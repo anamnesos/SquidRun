@@ -92,16 +92,26 @@ function setupEventListeners() {
     }
   });
 
-  // Broadcast input
+  // Broadcast input - only send on explicit Enter with non-empty content
   const broadcastInput = document.getElementById('broadcastInput');
   if (broadcastInput) {
     broadcastInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
+      // Only process Enter key, and only if there's actual content
+      if (e.key === 'Enter' && !e.isComposing) {
         e.preventDefault();
-        const message = broadcastInput.value + '\r';
-        terminal.broadcast(message);
-        broadcastInput.value = '';
+        e.stopPropagation();
+        const value = broadcastInput.value.trim();
+        // Don't send empty or whitespace-only messages
+        if (value.length > 0) {
+          terminal.broadcast(value + '\r');
+          broadcastInput.value = '';
+        }
       }
+    });
+    // Prevent form submission on any other events
+    broadcastInput.addEventListener('change', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
     });
   }
 
@@ -161,6 +171,15 @@ function setupEventListeners() {
       const paneId = pane.dataset.paneId;
       terminal.focusPane(paneId);
     });
+  });
+
+  // Fix: Blur terminals when any input/textarea gets focus
+  // This prevents xterm from capturing keyboard input meant for form fields
+  document.addEventListener('focusin', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+      // Blur all terminals so they don't capture keyboard input
+      terminal.blurAllTerminals();
+    }
   });
 }
 

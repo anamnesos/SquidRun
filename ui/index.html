@@ -2711,7 +2711,10 @@
       <div class="broadcast-bar">
         <input type="text" class="broadcast-input" id="broadcastInput"
                placeholder="Type here to broadcast to all panes (Enter to send)"
-               title="Send the same message to all 4 agent terminals at once">
+               title="Send the same message to all 4 agent terminals at once"
+               autocomplete="off" autocorrect="off" autocapitalize="off"
+               spellcheck="false" data-lpignore="true" data-form-type="other"
+               name="broadcast-input-no-autocomplete">
         <button class="btn" id="broadcastBtn" title="Send message to all terminals">Broadcast</button>
       </div>
     </div>
@@ -2785,7 +2788,7 @@
               <button class="activity-filter" data-filter="file" title="Show file change events">Files</button>
               <button class="activity-filter" data-filter="state" title="Show state transition events">State</button>
             </div>
-            <input type="text" class="activity-search" id="activitySearch" placeholder="Search..." title="Filter activity by text">
+            <input type="text" class="activity-search" id="activitySearch" placeholder="Search..." title="Filter activity by text" autocomplete="off">
           </div>
           <div class="activity-log" id="activityLog">
             <div class="activity-empty">No activity yet</div>
@@ -2856,7 +2859,7 @@
           <div class="template-current">
             <div class="template-section-title">Current Configuration</div>
             <div class="template-save-form">
-              <input type="text" class="template-input" id="templateNameInput" placeholder="Template name..." title="Enter a name for this configuration">
+              <input type="text" class="template-input" id="templateNameInput" placeholder="Template name..." title="Enter a name for this configuration" autocomplete="off">
               <button class="btn btn-folder" id="saveTemplateBtn" title="Save current settings as a template">Save</button>
             </div>
           </div>
@@ -2933,7 +2936,7 @@
           <div class="tab-title">Processes</div>
           <div class="tab-description">Manage background processes (npm run dev, tsc --watch, etc.)</div>
           <div class="process-spawn-form">
-            <input type="text" class="process-input" id="processCommandInput" placeholder="npm run dev" title="Enter command to run (e.g., npm run dev, tsc --watch)">
+            <input type="text" class="process-input" id="processCommandInput" placeholder="npm run dev" title="Enter command to run (e.g., npm run dev, tsc --watch)" autocomplete="off">
             <button class="process-spawn-btn" id="processSpawnBtn" title="Start the background process">Start</button>
           </div>
           <div class="process-list" id="processList">
