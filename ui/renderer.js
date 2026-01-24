@@ -191,17 +191,25 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Setup all event handlers
   setupEventListeners();
 
-  // Global ESC key handler - releases keyboard from xterm capture
+  // Global ESC key handler - interrupt agent AND release keyboard
   ipcRenderer.on('global-escape-pressed', () => {
+    // Send ESC character to focused pane to interrupt Claude
+    const focusedPane = terminal.getFocusedPane();
+    if (focusedPane) {
+      window.hivemind.pty.write(focusedPane, '\x1b');
+    }
+
+    // Also blur terminals to release keyboard capture
     terminal.blurAllTerminals();
     if (document.activeElement) {
       document.activeElement.blur();
     }
+
     // Show visual feedback
     const statusBar = document.querySelector('.status-bar');
     if (statusBar) {
       const msg = document.createElement('span');
-      msg.textContent = ' | ESC pressed - keyboard released';
+      msg.textContent = ` | ESC sent to pane ${focusedPane} - agent interrupted`;
       msg.style.color = '#4fc3f7';
       statusBar.appendChild(msg);
       setTimeout(() => msg.remove(), 2000);
