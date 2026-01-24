@@ -181,13 +181,13 @@ function sendHeartbeatToLead() {
   const leadPaneId = '1';
   const leadTerminal = terminals.get(leadPaneId);
 
-  // Step 1: Send Ctrl+C to interrupt any stuck state
+  // Step 1: Send ESC to interrupt any stuck state (ESC works better than Ctrl+C for Claude)
   if (leadTerminal && leadTerminal.alive && leadTerminal.pty) {
     try {
-      leadTerminal.pty.write('\x03'); // Ctrl+C
-      logInfo('[Heartbeat] Sent Ctrl+C to Lead to break prompt');
+      leadTerminal.pty.write('\x1b'); // ESC
+      logInfo('[Heartbeat] Sent ESC to Lead to break prompt');
     } catch (err) {
-      logWarn(`[Heartbeat] Could not send Ctrl+C to Lead: ${err.message}`);
+      logWarn(`[Heartbeat] Could not send ESC to Lead: ${err.message}`);
     }
   }
 
@@ -219,10 +219,10 @@ function directNudgeWorkers() {
     const terminal = terminals.get(paneId);
     if (terminal && terminal.alive && terminal.pty) {
       try {
-        terminal.pty.write('\x03'); // Ctrl+C
-        logInfo(`[Heartbeat] Sent Ctrl+C to Worker pane ${paneId}`);
+        terminal.pty.write('\x1b'); // ESC
+        logInfo(`[Heartbeat] Sent ESC to Worker pane ${paneId}`);
       } catch (err) {
-        logWarn(`[Heartbeat] Could not send Ctrl+C to pane ${paneId}: ${err.message}`);
+        logWarn(`[Heartbeat] Could not send ESC to pane ${paneId}: ${err.message}`);
       }
     }
   }
