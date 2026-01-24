@@ -95,47 +95,48 @@ function setupEventListeners() {
   // Broadcast input - only send on explicit user Enter with non-empty content
   const broadcastInput = document.getElementById('broadcastInput');
   let lastBroadcastTime = 0;
-  let lastInputChangeTime = 0;
-  let lastInputValue = '';
-  const AUTOCOMPLETE_GUARD_MS = 150; // Block submit if value changed within this window
+  let userTypedChars = 0; // Track actual keystrokes
 
   if (broadcastInput) {
-    // Track when input value changes (catches autocomplete fills)
-    broadcastInput.addEventListener('input', (e) => {
-      if (broadcastInput.value !== lastInputValue) {
-        lastInputChangeTime = Date.now();
-        lastInputValue = broadcastInput.value;
-      }
-    });
-
+    // Track actual user keystrokes (not autocomplete)
     broadcastInput.addEventListener('keydown', (e) => {
-      // DEFENSIVE: Only process real user Enter key presses
+      // Count printable characters typed by user
+      if (e.key.length === 1 && e.isTrusted && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        userTypedChars++;
+      }
+      // Backspace reduces count
+      if (e.key === 'Backspace' && userTypedChars > 0) {
+        userTypedChars--;
+      }
+
+      // SUBMIT: Only on Enter
       if (e.key === 'Enter' && e.isTrusted && !e.isComposing) {
         e.preventDefault();
         e.stopPropagation();
 
         const now = Date.now();
-
-        // Rate limit - too fast
-        if (now - lastBroadcastTime < 500) {
-          console.log('[Broadcast] Rate limited - too fast');
-          return;
-        }
-
-        // AUTOCOMPLETE GUARD: If value just changed, likely autocomplete fill
-        // User pressed Enter to select autocomplete, not to submit
-        if (now - lastInputChangeTime < AUTOCOMPLETE_GUARD_MS) {
-          console.log('[Broadcast] Blocked - possible autocomplete selection');
-          return;
-        }
-
         const value = broadcastInput.value.trim();
-        // Don't send empty or whitespace-only messages
+
+        // Rate limit
+        if (now - lastBroadcastTime < 500) {
+          console.log('[Broadcast] Rate limited');
+          return;
+        }
+
+        // AUTOCOMPLETE GUARD: User must have typed at least 3 chars
+        // Autocomplete fills without triggering keydown for each char
+        if (userTypedChars < 3 && value.length > 3) {
+          console.log('[Broadcast] Blocked - autocomplete detected (typed:', userTypedChars, 'value:', value.length, ')');
+          broadcastInput.value = '';
+          userTypedChars = 0;
+          return;
+        }
+
         if (value.length > 0) {
           lastBroadcastTime = now;
           terminal.broadcast(value + '\r');
           broadcastInput.value = '';
-          lastInputValue = '';
+          userTypedChars = 0;
         }
       }
     });
