@@ -175,50 +175,85 @@ let awaitingLeadResponse = false;
 
 /**
  * HB1: Write heartbeat message to Lead's trigger file
+ * FIX: Send Ctrl+C first to interrupt any stuck prompt, then message
  */
 function sendHeartbeatToLead() {
-  const triggerPath = path.join(TRIGGERS_PATH, 'lead.txt');
-  const message = '(SYSTEM): Heartbeat - check team status and nudge any stuck workers\n';
-  try {
-    fs.writeFileSync(triggerPath, message);
-    logInfo('[Heartbeat] Sent heartbeat to Lead');
-    awaitingLeadResponse = true;
-    lastHeartbeatTime = Date.now();
-  } catch (err) {
-    logError(`[Heartbeat] Failed to send to Lead: ${err.message}`);
+  const leadPaneId = '1';
+  const leadTerminal = terminals.get(leadPaneId);
+
+  // Step 1: Send Ctrl+C to interrupt any stuck state
+  if (leadTerminal && leadTerminal.alive && leadTerminal.pty) {
+    try {
+      leadTerminal.pty.write('\x03'); // Ctrl+C
+      logInfo('[Heartbeat] Sent Ctrl+C to Lead to break prompt');
+    } catch (err) {
+      logWarn(`[Heartbeat] Could not send Ctrl+C to Lead: ${err.message}`);
+    }
   }
+
+  // Step 2: Wait 500ms, then send heartbeat message
+  setTimeout(() => {
+    const triggerPath = path.join(TRIGGERS_PATH, 'lead.txt');
+    const message = '(SYSTEM): Heartbeat - check team status and nudge any stuck workers\n';
+    try {
+      fs.writeFileSync(triggerPath, message);
+      logInfo('[Heartbeat] Sent heartbeat to Lead');
+      awaitingLeadResponse = true;
+      lastHeartbeatTime = Date.now();
+    } catch (err) {
+      logError(`[Heartbeat] Failed to send to Lead: ${err.message}`);
+    }
+  }, 500);
 }
 
 /**
  * HB3: Directly nudge workers when Lead is unresponsive
+ * FIX: Send Ctrl+C first to interrupt any stuck prompts
  */
 function directNudgeWorkers() {
   logWarn('[Heartbeat] Lead unresponsive - directly nudging workers');
 
-  // Read shared_context.md to find incomplete tasks
-  let incompleteTasksMsg = 'Check shared_context.md for your tasks';
-  try {
-    if (fs.existsSync(SHARED_CONTEXT_PATH)) {
-      const content = fs.readFileSync(SHARED_CONTEXT_PATH, 'utf-8');
-      // Look for IN PROGRESS or ASSIGNED tasks
-      const inProgress = content.match(/\|.*\|.*🔄.*\|.*\|/g);
-      if (inProgress && inProgress.length > 0) {
-        incompleteTasksMsg = `${inProgress.length} task(s) in progress - status update needed`;
+  // Send Ctrl+C to worker terminals first
+  const workerPaneIds = ['2', '3']; // Worker A, Worker B
+  for (const paneId of workerPaneIds) {
+    const terminal = terminals.get(paneId);
+    if (terminal && terminal.alive && terminal.pty) {
+      try {
+        terminal.pty.write('\x03'); // Ctrl+C
+        logInfo(`[Heartbeat] Sent Ctrl+C to Worker pane ${paneId}`);
+      } catch (err) {
+        logWarn(`[Heartbeat] Could not send Ctrl+C to pane ${paneId}: ${err.message}`);
       }
     }
-  } catch (err) {
-    logWarn(`[Heartbeat] Could not read shared_context: ${err.message}`);
   }
 
-  // Nudge workers directly
-  const workersTrigger = path.join(TRIGGERS_PATH, 'workers.txt');
-  const message = `(SYSTEM): Watchdog alert - Lead unresponsive. ${incompleteTasksMsg}. Reply with your status.\n`;
-  try {
-    fs.writeFileSync(workersTrigger, message);
-    logInfo('[Heartbeat] Directly nudged workers');
-  } catch (err) {
-    logError(`[Heartbeat] Failed to nudge workers: ${err.message}`);
-  }
+  // Wait 500ms then send nudge message
+  setTimeout(() => {
+    // Read shared_context.md to find incomplete tasks
+    let incompleteTasksMsg = 'Check shared_context.md for your tasks';
+    try {
+      if (fs.existsSync(SHARED_CONTEXT_PATH)) {
+        const content = fs.readFileSync(SHARED_CONTEXT_PATH, 'utf-8');
+        // Look for IN PROGRESS or ASSIGNED tasks
+        const inProgress = content.match(/\|.*\|.*🔄.*\|.*\|/g);
+        if (inProgress && inProgress.length > 0) {
+          incompleteTasksMsg = `${inProgress.length} task(s) in progress - status update needed`;
+        }
+      }
+    } catch (err) {
+      logWarn(`[Heartbeat] Could not read shared_context: ${err.message}`);
+    }
+
+    // Nudge workers directly
+    const workersTrigger = path.join(TRIGGERS_PATH, 'workers.txt');
+    const message = `(SYSTEM): Watchdog alert - Lead unresponsive. ${incompleteTasksMsg}. Reply with your status.\n`;
+    try {
+      fs.writeFileSync(workersTrigger, message);
+      logInfo('[Heartbeat] Directly nudged workers');
+    } catch (err) {
+      logError(`[Heartbeat] Failed to nudge workers: ${err.message}`);
+    }
+  }, 500);
 }
 
 /**
