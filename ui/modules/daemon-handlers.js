@@ -1,0 +1,386 @@
+/**
+ * Daemon handlers module
+ * Handles IPC events from daemon and state changes
+ */
+
+const { ipcRenderer } = require('electron');
+
+// Pane IDs
+const PANE_IDS = ['1', '2', '3', '4'];
+
+// State display helpers
+const STATE_DISPLAY_NAMES = {
+  'idle': 'IDLE',
+  'project_selected': 'PROJECT SELECTED',
+  'planning': 'PLANNING',
+  'plan_review': 'PLAN REVIEW',
+  'plan_revision': 'PLAN REVISION',
+  'executing': 'EXECUTING',
+  'checkpoint': 'CHECKPOINT',
+  'checkpoint_review': 'CHECKPOINT REVIEW',
+  'checkpoint_fix': 'CHECKPOINT FIX',
+  'friction_logged': 'FRICTION LOGGED',
+  'friction_sync': 'FRICTION SYNC',
+  'friction_resolution': 'FRICTION RESOLUTION',
+  'complete': 'COMPLETE',
+  'error': 'ERROR',
+  'paused': 'PAUSED',
+};
+
+// Pane roles for display
+const PANE_ROLES = {
+  '1': 'Lead',
+  '2': 'Worker A',
+  '3': 'Worker B',
+  '4': 'Reviewer'
+};
+
+// Session timers
+const sessionStartTimes = new Map();
+let timerInterval = null;
+
+// Callbacks
+let onConnectionStatusUpdate = null;
+let onPaneStatusUpdate = null;
+
+function setStatusCallbacks(connectionCb, paneCb) {
+  onConnectionStatusUpdate = connectionCb;
+  onPaneStatusUpdate = paneCb;
+}
+
+function updateConnectionStatus(status) {
+  if (onConnectionStatusUpdate) {
+    onConnectionStatusUpdate(status);
+  }
+}
+
+function updatePaneStatus(paneId, status) {
+  if (onPaneStatusUpdate) {
+    onPaneStatusUpdate(paneId, status);
+  }
+}
+
+// ============================================================
+// DAEMON LISTENERS
+// ============================================================
+
+function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnectedFn) {
+  // Handle initial daemon connection with existing terminals
+  ipcRenderer.on('daemon-connected', async (event, data) => {
+    const { terminals: existingTerminals } = data;
+    console.log('[Daemon] Connected, existing terminals:', existingTerminals);
+
+    if (existingTerminals && existingTerminals.length > 0) {
+      updateConnectionStatus('Reconnecting to existing sessions...');
+      setReconnectedFn(true);
+
+      for (const term of existingTerminals) {
+        if (term.alive) {
+          await reattachTerminalFn(String(term.paneId));
+        }
+      }
+
+      updateConnectionStatus(`Restored ${existingTerminals.length} terminal(s)`);
+    } else {
+      console.log('[Daemon] No existing terminals, creating new ones...');
+      updateConnectionStatus('Creating terminals...');
+      await initTerminalsFn();
+      updateConnectionStatus('Ready');
+    }
+  });
+
+  // Handle daemon reconnection after disconnect
+  ipcRenderer.on('daemon-reconnected', (event) => {
+    console.log('[Daemon] Reconnected after disconnect');
+    updateConnectionStatus('Daemon reconnected');
+  });
+
+  // Handle daemon disconnect
+  ipcRenderer.on('daemon-disconnected', (event) => {
+    console.log('[Daemon] Disconnected');
+    updateConnectionStatus('Daemon disconnected - terminals may be stale');
+  });
+
+  // Handle message injection from main process
+  ipcRenderer.on('inject-message', (event, data) => {
+    const { panes, message } = data;
+    for (const paneId of panes) {
+      const text = message.replace(/\r$/, '');
+      window.hivemind.pty.write(String(paneId), text);
+      setTimeout(() => {
+        window.hivemind.pty.write(String(paneId), '\r');
+      }, 50);
+    }
+  });
+}
+
+// ============================================================
+// STATE DISPLAY
+// ============================================================
+
+function updateStateDisplay(state) {
+  const stateDisplay = document.getElementById('stateDisplay');
+  if (stateDisplay) {
+    const stateName = state.state || 'idle';
+    stateDisplay.textContent = STATE_DISPLAY_NAMES[stateName] || stateName.toUpperCase();
+    stateDisplay.className = 'state-value ' + stateName.replace(/_/g, '_');
+  }
+
+  const progressFill = document.getElementById('progressFill');
+  const progressText = document.getElementById('progressText');
+  if (progressFill && progressText) {
+    const current = state.current_checkpoint || 0;
+    const total = state.total_checkpoints || 0;
+    const percent = total > 0 ? (current / total) * 100 : 0;
+    progressFill.style.width = `${percent}%`;
+    progressText.textContent = `${current} / ${total}`;
+  }
+
+  const activeAgents = state.active_agents || [];
+  for (const paneId of PANE_IDS) {
+    const badge = document.getElementById(`badge-${paneId}`);
+    if (badge) {
+      const isActive = activeAgents.includes(paneId);
+      badge.classList.toggle('active', isActive);
+      badge.classList.toggle('idle', !isActive);
+    }
+  }
+
+  updateConnectionStatus(`State: ${STATE_DISPLAY_NAMES[state.state] || state.state}`);
+}
+
+function setupStateListener() {
+  ipcRenderer.on('state-changed', (event, state) => {
+    console.log('[State] Received state change:', state);
+    updateStateDisplay(state);
+  });
+}
+
+// ============================================================
+// CLAUDE STATE TRACKING
+// ============================================================
+
+function updateAgentStatus(paneId, state) {
+  const statusEl = document.getElementById(`status-${paneId}`);
+  if (statusEl) {
+    const labels = {
+      'idle': 'Idle',
+      'starting': 'Starting Claude...',
+      'running': 'Claude running',
+    };
+    statusEl.textContent = labels[state] || state;
+    statusEl.classList.remove('idle', 'starting', 'running');
+    statusEl.classList.add(state || 'idle');
+  }
+}
+
+function setupClaudeStateListener(handleSessionTimerStateFn) {
+  ipcRenderer.on('claude-state-changed', (event, states) => {
+    console.log('[Claude State] Received:', states);
+    for (const [paneId, state] of Object.entries(states)) {
+      updateAgentStatus(paneId, state);
+      if (handleSessionTimerStateFn) {
+        handleSessionTimerStateFn(paneId, state);
+      }
+    }
+  });
+}
+
+// ============================================================
+// COST ALERTS
+// ============================================================
+
+function showCostAlert(data) {
+  console.log('[Cost Alert]', data.message);
+
+  const costEl = document.getElementById('usageEstCost');
+  if (costEl) {
+    costEl.style.color = '#e94560';
+    costEl.textContent = `$${data.cost}`;
+    const parent = costEl.closest('.usage-stat.cost-estimate');
+    if (parent) {
+      parent.classList.add('alert');
+    }
+  }
+
+  showToast(data.message, 'warning');
+
+  const alertBadge = document.getElementById('costAlertBadge');
+  if (alertBadge) {
+    alertBadge.style.display = 'inline-block';
+  }
+}
+
+function showToast(message, type = 'info') {
+  const existing = document.querySelector('.toast-notification');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.className = `toast-notification toast-${type}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+
+  setTimeout(() => {
+    toast.classList.add('toast-fade');
+    setTimeout(() => toast.remove(), 500);
+  }, 5000);
+}
+
+function setupCostAlertListener() {
+  ipcRenderer.on('cost-alert', (event, data) => {
+    showCostAlert(data);
+  });
+}
+
+// ============================================================
+// SESSION TIMERS
+// ============================================================
+
+function formatTimer(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function handleSessionTimerState(paneId, state) {
+  if (state === 'running' && !sessionStartTimes.has(paneId)) {
+    sessionStartTimes.set(paneId, Date.now());
+    startTimerInterval();
+  } else if (state === 'idle' && sessionStartTimes.has(paneId)) {
+    sessionStartTimes.delete(paneId);
+  }
+  updateTimerDisplay(paneId);
+}
+
+function updateTimerDisplay(paneId) {
+  const timerEl = document.getElementById(`timer-${paneId}`);
+  if (!timerEl) return;
+
+  const startTime = sessionStartTimes.get(paneId);
+  if (startTime) {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    timerEl.textContent = formatTimer(elapsed);
+    timerEl.classList.add('active');
+  } else {
+    timerEl.textContent = '0:00';
+    timerEl.classList.remove('active');
+  }
+}
+
+function updateAllTimers() {
+  for (const paneId of PANE_IDS) {
+    updateTimerDisplay(paneId);
+  }
+
+  if (sessionStartTimes.size === 0 && timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+}
+
+function startTimerInterval() {
+  if (!timerInterval) {
+    timerInterval = setInterval(updateAllTimers, 1000);
+  }
+}
+
+function getTotalSessionTime() {
+  let total = 0;
+  const now = Date.now();
+  for (const startTime of sessionStartTimes.values()) {
+    total += Math.floor((now - startTime) / 1000);
+  }
+  return total;
+}
+
+// ============================================================
+// PROJECT PICKER
+// ============================================================
+
+function updateProjectDisplay(projectPath) {
+  const projectPathEl = document.getElementById('projectPath');
+  if (projectPathEl) {
+    if (projectPath) {
+      projectPathEl.textContent = projectPath;
+      projectPathEl.classList.remove('no-project');
+    } else {
+      projectPathEl.textContent = 'No project selected';
+      projectPathEl.classList.add('no-project');
+    }
+  }
+}
+
+async function selectProject() {
+  updateConnectionStatus('Selecting project...');
+  try {
+    const result = await window.hivemind.project.select();
+    if (result.success) {
+      updateProjectDisplay(result.path);
+      updateConnectionStatus(`Project: ${result.path}`);
+    } else if (result.canceled) {
+      updateConnectionStatus('Project selection canceled');
+    } else {
+      updateConnectionStatus('Failed to select project');
+    }
+  } catch (err) {
+    updateConnectionStatus(`Error: ${err.message}`);
+  }
+}
+
+async function loadInitialProject() {
+  try {
+    const projectPath = await window.hivemind.project.get();
+    if (projectPath) {
+      updateProjectDisplay(projectPath);
+    }
+  } catch (err) {
+    console.error('Error loading initial project:', err);
+  }
+}
+
+function setupProjectListener() {
+  ipcRenderer.on('project-changed', (event, projectPath) => {
+    console.log('[Project] Changed to:', projectPath);
+    updateProjectDisplay(projectPath);
+  });
+}
+
+// ============================================================
+// REFRESH BUTTONS
+// ============================================================
+
+function setupRefreshButtons(sendToPaneFn) {
+  document.querySelectorAll('.pane-refresh-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const paneId = btn.dataset.paneId;
+      sendToPaneFn(paneId, '/read workspace/shared_context.md\n');
+      updatePaneStatus(paneId, 'Refreshed');
+      setTimeout(() => {
+        const statusEl = document.getElementById(`status-${paneId}`);
+        if (statusEl && statusEl.textContent === 'Refreshed') {
+          statusEl.textContent = 'Ready';
+        }
+      }, 2000);
+    });
+  });
+}
+
+module.exports = {
+  PANE_IDS,
+  PANE_ROLES,
+  STATE_DISPLAY_NAMES,
+  setStatusCallbacks,
+  setupDaemonListeners,
+  updateStateDisplay,
+  setupStateListener,
+  setupClaudeStateListener,
+  setupCostAlertListener,
+  setupRefreshButtons,
+  setupProjectListener,
+  handleSessionTimerState,
+  getTotalSessionTime,
+  selectProject,
+  loadInitialProject,
+  showToast,
+};
