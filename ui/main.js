@@ -47,7 +47,7 @@ const DEFAULT_SETTINGS = {
   costAlertEnabled: true,
   costAlertThreshold: 5.00,
   dryRun: false,  // V3: Simulate without spawning real Claude
-  mcpAutoConfig: true,  // MC8: Auto-configure MCP on agent spawn
+  mcpAutoConfig: false,  // MC8: Auto-configure MCP on agent spawn (disabled by default)
   recentProjects: [],  // V3 J2: Recent projects list (max 10)
   stuckThreshold: 60000,  // V4: Auto-nudge after 60 seconds of no activity
   autoNudge: true,  // V4: Enable automatic stuck detection and nudging
