@@ -48,6 +48,24 @@ function setStatusCallbacks(connectionCb, paneCb) {
   onPaneStatusUpdate = paneCb;
 }
 
+// U2: Flash pane header when trigger is received
+function flashPaneHeader(paneId) {
+  const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+  if (pane) {
+    const header = pane.querySelector('.pane-header');
+    if (header) {
+      header.classList.remove('trigger-flash');
+      // Force reflow to restart animation
+      void header.offsetWidth;
+      header.classList.add('trigger-flash');
+      // Remove class after animation completes
+      setTimeout(() => {
+        header.classList.remove('trigger-flash');
+      }, 300);
+    }
+  }
+}
+
 function updateConnectionStatus(status) {
   if (onConnectionStatusUpdate) {
     onConnectionStatusUpdate(status);
@@ -76,7 +94,8 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 
       for (const term of existingTerminals) {
         if (term.alive) {
-          await reattachTerminalFn(String(term.paneId));
+          // U1: Pass scrollback for session restoration
+          await reattachTerminalFn(String(term.paneId), term.scrollback);
         }
       }
 
@@ -110,6 +129,8 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
       setTimeout(() => {
         window.hivemind.pty.write(String(paneId), '\r');
       }, 50);
+      // U2: Flash the pane header to indicate trigger received
+      flashPaneHeader(paneId);
     }
   });
 }

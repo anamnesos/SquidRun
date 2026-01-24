@@ -123,6 +123,12 @@ function setupEventListeners() {
     spawnAllBtn.addEventListener('click', terminal.spawnAllClaude);
   }
 
+  // Kill all button
+  const killAllBtn = document.getElementById('killAllBtn');
+  if (killAllBtn) {
+    killAllBtn.addEventListener('click', terminal.killAllTerminals);
+  }
+
   // Sync button
   const syncBtn = document.getElementById('syncBtn');
   if (syncBtn) {

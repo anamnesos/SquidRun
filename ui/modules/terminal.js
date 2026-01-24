@@ -171,7 +171,8 @@ async function initTerminal(paneId) {
 }
 
 // Reattach to existing terminal (daemon reconnection)
-async function reattachTerminal(paneId) {
+// U1: scrollback parameter contains buffered output to restore
+async function reattachTerminal(paneId, scrollback) {
   const container = document.getElementById(`terminal-${paneId}`);
   if (!container) return;
 
@@ -194,6 +195,11 @@ async function reattachTerminal(paneId) {
   terminals.set(paneId, terminal);
   fitAddons.set(paneId, fitAddon);
 
+  // U1: Restore scrollback buffer if available
+  if (scrollback && scrollback.length > 0) {
+    terminal.write(scrollback);
+  }
+
   terminal.onData((data) => {
     window.hivemind.pty.write(paneId, data);
   });
@@ -208,7 +214,6 @@ async function reattachTerminal(paneId) {
   });
 
   updatePaneStatus(paneId, 'Reconnected');
-  terminal.write('\r\n[Session restored from daemon]\r\n');
 
   container.addEventListener('click', () => {
     focusPane(paneId);
@@ -272,6 +277,20 @@ async function spawnAllClaude() {
     await spawnClaude(paneId);
   }
   updateConnectionStatus('All Claude instances running');
+}
+
+// Kill all terminals
+async function killAllTerminals() {
+  updateConnectionStatus('Killing all terminals...');
+  for (const paneId of PANE_IDS) {
+    try {
+      await window.hivemind.pty.kill(paneId);
+      updatePaneStatus(paneId, 'Killed');
+    } catch (err) {
+      console.error(`Failed to kill pane ${paneId}:`, err);
+    }
+  }
+  updateConnectionStatus('All terminals killed');
 }
 
 // Sync shared context to all panes
@@ -347,6 +366,7 @@ module.exports = {
   broadcast,
   spawnClaude,
   spawnAllClaude,
+  killAllTerminals,
   syncSharedContext,
   handleResize,
   getTerminal,

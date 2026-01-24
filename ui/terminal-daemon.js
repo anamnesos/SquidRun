@@ -12,12 +12,68 @@
 
 const net = require('net');
 const os = require('os');
+const fs = require('fs');
 const path = require('path');
 const pty = require('node-pty');
 const { PIPE_PATH, INSTANCE_DIRS } = require('./config');
 
-// Store PTY processes: Map<paneId, { pty, pid, alive, cwd }>
+// ============================================================
+// D1: DAEMON LOGGING TO FILE
+// ============================================================
+
+const LOG_FILE_PATH = path.join(__dirname, 'daemon.log');
+const daemonStartTime = Date.now();
+
+// Log levels
+const LOG_LEVELS = {
+  INFO: 'INFO',
+  WARN: 'WARN',
+  ERROR: 'ERROR',
+};
+
+// Log to both console and file
+function log(level, message) {
+  const timestamp = new Date().toISOString();
+  const entry = `[${timestamp}] [${level}] ${message}`;
+  console.log(entry);
+
+  try {
+    fs.appendFileSync(LOG_FILE_PATH, entry + '\n');
+  } catch (err) {
+    // If we can't write to log file, at least console still works
+  }
+}
+
+// Convenience log functions
+function logInfo(message) { log(LOG_LEVELS.INFO, message); }
+function logWarn(message) { log(LOG_LEVELS.WARN, message); }
+function logError(message) { log(LOG_LEVELS.ERROR, message); }
+
+// Initialize log file with startup message
+function initLogFile() {
+  const header = `\n${'='.repeat(60)}\nDaemon started at ${new Date().toISOString()}\nPID: ${process.pid}\n${'='.repeat(60)}\n`;
+  try {
+    fs.appendFileSync(LOG_FILE_PATH, header);
+  } catch (err) {
+    console.error('Could not initialize log file:', err.message);
+  }
+}
+
+// Format uptime as human-readable string
+function formatUptime(seconds) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${secs}s`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
+
+// Store PTY processes: Map<paneId, { pty, pid, alive, cwd, scrollback }>
 const terminals = new Map();
+
+// U1: Scrollback buffer settings - keep last 50KB of output per terminal
+const SCROLLBACK_MAX_SIZE = 50000;
 
 // Connected clients: Set<net.Socket>
 const clients = new Set();
@@ -34,7 +90,7 @@ function sendToClient(client, message) {
       client.write(JSON.stringify(message) + '\n');
     }
   } catch (err) {
-    console.error('[Daemon] Error sending to client:', err.message);
+    logError(`Error sending to client: ${err.message}`);
   }
 }
 
@@ -62,7 +118,7 @@ function spawnTerminal(paneId, cwd) {
   const instanceDir = INSTANCE_DIRS[paneId];
   const workDir = instanceDir || cwd || process.cwd();
 
-  console.log(`[Daemon] Spawning terminal for pane ${paneId} in ${workDir}`);
+  logInfo(`Spawning terminal for pane ${paneId} in ${workDir}`);
 
   const ptyProcess = pty.spawn(shell, [], {
     name: 'xterm-256color',
@@ -77,12 +133,20 @@ function spawnTerminal(paneId, cwd) {
     pid: ptyProcess.pid,
     alive: true,
     cwd: workDir,
+    scrollback: '', // U1: Buffer for scrollback persistence
   };
 
   terminals.set(paneId, terminalInfo);
 
   // Forward PTY output to all connected clients
   ptyProcess.onData((data) => {
+    // U1: Buffer output for scrollback persistence
+    terminalInfo.scrollback += data;
+    if (terminalInfo.scrollback.length > SCROLLBACK_MAX_SIZE) {
+      // Keep only the last SCROLLBACK_MAX_SIZE characters
+      terminalInfo.scrollback = terminalInfo.scrollback.slice(-SCROLLBACK_MAX_SIZE);
+    }
+
     broadcast({
       event: 'data',
       paneId,
@@ -92,7 +156,7 @@ function spawnTerminal(paneId, cwd) {
 
   // Handle PTY exit
   ptyProcess.onExit(({ exitCode }) => {
-    console.log(`[Daemon] Terminal ${paneId} exited with code ${exitCode}`);
+    logInfo(`Terminal ${paneId} exited with code ${exitCode}`);
     terminalInfo.alive = false;
     broadcast({
       event: 'exit',
@@ -147,6 +211,8 @@ function listTerminals() {
       pid: info.pid,
       alive: info.alive,
       cwd: info.cwd,
+      // U1: Include scrollback for session restoration
+      scrollback: info.scrollback || '',
     });
   }
   return list;
@@ -156,7 +222,7 @@ function listTerminals() {
 function handleMessage(client, message) {
   try {
     const msg = JSON.parse(message);
-    console.log(`[Daemon] Received: ${msg.action} for pane ${msg.paneId || 'N/A'}`);
+    logInfo(`Received: ${msg.action} for pane ${msg.paneId || 'N/A'}`);
 
     switch (msg.action) {
       case 'spawn': {
@@ -214,6 +280,8 @@ function handleMessage(client, message) {
             paneId: msg.paneId,
             pid: terminal.pid,
             alive: terminal.alive,
+            // U1: Include scrollback buffer for session restoration
+            scrollback: terminal.scrollback || '',
           });
         } else {
           sendToClient(client, {
@@ -230,8 +298,32 @@ function handleMessage(client, message) {
         break;
       }
 
+      // D2: Health check endpoint
+      case 'health': {
+        const uptimeMs = Date.now() - daemonStartTime;
+        const uptimeSecs = Math.floor(uptimeMs / 1000);
+        const memUsage = process.memoryUsage();
+
+        sendToClient(client, {
+          event: 'health',
+          uptime: uptimeSecs,
+          uptimeFormatted: formatUptime(uptimeSecs),
+          terminalCount: terminals.size,
+          activeTerminals: [...terminals.values()].filter(t => t.alive).length,
+          clientCount: clients.size,
+          memory: {
+            heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+            heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
+            rss: Math.round(memUsage.rss / 1024 / 1024),
+          },
+          pid: process.pid,
+        });
+        logInfo(`Health check requested by client`);
+        break;
+      }
+
       case 'shutdown': {
-        console.log('[Daemon] Shutdown requested');
+        logInfo('Shutdown requested via protocol');
         // Kill all terminals
         for (const [paneId] of terminals) {
           killTerminal(paneId);
@@ -251,7 +343,7 @@ function handleMessage(client, message) {
         });
     }
   } catch (err) {
-    console.error('[Daemon] Error handling message:', err.message);
+    logError(`Error handling message: ${err.message}`);
     sendToClient(client, {
       event: 'error',
       message: `Parse error: ${err.message}`,
@@ -261,7 +353,7 @@ function handleMessage(client, message) {
 
 // Create the server
 const server = net.createServer((client) => {
-  console.log('[Daemon] Client connected');
+  logInfo('Client connected');
   clients.add(client);
 
   // Buffer for incomplete messages (messages are newline-delimited)
@@ -282,13 +374,13 @@ const server = net.createServer((client) => {
   });
 
   client.on('close', () => {
-    console.log('[Daemon] Client disconnected');
+    logInfo('Client disconnected');
     clients.delete(client);
     // Don't kill terminals - that's the whole point!
   });
 
   client.on('error', (err) => {
-    console.error('[Daemon] Client error:', err.message);
+    logError(`Client error: ${err.message}`);
     clients.delete(client);
   });
 
@@ -313,7 +405,13 @@ function cleanupSocket() {
 
 // Handle process signals
 process.on('SIGINT', () => {
-  console.log('[Daemon] SIGINT received, shutting down...');
+  logInfo('SIGINT received, shutting down...');
+  // Notify clients of shutdown
+  broadcast({
+    event: 'shutdown',
+    message: 'Daemon is shutting down (SIGINT)',
+    timestamp: new Date().toISOString(),
+  });
   for (const [paneId] of terminals) {
     killTerminal(paneId);
   }
@@ -322,35 +420,61 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
+// D3: Graceful shutdown with client notification
 process.on('SIGTERM', () => {
-  console.log('[Daemon] SIGTERM received, shutting down...');
-  for (const [paneId] of terminals) {
-    killTerminal(paneId);
-  }
-  server.close();
-  cleanupSocket();
-  process.exit(0);
+  logInfo('SIGTERM received, initiating graceful shutdown...');
+
+  // Notify all clients before shutdown
+  broadcast({
+    event: 'shutdown',
+    message: 'Daemon is shutting down',
+    timestamp: new Date().toISOString(),
+  });
+  logInfo(`Notified ${clients.size} client(s) of shutdown`);
+
+  // Give clients a moment to process the shutdown message
+  setTimeout(() => {
+    // Kill all terminals
+    for (const [paneId] of terminals) {
+      killTerminal(paneId);
+    }
+    logInfo('All terminals killed');
+
+    server.close(() => {
+      logInfo('Server closed, exiting');
+      cleanupSocket();
+      process.exit(0);
+    });
+
+    // Force exit after 2 seconds if server doesn't close cleanly
+    setTimeout(() => {
+      logWarn('Forced exit after timeout');
+      cleanupSocket();
+      process.exit(0);
+    }, 2000);
+  }, 100);
 });
 
 // Start the server
 cleanupSocket();
+initLogFile();
+
 server.listen(PIPE_PATH, () => {
-  console.log(`[Daemon] Terminal daemon listening on ${PIPE_PATH}`);
-  console.log('[Daemon] PID:', process.pid);
+  logInfo(`Terminal daemon listening on ${PIPE_PATH}`);
+  logInfo(`PID: ${process.pid}`);
 
   // Write PID file for easy process management
-  const fs = require('fs');
   const pidFile = path.join(__dirname, 'daemon.pid');
   fs.writeFileSync(pidFile, process.pid.toString());
-  console.log(`[Daemon] PID written to ${pidFile}`);
+  logInfo(`PID written to ${pidFile}`);
 });
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.error('[Daemon] Another instance is already running on', PIPE_PATH);
+    logError(`Another instance is already running on ${PIPE_PATH}`);
     process.exit(1);
   } else {
-    console.error('[Daemon] Server error:', err);
+    logError(`Server error: ${err.message}`);
     process.exit(1);
   }
 });

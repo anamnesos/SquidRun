@@ -8,9 +8,9 @@ const { TRIGGER_TARGETS, WORKSPACE_PATH } = require('../config');
 
 describe('Trigger System', () => {
   describe('TRIGGER_TARGETS mapping', () => {
-    test('should have 6 trigger file types', () => {
+    test('should have 10 trigger file types', () => {
       const keys = Object.keys(TRIGGER_TARGETS);
-      expect(keys.length).toBe(6);
+      expect(keys.length).toBe(10); // 6 original + 4 "others" triggers
     });
 
     test('all trigger files should end with .txt', () => {
