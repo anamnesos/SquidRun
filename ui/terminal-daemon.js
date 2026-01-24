@@ -163,15 +163,33 @@ const TRIGGERS_PATH = path.join(__dirname, '..', 'workspace', 'triggers');
 const SHARED_CONTEXT_PATH = path.join(__dirname, '..', 'workspace', 'shared_context.md');
 
 // Configurable intervals (ms)
-const HEARTBEAT_INTERVAL = 60000;  // HB1: 60 seconds
-const LEAD_RESPONSE_TIMEOUT = 30000;  // HB2: 30 seconds
+const HEARTBEAT_INTERVAL = 30000;  // HB1: 30 seconds (reduced from 60)
+const LEAD_RESPONSE_TIMEOUT = 15000;  // HB2: 15 seconds (reduced from 30)
 const MAX_LEAD_NUDGES = 2;  // HB3: After 2 failed nudges, escalate
+const ACTIVITY_THRESHOLD = 10000;  // Only nudge if no activity for 10 seconds
 
 // State tracking
 let heartbeatEnabled = true;
 let leadNudgeCount = 0;
 let lastHeartbeatTime = 0;
 let awaitingLeadResponse = false;
+
+/**
+ * Check if any terminal has recent activity
+ * Returns true if agents are actively working (don't need nudge)
+ */
+function hasRecentActivity() {
+  const now = Date.now();
+  for (const [paneId, terminal] of terminals) {
+    if (terminal.alive && terminal.lastActivity) {
+      const idleTime = now - terminal.lastActivity;
+      if (idleTime < ACTIVITY_THRESHOLD) {
+        return true; // At least one agent is active
+      }
+    }
+  }
+  return false; // All agents idle
+}
 
 /**
  * HB1: Write heartbeat message to Lead's trigger file
@@ -331,6 +349,12 @@ function checkLeadResponse() {
  */
 function heartbeatTick() {
   if (!heartbeatEnabled || terminals.size === 0) {
+    return;
+  }
+
+  // SMART CHECK: Don't nudge if agents are actively working
+  if (!awaitingLeadResponse && hasRecentActivity()) {
+    logInfo('[Heartbeat] Agents active, skipping nudge');
     return;
   }
 
