@@ -239,6 +239,15 @@ function focusPane(paneId) {
   focusedPane = paneId;
 }
 
+// Blur all terminals - used when input fields get focus
+function blurAllTerminals() {
+  for (const terminal of terminals.values()) {
+    if (terminal && terminal.blur) {
+      terminal.blur();
+    }
+  }
+}
+
 // Send message to a specific pane
 function sendToPane(paneId, message) {
   const text = message.replace(/\r$/, '');
@@ -446,6 +455,7 @@ module.exports = {
   initTerminal,
   reattachTerminal,
   focusPane,
+  blurAllTerminals,
   sendToPane,
   broadcast,
   spawnClaude,
