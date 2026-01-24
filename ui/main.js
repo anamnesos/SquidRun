@@ -436,6 +436,7 @@ async function createWindow() {
 
   mainWindow.webContents.on('did-finish-load', async () => {
     watcher.startWatcher();
+    watcher.startMessageWatcher(); // V10 MQ4: Start message queue watcher
     const state = watcher.readState();
     mainWindow.webContents.send('state-changed', state);
     await initDaemonClient();
@@ -472,6 +473,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   watcher.stopWatcher();
+  watcher.stopMessageWatcher(); // V10 MQ4: Stop message queue watcher
 
   if (daemonClient) {
     console.log('[Cleanup] Disconnecting from daemon (terminals will survive)');

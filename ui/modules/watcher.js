@@ -11,9 +11,13 @@ const { WORKSPACE_PATH, TRIGGER_TARGETS } = require('../config');
 const STATE_FILE_PATH = path.join(WORKSPACE_PATH, 'state.json');
 const SHARED_CONTEXT_PATH = path.join(WORKSPACE_PATH, 'shared_context.md');
 
+// V10 MQ4: Message queue directory
+const MESSAGE_QUEUE_DIR = path.join(WORKSPACE_PATH, 'messages');
+
 // Module state (set by init)
 let mainWindow = null;
 let workspaceWatcher = null;
+let messageWatcher = null; // V10 MQ4: Separate watcher for message queues
 let triggers = null; // Reference to triggers module
 
 // ============================================================
@@ -558,6 +562,305 @@ function init(window, triggersModule) {
   triggers = triggersModule;
 }
 
+// ============================================================
+// V10 MQ4: MESSAGE QUEUE FILE WATCHER
+// ============================================================
+
+/**
+ * Initialize message queue directory
+ */
+function initMessageQueue() {
+  if (!fs.existsSync(MESSAGE_QUEUE_DIR)) {
+    fs.mkdirSync(MESSAGE_QUEUE_DIR, { recursive: true });
+    console.log('[MessageQueue] Created message directory');
+  }
+
+  // Create queue files for each pane if they don't exist
+  for (const paneId of ['1', '2', '3', '4']) {
+    const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${paneId}.json`);
+    if (!fs.existsSync(queueFile)) {
+      fs.writeFileSync(queueFile, '[]', 'utf-8');
+    }
+  }
+
+  return { success: true, path: MESSAGE_QUEUE_DIR };
+}
+
+/**
+ * Read messages for a pane
+ * @param {string} paneId - Target pane ID
+ * @param {boolean} undeliveredOnly - Only return undelivered messages
+ * @returns {Array} Messages
+ */
+function getMessages(paneId, undeliveredOnly = false) {
+  const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${paneId}.json`);
+
+  try {
+    if (!fs.existsSync(queueFile)) {
+      return [];
+    }
+    const content = fs.readFileSync(queueFile, 'utf-8');
+    const messages = JSON.parse(content);
+
+    if (undeliveredOnly) {
+      return messages.filter(m => !m.delivered);
+    }
+    return messages;
+  } catch (err) {
+    console.error(`[MessageQueue] Error reading queue for pane ${paneId}:`, err.message);
+    return [];
+  }
+}
+
+/**
+ * Send a message to a pane (append to queue)
+ * V10 MQ5: Direct messages bypass workflow gate
+ * @param {string} fromPaneId - Sender pane ID
+ * @param {string} toPaneId - Recipient pane ID
+ * @param {string} content - Message content
+ * @param {string} type - Message type: 'direct' | 'broadcast' | 'system'
+ * @returns {{ success: boolean, messageId?: string }}
+ */
+function sendMessage(fromPaneId, toPaneId, content, type = 'direct') {
+  const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${toPaneId}.json`);
+
+  try {
+    // Ensure directory exists
+    if (!fs.existsSync(MESSAGE_QUEUE_DIR)) {
+      initMessageQueue();
+    }
+
+    // Read existing messages
+    let messages = [];
+    if (fs.existsSync(queueFile)) {
+      const existing = fs.readFileSync(queueFile, 'utf-8');
+      messages = JSON.parse(existing);
+    }
+
+    // Create new message
+    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+    const message = {
+      id: messageId,
+      from: fromPaneId,
+      fromRole: PANE_ROLES[fromPaneId] || `Pane ${fromPaneId}`,
+      to: toPaneId,
+      toRole: PANE_ROLES[toPaneId] || `Pane ${toPaneId}`,
+      content,
+      type,
+      timestamp: new Date().toISOString(),
+      delivered: false,
+      deliveredAt: null,
+    };
+
+    // Append message
+    messages.push(message);
+
+    // Keep only last 100 messages per queue
+    if (messages.length > 100) {
+      messages = messages.slice(-100);
+    }
+
+    // Atomic write
+    const tempPath = queueFile + '.tmp';
+    fs.writeFileSync(tempPath, JSON.stringify(messages, null, 2), 'utf-8');
+    fs.renameSync(tempPath, queueFile);
+
+    console.log(`[MessageQueue] ${PANE_ROLES[fromPaneId]} → ${PANE_ROLES[toPaneId]}: ${content.substring(0, 50)}...`);
+
+    // Notify renderer of new message
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('message-queued', message);
+    }
+
+    return { success: true, messageId, message };
+  } catch (err) {
+    console.error(`[MessageQueue] Error sending message:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Mark a message as delivered
+ * @param {string} paneId - Pane ID
+ * @param {string} messageId - Message ID to mark
+ * @returns {{ success: boolean }}
+ */
+function markMessageDelivered(paneId, messageId) {
+  const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${paneId}.json`);
+
+  try {
+    if (!fs.existsSync(queueFile)) {
+      return { success: false, error: 'Queue not found' };
+    }
+
+    const content = fs.readFileSync(queueFile, 'utf-8');
+    const messages = JSON.parse(content);
+
+    const message = messages.find(m => m.id === messageId);
+    if (!message) {
+      return { success: false, error: 'Message not found' };
+    }
+
+    message.delivered = true;
+    message.deliveredAt = new Date().toISOString();
+
+    // Atomic write
+    const tempPath = queueFile + '.tmp';
+    fs.writeFileSync(tempPath, JSON.stringify(messages, null, 2), 'utf-8');
+    fs.renameSync(tempPath, queueFile);
+
+    console.log(`[MessageQueue] Marked delivered: ${messageId}`);
+
+    // Notify renderer
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('message-delivered', { paneId, messageId });
+    }
+
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Clear messages for a pane
+ * @param {string} paneId - Pane ID (or 'all' for all panes)
+ * @param {boolean} deliveredOnly - Only clear delivered messages
+ */
+function clearMessages(paneId, deliveredOnly = false) {
+  try {
+    const panes = paneId === 'all' ? ['1', '2', '3', '4'] : [paneId];
+
+    for (const p of panes) {
+      const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${p}.json`);
+      if (!fs.existsSync(queueFile)) continue;
+
+      if (deliveredOnly) {
+        const content = fs.readFileSync(queueFile, 'utf-8');
+        const messages = JSON.parse(content).filter(m => !m.delivered);
+        fs.writeFileSync(queueFile, JSON.stringify(messages, null, 2), 'utf-8');
+      } else {
+        fs.writeFileSync(queueFile, '[]', 'utf-8');
+      }
+    }
+
+    console.log(`[MessageQueue] Cleared messages for ${paneId}`);
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('messages-cleared', { paneId, deliveredOnly });
+    }
+
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Get message queue status
+ * @returns {{ queues: Object, totalMessages: number, undelivered: number }}
+ */
+function getMessageQueueStatus() {
+  const status = {
+    queues: {},
+    totalMessages: 0,
+    undelivered: 0,
+  };
+
+  for (const paneId of ['1', '2', '3', '4']) {
+    const messages = getMessages(paneId);
+    const undelivered = messages.filter(m => !m.delivered);
+
+    status.queues[paneId] = {
+      role: PANE_ROLES[paneId],
+      total: messages.length,
+      undelivered: undelivered.length,
+      latest: messages.length > 0 ? messages[messages.length - 1] : null,
+    };
+
+    status.totalMessages += messages.length;
+    status.undelivered += undelivered.length;
+  }
+
+  return status;
+}
+
+/**
+ * Handle message queue file changes
+ * @param {string} filePath - Path to changed queue file
+ */
+function handleMessageQueueChange(filePath) {
+  const filename = path.basename(filePath);
+  const match = filename.match(/queue-(\d)\.json/);
+
+  if (!match) return;
+
+  const paneId = match[1];
+  const undelivered = getMessages(paneId, true);
+
+  if (undelivered.length > 0) {
+    console.log(`[MessageQueue] ${undelivered.length} undelivered message(s) for pane ${paneId}`);
+
+    // Notify renderer to process messages
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('messages-pending', {
+        paneId,
+        count: undelivered.length,
+        messages: undelivered,
+      });
+    }
+
+    // V10 MQ5: Direct messages bypass workflow gate
+    // Inject messages directly to running Claude instances
+    if (triggers) {
+      for (const msg of undelivered) {
+        if (msg.type === 'direct' || msg.type === 'broadcast') {
+          // Format message for terminal injection
+          const formattedMsg = `[MSG from ${msg.fromRole}]: ${msg.content}`;
+
+          // Use triggers to inject (bypass gate for direct messages)
+          triggers.notifyAgents([paneId], formattedMsg);
+
+          // Mark as delivered
+          markMessageDelivered(paneId, msg.id);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Start watching message queue directory
+ */
+function startMessageWatcher() {
+  // Ensure directory exists
+  initMessageQueue();
+
+  if (messageWatcher) {
+    messageWatcher.close();
+  }
+
+  messageWatcher = chokidar.watch(MESSAGE_QUEUE_DIR, {
+    ignoreInitial: true,
+    persistent: true,
+  });
+
+  messageWatcher.on('change', handleMessageQueueChange);
+  messageWatcher.on('add', handleMessageQueueChange);
+
+  console.log(`[MessageQueue] Watching ${MESSAGE_QUEUE_DIR}`);
+}
+
+/**
+ * Stop message queue watcher
+ */
+function stopMessageWatcher() {
+  if (messageWatcher) {
+    messageWatcher.close();
+    messageWatcher = null;
+  }
+}
+
 module.exports = {
   // Initialization
   init,
@@ -588,8 +891,19 @@ module.exports = {
   getConflictQueueStatus,
   clearAllLocks,
 
+  // V10 MQ4+MQ5: Message queue
+  initMessageQueue,
+  sendMessage,
+  getMessages,
+  markMessageDelivered,
+  clearMessages,
+  getMessageQueueStatus,
+  MESSAGE_QUEUE_DIR,
+
   // Watcher control
   startWatcher,
   stopWatcher,
+  startMessageWatcher,
+  stopMessageWatcher,
   handleFileChange,
 };

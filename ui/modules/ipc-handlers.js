@@ -2433,6 +2433,71 @@ function setupIPCHandlers(deps) {
   });
 
   // ============================================================
+  // V10 MQ4: MESSAGE QUEUE IPC HANDLERS
+  // ============================================================
+
+  ipcMain.handle('init-message-queue', () => {
+    return watcher.initMessageQueue();
+  });
+
+  ipcMain.handle('send-message', (event, fromPaneId, toPaneId, content, type = 'direct') => {
+    return watcher.sendMessage(fromPaneId, toPaneId, content, type);
+  });
+
+  ipcMain.handle('send-broadcast-message', (event, fromPaneId, content) => {
+    // Send to all other panes
+    const results = [];
+    for (const toPaneId of ['1', '2', '3', '4']) {
+      if (toPaneId !== fromPaneId) {
+        const result = watcher.sendMessage(fromPaneId, toPaneId, content, 'broadcast');
+        results.push({ toPaneId, ...result });
+      }
+    }
+    return { success: true, results };
+  });
+
+  ipcMain.handle('send-group-message', (event, fromPaneId, toPaneIds, content) => {
+    const results = [];
+    for (const toPaneId of toPaneIds) {
+      if (toPaneId !== fromPaneId) {
+        const result = watcher.sendMessage(fromPaneId, toPaneId, content, 'direct');
+        results.push({ toPaneId, ...result });
+      }
+    }
+    return { success: true, results };
+  });
+
+  ipcMain.handle('get-messages', (event, paneId, undeliveredOnly = false) => {
+    const messages = watcher.getMessages(paneId, undeliveredOnly);
+    return { success: true, messages, count: messages.length };
+  });
+
+  ipcMain.handle('get-all-messages', () => {
+    const allMessages = {};
+    for (const paneId of ['1', '2', '3', '4']) {
+      allMessages[paneId] = watcher.getMessages(paneId);
+    }
+    return { success: true, messages: allMessages };
+  });
+
+  ipcMain.handle('mark-message-delivered', (event, paneId, messageId) => {
+    return watcher.markMessageDelivered(paneId, messageId);
+  });
+
+  ipcMain.handle('clear-messages', (event, paneId, deliveredOnly = false) => {
+    return watcher.clearMessages(paneId, deliveredOnly);
+  });
+
+  ipcMain.handle('get-message-queue-status', () => {
+    return watcher.getMessageQueueStatus();
+  });
+
+  ipcMain.handle('start-message-watcher', () => {
+    watcher.startMessageWatcher();
+    return { success: true };
+  });
+
+  // ============================================================
   // V9 DC3: API DOCUMENTATION GENERATOR
   // ============================================================
 
