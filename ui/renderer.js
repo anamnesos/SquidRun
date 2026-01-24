@@ -178,6 +178,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   daemonHandlers.setupAutoTriggerListener();  // AT2: Auto-trigger feedback
   daemonHandlers.setupHandoffListener();      // AH2: Handoff notification
   daemonHandlers.setupConflictResolutionListener(); // CR2: Conflict resolution
+  daemonHandlers.setupRollbackListener();     // RB2: Rollback UI
 
   // Setup UI panels
   tabs.setupFrictionPanel();
@@ -189,6 +190,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   tabs.setupProjectsTab();
   tabs.setupPerformanceTab();   // PT2: Performance dashboard
   tabs.setupTemplatesTab();     // TM2: Template management
+  tabs.setupActivityTab();      // OB2: Activity log
 
   // Setup daemon listeners (for terminal reconnection)
   daemonHandlers.setupDaemonListeners(

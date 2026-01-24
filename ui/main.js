@@ -58,6 +58,97 @@ const DEFAULT_SETTINGS = {
 
 let currentSettings = { ...DEFAULT_SETTINGS };
 
+// ============================================================
+// V7 OB1: ACTIVITY LOG AGGREGATION
+// ============================================================
+
+const MAX_ACTIVITY_ENTRIES = 500;
+const activityLog = [];
+
+const ACTIVITY_FILE_PATH = path.join(WORKSPACE_PATH, 'activity.json');
+
+/**
+ * Log an activity event
+ * @param {string} type - Event type: 'terminal', 'file', 'state', 'ipc', 'error', 'system'
+ * @param {string} paneId - Pane ID or null for system events
+ * @param {string} message - Event description
+ * @param {object} details - Additional event data
+ */
+function logActivity(type, paneId, message, details = {}) {
+  const entry = {
+    id: `act-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+    timestamp: new Date().toISOString(),
+    type,
+    paneId,
+    message,
+    details,
+  };
+
+  activityLog.push(entry);
+
+  // Keep only last MAX_ACTIVITY_ENTRIES
+  if (activityLog.length > MAX_ACTIVITY_ENTRIES) {
+    activityLog.shift();
+  }
+
+  // Notify renderer of new activity
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('activity-logged', entry);
+  }
+}
+
+function getActivityLog(filter = {}) {
+  let filtered = [...activityLog];
+
+  if (filter.type) {
+    filtered = filtered.filter(e => e.type === filter.type);
+  }
+  if (filter.paneId) {
+    filtered = filtered.filter(e => e.paneId === filter.paneId);
+  }
+  if (filter.since) {
+    const sinceTime = new Date(filter.since).getTime();
+    filtered = filtered.filter(e => new Date(e.timestamp).getTime() >= sinceTime);
+  }
+  if (filter.search) {
+    const searchLower = filter.search.toLowerCase();
+    filtered = filtered.filter(e =>
+      e.message.toLowerCase().includes(searchLower) ||
+      JSON.stringify(e.details).toLowerCase().includes(searchLower)
+    );
+  }
+
+  return filtered;
+}
+
+function clearActivityLog() {
+  activityLog.length = 0;
+}
+
+function saveActivityLog() {
+  try {
+    const tempPath = ACTIVITY_FILE_PATH + '.tmp';
+    fs.writeFileSync(tempPath, JSON.stringify(activityLog, null, 2), 'utf-8');
+    fs.renameSync(tempPath, ACTIVITY_FILE_PATH);
+    console.log(`[Activity] Saved ${activityLog.length} entries`);
+  } catch (err) {
+    console.error('[Activity] Error saving:', err.message);
+  }
+}
+
+function loadActivityLog() {
+  try {
+    if (fs.existsSync(ACTIVITY_FILE_PATH)) {
+      const content = fs.readFileSync(ACTIVITY_FILE_PATH, 'utf-8');
+      const loaded = JSON.parse(content);
+      activityLog.push(...loaded.slice(-MAX_ACTIVITY_ENTRIES));
+      console.log(`[Activity] Loaded ${activityLog.length} entries`);
+    }
+  } catch (err) {
+    console.error('[Activity] Error loading:', err.message);
+  }
+}
+
 function loadSettings() {
   try {
     if (fs.existsSync(SETTINGS_FILE_PATH)) {
@@ -189,11 +280,19 @@ async function initDaemonClient() {
       mainWindow.webContents.send(`pty-data-${paneId}`, data);
     }
 
+    // V7 OB1: Log significant terminal output (errors, completions)
+    if (data.includes('Error') || data.includes('error:') || data.includes('FAILED')) {
+      logActivity('error', paneId, 'Terminal error detected', { snippet: data.substring(0, 200) });
+    } else if (data.includes('✅') || data.includes('DONE') || data.includes('Complete')) {
+      logActivity('terminal', paneId, 'Completion indicator detected', { snippet: data.substring(0, 100) });
+    }
+
     // Detect Claude running state from output
     if (claudeRunning.get(paneId) === 'starting') {
       if (data.includes('Claude') || data.includes('>') || data.includes('claude')) {
         claudeRunning.set(paneId, 'running');
         broadcastClaudeState();
+        logActivity('state', paneId, 'Claude started', { status: 'running' });
         console.log(`[Claude] Pane ${paneId} now running`);
       }
     }
@@ -203,6 +302,7 @@ async function initDaemonClient() {
     recordSessionEnd(paneId);
     claudeRunning.set(paneId, 'idle');
     broadcastClaudeState();
+    logActivity('state', paneId, `Session ended (exit code: ${code})`, { exitCode: code });
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty-exit-${paneId}`, code);
     }
@@ -327,6 +427,11 @@ async function createWindow() {
     recordSessionEnd,
     saveUsageStats,
     broadcastClaudeState,
+    // V7 OB1: Activity log functions
+    logActivity,
+    getActivityLog,
+    clearActivityLog,
+    saveActivityLog,
   });
 
   mainWindow.webContents.on('did-finish-load', async () => {
