@@ -2224,12 +2224,202 @@
     .perf-actions,
     .template-actions,
     .progress-actions,
-    .test-actions {
+    .test-actions,
+    .messages-actions {
       margin-top: 16px;
       padding-top: 12px;
       border-top: 1px solid #0f3460;
       display: flex;
       gap: 8px;
+    }
+
+    /* MQ3+MQ6: Messages Tab */
+    .messages-empty {
+      text-align: center;
+      color: #555;
+      padding: 24px 16px;
+      font-size: 12px;
+      font-style: italic;
+    }
+
+    .messages-filter-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .messages-filter {
+      padding: 4px 10px;
+      font-size: 11px;
+      background: transparent;
+      border: 1px solid #333;
+      color: #888;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .messages-filter:hover {
+      border-color: #555;
+      color: #ccc;
+    }
+
+    .messages-filter.active {
+      background: #0f3460;
+      border-color: #4a9eff;
+      color: #fff;
+    }
+
+    .messages-list {
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid #1a1a2e;
+      border-radius: 4px;
+      background: #0a0a0f;
+    }
+
+    .message-item {
+      padding: 10px 12px;
+      border-bottom: 1px solid #1a1a2e;
+      font-size: 12px;
+    }
+
+    .message-item:last-child {
+      border-bottom: none;
+    }
+
+    .message-item.unread {
+      background: rgba(74, 158, 255, 0.05);
+    }
+
+    .message-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .message-from {
+      font-weight: 600;
+      color: #4a9eff;
+    }
+
+    .message-to {
+      color: #888;
+      font-size: 11px;
+    }
+
+    .message-time {
+      color: #555;
+      font-size: 10px;
+    }
+
+    .message-body {
+      color: #ccc;
+      line-height: 1.4;
+      word-wrap: break-word;
+    }
+
+    .message-delivered {
+      color: #4ade80;
+      font-size: 10px;
+      margin-top: 4px;
+    }
+
+    .message-pending {
+      color: #ffc857;
+      font-size: 10px;
+      margin-top: 4px;
+    }
+
+    /* MQ6: Message Composer */
+    .message-composer {
+      margin-top: 16px;
+      padding: 12px;
+      background: #0f0f14;
+      border: 1px solid #1a1a2e;
+      border-radius: 4px;
+    }
+
+    .composer-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #eee;
+      margin-bottom: 10px;
+    }
+
+    .composer-recipients {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+
+    .recipient-btn {
+      padding: 4px 10px;
+      font-size: 11px;
+      background: transparent;
+      border: 1px solid #333;
+      color: #888;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .recipient-btn:hover {
+      border-color: #555;
+      color: #ccc;
+    }
+
+    .recipient-btn.selected {
+      background: #0f3460;
+      border-color: #4a9eff;
+      color: #fff;
+    }
+
+    .composer-input-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .composer-input {
+      flex: 1;
+      background: #1a1a2e;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 8px 12px;
+      color: #eee;
+      font-size: 12px;
+      font-family: inherit;
+      resize: none;
+    }
+
+    .composer-input:focus {
+      outline: none;
+      border-color: #4a9eff;
+    }
+
+    .composer-send-btn {
+      padding: 8px 16px;
+      background: #4a9eff;
+      border: none;
+      border-radius: 4px;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .composer-send-btn:hover {
+      background: #3d8ae0;
+    }
+
+    .composer-send-btn:disabled {
+      background: #333;
+      color: #666;
+      cursor: not-allowed;
     }
   </style>
 </head>
@@ -2429,6 +2619,7 @@
         <button class="panel-tab" data-tab="templates" title="Save and load workspace configurations">Templates</button>
         <button class="panel-tab" data-tab="progress" title="Build progress and usage statistics">Progress</button>
         <button class="panel-tab" data-tab="processes" title="Manage background processes">Processes</button>
+        <button class="panel-tab" data-tab="messages" title="View message history between agents">Messages</button>
       </div>
       <div class="panel-content">
         <div class="tab-pane active" id="tab-screenshots">
@@ -2639,6 +2830,49 @@
           </div>
           <div class="process-list" id="processList">
             <div class="process-empty">No processes running</div>
+          </div>
+        </div>
+
+        <!-- MQ3+MQ6: Messages Tab -->
+        <div class="tab-pane" id="tab-messages">
+          <div class="tab-title">Messages</div>
+          <div class="tab-description">Message history and group messaging between agents</div>
+
+          <!-- Filter buttons -->
+          <div class="messages-filter-row">
+            <button class="messages-filter active" data-filter="all" title="Show all messages">All</button>
+            <button class="messages-filter" data-filter="lead" title="Messages from/to Lead">Lead</button>
+            <button class="messages-filter" data-filter="worker-a" title="Messages from/to Worker A">Worker A</button>
+            <button class="messages-filter" data-filter="worker-b" title="Messages from/to Worker B">Worker B</button>
+            <button class="messages-filter" data-filter="reviewer" title="Messages from/to Reviewer">Reviewer</button>
+          </div>
+
+          <!-- Message list -->
+          <div class="messages-list" id="messagesList">
+            <div class="messages-empty">No messages yet</div>
+          </div>
+
+          <!-- MQ6: Message Composer -->
+          <div class="message-composer">
+            <div class="composer-title">Send Message</div>
+            <div class="composer-recipients">
+              <button class="recipient-btn" data-recipient="lead" title="Send to Lead (Pane 1)">Lead</button>
+              <button class="recipient-btn" data-recipient="worker-a" title="Send to Worker A (Pane 2)">Worker A</button>
+              <button class="recipient-btn" data-recipient="worker-b" title="Send to Worker B (Pane 3)">Worker B</button>
+              <button class="recipient-btn" data-recipient="reviewer" title="Send to Reviewer (Pane 4)">Reviewer</button>
+              <button class="recipient-btn" data-recipient="workers" title="Send to Worker A and Worker B">Workers Only</button>
+              <button class="recipient-btn" data-recipient="all" title="Send to all agents">All Agents</button>
+            </div>
+            <div class="composer-input-row">
+              <textarea class="composer-input" id="messageComposerInput" placeholder="Type your message..." rows="2" title="Enter message to send"></textarea>
+              <button class="composer-send-btn" id="messageSendBtn" title="Send message to selected recipients" disabled>Send</button>
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div class="messages-actions">
+            <button class="btn btn-secondary" id="refreshMessagesBtn" title="Reload message history">Refresh</button>
+            <button class="btn btn-secondary" id="clearMessagesBtn" title="Clear message history">Clear</button>
           </div>
         </div>
       </div>

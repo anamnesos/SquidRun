@@ -396,6 +396,64 @@ function triggerAutoHandoff(completedPaneId, completionMessage) {
   return { success: true, from: completedPaneId, to: runningNext, fromRole, toRole };
 }
 
+// ============================================================
+// V10 MQ5: DIRECT MESSAGE (GATE BYPASS)
+// ============================================================
+
+/**
+ * V10 MQ5: Send direct message to agent(s) - BYPASSES WORKFLOW GATE
+ * Use this for inter-agent chat that should always be delivered
+ * @param {string[]} targetPanes - Target pane IDs
+ * @param {string} message - Message to send
+ * @param {string} fromRole - Sender role name (optional)
+ * @returns {{ success: boolean, notified: string[] }}
+ */
+function sendDirectMessage(targetPanes, message, fromRole = null) {
+  if (!message) return { success: false, error: 'No message' };
+
+  // No workflow gate check - direct messages always allowed
+  const notified = [];
+
+  for (const paneId of targetPanes) {
+    if (claudeRunning && claudeRunning.get(paneId) === 'running') {
+      notified.push(paneId);
+    }
+  }
+
+  if (notified.length > 0) {
+    const prefix = fromRole ? `[MSG from ${fromRole}]: ` : '';
+    const fullMessage = prefix + message;
+
+    console.log(`[DirectMessage] Sent to panes ${notified.join(', ')}: ${message.substring(0, 50)}...`);
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('inject-message', {
+        panes: notified,
+        message: fullMessage + '\r'
+      });
+      mainWindow.webContents.send('direct-message-sent', {
+        to: notified,
+        from: fromRole,
+        message: message.substring(0, 100)
+      });
+    }
+
+    return { success: true, notified };
+  }
+
+  console.log(`[DirectMessage] No running Claude in target panes: ${targetPanes.join(', ')}`);
+  return { success: false, notified: [], reason: 'no_running_targets' };
+}
+
+/**
+ * V10 MQ5: Check if direct messages are allowed (always true)
+ * This exists for API consistency with checkWorkflowGate
+ */
+function checkDirectMessageGate() {
+  // Direct messages always bypass workflow gate
+  return { allowed: true, reason: 'Direct messages bypass workflow gate' };
+}
+
 module.exports = {
   init,
   setWatcher,
@@ -410,4 +468,7 @@ module.exports = {
   triggerAutoHandoff,
   AGENT_ROLES,
   HANDOFF_CHAIN,
+  // V10 MQ5
+  sendDirectMessage,
+  checkDirectMessageGate,
 };

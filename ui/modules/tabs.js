@@ -1239,6 +1239,276 @@ function setupFrictionPanel() {
 }
 
 // ============================================================
+// MQ3+MQ6: MESSAGES TAB
+// ============================================================
+
+let messageHistory = [];
+let messageFilter = 'all';
+let selectedRecipients = [];
+
+const MESSAGE_AGENT_MAP = {
+  'lead': { pane: '1', name: 'Lead' },
+  'worker-a': { pane: '2', name: 'Worker A' },
+  'worker-b': { pane: '3', name: 'Worker B' },
+  'reviewer': { pane: '4', name: 'Reviewer' }
+};
+
+const PANE_TO_AGENT = {
+  '1': 'lead',
+  '2': 'worker-a',
+  '3': 'worker-b',
+  '4': 'reviewer'
+};
+
+function formatMessageTime(timestamp) {
+  const date = new Date(timestamp);
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+}
+
+function getAgentDisplayName(agentId) {
+  if (MESSAGE_AGENT_MAP[agentId]) return MESSAGE_AGENT_MAP[agentId].name;
+  if (AGENT_NAMES[agentId]) return AGENT_NAMES[agentId];
+  return agentId;
+}
+
+function renderMessagesList() {
+  const listEl = document.getElementById('messagesList');
+  if (!listEl) return;
+
+  // Apply filter
+  let filtered = messageHistory;
+  if (messageFilter !== 'all') {
+    filtered = messageHistory.filter(msg => {
+      const fromAgent = msg.from?.toLowerCase().replace(' ', '-');
+      const toAgent = msg.to?.toLowerCase().replace(' ', '-');
+      return fromAgent === messageFilter || toAgent === messageFilter ||
+             msg.from === messageFilter || msg.to === messageFilter;
+    });
+  }
+
+  if (filtered.length === 0) {
+    listEl.innerHTML = '<div class="messages-empty">No messages yet</div>';
+    return;
+  }
+
+  // Sort by time (newest last)
+  const sorted = [...filtered].sort((a, b) =>
+    new Date(a.time || a.timestamp) - new Date(b.time || b.timestamp)
+  );
+
+  listEl.innerHTML = sorted.map(msg => {
+    const fromName = getAgentDisplayName(msg.from);
+    const toName = msg.to ? getAgentDisplayName(msg.to) : 'All';
+    const time = formatMessageTime(msg.time || msg.timestamp);
+    const delivered = msg.delivered !== false;
+
+    return `
+      <div class="message-item ${delivered ? '' : 'unread'}">
+        <div class="message-header">
+          <span>
+            <span class="message-from">${fromName}</span>
+            <span class="message-to">→ ${toName}</span>
+          </span>
+          <span class="message-time">${time}</span>
+        </div>
+        <div class="message-body">${escapeHtml(msg.msg || msg.message || '')}</div>
+        ${delivered ? '<div class="message-delivered">✓ Delivered</div>' : '<div class="message-pending">⏳ Pending</div>'}
+      </div>
+    `;
+  }).join('');
+
+  // Auto-scroll to bottom
+  listEl.scrollTop = listEl.scrollHeight;
+}
+
+async function loadMessageHistory() {
+  try {
+    // Get messages from all queues
+    const result = await ipcRenderer.invoke('get-all-messages');
+    if (result && result.success) {
+      // Flatten all queues into single array
+      const allMessages = [];
+      for (const paneId in result.queues) {
+        const queue = result.queues[paneId];
+        if (Array.isArray(queue)) {
+          allMessages.push(...queue);
+        }
+      }
+      messageHistory = allMessages;
+      renderMessagesList();
+    }
+  } catch (err) {
+    console.error('[MQ3] Error loading message history:', err);
+  }
+}
+
+async function clearMessageHistory() {
+  if (!confirm('Clear all message history?')) return;
+
+  try {
+    // Clear all queues
+    for (const paneId of ['1', '2', '3', '4']) {
+      await ipcRenderer.invoke('clear-messages', paneId);
+    }
+    messageHistory = [];
+    renderMessagesList();
+    updateConnectionStatus('Message history cleared');
+  } catch (err) {
+    console.error('[MQ3] Error clearing message history:', err);
+    updateConnectionStatus('Failed to clear message history');
+  }
+}
+
+function updateSendButtonState() {
+  const sendBtn = document.getElementById('messageSendBtn');
+  const input = document.getElementById('messageComposerInput');
+
+  if (sendBtn && input) {
+    const hasRecipients = selectedRecipients.length > 0;
+    const hasMessage = input.value.trim().length > 0;
+    sendBtn.disabled = !hasRecipients || !hasMessage;
+  }
+}
+
+async function sendGroupMessage() {
+  const input = document.getElementById('messageComposerInput');
+  if (!input || !input.value.trim() || selectedRecipients.length === 0) return;
+
+  const message = input.value.trim();
+  let recipients = [];
+
+  // Expand recipient groups
+  for (const r of selectedRecipients) {
+    if (r === 'all') {
+      recipients = ['1', '2', '3', '4'];
+      break;
+    } else if (r === 'workers') {
+      recipients.push('2', '3');
+    } else if (MESSAGE_AGENT_MAP[r]) {
+      recipients.push(MESSAGE_AGENT_MAP[r].pane);
+    }
+  }
+
+  // Remove duplicates
+  recipients = [...new Set(recipients)];
+
+  updateConnectionStatus(`Sending message to ${recipients.length} recipient(s)...`);
+
+  try {
+    // Use the API from checkpoint.md: send-group-message(fromPaneId, toPanes, content)
+    // From 'user' we use pane 0 or system indicator
+    const result = await ipcRenderer.invoke('send-group-message', 'system', recipients, message);
+
+    if (result && result.success) {
+      input.value = '';
+      updateSendButtonState();
+      await loadMessageHistory();
+      updateConnectionStatus(`Message sent to ${recipients.length} agent(s)`);
+    } else {
+      updateConnectionStatus(`Failed to send: ${result?.error || 'Unknown error'}`);
+    }
+  } catch (err) {
+    updateConnectionStatus(`Send error: ${err.message}`);
+  }
+}
+
+function setupMessagesTab() {
+  // Filter buttons
+  document.querySelectorAll('.messages-filter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.messages-filter').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      messageFilter = btn.dataset.filter;
+      renderMessagesList();
+    });
+  });
+
+  // Recipient buttons (multi-select)
+  document.querySelectorAll('.recipient-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const recipient = btn.dataset.recipient;
+
+      // Handle "all" and "workers" - clear other selections
+      if (recipient === 'all' || recipient === 'workers') {
+        document.querySelectorAll('.recipient-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selectedRecipients = [recipient];
+      } else {
+        // If "all" or "workers" is selected, clear it
+        const allBtn = document.querySelector('.recipient-btn[data-recipient="all"]');
+        const workersBtn = document.querySelector('.recipient-btn[data-recipient="workers"]');
+        if (allBtn) allBtn.classList.remove('selected');
+        if (workersBtn) workersBtn.classList.remove('selected');
+        selectedRecipients = selectedRecipients.filter(r => r !== 'all' && r !== 'workers');
+
+        // Toggle individual recipient
+        if (btn.classList.contains('selected')) {
+          btn.classList.remove('selected');
+          selectedRecipients = selectedRecipients.filter(r => r !== recipient);
+        } else {
+          btn.classList.add('selected');
+          selectedRecipients.push(recipient);
+        }
+      }
+
+      updateSendButtonState();
+    });
+  });
+
+  // Message input
+  const input = document.getElementById('messageComposerInput');
+  if (input) {
+    input.addEventListener('input', updateSendButtonState);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendGroupMessage();
+      }
+    });
+  }
+
+  // Send button
+  const sendBtn = document.getElementById('messageSendBtn');
+  if (sendBtn) {
+    sendBtn.addEventListener('click', sendGroupMessage);
+  }
+
+  // Action buttons
+  const refreshBtn = document.getElementById('refreshMessagesBtn');
+  if (refreshBtn) refreshBtn.addEventListener('click', loadMessageHistory);
+
+  const clearBtn = document.getElementById('clearMessagesBtn');
+  if (clearBtn) clearBtn.addEventListener('click', clearMessageHistory);
+
+  // Listen for message events (from checkpoint.md API)
+  ipcRenderer.on('message-queued', (event, msg) => {
+    messageHistory.push(msg);
+    renderMessagesList();
+  });
+
+  ipcRenderer.on('message-delivered', (event, data) => {
+    // Update delivery status
+    const msg = messageHistory.find(m => m.id === data.messageId);
+    if (msg) {
+      msg.delivered = true;
+      msg.deliveredAt = data.deliveredAt;
+      renderMessagesList();
+    }
+  });
+
+  ipcRenderer.on('messages-cleared', () => {
+    loadMessageHistory(); // Reload to sync state
+  });
+
+  ipcRenderer.on('direct-message-sent', (event, data) => {
+    // Direct message sent via triggers, reload history
+    loadMessageHistory();
+  });
+
+  loadMessageHistory();
+}
+
+// ============================================================
 // SCREENSHOTS
 // ============================================================
 
@@ -1448,6 +1718,7 @@ module.exports = {
   setupActivityTab,
   setupTestsTab,           // TR1: Test results panel
   setupCIStatusIndicator,  // CI2: CI status indicator
+  setupMessagesTab,        // MQ3+MQ6: Messages tab
   setupFrictionPanel,
   setupRightPanel,
   updateBuildProgress,
@@ -1460,6 +1731,7 @@ module.exports = {
   loadTemplates,
   loadActivityLog,
   loadTestResults,         // TR1: Load test results
+  loadMessageHistory,      // MQ3: Load message history
   addActivityEntry,
   updateCIStatus,          // CI2: Update CI status
 };
