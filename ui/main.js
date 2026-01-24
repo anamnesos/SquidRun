@@ -4,9 +4,7 @@ const os = require('os');
 const fs = require('fs');
 const chokidar = require('chokidar');
 const { getDaemonClient } = require('./daemon-client');
-
-// Paths
-const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
+const { WORKSPACE_PATH, INSTANCE_DIRS, TRIGGER_TARGETS } = require('./config');
 const SHARED_CONTEXT_PATH = path.join(WORKSPACE_PATH, 'shared_context.md');
 const STATE_FILE_PATH = path.join(WORKSPACE_PATH, 'state.json');
 const SETTINGS_FILE_PATH = path.join(__dirname, 'settings.json');
@@ -27,9 +25,6 @@ const DEFAULT_SETTINGS = {
   watcherEnabled: true,
   // Permissions
   allowAllPermissions: false,
-  allowRead: false,
-  allowWrite: false,
-  allowBash: false,
   // Cost Alerts
   costAlertEnabled: true,
   costAlertThreshold: 5.00, // dollars
@@ -72,13 +67,7 @@ function saveSettings(settings) {
   return currentSettings;
 }
 
-// Instance working directories (role injection)
-const INSTANCE_DIRS = {
-  '1': path.join(__dirname, '..', 'workspace', 'instances', 'lead'),
-  '2': path.join(__dirname, '..', 'workspace', 'instances', 'worker-a'),
-  '3': path.join(__dirname, '..', 'workspace', 'instances', 'worker-b'),
-  '4': path.join(__dirname, '..', 'workspace', 'instances', 'reviewer'),
-};
+// INSTANCE_DIRS imported from ./config.js
 
 // Daemon client instance (connects to terminal daemon)
 let daemonClient = null;
@@ -191,8 +180,10 @@ async function createWindow() {
 
   mainWindow.loadFile('index.html');
 
-  // Always open DevTools for debugging
-  mainWindow.webContents.openDevTools();
+  // Open DevTools if enabled in settings
+  if (currentSettings.devTools) {
+    mainWindow.webContents.openDevTools();
+  }
 
   // Start file watcher when window is ready
   mainWindow.webContents.on('did-finish-load', async () => {
@@ -643,15 +634,7 @@ function notifyAllAgentsSync(triggerFile) {
   }
 }
 
-// TARGETED TRIGGERS: Map trigger filenames to pane IDs
-const TRIGGER_TARGETS = {
-  'lead.txt': ['1'],
-  'worker-a.txt': ['2'],
-  'worker-b.txt': ['3'],
-  'reviewer.txt': ['4'],
-  'workers.txt': ['2', '3'],
-  'all.txt': ['1', '2', '3', '4'],
-};
+// TRIGGER_TARGETS imported from ./config.js
 
 // Handle trigger file changes - sends content to target pane(s)
 function handleTriggerFile(filePath, filename) {
@@ -856,20 +839,6 @@ ipcMain.handle('trigger-sync', (event, file = 'shared_context.md') => {
 ipcMain.handle('broadcast-message', (event, message) => {
   // Use the dedicated broadcast function with clear indicator
   return broadcastToAllAgents(message);
-});
-
-// Legacy broadcast (kept for compatibility) - will be removed
-ipcMain.handle('broadcast-message-raw', (event, message) => {
-  const notified = [];
-  for (const [paneId, status] of claudeRunning) {
-    if (status === 'running') {
-      if (daemonClient && daemonClient.connected) {
-        daemonClient.write(paneId, message + '\n');
-        notified.push(paneId);
-      }
-    }
-  }
-  return { success: true, notified };
 });
 
 ipcMain.handle('start-planning', (event, project) => {

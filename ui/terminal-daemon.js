@@ -14,20 +14,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const pty = require('node-pty');
-
-// Named pipe path (Windows) or Unix socket
-const PIPE_PATH = os.platform() === 'win32'
-  ? '\\\\.\\pipe\\hivemind-terminal'
-  : '/tmp/hivemind-terminal.sock';
-
-// Instance working directories (role injection)
-const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
-const INSTANCE_DIRS = {
-  '1': path.join(WORKSPACE_PATH, 'instances', 'lead'),
-  '2': path.join(WORKSPACE_PATH, 'instances', 'worker-a'),
-  '3': path.join(WORKSPACE_PATH, 'instances', 'worker-b'),
-  '4': path.join(WORKSPACE_PATH, 'instances', 'reviewer'),
-};
+const { PIPE_PATH, INSTANCE_DIRS } = require('./config');
 
 // Store PTY processes: Map<paneId, { pty, pid, alive, cwd }>
 const terminals = new Map();
@@ -209,10 +196,10 @@ function handleMessage(client, message) {
       }
 
       case 'list': {
-        const terminals = listTerminals();
+        const terminalList = listTerminals();
         sendToClient(client, {
           event: 'list',
-          terminals,
+          terminals: terminalList,
         });
         break;
       }
