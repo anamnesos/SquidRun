@@ -1862,12 +1862,279 @@
       background: #444;
       color: #ccc;
     }
+
+    /* CI2: CI Status Indicator */
+    .ci-status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-left: 8px;
+    }
+
+    .ci-status-indicator.passing {
+      background: rgba(78, 204, 163, 0.2);
+      color: #4ecca3;
+      border: 1px solid #4ecca3;
+    }
+
+    .ci-status-indicator.failing {
+      background: rgba(233, 69, 96, 0.2);
+      color: #e94560;
+      border: 1px solid #e94560;
+      animation: ciFailPulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes ciFailPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    .ci-status-indicator.running {
+      background: rgba(255, 200, 87, 0.2);
+      color: #ffc857;
+      border: 1px solid #ffc857;
+    }
+
+    .ci-status-indicator.idle {
+      background: rgba(136, 136, 136, 0.2);
+      color: #888;
+      border: 1px solid #555;
+    }
+
+    .ci-status-icon {
+      font-size: 14px;
+    }
+
+    .ci-status-icon.spinning {
+      animation: ciSpin 1s linear infinite;
+    }
+
+    @keyframes ciSpin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    /* TR1: Test Results Panel */
+    .test-summary {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .test-summary-card {
+      flex: 1;
+      background: #1a1a2e;
+      border-radius: 6px;
+      padding: 12px;
+      text-align: center;
+    }
+
+    .test-summary-card.passed {
+      border-left: 3px solid #4ecca3;
+    }
+
+    .test-summary-card.failed {
+      border-left: 3px solid #e94560;
+    }
+
+    .test-summary-card.skipped {
+      border-left: 3px solid #888;
+    }
+
+    .test-summary-value {
+      font-size: 24px;
+      font-weight: 700;
+      font-family: 'Consolas', 'Monaco', monospace;
+    }
+
+    .test-summary-card.passed .test-summary-value { color: #4ecca3; }
+    .test-summary-card.failed .test-summary-value { color: #e94560; }
+    .test-summary-card.skipped .test-summary-value { color: #888; }
+
+    .test-summary-label {
+      font-size: 10px;
+      color: #888;
+      text-transform: uppercase;
+      margin-top: 4px;
+    }
+
+    .test-progress-bar {
+      height: 6px;
+      background: #0f3460;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+
+    .test-progress-fill {
+      height: 100%;
+      display: flex;
+    }
+
+    .test-progress-passed {
+      background: #4ecca3;
+      transition: width 0.3s;
+    }
+
+    .test-progress-failed {
+      background: #e94560;
+      transition: width 0.3s;
+    }
+
+    .test-progress-skipped {
+      background: #555;
+      transition: width 0.3s;
+    }
+
+    .test-status-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .test-status-badge.running {
+      background: rgba(255, 200, 87, 0.2);
+      color: #ffc857;
+    }
+
+    .test-status-badge.passed {
+      background: rgba(78, 204, 163, 0.2);
+      color: #4ecca3;
+    }
+
+    .test-status-badge.failed {
+      background: rgba(233, 69, 96, 0.2);
+      color: #e94560;
+    }
+
+    .test-status-badge.idle {
+      background: rgba(136, 136, 136, 0.2);
+      color: #888;
+    }
+
+    .test-results-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 250px;
+      overflow-y: auto;
+    }
+
+    .test-result-item {
+      background: #1a1a2e;
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .test-result-item:hover {
+      background: #0f3460;
+    }
+
+    .test-result-item.passed {
+      border-left: 3px solid #4ecca3;
+    }
+
+    .test-result-item.failed {
+      border-left: 3px solid #e94560;
+    }
+
+    .test-result-item.skipped {
+      border-left: 3px solid #888;
+    }
+
+    .test-result-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .test-result-name {
+      color: #eee;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 200px;
+    }
+
+    .test-result-status {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+
+    .test-result-status.passed { background: rgba(78, 204, 163, 0.2); color: #4ecca3; }
+    .test-result-status.failed { background: rgba(233, 69, 96, 0.2); color: #e94560; }
+    .test-result-status.skipped { background: rgba(136, 136, 136, 0.2); color: #888; }
+
+    .test-result-duration {
+      font-size: 10px;
+      color: #666;
+      margin-top: 4px;
+    }
+
+    .test-result-error {
+      display: none;
+      margin-top: 8px;
+      padding: 8px;
+      background: rgba(233, 69, 96, 0.1);
+      border-radius: 4px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 10px;
+      color: #e94560;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+
+    .test-result-item.expanded .test-result-error {
+      display: block;
+    }
+
+    .test-empty {
+      text-align: center;
+      color: #666;
+      padding: 30px 20px;
+      font-size: 12px;
+    }
+
+    .test-actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-test {
+      background: #4ecca3;
+      border: 1px solid #4ecca3;
+      color: #1a1a2e;
+    }
+
+    .btn-test:hover {
+      background: #3db892;
+      border-color: #3db892;
+    }
   </style>
 </head>
 <body>
   <div class="header">
     <h1>Hivemind</h1>
     <span class="dry-run-indicator" id="dryRunIndicator" style="display: none;">DRY RUN</span>
+    <div class="ci-status-indicator idle" id="ciStatusIndicator" style="display: none;">
+      <span class="ci-status-icon" id="ciStatusIcon">-</span>
+      <span class="ci-status-text" id="ciStatusText">CI Idle</span>
+    </div>
     <div class="header-actions">
       <button class="btn btn-folder" id="selectProjectBtn">Select Project</button>
       <button class="btn" id="syncBtn">Sync Context</button>
@@ -2047,6 +2314,7 @@
     <div class="right-panel" id="rightPanel">
       <div class="panel-tabs">
         <button class="panel-tab active" data-tab="screenshots">Screenshots</button>
+        <button class="panel-tab" data-tab="tests">Tests</button>
         <button class="panel-tab" data-tab="activity">Activity</button>
         <button class="panel-tab" data-tab="history">History</button>
         <button class="panel-tab" data-tab="projects">Projects</button>
@@ -2065,6 +2333,40 @@
           </div>
           <div class="screenshot-list" id="screenshotList">
             <div class="screenshot-empty">No screenshots yet</div>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-tests">
+          <div class="tab-title">Test Results</div>
+          <div class="tab-description">View test execution results and failures</div>
+          <div class="test-status-badge idle" id="testStatusBadge">No tests run</div>
+          <div class="test-summary" id="testSummary">
+            <div class="test-summary-card passed">
+              <div class="test-summary-value" id="testPassedCount">0</div>
+              <div class="test-summary-label">Passed</div>
+            </div>
+            <div class="test-summary-card failed">
+              <div class="test-summary-value" id="testFailedCount">0</div>
+              <div class="test-summary-label">Failed</div>
+            </div>
+            <div class="test-summary-card skipped">
+              <div class="test-summary-value" id="testSkippedCount">0</div>
+              <div class="test-summary-label">Skipped</div>
+            </div>
+          </div>
+          <div class="test-progress-bar">
+            <div class="test-progress-fill" id="testProgressFill">
+              <div class="test-progress-passed" id="testProgressPassed" style="width: 0%"></div>
+              <div class="test-progress-failed" id="testProgressFailed" style="width: 0%"></div>
+              <div class="test-progress-skipped" id="testProgressSkipped" style="width: 0%"></div>
+            </div>
+          </div>
+          <div class="test-results-list" id="testResultsList">
+            <div class="test-empty">No test results yet. Run tests to see results here.</div>
+          </div>
+          <div class="test-actions">
+            <button class="btn btn-test" id="runTestsBtn">Run Tests</button>
+            <button class="btn" id="refreshTestsBtn">Refresh</button>
+            <button class="btn" id="clearTestsBtn">Clear</button>
           </div>
         </div>
         <div class="tab-pane" id="tab-activity">
