@@ -136,6 +136,120 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 }
 
 // ============================================================
+// AH2: HANDOFF NOTIFICATION UI
+// ============================================================
+
+function showHandoffNotification(data) {
+  const { fromPane, toPane, reason, taskId } = data;
+  const fromRole = PANE_ROLES[fromPane] || `Pane ${fromPane}`;
+  const toRole = PANE_ROLES[toPane] || `Pane ${toPane}`;
+
+  console.log(`[Handoff] ${fromRole} → ${toRole}: ${reason}`);
+
+  // Remove existing notification
+  const existing = document.querySelector('.handoff-notification');
+  if (existing) existing.remove();
+
+  const notification = document.createElement('div');
+  notification.className = 'handoff-notification';
+  notification.innerHTML = `
+    <div class="handoff-header">
+      <span class="handoff-icon">🔄</span>
+      <span class="handoff-title">Task Handoff</span>
+    </div>
+    <div class="handoff-agents">
+      <span class="handoff-agent from">${fromRole}</span>
+      <span class="handoff-arrow">→</span>
+      <span class="handoff-agent to">${toRole}</span>
+    </div>
+    <div class="handoff-reason">${reason || 'Task completed'}</div>
+  `;
+  document.body.appendChild(notification);
+
+  // Auto-remove after 5 seconds
+  setTimeout(() => {
+    notification.classList.add('fade-out');
+    setTimeout(() => notification.remove(), 400);
+  }, 5000);
+}
+
+function setupHandoffListener() {
+  ipcRenderer.on('task-handoff', (event, data) => {
+    showHandoffNotification(data);
+  });
+
+  // Also listen for auto-handoff events
+  ipcRenderer.on('auto-handoff', (event, data) => {
+    showHandoffNotification({ ...data, reason: data.reason || 'Auto-handoff triggered' });
+  });
+}
+
+// ============================================================
+// CR2: CONFLICT RESOLUTION UI
+// ============================================================
+
+let activeConflicts = [];
+
+function showConflictNotification(data) {
+  const { file, agents, status, resolution } = data;
+
+  console.log(`[Conflict] File: ${file}, Agents: ${agents.join(', ')}, Status: ${status}`);
+
+  // Remove existing notification
+  const existing = document.querySelector('.conflict-notification');
+  if (existing) existing.remove();
+
+  const agentNames = agents.map(id => PANE_ROLES[id] || `Pane ${id}`);
+
+  const notification = document.createElement('div');
+  notification.className = 'conflict-notification';
+  notification.innerHTML = `
+    <div class="conflict-header">
+      <span class="conflict-icon">⚠️</span>
+      <span class="conflict-title">File Conflict</span>
+    </div>
+    <div class="conflict-file">${file}</div>
+    <div class="conflict-agents">
+      ${agentNames.map(name => `<span class="conflict-agent">${name}</span>`).join('')}
+    </div>
+    <div class="conflict-status ${status}">${resolution || getConflictStatusText(status)}</div>
+  `;
+  document.body.appendChild(notification);
+
+  // Auto-remove after 8 seconds for resolved, keep longer for pending
+  const timeout = status === 'resolved' ? 5000 : 10000;
+  setTimeout(() => {
+    notification.classList.add('fade-out');
+    setTimeout(() => notification.remove(), 400);
+  }, timeout);
+}
+
+function getConflictStatusText(status) {
+  switch (status) {
+    case 'pending': return 'Waiting for resolution...';
+    case 'queued': return 'Operations queued';
+    case 'resolved': return 'Conflict resolved';
+    default: return status;
+  }
+}
+
+function setupConflictResolutionListener() {
+  ipcRenderer.on('file-conflict', (event, data) => {
+    activeConflicts.push(data);
+    showConflictNotification(data);
+  });
+
+  ipcRenderer.on('conflict-resolved', (event, data) => {
+    activeConflicts = activeConflicts.filter(c => c.file !== data.file);
+    showConflictNotification({ ...data, status: 'resolved' });
+  });
+
+  ipcRenderer.on('conflict-queued', (event, data) => {
+    showConflictNotification({ ...data, status: 'queued' });
+  });
+}
+
+// ============================================================
 // MP2: PER-PANE PROJECT INDICATOR
 // ============================================================
 
@@ -569,4 +683,10 @@ module.exports = {
   updateAllPaneProjects,
   loadPaneProjects,
   setupPaneProjectClicks,
+  // AH2: Handoff notification
+  showHandoffNotification,
+  setupHandoffListener,
+  // CR2: Conflict resolution
+  showConflictNotification,
+  setupConflictResolutionListener,
 };

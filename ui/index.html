@@ -354,6 +354,161 @@
       background: rgba(255, 200, 87, 0.1);
     }
 
+    /* AH2: Handoff notification */
+    .handoff-notification {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: linear-gradient(135deg, #16213e 0%, #0f3460 100%);
+      border: 1px solid #4ecca3;
+      border-radius: 8px;
+      padding: 14px 18px;
+      min-width: 280px;
+      z-index: 10000;
+      animation: handoffSlideIn 0.4s ease;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    .handoff-notification.fade-out {
+      animation: handoffSlideOut 0.4s ease forwards;
+    }
+
+    @keyframes handoffSlideIn {
+      from { transform: translateX(120%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    @keyframes handoffSlideOut {
+      from { transform: translateX(0); opacity: 1; }
+      to { transform: translateX(120%); opacity: 0; }
+    }
+
+    .handoff-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .handoff-icon {
+      font-size: 18px;
+    }
+
+    .handoff-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #4ecca3;
+    }
+
+    .handoff-agents {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .handoff-agent {
+      background: #1a1a2e;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .handoff-agent.from { color: #e94560; }
+    .handoff-agent.to { color: #4ecca3; }
+
+    .handoff-arrow {
+      color: #888;
+      font-size: 14px;
+    }
+
+    .handoff-reason {
+      font-size: 11px;
+      color: #888;
+      font-style: italic;
+    }
+
+    /* CR2: Conflict resolution notification */
+    .conflict-notification {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      background: linear-gradient(135deg, #2d1a1a 0%, #3d1a1a 100%);
+      border: 1px solid #e94560;
+      border-radius: 8px;
+      padding: 14px 18px;
+      min-width: 300px;
+      z-index: 10000;
+      animation: conflictSlideIn 0.4s ease;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    .conflict-notification.fade-out {
+      animation: conflictSlideOut 0.4s ease forwards;
+    }
+
+    @keyframes conflictSlideIn {
+      from { transform: translateX(-120%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    @keyframes conflictSlideOut {
+      from { transform: translateX(0); opacity: 1; }
+      to { transform: translateX(-120%); opacity: 0; }
+    }
+
+    .conflict-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .conflict-icon {
+      font-size: 18px;
+    }
+
+    .conflict-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #e94560;
+    }
+
+    .conflict-file {
+      background: #1a1a2e;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 11px;
+      color: #ffc857;
+      margin-bottom: 8px;
+      word-break: break-all;
+    }
+
+    .conflict-agents {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .conflict-agent {
+      background: rgba(233, 69, 96, 0.2);
+      padding: 3px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      color: #e94560;
+    }
+
+    .conflict-status {
+      font-size: 11px;
+      color: #4ecca3;
+    }
+
+    .conflict-status.pending {
+      color: #ffc857;
+    }
+
     /* AT2: Auto-trigger feedback */
     .auto-trigger-indicator {
       position: fixed;

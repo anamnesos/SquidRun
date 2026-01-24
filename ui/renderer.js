@@ -176,6 +176,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   daemonHandlers.setupRefreshButtons(terminal.sendToPane);
   daemonHandlers.setupProjectListener();
   daemonHandlers.setupAutoTriggerListener();  // AT2: Auto-trigger feedback
+  daemonHandlers.setupHandoffListener();      // AH2: Handoff notification
+  daemonHandlers.setupConflictResolutionListener(); // CR2: Conflict resolution
 
   // Setup UI panels
   tabs.setupFrictionPanel();
