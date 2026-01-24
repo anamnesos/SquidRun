@@ -94,7 +94,6 @@ function setupEventListeners() {
 
   // Broadcast input - BUTTON ONLY (Enter disabled due to autocomplete bug)
   const broadcastInput = document.getElementById('broadcastInput');
-  let lastBroadcastTime = 0;
 
   if (broadcastInput) {
     // BLOCK all Enter key submission - autocomplete bug bypasses all guards
