@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+ui/node_modules/
+
+# Build outputs
+dist/
+out/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Electron
+ui/daemon.pid
+
+# Runtime state (regenerated)
+workspace/state.json
+workspace/console.log
+workspace/triggers/*.txt
+ui/usage-stats.json
+ui/settings.json
+
+# Instance working directories (local context)
+workspace/instances/
+
+# Screenshots (user-specific)
+workspace/screenshots/
+nul
+.env

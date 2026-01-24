@@ -1,0 +1,1321 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'">
+  <title>Hivemind</title>
+  <link rel="stylesheet" href="node_modules/xterm/css/xterm.css">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .header {
+      background: #16213e;
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #0f3460;
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #e94560;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn {
+      background: #0f3460;
+      border: 1px solid #e94560;
+      color: #eee;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.2s;
+    }
+
+    .btn:hover {
+      background: #e94560;
+    }
+
+    .pane-grid {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 2px;
+      padding: 2px;
+      background: #0f3460;
+      min-height: 0; /* Allow grid to shrink */
+      overflow: hidden;
+    }
+
+    .pane {
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+      min-height: 0; /* Allow pane to shrink */
+    }
+
+    .pane.focused {
+      outline: 2px solid #e94560;
+      outline-offset: -2px;
+    }
+
+    .pane-header {
+      background: #16213e;
+      padding: 4px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      border-bottom: 1px solid #0f3460;
+    }
+
+    .pane-title {
+      font-weight: 600;
+      color: #e94560;
+    }
+
+    .pane-status {
+      color: #888;
+      font-size: 11px;
+      transition: color 0.2s;
+    }
+
+    .pane-status.idle { color: #888; }
+    .pane-status.starting { color: #ffc857; }
+    .pane-status.running { color: #4ecca3; }
+
+    /* Session timer for cost tracking */
+    .pane-timer {
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 10px;
+      color: #555;
+      background: rgba(0,0,0,0.2);
+      padding: 1px 4px;
+      border-radius: 2px;
+      min-width: 40px;
+      text-align: center;
+    }
+
+    .pane-timer.active {
+      color: #4ecca3;
+      background: rgba(78, 204, 163, 0.1);
+    }
+
+    .pane-header-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pane-refresh-btn {
+      background: transparent;
+      border: 1px solid #0f3460;
+      color: #888;
+      width: 22px;
+      height: 22px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .pane-refresh-btn:hover {
+      border-color: #e94560;
+      color: #e94560;
+      background: rgba(233, 69, 96, 0.1);
+    }
+
+    .pane-terminal {
+      flex: 1;
+      padding: 4px;
+      overflow: hidden;
+      min-height: 0; /* Allow terminal to shrink */
+    }
+
+    .broadcast-bar {
+      background: #16213e;
+      padding: 8px;
+      display: flex;
+      gap: 8px;
+      border-top: 1px solid #0f3460;
+    }
+
+    .broadcast-input {
+      flex: 1;
+      background: #1a1a2e;
+      border: 1px solid #0f3460;
+      color: #eee;
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 14px;
+    }
+
+    .broadcast-input:focus {
+      outline: none;
+      border-color: #e94560;
+    }
+
+    .broadcast-input::placeholder {
+      color: #666;
+    }
+
+    .status-bar {
+      background: #0f3460;
+      padding: 4px 16px;
+      font-size: 11px;
+      color: #888;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* State display */
+    .state-bar {
+      background: #16213e;
+      padding: 6px 16px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      border-bottom: 1px solid #0f3460;
+      font-size: 12px;
+    }
+
+    .state-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .state-label {
+      color: #888;
+    }
+
+    .state-value {
+      background: #e94560;
+      color: #fff;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 11px;
+    }
+
+    .state-value.idle { background: #555; }
+    .state-value.planning { background: #ffc857; color: #1a1a2e; }
+    .state-value.plan_review { background: #9b59b6; }
+    .state-value.executing { background: #4ecca3; color: #1a1a2e; }
+    .state-value.checkpoint { background: #00d9ff; color: #1a1a2e; }
+    .state-value.complete { background: #4ecca3; color: #1a1a2e; }
+    .state-value.error { background: #e94560; }
+
+    .progress-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .progress-bar {
+      width: 100px;
+      height: 6px;
+      background: #0f3460;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: #4ecca3;
+      transition: width 0.3s ease;
+    }
+
+    .progress-text {
+      color: #888;
+      font-size: 11px;
+    }
+
+    /* Agent activity badges */
+    .agent-badge {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+      background: #555;
+    }
+
+    .agent-badge.active {
+      background: #4ecca3;
+      box-shadow: 0 0 6px #4ecca3;
+    }
+
+    .agent-badge.idle {
+      background: #555;
+    }
+
+    .pane-title {
+      display: flex;
+      align-items: center;
+      font-weight: 600;
+      color: #e94560;
+    }
+
+    /* Settings Panel */
+    .settings-panel {
+      background: #16213e;
+      border-bottom: 1px solid #0f3460;
+      overflow: hidden;
+      max-height: 0;
+      transition: max-height 0.3s ease, padding 0.3s ease;
+      padding: 0 16px;
+    }
+
+    .settings-panel.open {
+      max-height: 500px;
+      padding: 12px 16px;
+    }
+
+    .settings-section {
+      margin-bottom: 16px;
+    }
+
+    .settings-section-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #ffc857;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    .permissions-warning {
+      font-size: 11px;
+      color: #e94560;
+      margin-top: 8px;
+      padding: 8px;
+      background: rgba(233, 69, 96, 0.1);
+      border-radius: 4px;
+    }
+
+    .settings-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #e94560;
+      margin-bottom: 12px;
+    }
+
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .setting-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .setting-label {
+      font-size: 12px;
+      color: #ccc;
+    }
+
+    /* Cost threshold input */
+    .cost-threshold-setting {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .threshold-input {
+      width: 80px;
+      padding: 4px 8px;
+      background: #0f0f1a;
+      border: 1px solid #333;
+      border-radius: 4px;
+      color: #4ecca3;
+      font-size: 13px;
+    }
+    .threshold-input:focus {
+      border-color: #4ecca3;
+      outline: none;
+    }
+
+    /* Toggle switch */
+    .toggle {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      background: #0f3460;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .toggle.active {
+      background: #4ecca3;
+    }
+
+    .toggle::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      background: #eee;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+
+    .toggle.active::after {
+      transform: translateX(16px);
+    }
+
+    .btn.settings-btn {
+      background: transparent;
+      border: 1px solid #888;
+    }
+
+    .btn.settings-btn:hover {
+      border-color: #e94560;
+    }
+
+    .btn.settings-btn.active {
+      background: #0f3460;
+      border-color: #e94560;
+    }
+
+    /* Project/Folder picker */
+    .project-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .project-path {
+      color: #4ecca3;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 400px;
+    }
+
+    .project-path.no-project {
+      color: #888;
+      font-style: italic;
+    }
+
+    .btn-folder {
+      background: #4ecca3;
+      border: 1px solid #4ecca3;
+      color: #1a1a2e;
+    }
+
+    .btn-folder:hover {
+      background: #3db892;
+      border-color: #3db892;
+    }
+
+    /* Friction Panel */
+    .friction-panel {
+      background: #16213e;
+      border-bottom: 1px solid #0f3460;
+      overflow: hidden;
+      max-height: 0;
+      transition: max-height 0.3s ease, padding 0.3s ease;
+      padding: 0 16px;
+    }
+
+    .friction-panel.open {
+      max-height: 250px;
+      padding: 12px 16px;
+    }
+
+    .friction-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .friction-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #ffc857;
+    }
+
+    .friction-count {
+      background: #ffc857;
+      color: #1a1a2e;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .friction-list {
+      max-height: 180px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .friction-item {
+      background: #1a1a2e;
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.2s;
+    }
+
+    .friction-item:hover {
+      background: #0f3460;
+    }
+
+    .friction-item.selected {
+      border: 1px solid #ffc857;
+    }
+
+    .friction-item-name {
+      font-size: 12px;
+      color: #eee;
+      font-family: 'Consolas', 'Monaco', monospace;
+    }
+
+    .friction-item-time {
+      font-size: 10px;
+      color: #888;
+    }
+
+    .friction-empty {
+      color: #888;
+      font-size: 12px;
+      text-align: center;
+      padding: 20px;
+    }
+
+    .friction-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .btn-friction {
+      background: transparent;
+      border: 1px solid #ffc857;
+      color: #ffc857;
+    }
+
+    .btn-friction:hover {
+      background: #ffc857;
+      color: #1a1a2e;
+    }
+
+    .btn-friction.active {
+      background: #0f3460;
+    }
+
+    /* Main content wrapper with right panel */
+    .main-content {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .terminals-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      transition: margin-right 0.3s ease;
+    }
+
+    .terminals-section.panel-open {
+      margin-right: 0;
+    }
+
+    /* Right Panel */
+    .right-panel {
+      width: 0;
+      background: #16213e;
+      border-left: 1px solid #0f3460;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: width 0.3s ease;
+    }
+
+    .right-panel.open {
+      width: 350px;
+    }
+
+    .panel-tabs {
+      display: flex;
+      background: #0f3460;
+      border-bottom: 1px solid #1a1a2e;
+    }
+
+    .panel-tab {
+      padding: 8px 16px;
+      background: transparent;
+      border: none;
+      color: #888;
+      font-size: 12px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .panel-tab:hover {
+      color: #eee;
+      background: #16213e;
+    }
+
+    .panel-tab.active {
+      color: #e94560;
+      border-bottom-color: #e94560;
+      background: #16213e;
+    }
+
+    .panel-content {
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .tab-pane {
+      display: none;
+      flex: 1;
+      padding: 12px;
+      overflow-y: auto;
+    }
+
+    .tab-pane.active {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .tab-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #e94560;
+      margin-bottom: 12px;
+    }
+
+    .tab-description {
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 16px;
+    }
+
+    /* Panel toggle button */
+    .btn-panel {
+      background: #e94560;
+      border: 1px solid #e94560;
+      color: #fff;
+    }
+
+    .btn-panel:hover {
+      background: #d63650;
+    }
+
+    .btn-panel.active {
+      background: #0f3460;
+      color: #e94560;
+    }
+
+    /* Screenshots tab */
+    .screenshot-dropzone {
+      border: 2px dashed #0f3460;
+      border-radius: 8px;
+      padding: 24px;
+      text-align: center;
+      color: #888;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 12px;
+    }
+
+    .screenshot-dropzone:hover,
+    .screenshot-dropzone.dragover {
+      border-color: #e94560;
+      background: rgba(233, 69, 96, 0.1);
+      color: #eee;
+    }
+
+    .screenshot-dropzone-icon {
+      font-size: 32px;
+      margin-bottom: 8px;
+    }
+
+    .screenshot-dropzone-text {
+      font-size: 12px;
+    }
+
+    .screenshot-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .screenshot-item {
+      background: #1a1a2e;
+      border-radius: 4px;
+      padding: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .screenshot-thumb {
+      width: 48px;
+      height: 48px;
+      object-fit: cover;
+      border-radius: 4px;
+      background: #0f3460;
+    }
+
+    .screenshot-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .screenshot-name {
+      font-size: 11px;
+      color: #eee;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .screenshot-size {
+      font-size: 10px;
+      color: #888;
+    }
+
+    .screenshot-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .screenshot-btn {
+      background: transparent;
+      border: 1px solid #0f3460;
+      color: #888;
+      padding: 4px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      cursor: pointer;
+    }
+
+    .screenshot-btn:hover {
+      border-color: #e94560;
+      color: #e94560;
+    }
+
+    .screenshot-empty {
+      text-align: center;
+      color: #666;
+      padding: 20px;
+      font-size: 12px;
+    }
+
+    /* Processes tab */
+    .process-spawn-form {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .process-input {
+      flex: 1;
+      background: #1a1a2e;
+      border: 1px solid #0f3460;
+      color: #eee;
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 12px;
+    }
+
+    .process-input:focus {
+      outline: none;
+      border-color: #e94560;
+    }
+
+    .process-spawn-btn {
+      background: #4ecca3;
+      border: 1px solid #4ecca3;
+      color: #1a1a2e;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .process-spawn-btn:hover {
+      background: #3db892;
+    }
+
+    .process-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .process-item {
+      background: #1a1a2e;
+      border-radius: 4px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .process-status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .process-status-dot.running { background: #4ecca3; box-shadow: 0 0 6px #4ecca3; }
+    .process-status-dot.stopped { background: #888; }
+    .process-status-dot.error { background: #e94560; box-shadow: 0 0 6px #e94560; }
+
+    .process-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .process-command {
+      font-size: 12px;
+      color: #eee;
+      font-family: 'Consolas', 'Monaco', monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .process-details {
+      font-size: 10px;
+      color: #888;
+      margin-top: 2px;
+    }
+
+    .process-kill-btn {
+      background: transparent;
+      border: 1px solid #e94560;
+      color: #e94560;
+      padding: 4px 10px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 11px;
+    }
+
+    .process-kill-btn:hover {
+      background: #e94560;
+      color: #fff;
+    }
+
+    .process-kill-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .process-empty {
+      text-align: center;
+      color: #666;
+      padding: 30px 20px;
+      font-size: 12px;
+    }
+
+    /* Build Progress Tab */
+    .progress-section {
+      margin-bottom: 16px;
+    }
+
+    .progress-label {
+      font-size: 11px;
+      color: #888;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .progress-state-badge {
+      display: inline-block;
+      background: #0f3460;
+      color: #eee;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .progress-state-badge.planning { background: #ffc857; color: #1a1a2e; }
+    .progress-state-badge.executing { background: #4ecca3; color: #1a1a2e; }
+    .progress-state-badge.checkpoint { background: #00d9ff; color: #1a1a2e; }
+    .progress-state-badge.complete { background: #4ecca3; color: #1a1a2e; }
+    .progress-state-badge.error { background: #e94560; }
+
+    .progress-checkpoints {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .checkpoint-bar {
+      flex: 1;
+      height: 8px;
+      background: #0f3460;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .checkpoint-fill {
+      height: 100%;
+      background: #4ecca3;
+      transition: width 0.3s ease;
+    }
+
+    .checkpoint-text {
+      font-size: 12px;
+      color: #eee;
+      min-width: 50px;
+    }
+
+    .active-agents-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .active-agent-badge {
+      background: #4ecca3;
+      color: #1a1a2e;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .no-agents {
+      color: #666;
+      font-size: 12px;
+    }
+
+    .friction-count-display {
+      font-size: 24px;
+      font-weight: 600;
+      color: #ffc857;
+    }
+
+    /* Usage Stats */
+    .usage-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    .usage-stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 8px;
+      background: rgba(0, 217, 255, 0.1);
+      border-radius: 6px;
+      border: 1px solid rgba(0, 217, 255, 0.3);
+    }
+    .usage-stat-value {
+      font-size: 18px;
+      font-weight: 600;
+      color: #00d9ff;
+    }
+    .usage-stat-label {
+      font-size: 10px;
+      color: #888;
+      text-transform: uppercase;
+      margin-top: 4px;
+    }
+    .usage-stat.cost-estimate {
+      background: rgba(78, 204, 163, 0.1);
+      border-color: rgba(78, 204, 163, 0.3);
+    }
+    .usage-stat.cost-estimate .usage-stat-value {
+      color: #4ecca3;
+    }
+
+    /* Toast Notifications (Cost Alerts) */
+    .toast-notification {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      z-index: 10000;
+      animation: slideIn 0.3s ease;
+      max-width: 350px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    .toast-info {
+      background: #1a1a2e;
+      border: 1px solid #00d9ff;
+      color: #00d9ff;
+    }
+    .toast-warning {
+      background: #1a1a2e;
+      border: 1px solid #e94560;
+      color: #e94560;
+    }
+    .toast-fade {
+      opacity: 0;
+      transition: opacity 0.5s;
+    }
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    /* Cost alert warning state */
+    .usage-stat.cost-estimate.alert {
+      background: rgba(233, 69, 96, 0.2);
+      border-color: rgba(233, 69, 96, 0.5);
+      animation: pulse 1s infinite;
+    }
+    .usage-stat.cost-estimate.alert .usage-stat-value {
+      color: #e94560;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    .error-display {
+      background: rgba(233, 69, 96, 0.2);
+      border: 1px solid #e94560;
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #e94560;
+    }
+
+    .progress-actions {
+      margin-top: 20px;
+      display: flex;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Hivemind</h1>
+    <div class="header-actions">
+      <button class="btn btn-folder" id="selectProjectBtn">Select Project</button>
+      <button class="btn" id="syncBtn">Sync Context</button>
+      <button class="btn" id="spawnAllBtn">Spawn All Claude</button>
+      <button class="btn btn-friction" id="frictionBtn">Friction <span class="friction-count" id="frictionBadge">0</span></button>
+      <button class="btn settings-btn" id="settingsBtn">Settings</button>
+      <button class="btn btn-panel" id="panelBtn">Panel</button>
+    </div>
+  </div>
+
+  <div class="settings-panel" id="settingsPanel">
+    <div class="settings-section">
+      <div class="settings-section-title">General</div>
+      <div class="settings-grid">
+        <div class="setting-item">
+          <div class="toggle" id="toggleAutoSpawn" data-setting="autoSpawn"></div>
+          <span class="setting-label">Auto-spawn Claude on start</span>
+        </div>
+        <div class="setting-item">
+          <div class="toggle" id="toggleAutoSync" data-setting="autoSync"></div>
+          <span class="setting-label">Auto-sync context on state change</span>
+        </div>
+        <div class="setting-item">
+          <div class="toggle" id="toggleNotifications" data-setting="notifications"></div>
+          <span class="setting-label">Sound notifications</span>
+        </div>
+        <div class="setting-item">
+          <div class="toggle" id="toggleDevTools" data-setting="devTools"></div>
+          <span class="setting-label">Open DevTools on start</span>
+        </div>
+        <div class="setting-item">
+          <div class="toggle active" id="toggleAgentNotify" data-setting="agentNotify"></div>
+          <span class="setting-label">Notify agents on state change</span>
+        </div>
+        <div class="setting-item">
+          <div class="toggle active" id="toggleWatcher" data-setting="watcherEnabled"></div>
+          <span class="setting-label">File watcher enabled</span>
+        </div>
+      </div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">Permissions</div>
+      <div class="settings-grid">
+        <div class="setting-item">
+          <div class="toggle" id="toggleAllowAllPermissions" data-setting="allowAllPermissions"></div>
+          <span class="setting-label">Allow All (skip prompts)</span>
+        </div>
+        <div class="setting-item">
+          <div class="toggle" id="toggleAllowRead" data-setting="allowRead"></div>
+          <span class="setting-label">Read files</span>
+        </div>
+        <div class="setting-item">
+          <div class="toggle" id="toggleAllowWrite" data-setting="allowWrite"></div>
+          <span class="setting-label">Write files</span>
+        </div>
+        <div class="setting-item">
+          <div class="toggle" id="toggleAllowBash" data-setting="allowBash"></div>
+          <span class="setting-label">Run commands</span>
+        </div>
+      </div>
+      <div class="permissions-warning" id="permissionsWarning" style="display: none;">
+        ⚠️ "Allow All" grants full access. Only use for trusted projects.
+      </div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">Cost Alerts</div>
+      <div class="settings-grid">
+        <div class="setting-item">
+          <div class="toggle active" id="toggleCostAlertEnabled" data-setting="costAlertEnabled"></div>
+          <span class="setting-label">Enable cost alerts</span>
+        </div>
+      </div>
+      <div class="cost-threshold-setting">
+        <label class="setting-label">Alert threshold: $</label>
+        <input type="number" id="costAlertThreshold" class="threshold-input" value="5.00" min="0.01" step="0.50">
+      </div>
+    </div>
+  </div>
+
+  <div class="friction-panel" id="frictionPanel">
+    <div class="friction-header">
+      <span class="friction-title">Friction Logs</span>
+      <div class="friction-actions">
+        <button class="btn btn-friction" id="refreshFrictionBtn">Refresh</button>
+        <button class="btn btn-friction" id="clearFrictionBtn">Clear Resolved</button>
+      </div>
+    </div>
+    <div class="friction-list" id="frictionList">
+      <div class="friction-empty">No friction logs found</div>
+    </div>
+  </div>
+
+  <div class="state-bar">
+    <div class="project-indicator">
+      <span class="state-label">Project:</span>
+      <span class="project-path no-project" id="projectPath">No project selected</span>
+    </div>
+    <div class="state-indicator">
+      <span class="state-label">State:</span>
+      <span class="state-value idle" id="stateDisplay">IDLE</span>
+    </div>
+    <div class="progress-indicator">
+      <span class="state-label">Progress:</span>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+      </div>
+      <span class="progress-text" id="progressText">0 / 0</span>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <div class="terminals-section" id="terminalsSection">
+      <div class="pane-grid">
+        <div class="pane" data-pane-id="1">
+          <div class="pane-header">
+            <span class="pane-title"><span class="agent-badge idle" id="badge-1"></span>Lead (Ctrl+1)</span>
+            <div class="pane-header-right">
+              <span class="pane-timer" id="timer-1" title="Session time">0:00</span>
+              <span class="pane-status" id="status-1">Ready</span>
+              <button class="pane-refresh-btn" data-pane-id="1" title="Refresh context">↻</button>
+            </div>
+          </div>
+          <div class="pane-terminal" id="terminal-1"></div>
+        </div>
+
+        <div class="pane" data-pane-id="2">
+          <div class="pane-header">
+            <span class="pane-title"><span class="agent-badge idle" id="badge-2"></span>Worker A (Ctrl+2)</span>
+            <div class="pane-header-right">
+              <span class="pane-timer" id="timer-2" title="Session time">0:00</span>
+              <span class="pane-status" id="status-2">Ready</span>
+              <button class="pane-refresh-btn" data-pane-id="2" title="Refresh context">↻</button>
+            </div>
+          </div>
+          <div class="pane-terminal" id="terminal-2"></div>
+        </div>
+
+        <div class="pane" data-pane-id="3">
+          <div class="pane-header">
+            <span class="pane-title"><span class="agent-badge idle" id="badge-3"></span>Worker B (Ctrl+3)</span>
+            <div class="pane-header-right">
+              <span class="pane-timer" id="timer-3" title="Session time">0:00</span>
+              <span class="pane-status" id="status-3">Ready</span>
+              <button class="pane-refresh-btn" data-pane-id="3" title="Refresh context">↻</button>
+            </div>
+          </div>
+          <div class="pane-terminal" id="terminal-3"></div>
+        </div>
+
+        <div class="pane" data-pane-id="4">
+          <div class="pane-header">
+            <span class="pane-title"><span class="agent-badge idle" id="badge-4"></span>Reviewer (Ctrl+4)</span>
+            <div class="pane-header-right">
+              <span class="pane-timer" id="timer-4" title="Session time">0:00</span>
+              <span class="pane-status" id="status-4">Ready</span>
+              <button class="pane-refresh-btn" data-pane-id="4" title="Refresh context">↻</button>
+            </div>
+          </div>
+          <div class="pane-terminal" id="terminal-4"></div>
+        </div>
+      </div>
+
+      <div class="broadcast-bar">
+        <input type="text" class="broadcast-input" id="broadcastInput"
+               placeholder="Type here to broadcast to all panes (Enter to send)">
+        <button class="btn" id="broadcastBtn">Broadcast</button>
+      </div>
+    </div>
+
+    <div class="right-panel" id="rightPanel">
+      <div class="panel-tabs">
+        <button class="panel-tab active" data-tab="screenshots">Screenshots</button>
+        <button class="panel-tab" data-tab="progress">Progress</button>
+        <button class="panel-tab" data-tab="processes">Processes</button>
+      </div>
+      <div class="panel-content">
+        <div class="tab-pane active" id="tab-screenshots">
+          <div class="tab-title">Screenshots</div>
+          <div class="tab-description">Drag & drop images or paste from clipboard</div>
+          <div class="screenshot-dropzone" id="screenshotDropzone">
+            <div class="screenshot-dropzone-icon">📷</div>
+            <div class="screenshot-dropzone-text">Drop images here or click to browse</div>
+          </div>
+          <div class="screenshot-list" id="screenshotList">
+            <div class="screenshot-empty">No screenshots yet</div>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-progress">
+          <div class="tab-title">Build Progress</div>
+          <div class="tab-description">Track task completion and checkpoints</div>
+
+          <div class="progress-section">
+            <div class="progress-label">Current State</div>
+            <div class="progress-state-badge" id="progressState">IDLE</div>
+          </div>
+
+          <div class="progress-section">
+            <div class="progress-label">Checkpoints</div>
+            <div class="progress-checkpoints">
+              <div class="checkpoint-bar">
+                <div class="checkpoint-fill" id="checkpointFill" style="width: 0%"></div>
+              </div>
+              <span class="checkpoint-text" id="checkpointText">0 / 0</span>
+            </div>
+          </div>
+
+          <div class="progress-section">
+            <div class="progress-label">Active Agents</div>
+            <div class="active-agents-list" id="activeAgentsList">
+              <span class="no-agents">No agents active</span>
+            </div>
+          </div>
+
+          <div class="progress-section">
+            <div class="progress-label">Friction Count</div>
+            <div class="friction-count-display" id="frictionCountDisplay">0</div>
+          </div>
+
+          <div class="progress-section usage-stats-section">
+            <div class="progress-label">Usage Stats (Cost Tracking)</div>
+            <div class="usage-stats-grid" id="usageStatsGrid">
+              <div class="usage-stat">
+                <span class="usage-stat-value" id="usageTotalSpawns">0</span>
+                <span class="usage-stat-label">Total Spawns</span>
+              </div>
+              <div class="usage-stat">
+                <span class="usage-stat-value" id="usageSessionsToday">0</span>
+                <span class="usage-stat-label">Sessions Today</span>
+              </div>
+              <div class="usage-stat">
+                <span class="usage-stat-value" id="usageTotalTime">0s</span>
+                <span class="usage-stat-label">Total Time</span>
+              </div>
+              <div class="usage-stat cost-estimate">
+                <span class="usage-stat-value" id="usageEstCost">$0.00</span>
+                <span class="usage-stat-label">Est. Cost</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="progress-section" id="errorSection" style="display: none;">
+            <div class="progress-label">Last Error</div>
+            <div class="error-display" id="errorDisplay"></div>
+          </div>
+
+          <div class="progress-actions">
+            <button class="btn" id="refreshProgressBtn">Refresh</button>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-processes">
+          <div class="tab-title">Processes</div>
+          <div class="tab-description">Manage background processes (npm run dev, tsc --watch, etc.)</div>
+          <div class="process-spawn-form">
+            <input type="text" class="process-input" id="processCommandInput" placeholder="npm run dev">
+            <button class="process-spawn-btn" id="processSpawnBtn">Start</button>
+          </div>
+          <div class="process-list" id="processList">
+            <div class="process-empty">No processes running</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status-bar">
+    <span id="connectionStatus">Initializing...</span>
+    <span>Press Ctrl+1-4 to focus pane | Enter in broadcast bar to send to all</span>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
