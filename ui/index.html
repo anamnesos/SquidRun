@@ -1918,6 +1918,99 @@
       to { transform: rotate(360deg); }
     }
 
+    /* MC7: MCP Status Indicator */
+    .mcp-status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 8px;
+      background: rgba(136, 136, 136, 0.1);
+      border: 1px solid #333;
+    }
+
+    .mcp-status-label {
+      color: #888;
+      margin-right: 4px;
+    }
+
+    .mcp-agent-dots {
+      display: flex;
+      gap: 6px;
+    }
+
+    .mcp-agent-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      position: relative;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .mcp-agent-dot::after {
+      content: attr(data-agent);
+      position: absolute;
+      bottom: -16px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 8px;
+      color: #666;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .mcp-agent-dot:hover::after {
+      opacity: 1;
+    }
+
+    .mcp-agent-dot.connected {
+      background: #4ecca3;
+      box-shadow: 0 0 6px rgba(78, 204, 163, 0.5);
+    }
+
+    .mcp-agent-dot.disconnected {
+      background: #555;
+      border: 1px solid #666;
+    }
+
+    .mcp-agent-dot.connecting {
+      background: #ffc857;
+      animation: mcpPulse 1s ease-in-out infinite;
+    }
+
+    .mcp-agent-dot.error {
+      background: #e94560;
+      animation: mcpPulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes mcpPulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.9); }
+    }
+
+    .mcp-status-summary {
+      color: #888;
+      font-size: 10px;
+      margin-left: 4px;
+    }
+
+    .mcp-status-summary.all-connected {
+      color: #4ecca3;
+    }
+
+    .mcp-status-summary.partial {
+      color: #ffc857;
+    }
+
+    .mcp-status-summary.none {
+      color: #666;
+    }
+
     /* TR1: Test Results Panel */
     .test-summary {
       display: flex;
@@ -2431,6 +2524,17 @@
       <span class="ci-status-icon" id="ciStatusIcon">-</span>
       <span class="ci-status-text" id="ciStatusText">CI Idle</span>
     </div>
+    <!-- MC7: MCP Status Indicator -->
+    <div class="mcp-status-indicator" id="mcpStatusIndicator" title="MCP connection status per agent">
+      <span class="mcp-status-label">MCP</span>
+      <div class="mcp-agent-dots">
+        <div class="mcp-agent-dot disconnected" id="mcpDot1" data-pane="1" data-agent="Lead" title="Lead - Disconnected"></div>
+        <div class="mcp-agent-dot disconnected" id="mcpDot2" data-pane="2" data-agent="W-A" title="Worker A - Disconnected"></div>
+        <div class="mcp-agent-dot disconnected" id="mcpDot3" data-pane="3" data-agent="W-B" title="Worker B - Disconnected"></div>
+        <div class="mcp-agent-dot disconnected" id="mcpDot4" data-pane="4" data-agent="Rev" title="Reviewer - Disconnected"></div>
+      </div>
+      <span class="mcp-status-summary none" id="mcpStatusSummary">0/4</span>
+    </div>
     <div class="header-actions">
       <button class="btn btn-folder" id="selectProjectBtn" title="Choose project folder for all agents">Select Project</button>
       <button class="btn" id="syncBtn" title="Broadcast shared_context.md to all agents">Sync Context</button>
@@ -2475,6 +2579,10 @@
         <div class="setting-item" title="Simulate agent responses without spawning real Claude instances">
           <div class="toggle" id="toggleDryRun" data-setting="dryRun"></div>
           <span class="setting-label">Dry-run mode (simulate agents)</span>
+        </div>
+        <div class="setting-item" title="Automatically configure MCP server for each agent on spawn">
+          <div class="toggle active" id="toggleMCPAutoConfig" data-setting="mcpAutoConfig"></div>
+          <span class="setting-label">Auto-configure MCP on spawn</span>
         </div>
       </div>
     </div>

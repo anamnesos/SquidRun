@@ -2498,6 +2498,135 @@ function setupIPCHandlers(deps) {
   });
 
   // ============================================================
+  // V11 MC4-MC6: MCP BRIDGE IPC HANDLERS
+  // ============================================================
+
+  const mcpBridge = require('./mcp-bridge');
+
+  ipcMain.handle('mcp-register-agent', (event, sessionId, paneId) => {
+    return mcpBridge.registerAgent(sessionId, paneId);
+  });
+
+  ipcMain.handle('mcp-unregister-agent', (event, sessionId) => {
+    return mcpBridge.unregisterAgent(sessionId);
+  });
+
+  ipcMain.handle('mcp-get-connected-agents', () => {
+    return { success: true, agents: mcpBridge.getConnectedAgents() };
+  });
+
+  ipcMain.handle('mcp-tool-call', (event, sessionId, toolName, args) => {
+    return mcpBridge.handleToolCall(sessionId, toolName, args);
+  });
+
+  ipcMain.handle('mcp-get-tool-definitions', () => {
+    return { success: true, tools: mcpBridge.getMCPToolDefinitions() };
+  });
+
+  ipcMain.handle('mcp-validate-session', (event, sessionId) => {
+    return mcpBridge.validateSession(sessionId);
+  });
+
+  ipcMain.handle('get-mcp-health', () => {
+    return mcpBridge.getMCPHealth();
+  });
+
+  ipcMain.handle('get-mcp-status', () => {
+    // Combine connected agents with health info for UI
+    const health = mcpBridge.getMCPHealth();
+    const agents = mcpBridge.getConnectedAgents();
+    const status = {};
+
+    for (const paneId of ['1', '2', '3', '4']) {
+      const agent = agents.find(a => a.paneId === paneId);
+      status[paneId] = {
+        connected: !!agent,
+        role: { '1': 'Lead', '2': 'Worker A', '3': 'Worker B', '4': 'Reviewer' }[paneId],
+        lastSeen: agent?.lastSeen || null,
+        connectedAt: agent?.connectedAt || null,
+      };
+    }
+
+    return {
+      success: true,
+      status,
+      health,
+      connectedCount: agents.length,
+    };
+  });
+
+  // ============================================================
+  // MC8: MCP AUTO-CONFIGURATION
+  // ============================================================
+
+  const { exec } = require('child_process');
+  const MCP_SERVER_PATH = path.join(__dirname, 'mcp-server.js');
+
+  ipcMain.handle('mcp-configure-agent', async (event, paneId) => {
+    try {
+      // Get the MCP server configuration command
+      // This adds the hivemind MCP server to Claude's config for this agent
+      const serverName = `hivemind-${paneId}`;
+      const serverCommand = `node "${MCP_SERVER_PATH}" --pane ${paneId}`;
+
+      // Run: claude mcp add <name> --command "<command>"
+      const configCmd = `claude mcp add ${serverName} --command "${serverCommand}"`;
+
+      return new Promise((resolve) => {
+        exec(configCmd, { timeout: 10000 }, (error, stdout, stderr) => {
+          if (error) {
+            console.error(`[MC8] MCP config error for pane ${paneId}:`, error);
+            // Emit error event for UI
+            mainWindow?.webContents.send('mcp-agent-error', {
+              paneId,
+              error: error.message || 'Configuration failed'
+            });
+            resolve({ success: false, error: error.message });
+          } else {
+            console.log(`[MC8] MCP configured for pane ${paneId}`);
+            // Emit connecting event - actual connection happens when Claude starts
+            mainWindow?.webContents.send('mcp-agent-connecting', { paneId });
+            resolve({ success: true, paneId, serverName });
+          }
+        });
+      });
+    } catch (err) {
+      console.error(`[MC8] MCP configure error:`, err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('mcp-reconnect-agent', async (event, paneId) => {
+    try {
+      // For reconnection, we re-run the configuration
+      const result = await ipcMain.emit('mcp-configure-agent', event, paneId);
+      return result;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('mcp-remove-agent-config', async (event, paneId) => {
+    try {
+      const serverName = `hivemind-${paneId}`;
+      const removeCmd = `claude mcp remove ${serverName}`;
+
+      return new Promise((resolve) => {
+        exec(removeCmd, { timeout: 10000 }, (error) => {
+          if (error) {
+            resolve({ success: false, error: error.message });
+          } else {
+            mainWindow?.webContents.send('mcp-agent-disconnected', { paneId });
+            resolve({ success: true, paneId });
+          }
+        });
+      });
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ============================================================
   // V9 DC3: API DOCUMENTATION GENERATOR
   // ============================================================
 

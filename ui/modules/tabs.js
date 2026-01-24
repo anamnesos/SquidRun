@@ -617,6 +617,320 @@ function setupCIStatusIndicator() {
 }
 
 // ============================================================
+// MC7: MCP STATUS INDICATOR
+// ============================================================
+
+const mcpStatus = {
+  '1': 'disconnected',
+  '2': 'disconnected',
+  '3': 'disconnected',
+  '4': 'disconnected'
+};
+
+const MCP_AGENT_NAMES = {
+  '1': 'Lead',
+  '2': 'Worker A',
+  '3': 'Worker B',
+  '4': 'Reviewer'
+};
+
+function updateMCPAgentStatus(paneId, status) {
+  // status: 'connected', 'disconnected', 'connecting', 'error'
+  mcpStatus[paneId] = status;
+
+  const dot = document.getElementById(`mcpDot${paneId}`);
+  if (dot) {
+    dot.className = `mcp-agent-dot ${status}`;
+    const agentName = MCP_AGENT_NAMES[paneId] || `Pane ${paneId}`;
+    const statusText = status.charAt(0).toUpperCase() + status.slice(1);
+    dot.title = `${agentName} - ${statusText}`;
+  }
+
+  updateMCPSummary();
+}
+
+function updateMCPSummary() {
+  const summary = document.getElementById('mcpStatusSummary');
+  if (!summary) return;
+
+  const connected = Object.values(mcpStatus).filter(s => s === 'connected').length;
+  const total = 4;
+
+  summary.textContent = `${connected}/${total}`;
+
+  // Update summary color
+  summary.className = 'mcp-status-summary';
+  if (connected === total) {
+    summary.classList.add('all-connected');
+  } else if (connected > 0) {
+    summary.classList.add('partial');
+  } else {
+    summary.classList.add('none');
+  }
+}
+
+function setAllMCPStatus(status) {
+  for (const paneId of ['1', '2', '3', '4']) {
+    updateMCPAgentStatus(paneId, status);
+  }
+}
+
+async function loadMCPStatus() {
+  try {
+    const result = await ipcRenderer.invoke('get-mcp-status');
+    if (result && result.success) {
+      for (const paneId in result.status) {
+        updateMCPAgentStatus(paneId, result.status[paneId]);
+      }
+    }
+  } catch (err) {
+    // MCP not available yet, that's okay
+    console.log('[MC7] MCP status not available yet');
+  }
+}
+
+function setupMCPStatusIndicator() {
+  // Listen for MCP status events from backend
+  ipcRenderer.on('mcp-agent-connected', (event, data) => {
+    updateMCPAgentStatus(data.paneId, 'connected');
+    updateConnectionStatus(`MCP: ${MCP_AGENT_NAMES[data.paneId]} connected`);
+  });
+
+  ipcRenderer.on('mcp-agent-disconnected', (event, data) => {
+    updateMCPAgentStatus(data.paneId, 'disconnected');
+  });
+
+  ipcRenderer.on('mcp-agent-connecting', (event, data) => {
+    updateMCPAgentStatus(data.paneId, 'connecting');
+  });
+
+  ipcRenderer.on('mcp-agent-error', (event, data) => {
+    updateMCPAgentStatus(data.paneId, 'error');
+    updateConnectionStatus(`MCP: ${MCP_AGENT_NAMES[data.paneId]} error - ${data.error}`);
+  });
+
+  ipcRenderer.on('mcp-status-changed', (event, data) => {
+    if (data.status) {
+      for (const paneId in data.status) {
+        updateMCPAgentStatus(paneId, data.status[paneId]);
+      }
+    }
+  });
+
+  // Click on dot to attempt reconnection
+  document.querySelectorAll('.mcp-agent-dot').forEach(dot => {
+    dot.addEventListener('click', async () => {
+      const paneId = dot.dataset.pane;
+      if (mcpStatus[paneId] === 'disconnected' || mcpStatus[paneId] === 'error') {
+        updateMCPAgentStatus(paneId, 'connecting');
+        try {
+          await ipcRenderer.invoke('mcp-reconnect-agent', paneId);
+        } catch (err) {
+          updateMCPAgentStatus(paneId, 'error');
+        }
+      }
+    });
+  });
+
+  // Load initial MCP status
+  loadMCPStatus();
+
+  // MC9: Start health monitoring
+  startMCPHealthMonitoring();
+}
+
+// ============================================================
+// MC8: MCP AUTO-CONFIGURATION
+// ============================================================
+
+let mcpConfigured = {
+  '1': false,
+  '2': false,
+  '3': false,
+  '4': false
+};
+
+async function configureMCPForAgent(paneId) {
+  updateConnectionStatus(`Configuring MCP for ${MCP_AGENT_NAMES[paneId]}...`);
+  updateMCPAgentStatus(paneId, 'connecting');
+
+  try {
+    const result = await ipcRenderer.invoke('mcp-configure-agent', paneId);
+    if (result && result.success) {
+      mcpConfigured[paneId] = true;
+      updateConnectionStatus(`MCP configured for ${MCP_AGENT_NAMES[paneId]}`);
+      return true;
+    } else {
+      updateConnectionStatus(`MCP config failed for ${MCP_AGENT_NAMES[paneId]}: ${result?.error || 'Unknown error'}`);
+      updateMCPAgentStatus(paneId, 'error');
+      return false;
+    }
+  } catch (err) {
+    updateConnectionStatus(`MCP config error for ${MCP_AGENT_NAMES[paneId]}: ${err.message}`);
+    updateMCPAgentStatus(paneId, 'error');
+    return false;
+  }
+}
+
+async function configureAllMCP() {
+  updateConnectionStatus('Configuring MCP for all agents...');
+
+  for (const paneId of ['1', '2', '3', '4']) {
+    await configureMCPForAgent(paneId);
+  }
+
+  const configured = Object.values(mcpConfigured).filter(Boolean).length;
+  updateConnectionStatus(`MCP configured for ${configured}/4 agents`);
+}
+
+async function autoConfigureMCPOnSpawn(paneId) {
+  // Check if auto-configure is enabled
+  try {
+    const settings = await ipcRenderer.invoke('get-settings');
+    if (settings && settings.mcpAutoConfig !== false) {
+      // Only configure if not already configured
+      if (!mcpConfigured[paneId]) {
+        await configureMCPForAgent(paneId);
+      }
+    }
+  } catch (err) {
+    console.error('[MC8] Error checking MCP auto-config setting:', err);
+  }
+}
+
+function isMCPConfigured(paneId) {
+  return mcpConfigured[paneId] === true;
+}
+
+function resetMCPConfiguration() {
+  mcpConfigured = {
+    '1': false,
+    '2': false,
+    '3': false,
+    '4': false
+  };
+  setAllMCPStatus('disconnected');
+}
+
+// ============================================================
+// MC9: MCP CONNECTION HEALTH MONITORING
+// ============================================================
+
+let mcpHealthCheckInterval = null;
+const MCP_HEALTH_CHECK_INTERVAL = 30000; // Check every 30 seconds
+const MCP_STALE_THRESHOLD = 60000; // Consider stale after 60 seconds
+
+let lastMCPHealthCheck = {
+  '1': null,
+  '2': null,
+  '3': null,
+  '4': null
+};
+
+async function checkMCPHealth() {
+  try {
+    const result = await ipcRenderer.invoke('get-mcp-status');
+    if (!result || !result.success) return;
+
+    const now = Date.now();
+
+    for (const paneId of ['1', '2', '3', '4']) {
+      const agentStatus = result.status[paneId];
+
+      if (agentStatus && agentStatus.connected) {
+        const lastSeen = agentStatus.lastSeen ? new Date(agentStatus.lastSeen).getTime() : null;
+
+        if (lastSeen && (now - lastSeen) > MCP_STALE_THRESHOLD) {
+          // Connection is stale - might be disconnected
+          if (mcpStatus[paneId] === 'connected') {
+            updateMCPAgentStatus(paneId, 'error');
+            updateConnectionStatus(`MCP: ${MCP_AGENT_NAMES[paneId]} connection stale`);
+          }
+        } else {
+          // Connection is healthy
+          if (mcpStatus[paneId] !== 'connected') {
+            updateMCPAgentStatus(paneId, 'connected');
+          }
+        }
+
+        lastMCPHealthCheck[paneId] = now;
+      } else {
+        // Not connected
+        if (mcpStatus[paneId] === 'connected') {
+          updateMCPAgentStatus(paneId, 'disconnected');
+          updateConnectionStatus(`MCP: ${MCP_AGENT_NAMES[paneId]} disconnected`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[MC9] Health check error:', err);
+  }
+}
+
+function startMCPHealthMonitoring() {
+  // Stop any existing interval
+  stopMCPHealthMonitoring();
+
+  // Initial check
+  checkMCPHealth();
+
+  // Start periodic checks
+  mcpHealthCheckInterval = setInterval(checkMCPHealth, MCP_HEALTH_CHECK_INTERVAL);
+  console.log('[MC9] MCP health monitoring started');
+}
+
+function stopMCPHealthMonitoring() {
+  if (mcpHealthCheckInterval) {
+    clearInterval(mcpHealthCheckInterval);
+    mcpHealthCheckInterval = null;
+    console.log('[MC9] MCP health monitoring stopped');
+  }
+}
+
+async function attemptMCPReconnect(paneId) {
+  updateMCPAgentStatus(paneId, 'connecting');
+  updateConnectionStatus(`MCP: Reconnecting ${MCP_AGENT_NAMES[paneId]}...`);
+
+  try {
+    const result = await ipcRenderer.invoke('mcp-reconnect-agent', paneId);
+    if (result && result.success) {
+      // Wait a moment then check connection
+      setTimeout(() => checkMCPHealth(), 2000);
+    } else {
+      updateMCPAgentStatus(paneId, 'error');
+      updateConnectionStatus(`MCP: Reconnect failed for ${MCP_AGENT_NAMES[paneId]}`);
+    }
+  } catch (err) {
+    updateMCPAgentStatus(paneId, 'error');
+    updateConnectionStatus(`MCP: Reconnect error - ${err.message}`);
+  }
+}
+
+async function reconnectAllMCP() {
+  updateConnectionStatus('MCP: Reconnecting all agents...');
+
+  for (const paneId of ['1', '2', '3', '4']) {
+    if (mcpStatus[paneId] !== 'connected') {
+      await attemptMCPReconnect(paneId);
+    }
+  }
+}
+
+function getMCPHealthSummary() {
+  const connected = Object.values(mcpStatus).filter(s => s === 'connected').length;
+  const errors = Object.values(mcpStatus).filter(s => s === 'error').length;
+  const connecting = Object.values(mcpStatus).filter(s => s === 'connecting').length;
+
+  return {
+    connected,
+    disconnected: 4 - connected - errors - connecting,
+    errors,
+    connecting,
+    healthy: connected === 4
+  };
+}
+
+// ============================================================
 // PT2: PERFORMANCE DASHBOARD
 // ============================================================
 
@@ -1734,4 +2048,19 @@ module.exports = {
   loadMessageHistory,      // MQ3: Load message history
   addActivityEntry,
   updateCIStatus,          // CI2: Update CI status
+  setupMCPStatusIndicator, // MC7: MCP status indicator
+  updateMCPAgentStatus,    // MC7: Update single agent status
+  setAllMCPStatus,         // MC7: Set all agents status
+  loadMCPStatus,           // MC7: Load MCP status from backend
+  configureMCPForAgent,    // MC8: Configure MCP for single agent
+  configureAllMCP,         // MC8: Configure MCP for all agents
+  autoConfigureMCPOnSpawn, // MC8: Auto-config on spawn
+  isMCPConfigured,         // MC8: Check if agent MCP configured
+  resetMCPConfiguration,   // MC8: Reset configuration state
+  startMCPHealthMonitoring,  // MC9: Start health checks
+  stopMCPHealthMonitoring,   // MC9: Stop health checks
+  checkMCPHealth,            // MC9: Manual health check
+  attemptMCPReconnect,       // MC9: Reconnect single agent
+  reconnectAllMCP,           // MC9: Reconnect all agents
+  getMCPHealthSummary,       // MC9: Get health summary
 };
