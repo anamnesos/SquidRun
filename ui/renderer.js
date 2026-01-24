@@ -434,14 +434,15 @@ function updateConnectionStatus(status) {
   }
 }
 
-// Send message to a specific pane
+// Send message to a specific pane (with proper Enter handling)
 function sendToPane(paneId, message) {
-  const terminal = terminals.get(paneId);
-  if (terminal) {
-    terminal.paste(message);
-  } else {
-    window.hivemind.pty.write(paneId, message);
-  }
+  // Split: send text first, then Enter separately (like typing)
+  const text = message.replace(/\r$/, '');
+  window.hivemind.pty.write(String(paneId), text);
+  // Small delay then send Enter
+  setTimeout(() => {
+    window.hivemind.pty.write(String(paneId), '\r');
+  }, 50);
 }
 
 // Broadcast message to all panes
