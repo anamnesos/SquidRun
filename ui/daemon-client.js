@@ -371,6 +371,38 @@ class DaemonClient extends EventEmitter {
     });
   }
 
+  // ============================================================
+  // FX2: Session Persistence Methods
+  // ============================================================
+
+  /**
+   * Get saved session state from daemon
+   * @returns {Promise<Object|null>} Session state or null
+   */
+  getSession() {
+    return this._send({
+      action: 'get-session',
+    });
+  }
+
+  /**
+   * Manually save current session state
+   */
+  saveSession() {
+    return this._send({
+      action: 'save-session',
+    });
+  }
+
+  /**
+   * Clear saved session state
+   */
+  clearSession() {
+    return this._send({
+      action: 'clear-session',
+    });
+  }
+
   /**
    * Request daemon shutdown (kills all terminals)
    */

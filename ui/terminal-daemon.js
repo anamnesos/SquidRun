@@ -79,6 +79,83 @@ const SCROLLBACK_MAX_SIZE = 50000;
 const DEFAULT_STUCK_THRESHOLD = 60000;
 
 // ============================================================
+// FX2: SESSION PERSISTENCE
+// ============================================================
+
+const SESSION_FILE_PATH = path.join(__dirname, 'session-state.json');
+
+/**
+ * Save current session state to disk
+ * Called periodically and on shutdown
+ */
+function saveSessionState() {
+  const sessionState = {
+    savedAt: new Date().toISOString(),
+    daemonPid: process.pid,
+    terminals: [],
+  };
+
+  for (const [paneId, termInfo] of terminals) {
+    sessionState.terminals.push({
+      paneId,
+      cwd: termInfo.cwd,
+      alive: termInfo.alive,
+      dryRun: termInfo.dryRun || false,
+      scrollback: termInfo.scrollback || '',
+      lastActivity: termInfo.lastActivity,
+    });
+  }
+
+  try {
+    fs.writeFileSync(SESSION_FILE_PATH, JSON.stringify(sessionState, null, 2));
+    logInfo(`Session state saved: ${sessionState.terminals.length} terminals`);
+  } catch (err) {
+    logError(`Failed to save session state: ${err.message}`);
+  }
+}
+
+/**
+ * Load saved session state from disk
+ * Returns null if no saved state or invalid
+ */
+function loadSessionState() {
+  try {
+    if (!fs.existsSync(SESSION_FILE_PATH)) {
+      logInfo('No saved session state found');
+      return null;
+    }
+    const data = fs.readFileSync(SESSION_FILE_PATH, 'utf-8');
+    const state = JSON.parse(data);
+    logInfo(`Loaded session state from ${state.savedAt}`);
+    return state;
+  } catch (err) {
+    logWarn(`Could not load session state: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Clear saved session state
+ */
+function clearSessionState() {
+  try {
+    if (fs.existsSync(SESSION_FILE_PATH)) {
+      fs.unlinkSync(SESSION_FILE_PATH);
+      logInfo('Session state cleared');
+    }
+  } catch (err) {
+    logWarn(`Could not clear session state: ${err.message}`);
+  }
+}
+
+// Save session state periodically (every 30 seconds)
+setInterval(() => {
+  if (terminals.size > 0) {
+    saveSessionState();
+  }
+}, 30000);
+
+// ============================================================
 // D2 (V3): DRY-RUN MODE
 // ============================================================
 
@@ -527,8 +604,38 @@ function handleMessage(client, message) {
         break;
       }
 
+      // FX2: Session persistence protocol actions
+      case 'get-session': {
+        const state = loadSessionState();
+        sendToClient(client, {
+          event: 'session-state',
+          state: state,
+        });
+        break;
+      }
+
+      case 'save-session': {
+        saveSessionState();
+        sendToClient(client, {
+          event: 'session-saved',
+          success: true,
+        });
+        break;
+      }
+
+      case 'clear-session': {
+        clearSessionState();
+        sendToClient(client, {
+          event: 'session-cleared',
+          success: true,
+        });
+        break;
+      }
+
       case 'shutdown': {
         logInfo('Shutdown requested via protocol');
+        // FX2: Save session before shutdown
+        saveSessionState();
         // Kill all terminals
         for (const [paneId] of terminals) {
           killTerminal(paneId);
@@ -611,6 +718,8 @@ function cleanupSocket() {
 // Handle process signals
 process.on('SIGINT', () => {
   logInfo('SIGINT received, shutting down...');
+  // FX2: Save session state before shutdown
+  saveSessionState();
   // Notify clients of shutdown
   broadcast({
     event: 'shutdown',
@@ -628,6 +737,9 @@ process.on('SIGINT', () => {
 // D3: Graceful shutdown with client notification
 process.on('SIGTERM', () => {
   logInfo('SIGTERM received, initiating graceful shutdown...');
+
+  // FX2: Save session state before shutdown
+  saveSessionState();
 
   // Notify all clients before shutdown
   broadcast({
