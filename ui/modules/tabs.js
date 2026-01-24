@@ -172,6 +172,151 @@ function setupProcessesTab() {
 }
 
 // ============================================================
+// OB2: ACTIVITY LOG
+// ============================================================
+
+let activityLog = [];
+let activityFilter = 'all';
+let activitySearchText = '';
+const MAX_ACTIVITY_ENTRIES = 500;
+
+const ACTIVITY_AGENT_NAMES = {
+  '1': 'Lead',
+  '2': 'Worker A',
+  '3': 'Worker B',
+  '4': 'Reviewer',
+  'system': 'System'
+};
+
+function formatActivityTime(timestamp) {
+  const date = new Date(timestamp);
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function addActivityEntry(entry) {
+  activityLog.push({
+    id: Date.now(),
+    timestamp: new Date().toISOString(),
+    ...entry
+  });
+
+  // Trim to max entries
+  if (activityLog.length > MAX_ACTIVITY_ENTRIES) {
+    activityLog = activityLog.slice(-MAX_ACTIVITY_ENTRIES);
+  }
+
+  renderActivityLog();
+}
+
+function renderActivityLog() {
+  const logEl = document.getElementById('activityLog');
+  if (!logEl) return;
+
+  // Apply filters
+  let filtered = activityLog;
+
+  if (activityFilter !== 'all') {
+    filtered = filtered.filter(e => e.type === activityFilter);
+  }
+
+  if (activitySearchText) {
+    const search = activitySearchText.toLowerCase();
+    filtered = filtered.filter(e =>
+      (e.message && e.message.toLowerCase().includes(search)) ||
+      (e.agent && ACTIVITY_AGENT_NAMES[e.agent]?.toLowerCase().includes(search))
+    );
+  }
+
+  if (filtered.length === 0) {
+    logEl.innerHTML = '<div class="activity-empty">No matching activity</div>';
+    return;
+  }
+
+  // Show most recent last (scrolls to bottom)
+  logEl.innerHTML = filtered.map(entry => `
+    <div class="activity-entry" data-type="${entry.type}">
+      <span class="activity-time">${formatActivityTime(entry.timestamp)}</span>
+      <span class="activity-agent" data-agent="${entry.agent}">${ACTIVITY_AGENT_NAMES[entry.agent] || entry.agent}</span>
+      <span class="activity-type ${entry.type}">${entry.type}</span>
+      <span class="activity-message">${entry.message}</span>
+    </div>
+  `).join('');
+
+  // Auto-scroll to bottom
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function loadActivityLog() {
+  try {
+    const result = await ipcRenderer.invoke('get-activity-log');
+    if (result && result.success) {
+      activityLog = result.entries || [];
+      renderActivityLog();
+    }
+  } catch (err) {
+    console.error('[OB2] Error loading activity log:', err);
+  }
+}
+
+function clearActivityLog() {
+  if (!confirm('Clear all activity entries?')) return;
+  activityLog = [];
+  renderActivityLog();
+  ipcRenderer.invoke('clear-activity-log').catch(() => {});
+  updateConnectionStatus('Activity log cleared');
+}
+
+function exportActivityLog() {
+  const content = activityLog.map(e =>
+    `[${e.timestamp}] [${ACTIVITY_AGENT_NAMES[e.agent] || e.agent}] [${e.type}] ${e.message}`
+  ).join('\n');
+
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `activity-log-${new Date().toISOString().split('T')[0]}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+  updateConnectionStatus('Activity log exported');
+}
+
+function setupActivityTab() {
+  // Filter buttons
+  document.querySelectorAll('.activity-filter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.activity-filter').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activityFilter = btn.dataset.filter;
+      renderActivityLog();
+    });
+  });
+
+  // Search box
+  const searchInput = document.getElementById('activitySearch');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      activitySearchText = searchInput.value;
+      renderActivityLog();
+    });
+  }
+
+  // Action buttons
+  const clearBtn = document.getElementById('clearActivityBtn');
+  if (clearBtn) clearBtn.addEventListener('click', clearActivityLog);
+
+  const exportBtn = document.getElementById('exportActivityBtn');
+  if (exportBtn) exportBtn.addEventListener('click', exportActivityLog);
+
+  // Listen for activity events
+  ipcRenderer.on('activity-entry', (event, entry) => {
+    addActivityEntry(entry);
+  });
+
+  loadActivityLog();
+}
+
+// ============================================================
 // PT2: PERFORMANCE DASHBOARD
 // ============================================================
 
@@ -1000,6 +1145,7 @@ module.exports = {
   setupProjectsTab,
   setupPerformanceTab,
   setupTemplatesTab,
+  setupActivityTab,
   setupFrictionPanel,
   setupRightPanel,
   updateBuildProgress,
@@ -1010,4 +1156,6 @@ module.exports = {
   loadRecentProjects,
   loadPerformanceData,
   loadTemplates,
+  loadActivityLog,
+  addActivityEntry,
 };

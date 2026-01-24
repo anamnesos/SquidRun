@@ -136,6 +136,84 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 }
 
 // ============================================================
+// RB2: ROLLBACK CONFIRMATION UI
+// ============================================================
+
+let pendingRollback = null;
+
+function showRollbackUI(data) {
+  const { checkpointId, files, timestamp } = data;
+  pendingRollback = data;
+
+  console.log(`[Rollback] Available: ${files.length} files from ${timestamp}`);
+
+  // Remove existing rollback UI
+  const existing = document.querySelector('.rollback-indicator');
+  if (existing) existing.remove();
+
+  const indicator = document.createElement('div');
+  indicator.className = 'rollback-indicator';
+  indicator.innerHTML = `
+    <div class="rollback-header">
+      <span class="rollback-icon">⏪</span>
+      <span class="rollback-title">Rollback Available</span>
+    </div>
+    <div class="rollback-files">
+      ${files.slice(0, 5).map(f => `<div class="rollback-file">${f}</div>`).join('')}
+      ${files.length > 5 ? `<div class="rollback-file">... and ${files.length - 5} more</div>` : ''}
+    </div>
+    <div class="rollback-actions">
+      <button class="rollback-btn dismiss">Dismiss</button>
+      <button class="rollback-btn confirm">Rollback</button>
+    </div>
+  `;
+
+  document.body.appendChild(indicator);
+
+  // Dismiss button
+  indicator.querySelector('.rollback-btn.dismiss').addEventListener('click', () => {
+    hideRollbackUI();
+  });
+
+  // Confirm button
+  indicator.querySelector('.rollback-btn.confirm').addEventListener('click', async () => {
+    if (!confirm(`Rollback ${files.length} file(s) to checkpoint?\n\nThis will revert:\n${files.slice(0, 5).join('\n')}${files.length > 5 ? '\n...' : ''}`)) {
+      return;
+    }
+
+    try {
+      const result = await ipcRenderer.invoke('apply-rollback', checkpointId);
+      if (result && result.success) {
+        showToast(`Rolled back ${result.filesRestored} file(s)`, 'info');
+        hideRollbackUI();
+      } else {
+        showToast(`Rollback failed: ${result?.error || 'Unknown error'}`, 'warning');
+      }
+    } catch (err) {
+      showToast(`Rollback error: ${err.message}`, 'warning');
+    }
+  });
+}
+
+function hideRollbackUI() {
+  const indicator = document.querySelector('.rollback-indicator');
+  if (indicator) {
+    indicator.remove();
+  }
+  pendingRollback = null;
+}
+
+function setupRollbackListener() {
+  ipcRenderer.on('rollback-available', (event, data) => {
+    showRollbackUI(data);
+  });
+
+  ipcRenderer.on('rollback-cleared', () => {
+    hideRollbackUI();
+  });
+}
+
+// ============================================================
 // AH2: HANDOFF NOTIFICATION UI
 // ============================================================
 
@@ -689,4 +767,8 @@ module.exports = {
   // CR2: Conflict resolution
   showConflictNotification,
   setupConflictResolutionListener,
+  // RB2: Rollback UI
+  showRollbackUI,
+  hideRollbackUI,
+  setupRollbackListener,
 };

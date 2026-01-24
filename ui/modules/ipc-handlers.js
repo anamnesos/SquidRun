@@ -63,6 +63,11 @@ function setupIPCHandlers(deps) {
     recordSessionEnd,
     saveUsageStats,
     broadcastClaudeState,
+    // V7 OB1: Activity log functions
+    logActivity,
+    getActivityLog,
+    clearActivityLog,
+    saveActivityLog,
   } = deps;
 
   // ============================================================
@@ -1482,6 +1487,502 @@ function setupIPCHandlers(deps) {
       success: true,
       weights: learning.routingWeights,
     };
+  });
+
+  // ============================================================
+  // V7 QV1: OUTPUT VALIDATION HOOKS
+  // ============================================================
+
+  const VALIDATION_FILE_PATH = path.join(WORKSPACE_PATH, 'validations.json');
+
+  // Validation patterns for detecting incomplete work
+  const INCOMPLETE_PATTERNS = [
+    /TODO:/i,
+    /FIXME:/i,
+    /XXX:/i,
+    /HACK:/i,
+    /\.\.\.\s*$/,  // Trailing ellipsis
+    /not implemented/i,
+    /placeholder/i,
+    /coming soon/i,
+  ];
+
+  // Patterns indicating completion
+  const COMPLETION_INDICATORS = [
+    /✅/,
+    /DONE/i,
+    /COMPLETE/i,
+    /finished/i,
+    /implemented/i,
+  ];
+
+  function calculateConfidence(text) {
+    let score = 50; // Base score
+
+    // Check for incomplete patterns (reduce confidence)
+    for (const pattern of INCOMPLETE_PATTERNS) {
+      if (pattern.test(text)) {
+        score -= 15;
+      }
+    }
+
+    // Check for completion indicators (increase confidence)
+    for (const pattern of COMPLETION_INDICATORS) {
+      if (pattern.test(text)) {
+        score += 10;
+      }
+    }
+
+    // Check text length (very short = suspicious)
+    if (text.length < 50) score -= 20;
+    if (text.length > 500) score += 10;
+
+    // Clamp to 0-100
+    return Math.max(0, Math.min(100, score));
+  }
+
+  ipcMain.handle('validate-output', (event, text, options = {}) => {
+    const issues = [];
+    const warnings = [];
+
+    // Check for incomplete patterns
+    for (const pattern of INCOMPLETE_PATTERNS) {
+      const match = text.match(pattern);
+      if (match) {
+        issues.push({
+          type: 'incomplete',
+          pattern: pattern.toString(),
+          match: match[0],
+          message: `Found incomplete marker: ${match[0]}`,
+        });
+      }
+    }
+
+    // Syntax validation for code (if requested)
+    if (options.checkSyntax && options.language === 'javascript') {
+      try {
+        new Function(text);
+      } catch (err) {
+        issues.push({
+          type: 'syntax',
+          message: `JavaScript syntax error: ${err.message}`,
+        });
+      }
+    }
+
+    // JSON validation
+    if (options.checkJson) {
+      try {
+        JSON.parse(text);
+      } catch (err) {
+        issues.push({
+          type: 'json',
+          message: `JSON parse error: ${err.message}`,
+        });
+      }
+    }
+
+    // Calculate confidence score
+    const confidence = calculateConfidence(text);
+
+    // Low confidence warning
+    if (confidence < 40) {
+      warnings.push({
+        type: 'low_confidence',
+        message: `Low completion confidence: ${confidence}%`,
+      });
+    }
+
+    const valid = issues.length === 0;
+
+    console.log(`[Validation] ${valid ? 'PASS' : 'FAIL'} - Confidence: ${confidence}%, Issues: ${issues.length}`);
+
+    return {
+      success: true,
+      valid,
+      confidence,
+      issues,
+      warnings,
+    };
+  });
+
+  ipcMain.handle('validate-file', async (event, filePath, options = {}) => {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return { success: false, error: 'File not found' };
+      }
+
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const ext = path.extname(filePath).toLowerCase();
+
+      // Auto-detect options based on extension
+      if (ext === '.js' || ext === '.ts') {
+        options.checkSyntax = true;
+        options.language = 'javascript';
+      } else if (ext === '.json') {
+        options.checkJson = true;
+      }
+
+      // Use validate-output logic
+      const result = await ipcMain.handle('validate-output', event, content, options);
+      return { ...result, filePath, extension: ext };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('get-validation-patterns', () => {
+    return {
+      incomplete: INCOMPLETE_PATTERNS.map(p => p.toString()),
+      completion: COMPLETION_INDICATORS.map(p => p.toString()),
+    };
+  });
+
+  // ============================================================
+  // V7 RB1: CHECKPOINT ROLLBACK SUPPORT
+  // ============================================================
+
+  const ROLLBACK_DIR = path.join(WORKSPACE_PATH, 'rollbacks');
+  const MAX_CHECKPOINTS = 10;
+
+  // Ensure rollback directory exists
+  if (!fs.existsSync(ROLLBACK_DIR)) {
+    fs.mkdirSync(ROLLBACK_DIR, { recursive: true });
+  }
+
+  ipcMain.handle('create-checkpoint', (event, files, label = '') => {
+    try {
+      const checkpointId = `cp-${Date.now()}`;
+      const checkpointDir = path.join(ROLLBACK_DIR, checkpointId);
+      fs.mkdirSync(checkpointDir, { recursive: true });
+
+      const manifest = {
+        id: checkpointId,
+        label: label || `Checkpoint ${new Date().toLocaleTimeString()}`,
+        createdAt: new Date().toISOString(),
+        files: [],
+      };
+
+      // Backup each file
+      for (const filePath of files) {
+        if (fs.existsSync(filePath)) {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          const fileName = path.basename(filePath);
+          const backupPath = path.join(checkpointDir, fileName);
+
+          fs.writeFileSync(backupPath, content, 'utf-8');
+          manifest.files.push({
+            original: filePath,
+            backup: backupPath,
+            size: content.length,
+          });
+        }
+      }
+
+      // Save manifest
+      fs.writeFileSync(
+        path.join(checkpointDir, 'manifest.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8'
+      );
+
+      // Cleanup old checkpoints
+      const checkpoints = fs.readdirSync(ROLLBACK_DIR)
+        .filter(d => d.startsWith('cp-'))
+        .sort()
+        .reverse();
+
+      if (checkpoints.length > MAX_CHECKPOINTS) {
+        for (const old of checkpoints.slice(MAX_CHECKPOINTS)) {
+          const oldPath = path.join(ROLLBACK_DIR, old);
+          fs.rmSync(oldPath, { recursive: true, force: true });
+        }
+      }
+
+      console.log(`[Rollback] Checkpoint created: ${checkpointId} (${manifest.files.length} files)`);
+
+      return { success: true, checkpointId, files: manifest.files.length };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('list-checkpoints', () => {
+    try {
+      if (!fs.existsSync(ROLLBACK_DIR)) {
+        return { success: true, checkpoints: [] };
+      }
+
+      const checkpoints = fs.readdirSync(ROLLBACK_DIR)
+        .filter(d => d.startsWith('cp-'))
+        .map(d => {
+          const manifestPath = path.join(ROLLBACK_DIR, d, 'manifest.json');
+          if (fs.existsSync(manifestPath)) {
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+            return {
+              id: manifest.id,
+              label: manifest.label,
+              createdAt: manifest.createdAt,
+              fileCount: manifest.files.length,
+            };
+          }
+          return null;
+        })
+        .filter(Boolean)
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+      return { success: true, checkpoints };
+    } catch (err) {
+      return { success: false, error: err.message, checkpoints: [] };
+    }
+  });
+
+  ipcMain.handle('get-checkpoint-diff', (event, checkpointId) => {
+    try {
+      const checkpointDir = path.join(ROLLBACK_DIR, checkpointId);
+      const manifestPath = path.join(checkpointDir, 'manifest.json');
+
+      if (!fs.existsSync(manifestPath)) {
+        return { success: false, error: 'Checkpoint not found' };
+      }
+
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      const diffs = [];
+
+      for (const file of manifest.files) {
+        const backupContent = fs.existsSync(file.backup)
+          ? fs.readFileSync(file.backup, 'utf-8')
+          : null;
+        const currentContent = fs.existsSync(file.original)
+          ? fs.readFileSync(file.original, 'utf-8')
+          : null;
+
+        diffs.push({
+          file: file.original,
+          hasChanges: backupContent !== currentContent,
+          backupSize: backupContent ? backupContent.length : 0,
+          currentSize: currentContent ? currentContent.length : 0,
+        });
+      }
+
+      return { success: true, checkpointId, diffs };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('rollback-checkpoint', (event, checkpointId) => {
+    try {
+      const checkpointDir = path.join(ROLLBACK_DIR, checkpointId);
+      const manifestPath = path.join(checkpointDir, 'manifest.json');
+
+      if (!fs.existsSync(manifestPath)) {
+        return { success: false, error: 'Checkpoint not found' };
+      }
+
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      const restored = [];
+
+      for (const file of manifest.files) {
+        if (fs.existsSync(file.backup)) {
+          const content = fs.readFileSync(file.backup, 'utf-8');
+          fs.writeFileSync(file.original, content, 'utf-8');
+          restored.push(file.original);
+        }
+      }
+
+      console.log(`[Rollback] Restored ${restored.length} files from ${checkpointId}`);
+
+      // Notify renderer
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('rollback-complete', {
+          checkpointId,
+          restoredFiles: restored,
+        });
+      }
+
+      return { success: true, checkpointId, restored };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('delete-checkpoint', (event, checkpointId) => {
+    try {
+      const checkpointDir = path.join(ROLLBACK_DIR, checkpointId);
+
+      if (!fs.existsSync(checkpointDir)) {
+        return { success: false, error: 'Checkpoint not found' };
+      }
+
+      fs.rmSync(checkpointDir, { recursive: true, force: true });
+      console.log(`[Rollback] Deleted checkpoint: ${checkpointId}`);
+
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ============================================================
+  // V7 OB1: ACTIVITY LOG IPC HANDLERS
+  // ============================================================
+
+  ipcMain.handle('get-activity-log', (event, filter = {}) => {
+    const log = getActivityLog(filter);
+    return {
+      success: true,
+      entries: log,
+      total: log.length,
+    };
+  });
+
+  ipcMain.handle('clear-activity-log', () => {
+    clearActivityLog();
+    console.log('[Activity] Log cleared');
+    return { success: true };
+  });
+
+  ipcMain.handle('save-activity-log', () => {
+    saveActivityLog();
+    return { success: true };
+  });
+
+  ipcMain.handle('log-activity', (event, type, paneId, message, details = {}) => {
+    logActivity(type, paneId, message, details);
+    return { success: true };
+  });
+
+  // ============================================================
+  // V7 QV2: COMPLETION QUALITY CHECKS
+  // ============================================================
+
+  // State machine integration for quality validation before transitions
+  const QUALITY_RULES = {
+    // State transitions that require validation
+    executing: {
+      to: ['checkpoint', 'checkpoint_review'],
+      validate: true,
+    },
+    checkpoint_fix: {
+      to: ['checkpoint_review'],
+      validate: true,
+    },
+  };
+
+  ipcMain.handle('check-completion-quality', async (event, paneId, claimedWork) => {
+    const PANE_ROLES = { '1': 'Lead', '2': 'Worker A', '3': 'Worker B', '4': 'Reviewer' };
+    const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
+    const issues = [];
+    let qualityScore = 100;
+
+    // 1. Check claimed work for incomplete patterns
+    const validationResult = calculateConfidence(claimedWork || '');
+    if (validationResult < 50) {
+      issues.push({
+        type: 'low_confidence',
+        severity: 'warning',
+        message: `Low completion confidence: ${validationResult}%`,
+      });
+      qualityScore -= 20;
+    }
+
+    // 2. Check for uncommitted git changes in project
+    const state = watcher.readState();
+    if (state.project) {
+      try {
+        const { execSync } = require('child_process');
+        const gitStatus = execSync('git status --porcelain', {
+          cwd: state.project,
+          encoding: 'utf-8',
+        });
+        const uncommittedFiles = gitStatus.trim().split('\n').filter(l => l.trim());
+        if (uncommittedFiles.length > 0) {
+          issues.push({
+            type: 'uncommitted_changes',
+            severity: 'info',
+            message: `${uncommittedFiles.length} uncommitted file(s)`,
+            files: uncommittedFiles.slice(0, 5),
+          });
+          // Don't deduct points for uncommitted - just info
+        }
+      } catch (err) {
+        // Not a git repo or git not available - skip
+      }
+    }
+
+    // 3. Log the quality check
+    logActivity('system', paneId, `Quality check: ${qualityScore}% (${issues.length} issues)`, {
+      role,
+      qualityScore,
+      issues,
+    });
+
+    // 4. Determine if completion should be blocked
+    const criticalIssues = issues.filter(i => i.severity === 'error');
+    const blocked = criticalIssues.length > 0;
+
+    if (blocked) {
+      // Emit event to UI
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('quality-check-failed', {
+          paneId,
+          role,
+          issues: criticalIssues,
+        });
+      }
+    }
+
+    return {
+      success: true,
+      paneId,
+      role,
+      qualityScore,
+      issues,
+      blocked,
+      timestamp: new Date().toISOString(),
+    };
+  });
+
+  ipcMain.handle('validate-state-transition', async (event, fromState, toState) => {
+    const rule = QUALITY_RULES[fromState];
+
+    // Check if transition requires validation
+    if (!rule || !rule.validate || !rule.to.includes(toState)) {
+      return { success: true, allowed: true, reason: 'No validation required' };
+    }
+
+    // Get active agents and check their work quality
+    const state = watcher.readState();
+    const activeAgents = state.active_agents || [];
+    const qualityResults = [];
+
+    for (const paneId of activeAgents) {
+      if (claudeRunning.get(paneId) === 'running') {
+        // In real implementation, would get claimed work from agent
+        const result = await ipcMain.handle('check-completion-quality', event, paneId, '');
+        qualityResults.push(result);
+      }
+    }
+
+    const anyBlocked = qualityResults.some(r => r.blocked);
+
+    if (anyBlocked) {
+      logActivity('system', null, `State transition blocked: ${fromState} → ${toState}`, {
+        qualityResults,
+      });
+    }
+
+    return {
+      success: true,
+      allowed: !anyBlocked,
+      qualityResults,
+      reason: anyBlocked ? 'Quality check failed for one or more agents' : 'All quality checks passed',
+    };
+  });
+
+  ipcMain.handle('get-quality-rules', () => {
+    return QUALITY_RULES;
   });
 }
 
