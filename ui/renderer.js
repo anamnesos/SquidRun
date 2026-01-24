@@ -95,20 +95,37 @@ function setupEventListeners() {
   // Broadcast input - only send on explicit user Enter with non-empty content
   const broadcastInput = document.getElementById('broadcastInput');
   let lastBroadcastTime = 0;
+  let lastInputChangeTime = 0;
+  let lastInputValue = '';
+  const AUTOCOMPLETE_GUARD_MS = 150; // Block submit if value changed within this window
+
   if (broadcastInput) {
+    // Track when input value changes (catches autocomplete fills)
+    broadcastInput.addEventListener('input', (e) => {
+      if (broadcastInput.value !== lastInputValue) {
+        lastInputChangeTime = Date.now();
+        lastInputValue = broadcastInput.value;
+      }
+    });
+
     broadcastInput.addEventListener('keydown', (e) => {
       // DEFENSIVE: Only process real user Enter key presses
-      // - Must be Enter key
-      // - Must be trusted event (not programmatic)
-      // - Must not be composing (IME)
-      // - Must have rate limiting (prevent rapid-fire)
       if (e.key === 'Enter' && e.isTrusted && !e.isComposing) {
         e.preventDefault();
         e.stopPropagation();
 
         const now = Date.now();
+
+        // Rate limit - too fast
         if (now - lastBroadcastTime < 500) {
           console.log('[Broadcast] Rate limited - too fast');
+          return;
+        }
+
+        // AUTOCOMPLETE GUARD: If value just changed, likely autocomplete fill
+        // User pressed Enter to select autocomplete, not to submit
+        if (now - lastInputChangeTime < AUTOCOMPLETE_GUARD_MS) {
+          console.log('[Broadcast] Blocked - possible autocomplete selection');
           return;
         }
 
@@ -118,6 +135,7 @@ function setupEventListeners() {
           lastBroadcastTime = now;
           terminal.broadcast(value + '\r');
           broadcastInput.value = '';
+          lastInputValue = '';
         }
       }
     });
