@@ -192,7 +192,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
 
   // Global ESC key handler - releases keyboard from xterm capture
-  window.hivemind.on('global-escape-pressed', () => {
+  ipcRenderer.on('global-escape-pressed', () => {
     terminal.blurAllTerminals();
     if (document.activeElement) {
       document.activeElement.blur();
