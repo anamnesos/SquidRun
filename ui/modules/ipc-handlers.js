@@ -962,6 +962,303 @@ function setupIPCHandlers(deps) {
       return { success: false, error: err.message };
     }
   });
+
+  // ============================================================
+  // V5 MP1: PER-PANE PROJECT ASSIGNMENT
+  // ============================================================
+
+  ipcMain.handle('set-pane-project', (event, paneId, projectPath) => {
+    if (!['1', '2', '3', '4'].includes(paneId)) {
+      return { success: false, error: 'Invalid pane ID' };
+    }
+
+    if (projectPath && !fs.existsSync(projectPath)) {
+      return { success: false, error: 'Project path does not exist' };
+    }
+
+    const settings = loadSettings();
+    if (!settings.paneProjects) {
+      settings.paneProjects = { '1': null, '2': null, '3': null, '4': null };
+    }
+
+    settings.paneProjects[paneId] = projectPath;
+    saveSettings(settings);
+
+    console.log(`[Multi-Project] Pane ${paneId} assigned to: ${projectPath || 'default'}`);
+
+    // Notify renderer
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('pane-project-changed', { paneId, projectPath });
+    }
+
+    return { success: true, paneId, projectPath };
+  });
+
+  ipcMain.handle('get-pane-project', (event, paneId) => {
+    const settings = loadSettings();
+    const projectPath = settings.paneProjects?.[paneId] || null;
+    return { success: true, paneId, projectPath };
+  });
+
+  ipcMain.handle('get-all-pane-projects', () => {
+    const settings = loadSettings();
+    return {
+      success: true,
+      paneProjects: settings.paneProjects || { '1': null, '2': null, '3': null, '4': null },
+    };
+  });
+
+  ipcMain.handle('clear-pane-projects', () => {
+    const settings = loadSettings();
+    settings.paneProjects = { '1': null, '2': null, '3': null, '4': null };
+    saveSettings(settings);
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('pane-projects-cleared');
+    }
+
+    return { success: true };
+  });
+
+  // ============================================================
+  // V5 PT1: PERFORMANCE TRACKING
+  // ============================================================
+
+  const PERFORMANCE_FILE_PATH = path.join(WORKSPACE_PATH, 'performance.json');
+
+  const DEFAULT_PERFORMANCE = {
+    agents: {
+      '1': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
+      '2': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
+      '3': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
+      '4': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
+    },
+    lastUpdated: null,
+  };
+
+  function loadPerformance() {
+    try {
+      if (fs.existsSync(PERFORMANCE_FILE_PATH)) {
+        const content = fs.readFileSync(PERFORMANCE_FILE_PATH, 'utf-8');
+        return { ...DEFAULT_PERFORMANCE, ...JSON.parse(content) };
+      }
+    } catch (err) {
+      console.error('[Performance] Error loading:', err.message);
+    }
+    return { ...DEFAULT_PERFORMANCE };
+  }
+
+  function savePerformance(data) {
+    try {
+      data.lastUpdated = new Date().toISOString();
+      const tempPath = PERFORMANCE_FILE_PATH + '.tmp';
+      fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+      fs.renameSync(tempPath, PERFORMANCE_FILE_PATH);
+    } catch (err) {
+      console.error('[Performance] Error saving:', err.message);
+    }
+  }
+
+  ipcMain.handle('record-completion', (event, paneId) => {
+    const perf = loadPerformance();
+    if (!perf.agents[paneId]) {
+      perf.agents[paneId] = { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 };
+    }
+    perf.agents[paneId].completions++;
+    savePerformance(perf);
+
+    console.log(`[Performance] Pane ${paneId} completion recorded. Total: ${perf.agents[paneId].completions}`);
+    return { success: true, completions: perf.agents[paneId].completions };
+  });
+
+  ipcMain.handle('record-error', (event, paneId) => {
+    const perf = loadPerformance();
+    if (!perf.agents[paneId]) {
+      perf.agents[paneId] = { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 };
+    }
+    perf.agents[paneId].errors++;
+    savePerformance(perf);
+
+    return { success: true, errors: perf.agents[paneId].errors };
+  });
+
+  ipcMain.handle('record-response-time', (event, paneId, timeMs) => {
+    const perf = loadPerformance();
+    if (!perf.agents[paneId]) {
+      perf.agents[paneId] = { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 };
+    }
+    perf.agents[paneId].totalResponseTime += timeMs;
+    perf.agents[paneId].responseCount++;
+    savePerformance(perf);
+
+    const avg = Math.round(perf.agents[paneId].totalResponseTime / perf.agents[paneId].responseCount);
+    return { success: true, avgResponseTime: avg };
+  });
+
+  ipcMain.handle('get-performance', () => {
+    const perf = loadPerformance();
+    const PANE_ROLES = { '1': 'Lead', '2': 'Worker A', '3': 'Worker B', '4': 'Reviewer' };
+
+    // Calculate averages and add role names
+    const stats = {};
+    for (const [paneId, data] of Object.entries(perf.agents)) {
+      stats[paneId] = {
+        ...data,
+        role: PANE_ROLES[paneId] || `Pane ${paneId}`,
+        avgResponseTime: data.responseCount > 0
+          ? Math.round(data.totalResponseTime / data.responseCount)
+          : 0,
+      };
+    }
+
+    return {
+      success: true,
+      agents: stats,
+      lastUpdated: perf.lastUpdated,
+    };
+  });
+
+  ipcMain.handle('reset-performance', () => {
+    savePerformance({ ...DEFAULT_PERFORMANCE });
+    return { success: true };
+  });
+
+  // ============================================================
+  // V5 TM1: TEMPLATE SAVE/LOAD
+  // ============================================================
+
+  const TEMPLATES_FILE_PATH = path.join(WORKSPACE_PATH, 'templates.json');
+
+  function loadTemplates() {
+    try {
+      if (fs.existsSync(TEMPLATES_FILE_PATH)) {
+        const content = fs.readFileSync(TEMPLATES_FILE_PATH, 'utf-8');
+        return JSON.parse(content);
+      }
+    } catch (err) {
+      console.error('[Templates] Error loading:', err.message);
+    }
+    return [];
+  }
+
+  function saveTemplates(templates) {
+    try {
+      const tempPath = TEMPLATES_FILE_PATH + '.tmp';
+      fs.writeFileSync(tempPath, JSON.stringify(templates, null, 2), 'utf-8');
+      fs.renameSync(tempPath, TEMPLATES_FILE_PATH);
+    } catch (err) {
+      console.error('[Templates] Error saving:', err.message);
+    }
+  }
+
+  ipcMain.handle('save-template', (event, template) => {
+    if (!template.name) {
+      return { success: false, error: 'Template name is required' };
+    }
+
+    const templates = loadTemplates();
+
+    // Check for duplicate name
+    const existingIndex = templates.findIndex(t => t.name === template.name);
+
+    const newTemplate = {
+      id: existingIndex >= 0 ? templates[existingIndex].id : `tmpl-${Date.now()}`,
+      name: template.name,
+      description: template.description || '',
+      config: template.config || {},
+      paneProjects: template.paneProjects || {},
+      createdAt: existingIndex >= 0 ? templates[existingIndex].createdAt : new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (existingIndex >= 0) {
+      templates[existingIndex] = newTemplate;
+    } else {
+      templates.push(newTemplate);
+    }
+
+    // Keep max 20 templates
+    if (templates.length > 20) {
+      templates.splice(0, templates.length - 20);
+    }
+
+    saveTemplates(templates);
+    console.log(`[Templates] Saved template: ${template.name}`);
+
+    return { success: true, template: newTemplate };
+  });
+
+  ipcMain.handle('load-template', (event, templateId) => {
+    const templates = loadTemplates();
+    const template = templates.find(t => t.id === templateId || t.name === templateId);
+
+    if (!template) {
+      return { success: false, error: 'Template not found' };
+    }
+
+    // Apply template settings
+    const settings = loadSettings();
+
+    if (template.paneProjects) {
+      settings.paneProjects = { ...settings.paneProjects, ...template.paneProjects };
+    }
+
+    if (template.config) {
+      Object.assign(settings, template.config);
+    }
+
+    saveSettings(settings);
+
+    console.log(`[Templates] Loaded template: ${template.name}`);
+
+    // Notify renderer of changes
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('template-loaded', template);
+      mainWindow.webContents.send('settings-changed', settings);
+    }
+
+    return { success: true, template };
+  });
+
+  ipcMain.handle('list-templates', () => {
+    const templates = loadTemplates();
+    return {
+      success: true,
+      templates: templates.map(t => ({
+        id: t.id,
+        name: t.name,
+        description: t.description,
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt,
+      })),
+    };
+  });
+
+  ipcMain.handle('get-template', (event, templateId) => {
+    const templates = loadTemplates();
+    const template = templates.find(t => t.id === templateId || t.name === templateId);
+
+    if (!template) {
+      return { success: false, error: 'Template not found' };
+    }
+
+    return { success: true, template };
+  });
+
+  ipcMain.handle('delete-template', (event, templateId) => {
+    const templates = loadTemplates();
+    const index = templates.findIndex(t => t.id === templateId || t.name === templateId);
+
+    if (index < 0) {
+      return { success: false, error: 'Template not found' };
+    }
+
+    const deleted = templates.splice(index, 1)[0];
+    saveTemplates(templates);
+
+    console.log(`[Templates] Deleted template: ${deleted.name}`);
+    return { success: true };
+  });
 }
 
 function broadcastProcessList() {
