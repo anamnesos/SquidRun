@@ -191,6 +191,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Setup all event handlers
   setupEventListeners();
 
+  // Global ESC key handler - releases keyboard from xterm capture
+  window.hivemind.on('global-escape-pressed', () => {
+    terminal.blurAllTerminals();
+    if (document.activeElement) {
+      document.activeElement.blur();
+    }
+    // Show visual feedback
+    const statusBar = document.querySelector('.status-bar');
+    if (statusBar) {
+      const msg = document.createElement('span');
+      msg.textContent = ' | ESC pressed - keyboard released';
+      msg.style.color = '#4fc3f7';
+      statusBar.appendChild(msg);
+      setTimeout(() => msg.remove(), 2000);
+    }
+  });
+
   // Setup daemon handlers
   daemonHandlers.setupStateListener();
   daemonHandlers.setupClaudeStateListener(daemonHandlers.handleSessionTimerState);
