@@ -46,6 +46,12 @@ function applySettingsToUI() {
     warning.style.display = currentSettings.allowAllPermissions ? 'block' : 'none';
   }
 
+  // Show/hide dry-run indicator
+  const dryRunIndicator = document.getElementById('dryRunIndicator');
+  if (dryRunIndicator) {
+    dryRunIndicator.style.display = currentSettings.dryRun ? 'inline-block' : 'none';
+  }
+
   // Populate cost alert threshold
   const thresholdInput = document.getElementById('costAlertThreshold');
   if (thresholdInput && currentSettings.costAlertThreshold !== undefined) {

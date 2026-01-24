@@ -37,6 +37,25 @@
       color: #e94560;
     }
 
+    /* Dry-run mode indicator */
+    .dry-run-indicator {
+      background: #ffc857;
+      color: #1a1a2e;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      animation: dryRunPulse 2s ease-in-out infinite;
+      margin-left: 12px;
+    }
+
+    @keyframes dryRunPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
     .header-actions {
       display: flex;
       gap: 8px;
@@ -1086,11 +1105,160 @@
       display: flex;
       gap: 8px;
     }
+
+    /* Session History Tab */
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .history-item {
+      background: #1a1a2e;
+      border-radius: 4px;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+      border-left: 3px solid #4ecca3;
+    }
+
+    .history-item:hover {
+      background: #0f3460;
+    }
+
+    .history-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    .history-item-agent {
+      font-size: 12px;
+      font-weight: 600;
+      color: #e94560;
+    }
+
+    .history-item-duration {
+      font-size: 11px;
+      color: #4ecca3;
+      font-family: 'Consolas', 'Monaco', monospace;
+    }
+
+    .history-item-time {
+      font-size: 10px;
+      color: #888;
+    }
+
+    .history-empty {
+      text-align: center;
+      color: #666;
+      padding: 30px 20px;
+      font-size: 12px;
+    }
+
+    .history-actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+    }
+
+    /* Projects Tab */
+    .projects-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .project-item {
+      background: #1a1a2e;
+      border-radius: 4px;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+      border-left: 3px solid #0f3460;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .project-item:hover {
+      background: #0f3460;
+      border-left-color: #4ecca3;
+    }
+
+    .project-item.active {
+      border-left-color: #e94560;
+      background: rgba(233, 69, 96, 0.1);
+    }
+
+    .project-item-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .project-item-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: #eee;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .project-item-path {
+      font-size: 10px;
+      color: #888;
+      font-family: 'Consolas', 'Monaco', monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .project-item-remove {
+      background: transparent;
+      border: 1px solid #e94560;
+      color: #e94560;
+      width: 20px;
+      height: 20px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 10px;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .project-item:hover .project-item-remove {
+      opacity: 1;
+    }
+
+    .project-item-remove:hover {
+      background: #e94560;
+      color: #fff;
+    }
+
+    .projects-empty {
+      text-align: center;
+      color: #666;
+      padding: 30px 20px;
+      font-size: 12px;
+    }
+
+    .projects-actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+    }
   </style>
 </head>
 <body>
   <div class="header">
     <h1>Hivemind</h1>
+    <span class="dry-run-indicator" id="dryRunIndicator" style="display: none;">DRY RUN</span>
     <div class="header-actions">
       <button class="btn btn-folder" id="selectProjectBtn">Select Project</button>
       <button class="btn" id="syncBtn">Sync Context</button>
@@ -1131,6 +1299,10 @@
         <div class="setting-item">
           <div class="toggle active" id="toggleWatcher" data-setting="watcherEnabled"></div>
           <span class="setting-label">File watcher enabled</span>
+        </div>
+        <div class="setting-item">
+          <div class="toggle" id="toggleDryRun" data-setting="dryRun"></div>
+          <span class="setting-label">Dry-run mode (simulate agents)</span>
         </div>
       </div>
     </div>
@@ -1266,6 +1438,8 @@
     <div class="right-panel" id="rightPanel">
       <div class="panel-tabs">
         <button class="panel-tab active" data-tab="screenshots">Screenshots</button>
+        <button class="panel-tab" data-tab="history">History</button>
+        <button class="panel-tab" data-tab="projects">Projects</button>
         <button class="panel-tab" data-tab="progress">Progress</button>
         <button class="panel-tab" data-tab="processes">Processes</button>
       </div>
@@ -1279,6 +1453,27 @@
           </div>
           <div class="screenshot-list" id="screenshotList">
             <div class="screenshot-empty">No screenshots yet</div>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-history">
+          <div class="tab-title">Session History</div>
+          <div class="tab-description">Past Claude sessions and their durations</div>
+          <div class="history-list" id="historyList">
+            <div class="history-empty">No sessions recorded yet</div>
+          </div>
+          <div class="history-actions">
+            <button class="btn" id="refreshHistoryBtn">Refresh</button>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-projects">
+          <div class="tab-title">Recent Projects</div>
+          <div class="tab-description">Quick-switch between projects</div>
+          <div class="projects-list" id="projectsList">
+            <div class="projects-empty">No recent projects</div>
+          </div>
+          <div class="projects-actions">
+            <button class="btn btn-folder" id="addProjectBtn">Add Project</button>
+            <button class="btn" id="refreshProjectsBtn">Refresh</button>
           </div>
         </div>
         <div class="tab-pane" id="tab-progress">

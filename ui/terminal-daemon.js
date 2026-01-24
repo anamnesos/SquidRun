@@ -15,7 +15,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const pty = require('node-pty');
-const { PIPE_PATH, INSTANCE_DIRS } = require('./config');
+const { PIPE_PATH, INSTANCE_DIRS, PANE_ROLES } = require('./config');
 
 // ============================================================
 // D1: DAEMON LOGGING TO FILE
@@ -69,11 +69,86 @@ function formatUptime(seconds) {
   return `${secs}s`;
 }
 
-// Store PTY processes: Map<paneId, { pty, pid, alive, cwd, scrollback }>
+// Store PTY processes: Map<paneId, { pty, pid, alive, cwd, scrollback, dryRun }>
 const terminals = new Map();
 
 // U1: Scrollback buffer settings - keep last 50KB of output per terminal
 const SCROLLBACK_MAX_SIZE = 50000;
+
+// ============================================================
+// D2 (V3): DRY-RUN MODE
+// ============================================================
+
+// Mock responses for dry-run mode (simulates Claude agent)
+const DRY_RUN_RESPONSES = [
+  '[DRY-RUN] Claude agent simulated. Ready for input.\r\n',
+  '[DRY-RUN] Processing your request...\r\n',
+  '[DRY-RUN] Analyzing codebase structure...\r\n',
+  '[DRY-RUN] Reading relevant files...\r\n',
+  '[DRY-RUN] Task completed successfully.\r\n',
+  '[DRY-RUN] Waiting for next instruction...\r\n',
+];
+
+// Simulated typing delay (ms per character)
+const DRY_RUN_TYPING_DELAY = 15;
+
+// Send mock data with simulated typing effect
+function sendMockData(paneId, text, callback) {
+  const terminal = terminals.get(paneId);
+  if (!terminal || !terminal.alive) return;
+
+  let index = 0;
+  const sendChar = () => {
+    if (index < text.length && terminal.alive) {
+      const char = text[index];
+      // Buffer for scrollback
+      terminal.scrollback += char;
+      if (terminal.scrollback.length > SCROLLBACK_MAX_SIZE) {
+        terminal.scrollback = terminal.scrollback.slice(-SCROLLBACK_MAX_SIZE);
+      }
+      // Broadcast character
+      broadcast({ event: 'data', paneId, data: char });
+      index++;
+      setTimeout(sendChar, DRY_RUN_TYPING_DELAY);
+    } else if (callback) {
+      callback();
+    }
+  };
+  sendChar();
+}
+
+// Generate mock Claude response based on input
+function generateMockResponse(input) {
+  const trimmed = input.trim().toLowerCase();
+
+  // Recognize common commands/patterns
+  if (trimmed === '' || trimmed === '\r' || trimmed === '\n') {
+    return '';
+  }
+
+  if (trimmed.includes('sync') || trimmed.includes('hivemind')) {
+    return '\r\n[DRY-RUN] Sync received. Reading shared_context.md...\r\n[DRY-RUN] Worker acknowledged. Standing by for tasks.\r\n\r\n> ';
+  }
+
+  if (trimmed.includes('read') || trimmed.includes('cat')) {
+    return '\r\n[DRY-RUN] Reading file... (simulated)\r\n[DRY-RUN] File contents displayed.\r\n\r\n> ';
+  }
+
+  if (trimmed.includes('edit') || trimmed.includes('write') || trimmed.includes('fix')) {
+    return '\r\n[DRY-RUN] Editing file... (simulated)\r\n[DRY-RUN] Changes applied successfully.\r\n\r\n> ';
+  }
+
+  if (trimmed.includes('test') || trimmed.includes('npm')) {
+    return '\r\n[DRY-RUN] Running tests... (simulated)\r\n[DRY-RUN] All 86 tests passed.\r\n\r\n> ';
+  }
+
+  if (trimmed.includes('help') || trimmed === '?') {
+    return '\r\n[DRY-RUN] This is dry-run mode. Commands are simulated.\r\n[DRY-RUN] Toggle off in Settings to use real Claude.\r\n\r\n> ';
+  }
+
+  // Default response
+  return '\r\n[DRY-RUN] Command received: "' + input.trim().substring(0, 50) + '"\r\n[DRY-RUN] Processing... Done.\r\n\r\n> ';
+}
 
 // Connected clients: Set<net.Socket>
 const clients = new Set();
@@ -101,23 +176,60 @@ function broadcast(message) {
   }
 }
 
-// Spawn a new PTY for a pane
-function spawnTerminal(paneId, cwd) {
+// Spawn a new PTY for a pane (or mock terminal in dry-run mode)
+function spawnTerminal(paneId, cwd, dryRun = false) {
   // Kill existing terminal for this pane if any
   if (terminals.has(paneId)) {
     const existing = terminals.get(paneId);
-    if (existing.pty && existing.alive) {
+    if (existing.pty && existing.alive && !existing.dryRun) {
       try {
         existing.pty.kill();
       } catch (e) { /* ignore */ }
     }
+    // Clear any dry-run timers
+    if (existing.dryRunTimer) {
+      clearTimeout(existing.dryRunTimer);
+    }
   }
 
-  const shell = getShell();
   // Use role-specific instance directory if available
   const instanceDir = INSTANCE_DIRS[paneId];
   const workDir = instanceDir || cwd || process.cwd();
 
+  // DRY-RUN MODE: Create mock terminal instead of real PTY
+  if (dryRun) {
+    logInfo(`[DRY-RUN] Spawning MOCK terminal for pane ${paneId}`);
+
+    const mockPid = 90000 + parseInt(paneId); // Fake PID for identification
+
+    const terminalInfo = {
+      pty: null,
+      pid: mockPid,
+      alive: true,
+      cwd: workDir,
+      scrollback: '',
+      dryRun: true,
+      inputBuffer: '', // Buffer for accumulating input
+    };
+
+    terminals.set(paneId, terminalInfo);
+
+    // Send initial mock prompt after short delay
+    setTimeout(() => {
+      if (terminalInfo.alive) {
+        const welcomeMsg = `\r\n[DRY-RUN MODE] Mock Claude agent for Pane ${paneId}\r\n` +
+          `[DRY-RUN] Role: ${PANE_ROLES[paneId] || 'Unknown'}\r\n` +
+          `[DRY-RUN] Working dir: ${workDir}\r\n` +
+          `[DRY-RUN] Commands are simulated. Toggle off in Settings for real Claude.\r\n\r\n> `;
+        sendMockData(paneId, welcomeMsg);
+      }
+    }, 300);
+
+    return { paneId, pid: mockPid, dryRun: true };
+  }
+
+  // NORMAL MODE: Spawn real PTY
+  const shell = getShell();
   logInfo(`Spawning terminal for pane ${paneId} in ${workDir}`);
 
   const ptyProcess = pty.spawn(shell, [], {
@@ -134,6 +246,7 @@ function spawnTerminal(paneId, cwd) {
     alive: true,
     cwd: workDir,
     scrollback: '', // U1: Buffer for scrollback persistence
+    dryRun: false,
   };
 
   terminals.set(paneId, terminalInfo);
@@ -165,13 +278,46 @@ function spawnTerminal(paneId, cwd) {
     });
   });
 
-  return { paneId, pid: ptyProcess.pid };
+  return { paneId, pid: ptyProcess.pid, dryRun: false };
 }
 
 // Write data to a terminal
 function writeTerminal(paneId, data) {
   const terminal = terminals.get(paneId);
-  if (terminal && terminal.pty && terminal.alive) {
+  if (!terminal || !terminal.alive) {
+    return false;
+  }
+
+  // DRY-RUN MODE: Handle input simulation
+  if (terminal.dryRun) {
+    // Echo the input character
+    broadcast({ event: 'data', paneId, data });
+    terminal.scrollback += data;
+
+    // Accumulate input until Enter is pressed
+    if (data === '\r' || data === '\n') {
+      const input = terminal.inputBuffer;
+      terminal.inputBuffer = '';
+
+      // Generate and send mock response
+      const response = generateMockResponse(input);
+      if (response) {
+        // Delay response slightly for realism
+        setTimeout(() => {
+          sendMockData(paneId, response);
+        }, 100 + Math.random() * 200);
+      }
+    } else if (data === '\x7f' || data === '\b') {
+      // Backspace: remove last character from buffer
+      terminal.inputBuffer = terminal.inputBuffer.slice(0, -1);
+    } else {
+      terminal.inputBuffer += data;
+    }
+    return true;
+  }
+
+  // NORMAL MODE: Write to real PTY
+  if (terminal.pty) {
     terminal.pty.write(data);
     return true;
   }
@@ -191,15 +337,24 @@ function resizeTerminal(paneId, cols, rows) {
 // Kill a terminal
 function killTerminal(paneId) {
   const terminal = terminals.get(paneId);
-  if (terminal && terminal.pty) {
+  if (!terminal) return false;
+
+  // Clean up dry-run timer if exists
+  if (terminal.dryRunTimer) {
+    clearTimeout(terminal.dryRunTimer);
+  }
+
+  // Kill real PTY if not dry-run
+  if (terminal.pty && !terminal.dryRun) {
     try {
       terminal.pty.kill();
     } catch (e) { /* ignore */ }
-    terminal.alive = false;
-    terminals.delete(paneId);
-    return true;
   }
-  return false;
+
+  terminal.alive = false;
+  terminals.delete(paneId);
+  logInfo(`Terminal ${paneId} killed (dryRun: ${terminal.dryRun || false})`);
+  return true;
 }
 
 // List all terminals
@@ -213,6 +368,8 @@ function listTerminals() {
       cwd: info.cwd,
       // U1: Include scrollback for session restoration
       scrollback: info.scrollback || '',
+      // V3: Include dry-run flag
+      dryRun: info.dryRun || false,
     });
   }
   return list;
@@ -226,11 +383,12 @@ function handleMessage(client, message) {
 
     switch (msg.action) {
       case 'spawn': {
-        const result = spawnTerminal(msg.paneId, msg.cwd);
+        const result = spawnTerminal(msg.paneId, msg.cwd, msg.dryRun || false);
         sendToClient(client, {
           event: 'spawned',
           paneId: msg.paneId,
           pid: result.pid,
+          dryRun: result.dryRun || false,
         });
         break;
       }

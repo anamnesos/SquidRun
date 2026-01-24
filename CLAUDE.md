@@ -97,6 +97,27 @@ Your role comes from the sprint file, not from the code you're writing.
 ### Periodic Check (Every Major Task)
 Re-read blockers.md. Another instance may have found issues with your code.
 
+### Triggering Other Agents Directly
+
+To send a message directly to another agent's terminal, write to `workspace/triggers/`:
+
+| File | Targets |
+|------|---------|
+| `workspace/triggers/lead.txt` | Lead (pane 1) |
+| `workspace/triggers/worker-a.txt` | Worker A (pane 2) |
+| `workspace/triggers/worker-b.txt` | Worker B (pane 3) |
+| `workspace/triggers/reviewer.txt` | Reviewer (pane 4) |
+| `workspace/triggers/workers.txt` | Both workers (panes 2+3) |
+| `workspace/triggers/all.txt` | All agents |
+| `workspace/triggers/others-{role}.txt` | Everyone except sender |
+
+The file watcher detects changes and injects the content into the target terminal(s). The file is cleared after sending.
+
+**Example:** To tell Lead about a bug:
+```
+echo "BUG: Fix needed in main.js line 50" > workspace/triggers/lead.txt
+```
+
 ---
 
 ## Core Rules

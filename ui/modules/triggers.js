@@ -9,6 +9,10 @@ const { TRIGGER_TARGETS } = require('../config');
 // Module state (set by init)
 let mainWindow = null;
 let claudeRunning = null;
+let watcher = null; // Reference to watcher module for state checks
+
+// Worker pane IDs that require reviewer approval before triggering
+const WORKER_PANES = ['2', '3'];
 
 /**
  * Initialize the triggers module with shared state
@@ -18,6 +22,49 @@ let claudeRunning = null;
 function init(window, claudeState) {
   mainWindow = window;
   claudeRunning = claudeState;
+}
+
+/**
+ * Set watcher reference for state checks (called after watcher.init)
+ * @param {Object} watcherModule - The watcher module
+ */
+function setWatcher(watcherModule) {
+  watcher = watcherModule;
+}
+
+/**
+ * Check if workflow gate allows triggering workers
+ * Workers can only be triggered when state is EXECUTING
+ * @param {string[]} targets - Pane IDs being triggered
+ * @returns {{ allowed: boolean, reason?: string }}
+ */
+function checkWorkflowGate(targets) {
+  // Check if any targets are workers
+  const hasWorkerTargets = targets.some(t => WORKER_PANES.includes(t));
+  if (!hasWorkerTargets) {
+    return { allowed: true }; // Not targeting workers, allow
+  }
+
+  // Workers targeted - check state
+  if (!watcher) {
+    console.warn('[Workflow Gate] Watcher not initialized, allowing trigger');
+    return { allowed: true };
+  }
+
+  const state = watcher.readState();
+  const currentState = state.state;
+
+  // Workers can be triggered in EXECUTING or CHECKPOINT_FIX states
+  const allowedStates = ['executing', 'checkpoint_fix'];
+  if (allowedStates.includes(currentState)) {
+    return { allowed: true };
+  }
+
+  // BLOCKED: Reviewer hasn't approved yet
+  return {
+    allowed: false,
+    reason: `Workers blocked: state is '${currentState}', needs Reviewer approval first (plan-approved.md)`
+  };
 }
 
 /**
@@ -98,6 +145,21 @@ function handleTriggerFile(filePath, filename) {
     return { success: false, reason: 'unknown' };
   }
 
+  // WORKFLOW GATE: Check if workers can be triggered
+  const gateCheck = checkWorkflowGate(targets);
+  if (!gateCheck.allowed) {
+    console.warn(`[Trigger] BLOCKED by workflow gate: ${gateCheck.reason}`);
+    // Notify UI about blocked trigger
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('trigger-blocked', {
+        file: filename,
+        targets,
+        reason: gateCheck.reason
+      });
+    }
+    return { success: false, reason: 'workflow_gate', message: gateCheck.reason };
+  }
+
   // Read trigger file content
   let message;
   try {
@@ -175,8 +237,10 @@ function broadcastToAllAgents(message) {
 
 module.exports = {
   init,
+  setWatcher,
   notifyAgents,
   notifyAllAgentsSync,
   handleTriggerFile,
   broadcastToAllAgents,
+  checkWorkflowGate,
 };

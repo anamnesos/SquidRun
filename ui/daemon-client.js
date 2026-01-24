@@ -159,8 +159,9 @@ class DaemonClient extends EventEmitter {
             paneId: msg.paneId,
             pid: msg.pid,
             alive: true,
+            dryRun: msg.dryRun || false,
           });
-          this.emit('spawned', msg.paneId, msg.pid);
+          this.emit('spawned', msg.paneId, msg.pid, msg.dryRun || false);
           break;
 
         case 'list':
@@ -279,12 +280,14 @@ class DaemonClient extends EventEmitter {
    * Spawn a terminal in a pane
    * @param {string} paneId - The pane identifier
    * @param {string} [cwd] - Working directory
+   * @param {boolean} [dryRun=false] - If true, spawn mock terminal instead of real PTY
    */
-  spawn(paneId, cwd) {
+  spawn(paneId, cwd, dryRun = false) {
     return this._send({
       action: 'spawn',
       paneId,
       cwd,
+      dryRun,
     });
   }
 

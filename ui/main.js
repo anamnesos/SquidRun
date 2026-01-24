@@ -46,6 +46,8 @@ const DEFAULT_SETTINGS = {
   allowAllPermissions: false,
   costAlertEnabled: true,
   costAlertThreshold: 5.00,
+  dryRun: false,  // V3: Simulate without spawning real Claude
+  recentProjects: [],  // V3 J2: Recent projects list (max 10)
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };
@@ -54,11 +56,12 @@ function loadSettings() {
   try {
     if (fs.existsSync(SETTINGS_FILE_PATH)) {
       const content = fs.readFileSync(SETTINGS_FILE_PATH, 'utf-8');
-      currentSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(content) };
+      // Use Object.assign to mutate existing object, preserving reference for ipc-handlers
+      Object.assign(currentSettings, DEFAULT_SETTINGS, JSON.parse(content));
     }
   } catch (err) {
     console.error('Error loading settings:', err);
-    currentSettings = { ...DEFAULT_SETTINGS };
+    Object.assign(currentSettings, DEFAULT_SETTINGS);
   }
   return currentSettings;
 }
@@ -270,6 +273,7 @@ async function createWindow() {
   // Initialize modules with shared state
   triggers.init(mainWindow, claudeRunning);
   watcher.init(mainWindow, triggers);
+  triggers.setWatcher(watcher); // Enable workflow gate
 
   // Initialize IPC handlers
   ipcHandlers.init({
@@ -318,6 +322,8 @@ async function createWindow() {
 // ============================================================
 
 app.whenReady().then(() => {
+  // Load settings BEFORE createWindow so ipc-handlers gets the correct reference
+  loadSettings();
   createWindow();
 
   app.on('activate', () => {
