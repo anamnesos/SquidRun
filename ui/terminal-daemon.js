@@ -280,20 +280,50 @@ function alertUser() {
 }
 
 /**
- * Check if Lead responded (trigger file was cleared or modified)
+ * Check if Lead ACTUALLY responded (not just trigger file cleared)
+ * Real response = Lead wrote to workers.txt OR had terminal activity
  */
 function checkLeadResponse() {
+  // Check 1: Did Lead write to workers.txt after heartbeat?
+  const workersTrigger = path.join(TRIGGERS_PATH, 'workers.txt');
+  try {
+    if (fs.existsSync(workersTrigger)) {
+      const stats = fs.statSync(workersTrigger);
+      const content = fs.readFileSync(workersTrigger, 'utf-8').trim();
+      // If workers.txt was modified after heartbeat AND contains Lead message
+      if (stats.mtimeMs > lastHeartbeatTime && content.includes('(LEAD')) {
+        logInfo('[Heartbeat] Lead responded - wrote to workers.txt');
+        return true;
+      }
+    }
+  } catch (err) {
+    // Ignore
+  }
+
+  // Check 2: Did Lead's terminal have activity after heartbeat?
+  const leadTerminal = terminals.get('1');
+  if (leadTerminal && leadTerminal.lastActivity > lastHeartbeatTime) {
+    logInfo('[Heartbeat] Lead responded - terminal activity detected');
+    return true;
+  }
+
+  // Check 3: Original check - trigger file cleared (fallback)
   const triggerPath = path.join(TRIGGERS_PATH, 'lead.txt');
   try {
     if (!fs.existsSync(triggerPath)) {
-      return true; // File deleted = response processed
+      return true; // File deleted
     }
     const content = fs.readFileSync(triggerPath, 'utf-8').trim();
-    // If file is empty or doesn't contain our heartbeat message, Lead responded
-    return content.length === 0 || !content.includes('(SYSTEM): Heartbeat');
+    // Only count as response if file is empty (fully processed)
+    if (content.length === 0) {
+      return true;
+    }
   } catch (err) {
-    return false;
+    // Ignore read errors
   }
+
+  // No response detected
+  return false;
 }
 
 /**
