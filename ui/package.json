@@ -1,0 +1,32 @@
+{
+  "name": "hivemind-ui",
+  "version": "0.1.0",
+  "description": "Multi-pane Claude Code orchestration UI",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "rebuild": "npx @electron/rebuild -f -w node-pty",
+    "daemon:start": "node terminal-daemon.js",
+    "daemon:stop": "node -e \"const fs=require('fs');const p=fs.readFileSync('daemon.pid','utf-8').trim();process.kill(parseInt(p),'SIGTERM');fs.unlinkSync('daemon.pid');console.log('Daemon stopped')\"",
+    "daemon:status": "node -e \"const fs=require('fs');try{const p=fs.readFileSync('daemon.pid','utf-8').trim();process.kill(parseInt(p),0);console.log('Daemon running (PID '+p+')')}catch(e){console.log('Daemon not running')}\""
+  },
+  "keywords": [
+    "electron",
+    "claude",
+    "ai",
+    "orchestration"
+  ],
+  "author": "Hivemind",
+  "license": "MIT",
+  "devDependencies": {
+    "@electron/rebuild": "^3.5.0",
+    "electron": "^28.0.0"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "node-pty": "^1.0.0",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0",
+    "xterm-addon-web-links": "^0.9.0"
+  }
+}
