@@ -156,6 +156,174 @@ setInterval(() => {
 }, 30000);
 
 // ============================================================
+// V13 HB1-HB4: HEARTBEAT WATCHDOG
+// ============================================================
+
+const TRIGGERS_PATH = path.join(__dirname, '..', 'workspace', 'triggers');
+const SHARED_CONTEXT_PATH = path.join(__dirname, '..', 'workspace', 'shared_context.md');
+
+// Configurable intervals (ms)
+const HEARTBEAT_INTERVAL = 60000;  // HB1: 60 seconds
+const LEAD_RESPONSE_TIMEOUT = 30000;  // HB2: 30 seconds
+const MAX_LEAD_NUDGES = 2;  // HB3: After 2 failed nudges, escalate
+
+// State tracking
+let heartbeatEnabled = true;
+let leadNudgeCount = 0;
+let lastHeartbeatTime = 0;
+let awaitingLeadResponse = false;
+
+/**
+ * HB1: Write heartbeat message to Lead's trigger file
+ */
+function sendHeartbeatToLead() {
+  const triggerPath = path.join(TRIGGERS_PATH, 'lead.txt');
+  const message = '(SYSTEM): Heartbeat - check team status and nudge any stuck workers\n';
+  try {
+    fs.writeFileSync(triggerPath, message);
+    logInfo('[Heartbeat] Sent heartbeat to Lead');
+    awaitingLeadResponse = true;
+    lastHeartbeatTime = Date.now();
+  } catch (err) {
+    logError(`[Heartbeat] Failed to send to Lead: ${err.message}`);
+  }
+}
+
+/**
+ * HB3: Directly nudge workers when Lead is unresponsive
+ */
+function directNudgeWorkers() {
+  logWarn('[Heartbeat] Lead unresponsive - directly nudging workers');
+
+  // Read shared_context.md to find incomplete tasks
+  let incompleteTasksMsg = 'Check shared_context.md for your tasks';
+  try {
+    if (fs.existsSync(SHARED_CONTEXT_PATH)) {
+      const content = fs.readFileSync(SHARED_CONTEXT_PATH, 'utf-8');
+      // Look for IN PROGRESS or ASSIGNED tasks
+      const inProgress = content.match(/\|.*\|.*🔄.*\|.*\|/g);
+      if (inProgress && inProgress.length > 0) {
+        incompleteTasksMsg = `${inProgress.length} task(s) in progress - status update needed`;
+      }
+    }
+  } catch (err) {
+    logWarn(`[Heartbeat] Could not read shared_context: ${err.message}`);
+  }
+
+  // Nudge workers directly
+  const workersTrigger = path.join(TRIGGERS_PATH, 'workers.txt');
+  const message = `(SYSTEM): Watchdog alert - Lead unresponsive. ${incompleteTasksMsg}. Reply with your status.\n`;
+  try {
+    fs.writeFileSync(workersTrigger, message);
+    logInfo('[Heartbeat] Directly nudged workers');
+  } catch (err) {
+    logError(`[Heartbeat] Failed to nudge workers: ${err.message}`);
+  }
+}
+
+/**
+ * HB4: Alert user when all agents are stuck
+ */
+function alertUser() {
+  logError('[Heartbeat] ALL AGENTS UNRESPONSIVE - Alerting user');
+
+  // Write to all.txt as last resort
+  const allTrigger = path.join(TRIGGERS_PATH, 'all.txt');
+  const message = '(SYSTEM): ⚠️ WATCHDOG ALERT - All agents appear stuck. User intervention needed.\n';
+  try {
+    fs.writeFileSync(allTrigger, message);
+  } catch (err) {
+    logError(`[Heartbeat] Failed to write alert: ${err.message}`);
+  }
+
+  // Broadcast alert event to connected clients (for UI notification)
+  broadcast({
+    event: 'watchdog-alert',
+    message: 'All agents unresponsive - user intervention needed',
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * Check if Lead responded (trigger file was cleared or modified)
+ */
+function checkLeadResponse() {
+  const triggerPath = path.join(TRIGGERS_PATH, 'lead.txt');
+  try {
+    if (!fs.existsSync(triggerPath)) {
+      return true; // File deleted = response processed
+    }
+    const content = fs.readFileSync(triggerPath, 'utf-8').trim();
+    // If file is empty or doesn't contain our heartbeat message, Lead responded
+    return content.length === 0 || !content.includes('(SYSTEM): Heartbeat');
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * Main heartbeat tick - HB1-HB4 logic
+ */
+function heartbeatTick() {
+  if (!heartbeatEnabled || terminals.size === 0) {
+    return;
+  }
+
+  // If awaiting Lead response, check if they responded
+  if (awaitingLeadResponse) {
+    const elapsed = Date.now() - lastHeartbeatTime;
+
+    if (checkLeadResponse()) {
+      // Lead responded - reset state
+      logInfo('[Heartbeat] Lead responded');
+      leadNudgeCount = 0;
+      awaitingLeadResponse = false;
+      return;
+    }
+
+    // HB2: Check timeout
+    if (elapsed > LEAD_RESPONSE_TIMEOUT) {
+      leadNudgeCount++;
+      logWarn(`[Heartbeat] Lead no response after ${elapsed}ms (nudge ${leadNudgeCount}/${MAX_LEAD_NUDGES})`);
+
+      if (leadNudgeCount >= MAX_LEAD_NUDGES) {
+        // HB3: Escalate to direct worker nudge
+        directNudgeWorkers();
+        leadNudgeCount = 0;
+        awaitingLeadResponse = false;
+
+        // Set timer for HB4 check
+        setTimeout(() => {
+          // If workers also don't respond, alert user
+          const workersTrigger = path.join(TRIGGERS_PATH, 'workers.txt');
+          try {
+            if (fs.existsSync(workersTrigger)) {
+              const content = fs.readFileSync(workersTrigger, 'utf-8').trim();
+              if (content.includes('(SYSTEM): Watchdog')) {
+                alertUser();
+              }
+            }
+          } catch (err) {
+            // Ignore
+          }
+        }, LEAD_RESPONSE_TIMEOUT);
+      } else {
+        // Retry Lead nudge
+        sendHeartbeatToLead();
+      }
+    }
+    return;
+  }
+
+  // HB1: Send regular heartbeat
+  sendHeartbeatToLead();
+}
+
+// Start heartbeat timer
+const heartbeatTimer = setInterval(heartbeatTick, HEARTBEAT_INTERVAL);
+logInfo(`[Heartbeat] Watchdog started (interval: ${HEARTBEAT_INTERVAL}ms)`);
+
+// ============================================================
 // D2 (V3): DRY-RUN MODE
 // ============================================================
 
@@ -585,6 +753,39 @@ function handleMessage(client, message) {
           pid: process.pid,
         });
         logInfo(`Health check requested by client`);
+        break;
+      }
+
+      // V13 HB1-HB4: Heartbeat control
+      case 'heartbeat-enable': {
+        heartbeatEnabled = true;
+        logInfo('[Heartbeat] Enabled via protocol');
+        sendToClient(client, { event: 'heartbeat-status', enabled: true });
+        break;
+      }
+
+      case 'heartbeat-disable': {
+        heartbeatEnabled = false;
+        logInfo('[Heartbeat] Disabled via protocol');
+        sendToClient(client, { event: 'heartbeat-status', enabled: false });
+        break;
+      }
+
+      case 'heartbeat-status': {
+        sendToClient(client, {
+          event: 'heartbeat-status',
+          enabled: heartbeatEnabled,
+          leadNudgeCount,
+          awaitingResponse: awaitingLeadResponse,
+          lastHeartbeat: lastHeartbeatTime,
+        });
+        break;
+      }
+
+      case 'heartbeat-trigger': {
+        // Manually trigger a heartbeat
+        heartbeatTick();
+        sendToClient(client, { event: 'heartbeat-triggered' });
         break;
       }
 
