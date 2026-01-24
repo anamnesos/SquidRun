@@ -1770,13 +1770,32 @@ function setupMessagesTab() {
   });
 
   // Message input
+  // Message composer with autocomplete protection
   const input = document.getElementById('messageComposerInput');
+  let composerTypedChars = 0;
   if (input) {
     input.addEventListener('input', updateSendButtonState);
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      // Track actual keystrokes
+      if (e.key.length === 1 && e.isTrusted && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        composerTypedChars++;
+      }
+      if (e.key === 'Backspace' && composerTypedChars > 0) {
+        composerTypedChars--;
+      }
+
+      if (e.key === 'Enter' && !e.shiftKey && e.isTrusted && !e.isComposing) {
         e.preventDefault();
+        // Autocomplete guard
+        const value = input.value.trim();
+        if (composerTypedChars < 3 && value.length > 3) {
+          console.log('[MessageComposer] Blocked autocomplete');
+          input.value = '';
+          composerTypedChars = 0;
+          return;
+        }
         sendGroupMessage();
+        composerTypedChars = 0;
       }
     });
   }
