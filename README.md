@@ -10,12 +10,39 @@ Hivemind is a desktop app that runs multiple Claude Code CLI instances in parall
 
 ## Features
 
+### Core
 - **4 Persistent Terminals** - Each running a full Claude Code instance with all its tools
 - **Daemon Architecture** - Terminals survive app restarts (PTY processes managed by separate daemon)
 - **Agent-to-Agent Triggers** - Agents can trigger specific agents or groups via trigger files
 - **Auto-Sync** - Changes to shared context files automatically notify all agents
 - **Role-Based Context** - Each agent has its own working directory with role-specific CLAUDE.md
-- **Visual UI** - See all 4 agents working simultaneously in real-time
+
+### Developer Experience (V3)
+- **Dry-Run Mode** - Simulate multi-agent flow without spawning real Claude
+- **Session History** - View past sessions with duration and agents involved
+- **Projects Tab** - Quick-switch between recent projects
+- **Workflow Gate** - Enforce Lead → Reviewer → Workers approval flow
+
+### Self-Healing (V4)
+- **Auto-Unstick** - Detect and nudge frozen terminals automatically
+- **Agent Claims** - Track which agent owns which task
+- **Session Persistence** - Context summaries saved between sessions
+
+### Smart Automation (V6)
+- **Smart Routing** - Auto-assign tasks to best-performing agent
+- **Auto-Handoff** - Agents trigger next in chain on completion
+- **Conflict Queue** - Prevent simultaneous file writes
+- **Learning Mode** - Improve routing based on outcomes
+
+### Quality & Observability (V7)
+- **Activity Log** - Real-time event tracking with filters
+- **Quality Validation** - Confidence scoring for completions
+- **Rollback Support** - Checkpoint and restore file states
+
+### Testing & Automation (V8)
+- **Test Runner** - Auto-detect Jest/npm and run tests
+- **Test Results UI** - Display pass/fail with details
+- **CI Integration** - Pre-commit validation hooks
 
 ## How Triggers Work
 
