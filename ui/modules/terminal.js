@@ -293,6 +293,29 @@ async function killAllTerminals() {
   updateConnectionStatus('All terminals killed');
 }
 
+// Nudge a stuck pane - sends Escape then Enter to unstick Claude Code
+function nudgePane(paneId) {
+  // Send Escape (0x1B) to cancel any pending state
+  window.hivemind.pty.write(String(paneId), '\x1b');
+  // Brief delay then send Enter to prompt for new input
+  setTimeout(() => {
+    window.hivemind.pty.write(String(paneId), '\r');
+  }, 100);
+  updatePaneStatus(paneId, 'Nudged');
+  setTimeout(() => updatePaneStatus(paneId, 'Running'), 1000);
+}
+
+// Nudge all panes to unstick any churning agents
+function nudgeAllPanes() {
+  updateConnectionStatus('Nudging all agents...');
+  for (const paneId of PANE_IDS) {
+    nudgePane(paneId);
+  }
+  setTimeout(() => {
+    updateConnectionStatus('All agents nudged');
+  }, 200);
+}
+
 // Sync shared context to all panes
 async function syncSharedContext() {
   updateConnectionStatus('Syncing shared context...');
@@ -367,6 +390,8 @@ module.exports = {
   spawnClaude,
   spawnAllClaude,
   killAllTerminals,
+  nudgePane,
+  nudgeAllPanes,
   syncSharedContext,
   handleResize,
   getTerminal,
