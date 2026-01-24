@@ -174,30 +174,23 @@ function handleTriggerFile(filePath, filename) {
     return { success: false, reason: 'empty' };
   }
 
-  // Filter to only running Claude instances
-  const runningTargets = claudeRunning
-    ? targets.filter(paneId => claudeRunning.get(paneId) === 'running')
-    : [];
+  // Send to all target panes - don't filter by running state
+  // Terminals can always receive input, Claude state doesn't matter for direct messages
+  console.log(`[Trigger] ${filename} → panes ${targets.join(', ')}: ${message.substring(0, 50)}...`);
 
-  if (runningTargets.length > 0) {
-    console.log(`[Trigger] ${filename} → panes ${runningTargets.join(', ')}: ${message.substring(0, 50)}...`);
-    // Send to renderer which uses terminal.paste() for proper execution
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('inject-message', { panes: runningTargets, message: message + '\r' });
-    }
-
-    // Clear the trigger file after sending
-    try {
-      fs.writeFileSync(filePath, '', 'utf-8');
-    } catch (err) {
-      console.log(`[Trigger] Could not clear ${filename}: ${err.message}`);
-    }
-
-    return { success: true, notified: runningTargets };
-  } else {
-    console.log(`[Trigger] No running Claude in target panes for ${filename}`);
-    return { success: false, reason: 'no_running_targets' };
+  // Send to renderer which uses terminal.paste() for proper execution
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('inject-message', { panes: targets, message: message + '\r' });
   }
+
+  // Clear the trigger file after sending
+  try {
+    fs.writeFileSync(filePath, '', 'utf-8');
+  } catch (err) {
+    console.log(`[Trigger] Could not clear ${filename}: ${err.message}`);
+  }
+
+  return { success: true, notified: targets };
 }
 
 /**
