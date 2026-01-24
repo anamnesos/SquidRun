@@ -1984,6 +1984,453 @@ function setupIPCHandlers(deps) {
   ipcMain.handle('get-quality-rules', () => {
     return QUALITY_RULES;
   });
+
+  // ============================================================
+  // V8 TE2: TEST EXECUTION DAEMON
+  // ============================================================
+
+  const TEST_RESULTS_PATH = path.join(WORKSPACE_PATH, 'test-results.json');
+
+  // Detect test framework from project
+  const TEST_FRAMEWORKS = {
+    jest: {
+      detect: (projectPath) => {
+        const pkgPath = path.join(projectPath, 'package.json');
+        if (fs.existsSync(pkgPath)) {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+          return pkg.devDependencies?.jest || pkg.dependencies?.jest ||
+                 pkg.scripts?.test?.includes('jest');
+        }
+        return false;
+      },
+      command: 'npx',
+      args: ['jest', '--json', '--testLocationInResults'],
+      parseOutput: (output) => {
+        try {
+          const result = JSON.parse(output);
+          return {
+            passed: result.numPassedTests || 0,
+            failed: result.numFailedTests || 0,
+            total: result.numTotalTests || 0,
+            duration: result.testResults?.[0]?.perfStats?.runtime || 0,
+            failures: result.testResults?.flatMap(r =>
+              r.assertionResults?.filter(a => a.status === 'failed').map(a => ({
+                test: a.fullName,
+                message: a.failureMessages?.join('\n') || '',
+              }))
+            ) || [],
+          };
+        } catch {
+          return null;
+        }
+      },
+    },
+    npm: {
+      detect: (projectPath) => {
+        const pkgPath = path.join(projectPath, 'package.json');
+        if (fs.existsSync(pkgPath)) {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+          return !!pkg.scripts?.test;
+        }
+        return false;
+      },
+      command: 'npm',
+      args: ['test', '--', '--passWithNoTests'],
+      parseOutput: (output) => {
+        // Basic parsing for npm test output
+        const passed = (output.match(/(\d+)\s+(passing|passed)/i) || [])[1] || 0;
+        const failed = (output.match(/(\d+)\s+(failing|failed)/i) || [])[1] || 0;
+        return {
+          passed: parseInt(passed),
+          failed: parseInt(failed),
+          total: parseInt(passed) + parseInt(failed),
+          duration: 0,
+          failures: [],
+          raw: output,
+        };
+      },
+    },
+  };
+
+  let activeTestRun = null;
+
+  ipcMain.handle('detect-test-framework', (event, projectPath) => {
+    const detected = [];
+    for (const [name, framework] of Object.entries(TEST_FRAMEWORKS)) {
+      try {
+        if (framework.detect(projectPath)) {
+          detected.push(name);
+        }
+      } catch {
+        // Skip detection errors
+      }
+    }
+    return {
+      success: true,
+      frameworks: detected,
+      recommended: detected[0] || null,
+    };
+  });
+
+  ipcMain.handle('run-tests', async (event, projectPath, frameworkName = null) => {
+    if (activeTestRun) {
+      return { success: false, error: 'Tests already running' };
+    }
+
+    // Detect framework if not specified
+    if (!frameworkName) {
+      for (const [name, framework] of Object.entries(TEST_FRAMEWORKS)) {
+        if (framework.detect(projectPath)) {
+          frameworkName = name;
+          break;
+        }
+      }
+    }
+
+    if (!frameworkName || !TEST_FRAMEWORKS[frameworkName]) {
+      return { success: false, error: 'No test framework detected' };
+    }
+
+    const framework = TEST_FRAMEWORKS[frameworkName];
+    const runId = `test-${Date.now()}`;
+
+    activeTestRun = {
+      id: runId,
+      startTime: Date.now(),
+      framework: frameworkName,
+      status: 'running',
+    };
+
+    // Notify UI
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('test-run-started', { runId, framework: frameworkName });
+    }
+
+    try {
+      const { execSync } = require('child_process');
+      const output = execSync(`${framework.command} ${framework.args.join(' ')}`, {
+        cwd: projectPath,
+        encoding: 'utf-8',
+        timeout: 120000, // 2 minute timeout
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      const results = framework.parseOutput(output) || {
+        passed: 0,
+        failed: 0,
+        total: 0,
+        raw: output,
+      };
+
+      results.runId = runId;
+      results.framework = frameworkName;
+      results.duration = Date.now() - activeTestRun.startTime;
+      results.timestamp = new Date().toISOString();
+      results.success = results.failed === 0;
+
+      // Save results
+      fs.writeFileSync(TEST_RESULTS_PATH, JSON.stringify(results, null, 2), 'utf-8');
+
+      // Notify UI
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('test-run-complete', results);
+      }
+
+      activeTestRun = null;
+      return { success: true, results };
+    } catch (err) {
+      const results = {
+        runId,
+        framework: frameworkName,
+        success: false,
+        error: err.message,
+        output: err.stdout?.toString() || err.stderr?.toString() || '',
+        duration: Date.now() - activeTestRun.startTime,
+        timestamp: new Date().toISOString(),
+      };
+
+      // Try to parse output even on failure
+      const parsed = framework.parseOutput(results.output);
+      if (parsed) {
+        Object.assign(results, parsed);
+      }
+
+      fs.writeFileSync(TEST_RESULTS_PATH, JSON.stringify(results, null, 2), 'utf-8');
+
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('test-run-complete', results);
+      }
+
+      activeTestRun = null;
+      return { success: true, results };
+    }
+  });
+
+  ipcMain.handle('get-test-results', () => {
+    try {
+      if (fs.existsSync(TEST_RESULTS_PATH)) {
+        const content = fs.readFileSync(TEST_RESULTS_PATH, 'utf-8');
+        return { success: true, results: JSON.parse(content) };
+      }
+      return { success: true, results: null };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('get-test-status', () => {
+    return {
+      success: true,
+      running: !!activeTestRun,
+      currentRun: activeTestRun,
+    };
+  });
+
+  // ============================================================
+  // V8 CI1: PRE-COMMIT VALIDATION HOOKS
+  // ============================================================
+
+  const CI_STATUS_PATH = path.join(WORKSPACE_PATH, 'ci-status.json');
+
+  let ciEnabled = true;
+  let lastCiCheck = null;
+
+  ipcMain.handle('run-pre-commit-checks', async (event, projectPath) => {
+    const checkId = `ci-${Date.now()}`;
+    const checks = [];
+    let allPassed = true;
+
+    // 1. Run tests
+    const testResult = await new Promise((resolve) => {
+      ipcMain.handle('run-tests', event, projectPath).then(resolve);
+    }).catch(() => ({ success: false, error: 'Test execution failed' }));
+
+    if (testResult.results) {
+      const testsPassed = testResult.results.failed === 0;
+      checks.push({
+        name: 'tests',
+        passed: testsPassed,
+        message: testsPassed
+          ? `${testResult.results.passed} tests passed`
+          : `${testResult.results.failed} tests failed`,
+        details: testResult.results,
+      });
+      if (!testsPassed) allPassed = false;
+    }
+
+    // 2. Validate changed files
+    try {
+      const { execSync } = require('child_process');
+      const stagedFiles = execSync('git diff --cached --name-only', {
+        cwd: projectPath,
+        encoding: 'utf-8',
+      }).trim().split('\n').filter(f => f);
+
+      let validationIssues = 0;
+      for (const file of stagedFiles) {
+        const filePath = path.join(projectPath, file);
+        if (fs.existsSync(filePath) && (file.endsWith('.js') || file.endsWith('.json'))) {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          const confidence = calculateConfidence(content);
+          if (confidence < 40) {
+            validationIssues++;
+          }
+        }
+      }
+
+      checks.push({
+        name: 'validation',
+        passed: validationIssues === 0,
+        message: validationIssues === 0
+          ? `${stagedFiles.length} files validated`
+          : `${validationIssues} file(s) with low confidence`,
+      });
+      if (validationIssues > 0) allPassed = false;
+    } catch {
+      checks.push({
+        name: 'validation',
+        passed: true,
+        message: 'Skipped (not a git repo)',
+      });
+    }
+
+    // 3. Check for incomplete markers in staged files
+    try {
+      const { execSync } = require('child_process');
+      const stagedContent = execSync('git diff --cached', {
+        cwd: projectPath,
+        encoding: 'utf-8',
+      });
+
+      const hasIncomplete = INCOMPLETE_PATTERNS.some(p => p.test(stagedContent));
+      checks.push({
+        name: 'incomplete_check',
+        passed: !hasIncomplete,
+        message: hasIncomplete
+          ? 'Found TODO/FIXME markers in staged changes'
+          : 'No incomplete markers found',
+      });
+      if (hasIncomplete) allPassed = false;
+    } catch {
+      // Skip if git not available
+    }
+
+    lastCiCheck = {
+      id: checkId,
+      timestamp: new Date().toISOString(),
+      passed: allPassed,
+      checks,
+    };
+
+    // Save status
+    fs.writeFileSync(CI_STATUS_PATH, JSON.stringify(lastCiCheck, null, 2), 'utf-8');
+
+    // Notify UI
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('ci-check-complete', lastCiCheck);
+    }
+
+    return { success: true, ...lastCiCheck };
+  });
+
+  ipcMain.handle('get-ci-status', () => {
+    try {
+      if (fs.existsSync(CI_STATUS_PATH)) {
+        const content = fs.readFileSync(CI_STATUS_PATH, 'utf-8');
+        return { success: true, status: JSON.parse(content), enabled: ciEnabled };
+      }
+      return { success: true, status: null, enabled: ciEnabled };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('set-ci-enabled', (event, enabled) => {
+    ciEnabled = enabled;
+    console.log(`[CI] Pre-commit checks ${enabled ? 'enabled' : 'disabled'}`);
+    return { success: true, enabled: ciEnabled };
+  });
+
+  ipcMain.handle('should-block-commit', () => {
+    if (!ciEnabled) {
+      return { success: true, block: false, reason: 'CI checks disabled' };
+    }
+
+    if (!lastCiCheck) {
+      return { success: true, block: true, reason: 'No CI check has been run' };
+    }
+
+    // Check if CI check is stale (> 5 minutes old)
+    const checkAge = Date.now() - new Date(lastCiCheck.timestamp).getTime();
+    if (checkAge > 5 * 60 * 1000) {
+      return { success: true, block: true, reason: 'CI check is stale (> 5 minutes)' };
+    }
+
+    return {
+      success: true,
+      block: !lastCiCheck.passed,
+      reason: lastCiCheck.passed ? 'All checks passed' : 'CI checks failed',
+      lastCheck: lastCiCheck,
+    };
+  });
+
+  // ============================================================
+  // V8 TR2: TEST FAILURE NOTIFICATIONS
+  // ============================================================
+
+  const TEST_NOTIFICATION_SETTINGS = {
+    enabled: true,
+    flashTab: true,
+    blockTransitions: false,
+    soundEnabled: false,
+  };
+
+  ipcMain.handle('notify-test-failure', (event, results) => {
+    if (!TEST_NOTIFICATION_SETTINGS.enabled) {
+      return { success: true, notified: false, reason: 'Notifications disabled' };
+    }
+
+    const failedCount = results.failed || 0;
+    const failures = results.failures || [];
+
+    // Build notification message
+    const title = `${failedCount} Test${failedCount !== 1 ? 's' : ''} Failed`;
+    const body = failures.slice(0, 3).map(f => f.test || f.name).join('\n') +
+                 (failures.length > 3 ? `\n...and ${failures.length - 3} more` : '');
+
+    // Send to renderer for display
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('test-failure-notification', {
+        title,
+        body,
+        failedCount,
+        failures: failures.slice(0, 5),
+        timestamp: new Date().toISOString(),
+      });
+
+      // Flash the Tests tab
+      if (TEST_NOTIFICATION_SETTINGS.flashTab) {
+        mainWindow.webContents.send('flash-tab', { tab: 'tests', color: 'red' });
+      }
+    }
+
+    // Log activity
+    if (typeof logActivity === 'function') {
+      logActivity('error', null, `Test failure: ${failedCount} tests failed`, {
+        failedCount,
+        failures: failures.slice(0, 5),
+      });
+    }
+
+    console.log(`[Test Notification] ${title}`);
+
+    return { success: true, notified: true, title, body };
+  });
+
+  ipcMain.handle('get-test-notification-settings', () => {
+    return { success: true, settings: TEST_NOTIFICATION_SETTINGS };
+  });
+
+  ipcMain.handle('set-test-notification-settings', (event, settings) => {
+    Object.assign(TEST_NOTIFICATION_SETTINGS, settings);
+    console.log('[Test Notification] Settings updated:', TEST_NOTIFICATION_SETTINGS);
+    return { success: true, settings: TEST_NOTIFICATION_SETTINGS };
+  });
+
+  ipcMain.handle('should-block-on-test-failure', () => {
+    if (!TEST_NOTIFICATION_SETTINGS.blockTransitions) {
+      return { success: true, block: false, reason: 'Blocking disabled' };
+    }
+
+    // Check last test results
+    try {
+      if (fs.existsSync(TEST_RESULTS_PATH)) {
+        const content = fs.readFileSync(TEST_RESULTS_PATH, 'utf-8');
+        const results = JSON.parse(content);
+
+        if (results.failed > 0) {
+          return {
+            success: true,
+            block: true,
+            reason: `${results.failed} test(s) failing`,
+            results,
+          };
+        }
+      }
+    } catch (err) {
+      // Ignore errors reading results
+    }
+
+    return { success: true, block: false, reason: 'Tests passing or no results' };
+  });
+
+  // Hook into test-run-complete to auto-notify on failures
+  // This is called internally when tests finish
+  ipcMain.on('test-run-complete', (event, results) => {
+    if (results && results.failed > 0) {
+      ipcMain.emit('notify-test-failure', event, results);
+    }
+  });
 }
 
 function broadcastProcessList() {

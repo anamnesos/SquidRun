@@ -191,6 +191,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   tabs.setupPerformanceTab();   // PT2: Performance dashboard
   tabs.setupTemplatesTab();     // TM2: Template management
   tabs.setupActivityTab();      // OB2: Activity log
+  tabs.setupTestsTab();         // TR1: Test results panel
+  tabs.setupCIStatusIndicator(); // CI2: CI status indicator
 
   // Setup daemon listeners (for terminal reconnection)
   daemonHandlers.setupDaemonListeners(
