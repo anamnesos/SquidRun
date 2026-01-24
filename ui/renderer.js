@@ -92,58 +92,18 @@ function setupEventListeners() {
     }
   });
 
-  // Broadcast input - only send on explicit user Enter with non-empty content
+  // Broadcast input - BUTTON ONLY (Enter disabled due to autocomplete bug)
   const broadcastInput = document.getElementById('broadcastInput');
   let lastBroadcastTime = 0;
-  let userInputChars = 0; // Track user input (typing + paste)
 
   if (broadcastInput) {
-    // Track paste events - count pasted chars as user input
-    broadcastInput.addEventListener('paste', (e) => {
-      const pasteData = e.clipboardData?.getData('text') || '';
-      userInputChars += pasteData.length;
-    });
-
-    // Track actual user keystrokes
+    // BLOCK all Enter key submission - autocomplete bug bypasses all guards
     broadcastInput.addEventListener('keydown', (e) => {
-      // Count printable characters typed by user (not Ctrl combos except paste handled above)
-      if (e.key.length === 1 && e.isTrusted && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        userInputChars++;
-      }
-      // Backspace reduces count
-      if (e.key === 'Backspace' && userInputChars > 0) {
-        userInputChars--;
-      }
-
-      // SUBMIT: Only on Enter
-      if (e.key === 'Enter' && e.isTrusted && !e.isComposing) {
+      if (e.key === 'Enter') {
         e.preventDefault();
         e.stopPropagation();
-
-        const now = Date.now();
-        const value = broadcastInput.value.trim();
-
-        // Rate limit
-        if (now - lastBroadcastTime < 500) {
-          console.log('[Broadcast] Rate limited');
-          return;
-        }
-
-        // AUTOCOMPLETE GUARD: User must have input at least half the chars
-        // Autocomplete fills without triggering keydown/paste events
-        if (value.length > 3 && userInputChars < value.length / 2) {
-          console.log('[Broadcast] Blocked - autocomplete detected (input:', userInputChars, 'value:', value.length, ')');
-          broadcastInput.value = '';
-          userInputChars = 0;
-          return;
-        }
-
-        if (value.length > 0) {
-          lastBroadcastTime = now;
-          terminal.broadcast(value + '\r');
-          broadcastInput.value = '';
-          userInputChars = 0;
-        }
+        // Show hint
+        console.log('[Broadcast] Enter disabled - use Broadcast button');
       }
     });
     // Block ALL other submission methods
@@ -157,13 +117,25 @@ function setupEventListeners() {
     });
   }
 
-  // Broadcast button
+  // Broadcast button - ONLY way to send (Enter disabled)
   const broadcastBtn = document.getElementById('broadcastBtn');
+  let lastBroadcastTime = 0;
   if (broadcastBtn) {
-    broadcastBtn.addEventListener('click', () => {
+    broadcastBtn.addEventListener('click', (e) => {
+      // Must be trusted click event
+      if (!e.isTrusted) {
+        console.log('[Broadcast] Blocked untrusted click');
+        return;
+      }
+      const now = Date.now();
+      if (now - lastBroadcastTime < 500) {
+        console.log('[Broadcast] Rate limited');
+        return;
+      }
       const input = document.getElementById('broadcastInput');
-      if (input && input.value) {
-        terminal.broadcast(input.value + '\r');
+      if (input && input.value && input.value.trim()) {
+        lastBroadcastTime = now;
+        terminal.broadcast(input.value.trim() + '\r');
         input.value = '';
       }
     });
