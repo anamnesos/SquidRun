@@ -173,10 +173,13 @@ function setupEventListeners() {
     });
   });
 
-  // Fix: Blur terminals when any input/textarea gets focus
+  // Fix: Blur terminals when UI input/textarea gets focus (NOT xterm's internal textarea)
   // This prevents xterm from capturing keyboard input meant for form fields
   document.addEventListener('focusin', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+    // xterm uses a hidden textarea with class 'xterm-helper-textarea' for keyboard input
+    // We must NOT blur terminals when that textarea gets focus, or typing won't work
+    const isXtermTextarea = e.target.classList && e.target.classList.contains('xterm-helper-textarea');
+    if ((e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') && !isXtermTextarea) {
       // Blur all terminals so they don't capture keyboard input
       terminal.blurAllTerminals();
     }
