@@ -1,22 +1,20 @@
 /**
- * Hivemind Shared Configuration
- *
- * Centralized config for constants shared between main.js, terminal-daemon.js, etc.
+ * Shared configuration for Hivemind
+ * Used by main.js, terminal-daemon.js, and tests
  */
 
 const path = require('path');
 const os = require('os');
 
-// Base paths
-const PROJECT_ROOT = path.resolve(__dirname, '..');
-const WORKSPACE_PATH = path.join(PROJECT_ROOT, 'workspace');
-
-// Named pipe path for daemon communication
+// Named pipe path (Windows) or Unix socket
 const PIPE_PATH = os.platform() === 'win32'
   ? '\\\\.\\pipe\\hivemind-terminal'
   : '/tmp/hivemind-terminal.sock';
 
-// Instance directories - each pane gets its own working directory with role-specific CLAUDE.md
+// Workspace paths
+const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
+
+// Instance working directories (role injection)
 const INSTANCE_DIRS = {
   '1': path.join(WORKSPACE_PATH, 'instances', 'lead'),
   '2': path.join(WORKSPACE_PATH, 'instances', 'worker-a'),
@@ -24,7 +22,7 @@ const INSTANCE_DIRS = {
   '4': path.join(WORKSPACE_PATH, 'instances', 'reviewer'),
 };
 
-// Role names for display
+// Pane roles for display
 const PANE_ROLES = {
   '1': 'Lead',
   '2': 'Worker A',
@@ -32,7 +30,7 @@ const PANE_ROLES = {
   '4': 'Reviewer',
 };
 
-// Trigger file mappings
+// Trigger file targets - maps filename to target pane IDs
 const TRIGGER_TARGETS = {
   'lead.txt': ['1'],
   'worker-a.txt': ['2'],
@@ -42,11 +40,18 @@ const TRIGGER_TARGETS = {
   'all.txt': ['1', '2', '3', '4'],
 };
 
+// Protocol actions (client -> daemon)
+const PROTOCOL_ACTIONS = ['spawn', 'write', 'resize', 'kill', 'list', 'attach', 'ping', 'shutdown'];
+
+// Protocol events (daemon -> client)
+const PROTOCOL_EVENTS = ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected'];
+
 module.exports = {
-  PROJECT_ROOT,
-  WORKSPACE_PATH,
   PIPE_PATH,
+  WORKSPACE_PATH,
   INSTANCE_DIRS,
   PANE_ROLES,
   TRIGGER_TARGETS,
+  PROTOCOL_ACTIONS,
+  PROTOCOL_EVENTS,
 };
