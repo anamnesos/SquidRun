@@ -233,6 +233,51 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // HB4: Watchdog alert - all agents stuck, notify user
+  ipcRenderer.on('watchdog-alert', (event, data) => {
+    console.log('[Watchdog] Alert received:', data);
+
+    // Show desktop notification
+    if (Notification.permission === 'granted') {
+      new Notification('Hivemind Alert', {
+        body: 'All agents are stuck! Intervention needed.',
+        icon: 'assets/icon.png',
+        requireInteraction: true
+      });
+    } else if (Notification.permission !== 'denied') {
+      Notification.requestPermission().then(perm => {
+        if (perm === 'granted') {
+          new Notification('Hivemind Alert', {
+            body: 'All agents are stuck! Intervention needed.',
+            requireInteraction: true
+          });
+        }
+      });
+    }
+
+    // Play alert sound
+    try {
+      const audio = new Audio('assets/alert.mp3');
+      audio.play().catch(() => console.log('[Watchdog] Could not play alert sound'));
+    } catch (e) {
+      console.log('[Watchdog] Audio not available');
+    }
+
+    // Show visual alert in status bar
+    const statusBar = document.querySelector('.status-bar');
+    if (statusBar) {
+      const alert = document.createElement('span');
+      alert.className = 'watchdog-alert';
+      alert.textContent = ' ⚠️ ALL AGENTS STUCK - Click to nudge all';
+      alert.style.cssText = 'color: #ff5722; font-weight: bold; cursor: pointer; animation: pulse 1s infinite;';
+      alert.onclick = () => {
+        terminal.nudgeAllPanes();
+        alert.remove();
+      };
+      statusBar.appendChild(alert);
+    }
+  });
+
   // Setup daemon handlers
   daemonHandlers.setupStateListener();
   daemonHandlers.setupClaudeStateListener(daemonHandlers.handleSessionTimerState);
