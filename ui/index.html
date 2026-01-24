@@ -91,6 +91,17 @@
       justify-content: space-between;
       font-size: 12px;
       border-bottom: 1px solid #0f3460;
+      transition: background-color 0.1s ease-out;
+    }
+
+    /* U2: Visual flash when pane receives trigger */
+    .pane-header.trigger-flash {
+      animation: triggerFlash 0.3s ease-out;
+    }
+
+    @keyframes triggerFlash {
+      0% { background-color: #e94560; }
+      100% { background-color: #16213e; }
     }
 
     .pane-title {
@@ -445,6 +456,17 @@
     .btn-folder:hover {
       background: #3db892;
       border-color: #3db892;
+    }
+
+    .btn-danger {
+      background: transparent;
+      border: 1px solid #e94560;
+      color: #e94560;
+    }
+
+    .btn-danger:hover {
+      background: #e94560;
+      color: #fff;
     }
 
     /* Friction Panel */
@@ -1051,6 +1073,7 @@
       <button class="btn btn-folder" id="selectProjectBtn">Select Project</button>
       <button class="btn" id="syncBtn">Sync Context</button>
       <button class="btn" id="spawnAllBtn">Spawn All Claude</button>
+      <button class="btn btn-danger" id="killAllBtn">Kill All</button>
       <button class="btn btn-friction" id="frictionBtn">Friction <span class="friction-count" id="frictionBadge">0</span></button>
       <button class="btn settings-btn" id="settingsBtn">Settings</button>
       <button class="btn btn-panel" id="panelBtn">Panel</button>

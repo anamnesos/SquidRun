@@ -172,7 +172,8 @@ class DaemonClient extends EventEmitter {
           break;
 
         case 'attached':
-          this.emit('attached', msg.paneId, msg.pid, msg.alive);
+          // U1: Include scrollback in attached event
+          this.emit('attached', msg.paneId, msg.pid, msg.alive, msg.scrollback);
           break;
 
         case 'killed':
@@ -186,6 +187,19 @@ class DaemonClient extends EventEmitter {
 
         case 'pong':
           this.emit('pong');
+          break;
+
+        // D3: Handle graceful shutdown notification from daemon
+        case 'shutdown':
+          console.log('[DaemonClient] Daemon is shutting down:', msg.message);
+          this.emit('shutdown', msg.message, msg.timestamp);
+          // Don't attempt reconnect - daemon is intentionally shutting down
+          this.reconnecting = true; // Prevent auto-reconnect
+          break;
+
+        // D2: Handle health check response
+        case 'health':
+          this.emit('health', msg);
           break;
 
         default:
@@ -339,6 +353,16 @@ class DaemonClient extends EventEmitter {
   ping() {
     return this._send({
       action: 'ping',
+    });
+  }
+
+  /**
+   * Request health check from daemon
+   * Returns: uptime, terminal count, memory usage
+   */
+  health() {
+    return this._send({
+      action: 'health',
     });
   }
 

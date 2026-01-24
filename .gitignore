@@ -20,6 +20,7 @@ desktop.ini
 
 # Electron
 ui/daemon.pid
+ui/daemon.log
 
 # Runtime state (regenerated)
 workspace/state.json

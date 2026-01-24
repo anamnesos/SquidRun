@@ -38,13 +38,18 @@ const TRIGGER_TARGETS = {
   'reviewer.txt': ['4'],
   'workers.txt': ['2', '3'],
   'all.txt': ['1', '2', '3', '4'],
+  // "Others" triggers - send to all EXCEPT the sender
+  'others-lead.txt': ['2', '3', '4'],      // Lead sends to all others
+  'others-worker-a.txt': ['1', '3', '4'],  // Worker A sends to all others
+  'others-worker-b.txt': ['1', '2', '4'],  // Worker B sends to all others
+  'others-reviewer.txt': ['1', '2', '3'],  // Reviewer sends to all others
 };
 
 // Protocol actions (client -> daemon)
-const PROTOCOL_ACTIONS = ['spawn', 'write', 'resize', 'kill', 'list', 'attach', 'ping', 'shutdown'];
+const PROTOCOL_ACTIONS = ['spawn', 'write', 'resize', 'kill', 'list', 'attach', 'ping', 'shutdown', 'health'];
 
 // Protocol events (daemon -> client)
-const PROTOCOL_EVENTS = ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected'];
+const PROTOCOL_EVENTS = ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected', 'shutdown', 'health'];
 
 module.exports = {
   PIPE_PATH,
