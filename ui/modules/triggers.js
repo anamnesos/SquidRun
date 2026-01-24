@@ -14,6 +14,10 @@ let watcher = null; // Reference to watcher module for state checks
 // Worker pane IDs that require reviewer approval before triggering
 const WORKER_PANES = ['2', '3'];
 
+// BUG1 FIX: Track last sync time per pane to prevent self-sync
+const lastSyncTime = new Map(); // paneId -> timestamp
+const SYNC_DEBOUNCE_MS = 3000; // Skip sync if pane was synced within 3 seconds
+
 /**
  * Initialize the triggers module with shared state
  * @param {BrowserWindow} window - The main Electron window
@@ -54,16 +58,25 @@ function checkWorkflowGate(targets) {
   const state = watcher.readState();
   const currentState = state.state;
 
-  // Workers can be triggered in EXECUTING or CHECKPOINT_FIX states
-  const allowedStates = ['executing', 'checkpoint_fix'];
+  // Workers can be triggered in these states
+  // V12 FX3: Added planning states so team can coordinate anytime
+  const allowedStates = [
+    'executing',
+    'checkpoint_fix',
+    'idle',
+    'project_selected',
+    'planning',
+    'friction_sync',
+    'friction_logged'
+  ];
   if (allowedStates.includes(currentState)) {
     return { allowed: true };
   }
 
-  // BLOCKED: Reviewer hasn't approved yet
+  // BLOCKED: Only during review/verification phases
   return {
     allowed: false,
-    reason: `Workers blocked: state is '${currentState}', needs Reviewer approval first (plan-approved.md)`
+    reason: `Workers blocked during '${currentState}' - wait for review phase to complete`
   };
 }
 
@@ -104,15 +117,27 @@ function notifyAgents(agents, message) {
  */
 function notifyAllAgentsSync(triggerFile) {
   const message = `[HIVEMIND SYNC] ${triggerFile} was updated. Read workspace/${triggerFile} and respond.`;
+  const now = Date.now();
 
-  // Get list of running Claude panes
+  // Get list of running Claude panes, excluding recently synced (BUG1 FIX)
   const runningPanes = [];
+  const skippedPanes = [];
   if (claudeRunning) {
     for (const [paneId, status] of claudeRunning) {
       if (status === 'running') {
-        runningPanes.push(paneId);
+        const lastSync = lastSyncTime.get(paneId) || 0;
+        if (now - lastSync > SYNC_DEBOUNCE_MS) {
+          runningPanes.push(paneId);
+          lastSyncTime.set(paneId, now);
+        } else {
+          skippedPanes.push(paneId);
+        }
       }
     }
+  }
+
+  if (skippedPanes.length > 0) {
+    console.log(`[AUTO-SYNC] Skipped panes (recently synced): ${skippedPanes.join(', ')}`);
   }
 
   if (runningPanes.length > 0) {
@@ -122,7 +147,7 @@ function notifyAllAgentsSync(triggerFile) {
       mainWindow.webContents.send('inject-message', { panes: runningPanes, message: message + '\r' });
     }
   } else {
-    console.log(`[AUTO-SYNC] No Claude instances running to notify about ${triggerFile}`);
+    console.log(`[AUTO-SYNC] No Claude instances to notify about ${triggerFile}`);
   }
 
   // Also notify renderer for UI update
