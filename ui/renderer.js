@@ -129,6 +129,12 @@ function setupEventListeners() {
     killAllBtn.addEventListener('click', terminal.killAllTerminals);
   }
 
+  // Nudge all button - unstick churning agents
+  const nudgeAllBtn = document.getElementById('nudgeAllBtn');
+  if (nudgeAllBtn) {
+    nudgeAllBtn.addEventListener('click', terminal.nudgeAllPanes);
+  }
+
   // Sync button
   const syncBtn = document.getElementById('syncBtn');
   if (syncBtn) {

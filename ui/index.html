@@ -469,6 +469,17 @@
       color: #fff;
     }
 
+    .btn-nudge {
+      background: transparent;
+      border: 1px solid #ffc857;
+      color: #ffc857;
+    }
+
+    .btn-nudge:hover {
+      background: #ffc857;
+      color: #1a1a2e;
+    }
+
     /* Friction Panel */
     .friction-panel {
       background: #16213e;
@@ -1074,6 +1085,7 @@
       <button class="btn" id="syncBtn">Sync Context</button>
       <button class="btn" id="spawnAllBtn">Spawn All Claude</button>
       <button class="btn btn-danger" id="killAllBtn">Kill All</button>
+      <button class="btn btn-nudge" id="nudgeAllBtn" title="Unstick churning agents (Esc+Enter)">Nudge All</button>
       <button class="btn btn-friction" id="frictionBtn">Friction <span class="friction-count" id="frictionBadge">0</span></button>
       <button class="btn settings-btn" id="settingsBtn">Settings</button>
       <button class="btn btn-panel" id="panelBtn">Panel</button>
