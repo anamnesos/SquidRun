@@ -92,24 +92,41 @@ function setupEventListeners() {
     }
   });
 
-  // Broadcast input - only send on explicit Enter with non-empty content
+  // Broadcast input - only send on explicit user Enter with non-empty content
   const broadcastInput = document.getElementById('broadcastInput');
+  let lastBroadcastTime = 0;
   if (broadcastInput) {
     broadcastInput.addEventListener('keydown', (e) => {
-      // Only process Enter key, and only if there's actual content
-      if (e.key === 'Enter' && !e.isComposing) {
+      // DEFENSIVE: Only process real user Enter key presses
+      // - Must be Enter key
+      // - Must be trusted event (not programmatic)
+      // - Must not be composing (IME)
+      // - Must have rate limiting (prevent rapid-fire)
+      if (e.key === 'Enter' && e.isTrusted && !e.isComposing) {
         e.preventDefault();
         e.stopPropagation();
+
+        const now = Date.now();
+        if (now - lastBroadcastTime < 500) {
+          console.log('[Broadcast] Rate limited - too fast');
+          return;
+        }
+
         const value = broadcastInput.value.trim();
         // Don't send empty or whitespace-only messages
         if (value.length > 0) {
+          lastBroadcastTime = now;
           terminal.broadcast(value + '\r');
           broadcastInput.value = '';
         }
       }
     });
-    // Prevent form submission on any other events
+    // Block ALL other submission methods
     broadcastInput.addEventListener('change', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    broadcastInput.addEventListener('submit', (e) => {
       e.preventDefault();
       e.stopPropagation();
     });

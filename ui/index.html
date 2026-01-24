@@ -2708,15 +2708,17 @@
         </div>
       </div>
 
-      <div class="broadcast-bar">
+      <form class="broadcast-bar" autocomplete="off" onsubmit="return false;">
         <input type="text" class="broadcast-input" id="broadcastInput"
                placeholder="Type here to broadcast to all panes (Enter to send)"
                title="Send the same message to all 4 agent terminals at once"
-               autocomplete="off" autocorrect="off" autocapitalize="off"
+               autocomplete="new-password" autocorrect="off" autocapitalize="off"
                spellcheck="false" data-lpignore="true" data-form-type="other"
-               name="broadcast-input-no-autocomplete">
-        <button class="btn" id="broadcastBtn" title="Send message to all terminals">Broadcast</button>
-      </div>
+               data-1p-ignore="true" list=""
+               name="broadcast-input-random-8472"
+               readonly onfocus="this.removeAttribute('readonly');">
+        <button type="button" class="btn" id="broadcastBtn" title="Send message to all terminals">Broadcast</button>
+      </form>
     </div>
 
     <div class="right-panel" id="rightPanel">
