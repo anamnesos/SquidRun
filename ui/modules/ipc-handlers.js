@@ -78,8 +78,8 @@ function setupIPCHandlers(deps) {
     const instanceDir = INSTANCE_DIRS[paneId];
     const cwd = instanceDir || workingDir || process.cwd();
 
-    daemonClient.spawn(paneId, cwd);
-    return { paneId, cwd };
+    daemonClient.spawn(paneId, cwd, currentSettings.dryRun);
+    return { paneId, cwd, dryRun: currentSettings.dryRun };
   });
 
   ipcMain.handle('pty-write', (event, paneId, data) => {
@@ -101,6 +101,13 @@ function setupIPCHandlers(deps) {
   });
 
   ipcMain.handle('spawn-claude', (event, paneId, workingDir) => {
+    // V3: Dry-run mode - simulate without spawning real Claude
+    if (currentSettings.dryRun) {
+      claudeRunning.set(paneId, 'running');
+      broadcastClaudeState();
+      return { success: true, command: null, dryRun: true };
+    }
+
     if (!daemonClient || !daemonClient.connected) {
       return { success: false, error: 'Daemon not connected' };
     }
@@ -241,10 +248,23 @@ function setupIPCHandlers(deps) {
     }
 
     const projectPath = result.filePaths[0];
+    const projectName = path.basename(projectPath);
 
     const state = watcher.readState();
     state.project = projectPath;
     watcher.writeState(state);
+
+    // J2: Add to recent projects
+    const settings = loadSettings();
+    const projects = settings.recentProjects || [];
+    const filtered = projects.filter(p => p.path !== projectPath);
+    filtered.unshift({
+      name: projectName,
+      path: projectPath,
+      lastOpened: new Date().toISOString(),
+    });
+    settings.recentProjects = filtered.slice(0, 10); // Max 10
+    saveSettings(settings);
 
     watcher.transition(watcher.States.PROJECT_SELECTED);
 
@@ -252,7 +272,7 @@ function setupIPCHandlers(deps) {
       mainWindow.webContents.send('project-changed', projectPath);
     }
 
-    return { success: true, path: projectPath };
+    return { success: true, path: projectPath, name: projectName };
   });
 
   ipcMain.handle('get-project', () => {
@@ -594,6 +614,160 @@ function setupIPCHandlers(deps) {
     costAlertSent = false;
     saveUsageStats();
     return { success: true };
+  });
+
+  // ============================================================
+  // H2: SESSION HISTORY (Sprint 3.2)
+  // ============================================================
+
+  ipcMain.handle('get-session-history', (event, limit = 50) => {
+    const formatDuration = (ms) => {
+      const seconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      if (hours > 0) return `${hours}h ${minutes % 60}m`;
+      if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+      return `${seconds}s`;
+    };
+
+    const PANE_ROLES = { '1': 'Lead', '2': 'Worker A', '3': 'Worker B', '4': 'Reviewer' };
+
+    // Get history entries with enhanced data
+    const history = (usageStats.history || [])
+      .slice(-limit)
+      .reverse() // Most recent first
+      .map((entry, index) => ({
+        id: `session-${index}`,
+        pane: entry.pane,
+        role: PANE_ROLES[entry.pane] || `Pane ${entry.pane}`,
+        duration: entry.duration,
+        durationFormatted: formatDuration(entry.duration),
+        timestamp: entry.timestamp,
+        date: new Date(entry.timestamp).toLocaleDateString(),
+        time: new Date(entry.timestamp).toLocaleTimeString(),
+      }));
+
+    return {
+      success: true,
+      history,
+      total: usageStats.history ? usageStats.history.length : 0,
+    };
+  });
+
+  // ============================================================
+  // J2: RECENT PROJECTS (Sprint 3.2)
+  // ============================================================
+
+  ipcMain.handle('get-recent-projects', () => {
+    const settings = loadSettings();
+    const projects = settings.recentProjects || [];
+
+    // Verify projects still exist
+    const validProjects = projects.filter(p => {
+      try {
+        return fs.existsSync(p.path);
+      } catch {
+        return false;
+      }
+    });
+
+    // Update settings if some projects were removed
+    if (validProjects.length !== projects.length) {
+      settings.recentProjects = validProjects;
+      saveSettings(settings);
+    }
+
+    return {
+      success: true,
+      projects: validProjects,
+    };
+  });
+
+  ipcMain.handle('add-recent-project', (event, projectPath) => {
+    if (!projectPath || !fs.existsSync(projectPath)) {
+      return { success: false, error: 'Invalid project path' };
+    }
+
+    const settings = loadSettings();
+    const projects = settings.recentProjects || [];
+    const MAX_RECENT = 10;
+
+    // Get project name from path
+    const projectName = path.basename(projectPath);
+
+    // Remove if already exists (will re-add at top)
+    const filtered = projects.filter(p => p.path !== projectPath);
+
+    // Add to front
+    filtered.unshift({
+      name: projectName,
+      path: projectPath,
+      lastOpened: new Date().toISOString(),
+    });
+
+    // Limit to MAX_RECENT
+    settings.recentProjects = filtered.slice(0, MAX_RECENT);
+    saveSettings(settings);
+
+    return {
+      success: true,
+      projects: settings.recentProjects,
+    };
+  });
+
+  ipcMain.handle('remove-recent-project', (event, projectPath) => {
+    const settings = loadSettings();
+    const projects = settings.recentProjects || [];
+
+    settings.recentProjects = projects.filter(p => p.path !== projectPath);
+    saveSettings(settings);
+
+    return {
+      success: true,
+      projects: settings.recentProjects,
+    };
+  });
+
+  ipcMain.handle('clear-recent-projects', () => {
+    const settings = loadSettings();
+    settings.recentProjects = [];
+    saveSettings(settings);
+
+    return { success: true };
+  });
+
+  ipcMain.handle('switch-project', async (event, projectPath) => {
+    if (!projectPath || !fs.existsSync(projectPath)) {
+      return { success: false, error: 'Project path does not exist' };
+    }
+
+    // Update state with new project
+    const state = watcher.readState();
+    state.project = projectPath;
+    watcher.writeState(state);
+
+    // Add to recent projects
+    const settings = loadSettings();
+    const projects = settings.recentProjects || [];
+    const projectName = path.basename(projectPath);
+
+    const filtered = projects.filter(p => p.path !== projectPath);
+    filtered.unshift({
+      name: projectName,
+      path: projectPath,
+      lastOpened: new Date().toISOString(),
+    });
+    settings.recentProjects = filtered.slice(0, 10);
+    saveSettings(settings);
+
+    // Notify renderer
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('project-changed', projectPath);
+    }
+
+    watcher.transition(watcher.States.PROJECT_SELECTED);
+
+    return { success: true, path: projectPath, name: projectName };
   });
 }
 

@@ -172,6 +172,226 @@ function setupProcessesTab() {
 }
 
 // ============================================================
+// PROJECTS TAB
+// ============================================================
+
+// Recent projects data
+let recentProjects = [];
+let currentProjectPath = null;
+
+function getProjectName(projectPath) {
+  // Extract folder name from path
+  const parts = projectPath.replace(/\\/g, '/').split('/');
+  return parts[parts.length - 1] || projectPath;
+}
+
+function renderProjectsList() {
+  const listEl = document.getElementById('projectsList');
+  if (!listEl) return;
+
+  if (recentProjects.length === 0) {
+    listEl.innerHTML = '<div class="projects-empty">No recent projects</div>';
+    return;
+  }
+
+  listEl.innerHTML = recentProjects.map(project => {
+    const isActive = project.path === currentProjectPath;
+    return `
+      <div class="project-item ${isActive ? 'active' : ''}" data-path="${project.path}">
+        <div class="project-item-info">
+          <div class="project-item-name">${getProjectName(project.path)}</div>
+          <div class="project-item-path" title="${project.path}">${project.path}</div>
+        </div>
+        <button class="project-item-remove" data-path="${project.path}" title="Remove from list">X</button>
+      </div>
+    `;
+  }).join('');
+
+  // Click to switch project
+  listEl.querySelectorAll('.project-item').forEach(item => {
+    item.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('project-item-remove')) return;
+
+      const projectPath = item.dataset.path;
+      if (projectPath === currentProjectPath) return;
+
+      updateConnectionStatus(`Switching to ${getProjectName(projectPath)}...`);
+
+      try {
+        // Switch project via IPC
+        await ipcRenderer.invoke('switch-project', projectPath);
+        currentProjectPath = projectPath;
+        renderProjectsList();
+        updateConnectionStatus(`Switched to ${getProjectName(projectPath)}`);
+      } catch (err) {
+        updateConnectionStatus(`Failed to switch: ${err.message}`);
+      }
+    });
+  });
+
+  // Remove button
+  listEl.querySelectorAll('.project-item-remove').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const projectPath = btn.dataset.path;
+
+      try {
+        await ipcRenderer.invoke('remove-recent-project', projectPath);
+        recentProjects = recentProjects.filter(p => p.path !== projectPath);
+        renderProjectsList();
+        updateConnectionStatus(`Removed ${getProjectName(projectPath)} from recent`);
+      } catch (err) {
+        updateConnectionStatus(`Failed to remove: ${err.message}`);
+      }
+    });
+  });
+}
+
+async function loadRecentProjects() {
+  try {
+    const result = await ipcRenderer.invoke('get-recent-projects');
+    if (result && result.success) {
+      recentProjects = result.projects || [];
+    } else if (Array.isArray(result)) {
+      recentProjects = result;
+    }
+
+    // Get current project
+    const currentProject = await ipcRenderer.invoke('get-project');
+    currentProjectPath = currentProject;
+
+    renderProjectsList();
+  } catch (err) {
+    console.error('Error loading recent projects:', err);
+  }
+}
+
+async function addCurrentProject() {
+  try {
+    // Use existing project selector
+    const result = await ipcRenderer.invoke('select-project');
+    if (result.success) {
+      currentProjectPath = result.path;
+      await loadRecentProjects();
+      updateConnectionStatus(`Added project: ${getProjectName(result.path)}`);
+    }
+  } catch (err) {
+    updateConnectionStatus(`Failed to add project: ${err.message}`);
+  }
+}
+
+function setupProjectsTab() {
+  const refreshBtn = document.getElementById('refreshProjectsBtn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', loadRecentProjects);
+  }
+
+  const addBtn = document.getElementById('addProjectBtn');
+  if (addBtn) {
+    addBtn.addEventListener('click', addCurrentProject);
+  }
+
+  // Listen for project changes
+  ipcRenderer.on('project-changed', (event, projectPath) => {
+    currentProjectPath = projectPath;
+    loadRecentProjects();
+  });
+
+  loadRecentProjects();
+}
+
+// ============================================================
+// SESSION HISTORY TAB
+// ============================================================
+
+// Session history data
+let sessionHistory = [];
+
+function formatHistoryTime(isoString) {
+  const date = new Date(isoString);
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatDuration(ms) {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  if (hours > 0) return `${hours}h ${minutes % 60}m`;
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+  return `${seconds}s`;
+}
+
+function renderHistoryList() {
+  const listEl = document.getElementById('historyList');
+  if (!listEl) return;
+
+  if (sessionHistory.length === 0) {
+    listEl.innerHTML = '<div class="history-empty">No sessions recorded yet</div>';
+    return;
+  }
+
+  // Show most recent first
+  const sorted = [...sessionHistory].reverse();
+
+  listEl.innerHTML = sorted.map(session => `
+    <div class="history-item" data-timestamp="${session.timestamp}">
+      <div class="history-item-header">
+        <span class="history-item-agent">${AGENT_NAMES[session.pane] || `Pane ${session.pane}`}</span>
+        <span class="history-item-duration">${session.durationFormatted || formatDuration(session.duration)}</span>
+      </div>
+      <div class="history-item-time">${formatHistoryTime(session.timestamp)}</div>
+    </div>
+  `).join('');
+
+  // Click to show details
+  listEl.querySelectorAll('.history-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const timestamp = item.dataset.timestamp;
+      const session = sessionHistory.find(s => s.timestamp === timestamp);
+      if (session) {
+        const details = [
+          `Agent: ${AGENT_NAMES[session.pane] || `Pane ${session.pane}`}`,
+          `Duration: ${session.durationFormatted || formatDuration(session.duration)}`,
+          `Started: ${formatHistoryTime(session.timestamp)}`,
+        ];
+        if (session.filesModified) {
+          details.push(`Files Modified: ${session.filesModified.join(', ')}`);
+        }
+        if (session.commandsRun) {
+          details.push(`Commands: ${session.commandsRun}`);
+        }
+        alert(`Session Details\n\n${details.join('\n')}`);
+      }
+    });
+  });
+}
+
+async function loadSessionHistory() {
+  try {
+    const stats = await ipcRenderer.invoke('get-usage-stats');
+    if (stats && stats.recentSessions) {
+      sessionHistory = stats.recentSessions;
+      renderHistoryList();
+    }
+  } catch (err) {
+    console.error('Error loading session history:', err);
+  }
+}
+
+function setupHistoryTab() {
+  const refreshBtn = document.getElementById('refreshHistoryBtn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', loadSessionHistory);
+  }
+  loadSessionHistory();
+}
+
+// ============================================================
 // BUILD PROGRESS TAB
 // ============================================================
 
@@ -595,10 +815,14 @@ module.exports = {
   switchTab,
   setupProcessesTab,
   setupBuildProgressTab,
+  setupHistoryTab,
+  setupProjectsTab,
   setupFrictionPanel,
   setupRightPanel,
   updateBuildProgress,
   refreshBuildProgress,
   loadProcesses,
   loadScreenshots,
+  loadSessionHistory,
+  loadRecentProjects,
 };

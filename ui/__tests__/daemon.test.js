@@ -249,7 +249,7 @@ describe('DaemonClient', () => {
       const msg = JSON.stringify({ event: 'spawned', paneId: '1', pid: 9999 }) + '\n';
       mockSocket.emit('data', msg);
 
-      expect(spawnedHandler).toHaveBeenCalledWith('1', 9999);
+      expect(spawnedHandler).toHaveBeenCalledWith('1', 9999, false);
       expect(client.terminals.has('1')).toBe(true);
       expect(client.terminals.get('1').pid).toBe(9999);
     });

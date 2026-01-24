@@ -182,6 +182,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   tabs.setupRightPanel(terminal.handleResize);
   tabs.setupProcessesTab();
   tabs.setupBuildProgressTab();
+  tabs.setupHistoryTab();
+  tabs.setupProjectsTab();
 
   // Setup daemon listeners (for terminal reconnection)
   daemonHandlers.setupDaemonListeners(
