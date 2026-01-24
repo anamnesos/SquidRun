@@ -300,17 +300,19 @@ function sendMessageToQueue(fromPaneId, toPaneId, content) {
   fs.writeFileSync(tempPath, JSON.stringify(messages, null, 2), 'utf-8');
   fs.renameSync(tempPath, queueFile);
 
-  // HYBRID: Also write to file trigger as backup delivery mechanism
-  // This ensures message is delivered even if queue watcher isn't running
+  // HYBRID: File trigger backup DISABLED to prevent duplicate messages
+  // The queue-based delivery is the primary mechanism now
+  // Uncomment below to re-enable file trigger fallback:
+  /*
   try {
     const targetAgent = PANE_TO_AGENT[toPaneId];
     const triggerFile = path.join(TRIGGERS_PATH, `${targetAgent}.txt`);
     const triggerContent = `(${PANE_ROLES[fromPaneId].toUpperCase().replace(' ', '-')}): ${content}`;
     fs.writeFileSync(triggerFile, triggerContent, 'utf-8');
   } catch (triggerErr) {
-    // Trigger write failed, but queue write succeeded - still OK
     console.error('[Hivemind MCP] Trigger fallback write failed:', triggerErr.message);
   }
+  */
 
   return { success: true, messageId, to: PANE_ROLES[toPaneId] };
 }
