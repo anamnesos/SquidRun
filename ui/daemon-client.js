@@ -28,6 +28,7 @@ class DaemonClient extends EventEmitter {
     this.buffer = '';
     this.reconnecting = false;
     this.terminals = new Map(); // Cache of known terminals
+    this.lastActivity = new Map(); // V4: Track last activity time per pane
   }
 
   /**
@@ -144,6 +145,7 @@ class DaemonClient extends EventEmitter {
           break;
 
         case 'data':
+          this.lastActivity.set(msg.paneId, Date.now()); // V4: Track activity
           this.emit('data', msg.paneId, msg.data);
           break;
 
@@ -428,6 +430,23 @@ class DaemonClient extends EventEmitter {
    */
   getTerminals() {
     return Array.from(this.terminals.values());
+  }
+
+  /**
+   * V4: Get last activity timestamp for a pane
+   * @param {string} paneId
+   * @returns {number|null} timestamp or null if no activity recorded
+   */
+  getLastActivity(paneId) {
+    return this.lastActivity.get(paneId) || null;
+  }
+
+  /**
+   * V4: Get all activity timestamps
+   * @returns {Object} paneId -> timestamp
+   */
+  getAllActivity() {
+    return Object.fromEntries(this.lastActivity);
   }
 
   /**

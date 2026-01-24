@@ -135,7 +135,107 @@ function readState() {
     total_checkpoints: 0,
     friction_count: 0,
     error: null,
+    // V4 CB2: Agent claims
+    claims: {},
   };
+}
+
+// ============================================================
+// V4 CB2: AGENT CLAIM/RELEASE PROTOCOL
+// ============================================================
+
+const PANE_ROLES = { '1': 'Lead', '2': 'Worker A', '3': 'Worker B', '4': 'Reviewer' };
+
+/**
+ * Claim an agent role for a task
+ * @param {string} paneId - The pane/agent ID (1-4)
+ * @param {string} taskId - The task being claimed
+ * @param {string} [description] - Optional description
+ * @returns {{ success: boolean, error?: string }}
+ */
+function claimAgent(paneId, taskId, description = '') {
+  const state = readState();
+  if (!state.claims) state.claims = {};
+
+  // Check if already claimed by someone else
+  for (const [existingPane, claim] of Object.entries(state.claims)) {
+    if (claim.taskId === taskId && existingPane !== paneId) {
+      return {
+        success: false,
+        error: `Task "${taskId}" already claimed by ${PANE_ROLES[existingPane] || existingPane}`,
+      };
+    }
+  }
+
+  // Claim the task
+  state.claims[paneId] = {
+    taskId,
+    description,
+    claimedAt: new Date().toISOString(),
+    role: PANE_ROLES[paneId] || `Pane ${paneId}`,
+  };
+
+  writeState(state);
+  console.log(`[Claims] ${PANE_ROLES[paneId]} claimed task: ${taskId}`);
+
+  // Notify renderer
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('claims-changed', state.claims);
+  }
+
+  return { success: true, claim: state.claims[paneId] };
+}
+
+/**
+ * Release an agent's claim
+ * @param {string} paneId - The pane/agent ID
+ * @returns {{ success: boolean }}
+ */
+function releaseAgent(paneId) {
+  const state = readState();
+  if (!state.claims) state.claims = {};
+
+  const hadClaim = !!state.claims[paneId];
+  delete state.claims[paneId];
+
+  writeState(state);
+  if (hadClaim) {
+    console.log(`[Claims] ${PANE_ROLES[paneId]} released claim`);
+  }
+
+  // Notify renderer
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('claims-changed', state.claims);
+  }
+
+  return { success: true };
+}
+
+/**
+ * Get all current claims
+ * @returns {Object} paneId -> claim info
+ */
+function getClaims() {
+  const state = readState();
+  return state.claims || {};
+}
+
+/**
+ * Clear all claims (for fresh start)
+ * @returns {{ success: boolean }}
+ */
+function clearClaims() {
+  const state = readState();
+  state.claims = {};
+  writeState(state);
+
+  console.log('[Claims] All claims cleared');
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('claims-changed', {});
+  }
+
+  return { success: true };
 }
 
 function writeState(state) {
@@ -323,6 +423,12 @@ module.exports = {
   // Conflict detection
   checkFileConflicts,
   getLastConflicts,
+
+  // V4 CB2: Agent claims
+  claimAgent,
+  releaseAgent,
+  getClaims,
+  clearClaims,
 
   // Watcher control
   startWatcher,

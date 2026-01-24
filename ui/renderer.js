@@ -175,6 +175,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   daemonHandlers.setupCostAlertListener();
   daemonHandlers.setupRefreshButtons(terminal.sendToPane);
   daemonHandlers.setupProjectListener();
+  daemonHandlers.setupAutoTriggerListener();  // AT2: Auto-trigger feedback
 
   // Setup UI panels
   tabs.setupFrictionPanel();
@@ -194,6 +195,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Load initial project path
   await daemonHandlers.loadInitialProject();
+
+  // CB1: Load initial agent tasks on startup
+  await daemonHandlers.loadInitialAgentTasks();
 
   // Check auto-spawn after terminals are ready
   setTimeout(() => {
