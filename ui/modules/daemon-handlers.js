@@ -136,6 +136,92 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 }
 
 // ============================================================
+// CB1: STARTUP STATE DISPLAY - Show who's doing what
+// ============================================================
+
+function updateAgentTasks(state) {
+  // Update task display for each pane based on agent_claims in state
+  const claims = state.agent_claims || {};
+
+  for (const paneId of PANE_IDS) {
+    const taskEl = document.getElementById(`task-${paneId}`);
+    if (taskEl) {
+      const task = claims[paneId];
+      if (task) {
+        taskEl.textContent = task;
+        taskEl.classList.add('has-task');
+        taskEl.title = `Current task: ${task}`;
+      } else {
+        taskEl.textContent = '';
+        taskEl.classList.remove('has-task');
+        taskEl.title = '';
+      }
+    }
+  }
+}
+
+// Load initial agent tasks on startup
+async function loadInitialAgentTasks() {
+  try {
+    const state = await ipcRenderer.invoke('get-state');
+    if (state) {
+      updateAgentTasks(state);
+    }
+  } catch (err) {
+    console.error('[CB1] Error loading initial agent tasks:', err);
+  }
+}
+
+// ============================================================
+// AT2: AUTO-TRIGGER UI FEEDBACK
+// ============================================================
+
+function showAutoTriggerFeedback(data) {
+  const { fromPane, toPane, reason } = data;
+  const fromRole = PANE_ROLES[fromPane] || `Pane ${fromPane}`;
+  const toRole = PANE_ROLES[toPane] || `Pane ${toPane}`;
+
+  console.log(`[Auto-Trigger] ${fromRole} → ${toRole}: ${reason}`);
+
+  // Flash the target pane header
+  const targetPane = document.querySelector(`.pane[data-pane-id="${toPane}"]`);
+  if (targetPane) {
+    const header = targetPane.querySelector('.pane-header');
+    if (header) {
+      header.classList.remove('auto-triggered');
+      void header.offsetWidth; // Force reflow
+      header.classList.add('auto-triggered');
+      setTimeout(() => header.classList.remove('auto-triggered'), 500);
+    }
+  }
+
+  // Show indicator notification
+  const indicator = document.createElement('div');
+  indicator.className = 'auto-trigger-indicator';
+  indicator.innerHTML = `<span class="auto-trigger-icon">⚡</span>${fromRole} → ${toRole}`;
+  document.body.appendChild(indicator);
+
+  // Fade out and remove
+  setTimeout(() => {
+    indicator.classList.add('fade-out');
+    setTimeout(() => indicator.remove(), 500);
+  }, 3000);
+}
+
+function setupAutoTriggerListener() {
+  ipcRenderer.on('auto-trigger', (event, data) => {
+    showAutoTriggerFeedback(data);
+  });
+
+  // Also listen for completion detected events
+  ipcRenderer.on('completion-detected', (event, data) => {
+    const { paneId, pattern } = data;
+    console.log(`[Completion] Pane ${paneId} completed: ${pattern}`);
+    showToast(`${PANE_ROLES[paneId]} completed task`, 'info');
+  });
+}
+
+// ============================================================
 // STATE DISPLAY
 // ============================================================
 
@@ -166,6 +252,9 @@ function updateStateDisplay(state) {
       badge.classList.toggle('idle', !isActive);
     }
   }
+
+  // CB1: Update agent task display
+  updateAgentTasks(state);
 
   updateConnectionStatus(`State: ${STATE_DISPLAY_NAMES[state.state] || state.state}`);
 }
@@ -404,4 +493,10 @@ module.exports = {
   selectProject,
   loadInitialProject,
   showToast,
+  // CB1: Startup state display
+  updateAgentTasks,
+  loadInitialAgentTasks,
+  // AT2: Auto-trigger feedback
+  setupAutoTriggerListener,
+  showAutoTriggerFeedback,
 };

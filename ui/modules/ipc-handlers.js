@@ -769,6 +769,199 @@ function setupIPCHandlers(deps) {
 
     return { success: true, path: projectPath, name: projectName };
   });
+
+  // ============================================================
+  // V4: AUTO-NUDGE (AR2)
+  // ============================================================
+
+  ipcMain.handle('nudge-agent', (event, paneId, message) => {
+    if (!daemonClient || !daemonClient.connected) {
+      return { success: false, error: 'Daemon not connected' };
+    }
+
+    const nudgeMessage = message || '[HIVEMIND] Are you still working? Please respond with your current status.';
+
+    // Check if Claude is running in this pane
+    if (claudeRunning.get(paneId) !== 'running') {
+      return { success: false, error: 'Claude not running in this pane' };
+    }
+
+    // Send nudge via terminal
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('inject-message', {
+        panes: [paneId],
+        message: nudgeMessage + '\r'
+      });
+    }
+
+    console.log(`[Auto-Nudge] Sent to pane ${paneId}: ${nudgeMessage.substring(0, 50)}...`);
+
+    return { success: true, pane: paneId };
+  });
+
+  ipcMain.handle('nudge-all-stuck', () => {
+    const stuckThreshold = currentSettings.stuckThreshold || 60000; // 60 seconds default
+    const now = Date.now();
+    const nudged = [];
+
+    // Check each pane for stuck status
+    for (const [paneId, status] of claudeRunning) {
+      if (status === 'running') {
+        const lastActivity = daemonClient.getLastActivity(paneId);
+        if (lastActivity && (now - lastActivity) > stuckThreshold) {
+          // Nudge this agent
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('inject-message', {
+              panes: [paneId],
+              message: '[HIVEMIND] No activity detected. Please respond with your current status.\r'
+            });
+          }
+          nudged.push(paneId);
+        }
+      }
+    }
+
+    console.log(`[Auto-Nudge] Nudged ${nudged.length} stuck agents: ${nudged.join(', ')}`);
+    return { success: true, nudged };
+  });
+
+  // ============================================================
+  // V4: COMPLETION DETECTION (AT1)
+  // ============================================================
+
+  // Patterns that indicate an agent has completed their task
+  const COMPLETION_PATTERNS = [
+    /task\s+(complete|done|finished)/i,
+    /completed?\s+(task|work|assignment)/i,
+    /ready\s+for\s+(review|next|handoff)/i,
+    /handing\s+off\s+to/i,
+    /trigger(ing|ed)?\s+(lead|worker|reviewer)/i,
+    /✅\s*(done|complete|finished)/i,
+    /DONE:/i,
+    /COMPLETE:/i,
+  ];
+
+  ipcMain.handle('check-completion', (event, text) => {
+    for (const pattern of COMPLETION_PATTERNS) {
+      if (pattern.test(text)) {
+        return { completed: true, pattern: pattern.toString() };
+      }
+    }
+    return { completed: false };
+  });
+
+  ipcMain.handle('get-completion-patterns', () => {
+    return COMPLETION_PATTERNS.map(p => p.toString());
+  });
+
+  // ============================================================
+  // V4 CB2: AGENT CLAIMS
+  // ============================================================
+
+  ipcMain.handle('claim-agent', (event, paneId, taskId, description) => {
+    return watcher.claimAgent(paneId, taskId, description);
+  });
+
+  ipcMain.handle('release-agent', (event, paneId) => {
+    return watcher.releaseAgent(paneId);
+  });
+
+  ipcMain.handle('get-claims', () => {
+    return watcher.getClaims();
+  });
+
+  ipcMain.handle('clear-claims', () => {
+    return watcher.clearClaims();
+  });
+
+  // ============================================================
+  // V4 CP1: SESSION SUMMARY PERSISTENCE
+  // ============================================================
+
+  const SESSION_SUMMARY_PATH = path.join(WORKSPACE_PATH, 'session-summaries.json');
+
+  ipcMain.handle('save-session-summary', (event, summary) => {
+    try {
+      let summaries = [];
+      if (fs.existsSync(SESSION_SUMMARY_PATH)) {
+        const content = fs.readFileSync(SESSION_SUMMARY_PATH, 'utf-8');
+        summaries = JSON.parse(content);
+      }
+
+      // Add new summary with metadata
+      summaries.push({
+        ...summary,
+        savedAt: new Date().toISOString(),
+        id: `session-${Date.now()}`,
+      });
+
+      // Keep last 50 summaries
+      if (summaries.length > 50) {
+        summaries = summaries.slice(-50);
+      }
+
+      // Atomic write
+      const tempPath = SESSION_SUMMARY_PATH + '.tmp';
+      fs.writeFileSync(tempPath, JSON.stringify(summaries, null, 2), 'utf-8');
+      fs.renameSync(tempPath, SESSION_SUMMARY_PATH);
+
+      console.log('[Session Summary] Saved summary:', summary.title || 'Untitled');
+      return { success: true, id: summaries[summaries.length - 1].id };
+    } catch (err) {
+      console.error('[Session Summary] Error saving:', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('get-session-summaries', (event, limit = 10) => {
+    try {
+      if (!fs.existsSync(SESSION_SUMMARY_PATH)) {
+        return { success: true, summaries: [] };
+      }
+
+      const content = fs.readFileSync(SESSION_SUMMARY_PATH, 'utf-8');
+      const summaries = JSON.parse(content);
+
+      // Return most recent first
+      return {
+        success: true,
+        summaries: summaries.slice(-limit).reverse(),
+        total: summaries.length,
+      };
+    } catch (err) {
+      return { success: false, error: err.message, summaries: [] };
+    }
+  });
+
+  ipcMain.handle('get-latest-summary', () => {
+    try {
+      if (!fs.existsSync(SESSION_SUMMARY_PATH)) {
+        return { success: true, summary: null };
+      }
+
+      const content = fs.readFileSync(SESSION_SUMMARY_PATH, 'utf-8');
+      const summaries = JSON.parse(content);
+
+      if (summaries.length === 0) {
+        return { success: true, summary: null };
+      }
+
+      return { success: true, summary: summaries[summaries.length - 1] };
+    } catch (err) {
+      return { success: false, error: err.message, summary: null };
+    }
+  });
+
+  ipcMain.handle('clear-session-summaries', () => {
+    try {
+      if (fs.existsSync(SESSION_SUMMARY_PATH)) {
+        fs.unlinkSync(SESSION_SUMMARY_PATH);
+      }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
 }
 
 function broadcastProcessList() {

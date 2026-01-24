@@ -309,6 +309,67 @@
       background: #555;
     }
 
+    /* CB1: Agent task display */
+    .agent-task {
+      font-size: 10px;
+      color: #888;
+      background: rgba(0,0,0,0.2);
+      padding: 2px 6px;
+      border-radius: 3px;
+      margin-left: 8px;
+      max-width: 120px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: none;
+    }
+
+    .agent-task.has-task {
+      display: inline-block;
+      color: #ffc857;
+      background: rgba(255, 200, 87, 0.1);
+    }
+
+    /* AT2: Auto-trigger feedback */
+    .auto-trigger-indicator {
+      position: fixed;
+      top: 50px;
+      right: 20px;
+      background: #16213e;
+      border: 1px solid #4ecca3;
+      border-radius: 6px;
+      padding: 10px 16px;
+      font-size: 12px;
+      color: #4ecca3;
+      z-index: 10000;
+      animation: autoTriggerSlideIn 0.3s ease;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    .auto-trigger-indicator.fade-out {
+      opacity: 0;
+      transition: opacity 0.5s;
+    }
+
+    @keyframes autoTriggerSlideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    .auto-trigger-icon {
+      margin-right: 8px;
+    }
+
+    /* Pane header pulse for auto-trigger */
+    .pane-header.auto-triggered {
+      animation: autoTriggerPulse 0.5s ease-out;
+    }
+
+    @keyframes autoTriggerPulse {
+      0% { background-color: #4ecca3; }
+      100% { background-color: #16213e; }
+    }
+
     .pane-title {
       display: flex;
       align-items: center;
@@ -1381,7 +1442,7 @@
       <div class="pane-grid">
         <div class="pane" data-pane-id="1">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-badge idle" id="badge-1"></span>Lead (Ctrl+1)</span>
+            <span class="pane-title"><span class="agent-badge idle" id="badge-1"></span>Lead (Ctrl+1)<span class="agent-task" id="task-1"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-1" title="Session time">0:00</span>
               <span class="pane-status" id="status-1">Ready</span>
@@ -1393,7 +1454,7 @@
 
         <div class="pane" data-pane-id="2">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-badge idle" id="badge-2"></span>Worker A (Ctrl+2)</span>
+            <span class="pane-title"><span class="agent-badge idle" id="badge-2"></span>Worker A (Ctrl+2)<span class="agent-task" id="task-2"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-2" title="Session time">0:00</span>
               <span class="pane-status" id="status-2">Ready</span>
@@ -1405,7 +1466,7 @@
 
         <div class="pane" data-pane-id="3">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-badge idle" id="badge-3"></span>Worker B (Ctrl+3)</span>
+            <span class="pane-title"><span class="agent-badge idle" id="badge-3"></span>Worker B (Ctrl+3)<span class="agent-task" id="task-3"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-3" title="Session time">0:00</span>
               <span class="pane-status" id="status-3">Ready</span>
@@ -1417,7 +1478,7 @@
 
         <div class="pane" data-pane-id="4">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-badge idle" id="badge-4"></span>Reviewer (Ctrl+4)</span>
+            <span class="pane-title"><span class="agent-badge idle" id="badge-4"></span>Reviewer (Ctrl+4)<span class="agent-task" id="task-4"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-4" title="Session time">0:00</span>
               <span class="pane-status" id="status-4">Ready</span>

@@ -48,6 +48,8 @@ const DEFAULT_SETTINGS = {
   costAlertThreshold: 5.00,
   dryRun: false,  // V3: Simulate without spawning real Claude
   recentProjects: [],  // V3 J2: Recent projects list (max 10)
+  stuckThreshold: 60000,  // V4: Auto-nudge after 60 seconds of no activity
+  autoNudge: true,  // V4: Enable automatic stuck detection and nudging
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };
@@ -242,6 +244,32 @@ async function initDaemonClient() {
   const connected = await daemonClient.connect();
   if (connected) {
     console.log('[Main] Successfully connected to terminal daemon');
+
+    // V4: Auto-unstick timer - check for stuck terminals every 30 seconds
+    if (currentSettings.autoNudge) {
+      setInterval(() => {
+        const now = Date.now();
+        const threshold = currentSettings.stuckThreshold || 60000;
+
+        for (const [paneId, status] of claudeRunning) {
+          if (status === 'running') {
+            const lastActivity = daemonClient.getLastActivity(paneId);
+            if (lastActivity && (now - lastActivity) > threshold) {
+              console.log(`[Auto-Unstick] Pane ${paneId} stuck for ${Math.round((now - lastActivity) / 1000)}s, sending ESC+Enter`);
+              // Send ESC to cancel any pending input, then Enter to unstick
+              daemonClient.write(paneId, '\x1b'); // ESC
+              setTimeout(() => {
+                daemonClient.write(paneId, '\r'); // Enter
+              }, 100);
+              // Notify UI
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('agent-unstuck', { paneId, after: now - lastActivity });
+              }
+            }
+          }
+        }
+      }, 30000); // Check every 30 seconds
+    }
   } else {
     console.error('[Main] Failed to connect to terminal daemon');
   }

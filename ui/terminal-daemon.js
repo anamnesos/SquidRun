@@ -69,11 +69,14 @@ function formatUptime(seconds) {
   return `${secs}s`;
 }
 
-// Store PTY processes: Map<paneId, { pty, pid, alive, cwd, scrollback, dryRun }>
+// Store PTY processes: Map<paneId, { pty, pid, alive, cwd, scrollback, dryRun, lastActivity }>
 const terminals = new Map();
 
 // U1: Scrollback buffer settings - keep last 50KB of output per terminal
 const SCROLLBACK_MAX_SIZE = 50000;
+
+// V4 AR1: Default stuck threshold (60 seconds)
+const DEFAULT_STUCK_THRESHOLD = 60000;
 
 // ============================================================
 // D2 (V3): DRY-RUN MODE
@@ -210,6 +213,7 @@ function spawnTerminal(paneId, cwd, dryRun = false) {
       scrollback: '',
       dryRun: true,
       inputBuffer: '', // Buffer for accumulating input
+      lastActivity: Date.now(), // V4 AR1: Track last activity
     };
 
     terminals.set(paneId, terminalInfo);
@@ -247,12 +251,16 @@ function spawnTerminal(paneId, cwd, dryRun = false) {
     cwd: workDir,
     scrollback: '', // U1: Buffer for scrollback persistence
     dryRun: false,
+    lastActivity: Date.now(), // V4 AR1: Track last activity
   };
 
   terminals.set(paneId, terminalInfo);
 
   // Forward PTY output to all connected clients
   ptyProcess.onData((data) => {
+    // V4 AR1: Track last activity time
+    terminalInfo.lastActivity = Date.now();
+
     // U1: Buffer output for scrollback persistence
     terminalInfo.scrollback += data;
     if (terminalInfo.scrollback.length > SCROLLBACK_MAX_SIZE) {
@@ -370,9 +378,32 @@ function listTerminals() {
       scrollback: info.scrollback || '',
       // V3: Include dry-run flag
       dryRun: info.dryRun || false,
+      // V4 AR1: Include last activity timestamp
+      lastActivity: info.lastActivity || null,
     });
   }
   return list;
+}
+
+// V4 AR1: Get stuck terminals (no activity for threshold ms)
+function getStuckTerminals(thresholdMs = DEFAULT_STUCK_THRESHOLD) {
+  const now = Date.now();
+  const stuck = [];
+  for (const [paneId, info] of terminals) {
+    if (info.alive && info.lastActivity) {
+      const idleTime = now - info.lastActivity;
+      if (idleTime > thresholdMs) {
+        stuck.push({
+          paneId,
+          pid: info.pid,
+          lastActivity: info.lastActivity,
+          idleTimeMs: idleTime,
+          idleTimeFormatted: formatUptime(Math.floor(idleTime / 1000)),
+        });
+      }
+    }
+  }
+  return stuck;
 }
 
 // Handle incoming client messages
@@ -477,6 +508,22 @@ function handleMessage(client, message) {
           pid: process.pid,
         });
         logInfo(`Health check requested by client`);
+        break;
+      }
+
+      // V4 AR1: Get stuck terminals
+      case 'stuck': {
+        const threshold = msg.threshold || DEFAULT_STUCK_THRESHOLD;
+        const stuckTerminals = getStuckTerminals(threshold);
+        sendToClient(client, {
+          event: 'stuck',
+          terminals: stuckTerminals,
+          threshold,
+          count: stuckTerminals.length,
+        });
+        if (stuckTerminals.length > 0) {
+          logWarn(`Stuck check: ${stuckTerminals.length} terminal(s) idle > ${threshold}ms`);
+        }
         break;
       }
 
