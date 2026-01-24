@@ -75,9 +75,29 @@ Your role comes from the sprint file, not from the code you're writing.
 
 ---
 
-## Communication Protocol - CHECK SHARED FILES
+## Communication Protocol - MANDATORY
 
 **You are not alone. Other instances are working in parallel. Communicate through files.**
+
+### ⚠️ CRITICAL: Agent-to-Agent Communication
+
+**Terminal output is for talking to the USER. Trigger files are for talking to OTHER AGENTS.**
+
+When you receive a message FROM another agent (prefixed with their role like `(LEAD):` or `(WORKER-A):`):
+1. **DO NOT respond in terminal output** - the user is not your audience
+2. **MUST reply via trigger file** - write to their trigger file
+3. Format: `(YOUR-ROLE): Your response here`
+
+Example:
+- You receive in terminal: `(LEAD): Please review the auth changes`
+- You reply by writing to `workspace/triggers/lead.txt`:
+  ```
+  (WORKER-B): Reviewed. Found 2 issues, see blockers.md
+  ```
+
+**This is MANDATORY. Responding to agents via terminal output defeats the entire purpose of multi-agent coordination.**
+
+---
 
 ### Before Starting Work
 1. Read `workspace/build/blockers.md` - are there blockers assigned to you?
@@ -88,16 +108,17 @@ Your role comes from the sprint file, not from the code you're writing.
 1. Update `workspace/build/status.md` with your completion
 2. Check `workspace/build/blockers.md` again - did Reviewer find issues?
 3. If you created blockers for others, they're in blockers.md
+4. **Message relevant agents via triggers** about your completion
 
 ### When You Find Issues
 1. Write to `workspace/build/blockers.md` with owner and suggested fix
 2. Write to `workspace/build/errors.md` if it's a runtime error
-3. **Don't assume the user will relay messages** - the files ARE the communication
+3. **Message the affected agent via triggers** - don't assume user will relay
 
 ### Periodic Check (Every Major Task)
 Re-read blockers.md. Another instance may have found issues with your code.
 
-### Triggering Other Agents Directly
+### Triggering Other Agents Directly (USE THIS!)
 
 To send a message directly to another agent's terminal, write to `workspace/triggers/`:
 
