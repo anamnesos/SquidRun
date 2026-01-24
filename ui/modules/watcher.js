@@ -112,6 +112,158 @@ function getLastConflicts() {
 }
 
 // ============================================================
+// V6 CR1: CONFLICT QUEUE SYSTEM
+// ============================================================
+
+// Queue of pending file operations during conflicts
+const conflictQueue = new Map(); // file -> [{ paneId, operation, timestamp, callback }]
+const activeFileLocks = new Map(); // file -> paneId (who currently has lock)
+
+/**
+ * Request access to a file for an operation
+ * @param {string} filePath - File being accessed
+ * @param {string} paneId - Agent requesting access
+ * @param {string} operation - 'read' | 'write' | 'edit'
+ * @returns {{ granted: boolean, position?: number, lockHolder?: string }}
+ */
+function requestFileAccess(filePath, paneId, operation) {
+  const normalizedPath = filePath.toLowerCase();
+
+  // If no lock exists, grant immediately
+  if (!activeFileLocks.has(normalizedPath)) {
+    if (operation === 'write' || operation === 'edit') {
+      activeFileLocks.set(normalizedPath, paneId);
+      console.log(`[ConflictQueue] Lock granted: ${paneId} -> ${filePath}`);
+    }
+    return { granted: true };
+  }
+
+  const lockHolder = activeFileLocks.get(normalizedPath);
+
+  // If same agent holds lock, allow
+  if (lockHolder === paneId) {
+    return { granted: true };
+  }
+
+  // Read operations can proceed even with write lock (eventual consistency)
+  if (operation === 'read') {
+    return { granted: true, warning: `File locked by pane ${lockHolder}` };
+  }
+
+  // Queue the write/edit operation
+  if (!conflictQueue.has(normalizedPath)) {
+    conflictQueue.set(normalizedPath, []);
+  }
+
+  const queue = conflictQueue.get(normalizedPath);
+  const position = queue.length + 1;
+
+  queue.push({
+    paneId,
+    operation,
+    timestamp: new Date().toISOString(),
+    filePath,
+  });
+
+  console.log(`[ConflictQueue] Queued: ${paneId} waiting for ${filePath} (position ${position})`);
+
+  // Notify renderer
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('conflict-queued', {
+      filePath,
+      paneId,
+      position,
+      lockHolder,
+    });
+  }
+
+  return { granted: false, position, lockHolder };
+}
+
+/**
+ * Release a file lock
+ * @param {string} filePath - File to release
+ * @param {string} paneId - Agent releasing lock
+ * @returns {{ released: boolean, nextInQueue?: object }}
+ */
+function releaseFileAccess(filePath, paneId) {
+  const normalizedPath = filePath.toLowerCase();
+
+  // Only lock holder can release
+  if (activeFileLocks.get(normalizedPath) !== paneId) {
+    return { released: false, error: 'Not lock holder' };
+  }
+
+  activeFileLocks.delete(normalizedPath);
+  console.log(`[ConflictQueue] Lock released: ${paneId} -> ${filePath}`);
+
+  // Check if anyone is waiting
+  const queue = conflictQueue.get(normalizedPath);
+  if (queue && queue.length > 0) {
+    const next = queue.shift();
+
+    // Grant lock to next in queue
+    activeFileLocks.set(normalizedPath, next.paneId);
+    console.log(`[ConflictQueue] Lock granted to queued: ${next.paneId} -> ${filePath}`);
+
+    // Notify renderer
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('conflict-resolved', {
+        filePath,
+        paneId: next.paneId,
+        operation: next.operation,
+      });
+    }
+
+    // Clean up empty queue
+    if (queue.length === 0) {
+      conflictQueue.delete(normalizedPath);
+    }
+
+    return { released: true, nextInQueue: next };
+  }
+
+  return { released: true };
+}
+
+/**
+ * Get current queue status
+ * @returns {{ locks: Object, queues: Object }}
+ */
+function getConflictQueueStatus() {
+  const locks = {};
+  for (const [file, paneId] of activeFileLocks) {
+    locks[file] = paneId;
+  }
+
+  const queues = {};
+  for (const [file, queue] of conflictQueue) {
+    queues[file] = queue.map((item, idx) => ({
+      ...item,
+      position: idx + 1,
+    }));
+  }
+
+  return { locks, queues, lockCount: activeFileLocks.size, queuedCount: conflictQueue.size };
+}
+
+/**
+ * Force release all locks (for Fresh Start)
+ */
+function clearAllLocks() {
+  const count = activeFileLocks.size + conflictQueue.size;
+  activeFileLocks.clear();
+  conflictQueue.clear();
+  console.log(`[ConflictQueue] Cleared all locks and queues (${count} items)`);
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('conflicts-cleared');
+  }
+
+  return { success: true, cleared: count };
+}
+
+// ============================================================
 // STATE FUNCTIONS
 // ============================================================
 
@@ -429,6 +581,12 @@ module.exports = {
   releaseAgent,
   getClaims,
   clearClaims,
+
+  // V6 CR1: Conflict queue
+  requestFileAccess,
+  releaseFileAccess,
+  getConflictQueueStatus,
+  clearAllLocks,
 
   // Watcher control
   startWatcher,

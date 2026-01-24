@@ -235,6 +235,167 @@ function broadcastToAllAgents(message) {
   return { success: true, notified };
 }
 
+// ============================================================
+// V6 SR1: SMART ROUTING
+// ============================================================
+
+// Role definitions for routing
+const AGENT_ROLES = {
+  '1': { name: 'Lead', type: 'coordinator', skills: ['planning', 'coordination', 'architecture'] },
+  '2': { name: 'Worker A', type: 'worker', skills: ['ui', 'frontend', 'renderer'] },
+  '3': { name: 'Worker B', type: 'worker', skills: ['backend', 'daemon', 'ipc'] },
+  '4': { name: 'Reviewer', type: 'reviewer', skills: ['review', 'testing', 'verification'] },
+};
+
+/**
+ * V6 SR1: Get best agent for a task based on performance and type
+ * @param {string} taskType - Type of task (ui, backend, review, etc.)
+ * @param {Object} performance - Performance data from get-performance
+ * @returns {{ paneId: string, reason: string }}
+ */
+function getBestAgent(taskType, performance) {
+  // Find agents with matching skills
+  const candidates = [];
+  for (const [paneId, role] of Object.entries(AGENT_ROLES)) {
+    if (role.skills.includes(taskType) || role.type === taskType) {
+      candidates.push(paneId);
+    }
+  }
+
+  // If no skill match, use workers for general tasks
+  if (candidates.length === 0) {
+    candidates.push('2', '3'); // Workers
+  }
+
+  // Filter to running agents
+  const runningCandidates = candidates.filter(paneId =>
+    claudeRunning && claudeRunning.get(paneId) === 'running'
+  );
+
+  if (runningCandidates.length === 0) {
+    return { paneId: null, reason: 'no_running_candidates' };
+  }
+
+  // If we have performance data, pick best performer
+  if (performance && performance.agents) {
+    let bestPaneId = runningCandidates[0];
+    let bestScore = -1;
+
+    for (const paneId of runningCandidates) {
+      const stats = performance.agents[paneId];
+      if (stats) {
+        // Score = completions * 2 - errors + (1000 / avgResponseTime)
+        const avgTime = stats.responseCount > 0
+          ? stats.totalResponseTime / stats.responseCount
+          : 10000;
+        const score = (stats.completions * 2) - stats.errors + (1000 / Math.max(avgTime, 1));
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestPaneId = paneId;
+        }
+      }
+    }
+
+    return {
+      paneId: bestPaneId,
+      reason: bestScore > 0 ? 'performance_based' : 'first_available'
+    };
+  }
+
+  // No performance data, return first running candidate
+  return { paneId: runningCandidates[0], reason: 'first_available' };
+}
+
+/**
+ * V6 SR1: Route a task to the best agent
+ * @param {string} taskType - Type of task
+ * @param {string} message - Message to send
+ * @param {Object} performance - Performance data
+ */
+function routeTask(taskType, message, performance) {
+  const { paneId, reason } = getBestAgent(taskType, performance);
+
+  if (!paneId) {
+    console.log(`[SmartRoute] No agent available for ${taskType}`);
+    return { success: false, reason: 'no_agent_available' };
+  }
+
+  console.log(`[SmartRoute] Routing ${taskType} task to pane ${paneId} (${reason})`);
+
+  const routeMessage = `[ROUTED: ${taskType}] ${message}`;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('inject-message', {
+      panes: [paneId],
+      message: routeMessage + '\r'
+    });
+    mainWindow.webContents.send('task-routed', {
+      taskType, paneId, reason, message: message.substring(0, 50)
+    });
+  }
+
+  return { success: true, paneId, reason };
+}
+
+// ============================================================
+// V6 AH1: AUTO-HANDOFF
+// ============================================================
+
+// Handoff chain: who triggers who after completion
+const HANDOFF_CHAIN = {
+  '1': ['2', '3'],     // Lead → Workers
+  '2': ['4'],          // Worker A → Reviewer
+  '3': ['4'],          // Worker B → Reviewer
+  '4': ['1'],          // Reviewer → Lead
+};
+
+/**
+ * V6 AH1: Trigger auto-handoff when agent completes
+ * @param {string} completedPaneId - Pane that just completed
+ * @param {string} completionMessage - What was completed
+ */
+function triggerAutoHandoff(completedPaneId, completionMessage) {
+  const nextPanes = HANDOFF_CHAIN[completedPaneId];
+
+  if (!nextPanes || nextPanes.length === 0) {
+    console.log(`[AutoHandoff] No handoff chain for pane ${completedPaneId}`);
+    return { success: false, reason: 'no_chain' };
+  }
+
+  // Find first running agent in chain
+  const runningNext = nextPanes.find(paneId =>
+    claudeRunning && claudeRunning.get(paneId) === 'running'
+  );
+
+  if (!runningNext) {
+    console.log(`[AutoHandoff] No running agents in handoff chain for pane ${completedPaneId}`);
+    return { success: false, reason: 'no_running_next' };
+  }
+
+  const fromRole = AGENT_ROLES[completedPaneId]?.name || `Pane ${completedPaneId}`;
+  const toRole = AGENT_ROLES[runningNext]?.name || `Pane ${runningNext}`;
+
+  const handoffMessage = `[HANDOFF from ${fromRole}] ${completionMessage}`;
+
+  console.log(`[AutoHandoff] ${fromRole} → ${toRole}: ${completionMessage.substring(0, 50)}...`);
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('inject-message', {
+      panes: [runningNext],
+      message: handoffMessage + '\r'
+    });
+    mainWindow.webContents.send('auto-handoff', {
+      from: completedPaneId,
+      to: runningNext,
+      fromRole,
+      toRole,
+      message: completionMessage.substring(0, 100)
+    });
+  }
+
+  return { success: true, from: completedPaneId, to: runningNext, fromRole, toRole };
+}
+
 module.exports = {
   init,
   setWatcher,
@@ -243,4 +404,10 @@ module.exports = {
   handleTriggerFile,
   broadcastToAllAgents,
   checkWorkflowGate,
+  // V6
+  getBestAgent,
+  routeTask,
+  triggerAutoHandoff,
+  AGENT_ROLES,
+  HANDOFF_CHAIN,
 };
