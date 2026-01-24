@@ -8,6 +8,11 @@ const { ipcRenderer } = require('electron');
 // Pane IDs
 const PANE_IDS = ['1', '2', '3', '4'];
 
+// BUG2 FIX: Message queue to prevent trigger flood UI glitch
+const messageQueues = new Map(); // paneId -> array of messages
+const processingPanes = new Set(); // panes currently being processed
+const MESSAGE_DELAY = 150; // ms between messages per pane
+
 // State display helpers
 const STATE_DISPLAY_NAMES = {
   'idle': 'IDLE',
@@ -120,19 +125,49 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
     updateConnectionStatus('Daemon disconnected - terminals may be stale');
   });
 
-  // Handle message injection from main process
+  // Handle message injection from main process (BUG2 FIX: throttled queue)
   ipcRenderer.on('inject-message', (event, data) => {
     const { panes, message } = data;
     for (const paneId of panes) {
-      const text = message.replace(/\r$/, '');
-      window.hivemind.pty.write(String(paneId), text);
-      setTimeout(() => {
-        window.hivemind.pty.write(String(paneId), '\r');
-      }, 50);
-      // U2: Flash the pane header to indicate trigger received
-      flashPaneHeader(paneId);
+      queueMessage(String(paneId), message);
     }
   });
+}
+
+// BUG2 FIX: Queue a message for throttled delivery
+function queueMessage(paneId, message) {
+  if (!messageQueues.has(paneId)) {
+    messageQueues.set(paneId, []);
+  }
+  messageQueues.get(paneId).push(message);
+  processQueue(paneId);
+}
+
+// BUG2 FIX: Process message queue for a pane with throttling
+function processQueue(paneId) {
+  // Already processing this pane, let it continue
+  if (processingPanes.has(paneId)) return;
+
+  const queue = messageQueues.get(paneId);
+  if (!queue || queue.length === 0) return;
+
+  processingPanes.add(paneId);
+
+  const message = queue.shift();
+  const text = message.replace(/\r$/, '');
+
+  window.hivemind.pty.write(paneId, text);
+  setTimeout(() => {
+    window.hivemind.pty.write(paneId, '\r');
+    // Flash pane header (U2)
+    flashPaneHeader(paneId);
+
+    // Process next message after delay
+    processingPanes.delete(paneId);
+    if (queue.length > 0) {
+      setTimeout(() => processQueue(paneId), MESSAGE_DELAY);
+    }
+  }, 50);
 }
 
 // ============================================================
