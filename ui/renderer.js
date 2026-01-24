@@ -194,6 +194,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   tabs.setupTestsTab();         // TR1: Test results panel
   tabs.setupMessagesTab();      // MQ3+MQ6: Messages tab
   tabs.setupCIStatusIndicator(); // CI2: CI status indicator
+  tabs.setupMCPStatusIndicator(); // MC7: MCP status indicator
 
   // Setup daemon listeners (for terminal reconnection)
   daemonHandlers.setupDaemonListeners(
