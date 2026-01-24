@@ -316,6 +316,67 @@ function nudgeAllPanes() {
   }, 200);
 }
 
+// Fresh start - kill all and spawn new sessions without context
+async function freshStartAll() {
+  const confirmed = confirm(
+    'Fresh Start will:\n\n' +
+    '• Kill all 4 terminals\n' +
+    '• Start new Claude sessions with NO previous context\n\n' +
+    'All current conversations will be lost.\n\n' +
+    'Continue?'
+  );
+
+  if (!confirmed) {
+    updateConnectionStatus('Fresh start cancelled');
+    return;
+  }
+
+  updateConnectionStatus('Fresh start: killing all terminals...');
+
+  // Kill all terminals
+  for (const paneId of PANE_IDS) {
+    try {
+      await window.hivemind.pty.kill(paneId);
+    } catch (err) {
+      console.error(`Failed to kill pane ${paneId}:`, err);
+    }
+  }
+
+  // Clear terminal displays
+  for (const [paneId, terminal] of terminals) {
+    terminal.clear();
+  }
+
+  // Wait for terminals to close
+  await new Promise(resolve => setTimeout(resolve, 500));
+
+  updateConnectionStatus('Fresh start: spawning new sessions...');
+
+  // Spawn fresh Claude instances
+  for (const paneId of PANE_IDS) {
+    try {
+      await window.hivemind.pty.create(paneId, process.cwd());
+      updatePaneStatus(paneId, 'Connected');
+    } catch (err) {
+      console.error(`Failed to create terminal ${paneId}:`, err);
+    }
+  }
+
+  // Wait for terminals to be ready
+  await new Promise(resolve => setTimeout(resolve, 300));
+
+  // Spawn Claude with fresh session flag
+  for (const paneId of PANE_IDS) {
+    const terminal = terminals.get(paneId);
+    if (terminal) {
+      // Start Claude with explicit instruction to not resume
+      sendToPane(paneId, 'claude --dangerously-skip-permissions');
+    }
+  }
+
+  updateConnectionStatus('Fresh start complete - new sessions started');
+}
+
 // Sync shared context to all panes
 async function syncSharedContext() {
   updateConnectionStatus('Syncing shared context...');
@@ -392,6 +453,7 @@ module.exports = {
   killAllTerminals,
   nudgePane,
   nudgeAllPanes,
+  freshStartAll,
   syncSharedContext,
   handleResize,
   getTerminal,

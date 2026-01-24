@@ -135,6 +135,12 @@ function setupEventListeners() {
     nudgeAllBtn.addEventListener('click', terminal.nudgeAllPanes);
   }
 
+  // Fresh start button - kill all and start new sessions
+  const freshStartBtn = document.getElementById('freshStartBtn');
+  if (freshStartBtn) {
+    freshStartBtn.addEventListener('click', terminal.freshStartAll);
+  }
+
   // Sync button
   const syncBtn = document.getElementById('syncBtn');
   if (syncBtn) {

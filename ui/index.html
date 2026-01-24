@@ -480,6 +480,17 @@
       color: #1a1a2e;
     }
 
+    .btn-fresh {
+      background: transparent;
+      border: 1px solid #00d9ff;
+      color: #00d9ff;
+    }
+
+    .btn-fresh:hover {
+      background: #00d9ff;
+      color: #1a1a2e;
+    }
+
     /* Friction Panel */
     .friction-panel {
       background: #16213e;
@@ -1086,6 +1097,7 @@
       <button class="btn" id="spawnAllBtn">Spawn All Claude</button>
       <button class="btn btn-danger" id="killAllBtn">Kill All</button>
       <button class="btn btn-nudge" id="nudgeAllBtn" title="Unstick churning agents (Esc+Enter)">Nudge All</button>
+      <button class="btn btn-fresh" id="freshStartBtn" title="Kill all and start fresh sessions (no context)">Fresh Start</button>
       <button class="btn btn-friction" id="frictionBtn">Friction <span class="friction-count" id="frictionBadge">0</span></button>
       <button class="btn settings-btn" id="settingsBtn">Settings</button>
       <button class="btn btn-panel" id="panelBtn">Panel</button>
