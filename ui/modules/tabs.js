@@ -172,6 +172,187 @@ function setupProcessesTab() {
 }
 
 // ============================================================
+// PT2: PERFORMANCE DASHBOARD
+// ============================================================
+
+let performanceData = {};
+
+function formatAvgTime(ms) {
+  if (!ms || ms <= 0) return '--';
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+  return `${seconds}s`;
+}
+
+function formatSuccessRate(success, total) {
+  if (!total || total === 0) return '--';
+  const rate = (success / total) * 100;
+  return `${rate.toFixed(0)}%`;
+}
+
+function renderPerformanceData() {
+  for (const paneId of ['1', '2', '3', '4']) {
+    const data = performanceData[paneId] || {};
+
+    const completionsEl = document.getElementById(`perf-completions-${paneId}`);
+    const avgtimeEl = document.getElementById(`perf-avgtime-${paneId}`);
+    const successEl = document.getElementById(`perf-success-${paneId}`);
+
+    if (completionsEl) completionsEl.textContent = data.completions || 0;
+    if (avgtimeEl) avgtimeEl.textContent = formatAvgTime(data.avgResponseTime);
+    if (successEl) successEl.textContent = formatSuccessRate(data.successes, data.completions);
+  }
+}
+
+async function loadPerformanceData() {
+  try {
+    const result = await ipcRenderer.invoke('get-performance-stats');
+    if (result && result.success) {
+      performanceData = result.stats || {};
+      renderPerformanceData();
+    }
+  } catch (err) {
+    console.error('[PT2] Error loading performance data:', err);
+  }
+}
+
+async function resetPerformanceData() {
+  if (!confirm('Reset all performance statistics?')) return;
+  try {
+    await ipcRenderer.invoke('reset-performance-stats');
+    performanceData = {};
+    renderPerformanceData();
+    updateConnectionStatus('Performance stats reset');
+  } catch (err) {
+    console.error('[PT2] Error resetting performance data:', err);
+  }
+}
+
+function setupPerformanceTab() {
+  const refreshBtn = document.getElementById('refreshPerfBtn');
+  if (refreshBtn) refreshBtn.addEventListener('click', loadPerformanceData);
+
+  const resetBtn = document.getElementById('resetPerfBtn');
+  if (resetBtn) resetBtn.addEventListener('click', resetPerformanceData);
+
+  loadPerformanceData();
+}
+
+// ============================================================
+// TM2: TEMPLATE MANAGEMENT
+// ============================================================
+
+let templates = [];
+
+function formatTemplateDate(isoString) {
+  const date = new Date(isoString);
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function renderTemplateList() {
+  const listEl = document.getElementById('templateList');
+  if (!listEl) return;
+
+  if (templates.length === 0) {
+    listEl.innerHTML = '<div class="template-empty">No saved templates</div>';
+    return;
+  }
+
+  listEl.innerHTML = templates.map(tmpl => `
+    <div class="template-item" data-id="${tmpl.id}">
+      <div class="template-item-info">
+        <div class="template-item-name">${tmpl.name}</div>
+        <div class="template-item-date">${formatTemplateDate(tmpl.createdAt)}</div>
+      </div>
+      <div class="template-item-actions">
+        <button class="template-item-btn load-btn" data-id="${tmpl.id}">Load</button>
+        <button class="template-item-btn delete" data-id="${tmpl.id}">X</button>
+      </div>
+    </div>
+  `).join('');
+
+  // Load button handlers
+  listEl.querySelectorAll('.load-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      try {
+        const result = await ipcRenderer.invoke('load-template', id);
+        if (result && result.success) {
+          updateConnectionStatus(`Loaded template: ${result.name}`);
+        }
+      } catch (err) {
+        updateConnectionStatus(`Failed to load template: ${err.message}`);
+      }
+    });
+  });
+
+  // Delete button handlers
+  listEl.querySelectorAll('.template-item-btn.delete').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      try {
+        await ipcRenderer.invoke('delete-template', id);
+        templates = templates.filter(t => t.id !== id);
+        renderTemplateList();
+        updateConnectionStatus('Template deleted');
+      } catch (err) {
+        updateConnectionStatus(`Failed to delete template: ${err.message}`);
+      }
+    });
+  });
+}
+
+async function loadTemplates() {
+  try {
+    const result = await ipcRenderer.invoke('get-templates');
+    if (result && result.success) {
+      templates = result.templates || [];
+      renderTemplateList();
+    }
+  } catch (err) {
+    console.error('[TM2] Error loading templates:', err);
+  }
+}
+
+async function saveTemplate() {
+  const input = document.getElementById('templateNameInput');
+  const name = input?.value?.trim();
+  if (!name) {
+    updateConnectionStatus('Enter a template name');
+    return;
+  }
+
+  try {
+    const result = await ipcRenderer.invoke('save-template', name);
+    if (result && result.success) {
+      input.value = '';
+      await loadTemplates();
+      updateConnectionStatus(`Saved template: ${name}`);
+    }
+  } catch (err) {
+    updateConnectionStatus(`Failed to save template: ${err.message}`);
+  }
+}
+
+function setupTemplatesTab() {
+  const refreshBtn = document.getElementById('refreshTemplatesBtn');
+  if (refreshBtn) refreshBtn.addEventListener('click', loadTemplates);
+
+  const saveBtn = document.getElementById('saveTemplateBtn');
+  if (saveBtn) saveBtn.addEventListener('click', saveTemplate);
+
+  const input = document.getElementById('templateNameInput');
+  if (input) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') saveTemplate();
+    });
+  }
+
+  loadTemplates();
+}
+
+// ============================================================
 // PROJECTS TAB
 // ============================================================
 
@@ -817,6 +998,8 @@ module.exports = {
   setupBuildProgressTab,
   setupHistoryTab,
   setupProjectsTab,
+  setupPerformanceTab,
+  setupTemplatesTab,
   setupFrictionPanel,
   setupRightPanel,
   updateBuildProgress,
@@ -825,4 +1008,6 @@ module.exports = {
   loadScreenshots,
   loadSessionHistory,
   loadRecentProjects,
+  loadPerformanceData,
+  loadTemplates,
 };

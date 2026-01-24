@@ -50,6 +50,10 @@ const DEFAULT_SETTINGS = {
   recentProjects: [],  // V3 J2: Recent projects list (max 10)
   stuckThreshold: 60000,  // V4: Auto-nudge after 60 seconds of no activity
   autoNudge: true,  // V4: Enable automatic stuck detection and nudging
+  // V5 MP1: Per-pane project assignments
+  paneProjects: { '1': null, '2': null, '3': null, '4': null },
+  // V5 TM1: Saved templates
+  templates: [],
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };

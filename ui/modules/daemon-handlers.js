@@ -136,6 +136,71 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 }
 
 // ============================================================
+// MP2: PER-PANE PROJECT INDICATOR
+// ============================================================
+
+// Store per-pane projects
+const paneProjects = new Map();
+
+function getProjectName(projectPath) {
+  if (!projectPath) return '';
+  const parts = projectPath.replace(/\\/g, '/').split('/');
+  return parts[parts.length - 1] || projectPath;
+}
+
+function updatePaneProject(paneId, projectPath) {
+  paneProjects.set(paneId, projectPath);
+  const el = document.getElementById(`project-${paneId}`);
+  if (el) {
+    if (projectPath) {
+      const name = getProjectName(projectPath);
+      el.textContent = name;
+      el.title = `Project: ${projectPath}\nClick to change`;
+      el.classList.add('has-project');
+    } else {
+      el.textContent = '';
+      el.classList.remove('has-project');
+    }
+  }
+}
+
+function updateAllPaneProjects(paneProjectsData) {
+  for (const [paneId, projectPath] of Object.entries(paneProjectsData)) {
+    updatePaneProject(paneId, projectPath);
+  }
+}
+
+async function loadPaneProjects() {
+  try {
+    const result = await ipcRenderer.invoke('get-pane-projects');
+    if (result && result.success) {
+      updateAllPaneProjects(result.projects || {});
+    }
+  } catch (err) {
+    console.error('[MP2] Error loading pane projects:', err);
+  }
+}
+
+function setupPaneProjectClicks() {
+  for (const paneId of PANE_IDS) {
+    const el = document.getElementById(`project-${paneId}`);
+    if (el) {
+      el.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          const result = await ipcRenderer.invoke('select-pane-project', paneId);
+          if (result && result.success) {
+            updatePaneProject(paneId, result.path);
+          }
+        } catch (err) {
+          console.error(`[MP2] Error selecting project for pane ${paneId}:`, err);
+        }
+      });
+    }
+  }
+}
+
+// ============================================================
 // CB1: STARTUP STATE DISPLAY - Show who's doing what
 // ============================================================
 
@@ -499,4 +564,9 @@ module.exports = {
   // AT2: Auto-trigger feedback
   setupAutoTriggerListener,
   showAutoTriggerFeedback,
+  // MP2: Per-pane project indicator
+  updatePaneProject,
+  updateAllPaneProjects,
+  loadPaneProjects,
+  setupPaneProjectClicks,
 };

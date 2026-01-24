@@ -185,6 +185,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   tabs.setupBuildProgressTab();
   tabs.setupHistoryTab();
   tabs.setupProjectsTab();
+  tabs.setupPerformanceTab();   // PT2: Performance dashboard
+  tabs.setupTemplatesTab();     // TM2: Template management
 
   // Setup daemon listeners (for terminal reconnection)
   daemonHandlers.setupDaemonListeners(
@@ -198,6 +200,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // CB1: Load initial agent tasks on startup
   await daemonHandlers.loadInitialAgentTasks();
+
+  // MP2: Setup per-pane project indicators
+  daemonHandlers.setupPaneProjectClicks();
+  await daemonHandlers.loadPaneProjects();
 
   // Check auto-spawn after terminals are ready
   setTimeout(() => {

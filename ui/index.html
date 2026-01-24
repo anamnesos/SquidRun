@@ -309,6 +309,30 @@
       background: #555;
     }
 
+    /* MP2: Per-pane project indicator */
+    .pane-project {
+      font-size: 9px;
+      color: #4ecca3;
+      background: rgba(78, 204, 163, 0.1);
+      padding: 2px 6px;
+      border-radius: 3px;
+      margin-left: 6px;
+      max-width: 100px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: none;
+      cursor: pointer;
+    }
+
+    .pane-project.has-project {
+      display: inline-block;
+    }
+
+    .pane-project:hover {
+      background: rgba(78, 204, 163, 0.2);
+    }
+
     /* CB1: Agent task display */
     .agent-task {
       font-size: 10px;
@@ -1314,6 +1338,168 @@
       display: flex;
       gap: 8px;
     }
+
+    /* PT2: Performance Dashboard */
+    .perf-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .perf-card {
+      background: #1a1a2e;
+      border-radius: 6px;
+      padding: 12px;
+      border-left: 3px solid #4ecca3;
+    }
+
+    .perf-card-header {
+      font-size: 12px;
+      font-weight: 600;
+      color: #e94560;
+      margin-bottom: 8px;
+    }
+
+    .perf-stat {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    .perf-value {
+      font-size: 14px;
+      font-weight: 600;
+      color: #4ecca3;
+      font-family: 'Consolas', 'Monaco', monospace;
+    }
+
+    .perf-label {
+      font-size: 10px;
+      color: #888;
+    }
+
+    .perf-actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+    }
+
+    /* TM2: Template Management */
+    .template-current {
+      background: #1a1a2e;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .template-section-title {
+      font-size: 11px;
+      color: #888;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .template-save-form {
+      display: flex;
+      gap: 8px;
+    }
+
+    .template-input {
+      flex: 1;
+      background: #0f0f1a;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 6px 10px;
+      color: #eee;
+      font-size: 12px;
+    }
+
+    .template-input:focus {
+      border-color: #4ecca3;
+      outline: none;
+    }
+
+    .template-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 250px;
+      overflow-y: auto;
+    }
+
+    .template-item {
+      background: #1a1a2e;
+      border-radius: 4px;
+      padding: 10px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-left: 3px solid #0f3460;
+    }
+
+    .template-item:hover {
+      border-left-color: #4ecca3;
+    }
+
+    .template-item-info {
+      flex: 1;
+    }
+
+    .template-item-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: #eee;
+    }
+
+    .template-item-date {
+      font-size: 10px;
+      color: #888;
+    }
+
+    .template-item-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .template-item-btn {
+      background: transparent;
+      border: 1px solid #4ecca3;
+      color: #4ecca3;
+      padding: 4px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      cursor: pointer;
+    }
+
+    .template-item-btn:hover {
+      background: #4ecca3;
+      color: #1a1a2e;
+    }
+
+    .template-item-btn.delete {
+      border-color: #e94560;
+      color: #e94560;
+    }
+
+    .template-item-btn.delete:hover {
+      background: #e94560;
+      color: #fff;
+    }
+
+    .template-empty {
+      text-align: center;
+      color: #666;
+      padding: 20px;
+      font-size: 12px;
+    }
+
+    .template-actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+    }
   </style>
 </head>
 <body>
@@ -1442,7 +1628,7 @@
       <div class="pane-grid">
         <div class="pane" data-pane-id="1">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-badge idle" id="badge-1"></span>Lead (Ctrl+1)<span class="agent-task" id="task-1"></span></span>
+            <span class="pane-title"><span class="agent-badge idle" id="badge-1"></span>Lead (Ctrl+1)<span class="pane-project" id="project-1" title="Click to change project"></span><span class="agent-task" id="task-1"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-1" title="Session time">0:00</span>
               <span class="pane-status" id="status-1">Ready</span>
@@ -1454,7 +1640,7 @@
 
         <div class="pane" data-pane-id="2">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-badge idle" id="badge-2"></span>Worker A (Ctrl+2)<span class="agent-task" id="task-2"></span></span>
+            <span class="pane-title"><span class="agent-badge idle" id="badge-2"></span>Worker A (Ctrl+2)<span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-2" title="Session time">0:00</span>
               <span class="pane-status" id="status-2">Ready</span>
@@ -1466,7 +1652,7 @@
 
         <div class="pane" data-pane-id="3">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-badge idle" id="badge-3"></span>Worker B (Ctrl+3)<span class="agent-task" id="task-3"></span></span>
+            <span class="pane-title"><span class="agent-badge idle" id="badge-3"></span>Worker B (Ctrl+3)<span class="pane-project" id="project-3" title="Click to change project"></span><span class="agent-task" id="task-3"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-3" title="Session time">0:00</span>
               <span class="pane-status" id="status-3">Ready</span>
@@ -1478,7 +1664,7 @@
 
         <div class="pane" data-pane-id="4">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-badge idle" id="badge-4"></span>Reviewer (Ctrl+4)<span class="agent-task" id="task-4"></span></span>
+            <span class="pane-title"><span class="agent-badge idle" id="badge-4"></span>Reviewer (Ctrl+4)<span class="pane-project" id="project-4" title="Click to change project"></span><span class="agent-task" id="task-4"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-4" title="Session time">0:00</span>
               <span class="pane-status" id="status-4">Ready</span>
@@ -1501,6 +1687,8 @@
         <button class="panel-tab active" data-tab="screenshots">Screenshots</button>
         <button class="panel-tab" data-tab="history">History</button>
         <button class="panel-tab" data-tab="projects">Projects</button>
+        <button class="panel-tab" data-tab="performance">Perf</button>
+        <button class="panel-tab" data-tab="templates">Templates</button>
         <button class="panel-tab" data-tab="progress">Progress</button>
         <button class="panel-tab" data-tab="processes">Processes</button>
       </div>
@@ -1535,6 +1723,57 @@
           <div class="projects-actions">
             <button class="btn btn-folder" id="addProjectBtn">Add Project</button>
             <button class="btn" id="refreshProjectsBtn">Refresh</button>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-performance">
+          <div class="tab-title">Agent Performance</div>
+          <div class="tab-description">Track agent completions and response times</div>
+          <div class="perf-grid" id="perfGrid">
+            <div class="perf-card" data-pane="1">
+              <div class="perf-card-header">Lead</div>
+              <div class="perf-stat"><span class="perf-value" id="perf-completions-1">0</span><span class="perf-label">Completions</span></div>
+              <div class="perf-stat"><span class="perf-value" id="perf-avgtime-1">--</span><span class="perf-label">Avg Time</span></div>
+              <div class="perf-stat"><span class="perf-value" id="perf-success-1">--</span><span class="perf-label">Success</span></div>
+            </div>
+            <div class="perf-card" data-pane="2">
+              <div class="perf-card-header">Worker A</div>
+              <div class="perf-stat"><span class="perf-value" id="perf-completions-2">0</span><span class="perf-label">Completions</span></div>
+              <div class="perf-stat"><span class="perf-value" id="perf-avgtime-2">--</span><span class="perf-label">Avg Time</span></div>
+              <div class="perf-stat"><span class="perf-value" id="perf-success-2">--</span><span class="perf-label">Success</span></div>
+            </div>
+            <div class="perf-card" data-pane="3">
+              <div class="perf-card-header">Worker B</div>
+              <div class="perf-stat"><span class="perf-value" id="perf-completions-3">0</span><span class="perf-label">Completions</span></div>
+              <div class="perf-stat"><span class="perf-value" id="perf-avgtime-3">--</span><span class="perf-label">Avg Time</span></div>
+              <div class="perf-stat"><span class="perf-value" id="perf-success-3">--</span><span class="perf-label">Success</span></div>
+            </div>
+            <div class="perf-card" data-pane="4">
+              <div class="perf-card-header">Reviewer</div>
+              <div class="perf-stat"><span class="perf-value" id="perf-completions-4">0</span><span class="perf-label">Completions</span></div>
+              <div class="perf-stat"><span class="perf-value" id="perf-avgtime-4">--</span><span class="perf-label">Avg Time</span></div>
+              <div class="perf-stat"><span class="perf-value" id="perf-success-4">--</span><span class="perf-label">Success</span></div>
+            </div>
+          </div>
+          <div class="perf-actions">
+            <button class="btn" id="refreshPerfBtn">Refresh</button>
+            <button class="btn btn-danger" id="resetPerfBtn">Reset Stats</button>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-templates">
+          <div class="tab-title">Agent Templates</div>
+          <div class="tab-description">Save and load agent configurations</div>
+          <div class="template-current">
+            <div class="template-section-title">Current Configuration</div>
+            <div class="template-save-form">
+              <input type="text" class="template-input" id="templateNameInput" placeholder="Template name...">
+              <button class="btn btn-folder" id="saveTemplateBtn">Save</button>
+            </div>
+          </div>
+          <div class="template-list" id="templateList">
+            <div class="template-empty">No saved templates</div>
+          </div>
+          <div class="template-actions">
+            <button class="btn" id="refreshTemplatesBtn">Refresh</button>
           </div>
         </div>
         <div class="tab-pane" id="tab-progress">
