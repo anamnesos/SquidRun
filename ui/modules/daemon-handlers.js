@@ -562,7 +562,33 @@ function setupStateListener() {
 // CLAUDE STATE TRACKING
 // ============================================================
 
+// CO1: Inject CSS for working indicator animation (once)
+let workingAnimationInjected = false;
+function injectWorkingAnimation() {
+  if (workingAnimationInjected) return;
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes pulse-working {
+      0%, 100% { opacity: 1; box-shadow: 0 0 5px #4ecca3; }
+      50% { opacity: 0.6; box-shadow: 0 0 15px #4ecca3, 0 0 25px #4ecca3; }
+    }
+    .agent-badge.working {
+      background: #4ecca3 !important;
+      animation: pulse-working 1s ease-in-out infinite;
+    }
+    .agent-badge.starting {
+      background: #ffc857 !important;
+      animation: pulse-working 0.5s ease-in-out infinite;
+    }
+  `;
+  document.head.appendChild(style);
+  workingAnimationInjected = true;
+}
+
 function updateAgentStatus(paneId, state) {
+  // CO1: Ensure animation CSS is injected
+  injectWorkingAnimation();
+
   const statusEl = document.getElementById(`status-${paneId}`);
   if (statusEl) {
     const labels = {
@@ -573,6 +599,19 @@ function updateAgentStatus(paneId, state) {
     statusEl.textContent = labels[state] || state;
     statusEl.classList.remove('idle', 'starting', 'running');
     statusEl.classList.add(state || 'idle');
+  }
+
+  // CO1: Update badge with working indicator
+  const badge = document.getElementById(`badge-${paneId}`);
+  if (badge) {
+    badge.classList.remove('idle', 'active', 'working', 'starting');
+    if (state === 'running') {
+      badge.classList.add('working');
+    } else if (state === 'starting') {
+      badge.classList.add('starting');
+    } else {
+      badge.classList.add('idle');
+    }
   }
 }
 
