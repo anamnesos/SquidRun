@@ -2125,6 +2125,112 @@
       background: #3db892;
       border-color: #3db892;
     }
+
+    /* PL2: UI Consistency - Tooltip Styling */
+    [title] {
+      position: relative;
+    }
+
+    /* PL2: Consistent focus states for accessibility */
+    .btn:focus,
+    .panel-tab:focus,
+    .toggle:focus,
+    input:focus {
+      outline: 2px solid #e94560;
+      outline-offset: 2px;
+    }
+
+    /* PL2: Consistent disabled state */
+    .btn:disabled,
+    .btn.disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    /* PL2: Ensure all buttons have transition */
+    .btn,
+    .panel-tab,
+    .activity-filter,
+    .pane-refresh-btn,
+    .process-spawn-btn {
+      transition: all 0.2s ease;
+    }
+
+    /* PL2: Consistent secondary button style */
+    .btn-secondary {
+      background: transparent;
+      border-color: #555;
+      color: #888;
+    }
+
+    .btn-secondary:hover {
+      background: #333;
+      border-color: #888;
+      color: #eee;
+    }
+
+    /* PL2: Keyboard shortcut hints */
+    .kbd {
+      display: inline-block;
+      padding: 2px 6px;
+      font-size: 10px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      background: #0f3460;
+      border: 1px solid #1a1a2e;
+      border-radius: 3px;
+      color: #888;
+      margin-left: 4px;
+    }
+
+    /* PL2: Consistent empty state styling */
+    .screenshot-empty,
+    .history-empty,
+    .projects-empty,
+    .template-empty,
+    .process-empty,
+    .friction-empty,
+    .activity-empty,
+    .test-empty {
+      text-align: center;
+      color: #555;
+      padding: 24px 16px;
+      font-size: 12px;
+      font-style: italic;
+    }
+
+    /* PL2: Consistent section spacing */
+    .tab-pane {
+      padding: 16px;
+    }
+
+    .tab-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #eee;
+    }
+
+    .tab-description {
+      font-size: 11px;
+      color: #666;
+      margin-bottom: 16px;
+    }
+
+    /* PL2: Consistent action bar spacing */
+    .activity-actions,
+    .history-actions,
+    .projects-actions,
+    .perf-actions,
+    .template-actions,
+    .progress-actions,
+    .test-actions {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid #0f3460;
+      display: flex;
+      gap: 8px;
+    }
   </style>
 </head>
 <body>
@@ -2136,15 +2242,15 @@
       <span class="ci-status-text" id="ciStatusText">CI Idle</span>
     </div>
     <div class="header-actions">
-      <button class="btn btn-folder" id="selectProjectBtn">Select Project</button>
-      <button class="btn" id="syncBtn">Sync Context</button>
-      <button class="btn" id="spawnAllBtn">Spawn All Claude</button>
-      <button class="btn btn-danger" id="killAllBtn">Kill All</button>
-      <button class="btn btn-nudge" id="nudgeAllBtn" title="Unstick churning agents (Esc+Enter)">Nudge All</button>
-      <button class="btn btn-fresh" id="freshStartBtn" title="Kill all and start fresh sessions (no context)">Fresh Start</button>
-      <button class="btn btn-friction" id="frictionBtn">Friction <span class="friction-count" id="frictionBadge">0</span></button>
-      <button class="btn settings-btn" id="settingsBtn">Settings</button>
-      <button class="btn btn-panel" id="panelBtn">Panel</button>
+      <button class="btn btn-folder" id="selectProjectBtn" title="Choose project folder for all agents">Select Project</button>
+      <button class="btn" id="syncBtn" title="Broadcast shared_context.md to all agents">Sync Context</button>
+      <button class="btn" id="spawnAllBtn" title="Start Claude Code in all 4 terminal panes">Spawn All Claude</button>
+      <button class="btn btn-danger" id="killAllBtn" title="Terminate all running Claude sessions">Kill All</button>
+      <button class="btn btn-nudge" id="nudgeAllBtn" title="Send Esc+Enter to unstick churning agents">Nudge All</button>
+      <button class="btn btn-fresh" id="freshStartBtn" title="Kill all sessions and start fresh without context">Fresh Start</button>
+      <button class="btn btn-friction" id="frictionBtn" title="View agent friction logs and blockers">Friction <span class="friction-count" id="frictionBadge">0</span></button>
+      <button class="btn settings-btn" id="settingsBtn" title="Configure Hivemind settings and permissions">Settings</button>
+      <button class="btn btn-panel" id="panelBtn" title="Toggle right panel (Screenshots, Tests, Activity, etc.)">Panel</button>
     </div>
   </div>
 
@@ -2152,31 +2258,31 @@
     <div class="settings-section">
       <div class="settings-section-title">General</div>
       <div class="settings-grid">
-        <div class="setting-item">
+        <div class="setting-item" title="Automatically start Claude in all panes when Hivemind launches">
           <div class="toggle" id="toggleAutoSpawn" data-setting="autoSpawn"></div>
           <span class="setting-label">Auto-spawn Claude on start</span>
         </div>
-        <div class="setting-item">
+        <div class="setting-item" title="Broadcast context updates to agents when workflow state changes">
           <div class="toggle" id="toggleAutoSync" data-setting="autoSync"></div>
           <span class="setting-label">Auto-sync context on state change</span>
         </div>
-        <div class="setting-item">
+        <div class="setting-item" title="Play sound when agents complete tasks or encounter errors">
           <div class="toggle" id="toggleNotifications" data-setting="notifications"></div>
           <span class="setting-label">Sound notifications</span>
         </div>
-        <div class="setting-item">
+        <div class="setting-item" title="Open Chrome DevTools when Hivemind starts (for debugging)">
           <div class="toggle" id="toggleDevTools" data-setting="devTools"></div>
           <span class="setting-label">Open DevTools on start</span>
         </div>
-        <div class="setting-item">
+        <div class="setting-item" title="Send sync messages to agents when workflow state changes">
           <div class="toggle active" id="toggleAgentNotify" data-setting="agentNotify"></div>
           <span class="setting-label">Notify agents on state change</span>
         </div>
-        <div class="setting-item">
+        <div class="setting-item" title="Watch for file changes in workspace (triggers, context updates)">
           <div class="toggle active" id="toggleWatcher" data-setting="watcherEnabled"></div>
           <span class="setting-label">File watcher enabled</span>
         </div>
-        <div class="setting-item">
+        <div class="setting-item" title="Simulate agent responses without spawning real Claude instances">
           <div class="toggle" id="toggleDryRun" data-setting="dryRun"></div>
           <span class="setting-label">Dry-run mode (simulate agents)</span>
         </div>
@@ -2185,19 +2291,19 @@
     <div class="settings-section">
       <div class="settings-section-title">Permissions</div>
       <div class="settings-grid">
-        <div class="setting-item">
+        <div class="setting-item" title="Grant all permissions without prompting (use with caution!)">
           <div class="toggle" id="toggleAllowAllPermissions" data-setting="allowAllPermissions"></div>
           <span class="setting-label">Allow All (skip prompts)</span>
         </div>
-        <div class="setting-item">
+        <div class="setting-item" title="Allow agents to read files from the filesystem">
           <div class="toggle" id="toggleAllowRead" data-setting="allowRead"></div>
           <span class="setting-label">Read files</span>
         </div>
-        <div class="setting-item">
+        <div class="setting-item" title="Allow agents to create and modify files">
           <div class="toggle" id="toggleAllowWrite" data-setting="allowWrite"></div>
           <span class="setting-label">Write files</span>
         </div>
-        <div class="setting-item">
+        <div class="setting-item" title="Allow agents to execute shell commands (npm, git, etc.)">
           <div class="toggle" id="toggleAllowBash" data-setting="allowBash"></div>
           <span class="setting-label">Run commands</span>
         </div>
@@ -2209,24 +2315,24 @@
     <div class="settings-section">
       <div class="settings-section-title">Cost Alerts</div>
       <div class="settings-grid">
-        <div class="setting-item">
+        <div class="setting-item" title="Show warning when estimated session cost exceeds threshold">
           <div class="toggle active" id="toggleCostAlertEnabled" data-setting="costAlertEnabled"></div>
           <span class="setting-label">Enable cost alerts</span>
         </div>
       </div>
-      <div class="cost-threshold-setting">
+      <div class="cost-threshold-setting" title="Dollar amount that triggers a cost warning">
         <label class="setting-label">Alert threshold: $</label>
-        <input type="number" id="costAlertThreshold" class="threshold-input" value="5.00" min="0.01" step="0.50">
+        <input type="number" id="costAlertThreshold" class="threshold-input" value="5.00" min="0.01" step="0.50" title="Estimated cost limit before warning">
       </div>
     </div>
   </div>
 
   <div class="friction-panel" id="frictionPanel">
     <div class="friction-header">
-      <span class="friction-title">Friction Logs</span>
+      <span class="friction-title" title="Issues and blockers reported by agents">Friction Logs</span>
       <div class="friction-actions">
-        <button class="btn btn-friction" id="refreshFrictionBtn">Refresh</button>
-        <button class="btn btn-friction" id="clearFrictionBtn">Clear Resolved</button>
+        <button class="btn btn-friction" id="refreshFrictionBtn" title="Reload friction logs from workspace">Refresh</button>
+        <button class="btn btn-friction" id="clearFrictionBtn" title="Delete all resolved friction logs">Clear Resolved</button>
       </div>
     </div>
     <div class="friction-list" id="frictionList">
@@ -2235,15 +2341,15 @@
   </div>
 
   <div class="state-bar">
-    <div class="project-indicator">
+    <div class="project-indicator" title="Current project folder for all agents">
       <span class="state-label">Project:</span>
       <span class="project-path no-project" id="projectPath">No project selected</span>
     </div>
-    <div class="state-indicator">
+    <div class="state-indicator" title="Current workflow state: idle → planning → executing → complete">
       <span class="state-label">State:</span>
       <span class="state-value idle" id="stateDisplay">IDLE</span>
     </div>
-    <div class="progress-indicator">
+    <div class="progress-indicator" title="Checkpoint progress through current sprint">
       <span class="state-label">Progress:</span>
       <div class="progress-bar">
         <div class="progress-fill" id="progressFill" style="width: 0%"></div>
@@ -2306,22 +2412,23 @@
 
       <div class="broadcast-bar">
         <input type="text" class="broadcast-input" id="broadcastInput"
-               placeholder="Type here to broadcast to all panes (Enter to send)">
-        <button class="btn" id="broadcastBtn">Broadcast</button>
+               placeholder="Type here to broadcast to all panes (Enter to send)"
+               title="Send the same message to all 4 agent terminals at once">
+        <button class="btn" id="broadcastBtn" title="Send message to all terminals">Broadcast</button>
       </div>
     </div>
 
     <div class="right-panel" id="rightPanel">
       <div class="panel-tabs">
-        <button class="panel-tab active" data-tab="screenshots">Screenshots</button>
-        <button class="panel-tab" data-tab="tests">Tests</button>
-        <button class="panel-tab" data-tab="activity">Activity</button>
-        <button class="panel-tab" data-tab="history">History</button>
-        <button class="panel-tab" data-tab="projects">Projects</button>
-        <button class="panel-tab" data-tab="performance">Perf</button>
-        <button class="panel-tab" data-tab="templates">Templates</button>
-        <button class="panel-tab" data-tab="progress">Progress</button>
-        <button class="panel-tab" data-tab="processes">Processes</button>
+        <button class="panel-tab active" data-tab="screenshots" title="Drag & drop images for agents to reference">Screenshots</button>
+        <button class="panel-tab" data-tab="tests" title="View test results and run test suite">Tests</button>
+        <button class="panel-tab" data-tab="activity" title="Real-time log of all agent activity">Activity</button>
+        <button class="panel-tab" data-tab="history" title="View past session history">History</button>
+        <button class="panel-tab" data-tab="projects" title="Quick-switch between recent projects">Projects</button>
+        <button class="panel-tab" data-tab="performance" title="Agent performance metrics and stats">Perf</button>
+        <button class="panel-tab" data-tab="templates" title="Save and load workspace configurations">Templates</button>
+        <button class="panel-tab" data-tab="progress" title="Build progress and usage statistics">Progress</button>
+        <button class="panel-tab" data-tab="processes" title="Manage background processes">Processes</button>
       </div>
       <div class="panel-content">
         <div class="tab-pane active" id="tab-screenshots">
@@ -2364,9 +2471,9 @@
             <div class="test-empty">No test results yet. Run tests to see results here.</div>
           </div>
           <div class="test-actions">
-            <button class="btn btn-test" id="runTestsBtn">Run Tests</button>
-            <button class="btn" id="refreshTestsBtn">Refresh</button>
-            <button class="btn" id="clearTestsBtn">Clear</button>
+            <button class="btn btn-test" id="runTestsBtn" title="Execute test suite for current project">Run Tests</button>
+            <button class="btn" id="refreshTestsBtn" title="Reload test results from last run">Refresh</button>
+            <button class="btn" id="clearTestsBtn" title="Clear all test results">Clear</button>
           </div>
         </div>
         <div class="tab-pane" id="tab-activity">
@@ -2376,17 +2483,17 @@
             <div class="activity-filters">
               <button class="activity-filter active" data-filter="all">All</button>
               <button class="activity-filter" data-filter="error">Errors</button>
-              <button class="activity-filter" data-filter="file">Files</button>
-              <button class="activity-filter" data-filter="state">State</button>
+              <button class="activity-filter" data-filter="file" title="Show file change events">Files</button>
+              <button class="activity-filter" data-filter="state" title="Show state transition events">State</button>
             </div>
-            <input type="text" class="activity-search" id="activitySearch" placeholder="Search...">
+            <input type="text" class="activity-search" id="activitySearch" placeholder="Search..." title="Filter activity by text">
           </div>
           <div class="activity-log" id="activityLog">
             <div class="activity-empty">No activity yet</div>
           </div>
           <div class="activity-actions">
-            <button class="btn" id="clearActivityBtn">Clear</button>
-            <button class="btn" id="exportActivityBtn">Export</button>
+            <button class="btn" id="clearActivityBtn" title="Clear all activity entries">Clear</button>
+            <button class="btn" id="exportActivityBtn" title="Download activity log as text file">Export</button>
           </div>
         </div>
         <div class="tab-pane" id="tab-history">
@@ -2396,7 +2503,7 @@
             <div class="history-empty">No sessions recorded yet</div>
           </div>
           <div class="history-actions">
-            <button class="btn" id="refreshHistoryBtn">Refresh</button>
+            <button class="btn" id="refreshHistoryBtn" title="Reload session history">Refresh</button>
           </div>
         </div>
         <div class="tab-pane" id="tab-projects">
@@ -2406,8 +2513,8 @@
             <div class="projects-empty">No recent projects</div>
           </div>
           <div class="projects-actions">
-            <button class="btn btn-folder" id="addProjectBtn">Add Project</button>
-            <button class="btn" id="refreshProjectsBtn">Refresh</button>
+            <button class="btn btn-folder" id="addProjectBtn" title="Browse for a new project folder">Add Project</button>
+            <button class="btn" id="refreshProjectsBtn" title="Reload recent projects list">Refresh</button>
           </div>
         </div>
         <div class="tab-pane" id="tab-performance">
@@ -2440,8 +2547,8 @@
             </div>
           </div>
           <div class="perf-actions">
-            <button class="btn" id="refreshPerfBtn">Refresh</button>
-            <button class="btn btn-danger" id="resetPerfBtn">Reset Stats</button>
+            <button class="btn" id="refreshPerfBtn" title="Reload performance statistics">Refresh</button>
+            <button class="btn btn-danger" id="resetPerfBtn" title="Clear all performance data">Reset Stats</button>
           </div>
         </div>
         <div class="tab-pane" id="tab-templates">
@@ -2450,15 +2557,15 @@
           <div class="template-current">
             <div class="template-section-title">Current Configuration</div>
             <div class="template-save-form">
-              <input type="text" class="template-input" id="templateNameInput" placeholder="Template name...">
-              <button class="btn btn-folder" id="saveTemplateBtn">Save</button>
+              <input type="text" class="template-input" id="templateNameInput" placeholder="Template name..." title="Enter a name for this configuration">
+              <button class="btn btn-folder" id="saveTemplateBtn" title="Save current settings as a template">Save</button>
             </div>
           </div>
           <div class="template-list" id="templateList">
             <div class="template-empty">No saved templates</div>
           </div>
           <div class="template-actions">
-            <button class="btn" id="refreshTemplatesBtn">Refresh</button>
+            <button class="btn" id="refreshTemplatesBtn" title="Reload template list">Refresh</button>
           </div>
         </div>
         <div class="tab-pane" id="tab-progress">
@@ -2520,15 +2627,15 @@
           </div>
 
           <div class="progress-actions">
-            <button class="btn" id="refreshProgressBtn">Refresh</button>
+            <button class="btn" id="refreshProgressBtn" title="Reload build progress and stats">Refresh</button>
           </div>
         </div>
         <div class="tab-pane" id="tab-processes">
           <div class="tab-title">Processes</div>
           <div class="tab-description">Manage background processes (npm run dev, tsc --watch, etc.)</div>
           <div class="process-spawn-form">
-            <input type="text" class="process-input" id="processCommandInput" placeholder="npm run dev">
-            <button class="process-spawn-btn" id="processSpawnBtn">Start</button>
+            <input type="text" class="process-input" id="processCommandInput" placeholder="npm run dev" title="Enter command to run (e.g., npm run dev, tsc --watch)">
+            <button class="process-spawn-btn" id="processSpawnBtn" title="Start the background process">Start</button>
           </div>
           <div class="process-list" id="processList">
             <div class="process-empty">No processes running</div>
