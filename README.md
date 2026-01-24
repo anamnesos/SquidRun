@@ -72,6 +72,16 @@ hivemind/
 
 Windows-first (other platforms untested).
 
+## Security Notes
+
+This is a **development tool**, not a production web app. Some security decisions reflect this:
+
+- **Context Isolation Disabled** - `contextIsolation: false` in Electron config. This allows direct Node.js access from renderer, which is intentional for terminal management. Do not use this pattern for apps that load untrusted content.
+
+- **Permissions Bypass** - The `--dangerously-skip-permissions` flag can be enabled in settings. This gives Claude Code full access without permission prompts. Use only in trusted environments.
+
+- **Named Pipes** - The daemon uses `\\.\pipe\hivemind-terminal` which is accessible to any local process. Acceptable for local dev tool.
+
 ## License
 
 MIT

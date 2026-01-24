@@ -27,6 +27,7 @@ workspace/console.log
 workspace/triggers/*.txt
 ui/usage-stats.json
 ui/settings.json
+*.tmp
 
 # Instance working directories (local context)
 workspace/instances/
