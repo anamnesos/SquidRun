@@ -288,8 +288,9 @@ async function initDaemonClient() {
       logActivity('terminal', paneId, 'Completion indicator detected', { snippet: data.substring(0, 100) });
     }
 
-    // Detect Claude running state from output
-    if (claudeRunning.get(paneId) === 'starting') {
+    // Detect Claude running state from output (works even if user typed claude manually)
+    const currentState = claudeRunning.get(paneId);
+    if (currentState === 'starting' || currentState === 'idle') {
       if (data.includes('Claude') || data.includes('>') || data.includes('claude')) {
         claudeRunning.set(paneId, 'running');
         broadcastClaudeState();
@@ -441,6 +442,13 @@ async function createWindow() {
     const state = watcher.readState();
     mainWindow.webContents.send('state-changed', state);
     await initDaemonClient();
+  });
+
+  // ESC key interceptor - sends interrupt signal to focused terminal
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'Escape' && input.type === 'keyDown') {
+      mainWindow.webContents.send('global-escape-pressed');
+    }
   });
 
   // Console log capture
