@@ -137,12 +137,14 @@ async function initTerminal(paneId) {
   terminal.open(container);
   fitAddon.fit();
 
-  // CRITICAL FIX: Block keyboard input when user is typing in an input/textarea
+  // CRITICAL FIX: Block keyboard input when user is typing in a UI input/textarea
+  // BUT allow xterm's own internal textarea (xterm-helper-textarea) to work normally
   terminal.attachCustomKeyEventHandler((event) => {
     const activeEl = document.activeElement;
     const tagName = activeEl?.tagName?.toUpperCase();
-    // If focus is on an input or textarea, don't let xterm process the key
-    if (tagName === 'INPUT' || tagName === 'TEXTAREA') {
+    const isXtermTextarea = activeEl?.classList?.contains('xterm-helper-textarea');
+    // If focus is on a UI input/textarea (not xterm's own), block the key
+    if ((tagName === 'INPUT' || tagName === 'TEXTAREA') && !isXtermTextarea) {
       return false; // Prevent xterm from handling this key
     }
     return true; // Allow xterm to handle normally
@@ -201,11 +203,13 @@ async function reattachTerminal(paneId, scrollback) {
   terminal.open(container);
   fitAddon.fit();
 
-  // CRITICAL FIX: Block keyboard input when user is typing in an input/textarea
+  // CRITICAL FIX: Block keyboard input when user is typing in a UI input/textarea
+  // BUT allow xterm's own internal textarea (xterm-helper-textarea) to work normally
   terminal.attachCustomKeyEventHandler((event) => {
     const activeEl = document.activeElement;
     const tagName = activeEl?.tagName?.toUpperCase();
-    if (tagName === 'INPUT' || tagName === 'TEXTAREA') {
+    const isXtermTextarea = activeEl?.classList?.contains('xterm-helper-textarea');
+    if ((tagName === 'INPUT' || tagName === 'TEXTAREA') && !isXtermTextarea) {
       return false;
     }
     return true;
