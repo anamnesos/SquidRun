@@ -1772,30 +1772,37 @@ function setupMessagesTab() {
   // Message input
   // Message composer with autocomplete protection
   const input = document.getElementById('messageComposerInput');
-  let composerTypedChars = 0;
+  let composerInputChars = 0;
   if (input) {
     input.addEventListener('input', updateSendButtonState);
+
+    // Track paste events
+    input.addEventListener('paste', (e) => {
+      const pasteData = e.clipboardData?.getData('text') || '';
+      composerInputChars += pasteData.length;
+    });
+
     input.addEventListener('keydown', (e) => {
       // Track actual keystrokes
       if (e.key.length === 1 && e.isTrusted && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        composerTypedChars++;
+        composerInputChars++;
       }
-      if (e.key === 'Backspace' && composerTypedChars > 0) {
-        composerTypedChars--;
+      if (e.key === 'Backspace' && composerInputChars > 0) {
+        composerInputChars--;
       }
 
       if (e.key === 'Enter' && !e.shiftKey && e.isTrusted && !e.isComposing) {
         e.preventDefault();
-        // Autocomplete guard
+        // Autocomplete guard - allow if user input >= half value length
         const value = input.value.trim();
-        if (composerTypedChars < 3 && value.length > 3) {
+        if (value.length > 3 && composerInputChars < value.length / 2) {
           console.log('[MessageComposer] Blocked autocomplete');
           input.value = '';
-          composerTypedChars = 0;
+          composerInputChars = 0;
           return;
         }
         sendGroupMessage();
-        composerTypedChars = 0;
+        composerInputChars = 0;
       }
     });
   }

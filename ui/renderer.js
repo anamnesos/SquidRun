@@ -95,18 +95,24 @@ function setupEventListeners() {
   // Broadcast input - only send on explicit user Enter with non-empty content
   const broadcastInput = document.getElementById('broadcastInput');
   let lastBroadcastTime = 0;
-  let userTypedChars = 0; // Track actual keystrokes
+  let userInputChars = 0; // Track user input (typing + paste)
 
   if (broadcastInput) {
-    // Track actual user keystrokes (not autocomplete)
+    // Track paste events - count pasted chars as user input
+    broadcastInput.addEventListener('paste', (e) => {
+      const pasteData = e.clipboardData?.getData('text') || '';
+      userInputChars += pasteData.length;
+    });
+
+    // Track actual user keystrokes
     broadcastInput.addEventListener('keydown', (e) => {
-      // Count printable characters typed by user
+      // Count printable characters typed by user (not Ctrl combos except paste handled above)
       if (e.key.length === 1 && e.isTrusted && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        userTypedChars++;
+        userInputChars++;
       }
       // Backspace reduces count
-      if (e.key === 'Backspace' && userTypedChars > 0) {
-        userTypedChars--;
+      if (e.key === 'Backspace' && userInputChars > 0) {
+        userInputChars--;
       }
 
       // SUBMIT: Only on Enter
@@ -123,12 +129,12 @@ function setupEventListeners() {
           return;
         }
 
-        // AUTOCOMPLETE GUARD: User must have typed at least 3 chars
-        // Autocomplete fills without triggering keydown for each char
-        if (userTypedChars < 3 && value.length > 3) {
-          console.log('[Broadcast] Blocked - autocomplete detected (typed:', userTypedChars, 'value:', value.length, ')');
+        // AUTOCOMPLETE GUARD: User must have input at least half the chars
+        // Autocomplete fills without triggering keydown/paste events
+        if (value.length > 3 && userInputChars < value.length / 2) {
+          console.log('[Broadcast] Blocked - autocomplete detected (input:', userInputChars, 'value:', value.length, ')');
           broadcastInput.value = '';
-          userTypedChars = 0;
+          userInputChars = 0;
           return;
         }
 
@@ -136,7 +142,7 @@ function setupEventListeners() {
           lastBroadcastTime = now;
           terminal.broadcast(value + '\r');
           broadcastInput.value = '';
-          userTypedChars = 0;
+          userInputChars = 0;
         }
       }
     });
