@@ -193,10 +193,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Global ESC key handler - interrupt agent AND release keyboard
   ipcRenderer.on('global-escape-pressed', () => {
-    // Send ESC character to focused pane to interrupt Claude
+    // Send Ctrl+C (0x03) to focused pane to interrupt Claude
     const focusedPane = terminal.getFocusedPane();
     if (focusedPane) {
-      window.hivemind.pty.write(focusedPane, '\x1b');
+      window.hivemind.pty.write(focusedPane, '\x03');
     }
 
     // Also blur terminals to release keyboard capture
@@ -209,7 +209,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const statusBar = document.querySelector('.status-bar');
     if (statusBar) {
       const msg = document.createElement('span');
-      msg.textContent = ` | ESC sent to pane ${focusedPane} - agent interrupted`;
+      msg.textContent = ` | Ctrl+C sent to pane ${focusedPane} - agent interrupted`;
       msg.style.color = '#4fc3f7';
       statusBar.appendChild(msg);
       setTimeout(() => msg.remove(), 2000);
