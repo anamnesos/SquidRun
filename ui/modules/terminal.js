@@ -137,6 +137,17 @@ async function initTerminal(paneId) {
   terminal.open(container);
   fitAddon.fit();
 
+  // CRITICAL FIX: Block keyboard input when user is typing in an input/textarea
+  terminal.attachCustomKeyEventHandler((event) => {
+    const activeEl = document.activeElement;
+    const tagName = activeEl?.tagName?.toUpperCase();
+    // If focus is on an input or textarea, don't let xterm process the key
+    if (tagName === 'INPUT' || tagName === 'TEXTAREA') {
+      return false; // Prevent xterm from handling this key
+    }
+    return true; // Allow xterm to handle normally
+  });
+
   setupCopyPaste(container, terminal, paneId, 'Connected');
 
   terminals.set(paneId, terminal);
@@ -189,6 +200,16 @@ async function reattachTerminal(paneId, scrollback) {
 
   terminal.open(container);
   fitAddon.fit();
+
+  // CRITICAL FIX: Block keyboard input when user is typing in an input/textarea
+  terminal.attachCustomKeyEventHandler((event) => {
+    const activeEl = document.activeElement;
+    const tagName = activeEl?.tagName?.toUpperCase();
+    if (tagName === 'INPUT' || tagName === 'TEXTAREA') {
+      return false;
+    }
+    return true;
+  });
 
   setupCopyPaste(container, terminal, paneId, 'Reconnected');
 
