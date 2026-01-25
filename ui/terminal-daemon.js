@@ -235,6 +235,11 @@ const LEAD_RESPONSE_TIMEOUT = 15000;  // HB2: 15 seconds
 const MAX_LEAD_NUDGES = 2;  // HB3: After 2 failed nudges, escalate
 const ACTIVITY_THRESHOLD = 10000;  // Only nudge if no activity for 10 seconds
 
+// V18: Auto-aggressive-nudge settings
+const AGGRESSIVE_NUDGE_WAIT = 30000;  // 30 seconds between nudge attempts
+const MAX_AGGRESSIVE_NUDGES = 2;  // After 2 failed nudges, alert user
+const STUCK_CHECK_THRESHOLD = 60000;  // Consider stuck after 60s of no activity
+
 // State tracking
 let heartbeatEnabled = true;
 let leadNudgeCount = 0;
@@ -243,6 +248,10 @@ let awaitingLeadResponse = false;
 let currentHeartbeatState = 'idle';  // V17: Track current state
 let heartbeatTimerId = null;  // V17: Dynamic timer reference
 let isRecovering = false;  // V17: Recovery state after stuck detection
+
+// V18: Track aggressive nudge attempts per pane
+// Map<paneId, { attempts: number, lastNudgeTime: number, alerted: boolean }>
+const aggressiveNudgeState = new Map();
 
 /**
  * Check if any terminal has recent activity
@@ -374,6 +383,162 @@ function exitRecoveryMode() {
     isRecovering = false;
     logInfo('[Heartbeat] Exiting RECOVERING state');
     updateHeartbeatTimer();
+  }
+}
+
+// ============================================================
+// V18: AUTO-AGGRESSIVE-NUDGE
+// When watchdog detects stuck agent, auto-send (AGGRESSIVE_NUDGE)
+// Escalation: nudge → wait 30s → nudge again → alert user
+// ============================================================
+
+// Map paneId to trigger filename
+const PANE_TRIGGER_FILES = {
+  '1': 'lead.txt',
+  '2': 'worker-a.txt',
+  '3': 'worker-b.txt',
+  '4': 'reviewer.txt',
+};
+
+/**
+ * V18: Send aggressive nudge to a specific agent via trigger file
+ * Returns true if nudge was sent, false if failed
+ */
+function sendAggressiveNudge(paneId) {
+  const triggerFile = PANE_TRIGGER_FILES[paneId];
+  if (!triggerFile) {
+    logWarn(`[AutoNudge] Unknown paneId: ${paneId}`);
+    return false;
+  }
+
+  const triggerPath = path.join(TRIGGERS_PATH, triggerFile);
+  const roleName = PANE_ROLES[paneId] || `Pane ${paneId}`;
+  const message = `(AGGRESSIVE_NUDGE)\n`;
+
+  try {
+    fs.writeFileSync(triggerPath, message);
+    logInfo(`[AutoNudge] Sent aggressive nudge to ${roleName} (pane ${paneId})`);
+    return true;
+  } catch (err) {
+    logError(`[AutoNudge] Failed to nudge ${roleName}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
+ * V18: Check if an agent has responded since last nudge
+ * An agent has "responded" if they have recent activity
+ */
+// V18.2 FIX: Grace period to distinguish nudge-induced writes from real agent response
+// The nudge process takes ~200ms (ESC + 150ms delay + Enter), so any input within
+// 500ms of the nudge is likely the nudge itself, not the agent actually responding
+const NUDGE_GRACE_PERIOD_MS = 500;
+
+function hasAgentResponded(paneId) {
+  const terminal = terminals.get(paneId);
+  if (!terminal || !terminal.alive) return false;
+
+  const state = aggressiveNudgeState.get(paneId);
+  if (!state) return true; // No nudge state = not being tracked = OK
+
+  // V18 FIX: Agent responded if they received INPUT after the last nudge
+  // Use lastInputTime (user/trigger input) not lastActivity (PTY output)
+  const lastInput = terminal.lastInputTime || terminal.lastActivity;
+
+  // V18.2 FIX: Add grace period - the nudge itself causes PTY writes (ESC + Enter)
+  // which update lastInputTime. Only count as "responded" if input came AFTER
+  // the grace period, meaning it's likely real agent activity, not our nudge.
+  const nudgeCompleteTime = state.lastNudgeTime + NUDGE_GRACE_PERIOD_MS;
+  return lastInput > nudgeCompleteTime;
+}
+
+/**
+ * V18: Alert user about a specific stuck agent
+ */
+function alertUserAboutAgent(paneId) {
+  const roleName = PANE_ROLES[paneId] || `Pane ${paneId}`;
+  logError(`[AutoNudge] ${roleName} unresponsive after ${MAX_AGGRESSIVE_NUDGES} nudges - alerting user`);
+
+  // Broadcast alert event to connected clients (for UI notification)
+  broadcast({
+    event: 'agent-stuck-alert',
+    paneId: paneId,
+    role: roleName,
+    message: `${roleName} is stuck and not responding to nudges. Manual intervention needed.`,
+    timestamp: new Date().toISOString(),
+  });
+
+  // Also write to all.txt as visible notification
+  const allTrigger = path.join(TRIGGERS_PATH, 'all.txt');
+  const message = `(SYSTEM): ⚠️ ${roleName} (pane ${paneId}) is stuck. Auto-nudge failed. Please check manually.\n`;
+  try {
+    fs.writeFileSync(allTrigger, message);
+  } catch (err) {
+    logError(`[AutoNudge] Failed to write alert: ${err.message}`);
+  }
+}
+
+/**
+ * V18: Main auto-aggressive-nudge logic
+ * Called periodically to check for stuck agents and nudge them
+ */
+function checkAndNudgeStuckAgents() {
+  if (!heartbeatEnabled || terminals.size === 0) {
+    return;
+  }
+
+  const now = Date.now();
+  const stuckTerminals = getStuckTerminals(STUCK_CHECK_THRESHOLD);
+
+  // First: Clear nudge state for agents that have responded
+  for (const [paneId, state] of aggressiveNudgeState) {
+    if (hasAgentResponded(paneId)) {
+      logInfo(`[AutoNudge] Pane ${paneId} responded - clearing nudge state`);
+      aggressiveNudgeState.delete(paneId);
+    }
+  }
+
+  // Process each stuck terminal
+  for (const stuckInfo of stuckTerminals) {
+    const paneId = stuckInfo.paneId;
+    let state = aggressiveNudgeState.get(paneId);
+
+    // Initialize state if first time seeing this agent stuck
+    if (!state) {
+      state = { attempts: 0, lastNudgeTime: 0, alerted: false };
+      aggressiveNudgeState.set(paneId, state);
+    }
+
+    // Skip if already alerted user about this agent
+    if (state.alerted) {
+      continue;
+    }
+
+    // Check if enough time has passed since last nudge
+    const timeSinceLastNudge = now - state.lastNudgeTime;
+
+    if (state.attempts === 0 || timeSinceLastNudge >= AGGRESSIVE_NUDGE_WAIT) {
+      // Time to nudge
+      state.attempts++;
+      state.lastNudgeTime = now;
+
+      if (state.attempts <= MAX_AGGRESSIVE_NUDGES) {
+        // Send nudge
+        const roleName = PANE_ROLES[paneId] || `Pane ${paneId}`;
+        logInfo(`[AutoNudge] ${roleName} stuck for ${stuckInfo.idleTimeFormatted} - nudge attempt ${state.attempts}/${MAX_AGGRESSIVE_NUDGES}`);
+        sendAggressiveNudge(paneId);
+
+        // Enter recovery mode on first nudge
+        if (state.attempts === 1) {
+          enterRecoveryMode();
+        }
+      } else {
+        // Max nudges reached - alert user
+        state.alerted = true;
+        alertUserAboutAgent(paneId);
+        exitRecoveryMode();
+      }
+    }
   }
 }
 
@@ -534,12 +699,15 @@ function checkLeadResponse() {
 }
 
 /**
- * Main heartbeat tick - HB1-HB4 logic + V17 adaptive intervals
+ * Main heartbeat tick - HB1-HB4 logic + V17 adaptive intervals + V18 auto-nudge
  */
 function heartbeatTick() {
   if (!heartbeatEnabled || terminals.size === 0) {
     return;
   }
+
+  // V18: Check for stuck agents and auto-nudge them
+  checkAndNudgeStuckAgents();
 
   // V17: Check if state changed and update timer accordingly
   updateHeartbeatTimer();
@@ -626,7 +794,7 @@ function initHeartbeatTimer() {
   }, 30000);
 }
 
-initHeartbeatTimer();
+// NOTE: initHeartbeatTimer() is called later, after 'clients' Set is declared
 
 // ============================================================
 // D2 (V3): DRY-RUN MODE
@@ -706,6 +874,9 @@ function generateMockResponse(input) {
 // Connected clients: Set<net.Socket>
 const clients = new Set();
 
+// Initialize heartbeat timer now that clients is declared
+initHeartbeatTimer();
+
 // Get the appropriate shell for the platform
 function getShell() {
   return os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash';
@@ -764,6 +935,7 @@ function spawnTerminal(paneId, cwd, dryRun = false) {
       dryRun: true,
       inputBuffer: '', // Buffer for accumulating input
       lastActivity: Date.now(), // V4 AR1: Track last activity
+      lastInputTime: Date.now(), // V18 FIX: Track last user INPUT
     };
 
     terminals.set(paneId, terminalInfo);
@@ -801,7 +973,8 @@ function spawnTerminal(paneId, cwd, dryRun = false) {
     cwd: workDir,
     scrollback: '', // U1: Buffer for scrollback persistence
     dryRun: false,
-    lastActivity: Date.now(), // V4 AR1: Track last activity
+    lastActivity: Date.now(), // V4 AR1: Track last PTY output
+    lastInputTime: Date.now(), // V18 FIX: Track last user INPUT (not output)
   };
 
   terminals.set(paneId, terminalInfo);
@@ -848,12 +1021,15 @@ function writeTerminal(paneId, data) {
 
   // DRY-RUN MODE: Handle input simulation
   if (terminal.dryRun) {
-    // Echo the input character
-    broadcast({ event: 'data', paneId, data });
-    terminal.scrollback += data;
+    // V18 FIX: Track last INPUT time (for stuck detection)
+    terminal.lastInputTime = Date.now();
 
-    // Accumulate input until Enter is pressed
+    // Handle special characters BEFORE echoing
     if (data === '\r' || data === '\n') {
+      // Enter: echo newline and process command
+      broadcast({ event: 'data', paneId, data: '\r\n' });
+      terminal.scrollback += '\r\n';
+
       const input = terminal.inputBuffer;
       terminal.inputBuffer = '';
 
@@ -866,9 +1042,17 @@ function writeTerminal(paneId, data) {
         }, 100 + Math.random() * 200);
       }
     } else if (data === '\x7f' || data === '\b') {
-      // Backspace: remove last character from buffer
-      terminal.inputBuffer = terminal.inputBuffer.slice(0, -1);
+      // Backspace: remove last character from buffer and screen
+      if (terminal.inputBuffer.length > 0) {
+        terminal.inputBuffer = terminal.inputBuffer.slice(0, -1);
+        // Send escape sequence to visually delete: backspace, space, backspace
+        broadcast({ event: 'data', paneId, data: '\b \b' });
+        terminal.scrollback = terminal.scrollback.slice(0, -1);
+      }
     } else {
+      // Normal character: echo and add to buffer
+      broadcast({ event: 'data', paneId, data });
+      terminal.scrollback += data;
       terminal.inputBuffer += data;
     }
     return true;
@@ -876,6 +1060,8 @@ function writeTerminal(paneId, data) {
 
   // NORMAL MODE: Write to real PTY
   if (terminal.pty) {
+    // V18 FIX: Track last INPUT time (for stuck detection)
+    terminal.lastInputTime = Date.now();
     terminal.pty.write(data);
     return true;
   }
@@ -930,22 +1116,31 @@ function listTerminals() {
       dryRun: info.dryRun || false,
       // V4 AR1: Include last activity timestamp
       lastActivity: info.lastActivity || null,
+      // V18 FIX: Include last input timestamp (for stuck detection)
+      lastInputTime: info.lastInputTime || null,
     });
   }
   return list;
 }
 
-// V4 AR1: Get stuck terminals (no activity for threshold ms)
+// V4 AR1: Get stuck terminals (no INPUT for threshold ms)
+// V18 FIX: Use lastInputTime instead of lastActivity
+// lastActivity tracks PTY output (includes thinking animation - always "active")
+// lastInputTime tracks user INPUT (actual commands sent to agent)
 function getStuckTerminals(thresholdMs = DEFAULT_STUCK_THRESHOLD) {
   const now = Date.now();
   const stuck = [];
   for (const [paneId, info] of terminals) {
-    if (info.alive && info.lastActivity) {
-      const idleTime = now - info.lastActivity;
+    // V18 FIX: Check lastInputTime (when we last sent input TO the agent)
+    // not lastActivity (when agent last produced output)
+    const lastInput = info.lastInputTime || info.lastActivity;
+    if (info.alive && lastInput) {
+      const idleTime = now - lastInput;
       if (idleTime > thresholdMs) {
         stuck.push({
           paneId,
           pid: info.pid,
+          lastInputTime: info.lastInputTime,
           lastActivity: info.lastActivity,
           idleTimeMs: idleTime,
           idleTimeFormatted: formatUptime(Math.floor(idleTime / 1000)),
@@ -1129,6 +1324,58 @@ function handleMessage(client, message) {
         // Manually trigger a heartbeat
         heartbeatTick();
         sendToClient(client, { event: 'heartbeat-triggered' });
+        break;
+      }
+
+      // V18: Auto-aggressive-nudge protocol actions
+      case 'nudge-agent': {
+        // Manually nudge a specific agent
+        const success = sendAggressiveNudge(msg.paneId);
+        sendToClient(client, {
+          event: 'nudge-sent',
+          paneId: msg.paneId,
+          success: success,
+        });
+        break;
+      }
+
+      case 'nudge-status': {
+        // Get current nudge state for all agents
+        const nudgeStatus = {};
+        for (const [paneId, state] of aggressiveNudgeState) {
+          nudgeStatus[paneId] = {
+            attempts: state.attempts,
+            lastNudgeTime: state.lastNudgeTime,
+            alerted: state.alerted,
+            timeSinceNudge: state.lastNudgeTime ? Date.now() - state.lastNudgeTime : null,
+          };
+        }
+        sendToClient(client, {
+          event: 'nudge-status',
+          agents: nudgeStatus,
+          settings: {
+            waitTime: AGGRESSIVE_NUDGE_WAIT,
+            maxAttempts: MAX_AGGRESSIVE_NUDGES,
+            stuckThreshold: STUCK_CHECK_THRESHOLD,
+          },
+        });
+        break;
+      }
+
+      case 'nudge-reset': {
+        // Reset nudge state for a specific agent or all agents
+        if (msg.paneId) {
+          aggressiveNudgeState.delete(msg.paneId);
+          logInfo(`[AutoNudge] Reset nudge state for pane ${msg.paneId}`);
+        } else {
+          aggressiveNudgeState.clear();
+          logInfo('[AutoNudge] Reset all nudge states');
+        }
+        sendToClient(client, {
+          event: 'nudge-reset',
+          paneId: msg.paneId || 'all',
+          success: true,
+        });
         break;
       }
 
