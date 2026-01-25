@@ -352,11 +352,11 @@ function heartbeatTick() {
     return;
   }
 
-  // SMART CHECK: Don't nudge if agents are actively working
-  if (!awaitingLeadResponse && hasRecentActivity()) {
-    logInfo('[Heartbeat] Agents active, skipping nudge');
-    return;
-  }
+  // NOTE: Removed "smart activity check" - it was preventing heartbeats from firing
+  // because PTY output (ANSI codes, cursor updates) counts as "activity" even when
+  // agents are stuck at prompts. Heartbeats are non-intrusive, so always fire them.
+
+  logInfo(`[Heartbeat] Tick - awaiting=${awaitingLeadResponse}, nudgeCount=${leadNudgeCount}`);
 
   // If awaiting Lead response, check if they responded
   if (awaitingLeadResponse) {
