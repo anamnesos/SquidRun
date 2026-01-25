@@ -79,6 +79,62 @@ const SCROLLBACK_MAX_SIZE = 50000;
 const DEFAULT_STUCK_THRESHOLD = 60000;
 
 // ============================================================
+// FX4: GHOST TEXT DEDUPLICATION
+// ============================================================
+
+// Track recent inputs for ghost text detection
+// Format: [{ data, timestamp, paneId }, ...]
+const recentInputs = [];
+const GHOST_DEDUP_WINDOW_MS = 100; // Block duplicates within 100ms
+const GHOST_MIN_INPUT_LENGTH = 5; // Only check inputs >= 5 chars (ignore single keystrokes)
+let ghostBlockCount = 0; // Track total blocks for stats
+
+/**
+ * Check if this input is a ghost text duplicate
+ * Returns { isGhost: boolean, blockedPanes: string[] }
+ */
+function checkGhostText(paneId, data) {
+  const now = Date.now();
+
+  // Clean up old entries
+  while (recentInputs.length > 0 && now - recentInputs[0].timestamp > GHOST_DEDUP_WINDOW_MS) {
+    recentInputs.shift();
+  }
+
+  // Single keystrokes are not ghost text - only check longer inputs
+  // Ghost text typically submits entire suggestions at once
+  if (data.length < GHOST_MIN_INPUT_LENGTH) {
+    return { isGhost: false, blockedPanes: [] };
+  }
+
+  // Check if same input was recently sent to the SAME pane (true ghost text)
+  // Ghost text = same pane gets duplicate input, NOT different panes getting same input
+  // Cross-pane same-input is legitimate (e.g., broadcast messages)
+  const matchingInputs = recentInputs.filter(entry =>
+    entry.data === data &&
+    entry.paneId === paneId &&  // FX4 FIX: Only dedup SAME pane, not cross-pane
+    now - entry.timestamp < GHOST_DEDUP_WINDOW_MS
+  );
+
+  if (matchingInputs.length > 0) {
+    // This is a duplicate! Block it.
+    const blockedPanes = matchingInputs.map(e => e.paneId);
+    blockedPanes.push(paneId);
+    return { isGhost: true, blockedPanes };
+  }
+
+  // Record this input for future dedup checks
+  recentInputs.push({ data, timestamp: now, paneId });
+
+  // Keep only recent entries (prevent memory leak)
+  if (recentInputs.length > 50) {
+    recentInputs.shift();
+  }
+
+  return { isGhost: false, blockedPanes: [] };
+}
+
+// ============================================================
 // FX2: SESSION PERSISTENCE
 // ============================================================
 
@@ -163,7 +219,7 @@ const TRIGGERS_PATH = path.join(__dirname, '..', 'workspace', 'triggers');
 const SHARED_CONTEXT_PATH = path.join(__dirname, '..', 'workspace', 'shared_context.md');
 
 // Configurable intervals (ms)
-const HEARTBEAT_INTERVAL = 30000;  // HB1: 30 seconds (reduced from 60)
+const HEARTBEAT_INTERVAL = 1800000;  // HB1: 30 minutes (V16.11 fixed stuck, less frequent needed)
 const LEAD_RESPONSE_TIMEOUT = 15000;  // HB2: 15 seconds (reduced from 30)
 const MAX_LEAD_NUDGES = 2;  // HB3: After 2 failed nudges, escalate
 const ACTIVITY_THRESHOLD = 10000;  // Only nudge if no activity for 10 seconds
@@ -193,85 +249,65 @@ function hasRecentActivity() {
 
 /**
  * HB1: Write heartbeat message to Lead's trigger file
- * FIX: Send Ctrl+C first to interrupt any stuck prompt, then message
+ * NOTE: Removed automatic ESC sending - it was interrupting active agents
+ * The trigger file watcher will handle delivery; ESC is only sent if truly stuck
  */
 function sendHeartbeatToLead() {
   const leadPaneId = '1';
   const leadTerminal = terminals.get(leadPaneId);
 
-  // Step 1: Send ESC to interrupt any stuck state (ESC works better than Ctrl+C for Claude)
-  if (leadTerminal && leadTerminal.alive && leadTerminal.pty) {
-    try {
-      leadTerminal.pty.write('\x1b'); // ESC
-      logInfo('[Heartbeat] Sent ESC to Lead to break prompt');
-    } catch (err) {
-      logWarn(`[Heartbeat] Could not send ESC to Lead: ${err.message}`);
-    }
-  }
+  // V16 FIX: REMOVED ESC sending entirely - PTY ESC always kills/breaks agents
+  // The comment said "only if idle" but PTY ESC is fundamentally broken
+  // User keyboard ESC works, PTY ESC does not. Can't be fixed programmatically.
+  // Just send the trigger file message, let user manually ESC if needed.
 
-  // Step 2: Wait 500ms, then send heartbeat message
-  setTimeout(() => {
-    const triggerPath = path.join(TRIGGERS_PATH, 'lead.txt');
-    const message = '(SYSTEM): Heartbeat - check team status and nudge any stuck workers\n';
-    try {
-      fs.writeFileSync(triggerPath, message);
-      logInfo('[Heartbeat] Sent heartbeat to Lead');
-      awaitingLeadResponse = true;
-      lastHeartbeatTime = Date.now();
-    } catch (err) {
-      logError(`[Heartbeat] Failed to send to Lead: ${err.message}`);
-    }
-  }, 500);
+  // Send heartbeat message via trigger file
+  const triggerPath = path.join(TRIGGERS_PATH, 'lead.txt');
+  const message = '(SYSTEM): Heartbeat - check team status and nudge any stuck workers\n';
+  try {
+    fs.writeFileSync(triggerPath, message);
+    logInfo('[Heartbeat] Sent heartbeat to Lead');
+    awaitingLeadResponse = true;
+    lastHeartbeatTime = Date.now();
+  } catch (err) {
+    logError(`[Heartbeat] Failed to send to Lead: ${err.message}`);
+  }
 }
 
 /**
  * HB3: Directly nudge workers when Lead is unresponsive
- * FIX: Send Ctrl+C first to interrupt any stuck prompts
+ * NOTE: Only sends ESC to workers that are actually idle (not actively working)
  */
 function directNudgeWorkers() {
   logWarn('[Heartbeat] Lead unresponsive - directly nudging workers');
 
-  // Send Ctrl+C to worker terminals first
-  const workerPaneIds = ['2', '3']; // Worker A, Worker B
-  for (const paneId of workerPaneIds) {
-    const terminal = terminals.get(paneId);
-    if (terminal && terminal.alive && terminal.pty) {
-      try {
-        terminal.pty.write('\x1b'); // ESC
-        logInfo(`[Heartbeat] Sent ESC to Worker pane ${paneId}`);
-      } catch (err) {
-        logWarn(`[Heartbeat] Could not send ESC to pane ${paneId}: ${err.message}`);
+  // V16 FIX: REMOVED ESC sending entirely - PTY ESC always kills/breaks agents
+  // Just use trigger files, let user manually ESC if needed
+
+  // Read shared_context.md to find incomplete tasks
+  let incompleteTasksMsg = 'Check shared_context.md for your tasks';
+  try {
+    if (fs.existsSync(SHARED_CONTEXT_PATH)) {
+      const content = fs.readFileSync(SHARED_CONTEXT_PATH, 'utf-8');
+      // Look for IN PROGRESS or ASSIGNED tasks
+      const inProgress = content.match(/\|.*\|.*🔄.*\|.*\|/g);
+      if (inProgress && inProgress.length > 0) {
+        incompleteTasksMsg = `${inProgress.length} task(s) in progress - status update needed`;
       }
     }
+  } catch (err) {
+    logWarn(`[Heartbeat] Could not read shared_context: ${err.message}`);
   }
 
-  // Wait 500ms then send nudge message
-  setTimeout(() => {
-    // Read shared_context.md to find incomplete tasks
-    let incompleteTasksMsg = 'Check shared_context.md for your tasks';
-    try {
-      if (fs.existsSync(SHARED_CONTEXT_PATH)) {
-        const content = fs.readFileSync(SHARED_CONTEXT_PATH, 'utf-8');
-        // Look for IN PROGRESS or ASSIGNED tasks
-        const inProgress = content.match(/\|.*\|.*🔄.*\|.*\|/g);
-        if (inProgress && inProgress.length > 0) {
-          incompleteTasksMsg = `${inProgress.length} task(s) in progress - status update needed`;
-        }
-      }
-    } catch (err) {
-      logWarn(`[Heartbeat] Could not read shared_context: ${err.message}`);
-    }
-
-    // Nudge workers directly
-    const workersTrigger = path.join(TRIGGERS_PATH, 'workers.txt');
-    const message = `(SYSTEM): Watchdog alert - Lead unresponsive. ${incompleteTasksMsg}. Reply with your status.\n`;
-    try {
-      fs.writeFileSync(workersTrigger, message);
-      logInfo('[Heartbeat] Directly nudged workers');
-    } catch (err) {
-      logError(`[Heartbeat] Failed to nudge workers: ${err.message}`);
-    }
-  }, 500);
+  // Nudge workers directly via trigger file
+  const workersTrigger = path.join(TRIGGERS_PATH, 'workers.txt');
+  const message = `(SYSTEM): Watchdog alert - Lead unresponsive. ${incompleteTasksMsg}. Reply with your status.\n`;
+  try {
+    fs.writeFileSync(workersTrigger, message);
+    logInfo('[Heartbeat] Directly nudged workers');
+  } catch (err) {
+    logError(`[Heartbeat] Failed to nudge workers: ${err.message}`);
+  }
 }
 
 /**
@@ -318,12 +354,9 @@ function checkLeadResponse() {
     // Ignore
   }
 
-  // Check 2: Did Lead's terminal have activity after heartbeat?
-  const leadTerminal = terminals.get('1');
-  if (leadTerminal && leadTerminal.lastActivity > lastHeartbeatTime) {
-    logInfo('[Heartbeat] Lead responded - terminal activity detected');
-    return true;
-  }
+  // Check 2: REMOVED - Terminal activity check was causing false positives
+  // Claude Code's thinking animation counts as "activity" even when stuck
+  // Only actual actions (writing to workers.txt or clearing trigger file) count
 
   // Check 3: Original check - trigger file cleared (fallback)
   const triggerPath = path.join(TRIGGERS_PATH, 'lead.txt');
@@ -759,6 +792,35 @@ function handleMessage(client, message) {
       }
 
       case 'write': {
+        // FX4: Ghost text deduplication - block duplicate inputs across panes
+        const ghostCheck = checkGhostText(msg.paneId, msg.data);
+        if (ghostCheck.isGhost) {
+          ghostBlockCount++;
+          const panesStr = ghostCheck.blockedPanes.join(', ');
+          const truncatedInput = msg.data.length > 50 ? msg.data.substring(0, 50) + '...' : msg.data;
+          logWarn(`[GHOST-BLOCK] #${ghostBlockCount} Blocked duplicate input to panes ${panesStr}: "${truncatedInput}"`);
+
+          // Notify the requesting client
+          sendToClient(client, {
+            event: 'ghost-blocked',
+            paneId: msg.paneId,
+            blockedPanes: ghostCheck.blockedPanes,
+            message: `Ghost text blocked - same input sent to ${ghostCheck.blockedPanes.length} panes within ${GHOST_DEDUP_WINDOW_MS}ms`,
+            totalBlocks: ghostBlockCount,
+          });
+
+          // Also broadcast to all clients so UI can show feedback
+          broadcast({
+            event: 'ghost-blocked-broadcast',
+            blockedPanes: ghostCheck.blockedPanes,
+            inputPreview: truncatedInput,
+            totalBlocks: ghostBlockCount,
+            timestamp: new Date().toISOString(),
+          });
+
+          break; // Don't write the ghost text
+        }
+
         const success = writeTerminal(msg.paneId, msg.data);
         if (!success) {
           sendToClient(client, {
@@ -875,6 +937,18 @@ function handleMessage(client, message) {
         // Manually trigger a heartbeat
         heartbeatTick();
         sendToClient(client, { event: 'heartbeat-triggered' });
+        break;
+      }
+
+      // FX4: Ghost text stats
+      case 'ghost-stats': {
+        sendToClient(client, {
+          event: 'ghost-stats',
+          totalBlocks: ghostBlockCount,
+          dedupWindowMs: GHOST_DEDUP_WINDOW_MS,
+          minInputLength: GHOST_MIN_INPUT_LENGTH,
+          recentInputCount: recentInputs.length,
+        });
         break;
       }
 
