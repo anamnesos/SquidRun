@@ -213,14 +213,25 @@ setInterval(() => {
 
 // ============================================================
 // V13 HB1-HB4: HEARTBEAT WATCHDOG
+// V17: ADAPTIVE HEARTBEAT INTERVALS
 // ============================================================
 
 const TRIGGERS_PATH = path.join(__dirname, '..', 'workspace', 'triggers');
 const SHARED_CONTEXT_PATH = path.join(__dirname, '..', 'workspace', 'shared_context.md');
+const STATUS_MD_PATH = path.join(__dirname, '..', 'workspace', 'build', 'status.md');
 
-// Configurable intervals (ms)
-const HEARTBEAT_INTERVAL = 1800000;  // HB1: 30 minutes (V16.11 fixed stuck, less frequent needed)
-const LEAD_RESPONSE_TIMEOUT = 15000;  // HB2: 15 seconds (reduced from 30)
+// V17: Adaptive heartbeat intervals (ms)
+const HEARTBEAT_INTERVALS = {
+  idle: 600000,       // 10 minutes - no pending tasks
+  active: 120000,     // 2 minutes - tasks in progress
+  overdue: 60000,     // 1 minute - task stale (no status.md update in >5 min)
+  recovering: 45000,  // 45 seconds - after stuck detection, before escalation
+};
+
+// V17: Staleness threshold - task is "overdue" if no status.md update in 5 minutes
+const STALENESS_THRESHOLD = 300000; // 5 minutes
+
+const LEAD_RESPONSE_TIMEOUT = 15000;  // HB2: 15 seconds
 const MAX_LEAD_NUDGES = 2;  // HB3: After 2 failed nudges, escalate
 const ACTIVITY_THRESHOLD = 10000;  // Only nudge if no activity for 10 seconds
 
@@ -229,6 +240,9 @@ let heartbeatEnabled = true;
 let leadNudgeCount = 0;
 let lastHeartbeatTime = 0;
 let awaitingLeadResponse = false;
+let currentHeartbeatState = 'idle';  // V17: Track current state
+let heartbeatTimerId = null;  // V17: Dynamic timer reference
+let isRecovering = false;  // V17: Recovery state after stuck detection
 
 /**
  * Check if any terminal has recent activity
@@ -245,6 +259,148 @@ function hasRecentActivity() {
     }
   }
   return false; // All agents idle
+}
+
+/**
+ * V17: Get status.md last modified time
+ * Returns null if file doesn't exist or can't be read
+ */
+function getStatusMdMtime() {
+  try {
+    if (fs.existsSync(STATUS_MD_PATH)) {
+      const stats = fs.statSync(STATUS_MD_PATH);
+      return stats.mtimeMs;
+    }
+  } catch (err) {
+    logWarn(`[Heartbeat] Could not read status.md mtime: ${err.message}`);
+  }
+  return null;
+}
+
+/**
+ * V17: Check if there are pending/in-progress tasks in shared_context.md
+ * Returns true if tasks found, false otherwise
+ */
+function hasPendingTasks() {
+  try {
+    if (fs.existsSync(SHARED_CONTEXT_PATH)) {
+      const content = fs.readFileSync(SHARED_CONTEXT_PATH, 'utf-8');
+      // Look for task indicators: 🔄 (in progress), PENDING, IN PROGRESS, ASSIGNED
+      const hasInProgress = /🔄|IN PROGRESS|PENDING|ASSIGNED/i.test(content);
+      return hasInProgress;
+    }
+  } catch (err) {
+    logWarn(`[Heartbeat] Could not read shared_context.md: ${err.message}`);
+  }
+  return false;
+}
+
+/**
+ * V17: Determine heartbeat state based on task activity and staleness
+ * Returns: 'idle' | 'active' | 'overdue' | 'recovering'
+ */
+function getHeartbeatState() {
+  // If in recovery mode, stay there until cleared
+  if (isRecovering) {
+    return 'recovering';
+  }
+
+  const now = Date.now();
+  const statusMtime = getStatusMdMtime();
+  const hasTasks = hasPendingTasks();
+
+  // If no status.md, default to 'active' (safe default per Reviewer feedback)
+  if (statusMtime === null) {
+    logInfo('[Heartbeat] No status.md found, defaulting to ACTIVE state');
+    return 'active';
+  }
+
+  const staleness = now - statusMtime;
+
+  // Check for overdue: tasks exist but no status.md update in >5 minutes
+  if (hasTasks && staleness > STALENESS_THRESHOLD) {
+    logInfo(`[Heartbeat] Task stale (${Math.round(staleness/1000)}s since status.md update) - OVERDUE`);
+    return 'overdue';
+  }
+
+  // Check for active: tasks exist and recently updated
+  if (hasTasks) {
+    return 'active';
+  }
+
+  // No tasks = idle
+  return 'idle';
+}
+
+/**
+ * V17: Get heartbeat interval based on current state
+ * Returns interval in milliseconds
+ */
+function getHeartbeatInterval() {
+  const state = getHeartbeatState();
+  return HEARTBEAT_INTERVALS[state] || HEARTBEAT_INTERVALS.active;
+}
+
+/**
+ * V17: Broadcast heartbeat state change to all clients
+ * This is picked up by main.js and forwarded to renderer
+ */
+function broadcastHeartbeatState(state, interval) {
+  broadcast({
+    event: 'heartbeat-state-changed',
+    state: state,
+    interval: interval,
+    timestamp: new Date().toISOString(),
+  });
+  logInfo(`[Heartbeat] State changed: ${state} (interval: ${interval}ms)`);
+}
+
+/**
+ * V17: Enter recovery mode (45 sec interval) after stuck detection
+ */
+function enterRecoveryMode() {
+  if (!isRecovering) {
+    isRecovering = true;
+    logInfo('[Heartbeat] Entering RECOVERING state');
+    updateHeartbeatTimer();
+  }
+}
+
+/**
+ * V17: Exit recovery mode (agent responded)
+ */
+function exitRecoveryMode() {
+  if (isRecovering) {
+    isRecovering = false;
+    logInfo('[Heartbeat] Exiting RECOVERING state');
+    updateHeartbeatTimer();
+  }
+}
+
+/**
+ * V17: Update heartbeat timer with new interval based on current state
+ */
+function updateHeartbeatTimer() {
+  const newState = getHeartbeatState();
+  const newInterval = HEARTBEAT_INTERVALS[newState];
+
+  // Only update if state changed
+  if (newState !== currentHeartbeatState) {
+    currentHeartbeatState = newState;
+
+    // Clear existing timer
+    if (heartbeatTimerId) {
+      clearInterval(heartbeatTimerId);
+    }
+
+    // Set new timer with updated interval
+    heartbeatTimerId = setInterval(heartbeatTick, newInterval);
+
+    // Broadcast state change to clients
+    broadcastHeartbeatState(newState, newInterval);
+
+    logInfo(`[Heartbeat] Timer updated: ${newState} (${newInterval}ms)`);
+  }
 }
 
 /**
@@ -378,18 +534,21 @@ function checkLeadResponse() {
 }
 
 /**
- * Main heartbeat tick - HB1-HB4 logic
+ * Main heartbeat tick - HB1-HB4 logic + V17 adaptive intervals
  */
 function heartbeatTick() {
   if (!heartbeatEnabled || terminals.size === 0) {
     return;
   }
 
+  // V17: Check if state changed and update timer accordingly
+  updateHeartbeatTimer();
+
   // NOTE: Removed "smart activity check" - it was preventing heartbeats from firing
   // because PTY output (ANSI codes, cursor updates) counts as "activity" even when
   // agents are stuck at prompts. Heartbeats are non-intrusive, so always fire them.
 
-  logInfo(`[Heartbeat] Tick - awaiting=${awaitingLeadResponse}, nudgeCount=${leadNudgeCount}`);
+  logInfo(`[Heartbeat] Tick - state=${currentHeartbeatState}, awaiting=${awaitingLeadResponse}, nudgeCount=${leadNudgeCount}`);
 
   // If awaiting Lead response, check if they responded
   if (awaitingLeadResponse) {
@@ -400,6 +559,7 @@ function heartbeatTick() {
       logInfo('[Heartbeat] Lead responded');
       leadNudgeCount = 0;
       awaitingLeadResponse = false;
+      exitRecoveryMode();  // V17: Exit recovery if we were in it
       return;
     }
 
@@ -407,6 +567,9 @@ function heartbeatTick() {
     if (elapsed > LEAD_RESPONSE_TIMEOUT) {
       leadNudgeCount++;
       logWarn(`[Heartbeat] Lead no response after ${elapsed}ms (nudge ${leadNudgeCount}/${MAX_LEAD_NUDGES})`);
+
+      // V17: Enter recovery mode on first failed nudge
+      enterRecoveryMode();
 
       if (leadNudgeCount >= MAX_LEAD_NUDGES) {
         // HB3: Escalate to direct worker nudge
@@ -423,6 +586,7 @@ function heartbeatTick() {
               const content = fs.readFileSync(workersTrigger, 'utf-8').trim();
               if (content.includes('(SYSTEM): Watchdog')) {
                 alertUser();
+                exitRecoveryMode();  // V17: Exit recovery after user alert
               }
             }
           } catch (err) {
@@ -441,9 +605,28 @@ function heartbeatTick() {
   sendHeartbeatToLead();
 }
 
-// Start heartbeat timer
-const heartbeatTimer = setInterval(heartbeatTick, HEARTBEAT_INTERVAL);
-logInfo(`[Heartbeat] Watchdog started (interval: ${HEARTBEAT_INTERVAL}ms)`);
+// V17: Start heartbeat timer with initial adaptive interval
+function initHeartbeatTimer() {
+  const initialState = getHeartbeatState();
+  const initialInterval = HEARTBEAT_INTERVALS[initialState];
+  currentHeartbeatState = initialState;
+
+  heartbeatTimerId = setInterval(heartbeatTick, initialInterval);
+  logInfo(`[Heartbeat] Watchdog started - state: ${initialState}, interval: ${initialInterval}ms`);
+
+  // Broadcast initial state to any connected clients
+  broadcastHeartbeatState(initialState, initialInterval);
+
+  // V17: Periodic state check (every 30 seconds) to detect state changes
+  // This catches state changes between heartbeat ticks
+  setInterval(() => {
+    if (heartbeatEnabled) {
+      updateHeartbeatTimer();
+    }
+  }, 30000);
+}
+
+initHeartbeatTimer();
 
 // ============================================================
 // D2 (V3): DRY-RUN MODE
@@ -923,13 +1106,22 @@ function handleMessage(client, message) {
       }
 
       case 'heartbeat-status': {
+        const currentState = getHeartbeatState();
+        const currentInterval = HEARTBEAT_INTERVALS[currentState];
         sendToClient(client, {
           event: 'heartbeat-status',
           enabled: heartbeatEnabled,
+          // V17: Include adaptive state info
+          state: currentState,
+          interval: currentInterval,
+          isRecovering: isRecovering,
+          // Legacy fields
           leadNudgeCount,
           awaitingResponse: awaitingLeadResponse,
           lastHeartbeat: lastHeartbeatTime,
         });
+        // V17: Also broadcast current state so UI updates
+        broadcastHeartbeatState(currentState, currentInterval);
         break;
       }
 

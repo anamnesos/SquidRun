@@ -205,6 +205,21 @@ class DaemonClient extends EventEmitter {
           this.emit('health', msg);
           break;
 
+        // V17: Handle heartbeat state changes
+        case 'heartbeat-state-changed':
+          this.emit('heartbeat-state-changed', msg.state, msg.interval, msg.timestamp);
+          break;
+
+        // V17: Handle heartbeat status response
+        case 'heartbeat-status':
+          this.emit('heartbeat-status', msg);
+          break;
+
+        // V13: Handle watchdog alert
+        case 'watchdog-alert':
+          this.emit('watchdog-alert', msg.message, msg.timestamp);
+          break;
+
         default:
           console.log('[DaemonClient] Unknown event:', msg.event);
       }
