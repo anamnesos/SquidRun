@@ -347,11 +347,30 @@ async function initDaemonClient() {
     console.error(`[Daemon] Error for pane ${paneId}:`, message);
   });
 
+  // V17: Forward heartbeat state changes to renderer
+  daemonClient.on('heartbeat-state-changed', (state, interval, timestamp) => {
+    console.log(`[Heartbeat] State changed: ${state} (${interval}ms)`);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('heartbeat-state-changed', { state, interval });
+    }
+  });
+
+  // V13: Forward watchdog alerts to renderer
+  daemonClient.on('watchdog-alert', (message, timestamp) => {
+    console.log(`[Watchdog] Alert: ${message}`);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('watchdog-alert', { message, timestamp });
+    }
+  });
+
   const connected = await daemonClient.connect();
   if (connected) {
     console.log('[Main] Successfully connected to terminal daemon');
 
     // V4: Auto-unstick timer - check for stuck terminals every 30 seconds
+    // V16 FIX: REMOVED ESC sending - PTY ESC kills/interrupts agents!
+    // We can only NOTIFY the user about stuck agents, not auto-fix them.
+    // User keyboard ESC works to unstick, but programmatic PTY ESC breaks things.
     if (currentSettings.autoNudge) {
       setInterval(() => {
         const now = Date.now();
@@ -361,15 +380,15 @@ async function initDaemonClient() {
           if (status === 'running') {
             const lastActivity = daemonClient.getLastActivity(paneId);
             if (lastActivity && (now - lastActivity) > threshold) {
-              console.log(`[Auto-Unstick] Pane ${paneId} stuck for ${Math.round((now - lastActivity) / 1000)}s, sending ESC+Enter`);
-              // Send ESC to cancel any pending input, then Enter to unstick
-              daemonClient.write(paneId, '\x1b'); // ESC
-              setTimeout(() => {
-                daemonClient.write(paneId, '\r'); // Enter
-              }, 100);
-              // Notify UI
+              console.log(`[Auto-Unstick] Pane ${paneId} stuck for ${Math.round((now - lastActivity) / 1000)}s - user intervention needed`);
+              // V16 FIX: DO NOT send ESC via PTY - it kills agents!
+              // Just notify UI so user can manually press ESC
               if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('agent-unstuck', { paneId, after: now - lastActivity });
+                mainWindow.webContents.send('agent-stuck-detected', {
+                  paneId,
+                  idleTime: now - lastActivity,
+                  message: `Agent in pane ${paneId} appears stuck. Press ESC to unstick.`
+                });
               }
             }
           }
@@ -406,7 +425,7 @@ async function createWindow() {
 
   // Initialize modules with shared state
   triggers.init(mainWindow, claudeRunning);
-  watcher.init(mainWindow, triggers);
+  watcher.init(mainWindow, triggers, () => currentSettings); // V14: Pass settings getter for auto-sync control
   triggers.setWatcher(watcher); // Enable workflow gate
 
   // Initialize IPC handlers

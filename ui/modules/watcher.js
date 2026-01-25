@@ -19,6 +19,7 @@ let mainWindow = null;
 let workspaceWatcher = null;
 let messageWatcher = null; // V10 MQ4: Separate watcher for message queues
 let triggers = null; // Reference to triggers module
+let getSettings = null; // V14: Settings getter for auto-sync control
 
 // ============================================================
 // STATE MACHINE
@@ -503,14 +504,24 @@ function handleFileChange(filePath) {
     transition(States.PLAN_REVIEW);
   }
 
-  // AUTO-SYNC TRIGGERS
+  // AUTO-SYNC TRIGGERS (V14: controlled by autoSync setting)
   else if (filename === 'improvements.md' && triggers) {
-    console.log('[Watcher] Improvements file changed - triggering auto-sync to all agents');
-    triggers.notifyAllAgentsSync('improvements.md');
+    const settings = getSettings ? getSettings() : {};
+    if (settings.autoSync) {
+      console.log('[Watcher] Improvements file changed - triggering auto-sync to all agents');
+      triggers.notifyAllAgentsSync('improvements.md');
+    } else {
+      console.log('[Watcher] Improvements file changed - auto-sync disabled, skipping');
+    }
   }
   else if (filename === 'shared_context.md' && triggers) {
-    console.log('[Watcher] Shared context changed - triggering auto-sync to all agents');
-    triggers.notifyAllAgentsSync('shared_context.md');
+    const settings = getSettings ? getSettings() : {};
+    if (settings.autoSync) {
+      console.log('[Watcher] Shared context changed - triggering auto-sync to all agents');
+      triggers.notifyAllAgentsSync('shared_context.md');
+    } else {
+      console.log('[Watcher] Shared context changed - auto-sync disabled, skipping');
+    }
   }
 
   // TARGETED TRIGGERS: workspace/triggers/{target}.txt
@@ -531,6 +542,8 @@ function startWatcher() {
   workspaceWatcher = chokidar.watch(WORKSPACE_PATH, {
     ignoreInitial: true,
     persistent: true,
+    usePolling: true,  // V17: Windows fix - bash echo doesn't trigger native fs events
+    interval: 1000,    // Poll every 1 second
     ignored: [
       /node_modules/,
       /\.git/,
@@ -556,10 +569,12 @@ function stopWatcher() {
  * Initialize the watcher module with shared state
  * @param {BrowserWindow} window - The main Electron window
  * @param {Object} triggersModule - The triggers module reference
+ * @param {Function} settingsGetter - Function to get current settings (V14: for auto-sync control)
  */
-function init(window, triggersModule) {
+function init(window, triggersModule, settingsGetter = null) {
   mainWindow = window;
   triggers = triggersModule;
+  getSettings = settingsGetter;
 }
 
 // ============================================================
@@ -843,6 +858,8 @@ function startMessageWatcher() {
   messageWatcher = chokidar.watch(MESSAGE_QUEUE_DIR, {
     ignoreInitial: true,
     persistent: true,
+    usePolling: true,  // V17: Windows fix - bash echo doesn't trigger native fs events
+    interval: 1000,    // Poll every 1 second
   });
 
   messageWatcher.on('change', handleMessageQueueChange);
