@@ -11,6 +11,36 @@ const tabs = require('./modules/tabs');
 const settings = require('./modules/settings');
 const daemonHandlers = require('./modules/daemon-handlers');
 
+// Initialization state tracking - fixes race condition in auto-spawn
+let initState = {
+  settingsLoaded: false,
+  terminalsReady: false,
+  autoSpawnChecked: false
+};
+
+function checkInitComplete() {
+  if (initState.settingsLoaded && initState.terminalsReady && !initState.autoSpawnChecked) {
+    initState.autoSpawnChecked = true;
+    console.log('[Init] Both settings and terminals ready, checking auto-spawn...');
+    settings.checkAutoSpawn(
+      terminal.spawnAllClaude,
+      terminal.getReconnectedToExisting()
+    );
+  }
+}
+
+function markSettingsLoaded() {
+  initState.settingsLoaded = true;
+  console.log('[Init] Settings loaded');
+  checkInitComplete();
+}
+
+function markTerminalsReady() {
+  initState.terminalsReady = true;
+  console.log('[Init] Terminals ready');
+  checkInitComplete();
+}
+
 // Create hivemind API (replaces preload bridge)
 window.hivemind = {
   pty: {
@@ -76,6 +106,7 @@ function updateConnectionStatus(status) {
 terminal.setStatusCallbacks(updatePaneStatus, updateConnectionStatus);
 tabs.setConnectionStatusCallback(updateConnectionStatus);
 settings.setConnectionStatusCallback(updateConnectionStatus);
+settings.setSettingsLoadedCallback(markSettingsLoaded);
 daemonHandlers.setStatusCallbacks(updateConnectionStatus, updatePaneStatus);
 
 // Setup event listeners
@@ -92,33 +123,37 @@ function setupEventListeners() {
     }
   });
 
-  // Broadcast input - BUTTON ONLY (Enter disabled due to autocomplete bug)
+  // Broadcast input - Enter re-enabled (ghost text fix is in xterm, not here)
   const broadcastInput = document.getElementById('broadcastInput');
+  let lastBroadcastTime = 0;
 
   if (broadcastInput) {
-    // BLOCK all Enter key submission - autocomplete bug bypasses all guards
     broadcastInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        // Only allow trusted (real user) Enter presses
+        if (!e.isTrusted) {
+          e.preventDefault();
+          console.log('[Broadcast] Blocked untrusted Enter');
+          return;
+        }
         e.preventDefault();
-        e.stopPropagation();
-        // Show hint
-        console.log('[Broadcast] Enter disabled - use Broadcast button');
+        const input = broadcastInput;
+        if (input.value && input.value.trim()) {
+          const now = Date.now();
+          if (now - lastBroadcastTime < 500) {
+            console.log('[Broadcast] Rate limited');
+            return;
+          }
+          lastBroadcastTime = now;
+          terminal.broadcast(input.value.trim() + '\r');
+          input.value = '';
+        }
       }
-    });
-    // Block ALL other submission methods
-    broadcastInput.addEventListener('change', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    });
-    broadcastInput.addEventListener('submit', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
     });
   }
 
-  // Broadcast button - ONLY way to send (Enter disabled)
+  // Broadcast button - also works (for accessibility)
   const broadcastBtn = document.getElementById('broadcastBtn');
-  let lastBroadcastTime = 0;
   if (broadcastBtn) {
     broadcastBtn.addEventListener('click', (e) => {
       // Must be trusted click event
@@ -162,6 +197,17 @@ function setupEventListeners() {
   const freshStartBtn = document.getElementById('freshStartBtn');
   if (freshStartBtn) {
     freshStartBtn.addEventListener('click', terminal.freshStartAll);
+  }
+
+  // Full restart button - kill daemon and reload app with fresh code
+  const fullRestartBtn = document.getElementById('fullRestartBtn');
+  if (fullRestartBtn) {
+    fullRestartBtn.addEventListener('click', async () => {
+      if (confirm('This will kill the daemon and restart the app.\n\nAll agent conversations will be lost, but code changes will be loaded.\n\nContinue?')) {
+        updateConnectionStatus('Restarting...');
+        await ipcRenderer.invoke('full-restart');
+      }
+    });
   }
 
   // Sync button
@@ -274,6 +320,63 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // V17: Heartbeat state indicator
+  ipcRenderer.on('heartbeat-state-changed', (event, data) => {
+    const { state, interval } = data;
+    const indicator = document.getElementById('heartbeatIndicator');
+    if (indicator) {
+      // Format interval for display
+      const minutes = Math.round(interval / 60000);
+      const seconds = Math.round(interval / 1000);
+      const displayInterval = minutes >= 1 ? `${minutes}m` : `${seconds}s`;
+
+      // Update text and class
+      indicator.textContent = `HB: ${state.toUpperCase()} (${displayInterval})`;
+      indicator.className = `heartbeat-indicator ${state}`;
+      indicator.style.display = 'inline-flex';
+
+      console.log(`[Heartbeat] State changed: ${state}, interval: ${displayInterval}`);
+    }
+  });
+
+  // V16 FIX: Single agent stuck detection - notify user (we can't auto-ESC via PTY)
+  // Track shown alerts to avoid spamming
+  const stuckAlertShown = new Set();
+  ipcRenderer.on('agent-stuck-detected', (event, data) => {
+    const { paneId, idleTime, message } = data;
+
+    // Only show once per stuck detection (reset after 60 seconds)
+    if (stuckAlertShown.has(paneId)) return;
+    stuckAlertShown.add(paneId);
+    setTimeout(() => stuckAlertShown.delete(paneId), 60000);
+
+    console.log(`[Stuck Detection] Pane ${paneId} stuck for ${Math.round(idleTime / 1000)}s`);
+
+    // Flash the stuck pane header
+    const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+    if (pane) {
+      const header = pane.querySelector('.pane-header');
+      if (header) {
+        header.style.boxShadow = '0 0 10px #ff5722';
+        setTimeout(() => header.style.boxShadow = '', 3000);
+      }
+    }
+
+    // Show brief status bar notification
+    const statusBar = document.querySelector('.status-bar');
+    if (statusBar) {
+      const alert = document.createElement('span');
+      alert.textContent = ` | Pane ${paneId} may be stuck - click pane and press ESC`;
+      alert.style.cssText = 'color: #ffc857; cursor: pointer;';
+      alert.onclick = () => {
+        terminal.focusPane(paneId);
+        alert.remove();
+      };
+      statusBar.appendChild(alert);
+      setTimeout(() => alert.remove(), 5000);
+    }
+  });
+
   // Setup daemon handlers
   daemonHandlers.setupStateListener();
   daemonHandlers.setupClaudeStateListener(daemonHandlers.handleSessionTimerState);
@@ -302,10 +405,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   tabs.setupMCPStatusIndicator(); // MC7: MCP status indicator
 
   // Setup daemon listeners (for terminal reconnection)
+  // Pass markTerminalsReady callback to fix auto-spawn race condition
   daemonHandlers.setupDaemonListeners(
     terminal.initTerminals,
     terminal.reattachTerminal,
-    terminal.setReconnectedToExisting
+    terminal.setReconnectedToExisting,
+    markTerminalsReady
   );
 
   // Load initial project path
@@ -318,11 +423,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   daemonHandlers.setupPaneProjectClicks();
   await daemonHandlers.loadPaneProjects();
 
-  // Check auto-spawn after terminals are ready
-  setTimeout(() => {
-    settings.checkAutoSpawn(
-      terminal.spawnAllClaude,
-      terminal.getReconnectedToExisting()
-    );
-  }, 1000);
+  // Auto-spawn now handled by checkInitComplete() when both
+  // settings are loaded AND terminals are ready (no more race condition)
 });

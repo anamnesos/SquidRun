@@ -549,6 +549,34 @@
       100% { background-color: #16213e; }
     }
 
+    /* V17: Heartbeat state indicator */
+    .heartbeat-indicator {
+      display: inline-flex;
+      align-items: center;
+      margin-left: 12px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .heartbeat-indicator.idle {
+      background: #2d5a3d;
+      color: #4ecca3;
+    }
+    .heartbeat-indicator.active {
+      background: #1a3a5c;
+      color: #4fc3f7;
+    }
+    .heartbeat-indicator.overdue {
+      background: #5c4a1a;
+      color: #ffc857;
+    }
+    .heartbeat-indicator.recovering {
+      background: #5c3a1a;
+      color: #ff9800;
+    }
+
     .pane-title {
       display: flex;
       align-items: center;
@@ -747,6 +775,17 @@
 
     .btn-fresh:hover {
       background: #00d9ff;
+      color: #1a1a2e;
+    }
+
+    .btn-restart {
+      background: transparent;
+      border: 1px solid #ff9800;
+      color: #ff9800;
+    }
+
+    .btn-restart:hover {
+      background: #ff9800;
       color: #1a1a2e;
     }
 
@@ -2542,6 +2581,7 @@
       <button class="btn btn-danger" id="killAllBtn" title="Terminate all running Claude sessions">Kill All</button>
       <button class="btn btn-nudge" id="nudgeAllBtn" title="Send Esc+Enter to unstick churning agents">Nudge All</button>
       <button class="btn btn-fresh" id="freshStartBtn" title="Kill all sessions and start fresh without context">Fresh Start</button>
+      <button class="btn btn-restart" id="fullRestartBtn" title="Kill daemon and reload app with fresh code">Full Restart</button>
       <button class="btn btn-friction" id="frictionBtn" title="View agent friction logs and blockers">Friction <span class="friction-count" id="frictionBadge">0</span></button>
       <button class="btn settings-btn" id="settingsBtn" title="Configure Hivemind settings and permissions">Settings</button>
       <button class="btn btn-panel" id="panelBtn" title="Toggle right panel (Screenshots, Tests, Activity, etc.)">Panel</button>
@@ -2994,6 +3034,7 @@
 
   <div class="status-bar">
     <span id="connectionStatus">Initializing...</span>
+    <span id="heartbeatIndicator" class="heartbeat-indicator idle" style="display: none;">HB: IDLE (10m)</span>
     <span>Press Ctrl+1-4 to focus pane | Enter in broadcast bar to send to all</span>
   </div>
 
