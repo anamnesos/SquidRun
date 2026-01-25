@@ -87,7 +87,7 @@ function updatePaneStatus(paneId, status) {
 // DAEMON LISTENERS
 // ============================================================
 
-function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnectedFn) {
+function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnectedFn, onTerminalsReadyFn) {
   // Handle initial daemon connection with existing terminals
   ipcRenderer.on('daemon-connected', async (event, data) => {
     const { terminals: existingTerminals } = data;
@@ -97,19 +97,38 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
       updateConnectionStatus('Reconnecting to existing sessions...');
       setReconnectedFn(true);
 
+      // Track which panes have existing terminals
+      const existingPaneIds = new Set();
       for (const term of existingTerminals) {
         if (term.alive) {
+          existingPaneIds.add(String(term.paneId));
           // U1: Pass scrollback for session restoration
           await reattachTerminalFn(String(term.paneId), term.scrollback);
         }
       }
 
-      updateConnectionStatus(`Restored ${existingTerminals.length} terminal(s)`);
+      // Create terminals for any missing panes
+      const missingPanes = PANE_IDS.filter(id => !existingPaneIds.has(id));
+      if (missingPanes.length > 0) {
+        console.log('[Daemon] Creating missing terminals for panes:', missingPanes);
+        for (const paneId of missingPanes) {
+          // Use dynamic import to avoid circular dependency
+          const terminal = require('./terminal');
+          await terminal.initTerminal(paneId);
+        }
+      }
+
+      updateConnectionStatus(`Restored ${existingTerminals.length} terminal(s)${missingPanes.length > 0 ? `, created ${missingPanes.length} new` : ''}`);
     } else {
       console.log('[Daemon] No existing terminals, creating new ones...');
       updateConnectionStatus('Creating terminals...');
       await initTerminalsFn();
       updateConnectionStatus('Ready');
+    }
+
+    // Notify that terminals are ready (for init sequencing)
+    if (onTerminalsReadyFn) {
+      onTerminalsReadyFn();
     }
   });
 
@@ -144,6 +163,7 @@ function queueMessage(paneId, message) {
 }
 
 // BUG2 FIX: Process message queue for a pane with throttling
+// V16: Restore Enter for messages that include it (triggers, broadcasts)
 function processQueue(paneId) {
   // Already processing this pane, let it continue
   if (processingPanes.has(paneId)) return;
@@ -154,20 +174,32 @@ function processQueue(paneId) {
   processingPanes.add(paneId);
 
   const message = queue.shift();
-  const text = message.replace(/\r$/, '');
 
-  window.hivemind.pty.write(paneId, text);
-  setTimeout(() => {
-    window.hivemind.pty.write(paneId, '\r');
-    // Flash pane header (U2)
+  const terminal = require('./terminal');
+
+  // V16.10: Special (UNSTICK) command sends ESC keyboard event to unstick agent
+  if (message.trim() === '(UNSTICK)') {
+    console.log(`[Daemon] Sending UNSTICK (ESC) to pane ${paneId}`);
+    terminal.sendUnstick(paneId);
     flashPaneHeader(paneId);
-
-    // Process next message after delay
     processingPanes.delete(paneId);
     if (queue.length > 0) {
       setTimeout(() => processQueue(paneId), MESSAGE_DELAY);
     }
-  }, 50);
+    return;
+  }
+
+  // Normal message handling
+  terminal.sendToPane(paneId, message);
+
+  // Flash pane header (U2)
+  flashPaneHeader(paneId);
+
+  // Process next message after delay
+  processingPanes.delete(paneId);
+  if (queue.length > 0) {
+    setTimeout(() => processQueue(paneId), MESSAGE_DELAY);
+  }
 }
 
 // ============================================================
