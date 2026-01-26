@@ -1,9 +1,20 @@
 /**
  * Daemon handlers module
  * Handles IPC events from daemon and state changes
+ *
+ * V2 SDK Integration: When SDK mode is enabled, processQueue
+ * routes messages through SDK instead of terminal PTY.
  */
 
 const { ipcRenderer } = require('electron');
+
+// SDK renderer for immediate message display
+let sdkRenderer = null;
+try {
+  sdkRenderer = require('./sdk-renderer');
+} catch (e) {
+  // SDK renderer not available - will be loaded later
+}
 
 // Pane IDs
 const PANE_IDS = ['1', '2', '3', '4'];
@@ -12,6 +23,9 @@ const PANE_IDS = ['1', '2', '3', '4'];
 const messageQueues = new Map(); // paneId -> array of messages
 const processingPanes = new Set(); // panes currently being processed
 const MESSAGE_DELAY = 150; // ms between messages per pane
+
+// V2 SDK Integration
+let sdkModeEnabled = false;
 
 // State display helpers
 const STATE_DISPLAY_NAMES = {
@@ -53,6 +67,23 @@ function setStatusCallbacks(connectionCb, paneCb) {
   onPaneStatusUpdate = paneCb;
 }
 
+/**
+ * V2 SDK: Enable/disable SDK mode for message routing
+ * @param {boolean} enabled - Whether SDK mode is active
+ */
+function setSDKMode(enabled) {
+  sdkModeEnabled = enabled;
+  console.log(`[Daemon Handlers] SDK mode ${enabled ? 'ENABLED' : 'DISABLED'}`);
+}
+
+/**
+ * V2 SDK: Check if SDK mode is active
+ * @returns {boolean}
+ */
+function isSDKModeEnabled() {
+  return sdkModeEnabled;
+}
+
 // U2: Flash pane header when trigger is received
 function flashPaneHeader(paneId) {
   const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
@@ -90,8 +121,21 @@ function updatePaneStatus(paneId, status) {
 function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnectedFn, onTerminalsReadyFn) {
   // Handle initial daemon connection with existing terminals
   ipcRenderer.on('daemon-connected', async (event, data) => {
-    const { terminals: existingTerminals } = data;
-    console.log('[Daemon] Connected, existing terminals:', existingTerminals);
+    const { terminals: existingTerminals, sdkMode } = data;
+    console.log('[Daemon] Connected, existing terminals:', existingTerminals, 'SDK mode:', sdkMode);
+
+    // SDK Mode Check: Skip PTY terminal creation if SDK mode is enabled
+    // Use sdkMode from event (authoritative from main process) OR fallback to local flag
+    if (sdkMode || sdkModeEnabled) {
+      sdkModeEnabled = true; // Sync local flag
+      console.log('[Daemon] SDK mode enabled - skipping PTY terminal creation');
+      updateConnectionStatus('SDK Mode - initializing agents...');
+      // Notify ready so SDK init can proceed
+      if (onTerminalsReadyFn) {
+        onTerminalsReadyFn(true); // Pass true to indicate SDK mode
+      }
+      return;
+    }
 
     if (existingTerminals && existingTerminals.length > 0) {
       updateConnectionStatus('Reconnecting to existing sessions...');
@@ -128,7 +172,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 
     // Notify that terminals are ready (for init sequencing)
     if (onTerminalsReadyFn) {
-      onTerminalsReadyFn();
+      onTerminalsReadyFn(false); // Pass false to indicate PTY mode
     }
   });
 
@@ -164,6 +208,7 @@ function queueMessage(paneId, message) {
 
 // BUG2 FIX: Process message queue for a pane with throttling
 // V16: Restore Enter for messages that include it (triggers, broadcasts)
+// V2 SDK: Routes through SDK when SDK mode is enabled
 function processQueue(paneId) {
   // Already processing this pane, let it continue
   if (processingPanes.has(paneId)) return;
@@ -178,9 +223,15 @@ function processQueue(paneId) {
   const terminal = require('./terminal');
 
   // V16.10: Special (UNSTICK) command sends ESC keyboard event to unstick agent
+  // Note: UNSTICK only works in PTY mode - SDK has its own interrupt mechanism
   if (message.trim() === '(UNSTICK)') {
-    console.log(`[Daemon] Sending UNSTICK (ESC) to pane ${paneId}`);
-    terminal.sendUnstick(paneId);
+    if (sdkModeEnabled) {
+      console.log(`[Daemon SDK] Interrupting pane ${paneId} via SDK`);
+      ipcRenderer.invoke('sdk-interrupt', paneId);
+    } else {
+      console.log(`[Daemon] Sending UNSTICK (ESC) to pane ${paneId}`);
+      terminal.sendUnstick(paneId);
+    }
     flashPaneHeader(paneId);
     processingPanes.delete(paneId);
     if (queue.length > 0) {
@@ -189,7 +240,60 @@ function processQueue(paneId) {
     return;
   }
 
-  // Normal message handling
+  // FIX3: Special (AGGRESSIVE_NUDGE) command sends ESC + Enter for forceful unstick
+  // Note: In SDK mode, we just interrupt - no need for aggressive nudge
+  if (message.trim() === '(AGGRESSIVE_NUDGE)') {
+    if (sdkModeEnabled) {
+      console.log(`[Daemon SDK] Interrupting pane ${paneId} via SDK (aggressive)`);
+      ipcRenderer.invoke('sdk-interrupt', paneId);
+    } else {
+      console.log(`[Daemon] Sending AGGRESSIVE_NUDGE (ESC + Enter) to pane ${paneId}`);
+      terminal.aggressiveNudge(paneId);
+    }
+    flashPaneHeader(paneId);
+    processingPanes.delete(paneId);
+    if (queue.length > 0) {
+      setTimeout(() => processQueue(paneId), MESSAGE_DELAY);
+    }
+    return;
+  }
+
+  // V2 SDK MODE: Route through SDK instead of PTY
+  if (sdkModeEnabled) {
+    // Remove trailing \r - SDK doesn't need it
+    const cleanMessage = message.endsWith('\r') ? message.slice(0, -1) : message;
+    console.log(`[Daemon SDK] Sending to pane ${paneId} via SDK: ${cleanMessage.substring(0, 50)}...`);
+
+    // UX-7: Optimistic UI - show message immediately with delivery tracking
+    // The message appears instantly with "sending" state, then transitions to "sent" → "delivered"
+    let messageId = null;
+    if (sdkRenderer) {
+      messageId = sdkRenderer.appendMessage(paneId, { type: 'user', content: cleanMessage }, {
+        trackDelivery: true,
+        isOutgoing: true
+      });
+    }
+
+    // Send to SDK and track delivery confirmation
+    ipcRenderer.invoke('sdk-send-message', paneId, cleanMessage).then(() => {
+      // UX-7: Message accepted by SDK - mark as delivered
+      if (messageId && sdkRenderer) {
+        sdkRenderer.updateDeliveryState(messageId, 'delivered');
+      }
+    }).catch(err => {
+      console.error(`[Daemon SDK] Send failed for pane ${paneId}:`, err);
+      // Could add error state here if needed
+    });
+
+    flashPaneHeader(paneId);
+    processingPanes.delete(paneId);
+    if (queue.length > 0) {
+      setTimeout(() => processQueue(paneId), MESSAGE_DELAY);
+    }
+    return;
+  }
+
+  // PTY MODE (legacy): Normal message handling
   terminal.sendToPane(paneId, message);
 
   // Flash pane header (U2)
@@ -877,4 +981,7 @@ module.exports = {
   showRollbackUI,
   hideRollbackUI,
   setupRollbackListener,
+  // V2 SDK Integration
+  setSDKMode,
+  isSDKModeEnabled,
 };

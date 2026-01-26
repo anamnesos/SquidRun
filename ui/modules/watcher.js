@@ -17,9 +17,13 @@ const MESSAGE_QUEUE_DIR = path.join(WORKSPACE_PATH, 'messages');
 // Module state (set by init)
 let mainWindow = null;
 let workspaceWatcher = null;
+let triggerWatcher = null; // UX-9: Fast watcher for trigger files (sub-50ms)
 let messageWatcher = null; // V10 MQ4: Separate watcher for message queues
 let triggers = null; // Reference to triggers module
 let getSettings = null; // V14: Settings getter for auto-sync control
+
+// UX-9: Trigger file path for fast watching
+const TRIGGER_PATH = path.join(WORKSPACE_PATH, 'triggers');
 
 // ============================================================
 // STATE MACHINE
@@ -549,6 +553,7 @@ function startWatcher() {
       /\.git/,
       /instances\//,
       /state\.json$/,
+      /triggers\//,    // UX-9: Triggers handled by fast watcher
     ],
   });
 
@@ -562,6 +567,72 @@ function stopWatcher() {
   if (workspaceWatcher) {
     workspaceWatcher.close();
     workspaceWatcher = null;
+  }
+}
+
+// ============================================================
+// UX-9: FAST TRIGGER WATCHER (sub-50ms delivery)
+// ============================================================
+
+/**
+ * Handle trigger file changes with priority processing
+ * @param {string} filePath - Path to changed trigger file
+ */
+function handleTriggerChange(filePath) {
+  const filename = path.basename(filePath);
+  if (!filename.endsWith('.txt')) return;
+
+  console.log(`[FastTrigger] Detected: ${filename} (fast path)`);
+
+  // Route directly to triggers module for immediate processing
+  if (triggers) {
+    triggers.handleTriggerFile(filePath, filename);
+  }
+}
+
+/**
+ * Start the fast trigger watcher (UX-9)
+ * Uses aggressive polling for sub-50ms message delivery
+ */
+function startTriggerWatcher() {
+  // Ensure trigger directory exists
+  if (!fs.existsSync(TRIGGER_PATH)) {
+    fs.mkdirSync(TRIGGER_PATH, { recursive: true });
+    console.log('[FastTrigger] Created trigger directory');
+  }
+
+  if (triggerWatcher) {
+    triggerWatcher.close();
+  }
+
+  triggerWatcher = chokidar.watch(TRIGGER_PATH, {
+    ignoreInitial: true,
+    persistent: true,
+    usePolling: true,
+    interval: 50,           // UX-9: 50ms polling for triggers (was 1000ms)
+    binaryInterval: 50,
+    awaitWriteFinish: false, // Don't wait - immediate processing
+    atomic: false,           // Skip atomic write detection for speed
+    ignored: [
+      /\.tmp$/,              // Ignore temp files
+      /~$/,                  // Ignore backup files
+    ],
+  });
+
+  triggerWatcher.on('add', handleTriggerChange);
+  triggerWatcher.on('change', handleTriggerChange);
+
+  console.log(`[FastTrigger] Watching ${TRIGGER_PATH} with 50ms polling`);
+}
+
+/**
+ * Stop the fast trigger watcher
+ */
+function stopTriggerWatcher() {
+  if (triggerWatcher) {
+    triggerWatcher.close();
+    triggerWatcher = null;
+    console.log('[FastTrigger] Stopped');
   }
 }
 
@@ -923,4 +994,9 @@ module.exports = {
   startMessageWatcher,
   stopMessageWatcher,
   handleFileChange,
+
+  // UX-9: Fast trigger watcher
+  startTriggerWatcher,
+  stopTriggerWatcher,
+  TRIGGER_PATH,
 };

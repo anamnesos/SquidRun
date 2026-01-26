@@ -10,8 +10,19 @@ const { WebLinksAddon } = require('xterm-addon-web-links');
 // Pane configuration
 const PANE_IDS = ['1', '2', '3', '4'];
 
+// ID-1: Pane roles for identity injection (makes /resume sessions identifiable)
+const PANE_ROLES = {
+  '1': 'Lead',
+  '2': 'Worker A',
+  '3': 'Worker B',
+  '4': 'Reviewer',
+};
+
 // Track if we reconnected to existing terminals
 let reconnectedToExisting = false;
+
+// SDK Mode flag - when true, PTY spawn operations are blocked
+let sdkModeActive = false;
 
 // Terminal instances
 const terminals = new Map();
@@ -128,6 +139,12 @@ function processQueue(paneId) {
 
 // Initialize all terminals
 async function initTerminals() {
+  // SDK Mode Guard: Don't initialize PTY terminals in SDK mode
+  if (sdkModeActive) {
+    console.log('[initTerminals] SDK mode active - skipping PTY terminal initialization');
+    return;
+  }
+
   for (const paneId of PANE_IDS) {
     await initTerminal(paneId);
   }
@@ -370,10 +387,17 @@ function blurAllTerminals() {
 // V16.2: Actually send message to pane (internal - use sendToPane for idle detection)
 // V16.10: Trigger actual DOM keyboard events on xterm textarea with bypass marker
 // V16.11: Added diagnostic logging for pane 1 & 4 focus issues
+// FIX: Focus steal prevention - save/restore user's focus during message injection
 function doSendToPane(paneId, message) {
   const hasTrailingEnter = message.endsWith('\r');
   const text = message.replace(/\r$/, '');
   const id = String(paneId);
+
+  // FIX: Save current focus to restore after injection
+  const previousFocus = document.activeElement;
+  const wasInUIInput = previousFocus &&
+    (previousFocus.tagName === 'INPUT' || previousFocus.tagName === 'TEXTAREA') &&
+    !previousFocus.classList.contains('xterm-helper-textarea');
 
   // Find xterm's hidden textarea for this pane
   const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
@@ -382,9 +406,12 @@ function doSendToPane(paneId, message) {
   // V16.11: Diagnostic logging
   console.log(`[doSendToPane ${id}] paneEl found:`, !!paneEl);
   console.log(`[doSendToPane ${id}] textarea found:`, !!textarea);
+  if (wasInUIInput) {
+    console.log(`[doSendToPane ${id}] User was in UI input:`, previousFocus.id || previousFocus.className);
+  }
 
   if (textarea) {
-    // Focus the textarea
+    // Focus the textarea (needed for keyboard events to work)
     textarea.focus();
 
     // V16.11: Check focus state
@@ -399,8 +426,9 @@ function doSendToPane(paneId, message) {
     window.hivemind.pty.write(id, text);
 
     if (hasTrailingEnter) {
-      // Trigger actual keyboard Enter event after small delay
+      // Send carriage return directly to PTY (keyboard events don't reach daemon)
       setTimeout(() => {
+        window.hivemind.pty.write(id, '\r');
         // V16.11: Re-check focus before dispatching
         const stillFocused = document.activeElement === textarea;
         console.log(`[doSendToPane ${id}] still focused before Enter:`, stillFocused);
@@ -411,38 +439,82 @@ function doSendToPane(paneId, message) {
           console.log(`[doSendToPane ${id}] re-focused, now:`, document.activeElement === textarea);
         }
 
-        const enterEvent = new KeyboardEvent('keydown', {
-          key: 'Enter',
-          code: 'Enter',
-          keyCode: 13,
-          which: 13,
+        // FX4-v7: Dispatch ESC first to dismiss any Claude Code ghost text/autocomplete
+        // that may have appeared during the 50ms delay, then wait before Enter
+        const escEvent = new KeyboardEvent('keydown', {
+          key: 'Escape',
+          code: 'Escape',
+          keyCode: 27,
+          which: 27,
           bubbles: true,
           cancelable: true
         });
-        // Add our bypass marker so the key handler allows it
-        enterEvent._hivemindBypass = true;
-        textarea.dispatchEvent(enterEvent);
-        console.log(`[doSendToPane ${id}] Enter keydown dispatched`);
+        escEvent._hivemindBypass = true;
+        textarea.dispatchEvent(escEvent);
+        console.log(`[doSendToPane ${id}] ESC dispatched to dismiss ghost text`);
 
-        // Also keypress with bypass
-        const keypressEvent = new KeyboardEvent('keypress', {
-          key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-        });
-        keypressEvent._hivemindBypass = true;
-        textarea.dispatchEvent(keypressEvent);
+        // FX4-v7: Add 20ms delay after ESC for state to settle, then re-focus and send Enter
+        setTimeout(() => {
+          // Re-focus textarea after ESC (ESC may have changed focus)
+          textarea.focus();
+          console.log(`[doSendToPane ${id}] Re-focused after ESC delay`);
 
-        // And keyup
-        const keyupEvent = new KeyboardEvent('keyup', {
-          key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-        });
-        keyupEvent._hivemindBypass = true;
-        textarea.dispatchEvent(keyupEvent);
+          const enterEvent = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true
+          });
+          // Add our bypass marker so the key handler allows it
+          enterEvent._hivemindBypass = true;
+          textarea.dispatchEvent(enterEvent);
+          console.log(`[doSendToPane ${id}] Enter keydown dispatched`);
+
+          // Also keypress with bypass
+          const keypressEvent = new KeyboardEvent('keypress', {
+            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+          });
+          keypressEvent._hivemindBypass = true;
+          textarea.dispatchEvent(keypressEvent);
+
+          // And keyup
+          const keyupEvent = new KeyboardEvent('keyup', {
+            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+          });
+          keyupEvent._hivemindBypass = true;
+          textarea.dispatchEvent(keyupEvent);
+
+          // FIX: Restore user's focus after message injection
+          if (wasInUIInput && previousFocus) {
+            setTimeout(() => {
+              previousFocus.focus();
+              console.log(`[doSendToPane ${id}] Restored focus to:`, previousFocus.id || previousFocus.className);
+            }, 10);
+          }
+        }, 20); // FX4-v7: 20ms delay after ESC before Enter
       }, 50);
+    } else {
+      // No trailing Enter - restore focus immediately
+      if (wasInUIInput && previousFocus) {
+        setTimeout(() => {
+          previousFocus.focus();
+          console.log(`[doSendToPane ${id}] Restored focus to:`, previousFocus.id || previousFocus.className);
+        }, 10);
+      }
     }
   } else {
     // Fallback to direct PTY write
     console.warn(`[doSendToPane ${id}] No textarea found, using PTY fallback`);
     window.hivemind.pty.write(id, hasTrailingEnter ? text + '\r' : text);
+
+    // FIX: Restore focus even in fallback case
+    if (wasInUIInput && previousFocus) {
+      setTimeout(() => {
+        previousFocus.focus();
+      }, 10);
+    }
   }
 
   lastTypedTime[paneId] = Date.now();
@@ -477,20 +549,35 @@ function sendToPane(paneId, message) {
   }
 }
 
-// Broadcast message to all panes
-// V16.4: Added stagger delay between panes to avoid overwhelming all at once
+// Send message to Lead only (user interacts with Lead, Lead coordinates workers)
 function broadcast(message) {
-  const broadcastMessage = `[BROADCAST TO ALL AGENTS] ${message}`;
-  PANE_IDS.forEach((paneId, index) => {
-    setTimeout(() => {
-      sendToPane(paneId, broadcastMessage);
-    }, index * BROADCAST_STAGGER_MS);
-  });
-  updateConnectionStatus('Broadcast sent to all panes');
+  // Send directly to Lead (pane 1), no broadcast prefix needed
+  sendToPane('1', message);
+  updateConnectionStatus('Message sent to Lead');
+}
+
+// Set SDK mode - blocks PTY spawn operations when enabled
+function setSDKMode(enabled) {
+  sdkModeActive = enabled;
+  console.log(`[Terminal] SDK mode ${enabled ? 'enabled' : 'disabled'} - PTY spawn operations ${enabled ? 'blocked' : 'allowed'}`);
 }
 
 // Spawn claude in a pane
 async function spawnClaude(paneId) {
+  // Defense in depth: Early exit if no terminal exists for this pane
+  // This catches race conditions where SDK mode blocks terminal creation but
+  // user somehow triggers spawn before UI fully updates
+  if (!terminals.has(paneId)) {
+    console.log(`[spawnClaude] No terminal for pane ${paneId}, skipping`);
+    return;
+  }
+
+  // SDK Mode Guard: Don't spawn CLI Claude when SDK mode is active
+  if (sdkModeActive) {
+    console.log(`[spawnClaude] SDK mode active - blocking CLI spawn for pane ${paneId}`);
+    return;
+  }
+
   const terminal = terminals.get(paneId);
   if (terminal) {
     updatePaneStatus(paneId, 'Starting Claude...');
@@ -504,6 +591,17 @@ async function spawnClaude(paneId) {
       // Small delay before sending Enter
       await new Promise(resolve => setTimeout(resolve, 100));
       window.hivemind.pty.write(String(paneId), '\r');
+
+      // ID-1: Inject identity message after Claude initializes (4s delay)
+      // Uses sendToPane() which properly submits via keyboard events
+      // This makes sessions identifiable in /resume list
+      setTimeout(() => {
+        const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
+        const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        const identityMsg = `[HIVEMIND SESSION: ${role}] Started ${timestamp}`;
+        sendToPane(paneId, identityMsg + '\r');
+        console.log(`[spawnClaude] Identity injected for ${role} (pane ${paneId})`);
+      }, 4000);
     }
     updatePaneStatus(paneId, 'Claude running');
   }
@@ -587,6 +685,35 @@ function sendUnstick(paneId) {
   }
 }
 
+// FIX3: Aggressive nudge - ESC followed by Enter
+// More forceful than simple Enter nudge, interrupts thinking then prompts input
+function aggressiveNudge(paneId) {
+  const id = String(paneId);
+  console.log(`[Terminal ${id}] Aggressive nudge: ESC + Enter`);
+
+  // First send ESC to interrupt any stuck state
+  sendUnstick(id);
+
+  // Then send Enter after a brief delay to prompt for input
+  setTimeout(() => {
+    lastTypedTime[id] = Date.now();
+    window.hivemind.pty.write(id, '\r');
+    updatePaneStatus(id, 'Nudged (aggressive)');
+    setTimeout(() => updatePaneStatus(id, 'Running'), 1000);
+  }, 150); // 150ms delay between ESC and Enter
+}
+
+// FIX3: Aggressive nudge all panes
+function aggressiveNudgeAll() {
+  console.log('[Terminal] Aggressive nudge all panes');
+  for (const paneId of PANE_IDS) {
+    // Stagger to avoid thundering herd
+    setTimeout(() => {
+      aggressiveNudge(paneId);
+    }, paneId * 200);
+  }
+}
+
 // Nudge all panes to unstick any churning agents
 function nudgeAllPanes() {
   updateConnectionStatus('Nudging all agents...');
@@ -600,6 +727,13 @@ function nudgeAllPanes() {
 
 // Fresh start - kill all and spawn new sessions without context
 async function freshStartAll() {
+  // SDK Mode Guard: Don't allow fresh start in SDK mode
+  if (sdkModeActive) {
+    console.log('[freshStartAll] SDK mode active - blocking PTY fresh start');
+    alert('Fresh Start is not available in SDK mode.\nSDK manages Claude sessions differently.');
+    return;
+  }
+
   const confirmed = confirm(
     'Fresh Start will:\n\n' +
     '• Kill all 4 terminals\n' +
@@ -724,6 +858,7 @@ module.exports = {
   terminals,
   fitAddons,
   setStatusCallbacks,
+  setSDKMode,           // SDK mode guard for PTY operations
   initTerminals,
   initTerminal,
   reattachTerminal,
@@ -736,7 +871,9 @@ module.exports = {
   killAllTerminals,
   nudgePane,
   nudgeAllPanes,
-  sendUnstick,    // V16.10: ESC keyboard event to unstick agents
+  sendUnstick,         // V16.10: ESC keyboard event to unstick agents
+  aggressiveNudge,     // FIX3: ESC + Enter for more forceful unstick
+  aggressiveNudgeAll,  // FIX3: Aggressive nudge all panes with stagger
   freshStartAll,
   syncSharedContext,
   handleResize,
