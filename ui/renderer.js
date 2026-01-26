@@ -715,8 +715,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     sdkRenderer.streamingIndicator(paneId, active);
     // Update SDK status based on streaming state
     updateSDKStatus(paneId, active ? 'thinking' : 'idle');
-    // STR-4: Finalize streaming message when streaming stops
-    if (!active) {
+
+    if (active) {
+      // BUG3 FIX: Clear old streaming state when new turn starts
+      sdkRenderer.clearStreamingState(paneId);
+    } else {
+      // STR-4: Finalize streaming message when streaming stops
       sdkRenderer.finalizeStreamingMessage(paneId);
     }
   });
