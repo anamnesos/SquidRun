@@ -14,6 +14,13 @@ You are BUILDING a multi-agent system. You are NOT the agents in that system.
 The Reviewer in the codebase is a PRODUCT FEATURE, not your role.
 Your role comes from the sprint file, not from the code you're writing.
 
+### SDK Mode Note
+If you're running in SDK mode (not PTY terminals):
+- Read `workspace/shared_context.md` for SDK-specific onboarding
+- Your role comes from `workspace/instances/{role}/CLAUDE.md`
+- Messages arrive via SDK API, not keyboard injection
+- Use trigger files for inter-agent communication
+
 ---
 
 ## The One Rule
@@ -26,13 +33,25 @@ Your role comes from the sprint file, not from the code you're writing.
 
 **Do this immediately, no user input needed:**
 
-1. Read `docs/claude/REGISTRY.md`
-2. Find the first role with status = OPEN
-3. Claim it: change status to FILLED, add your name (Claude-[Role]), add today's date
-4. Save the registry file
-5. Say: "I've registered as [Role]. Starting on [first task] now."
-6. Read `SPRINT.md` for your task details
-7. Start working
+1. **Read `workspace/app-status.json`** - Check runtime state (SDK mode, last restart time)
+2. Read `docs/claude/REGISTRY.md`
+3. Find the first role with status = OPEN
+4. Claim it: change status to FILLED, add your name (Claude-[Role]), add today's date
+5. Save the registry file
+6. Say: "I've registered as [Role]. Starting on [first task] now."
+7. Read `SPRINT.md` for your task details
+8. Start working
+
+**App Status File (`workspace/app-status.json`):**
+```json
+{
+  "started": "2026-01-25T12:00:00.000Z",  // When app last started
+  "sdkMode": true,                         // SDK or PTY mode
+  "dryRun": false,                         // Dry run mode
+  "lastUpdated": "2026-01-25T12:00:00.000Z"
+}
+```
+**DO NOT ask user "did you restart?" or "are you in SDK mode?" - just read this file.**
 
 **If all roles are FILLED:** Ask the user what role they need.
 
@@ -136,8 +155,24 @@ The file watcher detects changes and injects the content into the target termina
 
 **Example:** To tell Lead about a bug:
 ```
-echo "BUG: Fix needed in main.js line 50" > workspace/triggers/lead.txt
+echo "(YOUR-ROLE #1): BUG: Fix needed in main.js line 50" > workspace/triggers/lead.txt
 ```
+
+### ⚠️ Message Sequence Numbers (IMPORTANT)
+
+Messages use sequence numbers to prevent duplicates: `(ROLE #N): message`
+
+**The app resets sequence tracking on every restart.** This means:
+- You can start from `#1` each session
+- Don't worry about what sequence numbers were used before
+- The format is: `(LEAD #1):`, `(WORKER-A #2):`, etc.
+
+**If your messages aren't going through:**
+1. Check the npm console for `[Trigger] SKIPPED duplicate`
+2. If you see that, use a higher sequence number
+3. This should NOT happen after the Jan 2026 fix, but if it does, restart the app
+
+**Technical detail:** `workspace/message-state.json` tracks sequences but resets `lastSeen` on app startup to prevent stale blocking.
 
 ---
 
@@ -156,6 +191,36 @@ echo "BUG: Fix needed in main.js line 50" > workspace/triggers/lead.txt
 6. **Blockers go in blockers.md.** Don't stay stuck.
 
 7. **Check blockers.md for YOUR issues.** Reviewer writes there, you read there.
+
+8. **Fresh session = restart already happened.** If you're in a new session, the user already restarted the app. Don't tell them to restart. If status.md says "requires restart to test", those fixes are NOW LIVE. Ask "Should I verify X is working?" not "Restart to test X."
+
+---
+
+## Reviewer Gate - MANDATORY Before "Ready to Test"
+
+**CRITICAL: "Review the code" means INTEGRATION REVIEW, not just reading one file.**
+
+Before ANY feature is marked "APPROVED FOR TESTING":
+
+1. **Reviewer must audit ALL files involved** - not just the primary file
+2. **Check cross-file contracts** - if A calls B, verify B expects what A sends
+3. **Check IPC protocols** - sender and receiver must agree on message shape
+4. **Check data format compatibility** - snake_case vs camelCase, nested vs flat
+5. **Document findings in blockers.md** - even if they seem minor
+
+**Anti-pattern (what went wrong with SDK V2):**
+- ❌ Reviewer checked hivemind-sdk-v2.py in isolation
+- ❌ Lead accepted "APPROVED" without cross-file verification
+- ❌ Critical protocol mismatches (snake_case vs camelCase) were missed
+- ❌ User had to demand a thorough audit to find obvious bugs
+
+**Correct pattern:**
+- ✅ Reviewer reads ALL files that interact (Python ↔ sdk-bridge.js ↔ renderer.js)
+- ✅ Reviewer traces data flow end-to-end
+- ✅ Lead verifies Reviewer did integration review, not just spot check
+- ✅ No "APPROVED" until integration test passes
+
+**If rushed:** Tell user "needs more review time" rather than approving broken code.
 
 ---
 
