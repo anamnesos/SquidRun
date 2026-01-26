@@ -25,14 +25,35 @@ const sessionIds = new Map();
 // Message ID counter for delivery tracking
 let messageIdCounter = 0;
 
-// ===== CLI-SPINNERS STYLE SPINNER =====
-// Braille dots spinner (same as Claude Code CLI)
+// ===== HIVEMIND HONEYCOMB ANIMATION =====
+// Branded honeycomb thinking indicator (replaces generic braille spinner)
+// 7 hexagons: 1 center + 6 surrounding, pulse animation via CSS
+
+/**
+ * Generate honeycomb HTML structure
+ * @returns {string} HTML for 7-cell honeycomb
+ */
+function generateHoneycombHTML() {
+  return `
+    <div class="hive-honeycomb">
+      <div class="hive-hex hive-hex-0"></div>
+      <div class="hive-hex hive-hex-1"></div>
+      <div class="hive-hex hive-hex-2"></div>
+      <div class="hive-hex hive-hex-3"></div>
+      <div class="hive-hex hive-hex-4"></div>
+      <div class="hive-hex hive-hex-5"></div>
+      <div class="hive-hex hive-hex-6"></div>
+    </div>
+  `;
+}
+
+// Legacy spinner (kept for reference, not used)
 const SPINNER = {
   interval: 80,
   frames: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 };
 
-// Active spinner intervals per pane
+// Active animation state per pane (simplified - CSS handles animation now)
 const spinnerIntervals = new Map();
 const spinnerFrameIndex = new Map();
 
@@ -481,8 +502,28 @@ function appendMessage(paneId, message, options = {}) {
     }
   }
 
-  // Remove streaming indicator if present
-  streamingIndicator(paneId, false);
+  // BUG2 FIX: If this is an assistant message and we have active streaming state,
+  // the content was already displayed via text_delta - skip duplicate rendering
+  if (message.type === 'assistant') {
+    const streamState = streamingMessages.get(paneId);
+    if (streamState && streamState.buffer.length > 0 && !streamState.complete) {
+      // Content already displayed via streaming - just finalize
+      console.log(`[SDK] Skipping duplicate assistant message for pane ${paneId} (${streamState.buffer.length} chars already streamed)`);
+      finalizeStreamingMessage(paneId);
+      return null;
+    }
+  }
+
+  // THINKING-FIX: Only remove streaming indicator for non-tool_use messages
+  // For tool_use, we WANT the indicator to stay visible showing "Reading file..." etc.
+  // It will be removed when: tool_result arrives, text_delta starts, or error occurs
+  const isToolUse = message.type === 'tool_use' ||
+    (message.type === 'assistant' && Array.isArray(message.content) &&
+     message.content.some(b => b.type === 'tool_use'));
+
+  if (!isToolUse) {
+    streamingIndicator(paneId, false);
+  }
 
   const msgEl = document.createElement('div');
   msgEl.className = `sdk-msg ${getMessageClass(message)}`;
@@ -547,49 +588,68 @@ function scrollToBottom(paneId) {
 }
 
 /**
- * Show/hide streaming indicator (animated spinner like Claude Code CLI)
- * UX-8: Now supports contextual text based on tool use
+ * Show/hide streaming indicator (Hivemind Honeycomb Animation)
+ * Replaces generic braille spinner with branded honeycomb pulse.
+ * UX-8: Supports contextual text based on tool use
+ * ROUND-2: Intensity scaling - different pulse speeds for different operations
  * @param {string} paneId - Pane ID (1-4)
  * @param {boolean} active - Whether to show or hide
  * @param {string} context - Optional context text (e.g., "Reading files...")
+ * @param {string} category - Optional tool category for color coding (read, write, edit, search, bash, thinking)
  */
-function streamingIndicator(paneId, active, context = null) {
+function streamingIndicator(paneId, active, context = null, category = 'thinking') {
   const container = containers.get(paneId);
   if (!container) return;
+
+  // ROUND-2: Map tool categories to intensity levels
+  // High intensity = faster pulse, brighter glow (heavy operations)
+  // Low intensity = slower pulse, gentle glow (read-only operations)
+  const intensityMap = {
+    'bash': 'high',      // Command execution - high stakes
+    'write': 'high',     // File creation - high stakes
+    'edit': 'high',      // File modification - high stakes
+    'read': 'low',       // Read-only - gentle
+    'search': 'low',     // Glob/Grep - gentle
+    'thinking': 'medium' // Default thinking state
+  };
+  const intensity = intensityMap[category] || 'medium';
 
   let indicator = container.querySelector('.sdk-streaming');
 
   if (active && !indicator) {
-    // Create spinner indicator
+    // Create honeycomb indicator (Hivemind branded)
     indicator = document.createElement('div');
     indicator.className = 'sdk-streaming';
+    indicator.dataset.tool = category;
+    indicator.dataset.intensity = intensity;  // ROUND-2: Add intensity attribute
     indicator.innerHTML = `
-      <span class="sdk-spinner">${SPINNER.frames[0]}</span>
-      <span class="sdk-streaming-text">${escapeHtml(context || 'Thinking...')}</span>
+      ${generateHoneycombHTML()}
+      <span class="sdk-streaming-context">${escapeHtml(context || 'Thinking...')}</span>
     `;
     container.appendChild(indicator);
     scrollToBottom(paneId);
 
-    // Start spinner animation
-    spinnerFrameIndex.set(paneId, 0);
-    const interval = setInterval(() => {
-      const spinnerEl = indicator.querySelector('.sdk-spinner');
-      if (spinnerEl) {
-        let frameIdx = (spinnerFrameIndex.get(paneId) + 1) % SPINNER.frames.length;
-        spinnerFrameIndex.set(paneId, frameIdx);
-        spinnerEl.textContent = SPINNER.frames[frameIdx];
-      }
-    }, SPINNER.interval);
-    spinnerIntervals.set(paneId, interval);
+    // CSS handles animation - no JS interval needed for honeycomb
+    // (Legacy spinnerIntervals kept for compatibility but not used)
 
-  } else if (active && indicator && context) {
-    // UX-8: Update context text if indicator exists
-    const textEl = indicator.querySelector('.sdk-streaming-text');
-    if (textEl) {
-      textEl.textContent = context;
+  } else if (active && indicator) {
+    // UX-8: Update context text and category if indicator exists (smooth transition)
+    const textEl = indicator.querySelector('.sdk-streaming-context');
+    if (textEl && context) {
+      // Add updating class for fade transition
+      textEl.classList.add('updating');
+      setTimeout(() => {
+        textEl.textContent = context;
+        textEl.classList.remove('updating');
+      }, 75);
+    }
+    // Update category for color change (CSS variables handle the color)
+    if (category) {
+      indicator.dataset.tool = category;
+      indicator.dataset.intensity = intensity;  // ROUND-2: Update intensity too
     }
   } else if (!active && indicator) {
-    // Stop spinner animation
+    // Clean up (CSS animation stops automatically when element removed)
     const interval = spinnerIntervals.get(paneId);
     if (interval) {
       clearInterval(interval);
@@ -715,6 +775,7 @@ function clearStreamingState(paneId) {
 /**
  * UX-8: Update streaming indicator with tool context
  * Parses tool_use messages and shows friendly descriptions
+ * Color-coded by tool type for visual distinction
  * @param {string} paneId - Pane ID (1-4)
  * @param {Object} toolUse - Tool use message object
  */
@@ -722,59 +783,61 @@ function updateToolContext(paneId, toolUse) {
   const toolName = toolUse.name || toolUse.tool || 'unknown';
   const input = toolUse.input || {};
 
-  // Map tool names to friendly descriptions
+  // Map tool names to friendly descriptions and tool category
   const contextMap = {
-    'Read': () => {
-      const file = input.file_path || input.path || 'file';
-      const fileName = file.split(/[/\\]/).pop();
-      return `Reading ${fileName}...`;
-    },
-    'Write': () => {
-      const file = input.file_path || input.path || 'file';
-      const fileName = file.split(/[/\\]/).pop();
-      return `Writing ${fileName}...`;
-    },
-    'Edit': () => {
-      const file = input.file_path || input.path || 'file';
-      const fileName = file.split(/[/\\]/).pop();
-      return `Editing ${fileName}...`;
-    },
-    'Glob': () => {
-      const pattern = input.pattern || '*';
-      return `Finding files: ${pattern}`;
-    },
-    'Grep': () => {
-      const pattern = input.pattern || 'pattern';
-      return `Searching: ${pattern.substring(0, 20)}...`;
-    },
-    'Bash': () => {
-      const cmd = input.command || '';
-      const shortCmd = cmd.split(' ')[0] || 'command';
-      return `Running ${shortCmd}...`;
-    },
-    'Task': () => {
-      const desc = input.description || 'task';
-      return `Delegating: ${desc.substring(0, 25)}...`;
-    },
+    'Read': () => ({
+      text: `Reading ${getFileName(input.file_path || input.path || 'file')}...`,
+      category: 'read'
+    }),
+    'Write': () => ({
+      text: `Writing ${getFileName(input.file_path || input.path || 'file')}...`,
+      category: 'write'
+    }),
+    'Edit': () => ({
+      text: `Editing ${getFileName(input.file_path || input.path || 'file')}...`,
+      category: 'edit'
+    }),
+    'Glob': () => ({
+      text: `Finding files: ${input.pattern || '*'}`,
+      category: 'search'
+    }),
+    'Grep': () => ({
+      text: `Searching: ${(input.pattern || 'pattern').substring(0, 20)}...`,
+      category: 'search'
+    }),
+    'Bash': () => ({
+      text: `Running ${(input.command || '').split(' ')[0] || 'command'}...`,
+      category: 'bash'
+    }),
+    'Task': () => ({
+      text: `Delegating: ${(input.description || 'task').substring(0, 25)}...`,
+      category: 'thinking'
+    }),
     'WebFetch': () => {
-      const url = input.url || 'URL';
       try {
-        const hostname = new URL(url).hostname;
-        return `Fetching ${hostname}...`;
+        const hostname = new URL(input.url || '').hostname;
+        return { text: `Fetching ${hostname}...`, category: 'search' };
       } catch {
-        return 'Fetching web page...';
+        return { text: 'Fetching web page...', category: 'search' };
       }
     },
-    'WebSearch': () => {
-      const query = input.query || 'query';
-      return `Searching: ${query.substring(0, 20)}...`;
-    },
+    'WebSearch': () => ({
+      text: `Searching: ${(input.query || 'query').substring(0, 20)}...`,
+      category: 'search'
+    }),
   };
 
   const contextFn = contextMap[toolName];
-  const context = contextFn ? contextFn() : `Using ${toolName}...`;
+  const result = contextFn ? contextFn() : { text: `Using ${toolName}...`, category: 'thinking' };
 
-  streamingIndicator(paneId, true, context);
+  streamingIndicator(paneId, true, result.text, result.category);
+}
+
+/**
+ * Helper to extract filename from path
+ */
+function getFileName(filePath) {
+  return filePath.split(/[/\\]/).pop() || 'file';
 }
 
 /**

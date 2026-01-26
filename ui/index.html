@@ -3206,27 +3206,214 @@
       border-radius: 6px;
     }
 
-    /* ===== STREAMING INDICATOR (Animated Spinner) ===== */
+    /* ===== HIVEMIND HONEYCOMB THINKING ANIMATION ===== */
+    /* Replaces generic braille spinner with branded honeycomb pulse */
+
     .sdk-streaming {
-      padding: 8px 16px;
+      padding: 12px 16px;
+      margin: 8px 0;
       display: flex;
       flex-direction: row;
       align-items: center;
-      gap: 10px;
+      gap: 16px;
+      background: rgba(255, 200, 87, 0.06);
+      border-left: 3px solid var(--hive-color, #ffc857);
+      border-radius: 0 8px 8px 0;
+      transition: border-color 0.3s ease, background 0.3s ease;
     }
 
-    .sdk-spinner {
-      font-size: 16px;
-      color: #ffc857;  /* Amber/yellow to match header thinking color */
-      font-family: 'Consolas', 'Monaco', monospace;
-      width: 16px;
-      text-align: center;
+    /* Honeycomb container - holds the 7 hexagons */
+    .hive-honeycomb {
+      position: relative;
+      width: 44px;
+      height: 38px;
+      flex-shrink: 0;
     }
 
-    .sdk-streaming-text {
-      font-size: 12px;
-      color: var(--sdk-text-muted);
-      opacity: 0.8;
+    /* Individual hexagon cell */
+    .hive-hex {
+      position: absolute;
+      width: 14px;
+      height: 16px;
+      background: var(--hive-color, #ffc857);
+      clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+      opacity: 0.25;
+      animation: hexPulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      filter: drop-shadow(0 0 3px var(--hive-color, #ffc857));
+      transition: background 0.3s ease;
+    }
+
+    /* Honeycomb layout: 1 center + 6 surrounding */
+    .hive-hex-0 { /* Center */
+      left: 15px;
+      top: 11px;
+      animation-delay: 0s;
+      opacity: 0.4; /* Center slightly brighter */
+    }
+    .hive-hex-1 { /* Top */
+      left: 15px;
+      top: -3px;
+      animation-delay: 0.12s;
+    }
+    .hive-hex-2 { /* Top-right */
+      left: 26px;
+      top: 4px;
+      animation-delay: 0.24s;
+    }
+    .hive-hex-3 { /* Bottom-right */
+      left: 26px;
+      top: 18px;
+      animation-delay: 0.36s;
+    }
+    .hive-hex-4 { /* Bottom */
+      left: 15px;
+      top: 25px;
+      animation-delay: 0.48s;
+    }
+    .hive-hex-5 { /* Bottom-left */
+      left: 4px;
+      top: 18px;
+      animation-delay: 0.60s;
+    }
+    .hive-hex-6 { /* Top-left */
+      left: 4px;
+      top: 4px;
+      animation-delay: 0.72s;
+    }
+
+    /* Pulse animation - breathes life into the honeycomb */
+    @keyframes hexPulse {
+      0%, 100% {
+        opacity: 0.25;
+        transform: scale(0.92);
+        filter: drop-shadow(0 0 2px var(--hive-color, #ffc857));
+      }
+      50% {
+        opacity: 1;
+        transform: scale(1.08);
+        filter: drop-shadow(0 0 10px var(--hive-color, #ffc857));
+      }
+    }
+
+    /* Context text next to honeycomb */
+    .sdk-streaming-context {
+      font-size: 13px;
+      color: #e0e0e0;
+      font-weight: 500;
+      letter-spacing: 0.3px;
+      transition: opacity 0.2s ease-out, color 0.3s ease;
+    }
+
+    .sdk-streaming-context.updating {
+      opacity: 0.5;
+    }
+
+    /* ===== TOOL-SPECIFIC COLORS ===== */
+    /* Each tool type gets its own hive color */
+
+    .sdk-streaming[data-tool="thinking"] {
+      --hive-color: #ffc857;
+      border-left-color: #ffc857;
+      background: rgba(255, 200, 87, 0.06);
+    }
+
+    .sdk-streaming[data-tool="read"] {
+      --hive-color: #4ecca3;
+      border-left-color: #4ecca3;
+      background: rgba(78, 204, 163, 0.06);
+    }
+
+    .sdk-streaming[data-tool="write"],
+    .sdk-streaming[data-tool="edit"] {
+      --hive-color: #ff6b6b;
+      border-left-color: #ff6b6b;
+      background: rgba(255, 107, 107, 0.06);
+    }
+
+    .sdk-streaming[data-tool="search"] {
+      --hive-color: #74b9ff;
+      border-left-color: #74b9ff;
+      background: rgba(116, 185, 255, 0.06);
+    }
+
+    .sdk-streaming[data-tool="bash"] {
+      --hive-color: #a29bfe;
+      border-left-color: #a29bfe;
+      background: rgba(162, 155, 254, 0.06);
+    }
+
+    /* ===== ROUND 2: INTENSITY SCALING ===== */
+    /* Dynamic animation speed/glow based on operation weight */
+    /* Worker A (CSS) + Worker B (JS data-intensity attribute) */
+
+    /* LOW intensity - gentle, contemplative (read, search) */
+    .sdk-streaming[data-intensity="low"] .hive-hex {
+      animation-duration: 3.2s;
+      filter: drop-shadow(0 0 2px var(--hive-color, #ffc857));
+    }
+    .sdk-streaming[data-intensity="low"] .hive-hex-0 {
+      opacity: 0.35; /* Dimmer center */
+    }
+
+    /* MEDIUM intensity - default thinking state */
+    .sdk-streaming[data-intensity="medium"] .hive-hex {
+      animation-duration: 2.4s; /* Same as base */
+    }
+
+    /* HIGH intensity - urgent, active (bash, write, edit) */
+    .sdk-streaming[data-intensity="high"] .hive-hex {
+      animation-duration: 1.6s;
+      filter: drop-shadow(0 0 12px var(--hive-color, #ffc857));
+    }
+    .sdk-streaming[data-intensity="high"] .hive-hex-0 {
+      opacity: 0.6; /* Brighter center */
+    }
+
+    /* HIGH intensity keyframes - more dramatic pulse */
+    .sdk-streaming[data-intensity="high"] .hive-hex {
+      animation-name: hexPulseIntense;
+    }
+
+    @keyframes hexPulseIntense {
+      0%, 100% {
+        opacity: 0.3;
+        transform: scale(0.88);
+        filter: drop-shadow(0 0 4px var(--hive-color, #ffc857));
+      }
+      50% {
+        opacity: 1;
+        transform: scale(1.15);
+        filter: drop-shadow(0 0 16px var(--hive-color, #ffc857));
+      }
+    }
+
+    /* ===== ACCESSIBILITY: Reduced Motion ===== */
+    @media (prefers-reduced-motion: reduce) {
+      .hive-hex {
+        animation: none;
+        opacity: 0.7;
+        transform: scale(1);
+        filter: drop-shadow(0 0 4px var(--hive-color, #ffc857));
+      }
+      .hive-hex-0 {
+        opacity: 1; /* Center stays bright */
+      }
+    }
+
+    /* ===== FADE IN/OUT TRANSITIONS ===== */
+    .sdk-streaming {
+      animation: hiveAppear 0.3s ease-out;
+    }
+
+    @keyframes hiveAppear {
+      from {
+        opacity: 0;
+        transform: translateX(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
     }
 
     /* Legacy shimmer bar (deprecated, keeping for fallback) */
