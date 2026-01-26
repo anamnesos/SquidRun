@@ -530,6 +530,23 @@ class SDKBridge extends EventEmitter {
         this.sendToRenderer('sdk-message', { paneId, message: msg });
         break;
 
+      case 'text_delta':
+        // STR-3: Real-time text streaming for typewriter effect
+        // Forward to renderer for incremental display
+        this.sendToRenderer('sdk-text-delta', {
+          paneId,
+          text: msg.text,
+        });
+        break;
+
+      case 'thinking_delta':
+        // Extended thinking streaming (optional - for future use)
+        this.sendToRenderer('sdk-thinking-delta', {
+          paneId,
+          thinking: msg.thinking,
+        });
+        break;
+
       case 'result':
         // Agent completed - capture session ID (check both snake_case and camelCase)
         const resultSessionId = msg.session_id || msg.sessionId;

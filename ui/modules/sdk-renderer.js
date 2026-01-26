@@ -25,8 +25,24 @@ const sessionIds = new Map();
 // Message ID counter for delivery tracking
 let messageIdCounter = 0;
 
+// ===== CLI-SPINNERS STYLE SPINNER =====
+// Braille dots spinner (same as Claude Code CLI)
+const SPINNER = {
+  interval: 80,
+  frames: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+};
+
+// Active spinner intervals per pane
+const spinnerIntervals = new Map();
+const spinnerFrameIndex = new Map();
+
 // Pending messages awaiting delivery confirmation
 const pendingMessages = new Map();
+
+// ===== STREAMING TEXT DELTA STATE =====
+// Track active streaming messages per pane for typewriter effect
+const streamingMessages = new Map();  // paneId -> { element, buffer, complete }
+const TYPEWRITER_DELAY = 0; // No delay - render immediately for responsiveness
 
 /**
  * Generate unique message ID
@@ -531,7 +547,7 @@ function scrollToBottom(paneId) {
 }
 
 /**
- * Show/hide streaming indicator (shimmer bar thinking animation)
+ * Show/hide streaming indicator (animated spinner like Claude Code CLI)
  * UX-8: Now supports contextual text based on tool use
  * @param {string} paneId - Pane ID (1-4)
  * @param {boolean} active - Whether to show or hide
@@ -544,14 +560,28 @@ function streamingIndicator(paneId, active, context = null) {
   let indicator = container.querySelector('.sdk-streaming');
 
   if (active && !indicator) {
+    // Create spinner indicator
     indicator = document.createElement('div');
     indicator.className = 'sdk-streaming';
     indicator.innerHTML = `
-      <div class="sdk-streaming-bar"></div>
+      <span class="sdk-spinner">${SPINNER.frames[0]}</span>
       <span class="sdk-streaming-text">${escapeHtml(context || 'Thinking...')}</span>
     `;
     container.appendChild(indicator);
     scrollToBottom(paneId);
+
+    // Start spinner animation
+    spinnerFrameIndex.set(paneId, 0);
+    const interval = setInterval(() => {
+      const spinnerEl = indicator.querySelector('.sdk-spinner');
+      if (spinnerEl) {
+        let frameIdx = (spinnerFrameIndex.get(paneId) + 1) % SPINNER.frames.length;
+        spinnerFrameIndex.set(paneId, frameIdx);
+        spinnerEl.textContent = SPINNER.frames[frameIdx];
+      }
+    }, SPINNER.interval);
+    spinnerIntervals.set(paneId, interval);
+
   } else if (active && indicator && context) {
     // UX-8: Update context text if indicator exists
     const textEl = indicator.querySelector('.sdk-streaming-text');
@@ -559,8 +589,127 @@ function streamingIndicator(paneId, active, context = null) {
       textEl.textContent = context;
     }
   } else if (!active && indicator) {
+    // Stop spinner animation
+    const interval = spinnerIntervals.get(paneId);
+    if (interval) {
+      clearInterval(interval);
+      spinnerIntervals.delete(paneId);
+    }
+    spinnerFrameIndex.delete(paneId);
     indicator.remove();
   }
+}
+
+/**
+ * STR-5: Append text delta for typewriter streaming effect
+ * Called when Python SDK sends partial text via StreamEvent
+ * @param {string} paneId - Pane ID (1-4)
+ * @param {string} text - Partial text chunk to append
+ */
+function appendTextDelta(paneId, text) {
+  let container = containers.get(paneId);
+
+  // Recover container if needed
+  if (!container) {
+    container = document.getElementById(`sdk-messages-${paneId}`);
+    if (container) {
+      containers.set(paneId, container);
+    }
+  }
+
+  if (!container) {
+    console.warn(`[SDK] appendTextDelta: No container for pane ${paneId}`);
+    return;
+  }
+
+  let streamState = streamingMessages.get(paneId);
+
+  // Create new streaming message element if needed
+  if (!streamState || streamState.complete) {
+    // Remove any existing streaming indicator
+    streamingIndicator(paneId, false);
+
+    // Create new streaming message element
+    const msgEl = document.createElement('div');
+    msgEl.className = 'sdk-msg sdk-assistant sdk-streaming-text';
+
+    // Add timestamp
+    const timestamp = document.createElement('span');
+    timestamp.className = 'sdk-timestamp';
+    timestamp.textContent = new Date().toLocaleTimeString();
+    msgEl.appendChild(timestamp);
+
+    // Create content container with cursor
+    const contentEl = document.createElement('pre');
+    contentEl.className = 'sdk-content sdk-typewriter';
+    msgEl.appendChild(contentEl);
+
+    // Add blinking cursor
+    const cursor = document.createElement('span');
+    cursor.className = 'sdk-cursor';
+    cursor.textContent = '▌';
+    contentEl.appendChild(cursor);
+
+    container.appendChild(msgEl);
+
+    streamState = {
+      element: msgEl,
+      contentEl: contentEl,
+      cursor: cursor,
+      buffer: '',
+      complete: false
+    };
+    streamingMessages.set(paneId, streamState);
+
+    scrollToBottom(paneId);
+  }
+
+  // Append new text to buffer
+  streamState.buffer += text;
+
+  // Update content (insert before cursor)
+  const textNode = document.createTextNode(text);
+  streamState.contentEl.insertBefore(textNode, streamState.cursor);
+
+  // Auto-scroll as text arrives
+  scrollToBottom(paneId);
+}
+
+/**
+ * STR-5: Finalize streaming message (remove cursor, mark complete)
+ * Called when streaming stops for a pane
+ * @param {string} paneId - Pane ID (1-4)
+ */
+function finalizeStreamingMessage(paneId) {
+  const streamState = streamingMessages.get(paneId);
+  if (!streamState || streamState.complete) return;
+
+  // Remove cursor
+  if (streamState.cursor && streamState.cursor.parentNode) {
+    streamState.cursor.remove();
+  }
+
+  // Mark complete
+  streamState.complete = true;
+  streamState.element.classList.remove('sdk-streaming-text');
+  streamState.element.classList.add('sdk-complete');
+
+  console.log(`[SDK] Finalized streaming message for pane ${paneId}, ${streamState.buffer.length} chars`);
+}
+
+/**
+ * STR-5: Clear streaming state for a pane (on new assistant turn)
+ * @param {string} paneId - Pane ID (1-4)
+ */
+function clearStreamingState(paneId) {
+  const streamState = streamingMessages.get(paneId);
+  if (streamState) {
+    streamState.complete = true;
+    if (streamState.cursor && streamState.cursor.parentNode) {
+      streamState.cursor.remove();
+    }
+  }
+  streamingMessages.delete(paneId);
 }
 
 /**
@@ -677,6 +826,11 @@ module.exports = {
 
   // UX-8: Contextual thinking states
   updateToolContext,
+
+  // STR-5: Typewriter streaming effect
+  appendTextDelta,
+  finalizeStreamingMessage,
+  clearStreamingState,
 
   // Session management
   getSessionId,

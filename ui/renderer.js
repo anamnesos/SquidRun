@@ -172,10 +172,18 @@ const SDK_STATUS_LABELS = {
   disconnected: '—',
   connected: '●',
   idle: '○',
-  thinking: '◐',
+  thinking: '◐',  // Will be animated
   responding: '◑',
   error: '✕'
 };
+
+// Braille spinner frames (same as Claude Code CLI)
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const SPINNER_INTERVAL = 80; // ms
+
+// Header spinner animation intervals per pane
+const headerSpinnerIntervals = new Map();
+const headerSpinnerFrameIndex = new Map();
 
 // Idle state tracking per pane
 const paneIdleState = new Map();
@@ -257,13 +265,36 @@ function updateSDKStatus(paneId, state) {
     trackPaneActivity(paneId, true);
   }
 
+  // Stop any existing spinner animation
+  const existingInterval = headerSpinnerIntervals.get(paneId);
+  if (existingInterval) {
+    clearInterval(existingInterval);
+    headerSpinnerIntervals.delete(paneId);
+    headerSpinnerFrameIndex.delete(paneId);
+  }
+
   // Remove all state classes
   statusEl.classList.remove('disconnected', 'connected', 'idle', 'thinking', 'responding', 'error', 'delivered');
 
   // Add new state class
   statusEl.classList.add(state);
-  statusEl.textContent = SDK_STATUS_LABELS[state] || state;
   statusEl.title = `SDK: ${state}`;
+
+  // Start spinner animation for thinking/responding states
+  if (state === 'thinking' || state === 'responding') {
+    headerSpinnerFrameIndex.set(paneId, 0);
+    statusEl.textContent = SPINNER_FRAMES[0];
+
+    const interval = setInterval(() => {
+      let frameIdx = (headerSpinnerFrameIndex.get(paneId) + 1) % SPINNER_FRAMES.length;
+      headerSpinnerFrameIndex.set(paneId, frameIdx);
+      statusEl.textContent = SPINNER_FRAMES[frameIdx];
+    }, SPINNER_INTERVAL);
+
+    headerSpinnerIntervals.set(paneId, interval);
+  } else {
+    statusEl.textContent = SDK_STATUS_LABELS[state] || state;
+  }
 
   console.log(`[SDK] Pane ${paneId} status: ${state}`);
 }
@@ -684,6 +715,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     sdkRenderer.streamingIndicator(paneId, active);
     // Update SDK status based on streaming state
     updateSDKStatus(paneId, active ? 'thinking' : 'idle');
+    // STR-4: Finalize streaming message when streaming stops
+    if (!active) {
+      sdkRenderer.finalizeStreamingMessage(paneId);
+    }
+  });
+
+  // STR-4: SDK text delta - real-time typewriter streaming from Python
+  // Receives partial text chunks for character-by-character display
+  ipcRenderer.on('sdk-text-delta', (event, data) => {
+    if (!data) return;
+    const { paneId, text } = data;
+    if (text) {
+      sdkRenderer.appendTextDelta(paneId, text);
+      // Update status to 'responding' while receiving text
+      updateSDKStatus(paneId, 'responding');
+    }
   });
 
   // SDK session started - initialize panes for SDK mode
