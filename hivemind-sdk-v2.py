@@ -41,6 +41,8 @@ try:
         ToolResultBlock,
         ThinkingBlock,  # For extended thinking
     )
+    # STR-2: StreamEvent is in types submodule for real-time text streaming
+    from claude_agent_sdk.types import StreamEvent
 except ImportError:
     print(json.dumps({"type": "error", "message": "Claude Agent SDK not installed. Run: pip install claude-agent-sdk"}))
     sys.exit(1)
@@ -170,6 +172,9 @@ class HivemindAgent:
             # CRITICAL: setting_sources=["project"] tells Claude to load CLAUDE.md from cwd
             # Without this, agents have NO ROLE IDENTITY and respond as generic Claude
             setting_sources=["project"],
+            # STR-1: Enable real-time text streaming for typewriter effect
+            # This gives us StreamEvent with text_delta for character-by-character display
+            include_partial_messages=True,
             # NOTE: Disabled resume - causes crashes with stale sessions
             # resume=resume_session_id,
         )
@@ -354,6 +359,39 @@ class HivemindAgent:
 
         elif isinstance(msg, ResultMessage):
             # Handled separately for session_id capture
+            return None
+
+        elif isinstance(msg, StreamEvent):
+            # STR-2: Real-time streaming event with text_delta
+            # StreamEvent.event is a dict containing the raw Anthropic API stream event
+            # We look for content_block_delta with text_delta type
+            event = msg.event
+            event_type = event.get("type") if isinstance(event, dict) else None
+
+            if event_type == "content_block_delta":
+                delta = event.get("delta", {})
+                delta_type = delta.get("type")
+
+                if delta_type == "text_delta":
+                    # Character-by-character text streaming - emit for typewriter effect
+                    text = delta.get("text", "")
+                    if text:
+                        return {
+                            "type": "text_delta",
+                            "text": text,
+                            "session_id": msg.session_id,
+                        }
+                elif delta_type == "thinking_delta":
+                    # Extended thinking streaming
+                    thinking = delta.get("thinking", "")
+                    if thinking:
+                        return {
+                            "type": "thinking_delta",
+                            "thinking": thinking,
+                            "session_id": msg.session_id,
+                        }
+
+            # Other stream events (message_start, content_block_start, etc.) - ignore
             return None
 
         # Unknown message type - return raw

@@ -238,19 +238,21 @@
     .sdk-status.thinking {
       color: #ffc857;
       background: rgba(255, 200, 87, 0.1);
+      font-family: 'Consolas', 'Monaco', monospace;
     }
     .sdk-status.thinking::before {
       background: #ffc857;
-      animation: sdkPulse 1s ease-in-out infinite;
+      /* No pulse - character animates now */
     }
 
     .sdk-status.responding {
       color: #4ecca3;
       background: rgba(78, 204, 163, 0.1);
+      font-family: 'Consolas', 'Monaco', monospace;
     }
     .sdk-status.responding::before {
       background: #4ecca3;
-      animation: sdkPulse 0.5s ease-in-out infinite;
+      /* No pulse - character animates now */
     }
 
     .sdk-status.error {
@@ -3204,14 +3206,30 @@
       border-radius: 6px;
     }
 
-    /* ===== STREAMING INDICATOR (Shimmer Bar) ===== */
+    /* ===== STREAMING INDICATOR (Animated Spinner) ===== */
     .sdk-streaming {
       padding: 8px 16px;
       display: flex;
-      flex-direction: column;
-      gap: 6px;
+      flex-direction: row;
+      align-items: center;
+      gap: 10px;
     }
 
+    .sdk-spinner {
+      font-size: 16px;
+      color: #ffc857;  /* Amber/yellow to match header thinking color */
+      font-family: 'Consolas', 'Monaco', monospace;
+      width: 16px;
+      text-align: center;
+    }
+
+    .sdk-streaming-text {
+      font-size: 12px;
+      color: var(--sdk-text-muted);
+      opacity: 0.8;
+    }
+
+    /* Legacy shimmer bar (deprecated, keeping for fallback) */
     .sdk-streaming-bar {
       height: 4px;
       border-radius: 2px;
@@ -3220,29 +3238,55 @@
       animation: shimmer 1.5s ease-in-out infinite;
     }
 
-    .sdk-streaming-text {
-      font-size: 11px;
-      color: var(--sdk-text-muted);
-      opacity: 0.7;
-    }
-
     @keyframes shimmer {
       0% { background-position: -200% 0; }
       100% { background-position: 200% 0; }
     }
 
-    /* Legacy dot animation (deprecated, keeping for fallback) */
-    .sdk-streaming .dot {
-      width: 8px;
-      height: 8px;
-      background: var(--sdk-accent-green);
-      border-radius: 50%;
-      animation: sdkPulse 1.4s ease-in-out infinite;
-    }
-
     @keyframes sdkPulse {
       0%, 100% { opacity: 0.3; transform: scale(0.8); }
       50% { opacity: 1; transform: scale(1); }
+    }
+
+    /* ===== STR-6: TYPEWRITER STREAMING TEXT ===== */
+    .sdk-streaming-text {
+      position: relative;
+    }
+
+    .sdk-streaming-text .sdk-content {
+      /* Ensure text flows naturally */
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    /* Blinking cursor for typewriter effect */
+    .sdk-cursor {
+      color: var(--sdk-accent-green);
+      animation: cursorBlink 1s step-end infinite;
+      font-weight: normal;
+      margin-left: 1px;
+    }
+
+    @keyframes cursorBlink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
+
+    /* Completed streaming message - no cursor */
+    .sdk-complete .sdk-cursor {
+      display: none;
+    }
+
+    /* Subtle fade-in for new text chunks */
+    .sdk-typewriter {
+      /* Smooth text appearance */
+      line-height: 1.5;
+    }
+
+    /* Responding state header indicator */
+    .sdk-status.responding {
+      color: #4ecca3;
+      background: rgba(78, 204, 163, 0.15);
     }
 
     /* ===== MESSAGE DELIVERY STATES ===== */
