@@ -195,15 +195,20 @@ class SDKBridge extends EventEmitter {
 
     this.process = spawn(pythonCmd, pythonArgs, {
       cwd: options.workspace || process.cwd(),
-      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: '1',
+        PYTHONIOENCODING: 'utf-8',  // Force UTF-8 encoding for Python I/O
+      },
     });
 
     this.active = true;
     this.buffer = '';
 
     // Handle stdout (JSON messages from Python)
+    // IMPORTANT: Specify 'utf8' encoding to handle emojis and special characters
     this.process.stdout.on('data', (data) => {
-      this.buffer += data.toString();
+      this.buffer += data.toString('utf8');
 
       // Process complete lines (each line is a JSON message)
       const lines = this.buffer.split('\n');
@@ -218,7 +223,7 @@ class SDKBridge extends EventEmitter {
 
     // Handle stderr (errors and debug output)
     this.process.stderr.on('data', (data) => {
-      const errorText = data.toString();
+      const errorText = data.toString('utf8');
       console.error('[SDK Bridge] Python stderr:', errorText);
 
       // Parse for pane-specific errors
