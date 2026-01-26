@@ -1,0 +1,4 @@
+# Hivemind SDK Requirements
+# Install: pip install -r requirements-sdk.txt
+
+claude-agent-sdk>=1.0.0

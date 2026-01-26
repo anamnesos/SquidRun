@@ -7,6 +7,8 @@
     "start": "electron .",
     "test": "jest",
     "test:coverage": "jest --coverage",
+    "lint": "eslint modules/*.js renderer.js main.js",
+    "lint:fix": "eslint modules/*.js renderer.js main.js --fix",
     "rebuild": "npx @electron/rebuild -f -w node-pty",
     "daemon:start": "node terminal-daemon.js",
     "daemon:stop": "node -e \"const fs=require('fs');const p=fs.readFileSync('daemon.pid','utf-8').trim();process.kill(parseInt(p),'SIGTERM');fs.unlinkSync('daemon.pid');console.log('Daemon stopped')\"",
@@ -23,6 +25,8 @@
   "devDependencies": {
     "@electron/rebuild": "^3.5.0",
     "electron": "^28.0.0",
+    "eslint": "^9.39.2",
+    "globals": "^17.1.0",
     "jest": "^30.2.0"
   },
   "dependencies": {

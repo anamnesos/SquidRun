@@ -79,28 +79,29 @@
     .pane-grid {
       flex: 1;
       display: grid;
-      grid-template-columns: 2fr 1fr;  /* Lead bigger, workers smaller */
-      grid-template-rows: 1fr;
+      grid-template-columns: minmax(400px, 2fr) minmax(200px, 1fr);  /* Lead bigger, workers smaller, with minimums */
+      grid-template-rows: 1fr auto;    /* Main content + input bar row */
       gap: 2px;
       padding: 2px;
       background: #0f3460;
       min-height: 0; /* Allow grid to shrink */
-      overflow: hidden;
+      overflow: auto; /* Allow scrolling if content is too wide */
     }
 
-    /* Lead pane takes full left column */
+    /* Lead pane takes left column, first row only */
     .lead-pane {
       grid-row: 1;
       grid-column: 1;
     }
 
-    /* Workers stacked vertically on right */
+    /* Workers stacked vertically on right - spans full height including input row */
     .worker-column {
+      grid-column: 2;
+      grid-row: 1 / -1;  /* Span from first row to last (includes input bar row) */
       display: flex;
       flex-direction: column;
       gap: 2px;
       min-height: 0; /* CRITICAL: Allow flex children to shrink below content size */
-      max-height: 100%; /* Prevent growing beyond grid cell */
       overflow: hidden;
     }
 
@@ -147,7 +148,8 @@
       flex-direction: column;
       overflow: hidden;
       position: relative;
-      min-height: 0; /* Allow pane to shrink */
+      min-height: 0; /* Allow pane to shrink vertically */
+      min-width: 200px; /* Prevent horizontal collapse */
     }
 
     .pane.focused {
@@ -164,6 +166,19 @@
       font-size: 12px;
       border-bottom: 1px solid #0f3460;
       transition: background-color 0.1s ease-out;
+    }
+
+    /* Agent avatars in headers */
+    .agent-avatar {
+      font-size: 14px;
+      margin-right: 6px;
+      filter: grayscale(0.3);
+      transition: filter 0.2s ease-out;
+    }
+
+    .pane:hover .agent-avatar,
+    .pane.focused .agent-avatar {
+      filter: grayscale(0);
     }
 
     /* U2: Visual flash when pane receives trigger */
@@ -324,8 +339,12 @@
       padding: 4px;
       overflow: hidden;
       min-height: 0; /* Allow terminal to shrink */
-      height: 100%; /* Constrain to parent */
+      min-width: 200px;  /* Minimum width for readability */
       position: relative; /* Positioning context for xterm */
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      box-sizing: border-box;
     }
 
     /* Constrain xterm elements to their container */
@@ -358,12 +377,13 @@
     }
 
     .broadcast-bar {
+      grid-column: 1;  /* Under Lead pane */
+      grid-row: 2;     /* In the input bar row */
       background: #16213e;
       padding: 8px;
       display: flex;
       gap: 8px;
       border-top: 1px solid #0f3460;
-      width: calc(66.67% - 1px);  /* Match Lead pane width (2fr of 3fr total) */
     }
 
     .broadcast-input {
@@ -2748,20 +2768,33 @@
 
     /* Base pane container */
     .sdk-pane {
-      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
       overflow: hidden;
       background: var(--sdk-bg-primary);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
       color: var(--sdk-text-primary);
+      display: flex;
+      transition: all 0.2s ease-out;
+      flex-direction: column;
+      box-sizing: border-box;
     }
 
     .sdk-messages {
-      height: 100%;
+      flex: 1;
+      width: 100%;
       overflow-y: auto;
+      overflow-x: hidden;
       padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
+      display: block;
+      box-sizing: border-box;
+    }
+
+    .sdk-messages > * {
+      margin-bottom: 12px;
     }
 
     /* Smooth scrollbar */
@@ -2784,12 +2817,24 @@
       padding: 12px 16px;
       border-radius: 12px;
       position: relative;
-      animation: sdkFadeIn 0.2s ease-out;
+      animation: sdkSlideIn 0.15s ease-out;
+      overflow: visible;      /* Allow content to show */
+      box-sizing: border-box; /* Include padding in width */
+      width: 100%;            /* Fill container width */
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+      flex-shrink: 0;         /* Don't shrink messages */
     }
 
-    @keyframes sdkFadeIn {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: translateY(0); }
+    @keyframes sdkSlideIn {
+      from {
+        opacity: 0;
+        transform: translateX(-12px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
     }
 
     /* Timestamp - subtle, top-right */
@@ -2801,6 +2846,10 @@
       color: rgba(255,255,255,0.25);
       font-weight: 500;
       letter-spacing: 0.02em;
+      white-space: nowrap;  /* Keep on one line */
+      max-width: 70px;      /* Limit width */
+      overflow: hidden;     /* Hide if too long */
+      text-overflow: clip;  /* Clip overflow */
     }
 
     /* Content - assistant text responses */
@@ -2808,11 +2857,14 @@
       margin: 0;
       white-space: pre-wrap;
       word-wrap: break-word;
+      overflow-wrap: break-word;
       font-size: 14px;
       line-height: 1.6;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       color: #fff;
       font-weight: 400;
+      width: 100%;
+      display: block;
     }
 
     /* ===== ASSISTANT MESSAGES ===== */
@@ -2832,6 +2884,9 @@
       box-shadow: 0 2px 12px rgba(59, 130, 246, 0.25);
       padding: 12px 18px;  /* More horizontal padding */
       padding-top: 10px;   /* Slightly less top padding */
+      max-width: 80%;      /* Prevent overflow */
+      overflow: hidden;    /* Contain content */
+      box-sizing: border-box;
     }
 
     /* Timestamp inside user messages - below content */
@@ -3061,6 +3116,9 @@
       border-radius: 12px;
       padding: 14px 18px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+      max-width: 100%;      /* Prevent overflow */
+      overflow: hidden;     /* Contain content */
+      box-sizing: border-box;
     }
 
     .sdk-agent-label {
@@ -3146,14 +3204,34 @@
       border-radius: 6px;
     }
 
-    /* ===== STREAMING INDICATOR ===== */
+    /* ===== STREAMING INDICATOR (Shimmer Bar) ===== */
     .sdk-streaming {
-      padding: 12px 16px;
+      padding: 8px 16px;
       display: flex;
-      align-items: center;
+      flex-direction: column;
       gap: 6px;
     }
 
+    .sdk-streaming-bar {
+      height: 4px;
+      border-radius: 2px;
+      background: linear-gradient(90deg, transparent, var(--sdk-accent-green), transparent);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s ease-in-out infinite;
+    }
+
+    .sdk-streaming-text {
+      font-size: 11px;
+      color: var(--sdk-text-muted);
+      opacity: 0.7;
+    }
+
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+
+    /* Legacy dot animation (deprecated, keeping for fallback) */
     .sdk-streaming .dot {
       width: 8px;
       height: 8px;
@@ -3162,13 +3240,86 @@
       animation: sdkPulse 1.4s ease-in-out infinite;
     }
 
-    .sdk-streaming .dot:nth-child(1) { animation-delay: 0s; }
-    .sdk-streaming .dot:nth-child(2) { animation-delay: 0.2s; }
-    .sdk-streaming .dot:nth-child(3) { animation-delay: 0.4s; }
-
     @keyframes sdkPulse {
       0%, 100% { opacity: 0.3; transform: scale(0.8); }
       50% { opacity: 1; transform: scale(1); }
+    }
+
+    /* ===== MESSAGE DELIVERY STATES ===== */
+    .sdk-delivery-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      color: var(--sdk-text-muted);
+      margin-left: 8px;
+      opacity: 0.7;
+    }
+
+    .sdk-delivery-state.sending {
+      color: var(--sdk-text-muted);
+    }
+
+    .sdk-delivery-state.sent {
+      color: var(--sdk-accent-blue);
+    }
+
+    .sdk-delivery-state.delivered {
+      color: var(--sdk-accent-green);
+    }
+
+    .sdk-delivery-icon {
+      font-size: 12px;
+    }
+
+    /* Sending animation (hollow circle pulse) */
+    .sdk-delivery-state.sending .sdk-delivery-icon {
+      animation: sendPulse 1s ease-in-out infinite;
+    }
+
+    @keyframes sendPulse {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
+    }
+
+    /* ===== IDLE STATE BREATHING ===== */
+    .pane.idle .sdk-pane {
+      animation: breathe 4s ease-in-out infinite;
+    }
+
+    @keyframes breathe {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 0.8; }
+    }
+
+    .sdk-idle-indicator {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 4px;
+      margin: 8px 16px;
+    }
+
+    .sdk-idle-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--sdk-accent-green);
+      animation: breatheDot 4s ease-in-out infinite;
+    }
+
+    @keyframes breatheDot {
+      0%, 100% { opacity: 0.3; transform: scale(0.8); }
+      50% { opacity: 0.6; transform: scale(1); }
+    }
+
+    .sdk-idle-text {
+      font-size: 11px;
+      color: var(--sdk-text-muted);
+      opacity: 0.6;
     }
 
     /* ===== DEFAULT FALLBACK ===== */
@@ -3206,6 +3357,18 @@
       padding: 10px;
       border-radius: 6px;
       margin: 6px 0 0 0;
+    }
+
+    /* ===== ACCESSIBILITY: Reduced Motion ===== */
+    @media (prefers-reduced-motion: reduce) {
+      .sdk-streaming-bar,
+      .pane.idle .sdk-pane,
+      .sdk-msg,
+      .sdk-delivery-state.sending .sdk-delivery-icon,
+      .sdk-idle-dot {
+        animation: none !important;
+        transition: none !important;
+      }
     }
   </style>
 </head>
@@ -3363,7 +3526,7 @@
         <!-- Lead takes full left side -->
         <div class="pane lead-pane" data-pane-id="1">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-badge idle" id="badge-1"></span>Lead (Main)<span class="pane-project" id="project-1" title="Click to change project"></span><span class="agent-task" id="task-1"></span></span>
+            <span class="pane-title"><span class="agent-avatar">👑</span><span class="agent-badge idle" id="badge-1"></span>Lead (Main)<span class="pane-project" id="project-1" title="Click to change project"></span><span class="agent-task" id="task-1"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-1" title="Session time">0:00</span>
               <span class="sdk-status disconnected" id="sdk-status-1" title="SDK session status">—</span>
@@ -3379,7 +3542,7 @@
         <div class="worker-column">
           <div class="pane worker-pane" data-pane-id="2">
             <div class="pane-header">
-              <span class="pane-title"><span class="agent-badge idle" id="badge-2"></span>Worker A<span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
+              <span class="pane-title"><span class="agent-avatar">🔧</span><span class="agent-badge idle" id="badge-2"></span>Worker A<span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
               <div class="pane-header-right">
                 <span class="pane-timer" id="timer-2" title="Session time">0:00</span>
                 <span class="sdk-status disconnected" id="sdk-status-2" title="SDK session status">—</span>
@@ -3394,7 +3557,7 @@
 
           <div class="pane worker-pane" data-pane-id="3">
             <div class="pane-header">
-              <span class="pane-title"><span class="agent-badge idle" id="badge-3"></span>Worker B<span class="pane-project" id="project-3" title="Click to change project"></span><span class="agent-task" id="task-3"></span></span>
+              <span class="pane-title"><span class="agent-avatar">⚙️</span><span class="agent-badge idle" id="badge-3"></span>Worker B<span class="pane-project" id="project-3" title="Click to change project"></span><span class="agent-task" id="task-3"></span></span>
               <div class="pane-header-right">
                 <span class="pane-timer" id="timer-3" title="Session time">0:00</span>
                 <span class="sdk-status disconnected" id="sdk-status-3" title="SDK session status">—</span>
@@ -3409,7 +3572,7 @@
 
           <div class="pane worker-pane" data-pane-id="4">
             <div class="pane-header">
-              <span class="pane-title"><span class="agent-badge idle" id="badge-4"></span>Reviewer<span class="pane-project" id="project-4" title="Click to change project"></span><span class="agent-task" id="task-4"></span></span>
+              <span class="pane-title"><span class="agent-avatar">🔍</span><span class="agent-badge idle" id="badge-4"></span>Reviewer<span class="pane-project" id="project-4" title="Click to change project"></span><span class="agent-task" id="task-4"></span></span>
               <div class="pane-header-right">
                 <span class="pane-timer" id="timer-4" title="Session time">0:00</span>
                 <span class="sdk-status disconnected" id="sdk-status-4" title="SDK session status">—</span>
@@ -3422,19 +3585,20 @@
             <div class="pane-terminal" id="terminal-4"></div>
           </div>
         </div>
-      </div>
 
-      <form class="broadcast-bar" autocomplete="off" onsubmit="return false;">
-        <input type="text" class="broadcast-input" id="broadcastInput"
-               placeholder="Type here to message Lead (Enter to send)"
-               title="Send message to Lead agent"
-               autocomplete="new-password" autocorrect="off" autocapitalize="off"
-               spellcheck="false" data-lpignore="true" data-form-type="other"
-               data-1p-ignore="true" list=""
-               name="broadcast-input-random-8472"
-               readonly onfocus="this.removeAttribute('readonly');">
-        <button type="button" class="btn" id="broadcastBtn" title="Send message to Lead">Send</button>
-      </form>
+        <!-- Input bar is now inside the grid, under Lead pane -->
+        <form class="broadcast-bar" autocomplete="off" onsubmit="return false;">
+          <input type="text" class="broadcast-input" id="broadcastInput"
+                 placeholder="Type here to message Lead (Enter to send)"
+                 title="Send message to Lead agent"
+                 autocomplete="new-password" autocorrect="off" autocapitalize="off"
+                 spellcheck="false" data-lpignore="true" data-form-type="other"
+                 data-1p-ignore="true" list=""
+                 name="broadcast-input-random-8472"
+                 readonly onfocus="this.removeAttribute('readonly');">
+          <button type="button" class="btn" id="broadcastBtn" title="Send message to Lead">Send</button>
+        </form>
+      </div>
     </div>
 
     <div class="right-panel" id="rightPanel">

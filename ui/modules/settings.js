@@ -11,8 +11,15 @@ let currentSettings = {};
 // Callback for connection status
 let onConnectionStatusUpdate = null;
 
+// Callback when settings finish loading
+let onSettingsLoaded = null;
+
 function setConnectionStatusCallback(cb) {
   onConnectionStatusUpdate = cb;
+}
+
+function setSettingsLoadedCallback(cb) {
+  onSettingsLoaded = cb;
 }
 
 function updateConnectionStatus(status) {
@@ -26,8 +33,16 @@ async function loadSettings() {
   try {
     currentSettings = await ipcRenderer.invoke('get-settings');
     applySettingsToUI();
+    // Notify that settings are loaded (for init sequencing)
+    if (onSettingsLoaded) {
+      onSettingsLoaded();
+    }
   } catch (err) {
     console.error('Error loading settings:', err);
+    // Still call callback so init doesn't hang
+    if (onSettingsLoaded) {
+      onSettingsLoaded();
+    }
   }
 }
 
@@ -50,6 +65,18 @@ function applySettingsToUI() {
   const dryRunIndicator = document.getElementById('dryRunIndicator');
   if (dryRunIndicator) {
     dryRunIndicator.style.display = currentSettings.dryRun ? 'inline-block' : 'none';
+  }
+
+  // Show/hide SDK mode notice
+  const sdkModeNotice = document.getElementById('sdkModeNotice');
+  if (sdkModeNotice) {
+    sdkModeNotice.style.display = currentSettings.sdkMode ? 'block' : 'none';
+  }
+
+  // Hide Spawn All button in SDK mode (SDK manages Claude, not CLI)
+  const spawnAllBtn = document.getElementById('spawnAllBtn');
+  if (spawnAllBtn) {
+    spawnAllBtn.style.display = currentSettings.sdkMode ? 'none' : 'inline-block';
   }
 
   // Populate cost alert threshold
@@ -117,9 +144,16 @@ function setupSettings() {
 
 // Check if should auto-spawn Claude
 async function checkAutoSpawn(spawnAllClaudeFn, reconnectedToExisting) {
-  // Skip auto-spawn if we reconnected to existing terminals
+  // V16: Skip auto-spawn if reconnecting to existing terminals (they already have Claude)
   if (reconnectedToExisting) {
-    console.log('[AutoSpawn] Skipping - reconnected to existing terminals');
+    console.log('[AutoSpawn] Reconnected to existing terminals, skipping auto-spawn');
+    return;
+  }
+
+  // SDK Mode: Don't auto-spawn CLI Claude when SDK mode is enabled
+  // SDK manages its own Claude instances via the Python SDK
+  if (currentSettings.sdkMode) {
+    console.log('[AutoSpawn] SDK mode enabled, skipping CLI auto-spawn');
     return;
   }
 
@@ -131,6 +165,7 @@ async function checkAutoSpawn(spawnAllClaudeFn, reconnectedToExisting) {
 
 module.exports = {
   setConnectionStatusCallback,
+  setSettingsLoadedCallback,
   loadSettings,
   applySettingsToUI,
   toggleSetting,

@@ -14,9 +14,11 @@ const { WORKSPACE_PATH } = require('./config');
 const triggers = require('./modules/triggers');
 const watcher = require('./modules/watcher');
 const ipcHandlers = require('./modules/ipc-handlers');
+const { getSDKBridge } = require('./modules/sdk-bridge');
 
 const SETTINGS_FILE_PATH = path.join(__dirname, 'settings.json');
 const USAGE_FILE_PATH = path.join(__dirname, 'usage-stats.json');
+const APP_STATUS_FILE_PATH = path.join(WORKSPACE_PATH, 'app-status.json');
 
 // Store main window reference
 let mainWindow = null;
@@ -55,6 +57,8 @@ const DEFAULT_SETTINGS = {
   paneProjects: { '1': null, '2': null, '3': null, '4': null },
   // V5 TM1: Saved templates
   templates: [],
+  // SDK Mode: Use Claude Agent SDK instead of PTY terminals
+  sdkMode: false,
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };
@@ -164,13 +168,54 @@ function loadSettings() {
   return currentSettings;
 }
 
+// ============================================================
+// APP STATUS FILE - For agents to know runtime state
+// ============================================================
+
+/**
+ * Write app-status.json so agents can check runtime state without asking
+ * Called on startup and when relevant settings change
+ */
+function writeAppStatus() {
+  try {
+    const status = {
+      started: new Date().toISOString(),
+      sdkMode: currentSettings.sdkMode || false,
+      dryRun: currentSettings.dryRun || false,
+      autoSpawn: currentSettings.autoSpawn || false,
+      version: require('./package.json').version || 'unknown',
+      platform: process.platform,
+      nodeVersion: process.version,
+      lastUpdated: new Date().toISOString(),
+    };
+    const tempPath = APP_STATUS_FILE_PATH + '.tmp';
+    fs.writeFileSync(tempPath, JSON.stringify(status, null, 2), 'utf-8');
+    fs.renameSync(tempPath, APP_STATUS_FILE_PATH);
+    console.log('[App Status] Written:', status.sdkMode ? 'SDK mode' : 'PTY mode');
+  } catch (err) {
+    console.error('[App Status] Error writing:', err.message);
+  }
+}
+
 function saveSettings(settings) {
   try {
-    currentSettings = { ...currentSettings, ...settings };
+    // Track if SDK mode changed
+    const sdkModeChanged = settings.sdkMode !== undefined && settings.sdkMode !== currentSettings.sdkMode;
+
+    // Use Object.assign to mutate existing object, preserving reference for ipc-handlers
+    Object.assign(currentSettings, settings);
     const tempPath = SETTINGS_FILE_PATH + '.tmp';
     const content = JSON.stringify(currentSettings, null, 2);
     fs.writeFileSync(tempPath, content, 'utf-8');
     fs.renameSync(tempPath, SETTINGS_FILE_PATH);
+
+    // V2 SDK: Update triggers SDK mode when setting changes
+    if (sdkModeChanged) {
+      triggers.setSDKMode(currentSettings.sdkMode);
+      console.log(`[Settings] SDK mode ${currentSettings.sdkMode ? 'ENABLED' : 'DISABLED'}`);
+      // Update app-status.json so agents know the new mode
+      writeAppStatus();
+    }
   } catch (err) {
     console.error('Error saving settings:', err);
     const tempPath = SETTINGS_FILE_PATH + '.tmp';
@@ -328,7 +373,11 @@ async function initDaemonClient() {
     }
 
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('daemon-connected', { terminals });
+      // Include sdkMode in event so renderer can skip PTY terminals if SDK mode enabled
+      mainWindow.webContents.send('daemon-connected', {
+        terminals,
+        sdkMode: currentSettings.sdkMode || false
+      });
     }
   });
 
@@ -428,6 +477,16 @@ async function createWindow() {
   watcher.init(mainWindow, triggers, () => currentSettings); // V14: Pass settings getter for auto-sync control
   triggers.setWatcher(watcher); // Enable workflow gate
 
+  // V2 SDK: Connect SDK bridge to triggers for message routing
+  const sdkBridge = getSDKBridge();
+  sdkBridge.setMainWindow(mainWindow);
+  triggers.setSDKBridge(sdkBridge);
+  // Set initial SDK mode from settings
+  if (currentSettings.sdkMode) {
+    triggers.setSDKMode(true);
+    console.log('[Main] SDK mode enabled from settings');
+  }
+
   // Initialize IPC handlers
   ipcHandlers.init({
     mainWindow,
@@ -457,6 +516,7 @@ async function createWindow() {
 
   mainWindow.webContents.on('did-finish-load', async () => {
     watcher.startWatcher();
+    watcher.startTriggerWatcher(); // UX-9: Fast trigger watcher (50ms polling)
     watcher.startMessageWatcher(); // V10 MQ4: Start message queue watcher
     const state = watcher.readState();
     mainWindow.webContents.send('state-changed', state);
@@ -490,6 +550,8 @@ async function createWindow() {
 app.whenReady().then(() => {
   // Load settings BEFORE createWindow so ipc-handlers gets the correct reference
   loadSettings();
+  // Write app status so agents can check runtime state without asking
+  writeAppStatus();
   createWindow();
 
   app.on('activate', () => {
@@ -501,11 +563,21 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   watcher.stopWatcher();
+  watcher.stopTriggerWatcher(); // UX-9: Stop fast trigger watcher
   watcher.stopMessageWatcher(); // V10 MQ4: Stop message queue watcher
 
   if (daemonClient) {
     console.log('[Cleanup] Disconnecting from daemon (terminals will survive)');
     daemonClient.disconnect();
+  }
+
+  // V2 SDK: Stop SDK sessions and save session IDs for resume
+  const sdkBridge = getSDKBridge();
+  if (sdkBridge.isActive()) {
+    console.log('[Cleanup] Stopping SDK sessions and saving state');
+    sdkBridge.stopSessions().catch(err => {
+      console.error('[Cleanup] SDK stop error:', err);
+    });
   }
 
   ipcHandlers.cleanupProcesses();

@@ -241,7 +241,7 @@ const MAX_AGGRESSIVE_NUDGES = 2;  // After 2 failed nudges, alert user
 const STUCK_CHECK_THRESHOLD = 60000;  // Consider stuck after 60s of no activity
 
 // State tracking
-let heartbeatEnabled = true;
+let heartbeatEnabled = false;  // Disabled by default - user can enable via protocol
 let leadNudgeCount = 0;
 let lastHeartbeatTime = 0;
 let awaitingLeadResponse = false;
@@ -979,6 +979,20 @@ function spawnTerminal(paneId, cwd, dryRun = false) {
 
   terminals.set(paneId, terminalInfo);
 
+  // Inject identity command after shell initializes
+  // This makes sessions identifiable in Claude Code's /resume list
+  setTimeout(() => {
+    if (terminalInfo.alive && terminalInfo.pty) {
+      const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
+      const instanceDir = INSTANCE_DIRS[paneId] || workDir;
+      // Clear line, print identity banner, then start fresh
+      const identityBanner = `\r\necho "╔══════════════════════════════════════╗"\r` +
+        `echo "║  HIVEMIND: ${role.padEnd(26)}║"\r` +
+        `echo "╚══════════════════════════════════════╝"\r`;
+      terminalInfo.pty.write(identityBanner);
+    }
+  }, 800); // Wait for shell to initialize
+
   // Forward PTY output to all connected clients
   ptyProcess.onData((data) => {
     // V4 AR1: Track last activity time
@@ -1324,6 +1338,45 @@ function handleMessage(client, message) {
         // Manually trigger a heartbeat
         heartbeatTick();
         sendToClient(client, { event: 'heartbeat-triggered' });
+        break;
+      }
+
+      // ID-1: Session identity injection for /resume identification
+      case 'inject-identity': {
+        const paneId = msg.paneId;
+        const terminal = terminals.get(paneId);
+        if (!terminal || !terminal.alive) {
+          sendToClient(client, {
+            event: 'error',
+            paneId: paneId,
+            message: 'Terminal not found or not alive',
+          });
+          break;
+        }
+
+        const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
+        const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+
+        // Identity message that becomes part of Claude conversation
+        // This shows in /resume session list, making it identifiable
+        const identityMsg = `[HIVEMIND SESSION: ${role}] Started ${timestamp}\n`;
+
+        if (terminal.dryRun) {
+          // Dry-run: just echo the message
+          broadcast({ event: 'data', paneId, data: `\r\n${identityMsg}` });
+          terminal.scrollback += identityMsg;
+        } else if (terminal.pty) {
+          // Real PTY: write the identity message
+          terminal.pty.write(identityMsg);
+        }
+
+        logInfo(`[Identity] Injected identity for ${role} (pane ${paneId})`);
+        sendToClient(client, {
+          event: 'identity-injected',
+          paneId: paneId,
+          role: role,
+          message: identityMsg,
+        });
         break;
       }
 

@@ -22,6 +22,65 @@ const containers = new Map();
 // Session IDs per pane (for resume capability)
 const sessionIds = new Map();
 
+// Message ID counter for delivery tracking
+let messageIdCounter = 0;
+
+// Pending messages awaiting delivery confirmation
+const pendingMessages = new Map();
+
+/**
+ * Generate unique message ID
+ * @returns {string} Unique message ID
+ */
+function generateMessageId() {
+  return `msg-${Date.now()}-${++messageIdCounter}`;
+}
+
+/**
+ * Create delivery state element
+ * @param {string} state - 'sending' | 'sent' | 'delivered'
+ * @returns {HTMLElement} Delivery state span
+ */
+function createDeliveryState(state) {
+  const stateEl = document.createElement('span');
+  stateEl.className = `sdk-delivery-state ${state}`;
+
+  const icons = {
+    sending: '\u25CB', // ○ hollow circle
+    sent: '\u25CF',    // ● filled circle
+    delivered: '\u2713' // ✓ checkmark
+  };
+
+  stateEl.innerHTML = `<span class="sdk-delivery-icon">${icons[state]}</span>`;
+  return stateEl;
+}
+
+/**
+ * Update message delivery state
+ * @param {string} messageId - Message ID to update
+ * @param {string} newState - New state ('sent' | 'delivered')
+ */
+function updateDeliveryState(messageId, newState) {
+  const msgEl = document.querySelector(`[data-msg-id="${messageId}"]`);
+  if (!msgEl) return;
+
+  const stateEl = msgEl.querySelector('.sdk-delivery-state');
+  if (stateEl) {
+    stateEl.className = `sdk-delivery-state ${newState}`;
+    const icons = {
+      sending: '\u25CB',
+      sent: '\u25CF',
+      delivered: '\u2713'
+    };
+    stateEl.innerHTML = `<span class="sdk-delivery-icon">${icons[newState]}</span>`;
+  }
+
+  // Remove from pending if delivered
+  if (newState === 'delivered') {
+    pendingMessages.delete(messageId);
+  }
+}
+
 /**
  * Initialize SDK pane - replaces terminal with message container
  * @param {string} paneId - Pane ID (1-4)
@@ -284,12 +343,14 @@ function formatMessage(message) {
     const content = message.content || message.message || '';
     const displayContent = typeof content === 'string' ? content : JSON.stringify(content);
 
-    // Detect agent prefix: (LEAD): (WORKER-A): (WORKER-B): (REVIEWER):
-    const agentMatch = displayContent.match(/^\((LEAD|WORKER-?A|WORKER-?B|REVIEWER)\):\s*/i);
+    // Detect agent prefix: (LEAD): (WORKER-A #5): (WORKER-B): (REVIEWER #12):
+    // Format: (ROLE) or (ROLE #N) where N is the sequence number
+    const agentMatch = displayContent.match(/^\((LEAD|WORKER-?A|WORKER-?B|REVIEWER)(?:\s*#(\d+))?\):\s*/i);
 
     if (agentMatch) {
       // This is a trigger message from another agent
       const role = agentMatch[1].toUpperCase().replace('-', '-');
+      const seqNum = agentMatch[2] ? parseInt(agentMatch[2], 10) : null;
       const actualMessage = displayContent.slice(agentMatch[0].length);
       const roleConfig = {
         'LEAD': { class: 'lead', label: 'Lead' },
@@ -300,10 +361,12 @@ function formatMessage(message) {
         'REVIEWER': { class: 'reviewer', label: 'Reviewer' }
       };
       const config = roleConfig[role] || roleConfig['LEAD'];
+      // Display label with sequence number if present: "Lead #7" or just "Lead"
+      const displayLabel = seqNum !== null ? `${config.label} #${seqNum}` : config.label;
 
       return `
         <div class="sdk-agent-msg sdk-agent-${config.class}">
-          <span class="sdk-agent-label">${config.label}</span>
+          <span class="sdk-agent-label">${displayLabel}</span>
           <pre class="sdk-agent-content">${escapeHtml(actualMessage)}</pre>
         </div>
       `;
@@ -376,8 +439,10 @@ function formatMessage(message) {
  * Append message to pane with type-specific formatting
  * @param {string} paneId - Pane ID (1-4)
  * @param {Object} message - SDK message object
+ * @param {Object} options - Optional settings { trackDelivery: boolean, isOutgoing: boolean }
+ * @returns {string|null} Message ID if tracking delivery, null otherwise
  */
-function appendMessage(paneId, message) {
+function appendMessage(paneId, message, options = {}) {
   let container = containers.get(paneId);
 
   // SDK-FIX2: Try to recover container if not found
@@ -396,7 +461,7 @@ function appendMessage(paneId, message) {
     container = containers.get(paneId);
     if (!container) {
       console.error(`[SDK] Failed to initialize container for pane ${paneId}`);
-      return;
+      return null;
     }
   }
 
@@ -407,11 +472,27 @@ function appendMessage(paneId, message) {
   msgEl.className = `sdk-msg ${getMessageClass(message)}`;
   msgEl.innerHTML = formatMessage(message);
 
+  // Add message ID for delivery tracking
+  const messageId = options.trackDelivery ? generateMessageId() : null;
+  if (messageId) {
+    msgEl.dataset.msgId = messageId;
+    pendingMessages.set(messageId, { paneId, timestamp: Date.now() });
+  }
+
   // Add timestamp
   const timestamp = document.createElement('span');
   timestamp.className = 'sdk-timestamp';
   timestamp.textContent = new Date().toLocaleTimeString();
   msgEl.insertBefore(timestamp, msgEl.firstChild);
+
+  // Add delivery state for outgoing messages
+  if (options.isOutgoing || options.trackDelivery) {
+    const deliveryState = createDeliveryState('sending');
+    msgEl.appendChild(deliveryState);
+
+    // Auto-transition to 'sent' after 200ms (optimistic)
+    setTimeout(() => updateDeliveryState(messageId, 'sent'), 200);
+  }
 
   container.appendChild(msgEl);
   scrollToBottom(paneId);
@@ -450,11 +531,13 @@ function scrollToBottom(paneId) {
 }
 
 /**
- * Show/hide streaming indicator (thinking animation)
+ * Show/hide streaming indicator (shimmer bar thinking animation)
+ * UX-8: Now supports contextual text based on tool use
  * @param {string} paneId - Pane ID (1-4)
  * @param {boolean} active - Whether to show or hide
+ * @param {string} context - Optional context text (e.g., "Reading files...")
  */
-function streamingIndicator(paneId, active) {
+function streamingIndicator(paneId, active, context = null) {
   const container = containers.get(paneId);
   if (!container) return;
 
@@ -463,12 +546,86 @@ function streamingIndicator(paneId, active) {
   if (active && !indicator) {
     indicator = document.createElement('div');
     indicator.className = 'sdk-streaming';
-    indicator.innerHTML = '<span class="dot">●</span><span class="dot">●</span><span class="dot">●</span>';
+    indicator.innerHTML = `
+      <div class="sdk-streaming-bar"></div>
+      <span class="sdk-streaming-text">${escapeHtml(context || 'Thinking...')}</span>
+    `;
     container.appendChild(indicator);
     scrollToBottom(paneId);
+  } else if (active && indicator && context) {
+    // UX-8: Update context text if indicator exists
+    const textEl = indicator.querySelector('.sdk-streaming-text');
+    if (textEl) {
+      textEl.textContent = context;
+    }
   } else if (!active && indicator) {
     indicator.remove();
   }
+}
+
+/**
+ * UX-8: Update streaming indicator with tool context
+ * Parses tool_use messages and shows friendly descriptions
+ * @param {string} paneId - Pane ID (1-4)
+ * @param {Object} toolUse - Tool use message object
+ */
+function updateToolContext(paneId, toolUse) {
+  const toolName = toolUse.name || toolUse.tool || 'unknown';
+  const input = toolUse.input || {};
+
+  // Map tool names to friendly descriptions
+  const contextMap = {
+    'Read': () => {
+      const file = input.file_path || input.path || 'file';
+      const fileName = file.split(/[/\\]/).pop();
+      return `Reading ${fileName}...`;
+    },
+    'Write': () => {
+      const file = input.file_path || input.path || 'file';
+      const fileName = file.split(/[/\\]/).pop();
+      return `Writing ${fileName}...`;
+    },
+    'Edit': () => {
+      const file = input.file_path || input.path || 'file';
+      const fileName = file.split(/[/\\]/).pop();
+      return `Editing ${fileName}...`;
+    },
+    'Glob': () => {
+      const pattern = input.pattern || '*';
+      return `Finding files: ${pattern}`;
+    },
+    'Grep': () => {
+      const pattern = input.pattern || 'pattern';
+      return `Searching: ${pattern.substring(0, 20)}...`;
+    },
+    'Bash': () => {
+      const cmd = input.command || '';
+      const shortCmd = cmd.split(' ')[0] || 'command';
+      return `Running ${shortCmd}...`;
+    },
+    'Task': () => {
+      const desc = input.description || 'task';
+      return `Delegating: ${desc.substring(0, 25)}...`;
+    },
+    'WebFetch': () => {
+      const url = input.url || 'URL';
+      try {
+        const hostname = new URL(url).hostname;
+        return `Fetching ${hostname}...`;
+      } catch {
+        return 'Fetching web page...';
+      }
+    },
+    'WebSearch': () => {
+      const query = input.query || 'query';
+      return `Searching: ${query.substring(0, 20)}...`;
+    },
+  };
+
+  const contextFn = contextMap[toolName];
+  const context = contextFn ? contextFn() : `Using ${toolName}...`;
+
+  streamingIndicator(paneId, true, context);
 }
 
 /**
@@ -508,11 +665,18 @@ module.exports = {
   addSystemMessage,
   addErrorMessage,
 
+  // Delivery state tracking
+  updateDeliveryState,
+  generateMessageId,
+
   // Pane control
   clearPane,
   clearAllPanes,
   scrollToBottom,
   streamingIndicator,
+
+  // UX-8: Contextual thinking states
+  updateToolContext,
 
   // Session management
   getSessionId,

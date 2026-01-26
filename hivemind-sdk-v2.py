@@ -736,6 +736,10 @@ async def run_ipc_server(manager: HivemindManager):
                 else:
                     manager._emit("error", {"message": "interrupt requires pane_id"})
 
+            elif command == "ping":
+                # Re-emit ready signal - allows JS to recover if it missed the initial ready
+                manager._emit("ready", {"agents": list(manager.agents.keys())})
+
             else:
                 manager._emit("error", {"message": f"Unknown command: {command}"})
 

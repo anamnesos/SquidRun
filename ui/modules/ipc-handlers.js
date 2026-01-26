@@ -106,6 +106,12 @@ function setupIPCHandlers(deps) {
   });
 
   ipcMain.handle('spawn-claude', (event, paneId, workingDir) => {
+    // SDK Mode Guard (defense in depth): Block CLI spawn when SDK mode is active
+    if (currentSettings.sdkMode) {
+      console.log('[spawn-claude] SDK mode - blocking CLI spawn');
+      return { success: false, error: 'SDK mode active' };
+    }
+
     // V3: Dry-run mode - simulate without spawning real Claude
     if (currentSettings.dryRun) {
       claudeRunning.set(paneId, 'running');
@@ -125,6 +131,9 @@ function setupIPCHandlers(deps) {
     if (currentSettings.allowAllPermissions) {
       claudeCmd = 'claude --dangerously-skip-permissions';
     }
+
+    // ID-1: Identity injection moved to renderer (terminal.js:spawnClaude)
+    // Daemon PTY writes don't submit to Claude - need keyboard events from renderer
 
     return { success: true, command: claudeCmd };
   });
@@ -3527,6 +3536,174 @@ function setupIPCHandlers(deps) {
     ipcMain.emit('show-error-toast', event, code, { originalError: errorStr, ...context });
 
     return { success: true, code, handled: true };
+  });
+
+  // Full restart - kill daemon and reload app with fresh code
+  ipcMain.handle('full-restart', async () => {
+    const { app } = require('electron');
+
+    console.log('[Full Restart] Initiating full restart...');
+
+    // Step 1: Disconnect from daemon
+    if (daemonClient) {
+      try {
+        daemonClient.shutdown();
+        console.log('[Full Restart] Sent shutdown to daemon');
+      } catch (err) {
+        console.log('[Full Restart] Error shutting down daemon:', err.message);
+      }
+    }
+
+    // Step 2: Kill all node processes (including daemon) on Windows
+    if (os.platform() === 'win32') {
+      try {
+        // Kill daemon by finding the process
+        const daemonPidPath = path.join(__dirname, '..', 'daemon.pid');
+        if (fs.existsSync(daemonPidPath)) {
+          const pid = fs.readFileSync(daemonPidPath, 'utf-8').trim();
+          spawn('taskkill', ['/pid', pid, '/f', '/t'], { shell: true, detached: true });
+          fs.unlinkSync(daemonPidPath);
+          console.log('[Full Restart] Killed daemon PID:', pid);
+        }
+      } catch (err) {
+        console.log('[Full Restart] Error killing daemon:', err.message);
+      }
+    }
+
+    // Step 3: Exit cleanly (user restarts manually - more reliable on Windows)
+    console.log('[Full Restart] Shutting down. Please run "npm start" to restart.');
+    app.exit(0);
+
+    return { success: true };
+  });
+
+  // ============================================================
+  // SDK IPC HANDLERS (Task #3: Multi-Agent Coordination)
+  // ============================================================
+
+  const { getSDKBridge } = require('./sdk-bridge');
+  const sdkBridge = getSDKBridge();
+  sdkBridge.setMainWindow(mainWindow);
+
+  ipcMain.handle('sdk-start', async (event, prompt, options = {}) => {
+    console.log('[SDK] Starting with prompt:', prompt?.substring(0, 50) + '...');
+    try {
+      sdkBridge.start(prompt, {
+        broadcast: options.broadcast || false,
+        workspace: options.workspace || process.cwd(),
+      });
+      return { success: true };
+    } catch (err) {
+      console.error('[SDK] Start error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('sdk-stop', () => {
+    console.log('[SDK] Stopping');
+    sdkBridge.stop();
+    return { success: true };
+  });
+
+  ipcMain.handle('sdk-write', (event, input) => {
+    console.log('[SDK] Writing input');
+    sdkBridge.write(input);
+    return { success: true };
+  });
+
+  ipcMain.handle('sdk-status', () => {
+    return {
+      active: sdkBridge.isActive(),
+      sessions: sdkBridge.getSessions(),
+    };
+  });
+
+  ipcMain.handle('sdk-broadcast', async (event, prompt) => {
+    console.log('[SDK V2] Broadcasting to all agents:', prompt?.substring(0, 50) + '...');
+    try {
+      // V2: Use broadcast() which sends to all 4 panes
+      if (!sdkBridge.isActive()) {
+        // Auto-start if not running
+        await sdkBridge.startSessions({ workspace: process.cwd() });
+      }
+      sdkBridge.broadcast(prompt);
+      return { success: true };
+    } catch (err) {
+      console.error('[SDK V2] Broadcast error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ============================================================
+  // SDK V2 IPC HANDLERS (4 Independent Sessions)
+  // ============================================================
+
+  // V2: Send message to specific pane/agent
+  ipcMain.handle('sdk-send-message', async (event, paneId, message) => {
+    console.log(`[SDK V2] Sending to pane ${paneId}:`, message?.substring(0, 50) + '...');
+    try {
+      const sent = sdkBridge.sendMessage(paneId, message);
+      return { success: sent };
+    } catch (err) {
+      console.error('[SDK V2] Send error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // V2: Subscribe to responses from a pane
+  ipcMain.handle('sdk-subscribe', (event, paneId) => {
+    console.log(`[SDK V2] Subscribing to pane ${paneId}`);
+    return { success: sdkBridge.subscribe(paneId) };
+  });
+
+  // V2: Unsubscribe from a pane
+  ipcMain.handle('sdk-unsubscribe', (event, paneId) => {
+    console.log(`[SDK V2] Unsubscribing from pane ${paneId}`);
+    return { success: sdkBridge.unsubscribe(paneId) };
+  });
+
+  // V2: Get all session IDs for persistence
+  ipcMain.handle('sdk-get-session-ids', () => {
+    console.log('[SDK V2] Getting session IDs');
+    return sdkBridge.getSessionIds();
+  });
+
+  // V2: Initialize all 4 agent sessions
+  ipcMain.handle('sdk-start-sessions', async (event, options = {}) => {
+    console.log('[SDK V2] Starting all sessions');
+    try {
+      await sdkBridge.startSessions({
+        workspace: options.workspace || process.cwd(),
+        resumeIds: options.resumeIds,
+      });
+      return { success: true };
+    } catch (err) {
+      console.error('[SDK V2] Start sessions error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // V2: Stop all sessions gracefully (captures session IDs)
+  ipcMain.handle('sdk-stop-sessions', async () => {
+    console.log('[SDK V2] Stopping all sessions');
+    try {
+      const sessionIds = await sdkBridge.stopSessions();
+      return { success: true, sessionIds };
+    } catch (err) {
+      console.error('[SDK V2] Stop sessions error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // V2: Get status of a specific pane
+  ipcMain.handle('sdk-pane-status', (event, paneId) => {
+    return sdkBridge.getPaneStatus(paneId);
+  });
+
+  // V2: Interrupt a specific agent
+  ipcMain.handle('sdk-interrupt', (event, paneId) => {
+    console.log(`[SDK V2] Interrupting pane ${paneId}`);
+    return { success: sdkBridge.interrupt(paneId) };
   });
 }
 

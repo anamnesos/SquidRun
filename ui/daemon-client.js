@@ -215,6 +215,11 @@ class DaemonClient extends EventEmitter {
           this.emit('heartbeat-status', msg);
           break;
 
+        // ID-1: Handle identity injection response
+        case 'identity-injected':
+          this.emit('identity-injected', msg.paneId, msg.role, msg.message);
+          break;
+
         // V13: Handle watchdog alert
         case 'watchdog-alert':
           this.emit('watchdog-alert', msg.message, msg.timestamp);
@@ -383,6 +388,23 @@ class DaemonClient extends EventEmitter {
   health() {
     return this._send({
       action: 'health',
+    });
+  }
+
+  // ============================================================
+  // ID-1: Session Identity Injection
+  // Inject role identity message for /resume identification
+  // ============================================================
+
+  /**
+   * Inject identity message into terminal for Claude session identification
+   * Makes sessions identifiable when using /resume
+   * @param {string} paneId - The pane identifier
+   */
+  injectIdentity(paneId) {
+    return this._send({
+      action: 'inject-identity',
+      paneId,
     });
   }
 
