@@ -1,14 +1,14 @@
 /**
  * SDK Bridge V2 - Multi-Session Support
  *
- * Manages 4 independent SDK sessions (one per pane/agent).
+ * Manages 6 independent SDK sessions (one per pane/agent).
  * Each agent has its own full context window - NOT subagents.
  *
  * IPC Handlers:
  * - sdk-send-message(paneId, message) - send to specific agent
  * - sdk-subscribe(paneId) - stream responses back to renderer
  * - sdk-get-session-ids - for persistence on app close
- * - sdk-start-sessions - initialize all 4 agents
+ * - sdk-start-sessions - initialize all 6 agents
  * - sdk-stop-sessions - graceful shutdown with session ID capture
  */
 
@@ -17,12 +17,14 @@ const path = require('path');
 const fs = require('fs');
 const EventEmitter = require('events');
 
-// Pane ID to role mapping
+// Pane ID to role mapping (6-pane architecture)
 const PANE_ROLES = {
-  '1': 'Lead',
-  '2': 'Worker A',
-  '3': 'Worker B',
-  '4': 'Reviewer',
+  '1': 'Architect',
+  '2': 'Orchestrator',
+  '3': 'Implementer A',
+  '4': 'Implementer B',
+  '5': 'Investigator',
+  '6': 'Reviewer',
 };
 
 // Reverse mapping - role to pane ID (supports multiple name variations)
@@ -30,25 +32,38 @@ const ROLE_TO_PANE = {
   'lead': '1',
   'Lead': '1',
   'LEAD': '1',
+  'architect': '1',
+  'Architect': '1',
+  'ARCHITECT': '1',
   '1': '1',
-  'worker-a': '2',
-  'Worker A': '2',
-  'WORKER-A': '2',
-  'worker_a': '2',
-  'workerA': '2',
-  'WorkerA': '2',
+  'orchestrator': '2',
+  'Orchestrator': '2',
+  'ORCHESTRATOR': '2',
   '2': '2',
-  'worker-b': '3',
-  'Worker B': '3',
-  'WORKER-B': '3',
-  'worker_b': '3',
-  'workerB': '3',
-  'WorkerB': '3',
+  'worker-a': '3',
+  'Worker A': '3',
+  'WORKER-A': '3',
+  'worker_a': '3',
+  'implementer-a': '3',
+  'Implementer A': '3',
+  'IMPLEMENTER-A': '3',
   '3': '3',
-  'reviewer': '4',
-  'Reviewer': '4',
-  'REVIEWER': '4',
+  'worker-b': '4',
+  'Worker B': '4',
+  'WORKER-B': '4',
+  'worker_b': '4',
+  'implementer-b': '4',
+  'Implementer B': '4',
+  'IMPLEMENTER-B': '4',
   '4': '4',
+  'investigator': '5',
+  'Investigator': '5',
+  'INVESTIGATOR': '5',
+  '5': '5',
+  'reviewer': '6',
+  'Reviewer': '6',
+  'REVIEWER': '6',
+  '6': '6',
 };
 
 // Session state file for persistence
@@ -62,16 +77,18 @@ class SDKBridge extends EventEmitter {
     this.ready = false;
     this.mainWindow = null;
 
-    // V2: Track 4 independent sessions
+    // V2: Track 6 independent sessions
     this.sessions = {
-      '1': { id: null, role: 'Lead', status: 'idle' },
-      '2': { id: null, role: 'Worker A', status: 'idle' },
-      '3': { id: null, role: 'Worker B', status: 'idle' },
-      '4': { id: null, role: 'Reviewer', status: 'idle' },
+      '1': { id: null, role: 'Architect', status: 'idle' },
+      '2': { id: null, role: 'Orchestrator', status: 'idle' },
+      '3': { id: null, role: 'Implementer A', status: 'idle' },
+      '4': { id: null, role: 'Implementer B', status: 'idle' },
+      '5': { id: null, role: 'Investigator', status: 'idle' },
+      '6': { id: null, role: 'Reviewer', status: 'idle' },
     };
 
     // Subscribers for streaming responses
-    this.subscribers = new Set(['1', '2', '3', '4']); // All panes subscribed by default
+    this.subscribers = new Set(['1', '2', '3', '4', '5', '6']); // All panes subscribed by default
 
     // Message queue for when process isn't ready
     this.pendingMessages = [];
@@ -348,7 +365,7 @@ class SDKBridge extends EventEmitter {
   }
 
   /**
-   * V2: Initialize all 4 agent sessions
+   * V2: Initialize all 6 agent sessions
    * Note: Python auto-starts all sessions in start_all() on process launch.
    * No init-sessions command needed - just start the process.
    * @param {object} options - { workspace: string, resumeIds: { paneId: sessionId } }
@@ -364,7 +381,7 @@ class SDKBridge extends EventEmitter {
     }
 
     // Start the Python process if not running
-    // Python auto-starts all 4 sessions via manager.start_all()
+    // Python auto-starts all 6 sessions via manager.start_all()
     if (!this.active) {
       this.startProcess(options);
     }

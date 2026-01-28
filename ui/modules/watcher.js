@@ -6,7 +6,7 @@
 const path = require('path');
 const fs = require('fs');
 const chokidar = require('chokidar');
-const { WORKSPACE_PATH, TRIGGER_TARGETS } = require('../config');
+const { WORKSPACE_PATH, TRIGGER_TARGETS, PANE_IDS, PANE_ROLES } = require('../config');
 
 const STATE_FILE_PATH = path.join(WORKSPACE_PATH, 'state.json');
 const SHARED_CONTEXT_PATH = path.join(WORKSPACE_PATH, 'shared_context.md');
@@ -24,6 +24,9 @@ let getSettings = null; // V14: Settings getter for auto-sync control
 
 // UX-9: Trigger file path for fast watching
 const TRIGGER_PATH = path.join(WORKSPACE_PATH, 'triggers');
+const TRIGGER_READ_RETRY_MS = 50;
+const TRIGGER_READ_MAX_ATTEMPTS = 3;
+const triggerRetryTimers = new Map();
 
 // ============================================================
 // STATE MACHINE
@@ -47,20 +50,20 @@ const States = {
   PAUSED: 'paused',
 };
 
-// Active agents per state (pane IDs: 1=Lead, 2=WorkerA, 3=WorkerB, 4=Reviewer)
+// Active agents per state (pane IDs: 1=Architect, 2=Orchestrator, 3=Implementer A, 4=Implementer B, 5=Investigator, 6=Reviewer)
 const ACTIVE_AGENTS = {
   [States.IDLE]: [],
-  [States.PROJECT_SELECTED]: ['1'],
-  [States.PLANNING]: ['1'],
-  [States.PLAN_REVIEW]: ['4'],
-  [States.PLAN_REVISION]: ['1'],
-  [States.EXECUTING]: ['2', '3'],
+  [States.PROJECT_SELECTED]: ['1', '2'],
+  [States.PLANNING]: ['1', '2'],
+  [States.PLAN_REVIEW]: ['6'],
+  [States.PLAN_REVISION]: ['1', '2'],
+  [States.EXECUTING]: ['3', '4', '5'],
   [States.CHECKPOINT]: [],
-  [States.CHECKPOINT_REVIEW]: ['4'],
-  [States.CHECKPOINT_FIX]: ['1', '2', '3'],
+  [States.CHECKPOINT_REVIEW]: ['6'],
+  [States.CHECKPOINT_FIX]: ['1', '3', '4', '5'],
   [States.FRICTION_LOGGED]: [],
   [States.FRICTION_SYNC]: [],
-  [States.FRICTION_RESOLUTION]: ['1'],
+  [States.FRICTION_RESOLUTION]: ['1', '2'],
   [States.COMPLETE]: [],
   [States.ERROR]: [],
   [States.PAUSED]: [],
@@ -95,10 +98,12 @@ function parseWorkerAssignments() {
     if (!fs.existsSync(SHARED_CONTEXT_PATH)) return {};
     const c = fs.readFileSync(SHARED_CONTEXT_PATH, 'utf-8');
     const a = {};
-    const wA = c.match(/### Worker A[\s\S]*?(?=###|$)/i);
-    const wB = c.match(/### Worker B[\s\S]*?(?=###|$)/i);
-    if (wA) a['Worker A'] = extractFilePaths(wA[0]);
-    if (wB) a['Worker B'] = extractFilePaths(wB[0]);
+    const wA = c.match(/### (Worker A|Implementer A)[\s\S]*?(?=###|$)/i);
+    const wB = c.match(/### (Worker B|Implementer B)[\s\S]*?(?=###|$)/i);
+    const inv = c.match(/### Investigator[\s\S]*?(?=###|$)/i);
+    if (wA) a['Implementer A'] = extractFilePaths(wA[0]);
+    if (wB) a['Implementer B'] = extractFilePaths(wB[0]);
+    if (inv) a['Investigator'] = extractFilePaths(inv[0]);
     return a;
   } catch (e) { return {}; }
 }
@@ -106,8 +111,20 @@ function parseWorkerAssignments() {
 function checkFileConflicts() {
   const a = parseWorkerAssignments();
   const conflicts = [];
-  const fA = a['Worker A'] || [], fB = a['Worker B'] || [];
-  for (const f of fA) if (fB.includes(f)) conflicts.push({ file: f, workers: ['A', 'B'] });
+  const roles = Object.keys(a);
+  for (let i = 0; i < roles.length; i++) {
+    for (let j = i + 1; j < roles.length; j++) {
+      const roleA = roles[i];
+      const roleB = roles[j];
+      const filesA = a[roleA] || [];
+      const filesB = a[roleB] || [];
+      for (const f of filesA) {
+        if (filesB.includes(f)) {
+          conflicts.push({ file: f, workers: [roleA, roleB] });
+        }
+      }
+    }
+  }
   lastConflicts = conflicts;
   if (conflicts.length && mainWindow && !mainWindow.isDestroyed()) {
     console.warn('[Conflict]', conflicts.map(c => c.file));
@@ -305,11 +322,9 @@ function readState() {
 // V4 CB2: AGENT CLAIM/RELEASE PROTOCOL
 // ============================================================
 
-const PANE_ROLES = { '1': 'Lead', '2': 'Worker A', '3': 'Worker B', '4': 'Reviewer' };
-
 /**
  * Claim an agent role for a task
- * @param {string} paneId - The pane/agent ID (1-4)
+ * @param {string} paneId - The pane/agent ID (1-6)
  * @param {string} taskId - The task being claimed
  * @param {string} [description] - Optional description
  * @returns {{ success: boolean, error?: string }}
@@ -448,10 +463,48 @@ function transition(newState) {
 }
 
 // ============================================================
-// FILE CHANGE HANDLER
+// FILE CHANGE HANDLER (with debounce for batch operations)
 // ============================================================
 
-function handleFileChange(filePath) {
+// Debounce state for handleFileChange
+const DEBOUNCE_DELAY_MS = 200;  // Batch events within 200ms window
+let debounceTimer = null;
+let pendingFileChanges = new Set();
+
+/**
+ * Debounced file change handler
+ * Batches rapid file changes (git checkout, npm install) to prevent event floods
+ * @param {string} filePath - Path to changed file
+ */
+function handleFileChangeDebounced(filePath) {
+  // Add to pending set (dedupes multiple changes to same file)
+  pendingFileChanges.add(filePath);
+
+  // Clear existing timer
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+  }
+
+  // Set new timer - process all pending after debounce window
+  debounceTimer = setTimeout(() => {
+    const files = [...pendingFileChanges];
+    pendingFileChanges.clear();
+    debounceTimer = null;
+
+    console.log(`[Watcher] Processing ${files.length} batched file change(s)`);
+
+    // Process each unique file
+    for (const file of files) {
+      handleFileChangeCore(file);
+    }
+  }, DEBOUNCE_DELAY_MS);
+}
+
+/**
+ * Core file change handler (called after debounce)
+ * @param {string} filePath - Path to changed file
+ */
+function handleFileChangeCore(filePath) {
   const filename = path.basename(filePath);
   const state = readState();
   const currentState = state.state;
@@ -530,7 +583,7 @@ function handleFileChange(filePath) {
 
   // TARGETED TRIGGERS: workspace/triggers/{target}.txt
   else if (filePath.includes('triggers') && filename.endsWith('.txt') && triggers) {
-    triggers.handleTriggerFile(filePath, filename);
+    handleTriggerFileWithRetry(filePath, filename);
   }
 }
 
@@ -557,8 +610,8 @@ function startWatcher() {
     ],
   });
 
-  workspaceWatcher.on('add', handleFileChange);
-  workspaceWatcher.on('change', handleFileChange);
+  workspaceWatcher.on('add', handleFileChangeDebounced);
+  workspaceWatcher.on('change', handleFileChangeDebounced);
 
   console.log(`[Watcher] Watching ${WORKSPACE_PATH}`);
 }
@@ -586,8 +639,47 @@ function handleTriggerChange(filePath) {
 
   // Route directly to triggers module for immediate processing
   if (triggers) {
-    triggers.handleTriggerFile(filePath, filename);
+    handleTriggerFileWithRetry(filePath, filename);
   }
+}
+
+/**
+ * Retry reading trigger files if write hasn't flushed yet.
+ * Avoids empty reads when file change event fires before content is written.
+ * @param {string} filePath - Path to trigger file
+ * @param {string} filename - Trigger filename
+ * @param {number} attempt - Current retry attempt
+ */
+function handleTriggerFileWithRetry(filePath, filename, attempt = 0) {
+  if (!triggers) return;
+
+  let stats;
+  try {
+    stats = fs.statSync(filePath);
+  } catch (err) {
+    console.log(`[Trigger] Could not stat ${filename}: ${err.message}`);
+    return;
+  }
+
+  if (stats.size === 0) {
+    if (attempt < TRIGGER_READ_MAX_ATTEMPTS) {
+      const existing = triggerRetryTimers.get(filePath);
+      if (existing) {
+        clearTimeout(existing);
+      }
+      const timer = setTimeout(() => {
+        triggerRetryTimers.delete(filePath);
+        handleTriggerFileWithRetry(filePath, filename, attempt + 1);
+      }, TRIGGER_READ_RETRY_MS);
+      triggerRetryTimers.set(filePath, timer);
+      return;
+    }
+
+    console.log(`[Trigger] Empty trigger file after ${TRIGGER_READ_MAX_ATTEMPTS} retries: ${filename}`);
+    return;
+  }
+
+  triggers.handleTriggerFile(filePath, filename);
 }
 
 /**
@@ -662,7 +754,7 @@ function initMessageQueue() {
   }
 
   // Create queue files for each pane if they don't exist
-  for (const paneId of ['1', '2', '3', '4']) {
+  for (const paneId of PANE_IDS) {
     const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${paneId}.json`);
     if (!fs.existsSync(queueFile)) {
       fs.writeFileSync(queueFile, '[]', 'utf-8');
@@ -815,7 +907,7 @@ function markMessageDelivered(paneId, messageId) {
  */
 function clearMessages(paneId, deliveredOnly = false) {
   try {
-    const panes = paneId === 'all' ? ['1', '2', '3', '4'] : [paneId];
+    const panes = paneId === 'all' ? PANE_IDS : [paneId];
 
     for (const p of panes) {
       const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${p}.json`);
@@ -853,7 +945,7 @@ function getMessageQueueStatus() {
     undelivered: 0,
   };
 
-  for (const paneId of ['1', '2', '3', '4']) {
+  for (const paneId of PANE_IDS) {
     const messages = getMessages(paneId);
     const undelivered = messages.filter(m => !m.delivered);
 
@@ -877,7 +969,7 @@ function getMessageQueueStatus() {
  */
 function handleMessageQueueChange(filePath) {
   const filename = path.basename(filePath);
-  const match = filename.match(/queue-(\d)\.json/);
+  const match = filename.match(/queue-(\d+)\.json/);
 
   if (!match) return;
 
@@ -993,7 +1085,7 @@ module.exports = {
   stopWatcher,
   startMessageWatcher,
   stopMessageWatcher,
-  handleFileChange,
+  handleFileChange: handleFileChangeDebounced,  // Export debounced version for external callers
 
   // UX-9: Fast trigger watcher
   startTriggerWatcher,

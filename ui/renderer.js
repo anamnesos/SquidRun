@@ -15,6 +15,15 @@ const sdkRenderer = require('./modules/sdk-renderer');
 // SDK mode flag - when true, use SDK renderer instead of xterm terminals
 let sdkMode = false;
 
+const SDK_PANE_LABELS = {
+  '1': { name: 'Architect', avatar: '👑' },
+  '2': { name: 'Orchestrator', avatar: '🔀' },
+  '3': { name: 'Implementer A', avatar: '🔧' },
+  '4': { name: 'Implementer B', avatar: '⚙️' },
+  '5': { name: 'Investigator', avatar: '🔍' },
+  '6': { name: 'Reviewer', avatar: '✅' }
+};
+
 // Initialization state tracking - fixes race condition in auto-spawn
 let initState = {
   settingsLoaded: false,
@@ -56,6 +65,8 @@ function markTerminalsReady(isSDKMode = false) {
   if (isSDKMode) {
     console.log('[Init] Initializing SDK mode...');
     sdkMode = true;
+    sdkRenderer.setSDKPaneConfig();
+    applySDKPaneLayout();
     sdkRenderer.initAllSDKPanes();
 
     // Auto-start SDK sessions (get workspace path via IPC)
@@ -82,6 +93,9 @@ window.hivemind = {
   pty: {
     create: (paneId, workingDir) => ipcRenderer.invoke('pty-create', paneId, workingDir),
     write: (paneId, data) => ipcRenderer.invoke('pty-write', paneId, data),
+    codexExec: (paneId, prompt) => ipcRenderer.invoke('codex-exec', paneId, prompt),
+    sendTrustedEnter: () => ipcRenderer.invoke('send-trusted-enter'),
+    clipboardPasteText: (text) => ipcRenderer.invoke('clipboard-paste-text', text),
     resize: (paneId, cols, rows) => ipcRenderer.invoke('pty-resize', paneId, cols, rows),
     kill: (paneId) => ipcRenderer.invoke('pty-kill', paneId),
     onData: (paneId, callback) => {
@@ -133,6 +147,8 @@ window.hivemind = {
         return;
       }
       sdkMode = true;
+      sdkRenderer.setSDKPaneConfig();
+      applySDKPaneLayout();
       sdkRenderer.initAllSDKPanes();
       console.log('[SDK] Mode enabled');
     },
@@ -164,6 +180,55 @@ function updateConnectionStatus(status) {
   const statusEl = document.getElementById('connectionStatus');
   if (statusEl) {
     statusEl.textContent = status;
+  }
+}
+
+function applySDKPaneLayout() {
+  const sdkPaneIds = Object.keys(SDK_PANE_LABELS);
+
+  sdkPaneIds.forEach((paneId) => {
+    const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+    if (!pane) return;
+    pane.style.display = '';
+
+    const titleEl = pane.querySelector('.pane-title');
+    if (!titleEl) return;
+
+    const avatarEl = titleEl.querySelector('.agent-avatar');
+    if (avatarEl) {
+      avatarEl.textContent = SDK_PANE_LABELS[paneId].avatar;
+    }
+
+    let roleTextNode = null;
+    for (const node of titleEl.childNodes) {
+      if (node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0) {
+        roleTextNode = node;
+        break;
+      }
+    }
+
+    if (!roleTextNode) {
+      const projectEl = titleEl.querySelector('.pane-project');
+      const nameNode = document.createTextNode(SDK_PANE_LABELS[paneId].name);
+      if (projectEl) {
+        titleEl.insertBefore(nameNode, projectEl);
+      } else {
+        titleEl.appendChild(nameNode);
+      }
+    } else {
+      roleTextNode.textContent = SDK_PANE_LABELS[paneId].name;
+    }
+  });
+
+  const broadcastInput = document.getElementById('broadcastInput');
+  if (broadcastInput) {
+    broadcastInput.placeholder = 'Type here to message Lead (Enter to send)';
+    broadcastInput.title = 'Send message to Lead';
+  }
+
+  const broadcastBtn = document.getElementById('broadcastBtn');
+  if (broadcastBtn) {
+    broadcastBtn.title = 'Send message to Lead';
   }
 }
 
@@ -362,8 +427,8 @@ function setupEventListeners() {
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
-    // Ctrl+1-4 to focus panes
-    if (e.ctrlKey && e.key >= '1' && e.key <= '4') {
+    // Ctrl+1-6 to focus panes
+    if (e.ctrlKey && e.key >= '1' && e.key <= '6') {
       e.preventDefault();
       terminal.focusPane(e.key);
     }
@@ -374,7 +439,7 @@ function setupEventListeners() {
   let lastBroadcastTime = 0;
 
   // Helper function to send broadcast - routes through SDK or PTY based on mode
-  // V2 FIX: Support pane targeting with /1, /2, /3, /4 prefix
+  // V2 FIX: Support pane targeting with /1-6 prefix
   function sendBroadcast(message) {
     const now = Date.now();
     if (now - lastBroadcastTime < 500) {
@@ -386,21 +451,41 @@ function setupEventListeners() {
     // Check SDK mode from settings
     const currentSettings = settings.getSettings();
     if (currentSettings.sdkMode || sdkMode) {
-      // V2 FIX: Check for pane targeting prefix: /1, /2, /3, /4 or /lead, /worker-a, etc.
+      // V2 FIX: Check for pane targeting prefix: /1-6 or /architect, /orchestrator, etc.
       // /all broadcasts to all agents
-      const paneMatch = message.match(/^\/([1-4]|all|lead|worker-?a|worker-?b|reviewer)\s+/i);
+      const paneMatch = message.match(/^\/([1-6]|all|lead|architect|orchestrator|worker-?a|worker-?b|implementer-?a|implementer-?b|investigator|reviewer)\s+/i);
       if (paneMatch) {
         const target = paneMatch[1].toLowerCase();
         const actualMessage = message.slice(paneMatch[0].length);
         if (target === 'all') {
           console.log('[SDK] Broadcast to ALL agents');
           // Show user message in ALL panes immediately
-          ['1', '2', '3', '4'].forEach(paneId => {
+          ['1', '2', '3', '4', '5', '6'].forEach(paneId => {
             sdkRenderer.appendMessage(paneId, { type: 'user', content: actualMessage });
           });
           ipcRenderer.invoke('sdk-broadcast', actualMessage);
         } else {
-          const paneMap = { '1': '1', '2': '2', '3': '3', '4': '4', 'lead': '1', 'worker-a': '2', 'workera': '2', 'worker-b': '3', 'workerb': '3', 'reviewer': '4' };
+          const paneMap = {
+            '1': '1',
+            '2': '2',
+            '3': '3',
+            '4': '4',
+            '5': '5',
+            '6': '6',
+            'lead': '1',
+            'architect': '1',
+            'orchestrator': '2',
+            'worker-a': '3',
+            'workera': '3',
+            'implementer-a': '3',
+            'implementera': '3',
+            'worker-b': '4',
+            'workerb': '4',
+            'implementer-b': '4',
+            'implementerb': '4',
+            'investigator': '5',
+            'reviewer': '6'
+          };
           const paneId = paneMap[target] || '1';
           console.log(`[SDK] Targeted send to pane ${paneId}: ${actualMessage.substring(0, 30)}...`);
           // Show user message in target pane immediately
@@ -408,10 +493,10 @@ function setupEventListeners() {
           ipcRenderer.invoke('sdk-send-message', paneId, actualMessage);
         }
       } else {
-        // V2 FIX: Default to Lead only (pane 1), not broadcast to all
+        // V2 FIX: Default to Architect only (pane 1), not broadcast to all
         // Use /all prefix to explicitly broadcast to all agents
-        console.log('[SDK] Default send to Lead (pane 1)');
-        // Show user message in Lead pane immediately
+        console.log('[SDK] Default send to Architect (pane 1)');
+        // Show user message in Architect pane immediately
         sdkRenderer.appendMessage('1', { type: 'user', content: message });
         ipcRenderer.invoke('sdk-send-message', '1', message);
       }
@@ -543,6 +628,9 @@ function setupEventListeners() {
 document.addEventListener('DOMContentLoaded', async () => {
   // Setup all event handlers
   setupEventListeners();
+
+  // BUG-4: Initialize global UI focus tracker for multi-pane focus restore
+  terminal.initUIFocusTracker();
 
   // Global ESC key handler - interrupt agent AND release keyboard
   ipcRenderer.on('global-escape-pressed', () => {
@@ -781,6 +869,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!data) return;
     const { paneId } = data;
     showSDKMessageDelivered(paneId);
+  });
+
+  // CLI Identity Badge listener
+  ipcRenderer.on('pane-cli-identity', (event, data) => {
+    if (!data) return;
+    const { paneId, label, provider } = data;
+    const el = document.getElementById(`cli-badge-${paneId}`);
+    if (!el) return;
+    const key = (provider || label || '').toLowerCase();
+    el.textContent = label || provider || '';
+    el.className = 'cli-badge visible';
+    if (key.includes('claude')) {
+      el.classList.add('claude');
+      terminal.unregisterCodexPane(paneId);
+    } else if (key.includes('codex')) {
+      el.classList.add('codex');
+      terminal.registerCodexPane(paneId);
+    } else if (key.includes('gemini')) {
+      el.classList.add('gemini');
+      terminal.unregisterCodexPane(paneId);
+    }
   });
 
   // Setup daemon handlers

@@ -19,11 +19,15 @@ let currentConflicts = [];
 
 // Agent names for display
 const AGENT_NAMES = {
-  '1': 'Lead',
-  '2': 'Worker A',
-  '3': 'Worker B',
-  '4': 'Reviewer',
+  '1': 'Architect',
+  '2': 'Orchestrator',
+  '3': 'Implementer A',
+  '4': 'Implementer B',
+  '5': 'Investigator',
+  '6': 'Reviewer',
 };
+
+const PANE_IDS = Object.keys(AGENT_NAMES);
 
 // Status callback
 let onConnectionStatusUpdate = null;
@@ -181,10 +185,12 @@ let activitySearchText = '';
 const MAX_ACTIVITY_ENTRIES = 500;
 
 const ACTIVITY_AGENT_NAMES = {
-  '1': 'Lead',
-  '2': 'Worker A',
-  '3': 'Worker B',
-  '4': 'Reviewer',
+  '1': 'Architect',
+  '2': 'Orchestrator',
+  '3': 'Implementer A',
+  '4': 'Implementer B',
+  '5': 'Investigator',
+  '6': 'Reviewer',
   'system': 'System'
 };
 
@@ -624,14 +630,18 @@ const mcpStatus = {
   '1': 'disconnected',
   '2': 'disconnected',
   '3': 'disconnected',
-  '4': 'disconnected'
+  '4': 'disconnected',
+  '5': 'disconnected',
+  '6': 'disconnected'
 };
 
 const MCP_AGENT_NAMES = {
-  '1': 'Lead',
-  '2': 'Worker A',
-  '3': 'Worker B',
-  '4': 'Reviewer'
+  '1': 'Architect',
+  '2': 'Orchestrator',
+  '3': 'Implementer A',
+  '4': 'Implementer B',
+  '5': 'Investigator',
+  '6': 'Reviewer'
 };
 
 function updateMCPAgentStatus(paneId, status) {
@@ -654,7 +664,7 @@ function updateMCPSummary() {
   if (!summary) return;
 
   const connected = Object.values(mcpStatus).filter(s => s === 'connected').length;
-  const total = 4;
+  const total = PANE_IDS.length;
 
   summary.textContent = `${connected}/${total}`;
 
@@ -670,7 +680,7 @@ function updateMCPSummary() {
 }
 
 function setAllMCPStatus(status) {
-  for (const paneId of ['1', '2', '3', '4']) {
+  for (const paneId of PANE_IDS) {
     updateMCPAgentStatus(paneId, status);
   }
 }
@@ -747,7 +757,9 @@ let mcpConfigured = {
   '1': false,
   '2': false,
   '3': false,
-  '4': false
+  '4': false,
+  '5': false,
+  '6': false
 };
 
 async function configureMCPForAgent(paneId) {
@@ -775,12 +787,12 @@ async function configureMCPForAgent(paneId) {
 async function configureAllMCP() {
   updateConnectionStatus('Configuring MCP for all agents...');
 
-  for (const paneId of ['1', '2', '3', '4']) {
+  for (const paneId of PANE_IDS) {
     await configureMCPForAgent(paneId);
   }
 
   const configured = Object.values(mcpConfigured).filter(Boolean).length;
-  updateConnectionStatus(`MCP configured for ${configured}/4 agents`);
+  updateConnectionStatus(`MCP configured for ${configured}/${PANE_IDS.length} agents`);
 }
 
 async function autoConfigureMCPOnSpawn(paneId) {
@@ -803,12 +815,7 @@ function isMCPConfigured(paneId) {
 }
 
 function resetMCPConfiguration() {
-  mcpConfigured = {
-    '1': false,
-    '2': false,
-    '3': false,
-    '4': false
-  };
+  mcpConfigured = Object.fromEntries(PANE_IDS.map(paneId => [paneId, false]));
   setAllMCPStatus('disconnected');
 }
 
@@ -820,12 +827,7 @@ let mcpHealthCheckInterval = null;
 const MCP_HEALTH_CHECK_INTERVAL = 30000; // Check every 30 seconds
 const MCP_STALE_THRESHOLD = 60000; // Consider stale after 60 seconds
 
-let lastMCPHealthCheck = {
-  '1': null,
-  '2': null,
-  '3': null,
-  '4': null
-};
+let lastMCPHealthCheck = Object.fromEntries(PANE_IDS.map(paneId => [paneId, null]));
 
 async function checkMCPHealth() {
   try {
@@ -834,7 +836,7 @@ async function checkMCPHealth() {
 
     const now = Date.now();
 
-    for (const paneId of ['1', '2', '3', '4']) {
+    for (const paneId of PANE_IDS) {
       const agentStatus = result.status[paneId];
 
       if (agentStatus && agentStatus.connected) {
@@ -909,7 +911,7 @@ async function attemptMCPReconnect(paneId) {
 async function reconnectAllMCP() {
   updateConnectionStatus('MCP: Reconnecting all agents...');
 
-  for (const paneId of ['1', '2', '3', '4']) {
+  for (const paneId of PANE_IDS) {
     if (mcpStatus[paneId] !== 'connected') {
       await attemptMCPReconnect(paneId);
     }
@@ -920,13 +922,14 @@ function getMCPHealthSummary() {
   const connected = Object.values(mcpStatus).filter(s => s === 'connected').length;
   const errors = Object.values(mcpStatus).filter(s => s === 'error').length;
   const connecting = Object.values(mcpStatus).filter(s => s === 'connecting').length;
+  const total = PANE_IDS.length;
 
   return {
     connected,
-    disconnected: 4 - connected - errors - connecting,
+    disconnected: total - connected - errors - connecting,
     errors,
     connecting,
-    healthy: connected === 4
+    healthy: connected === total
   };
 }
 
@@ -951,7 +954,7 @@ function formatSuccessRate(success, total) {
 }
 
 function renderPerformanceData() {
-  for (const paneId of ['1', '2', '3', '4']) {
+  for (const paneId of PANE_IDS) {
     const data = performanceData[paneId] || {};
 
     const completionsEl = document.getElementById(`perf-completions-${paneId}`);
@@ -1561,17 +1564,30 @@ let messageFilter = 'all';
 let selectedRecipients = [];
 
 const MESSAGE_AGENT_MAP = {
-  'lead': { pane: '1', name: 'Lead' },
-  'worker-a': { pane: '2', name: 'Worker A' },
-  'worker-b': { pane: '3', name: 'Worker B' },
-  'reviewer': { pane: '4', name: 'Reviewer' }
+  'architect': { pane: '1', name: 'Architect' },
+  'lead': { pane: '1', name: 'Architect' },
+  'orchestrator': { pane: '2', name: 'Orchestrator' },
+  'worker-a': { pane: '3', name: 'Implementer A' },
+  'implementer-a': { pane: '3', name: 'Implementer A' },
+  'worker-b': { pane: '4', name: 'Implementer B' },
+  'implementer-b': { pane: '4', name: 'Implementer B' },
+  'investigator': { pane: '5', name: 'Investigator' },
+  'reviewer': { pane: '6', name: 'Reviewer' }
+};
+
+const MESSAGE_AGENT_ALIASES = {
+  'lead': 'architect',
+  'worker-a': 'implementer-a',
+  'worker-b': 'implementer-b'
 };
 
 const PANE_TO_AGENT = {
-  '1': 'lead',
-  '2': 'worker-a',
-  '3': 'worker-b',
-  '4': 'reviewer'
+  '1': 'architect',
+  '2': 'orchestrator',
+  '3': 'implementer-a',
+  '4': 'implementer-b',
+  '5': 'investigator',
+  '6': 'reviewer'
 };
 
 function formatMessageTime(timestamp) {
@@ -1585,6 +1601,12 @@ function getAgentDisplayName(agentId) {
   return agentId;
 }
 
+function normalizeAgentKey(value) {
+  if (!value) return null;
+  const key = String(value).toLowerCase().replace(/\s+/g, '-');
+  return MESSAGE_AGENT_ALIASES[key] || key;
+}
+
 function renderMessagesList() {
   const listEl = document.getElementById('messagesList');
   if (!listEl) return;
@@ -1592,11 +1614,11 @@ function renderMessagesList() {
   // Apply filter
   let filtered = messageHistory;
   if (messageFilter !== 'all') {
+    const filterKey = normalizeAgentKey(messageFilter);
     filtered = messageHistory.filter(msg => {
-      const fromAgent = msg.from?.toLowerCase().replace(' ', '-');
-      const toAgent = msg.to?.toLowerCase().replace(' ', '-');
-      return fromAgent === messageFilter || toAgent === messageFilter ||
-             msg.from === messageFilter || msg.to === messageFilter;
+      const fromAgent = normalizeAgentKey(msg.from);
+      const toAgent = normalizeAgentKey(msg.to);
+      return fromAgent === filterKey || toAgent === filterKey;
     });
   }
 
@@ -1661,7 +1683,7 @@ async function clearMessageHistory() {
 
   try {
     // Clear all queues
-    for (const paneId of ['1', '2', '3', '4']) {
+    for (const paneId of PANE_IDS) {
       await ipcRenderer.invoke('clear-messages', paneId);
     }
     messageHistory = [];
@@ -1694,10 +1716,10 @@ async function sendGroupMessage() {
   // Expand recipient groups
   for (const r of selectedRecipients) {
     if (r === 'all') {
-      recipients = ['1', '2', '3', '4'];
+      recipients = ['1', '2', '3', '4', '5', '6'];
       break;
     } else if (r === 'workers') {
-      recipients.push('2', '3');
+      recipients.push('3', '4', '5');
     } else if (MESSAGE_AGENT_MAP[r]) {
       recipients.push(MESSAGE_AGENT_MAP[r].pane);
     }

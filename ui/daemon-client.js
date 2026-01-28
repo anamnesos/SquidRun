@@ -304,12 +304,13 @@ class DaemonClient extends EventEmitter {
    * @param {string} [cwd] - Working directory
    * @param {boolean} [dryRun=false] - If true, spawn mock terminal instead of real PTY
    */
-  spawn(paneId, cwd, dryRun = false) {
+  spawn(paneId, cwd, dryRun = false, mode = null) {
     return this._send({
       action: 'spawn',
       paneId,
       cwd,
       dryRun,
+      mode,
     });
   }
 
@@ -323,6 +324,19 @@ class DaemonClient extends EventEmitter {
       action: 'write',
       paneId,
       data,
+    });
+  }
+
+  /**
+   * Run Codex exec (non-interactive) for a pane
+   * @param {string} paneId - The pane identifier
+   * @param {string} prompt - Prompt text to send
+   */
+  codexExec(paneId, prompt) {
+    return this._send({
+      action: 'codex-exec',
+      paneId,
+      prompt,
     });
   }
 
