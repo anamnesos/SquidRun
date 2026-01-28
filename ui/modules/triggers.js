@@ -15,6 +15,7 @@ const log = require('./logger');
 let mainWindow = null;
 let claudeRunning = null;
 let watcher = null; // Reference to watcher module for state checks
+let logActivityFn = null; // Activity log function from main.js
 
 // SDK Integration
 let sdkBridge = null;
@@ -185,12 +186,35 @@ const STAGGER_RANDOM_MS = 100; // Random jitter added to base delay
  * Initialize the triggers module with shared state
  * @param {BrowserWindow} window - The main Electron window
  * @param {Map} claudeState - Map tracking Claude running state per pane
+ * @param {Function} logActivity - Activity logging function from main.js
  */
-function init(window, claudeState) {
+function init(window, claudeState, logActivity) {
   mainWindow = window;
   claudeRunning = claudeState;
+  logActivityFn = logActivity || null;
   // Load message sequence state from disk
   loadMessageState();
+}
+
+/**
+ * Log trigger activity to activity log
+ * @param {string} action - Action type (sent, received, routed, handoff)
+ * @param {Array|string} panes - Target pane(s)
+ * @param {string} message - Message content
+ * @param {object} extra - Additional details (sender, source, etc.)
+ */
+function logTriggerActivity(action, panes, message, extra = {}) {
+  if (!logActivityFn) return;
+
+  const paneList = Array.isArray(panes) ? panes.join(',') : panes;
+  const preview = message ? message.substring(0, 80).replace(/[\r\n]+/g, ' ') : '';
+  const truncated = message && message.length > 80 ? '...' : '';
+
+  logActivityFn('trigger', paneList, `${action}: ${preview}${truncated}`, {
+    panes: Array.isArray(panes) ? panes : [panes],
+    preview: preview + truncated,
+    ...extra,
+  });
 }
 
 /**
@@ -304,6 +328,7 @@ function notifyAgents(agents, message) {
       if (sent) successCount++;
     }
     log.info('notifyAgents SDK', `Delivered to ${successCount}/${agents.length} panes`);
+    logTriggerActivity('Sent (SDK)', agents, message, { mode: 'sdk', delivered: successCount });
     return agents; // SDK mode doesn't filter by running state
   }
 
@@ -322,6 +347,7 @@ function notifyAgents(agents, message) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('inject-message', { panes: notified, message: triggerMessage + '\r' });
     }
+    logTriggerActivity('Sent (PTY)', notified, message, { mode: 'pty' });
   } else {
     log.info('notifyAgents', `Skipped (no Claude running): ${agents.join(', ')}`);
   }
@@ -597,6 +623,7 @@ function handleTriggerFile(filePath, filename) {
       });
     }
 
+    logTriggerActivity('Trigger file (SDK)', targets, message, { file: filename, sender: parsed.sender, mode: 'sdk' });
     return { success: allSuccess, notified: targets, mode: 'sdk' };
   }
 
@@ -617,6 +644,7 @@ function handleTriggerFile(filePath, filename) {
     log.info('Trigger', `Could not clear ${filename}: ${err.message}`);
   }
 
+  logTriggerActivity('Trigger file (PTY)', targets, message, { file: filename, sender: parsed.sender, mode: 'pty' });
   return { success: true, notified: targets, mode: 'pty' };
 }
 
@@ -773,6 +801,7 @@ function routeTask(taskType, message, performance) {
     });
   }
 
+  logTriggerActivity('Routed task', [paneId], routeMessage, { taskType, reason });
   return { success: true, paneId, reason };
 }
 
@@ -835,6 +864,7 @@ function triggerAutoHandoff(completedPaneId, completionMessage) {
     });
   }
 
+  logTriggerActivity('Auto-handoff', [runningNext], handoffMessage, { from: fromRole, to: toRole });
   return { success: true, from: completedPaneId, to: runningNext, fromRole, toRole };
 }
 
@@ -886,6 +916,7 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
       });
     }
 
+    logTriggerActivity('Direct message (SDK)', targetPanes, fullMessage, { from: fromRole, mode: 'sdk' });
     return { success: allSuccess, notified: targetPanes, mode: 'sdk' };
   }
 
@@ -915,6 +946,7 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
       });
     }
 
+    logTriggerActivity('Direct message (PTY)', notified, fullMessage, { from: fromRole, mode: 'pty' });
     return { success: true, notified, mode: 'pty' };
   }
 
