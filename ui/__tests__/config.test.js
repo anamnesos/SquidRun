@@ -34,15 +34,17 @@ describe('config.js', () => {
   });
 
   describe('INSTANCE_DIRS', () => {
-    test('should have all 4 pane IDs', () => {
-      expect(Object.keys(INSTANCE_DIRS)).toEqual(['1', '2', '3', '4']);
+    test('should have all 6 pane IDs', () => {
+      expect(Object.keys(INSTANCE_DIRS)).toEqual(['1', '2', '3', '4', '5', '6']);
     });
 
     test('should have paths for each pane', () => {
       expect(INSTANCE_DIRS['1']).toContain('lead');
-      expect(INSTANCE_DIRS['2']).toContain('worker-a');
-      expect(INSTANCE_DIRS['3']).toContain('worker-b');
-      expect(INSTANCE_DIRS['4']).toContain('reviewer');
+      expect(INSTANCE_DIRS['2']).toContain('orchestrator');
+      expect(INSTANCE_DIRS['3']).toContain('worker-a');
+      expect(INSTANCE_DIRS['4']).toContain('worker-b');
+      expect(INSTANCE_DIRS['5']).toContain('investigator');
+      expect(INSTANCE_DIRS['6']).toContain('reviewer');
     });
 
     test('all paths should be absolute', () => {
@@ -53,15 +55,17 @@ describe('config.js', () => {
   });
 
   describe('PANE_ROLES', () => {
-    test('should have all 4 pane IDs', () => {
-      expect(Object.keys(PANE_ROLES)).toEqual(['1', '2', '3', '4']);
+    test('should have all 6 pane IDs', () => {
+      expect(Object.keys(PANE_ROLES)).toEqual(['1', '2', '3', '4', '5', '6']);
     });
 
     test('should have correct role names', () => {
-      expect(PANE_ROLES['1']).toBe('Lead');
-      expect(PANE_ROLES['2']).toBe('Worker A');
-      expect(PANE_ROLES['3']).toBe('Worker B');
-      expect(PANE_ROLES['4']).toBe('Reviewer');
+      expect(PANE_ROLES['1']).toBe('Architect');
+      expect(PANE_ROLES['2']).toBe('Orchestrator');
+      expect(PANE_ROLES['3']).toBe('Implementer A');
+      expect(PANE_ROLES['4']).toBe('Implementer B');
+      expect(PANE_ROLES['5']).toBe('Investigator');
+      expect(PANE_ROLES['6']).toBe('Reviewer');
     });
   });
 
@@ -69,8 +73,10 @@ describe('config.js', () => {
     test('should have expected trigger files', () => {
       const keys = Object.keys(TRIGGER_TARGETS);
       expect(keys).toContain('lead.txt');
+      expect(keys).toContain('orchestrator.txt');
       expect(keys).toContain('worker-a.txt');
       expect(keys).toContain('worker-b.txt');
+      expect(keys).toContain('investigator.txt');
       expect(keys).toContain('reviewer.txt');
       expect(keys).toContain('workers.txt');
       expect(keys).toContain('all.txt');
@@ -80,12 +86,12 @@ describe('config.js', () => {
       expect(TRIGGER_TARGETS['lead.txt']).toEqual(['1']);
     });
 
-    test('workers.txt should target panes 2 and 3', () => {
-      expect(TRIGGER_TARGETS['workers.txt']).toEqual(['2', '3']);
+    test('workers.txt should target execution panes', () => {
+      expect(TRIGGER_TARGETS['workers.txt']).toEqual(['3', '4', '5']);
     });
 
-    test('all.txt should target all 4 panes', () => {
-      expect(TRIGGER_TARGETS['all.txt']).toEqual(['1', '2', '3', '4']);
+    test('all.txt should target all 6 panes', () => {
+      expect(TRIGGER_TARGETS['all.txt']).toEqual(['1', '2', '3', '4', '5', '6']);
     });
   });
 

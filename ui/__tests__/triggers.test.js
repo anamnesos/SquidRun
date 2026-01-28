@@ -8,9 +8,9 @@ const { TRIGGER_TARGETS, WORKSPACE_PATH } = require('../config');
 
 describe('Trigger System', () => {
   describe('TRIGGER_TARGETS mapping', () => {
-    test('should have 10 trigger file types', () => {
+    test('should have 14 trigger file types', () => {
       const keys = Object.keys(TRIGGER_TARGETS);
-      expect(keys.length).toBe(10); // 6 original + 4 "others" triggers
+      expect(keys.length).toBe(14); // 8 base + 6 "others" triggers
     });
 
     test('all trigger files should end with .txt', () => {
@@ -20,7 +20,7 @@ describe('Trigger System', () => {
     });
 
     test('all target arrays should contain valid pane IDs', () => {
-      const validPaneIds = ['1', '2', '3', '4'];
+      const validPaneIds = ['1', '2', '3', '4', '5', '6'];
 
       Object.values(TRIGGER_TARGETS).forEach(targets => {
         expect(Array.isArray(targets)).toBe(true);
@@ -31,31 +31,40 @@ describe('Trigger System', () => {
     });
 
     describe('individual trigger targets', () => {
-      test('lead.txt targets only pane 1 (Lead)', () => {
+      test('lead.txt targets only pane 1 (Architect)', () => {
         expect(TRIGGER_TARGETS['lead.txt']).toEqual(['1']);
       });
 
-      test('worker-a.txt targets only pane 2 (Worker A)', () => {
-        expect(TRIGGER_TARGETS['worker-a.txt']).toEqual(['2']);
+      test('orchestrator.txt targets only pane 2 (Orchestrator)', () => {
+        expect(TRIGGER_TARGETS['orchestrator.txt']).toEqual(['2']);
       });
 
-      test('worker-b.txt targets only pane 3 (Worker B)', () => {
-        expect(TRIGGER_TARGETS['worker-b.txt']).toEqual(['3']);
+      test('worker-a.txt targets only pane 3 (Implementer A)', () => {
+        expect(TRIGGER_TARGETS['worker-a.txt']).toEqual(['3']);
       });
 
-      test('reviewer.txt targets only pane 4 (Reviewer)', () => {
-        expect(TRIGGER_TARGETS['reviewer.txt']).toEqual(['4']);
+      test('worker-b.txt targets only pane 4 (Implementer B)', () => {
+        expect(TRIGGER_TARGETS['worker-b.txt']).toEqual(['4']);
       });
 
-      test('workers.txt targets panes 2 and 3 (both workers)', () => {
-        expect(TRIGGER_TARGETS['workers.txt']).toEqual(['2', '3']);
+      test('investigator.txt targets only pane 5 (Investigator)', () => {
+        expect(TRIGGER_TARGETS['investigator.txt']).toEqual(['5']);
+      });
+
+      test('reviewer.txt targets only pane 6 (Reviewer)', () => {
+        expect(TRIGGER_TARGETS['reviewer.txt']).toEqual(['6']);
+      });
+
+      test('workers.txt targets execution panes', () => {
+        expect(TRIGGER_TARGETS['workers.txt']).toEqual(['3', '4', '5']);
         expect(TRIGGER_TARGETS['workers.txt']).not.toContain('1');
-        expect(TRIGGER_TARGETS['workers.txt']).not.toContain('4');
+        expect(TRIGGER_TARGETS['workers.txt']).not.toContain('2');
+        expect(TRIGGER_TARGETS['workers.txt']).not.toContain('6');
       });
 
-      test('all.txt targets all 4 panes', () => {
-        expect(TRIGGER_TARGETS['all.txt']).toEqual(['1', '2', '3', '4']);
-        expect(TRIGGER_TARGETS['all.txt'].length).toBe(4);
+      test('all.txt targets all 6 panes', () => {
+        expect(TRIGGER_TARGETS['all.txt']).toEqual(['1', '2', '3', '4', '5', '6']);
+        expect(TRIGGER_TARGETS['all.txt'].length).toBe(6);
       });
     });
   });
@@ -101,8 +110,8 @@ describe('Trigger System', () => {
 
     test('should return correct targets for known files', () => {
       expect(getTriggerTargets('lead.txt')).toEqual(['1']);
-      expect(getTriggerTargets('workers.txt')).toEqual(['2', '3']);
-      expect(getTriggerTargets('all.txt')).toEqual(['1', '2', '3', '4']);
+      expect(getTriggerTargets('workers.txt')).toEqual(['3', '4', '5']);
+      expect(getTriggerTargets('all.txt')).toEqual(['1', '2', '3', '4', '5', '6']);
     });
 
     test('should return null for unknown trigger files', () => {
@@ -123,14 +132,17 @@ describe('Trigger System', () => {
         ['2', 'idle'],
         ['3', 'running'],
         ['4', 'starting'],
+        ['5', 'running'],
+        ['6', 'idle'],
       ]);
 
-      const allTargets = ['1', '2', '3', '4'];
+      const allTargets = ['1', '2', '3', '4', '5', '6'];
       const running = filterToRunning(allTargets, claudeRunning);
 
-      expect(running).toEqual(['1', '3']);
+      expect(running).toEqual(['1', '3', '5']);
       expect(running).not.toContain('2');
       expect(running).not.toContain('4');
+      expect(running).not.toContain('6');
     });
 
     test('should return empty array when no panes running', () => {
@@ -139,9 +151,11 @@ describe('Trigger System', () => {
         ['2', 'idle'],
         ['3', 'idle'],
         ['4', 'idle'],
+        ['5', 'idle'],
+        ['6', 'idle'],
       ]);
 
-      const running = filterToRunning(['1', '2', '3', '4'], claudeRunning);
+      const running = filterToRunning(['1', '2', '3', '4', '5', '6'], claudeRunning);
       expect(running).toEqual([]);
     });
 
@@ -151,10 +165,12 @@ describe('Trigger System', () => {
         ['2', 'running'],
         ['3', 'running'],
         ['4', 'running'],
+        ['5', 'running'],
+        ['6', 'running'],
       ]);
 
-      const running = filterToRunning(['1', '2', '3', '4'], claudeRunning);
-      expect(running).toEqual(['1', '2', '3', '4']);
+      const running = filterToRunning(['1', '2', '3', '4', '5', '6'], claudeRunning);
+      expect(running).toEqual(['1', '2', '3', '4', '5', '6']);
     });
   });
 
@@ -183,41 +199,43 @@ describe('Trigger System', () => {
 
   describe('trigger file scenarios', () => {
     test('agent-to-agent trigger workflow', () => {
-      // Worker A wants to trigger Worker B
+      // Implementer A wants to trigger Implementer B
       const triggerFile = 'worker-b.txt';
       const targets = TRIGGER_TARGETS[triggerFile];
 
-      expect(targets).toEqual(['3']);
+      expect(targets).toEqual(['4']);
 
-      // Simulate: Worker A writes to workspace/triggers/worker-b.txt
-      // Main.js detects change, reads content, sends to pane 3
-      const message = '[HANDOFF] Worker A completed. Your turn!';
+      // Simulate: Implementer A writes to workspace/triggers/worker-b.txt
+      // Main.js detects change, reads content, sends to pane 4
+      const message = '[HANDOFF] Implementer A completed. Your turn!';
       expect(message.length).toBeGreaterThan(0);
     });
 
     test('broadcast trigger workflow', () => {
-      // Lead wants to notify all agents
+      // Architect wants to notify all agents
       const triggerFile = 'all.txt';
       const targets = TRIGGER_TARGETS[triggerFile];
 
-      expect(targets.length).toBe(4);
+      expect(targets.length).toBe(6);
 
       // All panes should receive the message
       const message = '[BROADCAST] Sprint 3 begins now!';
       targets.forEach(paneId => {
-        expect(['1', '2', '3', '4']).toContain(paneId);
+        expect(['1', '2', '3', '4', '5', '6']).toContain(paneId);
       });
     });
 
     test('workers-only trigger workflow', () => {
-      // Reviewer wants to notify only workers (not lead)
+      // Reviewer wants to notify only execution agents (not architect/orchestrator/reviewer)
       const triggerFile = 'workers.txt';
       const targets = TRIGGER_TARGETS[triggerFile];
 
-      expect(targets).toContain('2'); // Worker A
-      expect(targets).toContain('3'); // Worker B
-      expect(targets).not.toContain('1'); // Not Lead
-      expect(targets).not.toContain('4'); // Not Reviewer
+      expect(targets).toContain('3'); // Implementer A
+      expect(targets).toContain('4'); // Implementer B
+      expect(targets).toContain('5'); // Investigator
+      expect(targets).not.toContain('1'); // Not Architect
+      expect(targets).not.toContain('2'); // Not Orchestrator
+      expect(targets).not.toContain('6'); // Not Reviewer
     });
   });
 

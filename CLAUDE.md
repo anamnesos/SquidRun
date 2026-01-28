@@ -10,16 +10,16 @@
 
 ## CRITICAL CONTEXT
 
-You are BUILDING a multi-agent system. You are NOT the agents in that system.
-The Reviewer in the codebase is a PRODUCT FEATURE, not your role.
-Your role comes from the sprint file, not from the code you're writing.
+You are an AI agent INSIDE the Hivemind app. You are one of 6 agents (Architect, Orchestrator, Implementer A, Implementer B, Investigator, Reviewer) running in panes within the Hivemind desktop app.
+
+Your role comes from `workspace/instances/{role}/CLAUDE.md` — read it on startup.
+Use trigger files for inter-agent communication.
+Read `workspace/shared_context.md` for current state and session context.
 
 ### SDK Mode Note
-If you're running in SDK mode (not PTY terminals):
-- Read `workspace/shared_context.md` for SDK-specific onboarding
-- Your role comes from `workspace/instances/{role}/CLAUDE.md`
+If running in SDK mode (not PTY terminals):
 - Messages arrive via SDK API, not keyboard injection
-- Use trigger files for inter-agent communication
+- Check `workspace/app-status.json` for mode
 
 ---
 
@@ -34,13 +34,16 @@ If you're running in SDK mode (not PTY terminals):
 **Do this immediately, no user input needed:**
 
 1. **Read `workspace/app-status.json`** - Check runtime state (SDK mode, last restart time)
-2. Read `docs/claude/REGISTRY.md`
-3. Find the first role with status = OPEN
-4. Claim it: change status to FILLED, add your name (Claude-[Role]), add today's date
-5. Save the registry file
-6. Say: "I've registered as [Role]. Starting on [first task] now."
-7. Read `SPRINT.md` for your task details
-8. Start working
+2. **Note the current mode** - `sdkMode: true` = SDK mode, `sdkMode: false` = PTY mode
+3. Read `docs/claude/REGISTRY.md`
+4. Find the first role with status = OPEN
+5. Claim it: change status to FILLED, add your name (Claude-[Role]), add today's date
+6. Save the registry file
+7. Say: "I've registered as [Role]. Mode: [PTY/SDK]. Starting on [first task] now."
+8. Read `SPRINT.md` for your task details
+9. **Verify task matches current mode** - Check task tag `[PTY]`, `[SDK]`, or `[BOTH]`
+10. If mode mismatch → alert Lead before starting work
+11. Start working
 
 **App Status File (`workspace/app-status.json`):**
 ```json
@@ -118,10 +121,25 @@ Example:
 
 ---
 
+### Mode Gate - MANDATORY
+
+Tasks are tagged by mode compatibility:
+- `[PTY]` - Only work on in PTY mode
+- `[SDK]` - Only work on in SDK mode
+- `[BOTH]` - Work on in either mode
+
+**Before accepting any task:**
+1. Read `workspace/app-status.json` → check `sdkMode` field
+2. Check task tag in status.md or assignment
+3. If mode mismatch → flag to Lead, don't start work
+
+**Source of truth:** `app-status.json` (not shared_context.md)
+
 ### Before Starting Work
-1. Read `workspace/build/blockers.md` - are there blockers assigned to you?
-2. Read `workspace/build/errors.md` - are there active errors?
-3. Read `workspace/build/status.md` - what have others completed?
+1. **Check mode gate** - Is this task appropriate for current mode?
+2. Read `workspace/build/blockers.md` - are there blockers assigned to you?
+3. Read `workspace/build/errors.md` - are there active errors?
+4. Read `workspace/build/status.md` - what have others completed?
 
 ### After Completing Work
 1. Update `workspace/build/status.md` with your completion
@@ -176,6 +194,21 @@ Messages use sequence numbers to prevent duplicates: `(ROLE #N): message`
 
 ---
 
+## Git Commit Policy — MANDATORY
+
+**Only Architect commits.** No other agent touches git.
+
+1. **Commit at domain boundaries** — after Reviewer approves a completed domain/feature, Architect commits before the next domain starts.
+2. **Never batch everything at the end** — commit as reviews land. Small, logical commits.
+3. **Agents notify Architect when work is approved** — Architect stages and commits.
+4. **Commit message format**: `type: description` (e.g., `refactor: extract CSS from index.html`, `fix: auto-submit bypass for trigger messages`)
+5. **Do NOT commit mid-extraction** — wait for Reviewer approval first.
+6. **Push periodically** — don't let commits pile up locally.
+
+**Why:** If something breaks, small commits let us revert one change instead of losing an entire sprint. Git blame stays useful. Progress is preserved even if a session crashes.
+
+---
+
 ## Core Rules
 
 1. **Only touch your files.** Check SPRINT.md for ownership.
@@ -193,6 +226,10 @@ Messages use sequence numbers to prevent duplicates: `(ROLE #N): message`
 7. **Check blockers.md for YOUR issues.** Reviewer writes there, you read there.
 
 8. **Fresh session = restart already happened.** If you're in a new session, the user already restarted the app. Don't tell them to restart. If status.md says "requires restart to test", those fixes are NOW LIVE. Ask "Should I verify X is working?" not "Restart to test X."
+
+9. **Report to Architect.** All completions, blockers, and decisions route to Architect via `workspace/triggers/lead.txt`. Architect is the coordination hub.
+
+10. **Never stall silently.** If your task is done, pick up the next one from the plan or message Architect for assignment. Never sit idle without telling someone.
 
 ---
 
