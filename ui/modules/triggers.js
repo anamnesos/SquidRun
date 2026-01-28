@@ -398,6 +398,9 @@ function notifyAllAgentsSync(triggerFile) {
       mainWindow.webContents.send('sync-triggered', { file: triggerFile, notified: eligiblePanes, mode: 'sdk' });
     }
 
+    if (eligiblePanes.length > 0) {
+      logTriggerActivity('Auto-sync (SDK)', eligiblePanes, message, { file: triggerFile, mode: 'sdk' });
+    }
     return eligiblePanes;
   }
 
@@ -438,6 +441,9 @@ function notifyAllAgentsSync(triggerFile) {
     mainWindow.webContents.send('sync-triggered', { file: triggerFile, notified: runningPanes });
   }
 
+  if (runningPanes.length > 0) {
+    logTriggerActivity('Auto-sync (PTY)', runningPanes, message, { file: triggerFile, mode: 'pty' });
+  }
   return runningPanes;
 }
 
@@ -671,6 +677,7 @@ function broadcastToAllAgents(message) {
       });
     }
 
+    logTriggerActivity('Broadcast (SDK)', PANE_IDS, broadcastMessage, { mode: 'sdk' });
     return { success: true, notified: PANE_IDS, mode: 'sdk' };
   }
 
@@ -696,6 +703,9 @@ function broadcastToAllAgents(message) {
     mainWindow.webContents.send('broadcast-sent', { message, notified, mode: 'pty' });
   }
 
+  if (notified.length > 0) {
+    logTriggerActivity('Broadcast (PTY)', notified, broadcastMessage, { mode: 'pty' });
+  }
   return { success: true, notified, mode: 'pty' };
 }
 
