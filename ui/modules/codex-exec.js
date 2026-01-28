@@ -75,6 +75,9 @@ function createCodexExecRunner(options = {}) {
     // Codex exec item.completed events: { type: "item.completed", item: { text: "..." } }
     if (payload.item && typeof payload.item.text === 'string') return payload.item.text;
 
+    // item.started and item.completed without extractable text are lifecycle events - silence them
+    if (eventType === 'item.started' || eventType === 'item.completed') return '';
+
     // Codex exec agent_message / task_complete patterns
     if (payload.output && typeof payload.output === 'string') return payload.output;
     if (payload.result && typeof payload.result === 'string') return payload.result;
@@ -118,11 +121,13 @@ function createCodexExecRunner(options = {}) {
       || eventType === 'message_started'
       || eventType === 'turn_started'
       || eventType === 'turn.started'
-      || eventType === 'response.started';
+      || eventType === 'response.started'
+      || eventType === 'item.started';
     const isCompleteEvent = eventType === 'message_completed'
       || eventType === 'turn_completed'
       || eventType === 'turn.completed'
-      || eventType === 'response.completed';
+      || eventType === 'response.completed'
+      || eventType === 'item.completed';
 
     if (isStartEvent || isDelta) {
       emitWorkingOnce(terminal, paneId);
