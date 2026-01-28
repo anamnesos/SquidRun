@@ -8,8 +8,17 @@ function registerCompletionQualityHandlers(ctx, deps = {}) {
     throw new Error('registerCompletionQualityHandlers requires ctx.ipcMain');
   }
 
-  const { ipcMain, PANE_ROLES } = ctx;
+  const { ipcMain } = ctx;
+  const paneRoles = ctx.PANE_ROLES || {};
   const { logActivity } = deps;
+
+  const getWatcher = () => {
+    const watcher = ctx.watcher;
+    if (!watcher || typeof watcher.readState !== 'function') {
+      return { ok: false, error: 'state watcher not available' };
+    }
+    return { ok: true, watcher };
+  };
 
   const QUALITY_RULES = {
     executing: {
@@ -23,12 +32,13 @@ function registerCompletionQualityHandlers(ctx, deps = {}) {
   };
 
   async function runQualityCheck(paneId, claimedWork) {
-    const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
+    const role = paneRoles[paneId] || `Pane ${paneId}`;
     const issues = [];
     let qualityScore = 100;
 
-    const validationResult = ctx.calculateConfidence
-      ? ctx.calculateConfidence(claimedWork || '')
+    const calculateConfidence = ctx.calculateConfidence;
+    const validationResult = typeof calculateConfidence === 'function'
+      ? calculateConfidence(claimedWork || '')
       : 50;
     if (validationResult < 50) {
       issues.push({
@@ -39,7 +49,10 @@ function registerCompletionQualityHandlers(ctx, deps = {}) {
       qualityScore -= 20;
     }
 
-    const state = ctx.watcher.readState();
+    const watcher = ctx.watcher;
+    const state = watcher && typeof watcher.readState === 'function'
+      ? watcher.readState()
+      : {};
     if (state.project) {
       try {
         const { execSync } = require('child_process');
@@ -73,8 +86,9 @@ function registerCompletionQualityHandlers(ctx, deps = {}) {
     const blocked = criticalIssues.length > 0;
 
     if (blocked) {
-      if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
-        ctx.mainWindow.webContents.send('quality-check-failed', {
+      const mainWindow = ctx.mainWindow;
+      if (mainWindow && typeof mainWindow.isDestroyed === 'function' && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('quality-check-failed', {
           paneId,
           role,
           issues: criticalIssues,
@@ -104,12 +118,22 @@ function registerCompletionQualityHandlers(ctx, deps = {}) {
       return { success: true, allowed: true, reason: 'No validation required' };
     }
 
-    const state = ctx.watcher.readState();
+    const { ok, watcher, error } = getWatcher();
+    if (!ok) {
+      return {
+        success: false,
+        allowed: true,
+        reason: `${error}; skipping validation`,
+        qualityResults: [],
+      };
+    }
+    const state = watcher.readState();
     const activeAgents = state.active_agents || [];
     const qualityResults = [];
 
     for (const paneId of activeAgents) {
-      if (ctx.claudeRunning.get(paneId) === 'running') {
+      if (ctx.claudeRunning && typeof ctx.claudeRunning.get === 'function' &&
+          ctx.claudeRunning.get(paneId) === 'running') {
         const result = await runQualityCheck(paneId, '');
         qualityResults.push(result);
       }

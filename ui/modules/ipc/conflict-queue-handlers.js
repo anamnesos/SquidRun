@@ -9,21 +9,49 @@ function registerConflictQueueHandlers(ctx) {
   }
 
   const { ipcMain } = ctx;
+  const missingDependency = (name) => ({
+    success: false,
+    error: `${name} not available`,
+  });
+
+  const getWatcher = () => {
+    const watcher = ctx.watcher;
+    if (!watcher) {
+      return { ok: false, error: 'state watcher' };
+    }
+    return { ok: true, watcher };
+  };
 
   ipcMain.handle('request-file-access', (event, filePath, paneId, operation) => {
-    return ctx.watcher.requestFileAccess(filePath, paneId, operation);
+    const { ok, watcher, error } = getWatcher();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    return watcher.requestFileAccess(filePath, paneId, operation);
   });
 
   ipcMain.handle('release-file-access', (event, filePath, paneId) => {
-    return ctx.watcher.releaseFileAccess(filePath, paneId);
+    const { ok, watcher, error } = getWatcher();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    return watcher.releaseFileAccess(filePath, paneId);
   });
 
   ipcMain.handle('get-conflict-queue-status', () => {
-    return ctx.watcher.getConflictQueueStatus();
+    const { ok, watcher, error } = getWatcher();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    return watcher.getConflictQueueStatus();
   });
 
   ipcMain.handle('clear-all-locks', () => {
-    return ctx.watcher.clearAllLocks();
+    const { ok, watcher, error } = getWatcher();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    return watcher.clearAllLocks();
   });
 }
 
