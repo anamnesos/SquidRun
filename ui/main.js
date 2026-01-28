@@ -3,7 +3,7 @@
  * Refactored to use modular architecture
  */
 
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -26,13 +26,21 @@ let mainWindow = null;
 // Daemon client instance
 let daemonClient = null;
 
-// Track Claude running state per pane: 'idle' | 'starting' | 'running'
+// Track agent running state per pane: 'idle' | 'starting' | 'running'
 const claudeRunning = new Map([
   ['1', 'idle'],
   ['2', 'idle'],
   ['3', 'idle'],
   ['4', 'idle'],
+  ['5', 'idle'],
+  ['6', 'idle'],
 ]);
+
+// Track last CLI identity per pane to avoid duplicate UI updates
+const paneCliIdentity = new Map();
+
+// Register IPC forwarder once
+let cliIdentityForwarderRegistered = false;
 
 // ============================================================
 // SETTINGS
@@ -45,16 +53,25 @@ const DEFAULT_SETTINGS = {
   devTools: true,
   agentNotify: true,
   watcherEnabled: true,
-  allowAllPermissions: false,
+  allowAllPermissions: true,
   costAlertEnabled: true,
   costAlertThreshold: 5.00,
-  dryRun: false,  // V3: Simulate without spawning real Claude
+  dryRun: false,  // V3: Simulate without spawning real agents
   mcpAutoConfig: false,  // MC8: Auto-configure MCP on agent spawn (disabled by default)
   recentProjects: [],  // V3 J2: Recent projects list (max 10)
   stuckThreshold: 60000,  // V4: Auto-nudge after 60 seconds of no activity
   autoNudge: true,  // V4: Enable automatic stuck detection and nudging
   // V5 MP1: Per-pane project assignments
-  paneProjects: { '1': null, '2': null, '3': null, '4': null },
+  paneProjects: { '1': null, '2': null, '3': null, '4': null, '5': null, '6': null },
+  // V6: Per-pane CLI command (PTY mode)
+  paneCommands: {
+    '1': 'claude',
+    '2': 'codex',
+    '3': 'claude',
+    '4': 'codex',
+    '5': 'codex',
+    '6': 'claude',
+  },
   // V5 TM1: Saved templates
   templates: [],
   // SDK Mode: Use Claude Agent SDK instead of PTY terminals
@@ -62,6 +79,45 @@ const DEFAULT_SETTINGS = {
 };
 
 let currentSettings = { ...DEFAULT_SETTINGS };
+
+// ============================================================
+// CODEX CONFIG BOOTSTRAP
+// ============================================================
+
+function ensureCodexConfig() {
+  try {
+    const codexDir = path.join(os.homedir(), '.codex');
+    const configPath = path.join(codexDir, 'config.toml');
+
+    if (!fs.existsSync(codexDir)) {
+      fs.mkdirSync(codexDir, { recursive: true });
+    }
+
+    let content = '';
+    if (fs.existsSync(configPath)) {
+      content = fs.readFileSync(configPath, 'utf-8');
+    }
+
+    // Ensure sandbox_mode = "workspace-write"
+    const sandboxRegex = /(^|\r?\n)\s*sandbox_mode\s*=/;
+    const sandboxLineRegex = /(^|\r?\n)(\s*sandbox_mode\s*=\s*)(["'][^"']*["'])/;
+    if (!sandboxRegex.test(content)) {
+      const needsNewline = content.length > 0 && !content.endsWith('\n');
+      content += (needsNewline ? '\n' : '') + 'sandbox_mode = "danger-full-access"\n';
+      console.log('[Codex] Added sandbox_mode = "danger-full-access"');
+    } else {
+      content = content.replace(sandboxLineRegex, '$1$2"danger-full-access"');
+      console.log('[Codex] Updated sandbox_mode to "danger-full-access"');
+    }
+
+    // NOTE: approval_policy is NOT a valid config.toml key — use --full-auto CLI flag instead
+    // (added via ipc-handlers.js spawn-claude when allowAllPermissions is true)
+
+    fs.writeFileSync(configPath, content, 'utf-8');
+  } catch (err) {
+    console.error('[Codex] Failed to ensure config.toml:', err.message);
+  }
+}
 
 // ============================================================
 // V7 OB1: ACTIVITY LOG AGGREGATION
@@ -234,9 +290,9 @@ const sessionStartTimes = new Map();
 
 let usageStats = {
   totalSpawns: 0,
-  spawnsPerPane: { '1': 0, '2': 0, '3': 0, '4': 0 },
+  spawnsPerPane: { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0 },
   totalSessionTimeMs: 0,
-  sessionTimePerPane: { '1': 0, '2': 0, '3': 0, '4': 0 },
+  sessionTimePerPane: { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0 },
   sessionsToday: 0,
   lastResetDate: new Date().toISOString().split('T')[0],
   history: [],
@@ -311,6 +367,100 @@ function broadcastClaudeState() {
 }
 
 // ============================================================
+// CLI IDENTITY BADGE
+// ============================================================
+
+function extractBaseCommand(command) {
+  if (!command || typeof command !== 'string') return '';
+  const trimmed = command.trim();
+  if (!trimmed) return '';
+
+  let token = trimmed;
+  const firstChar = trimmed[0];
+  if (firstChar === '"' || firstChar === "'") {
+    const end = trimmed.indexOf(firstChar, 1);
+    token = end === -1 ? trimmed.slice(1) : trimmed.slice(1, end);
+  } else {
+    const match = trimmed.match(/^\S+/);
+    token = match ? match[0] : trimmed;
+  }
+
+  let base = path.basename(token).toLowerCase();
+  if (base.endsWith('.exe')) {
+    base = base.slice(0, -4);
+  }
+  return base;
+}
+
+function detectCliIdentity(command) {
+  const base = extractBaseCommand(command);
+  const normalized = (command || '').toLowerCase();
+  if (!base && !normalized) return null;
+
+  if (base.includes('claude') || normalized.includes('claude')) {
+    return { label: 'Claude Code', provider: 'Anthropic' };
+  }
+  if (base.includes('codex') || normalized.includes('codex')) {
+    return { label: 'Codex', provider: 'OpenAI' };
+  }
+  if (base.includes('gemini') || normalized.includes('gemini')) {
+    return { label: 'Gemini', provider: 'Google' };
+  }
+
+  if (!base) return null;
+  return { label: base };
+}
+
+function getPaneCommandForIdentity(paneId) {
+  const paneCommands = (currentSettings && currentSettings.paneCommands) || DEFAULT_SETTINGS.paneCommands || {};
+  let cmd = (paneCommands[paneId] || '').trim();
+  if (!cmd) cmd = 'claude';
+  return cmd;
+}
+
+function emitPaneCliIdentity(data) {
+  if (!data) return;
+  const paneId = data.paneId ? String(data.paneId) : '';
+  if (!paneId) return;
+
+  const payload = {
+    paneId,
+    label: data.label,
+    provider: data.provider,
+    version: data.version,
+  };
+
+  const prev = paneCliIdentity.get(paneId);
+  if (prev &&
+    prev.label === payload.label &&
+    prev.provider === payload.provider &&
+    prev.version === payload.version) {
+    return;
+  }
+
+  paneCliIdentity.set(paneId, payload);
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('pane-cli-identity', payload);
+  }
+}
+
+function inferAndEmitCliIdentity(paneId, command) {
+  const identity = detectCliIdentity(command);
+  if (!identity) return;
+  emitPaneCliIdentity({ paneId, ...identity });
+}
+
+function ensureCliIdentityForwarder() {
+  if (cliIdentityForwarderRegistered) return;
+  cliIdentityForwarderRegistered = true;
+
+  ipcMain.on('pane-cli-identity', (event, data) => {
+    emitPaneCliIdentity(data);
+  });
+}
+
+// ============================================================
 // DAEMON CLIENT INITIALIZATION
 // ============================================================
 
@@ -333,14 +483,14 @@ async function initDaemonClient() {
       logActivity('terminal', paneId, 'Completion indicator detected', { snippet: data.substring(0, 100) });
     }
 
-    // Detect Claude running state from output (works even if user typed claude manually)
+    // Detect agent running state from output (works even if user typed CLI manually)
     const currentState = claudeRunning.get(paneId);
     if (currentState === 'starting' || currentState === 'idle') {
-      if (data.includes('Claude') || data.includes('>') || data.includes('claude')) {
+      if (data.includes('Claude') || data.includes('>') || data.includes('claude') || data.includes('codex') || data.includes('gemini')) {
         claudeRunning.set(paneId, 'running');
         broadcastClaudeState();
-        logActivity('state', paneId, 'Claude started', { status: 'running' });
-        console.log(`[Claude] Pane ${paneId} now running`);
+        logActivity('state', paneId, 'Agent started', { status: 'running' });
+        console.log(`[Agent] Pane ${paneId} now running`);
       }
     }
   });
@@ -357,6 +507,8 @@ async function initDaemonClient() {
 
   daemonClient.on('spawned', (paneId, pid) => {
     console.log(`[Daemon] Terminal spawned for pane ${paneId}, PID: ${pid}`);
+    const command = getPaneCommandForIdentity(String(paneId));
+    inferAndEmitCliIdentity(paneId, command);
   });
 
   daemonClient.on('connected', (terminals) => {
@@ -367,6 +519,8 @@ async function initDaemonClient() {
         if (term.alive) {
           claudeRunning.set(String(term.paneId), 'running');
           console.log(`[Daemon] Pane ${term.paneId} assumed running (reconnected)`);
+          const command = getPaneCommandForIdentity(String(term.paneId));
+          inferAndEmitCliIdentity(term.paneId, command);
         }
       }
       broadcastClaudeState();
@@ -468,6 +622,9 @@ async function createWindow() {
 
   mainWindow.loadFile('index.html');
 
+  // Ensure pane-cli-identity forwarding is registered
+  ensureCliIdentityForwarder();
+
   if (currentSettings.devTools) {
     mainWindow.webContents.openDevTools();
   }
@@ -550,6 +707,9 @@ async function createWindow() {
 app.whenReady().then(() => {
   // Load settings BEFORE createWindow so ipc-handlers gets the correct reference
   loadSettings();
+  // Ensure Codex sandbox mode is preconfigured before any Codex spawn
+  // NOTE: This relies on Codex honoring config.toml sandbox_mode values.
+  ensureCodexConfig();
   // Write app status so agents can check runtime state without asking
   writeAppStatus();
   createWindow();

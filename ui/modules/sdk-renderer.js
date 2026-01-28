@@ -7,14 +7,39 @@
  * Owner: Worker A
  */
 
-// Pane configuration
-const PANE_IDS = ['1', '2', '3', '4'];
-const PANE_ROLES = {
-  '1': 'Lead',
-  '2': 'Worker A',
-  '3': 'Worker B',
-  '4': 'Reviewer'
+// Pane configuration (defaults to 6-pane PTY layout; can be overridden for SDK mode)
+let PANE_IDS = ['1', '2', '3', '4', '5', '6'];
+let PANE_ROLES = {
+  '1': 'Architect',
+  '2': 'Orchestrator',
+  '3': 'Implementer A',
+  '4': 'Implementer B',
+  '5': 'Investigator',
+  '6': 'Reviewer'
 };
+
+const SDK_PANE_IDS = ['1', '2', '3', '4', '5', '6'];
+const SDK_PANE_ROLES = {
+  '1': 'Architect',
+  '2': 'Orchestrator',
+  '3': 'Implementer A',
+  '4': 'Implementer B',
+  '5': 'Investigator',
+  '6': 'Reviewer'
+};
+
+function setPaneConfig({ paneIds, paneRoles } = {}) {
+  if (Array.isArray(paneIds)) {
+    PANE_IDS = paneIds;
+  }
+  if (paneRoles && typeof paneRoles === 'object') {
+    PANE_ROLES = paneRoles;
+  }
+}
+
+function setSDKPaneConfig() {
+  setPaneConfig({ paneIds: SDK_PANE_IDS, paneRoles: SDK_PANE_ROLES });
+}
 
 // Message containers per pane
 const containers = new Map();
@@ -120,7 +145,7 @@ function updateDeliveryState(messageId, newState) {
 
 /**
  * Initialize SDK pane - replaces terminal with message container
- * @param {string} paneId - Pane ID (1-4)
+ * @param {string} paneId - Pane ID (1-6)
  */
 function initSDKPane(paneId) {
   const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
@@ -380,9 +405,9 @@ function formatMessage(message) {
     const content = message.content || message.message || '';
     const displayContent = typeof content === 'string' ? content : JSON.stringify(content);
 
-    // Detect agent prefix: (LEAD): (WORKER-A #5): (WORKER-B): (REVIEWER #12):
+    // Detect agent prefix: (ARCHITECT): (ORCHESTRATOR): (IMPLEMENTER-A #5): (INVESTIGATOR): (REVIEWER #12):
     // Format: (ROLE) or (ROLE #N) where N is the sequence number
-    const agentMatch = displayContent.match(/^\((LEAD|WORKER-?A|WORKER-?B|REVIEWER)(?:\s*#(\d+))?\):\s*/i);
+    const agentMatch = displayContent.match(/^\((ARCHITECT|LEAD|ORCHESTRATOR|IMPLEMENTER-?A|IMPLEMENTER-?B|WORKER-?A|WORKER-?B|INVESTIGATOR|REVIEWER)(?:\s*#(\d+))?\):\s*/i);
 
     if (agentMatch) {
       // This is a trigger message from another agent
@@ -390,11 +415,18 @@ function formatMessage(message) {
       const seqNum = agentMatch[2] ? parseInt(agentMatch[2], 10) : null;
       const actualMessage = displayContent.slice(agentMatch[0].length);
       const roleConfig = {
-        'LEAD': { class: 'lead', label: 'Lead' },
-        'WORKER-A': { class: 'worker-a', label: 'Worker A' },
-        'WORKERA': { class: 'worker-a', label: 'Worker A' },
-        'WORKER-B': { class: 'worker-b', label: 'Worker B' },
-        'WORKERB': { class: 'worker-b', label: 'Worker B' },
+        'ARCHITECT': { class: 'lead', label: 'Architect' },
+        'LEAD': { class: 'lead', label: 'Architect' },
+        'ORCHESTRATOR': { class: 'worker-a', label: 'Orchestrator' },
+        'IMPLEMENTER-A': { class: 'worker-a', label: 'Implementer A' },
+        'IMPLEMENTERA': { class: 'worker-a', label: 'Implementer A' },
+        'WORKER-A': { class: 'worker-a', label: 'Implementer A' },
+        'WORKERA': { class: 'worker-a', label: 'Implementer A' },
+        'IMPLEMENTER-B': { class: 'worker-b', label: 'Implementer B' },
+        'IMPLEMENTERB': { class: 'worker-b', label: 'Implementer B' },
+        'WORKER-B': { class: 'worker-b', label: 'Implementer B' },
+        'WORKERB': { class: 'worker-b', label: 'Implementer B' },
+        'INVESTIGATOR': { class: 'worker-b', label: 'Investigator' },
         'REVIEWER': { class: 'reviewer', label: 'Reviewer' }
       };
       const config = roleConfig[role] || roleConfig['LEAD'];
@@ -474,7 +506,7 @@ function formatMessage(message) {
 
 /**
  * Append message to pane with type-specific formatting
- * @param {string} paneId - Pane ID (1-4)
+ * @param {string} paneId - Pane ID (1-6)
  * @param {Object} message - SDK message object
  * @param {Object} options - Optional settings { trackDelivery: boolean, isOutgoing: boolean }
  * @returns {string|null} Message ID if tracking delivery, null otherwise
@@ -557,7 +589,7 @@ function appendMessage(paneId, message, options = {}) {
 
 /**
  * Clear pane content
- * @param {string} paneId - Pane ID (1-4)
+ * @param {string} paneId - Pane ID (1-6)
  */
 function clearPane(paneId) {
   const container = containers.get(paneId);
@@ -578,7 +610,7 @@ function clearAllPanes() {
 
 /**
  * Auto-scroll pane to bottom
- * @param {string} paneId - Pane ID (1-4)
+ * @param {string} paneId - Pane ID (1-6)
  */
 function scrollToBottom(paneId) {
   const container = containers.get(paneId);
@@ -592,7 +624,7 @@ function scrollToBottom(paneId) {
  * Replaces generic braille spinner with branded honeycomb pulse.
  * UX-8: Supports contextual text based on tool use
  * ROUND-2: Intensity scaling - different pulse speeds for different operations
- * @param {string} paneId - Pane ID (1-4)
+ * @param {string} paneId - Pane ID (1-6)
  * @param {boolean} active - Whether to show or hide
  * @param {string} context - Optional context text (e.g., "Reading files...")
  * @param {string} category - Optional tool category for color coding (read, write, edit, search, bash, thinking)
@@ -663,7 +695,7 @@ function streamingIndicator(paneId, active, context = null, category = 'thinking
 /**
  * STR-5: Append text delta for typewriter streaming effect
  * Called when Python SDK sends partial text via StreamEvent
- * @param {string} paneId - Pane ID (1-4)
+ * @param {string} paneId - Pane ID (1-6)
  * @param {string} text - Partial text chunk to append
  */
 function appendTextDelta(paneId, text) {
@@ -738,7 +770,7 @@ function appendTextDelta(paneId, text) {
 /**
  * STR-5: Finalize streaming message (remove cursor, mark complete)
  * Called when streaming stops for a pane
- * @param {string} paneId - Pane ID (1-4)
+ * @param {string} paneId - Pane ID (1-6)
  */
 function finalizeStreamingMessage(paneId) {
   const streamState = streamingMessages.get(paneId);
@@ -759,7 +791,7 @@ function finalizeStreamingMessage(paneId) {
 
 /**
  * STR-5: Clear streaming state for a pane (on new assistant turn)
- * @param {string} paneId - Pane ID (1-4)
+ * @param {string} paneId - Pane ID (1-6)
  */
 function clearStreamingState(paneId) {
   const streamState = streamingMessages.get(paneId);
@@ -776,7 +808,7 @@ function clearStreamingState(paneId) {
  * UX-8: Update streaming indicator with tool context
  * Parses tool_use messages and shows friendly descriptions
  * Color-coded by tool type for visual distinction
- * @param {string} paneId - Pane ID (1-4)
+ * @param {string} paneId - Pane ID (1-6)
  * @param {Object} toolUse - Tool use message object
  */
 function updateToolContext(paneId, toolUse) {
@@ -842,7 +874,7 @@ function getFileName(filePath) {
 
 /**
  * Get session ID for a pane (for resume capability)
- * @param {string} paneId - Pane ID (1-4)
+ * @param {string} paneId - Pane ID (1-6)
  * @returns {string|null} Session ID or null
  */
 function getSessionId(paneId) {
@@ -851,7 +883,7 @@ function getSessionId(paneId) {
 
 /**
  * Add a system message to pane
- * @param {string} paneId - Pane ID (1-4)
+ * @param {string} paneId - Pane ID (1-6)
  * @param {string} text - System message text
  */
 function addSystemMessage(paneId, text) {
@@ -860,7 +892,7 @@ function addSystemMessage(paneId, text) {
 
 /**
  * Add an error message to pane
- * @param {string} paneId - Pane ID (1-4)
+ * @param {string} paneId - Pane ID (1-6)
  * @param {string} error - Error message text
  */
 function addErrorMessage(paneId, error) {
@@ -871,6 +903,8 @@ module.exports = {
   // Initialization
   initSDKPane,
   initAllSDKPanes,
+  setPaneConfig,
+  setSDKPaneConfig,
 
   // Message handling
   appendMessage,

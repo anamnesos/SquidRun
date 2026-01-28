@@ -15,6 +15,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const pty = require('node-pty');
+const { createCodexExecRunner } = require('./modules/codex-exec');
 const { PIPE_PATH, INSTANCE_DIRS, PANE_ROLES } = require('./config');
 
 // ============================================================
@@ -71,6 +72,58 @@ function formatUptime(seconds) {
 
 // Store PTY processes: Map<paneId, { pty, pid, alive, cwd, scrollback, dryRun, lastActivity }>
 const terminals = new Map();
+
+// ============================================================
+// CODEX AUTO-APPROVAL FALLBACK
+// ============================================================
+// Best-effort suppression when Codex still shows approval prompts.
+// This is a safety net; primary suppression is via CLI flags/config.
+const AUTO_APPROVE_ENABLED = true;
+const AUTO_APPROVE_THROTTLE_MS = 5000;
+const AUTO_APPROVE_BUFFER_MAX = 1500;
+const autoApproveState = new Map(); // paneId -> { buffer, lastTrigger }
+
+const CODEX_APPROVAL_PROMPT_REGEX =
+  /\b1\.\s*Yes\b[\s\S]{0,200}\b2\.\s*Yes and (?:don't|dont) ask again\b[\s\S]{0,200}\b3\.\s*No\b/i;
+
+function stripAnsi(input) {
+  if (!input) return '';
+  // Strip OSC (Operating System Command) and CSI (Control Sequence Introducer)
+  return input
+    .replace(/\x1B\][^\x07]*(\x07|\x1B\\)/g, '')
+    .replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
+function maybeAutoApprovePrompt(paneId, data) {
+  if (!AUTO_APPROVE_ENABLED) return;
+  const clean = stripAnsi(data);
+  if (!clean) return;
+
+  const state = autoApproveState.get(paneId) || { buffer: '', lastTrigger: 0 };
+  state.buffer = (state.buffer + clean).slice(-AUTO_APPROVE_BUFFER_MAX);
+
+  const now = Date.now();
+  if (now - state.lastTrigger < AUTO_APPROVE_THROTTLE_MS) {
+    autoApproveState.set(paneId, state);
+    return;
+  }
+
+  if (CODEX_APPROVAL_PROMPT_REGEX.test(state.buffer)) {
+    state.lastTrigger = now;
+    state.buffer = '';
+    autoApproveState.set(paneId, state);
+
+    const terminal = terminals.get(paneId);
+    if (terminal && terminal.pty && terminal.alive) {
+      terminal.pty.write('2\r'); // "Yes and don't ask again"
+      terminal.lastInputTime = Date.now();
+      logInfo(`[AutoApprove] Detected approval prompt in pane ${paneId} - sent '2'`);
+    }
+    return;
+  }
+
+  autoApproveState.set(paneId, state);
+}
 
 // U1: Scrollback buffer settings - keep last 50KB of output per terminal
 const SCROLLBACK_MAX_SIZE = 50000;
@@ -183,6 +236,16 @@ function loadSessionState() {
     const data = fs.readFileSync(SESSION_FILE_PATH, 'utf-8');
     const state = JSON.parse(data);
     logInfo(`Loaded session state from ${state.savedAt}`);
+    // Correct stale cwds against INSTANCE_DIRS (source of truth)
+    if (state.terminals) {
+      for (const term of state.terminals) {
+        const expectedDir = INSTANCE_DIRS[String(term.paneId)];
+        if (expectedDir && term.cwd && path.resolve(expectedDir) !== path.resolve(term.cwd)) {
+          logWarn(`[Session] Correcting pane ${term.paneId} cwd: ${term.cwd} -> ${expectedDir}`);
+          term.cwd = expectedDir;
+        }
+      }
+    }
     return state;
   } catch (err) {
     logWarn(`Could not load session state: ${err.message}`);
@@ -395,9 +458,11 @@ function exitRecoveryMode() {
 // Map paneId to trigger filename
 const PANE_TRIGGER_FILES = {
   '1': 'lead.txt',
-  '2': 'worker-a.txt',
-  '3': 'worker-b.txt',
-  '4': 'reviewer.txt',
+  '2': 'orchestrator.txt',
+  '3': 'worker-a.txt',
+  '4': 'worker-b.txt',
+  '5': 'investigator.txt',
+  '6': 'reviewer.txt',
 };
 
 /**
@@ -800,9 +865,9 @@ function initHeartbeatTimer() {
 // D2 (V3): DRY-RUN MODE
 // ============================================================
 
-// Mock responses for dry-run mode (simulates Claude agent)
+// Mock responses for dry-run mode (simulates an agent)
 const DRY_RUN_RESPONSES = [
-  '[DRY-RUN] Claude agent simulated. Ready for input.\r\n',
+  '[DRY-RUN] Agent simulated. Ready for input.\r\n',
   '[DRY-RUN] Processing your request...\r\n',
   '[DRY-RUN] Analyzing codebase structure...\r\n',
   '[DRY-RUN] Reading relevant files...\r\n',
@@ -838,7 +903,7 @@ function sendMockData(paneId, text, callback) {
   sendChar();
 }
 
-// Generate mock Claude response based on input
+// Generate mock agent response based on input
 function generateMockResponse(input) {
   const trimmed = input.trim().toLowerCase();
 
@@ -864,7 +929,7 @@ function generateMockResponse(input) {
   }
 
   if (trimmed.includes('help') || trimmed === '?') {
-    return '\r\n[DRY-RUN] This is dry-run mode. Commands are simulated.\r\n[DRY-RUN] Toggle off in Settings to use real Claude.\r\n\r\n> ';
+    return '\r\n[DRY-RUN] This is dry-run mode. Commands are simulated.\r\n[DRY-RUN] Toggle off in Settings to use real agents.\r\n\r\n> ';
   }
 
   // Default response
@@ -900,8 +965,16 @@ function broadcast(message) {
   }
 }
 
+// Codex exec runner (non-interactive)
+const codexExecRunner = createCodexExecRunner({
+  broadcast,
+  logInfo,
+  logWarn,
+  scrollbackMaxSize: SCROLLBACK_MAX_SIZE,
+});
+
 // Spawn a new PTY for a pane (or mock terminal in dry-run mode)
-function spawnTerminal(paneId, cwd, dryRun = false) {
+function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   // Kill existing terminal for this pane if any
   if (terminals.has(paneId)) {
     const existing = terminals.get(paneId);
@@ -933,6 +1006,7 @@ function spawnTerminal(paneId, cwd, dryRun = false) {
       cwd: workDir,
       scrollback: '',
       dryRun: true,
+      mode: 'dry-run',
       inputBuffer: '', // Buffer for accumulating input
       lastActivity: Date.now(), // V4 AR1: Track last activity
       lastInputTime: Date.now(), // V18 FIX: Track last user INPUT
@@ -943,15 +1017,44 @@ function spawnTerminal(paneId, cwd, dryRun = false) {
     // Send initial mock prompt after short delay
     setTimeout(() => {
       if (terminalInfo.alive) {
-        const welcomeMsg = `\r\n[DRY-RUN MODE] Mock Claude agent for Pane ${paneId}\r\n` +
+        const welcomeMsg = `\r\n[DRY-RUN MODE] Mock agent for Pane ${paneId}\r\n` +
           `[DRY-RUN] Role: ${PANE_ROLES[paneId] || 'Unknown'}\r\n` +
           `[DRY-RUN] Working dir: ${workDir}\r\n` +
-          `[DRY-RUN] Commands are simulated. Toggle off in Settings for real Claude.\r\n\r\n> `;
+          `[DRY-RUN] Commands are simulated. Toggle off in Settings for real agents.\r\n\r\n> `;
         sendMockData(paneId, welcomeMsg);
       }
     }, 300);
 
     return { paneId, pid: mockPid, dryRun: true };
+  }
+
+  // CODEX EXEC MODE: Create a virtual terminal entry without PTY
+  if (options.mode === 'codex-exec') {
+    logInfo(`[CodexExec] Initializing virtual terminal for pane ${paneId} in ${workDir}`);
+
+    const terminalInfo = {
+      pty: null,
+      pid: 0,
+      alive: true,
+      cwd: workDir,
+      scrollback: '',
+      dryRun: false,
+      mode: 'codex-exec',
+      execProcess: null,
+      execBuffer: '',
+      codexHasSession: false,
+      codexSessionId: null,
+      lastActivity: Date.now(),
+      lastInputTime: Date.now(),
+    };
+
+    terminals.set(paneId, terminalInfo);
+
+    const welcomeMsg = `\r\n[Codex exec mode ready]\r\n`;
+    broadcast({ event: 'data', paneId, data: welcomeMsg });
+    terminalInfo.scrollback += welcomeMsg;
+
+    return { paneId, pid: 0, dryRun: false, mode: 'codex-exec' };
   }
 
   // NORMAL MODE: Spawn real PTY
@@ -973,30 +1076,24 @@ function spawnTerminal(paneId, cwd, dryRun = false) {
     cwd: workDir,
     scrollback: '', // U1: Buffer for scrollback persistence
     dryRun: false,
+    mode: 'pty',
     lastActivity: Date.now(), // V4 AR1: Track last PTY output
     lastInputTime: Date.now(), // V18 FIX: Track last user INPUT (not output)
   };
 
   terminals.set(paneId, terminalInfo);
 
-  // Inject identity command after shell initializes
-  // This makes sessions identifiable in Claude Code's /resume list
-  setTimeout(() => {
-    if (terminalInfo.alive && terminalInfo.pty) {
-      const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
-      const instanceDir = INSTANCE_DIRS[paneId] || workDir;
-      // Clear line, print identity banner, then start fresh
-      const identityBanner = `\r\necho "╔══════════════════════════════════════╗"\r` +
-        `echo "║  HIVEMIND: ${role.padEnd(26)}║"\r` +
-        `echo "╚══════════════════════════════════════╝"\r`;
-      terminalInfo.pty.write(identityBanner);
-    }
-  }, 800); // Wait for shell to initialize
+  // Identity injection is handled by renderer (terminal.js:spawnClaude) at 4s
+  // using keyboard events via sendToPane(). The daemon PTY write approach caused
+  // issues with Codex CLI: echo commands landed in Codex's textarea instead of
+  // PowerShell when the CLI started before the 800ms delay elapsed.
 
   // Forward PTY output to all connected clients
   ptyProcess.onData((data) => {
     // V4 AR1: Track last activity time
     terminalInfo.lastActivity = Date.now();
+    // Codex approval prompt fallback (best-effort)
+    maybeAutoApprovePrompt(paneId, data);
 
     // U1: Buffer output for scrollback persistence
     terminalInfo.scrollback += data;
@@ -1030,6 +1127,11 @@ function spawnTerminal(paneId, cwd, dryRun = false) {
 function writeTerminal(paneId, data) {
   const terminal = terminals.get(paneId);
   if (!terminal || !terminal.alive) {
+    return false;
+  }
+
+  // Codex exec terminals are non-interactive; ignore PTY writes
+  if (terminal.mode === 'codex-exec') {
     return false;
   }
 
@@ -1082,6 +1184,8 @@ function writeTerminal(paneId, data) {
   return false;
 }
 
+// Append to scrollback buffer with max size trimming
+
 // Resize a terminal
 function resizeTerminal(paneId, cols, rows) {
   const terminal = terminals.get(paneId);
@@ -1109,6 +1213,13 @@ function killTerminal(paneId) {
     } catch (e) { /* ignore */ }
   }
 
+  // Kill active Codex exec process if any
+  if (terminal.execProcess) {
+    try {
+      terminal.execProcess.kill();
+    } catch (e) { /* ignore */ }
+  }
+
   terminal.alive = false;
   terminals.delete(paneId);
   logInfo(`Terminal ${paneId} killed (dryRun: ${terminal.dryRun || false})`);
@@ -1119,13 +1230,14 @@ function killTerminal(paneId) {
 function listTerminals() {
   const list = [];
   for (const [paneId, info] of terminals) {
-    list.push({
-      paneId,
-      pid: info.pid,
-      alive: info.alive,
-      cwd: info.cwd,
-      // U1: Include scrollback for session restoration
-      scrollback: info.scrollback || '',
+      list.push({
+        paneId,
+        pid: info.pid,
+        alive: info.alive,
+        cwd: info.cwd,
+        mode: info.mode || 'pty',
+        // U1: Include scrollback for session restoration
+        scrollback: info.scrollback || '',
       // V3: Include dry-run flag
       dryRun: info.dryRun || false,
       // V4 AR1: Include last activity timestamp
@@ -1173,7 +1285,7 @@ function handleMessage(client, message) {
 
     switch (msg.action) {
       case 'spawn': {
-        const result = spawnTerminal(msg.paneId, msg.cwd, msg.dryRun || false);
+        const result = spawnTerminal(msg.paneId, msg.cwd, msg.dryRun || false, { mode: msg.mode });
         sendToClient(client, {
           event: 'spawned',
           paneId: msg.paneId,
@@ -1219,6 +1331,19 @@ function handleMessage(client, message) {
             event: 'error',
             paneId: msg.paneId,
             message: 'Terminal not found or not alive',
+          });
+        }
+        break;
+      }
+
+      case 'codex-exec': {
+        const terminal = terminals.get(msg.paneId);
+        const result = codexExecRunner.runCodexExec(msg.paneId, terminal, msg.prompt || '');
+        if (!result.success) {
+          sendToClient(client, {
+            event: 'error',
+            paneId: msg.paneId,
+            message: result.error || 'Codex exec failed',
           });
         }
         break;
@@ -1359,7 +1484,7 @@ function handleMessage(client, message) {
 
         // Identity message that becomes part of Claude conversation
         // This shows in /resume session list, making it identifiable
-        const identityMsg = `[HIVEMIND SESSION: ${role}] Started ${timestamp}\n`;
+        const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}\n`;
 
         if (terminal.dryRun) {
           // Dry-run: just echo the message

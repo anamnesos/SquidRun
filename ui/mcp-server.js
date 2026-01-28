@@ -3,7 +3,7 @@
  * Hivemind MCP Server
  * V11: Model Context Protocol integration for agent-to-agent communication
  *
- * Usage: node mcp-server.js --agent <lead|worker-a|worker-b|reviewer>
+ * Usage: node mcp-server.js --agent <architect|orchestrator|implementer-a|implementer-b|investigator|reviewer>
  *
  * This server exposes tools for:
  * - Messaging: send_message, get_messages
@@ -33,24 +33,33 @@ const MESSAGE_QUEUE_DIR = path.join(WORKSPACE_PATH, 'messages');
 
 // Agent name to pane ID mapping
 const AGENT_TO_PANE = {
+  'architect': '1',
   'lead': '1',
-  'worker-a': '2',
-  'worker-b': '3',
-  'reviewer': '4',
+  'orchestrator': '2',
+  'implementer-a': '3',
+  'worker-a': '3',
+  'implementer-b': '4',
+  'worker-b': '4',
+  'investigator': '5',
+  'reviewer': '6',
 };
 
 const PANE_TO_AGENT = {
   '1': 'lead',
-  '2': 'worker-a',
-  '3': 'worker-b',
-  '4': 'reviewer',
+  '2': 'orchestrator',
+  '3': 'worker-a',
+  '4': 'worker-b',
+  '5': 'investigator',
+  '6': 'reviewer',
 };
 
 const PANE_ROLES = {
-  '1': 'Lead',
-  '2': 'Worker A',
-  '3': 'Worker B',
-  '4': 'Reviewer',
+  '1': 'Architect',
+  '2': 'Orchestrator',
+  '3': 'Implementer A',
+  '4': 'Implementer B',
+  '5': 'Investigator',
+  '6': 'Reviewer',
 };
 
 // ============================================================
@@ -69,7 +78,7 @@ function parseArgs() {
   }
 
   if (!agentName || !AGENT_TO_PANE[agentName]) {
-    console.error('Usage: node mcp-server.js --agent <lead|worker-a|worker-b|reviewer>');
+    console.error('Usage: node mcp-server.js --agent <architect|orchestrator|implementer-a|implementer-b|investigator|reviewer>');
     process.exit(1);
   }
 
@@ -111,8 +120,8 @@ const TOOLS = [
       properties: {
         to: {
           type: 'string',
-          enum: ['lead', 'worker-a', 'worker-b', 'reviewer', 'workers', 'all'],
-          description: 'Target agent(s). Use "workers" for both workers, "all" for everyone.',
+          enum: ['architect', 'lead', 'orchestrator', 'implementer-a', 'worker-a', 'implementer-b', 'worker-b', 'investigator', 'reviewer', 'workers', 'all'],
+          description: 'Target agent(s). Use "workers" for implementers/investigator, "all" for everyone.',
         },
         content: {
           type: 'string',
@@ -154,7 +163,7 @@ const TOOLS = [
       properties: {
         agent: {
           type: 'string',
-          enum: ['lead', 'worker-a', 'worker-b', 'reviewer', 'workers', 'all'],
+          enum: ['architect', 'lead', 'orchestrator', 'implementer-a', 'worker-a', 'implementer-b', 'worker-b', 'investigator', 'reviewer', 'workers', 'all'],
           description: 'Agent(s) to trigger.',
         },
         context: {
@@ -199,7 +208,7 @@ const TOOLS = [
         },
         trigger_next: {
           type: 'string',
-          enum: ['lead', 'worker-a', 'worker-b', 'reviewer', 'none'],
+          enum: ['architect', 'lead', 'orchestrator', 'implementer-a', 'worker-a', 'implementer-b', 'worker-b', 'investigator', 'reviewer', 'none'],
           description: 'Which agent to trigger next. Default: none.',
         },
       },
@@ -338,13 +347,27 @@ function getMessagesFromQueue(targetPaneId, undeliveredOnly = true) {
 
 function resolvePaneIds(target) {
   switch (target) {
-    case 'lead': return ['1'];
-    case 'worker-a': return ['2'];
-    case 'worker-b': return ['3'];
-    case 'reviewer': return ['4'];
-    case 'workers': return ['2', '3'];
-    case 'all': return ['1', '2', '3', '4'].filter(id => id !== paneId);
-    default: return [];
+    case 'architect':
+    case 'lead':
+      return ['1'];
+    case 'orchestrator':
+      return ['2'];
+    case 'implementer-a':
+    case 'worker-a':
+      return ['3'];
+    case 'implementer-b':
+    case 'worker-b':
+      return ['4'];
+    case 'investigator':
+      return ['5'];
+    case 'reviewer':
+      return ['6'];
+    case 'workers':
+      return ['3', '4', '5'];
+    case 'all':
+      return ['1', '2', '3', '4', '5', '6'].filter(id => id !== paneId);
+    default:
+      return [];
   }
 }
 
@@ -477,11 +500,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'trigger_agent': {
-        const targets = args.agent === 'workers'
-          ? ['worker-a', 'worker-b']
-          : args.agent === 'all'
-            ? ['lead', 'worker-a', 'worker-b', 'reviewer'].filter(a => a !== agentName)
-            : [args.agent];
+        const targetPaneIds = resolvePaneIds(args.agent);
+        const targets = targetPaneIds
+          .filter(id => id !== paneId)
+          .map(id => PANE_TO_AGENT[id])
+          .filter(Boolean);
 
         const results = [];
         for (const target of targets) {

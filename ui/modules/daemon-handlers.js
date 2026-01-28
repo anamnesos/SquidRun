@@ -7,6 +7,8 @@
  */
 
 const { ipcRenderer } = require('electron');
+const path = require('path');
+const { INSTANCE_DIRS } = require('../config');
 
 // SDK renderer for immediate message display
 let sdkRenderer = null;
@@ -17,7 +19,7 @@ try {
 }
 
 // Pane IDs
-const PANE_IDS = ['1', '2', '3', '4'];
+const PANE_IDS = ['1', '2', '3', '4', '5', '6'];
 
 // BUG2 FIX: Message queue to prevent trigger flood UI glitch
 const messageQueues = new Map(); // paneId -> array of messages
@@ -48,10 +50,12 @@ const STATE_DISPLAY_NAMES = {
 
 // Pane roles for display
 const PANE_ROLES = {
-  '1': 'Lead',
-  '2': 'Worker A',
-  '3': 'Worker B',
-  '4': 'Reviewer'
+  '1': 'Architect',
+  '2': 'Orchestrator',
+  '3': 'Implementer A',
+  '4': 'Implementer B',
+  '5': 'Investigator',
+  '6': 'Reviewer'
 };
 
 // Session timers
@@ -114,6 +118,11 @@ function updatePaneStatus(paneId, status) {
   }
 }
 
+function normalizePath(value) {
+  if (!value) return '';
+  return path.normalize(String(value)).replace(/\\/g, '/').toLowerCase();
+}
+
 // ============================================================
 // DAEMON LISTENERS
 // ============================================================
@@ -145,9 +154,20 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
       const existingPaneIds = new Set();
       for (const term of existingTerminals) {
         if (term.alive) {
-          existingPaneIds.add(String(term.paneId));
+          const paneId = String(term.paneId);
+          const expectedDir = INSTANCE_DIRS[paneId];
+          const cwd = term.cwd;
+          const hasMismatch = expectedDir && cwd &&
+            normalizePath(expectedDir) !== normalizePath(cwd);
+
+          if (hasMismatch) {
+            console.warn(`[Reattach] Pane ${paneId} cwd mismatch (expected: ${expectedDir}, got: ${cwd}) - updating session state to correct cwd`);
+            term.cwd = expectedDir;
+          }
+
+          existingPaneIds.add(paneId);
           // U1: Pass scrollback for session restoration
-          await reattachTerminalFn(String(term.paneId), term.scrollback);
+          await reattachTerminalFn(paneId, term.scrollback);
         }
       }
 
@@ -535,9 +555,9 @@ function updateAllPaneProjects(paneProjectsData) {
 
 async function loadPaneProjects() {
   try {
-    const result = await ipcRenderer.invoke('get-pane-projects');
+    const result = await ipcRenderer.invoke('get-all-pane-projects');
     if (result && result.success) {
-      updateAllPaneProjects(result.projects || {});
+      updateAllPaneProjects(result.paneProjects || {});
     }
   } catch (err) {
     console.error('[MP2] Error loading pane projects:', err);
@@ -729,8 +749,8 @@ function updateAgentStatus(paneId, state) {
   if (statusEl) {
     const labels = {
       'idle': 'Idle',
-      'starting': 'Starting Claude...',
-      'running': 'Claude running',
+      'starting': 'Starting agent...',
+      'running': 'Agent running',
     };
     statusEl.textContent = labels[state] || state;
     statusEl.classList.remove('idle', 'starting', 'running');
@@ -753,7 +773,7 @@ function updateAgentStatus(paneId, state) {
 
 function setupClaudeStateListener(handleSessionTimerStateFn) {
   ipcRenderer.on('claude-state-changed', (event, states) => {
-    console.log('[Claude State] Received:', states);
+    console.log('[Agent State] Received:', states);
     for (const [paneId, state] of Object.entries(states)) {
       updateAgentStatus(paneId, state);
       if (handleSessionTimerStateFn) {

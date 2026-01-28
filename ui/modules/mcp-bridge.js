@@ -29,9 +29,11 @@ let lastFallbackWarning = null;
 const TRIGGER_DIR = path.join(WORKSPACE_PATH, 'triggers');
 const TRIGGER_FILES = {
   '1': 'lead.txt',
-  '2': 'worker-a.txt',
-  '3': 'worker-b.txt',
-  '4': 'reviewer.txt',
+  '2': 'orchestrator.txt',
+  '3': 'worker-a.txt',
+  '4': 'worker-b.txt',
+  '5': 'investigator.txt',
+  '6': 'reviewer.txt',
 };
 
 /**
@@ -88,14 +90,21 @@ function getMCPHealth() {
 /**
  * Register an agent connection via MCP handshake
  * @param {string} sessionId - MCP session identifier
- * @param {string} paneId - Agent pane ID (1-4)
+ * @param {string} paneId - Agent pane ID (1-6)
  * @returns {{ success: boolean, agent: object }}
  */
 function registerAgent(sessionId, paneId) {
-  const roles = { '1': 'Lead', '2': 'Worker A', '3': 'Worker B', '4': 'Reviewer' };
+  const roles = {
+    '1': 'Architect',
+    '2': 'Orchestrator',
+    '3': 'Implementer A',
+    '4': 'Implementer B',
+    '5': 'Investigator',
+    '6': 'Reviewer'
+  };
 
-  if (!['1', '2', '3', '4'].includes(paneId)) {
-    return { success: false, error: 'Invalid paneId. Must be 1-4.' };
+  if (!['1', '2', '3', '4', '5', '6'].includes(paneId)) {
+    return { success: false, error: 'Invalid paneId. Must be 1-6.' };
   }
 
   const agent = {
@@ -201,7 +210,14 @@ function mcpSendMessage(sessionId, toPaneId, content, type = 'direct') {
   } catch (err) {
     // Fallback: Use file trigger
     logFallback('send_message', err.message);
-    const fromRole = { '1': 'Lead', '2': 'Worker A', '3': 'Worker B', '4': 'Reviewer' }[fromPaneId];
+    const fromRole = {
+      '1': 'Architect',
+      '2': 'Orchestrator',
+      '3': 'Implementer A',
+      '4': 'Implementer B',
+      '5': 'Investigator',
+      '6': 'Reviewer'
+    }[fromPaneId];
     const fallbackMsg = `[MSG from ${fromRole}]: ${content}`;
     const fallbackSuccess = writeFallbackTrigger(toPaneId, fallbackMsg);
 
@@ -230,7 +246,7 @@ function mcpBroadcastMessage(sessionId, content) {
   const fromPaneId = validation.paneId;
   const results = [];
 
-  for (const toPaneId of ['1', '2', '3', '4']) {
+  for (const toPaneId of ['1', '2', '3', '4', '5', '6']) {
     if (toPaneId !== fromPaneId) {
       const result = watcher.sendMessage(fromPaneId, toPaneId, content, 'broadcast');
       results.push({ toPaneId, ...result });
@@ -368,7 +384,7 @@ function mcpTriggerAgent(sessionId, targetPaneId, message) {
       return result;
     }
     // If no running Claude, fall back to file trigger
-    throw new Error('No running Claude in target pane');
+    throw new Error('No running agent in target pane');
   } catch (err) {
     // Fallback: Use file trigger
     logFallback('trigger_agent', err.message);
@@ -409,7 +425,7 @@ function getMCPToolDefinitions() {
       inputSchema: {
         type: 'object',
         properties: {
-          paneId: { type: 'string', description: 'Agent pane ID (1=Lead, 2=Worker A, 3=Worker B, 4=Reviewer)' },
+          paneId: { type: 'string', description: 'Agent pane ID (1=Architect, 2=Orchestrator, 3=Implementer A, 4=Implementer B, 5=Investigator, 6=Reviewer)' },
         },
         required: ['paneId'],
       },
@@ -420,7 +436,7 @@ function getMCPToolDefinitions() {
       inputSchema: {
         type: 'object',
         properties: {
-          to: { type: 'string', description: 'Recipient pane ID (1-4)' },
+          to: { type: 'string', description: 'Recipient pane ID (1-6)' },
           content: { type: 'string', description: 'Message content' },
         },
         required: ['to', 'content'],

@@ -8,7 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { TRIGGER_TARGETS, WORKSPACE_PATH } = require('../config');
+const { TRIGGER_TARGETS, WORKSPACE_PATH, PANE_IDS } = require('../config');
 
 // Module state (set by init)
 let mainWindow = null;
@@ -30,8 +30,10 @@ let messageState = {
   version: 1,
   sequences: {
     'lead': { outbound: 0, lastSeen: {} },
+    'orchestrator': { outbound: 0, lastSeen: {} },
     'worker-a': { outbound: 0, lastSeen: {} },
     'worker-b': { outbound: 0, lastSeen: {} },
+    'investigator': { outbound: 0, lastSeen: {} },
     'reviewer': { outbound: 0, lastSeen: {} },
   },
 };
@@ -49,8 +51,10 @@ function loadMessageState() {
       version: 1,
       sequences: {
         'lead': { outbound: 0, lastSeen: {} },
+        'orchestrator': { outbound: 0, lastSeen: {} },
         'worker-a': { outbound: 0, lastSeen: {} },
         'worker-b': { outbound: 0, lastSeen: {} },
+        'investigator': { outbound: 0, lastSeen: {} },
         'reviewer': { outbound: 0, lastSeen: {} },
       }
     };
@@ -166,7 +170,7 @@ function getSequenceState() {
 }
 
 // Worker pane IDs that require reviewer approval before triggering
-const WORKER_PANES = ['2', '3'];
+const WORKER_PANES = ['3', '4', '5'];
 
 // BUG1 FIX: Track last sync time per pane to prevent self-sync
 const lastSyncTime = new Map(); // paneId -> timestamp
@@ -307,8 +311,7 @@ function notifyAgents(agents, message) {
     console.log(`[notifyAgents] Sent to panes ${notified.join(', ')}: ${message.substring(0, 50)}...`);
     // Send to renderer which uses terminal.paste() for proper execution
     if (mainWindow && !mainWindow.isDestroyed()) {
-      // V15: No auto-Enter - user presses Enter to confirm (prevents ghost text submission)
-      mainWindow.webContents.send('inject-message', { panes: notified, message: message });
+      mainWindow.webContents.send('inject-message', { panes: notified, message: message + '\r' });
     }
   } else {
     console.log(`[notifyAgents] Skipped (no Claude running): ${agents.join(', ')}`);
@@ -331,7 +334,7 @@ function notifyAllAgentsSync(triggerFile) {
   if (isSDKModeEnabled()) {
     // Still apply debounce to prevent sync storms
     const eligiblePanes = [];
-    for (const paneId of ['1', '2', '3', '4']) {
+    for (const paneId of PANE_IDS) {
       const lastSync = lastSyncTime.get(paneId) || 0;
       if (now - lastSync > SYNC_DEBOUNCE_MS) {
         eligiblePanes.push(paneId);
@@ -466,6 +469,9 @@ function handleTriggerFile(filePath, filename) {
     console.log(`[Trigger] Unknown trigger file: ${filename}`);
     return { success: false, reason: 'unknown' };
   }
+  if (filename === 'lead.txt') {
+    console.log(`[Trigger:DEBUG][lead.txt] Detected change at ${filePath}`);
+  }
 
   // WORKFLOW GATE: Check if workers can be triggered
   const gateCheck = checkWorkflowGate(targets);
@@ -482,10 +488,30 @@ function handleTriggerFile(filePath, filename) {
     return { success: false, reason: 'workflow_gate', message: gateCheck.reason };
   }
 
-  // Read trigger file content
+  // Read trigger file content with encoding normalization
+  // Windows agents may write UTF-16LE (PowerShell default), UTF-8 with BOM,
+  // or OEM codepage (cmd.exe echo). Normalize to clean UTF-8.
   let message;
   try {
-    message = fs.readFileSync(filePath, 'utf-8').trim();
+    const raw = fs.readFileSync(filePath);
+
+    // Detect UTF-16LE BOM (FF FE)
+    if (raw.length >= 2 && raw[0] === 0xFF && raw[1] === 0xFE) {
+      message = raw.slice(2).toString('utf16le').trim();
+      console.log(`[Trigger] Decoded UTF-16LE BOM file: ${filename}`);
+    }
+    // Detect UTF-8 BOM (EF BB BF)
+    else if (raw.length >= 3 && raw[0] === 0xEF && raw[1] === 0xBB && raw[2] === 0xBF) {
+      message = raw.slice(3).toString('utf-8').trim();
+      console.log(`[Trigger] Stripped UTF-8 BOM from: ${filename}`);
+    }
+    // Default: UTF-8
+    else {
+      message = raw.toString('utf-8').trim();
+    }
+
+    // Strip null bytes and other control chars that slip through encoding issues
+    message = message.replace(/\0/g, '').replace(/[\x01-\x08\x0B\x0C\x0E-\x1F]/g, '');
   } catch (err) {
     console.log(`[Trigger] Could not read ${filename}: ${err.message}`);
     return { success: false, reason: 'read_error' };
@@ -495,10 +521,16 @@ function handleTriggerFile(filePath, filename) {
     console.log(`[Trigger] Empty trigger file: ${filename}`);
     return { success: false, reason: 'empty' };
   }
+  if (filename === 'lead.txt') {
+    console.log(`[Trigger:DEBUG][lead.txt] Read ${message.length} chars`);
+  }
 
   // MESSAGE SEQUENCING: Parse and check for duplicates
   const parsed = parseMessageSequence(message);
   const recipientRole = filename.replace('.txt', '').toLowerCase();
+  if (filename === 'lead.txt') {
+    console.log(`[Trigger:DEBUG][lead.txt] Parsed sender=${parsed.sender || 'n/a'} seq=${parsed.seq ?? 'n/a'}`);
+  }
 
   if (parsed.seq !== null && parsed.sender) {
     // Check for duplicate
@@ -559,7 +591,13 @@ function handleTriggerFile(filePath, filename) {
   }
 
   // PTY MODE (legacy): Use staggered send via inject-message IPC
+  if (filename === 'lead.txt') {
+    console.log(`[Trigger:DEBUG][lead.txt] Targets: ${targets.join(', ')}, SDK mode: ${isSDKModeEnabled()}`);
+  }
   sendStaggered(targets, message + '\r');
+  if (filename === 'lead.txt') {
+    console.log('[Trigger:DEBUG][lead.txt] Sent via inject-message (PTY mode)');
+  }
 
   // Clear the trigger file after sending
   try {
@@ -582,19 +620,19 @@ function broadcastToAllAgents(message) {
 
   // V2 SDK MODE: Broadcast through SDK bridge to all panes
   if (isSDKModeEnabled()) {
-    console.log(`[BROADCAST SDK] Broadcasting to all 4 panes`);
+    console.log(`[BROADCAST SDK] Broadcasting to all ${PANE_IDS.length} panes`);
     sdkBridge.broadcast(broadcastMessage);
 
     // Notify renderer
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('broadcast-sent', {
         message,
-        notified: ['1', '2', '3', '4'],
+        notified: PANE_IDS,
         mode: 'sdk'
       });
     }
 
-    return { success: true, notified: ['1', '2', '3', '4'], mode: 'sdk' };
+    return { success: true, notified: PANE_IDS, mode: 'sdk' };
   }
 
   // PTY MODE (legacy): Get list of running Claude panes
@@ -628,10 +666,12 @@ function broadcastToAllAgents(message) {
 
 // Role definitions for routing
 const AGENT_ROLES = {
-  '1': { name: 'Lead', type: 'coordinator', skills: ['planning', 'coordination', 'architecture'] },
-  '2': { name: 'Worker A', type: 'worker', skills: ['ui', 'frontend', 'renderer'] },
-  '3': { name: 'Worker B', type: 'worker', skills: ['backend', 'daemon', 'ipc'] },
-  '4': { name: 'Reviewer', type: 'reviewer', skills: ['review', 'testing', 'verification'] },
+  '1': { name: 'Architect', type: 'coordinator', skills: ['planning', 'coordination', 'architecture'] },
+  '2': { name: 'Orchestrator', type: 'coordinator', skills: ['routing', 'coordination', 'planning'] },
+  '3': { name: 'Implementer A', type: 'worker', skills: ['ui', 'frontend', 'renderer', 'implementation'] },
+  '4': { name: 'Implementer B', type: 'worker', skills: ['backend', 'daemon', 'ipc', 'refactor'] },
+  '5': { name: 'Investigator', type: 'investigator', skills: ['debugging', 'testing', 'analysis'] },
+  '6': { name: 'Reviewer', type: 'reviewer', skills: ['review', 'testing', 'verification'] },
 };
 
 /**
@@ -651,7 +691,7 @@ function getBestAgent(taskType, performance) {
 
   // If no skill match, use workers for general tasks
   if (candidates.length === 0) {
-    candidates.push('2', '3'); // Workers
+    candidates.push('3', '4', '5'); // Workers
   }
 
   // Filter to running agents
@@ -730,10 +770,12 @@ function routeTask(taskType, message, performance) {
 
 // Handoff chain: who triggers who after completion
 const HANDOFF_CHAIN = {
-  '1': ['2', '3'],     // Lead → Workers
-  '2': ['4'],          // Worker A → Reviewer
-  '3': ['4'],          // Worker B → Reviewer
-  '4': ['1'],          // Reviewer → Lead
+  '1': ['2'],          // Architect → Orchestrator
+  '2': ['3', '4', '5'],// Orchestrator → Implementers + Investigator
+  '3': ['6'],          // Implementer A → Reviewer
+  '4': ['6'],          // Implementer B → Reviewer
+  '5': ['6'],          // Investigator → Reviewer
+  '6': ['1'],          // Reviewer → Architect
 };
 
 /**

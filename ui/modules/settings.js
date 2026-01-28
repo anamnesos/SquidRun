@@ -73,7 +73,7 @@ function applySettingsToUI() {
     sdkModeNotice.style.display = currentSettings.sdkMode ? 'block' : 'none';
   }
 
-  // Hide Spawn All button in SDK mode (SDK manages Claude, not CLI)
+  // Hide Spawn All button in SDK mode (SDK manages agents, not CLIs)
   const spawnAllBtn = document.getElementById('spawnAllBtn');
   if (spawnAllBtn) {
     spawnAllBtn.style.display = currentSettings.sdkMode ? 'none' : 'inline-block';
@@ -142,15 +142,15 @@ function setupSettings() {
   loadSettings();
 }
 
-// Check if should auto-spawn Claude
+// Check if should auto-spawn agents
 async function checkAutoSpawn(spawnAllClaudeFn, reconnectedToExisting) {
-  // V16: Skip auto-spawn if reconnecting to existing terminals (they already have Claude)
+  // V16: Skip auto-spawn if reconnecting to existing terminals (they already have agents)
   if (reconnectedToExisting) {
     console.log('[AutoSpawn] Reconnected to existing terminals, skipping auto-spawn');
     return;
   }
 
-  // SDK Mode: Don't auto-spawn CLI Claude when SDK mode is enabled
+  // SDK Mode: Don't auto-spawn CLI agents when SDK mode is enabled
   // SDK manages its own Claude instances via the Python SDK
   if (currentSettings.sdkMode) {
     console.log('[AutoSpawn] SDK mode enabled, skipping CLI auto-spawn');
@@ -158,7 +158,7 @@ async function checkAutoSpawn(spawnAllClaudeFn, reconnectedToExisting) {
   }
 
   if (currentSettings.autoSpawn) {
-    updateConnectionStatus('Auto-spawning Claude in all panes...');
+    updateConnectionStatus('Auto-spawning agents in all panes...');
     await spawnAllClaudeFn();
   }
 }
