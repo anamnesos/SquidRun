@@ -578,7 +578,6 @@ function doSendToPane(paneId, message, onComplete) {
 
   // Save current focus to restore after injection
   const savedFocus = document.activeElement;
-  const wasXtermTextarea = savedFocus && savedFocus.classList && savedFocus.classList.contains('xterm-helper-textarea');
 
   // Step 1: Focus terminal so sendTrustedEnter targets correct pane
   if (textarea) {
@@ -601,7 +600,7 @@ function doSendToPane(paneId, message, onComplete) {
 
       // Step 4: Restore focus after injection complete
       setTimeout(() => {
-        if (savedFocus && savedFocus !== textarea && !wasXtermTextarea) {
+        if (savedFocus && savedFocus !== textarea) {
           try {
             savedFocus.focus();
           } catch (e) {
@@ -614,7 +613,7 @@ function doSendToPane(paneId, message, onComplete) {
     }, 50); // Wait for text to appear in terminal before Enter
   } else {
     // No Enter needed, just restore focus
-    if (savedFocus && savedFocus !== textarea && !wasXtermTextarea) {
+    if (savedFocus && savedFocus !== textarea) {
       try {
         savedFocus.focus();
       } catch (e) {
