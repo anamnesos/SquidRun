@@ -3,6 +3,8 @@
  * Channels: get-activity-log, clear-activity-log, save-activity-log, log-activity
  */
 
+const log = require('../logger');
+
 function registerActivityLogHandlers(ctx, deps = {}) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerActivityLogHandlers requires ctx.ipcMain');
@@ -33,7 +35,7 @@ function registerActivityLogHandlers(ctx, deps = {}) {
       return missingDependency('activity log provider');
     }
     clearActivityLog();
-    console.log('[Activity] Log cleared');
+    log.info('Activity', 'Log cleared');
     return { success: true };
   });
 

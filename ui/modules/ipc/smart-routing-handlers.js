@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const log = require('../logger');
 
 function registerSmartRoutingHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -52,7 +53,7 @@ function registerSmartRoutingHandlers(ctx) {
         return { ...DEFAULT_PERFORMANCE, ...JSON.parse(content) };
       }
     } catch (err) {
-      console.error('[Performance] Error loading:', err.message);
+      log.error('Smart Routing', 'Error loading performance:', err.message);
     }
     return { ...DEFAULT_PERFORMANCE };
   }

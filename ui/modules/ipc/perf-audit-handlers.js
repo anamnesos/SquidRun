@@ -1,5 +1,6 @@
 ﻿const fs = require('fs');
 const path = require('path');
+const log = require('../logger');
 
 function registerPerfAuditHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -22,7 +23,7 @@ function registerPerfAuditHandlers(ctx) {
       Object.assign(perfProfile, JSON.parse(content));
     }
   } catch (err) {
-    console.error('[Perf] Error loading profile:', err.message);
+    log.error('Perf', 'Error loading profile:', err.message);
   }
 
   function recordHandlerPerf(handler, durationMs) {
@@ -56,7 +57,7 @@ function registerPerfAuditHandlers(ctx) {
         perfProfile.slowCalls.shift();
       }
 
-      console.log(`[Perf] Slow call: ${handler} took ${durationMs}ms`);
+      log.info('Perf', `Slow call: ${handler} took ${durationMs}ms`);
     }
   }
 
@@ -68,7 +69,7 @@ function registerPerfAuditHandlers(ctx) {
       fs.writeFileSync(tempPath, JSON.stringify(perfProfile, null, 2), 'utf-8');
       fs.renameSync(tempPath, PERF_PROFILE_PATH);
     } catch (err) {
-      console.error('[Perf] Error saving profile:', err.message);
+      log.error('Perf', 'Error saving profile:', err.message);
     }
   }
 
@@ -106,13 +107,13 @@ function registerPerfAuditHandlers(ctx) {
 
   ipcMain.handle('set-perf-enabled', (event, enabled) => {
     perfProfile.enabled = enabled;
-    console.log(`[Perf] Profiling ${enabled ? 'enabled' : 'disabled'}`);
+    log.info('Perf', `Profiling ${enabled ? 'enabled' : 'disabled'}`);
     return { success: true, enabled };
   });
 
   ipcMain.handle('set-slow-threshold', (event, thresholdMs) => {
     perfProfile.slowThreshold = thresholdMs;
-    console.log(`[Perf] Slow threshold set to ${thresholdMs}ms`);
+    log.info('Perf', `Slow threshold set to ${thresholdMs}ms`);
     return { success: true, threshold: thresholdMs };
   });
 
@@ -120,7 +121,7 @@ function registerPerfAuditHandlers(ctx) {
     perfProfile.handlers = {};
     perfProfile.slowCalls = [];
     savePerfProfile();
-    console.log('[Perf] Profile reset');
+    log.info('Perf', 'Profile reset');
     return { success: true };
   });
 

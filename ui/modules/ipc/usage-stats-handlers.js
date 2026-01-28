@@ -3,6 +3,8 @@
  * Channels: get-usage-stats, reset-usage-stats
  */
 
+const log = require('../logger');
+
 function registerUsageStatsHandlers(ctx, deps) {
   const { ipcMain } = ctx;
   const { saveUsageStats } = deps;
@@ -26,7 +28,7 @@ function registerUsageStatsHandlers(ctx, deps) {
       const threshold = ctx.currentSettings.costAlertThreshold || 5.00;
       if (parseFloat(costStr) >= threshold) {
         ctx.costAlertSent = true;
-        console.log(`[Cost Alert] Threshold exceeded: $${costStr} >= $${threshold}`);
+        log.info('Cost Alert', `Threshold exceeded: $${costStr} >= $${threshold}`);
         if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
           ctx.mainWindow.webContents.send('cost-alert', {
             cost: costStr,

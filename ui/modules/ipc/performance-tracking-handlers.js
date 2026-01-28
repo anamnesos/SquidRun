@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const log = require('../logger');
 
 function registerPerformanceTrackingHandlers(ctx) {
   const { ipcMain, WORKSPACE_PATH, PANE_ROLES } = ctx;
@@ -30,7 +31,7 @@ function registerPerformanceTrackingHandlers(ctx) {
         return { ...DEFAULT_PERFORMANCE, ...JSON.parse(content) };
       }
     } catch (err) {
-      console.error('[Performance] Error loading:', err.message);
+      log.error('Performance', 'Error loading:', err.message);
     }
     return { ...DEFAULT_PERFORMANCE };
   }
@@ -42,7 +43,7 @@ function registerPerformanceTrackingHandlers(ctx) {
       fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
       fs.renameSync(tempPath, PERFORMANCE_FILE_PATH);
     } catch (err) {
-      console.error('[Performance] Error saving:', err.message);
+      log.error('Performance', 'Error saving:', err.message);
     }
   }
 
@@ -54,7 +55,7 @@ function registerPerformanceTrackingHandlers(ctx) {
     perf.agents[paneId].completions++;
     savePerformance(perf);
 
-    console.log(`[Performance] Pane ${paneId} completion recorded. Total: ${perf.agents[paneId].completions}`);
+    log.info('Performance', `Pane ${paneId} completion recorded. Total: ${perf.agents[paneId].completions}`);
     return { success: true, completions: perf.agents[paneId].completions };
   });
 

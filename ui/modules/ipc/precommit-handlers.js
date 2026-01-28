@@ -1,5 +1,6 @@
 ﻿const fs = require('fs');
 const path = require('path');
+const log = require('../logger');
 
 function registerPrecommitHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -127,7 +128,7 @@ function registerPrecommitHandlers(ctx) {
 
   ipcMain.handle('set-ci-enabled', (event, enabled) => {
     ciEnabled = enabled;
-    console.log(`[CI] Pre-commit checks ${enabled ? 'enabled' : 'disabled'}`);
+    log.info('CI', `Pre-commit checks ${enabled ? 'enabled' : 'disabled'}`);
     return { success: true, enabled: ciEnabled };
   });
 

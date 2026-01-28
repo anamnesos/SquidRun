@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const log = require('../logger');
 
 function registerLearningDataHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -28,7 +29,7 @@ function registerLearningDataHandlers(ctx) {
         return { ...DEFAULT_LEARNING, ...JSON.parse(content) };
       }
     } catch (err) {
-      console.error('[Learning] Error loading:', err.message);
+      log.error('Learning', 'Error loading:', err.message);
     }
     return { ...DEFAULT_LEARNING };
   }
@@ -40,7 +41,7 @@ function registerLearningDataHandlers(ctx) {
       fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
       fs.renameSync(tempPath, LEARNING_FILE_PATH);
     } catch (err) {
-      console.error('[Learning] Error saving:', err.message);
+      log.error('Learning', 'Error saving:', err.message);
     }
   }
 
@@ -82,9 +83,7 @@ function registerLearningDataHandlers(ctx) {
 
     saveLearning(learning);
 
-    console.log(
-      `[Learning] ${taskType} by pane ${paneId}: ${success ? 'SUCCESS' : 'FAILURE'} (rate: ${(successRate * 100).toFixed(1)}%)`
-    );
+    log.info('Learning', `${taskType} by pane ${paneId}: ${success ? 'SUCCESS' : 'FAILURE'} (rate: ${(successRate * 100).toFixed(1)}%)`);
 
     return {
       success: true,
@@ -163,7 +162,7 @@ function registerLearningDataHandlers(ctx) {
 
   ipcMain.handle('reset-learning', () => {
     saveLearning({ ...DEFAULT_LEARNING });
-    console.log('[Learning] Reset all learning data');
+    log.info('Learning', 'Reset all learning data');
     return { success: true };
   });
 

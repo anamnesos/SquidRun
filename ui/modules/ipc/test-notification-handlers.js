@@ -1,5 +1,6 @@
 ﻿const fs = require('fs');
 const path = require('path');
+const log = require('../logger');
 
 function registerTestNotificationHandlers(ctx, deps = {}) {
   if (!ctx || !ctx.ipcMain) {
@@ -49,7 +50,7 @@ function registerTestNotificationHandlers(ctx, deps = {}) {
       });
     }
 
-    console.log(`[Test Notification] ${title}`);
+    log.info('Test Notification', title);
 
     return { success: true, notified: true, title, body };
   }
@@ -64,7 +65,7 @@ function registerTestNotificationHandlers(ctx, deps = {}) {
 
   ipcMain.handle('set-test-notification-settings', (event, settings) => {
     Object.assign(TEST_NOTIFICATION_SETTINGS, settings);
-    console.log('[Test Notification] Settings updated:', TEST_NOTIFICATION_SETTINGS);
+    log.info('Test Notification', 'Settings updated:', TEST_NOTIFICATION_SETTINGS);
     return { success: true, settings: TEST_NOTIFICATION_SETTINGS };
   });
 

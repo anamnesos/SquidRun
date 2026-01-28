@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const log = require('../logger');
 
 function registerCheckpointHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -65,7 +66,7 @@ function registerCheckpointHandlers(ctx) {
         }
       }
 
-      console.log(`[Rollback] Checkpoint created: ${checkpointId} (${manifest.files.length} files)`);
+      log.info('Rollback', `Checkpoint created: ${checkpointId} (${manifest.files.length} files)`);
 
       return { success: true, checkpointId, files: manifest.files.length };
     } catch (err) {
@@ -157,7 +158,7 @@ function registerCheckpointHandlers(ctx) {
         }
       }
 
-      console.log(`[Rollback] Restored ${restored.length} files from ${checkpointId}`);
+      log.info('Rollback', `Restored ${restored.length} files from ${checkpointId}`);
 
       if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
         ctx.mainWindow.webContents.send('rollback-complete', {
@@ -181,7 +182,7 @@ function registerCheckpointHandlers(ctx) {
       }
 
       fs.rmSync(checkpointDir, { recursive: true, force: true });
-      console.log(`[Rollback] Deleted checkpoint: ${checkpointId}`);
+      log.info('Rollback', `Deleted checkpoint: ${checkpointId}`);
 
       return { success: true };
     } catch (err) {

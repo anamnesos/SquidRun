@@ -3,6 +3,8 @@
  * Channels: nudge-agent, nudge-all-stuck
  */
 
+const log = require('../logger');
+
 function registerAutoNudgeHandlers(ctx) {
   const { ipcMain } = ctx;
 
@@ -24,7 +26,7 @@ function registerAutoNudgeHandlers(ctx) {
       });
     }
 
-    console.log(`[Auto-Nudge] Sent to pane ${paneId}: ${nudgeMessage.substring(0, 50)}...`);
+    log.info('Auto-Nudge', `Sent to pane ${paneId}: ${nudgeMessage.substring(0, 50)}...`);
 
     return { success: true, pane: paneId };
   });
@@ -49,7 +51,7 @@ function registerAutoNudgeHandlers(ctx) {
       }
     }
 
-    console.log(`[Auto-Nudge] Nudged ${nudged.length} stuck agents: ${nudged.join(', ')}`);
+    log.info('Auto-Nudge', `Nudged ${nudged.length} stuck agents: ${nudged.join(', ')}`);
     return { success: true, nudged };
   });
 }

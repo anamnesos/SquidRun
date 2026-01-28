@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const log = require('../logger');
 
 function registerSessionSummaryHandlers(ctx) {
   const { ipcMain, WORKSPACE_PATH } = ctx;
@@ -33,10 +34,10 @@ function registerSessionSummaryHandlers(ctx) {
       fs.writeFileSync(tempPath, JSON.stringify(summaries, null, 2), 'utf-8');
       fs.renameSync(tempPath, SESSION_SUMMARY_PATH);
 
-      console.log('[Session Summary] Saved summary:', summary.title || 'Untitled');
+      log.info('Session Summary', 'Saved summary:', summary.title || 'Untitled');
       return { success: true, id: summaries[summaries.length - 1].id };
     } catch (err) {
-      console.error('[Session Summary] Error saving:', err.message);
+      log.error('Session Summary', 'Error saving:', err.message);
       return { success: false, error: err.message };
     }
   });
