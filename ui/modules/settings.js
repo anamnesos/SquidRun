@@ -4,6 +4,7 @@
  */
 
 const { ipcRenderer } = require('electron');
+const log = require('./logger');
 
 // Current settings state
 let currentSettings = {};
@@ -38,7 +39,7 @@ async function loadSettings() {
       onSettingsLoaded();
     }
   } catch (err) {
-    console.error('Error loading settings:', err);
+    log.error('Settings', 'Error loading settings', err);
     // Still call callback so init doesn't hang
     if (onSettingsLoaded) {
       onSettingsLoaded();
@@ -92,9 +93,9 @@ async function toggleSetting(key) {
     const newValue = !currentSettings[key];
     currentSettings = await ipcRenderer.invoke('set-setting', key, newValue);
     applySettingsToUI();
-    console.log(`[Settings] ${key} = ${newValue}`);
+    log.info('Settings', `${key} = ${newValue}`);
   } catch (err) {
-    console.error('Error setting:', err);
+    log.error('Settings', 'Error toggling setting', err);
   }
 }
 
@@ -133,7 +134,7 @@ function setupSettings() {
       const value = parseFloat(thresholdInput.value);
       if (!isNaN(value) && value > 0) {
         await ipcRenderer.invoke('set-setting', 'costAlertThreshold', value);
-        console.log('[Settings] Cost alert threshold set to $' + value.toFixed(2));
+        log.info('Settings', 'Cost alert threshold set to $' + value.toFixed(2));
       }
     });
   }
@@ -144,16 +145,16 @@ function setupSettings() {
 
 // Check if should auto-spawn agents
 async function checkAutoSpawn(spawnAllClaudeFn, reconnectedToExisting) {
-  // V16: Skip auto-spawn if reconnecting to existing terminals (they already have agents)
+  // Skip auto-spawn if reconnecting to existing terminals (they already have agents)
   if (reconnectedToExisting) {
-    console.log('[AutoSpawn] Reconnected to existing terminals, skipping auto-spawn');
+    log.info('AutoSpawn', 'Reconnected to existing terminals, skipping auto-spawn');
     return;
   }
 
   // SDK Mode: Don't auto-spawn CLI agents when SDK mode is enabled
   // SDK manages its own Claude instances via the Python SDK
   if (currentSettings.sdkMode) {
-    console.log('[AutoSpawn] SDK mode enabled, skipping CLI auto-spawn');
+    log.info('AutoSpawn', 'SDK mode enabled, skipping CLI auto-spawn');
     return;
   }
 

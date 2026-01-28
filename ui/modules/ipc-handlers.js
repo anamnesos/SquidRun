@@ -8,6 +8,7 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const { WORKSPACE_PATH, INSTANCE_DIRS, PANE_IDS, PANE_ROLES } = require('../config');
+const log = require('./logger');
 const { createIpcContext, createIpcRegistry } = require('./ipc');
 const ipcState = require('./ipc/ipc-state');
 const { registerSdkHandlers } = require('./ipc/sdk-handlers');
@@ -153,7 +154,7 @@ function cleanupProcesses() {
         }
       }
     } catch (err) {
-      console.log(`[Cleanup] Error killing process ${id}:`, err.message);
+      log.error('Cleanup', `Error killing process ${id}`, err.message);
     }
   }
   ctx.backgroundProcesses.clear();

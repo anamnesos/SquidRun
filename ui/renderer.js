@@ -440,7 +440,7 @@ function setupEventListeners() {
   let lastBroadcastTime = 0;
 
   // Helper function to send broadcast - routes through SDK or PTY based on mode
-  // V2 FIX: Support pane targeting with /1-6 prefix
+  // Supports pane targeting with /1-6 prefix
   function sendBroadcast(message) {
     const now = Date.now();
     if (now - lastBroadcastTime < 500) {
@@ -452,7 +452,7 @@ function setupEventListeners() {
     // Check SDK mode from settings
     const currentSettings = settings.getSettings();
     if (currentSettings.sdkMode || sdkMode) {
-      // V2 FIX: Check for pane targeting prefix: /1-6 or /architect, /orchestrator, etc.
+      // Check for pane targeting prefix: /1-6 or /architect, /orchestrator, etc.
       // /all broadcasts to all agents
       const paneMatch = message.match(/^\/([1-6]|all|lead|architect|orchestrator|worker-?a|worker-?b|implementer-?a|implementer-?b|investigator|reviewer)\s+/i);
       if (paneMatch) {
@@ -494,7 +494,7 @@ function setupEventListeners() {
           ipcRenderer.invoke('sdk-send-message', paneId, actualMessage);
         }
       } else {
-        // V2 FIX: Default to Architect only (pane 1), not broadcast to all
+        // Default to Architect only (pane 1), not broadcast to all
         // Use /all prefix to explicitly broadcast to all agents
         log.info('SDK', 'Default send to Architect (pane 1)');
         // Show user message in Architect pane immediately
@@ -630,7 +630,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Setup all event handlers
   setupEventListeners();
 
-  // BUG-4: Initialize global UI focus tracker for multi-pane focus restore
+  // Initialize global UI focus tracker for multi-pane focus restore
   terminal.initUIFocusTracker();
 
   // Global ESC key handler - interrupt agent AND release keyboard
@@ -658,12 +658,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // HB4: Watchdog alert - all agents stuck, notify user
-  // FIX3: Now auto-triggers aggressive nudge and uses it for click handler
+  // Watchdog alert - all agents stuck, notify user
+  // Auto-triggers aggressive nudge and uses it for click handler
   ipcRenderer.on('watchdog-alert', (event, data) => {
     log.info('Watchdog', 'Alert received:', data);
 
-    // FIX3: Auto-trigger aggressive nudge when watchdog fires
+    // Auto-trigger aggressive nudge when watchdog fires
     log.info('Watchdog', 'Auto-triggering aggressive nudge on all panes');
     terminal.aggressiveNudgeAll();
 
@@ -708,7 +708,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // V17: Heartbeat state indicator
+  // Heartbeat state indicator
   ipcRenderer.on('heartbeat-state-changed', (event, data) => {
     const { state, interval } = data;
     const indicator = document.getElementById('heartbeatIndicator');
@@ -727,7 +727,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // V16 FIX: Single agent stuck detection - notify user (we can't auto-ESC via PTY)
+  // Single agent stuck detection - notify user (we can't auto-ESC via PTY)
   // Track shown alerts to avoid spamming
   const stuckAlertShown = new Set();
   ipcRenderer.on('agent-stuck-detected', (event, data) => {
@@ -765,11 +765,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // SDK Message Handler (Task #2)
+  // SDK Message Handler
   // Receives messages from Python SDK via IPC and routes to correct pane
-  // BUG FIX: sdk-bridge sends single object { paneId, message }, not separate args
-  // SDK-2 FIX: Add null check for malformed data
-  // UX-8: Update contextual thinking state for tool_use messages
+  // sdk-bridge sends single object { paneId, message }, not separate args
+  // Includes null check for malformed data and contextual thinking state for tool_use
   ipcRenderer.on('sdk-message', (event, data) => {
     if (!data || !data.message) {
       log.warn('SDK', 'Received malformed sdk-message:', data);
@@ -778,7 +777,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const { paneId, message } = data;
     log.info('SDK', `Message for pane ${paneId}: ${message?.type || 'unknown'}`);
 
-    // UX-8: Update contextual thinking indicator for tool_use
+    // Update contextual thinking indicator for tool_use
     if (message.type === 'tool_use' || (message.type === 'assistant' && Array.isArray(message.content))) {
       // Check for tool_use blocks in assistant content
       const toolBlocks = Array.isArray(message.content)
@@ -797,7 +796,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // SDK streaming indicator - show when agent is thinking
-  // FIX: sdk-bridge sends { paneId, active } as single object
+  // sdk-bridge sends { paneId, active } as single object
   ipcRenderer.on('sdk-streaming', (event, data) => {
     if (!data) return;
     const { paneId, active } = data;
@@ -806,15 +805,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateSDKStatus(paneId, active ? 'thinking' : 'idle');
 
     if (active) {
-      // BUG3 FIX: Clear old streaming state when new turn starts
+      // Clear old streaming state when new turn starts
       sdkRenderer.clearStreamingState(paneId);
     } else {
-      // STR-4: Finalize streaming message when streaming stops
+      // Finalize streaming message when streaming stops
       sdkRenderer.finalizeStreamingMessage(paneId);
     }
   });
 
-  // STR-4: SDK text delta - real-time typewriter streaming from Python
+  // SDK text delta - real-time typewriter streaming from Python
   // Receives partial text chunks for character-by-character display
   ipcRenderer.on('sdk-text-delta', (event, data) => {
     if (!data) return;
@@ -846,7 +845,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // SDK error handler
-  // FIX: sdk-bridge sends { paneId, error } as single object
+  // sdk-bridge sends { paneId, error } as single object
   ipcRenderer.on('sdk-error', (event, data) => {
     if (!data) return;
     const { paneId, error } = data;

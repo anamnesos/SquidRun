@@ -2,13 +2,14 @@
  * Daemon handlers module
  * Handles IPC events from daemon and state changes
  *
- * V2 SDK Integration: When SDK mode is enabled, processQueue
+ * SDK integration: When SDK mode is enabled, processQueue
  * routes messages through SDK instead of terminal PTY.
  */
 
 const { ipcRenderer } = require('electron');
 const path = require('path');
 const { INSTANCE_DIRS } = require('../config');
+const log = require('./logger');
 
 // SDK renderer for immediate message display
 let sdkRenderer = null;
@@ -21,12 +22,12 @@ try {
 // Pane IDs
 const PANE_IDS = ['1', '2', '3', '4', '5', '6'];
 
-// BUG2 FIX: Message queue to prevent trigger flood UI glitch
+// Message queue to prevent trigger flood UI glitch
 const messageQueues = new Map(); // paneId -> array of messages
 const processingPanes = new Set(); // panes currently being processed
 const MESSAGE_DELAY = 150; // ms between messages per pane
 
-// V2 SDK Integration
+// SDK integration
 let sdkModeEnabled = false;
 
 // State display helpers
@@ -72,16 +73,16 @@ function setStatusCallbacks(connectionCb, paneCb) {
 }
 
 /**
- * V2 SDK: Enable/disable SDK mode for message routing
+ * Enable/disable SDK mode for message routing
  * @param {boolean} enabled - Whether SDK mode is active
  */
 function setSDKMode(enabled) {
   sdkModeEnabled = enabled;
-  console.log(`[Daemon Handlers] SDK mode ${enabled ? 'ENABLED' : 'DISABLED'}`);
+  log.info('Daemon Handlers', `SDK mode ${enabled ? 'ENABLED' : 'DISABLED'}`);
 }
 
 /**
- * V2 SDK: Check if SDK mode is active
+ * Check if SDK mode is active
  * @returns {boolean}
  */
 function isSDKModeEnabled() {
@@ -131,13 +132,13 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
   // Handle initial daemon connection with existing terminals
   ipcRenderer.on('daemon-connected', async (event, data) => {
     const { terminals: existingTerminals, sdkMode } = data;
-    console.log('[Daemon] Connected, existing terminals:', existingTerminals, 'SDK mode:', sdkMode);
+    log.info('Daemon', 'Connected, existing terminals:', existingTerminals, 'SDK mode:', sdkMode);
 
     // SDK Mode Check: Skip PTY terminal creation if SDK mode is enabled
     // Use sdkMode from event (authoritative from main process) OR fallback to local flag
     if (sdkMode || sdkModeEnabled) {
       sdkModeEnabled = true; // Sync local flag
-      console.log('[Daemon] SDK mode enabled - skipping PTY terminal creation');
+      log.info('Daemon', 'SDK mode enabled - skipping PTY terminal creation');
       updateConnectionStatus('SDK Mode - initializing agents...');
       // Notify ready so SDK init can proceed
       if (onTerminalsReadyFn) {
@@ -161,7 +162,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
             normalizePath(expectedDir) !== normalizePath(cwd);
 
           if (hasMismatch) {
-            console.warn(`[Reattach] Pane ${paneId} cwd mismatch (expected: ${expectedDir}, got: ${cwd}) - updating session state to correct cwd`);
+            log.warn('Reattach', `Pane ${paneId} cwd mismatch (expected: ${expectedDir}, got: ${cwd}) - updating session state to correct cwd`);
             term.cwd = expectedDir;
           }
 
@@ -174,7 +175,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
       // Create terminals for any missing panes
       const missingPanes = PANE_IDS.filter(id => !existingPaneIds.has(id));
       if (missingPanes.length > 0) {
-        console.log('[Daemon] Creating missing terminals for panes:', missingPanes);
+        log.info('Daemon', 'Creating missing terminals for panes:', missingPanes);
         for (const paneId of missingPanes) {
           // Use dynamic import to avoid circular dependency
           const terminal = require('./terminal');
@@ -184,7 +185,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 
       updateConnectionStatus(`Restored ${existingTerminals.length} terminal(s)${missingPanes.length > 0 ? `, created ${missingPanes.length} new` : ''}`);
     } else {
-      console.log('[Daemon] No existing terminals, creating new ones...');
+      log.info('Daemon', 'No existing terminals, creating new ones...');
       updateConnectionStatus('Creating terminals...');
       await initTerminalsFn();
       updateConnectionStatus('Ready');
@@ -198,17 +199,17 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 
   // Handle daemon reconnection after disconnect
   ipcRenderer.on('daemon-reconnected', (event) => {
-    console.log('[Daemon] Reconnected after disconnect');
+    log.info('Daemon', 'Reconnected after disconnect');
     updateConnectionStatus('Daemon reconnected');
   });
 
   // Handle daemon disconnect
   ipcRenderer.on('daemon-disconnected', (event) => {
-    console.log('[Daemon] Disconnected');
+    log.info('Daemon', 'Disconnected');
     updateConnectionStatus('Daemon disconnected - terminals may be stale');
   });
 
-  // Handle message injection from main process (BUG2 FIX: throttled queue)
+  // Handle message injection from main process (throttled queue)
   ipcRenderer.on('inject-message', (event, data) => {
     const { panes, message } = data;
     for (const paneId of panes) {
@@ -217,7 +218,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
   });
 }
 
-// BUG2 FIX: Queue a message for throttled delivery
+// Queue a message for throttled delivery
 function queueMessage(paneId, message) {
   if (!messageQueues.has(paneId)) {
     messageQueues.set(paneId, []);
@@ -226,9 +227,9 @@ function queueMessage(paneId, message) {
   processQueue(paneId);
 }
 
-// BUG2 FIX: Process message queue for a pane with throttling
-// V16: Restore Enter for messages that include it (triggers, broadcasts)
-// V2 SDK: Routes through SDK when SDK mode is enabled
+// Process message queue for a pane with throttling
+// Restore Enter for messages that include it (triggers, broadcasts)
+// Routes through SDK when SDK mode is enabled
 function processQueue(paneId) {
   // Already processing this pane, let it continue
   if (processingPanes.has(paneId)) return;
@@ -242,14 +243,14 @@ function processQueue(paneId) {
 
   const terminal = require('./terminal');
 
-  // V16.10: Special (UNSTICK) command sends ESC keyboard event to unstick agent
+  // Special (UNSTICK) command sends ESC keyboard event to unstick agent
   // Note: UNSTICK only works in PTY mode - SDK has its own interrupt mechanism
   if (message.trim() === '(UNSTICK)') {
     if (sdkModeEnabled) {
-      console.log(`[Daemon SDK] Interrupting pane ${paneId} via SDK`);
+      log.info('Daemon SDK', `Interrupting pane ${paneId} via SDK`);
       ipcRenderer.invoke('sdk-interrupt', paneId);
     } else {
-      console.log(`[Daemon] Sending UNSTICK (ESC) to pane ${paneId}`);
+      log.info('Daemon', `Sending UNSTICK (ESC) to pane ${paneId}`);
       terminal.sendUnstick(paneId);
     }
     flashPaneHeader(paneId);
@@ -260,14 +261,14 @@ function processQueue(paneId) {
     return;
   }
 
-  // FIX3: Special (AGGRESSIVE_NUDGE) command sends ESC + Enter for forceful unstick
+  // Special (AGGRESSIVE_NUDGE) command sends ESC + Enter for forceful unstick
   // Note: In SDK mode, we just interrupt - no need for aggressive nudge
   if (message.trim() === '(AGGRESSIVE_NUDGE)') {
     if (sdkModeEnabled) {
-      console.log(`[Daemon SDK] Interrupting pane ${paneId} via SDK (aggressive)`);
+      log.info('Daemon SDK', `Interrupting pane ${paneId} via SDK (aggressive)`);
       ipcRenderer.invoke('sdk-interrupt', paneId);
     } else {
-      console.log(`[Daemon] Sending AGGRESSIVE_NUDGE (ESC + Enter) to pane ${paneId}`);
+      log.info('Daemon', `Sending AGGRESSIVE_NUDGE (ESC + Enter) to pane ${paneId}`);
       terminal.aggressiveNudge(paneId);
     }
     flashPaneHeader(paneId);
@@ -278,11 +279,11 @@ function processQueue(paneId) {
     return;
   }
 
-  // V2 SDK MODE: Route through SDK instead of PTY
+  // SDK mode: Route through SDK instead of PTY
   if (sdkModeEnabled) {
     // Remove trailing \r - SDK doesn't need it
     const cleanMessage = message.endsWith('\r') ? message.slice(0, -1) : message;
-    console.log(`[Daemon SDK] Sending to pane ${paneId} via SDK: ${cleanMessage.substring(0, 50)}...`);
+    log.info('Daemon SDK', `Sending to pane ${paneId} via SDK: ${cleanMessage.substring(0, 50)}...`);
 
     // UX-7: Optimistic UI - show message immediately with delivery tracking
     // The message appears instantly with "sending" state, then transitions to "sent" → "delivered"
@@ -301,7 +302,7 @@ function processQueue(paneId) {
         sdkRenderer.updateDeliveryState(messageId, 'delivered');
       }
     }).catch(err => {
-      console.error(`[Daemon SDK] Send failed for pane ${paneId}:`, err);
+      log.error('Daemon SDK', `Send failed for pane ${paneId}:`, err);
       // Could add error state here if needed
     });
 
@@ -336,7 +337,7 @@ function showRollbackUI(data) {
   const { checkpointId, files, timestamp } = data;
   pendingRollback = data;
 
-  console.log(`[Rollback] Available: ${files.length} files from ${timestamp}`);
+  log.info('Rollback', `Available: ${files.length} files from ${timestamp}`);
 
   // Remove existing rollback UI
   const existing = document.querySelector('.rollback-indicator');
@@ -413,7 +414,7 @@ function showHandoffNotification(data) {
   const fromRole = PANE_ROLES[fromPane] || `Pane ${fromPane}`;
   const toRole = PANE_ROLES[toPane] || `Pane ${toPane}`;
 
-  console.log(`[Handoff] ${fromRole} → ${toRole}: ${reason}`);
+  log.info('Handoff', `${fromRole} → ${toRole}: ${reason}`);
 
   // Remove existing notification
   const existing = document.querySelector('.handoff-notification');
@@ -462,7 +463,7 @@ let activeConflicts = [];
 function showConflictNotification(data) {
   const { file, agents, status, resolution } = data;
 
-  console.log(`[Conflict] File: ${file}, Agents: ${agents.join(', ')}, Status: ${status}`);
+  log.info('Conflict', `File: ${file}, Agents: ${agents.join(', ')}, Status: ${status}`);
 
   // Remove existing notification
   const existing = document.querySelector('.conflict-notification');
@@ -560,7 +561,7 @@ async function loadPaneProjects() {
       updateAllPaneProjects(result.paneProjects || {});
     }
   } catch (err) {
-    console.error('[MP2] Error loading pane projects:', err);
+    log.error('MP2', 'Error loading pane projects:', err);
   }
 }
 
@@ -576,7 +577,7 @@ function setupPaneProjectClicks() {
             updatePaneProject(paneId, result.path);
           }
         } catch (err) {
-          console.error(`[MP2] Error selecting project for pane ${paneId}:`, err);
+          log.error('MP2', `Error selecting project for pane ${paneId}:`, err);
         }
       });
     }
@@ -616,7 +617,7 @@ async function loadInitialAgentTasks() {
       updateAgentTasks(state);
     }
   } catch (err) {
-    console.error('[CB1] Error loading initial agent tasks:', err);
+    log.error('CB1', 'Error loading initial agent tasks:', err);
   }
 }
 
@@ -629,7 +630,7 @@ function showAutoTriggerFeedback(data) {
   const fromRole = PANE_ROLES[fromPane] || `Pane ${fromPane}`;
   const toRole = PANE_ROLES[toPane] || `Pane ${toPane}`;
 
-  console.log(`[Auto-Trigger] ${fromRole} → ${toRole}: ${reason}`);
+  log.info('Auto-Trigger', `${fromRole} → ${toRole}: ${reason}`);
 
   // Flash the target pane header
   const targetPane = document.querySelector(`.pane[data-pane-id="${toPane}"]`);
@@ -664,7 +665,7 @@ function setupAutoTriggerListener() {
   // Also listen for completion detected events
   ipcRenderer.on('completion-detected', (event, data) => {
     const { paneId, pattern } = data;
-    console.log(`[Completion] Pane ${paneId} completed: ${pattern}`);
+    log.info('Completion', `Pane ${paneId} completed: ${pattern}`);
     showToast(`${PANE_ROLES[paneId]} completed task`, 'info');
   });
 }
@@ -709,7 +710,7 @@ function updateStateDisplay(state) {
 
 function setupStateListener() {
   ipcRenderer.on('state-changed', (event, state) => {
-    console.log('[State] Received state change:', state);
+    log.info('State', 'Received state change:', state);
     updateStateDisplay(state);
   });
 }
@@ -773,7 +774,7 @@ function updateAgentStatus(paneId, state) {
 
 function setupClaudeStateListener(handleSessionTimerStateFn) {
   ipcRenderer.on('claude-state-changed', (event, states) => {
-    console.log('[Agent State] Received:', states);
+    log.info('Agent State', 'Received:', states);
     for (const [paneId, state] of Object.entries(states)) {
       updateAgentStatus(paneId, state);
       if (handleSessionTimerStateFn) {
@@ -788,7 +789,7 @@ function setupClaudeStateListener(handleSessionTimerStateFn) {
 // ============================================================
 
 function showCostAlert(data) {
-  console.log('[Cost Alert]', data.message);
+  log.info('Cost Alert', data.message);
 
   const costEl = document.getElementById('usageEstCost');
   if (costEl) {
@@ -931,13 +932,13 @@ async function loadInitialProject() {
       updateProjectDisplay(projectPath);
     }
   } catch (err) {
-    console.error('Error loading initial project:', err);
+    log.error('Daemon', 'Error loading initial project:', err);
   }
 }
 
 function setupProjectListener() {
   ipcRenderer.on('project-changed', (event, projectPath) => {
-    console.log('[Project] Changed to:', projectPath);
+    log.info('Project', 'Changed to:', projectPath);
     updateProjectDisplay(projectPath);
   });
 }
@@ -1001,7 +1002,7 @@ module.exports = {
   showRollbackUI,
   hideRollbackUI,
   setupRollbackListener,
-  // V2 SDK Integration
+  // SDK integration
   setSDKMode,
   isSDKModeEnabled,
 };
