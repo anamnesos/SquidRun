@@ -74,6 +74,15 @@ const QUEUE_RETRY_MS = 200;      // Check queue every 200ms
 const BROADCAST_STAGGER_MS = 100; // Delay between panes in broadcast
 const INJECTION_LOCK_TIMEOUT_MS = 1000; // Safety release if callbacks missed
 
+// Adaptive Enter delay constants (fixes race condition where Enter fires before text appears)
+const ENTER_DELAY_IDLE_MS = 50;       // Pane idle (no output > 500ms): fast Enter
+const ENTER_DELAY_ACTIVE_MS = 150;    // Pane active (output in last 500ms): medium delay
+const ENTER_DELAY_BUSY_MS = 300;      // Pane busy (output in last 100ms): longer delay
+const PANE_ACTIVE_THRESHOLD_MS = 500; // Recent output threshold for "active"
+const PANE_BUSY_THRESHOLD_MS = 100;   // Very recent output threshold for "busy"
+const FOCUS_RETRY_DELAY_MS = 20;      // Delay between focus retry attempts
+const MAX_FOCUS_RETRIES = 3;          // Max focus retry attempts before giving up
+
 // Terminal theme configuration
 const TERMINAL_THEME = {
   background: '#1a1a2e',
@@ -225,6 +234,54 @@ function buildCodexExecPrompt(paneId, text) {
 function isIdle(paneId) {
   const lastOutput = lastOutputTime[paneId] || 0;
   return (Date.now() - lastOutput) >= IDLE_THRESHOLD_MS;
+}
+
+/**
+ * Calculate adaptive Enter delay based on pane activity level
+ * Under load, the terminal needs more time for text to appear before Enter
+ * @param {string} paneId - The pane ID
+ * @returns {number} - Delay in milliseconds before sending Enter
+ */
+function getAdaptiveEnterDelay(paneId) {
+  const lastOutput = lastOutputTime[paneId] || 0;
+  const timeSinceOutput = Date.now() - lastOutput;
+
+  if (timeSinceOutput < PANE_BUSY_THRESHOLD_MS) {
+    // Very recent output (< 100ms) - pane is busy, use longer delay
+    return ENTER_DELAY_BUSY_MS;
+  } else if (timeSinceOutput < PANE_ACTIVE_THRESHOLD_MS) {
+    // Recent output (< 500ms) - pane is active, use medium delay
+    return ENTER_DELAY_ACTIVE_MS;
+  } else {
+    // No recent output - pane is idle, fast Enter is safe
+    return ENTER_DELAY_IDLE_MS;
+  }
+}
+
+/**
+ * Attempt to focus textarea with retries
+ * Returns true if focus succeeded, false if failed after retries
+ * @param {HTMLElement} textarea - The textarea element to focus
+ * @param {number} retries - Number of retry attempts remaining
+ * @returns {Promise<boolean>} - Whether focus succeeded
+ */
+async function focusWithRetry(textarea, retries = MAX_FOCUS_RETRIES) {
+  if (!textarea) return false;
+
+  textarea.focus();
+
+  // Check if focus succeeded
+  if (document.activeElement === textarea) {
+    return true;
+  }
+
+  // Retry if attempts remaining
+  if (retries > 0) {
+    await new Promise(resolve => setTimeout(resolve, FOCUS_RETRY_DELAY_MS));
+    return focusWithRetry(textarea, retries - 1);
+  }
+
+  return false;
 }
 
 // Process queued messages for a pane
@@ -569,27 +626,49 @@ function doSendToPane(paneId, message, onComplete) {
   // sendTrustedEnter() sends native keyboard events via Electron which WORKS
   const terminal = terminals.get(id);
   const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
-  const textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
+  let textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
+
+  // Guard: Skip if textarea not found (prevents Enter going to wrong element)
+  if (!textarea) {
+    log.warn(`doSendToPane ${id}`, 'Claude pane: textarea not found, skipping injection');
+    finishWithClear();
+    return;
+  }
 
   // Save current focus to restore after injection
   const savedFocus = document.activeElement;
 
   // Step 1: Focus terminal so sendTrustedEnter targets correct pane
-  if (textarea) {
-    textarea.focus();
-  }
+  textarea.focus();
 
   // Step 2: Write text to PTY (without \r)
   window.hivemind.pty.write(id, text);
   log.info(`doSendToPane ${id}`, 'Claude pane: PTY write text');
 
-  // Step 3: If message needs Enter, use sendTrustedEnter after brief delay
+  // Step 3: If message needs Enter, use sendTrustedEnter after adaptive delay
   if (hasTrailingEnter) {
-    setTimeout(() => {
-      // Ensure still focused on correct textarea
-      if (textarea && document.activeElement !== textarea) {
-        textarea.focus();
+    // Calculate delay based on pane activity (busy panes need more time)
+    const enterDelay = getAdaptiveEnterDelay(id);
+    log.info(`doSendToPane ${id}`, `Using adaptive Enter delay: ${enterDelay}ms`);
+
+    setTimeout(async () => {
+      // Re-query textarea in case DOM changed during delay
+      const currentPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
+      textarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
+
+      // Guard: Abort if textarea disappeared
+      if (!textarea) {
+        log.warn(`doSendToPane ${id}`, 'Claude pane: textarea disappeared before Enter, aborting');
+        finishWithClear();
+        return;
       }
+
+      // Ensure focus with retry (handles race conditions)
+      const focusOk = await focusWithRetry(textarea);
+      if (!focusOk) {
+        log.warn(`doSendToPane ${id}`, 'Claude pane: focus failed after retries, sending Enter anyway');
+      }
+
       window.hivemind.pty.sendTrustedEnter();
       log.info(`doSendToPane ${id}`, 'Claude pane: sendTrustedEnter for submit');
 
@@ -604,8 +683,8 @@ function doSendToPane(paneId, message, onComplete) {
         }
         lastTypedTime[paneId] = Date.now();
         finishWithClear();
-      }, 50);
-    }, 50); // Wait for text to appear in terminal before Enter
+      }, ENTER_DELAY_IDLE_MS);
+    }, enterDelay);
   } else {
     // No Enter needed, just restore focus
     if (savedFocus && savedFocus !== textarea) {
