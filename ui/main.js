@@ -39,6 +39,7 @@ const claudeRunning = new Map([
 
 // Track last CLI identity per pane to avoid duplicate UI updates
 const paneCliIdentity = new Map();
+const lastInterruptAt = new Map();
 
 // Register IPC forwarder once
 let cliIdentityForwarderRegistered = false;
@@ -60,7 +61,7 @@ const DEFAULT_SETTINGS = {
   dryRun: false,  // V3: Simulate without spawning real agents
   mcpAutoConfig: false,  // MC8: Auto-configure MCP on agent spawn (disabled by default)
   recentProjects: [],  // V3 J2: Recent projects list (max 10)
-  stuckThreshold: 60000,  // V4: Auto-nudge after 60 seconds of no activity
+  stuckThreshold: 120000,  // Auto-interrupt after 120 seconds of no output
   autoNudge: true,  // V4: Enable automatic stuck detection and nudging
   // V5 MP1: Per-pane project assignments
   paneProjects: { '1': null, '2': null, '3': null, '4': null, '5': null, '6': null },
@@ -476,6 +477,7 @@ async function initDaemonClient() {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty-data-${paneId}`, data);
     }
+    lastInterruptAt.delete(paneId);
 
     // V7 OB1: Log significant terminal output (errors, completions)
     if (data.includes('Error') || data.includes('error:') || data.includes('FAILED')) {
@@ -571,27 +573,29 @@ async function initDaemonClient() {
   if (connected) {
     log.info('Main', 'Successfully connected to terminal daemon');
 
-    // V4: Auto-unstick timer - check for stuck terminals every 30 seconds
-    // V16 FIX: REMOVED ESC sending - PTY ESC kills/interrupts agents!
-    // We can only NOTIFY the user about stuck agents, not auto-fix them.
-    // User keyboard ESC works to unstick, but programmatic PTY ESC breaks things.
+    // Auto-unstick timer - check for stuck terminals every 30 seconds
+    // Auto-send Ctrl+C after 120s of no output.
     if (currentSettings.autoNudge) {
       setInterval(() => {
         const now = Date.now();
-        const threshold = currentSettings.stuckThreshold || 60000;
+        const threshold = currentSettings.stuckThreshold || 120000;
 
         for (const [paneId, status] of claudeRunning) {
           if (status === 'running') {
             const lastActivity = daemonClient.getLastActivity(paneId);
             if (lastActivity && (now - lastActivity) > threshold) {
-              log.warn('Auto-Unstick', `Pane ${paneId} stuck for ${Math.round((now - lastActivity) / 1000)}s - user intervention needed`);
-              // V16 FIX: DO NOT send ESC via PTY - it kills agents!
-              // Just notify UI so user can manually press ESC
+              const idleTime = now - lastActivity;
+              const lastInterrupt = lastInterruptAt.get(paneId) || 0;
+              if (now - lastInterrupt >= threshold) {
+                log.warn('Auto-Unstick', `Pane ${paneId} stuck for ${Math.round(idleTime / 1000)}s - sent Ctrl+C`);
+                daemonClient.write(paneId, '\x03');
+                lastInterruptAt.set(paneId, now);
+              }
               if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('agent-stuck-detected', {
                   paneId,
-                  idleTime: now - lastActivity,
-                  message: `Agent in pane ${paneId} appears stuck. Press ESC to unstick.`
+                  idleTime,
+                  message: `Agent in pane ${paneId} appears stuck. Ctrl+C sent automatically.`
                 });
               }
             }

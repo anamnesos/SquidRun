@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const { TRIGGER_TARGETS, WORKSPACE_PATH, PANE_IDS } = require('../config');
+const log = require('./logger');
 
 // Module state (set by init)
 let mainWindow = null;
@@ -46,7 +47,7 @@ function loadMessageState() {
     // FIX: Reset lastSeen on app startup to prevent stale sequence blocking
     // New Claude instances start from #1, so old "lastSeen" values would block all messages
     // We keep the structure but clear lastSeen so fresh sessions work immediately
-    console.log('[MessageSeq] Resetting message state for fresh session');
+    log.info('MessageSeq', 'Resetting message state for fresh session');
     messageState = {
       version: 1,
       sequences: {
@@ -59,9 +60,9 @@ function loadMessageState() {
       }
     };
     saveMessageState();
-    console.log('[MessageSeq] Fresh state initialized');
+    log.info('MessageSeq', 'Fresh state initialized');
   } catch (err) {
-    console.error('[MessageSeq] Error initializing state:', err.message);
+    log.error('MessageSeq', 'Error initializing state:', err);
   }
 }
 
@@ -75,7 +76,7 @@ function saveMessageState() {
     fs.writeFileSync(tempPath, JSON.stringify(messageState, null, 2), 'utf-8');
     fs.renameSync(tempPath, MESSAGE_STATE_PATH);
   } catch (err) {
-    console.error('[MessageSeq] Error saving state:', err.message);
+    log.error('MessageSeq', 'Error saving state:', err);
   }
 }
 
@@ -198,7 +199,7 @@ function init(window, claudeState) {
  */
 function setSDKBridge(bridge) {
   sdkBridge = bridge;
-  console.log('[Triggers] SDK bridge set');
+  log.info('Triggers', 'SDK bridge set');
 }
 
 /**
@@ -207,7 +208,7 @@ function setSDKBridge(bridge) {
  */
 function setSDKMode(enabled) {
   sdkModeEnabled = enabled;
-  console.log(`[Triggers] SDK mode ${enabled ? 'ENABLED' : 'DISABLED'}`);
+  log.info('Triggers', `SDK mode ${enabled ? 'ENABLED' : 'DISABLED'}`);
 }
 
 /**
@@ -216,6 +217,14 @@ function setSDKMode(enabled) {
  */
 function isSDKModeEnabled() {
   return sdkModeEnabled && sdkBridge !== null;
+}
+
+const TRIGGER_PREFIX = '\x1b[1;33m[TRIGGER]\x1b[0m ';
+
+function formatTriggerMessage(message) {
+  if (!message) return message;
+  if (message.startsWith(TRIGGER_PREFIX)) return message;
+  return `${TRIGGER_PREFIX}${message}`;
 }
 
 /**
@@ -241,7 +250,7 @@ function checkWorkflowGate(targets) {
 
   // Workers targeted - check state
   if (!watcher) {
-    console.warn('[Workflow Gate] Watcher not initialized, allowing trigger');
+    log.warn('Workflow Gate', 'Watcher not initialized, allowing trigger');
     return { allowed: true };
   }
 
@@ -282,7 +291,7 @@ function notifyAgents(agents, message) {
 
   // V2 SDK MODE: Route through SDK bridge (no running check needed - SDK manages sessions)
   if (isSDKModeEnabled()) {
-    console.log(`[notifyAgents SDK] Sending to ${agents.length} pane(s) via SDK: ${message.substring(0, 50)}...`);
+    log.info('notifyAgents SDK', `Sending to ${agents.length} pane(s) via SDK: ${message.substring(0, 50)}...`);
     let successCount = 0;
     for (const paneId of agents) {
       // FIX: Display incoming message in pane UI so user can see agent-to-agent messages
@@ -295,7 +304,7 @@ function notifyAgents(agents, message) {
       const sent = sdkBridge.sendMessage(paneId, message);
       if (sent) successCount++;
     }
-    console.log(`[notifyAgents SDK] Delivered to ${successCount}/${agents.length} panes`);
+    log.info('notifyAgents SDK', `Delivered to ${successCount}/${agents.length} panes`);
     return agents; // SDK mode doesn't filter by running state
   }
 
@@ -308,13 +317,14 @@ function notifyAgents(agents, message) {
   }
 
   if (notified.length > 0) {
-    console.log(`[notifyAgents] Sent to panes ${notified.join(', ')}: ${message.substring(0, 50)}...`);
+    const triggerMessage = formatTriggerMessage(message);
+    log.info('notifyAgents', `Sent to panes ${notified.join(', ')}: ${message.substring(0, 50)}...`);
     // Send to renderer which uses terminal.paste() for proper execution
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('inject-message', { panes: notified, message: message + '\r' });
+      mainWindow.webContents.send('inject-message', { panes: notified, message: triggerMessage + '\r' });
     }
   } else {
-    console.log(`[notifyAgents] Skipped (no Claude running): ${agents.join(', ')}`);
+    log.info('notifyAgents', `Skipped (no Claude running): ${agents.join(', ')}`);
   }
 
   return notified;
@@ -343,7 +353,7 @@ function notifyAllAgentsSync(triggerFile) {
     }
 
     if (eligiblePanes.length > 0) {
-      console.log(`[AUTO-SYNC SDK] Notifying panes ${eligiblePanes.join(', ')}: ${triggerFile} changed`);
+      log.info('AUTO-SYNC SDK', `Notifying panes ${eligiblePanes.join(', ')}: ${triggerFile} changed`);
       for (const paneId of eligiblePanes) {
         // FIX: Display incoming message in pane UI so user can see agent-to-agent messages
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -355,7 +365,7 @@ function notifyAllAgentsSync(triggerFile) {
         sdkBridge.sendMessage(paneId, message);
       }
     } else {
-      console.log(`[AUTO-SYNC SDK] All panes recently synced, skipping`);
+      log.info('AUTO-SYNC SDK', 'All panes recently synced, skipping');
     }
 
     // Notify renderer for UI update
@@ -384,17 +394,18 @@ function notifyAllAgentsSync(triggerFile) {
   }
 
   if (skippedPanes.length > 0) {
-    console.log(`[AUTO-SYNC] Skipped panes (recently synced): ${skippedPanes.join(', ')}`);
+    log.info('AUTO-SYNC', `Skipped panes (recently synced): ${skippedPanes.join(', ')}`);
   }
 
   if (runningPanes.length > 0) {
-    console.log(`[AUTO-SYNC] Notifying panes ${runningPanes.join(', ')}: ${triggerFile} changed`);
+    const triggerMessage = formatTriggerMessage(message);
+    log.info('AUTO-SYNC', `Notifying panes ${runningPanes.join(', ')}: ${triggerFile} changed`);
     // Send to renderer which uses terminal.paste() for proper execution
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('inject-message', { panes: runningPanes, message: message + '\r' });
+      mainWindow.webContents.send('inject-message', { panes: runningPanes, message: triggerMessage + '\r' });
     }
   } else {
-    console.log(`[AUTO-SYNC] No Claude instances to notify about ${triggerFile}`);
+    log.info('AUTO-SYNC', `No Claude instances to notify about ${triggerFile}`);
   }
 
   // Also notify renderer for UI update
@@ -414,7 +425,7 @@ function notifyAllAgentsSync(triggerFile) {
 function sendStaggered(panes, message) {
   // V2 SDK: Route through SDK if enabled
   if (isSDKModeEnabled()) {
-    console.log(`[Stagger/SDK] Sending to ${panes.length} panes via SDK`);
+    log.info('Stagger', `Sending to ${panes.length} panes via SDK`);
     panes.forEach((paneId, index) => {
       // Still stagger SDK calls to avoid overwhelming API
       const delay = index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS;
@@ -446,7 +457,7 @@ function sendStaggered(panes, message) {
   }
 
   // Multiple panes - stagger to avoid thundering herd
-  console.log(`[Stagger] Sending to ${panes.length} panes with staggered timing`);
+  log.info('Stagger', `Sending to ${panes.length} panes with staggered timing`);
   panes.forEach((paneId, index) => {
     const delay = index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS;
     setTimeout(() => {
@@ -466,17 +477,17 @@ function sendStaggered(panes, message) {
 function handleTriggerFile(filePath, filename) {
   const targets = TRIGGER_TARGETS[filename];
   if (!targets) {
-    console.log(`[Trigger] Unknown trigger file: ${filename}`);
+    log.info('Trigger', `Unknown trigger file: ${filename}`);
     return { success: false, reason: 'unknown' };
   }
   if (filename === 'lead.txt') {
-    console.log(`[Trigger:DEBUG][lead.txt] Detected change at ${filePath}`);
+    log.info('Trigger:DEBUG', `[lead.txt] Detected change at ${filePath}`);
   }
 
   // WORKFLOW GATE: Check if workers can be triggered
   const gateCheck = checkWorkflowGate(targets);
   if (!gateCheck.allowed) {
-    console.warn(`[Trigger] BLOCKED by workflow gate: ${gateCheck.reason}`);
+    log.warn('Trigger', `BLOCKED by workflow gate: ${gateCheck.reason}`);
     // Notify UI about blocked trigger
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('trigger-blocked', {
@@ -498,12 +509,12 @@ function handleTriggerFile(filePath, filename) {
     // Detect UTF-16LE BOM (FF FE)
     if (raw.length >= 2 && raw[0] === 0xFF && raw[1] === 0xFE) {
       message = raw.slice(2).toString('utf16le').trim();
-      console.log(`[Trigger] Decoded UTF-16LE BOM file: ${filename}`);
+      log.info('Trigger', `Decoded UTF-16LE BOM file: ${filename}`);
     }
     // Detect UTF-8 BOM (EF BB BF)
     else if (raw.length >= 3 && raw[0] === 0xEF && raw[1] === 0xBB && raw[2] === 0xBF) {
       message = raw.slice(3).toString('utf-8').trim();
-      console.log(`[Trigger] Stripped UTF-8 BOM from: ${filename}`);
+      log.info('Trigger', `Stripped UTF-8 BOM from: ${filename}`);
     }
     // Default: UTF-8
     else {
@@ -513,29 +524,29 @@ function handleTriggerFile(filePath, filename) {
     // Strip null bytes and other control chars that slip through encoding issues
     message = message.replace(/\0/g, '').replace(/[\x01-\x08\x0B\x0C\x0E-\x1F]/g, '');
   } catch (err) {
-    console.log(`[Trigger] Could not read ${filename}: ${err.message}`);
+    log.info('Trigger', `Could not read ${filename}: ${err.message}`);
     return { success: false, reason: 'read_error' };
   }
 
   if (!message) {
-    console.log(`[Trigger] Empty trigger file: ${filename}`);
+    log.info('Trigger', `Empty trigger file: ${filename}`);
     return { success: false, reason: 'empty' };
   }
   if (filename === 'lead.txt') {
-    console.log(`[Trigger:DEBUG][lead.txt] Read ${message.length} chars`);
+    log.info('Trigger:DEBUG', `[lead.txt] Read ${message.length} chars`);
   }
 
   // MESSAGE SEQUENCING: Parse and check for duplicates
   const parsed = parseMessageSequence(message);
   const recipientRole = filename.replace('.txt', '').toLowerCase();
   if (filename === 'lead.txt') {
-    console.log(`[Trigger:DEBUG][lead.txt] Parsed sender=${parsed.sender || 'n/a'} seq=${parsed.seq ?? 'n/a'}`);
+    log.info('Trigger:DEBUG', `[lead.txt] Parsed sender=${parsed.sender || 'n/a'} seq=${parsed.seq ?? 'n/a'}`);
   }
 
   if (parsed.seq !== null && parsed.sender) {
     // Check for duplicate
     if (isDuplicateMessage(parsed.sender, parsed.seq, recipientRole)) {
-      console.log(`[Trigger] SKIPPED duplicate: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
+      log.info('Trigger', `SKIPPED duplicate: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
       // Clear the file but don't deliver
       try {
         fs.writeFileSync(filePath, '', 'utf-8');
@@ -545,14 +556,14 @@ function handleTriggerFile(filePath, filename) {
 
     // Record that we've seen this sequence
     recordMessageSeen(parsed.sender, parsed.seq, recipientRole);
-    console.log(`[Trigger] Accepted: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
+    log.info('Trigger', `Accepted: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
   }
 
-  console.log(`[Trigger] ${filename} → panes ${targets.join(', ')}: ${message.substring(0, 50)}...`);
+  log.info('Trigger', `${filename} → panes ${targets.join(', ')}: ${message.substring(0, 50)}...`);
 
   // V2 SDK MODE: Route through SDK bridge (no keyboard events needed)
   if (isSDKModeEnabled()) {
-    console.log(`[Trigger SDK] Using SDK mode for ${targets.length} target(s)`);
+    log.info('Trigger SDK', `Using SDK mode for ${targets.length} target(s)`);
     let allSuccess = true;
 
     for (const paneId of targets) {
@@ -565,7 +576,7 @@ function handleTriggerFile(filePath, filename) {
       }
       const sent = sdkBridge.sendMessage(paneId, message);
       if (!sent) {
-        console.warn(`[Trigger SDK] Failed to send to pane ${paneId}`);
+        log.warn('Trigger SDK', `Failed to send to pane ${paneId}`);
         allSuccess = false;
       }
     }
@@ -573,9 +584,9 @@ function handleTriggerFile(filePath, filename) {
     // Clear trigger file after SDK calls (even partial success)
     try {
       fs.writeFileSync(filePath, '', 'utf-8');
-      console.log(`[Trigger SDK] Cleared trigger file: ${filename}`);
+      log.info('Trigger SDK', `Cleared trigger file: ${filename}`);
     } catch (err) {
-      console.log(`[Trigger SDK] Could not clear ${filename}: ${err.message}`);
+      log.info('Trigger SDK', `Could not clear ${filename}: ${err.message}`);
     }
 
     // Notify UI about trigger sent
@@ -592,18 +603,19 @@ function handleTriggerFile(filePath, filename) {
 
   // PTY MODE (legacy): Use staggered send via inject-message IPC
   if (filename === 'lead.txt') {
-    console.log(`[Trigger:DEBUG][lead.txt] Targets: ${targets.join(', ')}, SDK mode: ${isSDKModeEnabled()}`);
+    log.info('Trigger:DEBUG', `[lead.txt] Targets: ${targets.join(', ')}, SDK mode: ${isSDKModeEnabled()}`);
   }
-  sendStaggered(targets, message + '\r');
+  const triggerMessage = formatTriggerMessage(message);
+  sendStaggered(targets, triggerMessage + '\r');
   if (filename === 'lead.txt') {
-    console.log('[Trigger:DEBUG][lead.txt] Sent via inject-message (PTY mode)');
+    log.info('Trigger:DEBUG', '[lead.txt] Sent via inject-message (PTY mode)');
   }
 
   // Clear the trigger file after sending
   try {
     fs.writeFileSync(filePath, '', 'utf-8');
   } catch (err) {
-    console.log(`[Trigger] Could not clear ${filename}: ${err.message}`);
+    log.info('Trigger', `Could not clear ${filename}: ${err.message}`);
   }
 
   return { success: true, notified: targets, mode: 'pty' };
@@ -620,7 +632,7 @@ function broadcastToAllAgents(message) {
 
   // V2 SDK MODE: Broadcast through SDK bridge to all panes
   if (isSDKModeEnabled()) {
-    console.log(`[BROADCAST SDK] Broadcasting to all ${PANE_IDS.length} panes`);
+    log.info('BROADCAST SDK', `Broadcasting to all ${PANE_IDS.length} panes`);
     sdkBridge.broadcast(broadcastMessage);
 
     // Notify renderer
@@ -650,7 +662,7 @@ function broadcastToAllAgents(message) {
     sendStaggered(notified, broadcastMessage + '\r');
   }
 
-  console.log(`[BROADCAST] Sent to panes ${notified.join(', ')}: ${message.substring(0, 50)}...`);
+  log.info('BROADCAST', `Sent to panes ${notified.join(', ')}: ${message.substring(0, 50)}...`);
 
   // Notify renderer
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -744,17 +756,18 @@ function routeTask(taskType, message, performance) {
   const { paneId, reason } = getBestAgent(taskType, performance);
 
   if (!paneId) {
-    console.log(`[SmartRoute] No agent available for ${taskType}`);
+    log.info('SmartRoute', `No agent available for ${taskType}`);
     return { success: false, reason: 'no_agent_available' };
   }
 
-  console.log(`[SmartRoute] Routing ${taskType} task to pane ${paneId} (${reason})`);
+  log.info('SmartRoute', `Routing ${taskType} task to pane ${paneId} (${reason})`);
 
   const routeMessage = `[ROUTED: ${taskType}] ${message}`;
   if (mainWindow && !mainWindow.isDestroyed()) {
+    const triggerMessage = formatTriggerMessage(routeMessage);
     mainWindow.webContents.send('inject-message', {
       panes: [paneId],
-      message: routeMessage + '\r'
+      message: triggerMessage + '\r'
     });
     mainWindow.webContents.send('task-routed', {
       taskType, paneId, reason, message: message.substring(0, 50)
@@ -787,7 +800,7 @@ function triggerAutoHandoff(completedPaneId, completionMessage) {
   const nextPanes = HANDOFF_CHAIN[completedPaneId];
 
   if (!nextPanes || nextPanes.length === 0) {
-    console.log(`[AutoHandoff] No handoff chain for pane ${completedPaneId}`);
+    log.info('AutoHandoff', `No handoff chain for pane ${completedPaneId}`);
     return { success: false, reason: 'no_chain' };
   }
 
@@ -797,7 +810,7 @@ function triggerAutoHandoff(completedPaneId, completionMessage) {
   );
 
   if (!runningNext) {
-    console.log(`[AutoHandoff] No running agents in handoff chain for pane ${completedPaneId}`);
+    log.info('AutoHandoff', `No running agents in handoff chain for pane ${completedPaneId}`);
     return { success: false, reason: 'no_running_next' };
   }
 
@@ -806,12 +819,13 @@ function triggerAutoHandoff(completedPaneId, completionMessage) {
 
   const handoffMessage = `[HANDOFF from ${fromRole}] ${completionMessage}`;
 
-  console.log(`[AutoHandoff] ${fromRole} → ${toRole}: ${completionMessage.substring(0, 50)}...`);
+  log.info('AutoHandoff', `${fromRole} → ${toRole}: ${completionMessage.substring(0, 50)}...`);
 
   if (mainWindow && !mainWindow.isDestroyed()) {
+    const triggerMessage = formatTriggerMessage(handoffMessage);
     mainWindow.webContents.send('inject-message', {
       panes: [runningNext],
-      message: handoffMessage + '\r'
+      message: triggerMessage + '\r'
     });
     mainWindow.webContents.send('auto-handoff', {
       from: completedPaneId,
@@ -846,7 +860,7 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
 
   // V2 SDK MODE: Direct delivery through SDK bridge (no running check needed)
   if (isSDKModeEnabled()) {
-    console.log(`[DirectMessage SDK] Sending to panes ${targetPanes.join(', ')}: ${message.substring(0, 50)}...`);
+    log.info('DirectMessage SDK', `Sending to panes ${targetPanes.join(', ')}: ${message.substring(0, 50)}...`);
 
     let allSuccess = true;
     for (const paneId of targetPanes) {
@@ -859,7 +873,7 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
       }
       const sent = sdkBridge.sendMessage(paneId, fullMessage);
       if (!sent) {
-        console.warn(`[DirectMessage SDK] Failed to send to pane ${paneId}`);
+        log.warn('DirectMessage SDK', `Failed to send to pane ${paneId}`);
         allSuccess = false;
       }
     }
@@ -886,12 +900,13 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
   }
 
   if (notified.length > 0) {
-    console.log(`[DirectMessage] Sent to panes ${notified.join(', ')}: ${message.substring(0, 50)}...`);
+    log.info('DirectMessage', `Sent to panes ${notified.join(', ')}: ${message.substring(0, 50)}...`);
 
     if (mainWindow && !mainWindow.isDestroyed()) {
+      const triggerMessage = formatTriggerMessage(fullMessage);
       mainWindow.webContents.send('inject-message', {
         panes: notified,
-        message: fullMessage + '\r'
+        message: triggerMessage + '\r'
       });
       mainWindow.webContents.send('direct-message-sent', {
         to: notified,
@@ -904,7 +919,7 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
     return { success: true, notified, mode: 'pty' };
   }
 
-  console.log(`[DirectMessage] No running Claude in target panes: ${targetPanes.join(', ')}`);
+  log.info('DirectMessage', `No running Claude in target panes: ${targetPanes.join(', ')}`);
   return { success: false, notified: [], reason: 'no_running_targets' };
 }
 

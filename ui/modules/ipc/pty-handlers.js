@@ -5,13 +5,15 @@
  *           get-claude-state, get-daemon-terminals
  */
 
+const log = require('../logger');
+
 function registerPtyHandlers(ctx, deps) {
   const { ipcMain, INSTANCE_DIRS } = ctx;
   const { broadcastClaudeState, recordSessionStart } = deps;
 
   ipcMain.handle('pty-create', async (event, paneId, workingDir) => {
     if (!ctx.daemonClient || !ctx.daemonClient.connected) {
-      console.error('[pty-create] Daemon not connected');
+      log.error('PTY', 'pty-create: Daemon not connected');
       return { error: 'Daemon not connected' };
     }
 
@@ -30,6 +32,18 @@ function registerPtyHandlers(ctx, deps) {
     if (ctx.daemonClient && ctx.daemonClient.connected) {
       ctx.daemonClient.write(paneId, data);
     }
+  });
+
+  ipcMain.handle('interrupt-pane', (event, paneId) => {
+    if (!ctx.daemonClient || !ctx.daemonClient.connected) {
+      return { success: false, error: 'Daemon not connected' };
+    }
+    if (!paneId) {
+      return { success: false, error: 'paneId required' };
+    }
+    ctx.daemonClient.write(paneId, '\x03');
+    log.info('PTY', `Interrupt sent to pane ${paneId}`);
+    return { success: true };
   });
 
   // Codex exec (non-interactive) - run a single prompt through codex exec --json
@@ -81,7 +95,7 @@ function registerPtyHandlers(ctx, deps) {
   ipcMain.handle('spawn-claude', (event, paneId, workingDir) => {
     // SDK Mode Guard: Block CLI spawn when SDK mode is active
     if (ctx.currentSettings.sdkMode) {
-      console.log('[spawn-claude] SDK mode - blocking CLI spawn');
+      log.info('PTY', 'spawn-claude: SDK mode - blocking CLI spawn');
       return { success: false, error: 'SDK mode active' };
     }
 
