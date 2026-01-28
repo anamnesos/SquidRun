@@ -82,6 +82,9 @@ const PANE_ACTIVE_THRESHOLD_MS = 500; // Recent output threshold for "active"
 const PANE_BUSY_THRESHOLD_MS = 100;   // Very recent output threshold for "busy"
 const FOCUS_RETRY_DELAY_MS = 20;      // Delay between focus retry attempts
 const MAX_FOCUS_RETRIES = 3;          // Max focus retry attempts before giving up
+const ENTER_VERIFY_DELAY_MS = 100;    // Delay before checking if Enter succeeded
+const MAX_ENTER_RETRIES = 5;          // Max Enter retry attempts if text remains
+const ENTER_RETRY_INTERVAL_MS = 200;  // Interval between checking if pane is idle for retry
 
 // Terminal theme configuration
 const TERMINAL_THEME = {
@@ -282,6 +285,79 @@ async function focusWithRetry(textarea, retries = MAX_FOCUS_RETRIES) {
   }
 
   return false;
+}
+
+/**
+ * Verify Enter succeeded (textarea empty) and retry if text remains
+ * This handles cases where Enter fires during active output and is ignored
+ * @param {string} paneId - The pane ID
+ * @param {HTMLElement} textarea - The textarea element
+ * @param {number} retriesLeft - Remaining retry attempts
+ * @returns {Promise<boolean>} - Whether submit eventually succeeded
+ */
+async function verifyAndRetryEnter(paneId, textarea, retriesLeft = MAX_ENTER_RETRIES) {
+  // Wait a moment for Enter to be processed
+  await new Promise(resolve => setTimeout(resolve, ENTER_VERIFY_DELAY_MS));
+
+  // Re-query textarea in case DOM changed
+  const currentPane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+  const currentTextarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
+
+  if (!currentTextarea) {
+    log.warn(`verifyAndRetryEnter ${paneId}`, 'textarea disappeared');
+    return false;
+  }
+
+  // Check if textarea is empty (submit succeeded)
+  const textRemains = currentTextarea.value && currentTextarea.value.trim().length > 0;
+
+  if (!textRemains) {
+    log.info(`verifyAndRetryEnter ${paneId}`, 'Enter succeeded (textarea empty)');
+    return true;
+  }
+
+  // Text remains - Enter was likely ignored
+  if (retriesLeft <= 0) {
+    log.warn(`verifyAndRetryEnter ${paneId}`, `Max retries reached, text still in textarea: "${currentTextarea.value.substring(0, 50)}..."`);
+    return false;
+  }
+
+  log.info(`verifyAndRetryEnter ${paneId}`, `Text remains in textarea, waiting for idle to retry Enter (${retriesLeft} retries left)`);
+
+  // Wait for pane to be idle before retrying
+  const maxWaitTime = MAX_QUEUE_TIME_MS; // Reuse the force-inject timeout
+  const startWait = Date.now();
+
+  while (!isIdle(paneId) && (Date.now() - startWait) < maxWaitTime) {
+    await new Promise(resolve => setTimeout(resolve, ENTER_RETRY_INTERVAL_MS));
+  }
+
+  // Re-query textarea before retry
+  const retryPane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+  const retryTextarea = retryPane ? retryPane.querySelector('.xterm-helper-textarea') : null;
+
+  if (!retryTextarea) {
+    log.warn(`verifyAndRetryEnter ${paneId}`, 'textarea disappeared during wait');
+    return false;
+  }
+
+  // Check again - maybe it cleared during our wait
+  if (!retryTextarea.value || retryTextarea.value.trim().length === 0) {
+    log.info(`verifyAndRetryEnter ${paneId}`, 'Text cleared during idle wait');
+    return true;
+  }
+
+  // Focus and retry Enter
+  const focusOk = await focusWithRetry(retryTextarea);
+  if (!focusOk) {
+    log.warn(`verifyAndRetryEnter ${paneId}`, 'Focus failed on retry');
+  }
+
+  log.info(`verifyAndRetryEnter ${paneId}`, 'Retrying sendTrustedEnter');
+  window.hivemind.pty.sendTrustedEnter();
+
+  // Recurse with decremented retry count
+  return verifyAndRetryEnter(paneId, retryTextarea, retriesLeft - 1);
 }
 
 // Process queued messages for a pane
@@ -689,18 +765,23 @@ function doSendToPane(paneId, message, onComplete) {
       window.hivemind.pty.sendTrustedEnter();
       log.info(`doSendToPane ${id}`, 'Claude pane: sendTrustedEnter for submit');
 
+      // Verify Enter succeeded (textarea empty) - if not, wait for idle and retry
+      // This handles force-inject during active output where Enter is ignored
+      const submitOk = await verifyAndRetryEnter(id, textarea);
+      if (!submitOk) {
+        log.warn(`doSendToPane ${id}`, 'Claude pane: Enter verification failed after retries');
+      }
+
       // Step 4: Restore focus after injection complete
-      setTimeout(() => {
-        if (savedFocus && savedFocus !== textarea) {
-          try {
-            savedFocus.focus();
-          } catch (e) {
-            // Element may no longer be in DOM
-          }
+      if (savedFocus && savedFocus !== textarea) {
+        try {
+          savedFocus.focus();
+        } catch (e) {
+          // Element may no longer be in DOM
         }
-        lastTypedTime[paneId] = Date.now();
-        finishWithClear({ success: true });
-      }, ENTER_DELAY_IDLE_MS);
+      }
+      lastTypedTime[paneId] = Date.now();
+      finishWithClear({ success: submitOk });
     }, enterDelay);
   } else {
     // No Enter needed, just restore focus
