@@ -1,0 +1,404 @@
+/* panes.css — Pane header widgets: SDK status, session ID, timer, CLI badges, project indicators, agent tasks, handoff/conflict notifications, auto-trigger, heartbeat */
+
+/* SDK Session Status Indicator */
+.sdk-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(0,0,0,0.3);
+  transition: all 0.2s;
+}
+
+.sdk-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  transition: background 0.2s;
+}
+
+.sdk-status.disconnected { color: #666; }
+.sdk-status.disconnected::before { background: #666; }
+
+.sdk-status.connected { color: #4ecca3; }
+.sdk-status.connected::before { background: #4ecca3; }
+
+.sdk-status.idle { color: #888; }
+.sdk-status.idle::before { background: #888; }
+
+.sdk-status.thinking {
+  color: #ffc857;
+  background: rgba(255, 200, 87, 0.1);
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+.sdk-status.thinking::before {
+  background: #ffc857;
+}
+
+.sdk-status.responding {
+  color: #4ecca3;
+  background: rgba(78, 204, 163, 0.1);
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+.sdk-status.responding::before {
+  background: #4ecca3;
+}
+
+.sdk-status.error {
+  color: #e94560;
+  background: rgba(233, 69, 96, 0.1);
+}
+.sdk-status.error::before { background: #e94560; }
+
+@keyframes sdkPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* Message delivered confirmation */
+.sdk-status.delivered {
+  animation: deliveredFlash 0.6s ease-out;
+}
+
+@keyframes deliveredFlash {
+  0% { background: rgba(78, 204, 163, 0.4); }
+  100% { background: rgba(0,0,0,0.3); }
+}
+
+/* SDK Session ID (debug mode) */
+.sdk-session-id {
+  display: none;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 9px;
+  color: #555;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sdk-session-id.visible {
+  display: inline-block;
+}
+
+/* Session timer for cost tracking */
+.pane-timer {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 10px;
+  color: #555;
+  background: rgba(0,0,0,0.2);
+  padding: 1px 4px;
+  border-radius: 2px;
+  min-width: 40px;
+  text-align: center;
+}
+
+.pane-timer.active {
+  color: #4ecca3;
+  background: rgba(78, 204, 163, 0.1);
+}
+
+/* CLI Identity Badge */
+.cli-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 6px;
+  display: none;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.cli-badge.visible {
+  display: inline-block;
+}
+.cli-badge.claude {
+  color: #e9a060;
+  background: rgba(233, 160, 96, 0.15);
+}
+.cli-badge.codex {
+  color: #6ec6ff;
+  background: rgba(110, 198, 255, 0.15);
+}
+.cli-badge.gemini {
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.15);
+}
+
+/* Per-pane project indicator */
+.pane-project {
+  font-size: 9px;
+  color: #4ecca3;
+  background: rgba(78, 204, 163, 0.1);
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-left: 6px;
+  max-width: 100px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: none;
+  cursor: pointer;
+}
+
+.pane-project.has-project {
+  display: inline-block;
+}
+
+.pane-project:hover {
+  background: rgba(78, 204, 163, 0.2);
+}
+
+/* Agent task display */
+.agent-task {
+  font-size: 10px;
+  color: #888;
+  background: rgba(0,0,0,0.2);
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-left: 8px;
+  max-width: 120px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: none;
+}
+
+.agent-task.has-task {
+  display: inline-block;
+  color: #ffc857;
+  background: rgba(255, 200, 87, 0.1);
+}
+
+/* Handoff notification */
+.handoff-notification {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: linear-gradient(135deg, #16213e 0%, #0f3460 100%);
+  border: 1px solid #4ecca3;
+  border-radius: 8px;
+  padding: 14px 18px;
+  min-width: 280px;
+  z-index: 10000;
+  animation: handoffSlideIn 0.4s ease;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.handoff-notification.fade-out {
+  animation: handoffSlideOut 0.4s ease forwards;
+}
+
+@keyframes handoffSlideIn {
+  from { transform: translateX(120%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes handoffSlideOut {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(120%); opacity: 0; }
+}
+
+.handoff-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.handoff-icon {
+  font-size: 18px;
+}
+
+.handoff-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4ecca3;
+}
+
+.handoff-agents {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.handoff-agent {
+  background: #1a1a2e;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.handoff-agent.from { color: #e94560; }
+.handoff-agent.to { color: #4ecca3; }
+
+.handoff-arrow {
+  color: #888;
+  font-size: 14px;
+}
+
+.handoff-reason {
+  font-size: 11px;
+  color: #888;
+  font-style: italic;
+}
+
+/* Conflict resolution notification */
+.conflict-notification {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  background: linear-gradient(135deg, #2d1a1a 0%, #3d1a1a 100%);
+  border: 1px solid #e94560;
+  border-radius: 8px;
+  padding: 14px 18px;
+  min-width: 300px;
+  z-index: 10000;
+  animation: conflictSlideIn 0.4s ease;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.conflict-notification.fade-out {
+  animation: conflictSlideOut 0.4s ease forwards;
+}
+
+@keyframes conflictSlideIn {
+  from { transform: translateX(-120%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes conflictSlideOut {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(-120%); opacity: 0; }
+}
+
+.conflict-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.conflict-icon {
+  font-size: 18px;
+}
+
+.conflict-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e94560;
+}
+
+.conflict-file {
+  background: #1a1a2e;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 11px;
+  color: #ffc857;
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+
+.conflict-agents {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.conflict-agent {
+  background: rgba(233, 69, 96, 0.2);
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: #e94560;
+}
+
+.conflict-status {
+  font-size: 11px;
+  color: #4ecca3;
+}
+
+.conflict-status.pending {
+  color: #ffc857;
+}
+
+/* Auto-trigger feedback */
+.auto-trigger-indicator {
+  position: fixed;
+  top: 50px;
+  right: 20px;
+  background: #16213e;
+  border: 1px solid #4ecca3;
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 12px;
+  color: #4ecca3;
+  z-index: 10000;
+  animation: autoTriggerSlideIn 0.3s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.auto-trigger-indicator.fade-out {
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+
+@keyframes autoTriggerSlideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.auto-trigger-icon {
+  margin-right: 8px;
+}
+
+/* Pane header pulse for auto-trigger */
+.pane-header.auto-triggered {
+  animation: autoTriggerPulse 0.5s ease-out;
+}
+
+@keyframes autoTriggerPulse {
+  0% { background-color: #4ecca3; }
+  100% { background-color: #16213e; }
+}
+
+/* Heartbeat state indicator */
+.heartbeat-indicator {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.heartbeat-indicator.idle {
+  background: #2d5a3d;
+  color: #4ecca3;
+}
+.heartbeat-indicator.active {
+  background: #1a3a5c;
+  color: #4fc3f7;
+}
+.heartbeat-indicator.overdue {
+  background: #5c4a1a;
+  color: #ffc857;
+}
+.heartbeat-indicator.recovering {
+  background: #5c3a1a;
+  color: #ff9800;
+}
+
+.pane-title {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  color: #e94560;
+}

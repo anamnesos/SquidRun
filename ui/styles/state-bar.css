@@ -1,0 +1,83 @@
+/* state-bar.css — State display, progress bar, agent activity badges */
+
+.state-bar {
+  background: #16213e;
+  padding: 6px 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid #0f3460;
+  font-size: 12px;
+}
+
+.state-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.state-label {
+  color: #888;
+}
+
+.state-value {
+  background: #e94560;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.state-value.idle { background: #555; }
+.state-value.planning { background: #ffc857; color: #1a1a2e; }
+.state-value.plan_review { background: #9b59b6; }
+.state-value.executing { background: #4ecca3; color: #1a1a2e; }
+.state-value.checkpoint { background: #00d9ff; color: #1a1a2e; }
+.state-value.complete { background: #4ecca3; color: #1a1a2e; }
+.state-value.error { background: #e94560; }
+
+.progress-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.progress-bar {
+  width: 100px;
+  height: 6px;
+  background: #0f3460;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #4ecca3;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  color: #888;
+  font-size: 11px;
+}
+
+/* Agent activity badges */
+.agent-badge {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: #555;
+}
+
+.agent-badge.active {
+  background: #4ecca3;
+  box-shadow: 0 0 6px #4ecca3;
+}
+
+.agent-badge.idle {
+  background: #555;
+}
