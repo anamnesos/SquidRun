@@ -9,6 +9,7 @@ const os = require('os');
 const fs = require('fs');
 const { getDaemonClient } = require('./daemon-client');
 const { WORKSPACE_PATH } = require('./config');
+const log = require('./modules/logger');
 
 // Import modules
 const triggers = require('./modules/triggers');
@@ -104,10 +105,10 @@ function ensureCodexConfig() {
     if (!sandboxRegex.test(content)) {
       const needsNewline = content.length > 0 && !content.endsWith('\n');
       content += (needsNewline ? '\n' : '') + 'sandbox_mode = "danger-full-access"\n';
-      console.log('[Codex] Added sandbox_mode = "danger-full-access"');
+      log.info('Codex', 'Added sandbox_mode = "danger-full-access"');
     } else {
       content = content.replace(sandboxLineRegex, '$1$2"danger-full-access"');
-      console.log('[Codex] Updated sandbox_mode to "danger-full-access"');
+      log.info('Codex', 'Updated sandbox_mode to "danger-full-access"');
     }
 
     // NOTE: approval_policy is NOT a valid config.toml key — use --full-auto CLI flag instead
@@ -115,7 +116,7 @@ function ensureCodexConfig() {
 
     fs.writeFileSync(configPath, content, 'utf-8');
   } catch (err) {
-    console.error('[Codex] Failed to ensure config.toml:', err.message);
+    log.error('Codex', 'Failed to ensure config.toml:', err.message);
   }
 }
 
@@ -191,9 +192,9 @@ function saveActivityLog() {
     const tempPath = ACTIVITY_FILE_PATH + '.tmp';
     fs.writeFileSync(tempPath, JSON.stringify(activityLog, null, 2), 'utf-8');
     fs.renameSync(tempPath, ACTIVITY_FILE_PATH);
-    console.log(`[Activity] Saved ${activityLog.length} entries`);
+    log.info('Activity', `Saved ${activityLog.length} entries`);
   } catch (err) {
-    console.error('[Activity] Error saving:', err.message);
+    log.error('Activity', 'Error saving', err.message);
   }
 }
 
@@ -203,10 +204,10 @@ function loadActivityLog() {
       const content = fs.readFileSync(ACTIVITY_FILE_PATH, 'utf-8');
       const loaded = JSON.parse(content);
       activityLog.push(...loaded.slice(-MAX_ACTIVITY_ENTRIES));
-      console.log(`[Activity] Loaded ${activityLog.length} entries`);
+      log.info('Activity', `Loaded ${activityLog.length} entries`);
     }
   } catch (err) {
-    console.error('[Activity] Error loading:', err.message);
+    log.error('Activity', 'Error loading', err.message);
   }
 }
 
@@ -218,7 +219,7 @@ function loadSettings() {
       Object.assign(currentSettings, DEFAULT_SETTINGS, JSON.parse(content));
     }
   } catch (err) {
-    console.error('Error loading settings:', err);
+    log.error('Settings', 'Error loading settings', err);
     Object.assign(currentSettings, DEFAULT_SETTINGS);
   }
   return currentSettings;
@@ -247,9 +248,9 @@ function writeAppStatus() {
     const tempPath = APP_STATUS_FILE_PATH + '.tmp';
     fs.writeFileSync(tempPath, JSON.stringify(status, null, 2), 'utf-8');
     fs.renameSync(tempPath, APP_STATUS_FILE_PATH);
-    console.log('[App Status] Written:', status.sdkMode ? 'SDK mode' : 'PTY mode');
+    log.info('App Status', `Written: ${status.sdkMode ? 'SDK mode' : 'PTY mode'}`);
   } catch (err) {
-    console.error('[App Status] Error writing:', err.message);
+    log.error('App Status', 'Error writing', err.message);
   }
 }
 
@@ -268,12 +269,12 @@ function saveSettings(settings) {
     // V2 SDK: Update triggers SDK mode when setting changes
     if (sdkModeChanged) {
       triggers.setSDKMode(currentSettings.sdkMode);
-      console.log(`[Settings] SDK mode ${currentSettings.sdkMode ? 'ENABLED' : 'DISABLED'}`);
+      log.info('Settings', `SDK mode ${currentSettings.sdkMode ? 'ENABLED' : 'DISABLED'}`);
       // Update app-status.json so agents know the new mode
       writeAppStatus();
     }
   } catch (err) {
-    console.error('Error saving settings:', err);
+    log.error('Settings', 'Error saving settings', err);
     const tempPath = SETTINGS_FILE_PATH + '.tmp';
     if (fs.existsSync(tempPath)) {
       try { fs.unlinkSync(tempPath); } catch (e) { /* ignore */ }
@@ -310,7 +311,7 @@ function loadUsageStats() {
       }
     }
   } catch (err) {
-    console.error('Error loading usage stats:', err);
+    log.error('Usage', 'Error loading usage stats', err);
   }
 }
 
@@ -320,7 +321,7 @@ function saveUsageStats() {
     fs.writeFileSync(tempPath, JSON.stringify(usageStats, null, 2), 'utf-8');
     fs.renameSync(tempPath, USAGE_FILE_PATH);
   } catch (err) {
-    console.error('Error saving usage stats:', err);
+    log.error('Usage', 'Error saving usage stats', err);
   }
 }
 
@@ -490,7 +491,7 @@ async function initDaemonClient() {
         claudeRunning.set(paneId, 'running');
         broadcastClaudeState();
         logActivity('state', paneId, 'Agent started', { status: 'running' });
-        console.log(`[Agent] Pane ${paneId} now running`);
+        log.info('Agent', `Pane ${paneId} now running`);
       }
     }
   });
@@ -506,19 +507,19 @@ async function initDaemonClient() {
   });
 
   daemonClient.on('spawned', (paneId, pid) => {
-    console.log(`[Daemon] Terminal spawned for pane ${paneId}, PID: ${pid}`);
+    log.info('Daemon', `Terminal spawned for pane ${paneId}, PID: ${pid}`);
     const command = getPaneCommandForIdentity(String(paneId));
     inferAndEmitCliIdentity(paneId, command);
   });
 
   daemonClient.on('connected', (terminals) => {
-    console.log(`[Daemon] Connected. Existing terminals:`, terminals.length);
+    log.info('Daemon', `Connected. Existing terminals: ${terminals.length}`);
 
     if (terminals && terminals.length > 0) {
       for (const term of terminals) {
         if (term.alive) {
           claudeRunning.set(String(term.paneId), 'running');
-          console.log(`[Daemon] Pane ${term.paneId} assumed running (reconnected)`);
+          log.info('Daemon', `Pane ${term.paneId} assumed running (reconnected)`);
           const command = getPaneCommandForIdentity(String(term.paneId));
           inferAndEmitCliIdentity(term.paneId, command);
         }
@@ -536,23 +537,23 @@ async function initDaemonClient() {
   });
 
   daemonClient.on('disconnected', () => {
-    console.log('[Daemon] Disconnected from daemon');
+    log.warn('Daemon', 'Disconnected from daemon');
   });
 
   daemonClient.on('reconnected', () => {
-    console.log('[Daemon] Reconnected to daemon');
+    log.info('Daemon', 'Reconnected to daemon');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('daemon-reconnected');
     }
   });
 
   daemonClient.on('error', (paneId, message) => {
-    console.error(`[Daemon] Error for pane ${paneId}:`, message);
+    log.error('Daemon', `Error for pane ${paneId}`, message);
   });
 
   // V17: Forward heartbeat state changes to renderer
   daemonClient.on('heartbeat-state-changed', (state, interval, timestamp) => {
-    console.log(`[Heartbeat] State changed: ${state} (${interval}ms)`);
+    log.info('Heartbeat', `State changed: ${state} (${interval}ms)`);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('heartbeat-state-changed', { state, interval });
     }
@@ -560,7 +561,7 @@ async function initDaemonClient() {
 
   // V13: Forward watchdog alerts to renderer
   daemonClient.on('watchdog-alert', (message, timestamp) => {
-    console.log(`[Watchdog] Alert: ${message}`);
+    log.warn('Watchdog', `Alert: ${message}`);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('watchdog-alert', { message, timestamp });
     }
@@ -568,7 +569,7 @@ async function initDaemonClient() {
 
   const connected = await daemonClient.connect();
   if (connected) {
-    console.log('[Main] Successfully connected to terminal daemon');
+    log.info('Main', 'Successfully connected to terminal daemon');
 
     // V4: Auto-unstick timer - check for stuck terminals every 30 seconds
     // V16 FIX: REMOVED ESC sending - PTY ESC kills/interrupts agents!
@@ -583,7 +584,7 @@ async function initDaemonClient() {
           if (status === 'running') {
             const lastActivity = daemonClient.getLastActivity(paneId);
             if (lastActivity && (now - lastActivity) > threshold) {
-              console.log(`[Auto-Unstick] Pane ${paneId} stuck for ${Math.round((now - lastActivity) / 1000)}s - user intervention needed`);
+              log.warn('Auto-Unstick', `Pane ${paneId} stuck for ${Math.round((now - lastActivity) / 1000)}s - user intervention needed`);
               // V16 FIX: DO NOT send ESC via PTY - it kills agents!
               // Just notify UI so user can manually press ESC
               if (mainWindow && !mainWindow.isDestroyed()) {
@@ -599,7 +600,7 @@ async function initDaemonClient() {
       }, 30000); // Check every 30 seconds
     }
   } else {
-    console.error('[Main] Failed to connect to terminal daemon');
+    log.error('Main', 'Failed to connect to terminal daemon');
   }
 
   return connected;
@@ -641,7 +642,7 @@ async function createWindow() {
   // Set initial SDK mode from settings
   if (currentSettings.sdkMode) {
     triggers.setSDKMode(true);
-    console.log('[Main] SDK mode enabled from settings');
+    log.info('Main', 'SDK mode enabled from settings');
   }
 
   // Initialize IPC handlers
@@ -727,16 +728,16 @@ app.on('window-all-closed', () => {
   watcher.stopMessageWatcher(); // V10 MQ4: Stop message queue watcher
 
   if (daemonClient) {
-    console.log('[Cleanup] Disconnecting from daemon (terminals will survive)');
+    log.info('Cleanup', 'Disconnecting from daemon (terminals will survive)');
     daemonClient.disconnect();
   }
 
   // V2 SDK: Stop SDK sessions and save session IDs for resume
   const sdkBridge = getSDKBridge();
   if (sdkBridge.isActive()) {
-    console.log('[Cleanup] Stopping SDK sessions and saving state');
+    log.info('Cleanup', 'Stopping SDK sessions and saving state');
     sdkBridge.stopSessions().catch(err => {
-      console.error('[Cleanup] SDK stop error:', err);
+      log.error('Cleanup', 'SDK stop error', err);
     });
   }
 
