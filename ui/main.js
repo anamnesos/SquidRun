@@ -43,6 +43,7 @@ const lastInterruptAt = new Map();
 
 // Register IPC forwarder once
 let cliIdentityForwarderRegistered = false;
+let triggerAckForwarderRegistered = false;
 
 // ============================================================
 // SETTINGS
@@ -462,6 +463,16 @@ function ensureCliIdentityForwarder() {
   });
 }
 
+function ensureTriggerDeliveryAckForwarder() {
+  if (triggerAckForwarderRegistered) return;
+  triggerAckForwarderRegistered = true;
+
+  ipcMain.on('trigger-delivery-ack', (event, data) => {
+    if (!data || !data.deliveryId) return;
+    triggers.handleDeliveryAck(data.deliveryId, data.paneId);
+  });
+}
+
 // ============================================================
 // DAEMON CLIENT INITIALIZATION
 // ============================================================
@@ -630,6 +641,7 @@ async function createWindow() {
 
   // Ensure pane-cli-identity forwarding is registered
   ensureCliIdentityForwarder();
+  ensureTriggerDeliveryAckForwarder();
 
   if (currentSettings.devTools) {
     mainWindow.webContents.openDevTools();
