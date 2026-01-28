@@ -585,8 +585,8 @@ function handleTriggerFile(filePath, filename) {
       return { success: false, reason: 'duplicate', seq: parsed.seq, sender: parsed.sender };
     }
 
-    // Record that we've seen this sequence
-    recordMessageSeen(parsed.sender, parsed.seq, recipientRole);
+    // NOTE: recordMessageSeen() moved to AFTER delivery (SDK/PTY paths below)
+    // This prevents marking messages as "seen" before they're actually sent
     log.info('Trigger', `Accepted: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
   }
 
@@ -629,6 +629,14 @@ function handleTriggerFile(filePath, filename) {
       });
     }
 
+    // Record message as seen AFTER successful SDK delivery
+    if (allSuccess && parsed.seq !== null && parsed.sender) {
+      recordMessageSeen(parsed.sender, parsed.seq, recipientRole);
+      log.info('Trigger', `Recorded seen after SDK delivery: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
+    } else if (!allSuccess && parsed.seq !== null && parsed.sender) {
+      log.warn('Trigger', `NOT recording seen (SDK delivery failed): ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
+    }
+
     logTriggerActivity('Trigger file (SDK)', targets, message, { file: filename, sender: parsed.sender, mode: 'sdk' });
     return { success: allSuccess, notified: targets, mode: 'sdk' };
   }
@@ -641,6 +649,14 @@ function handleTriggerFile(filePath, filename) {
   sendStaggered(targets, triggerMessage + '\r');
   if (filename === 'lead.txt') {
     log.info('Trigger:DEBUG', '[lead.txt] Sent via inject-message (PTY mode)');
+  }
+
+  // Record message as seen AFTER PTY IPC dispatch
+  // Note: PTY injection is async and may still fail in renderer, but at least
+  // we've dispatched the IPC event. This is better than recording before dispatch.
+  if (parsed.seq !== null && parsed.sender) {
+    recordMessageSeen(parsed.sender, parsed.seq, recipientRole);
+    log.info('Trigger', `Recorded seen after PTY dispatch: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
   }
 
   // Clear the trigger file after sending
