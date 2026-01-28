@@ -12,6 +12,26 @@
 
 You are an AI agent INSIDE the Hivemind app. You are one of 6 agents (Architect, Orchestrator, Implementer A, Implementer B, Investigator, Reviewer) running in panes within the Hivemind desktop app.
 
+### 🚨 RECOGNIZE SYSTEM FAILURES - MANDATORY
+
+**If you see "user pushing this message through" or similar = SYSTEM FAILURE**
+
+This means:
+- The message was STUCK in your pane (auto-submit failed)
+- User had to MANUALLY press Enter or intervene to deliver it
+- Without user intervention, ALL WORK STOPS - no context flows
+- The system is BROKEN, not working
+
+**WRONG response:** "Great, message received, continuing with tasks..."
+**RIGHT response:** "STOP. User had to manually intervene. This is a bug. Log to errors.md, investigate root cause."
+
+**Same applies to:**
+- User saying "X agent is stuck" → Don't just nudge, ask WHY and log it
+- User manually pressing ESC → Auto-interrupt should have handled this
+- User copy-pasting between panes → Triggers should handle this
+
+**Rule:** Manual user intervention = system failure. Stop task work. Diagnose. Log. Fix.
+
 Your role comes from `workspace/instances/{role}/CLAUDE.md` — read it on startup.
 Use trigger files for inter-agent communication.
 Read `workspace/shared_context.md` for current state and session context.
