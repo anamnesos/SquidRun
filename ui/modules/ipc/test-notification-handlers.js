@@ -16,7 +16,7 @@ function registerTestNotificationHandlers(ctx, deps = {}) {
     soundEnabled: false,
   };
 
-  ipcMain.handle('notify-test-failure', (event, results) => {
+  function notifyTestFailure(results) {
     if (!TEST_NOTIFICATION_SETTINGS.enabled) {
       return { success: true, notified: false, reason: 'Notifications disabled' };
     }
@@ -52,6 +52,10 @@ function registerTestNotificationHandlers(ctx, deps = {}) {
     console.log(`[Test Notification] ${title}`);
 
     return { success: true, notified: true, title, body };
+  }
+
+  ipcMain.handle('notify-test-failure', (event, results) => {
+    return notifyTestFailure(results);
   });
 
   ipcMain.handle('get-test-notification-settings', () => {
@@ -92,7 +96,7 @@ function registerTestNotificationHandlers(ctx, deps = {}) {
 
   ipcMain.on('test-run-complete', (event, results) => {
     if (results && results.failed > 0) {
-      ipcMain.emit('notify-test-failure', event, results);
+      notifyTestFailure(results);
     }
   });
 }

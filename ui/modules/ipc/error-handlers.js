@@ -48,23 +48,7 @@
     },
   };
 
-  ipcMain.handle('get-error-message', (event, errorCode) => {
-    const errorInfo = ERROR_MESSAGES[errorCode];
-    if (!errorInfo) {
-      return {
-        success: false,
-        error: 'Unknown error code',
-        fallback: {
-          title: 'Error',
-          message: `An error occurred: ${errorCode}`,
-          recovery: 'Check the console for more details.',
-        },
-      };
-    }
-    return { success: true, ...errorInfo };
-  });
-
-  ipcMain.handle('show-error-toast', (event, errorCode, additionalInfo = {}) => {
+  function showErrorToast(errorCode, additionalInfo = {}) {
     const errorInfo = ERROR_MESSAGES[errorCode] || {
       title: 'Error',
       message: additionalInfo.message || 'An unexpected error occurred.',
@@ -91,6 +75,26 @@
     console.error(`[Error] ${errorInfo.title}: ${errorInfo.message}`);
 
     return { success: true, shown: true };
+  }
+
+  ipcMain.handle('get-error-message', (event, errorCode) => {
+    const errorInfo = ERROR_MESSAGES[errorCode];
+    if (!errorInfo) {
+      return {
+        success: false,
+        error: 'Unknown error code',
+        fallback: {
+          title: 'Error',
+          message: `An error occurred: ${errorCode}`,
+          recovery: 'Check the console for more details.',
+        },
+      };
+    }
+    return { success: true, ...errorInfo };
+  });
+
+  ipcMain.handle('show-error-toast', (event, errorCode, additionalInfo = {}) => {
+    return showErrorToast(errorCode, additionalInfo);
   });
 
   ipcMain.handle('list-error-codes', () => {
@@ -119,7 +123,7 @@
       code = 'GIT_NOT_FOUND';
     }
 
-    ipcMain.emit('show-error-toast', event, code, { originalError: errorStr, ...context });
+    showErrorToast(code, { originalError: errorStr, ...context });
 
     return { success: true, code, handled: true };
   });

@@ -16,7 +16,7 @@ function registerLearningDataHandlers(ctx) {
 
   const DEFAULT_LEARNING = {
     taskTypes: {},
-    routingWeights: { '1': 1.0, '2': 1.0, '3': 1.0, '4': 1.0 },
+    routingWeights: { '1': 1.0, '2': 1.0, '3': 1.0, '4': 1.0, '5': 1.0, '6': 1.0 },
     totalDecisions: 0,
     lastUpdated: null,
   };

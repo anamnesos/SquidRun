@@ -458,7 +458,7 @@ function registerApiDocsHandlers(ctx) {
     },
   };
 
-  ipcMain.handle('generate-api-docs', () => {
+  function generateApiDocs() {
     const categories = {};
 
     // Group by category
@@ -520,6 +520,10 @@ function registerApiDocsHandlers(ctx) {
       handlerCount: Object.keys(IPC_HANDLER_DOCS).length,
       categoryCount: Object.keys(categories).length,
     };
+  }
+
+  ipcMain.handle('generate-api-docs', () => {
+    return generateApiDocs();
   });
 
   ipcMain.handle('get-api-docs', () => {
@@ -530,7 +534,7 @@ function registerApiDocsHandlers(ctx) {
       }
 
       // Generate if doesn't exist
-      const result = ipcMain._events['generate-api-docs']?.[0]?.();
+      const result = generateApiDocs();
       if (result?.success) {
         const content = fs.readFileSync(API_DOCS_PATH, 'utf-8');
         return { success: true, content, path: API_DOCS_PATH };
