@@ -8,14 +8,20 @@ const { FitAddon } = require('xterm-addon-fit');
 const { WebLinksAddon } = require('xterm-addon-web-links');
 
 // Pane configuration
-const PANE_IDS = ['1', '2', '3', '4'];
+const PANE_IDS = ['1', '2', '3', '4', '5', '6'];
+
+// CLI identity tracking (dynamic)
+// Updated by renderer's pane-cli-identity handler (calls register/unregister)
+const paneCliIdentity = new Map();
 
 // ID-1: Pane roles for identity injection (makes /resume sessions identifiable)
 const PANE_ROLES = {
-  '1': 'Lead',
-  '2': 'Worker A',
-  '3': 'Worker B',
-  '4': 'Reviewer',
+  '1': 'Architect',
+  '2': 'Orchestrator',
+  '3': 'Implementer A',
+  '4': 'Implementer B',
+  '5': 'Investigator',
+  '6': 'Reviewer',
 };
 
 // Track if we reconnected to existing terminals
@@ -41,9 +47,16 @@ const lastTypedTime = {};
 // Track last output time per pane - updated on every pty.onData
 const lastOutputTime = {};
 
+// Codex exec mode: track identity injection per pane
+const codexIdentityInjected = new Set();
+
 // V16.2: Message queue for when pane is busy
 // Format: { paneId: [{ message, timestamp }, ...] }
 const messageQueue = {};
+
+// BUG-4: Global UI focus tracker - survives staggered multi-pane sends.
+// Updated by focusin listener on UI inputs; doSendToPane restores to this.
+let lastUserUIFocus = null;
 
 // V16.2: Idle detection constants
 // V16.4: Bumped from 500ms to 2000ms - Claude may need more time after output stops
@@ -81,6 +94,20 @@ const TERMINAL_OPTIONS = {
   allowProposedApi: true,
 };
 
+// BUG-4: Track when user focuses any UI input (not xterm textareas).
+// Call once from renderer.js after DOMContentLoaded.
+function initUIFocusTracker() {
+  document.addEventListener('focusin', (e) => {
+    const el = e.target;
+    const tag = el?.tagName?.toUpperCase();
+    const isUI = (tag === 'INPUT' || tag === 'TEXTAREA') &&
+      !el.classList.contains('xterm-helper-textarea');
+    if (isUI) {
+      lastUserUIFocus = el;
+    }
+  });
+}
+
 // Status update callbacks
 let onStatusUpdate = null;
 let onConnectionStatusUpdate = null;
@@ -100,6 +127,67 @@ function updateConnectionStatus(status) {
   if (onConnectionStatusUpdate) {
     onConnectionStatusUpdate(status);
   }
+}
+
+function normalizeCliKey(identity) {
+  if (!identity) return '';
+  const parts = [];
+  if (identity.provider) parts.push(String(identity.provider));
+  if (identity.label) parts.push(String(identity.label));
+  return parts.join(' ').toLowerCase();
+}
+
+function registerPaneCliIdentity(paneId, identity) {
+  if (!paneId) return;
+  const id = String(paneId);
+  const key = normalizeCliKey(identity);
+  paneCliIdentity.set(id, {
+    provider: identity?.provider,
+    label: identity?.label,
+    version: identity?.version,
+    key,
+  });
+}
+
+function isCodexFromSettings(paneId) {
+  try {
+    const settings = window?.hivemind?.settings?.get?.();
+    const paneCommands = settings?.paneCommands || {};
+    const cmd = paneCommands[String(paneId)] || '';
+    return typeof cmd === 'string' && cmd.toLowerCase().includes('codex');
+  } catch {
+    return false;
+  }
+}
+
+function isCodexPane(paneId) {
+  const entry = paneCliIdentity.get(String(paneId));
+  if (entry?.key) {
+    return entry.key.includes('codex');
+  }
+  return isCodexFromSettings(paneId);
+}
+
+// Renderer calls these based on pane-cli-identity IPC
+function registerCodexPane(paneId) {
+  registerPaneCliIdentity(paneId, { provider: 'codex', label: 'Codex' });
+}
+
+function unregisterCodexPane(paneId) {
+  registerPaneCliIdentity(paneId, { provider: 'unknown', label: 'Unknown' });
+}
+
+function buildCodexExecPrompt(paneId, text) {
+  const safeText = typeof text === 'string' ? text : '';
+  if (codexIdentityInjected.has(paneId)) {
+    return safeText;
+  }
+
+  const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
+  const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const identity = `# HIVEMIND SESSION: ${role} - Started ${timestamp}\n`;
+  codexIdentityInjected.add(paneId);
+  return identity + safeText;
 }
 
 // V16.2: Check if a pane is idle (no output for IDLE_THRESHOLD_MS)
@@ -221,10 +309,9 @@ async function initTerminal(paneId) {
     }
 
     // V16.10: Allow synthetic Enter if it's from our programmatic send
-    // Check for our marker on the event
+    // Check for our marker on the event or terminal-level bypass flag
     if (event.key === 'Enter' && !event.isTrusted) {
-      if (event._hivemindBypass) {
-        // Our programmatic send, allow it
+      if (event._hivemindBypass || terminal._hivemindBypass) {
         console.log(`[Terminal ${paneId}] Allowing programmatic Enter (hivemind bypass)`);
         return true;
       }
@@ -251,14 +338,24 @@ async function initTerminal(paneId) {
     await window.hivemind.pty.create(paneId, process.cwd());
     updatePaneStatus(paneId, 'Connected');
 
-    terminal.onData((data) => {
-      window.hivemind.pty.write(paneId, data);
-    });
+    if (!isCodexPane(paneId)) {
+      terminal.onData((data) => {
+        window.hivemind.pty.write(paneId, data);
+      });
+    }
 
     window.hivemind.pty.onData(paneId, (data) => {
       terminal.write(data);
       // V16.2: Track output time for idle detection
       lastOutputTime[paneId] = Date.now();
+      if (isCodexPane(paneId)) {
+        if (data.includes('[Working...]')) {
+          updatePaneStatus(paneId, 'Working');
+        }
+        if (data.includes('[Task complete]') || data.includes('[Codex exec exited')) {
+          updatePaneStatus(paneId, 'Codex exec ready');
+        }
+      }
     });
 
     window.hivemind.pty.onExit(paneId, (code) => {
@@ -307,7 +404,7 @@ async function reattachTerminal(paneId, scrollback) {
 
     // V16.10: Allow synthetic Enter if it's from our programmatic send
     if (event.key === 'Enter' && !event.isTrusted) {
-      if (event._hivemindBypass) {
+      if (event._hivemindBypass || terminal._hivemindBypass) {
         console.log(`[Terminal ${paneId}] Allowing programmatic Enter (hivemind bypass)`);
         return true;
       }
@@ -334,14 +431,24 @@ async function reattachTerminal(paneId, scrollback) {
     terminal.write(scrollback);
   }
 
-  terminal.onData((data) => {
-    window.hivemind.pty.write(paneId, data);
-  });
+  if (!isCodexPane(paneId)) {
+    terminal.onData((data) => {
+      window.hivemind.pty.write(paneId, data);
+    });
+  }
 
   window.hivemind.pty.onData(paneId, (data) => {
     terminal.write(data);
     // V16.2: Track output time for idle detection
     lastOutputTime[paneId] = Date.now();
+    if (isCodexPane(paneId)) {
+      if (data.includes('[Working...]')) {
+        updatePaneStatus(paneId, 'Working');
+      }
+      if (data.includes('[Task complete]') || data.includes('[Codex exec exited')) {
+        updatePaneStatus(paneId, 'Codex exec ready');
+      }
+    }
   });
 
   window.hivemind.pty.onExit(paneId, (code) => {
@@ -392,12 +499,32 @@ function doSendToPane(paneId, message) {
   const hasTrailingEnter = message.endsWith('\r');
   const text = message.replace(/\r$/, '');
   const id = String(paneId);
+  const isCodex = isCodexPane(id);
 
-  // FIX: Save current focus to restore after injection
-  const previousFocus = document.activeElement;
-  const wasInUIInput = previousFocus &&
-    (previousFocus.tagName === 'INPUT' || previousFocus.tagName === 'TEXTAREA') &&
-    !previousFocus.classList.contains('xterm-helper-textarea');
+  // Codex exec mode: bypass PTY/textarea injection
+  if (isCodex) {
+    const restoreTarget = lastUserUIFocus;
+    const prompt = buildCodexExecPrompt(id, text);
+    // Echo user input to xterm so it's visible
+    const terminal = terminals.get(id);
+    if (terminal) {
+      terminal.write(`\r\n\x1b[36m> ${text}\x1b[0m\r\n`);
+    }
+    window.hivemind.pty.codexExec(id, prompt);
+    updatePaneStatus(id, 'Working');
+    lastTypedTime[paneId] = Date.now();
+    lastOutputTime[paneId] = Date.now();
+    // Restore focus to non-xterm UI element if it was stolen
+    if (restoreTarget) {
+      setTimeout(() => restoreTarget.focus(), 50);
+    }
+    return;
+  }
+
+  // BUG-4 FIX: Use global lastUserUIFocus instead of per-call snapshot.
+  // Per-call previousFocus breaks under staggered multi-pane sends because
+  // the second call sees the first call's xterm textarea as activeElement.
+  const restoreTarget = lastUserUIFocus;
 
   // Find xterm's hidden textarea for this pane
   const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
@@ -406,115 +533,118 @@ function doSendToPane(paneId, message) {
   // V16.11: Diagnostic logging
   console.log(`[doSendToPane ${id}] paneEl found:`, !!paneEl);
   console.log(`[doSendToPane ${id}] textarea found:`, !!textarea);
-  if (wasInUIInput) {
-    console.log(`[doSendToPane ${id}] User was in UI input:`, previousFocus.id || previousFocus.className);
+  if (restoreTarget) {
+    console.log(`[doSendToPane ${id}] Will restore focus to:`, restoreTarget.id || restoreTarget.className);
   }
 
   if (textarea) {
     // Focus the textarea (needed for keyboard events to work)
     textarea.focus();
 
-    // V16.11: Check focus state
-    const activeAfterFocus = document.activeElement;
-    const focusSucceeded = activeAfterFocus === textarea;
+    const focusSucceeded = document.activeElement === textarea;
     console.log(`[doSendToPane ${id}] focus succeeded:`, focusSucceeded);
-    if (!focusSucceeded) {
-      console.warn(`[doSendToPane ${id}] Focus went to:`, activeAfterFocus?.className || activeAfterFocus?.tagName);
+
+    if (isCodex && hasTrailingEnter) {
+      // CODEX PATH: Single pty.write with text + newline.
+      // Codex TUI ignores synthetic Enter, sendInputEvent Enter, and clipboard paste.
+      // Writing the full payload including \n in one PTY call lets the underlying
+      // readline/ink renderer receive it as a complete line.
+      window.hivemind.pty.write(id, text + '\n');
+      console.log(`[doSendToPane ${id}] Codex pane: single pty.write with trailing \\n`);
+
+      if (restoreTarget) {
+        setTimeout(() => {
+          restoreTarget.focus();
+          console.log(`[doSendToPane ${id}] Restored focus to:`, restoreTarget.id || restoreTarget.className);
+        }, 50);
+      }
+    } else {
+      // CLAUDE PATH (or no trailing Enter): two-step write then Enter
+      window.hivemind.pty.write(id, text);
     }
 
-    // Send text via PTY (this part works)
-    window.hivemind.pty.write(id, text);
-
-    if (hasTrailingEnter) {
-      // Send carriage return directly to PTY (keyboard events don't reach daemon)
+    if (hasTrailingEnter && !isCodex) {
       setTimeout(() => {
+        const term = terminals.get(id);
+        if (term) term._hivemindBypass = true;
+
         window.hivemind.pty.write(id, '\r');
-        // V16.11: Re-check focus before dispatching
-        const stillFocused = document.activeElement === textarea;
-        console.log(`[doSendToPane ${id}] still focused before Enter:`, stillFocused);
 
-        if (!stillFocused) {
-          // Try to re-focus
+        // CLAUDE PATH: Trusted Enter via sendInputEvent (works for Claude CLI)
+        if (document.activeElement !== textarea) {
           textarea.focus();
-          console.log(`[doSendToPane ${id}] re-focused, now:`, document.activeElement === textarea);
         }
+        window.hivemind.pty.sendTrustedEnter();
+        console.log(`[doSendToPane ${id}] Claude pane: trusted Enter dispatched`);
 
-        // FX4-v7: Dispatch ESC first to dismiss any Claude Code ghost text/autocomplete
-        // that may have appeared during the 50ms delay, then wait before Enter
-        const escEvent = new KeyboardEvent('keydown', {
-          key: 'Escape',
-          code: 'Escape',
-          keyCode: 27,
-          which: 27,
-          bubbles: true,
-          cancelable: true
-        });
-        escEvent._hivemindBypass = true;
-        textarea.dispatchEvent(escEvent);
-        console.log(`[doSendToPane ${id}] ESC dispatched to dismiss ghost text`);
+        if (term) term._hivemindBypass = false;
 
-        // FX4-v7: Add 20ms delay after ESC for state to settle, then re-focus and send Enter
-        setTimeout(() => {
-          // Re-focus textarea after ESC (ESC may have changed focus)
-          textarea.focus();
-          console.log(`[doSendToPane ${id}] Re-focused after ESC delay`);
-
-          const enterEvent = new KeyboardEvent('keydown', {
-            key: 'Enter',
-            code: 'Enter',
-            keyCode: 13,
-            which: 13,
-            bubbles: true,
-            cancelable: true
-          });
-          // Add our bypass marker so the key handler allows it
-          enterEvent._hivemindBypass = true;
-          textarea.dispatchEvent(enterEvent);
-          console.log(`[doSendToPane ${id}] Enter keydown dispatched`);
-
-          // Also keypress with bypass
-          const keypressEvent = new KeyboardEvent('keypress', {
-            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-          });
-          keypressEvent._hivemindBypass = true;
-          textarea.dispatchEvent(keypressEvent);
-
-          // And keyup
-          const keyupEvent = new KeyboardEvent('keyup', {
-            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-          });
-          keyupEvent._hivemindBypass = true;
-          textarea.dispatchEvent(keyupEvent);
-
-          // FIX: Restore user's focus after message injection
-          if (wasInUIInput && previousFocus) {
-            setTimeout(() => {
-              previousFocus.focus();
-              console.log(`[doSendToPane ${id}] Restored focus to:`, previousFocus.id || previousFocus.className);
-            }, 10);
-          }
-        }, 20); // FX4-v7: 20ms delay after ESC before Enter
+        if (restoreTarget) {
+          setTimeout(() => {
+            restoreTarget.focus();
+            console.log(`[doSendToPane ${id}] Restored focus to:`, restoreTarget.id || restoreTarget.className);
+          }, 10);
+        }
       }, 50);
-    } else {
-      // No trailing Enter - restore focus immediately
-      if (wasInUIInput && previousFocus) {
-        setTimeout(() => {
-          previousFocus.focus();
-          console.log(`[doSendToPane ${id}] Restored focus to:`, previousFocus.id || previousFocus.className);
-        }, 10);
+    } else if (!isCodex) {
+      // No trailing Enter and not Codex - restore focus immediately
+      if (restoreTarget) {
+        setTimeout(() => restoreTarget.focus(), 10);
       }
     }
   } else {
-    // Fallback to direct PTY write
-    console.warn(`[doSendToPane ${id}] No textarea found, using PTY fallback`);
-    window.hivemind.pty.write(id, hasTrailingEnter ? text + '\r' : text);
+    // BUG-1 FIX: Retry finding textarea before falling back to unreliable PTY write.
+    // Codex CLI textareas may not be in DOM yet if pane is still initializing.
+    console.warn(`[doSendToPane ${id}] No textarea found, retrying...`);
+    let retryCount = 0;
+    const maxRetries = 5;
+    const retryDelayMs = 100;
 
-    // FIX: Restore focus even in fallback case
-    if (wasInUIInput && previousFocus) {
-      setTimeout(() => {
-        previousFocus.focus();
-      }, 10);
-    }
+    const retryFindTextarea = () => {
+      retryCount++;
+      const retryPaneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
+      const retryTextarea = retryPaneEl?.querySelector('.xterm-helper-textarea');
+
+      if (retryTextarea) {
+        console.log(`[doSendToPane ${id}] Textarea found on retry ${retryCount}`);
+        retryTextarea.focus();
+
+        if (isCodexPane(id) && hasTrailingEnter) {
+          // Codex: single pty.write with text + newline
+          window.hivemind.pty.write(id, text + '\n');
+          console.log(`[doSendToPane ${id}] Codex retry: single pty.write with trailing \\n`);
+          if (restoreTarget) {
+            setTimeout(() => restoreTarget.focus(), 50);
+          }
+        } else {
+          window.hivemind.pty.write(id, text);
+          if (hasTrailingEnter) {
+            setTimeout(() => {
+              window.hivemind.pty.write(id, '\r');
+              retryTextarea.focus();
+              window.hivemind.pty.sendTrustedEnter();
+              if (restoreTarget) {
+                setTimeout(() => restoreTarget.focus(), 10);
+              }
+            }, 50);
+          } else if (restoreTarget) {
+            setTimeout(() => restoreTarget.focus(), 10);
+          }
+        }
+      } else if (retryCount < maxRetries) {
+        setTimeout(retryFindTextarea, retryDelayMs);
+      } else {
+        // Final fallback after all retries exhausted
+        console.warn(`[doSendToPane ${id}] Textarea not found after ${maxRetries} retries, using PTY fallback`);
+        window.hivemind.pty.write(id, hasTrailingEnter ? text + '\r' : text);
+
+        if (restoreTarget) {
+          setTimeout(() => restoreTarget.focus(), 10);
+        }
+      }
+    };
+
+    setTimeout(retryFindTextarea, retryDelayMs);
   }
 
   lastTypedTime[paneId] = Date.now();
@@ -549,11 +679,11 @@ function sendToPane(paneId, message) {
   }
 }
 
-// Send message to Lead only (user interacts with Lead, Lead coordinates workers)
+// Send message to Architect only (user interacts with Architect, Architect coordinates execution)
 function broadcast(message) {
-  // Send directly to Lead (pane 1), no broadcast prefix needed
+  // Send directly to Architect (pane 1), no broadcast prefix needed
   sendToPane('1', message);
-  updateConnectionStatus('Message sent to Lead');
+  updateConnectionStatus('Message sent to Architect');
 }
 
 // Set SDK mode - blocks PTY spawn operations when enabled
@@ -578,9 +708,23 @@ async function spawnClaude(paneId) {
     return;
   }
 
+  // Codex exec mode: no interactive CLI spawn — send identity prompt to kick off agent
+  if (isCodexPane(String(paneId))) {
+    updatePaneStatus(paneId, 'Codex exec ready');
+    // Auto-send identity message to start the Codex agent (mirrors Claude identity injection at line 716)
+    setTimeout(() => {
+      const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
+      const timestamp = new Date().toISOString().split('T')[0];
+      const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
+      sendToPane(paneId, identityMsg + '\r');
+      console.log(`[spawnClaude] Codex exec identity sent for ${role} (pane ${paneId})`);
+    }, 2000);
+    return;
+  }
+
   const terminal = terminals.get(paneId);
   if (terminal) {
-    updatePaneStatus(paneId, 'Starting Claude...');
+    updatePaneStatus(paneId, 'Starting agent...');
     const result = await window.hivemind.claude.spawn(paneId);
     if (result.success && result.command) {
       // Use pty.write directly instead of terminal.paste for reliability
@@ -592,30 +736,43 @@ async function spawnClaude(paneId) {
       await new Promise(resolve => setTimeout(resolve, 100));
       window.hivemind.pty.write(String(paneId), '\r');
 
-      // ID-1: Inject identity message after Claude initializes (4s delay)
+      // Codex CLI needs an extra Enter after startup to dismiss its welcome prompt
+      // Claude Code CLI doesn't need this - it's ready immediately
+      // NOTE: Codex sandbox_mode should be pre-configured via ~/.codex/config.toml
+      // (sandbox_mode = "workspace-write") to skip the first-run sandbox prompt.
+      // This PTY \r is a fallback to dismiss any residual prompt if config is missing.
+      const isCodex = result.command.startsWith('codex');
+      if (isCodex) {
+        setTimeout(() => {
+          window.hivemind.pty.write(String(paneId), '\r');
+          console.log(`[spawnClaude] Codex pane ${paneId}: PTY \\r to dismiss any startup prompt`);
+        }, 3000);
+      }
+
+      // ID-1: Inject identity message after CLI initializes
       // Uses sendToPane() which properly submits via keyboard events
       // This makes sessions identifiable in /resume list
       setTimeout(() => {
         const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
         const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-        const identityMsg = `[HIVEMIND SESSION: ${role}] Started ${timestamp}`;
+        const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
         sendToPane(paneId, identityMsg + '\r');
         console.log(`[spawnClaude] Identity injected for ${role} (pane ${paneId})`);
-      }, 4000);
+      }, isCodex ? 5000 : 4000);
     }
-    updatePaneStatus(paneId, 'Claude running');
+    updatePaneStatus(paneId, 'Agent running');
   }
 }
 
 // Spawn claude in all panes
 async function spawnAllClaude() {
-  updateConnectionStatus('Starting Claude in all panes...');
+  updateConnectionStatus('Starting agents in all panes...');
   for (const paneId of PANE_IDS) {
     await spawnClaude(paneId);
     // Small delay between panes to prevent race conditions
     await new Promise(resolve => setTimeout(resolve, 200));
   }
-  updateConnectionStatus('All Claude instances running');
+  updateConnectionStatus('All agents running');
 }
 
 // Kill all terminals
@@ -694,10 +851,32 @@ function aggressiveNudge(paneId) {
   // First send ESC to interrupt any stuck state
   sendUnstick(id);
 
-  // Then send Enter after a brief delay to prompt for input
+  // BUG-2 FIX: Use keyboard Enter dispatch instead of unreliable pty.write('\r')
+  // PTY carriage return doesn't reliably submit in Codex CLI textareas
   setTimeout(() => {
     lastTypedTime[id] = Date.now();
-    window.hivemind.pty.write(id, '\r');
+
+    const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
+    const textarea = paneEl?.querySelector('.xterm-helper-textarea');
+
+    if (textarea) {
+      textarea.focus();
+      window.hivemind.pty.write(id, '\r');
+
+      if (isCodexPane(id)) {
+        // Codex: PTY newline to submit (clipboard paste broken - Codex treats as image paste)
+        window.hivemind.pty.write(id, '\r');
+        console.log(`[Terminal ${id}] Aggressive nudge: PTY carriage return (Codex)`);
+      } else {
+        window.hivemind.pty.sendTrustedEnter();
+        console.log(`[Terminal ${id}] Aggressive nudge: trusted Enter dispatched (Claude)`);
+      }
+    } else {
+      // Fallback if textarea truly missing
+      console.warn(`[Terminal ${id}] Aggressive nudge: no textarea, PTY fallback`);
+      window.hivemind.pty.write(id, '\r');
+    }
+
     updatePaneStatus(id, 'Nudged (aggressive)');
     setTimeout(() => updatePaneStatus(id, 'Running'), 1000);
   }, 150); // 150ms delay between ESC and Enter
@@ -730,14 +909,14 @@ async function freshStartAll() {
   // SDK Mode Guard: Don't allow fresh start in SDK mode
   if (sdkModeActive) {
     console.log('[freshStartAll] SDK mode active - blocking PTY fresh start');
-    alert('Fresh Start is not available in SDK mode.\nSDK manages Claude sessions differently.');
+    alert('Fresh Start is not available in SDK mode.\nSDK manages agent sessions differently.');
     return;
   }
 
   const confirmed = confirm(
     'Fresh Start will:\n\n' +
-    '• Kill all 4 terminals\n' +
-    '• Start new Claude sessions with NO previous context\n\n' +
+    '• Kill all 6 terminals\n' +
+    '• Start new agent sessions with NO previous context\n\n' +
     'All current conversations will be lost.\n\n' +
     'Continue?'
   );
@@ -781,13 +960,9 @@ async function freshStartAll() {
   // Wait for terminals to be ready
   await new Promise(resolve => setTimeout(resolve, 300));
 
-  // Spawn Claude with fresh session flag
+  // Spawn agents with fresh sessions
   for (const paneId of PANE_IDS) {
-    const terminal = terminals.get(paneId);
-    if (terminal) {
-      // Start Claude with explicit instruction to not resume
-      sendToPane(paneId, 'claude --dangerously-skip-permissions');
-    }
+    await spawnClaude(paneId);
   }
 
   updateConnectionStatus('Fresh start complete - new sessions started');
@@ -859,6 +1034,7 @@ module.exports = {
   fitAddons,
   setStatusCallbacks,
   setSDKMode,           // SDK mode guard for PTY operations
+  initUIFocusTracker,   // BUG-4: Global UI focus tracking for multi-pane restore
   initTerminals,
   initTerminal,
   reattachTerminal,
@@ -887,5 +1063,8 @@ module.exports = {
   lastTypedTime,  // FX4-v3: Track typing for Enter blocking
   lastOutputTime, // V16.2: Track output for idle detection
   isIdle,         // V16.2: Check if pane is idle
+  registerCodexPane,   // CLI Identity: mark pane as Codex
+  unregisterCodexPane, // CLI Identity: unmark pane as Codex
+  isCodexPane,         // CLI Identity: query Codex status
   messageQueue,   // V16.2: Message queue for busy panes
 };
