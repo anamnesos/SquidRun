@@ -8,6 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { TRIGGER_TARGETS, WORKSPACE_PATH, PANE_IDS } = require('../config');
 const log = require('./logger');
 
@@ -26,6 +27,8 @@ let sdkModeEnabled = false;
 // ============================================================
 
 const MESSAGE_STATE_PATH = path.join(WORKSPACE_PATH, 'message-state.json');
+const DELIVERY_ACK_TIMEOUT_MS = 30000;
+const pendingDeliveries = new Map();
 
 // In-memory sequence tracking (loaded from file on init)
 let messageState = {
@@ -148,6 +151,54 @@ function recordMessageSeen(sender, seq, recipient) {
     messageState.sequences[recipient].lastSeen[sender] = seq;
     saveMessageState();
   }
+}
+
+function createDeliveryId(sender, seq, recipient) {
+  if (crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  const safeSender = sender || 'unknown';
+  const safeSeq = Number.isInteger(seq) ? String(seq) : 'na';
+  const safeRecipient = recipient || 'unknown';
+  return `${safeSender}-${safeSeq}-${safeRecipient}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function startDeliveryTracking(deliveryId, sender, seq, recipient, targets) {
+  if (!deliveryId) return;
+  const expected = new Set((targets || []).map(paneId => String(paneId)));
+  const pending = {
+    sender,
+    seq,
+    recipient,
+    expected,
+    received: new Set(),
+    timeoutId: null,
+  };
+
+  pending.timeoutId = setTimeout(() => {
+    pendingDeliveries.delete(deliveryId);
+    log.warn('Trigger', `Delivery timeout for ${sender} #${seq} -> ${recipient} (received ${pending.received.size}/${pending.expected.size})`);
+  }, DELIVERY_ACK_TIMEOUT_MS);
+
+  pendingDeliveries.set(deliveryId, pending);
+}
+
+function handleDeliveryAck(deliveryId, paneId) {
+  if (!deliveryId) return;
+  const pending = pendingDeliveries.get(deliveryId);
+  if (!pending) return;
+
+  const paneKey = String(paneId);
+  pending.received.add(paneKey);
+
+  if (pending.received.size < pending.expected.size) {
+    return;
+  }
+
+  clearTimeout(pending.timeoutId);
+  pendingDeliveries.delete(deliveryId);
+  recordMessageSeen(pending.sender, pending.seq, pending.recipient);
+  log.info('Trigger', `Recorded delivery: ${pending.sender} #${pending.seq} -> ${pending.recipient}`);
 }
 
 /**
@@ -453,7 +504,7 @@ function notifyAllAgentsSync(triggerFile) {
  * @param {string[]} panes - Target pane IDs
  * @param {string} message - Message to send
  */
-function sendStaggered(panes, message) {
+function sendStaggered(panes, message, meta = {}) {
   // Route through SDK if enabled
   if (isSDKModeEnabled()) {
     log.info('Stagger', `Sending to ${panes.length} panes via SDK`);
@@ -481,9 +532,13 @@ function sendStaggered(panes, message) {
   // Legacy PTY mode
   if (!mainWindow || mainWindow.isDestroyed()) return;
 
+  const deliveryId = meta && meta.deliveryId ? meta.deliveryId : null;
+
   // Single pane - no stagger needed
   if (panes.length === 1) {
-    mainWindow.webContents.send('inject-message', { panes, message });
+    const payload = { panes, message };
+    if (deliveryId) payload.deliveryId = deliveryId;
+    mainWindow.webContents.send('inject-message', payload);
     return;
   }
 
@@ -493,7 +548,9 @@ function sendStaggered(panes, message) {
     const delay = index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS;
     setTimeout(() => {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('inject-message', { panes: [paneId], message });
+        const payload = { panes: [paneId], message };
+        if (deliveryId) payload.deliveryId = deliveryId;
+        mainWindow.webContents.send('inject-message', payload);
       }
     }, delay);
   });
@@ -570,11 +627,12 @@ function handleTriggerFile(filePath, filename) {
   // MESSAGE SEQUENCING: Parse and check for duplicates
   const parsed = parseMessageSequence(message);
   const recipientRole = filename.replace('.txt', '').toLowerCase();
+  const hasSequence = parsed.seq !== null && parsed.sender;
   if (filename === 'lead.txt') {
     log.info('Trigger:DEBUG', `[lead.txt] Parsed sender=${parsed.sender || 'n/a'} seq=${parsed.seq ?? 'n/a'}`);
   }
 
-  if (parsed.seq !== null && parsed.sender) {
+  if (hasSequence) {
     // Check for duplicate
     if (isDuplicateMessage(parsed.sender, parsed.seq, recipientRole)) {
       log.info('Trigger', `SKIPPED duplicate: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
@@ -630,10 +688,10 @@ function handleTriggerFile(filePath, filename) {
     }
 
     // Record message as seen AFTER successful SDK delivery
-    if (allSuccess && parsed.seq !== null && parsed.sender) {
+    if (allSuccess && hasSequence) {
       recordMessageSeen(parsed.sender, parsed.seq, recipientRole);
       log.info('Trigger', `Recorded seen after SDK delivery: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
-    } else if (!allSuccess && parsed.seq !== null && parsed.sender) {
+    } else if (!allSuccess && hasSequence) {
       log.warn('Trigger', `NOT recording seen (SDK delivery failed): ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
     }
 
@@ -646,18 +704,16 @@ function handleTriggerFile(filePath, filename) {
     log.info('Trigger:DEBUG', `[lead.txt] Targets: ${targets.join(', ')}, SDK mode: ${isSDKModeEnabled()}`);
   }
   const triggerMessage = formatTriggerMessage(message);
-  sendStaggered(targets, triggerMessage + '\r');
+  let deliveryId = null;
+  if (hasSequence) {
+    deliveryId = createDeliveryId(parsed.sender, parsed.seq, recipientRole);
+    startDeliveryTracking(deliveryId, parsed.sender, parsed.seq, recipientRole, targets);
+  }
+  sendStaggered(targets, triggerMessage + '\r', { deliveryId });
   if (filename === 'lead.txt') {
     log.info('Trigger:DEBUG', '[lead.txt] Sent via inject-message (PTY mode)');
   }
-
-  // Record message as seen AFTER PTY IPC dispatch
-  // Note: PTY injection is async and may still fail in renderer, but at least
-  // we've dispatched the IPC event. This is better than recording before dispatch.
-  if (parsed.seq !== null && parsed.sender) {
-    recordMessageSeen(parsed.sender, parsed.seq, recipientRole);
-    log.info('Trigger', `Recorded seen after PTY dispatch: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
-  }
+  // Sequence is recorded after renderer confirms delivery (trigger-delivery-ack)
 
   // Clear the trigger file after sending
   try {
@@ -667,7 +723,7 @@ function handleTriggerFile(filePath, filename) {
   }
 
   logTriggerActivity('Trigger file (PTY)', targets, message, { file: filename, sender: parsed.sender, mode: 'pty' });
-  return { success: true, notified: targets, mode: 'pty' };
+  return { success: true, notified: targets, mode: 'pty', deliveryId };
 }
 
 /**
@@ -1016,4 +1072,5 @@ module.exports = {
   recordMessageSeen,
   getNextSequence,
   getSequenceState,
+  handleDeliveryAck,
 };

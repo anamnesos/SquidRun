@@ -295,9 +295,11 @@ function processQueue(paneId) {
 
   const now = Date.now();
   const item = queue[0];
+  const queuedMessage = typeof item === 'string' ? item : item.message;
+  const onComplete = item && typeof item === 'object' ? item.onComplete : null;
 
   // Check if we should send (idle + not typing, OR timeout exceeded)
-  const waitedTooLong = (now - item.timestamp) >= MAX_QUEUE_TIME_MS;
+  const waitedTooLong = (now - (item.timestamp || now)) >= MAX_QUEUE_TIME_MS;
 
   if ((isIdle(paneId) && !userIsTyping()) || waitedTooLong) {
     // Remove from queue and send
@@ -306,8 +308,15 @@ function processQueue(paneId) {
       log.info(`Terminal ${paneId}`, `Force-injecting after ${MAX_QUEUE_TIME_MS}ms wait`);
     }
     injectionInFlight = true;
-    doSendToPane(paneId, item.message, () => {
+    doSendToPane(paneId, queuedMessage, (result) => {
       injectionInFlight = false;
+      if (typeof onComplete === 'function') {
+        try {
+          onComplete(result);
+        } catch (err) {
+          log.error('Terminal', 'queue onComplete failed', err);
+        }
+      }
       if (queue.length > 0) {
         setTimeout(() => processQueue(paneId), QUEUE_RETRY_MS);
       }
@@ -589,15 +598,23 @@ function blurAllTerminals() {
 // Includes diagnostic logging and focus steal prevention (save/restore user focus)
 function doSendToPane(paneId, message, onComplete) {
   let completed = false;
-  const finish = () => {
+  const finish = (result) => {
     if (completed) return;
     completed = true;
-    if (onComplete) onComplete();
+    if (onComplete) {
+      try {
+        onComplete(result);
+      } catch (err) {
+        log.error('Terminal', 'onComplete failed', err);
+      }
+    }
   };
-  const safetyTimer = setTimeout(finish, INJECTION_LOCK_TIMEOUT_MS);
-  const finishWithClear = () => {
+  const safetyTimer = setTimeout(() => {
+    finish({ success: false, reason: 'timeout' });
+  }, INJECTION_LOCK_TIMEOUT_MS);
+  const finishWithClear = (result) => {
     clearTimeout(safetyTimer);
-    finish();
+    finish(result || { success: true });
   };
 
   const hasTrailingEnter = message.endsWith('\r');
@@ -617,7 +634,7 @@ function doSendToPane(paneId, message, onComplete) {
     updatePaneStatus(id, 'Working');
     lastTypedTime[paneId] = Date.now();
     lastOutputTime[paneId] = Date.now();
-    finishWithClear();
+    finishWithClear({ success: true });
     return;
   }
 
@@ -631,7 +648,7 @@ function doSendToPane(paneId, message, onComplete) {
   // Guard: Skip if textarea not found (prevents Enter going to wrong element)
   if (!textarea) {
     log.warn(`doSendToPane ${id}`, 'Claude pane: textarea not found, skipping injection');
-    finishWithClear();
+    finishWithClear({ success: false, reason: 'missing_textarea' });
     return;
   }
 
@@ -659,7 +676,7 @@ function doSendToPane(paneId, message, onComplete) {
       // Guard: Abort if textarea disappeared
       if (!textarea) {
         log.warn(`doSendToPane ${id}`, 'Claude pane: textarea disappeared before Enter, aborting');
-        finishWithClear();
+        finishWithClear({ success: false, reason: 'textarea_disappeared' });
         return;
       }
 
@@ -682,7 +699,7 @@ function doSendToPane(paneId, message, onComplete) {
           }
         }
         lastTypedTime[paneId] = Date.now();
-        finishWithClear();
+        finishWithClear({ success: true });
       }, ENTER_DELAY_IDLE_MS);
     }, enterDelay);
   } else {
@@ -695,12 +712,12 @@ function doSendToPane(paneId, message, onComplete) {
       }
     }
     lastTypedTime[paneId] = Date.now();
-    finishWithClear();
+    finishWithClear({ success: true });
   }
 }
 
 // Send message to a specific pane (queues if pane is busy)
-function sendToPane(paneId, message) {
+function sendToPane(paneId, message, options = {}) {
   const id = String(paneId);
 
   if (!messageQueue[id]) {
@@ -709,7 +726,8 @@ function sendToPane(paneId, message) {
 
   messageQueue[id].push({
     message: message,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    onComplete: options.onComplete,
   });
 
   const reason = userIsTyping()

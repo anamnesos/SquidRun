@@ -211,19 +211,22 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 
   // Handle message injection from main process (throttled queue)
   ipcRenderer.on('inject-message', (event, data) => {
-    const { panes, message } = data;
-    for (const paneId of panes) {
-      queueMessage(String(paneId), message);
+    const { panes, message, deliveryId } = data || {};
+    for (const paneId of panes || []) {
+      queueMessage(String(paneId), message, deliveryId);
     }
   });
 }
 
 // Queue a message for throttled delivery
-function queueMessage(paneId, message) {
+function queueMessage(paneId, message, deliveryId) {
   if (!messageQueues.has(paneId)) {
     messageQueues.set(paneId, []);
   }
-  messageQueues.get(paneId).push(message);
+  messageQueues.get(paneId).push({
+    message,
+    deliveryId: deliveryId || null,
+  });
   processQueue(paneId);
 }
 
@@ -239,7 +242,9 @@ function processQueue(paneId) {
 
   processingPanes.add(paneId);
 
-  const message = queue.shift();
+  const item = queue.shift();
+  const message = typeof item === 'string' ? item : item.message;
+  const deliveryId = item && typeof item === 'object' ? item.deliveryId : null;
 
   const terminal = require('./terminal');
 
@@ -301,6 +306,9 @@ function processQueue(paneId) {
       if (messageId && sdkRenderer) {
         sdkRenderer.updateDeliveryState(messageId, 'delivered');
       }
+      if (deliveryId) {
+        ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
+      }
     }).catch(err => {
       log.error('Daemon SDK', `Send failed for pane ${paneId}:`, err);
       // Could add error state here if needed
@@ -315,7 +323,16 @@ function processQueue(paneId) {
   }
 
   // PTY MODE (legacy): Normal message handling
-  terminal.sendToPane(paneId, message);
+  terminal.sendToPane(paneId, message, {
+    onComplete: (result) => {
+      if (!deliveryId) return;
+      if (result && result.success === false) {
+        log.warn('Daemon', `Trigger delivery failed for pane ${paneId}: ${result.reason || 'unknown'}`);
+        return;
+      }
+      ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
+    }
+  });
 
   // Flash pane header (U2)
   flashPaneHeader(paneId);
