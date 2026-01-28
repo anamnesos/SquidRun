@@ -1,0 +1,136 @@
+/**
+ * Background Process IPC Handlers
+ * Channels: spawn-process, list-processes, kill-process, get-process-output
+ */
+
+const os = require('os');
+const { spawn } = require('child_process');
+
+function registerProcessHandlers(ctx) {
+  const { ipcMain } = ctx;
+
+  function broadcastProcessList() {
+    if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
+      const processes = [];
+      for (const [id, { info }] of ctx.backgroundProcesses) {
+        processes.push({
+          id: info.id,
+          command: info.command,
+          args: info.args,
+          pid: info.pid,
+          status: info.status,
+        });
+      }
+      ctx.mainWindow.webContents.send('processes-changed', processes);
+    }
+  }
+
+  ipcMain.handle('spawn-process', (event, command, args = [], cwd = null) => {
+    try {
+      const id = `proc-${ctx.processIdCounter++}`;
+      const workDir = cwd || process.cwd();
+
+      const isWindows = os.platform() === 'win32';
+      const spawnOptions = {
+        cwd: workDir,
+        shell: isWindows,
+        env: process.env,
+      };
+
+      const proc = spawn(command, args, spawnOptions);
+
+      const processInfo = {
+        id,
+        command,
+        args,
+        cwd: workDir,
+        pid: proc.pid,
+        startTime: new Date().toISOString(),
+        status: 'running',
+        output: [],
+      };
+
+      const captureOutput = (data) => {
+        const lines = data.toString().split('\n');
+        processInfo.output.push(...lines);
+        if (processInfo.output.length > 100) {
+          processInfo.output = processInfo.output.slice(-100);
+        }
+      };
+
+      proc.stdout.on('data', captureOutput);
+      proc.stderr.on('data', captureOutput);
+
+      proc.on('error', (err) => {
+        processInfo.status = 'error';
+        processInfo.error = err.message;
+        broadcastProcessList();
+      });
+
+      proc.on('exit', (code) => {
+        processInfo.status = code === 0 ? 'stopped' : 'error';
+        processInfo.exitCode = code;
+        broadcastProcessList();
+      });
+
+      ctx.backgroundProcesses.set(id, { process: proc, info: processInfo });
+      broadcastProcessList();
+
+      return { success: true, id, pid: proc.pid };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('list-processes', () => {
+    const processes = [];
+    for (const [id, { info }] of ctx.backgroundProcesses) {
+      processes.push({
+        id: info.id,
+        command: info.command,
+        args: info.args,
+        cwd: info.cwd,
+        pid: info.pid,
+        startTime: info.startTime,
+        status: info.status,
+        exitCode: info.exitCode,
+        error: info.error,
+      });
+    }
+    return { success: true, processes };
+  });
+
+  ipcMain.handle('kill-process', (event, processId) => {
+    try {
+      const entry = ctx.backgroundProcesses.get(processId);
+      if (!entry) {
+        return { success: false, error: 'Process not found' };
+      }
+
+      const { process: proc, info } = entry;
+
+      if (os.platform() === 'win32') {
+        spawn('taskkill', ['/pid', proc.pid.toString(), '/f', '/t']);
+      } else {
+        proc.kill('SIGTERM');
+      }
+
+      info.status = 'stopped';
+      broadcastProcessList();
+
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('get-process-output', (event, processId) => {
+    const entry = ctx.backgroundProcesses.get(processId);
+    if (!entry) {
+      return { success: false, error: 'Process not found' };
+    }
+    return { success: true, output: entry.info.output.join('\n') };
+  });
+}
+
+module.exports = { registerProcessHandlers };

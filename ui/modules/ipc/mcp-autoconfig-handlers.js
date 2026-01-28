@@ -1,0 +1,73 @@
+﻿const path = require('path');
+const { exec } = require('child_process');
+
+const MCP_SERVER_PATH = path.join(__dirname, '..', 'mcp-server.js');
+
+function registerMcpAutoconfigHandlers(ctx) {
+  if (!ctx || !ctx.ipcMain) {
+    throw new Error('registerMcpAutoconfigHandlers requires ctx.ipcMain');
+  }
+
+  const { ipcMain } = ctx;
+
+  ipcMain.handle('mcp-configure-agent', async (event, paneId) => {
+    try {
+      const serverName = `hivemind-${paneId}`;
+      const serverCommand = `node "${MCP_SERVER_PATH}" --pane ${paneId}`;
+      const configCmd = `claude mcp add ${serverName} --command "${serverCommand}"`;
+
+      return new Promise((resolve) => {
+        exec(configCmd, { timeout: 10000 }, (error) => {
+          if (error) {
+            console.error(`[MC8] MCP config error for pane ${paneId}:`, error);
+            ctx.mainWindow?.webContents.send('mcp-agent-error', {
+              paneId,
+              error: error.message || 'Configuration failed'
+            });
+            resolve({ success: false, error: error.message });
+          } else {
+            console.log(`[MC8] MCP configured for pane ${paneId}`);
+            ctx.mainWindow?.webContents.send('mcp-agent-connecting', { paneId });
+            resolve({ success: true, paneId, serverName });
+          }
+        });
+      });
+    } catch (err) {
+      console.error('[MC8] MCP configure error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('mcp-reconnect-agent', async (event, paneId) => {
+    try {
+      const result = await ipcMain.emit('mcp-configure-agent', event, paneId);
+      return result;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('mcp-remove-agent-config', async (event, paneId) => {
+    try {
+      const serverName = `hivemind-${paneId}`;
+      const removeCmd = `claude mcp remove ${serverName}`;
+
+      return new Promise((resolve) => {
+        exec(removeCmd, { timeout: 10000 }, (error) => {
+          if (error) {
+            resolve({ success: false, error: error.message });
+          } else {
+            ctx.mainWindow?.webContents.send('mcp-agent-disconnected', { paneId });
+            resolve({ success: true, paneId });
+          }
+        });
+      });
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+}
+
+module.exports = {
+  registerMcpAutoconfigHandlers,
+};
