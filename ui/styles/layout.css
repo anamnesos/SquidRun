@@ -1,0 +1,375 @@
+/* layout.css — Header, buttons, pane grid, pane structure, terminals, broadcast, status bar, main-content, right-panel shell */
+
+.header {
+  background: #16213e;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #0f3460;
+}
+
+.header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #e94560;
+}
+
+.dry-run-indicator {
+  background: #ffc857;
+  color: #1a1a2e;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  animation: dryRunPulse 2s ease-in-out infinite;
+  margin-left: 12px;
+}
+
+@keyframes dryRunPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn {
+  background: #0f3460;
+  border: 1px solid #e94560;
+  color: #eee;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.2s;
+}
+
+.btn:hover {
+  background: #e94560;
+}
+
+.pane-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  grid-template-rows: repeat(3, minmax(200px, 1fr)) auto;
+  gap: 2px;
+  padding: 2px;
+  background: #0f3460;
+  min-height: 0;
+  overflow: auto;
+}
+
+.pane-grid .pane {
+  min-height: 0;
+}
+
+.expand-btn {
+  background: transparent;
+  border: 1px solid #0f3460;
+  color: #888;
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+}
+
+.expand-btn:hover {
+  border-color: #4ecca3;
+  color: #4ecca3;
+  background: rgba(78, 204, 163, 0.1);
+}
+
+.worker-pane.expanded {
+  flex: 1;
+}
+
+.worker-pane.collapsed {
+  display: none;
+}
+
+.pane {
+  background: #1a1a2e;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+  min-width: 200px;
+}
+
+.pane.focused {
+  outline: 2px solid #e94560;
+  outline-offset: -2px;
+}
+
+.pane-header {
+  background: #16213e;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  border-bottom: 1px solid #0f3460;
+  transition: background-color 0.1s ease-out;
+}
+
+.agent-avatar {
+  font-size: 14px;
+  margin-right: 6px;
+  filter: grayscale(0.3);
+  transition: filter 0.2s ease-out;
+}
+
+.pane:hover .agent-avatar,
+.pane.focused .agent-avatar {
+  filter: grayscale(0);
+}
+
+.pane-header.trigger-flash {
+  animation: triggerFlash 0.3s ease-out;
+}
+
+@keyframes triggerFlash {
+  0% { background-color: #e94560; }
+  100% { background-color: #16213e; }
+}
+
+.pane-status {
+  color: #888;
+  font-size: 11px;
+  transition: color 0.2s;
+}
+
+.pane-status.idle { color: #888; }
+.pane-status.starting { color: #ffc857; }
+.pane-status.running { color: #4ecca3; }
+
+.pane-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pane-refresh-btn {
+  background: transparent;
+  border: 1px solid #0f3460;
+  color: #888;
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pane-refresh-btn:hover {
+  border-color: #e94560;
+  color: #e94560;
+  background: rgba(233, 69, 96, 0.1);
+}
+
+.pane-terminal {
+  flex: 1;
+  padding: 4px;
+  overflow: hidden;
+  min-height: 0;
+  min-width: 200px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.pane-terminal .xterm {
+  height: 100% !important;
+}
+
+.pane-terminal .xterm-viewport {
+  overflow-y: auto !important;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.pane-terminal .xterm-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+.pane-terminal .xterm-screen {
+  height: 100% !important;
+}
+
+.pane-terminal {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.pane-terminal::-webkit-scrollbar {
+  display: none;
+}
+
+.broadcast-bar {
+  grid-column: 1 / -1;
+  grid-row: 4;
+  background: #16213e;
+  padding: 8px;
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid #0f3460;
+}
+
+.broadcast-input {
+  flex: 1;
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  color: #eee;
+  padding: 12px 14px;
+  border-radius: 4px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 14px;
+  min-height: 44px;
+}
+
+.broadcast-input:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+.broadcast-input::placeholder {
+  color: #666;
+}
+
+.status-bar {
+  background: #0f3460;
+  padding: 4px 16px;
+  font-size: 11px;
+  color: #888;
+  display: flex;
+  justify-content: space-between;
+}
+
+/* Main content wrapper with right panel */
+.main-content {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.terminals-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  transition: margin-right 0.3s ease;
+}
+
+.terminals-section.panel-open {
+  margin-right: 0;
+}
+
+/* Right Panel */
+.right-panel {
+  width: 0;
+  background: #16213e;
+  border-left: 1px solid #0f3460;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width 0.3s ease;
+}
+
+.right-panel.open {
+  width: 350px;
+}
+
+.panel-tabs {
+  display: flex;
+  background: #0f3460;
+  border-bottom: 1px solid #1a1a2e;
+}
+
+.panel-tab {
+  padding: 8px 16px;
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.panel-tab:hover {
+  color: #eee;
+  background: #16213e;
+}
+
+.panel-tab.active {
+  color: #e94560;
+  border-bottom-color: #e94560;
+  background: #16213e;
+}
+
+.panel-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-pane {
+  display: none;
+  flex: 1;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.tab-pane.active {
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e94560;
+  margin-bottom: 12px;
+}
+
+.tab-description {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 16px;
+}
+
+.btn-panel {
+  background: #e94560;
+  border: 1px solid #e94560;
+  color: #fff;
+}
+
+.btn-panel:hover {
+  background: #d63650;
+}
+
+.btn-panel.active {
+  background: #0f3460;
+  color: #e94560;
+}

@@ -1,0 +1,205 @@
+/* settings-panel.css — Settings panel, toggles, permissions, cost alerts, project/folder picker, button variants */
+
+.settings-panel {
+  background: #16213e;
+  border-bottom: 1px solid #0f3460;
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+  padding: 0 16px;
+}
+
+.settings-panel.open {
+  max-height: 500px;
+  padding: 12px 16px;
+}
+
+.settings-section {
+  margin-bottom: 16px;
+}
+
+.settings-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffc857;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.permissions-warning {
+  font-size: 11px;
+  color: #e94560;
+  margin-top: 8px;
+  padding: 8px;
+  background: rgba(233, 69, 96, 0.1);
+  border-radius: 4px;
+}
+
+.settings-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e94560;
+  margin-bottom: 12px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.setting-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setting-label {
+  font-size: 12px;
+  color: #ccc;
+}
+
+/* Cost threshold input */
+.cost-threshold-setting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.threshold-input {
+  width: 80px;
+  padding: 4px 8px;
+  background: #0f0f1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #4ecca3;
+  font-size: 13px;
+}
+.threshold-input:focus {
+  border-color: #4ecca3;
+  outline: none;
+}
+
+/* Toggle switch */
+.toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: #0f3460;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.toggle.active {
+  background: #4ecca3;
+}
+
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #eee;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.toggle.active::after {
+  transform: translateX(16px);
+}
+
+.btn.settings-btn {
+  background: transparent;
+  border: 1px solid #888;
+}
+
+.btn.settings-btn:hover {
+  border-color: #e94560;
+}
+
+.btn.settings-btn.active {
+  background: #0f3460;
+  border-color: #e94560;
+}
+
+/* Project/Folder picker */
+.project-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.project-path {
+  color: #4ecca3;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 400px;
+}
+
+.project-path.no-project {
+  color: #888;
+  font-style: italic;
+}
+
+.btn-folder {
+  background: #4ecca3;
+  border: 1px solid #4ecca3;
+  color: #1a1a2e;
+}
+
+.btn-folder:hover {
+  background: #3db892;
+  border-color: #3db892;
+}
+
+.btn-danger {
+  background: transparent;
+  border: 1px solid #e94560;
+  color: #e94560;
+}
+
+.btn-danger:hover {
+  background: #e94560;
+  color: #fff;
+}
+
+.btn-nudge {
+  background: transparent;
+  border: 1px solid #ffc857;
+  color: #ffc857;
+}
+
+.btn-nudge:hover {
+  background: #ffc857;
+  color: #1a1a2e;
+}
+
+.btn-fresh {
+  background: transparent;
+  border: 1px solid #00d9ff;
+  color: #00d9ff;
+}
+
+.btn-fresh:hover {
+  background: #00d9ff;
+  color: #1a1a2e;
+}
+
+.btn-restart {
+  background: transparent;
+  border: 1px solid #ff9800;
+  color: #ff9800;
+}
+
+.btn-restart:hover {
+  background: #ff9800;
+  color: #1a1a2e;
+}
