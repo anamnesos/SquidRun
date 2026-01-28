@@ -6,7 +6,6 @@
 const { ipcMain, dialog } = require('electron');
 const path = require('path');
 const os = require('os');
-const fs = require('fs');
 const { spawn } = require('child_process');
 const { WORKSPACE_PATH, INSTANCE_DIRS, PANE_IDS, PANE_ROLES } = require('../config');
 const { createIpcContext, createIpcRegistry } = require('./ipc');
@@ -46,6 +45,7 @@ const { registerUsageStatsHandlers } = require('./ipc/usage-stats-handlers');
 const { registerSessionHistoryHandlers } = require('./ipc/session-history-handlers');
 const { registerConflictDetectionHandlers } = require('./ipc/conflict-detection-handlers');
 const { registerSettingsHandlers } = require('./ipc/settings-handlers');
+const { registerPtyHandlers } = require('./ipc/pty-handlers');
 
 const SHARED_CONTEXT_PATH = path.join(WORKSPACE_PATH, 'shared_context.md');
 const FRICTION_DIR = path.join(WORKSPACE_PATH, 'friction');
@@ -99,6 +99,7 @@ registry.register(registerUsageStatsHandlers);
 registry.register(registerSessionHistoryHandlers);
 registry.register(registerConflictDetectionHandlers);
 registry.register(registerSettingsHandlers);
+registry.register(registerPtyHandlers);
 
 /**
  * Initialize the IPC handlers module
@@ -118,153 +119,7 @@ function setDaemonClient(client) {
  * Setup all IPC handlers
  */
 function setupIPCHandlers(deps) {
-  const {
-    loadSettings,
-    saveSettings,
-    recordSessionStart,
-    recordSessionEnd,
-    saveUsageStats,
-    broadcastClaudeState,
-    // V7 OB1: Activity log functions
-    logActivity,
-    getActivityLog,
-    clearActivityLog,
-    saveActivityLog,
-  } = deps;
-
   registry.setup(ctx, deps);
-
-  // ============================================================
-  // PTY IPC HANDLERS (via Daemon)
-  // ============================================================
-
-  ipcMain.handle('pty-create', async (event, paneId, workingDir) => {
-    if (!ctx.daemonClient || !ctx.daemonClient.connected) {
-      console.error('[pty-create] Daemon not connected');
-      return { error: 'Daemon not connected' };
-    }
-
-    const instanceDir = INSTANCE_DIRS[paneId];
-    const cwd = instanceDir || workingDir || process.cwd();
-
-    const paneCommands = ctx.currentSettings.paneCommands || {};
-    const cmd = (paneCommands[paneId] || '').trim().toLowerCase();
-    const mode = cmd.includes('codex') ? 'codex-exec' : null;
-
-    ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, mode);
-    return { paneId, cwd, dryRun: ctx.currentSettings.dryRun };
-  });
-
-  ipcMain.handle('pty-write', (event, paneId, data) => {
-    if (ctx.daemonClient && ctx.daemonClient.connected) {
-      ctx.daemonClient.write(paneId, data);
-    }
-  });
-
-  // Codex exec (non-interactive) - run a single prompt through codex exec --json
-  ipcMain.handle('codex-exec', (event, paneId, prompt) => {
-    if (!ctx.daemonClient || !ctx.daemonClient.connected) {
-      return { success: false, error: 'Daemon not connected' };
-    }
-    ctx.daemonClient.codexExec(paneId, prompt || '');
-    return { success: true };
-  });
-
-  // Send trusted keyboard Enter via Electron's native input API
-  // Codex CLI ignores synthetic KeyboardEvents (isTrusted=false)
-  // webContents.sendInputEvent generates trusted events that Codex accepts
-  ipcMain.handle('send-trusted-enter', (event) => {
-    if (ctx.mainWindow && ctx.mainWindow.webContents) {
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'char', keyCode: 'Return' });
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
-    }
-  });
-
-  // Clipboard paste approach for Codex panes
-  // Codex CLI accepts pasted input but ignores synthetic Enter events.
-  // Writes text (with trailing newline) to clipboard, then simulates Ctrl+V.
-  ipcMain.handle('clipboard-paste-text', async (event, text) => {
-    const { clipboard } = require('electron');
-    if (ctx.mainWindow && ctx.mainWindow.webContents) {
-      const savedClipboard = clipboard.readText();
-      clipboard.writeText(text);
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Control' });
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'V', modifiers: ['control'] });
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'V', modifiers: ['control'] });
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Control' });
-      setTimeout(() => {
-        clipboard.writeText(savedClipboard);
-      }, 200);
-    }
-  });
-
-  ipcMain.handle('pty-resize', (event, paneId, cols, rows) => {
-    if (ctx.daemonClient && ctx.daemonClient.connected) {
-      ctx.daemonClient.resize(paneId, cols, rows);
-    }
-  });
-
-  ipcMain.handle('pty-kill', (event, paneId) => {
-    if (ctx.daemonClient && ctx.daemonClient.connected) {
-      ctx.daemonClient.kill(paneId);
-    }
-  });
-
-  ipcMain.handle('spawn-claude', (event, paneId, workingDir) => {
-    // SDK Mode Guard (defense in depth): Block CLI spawn when SDK mode is active
-    if (ctx.currentSettings.sdkMode) {
-      console.log('[spawn-claude] SDK mode - blocking CLI spawn');
-      return { success: false, error: 'SDK mode active' };
-    }
-
-    // V3: Dry-run mode - simulate without spawning real agents
-    if (ctx.currentSettings.dryRun) {
-      ctx.claudeRunning.set(paneId, 'running');
-      broadcastClaudeState();
-      return { success: true, command: null, dryRun: true };
-    }
-
-    if (!ctx.daemonClient || !ctx.daemonClient.connected) {
-      return { success: false, error: 'Daemon not connected' };
-    }
-
-    ctx.claudeRunning.set(paneId, 'starting');
-    broadcastClaudeState();
-    recordSessionStart(paneId);
-
-    const paneCommands = ctx.currentSettings.paneCommands || {};
-    let agentCmd = (paneCommands[paneId] || 'claude').trim();
-    if (!agentCmd) agentCmd = 'claude';
-
-    // Always add autonomy flags - no permission prompts in Hivemind
-    if (agentCmd.startsWith('claude') && !agentCmd.includes('--dangerously-skip-permissions')) {
-      agentCmd = `${agentCmd} --dangerously-skip-permissions`;
-    }
-    if (agentCmd.startsWith('codex')) {
-      // Use strongest bypass only
-      if (!agentCmd.includes('--dangerously-bypass-approvals-and-sandbox') && !agentCmd.includes('--yolo')) {
-        agentCmd = `${agentCmd} --yolo`;
-      }
-    }
-
-    // ID-1: Identity injection moved to renderer (terminal.js:spawnClaude)
-    // Daemon PTY writes don't submit to CLI - need keyboard events from renderer
-
-    return { success: true, command: agentCmd };
-  });
-
-  ipcMain.handle('get-claude-state', () => {
-    return Object.fromEntries(ctx.claudeRunning);
-  });
-
-  ipcMain.handle('get-daemon-terminals', () => {
-    if (ctx.daemonClient) {
-      return ctx.daemonClient.getTerminals();
-    }
-    return [];
-  });
-
 }
 
 function broadcastProcessList() {
