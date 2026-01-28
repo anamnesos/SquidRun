@@ -19,6 +19,7 @@ const {
 } = require('@modelcontextprotocol/sdk/types.js');
 const fs = require('fs');
 const path = require('path');
+const log = require('./modules/logger');
 
 // ============================================================
 // CONFIGURATION
@@ -78,7 +79,7 @@ function parseArgs() {
   }
 
   if (!agentName || !AGENT_TO_PANE[agentName]) {
-    console.error('Usage: node mcp-server.js --agent <architect|orchestrator|implementer-a|implementer-b|investigator|reviewer>');
+    log.error('MCP', 'Usage: node mcp-server.js --agent <architect|orchestrator|implementer-a|implementer-b|investigator|reviewer>');
     process.exit(1);
   }
 
@@ -319,7 +320,7 @@ function sendMessageToQueue(fromPaneId, toPaneId, content) {
     const triggerContent = `(${PANE_ROLES[fromPaneId].toUpperCase().replace(' ', '-')}): ${content}`;
     fs.writeFileSync(triggerFile, triggerContent, 'utf-8');
   } catch (triggerErr) {
-    console.error('[Hivemind MCP] Trigger fallback write failed:', triggerErr.message);
+    log.error('MCP', 'Trigger fallback write failed', triggerErr.message);
   }
   */
 
@@ -630,10 +631,10 @@ async function main() {
   await server.connect(transport);
 
   // Log to stderr so it doesn't interfere with stdio transport
-  console.error(`[Hivemind MCP] Server started for agent: ${agentName} (pane ${paneId})`);
+  log.warn('MCP', `Server started for agent: ${agentName} (pane ${paneId})`);
 }
 
 main().catch((error) => {
-  console.error('[Hivemind MCP] Fatal error:', error);
+  log.error('MCP', 'Fatal error', error);
   process.exit(1);
 });

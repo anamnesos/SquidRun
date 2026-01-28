@@ -11,6 +11,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { EventEmitter } = require('events');
+const log = require('./modules/logger');
 
 // Named pipe path (Windows) or Unix socket
 const PIPE_PATH = os.platform() === 'win32'
@@ -28,7 +29,7 @@ class DaemonClient extends EventEmitter {
     this.buffer = '';
     this.reconnecting = false;
     this.terminals = new Map(); // Cache of known terminals
-    this.lastActivity = new Map(); // V4: Track last activity time per pane
+    this.lastActivity = new Map(); // Track last activity time per pane
   }
 
   /**
@@ -39,12 +40,12 @@ class DaemonClient extends EventEmitter {
     // Try to connect first
     const connected = await this._tryConnect();
     if (connected) {
-      console.log('[DaemonClient] Connected to existing daemon');
+      log.info('DaemonClient', 'Connected to existing daemon');
       return true;
     }
 
     // Daemon not running, spawn it
-    console.log('[DaemonClient] Daemon not running, spawning...');
+    log.info('DaemonClient', 'Daemon not running, spawning...');
     await this._spawnDaemon();
 
     // Wait a bit for daemon to start
@@ -53,11 +54,11 @@ class DaemonClient extends EventEmitter {
     // Try to connect again
     const retryConnected = await this._tryConnect();
     if (retryConnected) {
-      console.log('[DaemonClient] Connected to newly spawned daemon');
+      log.info('DaemonClient', 'Connected to newly spawned daemon');
       return true;
     }
 
-    console.error('[DaemonClient] Failed to connect to daemon after spawn');
+    log.error('DaemonClient', 'Failed to connect to daemon after spawn');
     return false;
   }
 
@@ -110,7 +111,7 @@ class DaemonClient extends EventEmitter {
     });
 
     this.client.on('close', () => {
-      console.log('[DaemonClient] Connection closed');
+      log.warn('DaemonClient', 'Connection closed');
       this.connected = false;
       this.client = null;
       this.emit('disconnected');
@@ -122,7 +123,7 @@ class DaemonClient extends EventEmitter {
     });
 
     this.client.on('error', (err) => {
-      console.error('[DaemonClient] Connection error:', err.message);
+      log.error('DaemonClient', 'Connection error', err.message);
       this.connected = false;
     });
   }
@@ -194,7 +195,7 @@ class DaemonClient extends EventEmitter {
 
         // D3: Handle graceful shutdown notification from daemon
         case 'shutdown':
-          console.log('[DaemonClient] Daemon is shutting down:', msg.message);
+          log.warn('DaemonClient', 'Daemon is shutting down', msg.message);
           this.emit('shutdown', msg.message, msg.timestamp);
           // Don't attempt reconnect - daemon is intentionally shutting down
           this.reconnecting = true; // Prevent auto-reconnect
@@ -205,12 +206,12 @@ class DaemonClient extends EventEmitter {
           this.emit('health', msg);
           break;
 
-        // V17: Handle heartbeat state changes
+        // Handle heartbeat state changes
         case 'heartbeat-state-changed':
           this.emit('heartbeat-state-changed', msg.state, msg.interval, msg.timestamp);
           break;
 
-        // V17: Handle heartbeat status response
+        // Handle heartbeat status response
         case 'heartbeat-status':
           this.emit('heartbeat-status', msg);
           break;
@@ -220,16 +221,16 @@ class DaemonClient extends EventEmitter {
           this.emit('identity-injected', msg.paneId, msg.role, msg.message);
           break;
 
-        // V13: Handle watchdog alert
+        // Handle watchdog alert
         case 'watchdog-alert':
           this.emit('watchdog-alert', msg.message, msg.timestamp);
           break;
 
         default:
-          console.log('[DaemonClient] Unknown event:', msg.event);
+          log.warn('DaemonClient', 'Unknown event', msg.event);
       }
     } catch (err) {
-      console.error('[DaemonClient] Error parsing message:', err.message);
+      log.error('DaemonClient', 'Error parsing message', err.message);
     }
   }
 
@@ -240,20 +241,20 @@ class DaemonClient extends EventEmitter {
     if (this.reconnecting) return;
     this.reconnecting = true;
 
-    console.log('[DaemonClient] Attempting to reconnect...');
+    log.info('DaemonClient', 'Attempting to reconnect...');
 
     for (let i = 0; i < 5; i++) {
       await this._sleep(1000);
       const connected = await this._tryConnect();
       if (connected) {
-        console.log('[DaemonClient] Reconnected successfully');
+        log.info('DaemonClient', 'Reconnected successfully');
         this.reconnecting = false;
         this.emit('reconnected');
         return;
       }
     }
 
-    console.error('[DaemonClient] Failed to reconnect after 5 attempts');
+    log.error('DaemonClient', 'Failed to reconnect after 5 attempts');
     this.reconnecting = false;
     this.emit('reconnect-failed');
   }
@@ -263,7 +264,7 @@ class DaemonClient extends EventEmitter {
    */
   async _spawnDaemon() {
     return new Promise((resolve) => {
-      console.log('[DaemonClient] Spawning daemon:', DAEMON_SCRIPT);
+      log.info('DaemonClient', 'Spawning daemon', DAEMON_SCRIPT);
 
       // Spawn as detached process so it survives parent exit
       const daemon = spawn('node', [DAEMON_SCRIPT], {
@@ -275,7 +276,7 @@ class DaemonClient extends EventEmitter {
       // Unref so parent can exit without waiting
       daemon.unref();
 
-      console.log('[DaemonClient] Daemon spawned with PID:', daemon.pid);
+      log.info('DaemonClient', 'Daemon spawned with PID', daemon.pid);
       resolve();
     });
   }
@@ -285,7 +286,7 @@ class DaemonClient extends EventEmitter {
    */
   _send(message) {
     if (!this.connected || !this.client) {
-      console.error('[DaemonClient] Not connected');
+      log.error('DaemonClient', 'Not connected');
       return false;
     }
 
@@ -293,7 +294,7 @@ class DaemonClient extends EventEmitter {
       this.client.write(JSON.stringify(message) + '\n');
       return true;
     } catch (err) {
-      console.error('[DaemonClient] Send error:', err.message);
+      log.error('DaemonClient', 'Send error', err.message);
       return false;
     }
   }
@@ -516,7 +517,7 @@ class DaemonClient extends EventEmitter {
   }
 
   /**
-   * V4: Get last activity timestamp for a pane
+   * Get last activity timestamp for a pane
    * @param {string} paneId
    * @returns {number|null} timestamp or null if no activity recorded
    */
@@ -525,7 +526,7 @@ class DaemonClient extends EventEmitter {
   }
 
   /**
-   * V4: Get all activity timestamps
+   * Get all activity timestamps
    * @returns {Object} paneId -> timestamp
    */
   getAllActivity() {

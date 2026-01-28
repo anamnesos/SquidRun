@@ -35,11 +35,15 @@ const LOG_LEVELS = {
 // Log to both console and file
 function log(level, message) {
   const timestamp = new Date().toISOString();
-  const entry = `[${timestamp}] [${level}] ${message}`;
-  console.log(entry);
+  const entry = `[${timestamp}] [${level}] ${message}\n`;
+  if (level === LOG_LEVELS.ERROR || level === LOG_LEVELS.WARN) {
+    process.stderr.write(entry);
+  } else {
+    process.stdout.write(entry);
+  }
 
   try {
-    fs.appendFileSync(LOG_FILE_PATH, entry + '\n');
+    fs.appendFileSync(LOG_FILE_PATH, entry);
   } catch (err) {
     // If we can't write to log file, at least console still works
   }
@@ -56,7 +60,7 @@ function initLogFile() {
   try {
     fs.appendFileSync(LOG_FILE_PATH, header);
   } catch (err) {
-    console.error('Could not initialize log file:', err.message);
+    process.stderr.write(`Could not initialize log file: ${err.message}\n`);
   }
 }
 
@@ -1623,7 +1627,7 @@ function handleMessage(client, message) {
         }
         // Close server
         server.close(() => {
-          console.log('[Daemon] Server closed');
+          logInfo('[Daemon] Server closed');
           process.exit(0);
         });
         break;
