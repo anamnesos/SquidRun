@@ -633,6 +633,14 @@ function handleTriggerFile(filePath, filename) {
   }
 
   if (hasSequence) {
+    if (parsed.seq === 1 && message.includes('# HIVEMIND SESSION:')) {
+      if (!messageState.sequences[recipientRole]) {
+        messageState.sequences[recipientRole] = { outbound: 0, lastSeen: {} };
+      }
+      messageState.sequences[recipientRole].lastSeen[parsed.sender] = 0;
+      saveMessageState();
+      log.info('Trigger', `Reset lastSeen for sender restart: ${parsed.sender} -> ${recipientRole}`);
+    }
     // Check for duplicate
     if (isDuplicateMessage(parsed.sender, parsed.seq, recipientRole)) {
       log.info('Trigger', `SKIPPED duplicate: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
