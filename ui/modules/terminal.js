@@ -58,6 +58,11 @@ const messageQueue = {};
 // Updated by focusin listener on UI inputs; doSendToPane restores to this.
 let lastUserUIFocus = null;
 
+// Focus-steal fix: Track when user last typed in a UI input (not xterm).
+// doSendToPane defers injection while user is actively typing.
+let lastUserUIKeypressTime = 0;
+const TYPING_GUARD_MS = 300; // Defer injection if user typed within this window
+
 // V16.2: Idle detection constants
 // V16.4: Bumped from 500ms to 2000ms - Claude may need more time after output stops
 const IDLE_THRESHOLD_MS = 2000;  // No output for 2s = idle
@@ -106,6 +111,28 @@ function initUIFocusTracker() {
       lastUserUIFocus = el;
     }
   });
+
+  // Track user keystrokes in UI inputs for typing guard
+  document.addEventListener('keydown', (e) => {
+    const el = e.target;
+    const tag = el?.tagName?.toUpperCase();
+    const isUI = (tag === 'INPUT' || tag === 'TEXTAREA') &&
+      !el.classList.contains('xterm-helper-textarea');
+    if (isUI) {
+      lastUserUIKeypressTime = Date.now();
+    }
+  });
+}
+
+// Returns true if user is actively typing in a UI input
+function userIsTyping() {
+  if (!lastUserUIFocus) return false;
+  const el = document.activeElement;
+  const tag = el?.tagName?.toUpperCase();
+  const isUI = (tag === 'INPUT' || tag === 'TEXTAREA') &&
+    !el.classList.contains('xterm-helper-textarea');
+  if (!isUI) return false;
+  return (Date.now() - lastUserUIKeypressTime) < TYPING_GUARD_MS;
 }
 
 // Status update callbacks
@@ -204,10 +231,10 @@ function processQueue(paneId) {
   const now = Date.now();
   const item = queue[0];
 
-  // Check if we should send (idle OR timeout exceeded)
+  // Check if we should send (idle + not typing, OR timeout exceeded)
   const waitedTooLong = (now - item.timestamp) >= MAX_QUEUE_TIME_MS;
 
-  if (isIdle(paneId) || waitedTooLong) {
+  if ((isIdle(paneId) && !userIsTyping()) || waitedTooLong) {
     // Remove from queue and send
     queue.shift();
     if (waitedTooLong) {
@@ -538,7 +565,7 @@ function doSendToPane(paneId, message) {
   }
 
   if (textarea) {
-    // Focus the textarea (needed for keyboard events to work)
+    // Focus the textarea (needed for sendTrustedEnter to target xterm)
     textarea.focus();
 
     const focusSucceeded = document.activeElement === textarea;
@@ -547,8 +574,6 @@ function doSendToPane(paneId, message) {
     if (isCodex && hasTrailingEnter) {
       // CODEX PATH: Single pty.write with text + newline.
       // Codex TUI ignores synthetic Enter, sendInputEvent Enter, and clipboard paste.
-      // Writing the full payload including \n in one PTY call lets the underlying
-      // readline/ink renderer receive it as a complete line.
       window.hivemind.pty.write(id, text + '\n');
       console.log(`[doSendToPane ${id}] Codex pane: single pty.write with trailing \\n`);
 
@@ -570,7 +595,7 @@ function doSendToPane(paneId, message) {
 
         window.hivemind.pty.write(id, '\r');
 
-        // CLAUDE PATH: Trusted Enter via sendInputEvent (works for Claude CLI)
+        // CLAUDE PATH: Trusted Enter via sendInputEvent (requires DOM focus)
         if (document.activeElement !== textarea) {
           textarea.focus();
         }
@@ -655,14 +680,15 @@ function doSendToPane(paneId, message) {
 function sendToPane(paneId, message) {
   const id = String(paneId);
 
-  // If pane is idle, send immediately
-  if (isIdle(id)) {
+  // If pane is idle and user is not typing, send immediately
+  if (isIdle(id) && !userIsTyping()) {
     doSendToPane(id, message);
     return;
   }
 
-  // Pane is busy - queue the message
-  console.log(`[Terminal ${id}] Pane busy, queueing message`);
+  // Pane is busy or user is typing - queue the message
+  const reason = !isIdle(id) ? 'pane busy' : 'user typing';
+  console.log(`[Terminal ${id}] ${reason}, queueing message`);
 
   if (!messageQueue[id]) {
     messageQueue[id] = [];
