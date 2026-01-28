@@ -9,31 +9,75 @@ function registerStateHandlers(ctx) {
   }
 
   const { ipcMain } = ctx;
+  const missingDependency = (name, fallback = {}) => ({
+    success: false,
+    error: `${name} not available`,
+    ...fallback,
+  });
+
+  const getWatcher = () => {
+    const watcher = ctx.watcher;
+    if (!watcher) {
+      return { ok: false, error: 'state watcher' };
+    }
+    return { ok: true, watcher };
+  };
+
+  const getTriggers = () => {
+    const triggers = ctx.triggers;
+    if (!triggers) {
+      return { ok: false, error: 'triggers' };
+    }
+    return { ok: true, triggers };
+  };
 
   ipcMain.handle('get-state', () => {
-    return ctx.watcher.readState();
+    const { ok, watcher } = getWatcher();
+    if (!ok) {
+      return missingDependency('state watcher', { state: 'idle', agent_claims: {} });
+    }
+    return watcher.readState();
   });
 
   ipcMain.handle('set-state', (event, newState) => {
-    ctx.watcher.transition(newState);
-    return ctx.watcher.readState();
+    const { ok, watcher, error } = getWatcher();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    watcher.transition(newState);
+    return watcher.readState();
   });
 
   ipcMain.handle('trigger-sync', (event, file = 'shared_context.md') => {
-    ctx.triggers.notifyAllAgentsSync(file);
+    const { ok, triggers, error } = getTriggers();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    triggers.notifyAllAgentsSync(file);
     return { success: true, file };
   });
 
   ipcMain.handle('broadcast-message', (event, message) => {
-    return ctx.triggers.broadcastToAllAgents(message);
+    const { ok, triggers, error } = getTriggers();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    return triggers.broadcastToAllAgents(message);
   });
 
   ipcMain.handle('start-planning', (event, project) => {
-    const state = ctx.watcher.readState();
+    const { ok, watcher, error } = getWatcher();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    if (!watcher.States || !watcher.States.PLANNING) {
+      return missingDependency('state definitions');
+    }
+    const state = watcher.readState();
     state.project = project;
-    ctx.watcher.writeState(state);
-    ctx.watcher.transition(ctx.watcher.States.PLANNING);
-    return ctx.watcher.readState();
+    watcher.writeState(state);
+    watcher.transition(watcher.States.PLANNING);
+    return watcher.readState();
   });
 }
 

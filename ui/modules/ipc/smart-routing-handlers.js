@@ -11,8 +11,24 @@ function registerSmartRoutingHandlers(ctx) {
     throw new Error('registerSmartRoutingHandlers requires ctx.ipcMain');
   }
 
-  const { ipcMain, WORKSPACE_PATH } = ctx;
-  const PERFORMANCE_FILE_PATH = path.join(WORKSPACE_PATH, 'performance.json');
+  const { ipcMain } = ctx;
+  const missingDependency = (name) => ({
+    success: false,
+    error: `${name} not available`,
+  });
+
+  const getTriggers = () => {
+    const triggers = ctx.triggers;
+    if (!triggers) {
+      return { ok: false, error: 'triggers' };
+    }
+    return { ok: true, triggers };
+  };
+
+  const workspacePath = ctx.WORKSPACE_PATH;
+  const PERFORMANCE_FILE_PATH = workspacePath
+    ? path.join(workspacePath, 'performance.json')
+    : null;
 
   const DEFAULT_PERFORMANCE = {
     agents: {
@@ -27,6 +43,9 @@ function registerSmartRoutingHandlers(ctx) {
   };
 
   function loadPerformance() {
+    if (!PERFORMANCE_FILE_PATH) {
+      return { ...DEFAULT_PERFORMANCE };
+    }
     try {
       if (fs.existsSync(PERFORMANCE_FILE_PATH)) {
         const content = fs.readFileSync(PERFORMANCE_FILE_PATH, 'utf-8');
@@ -39,17 +58,35 @@ function registerSmartRoutingHandlers(ctx) {
   }
 
   ipcMain.handle('route-task', (event, taskType, message) => {
+    const { ok, triggers, error } = getTriggers();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    if (typeof triggers.routeTask !== 'function') {
+      return missingDependency('triggers.routeTask');
+    }
     const perf = loadPerformance();
-    return ctx.triggers.routeTask(taskType, message, perf);
+    return triggers.routeTask(taskType, message, perf);
   });
 
   ipcMain.handle('get-best-agent', (event, taskType) => {
+    const { ok, triggers, error } = getTriggers();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    if (typeof triggers.getBestAgent !== 'function') {
+      return missingDependency('triggers.getBestAgent');
+    }
     const perf = loadPerformance();
-    return ctx.triggers.getBestAgent(taskType, perf);
+    return triggers.getBestAgent(taskType, perf);
   });
 
   ipcMain.handle('get-agent-roles', () => {
-    return ctx.triggers.AGENT_ROLES;
+    const { ok, triggers, error } = getTriggers();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    return triggers.AGENT_ROLES || {};
   });
 }
 

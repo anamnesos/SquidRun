@@ -9,13 +9,36 @@ function registerAutoHandoffHandlers(ctx) {
   }
 
   const { ipcMain } = ctx;
+  const missingDependency = (name) => ({
+    success: false,
+    error: `${name} not available`,
+  });
+
+  const getTriggers = () => {
+    const triggers = ctx.triggers;
+    if (!triggers) {
+      return { ok: false, error: 'triggers' };
+    }
+    return { ok: true, triggers };
+  };
 
   ipcMain.handle('trigger-handoff', (event, fromPaneId, message) => {
-    return ctx.triggers.triggerAutoHandoff(fromPaneId, message);
+    const { ok, triggers, error } = getTriggers();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    if (typeof triggers.triggerAutoHandoff !== 'function') {
+      return missingDependency('triggers.triggerAutoHandoff');
+    }
+    return triggers.triggerAutoHandoff(fromPaneId, message);
   });
 
   ipcMain.handle('get-handoff-chain', () => {
-    return ctx.triggers.HANDOFF_CHAIN;
+    const { ok, triggers, error } = getTriggers();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    return triggers.HANDOFF_CHAIN || [];
   });
 }
 
