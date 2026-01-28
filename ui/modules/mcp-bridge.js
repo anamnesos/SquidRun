@@ -17,6 +17,7 @@ const fs = require('fs');
 const watcher = require('./watcher');
 const triggers = require('./triggers');
 const { WORKSPACE_PATH } = require('../config');
+const log = require('./logger');
 
 // Track connected MCP agents
 const connectedAgents = new Map(); // sessionId -> { paneId, role, connectedAt, lastSeen }
@@ -49,7 +50,7 @@ function logFallback(operation, error) {
     timestamp: new Date().toISOString(),
     fallbackUsed: true,
   };
-  console.warn(`[MCP Bridge] FALLBACK: ${operation} failed (${error}), using file trigger`);
+  log.warn('MCP Bridge', `FALLBACK: ${operation} failed (${error}), using file trigger`);
 }
 
 /**
@@ -62,11 +63,11 @@ function writeFallbackTrigger(paneId, message) {
     const triggerFile = path.join(TRIGGER_DIR, TRIGGER_FILES[paneId]);
     if (triggerFile) {
       fs.writeFileSync(triggerFile, message, 'utf-8');
-      console.log(`[MCP Bridge] Fallback trigger written to ${TRIGGER_FILES[paneId]}`);
+      log.info('MCP Bridge', `Fallback trigger written to ${TRIGGER_FILES[paneId]}`);
       return true;
     }
   } catch (err) {
-    console.error(`[MCP Bridge] Fallback trigger failed:`, err.message);
+    log.error('MCP Bridge', 'Fallback trigger failed', err.message);
   }
   return false;
 }
@@ -116,7 +117,7 @@ function registerAgent(sessionId, paneId) {
   };
 
   connectedAgents.set(sessionId, agent);
-  console.log(`[MCP Bridge] Agent registered: ${agent.role} (pane ${paneId})`);
+  log.info('MCP Bridge', `Agent registered: ${agent.role} (pane ${paneId})`);
 
   return { success: true, agent };
 }
@@ -128,7 +129,7 @@ function registerAgent(sessionId, paneId) {
 function unregisterAgent(sessionId) {
   const agent = connectedAgents.get(sessionId);
   if (agent) {
-    console.log(`[MCP Bridge] Agent disconnected: ${agent.role}`);
+    log.info('MCP Bridge', `Agent disconnected: ${agent.role}`);
     connectedAgents.delete(sessionId);
     return { success: true };
   }
@@ -514,7 +515,7 @@ function getMCPToolDefinitions() {
  * @returns {object} Tool result
  */
 function handleToolCall(sessionId, toolName, args = {}) {
-  console.log(`[MCP Bridge] Tool call: ${toolName}`, args);
+  log.info('MCP Bridge', `Tool call: ${toolName}`, args);
 
   switch (toolName) {
     case 'register_agent':

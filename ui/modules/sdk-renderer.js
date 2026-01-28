@@ -7,6 +7,8 @@
  * Owner: Worker A
  */
 
+const log = require('./logger');
+
 // Pane configuration (defaults to 6-pane PTY layout; can be overridden for SDK mode)
 let PANE_IDS = ['1', '2', '3', '4', '5', '6'];
 let PANE_ROLES = {
@@ -150,8 +152,7 @@ function updateDeliveryState(messageId, newState) {
 function initSDKPane(paneId) {
   const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
   if (!pane) {
-    console.error(`[SDK] Pane ${paneId} not found - available panes:`,
-      Array.from(document.querySelectorAll('.pane')).map(p => p.dataset.paneId));
+    log.error('SDK', `Pane ${paneId} not found - available panes: ${Array.from(document.querySelectorAll('.pane')).map(p => p.dataset.paneId).join(', ')}`);
     return;
   }
 
@@ -184,7 +185,7 @@ function initSDKPane(paneId) {
     } else {
       pane.appendChild(terminalDiv);
     }
-    console.log(`[SDK] Created new container for pane ${paneId}`);
+    log.info('SDK', `Created new container for pane ${paneId}`);
   }
 
   // Clear any existing xterm content and replace with SDK message container
@@ -202,14 +203,14 @@ function initSDKPane(paneId) {
   terminalDiv.appendChild(sdkPane);
 
   containers.set(paneId, sdkMessages);
-  console.log(`[SDK] Initialized pane ${paneId} (${PANE_ROLES[paneId]}) - container:`, sdkMessages);
+  log.info('SDK', `Initialized pane ${paneId} (${PANE_ROLES[paneId]})`);
 }
 
 /**
  * Initialize all SDK panes
  */
 function initAllSDKPanes() {
-  console.log('[SDK] Initializing all panes...');
+  log.info('SDK', 'Initializing all panes...');
 
   // Clear existing containers map
   containers.clear();
@@ -223,10 +224,10 @@ function initAllSDKPanes() {
   const missing = PANE_IDS.filter(id => !containers.has(id));
 
   if (missing.length > 0) {
-    console.error(`[SDK] Failed to initialize panes: ${missing.join(', ')}`);
+    log.error('SDK', `Failed to initialize panes: ${missing.join(', ')}`);
   }
 
-  console.log(`[SDK] All panes initialized: ${initialized.join(', ')} (${containers.size}/${PANE_IDS.length})`);
+  log.info('SDK', `All panes initialized: ${initialized.join(', ')} (${containers.size}/${PANE_IDS.length})`);
 }
 
 /**
@@ -295,7 +296,7 @@ function formatMessage(message) {
   if (message.type === 'assistant') {
     const content = message.content;
 
-    // V2 FIX: Python sends content as ARRAY of content blocks, not string
+    // Python sends content as ARRAY of content blocks, not string
     if (Array.isArray(content)) {
       return content.map(block => {
         if (block.type === 'text') {
@@ -395,7 +396,7 @@ function formatMessage(message) {
     `;
   }
 
-  // V2 FIX: Handle Python-specific message types
+  // Handle Python-specific message types
 
   // User message (echo of what user sent)
   // Check for agent prefix pattern: (ROLE): message
@@ -520,27 +521,27 @@ function appendMessage(paneId, message, options = {}) {
     container = document.getElementById(`sdk-messages-${paneId}`);
     if (container) {
       containers.set(paneId, container);
-      console.log(`[SDK] Recovered container for pane ${paneId}`);
+      log.info('SDK', `Recovered container for pane ${paneId}`);
     }
   }
 
   if (!container) {
-    console.warn(`[SDK] Container not found for pane ${paneId} - reinitializing`);
+    log.warn('SDK', `Container not found for pane ${paneId} - reinitializing`);
     initSDKPane(paneId);
     container = containers.get(paneId);
     if (!container) {
-      console.error(`[SDK] Failed to initialize container for pane ${paneId}`);
+      log.error('SDK', `Failed to initialize container for pane ${paneId}`);
       return null;
     }
   }
 
-  // BUG2 FIX: If this is an assistant message and we have active streaming state,
+  // If this is an assistant message and we have active streaming state,
   // the content was already displayed via text_delta - skip duplicate rendering
   if (message.type === 'assistant') {
     const streamState = streamingMessages.get(paneId);
     if (streamState && streamState.buffer.length > 0 && !streamState.complete) {
       // Content already displayed via streaming - just finalize
-      console.log(`[SDK] Skipping duplicate assistant message for pane ${paneId} (${streamState.buffer.length} chars already streamed)`);
+      log.info('SDK', `Skipping duplicate assistant message for pane ${paneId} (${streamState.buffer.length} chars already streamed)`);
       finalizeStreamingMessage(paneId);
       return null;
     }
@@ -595,7 +596,7 @@ function clearPane(paneId) {
   const container = containers.get(paneId);
   if (container) {
     container.innerHTML = '';
-    console.log(`[SDK] Cleared pane ${paneId}`);
+    log.info('SDK', `Cleared pane ${paneId}`);
   }
 }
 
@@ -710,7 +711,7 @@ function appendTextDelta(paneId, text) {
   }
 
   if (!container) {
-    console.warn(`[SDK] appendTextDelta: No container for pane ${paneId}`);
+    log.warn('SDK', `appendTextDelta: No container for pane ${paneId}`);
     return;
   }
 
@@ -786,7 +787,7 @@ function finalizeStreamingMessage(paneId) {
   streamState.element.classList.remove('sdk-streaming-text');
   streamState.element.classList.add('sdk-complete');
 
-  console.log(`[SDK] Finalized streaming message for pane ${paneId}, ${streamState.buffer.length} chars`);
+  log.info('SDK', `Finalized streaming message for pane ${paneId}, ${streamState.buffer.length} chars`);
 }
 
 /**
