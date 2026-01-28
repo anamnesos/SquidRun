@@ -16,6 +16,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const EventEmitter = require('events');
+const log = require('./logger');
 
 // Pane ID to role mapping (6-pane architecture)
 const PANE_ROLES = {
@@ -77,7 +78,7 @@ class SDKBridge extends EventEmitter {
     this.ready = false;
     this.mainWindow = null;
 
-    // V2: Track 6 independent sessions
+    // Track 6 independent sessions
     this.sessions = {
       '1': { id: null, role: 'Architect', status: 'idle' },
       '2': { id: null, role: 'Orchestrator', status: 'idle' },
@@ -129,18 +130,18 @@ class SDKBridge extends EventEmitter {
     try {
       if (fs.existsSync(SESSION_STATE_FILE)) {
         const data = JSON.parse(fs.readFileSync(SESSION_STATE_FILE, 'utf8'));
-        // V2 FIX: Use nested sdk_sessions key (matches Python format)
+        // Use nested sdk_sessions key (matches Python format)
         const sessions = data.sdk_sessions || data; // Fallback to flat format for migration
         for (const [paneId, sessionId] of Object.entries(sessions)) {
           if (this.sessions[paneId] && sessionId) {
             this.sessions[paneId].id = sessionId;
-            console.log(`[SDK Bridge] Loaded session for pane ${paneId}: ${sessionId}`);
+            log.info('SDK Bridge', `Loaded session for pane ${paneId}: ${sessionId}`);
           }
         }
         return true;
       }
     } catch (err) {
-      console.error('[SDK Bridge] Failed to load session state:', err);
+      log.error('SDK Bridge', 'Failed to load session state', err);
     }
     return false;
   }
@@ -171,14 +172,14 @@ class SDKBridge extends EventEmitter {
         }
       }
 
-      // V2 FIX: Use nested sdk_sessions key (matches Python format)
+      // Use nested sdk_sessions key (matches Python format)
       existing.sdk_sessions = sessions;
 
       fs.writeFileSync(SESSION_STATE_FILE, JSON.stringify(existing, null, 2));
-      console.log('[SDK Bridge] Saved session state:', sessions);
+      log.info('SDK Bridge', 'Saved session state:', sessions);
       return true;
     } catch (err) {
-      console.error('[SDK Bridge] Failed to save session state:', err);
+      log.error('SDK Bridge', 'Failed to save session state', err);
       return false;
     }
   }
@@ -189,7 +190,7 @@ class SDKBridge extends EventEmitter {
    */
   startProcess(options = {}) {
     if (this.process && this.active) {
-      console.log('[SDK Bridge] Process already running');
+      log.info('SDK Bridge', 'Process already running');
       return this.process;
     }
 
@@ -197,7 +198,7 @@ class SDKBridge extends EventEmitter {
     this.loadSessionState();
 
     const sdkPath = path.join(__dirname, '..', '..', 'hivemind-sdk-v2.py');
-    const args = [sdkPath, '--ipc'];  // V2 FIX: Must pass --ipc for JSON protocol
+    const args = [sdkPath, '--ipc'];  // Must pass --ipc for JSON protocol
 
     if (options.workspace) {
       args.push('--workspace', options.workspace);
@@ -208,7 +209,7 @@ class SDKBridge extends EventEmitter {
     const pythonCmd = process.platform === 'win32' ? 'py' : 'python';
     const pythonArgs = process.platform === 'win32' ? ['-3.12', ...args] : args;
 
-    console.log('[SDK Bridge] Starting V2 process:', pythonCmd, pythonArgs.join(' '));
+    log.info('SDK Bridge', `Starting V2 process: ${pythonCmd} ${pythonArgs.join(' ')}`);
 
     this.process = spawn(pythonCmd, pythonArgs, {
       cwd: options.workspace || process.cwd(),
@@ -241,7 +242,7 @@ class SDKBridge extends EventEmitter {
     // Handle stderr (errors and debug output)
     this.process.stderr.on('data', (data) => {
       const errorText = data.toString('utf8');
-      console.error('[SDK Bridge] Python stderr:', errorText);
+      log.error('SDK Bridge', 'Python stderr:', errorText);
 
       // Parse for pane-specific errors
       const paneMatch = errorText.match(/\[Pane (\d)\]/);
@@ -255,7 +256,7 @@ class SDKBridge extends EventEmitter {
 
     // Handle process exit
     this.process.on('close', (code) => {
-      console.log('[SDK Bridge] Process exited with code:', code);
+      log.info('SDK Bridge', `Process exited with code: ${code}`);
       this.active = false;
     this.ready = false;
 
@@ -275,7 +276,7 @@ class SDKBridge extends EventEmitter {
     });
 
     this.process.on('error', (err) => {
-      console.error('[SDK Bridge] Process error:', err);
+      log.error('SDK Bridge', 'Process error', err);
       this.active = false;
       this.ready = false;
       this.sendToRenderer('sdk-error', { paneId: '1', error: err.message });
@@ -284,11 +285,11 @@ class SDKBridge extends EventEmitter {
     // NOTE: Don't flush pending messages here - wait for "ready" signal from Python
     // This prevents race condition where messages are sent before agents are initialized
 
-    // V2 FIX: Send ping after short delay to get ready signal
+    // Send ping after short delay to get ready signal
     // This handles case where JS missed the initial ready signal
     setTimeout(() => {
       if (this.process && this.active && !this.ready) {
-        console.log('[SDK Bridge] Sending ping to get ready signal');
+        log.info('SDK Bridge', 'Sending ping to get ready signal');
         this.process.stdin.write(JSON.stringify({ command: 'ping' }) + '\n');
       }
     }, 2000);
@@ -305,11 +306,11 @@ class SDKBridge extends EventEmitter {
     const normalizedPaneId = ROLE_TO_PANE[paneId] || paneId;
 
     if (!this.sessions[normalizedPaneId]) {
-      console.error(`[SDK Bridge] Unknown pane: ${paneId}`);
+      log.error('SDK Bridge', `Unknown pane: ${paneId}`);
       return false;
     }
 
-    // V2 FIX: Use Python's expected key names (command, pane_id, session_id)
+    // Use Python's expected key names (command, pane_id, session_id)
     const cmd = {
       command: 'send',
       pane_id: normalizedPaneId,
@@ -334,7 +335,7 @@ class SDKBridge extends EventEmitter {
   subscribe(paneId) {
     const normalizedPaneId = ROLE_TO_PANE[paneId] || paneId;
     this.subscribers.add(normalizedPaneId);
-    console.log(`[SDK Bridge] Subscribed to pane ${normalizedPaneId}`);
+    log.info('SDK Bridge', `Subscribed to pane ${normalizedPaneId}`);
     return true;
   }
 
@@ -345,7 +346,7 @@ class SDKBridge extends EventEmitter {
   unsubscribe(paneId) {
     const normalizedPaneId = ROLE_TO_PANE[paneId] || paneId;
     this.subscribers.delete(normalizedPaneId);
-    console.log(`[SDK Bridge] Unsubscribed from pane ${normalizedPaneId}`);
+    log.info('SDK Bridge', `Unsubscribed from pane ${normalizedPaneId}`);
     return true;
   }
 
@@ -398,20 +399,20 @@ class SDKBridge extends EventEmitter {
   sendToProcess(command) {
     // Queue if process not running
     if (!this.process || !this.active) {
-      console.log('[SDK Bridge] Process not running, queueing message');
+      log.info('SDK Bridge', 'Process not running, queueing message');
       this.pendingMessages.push(command);
       return false;
     }
 
     // Queue if agents not yet ready (prevents race condition)
     if (!this.ready) {
-      console.log('[SDK Bridge] Agents not ready, queueing message');
+      log.info('SDK Bridge', 'Agents not ready, queueing message');
       this.pendingMessages.push(command);
       return false;
     }
 
     const json = JSON.stringify(command);
-    console.log('[SDK Bridge] Sending to Python:', json);
+    log.info('SDK Bridge', `Sending to Python: ${json}`);
     this.process.stdin.write(json + '\n');
     return true;
   }
@@ -421,7 +422,7 @@ class SDKBridge extends EventEmitter {
    */
   flushPendingMessages() {
     if (this.pendingMessages.length > 0) {
-      console.log(`[SDK Bridge] Flushing ${this.pendingMessages.length} pending messages`);
+      log.info('SDK Bridge', `Flushing ${this.pendingMessages.length} pending messages`);
       for (const msg of this.pendingMessages) {
         this.sendToProcess(msg);
       }
@@ -438,7 +439,7 @@ class SDKBridge extends EventEmitter {
       this.routeMessage(msg);
     } catch (_err) {
       // Not JSON - log as debug output
-      console.log('[SDK Bridge] Python output:', line);
+      log.info('SDK Bridge', `Python output: ${line}`);
     }
   }
 
@@ -544,7 +545,7 @@ class SDKBridge extends EventEmitter {
       case 'user':
         // UserMessage echo from Python - suppress to avoid duplication
         // (daemon-handlers.js already displays user message immediately when sent)
-        console.log(`[SDK Bridge] User echo for pane ${paneId} (suppressed - already displayed)`);
+        log.info('SDK Bridge', `User echo for pane ${paneId} (suppressed - already displayed)`);
         break;
 
       case 'thinking':
@@ -591,7 +592,7 @@ class SDKBridge extends EventEmitter {
 
       case 'ready':
         // Python has initialized all agents - now safe to send messages
-        console.log('[SDK Bridge] Received ready signal, agents:', msg.agents);
+        log.info('SDK Bridge', 'Received ready signal, agents:', msg.agents);
         this.ready = true;
         this.flushPendingMessages();
         this.sendToRenderer('sdk-ready', { agents: msg.agents });
@@ -607,30 +608,30 @@ class SDKBridge extends EventEmitter {
         break;
 
       case 'warning':
-        console.warn('[SDK Bridge] Warning:', msg.message);
+        log.warn('SDK Bridge', msg.message);
         this.sendToRenderer('sdk-warning', { paneId, message: msg.message });
         break;
 
       case 'message_received':
         // Acknowledgment that Python received the message - don't clutter UI
-        console.log(`[SDK Bridge] Message received by pane ${paneId}`);
+        log.info('SDK Bridge', `Message received by pane ${paneId}`);
         break;
 
       case 'all_stopped':
         // All agents stopped - internal event, don't show raw JSON to user
-        console.log('[SDK Bridge] All agents stopped, sessions saved:', msg.sessions_saved);
+        log.info('SDK Bridge', 'All agents stopped, sessions saved:', msg.sessions_saved);
         this.emit('sessions-stopped', this.getSessionIds());
         break;
 
       case 'ready':
         // IPC server ready - internal event, don't show to user
-        console.log('[SDK Bridge] Python ready, agents:', msg.agents);
+        log.info('SDK Bridge', 'Python ready, agents:', msg.agents);
         this.emit('python-ready', msg.agents);
         break;
 
       case 'sessions':
         // Response to get_sessions command - internal, just log
-        console.log('[SDK Bridge] Sessions:', msg.sessions);
+        log.info('SDK Bridge', 'Sessions:', msg.sessions);
         this.emit('sessions-list', msg.sessions);
         break;
 
@@ -650,7 +651,6 @@ class SDKBridge extends EventEmitter {
     }
 
     // Tell Python to stop all sessions and return final IDs
-    // V2 FIX: Use Python's expected key name
     const cmd = { command: 'stop' };
     this.sendToProcess(cmd);
 
@@ -676,7 +676,7 @@ class SDKBridge extends EventEmitter {
    */
   forceStop() {
     if (this.process) {
-      console.log('[SDK Bridge] Force stopping process');
+      log.info('SDK Bridge', 'Force stopping process');
       this.process.kill('SIGTERM');
       this.process = null;
     }
@@ -752,7 +752,7 @@ class SDKBridge extends EventEmitter {
    */
   interrupt(paneId) {
     const normalizedPaneId = ROLE_TO_PANE[paneId] || paneId;
-    // V2 FIX: Use Python's expected key names
+    // Use Python's expected key names
     const cmd = {
       command: 'interrupt',
       pane_id: normalizedPaneId,
