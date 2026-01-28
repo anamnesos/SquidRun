@@ -4,6 +4,7 @@
  */
 
 const { ipcRenderer } = require('electron');
+const log = require('./modules/logger');
 
 // Import modules
 const terminal = require('./modules/terminal');
@@ -34,7 +35,7 @@ let initState = {
 function checkInitComplete() {
   if (initState.settingsLoaded && initState.terminalsReady && !initState.autoSpawnChecked) {
     initState.autoSpawnChecked = true;
-    console.log('[Init] Both settings and terminals ready, checking auto-spawn...');
+    log.info('Init', 'Both settings and terminals ready, checking auto-spawn...');
     settings.checkAutoSpawn(
       terminal.spawnAllClaude,
       terminal.getReconnectedToExisting()
@@ -44,12 +45,12 @@ function checkInitComplete() {
 
 function markSettingsLoaded() {
   initState.settingsLoaded = true;
-  console.log('[Init] Settings loaded');
+  log.info('Init', 'Settings loaded');
 
   // SDK Mode: Set SDK mode flags in all relevant modules
   const currentSettings = settings.getSettings();
   if (currentSettings.sdkMode) {
-    console.log('[Init] SDK mode enabled in settings - notifying modules');
+    log.info('Init', 'SDK mode enabled in settings - notifying modules');
     daemonHandlers.setSDKMode(true);
     terminal.setSDKMode(true);  // Block PTY spawn operations
   }
@@ -59,28 +60,28 @@ function markSettingsLoaded() {
 
 function markTerminalsReady(isSDKMode = false) {
   initState.terminalsReady = true;
-  console.log('[Init] Terminals ready, SDK mode:', isSDKMode);
+  log.info('Init', `Terminals ready, SDK mode: ${isSDKMode}`);
 
   // SDK Mode: Initialize SDK panes and start sessions
   if (isSDKMode) {
-    console.log('[Init] Initializing SDK mode...');
+    log.info('Init', 'Initializing SDK mode...');
     sdkMode = true;
     sdkRenderer.setSDKPaneConfig();
     applySDKPaneLayout();
     sdkRenderer.initAllSDKPanes();
 
     // Auto-start SDK sessions (get workspace path via IPC)
-    console.log('[Init] Auto-starting SDK sessions...');
+    log.info('Init', 'Auto-starting SDK sessions...');
     ipcRenderer.invoke('get-project')
       .then(projectPath => {
         return ipcRenderer.invoke('sdk-start-sessions', { workspace: projectPath || undefined });
       })
       .then(() => {
-        console.log('[Init] SDK sessions started');
+        log.info('Init', 'SDK sessions started');
         updateConnectionStatus('SDK Mode - agents starting...');
       })
       .catch(err => {
-        console.error('[Init] Failed to start SDK sessions:', err);
+        log.error('Init', 'Failed to start SDK sessions:', err);
         updateConnectionStatus('SDK Mode - start failed');
       });
   }
@@ -143,18 +144,18 @@ window.hivemind = {
     enableMode: () => {
       // Idempotent - don't reinitialize if already enabled
       if (sdkMode) {
-        console.log('[SDK] Mode already enabled, skipping reinit');
+        log.info('SDK', 'Mode already enabled, skipping reinit');
         return;
       }
       sdkMode = true;
       sdkRenderer.setSDKPaneConfig();
       applySDKPaneLayout();
       sdkRenderer.initAllSDKPanes();
-      console.log('[SDK] Mode enabled');
+      log.info('SDK', 'Mode enabled');
     },
     disableMode: () => {
       sdkMode = false;
-      console.log('[SDK] Mode disabled');
+      log.info('SDK', 'Mode disabled');
     },
     // SDK status functions (exposed for external use)
     updateStatus: (paneId, state) => updateSDKStatus(paneId, state),
@@ -361,7 +362,7 @@ function updateSDKStatus(paneId, state) {
     statusEl.textContent = SDK_STATUS_LABELS[state] || state;
   }
 
-  console.log(`[SDK] Pane ${paneId} status: ${state}`);
+  log.info('SDK', `Pane ${paneId} status: ${state}`);
 }
 
 function showSDKMessageDelivered(paneId) {
@@ -374,7 +375,7 @@ function showSDKMessageDelivered(paneId) {
     statusEl.classList.remove('delivered');
   }, 600);
 
-  console.log(`[SDK] Pane ${paneId} message delivered`);
+  log.info('SDK', `Pane ${paneId} message delivered`);
 }
 
 function setSDKSessionId(paneId, sessionId, showInUI = false) {
@@ -443,7 +444,7 @@ function setupEventListeners() {
   function sendBroadcast(message) {
     const now = Date.now();
     if (now - lastBroadcastTime < 500) {
-      console.log('[Broadcast] Rate limited');
+      log.info('Broadcast', 'Rate limited');
       return false;
     }
     lastBroadcastTime = now;
@@ -458,7 +459,7 @@ function setupEventListeners() {
         const target = paneMatch[1].toLowerCase();
         const actualMessage = message.slice(paneMatch[0].length);
         if (target === 'all') {
-          console.log('[SDK] Broadcast to ALL agents');
+          log.info('SDK', 'Broadcast to ALL agents');
           // Show user message in ALL panes immediately
           ['1', '2', '3', '4', '5', '6'].forEach(paneId => {
             sdkRenderer.appendMessage(paneId, { type: 'user', content: actualMessage });
@@ -487,7 +488,7 @@ function setupEventListeners() {
             'reviewer': '6'
           };
           const paneId = paneMap[target] || '1';
-          console.log(`[SDK] Targeted send to pane ${paneId}: ${actualMessage.substring(0, 30)}...`);
+          log.info('SDK', `Targeted send to pane ${paneId}: ${actualMessage.substring(0, 30)}...`);
           // Show user message in target pane immediately
           sdkRenderer.appendMessage(paneId, { type: 'user', content: actualMessage });
           ipcRenderer.invoke('sdk-send-message', paneId, actualMessage);
@@ -495,13 +496,13 @@ function setupEventListeners() {
       } else {
         // V2 FIX: Default to Architect only (pane 1), not broadcast to all
         // Use /all prefix to explicitly broadcast to all agents
-        console.log('[SDK] Default send to Architect (pane 1)');
+        log.info('SDK', 'Default send to Architect (pane 1)');
         // Show user message in Architect pane immediately
         sdkRenderer.appendMessage('1', { type: 'user', content: message });
         ipcRenderer.invoke('sdk-send-message', '1', message);
       }
     } else {
-      console.log('[Broadcast] Using PTY mode');
+      log.info('Broadcast', 'Using PTY mode');
       terminal.broadcast(message + '\r');
     }
     return true;
@@ -513,7 +514,7 @@ function setupEventListeners() {
         // Only allow trusted (real user) Enter presses
         if (!e.isTrusted) {
           e.preventDefault();
-          console.log('[Broadcast] Blocked untrusted Enter');
+          log.info('Broadcast', 'Blocked untrusted Enter');
           return;
         }
         e.preventDefault();
@@ -533,7 +534,7 @@ function setupEventListeners() {
     broadcastBtn.addEventListener('click', (e) => {
       // Must be trusted click event
       if (!e.isTrusted) {
-        console.log('[Broadcast] Blocked untrusted click');
+        log.info('Broadcast', 'Blocked untrusted click');
         return;
       }
       const input = document.getElementById('broadcastInput');
@@ -660,10 +661,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // HB4: Watchdog alert - all agents stuck, notify user
   // FIX3: Now auto-triggers aggressive nudge and uses it for click handler
   ipcRenderer.on('watchdog-alert', (event, data) => {
-    console.log('[Watchdog] Alert received:', data);
+    log.info('Watchdog', 'Alert received:', data);
 
     // FIX3: Auto-trigger aggressive nudge when watchdog fires
-    console.log('[Watchdog] Auto-triggering aggressive nudge on all panes');
+    log.info('Watchdog', 'Auto-triggering aggressive nudge on all panes');
     terminal.aggressiveNudgeAll();
 
     // Show desktop notification
@@ -687,9 +688,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Play alert sound
     try {
       const audio = new Audio('assets/alert.mp3');
-      audio.play().catch(() => console.log('[Watchdog] Could not play alert sound'));
+      audio.play().catch(() => log.info('Watchdog', 'Could not play alert sound'));
     } catch (e) {
-      console.log('[Watchdog] Audio not available');
+      log.info('Watchdog', 'Audio not available');
     }
 
     // Show visual alert in status bar (click for additional nudge if needed)
@@ -722,7 +723,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       indicator.className = `heartbeat-indicator ${state}`;
       indicator.style.display = 'inline-flex';
 
-      console.log(`[Heartbeat] State changed: ${state}, interval: ${displayInterval}`);
+      log.info('Heartbeat', `State changed: ${state}, interval: ${displayInterval}`);
     }
   });
 
@@ -737,7 +738,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     stuckAlertShown.add(paneId);
     setTimeout(() => stuckAlertShown.delete(paneId), 60000);
 
-    console.log(`[Stuck Detection] Pane ${paneId} stuck for ${Math.round(idleTime / 1000)}s`);
+    log.info('StuckDetection', `Pane ${paneId} stuck for ${Math.round(idleTime / 1000)}s`);
 
     // Flash the stuck pane header
     const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
@@ -771,11 +772,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   // UX-8: Update contextual thinking state for tool_use messages
   ipcRenderer.on('sdk-message', (event, data) => {
     if (!data || !data.message) {
-      console.warn('[SDK] Received malformed sdk-message:', data);
+      log.warn('SDK', 'Received malformed sdk-message:', data);
       return;
     }
     const { paneId, message } = data;
-    console.log(`[SDK] Message for pane ${paneId}:`, message?.type || 'unknown');
+    log.info('SDK', `Message for pane ${paneId}: ${message?.type || 'unknown'}`);
 
     // UX-8: Update contextual thinking indicator for tool_use
     if (message.type === 'tool_use' || (message.type === 'assistant' && Array.isArray(message.content))) {
@@ -827,7 +828,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // SDK session started - initialize panes for SDK mode
   ipcRenderer.on('sdk-session-start', (event, data) => {
-    console.log('[SDK] Session starting - enabling SDK mode');
+    log.info('SDK', 'Session starting - enabling SDK mode');
     window.hivemind.sdk.enableMode();
     // Update all panes to connected status
     for (let i = 1; i <= 4; i++) {
@@ -837,7 +838,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // SDK session ended
   ipcRenderer.on('sdk-session-end', (event, data) => {
-    console.log('[SDK] Session ended');
+    log.info('SDK', 'Session ended');
     // Update all panes to disconnected status
     for (let i = 1; i <= 4; i++) {
       updateSDKStatus(i, 'disconnected');
@@ -849,7 +850,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   ipcRenderer.on('sdk-error', (event, data) => {
     if (!data) return;
     const { paneId, error } = data;
-    console.error(`[SDK] Error in pane ${paneId}:`, error);
+    log.error('SDK', `Error in pane ${paneId}:`, error);
     sdkRenderer.addErrorMessage(paneId, error);
     updateSDKStatus(paneId, 'error');
   });
