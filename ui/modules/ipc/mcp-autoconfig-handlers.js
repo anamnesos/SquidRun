@@ -1,5 +1,6 @@
 ﻿const path = require('path');
 const { exec } = require('child_process');
+const log = require('../logger');
 
 const MCP_SERVER_PATH = path.join(__dirname, '..', 'mcp-server.js');
 
@@ -19,21 +20,21 @@ function registerMcpAutoconfigHandlers(ctx) {
       return new Promise((resolve) => {
         exec(configCmd, { timeout: 10000 }, (error) => {
           if (error) {
-            console.error(`[MC8] MCP config error for pane ${paneId}:`, error);
+            log.error('MCP', `MCP config error for pane ${paneId}:`, error);
             ctx.mainWindow?.webContents.send('mcp-agent-error', {
               paneId,
               error: error.message || 'Configuration failed'
             });
             resolve({ success: false, error: error.message });
           } else {
-            console.log(`[MC8] MCP configured for pane ${paneId}`);
+            log.info('MCP', `MCP configured for pane ${paneId}`);
             ctx.mainWindow?.webContents.send('mcp-agent-connecting', { paneId });
             resolve({ success: true, paneId, serverName });
           }
         });
       });
     } catch (err) {
-      console.error('[MC8] MCP configure error:', err);
+      log.error('MCP', 'MCP configure error:', err);
       return { success: false, error: err.message };
     }
   }

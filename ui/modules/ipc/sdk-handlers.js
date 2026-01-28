@@ -1,4 +1,5 @@
 ﻿const { getSDKBridge } = require('../sdk-bridge');
+const log = require('../logger');
 
 function registerSdkHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -10,7 +11,7 @@ function registerSdkHandlers(ctx) {
   sdkBridge.setMainWindow(ctx.mainWindow);
 
   ipcMain.handle('sdk-start', async (event, prompt, options = {}) => {
-    console.log('[SDK] Starting with prompt:', prompt?.substring(0, 50) + '...');
+    log.info('SDK', 'Starting with prompt:', prompt?.substring(0, 50) + '...');
     try {
       sdkBridge.start(prompt, {
         broadcast: options.broadcast || false,
@@ -18,19 +19,19 @@ function registerSdkHandlers(ctx) {
       });
       return { success: true };
     } catch (err) {
-      console.error('[SDK] Start error:', err);
+      log.error('SDK', 'Start error:', err);
       return { success: false, error: err.message };
     }
   });
 
   ipcMain.handle('sdk-stop', () => {
-    console.log('[SDK] Stopping');
+    log.info('SDK', 'Stopping');
     sdkBridge.stop();
     return { success: true };
   });
 
   ipcMain.handle('sdk-write', (event, input) => {
-    console.log('[SDK] Writing input');
+    log.info('SDK', 'Writing input');
     sdkBridge.write(input);
     return { success: true };
   });
@@ -43,7 +44,7 @@ function registerSdkHandlers(ctx) {
   });
 
   ipcMain.handle('sdk-broadcast', async (event, prompt) => {
-    console.log('[SDK V2] Broadcasting to all agents:', prompt?.substring(0, 50) + '...');
+    log.info('SDK', 'Broadcasting to all agents:', prompt?.substring(0, 50) + '...');
     try {
       if (!sdkBridge.isActive()) {
         await sdkBridge.startSessions({ workspace: process.cwd() });
@@ -51,7 +52,7 @@ function registerSdkHandlers(ctx) {
       sdkBridge.broadcast(prompt);
       return { success: true };
     } catch (err) {
-      console.error('[SDK V2] Broadcast error:', err);
+      log.error('SDK', 'Broadcast error:', err);
       return { success: false, error: err.message };
     }
   });

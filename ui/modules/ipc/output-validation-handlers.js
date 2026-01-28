@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const log = require('../logger');
 
 function registerOutputValidationHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -107,7 +108,7 @@ function registerOutputValidationHandlers(ctx) {
 
     const valid = issues.length === 0;
 
-    console.log(`[Validation] ${valid ? 'PASS' : 'FAIL'} - Confidence: ${confidence}%, Issues: ${issues.length}`);
+    log.info('Validation', `${valid ? 'PASS' : 'FAIL'} - Confidence: ${confidence}%, Issues: ${issues.length}`);
 
     return {
       success: true,

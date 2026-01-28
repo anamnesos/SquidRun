@@ -1,5 +1,6 @@
 ﻿const fs = require('fs');
 const path = require('path');
+const log = require('../logger');
 
 function registerApiDocsHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -509,9 +510,9 @@ function registerApiDocsHandlers(ctx) {
     // Save to file
     try {
       fs.writeFileSync(API_DOCS_PATH, markdown, 'utf-8');
-      console.log(`[API Docs] Generated documentation: ${Object.keys(IPC_HANDLER_DOCS).length} handlers`);
+      log.info('API Docs', `Generated documentation: ${Object.keys(IPC_HANDLER_DOCS).length} handlers`);
     } catch (err) {
-      console.error('[API Docs] Error saving:', err.message);
+      log.error('API Docs', 'Error saving:', err.message);
     }
 
     return {

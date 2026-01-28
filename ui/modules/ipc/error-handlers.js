@@ -1,4 +1,6 @@
-﻿function registerErrorHandlers(ctx, deps = {}) {
+﻿const log = require('../logger');
+
+function registerErrorHandlers(ctx, deps = {}) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerErrorHandlers requires ctx.ipcMain');
   }
@@ -72,7 +74,7 @@
       });
     }
 
-    console.error(`[Error] ${errorInfo.title}: ${errorInfo.message}`);
+    log.error('Error', `${errorInfo.title}: ${errorInfo.message}`);
 
     return { success: true, shown: true };
   }
@@ -131,14 +133,14 @@
   ipcMain.handle('full-restart', async () => {
     const { app } = require('electron');
 
-    console.log('[Full Restart] Initiating full restart...');
+    log.info('Full Restart', 'Initiating full restart...');
 
     if (ctx.daemonClient) {
       try {
         ctx.daemonClient.shutdown();
-        console.log('[Full Restart] Sent shutdown to daemon');
+        log.info('Full Restart', 'Sent shutdown to daemon');
       } catch (err) {
-        console.log('[Full Restart] Error shutting down daemon:', err.message);
+        log.info('Full Restart', 'Error shutting down daemon:', err.message);
       }
     }
 
@@ -154,14 +156,14 @@
           const pid = fs.readFileSync(daemonPidPath, 'utf-8').trim();
           spawn('taskkill', ['/pid', pid, '/f', '/t'], { shell: true, detached: true });
           fs.unlinkSync(daemonPidPath);
-          console.log('[Full Restart] Killed daemon PID:', pid);
+          log.info('Full Restart', 'Killed daemon PID:', pid);
         }
       } catch (err) {
-        console.log('[Full Restart] Error killing daemon:', err.message);
+        log.info('Full Restart', 'Error killing daemon:', err.message);
       }
     }
 
-    console.log('[Full Restart] Shutting down. Please run "npm start" to restart.');
+    log.info('Full Restart', 'Shutting down. Please run "npm start" to restart.');
     app.exit(0);
 
     return { success: true };

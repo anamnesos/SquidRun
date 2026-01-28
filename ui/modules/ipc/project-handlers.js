@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const log = require('../logger');
 
 function registerProjectHandlers(ctx, deps) {
   const { ipcMain, PANE_IDS } = ctx;
@@ -168,7 +169,7 @@ function registerProjectHandlers(ctx, deps) {
     settings.paneProjects[paneId] = projectPath;
     saveSettings(settings);
 
-    console.log(`[Multi-Project] Pane ${paneId} assigned to: ${projectPath || 'default'}`);
+    log.info('Multi-Project', `Pane ${paneId} assigned to: ${projectPath || 'default'}`);
 
     if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
       ctx.mainWindow.webContents.send('pane-project-changed', { paneId, projectPath });

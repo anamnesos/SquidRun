@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const log = require('../logger');
 
 function registerTemplateHandlers(ctx, deps) {
   const { ipcMain, WORKSPACE_PATH } = ctx;
@@ -19,7 +20,7 @@ function registerTemplateHandlers(ctx, deps) {
         return JSON.parse(content);
       }
     } catch (err) {
-      console.error('[Templates] Error loading:', err.message);
+      log.error('Templates', 'Error loading:', err.message);
     }
     return [];
   }
@@ -30,7 +31,7 @@ function registerTemplateHandlers(ctx, deps) {
       fs.writeFileSync(tempPath, JSON.stringify(templates, null, 2), 'utf-8');
       fs.renameSync(tempPath, TEMPLATES_FILE_PATH);
     } catch (err) {
-      console.error('[Templates] Error saving:', err.message);
+      log.error('Templates', 'Error saving:', err.message);
     }
   }
 
@@ -63,7 +64,7 @@ function registerTemplateHandlers(ctx, deps) {
     }
 
     saveTemplates(templates);
-    console.log(`[Templates] Saved template: ${template.name}`);
+    log.info('Templates', `Saved template: ${template.name}`);
 
     return { success: true, template: newTemplate };
   });
@@ -88,7 +89,7 @@ function registerTemplateHandlers(ctx, deps) {
 
     saveSettings(settings);
 
-    console.log(`[Templates] Loaded template: ${template.name}`);
+    log.info('Templates', `Loaded template: ${template.name}`);
 
     if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
       ctx.mainWindow.webContents.send('template-loaded', template);
@@ -134,7 +135,7 @@ function registerTemplateHandlers(ctx, deps) {
     const deleted = templates.splice(index, 1)[0];
     saveTemplates(templates);
 
-    console.log(`[Templates] Deleted template: ${deleted.name}`);
+    log.info('Templates', `Deleted template: ${deleted.name}`);
     return { success: true };
   });
 }
