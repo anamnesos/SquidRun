@@ -255,11 +255,6 @@ function processQueue(paneId) {
         setTimeout(() => processQueue(paneId), QUEUE_RETRY_MS);
       }
     });
-
-    // Process next item if any
-    if (queue.length > 0 && !injectionInFlight) {
-      setTimeout(() => processQueue(paneId), QUEUE_RETRY_MS);
-    }
   } else {
     // Still busy, retry later
     setTimeout(() => processQueue(paneId), QUEUE_RETRY_MS);
