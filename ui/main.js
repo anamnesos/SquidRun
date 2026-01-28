@@ -489,7 +489,8 @@ async function initDaemonClient() {
     // Detect agent running state from output (works even if user typed CLI manually)
     const currentState = claudeRunning.get(paneId);
     if (currentState === 'starting' || currentState === 'idle') {
-      if (data.includes('Claude') || data.includes('>') || data.includes('claude') || data.includes('codex') || data.includes('gemini')) {
+      const lower = data.toLowerCase();
+      if (data.includes('>') || lower.includes('claude') || lower.includes('codex') || lower.includes('gemini')) {
         claudeRunning.set(paneId, 'running');
         broadcastClaudeState();
         logActivity('state', paneId, 'Agent started', { status: 'running' });
