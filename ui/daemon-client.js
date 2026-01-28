@@ -146,7 +146,7 @@ class DaemonClient extends EventEmitter {
           break;
 
         case 'data':
-          this.lastActivity.set(msg.paneId, Date.now()); // V4: Track activity
+          this.lastActivity.set(msg.paneId, Date.now()); // Track activity
           this.emit('data', msg.paneId, msg.data);
           break;
 

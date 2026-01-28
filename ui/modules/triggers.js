@@ -16,7 +16,7 @@ let mainWindow = null;
 let claudeRunning = null;
 let watcher = null; // Reference to watcher module for state checks
 
-// V2 SDK Integration
+// SDK Integration
 let sdkBridge = null;
 let sdkModeEnabled = false;
 
@@ -44,7 +44,7 @@ let messageState = {
  */
 function loadMessageState() {
   try {
-    // FIX: Reset lastSeen on app startup to prevent stale sequence blocking
+    // Reset lastSeen on app startup to prevent stale sequence blocking
     // New Claude instances start from #1, so old "lastSeen" values would block all messages
     // We keep the structure but clear lastSeen so fresh sessions work immediately
     log.info('MessageSeq', 'Resetting message state for fresh session');
@@ -173,11 +173,11 @@ function getSequenceState() {
 // Worker pane IDs that require reviewer approval before triggering
 const WORKER_PANES = ['3', '4', '5'];
 
-// BUG1 FIX: Track last sync time per pane to prevent self-sync
+// Track last sync time per pane to prevent self-sync
 const lastSyncTime = new Map(); // paneId -> timestamp
 const SYNC_DEBOUNCE_MS = 3000; // Skip sync if pane was synced within 3 seconds
 
-// FIX: Stagger delays to avoid thundering herd when multiple panes receive messages
+// Stagger delays to avoid thundering herd when multiple panes receive messages
 const STAGGER_BASE_DELAY_MS = 150; // Base delay between panes
 const STAGGER_RANDOM_MS = 100; // Random jitter added to base delay
 
@@ -257,8 +257,7 @@ function checkWorkflowGate(targets) {
   const state = watcher.readState();
   const currentState = state.state;
 
-  // Workers can be triggered in these states
-  // V12 FX3: Added planning states so team can coordinate anytime
+  // Workers can be triggered in these states (includes planning states for coordination)
   const allowedStates = [
     'executing',
     'checkpoint_fix',
@@ -282,19 +281,19 @@ function checkWorkflowGate(targets) {
 /**
  * Send context message to active agents
  * NOTE: Only works when Claude is running in terminal, not raw shell
- * V2 SDK: Routes through SDK when SDK mode is enabled
+ * Routes through SDK when SDK mode is enabled
  * @param {string[]} agents - Array of pane IDs to notify
  * @param {string} message - Message to send
  */
 function notifyAgents(agents, message) {
   if (!message) return;
 
-  // V2 SDK MODE: Route through SDK bridge (no running check needed - SDK manages sessions)
+  // SDK MODE: Route through SDK bridge (no running check needed - SDK manages sessions)
   if (isSDKModeEnabled()) {
     log.info('notifyAgents SDK', `Sending to ${agents.length} pane(s) via SDK: ${message.substring(0, 50)}...`);
     let successCount = 0;
     for (const paneId of agents) {
-      // FIX: Display incoming message in pane UI so user can see agent-to-agent messages
+      // Display incoming message in pane UI so user can see agent-to-agent messages
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('sdk-message', {
           paneId: paneId,
@@ -333,14 +332,14 @@ function notifyAgents(agents, message) {
 /**
  * AUTO-SYNC: Notify ALL agents when trigger files change
  * This enables the autonomous improvement loop
- * V2 SDK: Routes through SDK when SDK mode is enabled
+ * Routes through SDK when SDK mode is enabled
  * @param {string} triggerFile - Name of the file that changed
  */
 function notifyAllAgentsSync(triggerFile) {
   const message = `[HIVEMIND SYNC] ${triggerFile} was updated. Read workspace/${triggerFile} and respond.`;
   const now = Date.now();
 
-  // V2 SDK MODE: Broadcast through SDK bridge (no running check - SDK manages sessions)
+  // SDK MODE: Broadcast through SDK bridge (no running check - SDK manages sessions)
   if (isSDKModeEnabled()) {
     // Still apply debounce to prevent sync storms
     const eligiblePanes = [];
@@ -355,7 +354,7 @@ function notifyAllAgentsSync(triggerFile) {
     if (eligiblePanes.length > 0) {
       log.info('AUTO-SYNC SDK', `Notifying panes ${eligiblePanes.join(', ')}: ${triggerFile} changed`);
       for (const paneId of eligiblePanes) {
-        // FIX: Display incoming message in pane UI so user can see agent-to-agent messages
+        // Display incoming message in pane UI so user can see agent-to-agent messages
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('sdk-message', {
             paneId: paneId,
@@ -417,13 +416,13 @@ function notifyAllAgentsSync(triggerFile) {
 }
 
 /**
- * FIX: Send message to panes with staggered timing to avoid thundering herd
- * V2 SDK: Routes through SDK when SDK mode is enabled
+ * Send message to panes with staggered timing to avoid thundering herd
+ * Routes through SDK when SDK mode is enabled
  * @param {string[]} panes - Target pane IDs
  * @param {string} message - Message to send
  */
 function sendStaggered(panes, message) {
-  // V2 SDK: Route through SDK if enabled
+  // Route through SDK if enabled
   if (isSDKModeEnabled()) {
     log.info('Stagger', `Sending to ${panes.length} panes via SDK`);
     panes.forEach((paneId, index) => {
@@ -433,7 +432,7 @@ function sendStaggered(panes, message) {
         // Remove trailing \r - SDK doesn't need it
         const cleanMessage = message.endsWith('\r') ? message.slice(0, -1) : message;
 
-        // FIX: Display incoming message in pane UI so user can see agent-to-agent messages
+        // Display incoming message in pane UI so user can see agent-to-agent messages
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('sdk-message', {
             paneId: paneId,
@@ -561,13 +560,13 @@ function handleTriggerFile(filePath, filename) {
 
   log.info('Trigger', `${filename} → panes ${targets.join(', ')}: ${message.substring(0, 50)}...`);
 
-  // V2 SDK MODE: Route through SDK bridge (no keyboard events needed)
+  // SDK MODE: Route through SDK bridge (no keyboard events needed)
   if (isSDKModeEnabled()) {
     log.info('Trigger SDK', `Using SDK mode for ${targets.length} target(s)`);
     let allSuccess = true;
 
     for (const paneId of targets) {
-      // FIX: Display incoming message in pane UI so user can see agent-to-agent messages
+      // Display incoming message in pane UI so user can see agent-to-agent messages
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('sdk-message', {
           paneId: paneId,
@@ -624,13 +623,13 @@ function handleTriggerFile(filePath, filename) {
 /**
  * BROADCAST: Send message to ALL panes with clear broadcast indicator
  * Use this for user broadcasts so agents know it's going to everyone
- * V2: When SDK mode enabled, uses SDK bridge for delivery
+ * When SDK mode enabled, uses SDK bridge for delivery
  * @param {string} message - Message to broadcast (will be prefixed)
  */
 function broadcastToAllAgents(message) {
   const broadcastMessage = `[BROADCAST TO ALL AGENTS] ${message}`;
 
-  // V2 SDK MODE: Broadcast through SDK bridge to all panes
+  // SDK MODE: Broadcast through SDK bridge to all panes
   if (isSDKModeEnabled()) {
     log.info('BROADCAST SDK', `Broadcasting to all ${PANE_IDS.length} panes`);
     sdkBridge.broadcast(broadcastMessage);
@@ -658,7 +657,7 @@ function broadcastToAllAgents(message) {
   }
 
   if (notified.length > 0) {
-    // FIX: Use staggered send to avoid thundering herd
+    // Use staggered send to avoid thundering herd
     sendStaggered(notified, broadcastMessage + '\r');
   }
 
@@ -673,7 +672,7 @@ function broadcastToAllAgents(message) {
 }
 
 // ============================================================
-// V6 SR1: SMART ROUTING
+// SMART ROUTING
 // ============================================================
 
 // Role definitions for routing
@@ -778,7 +777,7 @@ function routeTask(taskType, message, performance) {
 }
 
 // ============================================================
-// V6 AH1: AUTO-HANDOFF
+// AUTO-HANDOFF
 // ============================================================
 
 // Handoff chain: who triggers who after completion
@@ -840,13 +839,13 @@ function triggerAutoHandoff(completedPaneId, completionMessage) {
 }
 
 // ============================================================
-// V10 MQ5: DIRECT MESSAGE (GATE BYPASS)
+// DIRECT MESSAGE (GATE BYPASS)
 // ============================================================
 
 /**
- * V10 MQ5: Send direct message to agent(s) - BYPASSES WORKFLOW GATE
+ * Send direct message to agent(s) - BYPASSES WORKFLOW GATE
  * Use this for inter-agent chat that should always be delivered
- * V2: When SDK mode enabled, uses SDK bridge for direct delivery
+ * When SDK mode enabled, uses SDK bridge for direct delivery
  * @param {string[]} targetPanes - Target pane IDs
  * @param {string} message - Message to send
  * @param {string} fromRole - Sender role name (optional)
@@ -858,13 +857,13 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
   const prefix = fromRole ? `[MSG from ${fromRole}]: ` : '';
   const fullMessage = prefix + message;
 
-  // V2 SDK MODE: Direct delivery through SDK bridge (no running check needed)
+  // SDK MODE: Direct delivery through SDK bridge (no running check needed)
   if (isSDKModeEnabled()) {
     log.info('DirectMessage SDK', `Sending to panes ${targetPanes.join(', ')}: ${message.substring(0, 50)}...`);
 
     let allSuccess = true;
     for (const paneId of targetPanes) {
-      // FIX: Display incoming message in pane UI so user can see agent-to-agent messages
+      // Display incoming message in pane UI so user can see agent-to-agent messages
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('sdk-message', {
           paneId: paneId,
@@ -924,7 +923,7 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
 }
 
 /**
- * V10 MQ5: Check if direct messages are allowed (always true)
+ * Check if direct messages are allowed (always true)
  * This exists for API consistency with checkWorkflowGate
  */
 function checkDirectMessageGate() {
@@ -940,16 +939,16 @@ module.exports = {
   handleTriggerFile,
   broadcastToAllAgents,
   checkWorkflowGate,
-  // V6
+  // Smart routing
   getBestAgent,
   routeTask,
   triggerAutoHandoff,
   AGENT_ROLES,
   HANDOFF_CHAIN,
-  // V10 MQ5
+  // Direct message
   sendDirectMessage,
   checkDirectMessageGate,
-  // V2 SDK Integration
+  // SDK Integration
   setSDKBridge,
   setSDKMode,
   isSDKModeEnabled,

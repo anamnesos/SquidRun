@@ -7,20 +7,21 @@ const path = require('path');
 const fs = require('fs');
 const chokidar = require('chokidar');
 const { WORKSPACE_PATH, TRIGGER_TARGETS, PANE_IDS, PANE_ROLES } = require('../config');
+const log = require('./logger');
 
 const STATE_FILE_PATH = path.join(WORKSPACE_PATH, 'state.json');
 const SHARED_CONTEXT_PATH = path.join(WORKSPACE_PATH, 'shared_context.md');
 
-// V10 MQ4: Message queue directory
+// Message queue directory
 const MESSAGE_QUEUE_DIR = path.join(WORKSPACE_PATH, 'messages');
 
 // Module state (set by init)
 let mainWindow = null;
 let workspaceWatcher = null;
 let triggerWatcher = null; // UX-9: Fast watcher for trigger files (sub-50ms)
-let messageWatcher = null; // V10 MQ4: Separate watcher for message queues
+let messageWatcher = null; // Separate watcher for message queues
 let triggers = null; // Reference to triggers module
-let getSettings = null; // V14: Settings getter for auto-sync control
+let getSettings = null; // Settings getter for auto-sync control
 
 // UX-9: Trigger file path for fast watching
 const TRIGGER_PATH = path.join(WORKSPACE_PATH, 'triggers');
@@ -127,7 +128,7 @@ function checkFileConflicts() {
   }
   lastConflicts = conflicts;
   if (conflicts.length && mainWindow && !mainWindow.isDestroyed()) {
-    console.warn('[Conflict]', conflicts.map(c => c.file));
+    log.warn('Conflict', 'File conflicts detected', conflicts.map(c => c.file));
     mainWindow.webContents.send('file-conflicts-detected', conflicts);
   }
   return conflicts;
@@ -138,7 +139,7 @@ function getLastConflicts() {
 }
 
 // ============================================================
-// V6 CR1: CONFLICT QUEUE SYSTEM
+// CONFLICT QUEUE SYSTEM
 // ============================================================
 
 // Queue of pending file operations during conflicts
@@ -159,7 +160,7 @@ function requestFileAccess(filePath, paneId, operation) {
   if (!activeFileLocks.has(normalizedPath)) {
     if (operation === 'write' || operation === 'edit') {
       activeFileLocks.set(normalizedPath, paneId);
-      console.log(`[ConflictQueue] Lock granted: ${paneId} -> ${filePath}`);
+      log.info('ConflictQueue', `Lock granted: ${paneId} -> ${filePath}`);
     }
     return { granted: true };
   }
@@ -191,7 +192,7 @@ function requestFileAccess(filePath, paneId, operation) {
     filePath,
   });
 
-  console.log(`[ConflictQueue] Queued: ${paneId} waiting for ${filePath} (position ${position})`);
+  log.info('ConflictQueue', `Queued: ${paneId} waiting for ${filePath} (position ${position})`);
 
   // Notify renderer
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -221,7 +222,7 @@ function releaseFileAccess(filePath, paneId) {
   }
 
   activeFileLocks.delete(normalizedPath);
-  console.log(`[ConflictQueue] Lock released: ${paneId} -> ${filePath}`);
+  log.info('ConflictQueue', `Lock released: ${paneId} -> ${filePath}`);
 
   // Check if anyone is waiting
   const queue = conflictQueue.get(normalizedPath);
@@ -230,7 +231,7 @@ function releaseFileAccess(filePath, paneId) {
 
     // Grant lock to next in queue
     activeFileLocks.set(normalizedPath, next.paneId);
-    console.log(`[ConflictQueue] Lock granted to queued: ${next.paneId} -> ${filePath}`);
+    log.info('ConflictQueue', `Lock granted to queued: ${next.paneId} -> ${filePath}`);
 
     // Notify renderer
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -280,7 +281,7 @@ function clearAllLocks() {
   const count = activeFileLocks.size + conflictQueue.size;
   activeFileLocks.clear();
   conflictQueue.clear();
-  console.log(`[ConflictQueue] Cleared all locks and queues (${count} items)`);
+  log.info('ConflictQueue', `Cleared all locks and queues (${count} items)`);
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('conflicts-cleared');
@@ -300,7 +301,7 @@ function readState() {
       return JSON.parse(content);
     }
   } catch (err) {
-    console.error('Error reading state:', err);
+    log.error('State', 'Error reading state', err);
   }
   // Return default state
   return {
@@ -313,13 +314,12 @@ function readState() {
     total_checkpoints: 0,
     friction_count: 0,
     error: null,
-    // V4 CB2: Agent claims
     claims: {},
   };
 }
 
 // ============================================================
-// V4 CB2: AGENT CLAIM/RELEASE PROTOCOL
+// AGENT CLAIM/RELEASE PROTOCOL
 // ============================================================
 
 /**
@@ -352,7 +352,7 @@ function claimAgent(paneId, taskId, description = '') {
   };
 
   writeState(state);
-  console.log(`[Claims] ${PANE_ROLES[paneId]} claimed task: ${taskId}`);
+  log.info('Claims', `${PANE_ROLES[paneId]} claimed task: ${taskId}`);
 
   // Notify renderer
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -376,7 +376,7 @@ function releaseAgent(paneId) {
 
   writeState(state);
   if (hadClaim) {
-    console.log(`[Claims] ${PANE_ROLES[paneId]} released claim`);
+    log.info('Claims', `${PANE_ROLES[paneId]} released claim`);
   }
 
   // Notify renderer
@@ -405,7 +405,7 @@ function clearClaims() {
   state.claims = {};
   writeState(state);
 
-  console.log('[Claims] All claims cleared');
+  log.info('Claims', 'All claims cleared');
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('claims-changed', {});
@@ -427,7 +427,7 @@ function writeState(state) {
     fs.writeFileSync(tempPath, content, 'utf-8');
     fs.renameSync(tempPath, STATE_FILE_PATH);
   } catch (err) {
-    console.error('Error writing state:', err);
+    log.error('State', 'Error writing state', err);
     const tempPath = STATE_FILE_PATH + '.tmp';
     if (fs.existsSync(tempPath)) {
       try { fs.unlinkSync(tempPath); } catch (e) { /* ignore */ }
@@ -448,7 +448,7 @@ function transition(newState) {
   state.timestamp = new Date().toISOString();
 
   writeState(state);
-  console.log(`[State Machine] ${oldState} → ${newState}`);
+  log.info('State Machine', `${oldState} → ${newState}`);
 
   // Notify renderer
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -491,7 +491,7 @@ function handleFileChangeDebounced(filePath) {
     pendingFileChanges.clear();
     debounceTimer = null;
 
-    console.log(`[Watcher] Processing ${files.length} batched file change(s)`);
+    log.info('Watcher', `Processing ${files.length} batched file change(s)`);
 
     // Process each unique file
     for (const file of files) {
@@ -509,7 +509,7 @@ function handleFileChangeCore(filePath) {
   const state = readState();
   const currentState = state.state;
 
-  console.log(`[Watcher] File changed: ${filename} (current state: ${currentState})`);
+  log.info('Watcher', `File changed: ${filename} (current state: ${currentState})`);
 
   // Transition logic based on file + current state
   if (filename === 'plan.md' && currentState === States.PLANNING) {
@@ -518,7 +518,7 @@ function handleFileChangeCore(filePath) {
   else if (filename === 'plan-approved.md' && currentState === States.PLAN_REVIEW) {
     const conflicts = checkFileConflicts();
     if (conflicts.length > 0) {
-      console.warn('[Transition] Proceeding to EXECUTING with file conflicts');
+      log.warn('Transition', 'Proceeding to EXECUTING with file conflicts');
     }
     transition(States.EXECUTING);
   }
@@ -565,19 +565,19 @@ function handleFileChangeCore(filePath) {
   else if (filename === 'improvements.md' && triggers) {
     const settings = getSettings ? getSettings() : {};
     if (settings.autoSync) {
-      console.log('[Watcher] Improvements file changed - triggering auto-sync to all agents');
+      log.info('Watcher', 'Improvements file changed - triggering auto-sync to all agents');
       triggers.notifyAllAgentsSync('improvements.md');
     } else {
-      console.log('[Watcher] Improvements file changed - auto-sync disabled, skipping');
+      log.info('Watcher', 'Improvements file changed - auto-sync disabled, skipping');
     }
   }
   else if (filename === 'shared_context.md' && triggers) {
     const settings = getSettings ? getSettings() : {};
     if (settings.autoSync) {
-      console.log('[Watcher] Shared context changed - triggering auto-sync to all agents');
+      log.info('Watcher', 'Shared context changed - triggering auto-sync to all agents');
       triggers.notifyAllAgentsSync('shared_context.md');
     } else {
-      console.log('[Watcher] Shared context changed - auto-sync disabled, skipping');
+      log.info('Watcher', 'Shared context changed - auto-sync disabled, skipping');
     }
   }
 
@@ -599,7 +599,7 @@ function startWatcher() {
   workspaceWatcher = chokidar.watch(WORKSPACE_PATH, {
     ignoreInitial: true,
     persistent: true,
-    usePolling: true,  // V17: Windows fix - bash echo doesn't trigger native fs events
+    usePolling: true,  // Windows fix - bash echo doesn't trigger native fs events
     interval: 1000,    // Poll every 1 second
     ignored: [
       /node_modules/,
@@ -613,7 +613,7 @@ function startWatcher() {
   workspaceWatcher.on('add', handleFileChangeDebounced);
   workspaceWatcher.on('change', handleFileChangeDebounced);
 
-  console.log(`[Watcher] Watching ${WORKSPACE_PATH}`);
+  log.info('Watcher', `Watching ${WORKSPACE_PATH}`);
 }
 
 function stopWatcher() {
@@ -635,7 +635,7 @@ function handleTriggerChange(filePath) {
   const filename = path.basename(filePath);
   if (!filename.endsWith('.txt')) return;
 
-  console.log(`[FastTrigger] Detected: ${filename} (fast path)`);
+  log.info('FastTrigger', `Detected: ${filename} (fast path)`);
 
   // Route directly to triggers module for immediate processing
   if (triggers) {
@@ -657,7 +657,7 @@ function handleTriggerFileWithRetry(filePath, filename, attempt = 0) {
   try {
     stats = fs.statSync(filePath);
   } catch (err) {
-    console.log(`[Trigger] Could not stat ${filename}: ${err.message}`);
+    log.info('Trigger', `Could not stat ${filename}: ${err.message}`);
     return;
   }
 
@@ -675,7 +675,7 @@ function handleTriggerFileWithRetry(filePath, filename, attempt = 0) {
       return;
     }
 
-    console.log(`[Trigger] Empty trigger file after ${TRIGGER_READ_MAX_ATTEMPTS} retries: ${filename}`);
+    log.info('Trigger', `Empty trigger file after ${TRIGGER_READ_MAX_ATTEMPTS} retries: ${filename}`);
     return;
   }
 
@@ -690,7 +690,7 @@ function startTriggerWatcher() {
   // Ensure trigger directory exists
   if (!fs.existsSync(TRIGGER_PATH)) {
     fs.mkdirSync(TRIGGER_PATH, { recursive: true });
-    console.log('[FastTrigger] Created trigger directory');
+    log.info('FastTrigger', 'Created trigger directory');
   }
 
   if (triggerWatcher) {
@@ -714,7 +714,7 @@ function startTriggerWatcher() {
   triggerWatcher.on('add', handleTriggerChange);
   triggerWatcher.on('change', handleTriggerChange);
 
-  console.log(`[FastTrigger] Watching ${TRIGGER_PATH} with 50ms polling`);
+  log.info('FastTrigger', `Watching ${TRIGGER_PATH} with 50ms polling`);
 }
 
 /**
@@ -724,7 +724,7 @@ function stopTriggerWatcher() {
   if (triggerWatcher) {
     triggerWatcher.close();
     triggerWatcher = null;
-    console.log('[FastTrigger] Stopped');
+    log.info('FastTrigger', 'Stopped');
   }
 }
 
@@ -741,7 +741,7 @@ function init(window, triggersModule, settingsGetter = null) {
 }
 
 // ============================================================
-// V10 MQ4: MESSAGE QUEUE FILE WATCHER
+// MESSAGE QUEUE FILE WATCHER
 // ============================================================
 
 /**
@@ -750,7 +750,7 @@ function init(window, triggersModule, settingsGetter = null) {
 function initMessageQueue() {
   if (!fs.existsSync(MESSAGE_QUEUE_DIR)) {
     fs.mkdirSync(MESSAGE_QUEUE_DIR, { recursive: true });
-    console.log('[MessageQueue] Created message directory');
+    log.info('MessageQueue', 'Created message directory');
   }
 
   // Create queue files for each pane if they don't exist
@@ -785,7 +785,7 @@ function getMessages(paneId, undeliveredOnly = false) {
     }
     return messages;
   } catch (err) {
-    console.error(`[MessageQueue] Error reading queue for pane ${paneId}:`, err.message);
+    log.error('MessageQueue', `Error reading queue for pane ${paneId}: ${err.message}`);
     return [];
   }
 }
@@ -843,7 +843,7 @@ function sendMessage(fromPaneId, toPaneId, content, type = 'direct') {
     fs.writeFileSync(tempPath, JSON.stringify(messages, null, 2), 'utf-8');
     fs.renameSync(tempPath, queueFile);
 
-    console.log(`[MessageQueue] ${PANE_ROLES[fromPaneId]} → ${PANE_ROLES[toPaneId]}: ${content.substring(0, 50)}...`);
+    log.info('MessageQueue', `${PANE_ROLES[fromPaneId]} → ${PANE_ROLES[toPaneId]}: ${content.substring(0, 50)}...`);
 
     // Notify renderer of new message
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -852,7 +852,7 @@ function sendMessage(fromPaneId, toPaneId, content, type = 'direct') {
 
     return { success: true, messageId, message };
   } catch (err) {
-    console.error(`[MessageQueue] Error sending message:`, err.message);
+    log.error('MessageQueue', `Error sending message: ${err.message}`);
     return { success: false, error: err.message };
   }
 }
@@ -887,7 +887,7 @@ function markMessageDelivered(paneId, messageId) {
     fs.writeFileSync(tempPath, JSON.stringify(messages, null, 2), 'utf-8');
     fs.renameSync(tempPath, queueFile);
 
-    console.log(`[MessageQueue] Marked delivered: ${messageId}`);
+    log.info('MessageQueue', `Marked delivered: ${messageId}`);
 
     // Notify renderer
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -922,7 +922,7 @@ function clearMessages(paneId, deliveredOnly = false) {
       }
     }
 
-    console.log(`[MessageQueue] Cleared messages for ${paneId}`);
+    log.info('MessageQueue', `Cleared messages for ${paneId}`);
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('messages-cleared', { paneId, deliveredOnly });
@@ -977,7 +977,7 @@ function handleMessageQueueChange(filePath) {
   const undelivered = getMessages(paneId, true);
 
   if (undelivered.length > 0) {
-    console.log(`[MessageQueue] ${undelivered.length} undelivered message(s) for pane ${paneId}`);
+    log.info('MessageQueue', `${undelivered.length} undelivered message(s) for pane ${paneId}`);
 
     // Notify renderer to process messages
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -988,7 +988,7 @@ function handleMessageQueueChange(filePath) {
       });
     }
 
-    // V10 MQ5: Direct messages bypass workflow gate
+    // Direct messages bypass workflow gate
     // Inject messages directly to running Claude instances
     if (triggers) {
       for (const msg of undelivered) {
@@ -1021,14 +1021,14 @@ function startMessageWatcher() {
   messageWatcher = chokidar.watch(MESSAGE_QUEUE_DIR, {
     ignoreInitial: true,
     persistent: true,
-    usePolling: true,  // V17: Windows fix - bash echo doesn't trigger native fs events
+    usePolling: true,  // Windows fix - bash echo doesn't trigger native fs events
     interval: 1000,    // Poll every 1 second
   });
 
   messageWatcher.on('change', handleMessageQueueChange);
   messageWatcher.on('add', handleMessageQueueChange);
 
-  console.log(`[MessageQueue] Watching ${MESSAGE_QUEUE_DIR}`);
+  log.info('MessageQueue', `Watching ${MESSAGE_QUEUE_DIR}`);
 }
 
 /**
@@ -1059,19 +1059,19 @@ module.exports = {
   checkFileConflicts,
   getLastConflicts,
 
-  // V4 CB2: Agent claims
+  // Agent claims
   claimAgent,
   releaseAgent,
   getClaims,
   clearClaims,
 
-  // V6 CR1: Conflict queue
+  // Conflict queue
   requestFileAccess,
   releaseFileAccess,
   getConflictQueueStatus,
   clearAllLocks,
 
-  // V10 MQ4+MQ5: Message queue
+  // Message queue
   initMessageQueue,
   sendMessage,
   getMessages,

@@ -132,7 +132,7 @@ function maybeAutoApprovePrompt(paneId, data) {
 // U1: Scrollback buffer settings - keep last 50KB of output per terminal
 const SCROLLBACK_MAX_SIZE = 50000;
 
-// V4 AR1: Default stuck threshold (60 seconds)
+// Default stuck threshold (60 seconds)
 const DEFAULT_STUCK_THRESHOLD = 60000;
 
 // ============================================================
@@ -279,15 +279,14 @@ setInterval(() => {
 }, 30000);
 
 // ============================================================
-// V13 HB1-HB4: HEARTBEAT WATCHDOG
-// V17: ADAPTIVE HEARTBEAT INTERVALS
+// HEARTBEAT WATCHDOG (adaptive intervals)
 // ============================================================
 
 const TRIGGERS_PATH = path.join(__dirname, '..', 'workspace', 'triggers');
 const SHARED_CONTEXT_PATH = path.join(__dirname, '..', 'workspace', 'shared_context.md');
 const STATUS_MD_PATH = path.join(__dirname, '..', 'workspace', 'build', 'status.md');
 
-// V17: Adaptive heartbeat intervals (ms)
+// Adaptive heartbeat intervals (ms)
 const HEARTBEAT_INTERVALS = {
   idle: 600000,       // 10 minutes - no pending tasks
   active: 120000,     // 2 minutes - tasks in progress
@@ -295,14 +294,14 @@ const HEARTBEAT_INTERVALS = {
   recovering: 45000,  // 45 seconds - after stuck detection, before escalation
 };
 
-// V17: Staleness threshold - task is "overdue" if no status.md update in 5 minutes
+// Staleness threshold - task is "overdue" if no status.md update in 5 minutes
 const STALENESS_THRESHOLD = 300000; // 5 minutes
 
 const LEAD_RESPONSE_TIMEOUT = 15000;  // HB2: 15 seconds
 const MAX_LEAD_NUDGES = 2;  // HB3: After 2 failed nudges, escalate
 const ACTIVITY_THRESHOLD = 10000;  // Only nudge if no activity for 10 seconds
 
-// V18: Auto-aggressive-nudge settings
+// Auto-aggressive-nudge settings
 const AGGRESSIVE_NUDGE_WAIT = 30000;  // 30 seconds between nudge attempts
 const MAX_AGGRESSIVE_NUDGES = 2;  // After 2 failed nudges, alert user
 const STUCK_CHECK_THRESHOLD = 60000;  // Consider stuck after 60s of no activity
@@ -312,11 +311,11 @@ let heartbeatEnabled = false;  // Disabled by default - user can enable via prot
 let leadNudgeCount = 0;
 let lastHeartbeatTime = 0;
 let awaitingLeadResponse = false;
-let currentHeartbeatState = 'idle';  // V17: Track current state
-let heartbeatTimerId = null;  // V17: Dynamic timer reference
-let isRecovering = false;  // V17: Recovery state after stuck detection
+let currentHeartbeatState = 'idle';  // Track current state
+let heartbeatTimerId = null;  // Dynamic timer reference
+let isRecovering = false;  // Recovery state after stuck detection
 
-// V18: Track aggressive nudge attempts per pane
+// Track aggressive nudge attempts per pane
 // Map<paneId, { attempts: number, lastNudgeTime: number, alerted: boolean }>
 const aggressiveNudgeState = new Map();
 
@@ -454,7 +453,7 @@ function exitRecoveryMode() {
 }
 
 // ============================================================
-// V18: AUTO-AGGRESSIVE-NUDGE
+// AUTO-AGGRESSIVE-NUDGE
 // When watchdog detects stuck agent, auto-send (AGGRESSIVE_NUDGE)
 // Escalation: nudge → wait 30s → nudge again → alert user
 // ============================================================
@@ -470,7 +469,7 @@ const PANE_TRIGGER_FILES = {
 };
 
 /**
- * V18: Send aggressive nudge to a specific agent via trigger file
+ * Send aggressive nudge to a specific agent via trigger file
  * Returns true if nudge was sent, false if failed
  */
 function sendAggressiveNudge(paneId) {
@@ -495,10 +494,10 @@ function sendAggressiveNudge(paneId) {
 }
 
 /**
- * V18: Check if an agent has responded since last nudge
+ * Check if an agent has responded since last nudge
  * An agent has "responded" if they have recent activity
  */
-// V18.2 FIX: Grace period to distinguish nudge-induced writes from real agent response
+// Grace period to distinguish nudge-induced writes from real agent response
 // The nudge process takes ~200ms (ESC + 150ms delay + Enter), so any input within
 // 500ms of the nudge is likely the nudge itself, not the agent actually responding
 const NUDGE_GRACE_PERIOD_MS = 500;
@@ -510,11 +509,11 @@ function hasAgentResponded(paneId) {
   const state = aggressiveNudgeState.get(paneId);
   if (!state) return true; // No nudge state = not being tracked = OK
 
-  // V18 FIX: Agent responded if they received INPUT after the last nudge
+  // Check if agent received INPUT after the last nudge
   // Use lastInputTime (user/trigger input) not lastActivity (PTY output)
   const lastInput = terminal.lastInputTime || terminal.lastActivity;
 
-  // V18.2 FIX: Add grace period - the nudge itself causes PTY writes (ESC + Enter)
+  // Add grace period - the nudge itself causes PTY writes (ESC + Enter)
   // which update lastInputTime. Only count as "responded" if input came AFTER
   // the grace period, meaning it's likely real agent activity, not our nudge.
   const nudgeCompleteTime = state.lastNudgeTime + NUDGE_GRACE_PERIOD_MS;
@@ -522,7 +521,7 @@ function hasAgentResponded(paneId) {
 }
 
 /**
- * V18: Alert user about a specific stuck agent
+ * Alert user about a specific stuck agent
  */
 function alertUserAboutAgent(paneId) {
   const roleName = PANE_ROLES[paneId] || `Pane ${paneId}`;
@@ -646,9 +645,7 @@ function sendHeartbeatToLead() {
   const leadPaneId = '1';
   const leadTerminal = terminals.get(leadPaneId);
 
-  // V16 FIX: REMOVED ESC sending entirely - PTY ESC always kills/breaks agents
-  // The comment said "only if idle" but PTY ESC is fundamentally broken
-  // User keyboard ESC works, PTY ESC does not. Can't be fixed programmatically.
+  // ESC sending removed - PTY ESC breaks agents (keyboard ESC works, PTY does not)
   // Just send the trigger file message, let user manually ESC if needed.
 
   // Send heartbeat message via trigger file
@@ -671,8 +668,7 @@ function sendHeartbeatToLead() {
 function directNudgeWorkers() {
   logWarn('[Heartbeat] Lead unresponsive - directly nudging workers');
 
-  // V16 FIX: REMOVED ESC sending entirely - PTY ESC always kills/breaks agents
-  // Just use trigger files, let user manually ESC if needed
+  // ESC sending removed - PTY ESC breaks agents. Use trigger files instead.
 
   // Read shared_context.md to find incomplete tasks
   let incompleteTasksMsg = 'Check shared_context.md for your tasks';
@@ -775,10 +771,10 @@ function heartbeatTick() {
     return;
   }
 
-  // V18: Check for stuck agents and auto-nudge them
+  // Check for stuck agents and auto-nudge them
   checkAndNudgeStuckAgents();
 
-  // V17: Check if state changed and update timer accordingly
+  // Check if state changed and update timer accordingly
   updateHeartbeatTimer();
 
   // NOTE: Removed "smart activity check" - it was preventing heartbeats from firing
@@ -796,7 +792,7 @@ function heartbeatTick() {
       logInfo('[Heartbeat] Lead responded');
       leadNudgeCount = 0;
       awaitingLeadResponse = false;
-      exitRecoveryMode();  // V17: Exit recovery if we were in it
+      exitRecoveryMode();  // Exit recovery if we were in it
       return;
     }
 
@@ -805,7 +801,7 @@ function heartbeatTick() {
       leadNudgeCount++;
       logWarn(`[Heartbeat] Lead no response after ${elapsed}ms (nudge ${leadNudgeCount}/${MAX_LEAD_NUDGES})`);
 
-      // V17: Enter recovery mode on first failed nudge
+      // Enter recovery mode on first failed nudge
       enterRecoveryMode();
 
       if (leadNudgeCount >= MAX_LEAD_NUDGES) {
@@ -823,7 +819,7 @@ function heartbeatTick() {
               const content = fs.readFileSync(workersTrigger, 'utf-8').trim();
               if (content.includes('(SYSTEM): Watchdog')) {
                 alertUser();
-                exitRecoveryMode();  // V17: Exit recovery after user alert
+                exitRecoveryMode();  // Exit recovery after user alert
               }
             }
           } catch (err) {
@@ -842,7 +838,7 @@ function heartbeatTick() {
   sendHeartbeatToLead();
 }
 
-// V17: Start heartbeat timer with initial adaptive interval
+// Start heartbeat timer with initial adaptive interval
 function initHeartbeatTimer() {
   const initialState = getHeartbeatState();
   const initialInterval = HEARTBEAT_INTERVALS[initialState];
@@ -854,7 +850,7 @@ function initHeartbeatTimer() {
   // Broadcast initial state to any connected clients
   broadcastHeartbeatState(initialState, initialInterval);
 
-  // V17: Periodic state check (every 30 seconds) to detect state changes
+  // Periodic state check (every 30 seconds) to detect state changes
   // This catches state changes between heartbeat ticks
   setInterval(() => {
     if (heartbeatEnabled) {
@@ -1012,8 +1008,8 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       dryRun: true,
       mode: 'dry-run',
       inputBuffer: '', // Buffer for accumulating input
-      lastActivity: Date.now(), // V4 AR1: Track last activity
-      lastInputTime: Date.now(), // V18 FIX: Track last user INPUT
+      lastActivity: Date.now(), // Track last activity
+      lastInputTime: Date.now(), // Track last user INPUT
     };
 
     terminals.set(paneId, terminalInfo);
@@ -1081,8 +1077,8 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     scrollback: '', // U1: Buffer for scrollback persistence
     dryRun: false,
     mode: 'pty',
-    lastActivity: Date.now(), // V4 AR1: Track last PTY output
-    lastInputTime: Date.now(), // V18 FIX: Track last user INPUT (not output)
+    lastActivity: Date.now(), // Track last PTY output
+    lastInputTime: Date.now(), // Track last user INPUT (not output)
   };
 
   terminals.set(paneId, terminalInfo);
@@ -1094,7 +1090,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
 
   // Forward PTY output to all connected clients
   ptyProcess.onData((data) => {
-    // V4 AR1: Track last activity time
+    // Track last activity time
     terminalInfo.lastActivity = Date.now();
     // Codex approval prompt fallback (best-effort)
     maybeAutoApprovePrompt(paneId, data);
@@ -1141,7 +1137,7 @@ function writeTerminal(paneId, data) {
 
   // DRY-RUN MODE: Handle input simulation
   if (terminal.dryRun) {
-    // V18 FIX: Track last INPUT time (for stuck detection)
+    // Track last INPUT time (for stuck detection)
     terminal.lastInputTime = Date.now();
 
     // Handle special characters BEFORE echoing
@@ -1180,7 +1176,7 @@ function writeTerminal(paneId, data) {
 
   // NORMAL MODE: Write to real PTY
   if (terminal.pty) {
-    // V18 FIX: Track last INPUT time (for stuck detection)
+    // Track last INPUT time (for stuck detection)
     terminal.lastInputTime = Date.now();
     terminal.pty.write(data);
     return true;
@@ -1240,29 +1236,23 @@ function listTerminals() {
         alive: info.alive,
         cwd: info.cwd,
         mode: info.mode || 'pty',
-        // U1: Include scrollback for session restoration
+        // Include scrollback for session restoration
         scrollback: info.scrollback || '',
-      // V3: Include dry-run flag
-      dryRun: info.dryRun || false,
-      // V4 AR1: Include last activity timestamp
-      lastActivity: info.lastActivity || null,
-      // V18 FIX: Include last input timestamp (for stuck detection)
-      lastInputTime: info.lastInputTime || null,
+        dryRun: info.dryRun || false,
+        lastActivity: info.lastActivity || null,
+        lastInputTime: info.lastInputTime || null,
     });
   }
   return list;
 }
 
-// V4 AR1: Get stuck terminals (no INPUT for threshold ms)
-// V18 FIX: Use lastInputTime instead of lastActivity
-// lastActivity tracks PTY output (includes thinking animation - always "active")
-// lastInputTime tracks user INPUT (actual commands sent to agent)
+// Get stuck terminals (no INPUT for threshold ms)
+// Uses lastInputTime (actual commands sent to agent) not lastActivity (PTY output)
 function getStuckTerminals(thresholdMs = DEFAULT_STUCK_THRESHOLD) {
   const now = Date.now();
   const stuck = [];
   for (const [paneId, info] of terminals) {
-    // V18 FIX: Check lastInputTime (when we last sent input TO the agent)
-    // not lastActivity (when agent last produced output)
+    // Check lastInputTime (when we last sent input TO the agent)
     const lastInput = info.lastInputTime || info.lastActivity;
     if (info.alive && lastInput) {
       const idleTime = now - lastInput;
@@ -1428,7 +1418,7 @@ function handleMessage(client, message) {
         break;
       }
 
-      // V13 HB1-HB4: Heartbeat control
+      // Heartbeat control
       case 'heartbeat-enable': {
         heartbeatEnabled = true;
         logInfo('[Heartbeat] Enabled via protocol');
@@ -1449,16 +1439,14 @@ function handleMessage(client, message) {
         sendToClient(client, {
           event: 'heartbeat-status',
           enabled: heartbeatEnabled,
-          // V17: Include adaptive state info
           state: currentState,
           interval: currentInterval,
           isRecovering: isRecovering,
-          // Legacy fields
           leadNudgeCount,
           awaitingResponse: awaitingLeadResponse,
           lastHeartbeat: lastHeartbeatTime,
         });
-        // V17: Also broadcast current state so UI updates
+        // Also broadcast current state so UI updates
         broadcastHeartbeatState(currentState, currentInterval);
         break;
       }
@@ -1509,7 +1497,7 @@ function handleMessage(client, message) {
         break;
       }
 
-      // V18: Auto-aggressive-nudge protocol actions
+      // Auto-aggressive-nudge protocol actions
       case 'nudge-agent': {
         // Manually nudge a specific agent
         const success = sendAggressiveNudge(msg.paneId);
@@ -1573,7 +1561,7 @@ function handleMessage(client, message) {
         break;
       }
 
-      // V4 AR1: Get stuck terminals
+      // Get stuck terminals
       case 'stuck': {
         const threshold = msg.threshold || DEFAULT_STUCK_THRESHOLD;
         const stuckTerminals = getStuckTerminals(threshold);

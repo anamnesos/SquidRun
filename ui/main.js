@@ -58,14 +58,14 @@ const DEFAULT_SETTINGS = {
   allowAllPermissions: true,
   costAlertEnabled: true,
   costAlertThreshold: 5.00,
-  dryRun: false,  // V3: Simulate without spawning real agents
+  dryRun: false,  // Simulate without spawning real agents
   mcpAutoConfig: false,  // MC8: Auto-configure MCP on agent spawn (disabled by default)
-  recentProjects: [],  // V3 J2: Recent projects list (max 10)
+  recentProjects: [],  // Recent projects list (max 10)
   stuckThreshold: 120000,  // Auto-interrupt after 120 seconds of no output
-  autoNudge: true,  // V4: Enable automatic stuck detection and nudging
-  // V5 MP1: Per-pane project assignments
+  autoNudge: true,  // Enable automatic stuck detection and nudging
+  // Per-pane project assignments
   paneProjects: { '1': null, '2': null, '3': null, '4': null, '5': null, '6': null },
-  // V6: Per-pane CLI command (PTY mode)
+  // Per-pane CLI command (PTY mode)
   paneCommands: {
     '1': 'claude',
     '2': 'codex',
@@ -74,7 +74,7 @@ const DEFAULT_SETTINGS = {
     '5': 'codex',
     '6': 'claude',
   },
-  // V5 TM1: Saved templates
+  // Saved templates
   templates: [],
   // SDK Mode: Use Claude Agent SDK instead of PTY terminals
   sdkMode: false,
@@ -122,7 +122,7 @@ function ensureCodexConfig() {
 }
 
 // ============================================================
-// V7 OB1: ACTIVITY LOG AGGREGATION
+// ACTIVITY LOG AGGREGATION
 // ============================================================
 
 const MAX_ACTIVITY_ENTRIES = 500;
@@ -267,7 +267,7 @@ function saveSettings(settings) {
     fs.writeFileSync(tempPath, content, 'utf-8');
     fs.renameSync(tempPath, SETTINGS_FILE_PATH);
 
-    // V2 SDK: Update triggers SDK mode when setting changes
+    // Update triggers SDK mode when setting changes
     if (sdkModeChanged) {
       triggers.setSDKMode(currentSettings.sdkMode);
       log.info('Settings', `SDK mode ${currentSettings.sdkMode ? 'ENABLED' : 'DISABLED'}`);
@@ -479,7 +479,7 @@ async function initDaemonClient() {
     }
     lastInterruptAt.delete(paneId);
 
-    // V7 OB1: Log significant terminal output (errors, completions)
+    // Log significant terminal output (errors, completions)
     if (data.includes('Error') || data.includes('error:') || data.includes('FAILED')) {
       logActivity('error', paneId, 'Terminal error detected', { snippet: data.substring(0, 200) });
     } else if (data.includes('✅') || data.includes('DONE') || data.includes('Complete')) {
@@ -554,7 +554,7 @@ async function initDaemonClient() {
     log.error('Daemon', `Error for pane ${paneId}`, message);
   });
 
-  // V17: Forward heartbeat state changes to renderer
+  // Forward heartbeat state changes to renderer
   daemonClient.on('heartbeat-state-changed', (state, interval, timestamp) => {
     log.info('Heartbeat', `State changed: ${state} (${interval}ms)`);
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -562,7 +562,7 @@ async function initDaemonClient() {
     }
   });
 
-  // V13: Forward watchdog alerts to renderer
+  // Forward watchdog alerts to renderer
   daemonClient.on('watchdog-alert', (message, timestamp) => {
     log.warn('Watchdog', `Alert: ${message}`);
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -637,10 +637,10 @@ async function createWindow() {
 
   // Initialize modules with shared state
   triggers.init(mainWindow, claudeRunning);
-  watcher.init(mainWindow, triggers, () => currentSettings); // V14: Pass settings getter for auto-sync control
+  watcher.init(mainWindow, triggers, () => currentSettings); // Pass settings getter for auto-sync control
   triggers.setWatcher(watcher); // Enable workflow gate
 
-  // V2 SDK: Connect SDK bridge to triggers for message routing
+  // Connect SDK bridge to triggers for message routing
   const sdkBridge = getSDKBridge();
   sdkBridge.setMainWindow(mainWindow);
   triggers.setSDKBridge(sdkBridge);
@@ -670,7 +670,7 @@ async function createWindow() {
     recordSessionEnd,
     saveUsageStats,
     broadcastClaudeState,
-    // V7 OB1: Activity log functions
+    // Activity log functions
     logActivity,
     getActivityLog,
     clearActivityLog,
@@ -680,7 +680,7 @@ async function createWindow() {
   mainWindow.webContents.on('did-finish-load', async () => {
     watcher.startWatcher();
     watcher.startTriggerWatcher(); // UX-9: Fast trigger watcher (50ms polling)
-    watcher.startMessageWatcher(); // V10 MQ4: Start message queue watcher
+    watcher.startMessageWatcher(); // Start message queue watcher
     const state = watcher.readState();
     mainWindow.webContents.send('state-changed', state);
     await initDaemonClient();
@@ -730,14 +730,14 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   watcher.stopWatcher();
   watcher.stopTriggerWatcher(); // UX-9: Stop fast trigger watcher
-  watcher.stopMessageWatcher(); // V10 MQ4: Stop message queue watcher
+  watcher.stopMessageWatcher(); // Stop message queue watcher
 
   if (daemonClient) {
     log.info('Cleanup', 'Disconnecting from daemon (terminals will survive)');
     daemonClient.disconnect();
   }
 
-  // V2 SDK: Stop SDK sessions and save session IDs for resume
+  // Stop SDK sessions and save session IDs for resume
   const sdkBridge = getSDKBridge();
   if (sdkBridge.isActive()) {
     log.info('Cleanup', 'Stopping SDK sessions and saving state');

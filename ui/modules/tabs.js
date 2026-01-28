@@ -4,6 +4,7 @@
  */
 
 const { ipcRenderer } = require('electron');
+const log = require('./logger');
 
 // Panel state
 let panelOpen = false;
@@ -124,7 +125,7 @@ async function loadProcesses() {
       renderProcessList();
     }
   } catch (err) {
-    console.error('Error loading processes:', err);
+    log.error('Tabs', 'Error loading processes', err);
   }
 }
 
@@ -260,7 +261,7 @@ async function loadActivityLog() {
       renderActivityLog();
     }
   } catch (err) {
-    console.error('[OB2] Error loading activity log:', err);
+    log.error('OB2', 'Error loading activity log', err);
   }
 }
 
@@ -491,7 +492,7 @@ async function loadTestResults() {
       setTestResults(result.results, result.summary);
     }
   } catch (err) {
-    console.error('[TR1] Error loading test results:', err);
+    log.error('TR1', 'Error loading test results', err);
   }
 }
 
@@ -695,7 +696,7 @@ async function loadMCPStatus() {
     }
   } catch (err) {
     // MCP not available yet, that's okay
-    console.log('[MC7] MCP status not available yet');
+    log.info('MC7', 'MCP status not available yet');
   }
 }
 
@@ -806,7 +807,7 @@ async function autoConfigureMCPOnSpawn(paneId) {
       }
     }
   } catch (err) {
-    console.error('[MC8] Error checking MCP auto-config setting:', err);
+    log.error('MC8', 'Error checking MCP auto-config setting', err);
   }
 }
 
@@ -865,7 +866,7 @@ async function checkMCPHealth() {
       }
     }
   } catch (err) {
-    console.error('[MC9] Health check error:', err);
+    log.error('MC9', 'Health check error', err);
   }
 }
 
@@ -878,14 +879,14 @@ function startMCPHealthMonitoring() {
 
   // Start periodic checks
   mcpHealthCheckInterval = setInterval(checkMCPHealth, MCP_HEALTH_CHECK_INTERVAL);
-  console.log('[MC9] MCP health monitoring started');
+  log.info('MC9', 'MCP health monitoring started');
 }
 
 function stopMCPHealthMonitoring() {
   if (mcpHealthCheckInterval) {
     clearInterval(mcpHealthCheckInterval);
     mcpHealthCheckInterval = null;
-    console.log('[MC9] MCP health monitoring stopped');
+    log.info('MC9', 'MCP health monitoring stopped');
   }
 }
 
@@ -975,7 +976,7 @@ async function loadPerformanceData() {
       renderPerformanceData();
     }
   } catch (err) {
-    console.error('[PT2] Error loading performance data:', err);
+    log.error('PT2', 'Error loading performance data', err);
   }
 }
 
@@ -987,7 +988,7 @@ async function resetPerformanceData() {
     renderPerformanceData();
     updateConnectionStatus('Performance stats reset');
   } catch (err) {
-    console.error('[PT2] Error resetting performance data:', err);
+    log.error('PT2', 'Error resetting performance data', err);
   }
 }
 
@@ -1073,7 +1074,7 @@ async function loadTemplates() {
       renderTemplateList();
     }
   } catch (err) {
-    console.error('[TM2] Error loading templates:', err);
+    log.error('TM2', 'Error loading templates', err);
   }
 }
 
@@ -1205,7 +1206,7 @@ async function loadRecentProjects() {
 
     renderProjectsList();
   } catch (err) {
-    console.error('Error loading recent projects:', err);
+    log.error('Tabs', 'Error loading recent projects', err);
   }
 }
 
@@ -1322,7 +1323,7 @@ async function loadSessionHistory() {
       renderHistoryList();
     }
   } catch (err) {
-    console.error('Error loading session history:', err);
+    log.error('Tabs', 'Error loading session history', err);
   }
 }
 
@@ -1404,7 +1405,7 @@ async function updateUsageStats() {
       if (estCostEl) estCostEl.textContent = `$${stats.estimatedCost || '0.00'}`;
     }
   } catch (err) {
-    console.error('Error loading usage stats:', err);
+    log.error('Tabs', 'Error loading usage stats', err);
   }
 }
 
@@ -1416,7 +1417,7 @@ async function refreshBuildProgress() {
     }
     await updateUsageStats();
   } catch (err) {
-    console.error('Error loading state:', err);
+    log.error('Tabs', 'Error loading state', err);
   }
 }
 
@@ -1433,7 +1434,7 @@ function displayConflicts(conflicts) {
 
 function setupConflictListener() {
   ipcRenderer.on('file-conflicts-detected', (event, conflicts) => {
-    console.log('[Conflict]', conflicts);
+    log.info('Conflict', conflicts);
     displayConflicts(conflicts);
   });
 }
@@ -1498,7 +1499,7 @@ async function loadFrictionFiles() {
       renderFrictionList();
     }
   } catch (err) {
-    console.error('Error loading friction files:', err);
+    log.error('Tabs', 'Error loading friction files', err);
   }
 }
 
@@ -1509,7 +1510,7 @@ async function viewFrictionFile(filename) {
       alert(`=== ${filename} ===\n\n${result.content}`);
     }
   } catch (err) {
-    console.error('Error reading friction file:', err);
+    log.error('Tabs', 'Error reading friction file', err);
   }
 }
 
@@ -1524,7 +1525,7 @@ async function clearFriction() {
       updateConnectionStatus('Friction logs cleared');
     }
   } catch (err) {
-    console.error('Error clearing friction:', err);
+    log.error('Tabs', 'Error clearing friction', err);
   }
 }
 
@@ -1674,7 +1675,7 @@ async function loadMessageHistory() {
       renderMessagesList();
     }
   } catch (err) {
-    console.error('[MQ3] Error loading message history:', err);
+    log.error('MQ3', 'Error loading message history', err);
   }
 }
 
@@ -1690,7 +1691,7 @@ async function clearMessageHistory() {
     renderMessagesList();
     updateConnectionStatus('Message history cleared');
   } catch (err) {
-    console.error('[MQ3] Error clearing message history:', err);
+    log.error('MQ3', 'Error clearing message history', err);
     updateConnectionStatus('Failed to clear message history');
   }
 }
@@ -1818,7 +1819,7 @@ function setupMessagesTab() {
         // Autocomplete guard - allow if user input >= half value length
         const value = input.value.trim();
         if (value.length > 3 && composerInputChars < value.length / 2) {
-          console.log('[MessageComposer] Blocked autocomplete');
+          log.info('MessageComposer', 'Blocked autocomplete');
           input.value = '';
           composerInputChars = 0;
           return;
@@ -1949,7 +1950,7 @@ async function loadScreenshots() {
   try {
     const result = await window.hivemind.screenshot.list();
     if (!result.success) {
-      console.error('Failed to load screenshots:', result.error);
+      log.error('Tabs', 'Failed to load screenshots', result.error);
       return;
     }
 
@@ -2005,7 +2006,7 @@ async function loadScreenshots() {
 
     updateConnectionStatus(`Loaded ${result.files.length} screenshot(s)`);
   } catch (err) {
-    console.error('Error loading screenshots:', err);
+    log.error('Tabs', 'Error loading screenshots', err);
   }
 }
 
