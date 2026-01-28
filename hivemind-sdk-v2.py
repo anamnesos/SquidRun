@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Hivemind SDK V2 - 4 Independent Claude Sessions
+Hivemind SDK V2 - 6 Independent Claude Sessions
 
-Architecture: 4 persistent ClaudeSDKClient instances (NOT subagents)
+Architecture: 6 persistent ClaudeSDKClient instances (NOT subagents)
 - Each agent has its own full context window
 - Sessions persist across app restarts
 - Context compacts independently per agent
@@ -81,43 +81,79 @@ class AgentConfig:
     """Configuration for a single Hivemind agent."""
     role: str
     pane_id: str
+    role_dir: Optional[str] = None
     allowed_tools: List[str] = field(default_factory=list)
     # V2 FIX: Use bypassPermissions for all agents - acceptEdits still prompts for reads
     permission_mode: PermissionMode = "bypassPermissions"
 
-    # Reviewer is read-only
     @classmethod
-    def lead(cls):
+    def architect(cls):
         return cls(
-            role="Lead",
+            role="Architect",
             pane_id="1",
+            role_dir="lead",
             allowed_tools=["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
         )
 
     @classmethod
-    def worker_a(cls):
+    def orchestrator(cls):
         return cls(
-            role="Worker A",
+            role="Orchestrator",
             pane_id="2",
+            role_dir="orchestrator",
             allowed_tools=["Read", "Edit", "Write", "Glob", "Grep"],
         )
 
     @classmethod
-    def worker_b(cls):
+    def implementer_a(cls):
         return cls(
-            role="Worker B",
+            role="Implementer A",
             pane_id="3",
+            role_dir="worker-a",
+            allowed_tools=["Read", "Edit", "Write", "Glob", "Grep"],
+        )
+
+    @classmethod
+    def implementer_b(cls):
+        return cls(
+            role="Implementer B",
+            pane_id="4",
+            role_dir="worker-b",
             allowed_tools=["Read", "Edit", "Write", "Bash", "Glob", "Grep"],
         )
 
     @classmethod
+    def investigator(cls):
+        return cls(
+            role="Investigator",
+            pane_id="5",
+            role_dir="investigator",
+            allowed_tools=["Read", "Edit", "Write", "Glob", "Grep"],
+        )
+
+    # Reviewer is read-only
+    @classmethod
     def reviewer(cls):
         return cls(
             role="Reviewer",
-            pane_id="4",
+            pane_id="6",
+            role_dir="reviewer",
             allowed_tools=["Read", "Glob", "Grep"],  # Read-only!
             permission_mode="bypassPermissions",
         )
+
+    # Backward-compatible aliases
+    @classmethod
+    def lead(cls):
+        return cls.architect()
+
+    @classmethod
+    def worker_a(cls):
+        return cls.implementer_a()
+
+    @classmethod
+    def worker_b(cls):
+        return cls.implementer_b()
 
 
 # =============================================================================
@@ -153,8 +189,8 @@ class HivemindAgent:
             resume_session_id: Session ID to resume (from previous app run)
         """
         # V2 FIX: Use role-specific directory so each agent reads its own CLAUDE.md
-        # Structure: workspace/instances/{role}/CLAUDE.md
-        role_dir_name = self.config.role.lower().replace(' ', '-')  # "Worker A" -> "worker-a"
+        # Structure: workspace/instances/{role_dir}/CLAUDE.md
+        role_dir_name = self.config.role_dir or self.config.role.lower().replace(' ', '-')
         role_specific_cwd = self.workspace / "workspace" / "instances" / role_dir_name
 
         # Fall back to main workspace if role directory doesn't exist
@@ -487,12 +523,12 @@ class HivemindAgent:
 
 
 # =============================================================================
-# HIVEMIND MANAGER - Manages all 4 agents
+# HIVEMIND MANAGER - Manages all 6 agents
 # =============================================================================
 
 class HivemindManager:
     """
-    Manages 4 independent Hivemind agents.
+    Manages 6 independent Hivemind agents.
 
     Handles:
     - Agent lifecycle (connect, disconnect)
@@ -507,16 +543,18 @@ class HivemindManager:
         self.session_file = workspace / "session-state.json"  # V2 FIX: Project root, aligned with sdk-bridge.js
 
     async def start_all(self):
-        """Start all 4 agents, resuming sessions if available."""
+        """Start all 6 agents, resuming sessions if available."""
 
         # Load saved sessions
         saved_sessions = self._load_sessions()
 
         # Create agents
         configs = [
-            AgentConfig.lead(),
-            AgentConfig.worker_a(),
-            AgentConfig.worker_b(),
+            AgentConfig.architect(),
+            AgentConfig.orchestrator(),
+            AgentConfig.implementer_a(),
+            AgentConfig.implementer_b(),
+            AgentConfig.investigator(),
             AgentConfig.reviewer(),
         ]
 
@@ -564,7 +602,7 @@ class HivemindManager:
         Send a message to a specific agent.
 
         Args:
-            pane_id: Target pane ("1", "2", "3", "4")
+            pane_id: Target pane ("1", "2", "3", "4", "5", "6")
             message: Message to send
         """
         agent = self.agents.get(pane_id)
@@ -586,7 +624,7 @@ class HivemindManager:
         Interrupt a running agent.
 
         Args:
-            pane_id: Target pane ("1", "2", "3", "4")
+            pane_id: Target pane ("1", "2", "3", "4", "5", "6")
         """
         agent = self.agents.get(pane_id)
         if not agent:
@@ -802,7 +840,7 @@ async def main_async(workspace: Path, ipc_mode: bool = False):
             await run_ipc_server(manager)
         else:
             # Interactive CLI mode
-            print("\nHivemind SDK V2 - 4 Independent Sessions")
+            print("\nHivemind SDK V2 - 6 Independent Sessions")
             print("Commands: send <pane> <msg>, broadcast <msg>, sessions, quit\n")
 
             while True:
@@ -844,7 +882,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Hivemind SDK V2 - 4 Independent Claude Sessions"
+        description="Hivemind SDK V2 - 6 Independent Claude Sessions"
     )
 
     parser.add_argument(
