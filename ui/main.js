@@ -636,7 +636,7 @@ async function createWindow() {
   }
 
   // Initialize modules with shared state
-  triggers.init(mainWindow, claudeRunning);
+  triggers.init(mainWindow, claudeRunning, logActivity);
   watcher.init(mainWindow, triggers, () => currentSettings); // Pass settings getter for auto-sync control
   triggers.setWatcher(watcher); // Enable workflow gate
 
