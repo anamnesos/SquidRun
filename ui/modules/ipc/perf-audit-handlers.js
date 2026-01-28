@@ -163,11 +163,17 @@ function registerPerfAuditHandlers(ctx) {
 
   ipcMain.handle('benchmark-handler', async (event, handlerName, iterations = 10) => {
     const times = [];
+    const benchmarkHandlers = ctx.benchmarkHandlers || {};
+    const target = benchmarkHandlers[handlerName];
+
+    if (typeof target !== 'function') {
+      return { success: false, error: 'Handler not benchmarkable' };
+    }
 
     for (let i = 0; i < iterations; i++) {
       const start = Date.now();
       try {
-        await ipcMain._events[handlerName]?.[0]?.();
+        await target();
       } catch {
         // Ignore errors during benchmark
       }
@@ -189,7 +195,11 @@ function registerPerfAuditHandlers(ctx) {
     };
   });
 
-  setInterval(() => {
+  if (ctx.perfAuditInterval) {
+    clearInterval(ctx.perfAuditInterval);
+  }
+
+  ctx.perfAuditInterval = setInterval(() => {
     if (Object.keys(perfProfile.handlers).length > 0) {
       savePerfProfile();
     }

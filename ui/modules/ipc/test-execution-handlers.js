@@ -71,25 +71,7 @@ function registerTestExecutionHandlers(ctx) {
 
   let activeTestRun = null;
 
-  ipcMain.handle('detect-test-framework', (event, projectPath) => {
-    const detected = [];
-    for (const [name, framework] of Object.entries(TEST_FRAMEWORKS)) {
-      try {
-        if (framework.detect(projectPath)) {
-          detected.push(name);
-        }
-      } catch {
-        // Skip detection errors
-      }
-    }
-    return {
-      success: true,
-      frameworks: detected,
-      recommended: detected[0] || null,
-    };
-  });
-
-  ipcMain.handle('run-tests', async (event, projectPath, frameworkName = null) => {
+  async function runTests(projectPath, frameworkName = null) {
     if (activeTestRun) {
       return { success: false, error: 'Tests already running' };
     }
@@ -175,6 +157,30 @@ function registerTestExecutionHandlers(ctx) {
       activeTestRun = null;
       return { success: true, results };
     }
+  }
+
+  ctx.runTests = runTests;
+
+  ipcMain.handle('detect-test-framework', (event, projectPath) => {
+    const detected = [];
+    for (const [name, framework] of Object.entries(TEST_FRAMEWORKS)) {
+      try {
+        if (framework.detect(projectPath)) {
+          detected.push(name);
+        }
+      } catch {
+        // Skip detection errors
+      }
+    }
+    return {
+      success: true,
+      frameworks: detected,
+      recommended: detected[0] || null,
+    };
+  });
+
+  ipcMain.handle('run-tests', async (event, projectPath, frameworkName = null) => {
+    return runTests(projectPath, frameworkName);
   });
 
   ipcMain.handle('get-test-results', () => {

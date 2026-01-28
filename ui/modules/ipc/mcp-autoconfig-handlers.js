@@ -10,7 +10,7 @@ function registerMcpAutoconfigHandlers(ctx) {
 
   const { ipcMain } = ctx;
 
-  ipcMain.handle('mcp-configure-agent', async (event, paneId) => {
+  function configureAgent(paneId) {
     try {
       const serverName = `hivemind-${paneId}`;
       const serverCommand = `node "${MCP_SERVER_PATH}" --pane ${paneId}`;
@@ -36,12 +36,15 @@ function registerMcpAutoconfigHandlers(ctx) {
       console.error('[MC8] MCP configure error:', err);
       return { success: false, error: err.message };
     }
+  }
+
+  ipcMain.handle('mcp-configure-agent', async (event, paneId) => {
+    return configureAgent(paneId);
   });
 
   ipcMain.handle('mcp-reconnect-agent', async (event, paneId) => {
     try {
-      const result = await ipcMain.emit('mcp-configure-agent', event, paneId);
-      return result;
+      return await configureAgent(paneId);
     } catch (err) {
       return { success: false, error: err.message };
     }

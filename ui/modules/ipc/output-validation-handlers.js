@@ -58,7 +58,7 @@ function registerOutputValidationHandlers(ctx) {
   ctx.calculateConfidence = calculateConfidence;
   ctx.VALIDATION_FILE_PATH = VALIDATION_FILE_PATH;
 
-  ipcMain.handle('validate-output', (event, text, options = {}) => {
+  function runValidation(text, options = {}) {
     const issues = [];
     const warnings = [];
 
@@ -116,6 +116,10 @@ function registerOutputValidationHandlers(ctx) {
       issues,
       warnings,
     };
+  }
+
+  ipcMain.handle('validate-output', (event, text, options = {}) => {
+    return runValidation(text, options);
   });
 
   ipcMain.handle('validate-file', async (event, filePath, options = {}) => {
@@ -134,7 +138,7 @@ function registerOutputValidationHandlers(ctx) {
         options.checkJson = true;
       }
 
-      const result = await ipcMain.handle('validate-output', event, content, options);
+      const result = runValidation(content, options);
       return { ...result, filePath, extension: ext };
     } catch (err) {
       return { success: false, error: err.message };

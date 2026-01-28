@@ -22,7 +22,7 @@ function registerCompletionQualityHandlers(ctx, deps = {}) {
     },
   };
 
-  ipcMain.handle('check-completion-quality', async (event, paneId, claimedWork) => {
+  async function runQualityCheck(paneId, claimedWork) {
     const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
     const issues = [];
     let qualityScore = 100;
@@ -91,6 +91,10 @@ function registerCompletionQualityHandlers(ctx, deps = {}) {
       blocked,
       timestamp: new Date().toISOString(),
     };
+  }
+
+  ipcMain.handle('check-completion-quality', async (event, paneId, claimedWork) => {
+    return runQualityCheck(paneId, claimedWork);
   });
 
   ipcMain.handle('validate-state-transition', async (event, fromState, toState) => {
@@ -106,7 +110,7 @@ function registerCompletionQualityHandlers(ctx, deps = {}) {
 
     for (const paneId of activeAgents) {
       if (ctx.claudeRunning.get(paneId) === 'running') {
-        const result = await ipcMain.handle('check-completion-quality', event, paneId, '');
+        const result = await runQualityCheck(paneId, '');
         qualityResults.push(result);
       }
     }

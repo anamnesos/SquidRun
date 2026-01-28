@@ -17,9 +17,14 @@ function registerPrecommitHandlers(ctx) {
     const checks = [];
     let allPassed = true;
 
-    const testResult = await new Promise((resolve) => {
-      ipcMain.handle('run-tests', event, projectPath).then(resolve);
-    }).catch(() => ({ success: false, error: 'Test execution failed' }));
+    let testResult = { success: false, error: 'Test runner unavailable' };
+    try {
+      if (typeof ctx.runTests === 'function') {
+        testResult = await ctx.runTests(projectPath);
+      }
+    } catch {
+      testResult = { success: false, error: 'Test execution failed' };
+    }
 
     if (testResult.results) {
       const testsPassed = testResult.results.failed === 0;
