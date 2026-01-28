@@ -96,9 +96,6 @@ class SDKBridge extends EventEmitter {
 
     // Buffer for incomplete JSON lines
     this.buffer = '';
-
-    // Track if Python has sent "ready" message (all agents initialized)
-    this.ready = false;
   }
 
   /**
@@ -621,12 +618,6 @@ class SDKBridge extends EventEmitter {
         // All agents stopped - internal event, don't show raw JSON to user
         log.info('SDK Bridge', 'All agents stopped, sessions saved:', msg.sessions_saved);
         this.emit('sessions-stopped', this.getSessionIds());
-        break;
-
-      case 'ready':
-        // IPC server ready - internal event, don't show to user
-        log.info('SDK Bridge', 'Python ready, agents:', msg.agents);
-        this.emit('python-ready', msg.agents);
         break;
 
       case 'sessions':
