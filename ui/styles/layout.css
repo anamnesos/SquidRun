@@ -53,6 +53,27 @@
   background: #e94560;
 }
 
+.cost-alert-badge {
+  display: none;
+  background: #e94560;
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  animation: cost-alert-pulse 1.5s ease-in-out infinite;
+}
+
+.cost-alert-badge:hover {
+  background: #ff6b6b;
+}
+
+@keyframes cost-alert-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
 .pane-grid {
   flex: 1;
   display: grid;
@@ -455,6 +476,8 @@
   display: flex;
   background: #0f3460;
   border-bottom: 1px solid #1a1a2e;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .panel-tab {
