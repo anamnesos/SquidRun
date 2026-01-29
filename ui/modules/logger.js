@@ -14,8 +14,26 @@
  *   log.error('Disconnected', err);
  */
 
+const fs = require('fs');
+const path = require('path');
+const { WORKSPACE_PATH } = require('../config');
+
 const LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
 let minLevel = LEVELS.info;
+
+const LOG_DIR = path.join(WORKSPACE_PATH, 'logs');
+const LOG_FILE_PATH = path.join(LOG_DIR, 'app.log');
+let logDirReady = false;
+
+function ensureLogDir() {
+  if (logDirReady) return;
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    logDirReady = true;
+  } catch (err) {
+    // If file logging fails, keep console logging working
+  }
+}
 
 function timestamp() {
   const d = new Date();
@@ -40,6 +58,23 @@ function write(level, subsystem, message, extra) {
     console.warn(...parts);
   } else {
     console.log(...parts);
+  }
+
+  ensureLogDir();
+  try {
+    const line = parts
+      .map((part) => {
+        if (typeof part === 'string') return part;
+        try {
+          return JSON.stringify(part);
+        } catch {
+          return String(part);
+        }
+      })
+      .join(' ');
+    fs.appendFileSync(LOG_FILE_PATH, `${line}\n`);
+  } catch (err) {
+    // Ignore file logging errors to avoid breaking runtime
   }
 }
 
