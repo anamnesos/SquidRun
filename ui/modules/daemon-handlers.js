@@ -1054,6 +1054,23 @@ function setupCostAlertListener() {
   ipcRenderer.on('cost-alert', (event, data) => {
     showCostAlert(data);
   });
+
+  // Add click handler to badge - opens Progress tab when clicked
+  const alertBadge = document.getElementById('costAlertBadge');
+  if (alertBadge) {
+    alertBadge.addEventListener('click', () => {
+      // Show right panel if hidden
+      const rightPanel = document.getElementById('rightPanel');
+      if (rightPanel && !rightPanel.classList.contains('visible')) {
+        rightPanel.classList.add('visible');
+        const panelBtn = document.getElementById('panelBtn');
+        if (panelBtn) panelBtn.classList.add('active');
+      }
+      // Switch to progress tab
+      const progressTab = document.querySelector('[data-tab="progress"]');
+      if (progressTab) progressTab.click();
+    });
+  }
 }
 
 // ============================================================
