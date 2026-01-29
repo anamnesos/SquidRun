@@ -107,6 +107,35 @@ function flashPaneHeader(paneId) {
   }
 }
 
+// Message Delivery Visibility (#2) - Show delivery status indicator in pane header
+function showDeliveryIndicator(paneId, status = 'delivered') {
+  const deliveryEl = document.getElementById(`delivery-${paneId}`);
+  const headerEl = document.querySelector(`.pane[data-pane-id="${paneId}"] .pane-header`);
+
+  if (deliveryEl) {
+    deliveryEl.textContent = status === 'delivered' ? '✓' : status === 'failed' ? '✗' : '…';
+    deliveryEl.className = `delivery-indicator visible ${status}`;
+
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+      deliveryEl.classList.remove('visible');
+    }, 3000);
+  }
+
+  // Flash header on successful delivery
+  if (headerEl && status === 'delivered') {
+    headerEl.classList.remove('delivery-flash');
+    void headerEl.offsetWidth; // Force reflow
+    headerEl.classList.add('delivery-flash');
+  }
+}
+
+// Show delivery failed with toast notification
+function showDeliveryFailed(paneId, reason) {
+  showDeliveryIndicator(paneId, 'failed');
+  showToast(`Delivery to pane ${paneId} failed: ${reason}`, 'error');
+}
+
 function updateConnectionStatus(status) {
   if (onConnectionStatusUpdate) {
     onConnectionStatusUpdate(status);
@@ -313,9 +342,12 @@ function processQueue(paneId) {
       if (deliveryId) {
         ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
       }
+      // #2: Show delivery indicator in pane header
+      showDeliveryIndicator(paneId, 'delivered');
     }).catch(err => {
       log.error('Daemon SDK', `Send failed for pane ${paneId}:`, err);
-      // Could add error state here if needed
+      // #2: Show delivery failed in pane header
+      showDeliveryFailed(paneId, err.message || 'Send failed');
     });
 
     flashPaneHeader(paneId);
@@ -329,12 +361,17 @@ function processQueue(paneId) {
   // PTY MODE (legacy): Normal message handling
   terminal.sendToPane(paneId, message, {
     onComplete: (result) => {
-      if (!deliveryId) return;
+      // #2: Show delivery status in pane header
       if (result && result.success === false) {
         log.warn('Daemon', `Trigger delivery failed for pane ${paneId}: ${result.reason || 'unknown'}`);
+        showDeliveryFailed(paneId, result.reason || 'Delivery failed');
         return;
       }
-      ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
+      // Success - show delivery indicator
+      showDeliveryIndicator(paneId, 'delivered');
+      if (deliveryId) {
+        ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
+      }
     }
   });
 
@@ -1026,4 +1063,7 @@ module.exports = {
   // SDK integration
   setSDKMode,
   isSDKModeEnabled,
+  // #2: Message Delivery Visibility
+  showDeliveryIndicator,
+  showDeliveryFailed,
 };

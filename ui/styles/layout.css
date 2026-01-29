@@ -156,6 +156,110 @@
 .pane-status.starting { color: #ffc857; }
 .pane-status.running { color: #4ecca3; }
 
+/* Agent Health Dashboard - #1 */
+.agent-health {
+  color: #666;
+  font-size: 10px;
+  font-family: monospace;
+  min-width: 28px;
+  text-align: right;
+}
+
+.agent-health.recent { color: #4ecca3; }
+.agent-health.active { color: #888; }
+.agent-health.stale { color: #ffc857; }
+
+.stuck-indicator {
+  color: #e94560;
+  font-size: 12px;
+  display: none;
+  animation: stuckPulse 1s ease-in-out infinite;
+}
+
+.stuck-indicator.visible {
+  display: inline;
+}
+
+@keyframes stuckPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Message Delivery Visibility (#2) */
+.delivery-indicator {
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  color: #4ecca3;
+}
+
+.delivery-indicator.visible {
+  opacity: 1;
+}
+
+.delivery-indicator.delivered {
+  animation: deliveryPop 0.5s ease-out;
+}
+
+.delivery-indicator.failed {
+  color: #e94560;
+}
+
+@keyframes deliveryPop {
+  0% { transform: scale(0.5); opacity: 0; }
+  50% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Pane header flash on delivery */
+.pane-header.delivery-flash {
+  animation: deliveryFlash 0.6s ease-out;
+}
+
+@keyframes deliveryFlash {
+  0% { background-color: rgba(78, 204, 163, 0.3); }
+  100% { background-color: #16213e; }
+}
+
+.pane-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.pane-action-btn {
+  background: transparent;
+  border: 1px solid #333;
+  color: #666;
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 10px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.pane-action-btn:hover {
+  border-color: #e94560;
+  color: #e94560;
+  background: rgba(233, 69, 96, 0.1);
+}
+
+.pane-action-btn.interrupt-btn:hover {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+}
+
+.pane-action-btn.unstick-btn:hover {
+  border-color: #ffc857;
+  color: #ffc857;
+  background: rgba(255, 200, 87, 0.1);
+}
+
 .pane-header-right {
   display: flex;
   align-items: center;
