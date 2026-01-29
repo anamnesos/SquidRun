@@ -1,6 +1,7 @@
 /**
  * Performance Tracking IPC Handlers
- * Channels: record-completion, record-error, record-response-time, get-performance, reset-performance
+ * Channels: record-completion, record-error, record-response-time, get-performance,
+ *           get-performance-stats, reset-performance, reset-performance-stats
  */
 
 const fs = require('fs');
@@ -83,20 +84,32 @@ function registerPerformanceTrackingHandlers(ctx) {
     return { success: true, avgResponseTime: avg };
   });
 
-  ipcMain.handle('get-performance', () => {
+  function buildPerformanceStats() {
     const perf = loadPerformance();
-
     const stats = {};
+
     for (const [paneId, data] of Object.entries(perf.agents)) {
+      const completions = data.completions || 0;
+      const errors = data.errors || 0;
       stats[paneId] = {
         ...data,
         role: PANE_ROLES[paneId] || `Pane ${paneId}`,
         avgResponseTime: data.responseCount > 0
           ? Math.round(data.totalResponseTime / data.responseCount)
           : 0,
+        successes: Math.max(0, completions - errors),
       };
     }
 
+    return { perf, stats };
+  }
+
+  function resetPerformanceData() {
+    savePerformance({ ...DEFAULT_PERFORMANCE });
+  }
+
+  ipcMain.handle('get-performance', () => {
+    const { perf, stats } = buildPerformanceStats();
     return {
       success: true,
       agents: stats,
@@ -104,8 +117,22 @@ function registerPerformanceTrackingHandlers(ctx) {
     };
   });
 
+  ipcMain.handle('get-performance-stats', () => {
+    const { perf, stats } = buildPerformanceStats();
+    return {
+      success: true,
+      stats,
+      lastUpdated: perf.lastUpdated,
+    };
+  });
+
   ipcMain.handle('reset-performance', () => {
-    savePerformance({ ...DEFAULT_PERFORMANCE });
+    resetPerformanceData();
+    return { success: true };
+  });
+
+  ipcMain.handle('reset-performance-stats', () => {
+    resetPerformanceData();
     return { success: true };
   });
 }
