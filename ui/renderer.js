@@ -184,6 +184,56 @@ function updateConnectionStatus(status) {
   }
 }
 
+// Agent Health Dashboard (#1) - update health indicators per pane
+const STUCK_THRESHOLD_MS = 60000; // 60 seconds without output = potentially stuck
+
+function formatTimeSince(timestamp) {
+  if (!timestamp) return '-';
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+  if (seconds < 0) return '-';
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h`;
+}
+
+function updateHealthIndicators() {
+  const lastOutputTime = terminal.lastOutputTime || {};
+  const paneIds = ['1', '2', '3', '4', '5', '6'];
+
+  paneIds.forEach(paneId => {
+    const healthEl = document.getElementById(`health-${paneId}`);
+    const stuckEl = document.getElementById(`stuck-${paneId}`);
+    const lastOutput = lastOutputTime[paneId];
+
+    if (healthEl) {
+      const timeStr = formatTimeSince(lastOutput);
+      healthEl.textContent = timeStr;
+
+      // Color coding based on recency
+      healthEl.classList.remove('recent', 'active', 'stale');
+      if (!lastOutput) {
+        healthEl.classList.add('active');
+      } else {
+        const age = Date.now() - lastOutput;
+        if (age < 5000) {
+          healthEl.classList.add('recent'); // Green - very recent
+        } else if (age < 30000) {
+          healthEl.classList.add('active'); // Gray - recent
+        } else {
+          healthEl.classList.add('stale'); // Yellow - getting stale
+        }
+      }
+    }
+
+    if (stuckEl) {
+      const isStuck = lastOutput && (Date.now() - lastOutput) > STUCK_THRESHOLD_MS;
+      stuckEl.classList.toggle('visible', isStuck);
+    }
+  });
+}
+
 function applySDKPaneLayout() {
   const sdkPaneIds = Object.keys(SDK_PANE_LABELS);
 
@@ -374,6 +424,9 @@ function showSDKMessageDelivered(paneId) {
   setTimeout(() => {
     statusEl.classList.remove('delivered');
   }, 600);
+
+  // Also show delivery indicator in pane header (using daemon-handlers version)
+  daemonHandlers.showDeliveryIndicator(paneId, 'delivered');
 
   log.info('SDK', `Pane ${paneId} message delivered`);
 }
@@ -570,6 +623,31 @@ function setupEventListeners() {
     nudgeAllBtn.addEventListener('click', terminal.aggressiveNudgeAll);
   }
 
+  // Agent Health Dashboard (#1) - interrupt and unstick buttons per pane
+  document.querySelectorAll('.interrupt-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const paneId = btn.dataset.paneId;
+      if (paneId) {
+        log.info('Health', `Sending Ctrl+C to pane ${paneId}`);
+        window.hivemind.pty.write(paneId, '\x03').catch(err => {
+          log.error('Health', `Interrupt pane ${paneId} failed:`, err);
+        });
+        terminal.updatePaneStatus(paneId, 'Interrupted');
+        setTimeout(() => terminal.updatePaneStatus(paneId, 'Running'), 1500);
+      }
+    });
+  });
+
+  document.querySelectorAll('.unstick-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const paneId = btn.dataset.paneId;
+      if (paneId) {
+        log.info('Health', `Sending ESC+Enter to pane ${paneId}`);
+        terminal.aggressiveNudge(paneId);
+      }
+    });
+  });
+
   // Fresh start button - kill all and start new sessions
   const freshStartBtn = document.getElementById('freshStartBtn');
   if (freshStartBtn) {
@@ -648,6 +726,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Initialize global UI focus tracker for multi-pane focus restore
   terminal.initUIFocusTracker();
+
+  // Agent Health Dashboard (#1) - start health monitor interval
+  setInterval(updateHealthIndicators, 1000);
+  updateHealthIndicators(); // Initial update
 
   // Global ESC key handler - interrupt agent AND release keyboard
   ipcRenderer.on('global-escape-pressed', () => {
