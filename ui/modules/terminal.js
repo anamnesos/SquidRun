@@ -56,6 +56,14 @@ const unstickState = new Map();
 // Codex exec mode: track identity injection per pane
 const codexIdentityInjected = new Set();
 
+// Stuck message sweeper - safety net for failed Enter submissions
+// Tracks panes where verifyAndRetryEnter exhausted retries but message may still be stuck
+const potentiallyStuckPanes = new Map(); // paneId -> { timestamp, retryCount }
+const SWEEPER_INTERVAL_MS = 30000;       // Check every 30 seconds
+const SWEEPER_MAX_AGE_MS = 300000;       // Give up after 5 minutes
+const SWEEPER_IDLE_THRESHOLD_MS = 10000; // Pane must be idle for 10 seconds before retry
+let sweeperIntervalId = null;
+
 // Message queue for when pane is busy
 // Format: { paneId: [{ message, timestamp }, ...] }
 const messageQueue = {};
@@ -253,6 +261,109 @@ function isIdle(paneId) {
 function isIdleForForceInject(paneId) {
   const lastOutput = lastOutputTime[paneId] || 0;
   return (Date.now() - lastOutput) >= FORCE_INJECT_IDLE_MS;
+}
+
+/**
+ * Mark a pane as potentially stuck (Enter verification failed)
+ * Sweeper will periodically retry Enter on these panes
+ */
+function markPotentiallyStuck(paneId) {
+  if (isCodexPane(paneId)) return; // Only Claude panes can get stuck this way
+
+  const existing = potentiallyStuckPanes.get(paneId);
+  if (existing) {
+    existing.retryCount++;
+    log.info(`StuckSweeper ${paneId}`, `Re-marked as stuck (retry #${existing.retryCount})`);
+  } else {
+    potentiallyStuckPanes.set(paneId, { timestamp: Date.now(), retryCount: 0 });
+    log.info(`StuckSweeper ${paneId}`, 'Marked as potentially stuck');
+  }
+}
+
+/**
+ * Clear stuck status for a pane (it's working again)
+ */
+function clearStuckStatus(paneId) {
+  if (potentiallyStuckPanes.has(paneId)) {
+    potentiallyStuckPanes.delete(paneId);
+    log.info(`StuckSweeper ${paneId}`, 'Cleared stuck status (pane active)');
+  }
+}
+
+/**
+ * Stuck message sweeper - periodic safety net for Claude panes
+ * Checks panes marked as potentially stuck and retries Enter if idle
+ */
+async function sweepStuckMessages() {
+  if (injectionInFlight) return; // Don't interfere with active injection
+  if (userIsTyping()) return; // Don't interfere with user
+
+  const now = Date.now();
+  const toRemove = [];
+
+  for (const [paneId, info] of potentiallyStuckPanes) {
+    const age = now - info.timestamp;
+
+    // Give up after 5 minutes
+    if (age > SWEEPER_MAX_AGE_MS) {
+      log.warn(`StuckSweeper ${paneId}`, `Giving up after ${Math.round(age / 1000)}s (max age reached)`);
+      toRemove.push(paneId);
+      continue;
+    }
+
+    // Only retry if pane is idle for at least 10 seconds
+    const lastOutput = lastOutputTime[paneId] || 0;
+    const idleTime = now - lastOutput;
+    if (idleTime < SWEEPER_IDLE_THRESHOLD_MS) {
+      continue; // Pane is active, wait
+    }
+
+    // Pane is idle and marked as stuck - try Enter
+    log.info(`StuckSweeper ${paneId}`, `Attempting recovery Enter (idle ${Math.round(idleTime / 1000)}s, stuck for ${Math.round(age / 1000)}s)`);
+
+    const paneEl = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+    const textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
+
+    if (textarea) {
+      const focusOk = await focusWithRetry(textarea);
+      if (focusOk) {
+        try {
+          await window.hivemind.pty.sendTrustedEnter();
+          log.info(`StuckSweeper ${paneId}`, 'Recovery Enter sent');
+          // Don't remove from stuck list yet - wait for output to confirm success
+        } catch (err) {
+          log.error(`StuckSweeper ${paneId}`, 'Recovery Enter failed:', err);
+        }
+      } else {
+        log.warn(`StuckSweeper ${paneId}`, 'Focus failed for recovery');
+      }
+    }
+  }
+
+  // Clean up expired entries
+  for (const paneId of toRemove) {
+    potentiallyStuckPanes.delete(paneId);
+  }
+}
+
+/**
+ * Start the stuck message sweeper interval
+ */
+function startStuckMessageSweeper() {
+  if (sweeperIntervalId) return; // Already running
+  sweeperIntervalId = setInterval(sweepStuckMessages, SWEEPER_INTERVAL_MS);
+  log.info('Terminal', `Stuck message sweeper started (interval: ${SWEEPER_INTERVAL_MS / 1000}s)`);
+}
+
+/**
+ * Stop the stuck message sweeper
+ */
+function stopStuckMessageSweeper() {
+  if (sweeperIntervalId) {
+    clearInterval(sweeperIntervalId);
+    sweeperIntervalId = null;
+    log.info('Terminal', 'Stuck message sweeper stopped');
+  }
 }
 
 /**
@@ -462,6 +573,9 @@ async function initTerminals() {
   }
   updateConnectionStatus('All terminals ready');
   focusPane('1');
+
+  // Start stuck message sweeper for Claude panes
+  startStuckMessageSweeper();
 }
 
 // Setup copy/paste handlers
@@ -580,6 +694,8 @@ async function initTerminal(paneId) {
       terminal.write(data);
       // Track output time for idle detection
       lastOutputTime[paneId] = Date.now();
+      // Clear stuck status - output means pane is working
+      clearStuckStatus(paneId);
       if (isCodexPane(paneId)) {
         if (data.includes('[Working...]')) {
           updatePaneStatus(paneId, 'Working');
@@ -675,6 +791,8 @@ async function reattachTerminal(paneId, scrollback) {
     terminal.write(data);
     // Track output time for idle detection
     lastOutputTime[paneId] = Date.now();
+    // Clear stuck status - output means pane is working
+    clearStuckStatus(paneId);
     if (isCodexPane(paneId)) {
       if (data.includes('[Working...]')) {
         updatePaneStatus(paneId, 'Working');
@@ -834,6 +952,7 @@ function doSendToPane(paneId, message, onComplete) {
       const submitOk = await verifyAndRetryEnter(id, textarea);
       if (!submitOk) {
         log.warn(`doSendToPane ${id}`, 'Claude pane: Enter verification failed after retries');
+        markPotentiallyStuck(id); // Register for sweeper retry
       }
 
       // Step 4: Restore focus after injection complete
@@ -1408,4 +1527,9 @@ module.exports = {
   unregisterCodexPane, // CLI Identity: unmark pane as Codex
   isCodexPane,         // CLI Identity: query Codex status
   messageQueue,   // Message queue for busy panes
+  // Stuck message sweeper
+  potentiallyStuckPanes, // Tracking for sweeper
+  startStuckMessageSweeper,
+  stopStuckMessageSweeper,
+  sweepStuckMessages,  // Manual trigger for testing
 };
