@@ -1,6 +1,6 @@
 /**
  * Template IPC Handlers
- * Channels: save-template, load-template, list-templates, get-template, delete-template
+ * Channels: save-template, load-template, list-templates, get-templates, get-template, delete-template
  */
 
 const fs = require('fs');
@@ -35,8 +35,32 @@ function registerTemplateHandlers(ctx, deps) {
     }
   }
 
-  ipcMain.handle('save-template', (event, template) => {
-    if (!template.name) {
+  function normalizeTemplateInput(templateInput) {
+    if (typeof templateInput === 'string') {
+      const settings = loadSettings();
+      const { paneProjects, ...config } = settings || {};
+      return { name: templateInput, config, paneProjects };
+    }
+    return templateInput;
+  }
+
+  function listTemplates() {
+    const templates = loadTemplates();
+    return {
+      success: true,
+      templates: templates.map(t => ({
+        id: t.id,
+        name: t.name,
+        description: t.description,
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt,
+      })),
+    };
+  }
+
+  ipcMain.handle('save-template', (event, templateInput) => {
+    const template = normalizeTemplateInput(templateInput);
+    if (!template || !template.name) {
       return { success: false, error: 'Template name is required' };
     }
 
@@ -96,22 +120,11 @@ function registerTemplateHandlers(ctx, deps) {
       ctx.mainWindow.webContents.send('settings-changed', settings);
     }
 
-    return { success: true, template };
+    return { success: true, template, name: template.name };
   });
 
-  ipcMain.handle('list-templates', () => {
-    const templates = loadTemplates();
-    return {
-      success: true,
-      templates: templates.map(t => ({
-        id: t.id,
-        name: t.name,
-        description: t.description,
-        createdAt: t.createdAt,
-        updatedAt: t.updatedAt,
-      })),
-    };
-  });
+  ipcMain.handle('list-templates', () => listTemplates());
+  ipcMain.handle('get-templates', () => listTemplates());
 
   ipcMain.handle('get-template', (event, templateId) => {
     const templates = loadTemplates();

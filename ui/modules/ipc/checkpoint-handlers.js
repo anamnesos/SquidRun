@@ -1,6 +1,6 @@
 /**
  * Checkpoint IPC Handlers
- * Channels: create-checkpoint, list-checkpoints, get-checkpoint-diff, rollback-checkpoint, delete-checkpoint
+ * Channels: create-checkpoint, list-checkpoints, get-checkpoint-diff, rollback-checkpoint, apply-rollback, delete-checkpoint
  */
 
 const fs = require('fs');
@@ -155,7 +155,7 @@ function registerCheckpointHandlers(ctx) {
     }
   });
 
-  ipcMain.handle('rollback-checkpoint', (event, checkpointId) => {
+  function rollbackCheckpoint(checkpointId) {
     try {
       if (!ensureRollbackDir()) {
         return { success: false, error: 'Rollback directory unavailable' };
@@ -187,11 +187,14 @@ function registerCheckpointHandlers(ctx) {
         });
       }
 
-      return { success: true, checkpointId, restored };
+      return { success: true, checkpointId, restored, filesRestored: restored.length };
     } catch (err) {
       return { success: false, error: err.message };
     }
-  });
+  }
+
+  ipcMain.handle('rollback-checkpoint', (event, checkpointId) => rollbackCheckpoint(checkpointId));
+  ipcMain.handle('apply-rollback', (event, checkpointId) => rollbackCheckpoint(checkpointId));
 
   ipcMain.handle('delete-checkpoint', (event, checkpointId) => {
     try {

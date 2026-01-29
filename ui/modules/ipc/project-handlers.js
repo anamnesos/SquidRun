@@ -2,7 +2,7 @@
  * Project IPC Handlers
  * Channels: select-project, get-project, get-recent-projects, add-recent-project,
  *           remove-recent-project, clear-recent-projects, switch-project,
- *           set-pane-project, get-pane-project, get-all-pane-projects, clear-pane-projects
+ *           set-pane-project, select-pane-project, get-pane-project, get-all-pane-projects, clear-pane-projects
  */
 
 const fs = require('fs');
@@ -152,7 +152,7 @@ function registerProjectHandlers(ctx, deps) {
 
   // === PER-PANE PROJECT ASSIGNMENT ===
 
-  ipcMain.handle('set-pane-project', (event, paneId, projectPath) => {
+  function assignPaneProject(paneId, projectPath) {
     if (!PANE_IDS.includes(paneId)) {
       return { success: false, error: 'Invalid pane ID' };
     }
@@ -176,6 +176,31 @@ function registerProjectHandlers(ctx, deps) {
     }
 
     return { success: true, paneId, projectPath };
+  }
+
+  ipcMain.handle('set-pane-project', (event, paneId, projectPath) => assignPaneProject(paneId, projectPath));
+
+  ipcMain.handle('select-pane-project', async (event, paneId) => {
+    if (!PANE_IDS.includes(paneId)) {
+      return { success: false, error: 'Invalid pane ID' };
+    }
+
+    const result = await ctx.dialog.showOpenDialog(ctx.mainWindow, {
+      properties: ['openDirectory'],
+      title: 'Select Project Folder',
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: false, canceled: true };
+    }
+
+    const projectPath = result.filePaths[0];
+    const assigned = assignPaneProject(paneId, projectPath);
+    if (!assigned.success) {
+      return assigned;
+    }
+
+    return { success: true, paneId, path: projectPath, name: path.basename(projectPath) };
   });
 
   ipcMain.handle('get-pane-project', (event, paneId) => {
