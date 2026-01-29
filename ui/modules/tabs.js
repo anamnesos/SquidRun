@@ -462,6 +462,7 @@ function clearTestResults() {
 
 async function runTests() {
   updateConnectionStatus('Running tests...');
+  updateCIStatus('running'); // Task #10: Show CI indicator during test run
   testStatus = 'running';
   testResults = [];
   testSummary = { passed: 0, failed: 0, skipped: 0, total: 0 };
@@ -472,14 +473,19 @@ async function runTests() {
     const result = await ipcRenderer.invoke('run-tests');
     if (result && result.success) {
       setTestResults(result.results, result.summary);
+      const allPassed = result.summary.failed === 0;
+      updateCIStatus(allPassed ? 'passing' : 'failing',
+        allPassed ? null : `${result.summary.failed} tests failed`);
       updateConnectionStatus(`Tests complete: ${result.summary.passed} passed, ${result.summary.failed} failed`);
     } else {
       testStatus = 'idle';
+      updateCIStatus('failing', result?.error || 'Test run failed');
       renderTestSummary();
       updateConnectionStatus(`Test run failed: ${result?.error || 'Unknown error'}`);
     }
   } catch (err) {
     testStatus = 'idle';
+    updateCIStatus('failing', err.message);
     renderTestSummary();
     updateConnectionStatus(`Test error: ${err.message}`);
   }
@@ -611,6 +617,23 @@ function setupCIStatusIndicator() {
 
   ipcRenderer.on('ci-validation-failed', (event, data) => {
     updateCIStatus('failing', data?.message || 'Validation failed');
+  });
+
+  // Task #10: Listen for ci-check-complete from precommit-handlers.js
+  ipcRenderer.on('ci-check-complete', (event, data) => {
+    if (data && data.passed !== undefined) {
+      if (data.passed) {
+        updateCIStatus('passing');
+        setTimeout(() => {
+          if (ciStatus === 'passing') {
+            updateCIStatus('idle');
+          }
+        }, 10000);
+      } else {
+        const failedChecks = data.checks?.filter(c => !c.passed).map(c => c.name).join(', ');
+        updateCIStatus('failing', failedChecks ? `Failed: ${failedChecks}` : 'CI checks failed');
+      }
+    }
   });
 
   // Load initial CI status
