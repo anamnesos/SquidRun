@@ -681,6 +681,74 @@
               </div>
             </div>
           </div>
+
+          <!-- Task #8: Reliability Analytics Section -->
+          <div class="inspector-section">
+            <div class="inspector-section-title">Reliability Analytics</div>
+            <div class="reliability-overview">
+              <div class="reliability-stat primary">
+                <span class="reliability-stat-value" id="reliabilitySuccessRate">--%</span>
+                <span class="reliability-stat-label">Success Rate</span>
+              </div>
+              <div class="reliability-stat">
+                <span class="reliability-stat-value" id="reliabilityUptime">--</span>
+                <span class="reliability-stat-label">Uptime</span>
+              </div>
+              <div class="reliability-stat">
+                <span class="reliability-stat-value" id="reliabilityLatency">--ms</span>
+                <span class="reliability-stat-label">Avg Latency</span>
+              </div>
+            </div>
+            <div class="reliability-details">
+              <div class="reliability-row">
+                <span class="reliability-row-label">Total Sent:</span>
+                <span class="reliability-row-value" id="reliabilitySent">0</span>
+              </div>
+              <div class="reliability-row">
+                <span class="reliability-row-label">Delivered:</span>
+                <span class="reliability-row-value success" id="reliabilityDelivered">0</span>
+              </div>
+              <div class="reliability-row">
+                <span class="reliability-row-label">Failed:</span>
+                <span class="reliability-row-value error" id="reliabilityFailed">0</span>
+              </div>
+              <div class="reliability-row">
+                <span class="reliability-row-label">Timed Out:</span>
+                <span class="reliability-row-value warning" id="reliabilityTimedOut">0</span>
+              </div>
+              <div class="reliability-row">
+                <span class="reliability-row-label">Skipped (dup):</span>
+                <span class="reliability-row-value" id="reliabilitySkipped">0</span>
+              </div>
+            </div>
+            <div class="reliability-modes">
+              <div class="reliability-mode-card">
+                <div class="reliability-mode-title">PTY Mode</div>
+                <div class="reliability-mode-stats">
+                  <span id="reliabilityPtySent">0</span> sent /
+                  <span id="reliabilityPtyDelivered">0</span> delivered
+                </div>
+              </div>
+              <div class="reliability-mode-card">
+                <div class="reliability-mode-title">SDK Mode</div>
+                <div class="reliability-mode-stats">
+                  <span id="reliabilitySdkSent">0</span> sent /
+                  <span id="reliabilitySdkDelivered">0</span> delivered
+                </div>
+              </div>
+            </div>
+            <div class="reliability-windows">
+              <div class="reliability-window">
+                <span class="reliability-window-label">Last 15m:</span>
+                <span id="reliability15m">--</span>
+              </div>
+              <div class="reliability-window">
+                <span class="reliability-window-label">Last 1h:</span>
+                <span id="reliability1h">--</span>
+              </div>
+            </div>
+            <button class="btn" id="refreshReliabilityBtn" title="Refresh reliability stats">Refresh Stats</button>
+          </div>
         </div>
       </div>
     </div>
