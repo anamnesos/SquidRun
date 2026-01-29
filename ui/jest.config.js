@@ -1,10 +1,29 @@
+/**
+ * Jest configuration for Hivemind UI tests
+ */
 module.exports = {
   testEnvironment: 'node',
-  testMatch: ['**/__tests__/**/*.test.js'],
-  verbose: true,
+  roots: ['<rootDir>/__tests__'],
+  testMatch: ['**/*.test.js'],
   collectCoverageFrom: [
-    'config.js',
-    'daemon-client.js',
-    'terminal-daemon.js',
+    'modules/**/*.js',
+    'renderer.js',
+    'main.js',
+    '!**/node_modules/**',
   ],
+  coverageDirectory: 'coverage',
+  coverageReporters: ['text', 'text-summary', 'lcov'],
+  coverageThreshold: {
+    global: {
+      branches: 50,
+      functions: 50,
+      lines: 50,
+      statements: 50,
+    },
+  },
+  modulePathIgnorePatterns: ['<rootDir>/node_modules/'],
+  // Setup file for global mocks
+  setupFilesAfterEnv: ['<rootDir>/__tests__/setup.js'],
+  // Increase timeout for async tests
+  testTimeout: 10000,
 };
