@@ -30,6 +30,15 @@ const MESSAGE_DELAY = 150; // ms between messages per pane
 // SDK integration
 let sdkModeEnabled = false;
 
+// Sync indicator (shared_context/blockers/errors)
+const SYNC_FILES = {
+  'shared_context.md': { label: 'CTX' },
+  'blockers.md': { label: 'BLK' },
+  'errors.md': { label: 'ERR' },
+};
+const syncState = new Map();
+let syncIndicatorSetup = false;
+
 // State display helpers
 const STATE_DISPLAY_NAMES = {
   'idle': 'IDLE',
@@ -134,6 +143,165 @@ function showDeliveryIndicator(paneId, status = 'delivered') {
 function showDeliveryFailed(paneId, reason) {
   showDeliveryIndicator(paneId, 'failed');
   showToast(`Delivery to pane ${paneId} failed: ${reason}`, 'error');
+}
+
+// ============================================================
+// SYNC INDICATOR (#7)
+// ============================================================
+
+function ensureStatusLeftGroup() {
+  const statusBar = document.querySelector('.status-bar');
+  if (!statusBar) return null;
+
+  let leftGroup = statusBar.querySelector('.status-left');
+  if (!leftGroup) {
+    leftGroup = document.createElement('div');
+    leftGroup.className = 'status-left';
+
+    const connectionEl = document.getElementById('connectionStatus');
+    const heartbeatEl = document.getElementById('heartbeatIndicator');
+
+    if (connectionEl) leftGroup.appendChild(connectionEl);
+    if (heartbeatEl) leftGroup.appendChild(heartbeatEl);
+
+    const firstChild = statusBar.firstElementChild;
+    if (firstChild) {
+      statusBar.insertBefore(leftGroup, firstChild);
+    } else {
+      statusBar.appendChild(leftGroup);
+    }
+  }
+
+  return leftGroup;
+}
+
+function ensureSyncIndicator() {
+  const leftGroup = ensureStatusLeftGroup();
+  if (!leftGroup) return null;
+
+  let indicator = document.getElementById('syncIndicator');
+  if (!indicator) {
+    indicator = document.createElement('div');
+    indicator.id = 'syncIndicator';
+    indicator.className = 'sync-indicator';
+
+    const label = document.createElement('span');
+    label.className = 'sync-label';
+    label.textContent = 'SYNC';
+    indicator.appendChild(label);
+
+    Object.entries(SYNC_FILES).forEach(([file, meta]) => {
+      const chip = document.createElement('span');
+      chip.className = 'sync-chip';
+      chip.dataset.file = file;
+      chip.textContent = meta.label;
+      chip.title = `${file} not synced`;
+      indicator.appendChild(chip);
+    });
+
+    leftGroup.appendChild(indicator);
+  }
+
+  return indicator;
+}
+
+function formatTime(ts) {
+  if (!ts) return '';
+  try {
+    return new Date(ts).toLocaleTimeString();
+  } catch (err) {
+    return '';
+  }
+}
+
+function updateSyncChip(file) {
+  const indicator = ensureSyncIndicator();
+  if (!indicator) return;
+
+  const chip = indicator.querySelector(`.sync-chip[data-file="${file}"]`);
+  if (!chip) return;
+
+  const state = syncState.get(file) || {};
+  const status = state.status || 'idle';
+
+  chip.classList.remove('dirty', 'synced', 'skipped');
+  if (status === 'dirty') chip.classList.add('dirty');
+  if (status === 'synced') chip.classList.add('synced');
+  if (status === 'skipped') chip.classList.add('skipped');
+
+  const parts = [file];
+  if (state.changedAt) {
+    parts.push(`changed ${formatTime(state.changedAt)}`);
+  }
+  if (state.syncedAt) {
+    const notifiedCount = Array.isArray(state.notified) ? state.notified.length : 0;
+    const notifiedLabel = notifiedCount > 0 ? `${notifiedCount} panes` : 'no panes';
+    parts.push(`synced ${formatTime(state.syncedAt)} (${notifiedLabel})`);
+  }
+  if (state.mode) {
+    parts.push(`mode ${state.mode}`);
+  }
+  if (state.source) {
+    parts.push(`source ${state.source}`);
+  }
+
+  chip.title = parts.join(' | ');
+}
+
+function setSyncState(file, nextState) {
+  const current = syncState.get(file) || {};
+  const merged = { ...current, ...nextState };
+  syncState.set(file, merged);
+  updateSyncChip(file);
+}
+
+function handleSyncFileChanged(payload = {}) {
+  const file = payload.file;
+  if (!SYNC_FILES[file]) return;
+  setSyncState(file, {
+    status: 'dirty',
+    changedAt: payload.changedAt || Date.now(),
+    source: 'watcher'
+  });
+}
+
+function handleSyncTriggered(payload = {}) {
+  const file = payload.file;
+  if (!SYNC_FILES[file]) return;
+  const notified = Array.isArray(payload.notified) ? payload.notified : [];
+  setSyncState(file, {
+    status: notified.length > 0 ? 'synced' : 'skipped',
+    syncedAt: Date.now(),
+    notified,
+    mode: payload.mode || 'pty',
+    source: 'auto-sync'
+  });
+}
+
+function setupSyncIndicator() {
+  if (syncIndicatorSetup) return;
+  syncIndicatorSetup = true;
+
+  ensureSyncIndicator();
+
+  ipcRenderer.on('sync-file-changed', (event, payload) => {
+    handleSyncFileChanged(payload);
+  });
+
+  ipcRenderer.on('sync-triggered', (event, payload) => {
+    handleSyncTriggered(payload);
+  });
+}
+
+function markManualSync(file) {
+  if (!SYNC_FILES[file]) return;
+  setSyncState(file, {
+    status: 'synced',
+    syncedAt: Date.now(),
+    notified: ['manual'],
+    mode: 'manual',
+    source: 'manual'
+  });
 }
 
 function updateConnectionStatus(status) {
@@ -1066,4 +1234,7 @@ module.exports = {
   // #2: Message Delivery Visibility
   showDeliveryIndicator,
   showDeliveryFailed,
+  // #7: Sync indicator
+  setupSyncIndicator,
+  markManualSync,
 };
