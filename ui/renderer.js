@@ -464,7 +464,9 @@ function setupEventListeners() {
           ['1', '2', '3', '4', '5', '6'].forEach(paneId => {
             sdkRenderer.appendMessage(paneId, { type: 'user', content: actualMessage });
           });
-          ipcRenderer.invoke('sdk-broadcast', actualMessage);
+          ipcRenderer.invoke('sdk-broadcast', actualMessage).catch(err => {
+            log.error('SDK', 'Broadcast failed:', err);
+          });
         } else {
           const paneMap = {
             '1': '1',
@@ -491,7 +493,9 @@ function setupEventListeners() {
           log.info('SDK', `Targeted send to pane ${paneId}: ${actualMessage.substring(0, 30)}...`);
           // Show user message in target pane immediately
           sdkRenderer.appendMessage(paneId, { type: 'user', content: actualMessage });
-          ipcRenderer.invoke('sdk-send-message', paneId, actualMessage);
+          ipcRenderer.invoke('sdk-send-message', paneId, actualMessage).catch(err => {
+            log.error('SDK', `Send to pane ${paneId} failed:`, err);
+          });
         }
       } else {
         // Default to Architect only (pane 1), not broadcast to all
@@ -499,7 +503,9 @@ function setupEventListeners() {
         log.info('SDK', 'Default send to Architect (pane 1)');
         // Show user message in Architect pane immediately
         sdkRenderer.appendMessage('1', { type: 'user', content: message });
-        ipcRenderer.invoke('sdk-send-message', '1', message);
+        ipcRenderer.invoke('sdk-send-message', '1', message).catch(err => {
+          log.error('SDK', 'Send to Architect failed:', err);
+        });
       }
     } else {
       log.info('Broadcast', 'Using PTY mode');
@@ -576,7 +582,12 @@ function setupEventListeners() {
     fullRestartBtn.addEventListener('click', async () => {
       if (confirm('This will kill the daemon and restart the app.\n\nAll agent conversations will be lost, but code changes will be loaded.\n\nContinue?')) {
         updateConnectionStatus('Restarting...');
-        await ipcRenderer.invoke('full-restart');
+        try {
+          await ipcRenderer.invoke('full-restart');
+        } catch (err) {
+          log.error('Restart', 'Full restart failed:', err);
+          updateConnectionStatus('Restart failed - try manually');
+        }
       }
     });
   }
@@ -585,7 +596,12 @@ function setupEventListeners() {
   const syncBtn = document.getElementById('syncBtn');
   if (syncBtn) {
     syncBtn.addEventListener('click', async () => {
-      await terminal.syncSharedContext();
+      try {
+        await terminal.syncSharedContext();
+      } catch (err) {
+        log.error('Sync', 'Sync failed:', err);
+        updateConnectionStatus('Sync failed');
+      }
     });
   }
 
@@ -638,7 +654,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Send Ctrl+C (0x03) to focused pane to interrupt Claude
     const focusedPane = terminal.getFocusedPane();
     if (focusedPane) {
-      window.hivemind.pty.write(focusedPane, '\x03');
+      window.hivemind.pty.write(focusedPane, '\x03').catch(err => {
+        log.error('ESC', 'Failed to send Ctrl+C:', err);
+      });
     }
 
     // Also blur terminals to release keyboard capture

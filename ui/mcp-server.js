@@ -262,8 +262,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // ============================================================
 
 function ensureMessageQueueDir() {
-  if (!fs.existsSync(MESSAGE_QUEUE_DIR)) {
-    fs.mkdirSync(MESSAGE_QUEUE_DIR, { recursive: true });
+  try {
+    if (!fs.existsSync(MESSAGE_QUEUE_DIR)) {
+      fs.mkdirSync(MESSAGE_QUEUE_DIR, { recursive: true });
+    }
+    return true;
+  } catch (err) {
+    log.error('MCP', 'Failed to ensure message queue directory', err);
+    return false;
   }
 }
 
@@ -272,7 +278,13 @@ function getQueueFilePath(targetPaneId) {
 }
 
 function sendMessageToQueue(fromPaneId, toPaneId, content) {
-  ensureMessageQueueDir();
+  if (!ensureMessageQueueDir()) {
+    return {
+      success: false,
+      error: 'Message queue directory unavailable',
+      to: PANE_ROLES[toPaneId],
+    };
+  }
   const queueFile = getQueueFilePath(toPaneId);
 
   let messages = [];
@@ -307,8 +319,17 @@ function sendMessageToQueue(fromPaneId, toPaneId, content) {
 
   // Atomic write
   const tempPath = queueFile + '.tmp';
-  fs.writeFileSync(tempPath, JSON.stringify(messages, null, 2), 'utf-8');
-  fs.renameSync(tempPath, queueFile);
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(messages, null, 2), 'utf-8');
+    fs.renameSync(tempPath, queueFile);
+  } catch (err) {
+    log.error('MCP', 'Failed to write message queue', err);
+    return {
+      success: false,
+      error: err.message,
+      to: PANE_ROLES[toPaneId],
+    };
+  }
 
   // HYBRID: File trigger backup DISABLED to prevent duplicate messages
   // The queue-based delivery is the primary mechanism now
@@ -328,7 +349,9 @@ function sendMessageToQueue(fromPaneId, toPaneId, content) {
 }
 
 function getMessagesFromQueue(targetPaneId, undeliveredOnly = true) {
-  ensureMessageQueueDir();
+  if (!ensureMessageQueueDir()) {
+    return [];
+  }
   const queueFile = getQueueFilePath(targetPaneId);
 
   if (!fs.existsSync(queueFile)) {
@@ -388,17 +411,28 @@ function readState() {
 }
 
 function writeState(state) {
-  state.timestamp = new Date().toISOString();
-  const tempPath = STATE_FILE_PATH + '.tmp';
-  fs.writeFileSync(tempPath, JSON.stringify(state, null, 2), 'utf-8');
-  fs.renameSync(tempPath, STATE_FILE_PATH);
+  try {
+    state.timestamp = new Date().toISOString();
+    const tempPath = STATE_FILE_PATH + '.tmp';
+    fs.writeFileSync(tempPath, JSON.stringify(state, null, 2), 'utf-8');
+    fs.renameSync(tempPath, STATE_FILE_PATH);
+    return { success: true };
+  } catch (err) {
+    log.error('MCP', 'Failed to write state file', err);
+    return { success: false, error: err.message };
+  }
 }
 
 function triggerAgentFile(targetAgent, context) {
   const triggerFile = path.join(TRIGGERS_PATH, `${targetAgent}.txt`);
   const content = `(${agentName.toUpperCase()}): ${context}`;
-  fs.writeFileSync(triggerFile, content, 'utf-8');
-  return { success: true, triggered: targetAgent };
+  try {
+    fs.writeFileSync(triggerFile, content, 'utf-8');
+    return { success: true, triggered: targetAgent };
+  } catch (err) {
+    log.error('MCP', `Failed to trigger agent ${targetAgent}`, err);
+    return { success: false, error: err.message, triggered: targetAgent };
+  }
 }
 
 function readSharedContext() {
@@ -414,17 +448,26 @@ function readSharedContext() {
 
 function updateStatusFile(taskId, status, note) {
   let content = '';
-  if (fs.existsSync(STATUS_FILE_PATH)) {
-    content = fs.readFileSync(STATUS_FILE_PATH, 'utf-8');
+  try {
+    if (fs.existsSync(STATUS_FILE_PATH)) {
+      content = fs.readFileSync(STATUS_FILE_PATH, 'utf-8');
+    }
+  } catch (err) {
+    log.error('MCP', 'Failed to read status file', err);
+    return { success: false, error: err.message, taskId, status };
   }
 
   const timestamp = new Date().toISOString();
   const entry = `\n- **${taskId}**: ${status.toUpperCase()} (${agentName}) - ${timestamp}${note ? ` - ${note}` : ''}`;
 
   content += entry;
-  fs.writeFileSync(STATUS_FILE_PATH, content, 'utf-8');
-
-  return { success: true, taskId, status };
+  try {
+    fs.writeFileSync(STATUS_FILE_PATH, content, 'utf-8');
+    return { success: true, taskId, status };
+  } catch (err) {
+    log.error('MCP', 'Failed to write status file', err);
+    return { success: false, error: err.message, taskId, status };
+  }
 }
 
 // ============================================================

@@ -533,7 +533,17 @@ function handleFileChangeCore(filePath) {
     setTimeout(() => transition(States.CHECKPOINT_REVIEW), 500);
   }
   else if (filename === 'checkpoint-approved.md' && currentState === States.CHECKPOINT_REVIEW) {
-    const checkpointContent = fs.readFileSync(filePath, 'utf-8').toLowerCase();
+    if (!fs.existsSync(filePath)) {
+      log.warn('Watcher', `Checkpoint approval file missing: ${filePath}`);
+      return;
+    }
+    let checkpointContent = '';
+    try {
+      checkpointContent = fs.readFileSync(filePath, 'utf-8').toLowerCase();
+    } catch (err) {
+      log.error('Watcher', 'Failed to read checkpoint-approved.md', err);
+      return;
+    }
     if (checkpointContent.includes('complete') || checkpointContent.includes('done')) {
       transition(States.COMPLETE);
     } else {
@@ -612,6 +622,9 @@ function startWatcher() {
 
   workspaceWatcher.on('add', handleFileChangeDebounced);
   workspaceWatcher.on('change', handleFileChangeDebounced);
+  workspaceWatcher.on('error', (err) => {
+    log.error('Watcher', 'Workspace watcher error', err);
+  });
 
   log.info('Watcher', `Watching ${WORKSPACE_PATH}`);
 }
@@ -688,9 +701,14 @@ function handleTriggerFileWithRetry(filePath, filename, attempt = 0) {
  */
 function startTriggerWatcher() {
   // Ensure trigger directory exists
-  if (!fs.existsSync(TRIGGER_PATH)) {
-    fs.mkdirSync(TRIGGER_PATH, { recursive: true });
-    log.info('FastTrigger', 'Created trigger directory');
+  try {
+    if (!fs.existsSync(TRIGGER_PATH)) {
+      fs.mkdirSync(TRIGGER_PATH, { recursive: true });
+      log.info('FastTrigger', 'Created trigger directory');
+    }
+  } catch (err) {
+    log.error('FastTrigger', 'Failed to initialize trigger directory', err);
+    return;
   }
 
   if (triggerWatcher) {
@@ -713,6 +731,9 @@ function startTriggerWatcher() {
 
   triggerWatcher.on('add', handleTriggerChange);
   triggerWatcher.on('change', handleTriggerChange);
+  triggerWatcher.on('error', (err) => {
+    log.error('FastTrigger', 'Trigger watcher error', err);
+  });
 
   log.info('FastTrigger', `Watching ${TRIGGER_PATH} with 50ms polling`);
 }
@@ -748,20 +769,25 @@ function init(window, triggersModule, settingsGetter = null) {
  * Initialize message queue directory
  */
 function initMessageQueue() {
-  if (!fs.existsSync(MESSAGE_QUEUE_DIR)) {
-    fs.mkdirSync(MESSAGE_QUEUE_DIR, { recursive: true });
-    log.info('MessageQueue', 'Created message directory');
-  }
-
-  // Create queue files for each pane if they don't exist
-  for (const paneId of PANE_IDS) {
-    const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${paneId}.json`);
-    if (!fs.existsSync(queueFile)) {
-      fs.writeFileSync(queueFile, '[]', 'utf-8');
+  try {
+    if (!fs.existsSync(MESSAGE_QUEUE_DIR)) {
+      fs.mkdirSync(MESSAGE_QUEUE_DIR, { recursive: true });
+      log.info('MessageQueue', 'Created message directory');
     }
-  }
 
-  return { success: true, path: MESSAGE_QUEUE_DIR };
+    // Create queue files for each pane if they don't exist
+    for (const paneId of PANE_IDS) {
+      const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${paneId}.json`);
+      if (!fs.existsSync(queueFile)) {
+        fs.writeFileSync(queueFile, '[]', 'utf-8');
+      }
+    }
+
+    return { success: true, path: MESSAGE_QUEUE_DIR };
+  } catch (err) {
+    log.error('MessageQueue', 'Failed to initialize message queue directory', err);
+    return { success: false, error: err.message };
+  }
 }
 
 /**
@@ -805,7 +831,10 @@ function sendMessage(fromPaneId, toPaneId, content, type = 'direct') {
   try {
     // Ensure directory exists
     if (!fs.existsSync(MESSAGE_QUEUE_DIR)) {
-      initMessageQueue();
+      const initResult = initMessageQueue();
+      if (!initResult.success) {
+        return { success: false, error: initResult.error || 'Message queue init failed' };
+      }
     }
 
     // Read existing messages
@@ -1012,7 +1041,11 @@ function handleMessageQueueChange(filePath) {
  */
 function startMessageWatcher() {
   // Ensure directory exists
-  initMessageQueue();
+  const initResult = initMessageQueue();
+  if (!initResult.success) {
+    log.error('MessageQueue', 'Skipping watcher start - init failed', initResult.error);
+    return;
+  }
 
   if (messageWatcher) {
     messageWatcher.close();
@@ -1027,6 +1060,9 @@ function startMessageWatcher() {
 
   messageWatcher.on('change', handleMessageQueueChange);
   messageWatcher.on('add', handleMessageQueueChange);
+  messageWatcher.on('error', (err) => {
+    log.error('MessageQueue', 'Message watcher error', err);
+  });
 
   log.info('MessageQueue', `Watching ${MESSAGE_QUEUE_DIR}`);
 }
