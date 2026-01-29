@@ -1071,6 +1071,20 @@ async function restartPane(paneId) {
   }
 
   await new Promise(resolve => setTimeout(resolve, 250));
+
+  // Codex exec panes need PTY recreated before spawnClaude
+  // spawnClaude() for Codex panes only sends identity message - doesn't create PTY
+  if (isCodexPane(id)) {
+    try {
+      await window.hivemind.pty.create(id);
+      log.info('Terminal', `Recreated PTY for Codex pane ${id}`);
+    } catch (err) {
+      log.error('Terminal', `Failed to recreate PTY for Codex pane ${id}:`, err);
+      updatePaneStatus(id, 'Restart failed');
+      return false;
+    }
+  }
+
   await spawnClaude(id);
   return true;
 }
