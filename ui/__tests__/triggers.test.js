@@ -690,6 +690,15 @@ describe('triggers.js module functions', () => {
   // ============================================================
 
   describe('handleTriggerFile', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.runOnlyPendingTimers();
+      jest.useRealTimers();
+    });
+
     test('should return error for unknown trigger file', () => {
       const result = triggers.handleTriggerFile('/path/to/unknown.txt', 'unknown.txt');
       expect(result.success).toBe(false);
@@ -767,6 +776,7 @@ describe('triggers.js module functions', () => {
     let mockClaudeRunning;
 
     beforeEach(() => {
+      jest.useFakeTimers();
       mockMainWindow = {
         isDestroyed: () => false,
         webContents: { send: jest.fn() },
@@ -776,6 +786,11 @@ describe('triggers.js module functions', () => {
         ['2', 'running'],
       ]);
       triggers.init(mockMainWindow, mockClaudeRunning, null);
+    });
+
+    afterEach(() => {
+      jest.runOnlyPendingTimers();
+      jest.useRealTimers();
     });
 
     test('should return undefined for null message', () => {
@@ -822,6 +837,7 @@ describe('triggers.js module functions', () => {
     let mockClaudeRunning;
 
     beforeEach(() => {
+      jest.useFakeTimers();
       mockMainWindow = {
         isDestroyed: () => false,
         webContents: { send: jest.fn() },
@@ -835,6 +851,11 @@ describe('triggers.js module functions', () => {
         ['6', 'running'],
       ]);
       triggers.init(mockMainWindow, mockClaudeRunning, null);
+    });
+
+    afterEach(() => {
+      jest.runOnlyPendingTimers();
+      jest.useRealTimers();
     });
 
     test('should send broadcast-sent IPC event', () => {
@@ -885,6 +906,7 @@ describe('triggers.js module functions', () => {
     let mockClaudeRunning;
 
     beforeEach(() => {
+      jest.useFakeTimers();
       mockMainWindow = {
         isDestroyed: () => false,
         webContents: { send: jest.fn() },
@@ -894,6 +916,11 @@ describe('triggers.js module functions', () => {
         ['3', 'running'],
       ]);
       triggers.init(mockMainWindow, mockClaudeRunning, null);
+    });
+
+    afterEach(() => {
+      jest.runOnlyPendingTimers();
+      jest.useRealTimers();
     });
 
     test('should return error for null message', () => {
@@ -1020,6 +1047,7 @@ describe('triggers.js module functions', () => {
     let testClaudeRunning;
 
     beforeEach(() => {
+      jest.useFakeTimers();
       testMainWindow = {
         isDestroyed: () => false,
         webContents: { send: jest.fn() },
@@ -1029,6 +1057,11 @@ describe('triggers.js module functions', () => {
         ['2', 'running'],
       ]);
       triggers.init(testMainWindow, testClaudeRunning, null);
+    });
+
+    afterEach(() => {
+      jest.runOnlyPendingTimers();
+      jest.useRealTimers();
     });
 
     test('should handle empty message', () => {
