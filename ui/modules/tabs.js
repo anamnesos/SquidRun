@@ -2067,6 +2067,345 @@ function setupRightPanel(handleResizeFn) {
   loadScreenshots();
 }
 
+// ============================================================
+// P2-5: MESSAGE INSPECTOR TAB
+// ============================================================
+
+let inspectorEvents = [];
+let inspectorFilter = 'all';
+let inspectorAutoScroll = true;
+let inspectorPaused = false;
+const MAX_INSPECTOR_EVENTS = 500;
+
+const INSPECTOR_STATS = {
+  total: 0,
+  delivered: 0,
+  pending: 0,
+  skipped: 0
+};
+
+const INSPECTOR_AGENT_NAMES = {
+  '1': 'Arch',
+  '2': 'Orch',
+  '3': 'ImpA',
+  '4': 'ImpB',
+  '5': 'Inv',
+  '6': 'Rev',
+  'lead': 'Arch',
+  'architect': 'Arch',
+  'orchestrator': 'Orch',
+  'worker-a': 'ImpA',
+  'implementer-a': 'ImpA',
+  'worker-b': 'ImpB',
+  'implementer-b': 'ImpB',
+  'investigator': 'Inv',
+  'reviewer': 'Rev',
+  'system': 'Sys',
+  'all': 'All',
+  'workers': 'Workers'
+};
+
+function formatInspectorTime(timestamp) {
+  const date = new Date(timestamp);
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function getAgentShortName(id) {
+  if (!id) return '?';
+  const strId = String(id);
+  return INSPECTOR_AGENT_NAMES[strId] || INSPECTOR_AGENT_NAMES[strId.toLowerCase()] || strId;
+}
+
+function addInspectorEvent(event) {
+  if (inspectorPaused) return;
+
+  const entry = {
+    id: Date.now() + Math.random(),
+    timestamp: new Date().toISOString(),
+    ...event
+  };
+
+  inspectorEvents.push(entry);
+
+  // Trim to max
+  if (inspectorEvents.length > MAX_INSPECTOR_EVENTS) {
+    inspectorEvents = inspectorEvents.slice(-MAX_INSPECTOR_EVENTS);
+  }
+
+  // Update stats
+  INSPECTOR_STATS.total++;
+  if (event.status === 'delivered' || event.status === 'success') {
+    INSPECTOR_STATS.delivered++;
+  } else if (event.status === 'pending') {
+    INSPECTOR_STATS.pending++;
+  } else if (event.status === 'skipped' || event.status === 'blocked') {
+    INSPECTOR_STATS.skipped++;
+  }
+
+  renderInspectorStats();
+  renderInspectorLog();
+}
+
+function renderInspectorStats() {
+  const totalEl = document.getElementById('inspectorTotalEvents');
+  const deliveredEl = document.getElementById('inspectorDelivered');
+  const pendingEl = document.getElementById('inspectorPending');
+  const skippedEl = document.getElementById('inspectorSkipped');
+
+  if (totalEl) totalEl.textContent = INSPECTOR_STATS.total;
+  if (deliveredEl) deliveredEl.textContent = INSPECTOR_STATS.delivered;
+  if (pendingEl) pendingEl.textContent = INSPECTOR_STATS.pending;
+  if (skippedEl) skippedEl.textContent = INSPECTOR_STATS.skipped;
+}
+
+function renderInspectorLog() {
+  const logEl = document.getElementById('inspectorLog');
+  if (!logEl) return;
+
+  // Apply filter
+  let filtered = inspectorEvents;
+  if (inspectorFilter !== 'all') {
+    filtered = inspectorEvents.filter(e => e.type === inspectorFilter);
+  }
+
+  if (filtered.length === 0) {
+    logEl.innerHTML = '<div class="inspector-empty">No events captured yet. Trigger files or send messages to see activity.</div>';
+    return;
+  }
+
+  logEl.innerHTML = filtered.map(event => {
+    const time = formatInspectorTime(event.timestamp);
+    const from = getAgentShortName(event.from);
+    const to = getAgentShortName(event.to);
+    const seq = event.seq ? `#${event.seq}` : '';
+    const statusIcon = event.status === 'delivered' || event.status === 'success' ? '✓' :
+                       event.status === 'pending' ? '⏳' :
+                       event.status === 'skipped' || event.status === 'blocked' ? '✗' : '';
+    const statusClass = event.status === 'delivered' || event.status === 'success' ? 'success' :
+                        event.status === 'pending' ? 'pending' : 'failed';
+    const msgPreview = event.message ? event.message.substring(0, 60) + (event.message.length > 60 ? '...' : '') : '';
+
+    return `
+      <div class="inspector-event" data-id="${event.id}" title="${escapeHtml(event.message || '')}">
+        <span class="inspector-event-time">${time}</span>
+        <span class="inspector-event-type ${event.type}">${event.type}</span>
+        <span class="inspector-event-route">
+          ${from}<span class="arrow">→</span>${to}
+        </span>
+        <span class="inspector-event-seq">${seq}</span>
+        <span class="inspector-event-status ${statusClass}">${statusIcon}</span>
+        <span class="inspector-event-message">${escapeHtml(msgPreview)}</span>
+      </div>
+    `;
+  }).join('');
+
+  // Auto-scroll
+  if (inspectorAutoScroll) {
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+}
+
+function clearInspectorLog() {
+  inspectorEvents = [];
+  INSPECTOR_STATS.total = 0;
+  INSPECTOR_STATS.delivered = 0;
+  INSPECTOR_STATS.pending = 0;
+  INSPECTOR_STATS.skipped = 0;
+  renderInspectorStats();
+  renderInspectorLog();
+  updateConnectionStatus('Inspector log cleared');
+}
+
+function exportInspectorLog() {
+  const content = inspectorEvents.map(e => {
+    const time = new Date(e.timestamp).toISOString();
+    return `[${time}] [${e.type}] ${e.from || '?'} -> ${e.to || '?'} #${e.seq || 'N/A'} (${e.status || 'unknown'}) ${e.message || ''}`;
+  }).join('\n');
+
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `inspector-log-${new Date().toISOString().split('T')[0]}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+  updateConnectionStatus('Inspector log exported');
+}
+
+async function loadSequenceState() {
+  try {
+    const result = await ipcRenderer.invoke('get-message-state');
+    if (result && result.success && result.state) {
+      const sequences = result.state.sequences || {};
+
+      for (const agent of ['lead', 'orchestrator', 'worker-a', 'worker-b', 'investigator', 'reviewer']) {
+        const el = document.getElementById(`seq-${agent}`);
+        if (el) {
+          const agentState = sequences[agent];
+          if (agentState && agentState.lastSeen) {
+            const lastSeenEntries = Object.entries(agentState.lastSeen);
+            if (lastSeenEntries.length > 0) {
+              el.textContent = lastSeenEntries.map(([sender, seq]) => `${getAgentShortName(sender)}:#${seq}`).join(', ');
+            } else {
+              el.textContent = 'clean';
+            }
+          } else {
+            el.textContent = 'clean';
+          }
+        }
+      }
+    }
+  } catch (err) {
+    log.error('P2-5', 'Error loading sequence state', err);
+  }
+}
+
+function setupInspectorTab() {
+  // Filter buttons
+  document.querySelectorAll('.inspector-filter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.inspector-filter').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      inspectorFilter = btn.dataset.filter;
+      renderInspectorLog();
+    });
+  });
+
+  // Auto-scroll checkbox
+  const autoScrollCheck = document.getElementById('inspectorAutoScroll');
+  if (autoScrollCheck) {
+    autoScrollCheck.addEventListener('change', () => {
+      inspectorAutoScroll = autoScrollCheck.checked;
+    });
+  }
+
+  // Pause checkbox
+  const pauseCheck = document.getElementById('inspectorPaused');
+  if (pauseCheck) {
+    pauseCheck.addEventListener('change', () => {
+      inspectorPaused = pauseCheck.checked;
+    });
+  }
+
+  // Action buttons
+  const refreshBtn = document.getElementById('refreshInspectorBtn');
+  if (refreshBtn) refreshBtn.addEventListener('click', loadSequenceState);
+
+  const clearBtn = document.getElementById('clearInspectorBtn');
+  if (clearBtn) clearBtn.addEventListener('click', clearInspectorLog);
+
+  const exportBtn = document.getElementById('exportInspectorBtn');
+  if (exportBtn) exportBtn.addEventListener('click', exportInspectorLog);
+
+  // Listen for message flow events from main process
+  ipcRenderer.on('inject-message', (event, data) => {
+    // PTY injection event
+    const panes = data.panes || [];
+    panes.forEach(paneId => {
+      addInspectorEvent({
+        type: 'pty',
+        from: 'system',
+        to: paneId,
+        message: data.message ? data.message.replace(/\r/g, '') : '',
+        status: 'delivered'
+      });
+    });
+  });
+
+  ipcRenderer.on('sdk-message', (event, data) => {
+    // SDK message event
+    addInspectorEvent({
+      type: 'sdk',
+      from: data.from || 'system',
+      to: data.paneId || data.to,
+      message: data.message || data.content,
+      seq: data.seq,
+      status: 'delivered'
+    });
+  });
+
+  ipcRenderer.on('sync-triggered', (event, data) => {
+    // Sync context trigger
+    addInspectorEvent({
+      type: 'trigger',
+      from: 'system',
+      to: data.notified ? data.notified.join(',') : 'all',
+      message: `Sync: ${data.file || 'shared_context.md'}`,
+      status: 'delivered'
+    });
+  });
+
+  ipcRenderer.on('trigger-blocked', (event, data) => {
+    // Blocked/skipped trigger
+    addInspectorEvent({
+      type: 'blocked',
+      from: data.sender || 'unknown',
+      to: data.recipient || data.target,
+      message: data.reason || 'Duplicate or blocked',
+      seq: data.seq,
+      status: 'skipped'
+    });
+    // Decrement delivered, increment skipped for accuracy
+    if (INSPECTOR_STATS.delivered > 0) INSPECTOR_STATS.delivered--;
+  });
+
+  ipcRenderer.on('trigger-sent-sdk', (event, data) => {
+    addInspectorEvent({
+      type: 'sdk',
+      from: data.from || 'trigger',
+      to: data.paneId,
+      message: data.message,
+      seq: data.seq,
+      status: 'delivered'
+    });
+  });
+
+  ipcRenderer.on('broadcast-sent', (event, data) => {
+    addInspectorEvent({
+      type: 'broadcast',
+      from: 'user',
+      to: data.notified ? data.notified.join(',') : 'all',
+      message: data.message,
+      status: 'delivered'
+    });
+  });
+
+  ipcRenderer.on('direct-message-sent', (event, data) => {
+    addInspectorEvent({
+      type: 'trigger',
+      from: data.from,
+      to: data.to,
+      message: data.message,
+      seq: data.seq,
+      status: 'delivered'
+    });
+  });
+
+  ipcRenderer.on('task-routed', (event, data) => {
+    addInspectorEvent({
+      type: 'trigger',
+      from: 'router',
+      to: data.targetPaneId,
+      message: `Task routed: ${data.message ? data.message.substring(0, 50) : 'N/A'}`,
+      status: 'delivered'
+    });
+  });
+
+  ipcRenderer.on('auto-handoff', (event, data) => {
+    addInspectorEvent({
+      type: 'trigger',
+      from: data.from,
+      to: data.to,
+      message: `Auto-handoff: ${data.message || 'N/A'}`,
+      status: 'delivered'
+    });
+  });
+
+  // Load initial state
+  loadSequenceState();
+  renderInspectorStats();
+}
+
 module.exports = {
   setConnectionStatusCallback,
   togglePanel,
@@ -2082,6 +2421,7 @@ module.exports = {
   setupTestsTab,           // TR1: Test results panel
   setupCIStatusIndicator,  // CI2: CI status indicator
   setupMessagesTab,        // MQ3+MQ6: Messages tab
+  setupInspectorTab,       // P2-5: Message inspector
   setupFrictionPanel,
   setupRightPanel,
   updateBuildProgress,
@@ -2095,7 +2435,9 @@ module.exports = {
   loadActivityLog,
   loadTestResults,         // TR1: Load test results
   loadMessageHistory,      // MQ3: Load message history
+  loadSequenceState,       // P2-5: Load sequence state
   addActivityEntry,
+  addInspectorEvent,       // P2-5: Add inspector event
   updateCIStatus,          // CI2: Update CI status
   setupMCPStatusIndicator, // MC7: MCP status indicator
   updateMCPAgentStatus,    // MC7: Update single agent status

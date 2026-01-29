@@ -320,6 +320,7 @@
         <button class="panel-tab" data-tab="progress" title="Build progress and usage statistics">Progress</button>
         <button class="panel-tab" data-tab="processes" title="Manage background processes">Processes</button>
         <button class="panel-tab" data-tab="messages" title="View message history between agents">Messages</button>
+        <button class="panel-tab" data-tab="inspector" title="Debug message flow and delivery">Inspector</button>
       </div>
       <div class="panel-content">
         <div class="tab-pane active" id="tab-screenshots">
@@ -589,6 +590,96 @@
           <div class="messages-actions">
             <button class="btn btn-secondary" id="refreshMessagesBtn" title="Reload message history">Refresh</button>
             <button class="btn btn-secondary" id="clearMessagesBtn" title="Clear message history">Clear</button>
+          </div>
+        </div>
+
+        <!-- P2-5: Message Inspector Tab -->
+        <div class="tab-pane" id="tab-inspector">
+          <div class="tab-title">Message Inspector</div>
+          <div class="tab-description">Debug message flow, delivery status, and sequence tracking</div>
+
+          <!-- Stats summary -->
+          <div class="inspector-stats">
+            <div class="inspector-stat">
+              <span class="inspector-stat-value" id="inspectorTotalEvents">0</span>
+              <span class="inspector-stat-label">Events</span>
+            </div>
+            <div class="inspector-stat success">
+              <span class="inspector-stat-value" id="inspectorDelivered">0</span>
+              <span class="inspector-stat-label">Delivered</span>
+            </div>
+            <div class="inspector-stat warning">
+              <span class="inspector-stat-value" id="inspectorPending">0</span>
+              <span class="inspector-stat-label">Pending</span>
+            </div>
+            <div class="inspector-stat error">
+              <span class="inspector-stat-value" id="inspectorSkipped">0</span>
+              <span class="inspector-stat-label">Skipped</span>
+            </div>
+          </div>
+
+          <!-- Filter controls -->
+          <div class="inspector-controls">
+            <div class="inspector-filters">
+              <button class="inspector-filter active" data-filter="all" title="Show all events">All</button>
+              <button class="inspector-filter" data-filter="trigger" title="Trigger file events">Triggers</button>
+              <button class="inspector-filter" data-filter="broadcast" title="Broadcast messages">Broadcast</button>
+              <button class="inspector-filter" data-filter="sdk" title="SDK mode events">SDK</button>
+              <button class="inspector-filter" data-filter="blocked" title="Blocked/skipped messages">Blocked</button>
+            </div>
+            <div class="inspector-toggle">
+              <label class="inspector-toggle-label">
+                <input type="checkbox" id="inspectorAutoScroll" checked>
+                Auto-scroll
+              </label>
+              <label class="inspector-toggle-label">
+                <input type="checkbox" id="inspectorPaused">
+                Pause
+              </label>
+            </div>
+          </div>
+
+          <!-- Event log -->
+          <div class="inspector-log" id="inspectorLog">
+            <div class="inspector-empty">No events captured yet. Trigger files or send messages to see activity.</div>
+          </div>
+
+          <!-- Actions -->
+          <div class="inspector-actions">
+            <button class="btn" id="refreshInspectorBtn" title="Reload sequence state">Refresh State</button>
+            <button class="btn" id="clearInspectorBtn" title="Clear event log">Clear Log</button>
+            <button class="btn" id="exportInspectorBtn" title="Export log to file">Export</button>
+          </div>
+
+          <!-- Sequence state display -->
+          <div class="inspector-section">
+            <div class="inspector-section-title">Sequence Tracking State</div>
+            <div class="inspector-sequence-grid" id="inspectorSequenceGrid">
+              <div class="inspector-sequence-item" data-agent="lead">
+                <span class="inspector-seq-name">Architect</span>
+                <span class="inspector-seq-value" id="seq-lead">-</span>
+              </div>
+              <div class="inspector-sequence-item" data-agent="orchestrator">
+                <span class="inspector-seq-name">Orchestrator</span>
+                <span class="inspector-seq-value" id="seq-orchestrator">-</span>
+              </div>
+              <div class="inspector-sequence-item" data-agent="worker-a">
+                <span class="inspector-seq-name">Implementer A</span>
+                <span class="inspector-seq-value" id="seq-worker-a">-</span>
+              </div>
+              <div class="inspector-sequence-item" data-agent="worker-b">
+                <span class="inspector-seq-name">Implementer B</span>
+                <span class="inspector-seq-value" id="seq-worker-b">-</span>
+              </div>
+              <div class="inspector-sequence-item" data-agent="investigator">
+                <span class="inspector-seq-name">Investigator</span>
+                <span class="inspector-seq-value" id="seq-investigator">-</span>
+              </div>
+              <div class="inspector-sequence-item" data-agent="reviewer">
+                <span class="inspector-seq-name">Reviewer</span>
+                <span class="inspector-seq-value" id="seq-reviewer">-</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>

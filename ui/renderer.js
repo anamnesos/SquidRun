@@ -1018,6 +1018,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   tabs.setupActivityTab();      // OB2: Activity log
   tabs.setupTestsTab();         // TR1: Test results panel
   tabs.setupMessagesTab();      // MQ3+MQ6: Messages tab
+  tabs.setupInspectorTab();     // P2-5: Message inspector
   tabs.setupCIStatusIndicator(); // CI2: CI status indicator
   tabs.setupMCPStatusIndicator(); // MC7: MCP status indicator
 
