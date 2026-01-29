@@ -2,7 +2,7 @@
  * Trigger handling and agent notification functions
  * Extracted from main.js for modularization
  *
- * V2 SDK Integration: When SDK mode is enabled, triggers route
+ * SDK integration: When SDK mode is enabled, triggers route
  * through sdk-bridge instead of PTY keyboard injection.
  */
 
@@ -269,7 +269,7 @@ function logTriggerActivity(action, panes, message, extra = {}) {
 }
 
 /**
- * V2 SDK: Set SDK bridge reference for direct message delivery
+ * SDK: Set SDK bridge reference for direct message delivery
  * @param {SDKBridge} bridge - The SDK bridge instance
  */
 function setSDKBridge(bridge) {
@@ -278,7 +278,7 @@ function setSDKBridge(bridge) {
 }
 
 /**
- * V2 SDK: Enable/disable SDK mode for message delivery
+ * SDK: Enable/disable SDK mode for message delivery
  * @param {boolean} enabled - Whether SDK mode is active
  */
 function setSDKMode(enabled) {
@@ -287,7 +287,7 @@ function setSDKMode(enabled) {
 }
 
 /**
- * V2 SDK: Check if SDK mode is active
+ * SDK: Check if SDK mode is active
  * @returns {boolean}
  */
 function isSDKModeEnabled() {
@@ -455,7 +455,7 @@ function notifyAllAgentsSync(triggerFile) {
     return eligiblePanes;
   }
 
-  // PTY MODE (legacy): Get list of running Claude panes, excluding recently synced (BUG1 FIX)
+  // PTY mode (legacy): get list of running Claude panes, excluding recently synced
   const runningPanes = [];
   const skippedPanes = [];
   if (claudeRunning) {
@@ -558,7 +558,7 @@ function sendStaggered(panes, message, meta = {}) {
 
 /**
  * Handle trigger file changes - sends content to target pane(s)
- * V2: When SDK mode enabled, routes through SDK bridge instead of PTY
+ * When SDK mode enabled, routes through SDK bridge instead of PTY
  * @param {string} filePath - Full path to the trigger file
  * @param {string} filename - Just the filename (e.g., 'worker-b.txt')
  */
@@ -804,7 +804,7 @@ const AGENT_ROLES = {
 };
 
 /**
- * V6 SR1: Get best agent for a task based on performance and type
+ * Smart routing: get best agent for a task based on performance and type
  * @param {string} taskType - Type of task (ui, backend, review, etc.)
  * @param {Object} performance - Performance data from get-performance
  * @returns {{ paneId: string, reason: string }}
@@ -864,7 +864,7 @@ function getBestAgent(taskType, performance) {
 }
 
 /**
- * V6 SR1: Route a task to the best agent
+ * Smart routing: route a task to the best agent
  * @param {string} taskType - Type of task
  * @param {string} message - Message to send
  * @param {Object} performance - Performance data
@@ -910,7 +910,7 @@ const HANDOFF_CHAIN = {
 };
 
 /**
- * V6 AH1: Trigger auto-handoff when agent completes
+ * Auto-handoff: trigger when agent completes
  * @param {string} completedPaneId - Pane that just completed
  * @param {string} completionMessage - What was completed
  */

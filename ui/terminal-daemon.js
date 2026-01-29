@@ -136,7 +136,7 @@ const SCROLLBACK_MAX_SIZE = 50000;
 const DEFAULT_STUCK_THRESHOLD = 60000;
 
 // ============================================================
-// FX4: GHOST TEXT DEDUPLICATION
+// Ghost text deduplication
 // ============================================================
 
 // Track recent inputs for ghost text detection
@@ -169,7 +169,7 @@ function checkGhostText(paneId, data) {
   // Cross-pane same-input is legitimate (e.g., broadcast messages)
   const matchingInputs = recentInputs.filter(entry =>
     entry.data === data &&
-    entry.paneId === paneId &&  // FX4 FIX: Only dedup SAME pane, not cross-pane
+    entry.paneId === paneId &&  // Only dedup SAME pane, not cross-pane
     now - entry.timestamp < GHOST_DEDUP_WINDOW_MS
   );
 
@@ -192,7 +192,7 @@ function checkGhostText(paneId, data) {
 }
 
 // ============================================================
-// FX2: SESSION PERSISTENCE
+// Session persistence
 // ============================================================
 
 const SESSION_FILE_PATH = path.join(__dirname, 'session-state.json');
@@ -337,7 +337,7 @@ function hasRecentActivity() {
 }
 
 /**
- * V17: Get status.md last modified time
+ * Get status.md last modified time
  * Returns null if file doesn't exist or can't be read
  */
 function getStatusMdMtime() {
@@ -353,7 +353,7 @@ function getStatusMdMtime() {
 }
 
 /**
- * V17: Check if there are pending/in-progress tasks in shared_context.md
+ * Check if there are pending/in-progress tasks in shared_context.md
  * Returns true if tasks found, false otherwise
  */
 function hasPendingTasks() {
@@ -371,7 +371,7 @@ function hasPendingTasks() {
 }
 
 /**
- * V17: Determine heartbeat state based on task activity and staleness
+ * Determine heartbeat state based on task activity and staleness
  * Returns: 'idle' | 'active' | 'overdue' | 'recovering'
  */
 function getHeartbeatState() {
@@ -408,7 +408,7 @@ function getHeartbeatState() {
 }
 
 /**
- * V17: Get heartbeat interval based on current state
+ * Get heartbeat interval based on current state
  * Returns interval in milliseconds
  */
 function getHeartbeatInterval() {
@@ -417,7 +417,7 @@ function getHeartbeatInterval() {
 }
 
 /**
- * V17: Broadcast heartbeat state change to all clients
+ * Broadcast heartbeat state change to all clients
  * This is picked up by main.js and forwarded to renderer
  */
 function broadcastHeartbeatState(state, interval) {
@@ -431,7 +431,7 @@ function broadcastHeartbeatState(state, interval) {
 }
 
 /**
- * V17: Enter recovery mode (45 sec interval) after stuck detection
+ * Enter recovery mode (45 sec interval) after stuck detection
  */
 function enterRecoveryMode() {
   if (!isRecovering) {
@@ -442,7 +442,7 @@ function enterRecoveryMode() {
 }
 
 /**
- * V17: Exit recovery mode (agent responded)
+ * Exit recovery mode (agent responded)
  */
 function exitRecoveryMode() {
   if (isRecovering) {
@@ -547,7 +547,7 @@ function alertUserAboutAgent(paneId) {
 }
 
 /**
- * V18: Main auto-aggressive-nudge logic
+ * Main auto-aggressive-nudge logic
  * Called periodically to check for stuck agents and nudge them
  */
 function checkAndNudgeStuckAgents() {
@@ -764,7 +764,7 @@ function checkLeadResponse() {
 }
 
 /**
- * Main heartbeat tick - HB1-HB4 logic + V17 adaptive intervals + V18 auto-nudge
+ * Main heartbeat tick - HB1-HB4 logic + adaptive intervals + auto-nudge
  */
 function heartbeatTick() {
   if (!heartbeatEnabled || terminals.size === 0) {
@@ -862,7 +862,7 @@ function initHeartbeatTimer() {
 // NOTE: initHeartbeatTimer() is called later, after 'clients' Set is declared
 
 // ============================================================
-// D2 (V3): DRY-RUN MODE
+// Dry-run mode
 // ============================================================
 
 // Mock responses for dry-run mode (simulates an agent)
@@ -1290,7 +1290,7 @@ function handleMessage(client, message) {
       }
 
       case 'write': {
-        // FX4: Ghost text deduplication - block duplicate inputs across panes
+        // Ghost text deduplication - block duplicate inputs across panes
         const ghostCheck = checkGhostText(msg.paneId, msg.data);
         if (ghostCheck.isGhost) {
           ghostBlockCount++;
@@ -1549,7 +1549,7 @@ function handleMessage(client, message) {
         break;
       }
 
-      // FX4: Ghost text stats
+      // Ghost text stats
       case 'ghost-stats': {
         sendToClient(client, {
           event: 'ghost-stats',
@@ -1577,7 +1577,7 @@ function handleMessage(client, message) {
         break;
       }
 
-      // FX2: Session persistence protocol actions
+      // Session persistence protocol actions
       case 'get-session': {
         const state = loadSessionState();
         sendToClient(client, {
@@ -1607,7 +1607,7 @@ function handleMessage(client, message) {
 
       case 'shutdown': {
         logInfo('Shutdown requested via protocol');
-        // FX2: Save session before shutdown
+        // Save session state before shutdown
         saveSessionState();
         // Kill all terminals
         for (const [paneId] of terminals) {
@@ -1691,7 +1691,7 @@ function cleanupSocket() {
 // Handle process signals
 process.on('SIGINT', () => {
   logInfo('SIGINT received, shutting down...');
-  // FX2: Save session state before shutdown
+  // Save session state before shutdown
   saveSessionState();
   // Notify clients of shutdown
   broadcast({
@@ -1711,7 +1711,7 @@ process.on('SIGINT', () => {
 process.on('SIGTERM', () => {
   logInfo('SIGTERM received, initiating graceful shutdown...');
 
-  // FX2: Save session state before shutdown
+  // Save session state before shutdown
   saveSessionState();
 
   // Notify all clients before shutdown
