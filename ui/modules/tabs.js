@@ -2260,6 +2260,70 @@ async function loadSequenceState() {
   }
 }
 
+// Task #8: Load and display reliability analytics
+async function loadReliabilityStats() {
+  try {
+    const result = await ipcRenderer.invoke('get-reliability-stats');
+    if (result && result.success && result.stats) {
+      const stats = result.stats;
+
+      // Main overview stats
+      const successRateEl = document.getElementById('reliabilitySuccessRate');
+      if (successRateEl) successRateEl.textContent = `${stats.aggregate.successRate}%`;
+
+      const uptimeEl = document.getElementById('reliabilityUptime');
+      if (uptimeEl) uptimeEl.textContent = stats.uptimeFormatted || '--';
+
+      const latencyEl = document.getElementById('reliabilityLatency');
+      if (latencyEl) latencyEl.textContent = stats.latency.avg > 0 ? `${stats.latency.avg}ms` : '--';
+
+      // Detail rows
+      const sentEl = document.getElementById('reliabilitySent');
+      if (sentEl) sentEl.textContent = stats.aggregate.sent;
+
+      const deliveredEl = document.getElementById('reliabilityDelivered');
+      if (deliveredEl) deliveredEl.textContent = stats.aggregate.delivered;
+
+      const failedEl = document.getElementById('reliabilityFailed');
+      if (failedEl) failedEl.textContent = stats.aggregate.failed;
+
+      const timedOutEl = document.getElementById('reliabilityTimedOut');
+      if (timedOutEl) timedOutEl.textContent = stats.aggregate.timedOut;
+
+      const skippedEl = document.getElementById('reliabilitySkipped');
+      if (skippedEl) skippedEl.textContent = stats.aggregate.skipped;
+
+      // Mode stats
+      const ptySentEl = document.getElementById('reliabilityPtySent');
+      if (ptySentEl) ptySentEl.textContent = stats.byMode.pty.sent;
+
+      const ptyDeliveredEl = document.getElementById('reliabilityPtyDelivered');
+      if (ptyDeliveredEl) ptyDeliveredEl.textContent = stats.byMode.pty.delivered;
+
+      const sdkSentEl = document.getElementById('reliabilitySdkSent');
+      if (sdkSentEl) sdkSentEl.textContent = stats.byMode.sdk.sent;
+
+      const sdkDeliveredEl = document.getElementById('reliabilitySdkDelivered');
+      if (sdkDeliveredEl) sdkDeliveredEl.textContent = stats.byMode.sdk.delivered;
+
+      // Rolling windows
+      const window15m = stats.windows.last15m;
+      const el15m = document.getElementById('reliability15m');
+      if (el15m) {
+        el15m.textContent = `${window15m.sent} sent, ${window15m.delivered} delivered`;
+      }
+
+      const window1h = stats.windows.last1h;
+      const el1h = document.getElementById('reliability1h');
+      if (el1h) {
+        el1h.textContent = `${window1h.sent} sent, ${window1h.delivered} delivered`;
+      }
+    }
+  } catch (err) {
+    log.error('Task8', 'Error loading reliability stats', err);
+  }
+}
+
 function setupInspectorTab() {
   // Filter buttons
   document.querySelectorAll('.inspector-filter').forEach(btn => {
@@ -2296,6 +2360,13 @@ function setupInspectorTab() {
 
   const exportBtn = document.getElementById('exportInspectorBtn');
   if (exportBtn) exportBtn.addEventListener('click', exportInspectorLog);
+
+  // Task #8: Reliability stats refresh button
+  const reliabilityRefreshBtn = document.getElementById('refreshReliabilityBtn');
+  if (reliabilityRefreshBtn) reliabilityRefreshBtn.addEventListener('click', loadReliabilityStats);
+
+  // Load initial reliability stats
+  loadReliabilityStats();
 
   // Listen for message flow events from main process
   ipcRenderer.on('inject-message', (event, data) => {
@@ -2436,6 +2507,7 @@ module.exports = {
   loadTestResults,         // TR1: Load test results
   loadMessageHistory,      // MQ3: Load message history
   loadSequenceState,       // P2-5: Load sequence state
+  loadReliabilityStats,    // Task #8: Load reliability analytics
   addActivityEntry,
   addInspectorEvent,       // P2-5: Add inspector event
   updateCIStatus,          // CI2: Update CI status

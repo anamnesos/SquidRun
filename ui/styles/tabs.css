@@ -1795,3 +1795,132 @@ input:focus {
   color: #4ecca3;
   font-weight: 600;
 }
+
+/* Task #8: Reliability Analytics */
+.reliability-overview {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.reliability-stat {
+  flex: 1;
+  background: #1a1a2e;
+  border-radius: 6px;
+  padding: 12px;
+  text-align: center;
+  border-left: 3px solid #888;
+}
+
+.reliability-stat.primary {
+  border-left-color: #4ecca3;
+}
+
+.reliability-stat-value {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  color: #e0e0e0;
+  margin-bottom: 4px;
+}
+
+.reliability-stat.primary .reliability-stat-value {
+  color: #4ecca3;
+}
+
+.reliability-stat-label {
+  font-size: 10px;
+  color: #888;
+  text-transform: uppercase;
+}
+
+.reliability-details {
+  background: #1a1a2e;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.reliability-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.reliability-row:not(:last-child) {
+  border-bottom: 1px solid #2a2a3e;
+}
+
+.reliability-row-label {
+  color: #888;
+}
+
+.reliability-row-value {
+  color: #e0e0e0;
+  font-weight: 600;
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.reliability-row-value.success {
+  color: #4ecca3;
+}
+
+.reliability-row-value.error {
+  color: #e94560;
+}
+
+.reliability-row-value.warning {
+  color: #f0a500;
+}
+
+.reliability-modes {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.reliability-mode-card {
+  flex: 1;
+  background: #1a1a2e;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.reliability-mode-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #4a9eff;
+  margin-bottom: 6px;
+}
+
+.reliability-mode-stats {
+  font-size: 11px;
+  color: #888;
+}
+
+.reliability-mode-stats span {
+  color: #e0e0e0;
+  font-weight: 600;
+}
+
+.reliability-windows {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  font-size: 11px;
+}
+
+.reliability-window {
+  display: flex;
+  gap: 6px;
+}
+
+.reliability-window-label {
+  color: #888;
+}
+
+.reliability-window span:not(.reliability-window-label) {
+  color: #e0e0e0;
+  font-weight: 600;
+}

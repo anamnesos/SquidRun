@@ -88,6 +88,15 @@ function registerStateHandlers(ctx) {
     }
     return { success: true, state: triggers.getSequenceState() };
   });
+
+  // Task #8: Get reliability analytics
+  ipcMain.handle('get-reliability-stats', () => {
+    const { ok, triggers, error } = getTriggers();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    return { success: true, stats: triggers.getReliabilityStats() };
+  });
 }
 
 module.exports = { registerStateHandlers };

@@ -30,6 +30,244 @@ const MESSAGE_STATE_PATH = path.join(WORKSPACE_PATH, 'message-state.json');
 const DELIVERY_ACK_TIMEOUT_MS = 30000;
 const pendingDeliveries = new Map();
 
+// ============================================================
+// RELIABILITY METRICS (Task #8)
+// ============================================================
+
+const ROLLING_WINDOW_15M = 15 * 60 * 1000;
+const ROLLING_WINDOW_1H = 60 * 60 * 1000;
+
+// Event log for time-windowed analysis
+const metricsEventLog = [];
+const MAX_METRICS_EVENTS = 2000;
+
+// Aggregate stats since app start
+const reliabilityStats = {
+  startTime: Date.now(),
+  aggregate: {
+    sent: 0,
+    delivered: 0,
+    failed: 0,
+    timedOut: 0,
+    skipped: 0,  // duplicates
+    retries: 0,
+  },
+  byMode: {
+    sdk: { sent: 0, delivered: 0, failed: 0 },
+    pty: { sent: 0, delivered: 0, failed: 0, timedOut: 0 },
+  },
+  byPane: {},  // paneId -> { sent, delivered, failed }
+  byType: {
+    trigger: { sent: 0, delivered: 0, failed: 0 },
+    broadcast: { sent: 0, delivered: 0, failed: 0 },
+    direct: { sent: 0, delivered: 0, failed: 0 },
+  },
+  latency: {
+    samples: [],  // { queuedAt, sentAt, ackedAt }
+    maxSamples: 100,
+  },
+};
+
+// Initialize per-pane stats
+PANE_IDS.forEach(id => {
+  reliabilityStats.byPane[id] = { sent: 0, delivered: 0, failed: 0 };
+});
+
+/**
+ * Record a metrics event for time-windowed analysis
+ */
+function recordMetricsEvent(type, data) {
+  const event = {
+    timestamp: Date.now(),
+    type,
+    ...data,
+  };
+  metricsEventLog.push(event);
+  if (metricsEventLog.length > MAX_METRICS_EVENTS) {
+    metricsEventLog.shift();
+  }
+}
+
+/**
+ * Get events within a time window
+ */
+function getEventsInWindow(windowMs) {
+  const cutoff = Date.now() - windowMs;
+  return metricsEventLog.filter(e => e.timestamp >= cutoff);
+}
+
+/**
+ * Calculate stats from events in a window
+ */
+function calculateWindowStats(windowMs) {
+  const events = getEventsInWindow(windowMs);
+  const stats = { sent: 0, delivered: 0, failed: 0, timedOut: 0, skipped: 0 };
+
+  events.forEach(e => {
+    if (e.type === 'sent') stats.sent++;
+    else if (e.type === 'delivered') stats.delivered++;
+    else if (e.type === 'failed') stats.failed++;
+    else if (e.type === 'timeout') stats.timedOut++;
+    else if (e.type === 'skipped') stats.skipped++;
+  });
+
+  return stats;
+}
+
+/**
+ * Record message sent
+ */
+function recordSent(mode, msgType, panes, queuedAt = null) {
+  const sentAt = Date.now();
+  reliabilityStats.aggregate.sent++;
+
+  if (reliabilityStats.byMode[mode]) {
+    reliabilityStats.byMode[mode].sent++;
+  }
+  if (reliabilityStats.byType[msgType]) {
+    reliabilityStats.byType[msgType].sent++;
+  }
+
+  panes.forEach(paneId => {
+    if (reliabilityStats.byPane[paneId]) {
+      reliabilityStats.byPane[paneId].sent++;
+    }
+  });
+
+  recordMetricsEvent('sent', { mode, msgType, panes, queuedAt, sentAt });
+
+  return { sentAt, queuedAt };
+}
+
+/**
+ * Record successful delivery
+ */
+function recordDelivered(mode, msgType, paneId, sentAt = null) {
+  const ackedAt = Date.now();
+  reliabilityStats.aggregate.delivered++;
+
+  if (reliabilityStats.byMode[mode]) {
+    reliabilityStats.byMode[mode].delivered++;
+  }
+  if (reliabilityStats.byType[msgType]) {
+    reliabilityStats.byType[msgType].delivered++;
+  }
+  if (reliabilityStats.byPane[paneId]) {
+    reliabilityStats.byPane[paneId].delivered++;
+  }
+
+  // Track latency if we have sentAt
+  if (sentAt) {
+    const latency = ackedAt - sentAt;
+    reliabilityStats.latency.samples.push({ sentAt, ackedAt, latency });
+    if (reliabilityStats.latency.samples.length > reliabilityStats.latency.maxSamples) {
+      reliabilityStats.latency.samples.shift();
+    }
+  }
+
+  recordMetricsEvent('delivered', { mode, msgType, paneId, sentAt, ackedAt });
+}
+
+/**
+ * Record failed delivery
+ */
+function recordFailed(mode, msgType, paneId, reason) {
+  reliabilityStats.aggregate.failed++;
+
+  if (reliabilityStats.byMode[mode]) {
+    reliabilityStats.byMode[mode].failed++;
+  }
+  if (reliabilityStats.byType[msgType]) {
+    reliabilityStats.byType[msgType].failed++;
+  }
+  if (reliabilityStats.byPane[paneId]) {
+    reliabilityStats.byPane[paneId].failed++;
+  }
+
+  recordMetricsEvent('failed', { mode, msgType, paneId, reason });
+}
+
+/**
+ * Record delivery timeout
+ */
+function recordTimeout(mode, msgType, panes) {
+  reliabilityStats.aggregate.timedOut++;
+
+  if (reliabilityStats.byMode[mode]) {
+    reliabilityStats.byMode[mode].timedOut++;
+  }
+
+  recordMetricsEvent('timeout', { mode, msgType, panes });
+}
+
+/**
+ * Record skipped (duplicate) message
+ */
+function recordSkipped(sender, seq, recipient) {
+  reliabilityStats.aggregate.skipped++;
+  recordMetricsEvent('skipped', { sender, seq, recipient });
+}
+
+/**
+ * Get comprehensive reliability statistics
+ */
+function getReliabilityStats() {
+  const now = Date.now();
+  const uptime = now - reliabilityStats.startTime;
+
+  // Calculate average latency
+  const latencySamples = reliabilityStats.latency.samples;
+  let avgLatency = 0;
+  let minLatency = 0;
+  let maxLatency = 0;
+
+  if (latencySamples.length > 0) {
+    const latencies = latencySamples.map(s => s.latency);
+    avgLatency = Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length);
+    minLatency = Math.min(...latencies);
+    maxLatency = Math.max(...latencies);
+  }
+
+  // Calculate success rate
+  const { sent, delivered, failed, timedOut, skipped } = reliabilityStats.aggregate;
+  const successRate = sent > 0 ? Math.round((delivered / sent) * 100) : 100;
+
+  return {
+    uptime,
+    uptimeFormatted: formatDuration(uptime),
+    aggregate: { ...reliabilityStats.aggregate, successRate },
+    byMode: { ...reliabilityStats.byMode },
+    byPane: { ...reliabilityStats.byPane },
+    byType: { ...reliabilityStats.byType },
+    latency: {
+      avg: avgLatency,
+      min: minLatency,
+      max: maxLatency,
+      sampleCount: latencySamples.length,
+    },
+    windows: {
+      last15m: calculateWindowStats(ROLLING_WINDOW_15M),
+      last1h: calculateWindowStats(ROLLING_WINDOW_1H),
+    },
+  };
+}
+
+/**
+ * Format duration in human readable format
+ */
+function formatDuration(ms) {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+
+  if (hours > 0) {
+    return `${hours}h ${minutes % 60}m`;
+  } else if (minutes > 0) {
+    return `${minutes}m ${seconds % 60}s`;
+  }
+  return `${seconds}s`;
+}
+
 // In-memory sequence tracking (loaded from file on init)
 let messageState = {
   version: 1,
@@ -163,9 +401,10 @@ function createDeliveryId(sender, seq, recipient) {
   return `${safeSender}-${safeSeq}-${safeRecipient}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function startDeliveryTracking(deliveryId, sender, seq, recipient, targets) {
+function startDeliveryTracking(deliveryId, sender, seq, recipient, targets, msgType = 'trigger', mode = 'pty') {
   if (!deliveryId) return;
   const expected = new Set((targets || []).map(paneId => String(paneId)));
+  const sentAt = Date.now();
   const pending = {
     sender,
     seq,
@@ -173,11 +412,16 @@ function startDeliveryTracking(deliveryId, sender, seq, recipient, targets) {
     expected,
     received: new Set(),
     timeoutId: null,
+    sentAt,
+    msgType,
+    mode,
   };
 
   pending.timeoutId = setTimeout(() => {
     pendingDeliveries.delete(deliveryId);
     log.warn('Trigger', `Delivery timeout for ${sender} #${seq} -> ${recipient} (received ${pending.received.size}/${pending.expected.size})`);
+    // Record timeout metric
+    recordTimeout(mode, msgType, Array.from(expected));
   }, DELIVERY_ACK_TIMEOUT_MS);
 
   pendingDeliveries.set(deliveryId, pending);
@@ -190,6 +434,9 @@ function handleDeliveryAck(deliveryId, paneId) {
 
   const paneKey = String(paneId);
   pending.received.add(paneKey);
+
+  // Record per-pane delivery metric
+  recordDelivered(pending.mode, pending.msgType, paneKey, pending.sentAt);
 
   if (pending.received.size < pending.expected.size) {
     return;
@@ -644,6 +891,7 @@ function handleTriggerFile(filePath, filename) {
     // Check for duplicate
     if (isDuplicateMessage(parsed.sender, parsed.seq, recipientRole)) {
       log.info('Trigger', `SKIPPED duplicate: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
+      recordSkipped(parsed.sender, parsed.seq, recipientRole);
       // Clear the file but don't deliver
       try {
         fs.writeFileSync(filePath, '', 'utf-8');
@@ -661,6 +909,7 @@ function handleTriggerFile(filePath, filename) {
   // SDK MODE: Route through SDK bridge (no keyboard events needed)
   if (isSDKModeEnabled()) {
     log.info('Trigger SDK', `Using SDK mode for ${targets.length} target(s)`);
+    recordSent('sdk', 'trigger', targets);
     let allSuccess = true;
 
     for (const paneId of targets) {
@@ -672,8 +921,11 @@ function handleTriggerFile(filePath, filename) {
         });
       }
       const sent = sdkBridge.sendMessage(paneId, message);
-      if (!sent) {
+      if (sent) {
+        recordDelivered('sdk', 'trigger', paneId);
+      } else {
         log.warn('Trigger SDK', `Failed to send to pane ${paneId}`);
+        recordFailed('sdk', 'trigger', paneId, 'sdk_send_failed');
         allSuccess = false;
       }
     }
@@ -712,10 +964,11 @@ function handleTriggerFile(filePath, filename) {
     log.info('Trigger:DEBUG', `[lead.txt] Targets: ${targets.join(', ')}, SDK mode: ${isSDKModeEnabled()}`);
   }
   const triggerMessage = formatTriggerMessage(message);
+  recordSent('pty', 'trigger', targets);
   let deliveryId = null;
   if (hasSequence) {
     deliveryId = createDeliveryId(parsed.sender, parsed.seq, recipientRole);
-    startDeliveryTracking(deliveryId, parsed.sender, parsed.seq, recipientRole, targets);
+    startDeliveryTracking(deliveryId, parsed.sender, parsed.seq, recipientRole, targets, 'trigger', 'pty');
   }
   sendStaggered(targets, triggerMessage + '\r', { deliveryId });
   if (filename === 'lead.txt') {
@@ -746,7 +999,10 @@ function broadcastToAllAgents(message) {
   // SDK MODE: Broadcast through SDK bridge to all panes
   if (isSDKModeEnabled()) {
     log.info('BROADCAST SDK', `Broadcasting to all ${PANE_IDS.length} panes`);
+    recordSent('sdk', 'broadcast', PANE_IDS);
     sdkBridge.broadcast(broadcastMessage);
+    // SDK broadcast is fire-and-forget, record as delivered
+    PANE_IDS.forEach(paneId => recordDelivered('sdk', 'broadcast', paneId));
 
     // Notify renderer
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -772,8 +1028,11 @@ function broadcastToAllAgents(message) {
   }
 
   if (notified.length > 0) {
+    recordSent('pty', 'broadcast', notified);
     // Use staggered send to avoid thundering herd
     sendStaggered(notified, broadcastMessage + '\r');
+    // PTY broadcast without sequence tracking - record as delivered (best effort)
+    notified.forEach(paneId => recordDelivered('pty', 'broadcast', paneId));
   }
 
   log.info('BROADCAST', `Sent to panes ${notified.join(', ')}: ${message.substring(0, 50)}...`);
@@ -980,6 +1239,7 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
   // SDK MODE: Direct delivery through SDK bridge (no running check needed)
   if (isSDKModeEnabled()) {
     log.info('DirectMessage SDK', `Sending to panes ${targetPanes.join(', ')}: ${message.substring(0, 50)}...`);
+    recordSent('sdk', 'direct', targetPanes);
 
     let allSuccess = true;
     for (const paneId of targetPanes) {
@@ -991,8 +1251,11 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
         });
       }
       const sent = sdkBridge.sendMessage(paneId, fullMessage);
-      if (!sent) {
+      if (sent) {
+        recordDelivered('sdk', 'direct', paneId);
+      } else {
         log.warn('DirectMessage SDK', `Failed to send to pane ${paneId}`);
+        recordFailed('sdk', 'direct', paneId, 'sdk_send_failed');
         allSuccess = false;
       }
     }
@@ -1021,6 +1284,7 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
 
   if (notified.length > 0) {
     log.info('DirectMessage', `Sent to panes ${notified.join(', ')}: ${message.substring(0, 50)}...`);
+    recordSent('pty', 'direct', notified);
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       const triggerMessage = formatTriggerMessage(fullMessage);
@@ -1035,6 +1299,8 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
         mode: 'pty'
       });
     }
+    // Direct messages without sequence tracking - record as delivered (best effort)
+    notified.forEach(paneId => recordDelivered('pty', 'direct', paneId));
 
     logTriggerActivity('Direct message (PTY)', notified, fullMessage, { from: fromRole, mode: 'pty' });
     return { success: true, notified, mode: 'pty' };
@@ -1081,4 +1347,6 @@ module.exports = {
   getNextSequence,
   getSequenceState,
   handleDeliveryAck,
+  // Reliability Metrics (Task #8)
+  getReliabilityStats,
 };
