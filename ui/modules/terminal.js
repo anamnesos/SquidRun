@@ -69,7 +69,10 @@ const TYPING_GUARD_MS = 300; // Defer injection if user typed within this window
 // Idle detection constants
 // 2000ms threshold - Claude may need more time after output stops
 const IDLE_THRESHOLD_MS = 2000;  // No output for 2s = idle
-const MAX_QUEUE_TIME_MS = 10000; // Force inject after 10 seconds
+const MAX_QUEUE_TIME_MS = 10000; // Consider force inject after 10 seconds
+const FORCE_INJECT_IDLE_MS = 500; // For force-inject, require 500ms of silence (not full 2s)
+const EXTREME_WAIT_MS = 30000;   // Log warning if message queued this long
+const ABSOLUTE_MAX_WAIT_MS = 60000; // Emergency fallback: force inject after 60s regardless
 const QUEUE_RETRY_MS = 200;      // Check queue every 200ms
 const BROADCAST_STAGGER_MS = 100; // Delay between panes in broadcast
 const INJECTION_LOCK_TIMEOUT_MS = 1000; // Safety release if callbacks missed
@@ -239,6 +242,14 @@ function isIdle(paneId) {
   return (Date.now() - lastOutput) >= IDLE_THRESHOLD_MS;
 }
 
+// Shorter idle check for force-inject scenario
+// Requires 500ms of silence - long enough for Enter to not be ignored,
+// but shorter than full 2s idle so messages don't queue forever
+function isIdleForForceInject(paneId) {
+  const lastOutput = lastOutputTime[paneId] || 0;
+  return (Date.now() - lastOutput) >= FORCE_INJECT_IDLE_MS;
+}
+
 /**
  * Calculate adaptive Enter delay based on pane activity level
  * Under load, the terminal needs more time for text to appear before Enter
@@ -288,67 +299,70 @@ async function focusWithRetry(textarea, retries = MAX_FOCUS_RETRIES) {
 }
 
 /**
- * Verify Enter succeeded (textarea empty) and retry if text remains
- * This handles cases where Enter fires during active output and is ignored
+ * Verify Enter succeeded by checking for output activity after submission
+ *
+ * NOTE: We inject text via PTY write, which bypasses textarea.value entirely.
+ * Therefore, checking textarea.value would always show empty (false positive).
+ * Instead, we verify by checking if output activity occurs after Enter,
+ * which indicates Claude processed the input.
+ *
+ * The PRIMARY defense is the stricter idle check in processQueue() which
+ * prevents injecting during active output. This verification is secondary.
+ *
  * @param {string} paneId - The pane ID
- * @param {HTMLElement} textarea - The textarea element
+ * @param {HTMLElement} textarea - The textarea element (for focus operations)
  * @param {number} retriesLeft - Remaining retry attempts
- * @returns {Promise<boolean>} - Whether submit eventually succeeded
+ * @returns {Promise<boolean>} - Whether submit appears to have succeeded
  */
 async function verifyAndRetryEnter(paneId, textarea, retriesLeft = MAX_ENTER_RETRIES) {
-  // Wait a moment for Enter to be processed
+  // Record output time before Enter
+  const outputTimeBefore = lastOutputTime[paneId] || 0;
+
+  // Wait for Enter to be processed and potential output to start
   await new Promise(resolve => setTimeout(resolve, ENTER_VERIFY_DELAY_MS));
 
-  // Re-query textarea in case DOM changed
-  const currentPane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-  const currentTextarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
+  // Check if there was output activity after Enter (indicates Claude processed input)
+  const outputTimeAfter = lastOutputTime[paneId] || 0;
+  const hadOutputActivity = outputTimeAfter > outputTimeBefore;
 
-  if (!currentTextarea) {
-    log.warn(`verifyAndRetryEnter ${paneId}`, 'textarea disappeared');
-    return false;
-  }
-
-  // Check if textarea is empty (submit succeeded)
-  const textRemains = currentTextarea.value && currentTextarea.value.trim().length > 0;
-
-  if (!textRemains) {
-    log.info(`verifyAndRetryEnter ${paneId}`, 'Enter succeeded (textarea empty)');
+  if (hadOutputActivity) {
+    log.info(`verifyAndRetryEnter ${paneId}`, 'Enter succeeded (output activity detected)');
     return true;
   }
 
-  // Text remains - Enter was likely ignored
+  // No output yet - could be normal delay or Enter was ignored
+  // Wait a bit longer and check for output
   if (retriesLeft <= 0) {
-    log.warn(`verifyAndRetryEnter ${paneId}`, `Max retries reached, text still in textarea: "${currentTextarea.value.substring(0, 50)}..."`);
+    log.warn(`verifyAndRetryEnter ${paneId}`, 'Max retries reached, no output activity detected after Enter');
     return false;
   }
 
-  log.info(`verifyAndRetryEnter ${paneId}`, `Text remains in textarea, waiting for idle to retry Enter (${retriesLeft} retries left)`);
+  log.info(`verifyAndRetryEnter ${paneId}`, `No output activity yet, waiting for idle to retry Enter (${retriesLeft} retries left)`);
 
-  // Wait for pane to be idle before retrying
-  const maxWaitTime = MAX_QUEUE_TIME_MS; // Reuse the force-inject timeout
+  // Wait for pane to be idle (if it's outputting, Enter might still be processing)
+  const maxWaitTime = MAX_QUEUE_TIME_MS;
   const startWait = Date.now();
 
   while (!isIdle(paneId) && (Date.now() - startWait) < maxWaitTime) {
     await new Promise(resolve => setTimeout(resolve, ENTER_RETRY_INTERVAL_MS));
+    // Check if output started during our wait
+    if ((lastOutputTime[paneId] || 0) > outputTimeBefore) {
+      log.info(`verifyAndRetryEnter ${paneId}`, 'Output started during wait, Enter succeeded');
+      return true;
+    }
   }
 
-  // Re-query textarea before retry
-  const retryPane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-  const retryTextarea = retryPane ? retryPane.querySelector('.xterm-helper-textarea') : null;
+  // Still no output - retry Enter
+  const currentPane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+  const currentTextarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
 
-  if (!retryTextarea) {
+  if (!currentTextarea) {
     log.warn(`verifyAndRetryEnter ${paneId}`, 'textarea disappeared during wait');
     return false;
   }
 
-  // Check again - maybe it cleared during our wait
-  if (!retryTextarea.value || retryTextarea.value.trim().length === 0) {
-    log.info(`verifyAndRetryEnter ${paneId}`, 'Text cleared during idle wait');
-    return true;
-  }
-
   // Focus and retry Enter
-  const focusOk = await focusWithRetry(retryTextarea);
+  const focusOk = await focusWithRetry(currentTextarea);
   if (!focusOk) {
     log.warn(`verifyAndRetryEnter ${paneId}`, 'Focus failed on retry');
   }
@@ -357,7 +371,7 @@ async function verifyAndRetryEnter(paneId, textarea, retriesLeft = MAX_ENTER_RET
   window.hivemind.pty.sendTrustedEnter();
 
   // Recurse with decremented retry count
-  return verifyAndRetryEnter(paneId, retryTextarea, retriesLeft - 1);
+  return verifyAndRetryEnter(paneId, currentTextarea, retriesLeft - 1);
 }
 
 // Process queued messages for a pane
@@ -374,14 +388,37 @@ function processQueue(paneId) {
   const queuedMessage = typeof item === 'string' ? item : item.message;
   const onComplete = item && typeof item === 'object' ? item.onComplete : null;
 
-  // Check if we should send (idle + not typing, OR timeout exceeded)
-  const waitedTooLong = (now - (item.timestamp || now)) >= MAX_QUEUE_TIME_MS;
+  // Check timing conditions
+  const waitTime = now - (item.timestamp || now);
+  const waitedTooLong = waitTime >= MAX_QUEUE_TIME_MS;
+  const waitedExtremelyLong = waitTime >= EXTREME_WAIT_MS;
+  const hitAbsoluteMax = waitTime >= ABSOLUTE_MAX_WAIT_MS;
 
-  if ((isIdle(paneId) && !userIsTyping()) || waitedTooLong) {
+  // Normal case: pane is fully idle (2s of silence)
+  const canSendNormal = isIdle(paneId) && !userIsTyping();
+
+  // Force-inject case: waited 10s+ AND pane has at least 500ms of silence
+  // This prevents injecting during active output which causes Enter to be ignored
+  const canForceInject = waitedTooLong && isIdleForForceInject(paneId) && !userIsTyping();
+
+  // Emergency fallback: 60s absolute max regardless of idle state
+  // This prevents messages from being stuck forever if pane never becomes idle
+  const mustForceInject = hitAbsoluteMax && !userIsTyping();
+
+  // Log warning at 30s mark (only once per message via flag check)
+  if (waitedExtremelyLong && !item._warnedExtreme) {
+    item._warnedExtreme = true;
+    const timeSinceOutput = Date.now() - (lastOutputTime[paneId] || 0);
+    log.warn(`Terminal ${paneId}`, `Message queued 30s+, pane last output ${timeSinceOutput}ms ago, still waiting for idle`);
+  }
+
+  if (canSendNormal || canForceInject || mustForceInject) {
     // Remove from queue and send
     queue.shift();
-    if (waitedTooLong) {
-      log.info(`Terminal ${paneId}`, `Force-injecting after ${MAX_QUEUE_TIME_MS}ms wait`);
+    if (mustForceInject && !canForceInject && !canSendNormal) {
+      log.warn(`Terminal ${paneId}`, `EMERGENCY: Force-injecting after ${waitTime}ms (60s max reached, pane may still be active)`);
+    } else if (canForceInject && !canSendNormal) {
+      log.info(`Terminal ${paneId}`, `Force-injecting after ${waitTime}ms wait (pane now idle for 500ms)`);
     }
     injectionInFlight = true;
     doSendToPane(paneId, queuedMessage, (result) => {
@@ -478,7 +515,7 @@ async function initTerminal(paneId) {
   terminal.open(container);
   fitAddon.fit();
 
-  // CRITICAL FIX: Block keyboard input when user is typing in a UI input/textarea
+  // Critical: block keyboard input when user is typing in a UI input/textarea
   // BUT allow xterm's own internal textarea (xterm-helper-textarea) to work normally
   terminal.attachCustomKeyEventHandler((event) => {
     // FX4-v3: Track actual user typing (single chars, no modifiers)
@@ -572,7 +609,7 @@ async function reattachTerminal(paneId, scrollback) {
   terminal.open(container);
   fitAddon.fit();
 
-  // CRITICAL FIX: Block keyboard input when user is typing in a UI input/textarea
+  // Critical: block keyboard input when user is typing in a UI input/textarea
   // BUT allow xterm's own internal textarea (xterm-helper-textarea) to work normally
   terminal.attachCustomKeyEventHandler((event) => {
     // FX4-v3: Track actual user typing (single chars, no modifiers)
