@@ -21,6 +21,15 @@ function listIpcModules() {
 }
 
 describe('IPC handler registration', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.runOnlyPendingTimers();
+    jest.useRealTimers();
+  });
+
   test('all IPC modules register at least one handler', () => {
     const { ipcMain } = createIpcHarness();
     const ctx = createDefaultContext({ ipcMain });
