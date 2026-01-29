@@ -16,6 +16,47 @@ const sdkRenderer = require('./modules/sdk-renderer');
 // SDK mode flag - when true, use SDK renderer instead of xterm terminals
 let sdkMode = false;
 
+// Centralized SDK mode setter - ensures all 4 flags stay in sync
+// Flags: renderer.sdkMode, daemonHandlers.sdkModeEnabled, terminal.sdkModeActive, settings.sdkMode
+function setSDKMode(enabled, options = {}) {
+  const { persist = true, source = 'renderer' } = options;
+  const nextValue = !!enabled;
+
+  sdkMode = nextValue;
+  daemonHandlers.setSDKMode(nextValue);
+  terminal.setSDKMode(nextValue);
+
+  const currentSettings = typeof settings.getSettings === 'function' ? settings.getSettings() : null;
+  const hasSettings = currentSettings && typeof currentSettings === 'object';
+  const settingsValue = hasSettings ? !!currentSettings.sdkMode : undefined;
+  const needsSettingsUpdate = settingsValue !== nextValue;
+
+  if (hasSettings && needsSettingsUpdate) {
+    currentSettings.sdkMode = nextValue;
+    if (typeof settings.applySettingsToUI === 'function') {
+      settings.applySettingsToUI();
+    }
+  }
+
+  if (persist && (!hasSettings || needsSettingsUpdate)) {
+    ipcRenderer.invoke('set-setting', 'sdkMode', nextValue)
+      .then((updated) => {
+        if (hasSettings && updated && typeof updated === 'object' && updated !== currentSettings) {
+          Object.assign(currentSettings, updated);
+        }
+        if (typeof settings.applySettingsToUI === 'function') {
+          settings.applySettingsToUI();
+        }
+        log.info('SDK', `SDK mode persisted to ${nextValue} (${source})`);
+      })
+      .catch((err) => {
+        log.error('SDK', `Failed to persist SDK mode (${source})`, err);
+      });
+  } else {
+    log.info('SDK', `SDK mode set to ${nextValue} (${source})`);
+  }
+}
+
 const SDK_PANE_LABELS = {
   '1': { name: 'Architect', avatar: '👑' },
   '2': { name: 'Orchestrator', avatar: '🔀' },
@@ -47,13 +88,11 @@ function markSettingsLoaded() {
   initState.settingsLoaded = true;
   log.info('Init', 'Settings loaded');
 
-  // SDK Mode: Set SDK mode flags in all relevant modules
+  // SDK Mode: Set SDK mode flags in all relevant modules (centralized)
   const currentSettings = settings.getSettings();
-  if (currentSettings.sdkMode) {
-    log.info('Init', 'SDK mode enabled in settings - notifying modules');
-    daemonHandlers.setSDKMode(true);
-    terminal.setSDKMode(true);  // Block PTY spawn operations
-  }
+  const sdkEnabled = !!currentSettings?.sdkMode;
+  log.info('Init', `SDK mode in settings: ${sdkEnabled}`);
+  setSDKMode(sdkEnabled, { persist: false, source: 'settings-loaded' });
 
   checkInitComplete();
 }
@@ -65,7 +104,7 @@ function markTerminalsReady(isSDKMode = false) {
   // SDK Mode: Initialize SDK panes and start sessions
   if (isSDKMode) {
     log.info('Init', 'Initializing SDK mode...');
-    sdkMode = true;
+    setSDKMode(true, { persist: false, source: 'daemon-ready' });  // Centralized - sets all 4 SDK mode flags
     sdkRenderer.setSDKPaneConfig();
     applySDKPaneLayout();
     sdkRenderer.initAllSDKPanes();
@@ -147,14 +186,14 @@ window.hivemind = {
         log.info('SDK', 'Mode already enabled, skipping reinit');
         return;
       }
-      sdkMode = true;
+      setSDKMode(true, { source: 'sdk-enable' });  // Centralized - sets all 4 SDK mode flags
       sdkRenderer.setSDKPaneConfig();
       applySDKPaneLayout();
       sdkRenderer.initAllSDKPanes();
       log.info('SDK', 'Mode enabled');
     },
     disableMode: () => {
-      sdkMode = false;
+      setSDKMode(false, { source: 'sdk-disable' });  // Centralized - clears all 4 SDK mode flags
       log.info('SDK', 'Mode disabled');
     },
     // SDK status functions (exposed for external use)
