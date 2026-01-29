@@ -625,14 +625,12 @@ function setupEventListeners() {
 
   // Agent Health Dashboard (#1) - interrupt and unstick buttons per pane
   document.querySelectorAll('.interrupt-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
       const paneId = btn.dataset.paneId;
       if (paneId) {
         log.info('Health', `Sending Ctrl+C to pane ${paneId}`);
-        window.hivemind.pty.write(paneId, '\x03').catch(err => {
-          log.error('Health', `Interrupt pane ${paneId} failed:`, err);
-        });
-        terminal.updatePaneStatus(paneId, 'Interrupted');
+        const ok = await terminal.interruptPane(paneId);
+        terminal.updatePaneStatus(paneId, ok ? 'Interrupted' : 'Interrupt failed');
         setTimeout(() => terminal.updatePaneStatus(paneId, 'Running'), 1500);
       }
     });
@@ -642,8 +640,8 @@ function setupEventListeners() {
     btn.addEventListener('click', (e) => {
       const paneId = btn.dataset.paneId;
       if (paneId) {
-        log.info('Health', `Sending ESC+Enter to pane ${paneId}`);
-        terminal.aggressiveNudge(paneId);
+        log.info('Health', `Unstick escalation for pane ${paneId}`);
+        terminal.unstickEscalation(paneId);
       }
     });
   });
@@ -675,7 +673,10 @@ function setupEventListeners() {
   if (syncBtn) {
     syncBtn.addEventListener('click', async () => {
       try {
-        await terminal.syncSharedContext();
+        const synced = await terminal.syncSharedContext();
+        if (synced) {
+          daemonHandlers.markManualSync('shared_context.md');
+        }
       } catch (err) {
         log.error('Sync', 'Sync failed:', err);
         updateConnectionStatus('Sync failed');
@@ -997,6 +998,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   daemonHandlers.setupClaudeStateListener(daemonHandlers.handleSessionTimerState);
   daemonHandlers.setupCostAlertListener();
   daemonHandlers.setupRefreshButtons(terminal.sendToPane);
+  daemonHandlers.setupSyncIndicator();
   daemonHandlers.setupProjectListener();
   daemonHandlers.setupAutoTriggerListener();  // AT2: Auto-trigger feedback
   daemonHandlers.setupHandoffListener();      // AH2: Handoff notification

@@ -23,6 +23,12 @@ let messageWatcher = null; // Separate watcher for message queues
 let triggers = null; // Reference to triggers module
 let getSettings = null; // Settings getter for auto-sync control
 
+const SYNC_FILES = new Set([
+  'shared_context.md',
+  'blockers.md',
+  'errors.md'
+]);
+
 // UX-9: Trigger file path for fast watching
 const TRIGGER_PATH = path.join(WORKSPACE_PATH, 'triggers');
 const TRIGGER_READ_RETRY_MS = 50;
@@ -471,6 +477,16 @@ const DEBOUNCE_DELAY_MS = 200;  // Batch events within 200ms window
 let debounceTimer = null;
 let pendingFileChanges = new Set();
 
+function notifySyncFileChanged(filename) {
+  if (!SYNC_FILES.has(filename)) return;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('sync-file-changed', {
+      file: filename,
+      changedAt: Date.now()
+    });
+  }
+}
+
 /**
  * Debounced file change handler
  * Batches rapid file changes (git checkout, npm install) to prevent event floods
@@ -510,6 +526,10 @@ function handleFileChangeCore(filePath) {
   const currentState = state.state;
 
   log.info('Watcher', `File changed: ${filename} (current state: ${currentState})`);
+
+  if (SYNC_FILES.has(filename)) {
+    notifySyncFileChanged(filename);
+  }
 
   // Transition logic based on file + current state
   if (filename === 'plan.md' && currentState === States.PLANNING) {
@@ -581,13 +601,13 @@ function handleFileChangeCore(filePath) {
       log.info('Watcher', 'Improvements file changed - auto-sync disabled, skipping');
     }
   }
-  else if (filename === 'shared_context.md' && triggers) {
+  else if (SYNC_FILES.has(filename) && triggers) {
     const settings = getSettings ? getSettings() : {};
     if (settings.autoSync) {
-      log.info('Watcher', 'Shared context changed - triggering auto-sync to all agents');
-      triggers.notifyAllAgentsSync('shared_context.md');
+      log.info('Watcher', `${filename} changed - triggering auto-sync to all agents`);
+      triggers.notifyAllAgentsSync(filename);
     } else {
-      log.info('Watcher', 'Shared context changed - auto-sync disabled, skipping');
+      log.info('Watcher', `${filename} changed - auto-sync disabled, skipping`);
     }
   }
 

@@ -366,6 +366,54 @@
   justify-content: space-between;
 }
 
+.status-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: #666;
+}
+
+.sync-label {
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  color: #666;
+}
+
+.sync-chip {
+  border: 1px solid #333;
+  color: #888;
+  background: rgba(15, 52, 96, 0.3);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 9px;
+  line-height: 1.2;
+}
+
+.sync-chip.dirty {
+  border-color: #ffc857;
+  color: #ffc857;
+  background: rgba(255, 200, 87, 0.12);
+}
+
+.sync-chip.synced {
+  border-color: #4ecca3;
+  color: #4ecca3;
+  background: rgba(78, 204, 163, 0.12);
+}
+
+.sync-chip.skipped {
+  border-color: #888;
+  color: #888;
+  background: rgba(136, 136, 136, 0.12);
+}
+
 /* Main content wrapper with right panel */
 .main-content {
   flex: 1;

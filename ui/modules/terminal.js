@@ -3,6 +3,7 @@
  * Handles xterm instances, PTY connections, and terminal operations
  */
 
+const { ipcRenderer } = require('electron');
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
 const { WebLinksAddon } = require('@xterm/addon-web-links');
@@ -47,6 +48,10 @@ const lastTypedTime = {};
 // Idle detection to prevent stuck animation
 // Track last output time per pane - updated on every pty.onData
 const lastOutputTime = {};
+
+// Unstick escalation tracking (nudge -> interrupt -> restart)
+const UNSTICK_RESET_MS = 30000;
+const unstickState = new Map();
 
 // Codex exec mode: track identity injection per pane
 const codexIdentityInjected = new Set();
@@ -1006,6 +1011,97 @@ async function killAllTerminals() {
   updateConnectionStatus('All terminals killed');
 }
 
+function getUnstickState(paneId) {
+  const id = String(paneId);
+  const now = Date.now();
+  const current = unstickState.get(id) || { step: 0, lastAt: 0 };
+  if (now - current.lastAt > UNSTICK_RESET_MS) {
+    current.step = 0;
+  }
+  current.lastAt = now;
+  unstickState.set(id, current);
+  return current;
+}
+
+function resetUnstickState(paneId) {
+  unstickState.set(String(paneId), { step: 0, lastAt: 0 });
+}
+
+async function interruptPane(paneId) {
+  const id = String(paneId);
+  if (sdkModeActive) {
+    try {
+      await ipcRenderer.invoke('sdk-interrupt', id);
+      log.info('Terminal', `SDK interrupt sent to pane ${id}`);
+      return true;
+    } catch (err) {
+      log.error('Terminal', `SDK interrupt failed for pane ${id}:`, err);
+      return false;
+    }
+  }
+
+  try {
+    if (ipcRenderer?.invoke) {
+      await ipcRenderer.invoke('interrupt-pane', id);
+    } else {
+      await window.hivemind.pty.write(id, '\x03');
+    }
+    log.info('Terminal', `Interrupt sent to pane ${id}`);
+    return true;
+  } catch (err) {
+    log.error('Terminal', `Interrupt failed for pane ${id}:`, err);
+    return false;
+  }
+}
+
+async function restartPane(paneId) {
+  const id = String(paneId);
+  if (sdkModeActive) {
+    log.info('Terminal', `Restart blocked for pane ${id} (SDK mode)`);
+    updatePaneStatus(id, 'Restart blocked (SDK)');
+    setTimeout(() => updatePaneStatus(id, 'Running'), 1500);
+    return false;
+  }
+
+  updatePaneStatus(id, 'Restarting...');
+  try {
+    await window.hivemind.pty.kill(id);
+  } catch (err) {
+    log.error('Terminal', `Failed to kill pane ${id} for restart:`, err);
+  }
+
+  await new Promise(resolve => setTimeout(resolve, 250));
+  await spawnClaude(id);
+  return true;
+}
+
+async function unstickEscalation(paneId) {
+  const id = String(paneId);
+  const state = getUnstickState(id);
+
+  if (state.step === 0) {
+    log.info('Unstick', `Pane ${id}: nudge`);
+    aggressiveNudge(id);
+    updatePaneStatus(id, 'Nudged');
+    setTimeout(() => updatePaneStatus(id, 'Running'), 1500);
+    state.step = 1;
+    return;
+  }
+
+  if (state.step === 1) {
+    log.info('Unstick', `Pane ${id}: interrupt`);
+    const ok = await interruptPane(id);
+    updatePaneStatus(id, ok ? 'Interrupted' : 'Interrupt failed');
+    setTimeout(() => updatePaneStatus(id, 'Running'), 1500);
+    state.step = 2;
+    return;
+  }
+
+  log.info('Unstick', `Pane ${id}: restart`);
+  await restartPane(id);
+  resetUnstickState(id);
+}
+
 // Nudge a stuck pane - sends Enter to unstick Claude Code
 // Uses Enter only (ESC sequences were interrupting active agents)
 function nudgePane(paneId) {
@@ -1203,7 +1299,7 @@ async function syncSharedContext() {
 
     if (!result.success) {
       updateConnectionStatus(`Sync failed: ${result.error}`);
-      return;
+      return false;
     }
 
     const syncMessage = `[HIVEMIND SYNC] Please read and acknowledge the following shared context:
@@ -1216,10 +1312,12 @@ Acknowledge receipt and summarize the key points.\r`;
 
     broadcast(syncMessage);
     updateConnectionStatus('Shared context synced to all panes');
+    return true;
 
   } catch (err) {
     updateConnectionStatus(`Sync error: ${err.message}`);
   }
+  return false;
 }
 
 // Handle window resize
@@ -1273,6 +1371,9 @@ module.exports = {
   killAllTerminals,
   nudgePane,
   nudgeAllPanes,
+  interruptPane,
+  restartPane,
+  unstickEscalation,
   sendUnstick,         // ESC keyboard event to unstick agents
   aggressiveNudge,     // ESC + Enter for more forceful unstick
   aggressiveNudgeAll,  // Aggressive nudge all panes with stagger
