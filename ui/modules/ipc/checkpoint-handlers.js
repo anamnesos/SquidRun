@@ -16,12 +16,23 @@ function registerCheckpointHandlers(ctx) {
   const ROLLBACK_DIR = path.join(WORKSPACE_PATH, 'rollbacks');
   const MAX_CHECKPOINTS = 10;
 
-  if (!fs.existsSync(ROLLBACK_DIR)) {
-    fs.mkdirSync(ROLLBACK_DIR, { recursive: true });
+  function ensureRollbackDir() {
+    try {
+      if (!fs.existsSync(ROLLBACK_DIR)) {
+        fs.mkdirSync(ROLLBACK_DIR, { recursive: true });
+      }
+      return true;
+    } catch (err) {
+      log.error('Rollback', 'Failed to initialize rollback directory', err);
+      return false;
+    }
   }
 
   ipcMain.handle('create-checkpoint', (event, files, label = '') => {
     try {
+      if (!ensureRollbackDir()) {
+        return { success: false, error: 'Rollback directory unavailable' };
+      }
       const checkpointId = `cp-${Date.now()}`;
       const checkpointDir = path.join(ROLLBACK_DIR, checkpointId);
       fs.mkdirSync(checkpointDir, { recursive: true });
@@ -76,6 +87,9 @@ function registerCheckpointHandlers(ctx) {
 
   ipcMain.handle('list-checkpoints', () => {
     try {
+      if (!ensureRollbackDir()) {
+        return { success: false, error: 'Rollback directory unavailable', checkpoints: [] };
+      }
       if (!fs.existsSync(ROLLBACK_DIR)) {
         return { success: true, checkpoints: [] };
       }
@@ -106,6 +120,9 @@ function registerCheckpointHandlers(ctx) {
 
   ipcMain.handle('get-checkpoint-diff', (event, checkpointId) => {
     try {
+      if (!ensureRollbackDir()) {
+        return { success: false, error: 'Rollback directory unavailable' };
+      }
       const checkpointDir = path.join(ROLLBACK_DIR, checkpointId);
       const manifestPath = path.join(checkpointDir, 'manifest.json');
 
@@ -140,6 +157,9 @@ function registerCheckpointHandlers(ctx) {
 
   ipcMain.handle('rollback-checkpoint', (event, checkpointId) => {
     try {
+      if (!ensureRollbackDir()) {
+        return { success: false, error: 'Rollback directory unavailable' };
+      }
       const checkpointDir = path.join(ROLLBACK_DIR, checkpointId);
       const manifestPath = path.join(checkpointDir, 'manifest.json');
 
@@ -175,6 +195,9 @@ function registerCheckpointHandlers(ctx) {
 
   ipcMain.handle('delete-checkpoint', (event, checkpointId) => {
     try {
+      if (!ensureRollbackDir()) {
+        return { success: false, error: 'Rollback directory unavailable' };
+      }
       const checkpointDir = path.join(ROLLBACK_DIR, checkpointId);
 
       if (!fs.existsSync(checkpointDir)) {

@@ -368,7 +368,11 @@ async function verifyAndRetryEnter(paneId, textarea, retriesLeft = MAX_ENTER_RET
   }
 
   log.info(`verifyAndRetryEnter ${paneId}`, 'Retrying sendTrustedEnter');
-  window.hivemind.pty.sendTrustedEnter();
+  try {
+    await window.hivemind.pty.sendTrustedEnter();
+  } catch (err) {
+    log.error(`verifyAndRetryEnter ${paneId}`, 'sendTrustedEnter failed:', err);
+  }
 
   // Recurse with decremented retry count
   return verifyAndRetryEnter(paneId, currentTextarea, retriesLeft - 1);
@@ -468,15 +472,21 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
     e.stopPropagation();
 
     if (lastSelection) {
-      await navigator.clipboard.writeText(lastSelection);
-      updatePaneStatus(paneId, 'Copied!');
-      setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
+      try {
+        await navigator.clipboard.writeText(lastSelection);
+        updatePaneStatus(paneId, 'Copied!');
+        setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
+      } catch (err) {
+        log.error('Clipboard', 'Copy failed (permission denied?):', err);
+        updatePaneStatus(paneId, 'Copy failed');
+        setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
+      }
       lastSelection = '';
     } else {
       try {
         const text = await navigator.clipboard.readText();
         if (text) {
-          window.hivemind.pty.write(paneId, text);
+          await window.hivemind.pty.write(paneId, text);
           updatePaneStatus(paneId, 'Pasted!');
           setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
         }
@@ -492,7 +502,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
       try {
         const text = await navigator.clipboard.readText();
         if (text) {
-          window.hivemind.pty.write(paneId, text);
+          await window.hivemind.pty.write(paneId, text);
         }
       } catch (err) {
         log.error('Paste', 'Paste failed', err);
@@ -555,7 +565,9 @@ async function initTerminal(paneId) {
 
     if (!isCodexPane(paneId)) {
       terminal.onData((data) => {
-        window.hivemind.pty.write(paneId, data);
+        window.hivemind.pty.write(paneId, data).catch(err => {
+          log.error(`Terminal ${paneId}`, 'PTY write failed:', err);
+        });
       });
     }
 
@@ -648,7 +660,9 @@ async function reattachTerminal(paneId, scrollback) {
 
   if (!isCodexPane(paneId)) {
     terminal.onData((data) => {
-      window.hivemind.pty.write(paneId, data);
+      window.hivemind.pty.write(paneId, data).catch(err => {
+        log.error(`Terminal ${paneId}`, 'PTY write failed:', err);
+      });
     });
   }
 
@@ -743,7 +757,9 @@ function doSendToPane(paneId, message, onComplete) {
     if (terminal) {
       terminal.write(`\r\n\x1b[36m> ${text}\x1b[0m\r\n`);
     }
-    window.hivemind.pty.codexExec(id, prompt);
+    window.hivemind.pty.codexExec(id, prompt).catch(err => {
+      log.error(`doSendToPane ${id}`, 'Codex exec failed:', err);
+    });
     updatePaneStatus(id, 'Working');
     lastTypedTime[paneId] = Date.now();
     lastOutputTime[paneId] = Date.now();
@@ -772,7 +788,9 @@ function doSendToPane(paneId, message, onComplete) {
   textarea.focus();
 
   // Step 2: Write text to PTY (without \r)
-  window.hivemind.pty.write(id, text);
+  window.hivemind.pty.write(id, text).catch(err => {
+    log.error(`doSendToPane ${id}`, 'PTY write failed:', err);
+  });
   log.info(`doSendToPane ${id}`, 'Claude pane: PTY write text');
 
   // Step 3: If message needs Enter, use sendTrustedEnter after adaptive delay
@@ -799,7 +817,11 @@ function doSendToPane(paneId, message, onComplete) {
         log.warn(`doSendToPane ${id}`, 'Claude pane: focus failed after retries, sending Enter anyway');
       }
 
-      window.hivemind.pty.sendTrustedEnter();
+      try {
+        await window.hivemind.pty.sendTrustedEnter();
+      } catch (err) {
+        log.error(`doSendToPane ${id}`, 'sendTrustedEnter failed:', err);
+      }
       log.info(`doSendToPane ${id}`, 'Claude pane: sendTrustedEnter for submit');
 
       // Verify Enter succeeded (textarea empty) - if not, wait for idle and retry
@@ -903,16 +925,31 @@ async function spawnClaude(paneId) {
   const terminal = terminals.get(paneId);
   if (terminal) {
     updatePaneStatus(paneId, 'Starting agent...');
-    const result = await window.hivemind.claude.spawn(paneId);
+    let result;
+    try {
+      result = await window.hivemind.claude.spawn(paneId);
+    } catch (err) {
+      log.error(`spawnClaude ${paneId}`, 'Spawn failed:', err);
+      updatePaneStatus(paneId, 'Spawn failed');
+      return;
+    }
     if (result.success && result.command) {
       // Use pty.write directly instead of terminal.paste for reliability
       // terminal.paste() can fail if terminal isn't fully ready
-      window.hivemind.pty.write(String(paneId), result.command);
+      try {
+        await window.hivemind.pty.write(String(paneId), result.command);
+      } catch (err) {
+        log.error(`spawnClaude ${paneId}`, 'PTY write command failed:', err);
+      }
       // FX4-v5: Mark as typed so Enter isn't blocked
       lastTypedTime[paneId] = Date.now();
       // Small delay before sending Enter
       await new Promise(resolve => setTimeout(resolve, 100));
-      window.hivemind.pty.write(String(paneId), '\r');
+      try {
+        await window.hivemind.pty.write(String(paneId), '\r');
+      } catch (err) {
+        log.error(`spawnClaude ${paneId}`, 'PTY write Enter failed:', err);
+      }
 
       // Codex CLI needs an extra Enter after startup to dismiss its welcome prompt
       // Claude Code CLI doesn't need this - it's ready immediately
@@ -922,7 +959,9 @@ async function spawnClaude(paneId) {
       const isCodex = result.command.startsWith('codex');
       if (isCodex) {
         setTimeout(() => {
-          window.hivemind.pty.write(String(paneId), '\r');
+          window.hivemind.pty.write(String(paneId), '\r').catch(err => {
+            log.error(`spawnClaude ${paneId}`, 'Codex startup Enter failed:', err);
+          });
           log.info('spawnClaude', `Codex pane ${paneId}: PTY \\r to dismiss any startup prompt`);
         }, 3000);
       }
@@ -973,7 +1012,9 @@ function nudgePane(paneId) {
   // FX4-v5: Mark as typed so our own Enter isn't blocked
   lastTypedTime[paneId] = Date.now();
   // Send Enter to prompt for new input
-  window.hivemind.pty.write(String(paneId), '\r');
+  window.hivemind.pty.write(String(paneId), '\r').catch(err => {
+    log.error(`nudgePane ${paneId}`, 'PTY write failed:', err);
+  });
   updatePaneStatus(paneId, 'Nudged');
   setTimeout(() => updatePaneStatus(paneId, 'Running'), 1000);
 }
@@ -1038,20 +1079,28 @@ function aggressiveNudge(paneId) {
 
     if (textarea) {
       textarea.focus();
-      window.hivemind.pty.write(id, '\r');
+      window.hivemind.pty.write(id, '\r').catch(err => {
+        log.error(`aggressiveNudge ${id}`, 'PTY write failed:', err);
+      });
 
       if (isCodexPane(id)) {
         // Codex: PTY newline to submit (clipboard paste broken - Codex treats as image paste)
-        window.hivemind.pty.write(id, '\r');
+        window.hivemind.pty.write(id, '\r').catch(err => {
+          log.error(`aggressiveNudge ${id}`, 'Codex PTY write failed:', err);
+        });
         log.info(`Terminal ${id}`, 'Aggressive nudge: PTY carriage return (Codex)');
       } else {
-        window.hivemind.pty.sendTrustedEnter();
+        window.hivemind.pty.sendTrustedEnter().catch(err => {
+          log.error(`aggressiveNudge ${id}`, 'sendTrustedEnter failed:', err);
+        });
         log.info(`Terminal ${id}`, 'Aggressive nudge: trusted Enter dispatched (Claude)');
       }
     } else {
       // Fallback if textarea truly missing
       log.warn(`Terminal ${id}`, 'Aggressive nudge: no textarea, PTY fallback');
-      window.hivemind.pty.write(id, '\r');
+      window.hivemind.pty.write(id, '\r').catch(err => {
+        log.error(`aggressiveNudge ${id}`, 'PTY fallback write failed:', err);
+      });
     }
 
     updatePaneStatus(id, 'Nudged (aggressive)');

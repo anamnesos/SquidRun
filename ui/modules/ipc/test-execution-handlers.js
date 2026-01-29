@@ -15,9 +15,13 @@ function registerTestExecutionHandlers(ctx) {
       detect: (projectPath) => {
         const pkgPath = path.join(projectPath, 'package.json');
         if (fs.existsSync(pkgPath)) {
-          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-          return pkg.devDependencies?.jest || pkg.dependencies?.jest ||
-                 pkg.scripts?.test?.includes('jest');
+          try {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+            return pkg.devDependencies?.jest || pkg.dependencies?.jest ||
+                   pkg.scripts?.test?.includes('jest');
+          } catch {
+            return false;
+          }
         }
         return false;
       },
@@ -47,8 +51,12 @@ function registerTestExecutionHandlers(ctx) {
       detect: (projectPath) => {
         const pkgPath = path.join(projectPath, 'package.json');
         if (fs.existsSync(pkgPath)) {
-          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-          return !!pkg.scripts?.test;
+          try {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+            return !!pkg.scripts?.test;
+          } catch {
+            return false;
+          }
         }
         return false;
       },

@@ -253,7 +253,9 @@ function processQueue(paneId) {
   if (message.trim() === '(UNSTICK)') {
     if (sdkModeEnabled) {
       log.info('Daemon SDK', `Interrupting pane ${paneId} via SDK`);
-      ipcRenderer.invoke('sdk-interrupt', paneId);
+      ipcRenderer.invoke('sdk-interrupt', paneId).catch(err => {
+        log.error('Daemon SDK', `Interrupt failed for pane ${paneId}:`, err);
+      });
     } else {
       log.info('Daemon', `Sending UNSTICK (ESC) to pane ${paneId}`);
       terminal.sendUnstick(paneId);
@@ -271,7 +273,9 @@ function processQueue(paneId) {
   if (message.trim() === '(AGGRESSIVE_NUDGE)') {
     if (sdkModeEnabled) {
       log.info('Daemon SDK', `Interrupting pane ${paneId} via SDK (aggressive)`);
-      ipcRenderer.invoke('sdk-interrupt', paneId);
+      ipcRenderer.invoke('sdk-interrupt', paneId).catch(err => {
+        log.error('Daemon SDK', `Interrupt (aggressive) failed for pane ${paneId}:`, err);
+      });
     } else {
       log.info('Daemon', `Sending AGGRESSIVE_NUDGE (ESC + Enter) to pane ${paneId}`);
       terminal.aggressiveNudge(paneId);

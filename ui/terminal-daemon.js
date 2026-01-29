@@ -1755,8 +1755,12 @@ server.listen(PIPE_PATH, () => {
 
   // Write PID file for easy process management
   const pidFile = path.join(__dirname, 'daemon.pid');
-  fs.writeFileSync(pidFile, process.pid.toString());
-  logInfo(`PID written to ${pidFile}`);
+  try {
+    fs.writeFileSync(pidFile, process.pid.toString());
+    logInfo(`PID written to ${pidFile}`);
+  } catch (err) {
+    logError(`Failed to write PID file: ${err.message}`);
+  }
 });
 
 server.on('error', (err) => {

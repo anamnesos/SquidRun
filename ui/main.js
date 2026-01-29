@@ -690,12 +690,32 @@ async function createWindow() {
   });
 
   mainWindow.webContents.on('did-finish-load', async () => {
-    watcher.startWatcher();
-    watcher.startTriggerWatcher(); // UX-9: Fast trigger watcher (50ms polling)
-    watcher.startMessageWatcher(); // Start message queue watcher
-    const state = watcher.readState();
-    mainWindow.webContents.send('state-changed', state);
-    await initDaemonClient();
+    const initAfterLoad = async (attempt = 1) => {
+      try {
+        watcher.startWatcher();
+        watcher.startTriggerWatcher(); // UX-9: Fast trigger watcher (50ms polling)
+        watcher.startMessageWatcher(); // Start message queue watcher
+        const state = watcher.readState();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('state-changed', state);
+        }
+        await initDaemonClient();
+      } catch (err) {
+        log.error('Main', 'Post-load init failed', err);
+        logActivity('error', null, 'Post-load init failed', {
+          attempt,
+          error: err.message,
+        });
+
+        if (attempt < 3) {
+          const delay = Math.min(2000 * attempt, 10000);
+          log.warn('Main', `Retrying post-load init in ${delay}ms (attempt ${attempt + 1})`);
+          setTimeout(() => initAfterLoad(attempt + 1), delay);
+        }
+      }
+    };
+
+    initAfterLoad();
   });
 
   // ESC key interceptor - sends interrupt signal to focused terminal
