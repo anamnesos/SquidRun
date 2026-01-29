@@ -79,6 +79,15 @@ function registerStateHandlers(ctx) {
     watcher.transition(watcher.States.PLANNING);
     return watcher.readState();
   });
+
+  // P2-5: Get message sequence state for Inspector
+  ipcMain.handle('get-message-state', () => {
+    const { ok, triggers, error } = getTriggers();
+    if (!ok) {
+      return missingDependency(error);
+    }
+    return { success: true, state: triggers.getSequenceState() };
+  });
 }
 
 module.exports = { registerStateHandlers };
