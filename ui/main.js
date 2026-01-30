@@ -3,7 +3,7 @@
  * Refactored to use modular architecture
  */
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, session } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -821,6 +821,18 @@ async function createWindow() {
       contextIsolation: false,
     },
     title: 'Hivemind',
+  });
+
+  // Allow microphone permission for SpeechRecognition (voice control)
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowedPermissions = ['media', 'audioCapture'];
+    if (allowedPermissions.includes(permission)) {
+      log.info('Main', `Granted permission: ${permission}`);
+      callback(true);
+    } else {
+      log.warn('Main', `Denied permission: ${permission}`);
+      callback(false);
+    }
   });
 
   mainWindow.loadFile('index.html');
