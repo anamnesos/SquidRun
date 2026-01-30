@@ -15,24 +15,34 @@ function registerStateHandlers(ctx) {
     ...fallback,
   });
 
-  const getWatcher = () => {
+  const getWatcher = (required = []) => {
     const watcher = ctx.watcher;
     if (!watcher) {
       return { ok: false, error: 'state watcher' };
     }
+    for (const fn of required) {
+      if (typeof watcher[fn] !== 'function') {
+        return { ok: false, error: `state watcher.${fn}` };
+      }
+    }
     return { ok: true, watcher };
   };
 
-  const getTriggers = () => {
+  const getTriggers = (required = []) => {
     const triggers = ctx.triggers;
     if (!triggers) {
       return { ok: false, error: 'triggers' };
+    }
+    for (const fn of required) {
+      if (typeof triggers[fn] !== 'function') {
+        return { ok: false, error: `triggers.${fn}` };
+      }
     }
     return { ok: true, triggers };
   };
 
   ipcMain.handle('get-state', () => {
-    const { ok, watcher } = getWatcher();
+    const { ok, watcher } = getWatcher(['readState']);
     if (!ok) {
       return missingDependency('state watcher', { state: 'idle', agent_claims: {} });
     }
@@ -40,7 +50,7 @@ function registerStateHandlers(ctx) {
   });
 
   ipcMain.handle('set-state', (event, newState) => {
-    const { ok, watcher, error } = getWatcher();
+    const { ok, watcher, error } = getWatcher(['transition', 'readState']);
     if (!ok) {
       return missingDependency(error);
     }
@@ -49,7 +59,7 @@ function registerStateHandlers(ctx) {
   });
 
   ipcMain.handle('trigger-sync', (event, file = 'shared_context.md') => {
-    const { ok, triggers, error } = getTriggers();
+    const { ok, triggers, error } = getTriggers(['notifyAllAgentsSync']);
     if (!ok) {
       return missingDependency(error);
     }
@@ -58,7 +68,7 @@ function registerStateHandlers(ctx) {
   });
 
   ipcMain.handle('broadcast-message', (event, message) => {
-    const { ok, triggers, error } = getTriggers();
+    const { ok, triggers, error } = getTriggers(['broadcastToAllAgents']);
     if (!ok) {
       return missingDependency(error);
     }
@@ -66,7 +76,7 @@ function registerStateHandlers(ctx) {
   });
 
   ipcMain.handle('start-planning', (event, project) => {
-    const { ok, watcher, error } = getWatcher();
+    const { ok, watcher, error } = getWatcher(['readState', 'writeState', 'transition']);
     if (!ok) {
       return missingDependency(error);
     }
@@ -82,7 +92,7 @@ function registerStateHandlers(ctx) {
 
   // P2-5: Get message sequence state for Inspector
   ipcMain.handle('get-message-state', () => {
-    const { ok, triggers, error } = getTriggers();
+    const { ok, triggers, error } = getTriggers(['getSequenceState']);
     if (!ok) {
       return missingDependency(error);
     }
@@ -91,7 +101,7 @@ function registerStateHandlers(ctx) {
 
   // Task #8: Get reliability analytics
   ipcMain.handle('get-reliability-stats', () => {
-    const { ok, triggers, error } = getTriggers();
+    const { ok, triggers, error } = getTriggers(['getReliabilityStats']);
     if (!ok) {
       return missingDependency(error);
     }
