@@ -415,29 +415,81 @@ async function initTerminals() {
 
 // Setup copy/paste handlers
 function setupCopyPaste(container, terminal, paneId, statusMsg) {
+  // Track selection - clear when empty to fix stale selection bug
   let lastSelection = '';
   terminal.onSelectionChange(() => {
-    const sel = terminal.getSelection();
-    if (sel) lastSelection = sel;
+    // FIX: Always update, including clearing when selection is empty
+    lastSelection = terminal.getSelection() || '';
   });
 
   container.addEventListener('contextmenu', async (e) => {
     e.preventDefault();
     e.stopPropagation();
 
-    if (lastSelection) {
+    // FIX: Check hasSelection() at click time, not stale lastSelection variable
+    // This ensures we detect current selection state, not old cached value
+    const currentSelection = terminal.hasSelection() ? terminal.getSelection() : '';
+
+    if (currentSelection) {
+      // COPY: There's an active selection
       try {
-        await navigator.clipboard.writeText(lastSelection);
+        await navigator.clipboard.writeText(currentSelection);
         updatePaneStatus(paneId, 'Copied!');
+        log.info('Clipboard', `Copied ${currentSelection.length} chars from pane ${paneId}`);
         setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
       } catch (err) {
         log.error('Clipboard', 'Copy failed (permission denied?):', err);
         updatePaneStatus(paneId, 'Copy failed');
         setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
       }
+      // Clear selection after copy
+      terminal.clearSelection();
       lastSelection = '';
     } else {
-      // Block paste when input is locked
+      // PASTE: No selection, so paste from clipboard
+      if (inputLocked[paneId]) {
+        updatePaneStatus(paneId, 'Input locked');
+        setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
+        return;
+      }
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          await window.hivemind.pty.write(paneId, text);
+          updatePaneStatus(paneId, 'Pasted!');
+          log.info('Clipboard', `Pasted ${text.length} chars to pane ${paneId}`);
+          setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
+        } else {
+          updatePaneStatus(paneId, 'Clipboard empty');
+          setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
+        }
+      } catch (err) {
+        log.error('Paste', 'Paste failed:', err);
+        updatePaneStatus(paneId, 'Paste failed');
+        setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
+      }
+    }
+  });
+
+  // Ctrl+C: Copy selection (if any)
+  container.addEventListener('keydown', async (e) => {
+    if (e.ctrlKey && e.key === 'c' && terminal.hasSelection()) {
+      // Don't prevent default - let xterm handle Ctrl+C for interrupt when no selection
+      const selection = terminal.getSelection();
+      if (selection) {
+        try {
+          await navigator.clipboard.writeText(selection);
+          updatePaneStatus(paneId, 'Copied!');
+          setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
+        } catch (err) {
+          log.error('Clipboard', 'Ctrl+C copy failed:', err);
+        }
+      }
+    }
+
+    // Ctrl+V: Paste
+    if (e.ctrlKey && e.key === 'v') {
+      e.preventDefault();
       if (inputLocked[paneId]) {
         updatePaneStatus(paneId, 'Input locked');
         setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
@@ -451,27 +503,9 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
           setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
         }
       } catch (err) {
-        log.error('Paste', 'Paste failed', err);
-      }
-    }
-  });
-
-  container.addEventListener('keydown', async (e) => {
-    if (e.ctrlKey && e.key === 'v') {
-      e.preventDefault();
-      // Block Ctrl+V paste when input is locked
-      if (inputLocked[paneId]) {
-        updatePaneStatus(paneId, 'Input locked');
+        log.error('Paste', 'Ctrl+V paste failed:', err);
+        updatePaneStatus(paneId, 'Paste failed');
         setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
-        return;
-      }
-      try {
-        const text = await navigator.clipboard.readText();
-        if (text) {
-          await window.hivemind.pty.write(paneId, text);
-        }
-      } catch (err) {
-        log.error('Paste', 'Paste failed', err);
       }
     }
   });
