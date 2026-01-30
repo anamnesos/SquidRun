@@ -720,9 +720,22 @@ function setupEventListeners() {
     };
 
     recognition.onerror = (event) => {
-      log.error('Voice', 'Speech recognition error', event?.error || event);
+      const errorType = event?.error || 'unknown';
+      log.error('Voice', 'Speech recognition error', errorType);
       voiceListening = false;
-      updateVoiceUI('Voice error');
+
+      if (errorType === 'network') {
+        // Electron/Chromium limitation - Google Speech API not available
+        updateVoiceUI('Unavailable in Electron');
+        showStatusNotice('Voice input requires Chrome browser or local speech support (coming soon)', 10000);
+      } else if (errorType === 'not-allowed') {
+        updateVoiceUI('Mic blocked');
+        showStatusNotice('Microphone access denied. Check browser permissions.', 8000);
+      } else if (errorType === 'no-speech') {
+        updateVoiceUI('No speech detected');
+      } else {
+        updateVoiceUI('Voice error');
+      }
     };
 
     recognition.onend = () => {
