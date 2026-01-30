@@ -128,6 +128,30 @@
   background: rgba(167, 139, 250, 0.15);
 }
 
+/* CLI-specific pane action accents */
+.pane.cli-codex .pane-refresh-btn,
+.pane.cli-codex .pane-action-btn,
+.pane.cli-codex .lock-icon {
+  color: #6ec6ff;
+  border-color: rgba(110, 198, 255, 0.45);
+}
+
+.pane.cli-codex .pane-refresh-btn:hover,
+.pane.cli-codex .pane-action-btn:hover,
+.pane.cli-codex .lock-icon:hover {
+  color: #6ec6ff;
+  border-color: #6ec6ff;
+  background: rgba(110, 198, 255, 0.15);
+}
+
+.pane.cli-codex .lock-icon.unlocked {
+  color: #9ad8ff;
+}
+
+.pane.cli-codex .lock-icon.unlocked:hover {
+  background: rgba(110, 198, 255, 0.2);
+}
+
 /* Per-pane project indicator */
 .pane-project {
   font-size: 9px;

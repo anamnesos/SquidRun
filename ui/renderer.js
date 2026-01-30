@@ -59,12 +59,12 @@ function setSDKMode(enabled, options = {}) {
 }
 
 const SDK_PANE_LABELS = {
-  '1': { name: 'Architect', avatar: '👑' },
-  '2': { name: 'Orchestrator', avatar: '🔀' },
-  '3': { name: 'Implementer A', avatar: '🔧' },
-  '4': { name: 'Implementer B', avatar: '⚙️' },
-  '5': { name: 'Investigator', avatar: '🔍' },
-  '6': { name: 'Reviewer', avatar: '✅' }
+  '1': { name: 'Architect', avatar: '[A]' },
+  '2': { name: 'Orchestrator', avatar: '[O]' },
+  '3': { name: 'Implementer A', avatar: '[1]' },
+  '4': { name: 'Implementer B', avatar: '[2]' },
+  '5': { name: 'Investigator', avatar: '[?]' },
+  '6': { name: 'Reviewer', avatar: '[R]' }
 };
 
 const MAIN_PANE_CONTAINER_SELECTOR = '.main-pane-container';
@@ -1346,6 +1346,93 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // Codex activity indicator - update pane status based on Codex exec activity
+  // State labels for UI display
+  const CODEX_ACTIVITY_LABELS = {
+    thinking: 'Thinking',
+    tool: 'Tool',
+    command: 'Command',
+    file: 'File',
+    streaming: 'Streaming',
+    done: 'Done',
+    ready: 'Ready',
+  };
+
+  // Glyph spinner sequence (Claude TUI style)
+  const SPINNER_GLYPHS = ['◐', '◓', '◑', '◒'];
+  const spinnerTimers = new Map(); // paneId -> intervalId
+
+  // Start glyph cycling for a pane
+  function startSpinnerCycle(paneId, spinnerEl) {
+    // Clear existing timer if any
+    if (spinnerTimers.has(paneId)) {
+      clearInterval(spinnerTimers.get(paneId));
+    }
+    // Check reduced motion preference
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reducedMotion) {
+      spinnerEl.textContent = '●';
+      return;
+    }
+    // Cycle through glyphs
+    let index = 0;
+    spinnerEl.textContent = SPINNER_GLYPHS[0];
+    const timerId = setInterval(() => {
+      index = (index + 1) % SPINNER_GLYPHS.length;
+      spinnerEl.textContent = SPINNER_GLYPHS[index];
+    }, 150);
+    spinnerTimers.set(paneId, timerId);
+  }
+
+  // Stop glyph cycling for a pane
+  function stopSpinnerCycle(paneId) {
+    if (spinnerTimers.has(paneId)) {
+      clearInterval(spinnerTimers.get(paneId));
+      spinnerTimers.delete(paneId);
+    }
+  }
+
+  ipcRenderer.on('codex-activity', (event, data) => {
+    const { paneId, state, detail } = data;
+    const statusEl = document.getElementById(`status-${paneId}`);
+    if (!statusEl) return;
+
+    // Get or create spinner element
+    let spinnerEl = statusEl.querySelector('.pane-spinner');
+    if (!spinnerEl) {
+      spinnerEl = document.createElement('span');
+      spinnerEl.className = 'pane-spinner';
+      statusEl.insertBefore(spinnerEl, statusEl.firstChild);
+    }
+
+    // Update status text with optional detail truncated
+    const label = CODEX_ACTIVITY_LABELS[state] || state;
+    const displayDetail = detail && detail.length > 30 ? detail.slice(0, 27) + '...' : detail;
+    const statusText = displayDetail ? `${label}: ${displayDetail}` : label;
+
+    // Set tooltip for full detail
+    statusEl.title = detail || '';
+
+    // Update text content (preserve spinner)
+    statusEl.innerHTML = '';
+    statusEl.appendChild(spinnerEl);
+    statusEl.appendChild(document.createTextNode(statusText));
+
+    // Update CSS classes for activity state
+    statusEl.classList.remove('idle', 'starting', 'running', 'working', 'activity-thinking', 'activity-tool', 'activity-command', 'activity-file', 'activity-streaming', 'activity-done');
+
+    if (state === 'ready') {
+      statusEl.classList.add('idle');
+      stopSpinnerCycle(paneId);
+    } else if (state === 'done') {
+      statusEl.classList.add('activity-done');
+      stopSpinnerCycle(paneId);
+    } else {
+      statusEl.classList.add('working', `activity-${state}`);
+      startSpinnerCycle(paneId, spinnerEl);
+    }
+  });
+
   // Single agent stuck detection - notify user (we can't auto-ESC via PTY)
   // Track shown alerts to avoid spamming
   const stuckAlertShown = new Set();
@@ -1496,17 +1583,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     const { paneId, label, provider } = data;
     const el = document.getElementById(`cli-badge-${paneId}`);
     if (!el) return;
+    const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
     const key = (provider || label || '').toLowerCase();
     el.textContent = label || provider || '';
     el.className = 'cli-badge visible';
+    if (pane) {
+      pane.classList.remove('cli-claude', 'cli-codex', 'cli-gemini');
+    }
     if (key.includes('claude')) {
       el.classList.add('claude');
+      if (pane) pane.classList.add('cli-claude');
       terminal.unregisterCodexPane(paneId);
     } else if (key.includes('codex')) {
       el.classList.add('codex');
+      if (pane) pane.classList.add('cli-codex');
       terminal.registerCodexPane(paneId);
     } else if (key.includes('gemini')) {
       el.classList.add('gemini');
+      if (pane) pane.classList.add('cli-gemini');
       terminal.unregisterCodexPane(paneId);
     }
   });

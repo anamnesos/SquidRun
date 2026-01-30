@@ -226,6 +226,11 @@ class DaemonClient extends EventEmitter {
           this.emit('watchdog-alert', msg.message, msg.timestamp);
           break;
 
+        // Handle Codex exec activity state changes
+        case 'codex-activity':
+          this.emit('codex-activity', msg.paneId, msg.state, msg.detail);
+          break;
+
         default:
           log.warn('DaemonClient', 'Unknown event', msg.event);
       }

@@ -581,6 +581,13 @@ async function initDaemonClient() {
     }
   });
 
+  // Forward Codex activity state changes to renderer
+  daemonClient.on('codex-activity', (paneId, state, detail) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('codex-activity', { paneId, state, detail });
+    }
+  });
+
   const connected = await daemonClient.connect();
   if (connected) {
     log.info('Main', 'Successfully connected to terminal daemon');

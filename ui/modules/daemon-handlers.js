@@ -10,6 +10,7 @@ const { ipcRenderer } = require('electron');
 const path = require('path');
 const { INSTANCE_DIRS } = require('../config');
 const log = require('./logger');
+const diagnosticLog = require('./diagnostic-log');
 
 // SDK renderer for immediate message display
 let sdkRenderer = null;
@@ -411,6 +412,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
     const { panes, message, deliveryId } = data || {};
     for (const paneId of panes || []) {
       log.info('Inject', `Received inject-message for pane ${paneId}`);
+      diagnosticLog.write('Inject', `Received inject-message for pane ${paneId}`);
       queueMessage(String(paneId), message, deliveryId);
     }
   });
@@ -426,6 +428,7 @@ function queueMessage(paneId, message, deliveryId) {
     deliveryId: deliveryId || null,
   });
   log.info('Queue', `Queued for pane ${paneId}, queue length: ${messageQueues.get(paneId).length}`);
+  diagnosticLog.write('Queue', `Queued for pane ${paneId}, queue length: ${messageQueues.get(paneId).length}`);
   processQueue(paneId);
 }
 
@@ -981,7 +984,16 @@ function updateAgentStatus(paneId, state) {
       'starting': 'Starting agent...',
       'running': 'Agent running',
     };
-    statusEl.textContent = labels[state] || state;
+    const statusText = labels[state] || state;
+    // Preserve activity spinner if present (Fix 4: prevent clobbering)
+    const spinnerEl = statusEl.querySelector('.pane-spinner');
+    if (spinnerEl) {
+      statusEl.innerHTML = '';
+      statusEl.appendChild(spinnerEl);
+      statusEl.appendChild(document.createTextNode(statusText));
+    } else {
+      statusEl.textContent = statusText;
+    }
     statusEl.classList.remove('idle', 'starting', 'running');
     statusEl.classList.add(state || 'idle');
   }
