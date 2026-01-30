@@ -282,7 +282,28 @@ window.hivemind = {
 function updatePaneStatus(paneId, status) {
   const statusEl = document.getElementById(`status-${paneId}`);
   if (statusEl) {
-    statusEl.textContent = status;
+    // Update text (preserve spinner if working)
+    const spinnerEl = statusEl.querySelector('.pane-spinner');
+    if (spinnerEl) {
+      statusEl.innerHTML = '';
+      statusEl.appendChild(spinnerEl);
+      statusEl.appendChild(document.createTextNode(status));
+    } else {
+      statusEl.textContent = status;
+    }
+
+    // Toggle CSS classes based on status
+    statusEl.classList.remove('idle', 'starting', 'running', 'working');
+    const statusLower = status.toLowerCase();
+    if (statusLower === 'ready' || statusLower === 'idle' || statusLower === 'stopped') {
+      statusEl.classList.add('idle');
+    } else if (statusLower === 'starting' || statusLower === 'spawning') {
+      statusEl.classList.add('starting');
+    } else if (statusLower === 'working' || statusLower === 'processing') {
+      statusEl.classList.add('working');
+    } else if (statusLower === 'running' || statusLower.includes('running')) {
+      statusEl.classList.add('running');
+    }
   }
 }
 
@@ -839,6 +860,28 @@ function setupEventListeners() {
     selectProjectBtn.addEventListener('click', daemonHandlers.selectProject);
   }
 
+  // Actions dropdown toggle
+  const actionsBtn = document.getElementById('actionsBtn');
+  const actionsMenu = document.getElementById('actionsMenu');
+  if (actionsBtn && actionsMenu) {
+    actionsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      actionsMenu.classList.toggle('show');
+    });
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#actionsDropdown')) {
+        actionsMenu.classList.remove('show');
+      }
+    });
+    // Close dropdown when clicking a menu item
+    actionsMenu.querySelectorAll('.dropdown-item').forEach(item => {
+      item.addEventListener('click', () => {
+        actionsMenu.classList.remove('show');
+      });
+    });
+  }
+
   // Pane click: swap side pane into main, or focus if already main
   document.querySelectorAll('.pane').forEach(pane => {
     pane.addEventListener('click', (event) => {
@@ -1054,7 +1097,14 @@ function initCommandPalette() {
     // Panels
     { id: 'toggle-settings', label: 'Toggle Settings Panel', icon: '⚙️', category: 'Panels', action: () => document.getElementById('settingsBtn')?.click() },
     { id: 'toggle-panel', label: 'Toggle Right Panel', icon: '📊', category: 'Panels', action: () => document.getElementById('panelBtn')?.click() },
-    { id: 'toggle-friction', label: 'View Friction Logs', icon: '🔧', category: 'Panels', action: () => document.getElementById('frictionBtn')?.click() },
+    { id: 'toggle-friction', label: 'View Friction Logs', icon: '🔧', category: 'Panels', action: () => {
+      // Open right panel and switch to friction tab
+      const rightPanel = document.getElementById('rightPanel');
+      if (rightPanel && !rightPanel.classList.contains('visible')) {
+        document.getElementById('panelBtn')?.click();
+      }
+      document.querySelector('.panel-tab[data-tab="friction"]')?.click();
+    }},
 
     // Project
     { id: 'select-project', label: 'Select Project Folder', icon: '📁', category: 'Project', action: () => document.getElementById('selectProjectBtn')?.click() },

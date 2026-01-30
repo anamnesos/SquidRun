@@ -1485,9 +1485,16 @@ function setupBuildProgressTab() {
 // ============================================================
 
 function updateFrictionBadge(count) {
+  // Update old toolbar badge (if still exists)
   const badge = document.getElementById('frictionBadge');
   if (badge) {
     badge.textContent = count;
+  }
+  // Update new tab badge
+  const tabBadge = document.getElementById('frictionTabBadge');
+  if (tabBadge) {
+    tabBadge.textContent = count;
+    tabBadge.classList.toggle('hidden', count === 0);
   }
 }
 
@@ -1502,26 +1509,36 @@ function formatFrictionTime(isoString) {
 }
 
 function renderFrictionList() {
-  const listEl = document.getElementById('frictionList');
-  if (!listEl) return;
+  // Render to both old panel and new tab
+  const listEls = [
+    document.getElementById('frictionList'),
+    document.getElementById('frictionListTab')
+  ].filter(Boolean);
+
+  if (listEls.length === 0) return;
 
   if (frictionFiles.length === 0) {
-    listEl.innerHTML = '<div class="friction-empty">No friction logs found</div>';
+    listEls.forEach(el => {
+      el.innerHTML = '<div class="friction-empty">No friction logs found</div>';
+    });
     updateFrictionBadge(0);
     return;
   }
 
   updateFrictionBadge(frictionFiles.length);
 
-  listEl.innerHTML = frictionFiles.map(f => `
+  const html = frictionFiles.map(f => `
     <div class="friction-item" data-filename="${f.name}">
       <span class="friction-item-name">${f.name}</span>
       <span class="friction-item-time">${formatFrictionTime(f.modified)}</span>
     </div>
   `).join('');
 
-  listEl.querySelectorAll('.friction-item').forEach(item => {
-    item.addEventListener('click', () => viewFrictionFile(item.dataset.filename));
+  listEls.forEach(el => {
+    el.innerHTML = html;
+    el.querySelectorAll('.friction-item').forEach(item => {
+      item.addEventListener('click', () => viewFrictionFile(item.dataset.filename));
+    });
   });
 }
 
@@ -1564,6 +1581,7 @@ async function clearFriction() {
 }
 
 function setupFrictionPanel() {
+  // Old panel toggle (if still exists)
   const frictionBtn = document.getElementById('frictionBtn');
   const frictionPanel = document.getElementById('frictionPanel');
 
@@ -1577,6 +1595,7 @@ function setupFrictionPanel() {
     });
   }
 
+  // Old panel buttons
   const refreshBtn = document.getElementById('refreshFrictionBtn');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', loadFrictionFiles);
@@ -1586,6 +1605,22 @@ function setupFrictionPanel() {
   if (clearBtn) {
     clearBtn.addEventListener('click', clearFriction);
   }
+
+  // New tab buttons
+  const refreshTabBtn = document.getElementById('refreshFrictionTabBtn');
+  if (refreshTabBtn) {
+    refreshTabBtn.addEventListener('click', loadFrictionFiles);
+  }
+
+  const clearTabBtn = document.getElementById('clearFrictionTabBtn');
+  if (clearTabBtn) {
+    clearTabBtn.addEventListener('click', clearFriction);
+  }
+
+  // Load friction on friction tab activation
+  document.querySelector('.panel-tab[data-tab="friction"]')?.addEventListener('click', () => {
+    loadFrictionFiles();
+  });
 
   loadFrictionFiles();
 }

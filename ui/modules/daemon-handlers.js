@@ -332,9 +332,9 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
     log.info('Daemon', 'Connected, existing terminals:', existingTerminals, 'SDK mode:', sdkMode);
 
     // SDK Mode Check: Skip PTY terminal creation if SDK mode is enabled
-    // Use sdkMode from event (authoritative from main process) OR fallback to local flag
-    if (sdkMode || sdkModeEnabled) {
-      sdkModeEnabled = true; // Sync local flag
+    // sdkMode from event is authoritative (from main process currentSettings)
+    if (sdkMode) {
+      setSDKMode(true); // Use setter instead of direct assignment
       log.info('Daemon', 'SDK mode enabled - skipping PTY terminal creation');
       updateConnectionStatus('SDK Mode - initializing agents...');
       // Notify ready so SDK init can proceed
@@ -410,6 +410,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
   ipcRenderer.on('inject-message', (event, data) => {
     const { panes, message, deliveryId } = data || {};
     for (const paneId of panes || []) {
+      log.info('Inject', `Received inject-message for pane ${paneId}`);
       queueMessage(String(paneId), message, deliveryId);
     }
   });
@@ -424,6 +425,7 @@ function queueMessage(paneId, message, deliveryId) {
     message,
     deliveryId: deliveryId || null,
   });
+  log.info('Queue', `Queued for pane ${paneId}, queue length: ${messageQueues.get(paneId).length}`);
   processQueue(paneId);
 }
 

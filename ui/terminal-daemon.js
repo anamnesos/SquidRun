@@ -76,6 +76,8 @@ function formatUptime(seconds) {
 
 // Store PTY processes: Map<paneId, { pty, pid, alive, cwd, scrollback, dryRun, lastActivity }>
 const terminals = new Map();
+// Cache Codex exec session IDs so restarts can resume
+const codexSessionCache = new Map(); // paneId -> codexSessionId
 
 // ============================================================
 // CODEX AUTO-APPROVAL FALLBACK
@@ -215,6 +217,8 @@ function saveSessionState() {
       alive: termInfo.alive,
       dryRun: termInfo.dryRun || false,
       scrollback: termInfo.scrollback || '',
+      codexSessionId: termInfo.codexSessionId || null,
+      codexHasSession: termInfo.codexHasSession || false,
       lastActivity: termInfo.lastActivity,
     });
   }
@@ -248,6 +252,13 @@ function loadSessionState() {
           logWarn(`[Session] Correcting pane ${term.paneId} cwd: ${term.cwd} -> ${expectedDir}`);
           term.cwd = expectedDir;
         }
+        if (term.codexSessionId) {
+          term.codexHasSession = term.codexHasSession || true;
+          codexSessionCache.set(String(term.paneId), term.codexSessionId);
+        } else {
+          term.codexSessionId = null;
+          term.codexHasSession = false;
+        }
       }
     }
     return state;
@@ -255,6 +266,22 @@ function loadSessionState() {
     logWarn(`Could not load session state: ${err.message}`);
     return null;
   }
+}
+
+function getCachedCodexSession(paneId) {
+  const id = String(paneId);
+  if (codexSessionCache.has(id)) {
+    return codexSessionCache.get(id);
+  }
+  const state = loadSessionState();
+  if (state && Array.isArray(state.terminals)) {
+    const saved = state.terminals.find(term => String(term.paneId) === id);
+    if (saved && saved.codexSessionId) {
+      codexSessionCache.set(id, saved.codexSessionId);
+      return saved.codexSessionId;
+    }
+  }
+  return null;
 }
 
 /**
@@ -1032,6 +1059,11 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   if (options.mode === 'codex-exec') {
     logInfo(`[CodexExec] Initializing virtual terminal for pane ${paneId} in ${workDir}`);
 
+    const restoredSessionId = getCachedCodexSession(paneId);
+    if (restoredSessionId) {
+      logInfo(`[CodexExec] Restored session id for pane ${paneId}`);
+    }
+
     const terminalInfo = {
       pty: null,
       pid: 0,
@@ -1042,8 +1074,8 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       mode: 'codex-exec',
       execProcess: null,
       execBuffer: '',
-      codexHasSession: false,
-      codexSessionId: null,
+      codexHasSession: !!restoredSessionId,
+      codexSessionId: restoredSessionId || null,
       lastActivity: Date.now(),
       lastInputTime: Date.now(),
     };
@@ -1200,6 +1232,11 @@ function resizeTerminal(paneId, cols, rows) {
 function killTerminal(paneId) {
   const terminal = terminals.get(paneId);
   if (!terminal) return false;
+
+  if (terminal.mode === 'codex-exec' && terminal.codexSessionId) {
+    codexSessionCache.set(String(paneId), terminal.codexSessionId);
+    logInfo(`[CodexExec] Cached session id for pane ${paneId} on kill`);
+  }
 
   // Clean up dry-run timer if exists
   if (terminal.dryRunTimer) {

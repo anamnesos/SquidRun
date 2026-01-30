@@ -785,6 +785,7 @@ function sendStaggered(panes, message, meta = {}) {
   if (panes.length === 1) {
     const payload = { panes, message };
     if (deliveryId) payload.deliveryId = deliveryId;
+    log.info('Stagger', `Sending inject-message to pane ${panes[0]}`);
     mainWindow.webContents.send('inject-message', payload);
     return;
   }
