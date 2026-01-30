@@ -880,13 +880,21 @@ function handleTriggerFile(filePath, filename) {
   }
 
   if (hasSequence) {
-    if (parsed.seq === 1 && message.includes('# HIVEMIND SESSION:')) {
-      if (!messageState.sequences[recipientRole]) {
-        messageState.sequences[recipientRole] = { outbound: 0, lastSeen: {} };
-      }
+    if (!messageState.sequences[recipientRole]) {
+      messageState.sequences[recipientRole] = { outbound: 0, lastSeen: {} };
+    }
+    const lastSeen = messageState.sequences[recipientRole].lastSeen[parsed.sender] || 0;
+    const hasSessionBanner = message.includes('# HIVEMIND SESSION:');
+
+    if (parsed.seq === 1 && hasSessionBanner) {
       messageState.sequences[recipientRole].lastSeen[parsed.sender] = 0;
       saveMessageState();
       log.info('Trigger', `Reset lastSeen for sender restart: ${parsed.sender} -> ${recipientRole}`);
+    } else if (parsed.seq < lastSeen - 5) {
+      // Large sequence regression implies agent restart/compaction; accept and reset baseline.
+      messageState.sequences[recipientRole].lastSeen[parsed.sender] = Math.max(parsed.seq - 1, 0);
+      saveMessageState();
+      log.info('Trigger', `Reset lastSeen for sender regression: ${parsed.sender} -> ${recipientRole} (lastSeen=${lastSeen}, seq=${parsed.seq})`);
     }
     // Check for duplicate
     if (isDuplicateMessage(parsed.sender, parsed.seq, recipientRole)) {
