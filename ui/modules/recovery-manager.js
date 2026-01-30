@@ -61,6 +61,7 @@ function createRecoveryManager(options = {}) {
     getAllActivity,
     getDaemonTerminals,
     isPaneRunning,
+    isCodexPane,  // NEW: Check if pane runs Codex CLI
     requestRestart,
     beforeRestart,
     afterRestart,
@@ -406,7 +407,9 @@ function createRecoveryManager(options = {}) {
   function handleExit(paneId, exitCode) {
     const state = getPaneState(paneId);
     const expected = consumeExpectedExit(paneId);
+    const isCodex = typeof isCodexPane === 'function' && isCodexPane(paneId);
 
+    // Expected exit (manual restart, auto-restart confirmation, etc)
     if (expected) {
       state.status = 'recovering';
       emitEvent({
@@ -419,6 +422,28 @@ function createRecoveryManager(options = {}) {
       return;
     }
 
+    // Codex graceful completion (exit code 0) - NOT a failure
+    // Codex CLI exits normally after completing tasks, needs auto-restart
+    if (isCodex && exitCode === 0) {
+      log.info('Recovery', `Codex pane ${paneId} completed (exit 0), auto-restarting`);
+      emitEvent({
+        type: 'exit',
+        paneId: String(paneId),
+        status: 'codex_completed',
+        message: 'Codex task completed, auto-restarting',
+        timestamp: new Date().toISOString(),
+      });
+      // Reset backoff state - graceful completion is not a failure
+      state.restartAttempts = 0;
+      state.failureTimestamps = [];
+      // Immediate restart - no backoff, no failure counting
+      // Mark as expected so the restart itself doesn't trigger another handleExit
+      markExpectedExit(paneId, 'codex-auto-restart');
+      performRestart(paneId, 'codex-completion');
+      return;
+    }
+
+    // Unexpected exit - treat as failure
     state.lastFailureAt = Date.now();
     state.lastFailureReason = `exit-${exitCode}`;
     updateFailureWindow(state, state.lastFailureAt);

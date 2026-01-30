@@ -291,6 +291,10 @@ function initRecoveryManager() {
     getAllActivity: () => daemonClient?.getAllActivity?.() || {},
     getDaemonTerminals: () => daemonClient?.getTerminals?.() || [],
     isPaneRunning: paneId => claudeRunning.get(String(paneId)) === 'running',
+    isCodexPane: paneId => {
+      const cmd = currentSettings.paneCommands?.[String(paneId)] || '';
+      return cmd.includes('codex');
+    },
     requestRestart: (paneId, info = {}) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('restart-pane', {
