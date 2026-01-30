@@ -249,6 +249,13 @@ function buildCodexExecPrompt(paneId, text) {
   return identity + safeText;
 }
 
+// Reset codex identity injection tracking for a pane (used on restart)
+// This ensures the identity header is re-injected when the pane restarts
+function resetCodexIdentity(paneId) {
+  codexIdentityInjected.delete(String(paneId));
+  log.info('Terminal', `Reset codex identity tracking for pane ${paneId}`);
+}
+
 // Check if a pane is idle (no output for IDLE_THRESHOLD_MS)
 function isIdle(paneId) {
   const lastOutput = lastOutputTime[paneId] || 0;
@@ -315,6 +322,7 @@ const recoveryController = createRecoveryController({
   userIsTyping,
   getInjectionHelpers: () => injectionController,
   spawnClaude,
+  resetCodexIdentity,
 });
 
 injectionController = createInjectionController({

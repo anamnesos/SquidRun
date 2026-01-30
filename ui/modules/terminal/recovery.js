@@ -20,6 +20,7 @@ function createRecoveryController(options = {}) {
     userIsTyping,
     getInjectionHelpers,
     spawnClaude,
+    resetCodexIdentity,
   } = options;
 
   // Unstick escalation tracking (nudge -> interrupt -> restart)
@@ -220,6 +221,11 @@ function createRecoveryController(options = {}) {
     }
 
     await new Promise(resolve => setTimeout(resolve, 250));
+
+    // Reset identity tracking so new session gets fresh identity header
+    if (typeof resetCodexIdentity === 'function') {
+      resetCodexIdentity(id);
+    }
 
     // Codex exec panes need PTY recreated before spawnClaude
     // spawnClaude() for Codex panes only sends identity message - doesn't create PTY
