@@ -66,6 +66,75 @@ const SDK_PANE_LABELS = {
   '6': { name: 'Reviewer', avatar: '✅' }
 };
 
+const MAIN_PANE_CONTAINER_SELECTOR = '.main-pane-container';
+const SIDE_PANES_CONTAINER_SELECTOR = '.side-panes-container';
+let mainPaneId = '1';
+
+function getPaneElement(paneId) {
+  return document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+}
+
+function updateMainPaneState(paneId) {
+  mainPaneId = String(paneId);
+  if (document.body) {
+    document.body.dataset.mainPaneId = mainPaneId;
+  }
+  document.querySelectorAll('.pane').forEach((pane) => {
+    pane.dataset.main = pane.dataset.paneId === mainPaneId ? 'true' : 'false';
+  });
+}
+
+function getMainPaneId() {
+  return mainPaneId;
+}
+
+function swapToMainPane(targetPaneId) {
+  const targetId = String(targetPaneId);
+  if (!targetId || targetId === mainPaneId) {
+    terminal.focusPane(targetId || mainPaneId);
+    return;
+  }
+
+  const mainContainer = document.querySelector(MAIN_PANE_CONTAINER_SELECTOR);
+  const sideContainer = document.querySelector(SIDE_PANES_CONTAINER_SELECTOR);
+  const targetPane = getPaneElement(targetId);
+  const currentMainPane = getPaneElement(mainPaneId);
+
+  if (!mainContainer || !sideContainer || !targetPane || !currentMainPane) {
+    log.warn('PaneSwap', 'Swap aborted - missing pane containers or elements');
+    return;
+  }
+
+  if (targetPane.parentElement !== sideContainer) {
+    terminal.focusPane(targetId);
+    return;
+  }
+
+  const targetNextSibling = targetPane.nextSibling;
+
+  mainContainer.appendChild(targetPane);
+  if (targetNextSibling) {
+    sideContainer.insertBefore(currentMainPane, targetNextSibling);
+  } else {
+    sideContainer.appendChild(currentMainPane);
+  }
+
+  updateMainPaneState(targetId);
+  terminal.focusPane(targetId);
+
+  requestAnimationFrame(() => {
+    terminal.handleResize();
+    setTimeout(() => terminal.handleResize(), 50);
+  });
+}
+
+function initMainPaneState() {
+  const mainContainer = document.querySelector(MAIN_PANE_CONTAINER_SELECTOR);
+  const mainPane = mainContainer ? mainContainer.querySelector('.pane') : null;
+  const paneId = mainPane?.dataset?.paneId || '1';
+  updateMainPaneState(paneId);
+}
+
 // Initialization state tracking - fixes race condition in auto-spawn
 let initState = {
   settingsLoaded: false,
@@ -310,16 +379,8 @@ function applySDKPaneLayout() {
     }
   });
 
-  const broadcastInput = document.getElementById('broadcastInput');
-  if (broadcastInput) {
-    broadcastInput.placeholder = 'Type here to message Lead (Enter to send)';
-    broadcastInput.title = 'Send message to Lead';
-  }
-
-  const broadcastBtn = document.getElementById('broadcastBtn');
-  if (broadcastBtn) {
-    broadcastBtn.title = 'Send message to Lead';
-  }
+  // Placeholder is now set dynamically by updateCommandPlaceholder() based on target selector
+  // Initial call happens in DOMContentLoaded event handler
 }
 
 // SDK Status update functions
@@ -527,12 +588,53 @@ function setupEventListeners() {
     }
   });
 
-  // Broadcast input - Enter re-enabled (ghost text fix is in xterm, not here)
+  // Command bar input - Enter re-enabled (ghost text fix is in xterm, not here)
   const broadcastInput = document.getElementById('broadcastInput');
+  const commandTarget = document.getElementById('commandTarget');
+  const commandDeliveryStatus = document.getElementById('commandDeliveryStatus');
   let lastBroadcastTime = 0;
 
+  // Update placeholder based on selected target
+  function updateCommandPlaceholder() {
+    if (!broadcastInput || !commandTarget) return;
+    const target = commandTarget.value;
+    const targetName = commandTarget.options[commandTarget.selectedIndex]?.text || 'Architect';
+    if (target === 'all') {
+      broadcastInput.placeholder = 'Type here to message all agents (Enter to send)';
+      broadcastInput.title = 'Send message to all agents';
+    } else {
+      broadcastInput.placeholder = `Type here to message ${targetName} (Enter to send)`;
+      broadcastInput.title = `Send message to ${targetName}`;
+    }
+  }
+
+  // Show delivery status indicator
+  function showDeliveryStatus(status) {
+    if (!commandDeliveryStatus) return;
+    commandDeliveryStatus.className = 'command-delivery-status visible ' + status;
+    if (status === 'sending') {
+      commandDeliveryStatus.textContent = '⏳';
+    } else if (status === 'delivered') {
+      commandDeliveryStatus.textContent = '✓';
+      setTimeout(() => {
+        commandDeliveryStatus.classList.remove('visible');
+      }, 2000);
+    } else if (status === 'failed') {
+      commandDeliveryStatus.textContent = '✕';
+      setTimeout(() => {
+        commandDeliveryStatus.classList.remove('visible');
+      }, 3000);
+    }
+  }
+
+  // Target selector change event
+  if (commandTarget) {
+    commandTarget.addEventListener('change', updateCommandPlaceholder);
+    updateCommandPlaceholder(); // Set initial placeholder
+  }
+
   // Helper function to send broadcast - routes through SDK or PTY based on mode
-  // Supports pane targeting with /1-6 prefix
+  // Supports pane targeting via dropdown or /1-6 prefix
   function sendBroadcast(message) {
     const now = Date.now();
     if (now - lastBroadcastTime < 500) {
@@ -541,67 +643,74 @@ function setupEventListeners() {
     }
     lastBroadcastTime = now;
 
+    // Show sending status
+    showDeliveryStatus('sending');
+
     // Check SDK mode from settings
     const currentSettings = settings.getSettings();
     if (currentSettings.sdkMode || sdkMode) {
       // Check for pane targeting prefix: /1-6 or /architect, /orchestrator, etc.
       // /all broadcasts to all agents
       const paneMatch = message.match(/^\/([1-6]|all|lead|architect|orchestrator|worker-?a|worker-?b|implementer-?a|implementer-?b|investigator|reviewer)\s+/i);
+
+      // Determine target: explicit prefix > dropdown selector > default (1)
+      let targetPaneId = '1';
+      let actualMessage = message;
+
       if (paneMatch) {
+        // Explicit prefix takes precedence
         const target = paneMatch[1].toLowerCase();
-        const actualMessage = message.slice(paneMatch[0].length);
+        actualMessage = message.slice(paneMatch[0].length);
         if (target === 'all') {
-          log.info('SDK', 'Broadcast to ALL agents');
-          // Show user message in ALL panes immediately
-          ['1', '2', '3', '4', '5', '6'].forEach(paneId => {
-            sdkRenderer.appendMessage(paneId, { type: 'user', content: actualMessage });
-          });
-          ipcRenderer.invoke('sdk-broadcast', actualMessage).catch(err => {
-            log.error('SDK', 'Broadcast failed:', err);
-          });
+          targetPaneId = 'all';
         } else {
           const paneMap = {
-            '1': '1',
-            '2': '2',
-            '3': '3',
-            '4': '4',
-            '5': '5',
-            '6': '6',
-            'lead': '1',
-            'architect': '1',
-            'orchestrator': '2',
-            'worker-a': '3',
-            'workera': '3',
-            'implementer-a': '3',
-            'implementera': '3',
-            'worker-b': '4',
-            'workerb': '4',
-            'implementer-b': '4',
-            'implementerb': '4',
-            'investigator': '5',
-            'reviewer': '6'
+            '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6',
+            'lead': '1', 'architect': '1', 'orchestrator': '2',
+            'worker-a': '3', 'workera': '3', 'implementer-a': '3', 'implementera': '3',
+            'worker-b': '4', 'workerb': '4', 'implementer-b': '4', 'implementerb': '4',
+            'investigator': '5', 'reviewer': '6'
           };
-          const paneId = paneMap[target] || '1';
-          log.info('SDK', `Targeted send to pane ${paneId}: ${actualMessage.substring(0, 30)}...`);
-          // Show user message in target pane immediately
-          sdkRenderer.appendMessage(paneId, { type: 'user', content: actualMessage });
-          ipcRenderer.invoke('sdk-send-message', paneId, actualMessage).catch(err => {
-            log.error('SDK', `Send to pane ${paneId} failed:`, err);
-          });
+          targetPaneId = paneMap[target] || '1';
         }
-      } else {
-        // Default to Architect only (pane 1), not broadcast to all
-        // Use /all prefix to explicitly broadcast to all agents
-        log.info('SDK', 'Default send to Architect (pane 1)');
-        // Show user message in Architect pane immediately
-        sdkRenderer.appendMessage('1', { type: 'user', content: message });
-        ipcRenderer.invoke('sdk-send-message', '1', message).catch(err => {
-          log.error('SDK', 'Send to Architect failed:', err);
+      } else if (commandTarget) {
+        // Use dropdown selector value
+        targetPaneId = commandTarget.value;
+      }
+
+      // Send to target(s)
+      if (targetPaneId === 'all') {
+        log.info('SDK', 'Broadcast to ALL agents');
+        ['1', '2', '3', '4', '5', '6'].forEach(paneId => {
+          sdkRenderer.appendMessage(paneId, { type: 'user', content: actualMessage });
         });
+        ipcRenderer.invoke('sdk-broadcast', actualMessage)
+          .then(() => showDeliveryStatus('delivered'))
+          .catch(err => {
+            log.error('SDK', 'Broadcast failed:', err);
+            showDeliveryStatus('failed');
+          });
+      } else {
+        log.info('SDK', `Targeted send to pane ${targetPaneId}: ${actualMessage.substring(0, 30)}...`);
+        sdkRenderer.appendMessage(targetPaneId, { type: 'user', content: actualMessage });
+        ipcRenderer.invoke('sdk-send-message', targetPaneId, actualMessage)
+          .then(() => showDeliveryStatus('delivered'))
+          .catch(err => {
+            log.error('SDK', `Send to pane ${targetPaneId} failed:`, err);
+            showDeliveryStatus('failed');
+          });
       }
     } else {
-      log.info('Broadcast', 'Using PTY mode');
-      terminal.broadcast(message + '\r');
+      // PTY mode - use terminal broadcast with target from dropdown
+      const targetPaneId = commandTarget ? commandTarget.value : 'all';
+      log.info('Broadcast', `Using PTY mode, target: ${targetPaneId}`);
+      if (targetPaneId === 'all') {
+        terminal.broadcast(message + '\r');
+      } else {
+        // Send to specific pane in PTY mode
+        terminal.sendToPane(targetPaneId, message + '\r');
+      }
+      showDeliveryStatus('delivered');
     }
     return true;
   }
@@ -656,7 +765,7 @@ function setupEventListeners() {
     killAllBtn.addEventListener('click', terminal.killAllTerminals);
   }
 
-  // Nudge all button - unstick churning agents (FIX3: now uses aggressive ESC+Enter)
+  // Nudge all button - unstick churning agents (uses aggressive ESC+Enter)
   const nudgeAllBtn = document.getElementById('nudgeAllBtn');
   if (nudgeAllBtn) {
     nudgeAllBtn.addEventListener('click', terminal.aggressiveNudgeAll);
@@ -729,11 +838,22 @@ function setupEventListeners() {
     selectProjectBtn.addEventListener('click', daemonHandlers.selectProject);
   }
 
-  // Pane click to focus
+  // Pane click: swap side pane into main, or focus if already main
   document.querySelectorAll('.pane').forEach(pane => {
-    pane.addEventListener('click', () => {
+    pane.addEventListener('click', (event) => {
+      if (event.target && event.target.closest('button')) {
+        return;
+      }
       const paneId = pane.dataset.paneId;
-      terminal.focusPane(paneId);
+      const mainContainer = document.querySelector(MAIN_PANE_CONTAINER_SELECTOR);
+      if (!paneId) return;
+
+      if (pane.parentElement === mainContainer || paneId === getMainPaneId()) {
+        terminal.focusPane(paneId);
+        return;
+      }
+
+      swapToMainPane(paneId);
     });
   });
 
@@ -743,6 +863,17 @@ function setupEventListeners() {
       e.stopPropagation(); // Don't trigger pane focus
       const paneId = btn.dataset.paneId;
       toggleExpandPane(paneId);
+    });
+  });
+
+  // Lock icon click handler - toggle input lock for pane
+  document.querySelectorAll('.lock-icon').forEach(icon => {
+    icon.addEventListener('click', (e) => {
+      e.stopPropagation(); // Don't trigger pane click/focus
+      const paneId = icon.dataset.paneId;
+      if (paneId) {
+        terminal.toggleInputLock(paneId);
+      }
     });
   });
 
@@ -763,6 +894,7 @@ function setupEventListeners() {
 document.addEventListener('DOMContentLoaded', async () => {
   // Setup all event handlers
   setupEventListeners();
+  initMainPaneState();
 
   // Initialize global UI focus tracker for multi-pane focus restore
   terminal.initUIFocusTracker();
@@ -1056,7 +1188,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   tabs.setupTemplatesTab();     // TM2: Template management
   tabs.setupActivityTab();      // OB2: Activity log
   tabs.setupTestsTab();         // TR1: Test results panel
-  tabs.setupMessagesTab();      // MQ3+MQ6: Messages tab
   tabs.setupInspectorTab();     // P2-5: Message inspector
   tabs.setupCIStatusIndicator(); // CI2: CI status indicator
   tabs.setupMCPStatusIndicator(); // MC7: MCP status indicator
