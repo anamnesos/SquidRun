@@ -167,8 +167,9 @@
 
   <div class="main-content">
     <div class="terminals-section" id="terminalsSection">
-      <div class="pane-grid">
-        <div class="pane" data-pane-id="1">
+      <div class="pane-layout">
+        <div class="main-pane-container">
+          <div class="pane" data-pane-id="1">
           <div class="pane-header">
             <span class="pane-title"><span class="agent-avatar">ðŸ‘‘</span><span class="agent-badge idle" id="badge-1"></span>Architect<span class="cli-badge" id="cli-badge-1"></span><span class="pane-project" id="project-1" title="Click to change project"></span><span class="agent-task" id="task-1"></span></span>
             <div class="pane-header-right">
@@ -184,12 +185,14 @@
                 <button class="pane-action-btn unstick-btn" data-pane-id="1" title="Send ESC (unstick)">⎋</button>
               </div>
               <button class="pane-refresh-btn" data-pane-id="1" title="Refresh context">↻</button>
+              <span class="lock-icon" id="lock-icon-1" data-pane-id="1" title="Input locked (click to unlock)">🔒</span>
             </div>
           </div>
           <div class="pane-terminal" id="terminal-1"></div>
+          </div>
         </div>
-
-        <div class="pane" data-pane-id="2">
+        <div class="side-panes-container">
+          <div class="pane" data-pane-id="2">
           <div class="pane-header">
             <span class="pane-title"><span class="agent-avatar">ðŸ§­</span><span class="agent-badge idle" id="badge-2"></span>Orchestrator<span class="cli-badge" id="cli-badge-2"></span><span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
             <div class="pane-header-right">
@@ -205,6 +208,7 @@
                 <button class="pane-action-btn unstick-btn" data-pane-id="2" title="Send ESC (unstick)">⎋</button>
               </div>
               <button class="pane-refresh-btn" data-pane-id="2" title="Refresh context">↻</button>
+              <span class="lock-icon" id="lock-icon-2" data-pane-id="2" title="Input locked (click to unlock)">🔒</span>
             </div>
           </div>
           <div class="pane-terminal" id="terminal-2"></div>
@@ -226,6 +230,7 @@
                 <button class="pane-action-btn unstick-btn" data-pane-id="3" title="Send ESC (unstick)">⎋</button>
               </div>
               <button class="pane-refresh-btn" data-pane-id="3" title="Refresh context">↻</button>
+              <span class="lock-icon" id="lock-icon-3" data-pane-id="3" title="Input locked (click to unlock)">🔒</span>
             </div>
           </div>
           <div class="pane-terminal" id="terminal-3"></div>
@@ -247,6 +252,7 @@
                 <button class="pane-action-btn unstick-btn" data-pane-id="4" title="Send ESC (unstick)">⎋</button>
               </div>
               <button class="pane-refresh-btn" data-pane-id="4" title="Refresh context">↻</button>
+              <span class="lock-icon" id="lock-icon-4" data-pane-id="4" title="Input locked (click to unlock)">🔒</span>
             </div>
           </div>
           <div class="pane-terminal" id="terminal-4"></div>
@@ -268,6 +274,7 @@
                 <button class="pane-action-btn unstick-btn" data-pane-id="5" title="Send ESC (unstick)">⎋</button>
               </div>
               <button class="pane-refresh-btn" data-pane-id="5" title="Refresh context">↻</button>
+              <span class="lock-icon" id="lock-icon-5" data-pane-id="5" title="Input locked (click to unlock)">🔒</span>
             </div>
           </div>
           <div class="pane-terminal" id="terminal-5"></div>
@@ -289,24 +296,38 @@
                 <button class="pane-action-btn unstick-btn" data-pane-id="6" title="Send ESC (unstick)">⎋</button>
               </div>
               <button class="pane-refresh-btn" data-pane-id="6" title="Refresh context">↻</button>
+              <span class="lock-icon" id="lock-icon-6" data-pane-id="6" title="Input locked (click to unlock)">🔒</span>
             </div>
           </div>
           <div class="pane-terminal" id="terminal-6"></div>
         </div>
-
-        <!-- Input bar is now inside the grid, under the agent panes -->
-        <form class="broadcast-bar" autocomplete="off" onsubmit="return false;">
-          <input type="text" class="broadcast-input" id="broadcastInput"
-                 placeholder="Type here to message Architect (Enter to send)"
-                 title="Send message to Architect"
-                 autocomplete="new-password" autocorrect="off" autocapitalize="off"
-                 spellcheck="false" data-lpignore="true" data-form-type="other"
-                 data-1p-ignore="true" list=""
-                 name="broadcast-input-random-8472"
-                 readonly onfocus="this.removeAttribute('readonly');">
-          <button type="button" class="btn" id="broadcastBtn" title="Send message to Architect">Send</button>
-        </form>
+        </div>
       </div>
+
+      <!-- Command bar - full width at bottom -->
+      <form class="command-bar" autocomplete="off" onsubmit="return false;">
+        <div class="command-target-wrapper">
+          <select class="command-target" id="commandTarget" title="Select message target">
+            <option value="1" selected>Architect</option>
+            <option value="all">All Agents</option>
+            <option value="2">Orchestrator</option>
+            <option value="3">Implementer A</option>
+            <option value="4">Implementer B</option>
+            <option value="5">Investigator</option>
+            <option value="6">Reviewer</option>
+          </select>
+        </div>
+        <input type="text" class="command-input" id="broadcastInput"
+               placeholder="Type here to message Architect (Enter to send)"
+               title="Send message to selected target"
+               autocomplete="new-password" autocorrect="off" autocapitalize="off"
+               spellcheck="false" data-lpignore="true" data-form-type="other"
+               data-1p-ignore="true" list=""
+               name="broadcast-input-random-8472"
+               readonly onfocus="this.removeAttribute('readonly');">
+        <span class="command-delivery-status" id="commandDeliveryStatus" title="Message delivery status"></span>
+        <button type="button" class="btn" id="broadcastBtn" title="Send message">Send</button>
+      </form>
     </div>
 
     <div class="right-panel" id="rightPanel">
@@ -321,7 +342,6 @@
         <button class="panel-tab" data-tab="templates" title="Save and load workspace configurations">Tmpl</button>
         <button class="panel-tab" data-tab="progress" title="Build progress and usage statistics">Prog</button>
         <button class="panel-tab" data-tab="processes" title="Manage background processes">Proc</button>
-        <button class="panel-tab" data-tab="messages" title="View message history between agents">Msgs</button>
       </div>
       <div class="panel-content">
         <div class="tab-pane active" id="tab-screenshots">
@@ -544,53 +564,6 @@
           </div>
           <div class="process-list" id="processList">
             <div class="process-empty">No processes running</div>
-          </div>
-        </div>
-
-        <!-- MQ3+MQ6: Messages Tab -->
-        <div class="tab-pane" id="tab-messages">
-          <div class="tab-title">Messages</div>
-          <div class="tab-description">Message history and group messaging between agents</div>
-
-          <!-- Filter buttons -->
-          <div class="messages-filter-row">
-            <button class="messages-filter active" data-filter="all" title="Show all messages">All</button>
-            <button class="messages-filter" data-filter="architect" title="Messages from/to Architect">Architect</button>
-            <button class="messages-filter" data-filter="orchestrator" title="Messages from/to Orchestrator">Orchestrator</button>
-            <button class="messages-filter" data-filter="implementer-a" title="Messages from/to Implementer A">Implementer A</button>
-            <button class="messages-filter" data-filter="implementer-b" title="Messages from/to Implementer B">Implementer B</button>
-            <button class="messages-filter" data-filter="investigator" title="Messages from/to Investigator">Investigator</button>
-            <button class="messages-filter" data-filter="reviewer" title="Messages from/to Reviewer">Reviewer</button>
-          </div>
-
-          <!-- Message list -->
-          <div class="messages-list" id="messagesList">
-            <div class="messages-empty">No messages yet</div>
-          </div>
-
-          <!-- MQ6: Message Composer -->
-          <div class="message-composer">
-            <div class="composer-title">Send Message</div>
-            <div class="composer-recipients">
-              <button class="recipient-btn" data-recipient="architect" title="Send to Architect (Pane 1)">Architect</button>
-              <button class="recipient-btn" data-recipient="orchestrator" title="Send to Orchestrator (Pane 2)">Orchestrator</button>
-              <button class="recipient-btn" data-recipient="implementer-a" title="Send to Implementer A (Pane 3)">Implementer A</button>
-              <button class="recipient-btn" data-recipient="implementer-b" title="Send to Implementer B (Pane 4)">Implementer B</button>
-              <button class="recipient-btn" data-recipient="investigator" title="Send to Investigator (Pane 5)">Investigator</button>
-              <button class="recipient-btn" data-recipient="reviewer" title="Send to Reviewer (Pane 6)">Reviewer</button>
-              <button class="recipient-btn" data-recipient="workers" title="Send to Implementer A, Implementer B, and Investigator">Implementers + Investigator</button>
-              <button class="recipient-btn" data-recipient="all" title="Send to all agents">All Agents</button>
-            </div>
-            <div class="composer-input-row">
-              <textarea class="composer-input" id="messageComposerInput" placeholder="Type your message..." rows="2" title="Enter message to send"></textarea>
-              <button class="composer-send-btn" id="messageSendBtn" title="Send message to selected recipients" disabled>Send</button>
-            </div>
-          </div>
-
-          <!-- Actions -->
-          <div class="messages-actions">
-            <button class="btn btn-secondary" id="refreshMessagesBtn" title="Reload message history">Refresh</button>
-            <button class="btn btn-secondary" id="clearMessagesBtn" title="Clear message history">Clear</button>
           </div>
         </div>
 

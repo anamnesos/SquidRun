@@ -74,20 +74,42 @@
   50% { opacity: 0.7; }
 }
 
-.pane-grid {
+/* New layout: main pane left + 5 side panes right */
+.pane-layout {
   flex: 1;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(320px, 1fr));
-  grid-template-rows: repeat(3, minmax(200px, 1fr)) auto;
+  display: flex;
   gap: 2px;
   padding: 2px;
   background: #0f3460;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
-.pane-grid .pane {
+.main-pane-container {
+  flex: 3;
+  display: flex;
+  min-width: 400px;
   min-height: 0;
+}
+
+.main-pane-container .pane {
+  flex: 1;
+  min-height: 0;
+}
+
+.side-panes-container {
+  flex: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 300px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.side-panes-container .pane {
+  flex: 1;
+  min-height: 80px;
 }
 
 .expand-btn {
@@ -308,6 +330,28 @@
   background: rgba(233, 69, 96, 0.1);
 }
 
+/* Per-pane input lock icon */
+.lock-icon {
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.lock-icon:hover {
+  background: rgba(233, 69, 96, 0.2);
+}
+
+.lock-icon.unlocked {
+  opacity: 0.6;
+}
+
+.lock-icon.unlocked:hover {
+  background: rgba(78, 204, 163, 0.2);
+}
+
 .pane-terminal {
   flex: 1;
   padding: 4px;
@@ -347,17 +391,17 @@
   display: none;
 }
 
-.broadcast-bar {
-  grid-column: 1 / -1;
-  grid-row: 4;
+/* Command bar - full width at bottom */
+.command-bar {
   background: #16213e;
-  padding: 8px;
+  padding: 8px 12px;
   display: flex;
   gap: 8px;
   border-top: 1px solid #0f3460;
+  flex-shrink: 0;
 }
 
-.broadcast-input {
+.command-input {
   flex: 1;
   background: #1a1a2e;
   border: 1px solid #0f3460;
@@ -369,13 +413,70 @@
   min-height: 44px;
 }
 
-.broadcast-input:focus {
+.command-input:focus {
   outline: none;
   border-color: #e94560;
 }
 
-.broadcast-input::placeholder {
+.command-input::placeholder {
   color: #666;
+}
+
+/* Command target selector */
+.command-target-wrapper {
+  flex-shrink: 0;
+}
+
+.command-target {
+  background: #1a1a2e;
+  border: 1px solid #0f3460;
+  color: #eee;
+  padding: 10px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  min-width: 120px;
+}
+
+.command-target:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+.command-target option {
+  background: #1a1a2e;
+  color: #eee;
+}
+
+/* Command delivery status */
+.command-delivery-status {
+  font-size: 14px;
+  min-width: 24px;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.command-delivery-status.visible {
+  opacity: 1;
+}
+
+.command-delivery-status.sending {
+  color: #ffc857;
+  animation: sendingPulse 1s ease-in-out infinite;
+}
+
+.command-delivery-status.delivered {
+  color: #4ecca3;
+}
+
+.command-delivery-status.failed {
+  color: #e94560;
+}
+
+@keyframes sendingPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 .status-bar {
