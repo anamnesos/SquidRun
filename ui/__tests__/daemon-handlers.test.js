@@ -972,4 +972,1044 @@ describe('daemon-handlers.js module', () => {
       expect(() => daemonHandlers.updateAgentTasks({})).not.toThrow();
     });
   });
+
+  describe('showDeliveryIndicator', () => {
+    test('should show delivered indicator', () => {
+      const deliveryEl = {
+        textContent: '',
+        className: '',
+        classList: { add: jest.fn(), remove: jest.fn() },
+      };
+      const headerEl = {
+        classList: { add: jest.fn(), remove: jest.fn() },
+        offsetWidth: 100,
+      };
+
+      mockDocument.getElementById.mockImplementation((id) => {
+        if (id === 'delivery-1') return deliveryEl;
+        return null;
+      });
+      // document.querySelector returns headerEl directly
+      mockDocument.querySelector.mockReturnValue(headerEl);
+
+      daemonHandlers.showDeliveryIndicator('1', 'delivered');
+
+      expect(deliveryEl.textContent).toBe('✓');
+      expect(deliveryEl.className).toBe('delivery-indicator visible delivered');
+      expect(headerEl.classList.remove).toHaveBeenCalledWith('delivery-flash');
+      expect(headerEl.classList.add).toHaveBeenCalledWith('delivery-flash');
+    });
+
+    test('should show failed indicator', () => {
+      const deliveryEl = {
+        textContent: '',
+        className: '',
+        classList: { add: jest.fn(), remove: jest.fn() },
+      };
+      mockDocument.getElementById.mockReturnValue(deliveryEl);
+      mockDocument.querySelector.mockReturnValue(null);
+
+      daemonHandlers.showDeliveryIndicator('1', 'failed');
+
+      expect(deliveryEl.textContent).toBe('✗');
+    });
+
+    test('should show pending indicator', () => {
+      const deliveryEl = {
+        textContent: '',
+        className: '',
+        classList: { add: jest.fn(), remove: jest.fn() },
+      };
+      mockDocument.getElementById.mockReturnValue(deliveryEl);
+      mockDocument.querySelector.mockReturnValue(null);
+
+      daemonHandlers.showDeliveryIndicator('1', 'pending');
+
+      expect(deliveryEl.textContent).toBe('…');
+    });
+
+    test('should auto-hide after 3 seconds', () => {
+      const deliveryEl = {
+        textContent: '',
+        className: '',
+        classList: { add: jest.fn(), remove: jest.fn() },
+      };
+      mockDocument.getElementById.mockReturnValue(deliveryEl);
+      mockDocument.querySelector.mockReturnValue(null);
+
+      daemonHandlers.showDeliveryIndicator('1', 'delivered');
+
+      jest.advanceTimersByTime(3000);
+      expect(deliveryEl.classList.remove).toHaveBeenCalledWith('visible');
+    });
+
+    test('should handle missing delivery element', () => {
+      mockDocument.getElementById.mockReturnValue(null);
+      expect(() => daemonHandlers.showDeliveryIndicator('1')).not.toThrow();
+    });
+  });
+
+  describe('showDeliveryFailed', () => {
+    test('should show failed indicator and toast', () => {
+      const deliveryEl = {
+        textContent: '',
+        className: '',
+        classList: { add: jest.fn(), remove: jest.fn() },
+      };
+      const mockToast = {
+        className: '',
+        textContent: '',
+        classList: { add: jest.fn() },
+        remove: jest.fn(),
+      };
+
+      mockDocument.getElementById.mockReturnValue(deliveryEl);
+      mockDocument.querySelector.mockReturnValue(null);
+      mockDocument.createElement.mockReturnValue(mockToast);
+
+      daemonHandlers.showDeliveryFailed('1', 'Connection timeout');
+
+      expect(deliveryEl.textContent).toBe('✗');
+      expect(mockToast.textContent).toContain('Delivery to pane 1 failed');
+    });
+  });
+
+  describe('markManualSync', () => {
+    test('should mark sync file as manually synced', () => {
+      const indicator = {
+        querySelector: jest.fn().mockReturnValue({
+          classList: { add: jest.fn(), remove: jest.fn() },
+          title: '',
+        }),
+      };
+      const leftGroup = { appendChild: jest.fn() };
+      const statusBar = { querySelector: jest.fn().mockReturnValue(leftGroup), firstElementChild: null };
+      mockDocument.querySelector.mockReturnValue(statusBar);
+      mockDocument.getElementById.mockReturnValue(indicator);
+
+      daemonHandlers.markManualSync('shared_context.md');
+
+      // Should not throw
+    });
+
+    test('should ignore non-sync files', () => {
+      expect(() => daemonHandlers.markManualSync('random.txt')).not.toThrow();
+    });
+  });
+
+  describe('setupSyncIndicator', () => {
+    test('should set up sync indicator and IPC listeners', () => {
+      const leftGroup = { appendChild: jest.fn() };
+      const statusBar = {
+        querySelector: jest.fn().mockReturnValue(leftGroup),
+        insertBefore: jest.fn(),
+        appendChild: jest.fn(),
+        firstElementChild: null,
+      };
+      mockDocument.querySelector.mockReturnValue(statusBar);
+      mockDocument.getElementById.mockReturnValue(null);
+      mockDocument.createElement.mockReturnValue({
+        id: '',
+        className: '',
+        appendChild: jest.fn(),
+        dataset: {},
+        textContent: '',
+        title: '',
+      });
+
+      daemonHandlers.setupSyncIndicator();
+
+      expect(ipcRenderer.on).toHaveBeenCalledWith('sync-file-changed', expect.any(Function));
+      expect(ipcRenderer.on).toHaveBeenCalledWith('sync-triggered', expect.any(Function));
+    });
+  });
+
+  describe('IPC Handler Execution', () => {
+    let ipcHandlers;
+
+    beforeEach(() => {
+      // Capture IPC handlers
+      ipcHandlers = {};
+      ipcRenderer.on.mockImplementation((channel, handler) => {
+        ipcHandlers[channel] = handler;
+      });
+    });
+
+    describe('daemon-connected handler', () => {
+      test('should handle SDK mode', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        // Trigger daemon-connected with SDK mode
+        await ipcHandlers['daemon-connected']({}, { terminals: [], sdkMode: true });
+
+        expect(daemonHandlers.isSDKModeEnabled()).toBe(true);
+        expect(onTerminalsReadyFn).toHaveBeenCalledWith(true);
+        expect(initTerminalsFn).not.toHaveBeenCalled();
+      });
+
+      test('should create new terminals when none exist', async () => {
+        const initTerminalsFn = jest.fn().mockResolvedValue();
+        const reattachTerminalFn = jest.fn();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setSDKMode(false); // Ensure PTY mode
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        await ipcHandlers['daemon-connected']({}, { terminals: [], sdkMode: false });
+
+        expect(initTerminalsFn).toHaveBeenCalled();
+        expect(onTerminalsReadyFn).toHaveBeenCalledWith(false);
+      });
+
+      test('should reattach existing terminals', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setSDKMode(false);
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        await ipcHandlers['daemon-connected']({}, {
+          terminals: [
+            { paneId: '1', alive: true, cwd: '/project/instances/lead', scrollback: 'test' },
+          ],
+          sdkMode: false,
+        });
+
+        expect(setReconnectedFn).toHaveBeenCalledWith(true);
+        expect(reattachTerminalFn).toHaveBeenCalledWith('1', 'test');
+      });
+    });
+
+    describe('daemon-reconnected handler', () => {
+      test('should handle reconnection', () => {
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        expect(() => ipcHandlers['daemon-reconnected']({})).not.toThrow();
+      });
+    });
+
+    describe('daemon-disconnected handler', () => {
+      test('should handle disconnection', () => {
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        expect(() => ipcHandlers['daemon-disconnected']({})).not.toThrow();
+      });
+    });
+
+    describe('inject-message handler', () => {
+      const terminal = require('../modules/terminal');
+
+      test('should queue message for delivery', () => {
+        daemonHandlers.setSDKMode(false);
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['inject-message']({}, { panes: ['1'], message: 'test message' });
+
+        jest.advanceTimersByTime(200);
+        expect(terminal.sendToPane).toHaveBeenCalled();
+      });
+
+      test('should handle UNSTICK command in PTY mode', () => {
+        daemonHandlers.setSDKMode(false);
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['inject-message']({}, { panes: ['1'], message: '(UNSTICK)' });
+
+        expect(terminal.sendUnstick).toHaveBeenCalledWith('1');
+      });
+
+      test('should handle UNSTICK command in SDK mode', () => {
+        daemonHandlers.setSDKMode(true);
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['inject-message']({}, { panes: ['1'], message: '(UNSTICK)' });
+
+        expect(ipcRenderer.invoke).toHaveBeenCalledWith('sdk-interrupt', '1');
+      });
+
+      test('should handle AGGRESSIVE_NUDGE in PTY mode', () => {
+        daemonHandlers.setSDKMode(false);
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['inject-message']({}, { panes: ['1'], message: '(AGGRESSIVE_NUDGE)' });
+
+        expect(terminal.aggressiveNudge).toHaveBeenCalledWith('1');
+      });
+
+      test('should route messages through SDK when enabled', () => {
+        daemonHandlers.setSDKMode(true);
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['inject-message']({}, { panes: ['2'], message: 'SDK message\r' });
+
+        jest.advanceTimersByTime(200);
+        expect(ipcRenderer.invoke).toHaveBeenCalledWith('sdk-send-message', '2', 'SDK message');
+      });
+
+      test('should handle multiple panes', () => {
+        daemonHandlers.setSDKMode(false);
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['inject-message']({}, { panes: ['1', '2', '3'], message: 'broadcast' });
+
+        jest.advanceTimersByTime(500);
+        expect(terminal.sendToPane).toHaveBeenCalledTimes(3);
+      });
+
+      test('should handle delivery ID for acks', async () => {
+        daemonHandlers.setSDKMode(true);
+        ipcRenderer.invoke.mockResolvedValue({});
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['inject-message']({}, {
+          panes: ['1'],
+          message: 'test',
+          deliveryId: 'del-123',
+        });
+
+        // Flush promises and advance timers
+        await Promise.resolve();
+        jest.advanceTimersByTime(200);
+        await Promise.resolve();
+
+        // In SDK mode, delivery ack is sent after sdk-send-message resolves
+        expect(ipcRenderer.invoke).toHaveBeenCalledWith('sdk-send-message', '1', 'test');
+      });
+    });
+
+    describe('state-changed handler', () => {
+      test('should update state display', () => {
+        const stateEl = { textContent: '', className: '' };
+        mockDocument.getElementById.mockImplementation((id) => {
+          if (id === 'stateDisplay') return stateEl;
+          return null;
+        });
+
+        daemonHandlers.setupStateListener();
+        ipcHandlers['state-changed']({}, { state: 'executing', agent_claims: {} });
+
+        expect(stateEl.textContent).toBe('EXECUTING');
+      });
+    });
+
+    describe('claude-state-changed handler', () => {
+      test('should update agent status for each pane', () => {
+        const statusEl = {
+          textContent: '',
+          innerHTML: '',
+          classList: { add: jest.fn(), remove: jest.fn() },
+          querySelector: jest.fn().mockReturnValue(null),
+        };
+        const badgeEl = {
+          classList: { add: jest.fn(), remove: jest.fn() },
+        };
+        mockDocument.getElementById.mockImplementation((id) => {
+          if (id.startsWith('status-')) return statusEl;
+          if (id.startsWith('badge-')) return badgeEl;
+          return null;
+        });
+
+        const handleTimerFn = jest.fn();
+        daemonHandlers.setupClaudeStateListener(handleTimerFn);
+        ipcHandlers['claude-state-changed']({}, { '1': 'running', '2': 'idle' });
+
+        expect(handleTimerFn).toHaveBeenCalledWith('1', 'running');
+        expect(handleTimerFn).toHaveBeenCalledWith('2', 'idle');
+      });
+    });
+
+    describe('cost-alert handler', () => {
+      test('should show cost alert', () => {
+        const costEl = {
+          style: {},
+          textContent: '',
+          closest: jest.fn().mockReturnValue({ classList: { add: jest.fn() } }),
+        };
+        const alertBadge = { style: {}, addEventListener: jest.fn() };
+        const mockToast = {
+          className: '',
+          textContent: '',
+          classList: { add: jest.fn() },
+          remove: jest.fn(),
+        };
+
+        mockDocument.getElementById.mockImplementation((id) => {
+          if (id === 'usageEstCost') return costEl;
+          if (id === 'costAlertBadge') return alertBadge;
+          return null;
+        });
+        mockDocument.querySelector.mockReturnValue(null);
+        mockDocument.createElement.mockReturnValue(mockToast);
+
+        daemonHandlers.setupCostAlertListener();
+        ipcHandlers['cost-alert']({}, { message: 'Budget exceeded', cost: 50.00 });
+
+        expect(costEl.textContent).toBe('$50');
+        expect(costEl.style.color).toBe('#e94560');
+      });
+    });
+
+    describe('project-changed handler', () => {
+      test('should update project display', () => {
+        const projectPathEl = {
+          textContent: '',
+          classList: { add: jest.fn(), remove: jest.fn() },
+        };
+        mockDocument.getElementById.mockReturnValue(projectPathEl);
+
+        daemonHandlers.setupProjectListener();
+        ipcHandlers['project-changed']({}, '/new/project/path');
+
+        expect(projectPathEl.textContent).toBe('/new/project/path');
+      });
+    });
+
+    describe('auto-trigger handler', () => {
+      test('should show auto-trigger feedback', () => {
+        const mockHeader = {
+          classList: { add: jest.fn(), remove: jest.fn() },
+          offsetWidth: 100,
+        };
+        const mockPane = { querySelector: jest.fn().mockReturnValue(mockHeader) };
+        const mockIndicator = {
+          className: '',
+          innerHTML: '',
+          classList: { add: jest.fn() },
+          remove: jest.fn(),
+        };
+
+        mockDocument.querySelector.mockReturnValue(mockPane);
+        mockDocument.createElement.mockReturnValue(mockIndicator);
+
+        daemonHandlers.setupAutoTriggerListener();
+        ipcHandlers['auto-trigger']({}, { fromPane: '1', toPane: '2', reason: 'test' });
+
+        expect(mockHeader.classList.add).toHaveBeenCalledWith('auto-triggered');
+      });
+
+      test('should handle completion-detected event', () => {
+        const mockToast = {
+          className: '',
+          textContent: '',
+          classList: { add: jest.fn() },
+          remove: jest.fn(),
+        };
+        mockDocument.querySelector.mockReturnValue(null);
+        mockDocument.createElement.mockReturnValue(mockToast);
+
+        daemonHandlers.setupAutoTriggerListener();
+        ipcHandlers['completion-detected']({}, { paneId: '1', pattern: 'done' });
+
+        expect(mockToast.textContent).toContain('completed task');
+      });
+    });
+
+    describe('handoff handlers', () => {
+      test('should handle task-handoff event', () => {
+        const mockNotification = {
+          className: '',
+          innerHTML: '',
+          classList: { add: jest.fn() },
+          remove: jest.fn(),
+        };
+        mockDocument.querySelector.mockReturnValue(null);
+        mockDocument.createElement.mockReturnValue(mockNotification);
+
+        daemonHandlers.setupHandoffListener();
+        ipcHandlers['task-handoff']({}, { fromPane: '1', toPane: '2', reason: 'Done' });
+
+        expect(mockNotification.innerHTML).toContain('Architect');
+      });
+
+      test('should handle auto-handoff event', () => {
+        const mockNotification = {
+          className: '',
+          innerHTML: '',
+          classList: { add: jest.fn() },
+          remove: jest.fn(),
+        };
+        mockDocument.querySelector.mockReturnValue(null);
+        mockDocument.createElement.mockReturnValue(mockNotification);
+
+        daemonHandlers.setupHandoffListener();
+        ipcHandlers['auto-handoff']({}, { fromPane: '3', toPane: '4' });
+
+        expect(mockNotification.innerHTML).toContain('Implementer');
+      });
+    });
+
+    describe('conflict handlers', () => {
+      test('should handle file-conflict event', () => {
+        const mockNotification = {
+          className: '',
+          innerHTML: '',
+          classList: { add: jest.fn() },
+          remove: jest.fn(),
+        };
+        mockDocument.querySelector.mockReturnValue(null);
+        mockDocument.createElement.mockReturnValue(mockNotification);
+
+        daemonHandlers.setupConflictResolutionListener();
+        ipcHandlers['file-conflict']({}, { file: 'app.js', agents: ['1', '2'], status: 'pending' });
+
+        expect(mockNotification.innerHTML).toContain('app.js');
+      });
+
+      test('should handle conflict-resolved event', () => {
+        const mockNotification = {
+          className: '',
+          innerHTML: '',
+          classList: { add: jest.fn() },
+          remove: jest.fn(),
+        };
+        mockDocument.querySelector.mockReturnValue(null);
+        mockDocument.createElement.mockReturnValue(mockNotification);
+
+        daemonHandlers.setupConflictResolutionListener();
+        ipcHandlers['conflict-resolved']({}, { file: 'app.js', agents: ['1'] });
+
+        expect(mockNotification.className).toBe('conflict-notification');
+      });
+
+      test('should handle conflict-queued event', () => {
+        const mockNotification = {
+          className: '',
+          innerHTML: '',
+          classList: { add: jest.fn() },
+          remove: jest.fn(),
+        };
+        mockDocument.querySelector.mockReturnValue(null);
+        mockDocument.createElement.mockReturnValue(mockNotification);
+
+        daemonHandlers.setupConflictResolutionListener();
+        ipcHandlers['conflict-queued']({}, { file: 'main.js', agents: ['2', '3'] });
+
+        expect(mockNotification.innerHTML).toContain('main.js');
+      });
+    });
+
+    describe('rollback handlers', () => {
+      test('should handle rollback-available event', () => {
+        const mockIndicator = {
+          className: '',
+          innerHTML: '',
+          querySelector: jest.fn().mockReturnValue({ addEventListener: jest.fn() }),
+        };
+        mockDocument.querySelector.mockReturnValue(null);
+        mockDocument.createElement.mockReturnValue(mockIndicator);
+
+        daemonHandlers.setupRollbackListener();
+        ipcHandlers['rollback-available']({}, {
+          checkpointId: 'cp-1',
+          files: ['file1.js'],
+          timestamp: '2026-01-30',
+        });
+
+        expect(mockIndicator.innerHTML).toContain('Rollback Available');
+      });
+
+      test('should handle rollback-cleared event', () => {
+        const existingIndicator = { remove: jest.fn() };
+        mockDocument.querySelector.mockReturnValue(existingIndicator);
+
+        daemonHandlers.setupRollbackListener();
+        ipcHandlers['rollback-cleared']({});
+
+        expect(existingIndicator.remove).toHaveBeenCalled();
+      });
+    });
+
+    describe('sync handlers', () => {
+      beforeEach(() => {
+        // Reset sync indicator state so setupSyncIndicator can re-register handlers
+        daemonHandlers._resetForTesting();
+      });
+
+      test('should handle sync-file-changed event', () => {
+        const indicator = {
+          querySelector: jest.fn().mockReturnValue({
+            classList: { add: jest.fn(), remove: jest.fn() },
+            title: '',
+          }),
+        };
+        mockDocument.getElementById.mockReturnValue(indicator);
+        mockDocument.querySelector.mockReturnValue({
+          querySelector: jest.fn().mockReturnValue(null),
+          appendChild: jest.fn(),
+        });
+        mockDocument.createElement.mockReturnValue({
+          id: '',
+          className: '',
+          appendChild: jest.fn(),
+          dataset: {},
+          textContent: '',
+        });
+
+        daemonHandlers.setupSyncIndicator();
+        ipcHandlers['sync-file-changed']({}, { file: 'shared_context.md', changedAt: Date.now() });
+
+        // Should update sync state
+      });
+
+      test('should handle sync-triggered event', () => {
+        const indicator = {
+          querySelector: jest.fn().mockReturnValue({
+            classList: { add: jest.fn(), remove: jest.fn() },
+            title: '',
+          }),
+        };
+        mockDocument.getElementById.mockReturnValue(indicator);
+        mockDocument.querySelector.mockReturnValue({
+          querySelector: jest.fn().mockReturnValue(null),
+          appendChild: jest.fn(),
+        });
+        mockDocument.createElement.mockReturnValue({
+          id: '',
+          className: '',
+          appendChild: jest.fn(),
+          dataset: {},
+          textContent: '',
+        });
+
+        daemonHandlers.setupSyncIndicator();
+        ipcHandlers['sync-triggered']({}, {
+          file: 'blockers.md',
+          notified: ['1', '2'],
+          mode: 'pty',
+        });
+
+        // Should update sync state
+      });
+    });
+
+    describe('health handlers', () => {
+      const terminal = require('../modules/terminal');
+
+      test('should handle nudge-pane event', () => {
+        terminal.nudgePane = jest.fn();
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['nudge-pane']({}, { paneId: '3' });
+
+        expect(terminal.nudgePane).toHaveBeenCalledWith('3');
+      });
+
+      test('should handle restart-pane event', () => {
+        terminal.restartPane = jest.fn();
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['restart-pane']({}, { paneId: '2' });
+
+        expect(terminal.restartPane).toHaveBeenCalledWith('2');
+      });
+
+      test('should handle restart-all-panes event', () => {
+        terminal.freshStartAll = jest.fn();
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['restart-all-panes']({});
+
+        expect(terminal.freshStartAll).toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('Message Queue Processing', () => {
+    test('should process messages sequentially', () => {
+      const terminal = require('../modules/terminal');
+      daemonHandlers.setSDKMode(false);
+
+      // Setup daemon listeners to get inject-message handler
+      let injectHandler;
+      ipcRenderer.on.mockImplementation((channel, handler) => {
+        if (channel === 'inject-message') injectHandler = handler;
+      });
+      daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+      // Queue messages one at a time - each is processed before next is queued
+      // so all three are processed immediately (no throttling needed)
+      injectHandler({}, { panes: ['1'], message: 'msg1' });
+      injectHandler({}, { panes: ['1'], message: 'msg2' });
+      injectHandler({}, { panes: ['1'], message: 'msg3' });
+
+      // All messages processed synchronously since queue is empty between each
+      expect(terminal.sendToPane).toHaveBeenCalledTimes(3);
+      expect(terminal.sendToPane).toHaveBeenCalledWith('1', 'msg1', expect.any(Object));
+      expect(terminal.sendToPane).toHaveBeenCalledWith('1', 'msg2', expect.any(Object));
+      expect(terminal.sendToPane).toHaveBeenCalledWith('1', 'msg3', expect.any(Object));
+    });
+
+    test('should throttle when multiple items in queue', () => {
+      const terminal = require('../modules/terminal');
+      daemonHandlers.setSDKMode(false);
+
+      // Setup daemon listeners
+      let injectHandler;
+      ipcRenderer.on.mockImplementation((channel, handler) => {
+        if (channel === 'inject-message') injectHandler = handler;
+      });
+      daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+      // Block processing by adding to processingPanes first
+      // Then queue multiple messages - they'll throttle when processed
+      terminal.sendToPane.mockClear();
+
+      // Inject with multiple panes to test queue per pane
+      injectHandler({}, { panes: ['2'], message: 'msgA' });
+      expect(terminal.sendToPane).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Session Timer Functions', () => {
+    test('should format timer correctly', () => {
+      // Test through handleSessionTimerState
+      const timerEl = {
+        textContent: '',
+        classList: { add: jest.fn(), remove: jest.fn() },
+      };
+      mockDocument.getElementById.mockReturnValue(timerEl);
+
+      daemonHandlers.handleSessionTimerState('1', 'running');
+
+      // Advance time and update timers
+      jest.advanceTimersByTime(65000);
+
+      // Timer should have been updated
+      expect(timerEl.classList.add).toHaveBeenCalledWith('active');
+    });
+
+    test('should track multiple sessions', () => {
+      const timerEls = {};
+      mockDocument.getElementById.mockImplementation((id) => {
+        if (!timerEls[id]) {
+          timerEls[id] = {
+            textContent: '',
+            classList: { add: jest.fn(), remove: jest.fn() },
+          };
+        }
+        return timerEls[id];
+      });
+
+      daemonHandlers.handleSessionTimerState('1', 'running');
+      daemonHandlers.handleSessionTimerState('2', 'running');
+
+      const total = daemonHandlers.getTotalSessionTime();
+      expect(total).toBeGreaterThanOrEqual(0);
+    });
+
+    test('should clear timer interval when all sessions stop', () => {
+      mockDocument.getElementById.mockReturnValue({
+        textContent: '',
+        classList: { add: jest.fn(), remove: jest.fn() },
+      });
+
+      daemonHandlers.handleSessionTimerState('1', 'running');
+      daemonHandlers.handleSessionTimerState('1', 'idle');
+
+      // After some time, interval should be cleared if no active sessions
+      jest.advanceTimersByTime(2000);
+    });
+  });
+
+  describe('Rollback UI Actions', () => {
+    test('should handle dismiss button click', () => {
+      const dismissBtn = { addEventListener: jest.fn() };
+      const confirmBtn = { addEventListener: jest.fn() };
+      const mockIndicator = {
+        className: '',
+        innerHTML: '',
+        querySelector: jest.fn((selector) => {
+          if (selector.includes('dismiss')) return dismissBtn;
+          if (selector.includes('confirm')) return confirmBtn;
+          return null;
+        }),
+        remove: jest.fn(),
+      };
+
+      mockDocument.querySelector.mockReturnValue(null);
+      mockDocument.createElement.mockReturnValue(mockIndicator);
+
+      daemonHandlers.showRollbackUI({
+        checkpointId: 'cp-1',
+        files: ['file1.js'],
+        timestamp: '2026-01-30',
+      });
+
+      // Get click handler
+      const dismissClickHandler = dismissBtn.addEventListener.mock.calls.find(
+        c => c[0] === 'click'
+      )?.[1];
+
+      if (dismissClickHandler) {
+        // Mock querySelector for hideRollbackUI
+        mockDocument.querySelector.mockReturnValue(mockIndicator);
+        dismissClickHandler();
+        expect(mockIndicator.remove).toHaveBeenCalled();
+      }
+    });
+
+    test('should handle confirm button click with canceled confirm', async () => {
+      global.confirm.mockReturnValue(false);
+
+      const dismissBtn = { addEventListener: jest.fn() };
+      const confirmBtn = { addEventListener: jest.fn() };
+      const mockIndicator = {
+        className: '',
+        innerHTML: '',
+        querySelector: jest.fn((selector) => {
+          if (selector.includes('dismiss')) return dismissBtn;
+          if (selector.includes('confirm')) return confirmBtn;
+          return null;
+        }),
+      };
+
+      mockDocument.querySelector.mockReturnValue(null);
+      mockDocument.createElement.mockReturnValue(mockIndicator);
+
+      daemonHandlers.showRollbackUI({
+        checkpointId: 'cp-1',
+        files: ['file1.js'],
+        timestamp: '2026-01-30',
+      });
+
+      const confirmClickHandler = confirmBtn.addEventListener.mock.calls.find(
+        c => c[0] === 'click'
+      )?.[1];
+
+      if (confirmClickHandler) {
+        await confirmClickHandler();
+        // Should not invoke rollback since confirm was canceled
+        expect(ipcRenderer.invoke).not.toHaveBeenCalledWith('apply-rollback', 'cp-1');
+      }
+    });
+
+    test('should handle successful rollback', async () => {
+      global.confirm.mockReturnValue(true);
+      ipcRenderer.invoke.mockResolvedValue({ success: true, filesRestored: 2 });
+
+      const dismissBtn = { addEventListener: jest.fn() };
+      const confirmBtn = { addEventListener: jest.fn() };
+      const mockIndicator = {
+        className: '',
+        innerHTML: '',
+        querySelector: jest.fn((selector) => {
+          if (selector.includes('dismiss')) return dismissBtn;
+          if (selector.includes('confirm')) return confirmBtn;
+          return null;
+        }),
+        remove: jest.fn(),
+      };
+
+      mockDocument.querySelector.mockReturnValue(null);
+      mockDocument.createElement.mockReturnValue(mockIndicator);
+
+      daemonHandlers.showRollbackUI({
+        checkpointId: 'cp-1',
+        files: ['file1.js'],
+        timestamp: '2026-01-30',
+      });
+
+      const confirmClickHandler = confirmBtn.addEventListener.mock.calls.find(
+        c => c[0] === 'click'
+      )?.[1];
+
+      if (confirmClickHandler) {
+        mockDocument.querySelector.mockReturnValue(mockIndicator);
+        await confirmClickHandler();
+        expect(ipcRenderer.invoke).toHaveBeenCalledWith('apply-rollback', 'cp-1');
+      }
+    });
+  });
+
+  describe('Conflict Status Text', () => {
+    test('should show pending status text', () => {
+      const mockNotification = {
+        className: '',
+        innerHTML: '',
+        classList: { add: jest.fn() },
+        remove: jest.fn(),
+      };
+      mockDocument.querySelector.mockReturnValue(null);
+      mockDocument.createElement.mockReturnValue(mockNotification);
+
+      daemonHandlers.showConflictNotification({
+        file: 'test.js',
+        agents: ['1'],
+        status: 'pending',
+      });
+
+      expect(mockNotification.innerHTML).toContain('Waiting for resolution');
+    });
+
+    test('should show queued status text', () => {
+      const mockNotification = {
+        className: '',
+        innerHTML: '',
+        classList: { add: jest.fn() },
+        remove: jest.fn(),
+      };
+      mockDocument.querySelector.mockReturnValue(null);
+      mockDocument.createElement.mockReturnValue(mockNotification);
+
+      daemonHandlers.showConflictNotification({
+        file: 'test.js',
+        agents: ['1'],
+        status: 'queued',
+      });
+
+      expect(mockNotification.innerHTML).toContain('Operations queued');
+    });
+
+    test('should show resolved status text', () => {
+      const mockNotification = {
+        className: '',
+        innerHTML: '',
+        classList: { add: jest.fn() },
+        remove: jest.fn(),
+      };
+      mockDocument.querySelector.mockReturnValue(null);
+      mockDocument.createElement.mockReturnValue(mockNotification);
+
+      daemonHandlers.showConflictNotification({
+        file: 'test.js',
+        agents: ['1'],
+        status: 'resolved',
+      });
+
+      expect(mockNotification.innerHTML).toContain('Conflict resolved');
+    });
+  });
+
+  describe('Pane Header Flashing', () => {
+    test('should flash header on delivery', () => {
+      const headerEl = {
+        classList: { add: jest.fn(), remove: jest.fn() },
+        offsetWidth: 100,
+      };
+      const deliveryEl = {
+        textContent: '',
+        className: '',
+        classList: { add: jest.fn(), remove: jest.fn() },
+      };
+
+      mockDocument.getElementById.mockImplementation((id) => {
+        if (id.startsWith('delivery-')) return deliveryEl;
+        return null;
+      });
+      // document.querySelector returns headerEl directly
+      mockDocument.querySelector.mockReturnValue(headerEl);
+
+      daemonHandlers.showDeliveryIndicator('1', 'delivered');
+
+      expect(headerEl.classList.add).toHaveBeenCalledWith('delivery-flash');
+    });
+  });
+
+  describe('Agent Status Badge Updates', () => {
+    test('should set working class for running state', () => {
+      const statusEl = {
+        textContent: '',
+        innerHTML: '',
+        classList: { add: jest.fn(), remove: jest.fn() },
+        querySelector: jest.fn().mockReturnValue(null),
+      };
+      const badgeEl = {
+        classList: { add: jest.fn(), remove: jest.fn() },
+      };
+      mockDocument.getElementById.mockImplementation((id) => {
+        if (id.startsWith('status-')) return statusEl;
+        if (id.startsWith('badge-')) return badgeEl;
+        return null;
+      });
+
+      let handler;
+      ipcRenderer.on.mockImplementation((channel, h) => {
+        if (channel === 'claude-state-changed') handler = h;
+      });
+
+      daemonHandlers.setupClaudeStateListener();
+      handler({}, { '1': 'running' });
+
+      expect(badgeEl.classList.add).toHaveBeenCalledWith('working');
+    });
+
+    test('should set starting class for starting state', () => {
+      const statusEl = {
+        textContent: '',
+        innerHTML: '',
+        classList: { add: jest.fn(), remove: jest.fn() },
+        querySelector: jest.fn().mockReturnValue(null),
+      };
+      const badgeEl = {
+        classList: { add: jest.fn(), remove: jest.fn() },
+      };
+      mockDocument.getElementById.mockImplementation((id) => {
+        if (id.startsWith('status-')) return statusEl;
+        if (id.startsWith('badge-')) return badgeEl;
+        return null;
+      });
+
+      let handler;
+      ipcRenderer.on.mockImplementation((channel, h) => {
+        if (channel === 'claude-state-changed') handler = h;
+      });
+
+      daemonHandlers.setupClaudeStateListener();
+      handler({}, { '1': 'starting' });
+
+      expect(badgeEl.classList.add).toHaveBeenCalledWith('starting');
+    });
+
+    test('should preserve spinner when activity class is present', () => {
+      const spinnerEl = { className: 'pane-spinner' };
+      const statusEl = {
+        textContent: '',
+        innerHTML: '',
+        classList: new Set(['activity-reading']),
+        querySelector: jest.fn().mockReturnValue(spinnerEl),
+        appendChild: jest.fn(),
+      };
+      statusEl.classList.add = jest.fn((cls) => statusEl.classList.add(cls));
+      statusEl.classList.remove = jest.fn((cls) => statusEl.classList.delete(cls));
+      statusEl.classList.some = jest.fn((fn) => Array.from(statusEl.classList).some(fn));
+
+      mockDocument.getElementById.mockImplementation((id) => {
+        if (id.startsWith('status-')) return statusEl;
+        return { classList: { add: jest.fn(), remove: jest.fn() } };
+      });
+
+      let handler;
+      ipcRenderer.on.mockImplementation((channel, h) => {
+        if (channel === 'claude-state-changed') handler = h;
+      });
+
+      daemonHandlers.setupClaudeStateListener();
+      handler({}, { '1': 'running' });
+
+      // Should not override the activity indicator
+    });
+  });
 });

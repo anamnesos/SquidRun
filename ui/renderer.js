@@ -621,12 +621,52 @@ function setupEventListeners() {
     if (!broadcastInput || !commandTarget) return;
     const target = commandTarget.value;
     const targetName = commandTarget.options[commandTarget.selectedIndex]?.text || 'Architect';
-    if (target === 'all') {
+    if (target === 'auto') {
+      broadcastInput.placeholder = 'Describe a task to auto-route (Enter to send)';
+      broadcastInput.title = 'Auto-route a task based on description';
+    } else if (target === 'all') {
       broadcastInput.placeholder = 'Type here to message all agents (Enter to send)';
       broadcastInput.title = 'Send message to all agents';
     } else {
       broadcastInput.placeholder = `Type here to message ${targetName} (Enter to send)`;
       broadcastInput.title = `Send message to ${targetName}`;
+    }
+  }
+
+  function showStatusNotice(message, timeoutMs = 6000) {
+    const statusBar = document.querySelector('.status-bar');
+    if (!statusBar) return;
+    const notice = document.createElement('span');
+    notice.className = 'status-notice';
+    notice.textContent = ` | ${message}`;
+    notice.style.cssText = 'color: #8fd3ff; margin-left: 8px;';
+    statusBar.appendChild(notice);
+    setTimeout(() => notice.remove(), timeoutMs);
+  }
+
+  async function routeNaturalTask(message) {
+    try {
+      const result = await ipcRenderer.invoke('route-task-input', message);
+      if (result?.success) {
+        const routedCount = result.routed?.length || 0;
+        showStatusNotice(`Auto-routed ${routedCount} task${routedCount === 1 ? '' : 's'}`);
+        showDeliveryStatus('delivered');
+        return true;
+      }
+      if (result?.ambiguity?.isAmbiguous) {
+        showDeliveryStatus('failed');
+        const questions = result.ambiguity.questions?.join(' ') || 'Clarification needed.';
+        showStatusNotice(`Clarify: ${questions}`, 9000);
+        return false;
+      }
+      showDeliveryStatus('failed');
+      showStatusNotice('Auto-route failed. Check task description.', 7000);
+      return false;
+    } catch (err) {
+      log.error('AutoRoute', 'Failed to route task:', err);
+      showDeliveryStatus('failed');
+      showStatusNotice('Auto-route error. See logs.', 7000);
+      return false;
     }
   }
 
@@ -667,6 +707,15 @@ function setupEventListeners() {
 
     // Show sending status
     showDeliveryStatus('sending');
+
+    const trimmed = message.trim();
+    if (trimmed.toLowerCase().startsWith('/task ')) {
+      return routeNaturalTask(trimmed.slice(6));
+    }
+
+    if (commandTarget && commandTarget.value === 'auto') {
+      return routeNaturalTask(trimmed);
+    }
 
     // Check SDK mode from settings
     const currentSettings = settings.getSettings();
@@ -1237,11 +1286,34 @@ function initCommandPalette() {
   log.info('UI', 'Command palette initialized (Ctrl+K)');
 }
 
+function applyShortcutTooltips() {
+  const shortcutRegex = /(Ctrl\+[A-Za-z0-9]+|Alt\+[A-Za-z0-9]+|Shift\+[A-Za-z0-9]+|Cmd\+[A-Za-z0-9]+|⌘[A-Za-z0-9]+|Esc|Escape|Enter|Tab|↑|↓)/gi;
+  document.querySelectorAll('[title]').forEach((el) => {
+    const title = el.getAttribute('title');
+    if (!title) return;
+    const matches = title.match(shortcutRegex);
+    if (!matches) return;
+    const shortcut = matches.join(' / ').replace(/Escape/gi, 'Esc');
+    const cleaned = title
+      .replace(shortcutRegex, '')
+      .replace(/[()]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    el.dataset.tooltip = cleaned || title;
+    el.dataset.shortcut = shortcut;
+    el.classList.add('shortcut-tooltip');
+    el.removeAttribute('title');
+  });
+}
+
 // Initialize on DOM load
 document.addEventListener('DOMContentLoaded', async () => {
   // Setup all event handlers
   setupEventListeners();
   initMainPaneState();
+
+  // Enhance shortcut tooltips for controls with keyboard hints
+  applyShortcutTooltips();
 
   // Initialize global UI focus tracker for multi-pane focus restore
   terminal.initUIFocusTracker();
@@ -1344,6 +1416,28 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       log.info('Heartbeat', `State changed: ${state}, interval: ${displayInterval}`);
     }
+  });
+
+  // Self-healing recovery actions
+  ipcRenderer.on('nudge-pane', (event, data) => {
+    const paneId = data?.paneId;
+    if (paneId) {
+      terminal.nudgePane(String(paneId));
+    }
+  });
+
+  ipcRenderer.on('restart-pane', (event, data) => {
+    const paneId = data?.paneId;
+    if (paneId) {
+      terminal.restartPane(String(paneId));
+    }
+  });
+
+  ipcRenderer.on('restart-all-panes', () => {
+    const panes = terminal.PANE_IDS || ['1', '2', '3', '4', '5', '6'];
+    panes.forEach((paneId, index) => {
+      setTimeout(() => terminal.restartPane(String(paneId)), index * 200);
+    });
   });
 
   // Codex activity indicator - update pane status based on Codex exec activity
@@ -1584,7 +1678,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const el = document.getElementById(`cli-badge-${paneId}`);
     if (!el) return;
     const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-    const key = (provider || label || '').toLowerCase();
+    const key = (label || provider || '').toLowerCase();
     el.textContent = label || provider || '';
     el.className = 'cli-badge visible';
     if (pane) {
@@ -1628,10 +1722,27 @@ document.addEventListener('DOMContentLoaded', async () => {
   tabs.setupPerformanceTab();   // PT2: Performance dashboard
   tabs.setupTemplatesTab();     // TM2: Template management
   tabs.setupActivityTab();      // OB2: Activity log
+  tabs.setupQueueTab();         // Task #3: Task queue dashboard
+  tabs.setupScheduleTab();      // Task #28: Scheduler
   tabs.setupTestsTab();         // TR1: Test results panel
   tabs.setupInspectorTab();     // P2-5: Message inspector
   tabs.setupCIStatusIndicator(); // CI2: CI status indicator
   tabs.setupMCPStatusIndicator(); // MC7: MCP status indicator
+  tabs.setupGitTab();           // Task #6: Git integration
+  tabs.setupMemoryTab();        // Task #8: Conversation history viewer
+  tabs.setupHealthTab();        // Task #29: Self-healing error recovery UI
+  tabs.setupGraphTab();         // Task #36: Knowledge graph visualization
+  tabs.setupWorkflowTab();      // Task #19: Workflow builder
+  tabs.setupDebugTab();         // Task #21: Agent debugging/replay
+  tabs.setupReviewTab();        // Task #18: AI-powered code review
+  tabs.setupDocsTab();          // Task #23: Automated documentation generation
+  tabs.setupCostsTab();         // Task #24: Cost optimization engine
+  tabs.setupSecurityTab();      // Task #25: Security hardening
+  tabs.setupDashboardTab();     // Task #30: Multi-project dashboard
+  tabs.setupScaffoldTab();      // Task #12: Project scaffolding
+  tabs.setupDeployTab();        // Task #15: Automated deployment pipeline
+  tabs.setupCollabTab();        // Task #11: Real-time collaboration
+  tabs.setupMobileTab();        // Task #17: Mobile companion app
 
   // Setup daemon listeners (for terminal reconnection)
   // Pass markTerminalsReady callback to fix auto-spawn race condition

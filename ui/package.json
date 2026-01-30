@@ -5,11 +5,32 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "dev": "electron . --dev",
     "test": "jest",
     "test:coverage": "jest --coverage",
+    "test:watch": "jest --watch",
     "lint": "eslint modules/*.js renderer.js main.js",
     "lint:fix": "eslint modules/*.js renderer.js main.js --fix",
     "rebuild": "npx @electron/rebuild -f -w node-pty",
+    "build": "echo 'Building Hivemind...' && npm run lint && npm run test",
+    "build:dev": "echo 'Development build...'",
+    "build:staging": "npm run lint && npm run test && echo 'Staging build complete'",
+    "build:prod": "npm run lint && npm run test && echo 'Production build complete'",
+    "build:win32": "echo 'Windows build...'",
+    "build:darwin": "echo 'macOS build...'",
+    "build:linux": "echo 'Linux build...'",
+    "package": "electron-builder --publish=never",
+    "package:win": "electron-builder --win --publish=never",
+    "package:mac": "electron-builder --mac --publish=never",
+    "package:linux": "electron-builder --linux --publish=never",
+    "package:all": "electron-builder -mwl --publish=never",
+    "release": "electron-builder --publish=always",
+    "release:draft": "electron-builder --publish=always --draft",
+    "clean": "rimraf dist out coverage",
+    "prebuild": "npm run clean",
+    "postbuild": "echo 'Build complete!'",
+    "notify:staging": "echo 'Deployed to staging'",
+    "notify:production": "echo 'Deployed to production'",
     "daemon:start": "node terminal-daemon.js",
     "daemon:stop": "node -e \"const fs=require('fs');const p=fs.readFileSync('daemon.pid','utf-8').trim();process.kill(parseInt(p),'SIGTERM');fs.unlinkSync('daemon.pid');console.log('Daemon stopped')\"",
     "daemon:status": "node -e \"const fs=require('fs');try{const p=fs.readFileSync('daemon.pid','utf-8').trim();process.kill(parseInt(p),0);console.log('Daemon running (PID '+p+')')}catch(e){console.log('Daemon not running')}\""
@@ -37,6 +58,7 @@
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "chokidar": "^3.6.0",
-    "node-pty": "^1.0.0"
+    "node-pty": "^1.0.0",
+    "ws": "^8.19.0"
   }
 }

@@ -1,66 +1,68 @@
 /* state-bar.css — State display, progress bar, agent activity badges */
 
 .state-bar {
-  background: #16213e;
-  padding: 6px 16px;
+  background: var(--color-bg-medium);
+  padding: var(--space-2) var(--space-4);
   display: flex;
   align-items: center;
-  gap: 16px;
-  border-bottom: 1px solid #0f3460;
-  font-size: 12px;
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--color-bg-light);
+  font-size: var(--text-base);
 }
 
 .state-indicator {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .state-label {
-  color: #888;
+  color: var(--color-text-muted);
 }
 
 .state-value {
-  background: #e94560;
-  color: #fff;
-  padding: 2px 8px;
-  border-radius: 3px;
+  background: var(--color-primary);
+  color: var(--color-text);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
   font-weight: 600;
   text-transform: uppercase;
-  font-size: 11px;
+  font-size: var(--text-sm);
+  transition: background var(--transition-normal), color var(--transition-normal),
+    box-shadow var(--transition-normal), transform var(--transition-normal);
 }
 
 .state-value.idle { background: #555; }
-.state-value.planning { background: #ffc857; color: #1a1a2e; }
+.state-value.planning { background: var(--color-warning); color: var(--color-bg-dark); }
 .state-value.plan_review { background: #9b59b6; }
-.state-value.executing { background: #4ecca3; color: #1a1a2e; }
-.state-value.checkpoint { background: #00d9ff; color: #1a1a2e; }
-.state-value.complete { background: #4ecca3; color: #1a1a2e; }
-.state-value.error { background: #e94560; }
+.state-value.executing { background: var(--color-secondary); color: var(--color-bg-dark); animation: statePulse 2.4s ease-in-out infinite; }
+.state-value.checkpoint { background: var(--color-info); color: var(--color-bg-dark); animation: statePulse 2.8s ease-in-out infinite; }
+.state-value.complete { background: var(--color-secondary); color: var(--color-bg-dark); }
+.state-value.error { background: var(--color-error); }
 
 .progress-indicator {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .progress-bar {
   width: 100px;
   height: 6px;
-  background: #0f3460;
-  border-radius: 3px;
+  background: var(--color-bg-light);
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: #4ecca3;
-  transition: width 0.3s ease;
+  background: var(--color-secondary);
+  transition: width var(--transition-slow), background var(--transition-normal);
 }
 
 .progress-text {
-  color: #888;
-  font-size: 11px;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
 }
 
 /* Agent activity badges */
@@ -71,13 +73,33 @@
   border-radius: 50%;
   margin-right: 6px;
   background: #555;
+  transition: background var(--transition-normal), box-shadow var(--transition-normal), transform var(--transition-normal);
 }
 
 .agent-badge.active {
-  background: #4ecca3;
-  box-shadow: 0 0 6px #4ecca3;
+  background: var(--color-secondary);
+  box-shadow: var(--glow-secondary);
+  animation: agentPulse 2s ease-in-out infinite;
 }
 
 .agent-badge.idle {
   background: #555;
+}
+
+@keyframes statePulse {
+  0%, 100% { box-shadow: 0 0 0 transparent; transform: translateY(0); }
+  50% { box-shadow: var(--glow-secondary); transform: translateY(-1px); }
+}
+
+@keyframes agentPulse {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.15); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .state-value.executing,
+  .state-value.checkpoint,
+  .agent-badge.active {
+    animation: none;
+  }
 }

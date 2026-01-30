@@ -5,6 +5,9 @@
   currentSettings: null,
   watcher: null,
   triggers: null,
+  recoveryManager: null,
+  pluginManager: null,
+  backupManager: null,
   usageStats: null,
   sessionStartTimes: null,
   costAlertSent: false,
@@ -25,6 +28,9 @@ function initState(deps = {}) {
   assign('currentSettings');
   assign('watcher');
   assign('triggers');
+  assign('recoveryManager');
+  assign('pluginManager');
+  assign('backupManager');
   assign('usageStats');
   assign('sessionStartTimes');
 }

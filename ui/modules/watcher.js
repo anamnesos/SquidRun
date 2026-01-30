@@ -22,6 +22,7 @@ let triggerWatcher = null; // UX-9: Fast watcher for trigger files (sub-50ms)
 let messageWatcher = null; // Separate watcher for message queues
 let triggers = null; // Reference to triggers module
 let getSettings = null; // Settings getter for auto-sync control
+let notifyExternal = null; // External notification hook
 
 const SYNC_FILES = new Set([
   'shared_context.md',
@@ -466,6 +467,24 @@ function transition(newState) {
   if (message && triggers) {
     triggers.notifyAgents(state.active_agents, message);
   }
+
+  if (notifyExternal) {
+    if (newState === States.COMPLETE) {
+      notifyExternal({
+        category: 'completion',
+        title: 'Workflow complete',
+        message: `State transitioned to ${newState}`,
+        meta: { state: newState },
+      });
+    } else if (newState === States.ERROR) {
+      notifyExternal({
+        category: 'alert',
+        title: 'Workflow error',
+        message: `State transitioned to ${newState}`,
+        meta: { state: newState },
+      });
+    }
+  }
 }
 
 // ============================================================
@@ -635,6 +654,7 @@ function startWatcher() {
       /node_modules/,
       /\.git/,
       /instances\//,
+      /backups\//,
       /state\.json$/,
       /triggers\//,    // UX-9: Triggers handled by fast watcher
     ],
@@ -708,7 +728,8 @@ function handleTriggerFileWithRetry(filePath, filename, attempt = 0) {
       return;
     }
 
-    log.info('Trigger', `Empty trigger file after ${TRIGGER_READ_MAX_ATTEMPTS} retries: ${filename}`);
+    // Expected post-clear noise: trigger was delivered then cleared, watcher sees empty file
+    log.debug('Trigger', `Empty trigger file after ${TRIGGER_READ_MAX_ATTEMPTS} retries: ${filename}`);
     return;
   }
 
@@ -779,6 +800,10 @@ function init(window, triggersModule, settingsGetter = null) {
   mainWindow = window;
   triggers = triggersModule;
   getSettings = settingsGetter;
+}
+
+function setExternalNotifier(fn) {
+  notifyExternal = typeof fn === 'function' ? fn : null;
 }
 
 // ============================================================
@@ -1147,4 +1172,5 @@ module.exports = {
   startTriggerWatcher,
   stopTriggerWatcher,
   TRIGGER_PATH,
+  setExternalNotifier,
 };

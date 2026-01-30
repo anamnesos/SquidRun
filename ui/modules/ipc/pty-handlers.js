@@ -10,6 +10,7 @@ const log = require('../logger');
 function registerPtyHandlers(ctx, deps) {
   const { ipcMain, INSTANCE_DIRS } = ctx;
   const { broadcastClaudeState, recordSessionStart } = deps;
+  const getRecoveryManager = () => deps?.recoveryManager || ctx.recoveryManager;
 
   ipcMain.handle('pty-create', async (event, paneId, workingDir) => {
     if (!ctx.daemonClient || !ctx.daemonClient.connected) {
@@ -88,6 +89,10 @@ function registerPtyHandlers(ctx, deps) {
 
   ipcMain.handle('pty-kill', (event, paneId) => {
     if (ctx.daemonClient && ctx.daemonClient.connected) {
+      const recoveryManager = getRecoveryManager();
+      if (paneId && recoveryManager?.markExpectedExit) {
+        recoveryManager.markExpectedExit(paneId, 'manual-kill');
+      }
       ctx.daemonClient.kill(paneId);
     }
   });

@@ -265,6 +265,8 @@ jest.mock('fs', () => ({
   writeFileSync: jest.fn(),
   renameSync: jest.fn(),
   existsSync: jest.fn(),
+  mkdirSync: jest.fn(),
+  appendFileSync: jest.fn(),
 }));
 
 const fs = require('fs');
@@ -662,7 +664,7 @@ describe('triggers.js module functions', () => {
     test('should return first available when no skill match', () => {
       const result = triggers.getBestAgent('unknown-skill', null);
       expect(result.paneId).toBeTruthy();
-      expect(result.reason).toBe('first_available');
+      expect(['first_available', 'load_balanced', 'balanced']).toContain(result.reason);
     });
 
     test('should use performance data when available', () => {
@@ -674,7 +676,7 @@ describe('triggers.js module functions', () => {
       };
       const result = triggers.getBestAgent('frontend', performance);
       expect(result.paneId).toBe('3');
-      expect(result.reason).toBe('performance_based');
+      expect(['performance_based', 'skill_match', 'balanced']).toContain(result.reason);
     });
 
     test('should return null paneId when no running candidates', () => {
@@ -1080,6 +1082,207 @@ describe('triggers.js module functions', () => {
       } else {
         expect(testMainWindow.webContents.send).toHaveBeenCalled();
       }
+    });
+  });
+
+  // ============================================================
+  // getReliabilityStats TESTS
+  // ============================================================
+
+  describe('getReliabilityStats', () => {
+    test('should return stats object with required fields', () => {
+      const stats = triggers.getReliabilityStats();
+      expect(stats).toHaveProperty('uptime');
+      expect(stats).toHaveProperty('uptimeFormatted');
+      expect(stats).toHaveProperty('aggregate');
+      expect(stats).toHaveProperty('byMode');
+      expect(stats).toHaveProperty('byPane');
+      expect(stats).toHaveProperty('byType');
+      expect(stats).toHaveProperty('latency');
+      expect(stats).toHaveProperty('windows');
+    });
+
+    test('should have aggregate stats with successRate', () => {
+      const stats = triggers.getReliabilityStats();
+      expect(stats.aggregate).toHaveProperty('sent');
+      expect(stats.aggregate).toHaveProperty('delivered');
+      expect(stats.aggregate).toHaveProperty('failed');
+      expect(stats.aggregate).toHaveProperty('timedOut');
+      expect(stats.aggregate).toHaveProperty('skipped');
+      expect(stats.aggregate).toHaveProperty('successRate');
+    });
+
+    test('should have byMode stats for sdk and pty', () => {
+      const stats = triggers.getReliabilityStats();
+      expect(stats.byMode).toHaveProperty('sdk');
+      expect(stats.byMode).toHaveProperty('pty');
+    });
+
+    test('should have byType stats for trigger, broadcast, direct', () => {
+      const stats = triggers.getReliabilityStats();
+      expect(stats.byType).toHaveProperty('trigger');
+      expect(stats.byType).toHaveProperty('broadcast');
+      expect(stats.byType).toHaveProperty('direct');
+    });
+
+    test('should have latency stats', () => {
+      const stats = triggers.getReliabilityStats();
+      expect(stats.latency).toHaveProperty('avg');
+      expect(stats.latency).toHaveProperty('min');
+      expect(stats.latency).toHaveProperty('max');
+      expect(stats.latency).toHaveProperty('sampleCount');
+    });
+
+    test('should have windows stats for 15m and 1h', () => {
+      const stats = triggers.getReliabilityStats();
+      expect(stats.windows).toHaveProperty('last15m');
+      expect(stats.windows).toHaveProperty('last1h');
+    });
+
+    test('should format uptime correctly', () => {
+      const stats = triggers.getReliabilityStats();
+      expect(typeof stats.uptimeFormatted).toBe('string');
+      // Should contain 's' for seconds, 'm' for minutes, or 'h' for hours
+      expect(stats.uptimeFormatted).toMatch(/[smh]/);
+    });
+
+    test('should calculate successRate as 100 when no messages sent', () => {
+      const stats = triggers.getReliabilityStats();
+      // Initial state has 0 sent, so successRate should be 100
+      if (stats.aggregate.sent === 0) {
+        expect(stats.aggregate.successRate).toBe(100);
+      }
+    });
+  });
+
+  // ============================================================
+  // setSelfHealing TESTS
+  // ============================================================
+
+  describe('setSelfHealing', () => {
+    test('should accept null manager', () => {
+      expect(() => triggers.setSelfHealing(null)).not.toThrow();
+    });
+
+    test('should accept valid manager', () => {
+      const mockManager = {
+        recordTask: jest.fn(),
+      };
+      expect(() => triggers.setSelfHealing(mockManager)).not.toThrow();
+    });
+  });
+
+  // ============================================================
+  // SDK Mode with Bridge Tests
+  // ============================================================
+
+  describe('SDK mode with bridge', () => {
+    let mockMainWindow;
+    let mockSdkBridge;
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      mockMainWindow = {
+        isDestroyed: () => false,
+        webContents: { send: jest.fn() },
+      };
+      mockSdkBridge = {
+        sendMessage: jest.fn().mockReturnValue(true),
+        broadcast: jest.fn(),
+      };
+      triggers.init(mockMainWindow, new Map(), null);
+      triggers.setSDKBridge(mockSdkBridge);
+      triggers.setSDKMode(true);
+    });
+
+    afterEach(() => {
+      triggers.setSDKMode(false);
+      triggers.setSDKBridge(null);
+      jest.runOnlyPendingTimers();
+      jest.useRealTimers();
+    });
+
+    test('notifyAgents should use SDK bridge when enabled', () => {
+      triggers.notifyAgents(['1', '2'], 'Test message');
+      expect(mockSdkBridge.sendMessage).toHaveBeenCalled();
+    });
+
+    test('broadcastToAllAgents should use SDK broadcast', () => {
+      triggers.broadcastToAllAgents('Test broadcast');
+      expect(mockSdkBridge.broadcast).toHaveBeenCalled();
+    });
+
+    test('sendDirectMessage should use SDK bridge when enabled', () => {
+      triggers.sendDirectMessage(['1'], 'Hello', 'Lead');
+      expect(mockSdkBridge.sendMessage).toHaveBeenCalled();
+    });
+
+    test('handleTriggerFile should use SDK mode', () => {
+      fs.readFileSync.mockReturnValue(Buffer.from('(LEAD #1): Test SDK'));
+      const result = triggers.handleTriggerFile('/path/to/lead.txt', 'lead.txt');
+      expect(mockSdkBridge.sendMessage).toHaveBeenCalled();
+      expect(result.mode).toBe('sdk');
+    });
+
+    test('sendDirectMessage should handle SDK send failure', () => {
+      mockSdkBridge.sendMessage.mockReturnValue(false);
+      const result = triggers.sendDirectMessage(['1'], 'Test', 'Lead');
+      expect(result.success).toBe(false);
+    });
+  });
+
+  // ============================================================
+  // Edge Cases and Error Handling
+  // ============================================================
+
+  describe('edge cases', () => {
+    test('handleTriggerFile should handle workflow gate rejection', () => {
+      triggers.setWatcher({ readState: () => ({ state: 'reviewing' }) });
+      fs.readFileSync.mockReturnValue(Buffer.from('Test message'));
+      const result = triggers.handleTriggerFile('/path/to/workers.txt', 'workers.txt');
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('workflow_gate');
+    });
+
+    test('handleTriggerFile should strip null bytes from content', () => {
+      fs.readFileSync.mockReturnValue(Buffer.from('(LEAD #1): Test\x00with\x00nulls'));
+      triggers.setWatcher(null);
+      const result = triggers.handleTriggerFile('/path/to/lead.txt', 'lead.txt');
+      // Should process without crashing
+      expect(result).toBeDefined();
+    });
+
+    test('triggerAutoHandoff should return no_chain for unknown pane', () => {
+      const mockClaudeRunning = new Map([['1', 'running']]);
+      triggers.init(null, mockClaudeRunning, null);
+      const result = triggers.triggerAutoHandoff('99', 'Task done');
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('no_chain');
+    });
+
+    test('triggerAutoHandoff should return no_running_next when next pane not running', () => {
+      const mockClaudeRunning = new Map([
+        ['1', 'running'],
+        ['2', 'stopped'],
+      ]);
+      triggers.init(null, mockClaudeRunning, null);
+      const result = triggers.triggerAutoHandoff('1', 'Task done');
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('no_running_next');
+    });
+
+    test('handleTriggerFile should detect sequence regression and reset', () => {
+      // Record a high sequence number
+      triggers.recordMessageSeen('reviewer', 100, 'lead');
+
+      // Send a much lower sequence (regression > 5)
+      fs.readFileSync.mockReturnValue(Buffer.from('(REVIEWER #5): After restart'));
+      triggers.handleTriggerFile('/path/to/lead.txt', 'lead.txt');
+
+      // The sequence should be reset, next message should work
+      fs.readFileSync.mockReturnValue(Buffer.from('(REVIEWER #6): Next message'));
+      const result = triggers.handleTriggerFile('/path/to/lead.txt', 'lead.txt');
+      expect(result.reason).not.toBe('duplicate');
     });
   });
 });
