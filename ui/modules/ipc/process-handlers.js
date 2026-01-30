@@ -8,7 +8,16 @@ const { spawn } = require('child_process');
 const { createBackgroundProcessController } = require('./background-processes');
 
 function registerProcessHandlers(ctx) {
+  if (!ctx || !ctx.ipcMain) {
+    throw new Error('registerProcessHandlers requires ctx.ipcMain');
+  }
   const { ipcMain } = ctx;
+  if (!ctx.backgroundProcesses) {
+    ctx.backgroundProcesses = new Map();
+  }
+  if (typeof ctx.processIdCounter !== 'number') {
+    ctx.processIdCounter = 1;
+  }
 
   const { broadcastProcessList } = createBackgroundProcessController(ctx);
 

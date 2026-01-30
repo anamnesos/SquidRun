@@ -1181,32 +1181,32 @@ You are the Lead (Architect) for this project.
       },
       'workspace/instances/worker-a/CLAUDE.md': {
         type: 'text',
-        content: `# Worker A Instance
+        content: `# Frontend Instance
 
-You are Worker A (Implementer A) for this project.
+You are Frontend for this project.
 
 ## Responsibilities
 - Implementation tasks
 - Frontend/UI work
 
 ## Communication
-- Receive messages: workspace/triggers/worker-a.txt
-- Report to Lead: workspace/triggers/lead.txt
+- Receive messages: workspace/triggers/frontend.txt
+- Report to Lead: workspace/triggers/architect.txt
 `,
       },
       'workspace/instances/worker-b/CLAUDE.md': {
         type: 'text',
-        content: `# Worker B Instance
+        content: `# Backend Instance
 
-You are Worker B (Implementer B) for this project.
+You are Backend for this project.
 
 ## Responsibilities
 - Implementation tasks
 - Backend work
 
 ## Communication
-- Receive messages: workspace/triggers/worker-b.txt
-- Report to Lead: workspace/triggers/lead.txt
+- Receive messages: workspace/triggers/backend.txt
+- Report to Lead: workspace/triggers/architect.txt
 `,
       },
       'workspace/instances/reviewer/CLAUDE.md': {

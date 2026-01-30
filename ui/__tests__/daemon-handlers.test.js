@@ -109,8 +109,8 @@ describe('daemon-handlers.js module', () => {
 
     test('should have correct role names', () => {
       expect(daemonHandlers.PANE_ROLES['1']).toBe('Architect');
-      expect(daemonHandlers.PANE_ROLES['2']).toBe('Orchestrator');
-      expect(daemonHandlers.PANE_ROLES['3']).toBe('Implementer A');
+      expect(daemonHandlers.PANE_ROLES['2']).toBe('Infra');
+      expect(daemonHandlers.PANE_ROLES['3']).toBe('Frontend');
       expect(daemonHandlers.PANE_ROLES['6']).toBe('Reviewer');
     });
   });
@@ -403,7 +403,7 @@ describe('daemon-handlers.js module', () => {
       expect(mockDocument.createElement).toHaveBeenCalledWith('div');
       expect(mockNotification.className).toBe('handoff-notification');
       expect(mockNotification.innerHTML).toContain('Architect');
-      expect(mockNotification.innerHTML).toContain('Orchestrator');
+      expect(mockNotification.innerHTML).toContain('Infra');
     });
 
     test('should remove existing notification', () => {
@@ -1457,7 +1457,7 @@ describe('daemon-handlers.js module', () => {
         daemonHandlers.setupHandoffListener();
         ipcHandlers['auto-handoff']({}, { fromPane: '3', toPane: '4' });
 
-        expect(mockNotification.innerHTML).toContain('Implementer');
+        expect(mockNotification.innerHTML).toContain('Frontend');
       });
     });
 

@@ -13,20 +13,20 @@ const log = require('./logger');
 let PANE_IDS = ['1', '2', '3', '4', '5', '6'];
 let PANE_ROLES = {
   '1': 'Architect',
-  '2': 'Orchestrator',
-  '3': 'Implementer A',
-  '4': 'Implementer B',
-  '5': 'Investigator',
+  '2': 'Infra',
+  '3': 'Frontend',
+  '4': 'Backend',
+  '5': 'Analyst',
   '6': 'Reviewer'
 };
 
 const SDK_PANE_IDS = ['1', '2', '3', '4', '5', '6'];
 const SDK_PANE_ROLES = {
   '1': 'Architect',
-  '2': 'Orchestrator',
-  '3': 'Implementer A',
-  '4': 'Implementer B',
-  '5': 'Investigator',
+  '2': 'Infra',
+  '3': 'Frontend',
+  '4': 'Backend',
+  '5': 'Analyst',
   '6': 'Reviewer'
 };
 
@@ -418,16 +418,24 @@ function formatMessage(message) {
       const roleConfig = {
         'ARCHITECT': { class: 'lead', label: 'Architect' },
         'LEAD': { class: 'lead', label: 'Architect' },
-        'ORCHESTRATOR': { class: 'worker-a', label: 'Orchestrator' },
-        'IMPLEMENTER-A': { class: 'worker-a', label: 'Implementer A' },
-        'IMPLEMENTERA': { class: 'worker-a', label: 'Implementer A' },
-        'WORKER-A': { class: 'worker-a', label: 'Implementer A' },
-        'WORKERA': { class: 'worker-a', label: 'Implementer A' },
-        'IMPLEMENTER-B': { class: 'worker-b', label: 'Implementer B' },
-        'IMPLEMENTERB': { class: 'worker-b', label: 'Implementer B' },
-        'WORKER-B': { class: 'worker-b', label: 'Implementer B' },
-        'WORKERB': { class: 'worker-b', label: 'Implementer B' },
-        'INVESTIGATOR': { class: 'worker-b', label: 'Investigator' },
+        // Pane 2: Infra (legacy: Orchestrator)
+        'INFRA': { class: 'infra', label: 'Infra' },
+        'ORCHESTRATOR': { class: 'infra', label: 'Infra' },
+        // Pane 3: Frontend (legacy: Worker A, Implementer A)
+        'FRONTEND': { class: 'frontend', label: 'Frontend' },
+        'IMPLEMENTER-A': { class: 'frontend', label: 'Frontend' },
+        'IMPLEMENTERA': { class: 'frontend', label: 'Frontend' },
+        'WORKER-A': { class: 'frontend', label: 'Frontend' },
+        'WORKERA': { class: 'frontend', label: 'Frontend' },
+        // Pane 4: Backend (legacy: Worker B, Implementer B)
+        'BACKEND': { class: 'backend', label: 'Backend' },
+        'IMPLEMENTER-B': { class: 'backend', label: 'Backend' },
+        'IMPLEMENTERB': { class: 'backend', label: 'Backend' },
+        'WORKER-B': { class: 'backend', label: 'Backend' },
+        'WORKERB': { class: 'backend', label: 'Backend' },
+        // Pane 5: Analyst (legacy: Investigator)
+        'ANALYST': { class: 'analyst', label: 'Analyst' },
+        'INVESTIGATOR': { class: 'analyst', label: 'Analyst' },
         'REVIEWER': { class: 'reviewer', label: 'Reviewer' }
       };
       const config = roleConfig[role] || roleConfig['LEAD'];

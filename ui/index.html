@@ -41,10 +41,10 @@
       <span class="mcp-status-label">MCP</span>
       <div class="mcp-agent-dots">
         <div class="mcp-agent-dot disconnected" id="mcpDot1" data-pane="1" data-agent="Arch" title="Architect - Disconnected"></div>
-        <div class="mcp-agent-dot disconnected" id="mcpDot2" data-pane="2" data-agent="Orch" title="Orchestrator - Disconnected"></div>
-        <div class="mcp-agent-dot disconnected" id="mcpDot3" data-pane="3" data-agent="ImpA" title="Implementer A - Disconnected"></div>
-        <div class="mcp-agent-dot disconnected" id="mcpDot4" data-pane="4" data-agent="ImpB" title="Implementer B - Disconnected"></div>
-        <div class="mcp-agent-dot disconnected" id="mcpDot5" data-pane="5" data-agent="Inv" title="Investigator - Disconnected"></div>
+        <div class="mcp-agent-dot disconnected" id="mcpDot2" data-pane="2" data-agent="Infra" title="Infra - Disconnected"></div>
+        <div class="mcp-agent-dot disconnected" id="mcpDot3" data-pane="3" data-agent="Front" title="Frontend - Disconnected"></div>
+        <div class="mcp-agent-dot disconnected" id="mcpDot4" data-pane="4" data-agent="Back" title="Backend - Disconnected"></div>
+        <div class="mcp-agent-dot disconnected" id="mcpDot5" data-pane="5" data-agent="Anly" title="Analyst - Disconnected"></div>
         <div class="mcp-agent-dot disconnected" id="mcpDot6" data-pane="6" data-agent="Rev" title="Reviewer - Disconnected"></div>
       </div>
       <span class="mcp-status-summary none" id="mcpStatusSummary">0/6</span>
@@ -300,7 +300,7 @@
         <div class="side-panes-container">
           <div class="pane" data-pane-id="2">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">[O]</span><span class="agent-badge idle" id="badge-2"></span>Orchestrator<span class="cli-badge" id="cli-badge-2"></span><span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
+            <span class="pane-title"><span class="agent-avatar">[I]</span><span class="agent-badge idle" id="badge-2"></span>Infra<span class="cli-badge" id="cli-badge-2"></span><span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-2" title="Session time">0:00</span>
               <span class="sdk-status disconnected" id="sdk-status-2" title="SDK session status">—</span>
@@ -322,7 +322,7 @@
 
         <div class="pane" data-pane-id="3">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">[1]</span><span class="agent-badge idle" id="badge-3"></span>Implementer A<span class="cli-badge" id="cli-badge-3"></span><span class="pane-project" id="project-3" title="Click to change project"></span><span class="agent-task" id="task-3"></span></span>
+            <span class="pane-title"><span class="agent-avatar">[F]</span><span class="agent-badge idle" id="badge-3"></span>Frontend<span class="cli-badge" id="cli-badge-3"></span><span class="pane-project" id="project-3" title="Click to change project"></span><span class="agent-task" id="task-3"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-3" title="Session time">0:00</span>
               <span class="sdk-status disconnected" id="sdk-status-3" title="SDK session status">—</span>
@@ -344,7 +344,7 @@
 
         <div class="pane" data-pane-id="4">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">[2]</span><span class="agent-badge idle" id="badge-4"></span>Implementer B<span class="cli-badge" id="cli-badge-4"></span><span class="pane-project" id="project-4" title="Click to change project"></span><span class="agent-task" id="task-4"></span></span>
+            <span class="pane-title"><span class="agent-avatar">[B]</span><span class="agent-badge idle" id="badge-4"></span>Backend<span class="cli-badge" id="cli-badge-4"></span><span class="pane-project" id="project-4" title="Click to change project"></span><span class="agent-task" id="task-4"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-4" title="Session time">0:00</span>
               <span class="sdk-status disconnected" id="sdk-status-4" title="SDK session status">—</span>
@@ -366,7 +366,7 @@
 
         <div class="pane" data-pane-id="5">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">[?]</span><span class="agent-badge idle" id="badge-5"></span>Investigator<span class="cli-badge" id="cli-badge-5"></span><span class="pane-project" id="project-5" title="Click to change project"></span><span class="agent-task" id="task-5"></span></span>
+            <span class="pane-title"><span class="agent-avatar">[?]</span><span class="agent-badge idle" id="badge-5"></span>Analyst<span class="cli-badge" id="cli-badge-5"></span><span class="pane-project" id="project-5" title="Click to change project"></span><span class="agent-task" id="task-5"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-5" title="Session time">0:00</span>
               <span class="sdk-status disconnected" id="sdk-status-5" title="SDK session status">—</span>
@@ -417,10 +417,10 @@
             <option value="auto">Auto-route</option>
             <option value="1" selected>Architect</option>
             <option value="all">All Agents</option>
-            <option value="2">Orchestrator</option>
-            <option value="3">Implementer A</option>
-            <option value="4">Implementer B</option>
-            <option value="5">Investigator</option>
+            <option value="2">Infra</option>
+            <option value="3">Frontend</option>
+            <option value="4">Backend</option>
+            <option value="5">Analyst</option>
             <option value="6">Reviewer</option>
           </select>
         </div>
@@ -642,10 +642,10 @@
             <select id="memoryAgentSelect" class="memory-agent-select">
               <option value="all">All Agents</option>
               <option value="1">Architect</option>
-              <option value="2">Orchestrator</option>
-              <option value="3">Implementer A</option>
-              <option value="4">Implementer B</option>
-              <option value="5">Investigator</option>
+              <option value="2">Infra</option>
+              <option value="3">Frontend</option>
+              <option value="4">Backend</option>
+              <option value="5">Analyst</option>
               <option value="6">Reviewer</option>
             </select>
             <input type="text" id="memorySearchInput" class="memory-search-input" placeholder="Search conversations..." />
@@ -774,7 +774,7 @@
               <div class="health-agent-item" data-pane="2">
               <div class="health-agent-header">
                 <span class="health-agent-badge" id="health-badge-2">●</span>
-                <span class="health-agent-name">Orchestrator</span>
+                <span class="health-agent-name">Infra</span>
                 <span class="health-agent-status" id="health-status-2">Unknown</span>
               </div>
                 <div class="health-agent-details">
@@ -808,7 +808,7 @@
               <div class="health-agent-item" data-pane="3">
               <div class="health-agent-header">
                 <span class="health-agent-badge" id="health-badge-3">●</span>
-                <span class="health-agent-name">Implementer A</span>
+                <span class="health-agent-name">Frontend</span>
                 <span class="health-agent-status" id="health-status-3">Unknown</span>
               </div>
                 <div class="health-agent-details">
@@ -842,7 +842,7 @@
               <div class="health-agent-item" data-pane="4">
               <div class="health-agent-header">
                 <span class="health-agent-badge" id="health-badge-4">●</span>
-                <span class="health-agent-name">Implementer B</span>
+                <span class="health-agent-name">Backend</span>
                 <span class="health-agent-status" id="health-status-4">Unknown</span>
               </div>
                 <div class="health-agent-details">
@@ -876,7 +876,7 @@
               <div class="health-agent-item" data-pane="5">
               <div class="health-agent-header">
                 <span class="health-agent-badge" id="health-badge-5">●</span>
-                <span class="health-agent-name">Investigator</span>
+                <span class="health-agent-name">Analyst</span>
                 <span class="health-agent-status" id="health-status-5">Unknown</span>
               </div>
                 <div class="health-agent-details">
@@ -1167,10 +1167,10 @@
             <select class="debug-agent-select" id="debugAgentSelect">
               <option value="">Select Agent...</option>
               <option value="Architect">Architect</option>
-              <option value="Orchestrator">Orchestrator</option>
-              <option value="Implementer A">Implementer A</option>
-              <option value="Implementer B">Implementer B</option>
-              <option value="Investigator">Investigator</option>
+              <option value="Infra">Infra</option>
+              <option value="Frontend">Frontend</option>
+              <option value="Backend">Backend</option>
+              <option value="Analyst">Analyst</option>
               <option value="Reviewer">Reviewer</option>
             </select>
             <button class="btn btn-sm btn-primary" id="debugLoadBtn" title="Load session for selected agent">Load</button>
@@ -1795,25 +1795,25 @@
               <div class="perf-stat"><span class="perf-value" id="perf-success-1">--</span><span class="perf-label">Success</span></div>
             </div>
             <div class="perf-card" data-pane="2">
-              <div class="perf-card-header">Orchestrator</div>
+              <div class="perf-card-header">Infra</div>
               <div class="perf-stat"><span class="perf-value" id="perf-completions-2">0</span><span class="perf-label">Completions</span></div>
               <div class="perf-stat"><span class="perf-value" id="perf-avgtime-2">--</span><span class="perf-label">Avg Time</span></div>
               <div class="perf-stat"><span class="perf-value" id="perf-success-2">--</span><span class="perf-label">Success</span></div>
             </div>
             <div class="perf-card" data-pane="3">
-              <div class="perf-card-header">Implementer A</div>
+              <div class="perf-card-header">Frontend</div>
               <div class="perf-stat"><span class="perf-value" id="perf-completions-3">0</span><span class="perf-label">Completions</span></div>
               <div class="perf-stat"><span class="perf-value" id="perf-avgtime-3">--</span><span class="perf-label">Avg Time</span></div>
               <div class="perf-stat"><span class="perf-value" id="perf-success-3">--</span><span class="perf-label">Success</span></div>
             </div>
             <div class="perf-card" data-pane="4">
-              <div class="perf-card-header">Implementer B</div>
+              <div class="perf-card-header">Backend</div>
               <div class="perf-stat"><span class="perf-value" id="perf-completions-4">0</span><span class="perf-label">Completions</span></div>
               <div class="perf-stat"><span class="perf-value" id="perf-avgtime-4">--</span><span class="perf-label">Avg Time</span></div>
               <div class="perf-stat"><span class="perf-value" id="perf-success-4">--</span><span class="perf-label">Success</span></div>
             </div>
             <div class="perf-card" data-pane="5">
-              <div class="perf-card-header">Investigator</div>
+              <div class="perf-card-header">Analyst</div>
               <div class="perf-stat"><span class="perf-value" id="perf-completions-5">0</span><span class="perf-label">Completions</span></div>
               <div class="perf-stat"><span class="perf-value" id="perf-avgtime-5">--</span><span class="perf-label">Avg Time</span></div>
               <div class="perf-stat"><span class="perf-value" id="perf-success-5">--</span><span class="perf-label">Success</span></div>
@@ -2435,19 +2435,19 @@
                 <span class="inspector-seq-value" id="seq-lead">-</span>
               </div>
               <div class="inspector-sequence-item" data-agent="orchestrator">
-                <span class="inspector-seq-name">Orchestrator</span>
+                <span class="inspector-seq-name">Infra</span>
                 <span class="inspector-seq-value" id="seq-orchestrator">-</span>
               </div>
               <div class="inspector-sequence-item" data-agent="worker-a">
-                <span class="inspector-seq-name">Implementer A</span>
+                <span class="inspector-seq-name">Frontend</span>
                 <span class="inspector-seq-value" id="seq-worker-a">-</span>
               </div>
               <div class="inspector-sequence-item" data-agent="worker-b">
-                <span class="inspector-seq-name">Implementer B</span>
+                <span class="inspector-seq-name">Backend</span>
                 <span class="inspector-seq-value" id="seq-worker-b">-</span>
               </div>
               <div class="inspector-sequence-item" data-agent="investigator">
-                <span class="inspector-seq-name">Investigator</span>
+                <span class="inspector-seq-name">Analyst</span>
                 <span class="inspector-seq-value" id="seq-investigator">-</span>
               </div>
               <div class="inspector-sequence-item" data-agent="reviewer">

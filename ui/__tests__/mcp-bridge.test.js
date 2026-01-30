@@ -61,10 +61,10 @@ describe('MCP Bridge', () => {
       test('registers all 6 pane roles correctly', () => {
         const roles = {
           '1': 'Architect',
-          '2': 'Orchestrator',
-          '3': 'Implementer A',
-          '4': 'Implementer B',
-          '5': 'Investigator',
+          '2': 'Infra',
+          '3': 'Frontend',
+          '4': 'Backend',
+          '5': 'Analyst',
           '6': 'Reviewer',
         };
 
@@ -137,7 +137,7 @@ describe('MCP Bridge', () => {
 
         expect(agent).not.toBeNull();
         expect(agent.paneId).toBe('4');
-        expect(agent.role).toBe('Implementer B');
+        expect(agent.role).toBe('Backend');
       });
 
       test('returns null for unknown session', () => {
@@ -183,7 +183,7 @@ describe('MCP Bridge', () => {
 
         expect(result.valid).toBe(true);
         expect(result.paneId).toBe('5');
-        expect(result.role).toBe('Investigator');
+        expect(result.role).toBe('Analyst');
       });
 
       test('returns invalid for unknown session', () => {

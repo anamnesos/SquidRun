@@ -482,7 +482,8 @@ function getSequenceState() {
 }
 
 // Worker pane IDs that require reviewer approval before triggering
-const WORKER_PANES = ['3', '4', '5'];
+// Note: Analyst (pane 5) excluded - they handle debugging/analysis, not implementation
+const WORKER_PANES = ['3', '4'];
 
 // Track last sync time per pane to prevent self-sync
 const lastSyncTime = new Map(); // paneId -> timestamp
@@ -980,8 +981,8 @@ function handleTriggerFile(filePath, filename) {
       targets,
       message,
       file: filename,
-      sender: parsed.sender,
-      seq: parsed.seq,
+      sender: preParsed.sender,
+      seq: preParsed.seq,
       mode: isSDKModeEnabled() ? 'sdk' : 'pty',
       success: false,
       reason: 'plugin_cancelled',
@@ -1298,10 +1299,10 @@ function broadcastToAllAgents(message) {
 // Role definitions for routing
 const AGENT_ROLES = {
   '1': { name: 'Architect', type: 'coordinator', skills: ['planning', 'coordination', 'architecture'] },
-  '2': { name: 'Orchestrator', type: 'coordinator', skills: ['routing', 'coordination', 'planning'] },
-  '3': { name: 'Implementer A', type: 'worker', skills: ['ui', 'frontend', 'renderer', 'implementation'] },
-  '4': { name: 'Implementer B', type: 'worker', skills: ['backend', 'daemon', 'ipc', 'refactor'] },
-  '5': { name: 'Investigator', type: 'investigator', skills: ['debugging', 'testing', 'analysis'] },
+  '2': { name: 'Infra', type: 'coordinator', skills: ['routing', 'ci-cd', 'deployment', 'infrastructure'] },
+  '3': { name: 'Frontend', type: 'worker', skills: ['ui', 'frontend', 'renderer', 'css'] },
+  '4': { name: 'Backend', type: 'worker', skills: ['backend', 'daemon', 'ipc', 'processes'] },
+  '5': { name: 'Analyst', type: 'analyst', skills: ['debugging', 'profiling', 'analysis', 'investigation'] },
   '6': { name: 'Reviewer', type: 'reviewer', skills: ['review', 'testing', 'verification'] },
 };
 
@@ -1375,11 +1376,11 @@ function routeTask(taskType, message, performance) {
 
 // Handoff chain: who triggers who after completion
 const HANDOFF_CHAIN = {
-  '1': ['2'],          // Architect → Orchestrator
-  '2': ['3', '4', '5'],// Orchestrator → Implementers + Investigator
-  '3': ['6'],          // Implementer A → Reviewer
-  '4': ['6'],          // Implementer B → Reviewer
-  '5': ['6'],          // Investigator → Reviewer
+  '1': ['2'],          // Architect → Infra
+  '2': ['3', '4', '5'],// Infra → Frontend + Backend + Analyst
+  '3': ['6'],          // Frontend → Reviewer
+  '4': ['6'],          // Backend → Reviewer
+  '5': ['6'],          // Analyst → Reviewer
   '6': ['1'],          // Reviewer → Architect
 };
 

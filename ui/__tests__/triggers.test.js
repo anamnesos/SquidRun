@@ -592,10 +592,10 @@ describe('triggers.js module functions', () => {
 
     test('should have correct role names', () => {
       expect(triggers.AGENT_ROLES['1'].name).toBe('Architect');
-      expect(triggers.AGENT_ROLES['2'].name).toBe('Orchestrator');
-      expect(triggers.AGENT_ROLES['3'].name).toBe('Implementer A');
-      expect(triggers.AGENT_ROLES['4'].name).toBe('Implementer B');
-      expect(triggers.AGENT_ROLES['5'].name).toBe('Investigator');
+      expect(triggers.AGENT_ROLES['2'].name).toBe('Infra');
+      expect(triggers.AGENT_ROLES['3'].name).toBe('Frontend');
+      expect(triggers.AGENT_ROLES['4'].name).toBe('Backend');
+      expect(triggers.AGENT_ROLES['5'].name).toBe('Analyst');
       expect(triggers.AGENT_ROLES['6'].name).toBe('Reviewer');
     });
   });

@@ -22,10 +22,10 @@ const paneCliIdentity = new Map();
 // ID-1: Pane roles for identity injection (makes /resume sessions identifiable)
 const PANE_ROLES = {
   '1': 'Architect',
-  '2': 'Orchestrator',
-  '3': 'Implementer A',
-  '4': 'Implementer B',
-  '5': 'Investigator',
+  '2': 'Infra',
+  '3': 'Frontend',
+  '4': 'Backend',
+  '5': 'Analyst',
   '6': 'Reviewer',
 };
 
