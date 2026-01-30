@@ -15,6 +15,104 @@ const path = require('path');
 // Workflow storage directory
 let workflowsDir = null;
 
+// Shared workflow templates (used by workflow-get-templates and workflow-apply-template)
+const WORKFLOW_TEMPLATES = [
+  {
+    id: 'simple-agent',
+    name: 'Simple Agent',
+    description: 'Basic workflow with trigger, agent, and output',
+    nodes: [
+      { id: 'n1', type: 'trigger', label: 'Start', x: 50, y: 100, config: { triggerType: 'manual' } },
+      { id: 'n2', type: 'agent', label: 'Process', x: 250, y: 100, config: { agentType: 'claude' } },
+      { id: 'n3', type: 'output', label: 'Result', x: 450, y: 100, config: { outputType: 'console' } }
+    ],
+    edges: [
+      { id: 'e1', from: 'n1', to: 'n2' },
+      { id: 'e2', from: 'n2', to: 'n3' }
+    ]
+  },
+  {
+    id: 'parallel-agents',
+    name: 'Parallel Agents',
+    description: 'Run multiple agents in parallel and merge results',
+    nodes: [
+      { id: 'n1', type: 'trigger', label: 'Start', x: 50, y: 150 },
+      { id: 'n2', type: 'parallel', label: 'Split', x: 200, y: 150 },
+      { id: 'n3', type: 'agent', label: 'Agent A', x: 350, y: 50 },
+      { id: 'n4', type: 'agent', label: 'Agent B', x: 350, y: 150 },
+      { id: 'n5', type: 'agent', label: 'Agent C', x: 350, y: 250 },
+      { id: 'n6', type: 'merge', label: 'Combine', x: 500, y: 150 },
+      { id: 'n7', type: 'output', label: 'Result', x: 650, y: 150 }
+    ],
+    edges: [
+      { id: 'e1', from: 'n1', to: 'n2' },
+      { id: 'e2', from: 'n2', to: 'n3' },
+      { id: 'e3', from: 'n2', to: 'n4' },
+      { id: 'e4', from: 'n2', to: 'n5' },
+      { id: 'e5', from: 'n3', to: 'n6' },
+      { id: 'e6', from: 'n4', to: 'n6' },
+      { id: 'e7', from: 'n5', to: 'n6' },
+      { id: 'e8', from: 'n6', to: 'n7' }
+    ]
+  },
+  {
+    id: 'conditional-routing',
+    name: 'Conditional Routing',
+    description: 'Route to different agents based on decision',
+    nodes: [
+      { id: 'n1', type: 'input', label: 'Input', x: 50, y: 150 },
+      { id: 'n2', type: 'decision', label: 'Check Type', x: 200, y: 150, config: { condition: 'input.type === "code"' } },
+      { id: 'n3', type: 'agent', label: 'Code Agent', x: 400, y: 50, config: { agentType: 'codex' } },
+      { id: 'n4', type: 'agent', label: 'Text Agent', x: 400, y: 250, config: { agentType: 'claude' } },
+      { id: 'n5', type: 'output', label: 'Result', x: 600, y: 150 }
+    ],
+    edges: [
+      { id: 'e1', from: 'n1', to: 'n2' },
+      { id: 'e2', from: 'n2', to: 'n3', label: 'true' },
+      { id: 'e3', from: 'n2', to: 'n4', label: 'false' },
+      { id: 'e4', from: 'n3', to: 'n5' },
+      { id: 'e5', from: 'n4', to: 'n5' }
+    ]
+  },
+  {
+    id: 'iteration-loop',
+    name: 'Iteration Loop',
+    description: 'Process items in a collection one by one',
+    nodes: [
+      { id: 'n1', type: 'input', label: 'Items', x: 50, y: 100 },
+      { id: 'n2', type: 'loop', label: 'For Each', x: 200, y: 100, config: { iteratorVar: 'item' } },
+      { id: 'n3', type: 'agent', label: 'Process Item', x: 350, y: 50 },
+      { id: 'n4', type: 'output', label: 'Results', x: 350, y: 200 }
+    ],
+    edges: [
+      { id: 'e1', from: 'n1', to: 'n2' },
+      { id: 'e2', from: 'n2', to: 'n3', label: 'each' },
+      { id: 'e3', from: 'n3', to: 'n2' },
+      { id: 'e4', from: 'n2', to: 'n4', label: 'done' }
+    ]
+  },
+  {
+    id: 'agent-chain',
+    name: 'Agent Chain',
+    description: 'Chain multiple agents with transformations',
+    nodes: [
+      { id: 'n1', type: 'trigger', label: 'Start', x: 50, y: 100 },
+      { id: 'n2', type: 'agent', label: 'Architect', x: 200, y: 100, config: { prompt: 'Design the solution' } },
+      { id: 'n3', type: 'transform', label: 'Format Plan', x: 350, y: 100 },
+      { id: 'n4', type: 'agent', label: 'Implementer', x: 500, y: 100, config: { prompt: 'Implement the design' } },
+      { id: 'n5', type: 'agent', label: 'Reviewer', x: 650, y: 100, config: { prompt: 'Review the implementation' } },
+      { id: 'n6', type: 'output', label: 'Final', x: 800, y: 100 }
+    ],
+    edges: [
+      { id: 'e1', from: 'n1', to: 'n2' },
+      { id: 'e2', from: 'n2', to: 'n3' },
+      { id: 'e3', from: 'n3', to: 'n4' },
+      { id: 'e4', from: 'n4', to: 'n5' },
+      { id: 'e5', from: 'n5', to: 'n6' }
+    ]
+  }
+];
+
 /**
  * Initialize workflows directory
  */
@@ -721,112 +819,12 @@ function registerWorkflowHandlers(ctx = {}) {
 
   // Get workflow templates
   ipcMain.handle('workflow-get-templates', async () => {
-    const templates = [
-      {
-        id: 'simple-agent',
-        name: 'Simple Agent',
-        description: 'Basic workflow with trigger, agent, and output',
-        nodes: [
-          { id: 'n1', type: 'trigger', label: 'Start', x: 50, y: 100, config: { triggerType: 'manual' } },
-          { id: 'n2', type: 'agent', label: 'Process', x: 250, y: 100, config: { agentType: 'claude' } },
-          { id: 'n3', type: 'output', label: 'Result', x: 450, y: 100, config: { outputType: 'console' } }
-        ],
-        edges: [
-          { id: 'e1', from: 'n1', to: 'n2' },
-          { id: 'e2', from: 'n2', to: 'n3' }
-        ]
-      },
-      {
-        id: 'parallel-agents',
-        name: 'Parallel Agents',
-        description: 'Run multiple agents in parallel and merge results',
-        nodes: [
-          { id: 'n1', type: 'trigger', label: 'Start', x: 50, y: 150 },
-          { id: 'n2', type: 'parallel', label: 'Split', x: 200, y: 150 },
-          { id: 'n3', type: 'agent', label: 'Agent A', x: 350, y: 50 },
-          { id: 'n4', type: 'agent', label: 'Agent B', x: 350, y: 150 },
-          { id: 'n5', type: 'agent', label: 'Agent C', x: 350, y: 250 },
-          { id: 'n6', type: 'merge', label: 'Combine', x: 500, y: 150 },
-          { id: 'n7', type: 'output', label: 'Result', x: 650, y: 150 }
-        ],
-        edges: [
-          { id: 'e1', from: 'n1', to: 'n2' },
-          { id: 'e2', from: 'n2', to: 'n3' },
-          { id: 'e3', from: 'n2', to: 'n4' },
-          { id: 'e4', from: 'n2', to: 'n5' },
-          { id: 'e5', from: 'n3', to: 'n6' },
-          { id: 'e6', from: 'n4', to: 'n6' },
-          { id: 'e7', from: 'n5', to: 'n6' },
-          { id: 'e8', from: 'n6', to: 'n7' }
-        ]
-      },
-      {
-        id: 'conditional-routing',
-        name: 'Conditional Routing',
-        description: 'Route to different agents based on decision',
-        nodes: [
-          { id: 'n1', type: 'input', label: 'Input', x: 50, y: 150 },
-          { id: 'n2', type: 'decision', label: 'Check Type', x: 200, y: 150, config: { condition: 'input.type === "code"' } },
-          { id: 'n3', type: 'agent', label: 'Code Agent', x: 400, y: 50, config: { agentType: 'codex' } },
-          { id: 'n4', type: 'agent', label: 'Text Agent', x: 400, y: 250, config: { agentType: 'claude' } },
-          { id: 'n5', type: 'output', label: 'Result', x: 600, y: 150 }
-        ],
-        edges: [
-          { id: 'e1', from: 'n1', to: 'n2' },
-          { id: 'e2', from: 'n2', to: 'n3', label: 'true' },
-          { id: 'e3', from: 'n2', to: 'n4', label: 'false' },
-          { id: 'e4', from: 'n3', to: 'n5' },
-          { id: 'e5', from: 'n4', to: 'n5' }
-        ]
-      },
-      {
-        id: 'iteration-loop',
-        name: 'Iteration Loop',
-        description: 'Process items in a collection one by one',
-        nodes: [
-          { id: 'n1', type: 'input', label: 'Items', x: 50, y: 100 },
-          { id: 'n2', type: 'loop', label: 'For Each', x: 200, y: 100, config: { iteratorVar: 'item' } },
-          { id: 'n3', type: 'agent', label: 'Process Item', x: 350, y: 50 },
-          { id: 'n4', type: 'output', label: 'Results', x: 350, y: 200 }
-        ],
-        edges: [
-          { id: 'e1', from: 'n1', to: 'n2' },
-          { id: 'e2', from: 'n2', to: 'n3', label: 'each' },
-          { id: 'e3', from: 'n3', to: 'n2' },
-          { id: 'e4', from: 'n2', to: 'n4', label: 'done' }
-        ]
-      },
-      {
-        id: 'agent-chain',
-        name: 'Agent Chain',
-        description: 'Chain multiple agents with transformations',
-        nodes: [
-          { id: 'n1', type: 'trigger', label: 'Start', x: 50, y: 100 },
-          { id: 'n2', type: 'agent', label: 'Architect', x: 200, y: 100, config: { prompt: 'Design the solution' } },
-          { id: 'n3', type: 'transform', label: 'Format Plan', x: 350, y: 100 },
-          { id: 'n4', type: 'agent', label: 'Implementer', x: 500, y: 100, config: { prompt: 'Implement the design' } },
-          { id: 'n5', type: 'agent', label: 'Reviewer', x: 650, y: 100, config: { prompt: 'Review the implementation' } },
-          { id: 'n6', type: 'output', label: 'Final', x: 800, y: 100 }
-        ],
-        edges: [
-          { id: 'e1', from: 'n1', to: 'n2' },
-          { id: 'e2', from: 'n2', to: 'n3' },
-          { id: 'e3', from: 'n3', to: 'n4' },
-          { id: 'e4', from: 'n4', to: 'n5' },
-          { id: 'e5', from: 'n5', to: 'n6' }
-        ]
-      }
-    ];
-
-    return { success: true, templates };
+    return { success: true, templates: WORKFLOW_TEMPLATES };
   });
 
   // Apply template
   ipcMain.handle('workflow-apply-template', async (event, { templateId }) => {
-    const { success, templates } = await ipcMain.handle('workflow-get-templates');
-    if (!success) return { success: false, error: 'Failed to load templates' };
-
-    const template = templates.find(t => t.id === templateId);
+    const template = WORKFLOW_TEMPLATES.find(t => t.id === templateId);
     if (!template) {
       return { success: false, error: 'Template not found' };
     }
