@@ -823,14 +823,14 @@ async function createWindow() {
     title: 'Hivemind',
   });
 
-  // Allow microphone permission for SpeechRecognition (voice control)
+  // Allow microphone permission for SpeechRecognition (voice control) and clipboard for copy/paste
   // Need BOTH handlers: checkHandler for permission queries, requestHandler for grants
   session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
-    const allowedPermissions = ['media', 'audioCapture'];
+    const allowedPermissions = ['media', 'audioCapture', 'clipboard-read', 'clipboard-sanitized-write'];
     const mediaTypes = details?.mediaTypes || [];
-    // Allow audio-related permission checks
+    // Allow audio and clipboard permission checks
     if (allowedPermissions.includes(permission) || mediaTypes.includes('audio')) {
-      log.info('Main', `Permission check allowed: ${permission} (mediaTypes: ${mediaTypes.join(', ') || 'none'})`);
+      log.debug('Main', `Permission check allowed: ${permission} (mediaTypes: ${mediaTypes.join(', ') || 'none'})`);
       return true;
     }
     log.warn('Main', `Permission check denied: ${permission}`);
@@ -838,7 +838,7 @@ async function createWindow() {
   });
 
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    const allowedPermissions = ['media', 'audioCapture'];
+    const allowedPermissions = ['media', 'audioCapture', 'clipboard-read', 'clipboard-sanitized-write'];
     if (allowedPermissions.includes(permission)) {
       log.info('Main', `Granted permission: ${permission}`);
       callback(true);
