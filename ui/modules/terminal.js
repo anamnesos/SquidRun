@@ -980,10 +980,12 @@ async function freshStartAll() {
 
   updateConnectionStatus('Fresh start: killing all terminals...');
 
-  // Kill all terminals
+  // Kill all terminals and reset identity tracking
   for (const paneId of PANE_IDS) {
     try {
       await window.hivemind.pty.kill(paneId);
+      // Reset codex identity tracking so new session gets identity header
+      resetCodexIdentity(paneId);
     } catch (err) {
       log.error(`Terminal ${paneId}`, 'Failed to kill pane', err);
     }

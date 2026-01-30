@@ -824,6 +824,19 @@ async function createWindow() {
   });
 
   // Allow microphone permission for SpeechRecognition (voice control)
+  // Need BOTH handlers: checkHandler for permission queries, requestHandler for grants
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    const allowedPermissions = ['media', 'audioCapture'];
+    const mediaTypes = details?.mediaTypes || [];
+    // Allow audio-related permission checks
+    if (allowedPermissions.includes(permission) || mediaTypes.includes('audio')) {
+      log.info('Main', `Permission check allowed: ${permission} (mediaTypes: ${mediaTypes.join(', ') || 'none'})`);
+      return true;
+    }
+    log.warn('Main', `Permission check denied: ${permission}`);
+    return false;
+  });
+
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     const allowedPermissions = ['media', 'audioCapture'];
     if (allowedPermissions.includes(permission)) {
