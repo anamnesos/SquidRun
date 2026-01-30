@@ -219,5 +219,28 @@ describe('logger', () => {
       expect(console.error).toHaveBeenCalledTimes(1);
       expect(console.log).not.toHaveBeenCalled();
     });
+
+    test('scoped debug logs when level set to debug', () => {
+      logger.setLevel('debug');
+      const scoped = logger.scope('ScopedDebug');
+      scoped.debug('debug message');
+      expect(console.log).toHaveBeenCalledTimes(1);
+      expect(console.log.mock.calls[0][0]).toContain('[ScopedDebug]');
+    });
+  });
+
+  describe('edge cases', () => {
+    test('handles circular reference in extra', () => {
+      const circular = {};
+      circular.self = circular;
+
+      // Should not throw
+      expect(() => logger.info('Test', 'message', circular)).not.toThrow();
+
+      // File output should use String() fallback for circular object
+      expect(fsMock.appendFileSync).toHaveBeenCalled();
+      const line = fsMock.appendFileSync.mock.calls[0][1];
+      expect(line).toContain('[object Object]');
+    });
   });
 });

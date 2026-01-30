@@ -85,6 +85,18 @@ function applySettingsToUI() {
   if (thresholdInput && currentSettings.costAlertThreshold !== undefined) {
     thresholdInput.value = currentSettings.costAlertThreshold.toFixed(2);
   }
+
+  // Populate text/number inputs bound to settings
+  document.querySelectorAll('input[data-setting]').forEach(input => {
+    const key = input.dataset.setting;
+    if (key && currentSettings[key] !== undefined) {
+      if (input.type === 'number') {
+        input.value = currentSettings[key];
+      } else {
+        input.value = currentSettings[key] || '';
+      }
+    }
+  });
 }
 
 // Handle setting toggle
@@ -135,6 +147,47 @@ function setupSettings() {
       if (!isNaN(value) && value > 0) {
         await ipcRenderer.invoke('set-setting', 'costAlertThreshold', value);
         log.info('Settings', 'Cost alert threshold set to $' + value.toFixed(2));
+      }
+    });
+  }
+
+  // Generic settings inputs (text/number)
+  document.querySelectorAll('input[data-setting]').forEach(input => {
+    input.addEventListener('change', async () => {
+      const key = input.dataset.setting;
+      if (!key) return;
+      let value = input.value;
+      if (input.type === 'number') {
+        const parsed = parseFloat(input.value);
+        if (!isNaN(parsed)) {
+          value = parsed;
+        } else {
+          return;
+        }
+      }
+
+      try {
+        currentSettings = await ipcRenderer.invoke('set-setting', key, value);
+        const safeValue = key.toLowerCase().includes('pass') ? '[hidden]' : value;
+        log.info('Settings', `${key} updated: ${safeValue}`);
+      } catch (err) {
+        log.error('Settings', `Error updating ${key}`, err);
+      }
+    });
+  });
+
+  const testExternalBtn = document.getElementById('sendExternalTestBtn');
+  if (testExternalBtn) {
+    testExternalBtn.addEventListener('click', async () => {
+      try {
+        const result = await ipcRenderer.invoke('notify-external-test', {});
+        if (result && result.success) {
+          log.info('Settings', 'External notification test sent');
+        } else {
+          log.warn('Settings', 'External notification test failed', result?.error || 'unknown');
+        }
+      } catch (err) {
+        log.error('Settings', 'External notification test error', err);
       }
     });
   }

@@ -1,4 +1,91 @@
-/* base.css — Reset, typography, body/background */
+/* base.css — Design System + Reset + Typography */
+
+/* ============================================================
+   CSS DESIGN SYSTEM - Custom Properties
+   ============================================================ */
+
+:root {
+  /* Colors - Brand */
+  --color-primary: #e94560;
+  --color-primary-hover: #d63650;
+  --color-secondary: #4ecca3;
+  --color-secondary-hover: #3db892;
+  --color-accent: #ffc857;
+  --color-accent-hover: #e6b44e;
+
+  /* Colors - Backgrounds */
+  --color-bg-dark: #1a1a2e;
+  --color-bg-medium: #16213e;
+  --color-bg-light: #0f3460;
+  --color-bg-elevated: #1e2a4a;
+
+  /* Colors - Text */
+  --color-text: #eee;
+  --color-text-muted: #888;
+  --color-text-dim: #666;
+
+  /* Colors - Semantic */
+  --color-success: #4ecca3;
+  --color-warning: #ffc857;
+  --color-error: #e94560;
+  --color-info: #6ec6ff;
+
+  /* Colors - Borders */
+  --color-border: #333;
+  --color-border-light: #444;
+
+  /* Typography - Font Sizes */
+  --text-xs: 9px;
+  --text-sm: 11px;
+  --text-base: 12px;
+  --text-lg: 14px;
+  --text-xl: 18px;
+
+  /* Typography - Font Family */
+  --font-system: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Consolas', 'Monaco', 'Courier New', monospace;
+
+  /* Spacing Scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* Border Radius */
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-full: 9999px;
+
+  /* Transitions */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.2s ease;
+  --transition-slow: 0.3s ease;
+
+  /* Z-Index Scale */
+  --z-base: 1;
+  --z-dropdown: 100;
+  --z-modal: 1000;
+  --z-tooltip: 1100;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 8px 24px rgba(0, 0, 0, 0.6);
+
+  /* Glow Effects - Premium feel */
+  --glow-primary: 0 0 20px rgba(233, 69, 96, 0.3);
+  --glow-secondary: 0 0 20px rgba(78, 204, 163, 0.3);
+  --glow-accent: 0 0 20px rgba(255, 200, 87, 0.3);
+}
+
+/* ============================================================
+   RESET
+   ============================================================ */
 
 * {
   margin: 0;
@@ -6,12 +93,859 @@
   box-sizing: border-box;
 }
 
+/* ============================================================
+   BASE STYLES
+   ============================================================ */
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: #1a1a2e;
-  color: #eee;
+  font-family: var(--font-system);
+  font-size: var(--text-base);
+  background: var(--color-bg-dark);
+  color: var(--color-text);
   height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  line-height: 1.4;
+}
+
+/* Selection */
+::selection {
+  background: var(--color-primary);
+  color: var(--color-text);
+}
+
+/* Focus outline for accessibility */
+:focus-visible {
+  outline: 2px solid var(--color-secondary);
+  outline-offset: 2px;
+}
+
+/* Scrollbar styling (WebKit) - Premium feel */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-dark);
+  border-radius: var(--radius-md);
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    var(--color-bg-light) 0%,
+    var(--color-border-light) 100%
+  );
+  border-radius: var(--radius-md);
+  border: 2px solid var(--color-bg-dark);
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    var(--color-secondary) 0%,
+    var(--color-bg-light) 100%
+  );
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--color-bg-dark);
+}
+
+/* Smooth scroll behavior */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Scrollbar styling for Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-light) var(--color-bg-dark);
+}
+
+/* ============================================================
+   FOCUS-VISIBLE ACCESSIBILITY - Enhanced keyboard navigation
+   ============================================================ */
+
+/* Buttons - prominent glow ring */
+button:focus-visible,
+.btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(78, 204, 163, 0.4), var(--glow-secondary);
+}
+
+/* Inputs - subtle but clear */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--color-secondary);
+  box-shadow: 0 0 0 3px rgba(78, 204, 163, 0.2);
+}
+
+/* Tabs and navigation - underline style */
+.panel-tab:focus-visible,
+.dropdown-item:focus-visible {
+  outline: none;
+  background: rgba(78, 204, 163, 0.1);
+  box-shadow: inset 0 -2px 0 var(--color-secondary);
+}
+
+/* Skip link for accessibility */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: var(--space-4);
+  background: var(--color-primary);
+  color: var(--color-text);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  z-index: 10000;
+  transition: top 0.2s ease;
+}
+
+.skip-link:focus {
+  top: var(--space-4);
+}
+
+/* ============================================================
+   LOADING SKELETON STATES - Premium shimmer effect
+   ============================================================ */
+
+/* Base skeleton styling */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-medium) 0%,
+    var(--color-bg-light) 50%,
+    var(--color-bg-medium) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Skeleton variants */
+.skeleton-text {
+  height: 12px;
+  margin-bottom: var(--space-2);
+}
+
+.skeleton-text.short {
+  width: 60%;
+}
+
+.skeleton-text.medium {
+  width: 80%;
+}
+
+.skeleton-line {
+  height: 16px;
+  margin-bottom: var(--space-3);
+}
+
+.skeleton-block {
+  height: 100px;
+  margin-bottom: var(--space-4);
+}
+
+/* Pane loading state */
+.pane-loading {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4);
+  gap: var(--space-3);
+}
+
+.pane-loading .skeleton-header {
+  height: 24px;
+  width: 40%;
+}
+
+.pane-loading .skeleton-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Terminal loading placeholder */
+.terminal-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4);
+  background: var(--color-bg-dark);
+  gap: var(--space-2);
+}
+
+.terminal-loading.hidden {
+  display: none;
+}
+
+/* Pulse animation for loading indicators */
+@keyframes loading-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.loading-pulse {
+  animation: loading-pulse 1.5s ease-in-out infinite;
+}
+
+/* ============================================================
+   CONTEXT MENU STYLING - Premium right-click menus
+   ============================================================ */
+
+.context-menu {
+  position: fixed;
+  min-width: 180px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-bg-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl), 0 0 30px rgba(0, 0, 0, 0.3);
+  z-index: 10000;
+  padding: var(--space-1) 0;
+  animation: contextMenuIn 0.15s ease;
+  backdrop-filter: blur(8px);
+}
+
+@keyframes contextMenuIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.context-menu-item {
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+}
+
+.context-menu-item:hover {
+  background: linear-gradient(
+    90deg,
+    rgba(78, 204, 163, 0.15) 0%,
+    rgba(78, 204, 163, 0.05) 100%
+  );
+  color: var(--color-secondary);
+}
+
+.context-menu-item:active {
+  transform: scale(0.98);
+}
+
+.context-menu-item .icon {
+  width: 16px;
+  text-align: center;
+  opacity: 0.7;
+}
+
+.context-menu-item:hover .icon {
+  opacity: 1;
+}
+
+.context-menu-item .shortcut {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--color-text-dim);
+  padding: 2px var(--space-2);
+  background: var(--color-bg-medium);
+  border-radius: var(--radius-sm);
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: var(--color-bg-light);
+  margin: var(--space-1) var(--space-2);
+}
+
+.context-menu-item.danger {
+  color: var(--color-primary);
+}
+
+.context-menu-item.danger:hover {
+  background: rgba(233, 69, 96, 0.15);
+  color: var(--color-primary);
+}
+
+/* ============================================================
+   MICRO-ANIMATIONS - Premium feel interactions
+   ============================================================ */
+
+/* Button click feedback */
+.btn:active,
+button:active {
+  transform: scale(0.97);
+  transition: transform 0.1s ease;
+}
+
+/* Status badge number change */
+@keyframes badge-flip {
+  0% { transform: rotateX(0); }
+  50% { transform: rotateX(90deg); }
+  100% { transform: rotateX(0); }
+}
+
+.badge-animate {
+  animation: badge-flip 0.3s ease;
+}
+
+/* Pane header activity shimmer */
+@keyframes header-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.pane-header.activity {
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-medium) 0%,
+    rgba(78, 204, 163, 0.1) 50%,
+    var(--color-bg-medium) 100%
+  );
+  background-size: 200% 100%;
+  animation: header-shimmer 2s ease infinite;
+}
+
+/* Command sent ripple */
+@keyframes ripple-out {
+  0% {
+    box-shadow: 0 0 0 0 rgba(78, 204, 163, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 10px rgba(78, 204, 163, 0);
+  }
+}
+
+.input-ripple {
+  animation: ripple-out 0.4s ease;
+}
+
+/* Message arrival slide-in */
+@keyframes message-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  70% {
+    transform: translateX(2px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.message-animate {
+  animation: message-in 0.3s ease;
+}
+
+/* Success checkmark pop */
+@keyframes success-pop {
+  0% { transform: scale(0); opacity: 0; }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.success-animate {
+  animation: success-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+/* Error shake */
+@keyframes error-shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-4px); }
+  40%, 80% { transform: translateX(4px); }
+}
+
+.error-shake {
+  animation: error-shake 0.4s ease;
+}
+
+/* Tooltip fade-in */
+@keyframes tooltip-in {
+  0% { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.tooltip {
+  animation: tooltip-in 0.2s ease;
+}
+
+/* ============================================================
+   TOOLTIP SYSTEM - Keyboard shortcuts and hints
+   ============================================================ */
+
+/* Base tooltip container */
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::before,
+[data-tooltip]::after {
+  position: absolute;
+  z-index: var(--z-tooltip);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+/* Tooltip content */
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-bg-light);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  color: var(--color-text);
+  white-space: nowrap;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(8px);
+}
+
+/* Tooltip arrow */
+[data-tooltip]::before {
+  content: '';
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  border: 6px solid transparent;
+  border-top-color: var(--color-bg-light);
+  margin-bottom: -12px;
+}
+
+/* Show tooltip on hover */
+[data-tooltip]:hover::before,
+[data-tooltip]:hover::after {
+  opacity: 1;
+}
+
+[data-tooltip]:hover::after {
+  transform: translateX(-50%) translateY(-6px);
+}
+
+[data-tooltip]:hover::before {
+  transform: translateX(-50%) translateY(-2px);
+}
+
+/* Keyboard shortcut styling in tooltips */
+.kbd,
+kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text);
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 1px 0 var(--color-border);
+  margin: 0 2px;
+}
+
+/* Shortcut hint display */
+.shortcut-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: var(--space-2);
+  color: var(--color-text-dim);
+  font-size: 10px;
+}
+
+/* Bottom-positioned tooltip variant */
+[data-tooltip-bottom]::after {
+  bottom: auto;
+  top: 100%;
+  transform: translateX(-50%) translateY(-4px);
+}
+
+[data-tooltip-bottom]:hover::after {
+  transform: translateX(-50%) translateY(6px);
+}
+
+/* ============================================================
+   ACTIVITY INDICATOR PULSE EFFECTS
+   ============================================================ */
+
+/* Activity dot pulse */
+@keyframes activity-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.4);
+    opacity: 0.7;
+  }
+}
+
+.activity-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-secondary);
+  animation: activity-pulse 1.5s ease-in-out infinite;
+}
+
+.activity-indicator.idle {
+  background: var(--color-text-dim);
+  animation: none;
+}
+
+.activity-indicator.working {
+  background: var(--color-secondary);
+  box-shadow: 0 0 8px var(--color-secondary);
+}
+
+.activity-indicator.error {
+  background: var(--color-primary);
+  box-shadow: 0 0 8px var(--color-primary);
+}
+
+/* Ring pulse for emphasis */
+@keyframes ring-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(78, 204, 163, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(78, 204, 163, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(78, 204, 163, 0);
+  }
+}
+
+.pulse-ring {
+  animation: ring-pulse 1.5s ease-out infinite;
+}
+
+/* Glow animation for active elements */
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(78, 204, 163, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 15px rgba(78, 204, 163, 0.6);
+  }
+}
+
+.glow-active {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+/* Typing indicator dots */
+@keyframes typing-bounce {
+  0%, 80%, 100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-4px);
+  }
+}
+
+.typing-indicator {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.typing-indicator span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-secondary);
+  animation: typing-bounce 1.4s ease-in-out infinite;
+}
+
+.typing-indicator span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-indicator span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* ============================================================
+   GLASSMORPHISM EFFECTS - Modern frosted glass UI
+   ============================================================ */
+
+/* Base glass effect mixin class */
+.glass {
+  background: rgba(22, 33, 62, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-dark {
+  background: rgba(26, 26, 46, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glass-light {
+  background: rgba(78, 204, 163, 0.1);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(78, 204, 163, 0.2);
+}
+
+/* Glass overlay for modals */
+.glass-overlay {
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* Glass card component */
+.glass-card {
+  background: linear-gradient(
+    135deg,
+    rgba(22, 33, 62, 0.8) 0%,
+    rgba(26, 26, 46, 0.6) 100%
+  );
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Glass button variant */
+.btn-glass {
+  background: rgba(78, 204, 163, 0.15);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(78, 204, 163, 0.3);
+  color: var(--color-secondary);
+  transition: all var(--transition-fast);
+}
+
+.btn-glass:hover {
+  background: rgba(78, 204, 163, 0.25);
+  border-color: rgba(78, 204, 163, 0.5);
+  box-shadow: 0 0 20px rgba(78, 204, 163, 0.2);
+}
+
+/* ============================================================
+   GRADIENT BORDER EFFECTS - Premium focus states
+   ============================================================ */
+
+/* Animated gradient border wrapper */
+.gradient-border {
+  position: relative;
+  border-radius: var(--radius-md);
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    var(--color-primary),
+    var(--color-secondary),
+    var(--color-accent),
+    var(--color-secondary),
+    var(--color-primary)
+  );
+  background-size: 300% 100%;
+  z-index: -1;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.gradient-border:focus-within::before,
+.gradient-border:hover::before {
+  opacity: 1;
+  animation: gradient-shift 3s linear infinite;
+}
+
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 300% 50%; }
+}
+
+/* Glowing border on focus */
+.glow-border:focus {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--color-bg-dark),
+    0 0 0 4px var(--color-secondary),
+    0 0 20px rgba(78, 204, 163, 0.4);
+}
+
+/* ============================================================
+   PANE ZOOM/EXPAND ANIMATION
+   ============================================================ */
+
+/* Expanding pane overlay */
+.pane-expanded-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  z-index: 999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-normal);
+}
+
+.pane-expanded-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Expanded pane container */
+.pane.expanding {
+  animation: pane-expand 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.05) forwards;
+  z-index: 1000;
+}
+
+@keyframes pane-expand {
+  0% {
+    transform: scale(1);
+  }
+  100% {
+    position: fixed;
+    top: var(--space-6);
+    left: var(--space-6);
+    right: var(--space-6);
+    bottom: var(--space-6);
+    transform: scale(1);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl), 0 0 60px rgba(0, 0, 0, 0.5);
+  }
+}
+
+.pane.collapsing {
+  animation: pane-collapse 0.25s ease forwards;
+}
+
+@keyframes pane-collapse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+}
+
+/* ============================================================
+   SUCCESS PARTICLE/CONFETTI EFFECTS (CSS-only)
+   ============================================================ */
+
+/* Confetti container */
+.confetti-container {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  pointer-events: none;
+  z-index: 10001;
+}
+
+/* Individual confetti pieces */
+.confetti {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  animation: confetti-fall 1s ease-out forwards;
+}
+
+@keyframes confetti-fall {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--x, 50px), var(--y, 100px)) rotate(720deg);
+    opacity: 0;
+  }
+}
+
+/* Color variants */
+.confetti.primary { background: var(--color-primary); }
+.confetti.secondary { background: var(--color-secondary); }
+.confetti.accent { background: var(--color-accent); }
+
+/* Success burst */
+@keyframes success-burst {
+  0% {
+    transform: scale(0);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.5);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.success-burst {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(78, 204, 163, 0.6) 0%,
+    rgba(78, 204, 163, 0) 70%
+  );
+  animation: success-burst 0.5s ease-out forwards;
+  pointer-events: none;
+}
+
+/* Sparkle effect */
+@keyframes sparkle {
+  0%, 100% {
+    transform: scale(0) rotate(0deg);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1) rotate(180deg);
+    opacity: 1;
+  }
+}
+
+.sparkle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  background: var(--color-accent);
+  clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+  animation: sparkle 0.6s ease-out forwards;
 }

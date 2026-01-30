@@ -50,6 +50,14 @@ function registerTestNotificationHandlers(ctx, deps = {}) {
       });
     }
 
+    if (ctx.externalNotifier && typeof ctx.externalNotifier.notify === 'function') {
+      ctx.externalNotifier.notify({
+        category: 'alert',
+        title: `${failedCount} test${failedCount !== 1 ? 's' : ''} failed`,
+        message: body,
+      }).catch(() => {});
+    }
+
     log.info('Test Notification', title);
 
     return { success: true, notified: true, title, body };

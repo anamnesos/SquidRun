@@ -10,12 +10,18 @@ const fs = require('fs');
 const { getDaemonClient } = require('./daemon-client');
 const { WORKSPACE_PATH } = require('./config');
 const log = require('./modules/logger');
+const { createPluginManager } = require('./modules/plugins');
+const { createBackupManager } = require('./modules/backup-manager');
 
 // Import modules
 const triggers = require('./modules/triggers');
 const watcher = require('./modules/watcher');
 const ipcHandlers = require('./modules/ipc-handlers');
 const { getSDKBridge } = require('./modules/sdk-bridge');
+const memory = require('./modules/memory');
+const memoryIPC = require('./modules/memory/ipc-handlers');
+const { createRecoveryManager } = require('./modules/recovery-manager');
+const { createExternalNotifier } = require('./modules/external-notifications');
 
 const SETTINGS_FILE_PATH = path.join(__dirname, 'settings.json');
 const USAGE_FILE_PATH = path.join(__dirname, 'usage-stats.json');
@@ -26,6 +32,10 @@ let mainWindow = null;
 
 // Daemon client instance
 let daemonClient = null;
+let recoveryManager = null;
+let pluginManager = null;
+let backupManager = null;
+let externalNotifier = null;
 
 // Track agent running state per pane: 'idle' | 'starting' | 'running'
 const claudeRunning = new Map([
@@ -53,6 +63,19 @@ const DEFAULT_SETTINGS = {
   autoSpawn: false,
   autoSync: false,
   notifications: false,
+  externalNotificationsEnabled: false,
+  notifyOnAlerts: true,
+  notifyOnCompletions: true,
+  slackWebhookUrl: '',
+  discordWebhookUrl: '',
+  emailNotificationsEnabled: false,
+  smtpHost: '',
+  smtpPort: 587,
+  smtpSecure: false,
+  smtpUser: '',
+  smtpPass: '',
+  smtpFrom: '',
+  smtpTo: '',
   devTools: true,
   agentNotify: true,
   watcherEnabled: true,
@@ -77,6 +100,10 @@ const DEFAULT_SETTINGS = {
   },
   // Saved templates
   templates: [],
+  // Voice control
+  voiceInputEnabled: false,
+  voiceAutoSend: false,
+  voiceLanguage: 'en-US',
   // SDK Mode: Use Claude Agent SDK instead of PTY terminals
   sdkMode: false,
 };
@@ -159,6 +186,30 @@ function logActivity(type, paneId, message, details = {}) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('activity-logged', entry);
   }
+
+  if (pluginManager?.hasHook('activity:log')) {
+    pluginManager.dispatch('activity:log', entry).catch(() => {});
+  }
+
+  if (externalNotifier && typeof externalNotifier.notify === 'function') {
+    if (type === 'error') {
+      externalNotifier.notify({
+        category: 'alert',
+        title: `Error detected${paneId ? ` (pane ${paneId})` : ''}`,
+        message: details.snippet || message,
+        meta: { paneId },
+      }).catch(() => {});
+    }
+
+    if (type === 'terminal' && /completion/i.test(message)) {
+      externalNotifier.notify({
+        category: 'completion',
+        title: `Completion detected${paneId ? ` (pane ${paneId})` : ''}`,
+        message: details.snippet || message,
+        meta: { paneId },
+      }).catch(() => {});
+    }
+  }
 }
 
 function getActivityLog(filter = {}) {
@@ -225,6 +276,100 @@ function loadSettings() {
     Object.assign(currentSettings, DEFAULT_SETTINGS);
   }
   return currentSettings;
+}
+
+// ============================================================
+// SELF-HEALING RECOVERY MANAGER
+// ============================================================
+
+function initRecoveryManager() {
+  if (recoveryManager) return recoveryManager;
+
+  recoveryManager = createRecoveryManager({
+    getSettings: () => currentSettings,
+    getLastActivity: paneId => daemonClient?.getLastActivity?.(paneId),
+    getAllActivity: () => daemonClient?.getAllActivity?.() || {},
+    getDaemonTerminals: () => daemonClient?.getTerminals?.() || [],
+    isPaneRunning: paneId => claudeRunning.get(String(paneId)) === 'running',
+    requestRestart: (paneId, info = {}) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('restart-pane', {
+          paneId: String(paneId),
+          source: 'recovery',
+          ...info,
+        });
+      }
+    },
+    beforeRestart: async (paneId, reason) => {
+      if (daemonClient?.connected) {
+        daemonClient.saveSession();
+      }
+      logActivity('recovery', String(paneId), `Auto-restart requested (${reason})`, { reason });
+    },
+    resendTask: (paneId, message, meta = {}) => {
+      if (triggers && typeof triggers.sendDirectMessage === 'function') {
+        const recoveryMessage = `[RECOVERY] Resuming previous task\\n${message}`;
+        const result = triggers.sendDirectMessage([String(paneId)], recoveryMessage, 'Self-Healing');
+        return Boolean(result && result.success);
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('inject-message', {
+          panes: [String(paneId)],
+          message: `[RECOVERY] Resuming previous task\\n${message}\\r`,
+          meta,
+        });
+        return true;
+      }
+      return false;
+    },
+    notifyEvent: (payload) => {
+      const paneId = payload?.paneId ? String(payload.paneId) : 'system';
+      logActivity('recovery', paneId, payload?.message || 'Recovery event', payload);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('recovery-event', payload);
+      }
+    },
+  });
+
+  return recoveryManager;
+}
+
+// ============================================================
+// PLUGIN MANAGER
+// ============================================================
+
+function initPluginManager() {
+  if (pluginManager) return pluginManager;
+
+  pluginManager = createPluginManager({
+    workspacePath: WORKSPACE_PATH,
+    getSettings: () => currentSettings,
+    getState: () => watcher?.readState?.() || null,
+    notifyAgents: (targets, message) => triggers.notifyAgents(targets, message),
+    sendDirectMessage: (targets, message, fromRole) => triggers.sendDirectMessage(targets, message, fromRole),
+    broadcastMessage: (message) => triggers.broadcastToAllAgents(message),
+    logActivity,
+    getMainWindow: () => mainWindow,
+  });
+
+  return pluginManager;
+}
+
+// ============================================================
+// BACKUP MANAGER
+// ============================================================
+
+function initBackupManager() {
+  if (backupManager) return backupManager;
+
+  backupManager = createBackupManager({
+    workspacePath: WORKSPACE_PATH,
+    repoRoot: path.join(WORKSPACE_PATH, '..'),
+    logActivity,
+  });
+
+  backupManager.init();
+  return backupManager;
 }
 
 // ============================================================
@@ -479,12 +624,18 @@ function ensureTriggerDeliveryAckForwarder() {
 
 async function initDaemonClient() {
   daemonClient = getDaemonClient();
+  initRecoveryManager();
+  initPluginManager();
 
   // Update IPC handlers with daemon client
   ipcHandlers.setDaemonClient(daemonClient);
 
   // Set up event handlers for daemon events
   daemonClient.on('data', (paneId, data) => {
+    recoveryManager?.recordActivity(paneId);
+    if (pluginManager?.hasHook('daemon:data')) {
+      pluginManager.dispatch('daemon:data', { paneId: String(paneId), data }).catch(() => {});
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty-data-${paneId}`, data);
     }
@@ -503,6 +654,7 @@ async function initDaemonClient() {
       const lower = data.toLowerCase();
       if (data.includes('>') || lower.includes('claude') || lower.includes('codex') || lower.includes('gemini')) {
         claudeRunning.set(paneId, 'running');
+        pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'running' }).catch(() => {});
         broadcastClaudeState();
         logActivity('state', paneId, 'Agent started', { status: 'running' });
         log.info('Agent', `Pane ${paneId} now running`);
@@ -511,8 +663,10 @@ async function initDaemonClient() {
   });
 
   daemonClient.on('exit', (paneId, code) => {
+    recoveryManager?.handleExit(paneId, code);
     recordSessionEnd(paneId);
     claudeRunning.set(paneId, 'idle');
+    pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'idle', exitCode: code }).catch(() => {});
     broadcastClaudeState();
     logActivity('state', paneId, `Session ended (exit code: ${code})`, { exitCode: code });
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -524,6 +678,7 @@ async function initDaemonClient() {
     log.info('Daemon', `Terminal spawned for pane ${paneId}, PID: ${pid}`);
     const command = getPaneCommandForIdentity(String(paneId));
     inferAndEmitCliIdentity(paneId, command);
+    recoveryManager?.recordActivity(paneId);
   });
 
   daemonClient.on('connected', (terminals) => {
@@ -576,6 +731,14 @@ async function initDaemonClient() {
   // Forward watchdog alerts to renderer
   daemonClient.on('watchdog-alert', (message, timestamp) => {
     log.warn('Watchdog', `Alert: ${message}`);
+    if (externalNotifier && typeof externalNotifier.notify === 'function') {
+      externalNotifier.notify({
+        category: 'alert',
+        title: 'Watchdog alert',
+        message,
+        meta: { timestamp },
+      }).catch(() => {});
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('watchdog-alert', { message, timestamp });
     }
@@ -585,6 +748,9 @@ async function initDaemonClient() {
   daemonClient.on('codex-activity', (paneId, state, detail) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('codex-activity', { paneId, state, detail });
+    }
+    if (pluginManager?.hasHook('agent:activity')) {
+      pluginManager.dispatch('agent:activity', { paneId: String(paneId), state, detail }).catch(() => {});
     }
   });
 
@@ -609,6 +775,7 @@ async function initDaemonClient() {
                 log.warn('Auto-Unstick', `Pane ${paneId} stuck for ${Math.round(idleTime / 1000)}s - sent Ctrl+C`);
                 daemonClient.write(paneId, '\x03');
                 lastInterruptAt.set(paneId, now);
+                recoveryManager?.handleStuck(paneId, idleTime, 'auto-nudge');
               }
               if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('agent-stuck-detected', {
@@ -616,6 +783,14 @@ async function initDaemonClient() {
                   idleTime,
                   message: `Agent in pane ${paneId} appears stuck. Ctrl+C sent automatically.`
                 });
+              }
+              if (externalNotifier && typeof externalNotifier.notify === 'function') {
+                externalNotifier.notify({
+                  category: 'alert',
+                  title: `Agent stuck (pane ${paneId})`,
+                  message: `Idle for ${Math.round(idleTime / 1000)}s. Auto-interrupt sent.`,
+                  meta: { paneId },
+                }).catch(() => {});
               }
             }
           }
@@ -659,6 +834,17 @@ async function createWindow() {
   watcher.init(mainWindow, triggers, () => currentSettings); // Pass settings getter for auto-sync control
   triggers.setWatcher(watcher); // Enable workflow gate
 
+  // Attach recovery manager for self-healing context preservation
+  triggers.setSelfHealing(initRecoveryManager());
+
+  // Initialize plugins and attach to triggers
+  pluginManager = initPluginManager();
+  triggers.setPluginManager(pluginManager);
+  pluginManager.loadAll();
+
+  // Initialize backup manager
+  backupManager = initBackupManager();
+
   // Connect SDK bridge to triggers for message routing
   const sdkBridge = getSDKBridge();
   sdkBridge.setMainWindow(mainWindow);
@@ -679,6 +865,9 @@ async function createWindow() {
     triggers,
     usageStats,
     sessionStartTimes,
+    recoveryManager: initRecoveryManager(),
+    pluginManager,
+    backupManager,
   });
 
   // Setup all IPC handlers
@@ -696,9 +885,15 @@ async function createWindow() {
     saveActivityLog,
   });
 
+  // Setup memory system IPC handlers
+  memoryIPC.registerHandlers({ mainWindow });
+
   mainWindow.webContents.on('did-finish-load', async () => {
     const initAfterLoad = async (attempt = 1) => {
       try {
+        // Initialize memory system
+        memory.initialize();
+
         watcher.startWatcher();
         watcher.startTriggerWatcher(); // UX-9: Fast trigger watcher (50ms polling)
         watcher.startMessageWatcher(); // Start message queue watcher
@@ -752,6 +947,15 @@ async function createWindow() {
 app.whenReady().then(() => {
   // Load settings BEFORE createWindow so ipc-handlers gets the correct reference
   loadSettings();
+  externalNotifier = createExternalNotifier({
+    getSettings: () => currentSettings,
+    log,
+    appName: 'Hivemind',
+  });
+  ipcHandlers.setExternalNotifier(externalNotifier);
+  if (watcher && typeof watcher.setExternalNotifier === 'function') {
+    watcher.setExternalNotifier((payload) => externalNotifier?.notify(payload));
+  }
   // Ensure Codex sandbox mode is preconfigured before any Codex spawn
   // NOTE: This relies on Codex honoring config.toml sandbox_mode values.
   ensureCodexConfig();
@@ -767,6 +971,9 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  // Shutdown memory system - flush pending writes
+  memory.shutdown();
+
   watcher.stopWatcher();
   watcher.stopTriggerWatcher(); // UX-9: Stop fast trigger watcher
   watcher.stopMessageWatcher(); // Stop message queue watcher

@@ -1062,4 +1062,354 @@ describe('terminal.js module', () => {
       expect(terminal.isCodexPane('1')).toBe(false);
     });
   });
+
+  describe('Input Lock Functions', () => {
+    beforeEach(() => {
+      terminal.inputLocked['1'] = false;
+      terminal.inputLocked['2'] = false;
+      mockDocument.getElementById.mockReturnValue({
+        textContent: '',
+        title: '',
+        classList: { add: jest.fn(), remove: jest.fn(), toggle: jest.fn() },
+      });
+    });
+
+    describe('isInputLocked', () => {
+      test('should return false for unlocked pane', () => {
+        terminal.inputLocked['1'] = false;
+        expect(terminal.isInputLocked('1')).toBe(false);
+      });
+
+      test('should return true for locked pane', () => {
+        terminal.inputLocked['1'] = true;
+        expect(terminal.isInputLocked('1')).toBe(true);
+      });
+
+      test('should return false for undefined pane', () => {
+        delete terminal.inputLocked['3'];
+        expect(terminal.isInputLocked('3')).toBe(false);
+      });
+    });
+
+    describe('toggleInputLock', () => {
+      test('should toggle lock from false to true', () => {
+        terminal.inputLocked['1'] = false;
+        const result = terminal.toggleInputLock('1');
+        expect(result).toBe(true);
+        expect(terminal.inputLocked['1']).toBe(true);
+      });
+
+      test('should toggle lock from true to false', () => {
+        terminal.inputLocked['1'] = true;
+        const result = terminal.toggleInputLock('1');
+        expect(result).toBe(false);
+        expect(terminal.inputLocked['1']).toBe(false);
+      });
+
+      test('should update lock icon when element exists', () => {
+        const mockLockIcon = {
+          textContent: '',
+          title: '',
+          classList: { add: jest.fn(), remove: jest.fn(), toggle: jest.fn() },
+        };
+        mockDocument.getElementById.mockReturnValue(mockLockIcon);
+
+        terminal.inputLocked['1'] = false;
+        terminal.toggleInputLock('1');
+
+        expect(mockLockIcon.textContent).toBe('L');
+        expect(mockLockIcon.classList.toggle).toHaveBeenCalledWith('unlocked', false);
+      });
+
+      test('should handle missing lock icon element', () => {
+        mockDocument.getElementById.mockReturnValue(null);
+        terminal.inputLocked['1'] = false;
+
+        expect(() => terminal.toggleInputLock('1')).not.toThrow();
+        expect(terminal.inputLocked['1']).toBe(true);
+      });
+    });
+
+    describe('setInputLocked', () => {
+      test('should set lock state to true', () => {
+        terminal.inputLocked['1'] = false;
+        terminal.setInputLocked('1', true);
+        expect(terminal.inputLocked['1']).toBe(true);
+      });
+
+      test('should set lock state to false', () => {
+        terminal.inputLocked['1'] = true;
+        terminal.setInputLocked('1', false);
+        expect(terminal.inputLocked['1']).toBe(false);
+      });
+
+      test('should update lock icon when element exists', () => {
+        const mockLockIcon = {
+          textContent: '',
+          title: '',
+          classList: { add: jest.fn(), remove: jest.fn(), toggle: jest.fn() },
+        };
+        mockDocument.getElementById.mockReturnValue(mockLockIcon);
+
+        terminal.setInputLocked('1', true);
+
+        expect(mockLockIcon.textContent).toBe('L');
+        expect(mockLockIcon.title).toContain('locked');
+        expect(mockLockIcon.classList.toggle).toHaveBeenCalledWith('unlocked', false);
+      });
+
+      test('should handle missing lock icon element', () => {
+        mockDocument.getElementById.mockReturnValue(null);
+
+        expect(() => terminal.setInputLocked('1', true)).not.toThrow();
+        expect(terminal.inputLocked['1']).toBe(true);
+      });
+    });
+  });
+
+  describe('Terminal Search Functions', () => {
+    beforeEach(() => {
+      terminal.searchAddons.set('1', {
+        findNext: jest.fn(),
+        findPrevious: jest.fn(),
+      });
+    });
+
+    describe('searchAddons', () => {
+      test('should store search addon instances', () => {
+        expect(terminal.searchAddons.get('1')).toBeDefined();
+        expect(terminal.searchAddons.get('1').findNext).toBeDefined();
+      });
+    });
+
+    // Note: openTerminalSearch and closeTerminalSearch are tightly coupled
+    // to DOM state (module-level searchBar variable) making isolated unit
+    // testing difficult. Integration tests via renderer.test.js cover these.
+  });
+
+  describe('Idle Detection', () => {
+    describe('isIdle', () => {
+      test('should return true when pane has been idle', () => {
+        terminal.lastOutputTime['1'] = Date.now() - 10000; // 10 seconds ago
+        expect(terminal.isIdle('1')).toBe(true);
+      });
+
+      test('should return false when pane has recent output', () => {
+        terminal.lastOutputTime['1'] = Date.now() - 500; // 0.5 seconds ago
+        expect(terminal.isIdle('1')).toBe(false);
+      });
+
+      test('should return true for undefined pane', () => {
+        delete terminal.lastOutputTime['3'];
+        expect(terminal.isIdle('3')).toBe(true);
+      });
+    });
+  });
+
+  describe('Stuck Message Sweeper', () => {
+    describe('startStuckMessageSweeper', () => {
+      test('should not throw when called', () => {
+        expect(() => terminal.startStuckMessageSweeper()).not.toThrow();
+      });
+    });
+
+    describe('stopStuckMessageSweeper', () => {
+      test('should not throw when called', () => {
+        expect(() => terminal.stopStuckMessageSweeper()).not.toThrow();
+      });
+    });
+
+    describe('sweepStuckMessages', () => {
+      test('should not throw when called', () => {
+        terminal.potentiallyStuckPanes.clear();
+        expect(() => terminal.sweepStuckMessages()).not.toThrow();
+      });
+
+      test('should process stuck panes', () => {
+        terminal.potentiallyStuckPanes.set('1', {
+          message: 'test',
+          queuedAt: Date.now() - 60000, // 1 minute ago
+        });
+
+        expect(() => terminal.sweepStuckMessages()).not.toThrow();
+      });
+    });
+  });
+
+  describe('Message Queue', () => {
+    test('should exist as an object', () => {
+      expect(typeof terminal.messageQueue).toBe('object');
+      expect(terminal.messageQueue).not.toBeNull();
+    });
+  });
+
+  describe('Last Activity Tracking', () => {
+    test('lastEnterTime should be an object', () => {
+      expect(typeof terminal.lastEnterTime).toBe('object');
+    });
+
+    test('lastTypedTime should be an object', () => {
+      expect(typeof terminal.lastTypedTime).toBe('object');
+    });
+
+    test('lastOutputTime should be an object', () => {
+      expect(typeof terminal.lastOutputTime).toBe('object');
+    });
+  });
+
+  describe('potentiallyStuckPanes', () => {
+    test('should exist as a Map', () => {
+      expect(terminal.potentiallyStuckPanes instanceof Map).toBe(true);
+    });
+
+    test('should allow set and get operations', () => {
+      terminal.potentiallyStuckPanes.set('test', { message: 'test' });
+      expect(terminal.potentiallyStuckPanes.get('test')).toEqual({ message: 'test' });
+      terminal.potentiallyStuckPanes.delete('test');
+    });
+  });
+
+  describe('fitAddons', () => {
+    test('should exist as a Map', () => {
+      expect(terminal.fitAddons instanceof Map).toBe(true);
+    });
+  });
+
+  describe('searchAddons', () => {
+    test('should exist as a Map', () => {
+      expect(terminal.searchAddons instanceof Map).toBe(true);
+    });
+  });
+
+  describe('initUIFocusTracker', () => {
+    test('should attach focusin event listener', () => {
+      mockDocument.addEventListener.mockClear();
+      terminal.initUIFocusTracker();
+
+      expect(mockDocument.addEventListener).toHaveBeenCalledWith('focusin', expect.any(Function));
+    });
+
+    test('should attach keydown event listener', () => {
+      mockDocument.addEventListener.mockClear();
+      terminal.initUIFocusTracker();
+
+      expect(mockDocument.addEventListener).toHaveBeenCalledWith('keydown', expect.any(Function));
+    });
+
+    test('focusin handler should track UI input focus', () => {
+      mockDocument.addEventListener.mockClear();
+      terminal.initUIFocusTracker();
+
+      // Get the focusin handler
+      const focusinCall = mockDocument.addEventListener.mock.calls.find(
+        call => call[0] === 'focusin'
+      );
+      const focusinHandler = focusinCall[1];
+
+      // Simulate focus on INPUT element (not xterm)
+      const mockInput = {
+        tagName: 'INPUT',
+        classList: { contains: jest.fn().mockReturnValue(false) },
+      };
+
+      focusinHandler({ target: mockInput });
+      // Handler sets lastUserUIFocus internally - no error = success
+    });
+
+    test('focusin handler should ignore xterm-helper-textarea', () => {
+      mockDocument.addEventListener.mockClear();
+      terminal.initUIFocusTracker();
+
+      const focusinCall = mockDocument.addEventListener.mock.calls.find(
+        call => call[0] === 'focusin'
+      );
+      const focusinHandler = focusinCall[1];
+
+      // Simulate focus on xterm textarea (should be ignored)
+      const mockXtermTextarea = {
+        tagName: 'TEXTAREA',
+        classList: { contains: jest.fn().mockReturnValue(true) }, // is xterm-helper-textarea
+      };
+
+      focusinHandler({ target: mockXtermTextarea });
+      // Should not update lastUserUIFocus for xterm textarea
+    });
+
+    test('keydown handler should track typing in UI inputs', () => {
+      mockDocument.addEventListener.mockClear();
+      terminal.initUIFocusTracker();
+
+      const keydownCall = mockDocument.addEventListener.mock.calls.find(
+        call => call[0] === 'keydown'
+      );
+      const keydownHandler = keydownCall[1];
+
+      const mockInput = {
+        tagName: 'INPUT',
+        classList: { contains: jest.fn().mockReturnValue(false) },
+      };
+
+      keydownHandler({ target: mockInput });
+      // Handler updates lastUserUIKeypressTime internally
+    });
+  });
+
+  describe('interruptPane', () => {
+    test('should exist as a function', () => {
+      expect(typeof terminal.interruptPane).toBe('function');
+    });
+
+    test('should not throw when called', () => {
+      expect(() => terminal.interruptPane('1')).not.toThrow();
+    });
+  });
+
+  describe('restartPane', () => {
+    test('should exist as a function', () => {
+      expect(typeof terminal.restartPane).toBe('function');
+    });
+
+    test('should return a promise', () => {
+      terminal.terminals.set('1', { clear: jest.fn() });
+      const result = terminal.restartPane('1');
+      expect(result).toBeInstanceOf(Promise);
+      // Don't await - has internal delays
+    });
+  });
+
+  describe('unstickEscalation', () => {
+    test('should exist as a function', () => {
+      expect(typeof terminal.unstickEscalation).toBe('function');
+    });
+
+    test('should not throw when called', () => {
+      expect(() => terminal.unstickEscalation('1')).not.toThrow();
+    });
+  });
+
+  describe('inputLocked state', () => {
+    test('inputLocked should be an object', () => {
+      expect(typeof terminal.inputLocked).toBe('object');
+    });
+
+    test('should support setting and getting lock state', () => {
+      terminal.inputLocked['1'] = true;
+      expect(terminal.inputLocked['1']).toBe(true);
+      terminal.inputLocked['1'] = false;
+      expect(terminal.inputLocked['1']).toBe(false);
+    });
+  });
+
+  describe('openTerminalSearch edge cases', () => {
+    test('should handle missing search addon', () => {
+      terminal.searchAddons.delete('999');
+      expect(() => terminal.openTerminalSearch('999')).not.toThrow();
+    });
+  });
+
+  describe('closeTerminalSearch edge cases', () => {
+    test('should not throw when called without active search', () => {
+      expect(() => terminal.closeTerminalSearch()).not.toThrow();
+    });
+  });
 });

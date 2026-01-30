@@ -12,12 +12,23 @@ const crypto = require('crypto');
 const { TRIGGER_TARGETS, WORKSPACE_PATH, PANE_IDS } = require('../config');
 const log = require('./logger');
 const diagnosticLog = require('./diagnostic-log');
+const smartRouting = require('./smart-routing');
+
+// Memory system for trigger logging
+let memory = null;
+try {
+  memory = require('./memory');
+} catch (e) {
+  // Memory system not available - continue without logging
+}
 
 // Module state (set by init)
 let mainWindow = null;
 let claudeRunning = null;
 let watcher = null; // Reference to watcher module for state checks
 let logActivityFn = null; // Activity log function from main.js
+let selfHealing = null; // Optional self-healing manager
+let pluginManager = null; // Optional plugin manager
 
 // SDK Integration
 let sdkBridge = null;
@@ -496,6 +507,37 @@ function init(window, claudeState, logActivity) {
 }
 
 /**
+ * Attach self-healing manager for task recovery context
+ * @param {object} manager - Self-healing manager instance
+ */
+function setSelfHealing(manager) {
+  selfHealing = manager || null;
+}
+
+function setPluginManager(manager) {
+  pluginManager = manager || null;
+}
+
+function applyPluginHookSync(eventName, payload) {
+  if (!pluginManager || !pluginManager.hasHook(eventName)) {
+    return payload;
+  }
+  return pluginManager.applyHookSync(eventName, payload);
+}
+
+function dispatchPluginEvent(eventName, payload) {
+  if (!pluginManager || !pluginManager.hasHook(eventName)) {
+    return;
+  }
+  pluginManager.dispatch(eventName, payload).catch(() => {});
+}
+
+function recordSelfHealingMessage(paneId, message, meta = {}) {
+  if (!selfHealing || typeof selfHealing.recordTask !== 'function') return;
+  selfHealing.recordTask(paneId, message, meta);
+}
+
+/**
  * Log trigger activity to activity log
  * @param {string} action - Action type (sent, received, routed, handoff)
  * @param {Array|string} panes - Target pane(s)
@@ -610,12 +652,29 @@ function checkWorkflowGate(targets) {
  */
 function notifyAgents(agents, message) {
   if (!message) return;
+  let targets = Array.isArray(agents) ? [...agents] : [];
+  const beforePayload = applyPluginHookSync('message:beforeSend', {
+    type: 'notify',
+    targets,
+    message,
+    mode: isSDKModeEnabled() ? 'sdk' : 'pty',
+  });
+  if (beforePayload && beforePayload.cancel) {
+    return [];
+  }
+  if (beforePayload && typeof beforePayload.message === 'string') {
+    message = beforePayload.message;
+  }
+  if (beforePayload && Array.isArray(beforePayload.targets)) {
+    targets = beforePayload.targets;
+  }
 
   // SDK MODE: Route through SDK bridge (no running check needed - SDK manages sessions)
   if (isSDKModeEnabled()) {
-    log.info('notifyAgents SDK', `Sending to ${agents.length} pane(s) via SDK: ${message.substring(0, 50)}...`);
+    if (targets.length === 0) return [];
+    log.info('notifyAgents SDK', `Sending to ${targets.length} pane(s) via SDK: ${message.substring(0, 50)}...`);
     let successCount = 0;
-    for (const paneId of agents) {
+    for (const paneId of targets) {
       // Display incoming message in pane UI so user can see agent-to-agent messages
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('sdk-message', {
@@ -626,14 +685,21 @@ function notifyAgents(agents, message) {
       const sent = sdkBridge.sendMessage(paneId, message);
       if (sent) successCount++;
     }
-    log.info('notifyAgents SDK', `Delivered to ${successCount}/${agents.length} panes`);
-    logTriggerActivity('Sent (SDK)', agents, message, { mode: 'sdk', delivered: successCount });
-    return agents; // SDK mode doesn't filter by running state
+    log.info('notifyAgents SDK', `Delivered to ${successCount}/${targets.length} panes`);
+    logTriggerActivity('Sent (SDK)', targets, message, { mode: 'sdk', delivered: successCount });
+    dispatchPluginEvent('message:afterSend', {
+      type: 'notify',
+      targets,
+      message,
+      mode: 'sdk',
+      success: successCount === targets.length,
+    });
+    return targets; // SDK mode doesn't filter by running state
   }
 
   // PTY MODE (legacy): Only send to panes where Claude is confirmed running
   const notified = [];
-  for (const paneId of agents) {
+  for (const paneId of targets) {
     if (claudeRunning && claudeRunning.get(paneId) === 'running') {
       notified.push(paneId);
     }
@@ -648,8 +714,16 @@ function notifyAgents(agents, message) {
     }
     logTriggerActivity('Sent (PTY)', notified, message, { mode: 'pty' });
   } else {
-    log.info('notifyAgents', `Skipped (no Claude running): ${agents.join(', ')}`);
+    log.info('notifyAgents', `Skipped (no Claude running): ${targets.join(', ')}`);
   }
+
+  dispatchPluginEvent('message:afterSend', {
+    type: 'notify',
+    targets: notified,
+    message,
+    mode: 'pty',
+    success: notified.length > 0,
+  });
 
   return notified;
 }
@@ -814,7 +888,7 @@ function sendStaggered(panes, message, meta = {}) {
  * @param {string} filename - Just the filename (e.g., 'worker-b.txt')
  */
 function handleTriggerFile(filePath, filename) {
-  const targets = TRIGGER_TARGETS[filename];
+  let targets = TRIGGER_TARGETS[filename];
   if (!targets) {
     log.info('Trigger', `Unknown trigger file: ${filename}`);
     return { success: false, reason: 'unknown' };
@@ -875,8 +949,57 @@ function handleTriggerFile(filePath, filename) {
     log.info('Trigger:DEBUG', `[lead.txt] Read ${message.length} chars`);
   }
 
+  const preParsed = parseMessageSequence(message);
+
+  dispatchPluginEvent('trigger:received', {
+    file: filename,
+    targets,
+    message,
+    sender: preParsed.sender,
+    seq: preParsed.seq,
+    mode: isSDKModeEnabled() ? 'sdk' : 'pty',
+  });
+
+  const beforePayload = applyPluginHookSync('message:beforeSend', {
+    type: 'trigger',
+    targets,
+    message,
+    file: filename,
+    sender: preParsed.sender,
+    seq: preParsed.seq,
+    mode: isSDKModeEnabled() ? 'sdk' : 'pty',
+  });
+  if (beforePayload && beforePayload.cancel) {
+    try {
+      fs.writeFileSync(filePath, '', 'utf-8');
+    } catch (err) {
+      log.info('Trigger', `Could not clear ${filename}: ${err.message}`);
+    }
+    dispatchPluginEvent('message:afterSend', {
+      type: 'trigger',
+      targets,
+      message,
+      file: filename,
+      sender: parsed.sender,
+      seq: parsed.seq,
+      mode: isSDKModeEnabled() ? 'sdk' : 'pty',
+      success: false,
+      reason: 'plugin_cancelled',
+    });
+    return { success: false, reason: 'plugin_cancelled' };
+  }
+  if (beforePayload && typeof beforePayload.message === 'string') {
+    message = beforePayload.message;
+  }
+  if (beforePayload && Array.isArray(beforePayload.targets)) {
+    targets = beforePayload.targets;
+  }
+
   // MESSAGE SEQUENCING: Parse and check for duplicates
-  const parsed = parseMessageSequence(message);
+  let parsed = parseMessageSequence(message);
+  if ((parsed.seq === null || !parsed.sender) && (preParsed.seq !== null && preParsed.sender)) {
+    parsed = preParsed;
+  }
   const recipientRole = filename.replace('.txt', '').toLowerCase();
   const hasSequence = parsed.seq !== null && parsed.sender;
   if (filename === 'lead.txt') {
@@ -968,6 +1091,39 @@ function handleTriggerFile(filePath, filename) {
     }
 
     logTriggerActivity('Trigger file (SDK)', targets, message, { file: filename, sender: parsed.sender, mode: 'sdk' });
+
+    if (allSuccess) {
+      for (const targetPaneId of targets) {
+        recordSelfHealingMessage(targetPaneId, message, {
+          source: 'trigger',
+          file: filename,
+          sender: parsed.sender,
+          mode: 'sdk',
+        });
+      }
+    }
+
+    // Log trigger to memory system
+    if (memory && allSuccess) {
+      for (const targetPaneId of targets) {
+        // Find source pane ID from sender role
+        const senderRole = parsed.sender || 'unknown';
+        const sourcePaneId = Object.entries(TRIGGER_TARGETS)
+          .find(([file]) => file.replace('.txt', '').toLowerCase() === senderRole)?.[1]?.[0] || '0';
+        memory.logTriggerMessage(sourcePaneId, targetPaneId, message);
+      }
+    }
+
+    dispatchPluginEvent('message:afterSend', {
+      type: 'trigger',
+      targets,
+      message,
+      file: filename,
+      sender: parsed.sender,
+      seq: parsed.seq,
+      mode: 'sdk',
+      success: allSuccess,
+    });
     return { success: allSuccess, notified: targets, mode: 'sdk' };
   }
 
@@ -996,6 +1152,37 @@ function handleTriggerFile(filePath, filename) {
   }
 
   logTriggerActivity('Trigger file (PTY)', targets, message, { file: filename, sender: parsed.sender, mode: 'pty' });
+
+  for (const targetPaneId of targets) {
+    recordSelfHealingMessage(targetPaneId, message, {
+      source: 'trigger',
+      file: filename,
+      sender: parsed.sender,
+      mode: 'pty',
+    });
+  }
+
+  // Log trigger to memory system
+  if (memory) {
+    for (const targetPaneId of targets) {
+      const senderRole = parsed.sender || 'unknown';
+      const sourcePaneId = Object.entries(TRIGGER_TARGETS)
+        .find(([file]) => file.replace('.txt', '').toLowerCase() === senderRole)?.[1]?.[0] || '0';
+      memory.logTriggerMessage(sourcePaneId, targetPaneId, message);
+    }
+  }
+
+  dispatchPluginEvent('message:afterSend', {
+    type: 'trigger',
+    targets,
+    message,
+    file: filename,
+    sender: parsed.sender,
+    seq: parsed.seq,
+    mode: 'pty',
+    success: true,
+    deliveryId,
+  });
   return { success: true, notified: targets, mode: 'pty', deliveryId };
 }
 
@@ -1006,34 +1193,71 @@ function handleTriggerFile(filePath, filename) {
  * @param {string} message - Message to broadcast (will be prefixed)
  */
 function broadcastToAllAgents(message) {
+  let targets = [...PANE_IDS];
+  const beforePayload = applyPluginHookSync('message:beforeSend', {
+    type: 'broadcast',
+    targets,
+    message,
+    mode: isSDKModeEnabled() ? 'sdk' : 'pty',
+  });
+  if (beforePayload && beforePayload.cancel) {
+    return { success: false, notified: [], mode: isSDKModeEnabled() ? 'sdk' : 'pty' };
+  }
+  if (beforePayload && typeof beforePayload.message === 'string') {
+    message = beforePayload.message;
+  }
+  if (beforePayload && Array.isArray(beforePayload.targets)) {
+    targets = beforePayload.targets;
+  }
+
   const broadcastMessage = `[BROADCAST TO ALL AGENTS] ${message}`;
 
   // SDK MODE: Broadcast through SDK bridge to all panes
   if (isSDKModeEnabled()) {
-    log.info('BROADCAST SDK', `Broadcasting to all ${PANE_IDS.length} panes`);
-    recordSent('sdk', 'broadcast', PANE_IDS);
-    sdkBridge.broadcast(broadcastMessage);
-    // SDK broadcast is fire-and-forget, record as delivered
-    PANE_IDS.forEach(paneId => recordDelivered('sdk', 'broadcast', paneId));
+    if (targets.length === 0) {
+      return { success: false, notified: [], mode: 'sdk' };
+    }
+    log.info('BROADCAST SDK', `Broadcasting to ${targets.length} pane(s)`);
+    recordSent('sdk', 'broadcast', targets);
+    if (targets.length === PANE_IDS.length) {
+      sdkBridge.broadcast(broadcastMessage);
+      PANE_IDS.forEach(paneId => recordDelivered('sdk', 'broadcast', paneId));
+    } else {
+      targets.forEach(paneId => {
+        const sent = sdkBridge.sendMessage(paneId, broadcastMessage);
+        if (sent) {
+          recordDelivered('sdk', 'broadcast', paneId);
+        } else {
+          recordFailed('sdk', 'broadcast', paneId, 'sdk_send_failed');
+        }
+      });
+    }
 
     // Notify renderer
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('broadcast-sent', {
         message,
-        notified: PANE_IDS,
+        notified: targets,
         mode: 'sdk'
       });
     }
 
-    logTriggerActivity('Broadcast (SDK)', PANE_IDS, broadcastMessage, { mode: 'sdk' });
-    return { success: true, notified: PANE_IDS, mode: 'sdk' };
+    logTriggerActivity('Broadcast (SDK)', targets, broadcastMessage, { mode: 'sdk' });
+    dispatchPluginEvent('message:afterSend', {
+      type: 'broadcast',
+      targets,
+      message,
+      mode: 'sdk',
+      success: true,
+    });
+    return { success: true, notified: targets, mode: 'sdk' };
   }
 
   // PTY MODE (legacy): Get list of running Claude panes
   const notified = [];
   if (claudeRunning) {
     for (const [paneId, status] of claudeRunning) {
-      if (status === 'running') {
+      if (status === 'running' && targets.includes(paneId)) {
         notified.push(paneId);
       }
     }
@@ -1057,6 +1281,13 @@ function broadcastToAllAgents(message) {
   if (notified.length > 0) {
     logTriggerActivity('Broadcast (PTY)', notified, broadcastMessage, { mode: 'pty' });
   }
+  dispatchPluginEvent('message:afterSend', {
+    type: 'broadcast',
+    targets: notified,
+    message,
+    mode: 'pty',
+    success: notified.length > 0,
+  });
   return { success: true, notified, mode: 'pty' };
 }
 
@@ -1080,58 +1311,21 @@ const AGENT_ROLES = {
  * @param {Object} performance - Performance data from get-performance
  * @returns {{ paneId: string, reason: string }}
  */
-function getBestAgent(taskType, performance) {
-  // Find agents with matching skills
-  const candidates = [];
-  for (const [paneId, role] of Object.entries(AGENT_ROLES)) {
-    if (role.skills.includes(taskType) || role.type === taskType) {
-      candidates.push(paneId);
-    }
-  }
+function getBestAgent(taskType, performance, message = '') {
+  const runningMap = (watcher && typeof watcher.getClaudeRunning === 'function')
+    ? watcher.getClaudeRunning()
+    : (claudeRunning || new Map());
 
-  // If no skill match, use workers for general tasks
-  if (candidates.length === 0) {
-    candidates.push('3', '4', '5'); // Workers
-  }
+  const decision = smartRouting.getBestAgent({
+    taskType,
+    message,
+    roles: AGENT_ROLES,
+    runningMap: runningMap || new Map(),
+    performance,
+    workspacePath: WORKSPACE_PATH,
+  });
 
-  // Filter to running agents
-  const runningCandidates = candidates.filter(paneId =>
-    claudeRunning && claudeRunning.get(paneId) === 'running'
-  );
-
-  if (runningCandidates.length === 0) {
-    return { paneId: null, reason: 'no_running_candidates' };
-  }
-
-  // If we have performance data, pick best performer
-  if (performance && performance.agents) {
-    let bestPaneId = runningCandidates[0];
-    let bestScore = -1;
-
-    for (const paneId of runningCandidates) {
-      const stats = performance.agents[paneId];
-      if (stats) {
-        // Score = completions * 2 - errors + (1000 / avgResponseTime)
-        const avgTime = stats.responseCount > 0
-          ? stats.totalResponseTime / stats.responseCount
-          : 10000;
-        const score = (stats.completions * 2) - stats.errors + (1000 / Math.max(avgTime, 1));
-
-        if (score > bestScore) {
-          bestScore = score;
-          bestPaneId = paneId;
-        }
-      }
-    }
-
-    return {
-      paneId: bestPaneId,
-      reason: bestScore > 0 ? 'performance_based' : 'first_available'
-    };
-  }
-
-  // No performance data, return first running candidate
-  return { paneId: runningCandidates[0], reason: 'first_available' };
+  return decision;
 }
 
 /**
@@ -1141,14 +1335,17 @@ function getBestAgent(taskType, performance) {
  * @param {Object} performance - Performance data
  */
 function routeTask(taskType, message, performance) {
-  const { paneId, reason } = getBestAgent(taskType, performance);
+  const decision = getBestAgent(taskType, performance, message);
+  const { paneId, reason, confidence } = decision;
 
   if (!paneId) {
     log.info('SmartRoute', `No agent available for ${taskType}`);
     return { success: false, reason: 'no_agent_available' };
   }
 
-  log.info('SmartRoute', `Routing ${taskType} task to pane ${paneId} (${reason})`);
+  const confidencePct = confidence != null ? Math.round(confidence * 100) : null;
+  const confidenceNote = confidencePct !== null ? `, ${confidencePct}% confidence` : '';
+  log.info('SmartRoute', `Routing ${taskType} task to pane ${paneId} (${reason}${confidenceNote})`);
 
   const routeMessage = `[ROUTED: ${taskType}] ${message}`;
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1158,12 +1355,18 @@ function routeTask(taskType, message, performance) {
       message: triggerMessage + '\r'
     });
     mainWindow.webContents.send('task-routed', {
-      taskType, paneId, reason, message: message.substring(0, 50)
+      taskType,
+      paneId,
+      reason,
+      confidence,
+      scores: decision.scores ? decision.scores.slice(0, 3) : null,
+      message: message.substring(0, 50)
     });
   }
 
-  logTriggerActivity('Routed task', [paneId], routeMessage, { taskType, reason });
-  return { success: true, paneId, reason };
+  logTriggerActivity('Routed task', [paneId], routeMessage, { taskType, reason, confidence });
+  recordSelfHealingMessage(paneId, message, { source: 'route', taskType, confidence });
+  return { success: true, paneId, reason, confidence };
 }
 
 // ============================================================
@@ -1245,16 +1448,59 @@ function triggerAutoHandoff(completedPaneId, completionMessage) {
 function sendDirectMessage(targetPanes, message, fromRole = null) {
   if (!message) return { success: false, error: 'No message' };
 
+  let targets = Array.isArray(targetPanes) ? [...targetPanes] : [];
+  const beforePayload = applyPluginHookSync('message:beforeSend', {
+    type: 'direct',
+    targets,
+    message,
+    fromRole,
+    mode: isSDKModeEnabled() ? 'sdk' : 'pty',
+  });
+  if (beforePayload && beforePayload.cancel) {
+    dispatchPluginEvent('message:afterSend', {
+      type: 'direct',
+      targets,
+      message,
+      fromRole,
+      mode: isSDKModeEnabled() ? 'sdk' : 'pty',
+      success: false,
+      reason: 'plugin_cancelled',
+    });
+    return { success: false, notified: [], reason: 'plugin_cancelled', mode: isSDKModeEnabled() ? 'sdk' : 'pty' };
+  }
+  if (beforePayload && typeof beforePayload.message === 'string') {
+    message = beforePayload.message;
+  }
+  if (beforePayload && typeof beforePayload.fromRole === 'string') {
+    fromRole = beforePayload.fromRole;
+  }
+  if (beforePayload && Array.isArray(beforePayload.targets)) {
+    targets = beforePayload.targets;
+  }
+
+  if (targets.length === 0) {
+    dispatchPluginEvent('message:afterSend', {
+      type: 'direct',
+      targets,
+      message,
+      fromRole,
+      mode: isSDKModeEnabled() ? 'sdk' : 'pty',
+      success: false,
+      reason: 'no_targets',
+    });
+    return { success: false, notified: [], reason: 'no_targets', mode: isSDKModeEnabled() ? 'sdk' : 'pty' };
+  }
+
   const prefix = fromRole ? `[MSG from ${fromRole}]: ` : '';
   const fullMessage = prefix + message;
 
   // SDK MODE: Direct delivery through SDK bridge (no running check needed)
   if (isSDKModeEnabled()) {
-    log.info('DirectMessage SDK', `Sending to panes ${targetPanes.join(', ')}: ${message.substring(0, 50)}...`);
-    recordSent('sdk', 'direct', targetPanes);
+    log.info('DirectMessage SDK', `Sending to panes ${targets.join(', ')}: ${message.substring(0, 50)}...`);
+    recordSent('sdk', 'direct', targets);
 
     let allSuccess = true;
-    for (const paneId of targetPanes) {
+    for (const paneId of targets) {
       // Display incoming message in pane UI so user can see agent-to-agent messages
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('sdk-message', {
@@ -1274,21 +1520,32 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('direct-message-sent', {
-        to: targetPanes,
+        to: targets,
         from: fromRole,
         message: message.substring(0, 100),
         mode: 'sdk'
       });
     }
 
-    logTriggerActivity('Direct message (SDK)', targetPanes, fullMessage, { from: fromRole, mode: 'sdk' });
-    return { success: allSuccess, notified: targetPanes, mode: 'sdk' };
+    logTriggerActivity('Direct message (SDK)', targets, fullMessage, { from: fromRole, mode: 'sdk' });
+    for (const paneId of targets) {
+      recordSelfHealingMessage(paneId, fullMessage, { source: 'direct', from: fromRole, mode: 'sdk' });
+    }
+    dispatchPluginEvent('message:afterSend', {
+      type: 'direct',
+      targets,
+      message,
+      fromRole,
+      mode: 'sdk',
+      success: allSuccess,
+    });
+    return { success: allSuccess, notified: targets, mode: 'sdk' };
   }
 
   // PTY MODE (legacy): No workflow gate check - direct messages always allowed
   const notified = [];
 
-  for (const paneId of targetPanes) {
+  for (const paneId of targets) {
     if (claudeRunning && claudeRunning.get(paneId) === 'running') {
       notified.push(paneId);
     }
@@ -1315,11 +1572,31 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
     notified.forEach(paneId => recordDelivered('pty', 'direct', paneId));
 
     logTriggerActivity('Direct message (PTY)', notified, fullMessage, { from: fromRole, mode: 'pty' });
+    for (const paneId of notified) {
+      recordSelfHealingMessage(paneId, fullMessage, { source: 'direct', from: fromRole, mode: 'pty' });
+    }
+    dispatchPluginEvent('message:afterSend', {
+      type: 'direct',
+      targets: notified,
+      message,
+      fromRole,
+      mode: 'pty',
+      success: true,
+    });
     return { success: true, notified, mode: 'pty' };
   }
 
-  log.info('DirectMessage', `No running Claude in target panes: ${targetPanes.join(', ')}`);
-  return { success: false, notified: [], reason: 'no_running_targets' };
+  log.info('DirectMessage', `No running Claude in target panes: ${targets.join(', ')}`);
+  dispatchPluginEvent('message:afterSend', {
+    type: 'direct',
+    targets,
+    message,
+    fromRole,
+    mode: 'pty',
+    success: false,
+    reason: 'no_running_targets',
+  });
+  return { success: false, notified: [], reason: 'no_running_targets', mode: 'pty' };
 }
 
 /**
@@ -1352,6 +1629,8 @@ module.exports = {
   setSDKBridge,
   setSDKMode,
   isSDKModeEnabled,
+  setSelfHealing,
+  setPluginManager,
   // Message Sequencing
   parseMessageSequence,
   isDuplicateMessage,

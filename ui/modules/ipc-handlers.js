@@ -44,10 +44,35 @@ function setDaemonClient(client) {
   ipcState.setDaemonClient(client);
 }
 
+function setExternalNotifier(notifier) {
+  ctx.externalNotifier = notifier;
+}
+
 /**
  * Setup all IPC handlers
  */
 function setupIPCHandlers(deps) {
+  if (ctx.ipcMain && !ctx._perfWrapped) {
+    const originalHandle = ctx.ipcMain.handle.bind(ctx.ipcMain);
+    ctx.ipcMain.handle = (channel, handler) => {
+      if (typeof handler !== 'function') {
+        return originalHandle(channel, handler);
+      }
+      return originalHandle(channel, async (event, ...args) => {
+        const start = Date.now();
+        try {
+          return await handler(event, ...args);
+        } finally {
+          const duration = Date.now() - start;
+          if (typeof ctx.recordHandlerPerf === 'function') {
+            ctx.recordHandlerPerf(channel, duration);
+          }
+        }
+      });
+    };
+    ctx._perfWrapped = true;
+  }
+
   registry.setup(ctx, deps);
 }
 
@@ -59,6 +84,7 @@ const cleanupProcesses = backgroundController.cleanupProcesses;
 module.exports = {
   init,
   setDaemonClient,
+  setExternalNotifier,
   setupIPCHandlers,
   getBackgroundProcesses,
   cleanupProcesses,

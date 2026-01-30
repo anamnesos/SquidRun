@@ -20,6 +20,19 @@ try {
   // SDK renderer not available - will be loaded later
 }
 
+// Terminal module for health handlers (lazy loaded)
+let terminal = null;
+function getTerminal() {
+  if (!terminal) {
+    try {
+      terminal = require('./terminal');
+    } catch (e) {
+      // Terminal not available yet
+    }
+  }
+  return terminal;
+}
+
 // Pane IDs
 const PANE_IDS = ['1', '2', '3', '4', '5', '6'];
 
@@ -305,6 +318,12 @@ function markManualSync(file) {
   });
 }
 
+// Test helper - reset internal state
+function _resetForTesting() {
+  syncIndicatorSetup = false;
+  syncState.clear();
+}
+
 function updateConnectionStatus(status) {
   if (onConnectionStatusUpdate) {
     onConnectionStatusUpdate(status);
@@ -414,6 +433,35 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
       log.info('Inject', `Received inject-message for pane ${paneId}`);
       diagnosticLog.write('Inject', `Received inject-message for pane ${paneId}`);
       queueMessage(String(paneId), message, deliveryId);
+    }
+  });
+
+  // Task #29: Health tab - nudge single pane
+  ipcRenderer.on('nudge-pane', (event, data) => {
+    const { paneId } = data || {};
+    const term = getTerminal();
+    if (paneId && typeof term?.nudgePane === 'function') {
+      log.info('Health', `Nudging pane ${paneId}`);
+      term.nudgePane(String(paneId));
+    }
+  });
+
+  // Task #29: Health tab - restart single pane
+  ipcRenderer.on('restart-pane', (event, data) => {
+    const { paneId } = data || {};
+    const term = getTerminal();
+    if (paneId && typeof term?.restartPane === 'function') {
+      log.info('Health', `Restarting pane ${paneId}`);
+      term.restartPane(String(paneId));
+    }
+  });
+
+  // Task #29: Health tab - restart all panes
+  ipcRenderer.on('restart-all-panes', () => {
+    log.info('Health', 'Restarting all panes');
+    const term = getTerminal();
+    if (typeof term?.freshStartAll === 'function') {
+      term.freshStartAll();
     }
   });
 }
@@ -979,23 +1027,31 @@ function updateAgentStatus(paneId, state) {
 
   const statusEl = document.getElementById(`status-${paneId}`);
   if (statusEl) {
-    const labels = {
-      'idle': 'Idle',
-      'starting': 'Starting agent...',
-      'running': 'Agent running',
-    };
-    const statusText = labels[state] || state;
-    // Preserve activity spinner if present (Fix 4: prevent clobbering)
+    // Check if codex activity indicator is active (has activity-* class)
+    const hasActiveActivity = Array.from(statusEl.classList).some(c => c.startsWith('activity-'));
     const spinnerEl = statusEl.querySelector('.pane-spinner');
-    if (spinnerEl) {
-      statusEl.innerHTML = '';
-      statusEl.appendChild(spinnerEl);
-      statusEl.appendChild(document.createTextNode(statusText));
+
+    // If codex activity is showing, don't override it with generic agent state
+    if (hasActiveActivity && spinnerEl) {
+      // Only update badge, skip status text/class changes
     } else {
-      statusEl.textContent = statusText;
+      const labels = {
+        'idle': 'Idle',
+        'starting': 'Starting agent...',
+        'running': 'Agent running',
+      };
+      const statusText = labels[state] || state;
+      // Preserve activity spinner if present (Fix 4: prevent clobbering)
+      if (spinnerEl) {
+        statusEl.innerHTML = '';
+        statusEl.appendChild(spinnerEl);
+        statusEl.appendChild(document.createTextNode(statusText));
+      } else {
+        statusEl.textContent = statusText;
+      }
+      statusEl.classList.remove('idle', 'starting', 'running');
+      statusEl.classList.add(state || 'idle');
     }
-    statusEl.classList.remove('idle', 'starting', 'running');
-    statusEl.classList.add(state || 'idle');
   }
 
   // CO1: Update badge with working indicator
@@ -1268,4 +1324,6 @@ module.exports = {
   // #7: Sync indicator
   setupSyncIndicator,
   markManualSync,
+  // Test helpers
+  _resetForTesting,
 };
