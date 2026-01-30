@@ -121,7 +121,8 @@ describe('codex-exec runner', () => {
     child.stdout.emit('data', Buffer.from(deltaLine));
 
     const broadcastData = broadcast.mock.calls.map(call => call[0].data);
-    expect(broadcastData).toContain('\r\n[Working...]\r\n');
+    // Output now includes ANSI color codes (cyan for Working)
+    expect(broadcastData.some(d => d && d.includes('[Working...]'))).toBe(true);
     expect(broadcastData).toContain('Hello');
   });
 

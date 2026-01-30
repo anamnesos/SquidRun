@@ -279,7 +279,7 @@ function toggleInputLock(paneId) {
   inputLocked[paneId] = !inputLocked[paneId];
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);
   if (lockIcon) {
-    lockIcon.textContent = inputLocked[paneId] ? '🔒' : '🔓';
+    lockIcon.textContent = inputLocked[paneId] ? 'L' : 'U';
     lockIcon.title = inputLocked[paneId] ? 'Input locked (click to unlock)' : 'Input unlocked (click to lock)';
     lockIcon.classList.toggle('unlocked', !inputLocked[paneId]);
   }
@@ -294,7 +294,7 @@ function setInputLocked(paneId, locked) {
   inputLocked[paneId] = locked;
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);
   if (lockIcon) {
-    lockIcon.textContent = locked ? '🔒' : '🔓';
+    lockIcon.textContent = locked ? 'L' : 'U';
     lockIcon.title = locked ? 'Input locked (click to unlock)' : 'Input unlocked (click to lock)';
     lockIcon.classList.toggle('unlocked', !locked);
   }

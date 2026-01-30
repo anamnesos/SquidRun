@@ -307,7 +307,11 @@
 .pane-status {
   color: #888;
   font-size: 11px;
-  transition: color 0.2s;
+  transition: color 0.2s, opacity 0.2s;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pane-status.idle { color: #888; }
@@ -315,24 +319,43 @@
 .pane-status.running { color: #4ecca3; }
 .pane-status.working { color: #4ecca3; }
 
-/* Spinner for working status */
+/* Activity state colors */
+.pane-status.activity-thinking { color: #4ecca3; }
+.pane-status.activity-tool { color: #bb86fc; }
+.pane-status.activity-command { color: #ffc857; }
+.pane-status.activity-file { color: #64b5f6; }
+.pane-status.activity-streaming { color: #4ecca3; }
+.pane-status.activity-done { color: #81c784; }
+
+/* Glyph spinner for working status (Claude TUI style) */
 .pane-spinner {
   display: none;
-  width: 12px;
-  height: 12px;
-  border: 2px solid #333;
-  border-top-color: #4ecca3;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
   margin-right: 4px;
+  font-size: 12px;
+  animation: breathe 2s ease-in-out infinite;
 }
 
-.pane-status.working .pane-spinner {
+.pane-status.working .pane-spinner,
+.pane-status.activity-thinking .pane-spinner,
+.pane-status.activity-tool .pane-spinner,
+.pane-status.activity-command .pane-spinner,
+.pane-status.activity-file .pane-spinner,
+.pane-status.activity-streaming .pane-spinner {
   display: inline-block;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+/* Breathing opacity animation */
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .pane-spinner {
+    animation: none;
+    opacity: 1;
+  }
 }
 
 /* Agent Health Dashboard - #1 */
@@ -503,6 +526,8 @@
 
 .pane-terminal .xterm {
   height: 100% !important;
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 .pane-terminal .xterm-viewport {

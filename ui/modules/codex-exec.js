@@ -5,6 +5,24 @@
 
 const { spawn } = require('child_process');
 
+// ANSI color codes for terminal output
+const ANSI = {
+  RESET: '\x1b[0m',
+  CYAN: '\x1b[36m',
+  GREEN: '\x1b[32m',
+  RED: '\x1b[31m',
+  YELLOW: '\x1b[33m',
+  BLUE: '\x1b[34m',
+  MAGENTA: '\x1b[35m',
+};
+
+// Strip Unicode bidirectional control characters that can cause RTL rendering
+// Includes: LTR/RTL marks (200E-200F), embedding/override (202A-202E), isolates (2066-2069)
+function stripBidiControls(text) {
+  if (typeof text !== 'string') return text;
+  return text.replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '');
+}
+
 function createCodexExecRunner(options = {}) {
   const {
     broadcast,
@@ -25,7 +43,7 @@ function createCodexExecRunner(options = {}) {
     }
   }
 
-  const WORKING_MARKER = '\r\n[Working...]\r\n';
+  const WORKING_MARKER = `\r\n${ANSI.CYAN}[Working...]${ANSI.RESET}\r\n`;
 
   function emitMarker(terminal, paneId, marker, flagKey) {
     if (!terminal || terminal[flagKey]) return;
@@ -42,9 +60,19 @@ function createCodexExecRunner(options = {}) {
     if (!terminal || terminal.execDoneEmitted) return;
     terminal.execDoneEmitted = true;
     const code = typeof exitCode === 'number' ? exitCode : 'unknown';
-    const marker = `\r\n[Done (exit ${code})]\r\n`;
+    const color = (exitCode === 0) ? ANSI.GREEN : ANSI.RED;
+    const marker = `\r\n${color}[Done (exit ${code})]${ANSI.RESET}\r\n`;
     broadcast({ event: 'data', paneId, data: marker });
     appendScrollback(terminal, marker);
+    // Emit done activity, then ready after delay
+    emitActivity(paneId, 'done', exitCode === 0 ? 'Success' : `Exit ${code}`);
+    setTimeout(() => emitActivity(paneId, 'ready'), 2000);
+  }
+
+  // Activity state emission for UI indicators
+  // States: thinking, tool, command, file, streaming, done, ready
+  function emitActivity(paneId, state, detail = '') {
+    broadcast({ event: 'codex-activity', paneId, state, detail });
   }
 
   // Event types we silently ignore (metadata, lifecycle, internal)
@@ -87,10 +115,10 @@ function createCodexExecRunner(options = {}) {
     return /[\r\n]$/.test(text) ? text : `${text}\r\n`;
   }
 
-  function formatTaggedLine(tag, detail) {
+  function formatTaggedLine(tag, detail, color = ANSI.RESET) {
     const clean = truncateDetail(normalizeDetail(detail));
     if (!clean) return null;
-    return `\r\n[${tag}] ${clean}\r\n`;
+    return `\r\n${color}[${tag}]${ANSI.RESET} ${clean}\r\n`;
   }
 
   function isStartLikeEvent(eventType) {
@@ -192,7 +220,7 @@ function createCodexExecRunner(options = {}) {
 
     const fileSummary = extractFileSummary(eventType, payload);
     if (fileSummary) {
-      return formatTaggedLine('FILE', `${fileSummary.action} ${fileSummary.target}`);
+      return formatTaggedLine('FILE', `${fileSummary.action} ${fileSummary.target}`, ANSI.BLUE);
     }
 
     const isCommandEvent = eventType.includes('command');
@@ -202,7 +230,7 @@ function createCodexExecRunner(options = {}) {
       }
       const command = extractCommand(payload);
       if (command) {
-        return formatTaggedLine('CMD', command);
+        return formatTaggedLine('CMD', command, ANSI.YELLOW);
       }
     }
 
@@ -215,7 +243,7 @@ function createCodexExecRunner(options = {}) {
       const toolDetail = extractToolDetail(payload);
       if (toolName) {
         const detail = toolDetail ? `${toolName} ${toolDetail}` : toolName;
-        return formatTaggedLine('TOOL', detail);
+        return formatTaggedLine('TOOL', detail, ANSI.MAGENTA);
       }
     }
 
@@ -273,7 +301,7 @@ function createCodexExecRunner(options = {}) {
     try {
       event = JSON.parse(line);
     } catch {
-      const raw = line + '\r\n';
+      const raw = stripBidiControls(line) + '\r\n';
       broadcast({ event: 'data', paneId, data: raw });
       terminal.lastActivity = Date.now();
       appendScrollback(terminal, raw);
@@ -292,6 +320,9 @@ function createCodexExecRunner(options = {}) {
 
     if (isStartEvent || isDelta) {
       emitWorkingOnce(terminal, paneId);
+      if (isStartEvent) {
+        emitActivity(paneId, 'thinking');
+      }
     }
 
     if (event.type === 'session_meta' && event.payload && event.payload.id) {
@@ -316,6 +347,17 @@ function createCodexExecRunner(options = {}) {
         broadcast({ event: 'data', paneId, data: auxLine });
         terminal.lastActivity = Date.now();
         appendScrollback(terminal, auxLine);
+        // Emit activity based on tag type
+        if (auxLine.includes('[FILE]')) {
+          const detail = auxLine.replace(/.*\[FILE\]\s*/, '').replace(/\r?\n/g, '').trim();
+          emitActivity(paneId, 'file', detail);
+        } else if (auxLine.includes('[CMD]')) {
+          const detail = auxLine.replace(/.*\[CMD\]\s*/, '').replace(/\r?\n/g, '').trim();
+          emitActivity(paneId, 'command', detail);
+        } else if (auxLine.includes('[TOOL]')) {
+          const detail = auxLine.replace(/.*\[TOOL\]\s*/, '').replace(/\r?\n/g, '').trim();
+          emitActivity(paneId, 'tool', detail);
+        }
       }
       return;
     }
@@ -327,10 +369,15 @@ function createCodexExecRunner(options = {}) {
       return;
     }
     if (text) {
-      const formatted = isDelta ? text : ensureTrailingNewline(text);
+      const sanitized = stripBidiControls(text);
+      const formatted = isDelta ? sanitized : ensureTrailingNewline(sanitized);
       broadcast({ event: 'data', paneId, data: formatted });
       terminal.lastActivity = Date.now();
       appendScrollback(terminal, formatted);
+      // Emit streaming activity for text output
+      if (isDelta) {
+        emitActivity(paneId, 'streaming');
+      }
     } else {
       // Unknown event type — log it quietly instead of dumping raw JSON
       logWarn(`[CodexExec] Unhandled event type="${event.type || 'unknown'}" for pane ${paneId}`);

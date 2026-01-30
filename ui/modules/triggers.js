@@ -11,6 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { TRIGGER_TARGETS, WORKSPACE_PATH, PANE_IDS } = require('../config');
 const log = require('./logger');
+const diagnosticLog = require('./diagnostic-log');
 
 // Module state (set by init)
 let mainWindow = null;
@@ -786,12 +787,14 @@ function sendStaggered(panes, message, meta = {}) {
     const payload = { panes, message };
     if (deliveryId) payload.deliveryId = deliveryId;
     log.info('Stagger', `Sending inject-message to pane ${panes[0]}`);
+    diagnosticLog.write('Stagger', `Sending inject-message to pane ${panes[0]}`);
     mainWindow.webContents.send('inject-message', payload);
     return;
   }
 
   // Multiple panes - stagger to avoid thundering herd
   log.info('Stagger', `Sending to ${panes.length} panes with staggered timing`);
+  diagnosticLog.write('Stagger', `Sending to ${panes.length} panes with staggered timing`, { panes });
   panes.forEach((paneId, index) => {
     const delay = index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS;
     setTimeout(() => {

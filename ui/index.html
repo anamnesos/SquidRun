@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -22,7 +22,7 @@
              placeholder="Type a command..." autocomplete="off" spellcheck="false">
       <div class="command-palette-list" id="commandPaletteList"></div>
       <div class="command-palette-footer">
-        <span class="shortcut">↑↓ Navigate</span>
+        <span class="shortcut">?? Navigate</span>
         <span class="shortcut">Enter Select</span>
         <span class="shortcut">Esc Close</span>
       </div>
@@ -50,22 +50,22 @@
       <span class="mcp-status-summary none" id="mcpStatusSummary">0/6</span>
     </div>
     <div class="header-actions">
-      <button class="btn btn-folder" id="selectProjectBtn" title="Choose project folder for all agents"><span class="btn-icon">📁</span> Project</button>
-      <button class="btn btn-spawn" id="spawnAllBtn" title="Start agent CLIs in all 6 terminal panes"><span class="btn-icon">🚀</span> Spawn</button>
-      <button class="btn btn-sync" id="syncBtn" title="Broadcast shared_context.md to all agents"><span class="btn-icon">🔄</span> Sync</button>
+      <button class="btn btn-folder" id="selectProjectBtn" title="Choose project folder for all agents"><span class="btn-icon">??</span> Project</button>
+      <button class="btn btn-spawn" id="spawnAllBtn" title="Start agent CLIs in all 6 terminal panes"><span class="btn-icon">??</span> Spawn</button>
+      <button class="btn btn-sync" id="syncBtn" title="Broadcast shared_context.md to all agents"><span class="btn-icon">??</span> Sync</button>
       <div class="dropdown" id="actionsDropdown">
-        <button class="btn btn-actions" id="actionsBtn" title="Agent management actions"><span class="btn-icon">⚡</span> Actions <span class="dropdown-arrow">▼</span></button>
+        <button class="btn btn-actions" id="actionsBtn" title="Agent management actions"><span class="btn-icon">?</span> Actions <span class="dropdown-arrow">?</span></button>
         <div class="dropdown-menu" id="actionsMenu">
-          <button class="dropdown-item btn-nudge" id="nudgeAllBtn" title="Send Esc+Enter to unstick churning agents"><span class="btn-icon">👋</span> Nudge All</button>
-          <button class="dropdown-item btn-danger" id="killAllBtn" title="Terminate all running agent sessions"><span class="btn-icon">💀</span> Kill All</button>
-          <button class="dropdown-item btn-fresh" id="freshStartBtn" title="Kill all sessions and start fresh without context"><span class="btn-icon">✨</span> Fresh Start</button>
+          <button class="dropdown-item btn-nudge" id="nudgeAllBtn" title="Send Esc+Enter to unstick churning agents"><span class="btn-icon">??</span> Nudge All</button>
+          <button class="dropdown-item btn-danger" id="killAllBtn" title="Terminate all running agent sessions"><span class="btn-icon">??</span> Kill All</button>
+          <button class="dropdown-item btn-fresh" id="freshStartBtn" title="Kill all sessions and start fresh without context"><span class="btn-icon">?</span> Fresh Start</button>
           <div class="dropdown-divider"></div>
-          <button class="dropdown-item btn-restart" id="fullRestartBtn" title="Shutdown cleanly (run 'npm start' to restart)"><span class="btn-icon">🔌</span> Shutdown</button>
+          <button class="dropdown-item btn-restart" id="fullRestartBtn" title="Shutdown cleanly (run 'npm start' to restart)"><span class="btn-icon">??</span> Shutdown</button>
         </div>
       </div>
-      <span class="cost-alert-badge" id="costAlertBadge" title="Cost threshold exceeded - click to view">⚠ Cost</span>
-      <button class="btn settings-btn" id="settingsBtn" title="Configure Hivemind settings and permissions"><span class="btn-icon">⚙️</span> Settings</button>
-      <button class="btn btn-panel" id="panelBtn" title="Toggle right panel (Screenshots, Tests, Activity, etc.)"><span class="btn-icon">📊</span> Panel</button>
+      <span class="cost-alert-badge" id="costAlertBadge" title="Cost threshold exceeded - click to view">? Cost</span>
+      <button class="btn settings-btn" id="settingsBtn" title="Configure Hivemind settings and permissions"><span class="btn-icon">??</span> Settings</button>
+      <button class="btn btn-panel" id="panelBtn" title="Toggle right panel (Screenshots, Tests, Activity, etc.)"><span class="btn-icon">??</span> Panel</button>
     </div>
   </div>
 
@@ -111,7 +111,7 @@
         </div>
       </div>
       <div class="sdk-mode-notice" id="sdkModeNotice" style="display: none; color: #4ecca3; padding: 8px 12px; background: rgba(78, 204, 163, 0.1); border-radius: 4px; margin-top: 8px;">
-        ðŸš€ SDK Mode: Uses Claude Agent SDK (4 Claude sessions) for native orchestration.
+        🚀 SDK Mode: Uses Claude Agent SDK (4 Claude sessions) for native orchestration.
       </div>
     </div>
     <div class="settings-section">
@@ -135,7 +135,7 @@
         </div>
       </div>
       <div class="permissions-warning" id="permissionsWarning" style="display: none;">
-        âš ï¸ "Allow All" grants full access. Only use for trusted projects.
+        ⚠️ "Allow All" grants full access. Only use for trusted projects.
       </div>
     </div>
     <div class="settings-section">
@@ -171,7 +171,7 @@
       <span class="state-label">Project:</span>
       <span class="project-path no-project" id="projectPath">No project selected</span>
     </div>
-    <div class="state-indicator" title="Current workflow state: idle â†’ planning â†’ executing â†’ complete">
+    <div class="state-indicator" title="Current workflow state: idle → planning → executing → complete">
       <span class="state-label">State:</span>
       <span class="state-value idle" id="stateDisplay">IDLE</span>
     </div>
@@ -190,21 +190,21 @@
         <div class="main-pane-container">
           <div class="pane" data-pane-id="1">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">ðŸ‘‘</span><span class="agent-badge idle" id="badge-1"></span>Architect<span class="cli-badge" id="cli-badge-1"></span><span class="pane-project" id="project-1" title="Click to change project"></span><span class="agent-task" id="task-1"></span></span>
+            <span class="pane-title"><span class="agent-avatar">[A]</span><span class="agent-badge idle" id="badge-1"></span>Architect<span class="cli-badge" id="cli-badge-1"></span><span class="pane-project" id="project-1" title="Click to change project"></span><span class="agent-task" id="task-1"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-1" title="Session time">0:00</span>
-              <span class="sdk-status disconnected" id="sdk-status-1" title="SDK session status">â€”</span>
+              <span class="sdk-status disconnected" id="sdk-status-1" title="SDK session status">—</span>
               <span class="sdk-session-id" id="sdk-session-1" title="Session ID"></span>
               <span class="pane-status idle" id="status-1"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-1" title="Last output time">-</span>
-              <span class="stuck-indicator" id="stuck-1" title="Agent may be stuck">⚠</span>
+              <span class="stuck-indicator" id="stuck-1" title="Agent may be stuck">!</span>
               <span class="delivery-indicator" id="delivery-1" title="Message delivery status"></span>
               <div class="pane-actions">
-                <button class="pane-action-btn interrupt-btn" data-pane-id="1" title="Send Ctrl+C (interrupt)">⊘</button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="1" title="Send ESC (unstick)">⎋</button>
+                <button class="pane-action-btn interrupt-btn" data-pane-id="1" title="Send Ctrl+C (interrupt)">X</button>
+                <button class="pane-action-btn unstick-btn" data-pane-id="1" title="Send ESC (unstick)">~</button>
               </div>
-              <button class="pane-refresh-btn" data-pane-id="1" title="Refresh context">↻</button>
-              <span class="lock-icon" id="lock-icon-1" data-pane-id="1" title="Input locked (click to unlock)">🔒</span>
+              <button class="pane-refresh-btn" data-pane-id="1" title="Refresh context">R</button>
+              <span class="lock-icon" id="lock-icon-1" data-pane-id="1" title="Input locked (click to unlock)">L</span>
             </div>
           </div>
           <div class="pane-terminal" id="terminal-1"></div>
@@ -213,21 +213,21 @@
         <div class="side-panes-container">
           <div class="pane" data-pane-id="2">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">ðŸ§­</span><span class="agent-badge idle" id="badge-2"></span>Orchestrator<span class="cli-badge" id="cli-badge-2"></span><span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
+            <span class="pane-title"><span class="agent-avatar">[O]</span><span class="agent-badge idle" id="badge-2"></span>Orchestrator<span class="cli-badge" id="cli-badge-2"></span><span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-2" title="Session time">0:00</span>
-              <span class="sdk-status disconnected" id="sdk-status-2" title="SDK session status">â€”</span>
+              <span class="sdk-status disconnected" id="sdk-status-2" title="SDK session status">—</span>
               <span class="sdk-session-id" id="sdk-session-2" title="Session ID"></span>
               <span class="pane-status idle" id="status-2"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-2" title="Last output time">-</span>
-              <span class="stuck-indicator" id="stuck-2" title="Agent may be stuck">⚠</span>
+              <span class="stuck-indicator" id="stuck-2" title="Agent may be stuck">!</span>
               <span class="delivery-indicator" id="delivery-2" title="Message delivery status"></span>
               <div class="pane-actions">
-                <button class="pane-action-btn interrupt-btn" data-pane-id="2" title="Send Ctrl+C (interrupt)">⊘</button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="2" title="Send ESC (unstick)">⎋</button>
+                <button class="pane-action-btn interrupt-btn" data-pane-id="2" title="Send Ctrl+C (interrupt)">X</button>
+                <button class="pane-action-btn unstick-btn" data-pane-id="2" title="Send ESC (unstick)">~</button>
               </div>
-              <button class="pane-refresh-btn" data-pane-id="2" title="Refresh context">↻</button>
-              <span class="lock-icon" id="lock-icon-2" data-pane-id="2" title="Input locked (click to unlock)">🔒</span>
+              <button class="pane-refresh-btn" data-pane-id="2" title="Refresh context">R</button>
+              <span class="lock-icon" id="lock-icon-2" data-pane-id="2" title="Input locked (click to unlock)">L</span>
             </div>
           </div>
           <div class="pane-terminal" id="terminal-2"></div>
@@ -235,21 +235,21 @@
 
         <div class="pane" data-pane-id="3">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">ðŸ”§</span><span class="agent-badge idle" id="badge-3"></span>Implementer A<span class="cli-badge" id="cli-badge-3"></span><span class="pane-project" id="project-3" title="Click to change project"></span><span class="agent-task" id="task-3"></span></span>
+            <span class="pane-title"><span class="agent-avatar">[1]</span><span class="agent-badge idle" id="badge-3"></span>Implementer A<span class="cli-badge" id="cli-badge-3"></span><span class="pane-project" id="project-3" title="Click to change project"></span><span class="agent-task" id="task-3"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-3" title="Session time">0:00</span>
-              <span class="sdk-status disconnected" id="sdk-status-3" title="SDK session status">â€”</span>
+              <span class="sdk-status disconnected" id="sdk-status-3" title="SDK session status">—</span>
               <span class="sdk-session-id" id="sdk-session-3" title="Session ID"></span>
               <span class="pane-status idle" id="status-3"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-3" title="Last output time">-</span>
-              <span class="stuck-indicator" id="stuck-3" title="Agent may be stuck">⚠</span>
+              <span class="stuck-indicator" id="stuck-3" title="Agent may be stuck">!</span>
               <span class="delivery-indicator" id="delivery-3" title="Message delivery status"></span>
               <div class="pane-actions">
-                <button class="pane-action-btn interrupt-btn" data-pane-id="3" title="Send Ctrl+C (interrupt)">⊘</button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="3" title="Send ESC (unstick)">⎋</button>
+                <button class="pane-action-btn interrupt-btn" data-pane-id="3" title="Send Ctrl+C (interrupt)">X</button>
+                <button class="pane-action-btn unstick-btn" data-pane-id="3" title="Send ESC (unstick)">~</button>
               </div>
-              <button class="pane-refresh-btn" data-pane-id="3" title="Refresh context">↻</button>
-              <span class="lock-icon" id="lock-icon-3" data-pane-id="3" title="Input locked (click to unlock)">🔒</span>
+              <button class="pane-refresh-btn" data-pane-id="3" title="Refresh context">R</button>
+              <span class="lock-icon" id="lock-icon-3" data-pane-id="3" title="Input locked (click to unlock)">L</span>
             </div>
           </div>
           <div class="pane-terminal" id="terminal-3"></div>
@@ -257,21 +257,21 @@
 
         <div class="pane" data-pane-id="4">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">âš™ï¸</span><span class="agent-badge idle" id="badge-4"></span>Implementer B<span class="cli-badge" id="cli-badge-4"></span><span class="pane-project" id="project-4" title="Click to change project"></span><span class="agent-task" id="task-4"></span></span>
+            <span class="pane-title"><span class="agent-avatar">[2]</span><span class="agent-badge idle" id="badge-4"></span>Implementer B<span class="cli-badge" id="cli-badge-4"></span><span class="pane-project" id="project-4" title="Click to change project"></span><span class="agent-task" id="task-4"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-4" title="Session time">0:00</span>
-              <span class="sdk-status disconnected" id="sdk-status-4" title="SDK session status">â€”</span>
+              <span class="sdk-status disconnected" id="sdk-status-4" title="SDK session status">—</span>
               <span class="sdk-session-id" id="sdk-session-4" title="Session ID"></span>
               <span class="pane-status idle" id="status-4"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-4" title="Last output time">-</span>
-              <span class="stuck-indicator" id="stuck-4" title="Agent may be stuck">⚠</span>
+              <span class="stuck-indicator" id="stuck-4" title="Agent may be stuck">!</span>
               <span class="delivery-indicator" id="delivery-4" title="Message delivery status"></span>
               <div class="pane-actions">
-                <button class="pane-action-btn interrupt-btn" data-pane-id="4" title="Send Ctrl+C (interrupt)">⊘</button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="4" title="Send ESC (unstick)">⎋</button>
+                <button class="pane-action-btn interrupt-btn" data-pane-id="4" title="Send Ctrl+C (interrupt)">X</button>
+                <button class="pane-action-btn unstick-btn" data-pane-id="4" title="Send ESC (unstick)">~</button>
               </div>
-              <button class="pane-refresh-btn" data-pane-id="4" title="Refresh context">↻</button>
-              <span class="lock-icon" id="lock-icon-4" data-pane-id="4" title="Input locked (click to unlock)">🔒</span>
+              <button class="pane-refresh-btn" data-pane-id="4" title="Refresh context">R</button>
+              <span class="lock-icon" id="lock-icon-4" data-pane-id="4" title="Input locked (click to unlock)">L</span>
             </div>
           </div>
           <div class="pane-terminal" id="terminal-4"></div>
@@ -279,21 +279,21 @@
 
         <div class="pane" data-pane-id="5">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">ðŸ”</span><span class="agent-badge idle" id="badge-5"></span>Investigator<span class="cli-badge" id="cli-badge-5"></span><span class="pane-project" id="project-5" title="Click to change project"></span><span class="agent-task" id="task-5"></span></span>
+            <span class="pane-title"><span class="agent-avatar">[?]</span><span class="agent-badge idle" id="badge-5"></span>Investigator<span class="cli-badge" id="cli-badge-5"></span><span class="pane-project" id="project-5" title="Click to change project"></span><span class="agent-task" id="task-5"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-5" title="Session time">0:00</span>
-              <span class="sdk-status disconnected" id="sdk-status-5" title="SDK session status">â€”</span>
+              <span class="sdk-status disconnected" id="sdk-status-5" title="SDK session status">—</span>
               <span class="sdk-session-id" id="sdk-session-5" title="Session ID"></span>
               <span class="pane-status idle" id="status-5"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-5" title="Last output time">-</span>
-              <span class="stuck-indicator" id="stuck-5" title="Agent may be stuck">⚠</span>
+              <span class="stuck-indicator" id="stuck-5" title="Agent may be stuck">!</span>
               <span class="delivery-indicator" id="delivery-5" title="Message delivery status"></span>
               <div class="pane-actions">
-                <button class="pane-action-btn interrupt-btn" data-pane-id="5" title="Send Ctrl+C (interrupt)">⊘</button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="5" title="Send ESC (unstick)">⎋</button>
+                <button class="pane-action-btn interrupt-btn" data-pane-id="5" title="Send Ctrl+C (interrupt)">X</button>
+                <button class="pane-action-btn unstick-btn" data-pane-id="5" title="Send ESC (unstick)">~</button>
               </div>
-              <button class="pane-refresh-btn" data-pane-id="5" title="Refresh context">↻</button>
-              <span class="lock-icon" id="lock-icon-5" data-pane-id="5" title="Input locked (click to unlock)">🔒</span>
+              <button class="pane-refresh-btn" data-pane-id="5" title="Refresh context">R</button>
+              <span class="lock-icon" id="lock-icon-5" data-pane-id="5" title="Input locked (click to unlock)">L</span>
             </div>
           </div>
           <div class="pane-terminal" id="terminal-5"></div>
@@ -301,21 +301,21 @@
 
         <div class="pane" data-pane-id="6">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">âœ…</span><span class="agent-badge idle" id="badge-6"></span>Reviewer<span class="cli-badge" id="cli-badge-6"></span><span class="pane-project" id="project-6" title="Click to change project"></span><span class="agent-task" id="task-6"></span></span>
+            <span class="pane-title"><span class="agent-avatar">[R]</span><span class="agent-badge idle" id="badge-6"></span>Reviewer<span class="cli-badge" id="cli-badge-6"></span><span class="pane-project" id="project-6" title="Click to change project"></span><span class="agent-task" id="task-6"></span></span>
             <div class="pane-header-right">
               <span class="pane-timer" id="timer-6" title="Session time">0:00</span>
-              <span class="sdk-status disconnected" id="sdk-status-6" title="SDK session status">â€”</span>
+              <span class="sdk-status disconnected" id="sdk-status-6" title="SDK session status">—</span>
               <span class="sdk-session-id" id="sdk-session-6" title="Session ID"></span>
               <span class="pane-status idle" id="status-6"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-6" title="Last output time">-</span>
-              <span class="stuck-indicator" id="stuck-6" title="Agent may be stuck">⚠</span>
+              <span class="stuck-indicator" id="stuck-6" title="Agent may be stuck">!</span>
               <span class="delivery-indicator" id="delivery-6" title="Message delivery status"></span>
               <div class="pane-actions">
-                <button class="pane-action-btn interrupt-btn" data-pane-id="6" title="Send Ctrl+C (interrupt)">⊘</button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="6" title="Send ESC (unstick)">⎋</button>
+                <button class="pane-action-btn interrupt-btn" data-pane-id="6" title="Send Ctrl+C (interrupt)">X</button>
+                <button class="pane-action-btn unstick-btn" data-pane-id="6" title="Send ESC (unstick)">~</button>
               </div>
-              <button class="pane-refresh-btn" data-pane-id="6" title="Refresh context">↻</button>
-              <span class="lock-icon" id="lock-icon-6" data-pane-id="6" title="Input locked (click to unlock)">🔒</span>
+              <button class="pane-refresh-btn" data-pane-id="6" title="Refresh context">R</button>
+              <span class="lock-icon" id="lock-icon-6" data-pane-id="6" title="Input locked (click to unlock)">L</span>
             </div>
           </div>
           <div class="pane-terminal" id="terminal-6"></div>
@@ -368,7 +368,7 @@
           <div class="tab-title">Screenshots</div>
           <div class="tab-description">Drag & drop images or paste from clipboard</div>
           <div class="screenshot-dropzone" id="screenshotDropzone">
-            <div class="screenshot-dropzone-icon">ðŸ“·</div>
+            <div class="screenshot-dropzone-icon">📷</div>
             <div class="screenshot-dropzone-text">Drop images here or click to browse</div>
           </div>
           <div class="screenshot-list" id="screenshotList">
