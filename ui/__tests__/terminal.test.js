@@ -305,15 +305,17 @@ describe('terminal.js module', () => {
 
   describe('sendToPane', () => {
     test('should queue message when pane is busy', () => {
-      // Use real timers for this test to ensure Date.now() works correctly
-      jest.useRealTimers();
-      terminal.lastOutputTime['1'] = Date.now(); // Recent output = busy
+      // Stay on fake timers - set lastOutputTime to "now" to simulate busy pane
+      const now = Date.now();
+      jest.setSystemTime(now);
+      terminal.lastOutputTime['1'] = now; // Recent output = busy
 
       terminal.sendToPane('1', 'test message');
 
       expect(terminal.messageQueue['1']).toHaveLength(1);
       expect(terminal.messageQueue['1'][0].message).toBe('test message');
-      jest.useFakeTimers();
+      // Clear any pending processQueue timers
+      jest.runAllTimers();
     });
 
     test('should include timestamp in queued message', () => {
@@ -953,14 +955,17 @@ describe('terminal.js module', () => {
 
   describe('sendToPane edge cases', () => {
     test('should queue message when pane is busy', () => {
-      jest.useRealTimers();
-      terminal.lastOutputTime['1'] = Date.now(); // Keep pane busy
+      // Stay on fake timers - set lastOutputTime to "now" to simulate busy pane
+      const now = Date.now();
+      jest.setSystemTime(now);
+      terminal.lastOutputTime['1'] = now; // Keep pane busy
 
       terminal.sendToPane('1', 'Test message');
 
       expect(terminal.messageQueue['1']).toBeDefined();
       expect(terminal.messageQueue['1'].length).toBeGreaterThan(0);
-      jest.useFakeTimers();
+      // Clear any pending processQueue timers
+      jest.runAllTimers();
     });
 
     test('should handle empty message', () => {
