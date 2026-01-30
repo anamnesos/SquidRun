@@ -53,6 +53,93 @@
   background: #e94560;
 }
 
+/* Button icons */
+.btn-icon {
+  margin-right: 4px;
+}
+
+/* Actions dropdown */
+.dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.dropdown-arrow {
+  font-size: 10px;
+  margin-left: 4px;
+}
+
+.dropdown-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  background: #1a1a2e;
+  border: 1px solid #e94560;
+  border-radius: 4px;
+  min-width: 160px;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  margin-top: 4px;
+}
+
+.dropdown-menu.show {
+  display: block;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: #eee;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.dropdown-item:hover {
+  background: #0f3460;
+}
+
+.dropdown-item.btn-danger:hover {
+  background: #e94560;
+}
+
+.dropdown-item.btn-restart:hover {
+  background: #6c757d;
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: #333;
+  margin: 4px 0;
+}
+
+/* Tab badge for friction count */
+.tab-badge {
+  background: #e94560;
+  color: #fff;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  margin-right: 4px;
+}
+
+.tab-badge.hidden {
+  display: none;
+}
+
+/* Friction tab styles */
+.friction-actions-tab {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid #333;
+}
+
 .cost-alert-badge {
   display: none;
   background: #e94560;
@@ -226,6 +313,27 @@
 .pane-status.idle { color: #888; }
 .pane-status.starting { color: #ffc857; }
 .pane-status.running { color: #4ecca3; }
+.pane-status.working { color: #4ecca3; }
+
+/* Spinner for working status */
+.pane-spinner {
+  display: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #333;
+  border-top-color: #4ecca3;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: 4px;
+}
+
+.pane-status.working .pane-spinner {
+  display: inline-block;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 
 /* Agent Health Dashboard - #1 */
 .agent-health {

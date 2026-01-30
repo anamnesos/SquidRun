@@ -26,7 +26,6 @@ function createCodexExecRunner(options = {}) {
   }
 
   const WORKING_MARKER = '\r\n[Working...]\r\n';
-  const COMPLETE_MARKER = '\r\n[Task complete]\r\n';
 
   function emitMarker(terminal, paneId, marker, flagKey) {
     if (!terminal || terminal[flagKey]) return;
@@ -39,8 +38,13 @@ function createCodexExecRunner(options = {}) {
     emitMarker(terminal, paneId, WORKING_MARKER, 'execWorkingEmitted');
   }
 
-  function emitCompleteOnce(terminal, paneId) {
-    emitMarker(terminal, paneId, COMPLETE_MARKER, 'execCompleteEmitted');
+  function emitDoneOnce(terminal, paneId, exitCode) {
+    if (!terminal || terminal.execDoneEmitted) return;
+    terminal.execDoneEmitted = true;
+    const code = typeof exitCode === 'number' ? exitCode : 'unknown';
+    const marker = `\r\n[Done (exit ${code})]\r\n`;
+    broadcast({ event: 'data', paneId, data: marker });
+    appendScrollback(terminal, marker);
   }
 
   // Event types we silently ignore (metadata, lifecycle, internal)
@@ -49,12 +53,174 @@ function createCodexExecRunner(options = {}) {
     'message_started', 'message_completed',
     'turn_started', 'turn_completed',
     'turn.started', 'turn.completed',
-    'command_started', 'command_completed',
-    'tool_use_started', 'tool_use_completed',
     'content_block_start', 'content_block_stop',
     'input_json_delta', 'input_json',
     'ping', 'rate_limit',
   ]);
+
+  const MAX_EVENT_DETAIL = 160;
+
+  function normalizeDetail(value) {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  function collapseWhitespace(text) {
+    return text.replace(/\s+/g, ' ').trim();
+  }
+
+  function truncateDetail(text, maxLen = MAX_EVENT_DETAIL) {
+    const clean = collapseWhitespace(text);
+    if (!clean) return '';
+    if (clean.length <= maxLen) return clean;
+    return `${clean.slice(0, maxLen - 3)}...`;
+  }
+
+  function ensureTrailingNewline(text) {
+    if (!text) return text;
+    return /[\r\n]$/.test(text) ? text : `${text}\r\n`;
+  }
+
+  function formatTaggedLine(tag, detail) {
+    const clean = truncateDetail(normalizeDetail(detail));
+    if (!clean) return null;
+    return `\r\n[${tag}] ${clean}\r\n`;
+  }
+
+  function isStartLikeEvent(eventType) {
+    return eventType.endsWith('started')
+      || eventType.endsWith('.started')
+      || eventType.endsWith('_started')
+      || eventType === 'tool_use'
+      || eventType === 'tool_call'
+      || eventType === 'command';
+  }
+
+  function isCompleteLikeEvent(eventType) {
+    return eventType.endsWith('completed')
+      || eventType.endsWith('.completed')
+      || eventType.endsWith('_completed')
+      || eventType.endsWith('stopped')
+      || eventType.endsWith('.stopped');
+  }
+
+  function extractCommand(payload) {
+    if (!payload || typeof payload !== 'object') return '';
+    if (typeof payload.command === 'string') return payload.command;
+    if (Array.isArray(payload.command)) return payload.command.join(' ');
+    if (payload.command && typeof payload.command === 'object') {
+      if (typeof payload.command.command === 'string') return payload.command.command;
+      if (Array.isArray(payload.command.args)) return payload.command.args.join(' ');
+    }
+    if (typeof payload.command_line === 'string') return payload.command_line;
+    if (typeof payload.commandLine === 'string') return payload.commandLine;
+    if (typeof payload.cmd === 'string') return payload.cmd;
+    if (Array.isArray(payload.args)) return payload.args.join(' ');
+    if (Array.isArray(payload.argv)) return payload.argv.join(' ');
+    return '';
+  }
+
+  function extractToolName(payload) {
+    if (!payload || typeof payload !== 'object') return '';
+    if (typeof payload.tool_name === 'string') return payload.tool_name;
+    if (typeof payload.toolName === 'string') return payload.toolName;
+    if (typeof payload.name === 'string') return payload.name;
+    if (typeof payload.tool === 'string') return payload.tool;
+    if (payload.tool && typeof payload.tool.name === 'string') return payload.tool.name;
+    if (payload.tool_call && typeof payload.tool_call.name === 'string') return payload.tool_call.name;
+    if (payload.tool_call && payload.tool_call.function && typeof payload.tool_call.function.name === 'string') {
+      return payload.tool_call.function.name;
+    }
+    if (payload.function && typeof payload.function.name === 'string') return payload.function.name;
+    return '';
+  }
+
+  function extractToolDetail(payload) {
+    if (!payload || typeof payload !== 'object') return '';
+    const input = payload.input || payload.arguments || payload.args || payload.params || payload.parameters;
+    if (typeof input === 'string') return input;
+    if (input && typeof input === 'object') {
+      const query = input.query || input.q || input.search || input.text;
+      if (typeof query === 'string') return query;
+      return normalizeDetail(input);
+    }
+    return '';
+  }
+
+  function deriveFileAction(eventType, payload) {
+    const raw = normalizeDetail(payload?.action || payload?.event || eventType).toLowerCase();
+    if (raw.includes('delete') || raw.includes('remove')) return 'deleted';
+    if (raw.includes('create') || raw.includes('new')) return 'created';
+    if (raw.includes('write') || raw.includes('update') || raw.includes('edit') || raw.includes('patch') || raw.includes('modify')) {
+      return 'edited';
+    }
+    return 'updated';
+  }
+
+  function extractFileSummary(eventType, payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    const files = payload.files || payload.paths || payload.file_paths || payload.filePaths;
+    if (Array.isArray(files) && files.length > 0) {
+      const action = deriveFileAction(eventType, payload);
+      if (files.length === 1) {
+        return { action, target: files[0] };
+      }
+      return { action, target: `${files.length} files` };
+    }
+    const file = payload.file || payload.path || payload.filename || payload.file_path || payload.filePath;
+    if (typeof file === 'string' && file) {
+      const action = deriveFileAction(eventType, payload);
+      return { action, target: file };
+    }
+    const count = payload.count || payload.fileCount || payload.filesCount;
+    if (typeof count === 'number') {
+      const action = deriveFileAction(eventType, payload);
+      return { action, target: `${count} files` };
+    }
+    return null;
+  }
+
+  function formatAuxEvent(event) {
+    const eventType = String(event.type || '').toLowerCase();
+    const payload = event.payload || event;
+
+    const fileSummary = extractFileSummary(eventType, payload);
+    if (fileSummary) {
+      return formatTaggedLine('FILE', `${fileSummary.action} ${fileSummary.target}`);
+    }
+
+    const isCommandEvent = eventType.includes('command');
+    if (isCommandEvent) {
+      if (isCompleteLikeEvent(eventType) && !isStartLikeEvent(eventType)) {
+        return '';
+      }
+      const command = extractCommand(payload);
+      if (command) {
+        return formatTaggedLine('CMD', command);
+      }
+    }
+
+    const isToolEvent = eventType.includes('tool');
+    if (isToolEvent) {
+      if (isCompleteLikeEvent(eventType) && !isStartLikeEvent(eventType)) {
+        return '';
+      }
+      const toolName = extractToolName(payload);
+      const toolDetail = extractToolDetail(payload);
+      if (toolName) {
+        const detail = toolDetail ? `${toolName} ${toolDetail}` : toolName;
+        return formatTaggedLine('TOOL', detail);
+      }
+    }
+
+    return null;
+  }
 
   function extractCodexText(event) {
     if (!event || typeof event !== 'object') return null;
@@ -123,17 +289,9 @@ function createCodexExecRunner(options = {}) {
       || eventType === 'turn.started'
       || eventType === 'response.started'
       || eventType === 'item.started';
-    const isCompleteEvent = eventType === 'message_completed'
-      || eventType === 'turn_completed'
-      || eventType === 'turn.completed'
-      || eventType === 'response.completed'
-      || eventType === 'item.completed';
 
     if (isStartEvent || isDelta) {
       emitWorkingOnce(terminal, paneId);
-    }
-    if (isCompleteEvent) {
-      emitCompleteOnce(terminal, paneId);
     }
 
     if (event.type === 'session_meta' && event.payload && event.payload.id) {
@@ -151,6 +309,17 @@ function createCodexExecRunner(options = {}) {
       return;
     }
 
+    const auxLine = formatAuxEvent(event);
+    if (auxLine !== null) {
+      if (auxLine) {
+        emitWorkingOnce(terminal, paneId);
+        broadcast({ event: 'data', paneId, data: auxLine });
+        terminal.lastActivity = Date.now();
+        appendScrollback(terminal, auxLine);
+      }
+      return;
+    }
+
     const text = extractCodexText(event);
     if (text === '') {
       // Silent event — suppress (metadata, lifecycle, etc.)
@@ -158,7 +327,7 @@ function createCodexExecRunner(options = {}) {
       return;
     }
     if (text) {
-      const formatted = isDelta ? text : `${text}\r\n`;
+      const formatted = isDelta ? text : ensureTrailingNewline(text);
       broadcast({ event: 'data', paneId, data: formatted });
       terminal.lastActivity = Date.now();
       appendScrollback(terminal, formatted);
@@ -202,7 +371,7 @@ function createCodexExecRunner(options = {}) {
     terminal.execBuffer = '';
     terminal.lastInputTime = Date.now();
     terminal.execWorkingEmitted = false;
-    terminal.execCompleteEmitted = false;
+    terminal.execDoneEmitted = false;
 
     child.stdout.on('data', (chunk) => {
       const text = chunk.toString();
@@ -233,14 +402,9 @@ function createCodexExecRunner(options = {}) {
         handleCodexExecLine(paneId, terminal, terminal.execBuffer.trim());
         terminal.execBuffer = '';
       }
-      if (terminal.execProcess) {
-        emitCompleteOnce(terminal, paneId);
-      }
       terminal.execProcess = null;
       terminal.lastActivity = Date.now();
-      const exitMsg = `\r\n[Codex exec exited ${code}]\r\n`;
-      broadcast({ event: 'data', paneId, data: exitMsg });
-      appendScrollback(terminal, exitMsg);
+      emitDoneOnce(terminal, paneId, code);
     });
 
     const payload = typeof prompt === 'string' ? prompt : '';

@@ -50,17 +50,22 @@
       <span class="mcp-status-summary none" id="mcpStatusSummary">0/6</span>
     </div>
     <div class="header-actions">
-      <button class="btn btn-folder" id="selectProjectBtn" title="Choose project folder for all agents">Select Project</button>
-      <button class="btn" id="syncBtn" title="Broadcast shared_context.md to all agents">Sync Context</button>
-      <button class="btn" id="spawnAllBtn" title="Start agent CLIs in all 6 terminal panes">Spawn All Agents</button>
-      <button class="btn btn-danger" id="killAllBtn" title="Terminate all running agent sessions">Kill All</button>
-      <button class="btn btn-nudge" id="nudgeAllBtn" title="Send Esc+Enter to unstick churning agents">Nudge All</button>
-      <button class="btn btn-fresh" id="freshStartBtn" title="Kill all sessions and start fresh without context">Fresh Start</button>
-      <button class="btn btn-restart" id="fullRestartBtn" title="Shutdown cleanly (run 'npm start' to restart)">Shutdown</button>
-      <button class="btn btn-friction" id="frictionBtn" title="View agent friction logs and blockers">Friction <span class="friction-count" id="frictionBadge">0</span></button>
+      <button class="btn btn-folder" id="selectProjectBtn" title="Choose project folder for all agents"><span class="btn-icon">📁</span> Project</button>
+      <button class="btn btn-spawn" id="spawnAllBtn" title="Start agent CLIs in all 6 terminal panes"><span class="btn-icon">🚀</span> Spawn</button>
+      <button class="btn btn-sync" id="syncBtn" title="Broadcast shared_context.md to all agents"><span class="btn-icon">🔄</span> Sync</button>
+      <div class="dropdown" id="actionsDropdown">
+        <button class="btn btn-actions" id="actionsBtn" title="Agent management actions"><span class="btn-icon">⚡</span> Actions <span class="dropdown-arrow">▼</span></button>
+        <div class="dropdown-menu" id="actionsMenu">
+          <button class="dropdown-item btn-nudge" id="nudgeAllBtn" title="Send Esc+Enter to unstick churning agents"><span class="btn-icon">👋</span> Nudge All</button>
+          <button class="dropdown-item btn-danger" id="killAllBtn" title="Terminate all running agent sessions"><span class="btn-icon">💀</span> Kill All</button>
+          <button class="dropdown-item btn-fresh" id="freshStartBtn" title="Kill all sessions and start fresh without context"><span class="btn-icon">✨</span> Fresh Start</button>
+          <div class="dropdown-divider"></div>
+          <button class="dropdown-item btn-restart" id="fullRestartBtn" title="Shutdown cleanly (run 'npm start' to restart)"><span class="btn-icon">🔌</span> Shutdown</button>
+        </div>
+      </div>
       <span class="cost-alert-badge" id="costAlertBadge" title="Cost threshold exceeded - click to view">⚠ Cost</span>
-      <button class="btn settings-btn" id="settingsBtn" title="Configure Hivemind settings and permissions">Settings</button>
-      <button class="btn btn-panel" id="panelBtn" title="Toggle right panel (Screenshots, Tests, Activity, etc.)">Panel</button>
+      <button class="btn settings-btn" id="settingsBtn" title="Configure Hivemind settings and permissions"><span class="btn-icon">⚙️</span> Settings</button>
+      <button class="btn btn-panel" id="panelBtn" title="Toggle right panel (Screenshots, Tests, Activity, etc.)"><span class="btn-icon">📊</span> Panel</button>
     </div>
   </div>
 
@@ -190,7 +195,7 @@
               <span class="pane-timer" id="timer-1" title="Session time">0:00</span>
               <span class="sdk-status disconnected" id="sdk-status-1" title="SDK session status">â€”</span>
               <span class="sdk-session-id" id="sdk-session-1" title="Session ID"></span>
-              <span class="pane-status" id="status-1">Ready</span>
+              <span class="pane-status idle" id="status-1"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-1" title="Last output time">-</span>
               <span class="stuck-indicator" id="stuck-1" title="Agent may be stuck">⚠</span>
               <span class="delivery-indicator" id="delivery-1" title="Message delivery status"></span>
@@ -213,7 +218,7 @@
               <span class="pane-timer" id="timer-2" title="Session time">0:00</span>
               <span class="sdk-status disconnected" id="sdk-status-2" title="SDK session status">â€”</span>
               <span class="sdk-session-id" id="sdk-session-2" title="Session ID"></span>
-              <span class="pane-status" id="status-2">Ready</span>
+              <span class="pane-status idle" id="status-2"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-2" title="Last output time">-</span>
               <span class="stuck-indicator" id="stuck-2" title="Agent may be stuck">⚠</span>
               <span class="delivery-indicator" id="delivery-2" title="Message delivery status"></span>
@@ -235,7 +240,7 @@
               <span class="pane-timer" id="timer-3" title="Session time">0:00</span>
               <span class="sdk-status disconnected" id="sdk-status-3" title="SDK session status">â€”</span>
               <span class="sdk-session-id" id="sdk-session-3" title="Session ID"></span>
-              <span class="pane-status" id="status-3">Ready</span>
+              <span class="pane-status idle" id="status-3"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-3" title="Last output time">-</span>
               <span class="stuck-indicator" id="stuck-3" title="Agent may be stuck">⚠</span>
               <span class="delivery-indicator" id="delivery-3" title="Message delivery status"></span>
@@ -257,7 +262,7 @@
               <span class="pane-timer" id="timer-4" title="Session time">0:00</span>
               <span class="sdk-status disconnected" id="sdk-status-4" title="SDK session status">â€”</span>
               <span class="sdk-session-id" id="sdk-session-4" title="Session ID"></span>
-              <span class="pane-status" id="status-4">Ready</span>
+              <span class="pane-status idle" id="status-4"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-4" title="Last output time">-</span>
               <span class="stuck-indicator" id="stuck-4" title="Agent may be stuck">⚠</span>
               <span class="delivery-indicator" id="delivery-4" title="Message delivery status"></span>
@@ -279,7 +284,7 @@
               <span class="pane-timer" id="timer-5" title="Session time">0:00</span>
               <span class="sdk-status disconnected" id="sdk-status-5" title="SDK session status">â€”</span>
               <span class="sdk-session-id" id="sdk-session-5" title="Session ID"></span>
-              <span class="pane-status" id="status-5">Ready</span>
+              <span class="pane-status idle" id="status-5"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-5" title="Last output time">-</span>
               <span class="stuck-indicator" id="stuck-5" title="Agent may be stuck">⚠</span>
               <span class="delivery-indicator" id="delivery-5" title="Message delivery status"></span>
@@ -301,7 +306,7 @@
               <span class="pane-timer" id="timer-6" title="Session time">0:00</span>
               <span class="sdk-status disconnected" id="sdk-status-6" title="SDK session status">â€”</span>
               <span class="sdk-session-id" id="sdk-session-6" title="Session ID"></span>
-              <span class="pane-status" id="status-6">Ready</span>
+              <span class="pane-status idle" id="status-6"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-6" title="Last output time">-</span>
               <span class="stuck-indicator" id="stuck-6" title="Agent may be stuck">⚠</span>
               <span class="delivery-indicator" id="delivery-6" title="Message delivery status"></span>
@@ -349,6 +354,7 @@
         <button class="panel-tab active" data-tab="screenshots" title="Drag & drop images for agents to reference">Shots</button>
         <button class="panel-tab" data-tab="tests" title="View test results and run test suite">Tests</button>
         <button class="panel-tab" data-tab="activity" title="Real-time log of all agent activity">Activity</button>
+        <button class="panel-tab" data-tab="friction" title="Agent friction logs and blockers"><span id="frictionTabBadge" class="tab-badge hidden">0</span>Friction</button>
         <button class="panel-tab" data-tab="inspector" title="Debug message flow and delivery">Insp</button>
         <button class="panel-tab" data-tab="history" title="View past session history">Hist</button>
         <button class="panel-tab" data-tab="projects" title="Quick-switch between recent projects">Proj</button>
@@ -421,6 +427,17 @@
           <div class="activity-actions">
             <button class="btn" id="clearActivityBtn" title="Clear all activity entries">Clear</button>
             <button class="btn" id="exportActivityBtn" title="Download activity log as text file">Export</button>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-friction">
+          <div class="tab-title">Friction Logs</div>
+          <div class="tab-description">Issues and blockers reported by agents</div>
+          <div class="friction-list" id="frictionListTab">
+            <div class="friction-empty">No friction logs found</div>
+          </div>
+          <div class="friction-actions-tab">
+            <button class="btn" id="refreshFrictionTabBtn" title="Reload friction logs from workspace">Refresh</button>
+            <button class="btn" id="clearFrictionTabBtn" title="Delete all resolved friction logs">Clear Resolved</button>
           </div>
         </div>
         <div class="tab-pane" id="tab-history">
