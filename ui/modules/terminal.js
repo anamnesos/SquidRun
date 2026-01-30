@@ -1048,7 +1048,7 @@ function blurAllTerminals() {
 // Actually send message to pane (internal - use sendToPane for idle detection)
 // Triggers actual DOM keyboard events on xterm textarea with bypass marker
 // Includes diagnostic logging and focus steal prevention (save/restore user focus)
-function doSendToPane(paneId, message, onComplete) {
+async function doSendToPane(paneId, message, onComplete) {
   let completed = false;
   const finish = (result) => {
     if (completed) return;
@@ -1126,13 +1126,28 @@ function doSendToPane(paneId, message, onComplete) {
     textarea.focus();
   }
 
-  // Step 2: Write text to PTY (without \r)
-  window.hivemind.pty.write(id, text).catch(err => {
-    log.error(`doSendToPane ${id}`, 'PTY write failed:', err);
-  });
-  log.info(`doSendToPane ${id}`, 'Claude pane: PTY write text');
+  // Step 2: Clear any stuck input BEFORE writing new text
+  // Ctrl+U (0x15) clears the current input line - prevents accumulation if previous Enter failed
+  // This is harmless if line is already empty
+  try {
+    await window.hivemind.pty.write(id, '\x15');
+    log.info(`doSendToPane ${id}`, 'Claude pane: cleared input line (Ctrl+U)');
+  } catch (err) {
+    log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
+    // Continue anyway - text write may still work
+  }
 
-  // Step 3: If message needs Enter, use sendTrustedEnter after adaptive delay
+  // Step 3: Write text to PTY (without \r)
+  try {
+    await window.hivemind.pty.write(id, text);
+    log.info(`doSendToPane ${id}`, 'Claude pane: PTY write text complete');
+  } catch (err) {
+    log.error(`doSendToPane ${id}`, 'PTY write failed:', err);
+    finishWithClear({ success: false, reason: 'pty_write_failed' });
+    return;
+  }
+
+  // Step 4: If message needs Enter, use sendTrustedEnter after adaptive delay
   if (hasTrailingEnter) {
     // Calculate delay based on pane activity (busy panes need more time)
     const enterDelay = getAdaptiveEnterDelay(id);
@@ -1188,7 +1203,11 @@ function doSendToPane(paneId, message, onComplete) {
       }
 
       lastTypedTime[paneId] = Date.now();
-      finishWithClear({ success: submitOk });
+      const resultPayload = submitOk
+        ? { success: true }
+        // Enter was sent, but verification failed (no output/prompt yet) - treat as unverified success
+        : { success: true, verified: false, reason: 'verification_failed' };
+      finishWithClear(resultPayload);
     }, enterDelay);
   } else {
     // No Enter needed, just restore focus
