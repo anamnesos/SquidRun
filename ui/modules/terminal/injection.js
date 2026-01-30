@@ -281,9 +281,18 @@ function createInjectionController(options = {}) {
 
   // Process queued messages for a pane
   function processQueue(paneId) {
-    if (getInjectionInFlight()) {
+    const id = String(paneId);
+    const isCodex = isCodexPane(id);
+
+    // Global lock only applies to Claude panes (need focus for sendTrustedEnter)
+    // Codex panes use codexExec API which doesn't need focus - never block them
+    if (!isCodex && getInjectionInFlight()) {
+      log.debug(`processQueue ${id}`, 'Claude pane deferred - injection in flight');
       setTimeout(() => processQueue(paneId), QUEUE_RETRY_MS);
       return;
+    }
+    if (isCodex && getInjectionInFlight()) {
+      log.debug(`processQueue ${id}`, 'Codex pane bypassing global lock');
     }
     const queue = messageQueue[paneId];
     if (!queue || queue.length === 0) return;
@@ -325,9 +334,14 @@ function createInjectionController(options = {}) {
       } else if (canForceInject && !canSendNormal) {
         log.info(`Terminal ${paneId}`, `Force-injecting after ${waitTime}ms wait (pane now idle for 500ms)`);
       }
-      setInjectionInFlight(true);
+      // Only set global lock for Claude panes (Codex uses API, no focus needed)
+      if (!isCodex) {
+        setInjectionInFlight(true);
+      }
       doSendToPane(paneId, queuedMessage, (result) => {
-        setInjectionInFlight(false);
+        if (!isCodex) {
+          setInjectionInFlight(false);
+        }
         if (typeof onComplete === 'function') {
           try {
             onComplete(result);
