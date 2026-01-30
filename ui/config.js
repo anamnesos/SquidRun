@@ -15,44 +15,65 @@ const PIPE_PATH = os.platform() === 'win32'
 const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
 
 // Instance working directories (role injection)
+// NOTE: Directory names kept as-is for now, content updated to new role names
 const INSTANCE_DIRS = {
-  '1': path.join(WORKSPACE_PATH, 'instances', 'lead'),
-  '2': path.join(WORKSPACE_PATH, 'instances', 'orchestrator'),
-  '3': path.join(WORKSPACE_PATH, 'instances', 'worker-a'),
-  '4': path.join(WORKSPACE_PATH, 'instances', 'worker-b'),
-  '5': path.join(WORKSPACE_PATH, 'instances', 'investigator'),
-  '6': path.join(WORKSPACE_PATH, 'instances', 'reviewer'),
+  '1': path.join(WORKSPACE_PATH, 'instances', 'lead'),        // Architect
+  '2': path.join(WORKSPACE_PATH, 'instances', 'orchestrator'), // Infra
+  '3': path.join(WORKSPACE_PATH, 'instances', 'worker-a'),     // Frontend
+  '4': path.join(WORKSPACE_PATH, 'instances', 'worker-b'),     // Backend
+  '5': path.join(WORKSPACE_PATH, 'instances', 'investigator'), // Analyst
+  '6': path.join(WORKSPACE_PATH, 'instances', 'reviewer'),     // Reviewer
 };
 
-// Pane roles for display
+// Pane roles for display - UPDATED role names
 const PANE_ROLES = {
   '1': 'Architect',
-  '2': 'Orchestrator',
-  '3': 'Implementer A',
-  '4': 'Implementer B',
-  '5': 'Investigator',
+  '2': 'Infra',
+  '3': 'Frontend',
+  '4': 'Backend',
+  '5': 'Analyst',
   '6': 'Reviewer',
 };
 
 const PANE_IDS = Object.keys(PANE_ROLES);
 
 // Trigger file targets - maps filename to target pane IDs
+// TRANSITION: Both old and new names work during migration period
 const TRIGGER_TARGETS = {
-  'lead.txt': ['1'],
-  'orchestrator.txt': ['2'],
-  'worker-a.txt': ['3'],
-  'worker-b.txt': ['4'],
-  'investigator.txt': ['5'],
+  // NEW trigger names (primary)
+  'architect.txt': ['1'],
+  'infra.txt': ['2'],
+  'frontend.txt': ['3'],
+  'backend.txt': ['4'],
+  'analyst.txt': ['5'],
   'reviewer.txt': ['6'],
-  'workers.txt': ['3', '4', '5'],
+
+  // OLD trigger names (deprecated, remove after transition)
+  'lead.txt': ['1'],           // -> architect.txt
+  'orchestrator.txt': ['2'],   // -> infra.txt
+  'worker-a.txt': ['3'],       // -> frontend.txt
+  'worker-b.txt': ['4'],       // -> backend.txt
+  'investigator.txt': ['5'],   // -> analyst.txt
+
+  // Broadcast triggers
+  'workers.txt': ['3', '4'],              // Frontend + Backend
+  'implementers.txt': ['2', '3', '4'],    // Infra + Frontend + Backend
   'all.txt': ['1', '2', '3', '4', '5', '6'],
-  // "Others" triggers - send to all EXCEPT the sender
-  'others-lead.txt': ['2', '3', '4', '5', '6'],          // Architect sends to all others
-  'others-orchestrator.txt': ['1', '3', '4', '5', '6'],   // Orchestrator sends to all others
-  'others-worker-a.txt': ['1', '2', '4', '5', '6'],       // Implementer A sends to all others
-  'others-worker-b.txt': ['1', '2', '3', '5', '6'],       // Implementer B sends to all others
-  'others-investigator.txt': ['1', '2', '3', '4', '6'],   // Investigator sends to all others
-  'others-reviewer.txt': ['1', '2', '3', '4', '5'],       // Reviewer sends to all others
+
+  // "Others" triggers - send to all EXCEPT the sender (NEW names)
+  'others-architect.txt': ['2', '3', '4', '5', '6'],
+  'others-infra.txt': ['1', '3', '4', '5', '6'],
+  'others-frontend.txt': ['1', '2', '4', '5', '6'],
+  'others-backend.txt': ['1', '2', '3', '5', '6'],
+  'others-analyst.txt': ['1', '2', '3', '4', '6'],
+  'others-reviewer.txt': ['1', '2', '3', '4', '5'],
+
+  // "Others" triggers (OLD names - deprecated)
+  'others-lead.txt': ['2', '3', '4', '5', '6'],
+  'others-orchestrator.txt': ['1', '3', '4', '5', '6'],
+  'others-worker-a.txt': ['1', '2', '4', '5', '6'],
+  'others-worker-b.txt': ['1', '2', '3', '5', '6'],
+  'others-investigator.txt': ['1', '2', '3', '4', '6'],
 };
 
 // Protocol actions (client -> daemon)

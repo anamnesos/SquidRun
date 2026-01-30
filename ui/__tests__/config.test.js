@@ -61,10 +61,10 @@ describe('config.js', () => {
 
     test('should have correct role names', () => {
       expect(PANE_ROLES['1']).toBe('Architect');
-      expect(PANE_ROLES['2']).toBe('Orchestrator');
-      expect(PANE_ROLES['3']).toBe('Implementer A');
-      expect(PANE_ROLES['4']).toBe('Implementer B');
-      expect(PANE_ROLES['5']).toBe('Investigator');
+      expect(PANE_ROLES['2']).toBe('Infra');
+      expect(PANE_ROLES['3']).toBe('Frontend');
+      expect(PANE_ROLES['4']).toBe('Backend');
+      expect(PANE_ROLES['5']).toBe('Analyst');
       expect(PANE_ROLES['6']).toBe('Reviewer');
     });
   });
@@ -86,8 +86,8 @@ describe('config.js', () => {
       expect(TRIGGER_TARGETS['lead.txt']).toEqual(['1']);
     });
 
-    test('workers.txt should target execution panes', () => {
-      expect(TRIGGER_TARGETS['workers.txt']).toEqual(['3', '4', '5']);
+    test('workers.txt should target Frontend and Backend', () => {
+      expect(TRIGGER_TARGETS['workers.txt']).toEqual(['3', '4']);
     });
 
     test('all.txt should target all 6 panes', () => {
