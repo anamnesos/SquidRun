@@ -160,12 +160,12 @@
 
 /* Dim inactive panes to emphasize focused pane */
 .pane:not(.focused) {
-  filter: brightness(0.85);
+  filter: brightness(0.65);
   transition: filter 0.2s ease;
 }
 
 .pane:not(.focused):hover {
-  filter: brightness(0.95);
+  filter: brightness(0.80);
 }
 
 .pane.focused {
