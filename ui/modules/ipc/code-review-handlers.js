@@ -98,55 +98,63 @@ function registerCodeReviewHandlers(ctx) {
   loadSettings();
 
   /**
+   * Core review logic - shared by review-diff and review-staged
+   */
+  async function performDiffReview(projectPath, mode = 'all') {
+    const cwd = projectPath || path.join(WORKSPACE_PATH, '..');
+
+    const { execSync } = require('child_process');
+
+    // Get diff based on mode
+    let cmd = 'git diff HEAD';
+    if (mode === 'staged') {
+      cmd = 'git diff --cached';
+    } else if (mode === 'unstaged') {
+      cmd = 'git diff';
+    }
+
+    let diff;
+    try {
+      diff = execSync(cmd, {
+        cwd,
+        encoding: 'utf-8',
+        maxBuffer: 10 * 1024 * 1024,
+      });
+    } catch (err) {
+      diff = err.stdout || '';
+    }
+
+    if (!diff || diff.trim().length === 0) {
+      return {
+        success: true,
+        issues: [],
+        summary: 'No changes to review',
+        stats: { total: 0, bySeverity: {}, byCategory: {} },
+      };
+    }
+
+    const reviewer = getReviewer();
+    const result = await reviewer.reviewDiff(diff, {
+      projectPath: cwd,
+      mode,
+    });
+
+    // Save to history
+    if (result.success && result.issues.length > 0) {
+      saveReview(result, mode);
+    }
+
+    return result;
+  }
+
+  /**
    * Review current git diff
    */
   ipcMain.handle('review-diff', async (event, payload = {}) => {
     const { projectPath, mode = 'all' } = payload;
-    const cwd = projectPath || path.join(WORKSPACE_PATH, '..');
 
     try {
-      const { execSync } = require('child_process');
-
-      // Get diff based on mode
-      let cmd = 'git diff HEAD';
-      if (mode === 'staged') {
-        cmd = 'git diff --cached';
-      } else if (mode === 'unstaged') {
-        cmd = 'git diff';
-      }
-
-      let diff;
-      try {
-        diff = execSync(cmd, {
-          cwd,
-          encoding: 'utf-8',
-          maxBuffer: 10 * 1024 * 1024,
-        });
-      } catch (err) {
-        diff = err.stdout || '';
-      }
-
-      if (!diff || diff.trim().length === 0) {
-        return {
-          success: true,
-          issues: [],
-          summary: 'No changes to review',
-          stats: { total: 0, bySeverity: {}, byCategory: {} },
-        };
-      }
-
-      const reviewer = getReviewer();
-      const result = await reviewer.reviewDiff(diff, {
-        projectPath: cwd,
-        mode,
-      });
-
-      // Save to history
-      if (result.success && result.issues.length > 0) {
-        saveReview(result, mode);
-      }
-
-      return result;
+      return await performDiffReview(projectPath, mode);
     } catch (err) {
       console.error('[CodeReview] Review diff error:', err);
       return { success: false, error: err.message };
@@ -157,7 +165,12 @@ function registerCodeReviewHandlers(ctx) {
    * Review only staged changes
    */
   ipcMain.handle('review-staged', async (event, payload = {}) => {
-    return ipcMain.handle('review-diff', event, { ...payload, mode: 'staged' });
+    try {
+      return await performDiffReview(payload.projectPath, 'staged');
+    } catch (err) {
+      console.error('[CodeReview] Review staged error:', err);
+      return { success: false, error: err.message };
+    }
   });
 
   /**

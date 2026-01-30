@@ -247,18 +247,41 @@ describe('Code Review IPC Handlers', () => {
       registerCodeReviewHandlers({ ipcMain: mockIpcMain, WORKSPACE_PATH: '/test/workspace' });
     });
 
-    test('attempts to delegate to review-diff', async () => {
-      // Note: The source code calls ipcMain.handle() which is for registration,
-      // not invocation. This appears to be a bug in the source.
-      // The handler returns whatever ipcMain.handle returns (undefined in mock)
+    test('reviews staged changes successfully', async () => {
+      execSync.mockReturnValue('diff --git a/test.js b/test.js\n+console.log("test");');
+      mockReviewer.reviewDiff.mockResolvedValue({
+        success: true,
+        issues: [{ severity: 'low', message: 'Console statement' }],
+        summary: 'Found issues',
+        stats: { total: 1, bySeverity: { low: 1 }, byCategory: {} },
+      });
+
       const result = await handlers['review-staged']({}, { projectPath: '/test' });
 
-      // The call was made to ipcMain.handle (even though it's incorrect usage)
-      expect(mockIpcMain.handle).toHaveBeenCalledWith(
-        'review-diff',
-        expect.anything(),
-        expect.objectContaining({ mode: 'staged' })
-      );
+      // Should call git diff --cached for staged changes
+      expect(execSync).toHaveBeenCalledWith('git diff --cached', expect.any(Object));
+      expect(result.success).toBe(true);
+      expect(result.issues).toHaveLength(1);
+    });
+
+    test('returns no changes message when no staged changes', async () => {
+      execSync.mockReturnValue('');
+
+      const result = await handlers['review-staged']({}, { projectPath: '/test' });
+
+      expect(result.success).toBe(true);
+      expect(result.summary).toBe('No changes to review');
+      expect(result.issues).toHaveLength(0);
+    });
+
+    test('handles errors gracefully', async () => {
+      execSync.mockReturnValue('diff content');
+      mockReviewer.reviewDiff.mockRejectedValue(new Error('Review error'));
+
+      const result = await handlers['review-staged']({}, {});
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Review error');
     });
   });
 
