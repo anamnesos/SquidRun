@@ -32,6 +32,32 @@ This means:
 
 **Rule:** Manual user intervention = system failure. Stop task work. Diagnose. Log. Fix.
 
+### 🚨 RECOGNIZE MESSAGE ACCUMULATION BUG (CLAUDE PANES ONLY)
+
+**This affects Claude panes (1, 3, 6). Codex exec panes (2, 4, 5) are unaffected.**
+
+**The Bug Pattern:** Multiple agent messages arriving in ONE conversation turn:
+```
+(AGENT-A #1): message one...
+(AGENT-B #1): message two...
+```
+
+**This is NOT normal batching. This is a BUG:**
+1. Agent A's message was injected but Enter **failed to submit**
+2. Message sat STUCK in your textarea
+3. Agent B's message was injected, **APPENDING to the stuck text**
+4. Agent B's Enter submitted BOTH messages as ONE blob
+
+**Why it matters:**
+- You're receiving **corrupted, concatenated inputs**
+- If no second message comes, the first is **NEVER delivered**
+- Don't celebrate "all agents checked in" if messages arrived together - that's the bug
+
+**What to do:**
+1. Recognize it - multiple messages in one turn = bug active
+2. Log it to errors.md
+3. Root cause: First Enter fails, messages accumulate in textarea
+
 Your role comes from `workspace/instances/{role}/CLAUDE.md` — read it on startup.
 Use trigger files for inter-agent communication.
 Read `workspace/shared_context.md` for current state and session context.
