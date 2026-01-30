@@ -3,11 +3,14 @@
  * Handles xterm instances, PTY connections, and terminal operations
  */
 
-const { ipcRenderer } = require('electron');
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
 const { WebLinksAddon } = require('@xterm/addon-web-links');
+const { WebglAddon } = require('@xterm/addon-webgl');
+const { SearchAddon } = require('@xterm/addon-search');
 const log = require('./logger');
+const { createInjectionController } = require('./terminal/injection');
+const { createRecoveryController } = require('./terminal/recovery');
 
 // Pane configuration
 const PANE_IDS = ['1', '2', '3', '4', '5', '6'];
@@ -35,6 +38,7 @@ let sdkModeActive = false;
 // Terminal instances
 const terminals = new Map();
 const fitAddons = new Map();
+const searchAddons = new Map();
 let focusedPane = '1';
 
 // Cross-pane Enter debounce tracking
@@ -49,20 +53,8 @@ const lastTypedTime = {};
 // Track last output time per pane - updated on every pty.onData
 const lastOutputTime = {};
 
-// Unstick escalation tracking (nudge -> interrupt -> restart)
-const UNSTICK_RESET_MS = 30000;
-const unstickState = new Map();
-
 // Codex exec mode: track identity injection per pane
 const codexIdentityInjected = new Set();
-
-// Stuck message sweeper - safety net for failed Enter submissions
-// Tracks panes where verifyAndRetryEnter exhausted retries but message may still be stuck
-const potentiallyStuckPanes = new Map(); // paneId -> { timestamp, retryCount }
-const SWEEPER_INTERVAL_MS = 30000;       // Check every 30 seconds
-const SWEEPER_MAX_AGE_MS = 300000;       // Give up after 5 minutes
-const SWEEPER_IDLE_THRESHOLD_MS = 10000; // Pane must be idle for 10 seconds before retry
-let sweeperIntervalId = null;
 
 // Per-pane input lock - panes locked by default (view-only), toggle to unlock for direct typing
 // Prevents accidental typing in agent panes while allowing programmatic sends (sendToPane/triggers)
@@ -74,6 +66,8 @@ PANE_IDS.forEach(id => { inputLocked[id] = true; }); // Default: all panes locke
 const messageQueue = {};
 // Prevent overlapping PTY injections across panes (global focus/Enter mutex)
 let injectionInFlight = false;
+const getInjectionInFlight = () => injectionInFlight;
+const setInjectionInFlight = (value) => { injectionInFlight = value; };
 
 // Global UI focus tracker - survives staggered multi-pane sends.
 // Updated by focusin listener on UI inputs; doSendToPane restores to this.
@@ -307,412 +301,98 @@ function setInputLocked(paneId, locked) {
   log.info(`Terminal ${paneId}`, `Input ${locked ? 'locked' : 'unlocked'}`);
 }
 
-/**
- * Mark a pane as potentially stuck (Enter verification failed)
- * Sweeper will periodically retry Enter on these panes
- */
-function markPotentiallyStuck(paneId) {
-  if (isCodexPane(paneId)) return; // Only Claude panes can get stuck this way
+let injectionController = null;
+const recoveryController = createRecoveryController({
+  PANE_IDS,
+  terminals,
+  lastOutputTime,
+  lastTypedTime,
+  isCodexPane,
+  updatePaneStatus,
+  updateConnectionStatus,
+  getSdkModeActive: () => sdkModeActive,
+  getInjectionInFlight,
+  userIsTyping,
+  getInjectionHelpers: () => injectionController,
+  spawnClaude,
+});
 
-  const existing = potentiallyStuckPanes.get(paneId);
-  if (existing) {
-    existing.retryCount++;
-    log.info(`StuckSweeper ${paneId}`, `Re-marked as stuck (retry #${existing.retryCount})`);
-  } else {
-    potentiallyStuckPanes.set(paneId, { timestamp: Date.now(), retryCount: 0 });
-    log.info(`StuckSweeper ${paneId}`, 'Marked as potentially stuck');
-  }
+injectionController = createInjectionController({
+  terminals,
+  lastOutputTime,
+  lastTypedTime,
+  messageQueue,
+  isCodexPane,
+  buildCodexExecPrompt,
+  isIdle,
+  isIdleForForceInject,
+  userIsTyping,
+  updatePaneStatus,
+  markPotentiallyStuck: recoveryController.markPotentiallyStuck,
+  getInjectionInFlight,
+  setInjectionInFlight,
+  constants: {
+    ENTER_DELAY_IDLE_MS,
+    ENTER_DELAY_ACTIVE_MS,
+    ENTER_DELAY_BUSY_MS,
+    PANE_ACTIVE_THRESHOLD_MS,
+    PANE_BUSY_THRESHOLD_MS,
+    FOCUS_RETRY_DELAY_MS,
+    MAX_FOCUS_RETRIES,
+    ENTER_VERIFY_DELAY_MS,
+    MAX_ENTER_RETRIES,
+    ENTER_RETRY_INTERVAL_MS,
+    PROMPT_READY_TIMEOUT_MS,
+    MAX_QUEUE_TIME_MS,
+    EXTREME_WAIT_MS,
+    ABSOLUTE_MAX_WAIT_MS,
+    QUEUE_RETRY_MS,
+    INJECTION_LOCK_TIMEOUT_MS,
+  },
+});
+
+const {
+  potentiallyStuckPanes,
+  clearStuckStatus,
+  startStuckMessageSweeper,
+  stopStuckMessageSweeper,
+  sweepStuckMessages,
+  interruptPane,
+  restartPane,
+  unstickEscalation,
+  nudgePane,
+  nudgeAllPanes,
+  sendUnstick,
+  aggressiveNudge,
+  aggressiveNudgeAll,
+} = recoveryController;
+
+function focusWithRetry(...args) {
+  return injectionController.focusWithRetry(...args);
 }
 
-/**
- * Clear stuck status for a pane (it's working again)
- */
-function clearStuckStatus(paneId) {
-  if (potentiallyStuckPanes.has(paneId)) {
-    potentiallyStuckPanes.delete(paneId);
-    log.info(`StuckSweeper ${paneId}`, 'Cleared stuck status (pane active)');
-  }
+function sendEnterToPane(...args) {
+  return injectionController.sendEnterToPane(...args);
 }
 
-/**
- * Stuck message sweeper - periodic safety net for Claude panes
- * Checks panes marked as potentially stuck and retries Enter if idle
- */
-async function sweepStuckMessages() {
-  if (injectionInFlight) return; // Don't interfere with active injection
-  if (userIsTyping()) return; // Don't interfere with user
-
-  const now = Date.now();
-  const toRemove = [];
-
-  for (const [paneId, info] of potentiallyStuckPanes) {
-    const age = now - info.timestamp;
-
-    // Give up after 5 minutes
-    if (age > SWEEPER_MAX_AGE_MS) {
-      log.warn(`StuckSweeper ${paneId}`, `Giving up after ${Math.round(age / 1000)}s (max age reached)`);
-      toRemove.push(paneId);
-      continue;
-    }
-
-    // Only retry if pane is idle for at least 10 seconds
-    const lastOutput = lastOutputTime[paneId] || 0;
-    const idleTime = now - lastOutput;
-    if (idleTime < SWEEPER_IDLE_THRESHOLD_MS) {
-      continue; // Pane is active, wait
-    }
-
-    // Pane is idle and marked as stuck - try Enter
-    log.info(`StuckSweeper ${paneId}`, `Attempting recovery Enter (idle ${Math.round(idleTime / 1000)}s, stuck for ${Math.round(age / 1000)}s)`);
-
-    const paneEl = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-    const textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
-
-    if (textarea) {
-      const focusOk = await focusWithRetry(textarea);
-      if (focusOk) {
-        // Use sendEnterToPane helper (handles bypass flag + Terminal.input fallback)
-        const enterResult = await sendEnterToPane(paneId);
-        if (enterResult.success) {
-          log.info(`StuckSweeper ${paneId}`, `Recovery Enter sent via ${enterResult.method}`);
-          // Don't remove from stuck list yet - wait for output to confirm success
-        } else {
-          log.error(`StuckSweeper ${paneId}`, 'Recovery Enter failed');
-        }
-      } else {
-        log.warn(`StuckSweeper ${paneId}`, 'Focus failed for recovery');
-      }
-    }
-  }
-
-  // Clean up expired entries
-  for (const paneId of toRemove) {
-    potentiallyStuckPanes.delete(paneId);
-  }
+function isPromptReady(...args) {
+  return injectionController.isPromptReady(...args);
 }
 
-/**
- * Start the stuck message sweeper interval
- */
-function startStuckMessageSweeper() {
-  if (sweeperIntervalId) return; // Already running
-  sweeperIntervalId = setInterval(sweepStuckMessages, SWEEPER_INTERVAL_MS);
-  log.info('Terminal', `Stuck message sweeper started (interval: ${SWEEPER_INTERVAL_MS / 1000}s)`);
+function verifyAndRetryEnter(...args) {
+  return injectionController.verifyAndRetryEnter(...args);
 }
 
-/**
- * Stop the stuck message sweeper
- */
-function stopStuckMessageSweeper() {
-  if (sweeperIntervalId) {
-    clearInterval(sweeperIntervalId);
-    sweeperIntervalId = null;
-    log.info('Terminal', 'Stuck message sweeper stopped');
-  }
+function processQueue(...args) {
+  return injectionController.processQueue(...args);
 }
 
-/**
- * Calculate adaptive Enter delay based on pane activity level
- * Under load, the terminal needs more time for text to appear before Enter
- * @param {string} paneId - The pane ID
- * @returns {number} - Delay in milliseconds before sending Enter
- */
-function getAdaptiveEnterDelay(paneId) {
-  const lastOutput = lastOutputTime[paneId] || 0;
-  const timeSinceOutput = Date.now() - lastOutput;
-
-  if (timeSinceOutput < PANE_BUSY_THRESHOLD_MS) {
-    // Very recent output (< 100ms) - pane is busy, use longer delay
-    return ENTER_DELAY_BUSY_MS;
-  } else if (timeSinceOutput < PANE_ACTIVE_THRESHOLD_MS) {
-    // Recent output (< 500ms) - pane is active, use medium delay
-    return ENTER_DELAY_ACTIVE_MS;
-  } else {
-    // No recent output - pane is idle, fast Enter is safe
-    return ENTER_DELAY_IDLE_MS;
-  }
+function doSendToPane(...args) {
+  return injectionController.doSendToPane(...args);
 }
 
-/**
- * Attempt to focus textarea with retries
- * Returns true if focus succeeded, false if failed after retries
- * @param {HTMLElement} textarea - The textarea element to focus
- * @param {number} retries - Number of retry attempts remaining
- * @returns {Promise<boolean>} - Whether focus succeeded
- */
-async function focusWithRetry(textarea, retries = MAX_FOCUS_RETRIES) {
-  if (!textarea) return false;
-
-  textarea.focus();
-
-  // Check if focus succeeded
-  if (document.activeElement === textarea) {
-    return true;
-  }
-
-  // Retry if attempts remaining
-  if (retries > 0) {
-    await new Promise(resolve => setTimeout(resolve, FOCUS_RETRY_DELAY_MS));
-    return focusWithRetry(textarea, retries - 1);
-  }
-
-  return false;
-}
-
-/**
- * Send Enter to terminal via sendTrustedEnter (native Electron keyboard events).
- * Terminal.input() is DISABLED for Claude panes - it doesn't work with ink TUI.
- * @param {string} paneId - The pane ID
- * @returns {Promise<{success: boolean, method: string}>}
- */
-async function sendEnterToPane(paneId) {
-  const terminal = terminals.get(paneId);
-
-  // NOTE: Terminal.input('\r') does NOT work for Claude's ink TUI
-  // It routes through onData → pty.write, same as direct PTY '\r' (no-op for ink TUI)
-  // Terminal.input succeeds but Claude ignores it - messages sit until nudged
-  // MUST use sendTrustedEnter which sends native Electron keyboard events
-  //
-  // Terminal.input is disabled for Claude panes until a working focus-free path is found
-  // (Codex panes use codex-exec path, not this function)
-
-  // Always use sendTrustedEnter for Claude panes (requires focus)
-  // sendInputEvent can produce isTrusted=false, which the key handler blocks unless bypassed
-  // Set bypass flag so attachCustomKeyEventHandler allows the Enter through
-  if (terminal) {
-    terminal._hivemindBypass = true;
-    log.debug(`sendEnterToPane ${paneId}`, 'Set _hivemindBypass=true for sendTrustedEnter');
-  }
-
-  try {
-    await window.hivemind.pty.sendTrustedEnter();
-    log.info(`sendEnterToPane ${paneId}`, 'Enter sent via sendTrustedEnter (focus-based, bypass enabled)');
-    return { success: true, method: 'sendTrustedEnter' };
-  } catch (err) {
-    log.error(`sendEnterToPane ${paneId}`, 'sendTrustedEnter failed:', err);
-    return { success: false, method: 'sendTrustedEnter' };
-  } finally {
-    // Clear bypass flag after Enter is processed (next tick to ensure event handled)
-    if (terminal) {
-      setTimeout(() => {
-        terminal._hivemindBypass = false;
-        log.debug(`sendEnterToPane ${paneId}`, 'Cleared _hivemindBypass');
-      }, 0);
-    }
-  }
-}
-
-/**
- * Check if terminal shows a prompt (ready for input).
- * Looks for common prompt patterns at end of current line.
- * @param {string} paneId - The pane ID
- * @returns {boolean}
- */
-function isPromptReady(paneId) {
-  const terminal = terminals.get(paneId);
-  if (!terminal || !terminal.buffer || !terminal.buffer.active) return false;
-
-  try {
-    const buffer = terminal.buffer.active;
-    const cursorY = buffer.cursorY;
-    const line = buffer.getLine(cursorY + buffer.viewportY);
-    if (!line) return false;
-
-    const lineText = line.translateToString(true).trimEnd();
-    // Common prompt patterns: ends with >, $, #, :, or ? (for prompts like "Continue?")
-    // Note: May false-positive on questions in output - runtime testing needed
-    const promptPatterns = [/>\s*$/, /\$\s*$/, /#\s*$/, /:\s*$/, /\?\s*$/];
-    const hasPrompt = promptPatterns.some(p => p.test(lineText));
-
-    if (hasPrompt) {
-      log.debug(`isPromptReady ${paneId}`, `Prompt detected: "${lineText.slice(-20)}"`);
-    }
-    return hasPrompt;
-  } catch (err) {
-    log.warn(`isPromptReady ${paneId}`, 'Buffer read failed:', err.message);
-    return false;
-  }
-}
-
-/**
- * Verify Enter succeeded using stricter criteria:
- * 1. Output activity started (Claude began processing)
- * 2. AND prompt returned (Claude finished and is ready for input)
- *
- * This prevents false positives from continuation output.
- * Retries Enter only if focus can be established.
- *
- * @param {string} paneId - The pane ID
- * @param {HTMLElement} textarea - The textarea element (for focus operations)
- * @param {number} retriesLeft - Remaining retry attempts
- * @returns {Promise<boolean>} - Whether submit appears to have succeeded
- */
-async function verifyAndRetryEnter(paneId, textarea, retriesLeft = MAX_ENTER_RETRIES) {
-  const outputTimeBefore = lastOutputTime[paneId] || 0;
-
-  // Wait for Enter to be processed
-  await new Promise(resolve => setTimeout(resolve, ENTER_VERIFY_DELAY_MS));
-
-  // Check for output activity (indicates Claude started processing)
-  const outputTimeAfter = lastOutputTime[paneId] || 0;
-  const hadOutputActivity = outputTimeAfter > outputTimeBefore;
-
-  if (hadOutputActivity) {
-    // Output started - now wait for prompt-ready (stricter success criteria)
-    log.info(`verifyAndRetryEnter ${paneId}`, 'Output activity detected, waiting for prompt-ready');
-
-    const promptWaitStart = Date.now();
-    while ((Date.now() - promptWaitStart) < PROMPT_READY_TIMEOUT_MS) {
-      // Check if prompt appeared (terminal ready for input)
-      if (isPromptReady(paneId) && isIdle(paneId)) {
-        log.info(`verifyAndRetryEnter ${paneId}`, 'Enter succeeded (prompt-ready + idle)');
-        return true;
-      }
-      await new Promise(resolve => setTimeout(resolve, ENTER_RETRY_INTERVAL_MS));
-    }
-
-    // Timeout waiting for prompt, but output DID start - consider partial success
-    // This handles cases where Claude is still outputting (long response)
-    if (!isIdle(paneId)) {
-      log.info(`verifyAndRetryEnter ${paneId}`, 'Enter succeeded (output ongoing, not idle)');
-      return true;
-    }
-
-    // Pane is idle but no prompt detected - DON'T assume success
-    // This is likely a false positive: Claude was already outputting, our Enter was ignored
-    if (retriesLeft > 0) {
-      log.info(`verifyAndRetryEnter ${paneId}`, 'No prompt detected after output, retrying Enter');
-      // Re-query textarea and retry
-      const currentPane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-      const currentTextarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
-      if (currentTextarea) {
-        const focusOk = await focusWithRetry(currentTextarea);
-        if (focusOk) {
-          await sendEnterToPane(paneId);
-          return verifyAndRetryEnter(paneId, currentTextarea, retriesLeft - 1);
-        }
-      }
-      log.warn(`verifyAndRetryEnter ${paneId}`, 'Could not retry Enter (focus/textarea issue)');
-    }
-    log.warn(`verifyAndRetryEnter ${paneId}`, 'Enter unverified (no prompt detected after output)');
-    markPotentiallyStuck(paneId);
-    return false;
-  }
-
-  // No output activity - Enter may have been ignored
-  if (retriesLeft <= 0) {
-    log.warn(`verifyAndRetryEnter ${paneId}`, 'Max retries reached, no output activity detected');
-    return false;
-  }
-
-  log.info(`verifyAndRetryEnter ${paneId}`, `No output activity, will retry Enter (${retriesLeft} left)`);
-
-  // Wait for pane to be idle before retrying
-  const maxWaitTime = MAX_QUEUE_TIME_MS;
-  const startWait = Date.now();
-
-  while (!isIdle(paneId) && (Date.now() - startWait) < maxWaitTime) {
-    await new Promise(resolve => setTimeout(resolve, ENTER_RETRY_INTERVAL_MS));
-    // Check if output started during wait
-    if ((lastOutputTime[paneId] || 0) > outputTimeBefore) {
-      log.info(`verifyAndRetryEnter ${paneId}`, 'Output started during wait');
-      // Recurse to apply prompt-ready check
-      return verifyAndRetryEnter(paneId, textarea, retriesLeft);
-    }
-  }
-
-  // Re-query textarea
-  const currentPane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-  const currentTextarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
-
-  if (!currentTextarea) {
-    log.warn(`verifyAndRetryEnter ${paneId}`, 'textarea disappeared during wait');
-    return false;
-  }
-
-  // STRICT: Only retry Enter if focus succeeds (no "sending anyway")
-  const focusOk = await focusWithRetry(currentTextarea);
-  if (!focusOk) {
-    log.warn(`verifyAndRetryEnter ${paneId}`, 'Focus failed on retry - aborting (would send to wrong element)');
-    return false;
-  }
-
-  // Retry Enter using helper (prefers Terminal.input if available)
-  log.info(`verifyAndRetryEnter ${paneId}`, 'Retrying Enter');
-  const enterResult = await sendEnterToPane(paneId);
-  if (!enterResult.success) {
-    log.warn(`verifyAndRetryEnter ${paneId}`, 'Enter retry failed');
-    return false;
-  }
-
-  // Recurse with decremented retry count
-  return verifyAndRetryEnter(paneId, currentTextarea, retriesLeft - 1);
-}
-
-// Process queued messages for a pane
-function processQueue(paneId) {
-  if (injectionInFlight) {
-    setTimeout(() => processQueue(paneId), QUEUE_RETRY_MS);
-    return;
-  }
-  const queue = messageQueue[paneId];
-  if (!queue || queue.length === 0) return;
-
-  const now = Date.now();
-  const item = queue[0];
-  const queuedMessage = typeof item === 'string' ? item : item.message;
-  const onComplete = item && typeof item === 'object' ? item.onComplete : null;
-
-  // Check timing conditions
-  const waitTime = now - (item.timestamp || now);
-  const waitedTooLong = waitTime >= MAX_QUEUE_TIME_MS;
-  const waitedExtremelyLong = waitTime >= EXTREME_WAIT_MS;
-  const hitAbsoluteMax = waitTime >= ABSOLUTE_MAX_WAIT_MS;
-
-  // Normal case: pane is fully idle (2s of silence)
-  const canSendNormal = isIdle(paneId) && !userIsTyping();
-
-  // Force-inject case: waited 10s+ AND pane has at least 500ms of silence
-  // This prevents injecting during active output which causes Enter to be ignored
-  const canForceInject = waitedTooLong && isIdleForForceInject(paneId) && !userIsTyping();
-
-  // Emergency fallback: 60s absolute max regardless of idle state
-  // This prevents messages from being stuck forever if pane never becomes idle
-  const mustForceInject = hitAbsoluteMax && !userIsTyping();
-
-  // Log warning at 30s mark (only once per message via flag check)
-  if (waitedExtremelyLong && !item._warnedExtreme) {
-    item._warnedExtreme = true;
-    const timeSinceOutput = Date.now() - (lastOutputTime[paneId] || 0);
-    log.warn(`Terminal ${paneId}`, `Message queued 30s+, pane last output ${timeSinceOutput}ms ago, still waiting for idle`);
-  }
-
-  if (canSendNormal || canForceInject || mustForceInject) {
-    // Remove from queue and send
-    queue.shift();
-    if (mustForceInject && !canForceInject && !canSendNormal) {
-      log.warn(`Terminal ${paneId}`, `EMERGENCY: Force-injecting after ${waitTime}ms (60s max reached, pane may still be active)`);
-    } else if (canForceInject && !canSendNormal) {
-      log.info(`Terminal ${paneId}`, `Force-injecting after ${waitTime}ms wait (pane now idle for 500ms)`);
-    }
-    injectionInFlight = true;
-    doSendToPane(paneId, queuedMessage, (result) => {
-      injectionInFlight = false;
-      if (typeof onComplete === 'function') {
-        try {
-          onComplete(result);
-        } catch (err) {
-          log.error('Terminal', 'queue onComplete failed', err);
-        }
-      }
-      if (queue.length > 0) {
-        setTimeout(() => processQueue(paneId), QUEUE_RETRY_MS);
-      }
-    });
-  } else {
-    // Still busy, retry later
-    setTimeout(() => processQueue(paneId), QUEUE_RETRY_MS);
-  }
+function sendToPane(...args) {
+  return injectionController.sendToPane(...args);
 }
 
 // Initialize all terminals
@@ -805,8 +485,24 @@ async function initTerminal(paneId) {
   const terminal = new Terminal(TERMINAL_OPTIONS);
   const fitAddon = new FitAddon();
   const webLinksAddon = new WebLinksAddon();
+  const searchAddon = new SearchAddon();
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(webLinksAddon);
+  terminal.loadAddon(searchAddon);
+  searchAddons.set(paneId, searchAddon);
+
+  // Load WebGL addon for GPU-accelerated rendering (with fallback)
+  try {
+    const webglAddon = new WebglAddon();
+    webglAddon.onContextLoss(() => {
+      log.warn(`Terminal ${paneId}`, 'WebGL context lost, falling back to canvas');
+      webglAddon.dispose();
+    });
+    terminal.loadAddon(webglAddon);
+    log.info(`Terminal ${paneId}`, 'WebGL renderer enabled');
+  } catch (e) {
+    log.warn(`Terminal ${paneId}`, `WebGL not available: ${e.message}`);
+  }
 
   terminal.open(container);
   fitAddon.fit();
@@ -833,6 +529,12 @@ async function initTerminal(paneId) {
     // Block non-trusted synthetic Enter that doesn't have bypass flag
     if (isEnterKey && !event.isTrusted) {
       log.info(`Terminal ${paneId}`, `Blocked synthetic Enter (isTrusted=false, no bypass, key=${event.key})`);
+      return false;
+    }
+
+    // Ctrl+F opens search for this terminal
+    if (event.ctrlKey && event.key.toLowerCase() === 'f') {
+      openTerminalSearch(paneId);
       return false;
     }
 
@@ -928,8 +630,24 @@ async function reattachTerminal(paneId, scrollback) {
   const terminal = new Terminal(TERMINAL_OPTIONS);
   const fitAddon = new FitAddon();
   const webLinksAddon = new WebLinksAddon();
+  const searchAddon = new SearchAddon();
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(webLinksAddon);
+  terminal.loadAddon(searchAddon);
+  searchAddons.set(paneId, searchAddon);
+
+  // Load WebGL addon for GPU-accelerated rendering (with fallback)
+  try {
+    const webglAddon = new WebglAddon();
+    webglAddon.onContextLoss(() => {
+      log.warn(`Terminal ${paneId}`, 'WebGL context lost, falling back to canvas');
+      webglAddon.dispose();
+    });
+    terminal.loadAddon(webglAddon);
+    log.info(`Terminal ${paneId}`, 'WebGL renderer enabled');
+  } catch (e) {
+    log.warn(`Terminal ${paneId}`, `WebGL not available: ${e.message}`);
+  }
 
   terminal.open(container);
   fitAddon.fit();
@@ -956,6 +674,12 @@ async function reattachTerminal(paneId, scrollback) {
     // Block non-trusted synthetic Enter that doesn't have bypass flag
     if (isEnterKey && !event.isTrusted) {
       log.info(`Terminal ${paneId}`, `Blocked synthetic Enter (isTrusted=false, no bypass, key=${event.key})`);
+      return false;
+    }
+
+    // Ctrl+F opens search for this terminal
+    if (event.ctrlKey && event.key.toLowerCase() === 'f') {
+      openTerminalSearch(paneId);
       return false;
     }
 
@@ -991,6 +715,7 @@ async function reattachTerminal(paneId, scrollback) {
 
   terminals.set(paneId, terminal);
   fitAddons.set(paneId, fitAddon);
+  searchAddons.set(paneId, searchAddon);
 
   // U1: Restore scrollback buffer if available
   if (scrollback && scrollback.length > 0) {
@@ -1061,223 +786,6 @@ function blurAllTerminals() {
   }
 }
 
-// Actually send message to pane (internal - use sendToPane for idle detection)
-// Triggers actual DOM keyboard events on xterm textarea with bypass marker
-// Includes diagnostic logging and focus steal prevention (save/restore user focus)
-async function doSendToPane(paneId, message, onComplete) {
-  let completed = false;
-  const finish = (result) => {
-    if (completed) return;
-    completed = true;
-    if (onComplete) {
-      try {
-        onComplete(result);
-      } catch (err) {
-        log.error('Terminal', 'onComplete failed', err);
-      }
-    }
-  };
-  const safetyTimer = setTimeout(() => {
-    // Timeout doesn't mean failure - message may still be delivered
-    // Return success:true so delivery ack is sent, but mark as unverified
-    finish({ success: true, verified: false, reason: 'timeout' });
-  }, INJECTION_LOCK_TIMEOUT_MS);
-  const finishWithClear = (result) => {
-    clearTimeout(safetyTimer);
-    finish(result || { success: true });
-  };
-
-  const hasTrailingEnter = message.endsWith('\r');
-  const text = message.replace(/\r$/, '');
-  const id = String(paneId);
-  const isCodex = isCodexPane(id);
-
-  // Codex exec mode: bypass PTY/textarea injection
-  if (isCodex) {
-    const prompt = buildCodexExecPrompt(id, text);
-    // Echo user input to xterm so it's visible
-    const terminal = terminals.get(id);
-    if (terminal) {
-      terminal.write(`\r\n\x1b[36m> ${text}\x1b[0m\r\n`);
-    }
-    window.hivemind.pty.codexExec(id, prompt).catch(err => {
-      log.error(`doSendToPane ${id}`, 'Codex exec failed:', err);
-    });
-    updatePaneStatus(id, 'Working');
-    lastTypedTime[paneId] = Date.now();
-    lastOutputTime[paneId] = Date.now();
-    finishWithClear({ success: true });
-    return;
-  }
-
-  // CLAUDE PATH: Hybrid approach (PTY write for text + DOM keyboard for Enter)
-  // PTY \r does NOT auto-submit in Claude Code's ink TUI (PTY newline ignored)
-  // sendTrustedEnter() sends native keyboard events via Electron which WORKS
-  const terminal = terminals.get(id);
-  const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
-  let textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
-
-  // Guard: Skip if textarea not found (prevents Enter going to wrong element)
-  if (!textarea) {
-    log.warn(`doSendToPane ${id}`, 'Claude pane: textarea not found, skipping injection');
-    finishWithClear({ success: false, reason: 'missing_textarea' });
-    return;
-  }
-
-  // Save current focus to restore after injection
-  const savedFocus = document.activeElement;
-
-  // Helper to restore focus (called immediately after Enter, not after verification)
-  const restoreSavedFocus = () => {
-    if (savedFocus && savedFocus !== textarea && document.body.contains(savedFocus)) {
-      try {
-        savedFocus.focus();
-      } catch (e) {
-        // Element may not be focusable
-      }
-    }
-  };
-
-  // Step 1: Focus terminal for sendTrustedEnter (required for Enter to target correct pane)
-  // Note: Terminal.input() was disabled for Claude panes - it doesn't work with ink TUI
-  if (hasTrailingEnter) {
-    textarea.focus();
-  }
-
-  // Step 2: Clear any stuck input BEFORE writing new text
-  // Ctrl+U (0x15) clears the current input line - prevents accumulation if previous Enter failed
-  // This is harmless if line is already empty
-  try {
-    await window.hivemind.pty.write(id, '\x15');
-    log.info(`doSendToPane ${id}`, 'Claude pane: cleared input line (Ctrl+U)');
-  } catch (err) {
-    log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
-    // Continue anyway - text write may still work
-  }
-
-  // Step 3: Write text to PTY (without \r)
-  try {
-    await window.hivemind.pty.write(id, text);
-    log.info(`doSendToPane ${id}`, 'Claude pane: PTY write text complete');
-  } catch (err) {
-    log.error(`doSendToPane ${id}`, 'PTY write failed:', err);
-    finishWithClear({ success: false, reason: 'pty_write_failed' });
-    return;
-  }
-
-  // Step 4: If message needs Enter, use sendTrustedEnter after adaptive delay
-  if (hasTrailingEnter) {
-    // Calculate delay based on pane activity (busy panes need more time)
-    const enterDelay = getAdaptiveEnterDelay(id);
-    log.info(`doSendToPane ${id}`, `Using adaptive Enter delay: ${enterDelay}ms`);
-
-    setTimeout(async () => {
-      // Clear safety timer immediately - we've reached the callback, injection is proceeding
-      // (safetyTimer at 1000ms can fire during enterDelay wait, causing false abort)
-      clearTimeout(safetyTimer);
-
-      // Re-query textarea in case DOM changed during delay
-      const currentPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
-      textarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
-
-      // Guard: Abort if textarea disappeared
-      if (!textarea) {
-        log.warn(`doSendToPane ${id}`, 'Claude pane: textarea disappeared before Enter, aborting');
-        restoreSavedFocus();
-        finishWithClear({ success: false, reason: 'textarea_disappeared' });
-        return;
-      }
-
-      // PRE-FLIGHT IDLE CHECK: Don't send Enter while Claude is outputting
-      // If we send Enter mid-output, it gets ignored and verification sees false positive
-      // (lastOutputTime comparison doesn't work if Claude was already outputting)
-      if (!isIdle(id)) {
-        log.info(`doSendToPane ${id}`, 'Claude pane: waiting for idle before Enter');
-        const idleWaitStart = Date.now();
-        const maxIdleWait = 5000; // 5s max wait for idle
-        while (!isIdle(id) && (Date.now() - idleWaitStart) < maxIdleWait) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        if (!isIdle(id)) {
-          log.warn(`doSendToPane ${id}`, 'Claude pane: still not idle after 5s, proceeding anyway');
-        } else {
-          log.info(`doSendToPane ${id}`, `Claude pane: now idle after ${Date.now() - idleWaitStart}ms`);
-        }
-      }
-
-      // Ensure focus for sendTrustedEnter (Terminal.input disabled for Claude panes)
-      const focusOk = await focusWithRetry(textarea);
-
-      // STRICT: If focus failed, abort BEFORE sending Enter (would go to wrong element)
-      if (!focusOk) {
-        log.warn(`doSendToPane ${id}`, 'Claude pane: focus failed - aborting Enter');
-        restoreSavedFocus();
-        markPotentiallyStuck(id);
-        finishWithClear({ success: false, reason: 'focus_failed' });
-        return;
-      }
-
-      // Send Enter via sendTrustedEnter (Terminal.input disabled for Claude panes)
-      const enterResult = await sendEnterToPane(id);
-
-      // IMMEDIATELY restore focus after Enter sent - don't block user input during verification
-      // (Restore focus to avoid blocking command bar during trigger injections)
-      restoreSavedFocus();
-
-      if (!enterResult.success) {
-        log.error(`doSendToPane ${id}`, 'Enter send failed');
-        markPotentiallyStuck(id);
-        finishWithClear({ success: false, reason: 'enter_failed' });
-        return;
-      }
-      log.info(`doSendToPane ${id}`, `Claude pane: Enter sent via ${enterResult.method}`);
-
-      // Verify Enter succeeded (textarea empty) - if not, wait for idle and retry
-      // This handles force-inject during active output where Enter is ignored
-      // Note: verification runs with focus already restored to user
-      const submitOk = await verifyAndRetryEnter(id, textarea);
-      if (!submitOk) {
-        log.warn(`doSendToPane ${id}`, 'Claude pane: Enter verification failed after retries');
-        markPotentiallyStuck(id); // Register for sweeper retry
-      }
-
-      lastTypedTime[paneId] = Date.now();
-      const resultPayload = submitOk
-        ? { success: true }
-        // Enter was sent, but verification failed (no output/prompt yet) - treat as unverified success
-        : { success: true, verified: false, reason: 'verification_failed' };
-      finishWithClear(resultPayload);
-    }, enterDelay);
-  } else {
-    // No Enter needed, just restore focus
-    restoreSavedFocus();
-    lastTypedTime[paneId] = Date.now();
-    finishWithClear({ success: true });
-  }
-}
-
-// Send message to a specific pane (queues if pane is busy)
-function sendToPane(paneId, message, options = {}) {
-  const id = String(paneId);
-
-  if (!messageQueue[id]) {
-    messageQueue[id] = [];
-  }
-
-  messageQueue[id].push({
-    message: message,
-    timestamp: Date.now(),
-    onComplete: options.onComplete,
-  });
-
-  const reason = userIsTyping()
-    ? 'user typing'
-    : (injectionInFlight ? 'injection in flight' : (!isIdle(id) ? 'pane busy' : 'idle'));
-  log.info(`Terminal ${id}`, `${reason}, queueing message`);
-
-  // Start processing queue
-  processQueue(id);
-}
 
 // Send message to Architect only (user interacts with Architect, Architect coordinates execution)
 function broadcast(message) {
@@ -1406,245 +914,6 @@ async function killAllTerminals() {
   updateConnectionStatus('All terminals killed');
 }
 
-function getUnstickState(paneId) {
-  const id = String(paneId);
-  const now = Date.now();
-  const current = unstickState.get(id) || { step: 0, lastAt: 0 };
-  if (now - current.lastAt > UNSTICK_RESET_MS) {
-    current.step = 0;
-  }
-  current.lastAt = now;
-  unstickState.set(id, current);
-  return current;
-}
-
-function resetUnstickState(paneId) {
-  unstickState.set(String(paneId), { step: 0, lastAt: 0 });
-}
-
-async function interruptPane(paneId) {
-  const id = String(paneId);
-  if (sdkModeActive) {
-    try {
-      await ipcRenderer.invoke('sdk-interrupt', id);
-      log.info('Terminal', `SDK interrupt sent to pane ${id}`);
-      return true;
-    } catch (err) {
-      log.error('Terminal', `SDK interrupt failed for pane ${id}:`, err);
-      return false;
-    }
-  }
-
-  try {
-    if (ipcRenderer?.invoke) {
-      await ipcRenderer.invoke('interrupt-pane', id);
-    } else {
-      await window.hivemind.pty.write(id, '\x03');
-    }
-    log.info('Terminal', `Interrupt sent to pane ${id}`);
-    return true;
-  } catch (err) {
-    log.error('Terminal', `Interrupt failed for pane ${id}:`, err);
-    return false;
-  }
-}
-
-async function restartPane(paneId) {
-  const id = String(paneId);
-  if (sdkModeActive) {
-    log.info('Terminal', `Restart blocked for pane ${id} (SDK mode)`);
-    updatePaneStatus(id, 'Restart blocked (SDK)');
-    setTimeout(() => updatePaneStatus(id, 'Running'), 1500);
-    return false;
-  }
-
-  updatePaneStatus(id, 'Restarting...');
-  try {
-    await window.hivemind.pty.kill(id);
-  } catch (err) {
-    log.error('Terminal', `Failed to kill pane ${id} for restart:`, err);
-  }
-
-  await new Promise(resolve => setTimeout(resolve, 250));
-
-  // Codex exec panes need PTY recreated before spawnClaude
-  // spawnClaude() for Codex panes only sends identity message - doesn't create PTY
-  if (isCodexPane(id)) {
-    try {
-      await window.hivemind.pty.create(id);
-      log.info('Terminal', `Recreated PTY for Codex pane ${id}`);
-    } catch (err) {
-      log.error('Terminal', `Failed to recreate PTY for Codex pane ${id}:`, err);
-      updatePaneStatus(id, 'Restart failed');
-      return false;
-    }
-  }
-
-  await spawnClaude(id);
-  return true;
-}
-
-async function unstickEscalation(paneId) {
-  const id = String(paneId);
-  const state = getUnstickState(id);
-
-  if (state.step === 0) {
-    log.info('Unstick', `Pane ${id}: nudge`);
-    aggressiveNudge(id);
-    updatePaneStatus(id, 'Nudged');
-    setTimeout(() => updatePaneStatus(id, 'Running'), 1500);
-    state.step = 1;
-    return;
-  }
-
-  if (state.step === 1) {
-    log.info('Unstick', `Pane ${id}: interrupt`);
-    const ok = await interruptPane(id);
-    updatePaneStatus(id, ok ? 'Interrupted' : 'Interrupt failed');
-    setTimeout(() => updatePaneStatus(id, 'Running'), 1500);
-    state.step = 2;
-    return;
-  }
-
-  log.info('Unstick', `Pane ${id}: restart`);
-  await restartPane(id);
-  resetUnstickState(id);
-}
-
-// Nudge a stuck pane - sends Enter to unstick Claude Code
-// Uses Enter only (ESC sequences were interrupting active agents)
-function nudgePane(paneId) {
-  // Mark as typed so our own Enter isn't blocked
-  lastTypedTime[paneId] = Date.now();
-  // Send Enter to prompt for new input
-  window.hivemind.pty.write(String(paneId), '\r').catch(err => {
-    log.error(`nudgePane ${paneId}`, 'PTY write failed:', err);
-  });
-  updatePaneStatus(paneId, 'Nudged');
-  setTimeout(() => updatePaneStatus(paneId, 'Running'), 1000);
-}
-
-// Send ESC keyboard event to unstick a stuck agent
-// Triggered by writing "(UNSTICK)" to an agent's trigger file
-// Keyboard ESC safely interrupts thinking animation (unlike PTY ESC)
-function sendUnstick(paneId) {
-  const id = String(paneId);
-  const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
-  const textarea = paneEl?.querySelector('.xterm-helper-textarea');
-
-  if (textarea) {
-    textarea.focus();
-
-    // Dispatch ESC keydown event with bypass marker
-    const escEvent = new KeyboardEvent('keydown', {
-      key: 'Escape',
-      code: 'Escape',
-      keyCode: 27,
-      which: 27,
-      bubbles: true,
-      cancelable: true
-    });
-    escEvent._hivemindBypass = true;
-    textarea.dispatchEvent(escEvent);
-
-    // Also keyup for completeness
-    const escUpEvent = new KeyboardEvent('keyup', {
-      key: 'Escape',
-      code: 'Escape',
-      keyCode: 27,
-      which: 27,
-      bubbles: true
-    });
-    escUpEvent._hivemindBypass = true;
-    textarea.dispatchEvent(escUpEvent);
-
-    log.info(`Terminal ${id}`, 'Sent ESC keyboard event to unstick agent');
-    updatePaneStatus(id, 'Unstick sent');
-    setTimeout(() => updatePaneStatus(id, 'Running'), 1000);
-  } else {
-    log.warn(`Terminal ${id}`, 'Could not find xterm textarea for unstick');
-  }
-}
-
-// Aggressive nudge - ESC followed by Enter
-// More forceful than simple Enter nudge, interrupts thinking then prompts input
-function aggressiveNudge(paneId) {
-  const id = String(paneId);
-  log.info(`Terminal ${id}`, 'Aggressive nudge: ESC + Enter');
-
-  // First send ESC to interrupt any stuck state
-  sendUnstick(id);
-
-  // Use keyboard Enter dispatch (PTY carriage return unreliable in Codex CLI)
-  setTimeout(() => {
-    lastTypedTime[id] = Date.now();
-
-    const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
-    const textarea = paneEl?.querySelector('.xterm-helper-textarea');
-
-    if (textarea) {
-      textarea.focus();
-      window.hivemind.pty.write(id, '\r').catch(err => {
-        log.error(`aggressiveNudge ${id}`, 'PTY write failed:', err);
-      });
-
-      if (isCodexPane(id)) {
-        // Codex: PTY newline to submit (clipboard paste broken - Codex treats as image paste)
-        window.hivemind.pty.write(id, '\r').catch(err => {
-          log.error(`aggressiveNudge ${id}`, 'Codex PTY write failed:', err);
-        });
-        log.info(`Terminal ${id}`, 'Aggressive nudge: PTY carriage return (Codex)');
-      } else {
-        // Claude: use sendEnterToPane helper (handles bypass flag + Terminal.input fallback)
-        const terminal = terminals.get(id);
-        if (terminal) {
-          terminal._hivemindBypass = true;
-        }
-        window.hivemind.pty.sendTrustedEnter().then(() => {
-          log.info(`Terminal ${id}`, 'Aggressive nudge: trusted Enter dispatched (Claude)');
-        }).catch(err => {
-          log.error(`aggressiveNudge ${id}`, 'sendTrustedEnter failed:', err);
-        }).finally(() => {
-          if (terminal) {
-            setTimeout(() => { terminal._hivemindBypass = false; }, 0);
-          }
-        });
-      }
-    } else {
-      // Fallback if textarea truly missing
-      log.warn(`Terminal ${id}`, 'Aggressive nudge: no textarea, PTY fallback');
-      window.hivemind.pty.write(id, '\r').catch(err => {
-        log.error(`aggressiveNudge ${id}`, 'PTY fallback write failed:', err);
-      });
-    }
-
-    updatePaneStatus(id, 'Nudged (aggressive)');
-    setTimeout(() => updatePaneStatus(id, 'Running'), 1000);
-  }, 150); // 150ms delay between ESC and Enter
-}
-
-// Aggressive nudge all panes (staggered to avoid thundering herd)
-function aggressiveNudgeAll() {
-  log.info('Terminal', 'Aggressive nudge all panes');
-  for (const paneId of PANE_IDS) {
-    // Stagger to avoid thundering herd
-    setTimeout(() => {
-      aggressiveNudge(paneId);
-    }, paneId * 200);
-  }
-}
-
-// Nudge all panes to unstick any churning agents
-function nudgeAllPanes() {
-  updateConnectionStatus('Nudging all agents...');
-  for (const paneId of PANE_IDS) {
-    nudgePane(paneId);
-  }
-  setTimeout(() => {
-    updateConnectionStatus('All agents nudged');
-  }, 200);
-}
-
 // Fresh start - kill all and spawn new sessions without context
 async function freshStartAll() {
   // SDK Mode Guard: Don't allow fresh start in SDK mode
@@ -1771,6 +1040,114 @@ function getReconnectedToExisting() {
   return reconnectedToExisting;
 }
 
+// Terminal search UI - opens a search bar for the focused pane
+let activeSearchPane = null;
+let searchBar = null;
+
+function openTerminalSearch(paneId) {
+  const searchAddon = searchAddons.get(paneId);
+  if (!searchAddon) {
+    log.warn(`Terminal ${paneId}`, 'Search addon not available');
+    return;
+  }
+
+  // Create search bar if it doesn't exist
+  if (!searchBar) {
+    searchBar = document.createElement('div');
+    searchBar.id = 'terminal-search-bar';
+    searchBar.innerHTML = `
+      <input type="text" id="terminal-search-input" placeholder="Search terminal (Enter=next, Shift+Enter=prev, Esc=close)">
+      <span id="terminal-search-count"></span>
+      <button id="terminal-search-prev" title="Previous (Shift+Enter)">▲</button>
+      <button id="terminal-search-next" title="Next (Enter)">▼</button>
+      <button id="terminal-search-close" title="Close (Esc)">✕</button>
+    `;
+    document.body.appendChild(searchBar);
+
+    const input = document.getElementById('terminal-search-input');
+    const prevBtn = document.getElementById('terminal-search-prev');
+    const nextBtn = document.getElementById('terminal-search-next');
+    const closeBtn = document.getElementById('terminal-search-close');
+
+    input.addEventListener('input', () => {
+      if (activeSearchPane) {
+        const addon = searchAddons.get(activeSearchPane);
+        if (addon && input.value) {
+          addon.findNext(input.value);
+        }
+      }
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (activeSearchPane) {
+          const addon = searchAddons.get(activeSearchPane);
+          if (addon && input.value) {
+            if (e.shiftKey) {
+              addon.findPrevious(input.value);
+            } else {
+              addon.findNext(input.value);
+            }
+          }
+        }
+      } else if (e.key === 'Escape') {
+        closeTerminalSearch();
+      }
+    });
+
+    prevBtn.addEventListener('click', () => {
+      if (activeSearchPane) {
+        const addon = searchAddons.get(activeSearchPane);
+        const input = document.getElementById('terminal-search-input');
+        if (addon && input.value) {
+          addon.findPrevious(input.value);
+        }
+      }
+    });
+
+    nextBtn.addEventListener('click', () => {
+      if (activeSearchPane) {
+        const addon = searchAddons.get(activeSearchPane);
+        const input = document.getElementById('terminal-search-input');
+        if (addon && input.value) {
+          addon.findNext(input.value);
+        }
+      }
+    });
+
+    closeBtn.addEventListener('click', closeTerminalSearch);
+  }
+
+  activeSearchPane = paneId;
+  searchBar.style.display = 'flex';
+  searchBar.dataset.paneId = paneId;
+
+  const input = document.getElementById('terminal-search-input');
+  input.value = '';
+  input.focus();
+
+  log.info(`Terminal ${paneId}`, 'Search opened');
+}
+
+function closeTerminalSearch() {
+  if (searchBar) {
+    searchBar.style.display = 'none';
+  }
+  if (activeSearchPane) {
+    const addon = searchAddons.get(activeSearchPane);
+    if (addon) {
+      addon.clearDecorations();
+    }
+    // Return focus to terminal
+    const terminal = terminals.get(activeSearchPane);
+    if (terminal) {
+      terminal.focus();
+    }
+    activeSearchPane = null;
+  }
+}
+
 module.exports = {
   PANE_IDS,
   terminals,
@@ -1823,4 +1200,8 @@ module.exports = {
   isInputLocked,       // Check if pane is locked
   toggleInputLock,     // Toggle lock state
   setInputLocked,      // Set lock state directly
+  // Terminal search (Ctrl+F)
+  searchAddons,        // Search addon instances
+  openTerminalSearch,  // Open search bar for pane
+  closeTerminalSearch, // Close search bar
 };

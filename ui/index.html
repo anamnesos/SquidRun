@@ -15,6 +15,20 @@
   <link rel="stylesheet" href="styles/sdk-renderer.css">
 </head>
 <body>
+  <!-- Command Palette (Ctrl+K) -->
+  <div class="command-palette-overlay" id="commandPaletteOverlay">
+    <div class="command-palette" id="commandPalette">
+      <input type="text" class="command-palette-input" id="commandPaletteInput"
+             placeholder="Type a command..." autocomplete="off" spellcheck="false">
+      <div class="command-palette-list" id="commandPaletteList"></div>
+      <div class="command-palette-footer">
+        <span class="shortcut">↑↓ Navigate</span>
+        <span class="shortcut">Enter Select</span>
+        <span class="shortcut">Esc Close</span>
+      </div>
+    </div>
+  </div>
+
   <div class="header">
     <h1>Hivemind</h1>
     <span class="dry-run-indicator" id="dryRunIndicator" style="display: none;">DRY RUN</span>
