@@ -64,6 +64,11 @@ const SWEEPER_MAX_AGE_MS = 300000;       // Give up after 5 minutes
 const SWEEPER_IDLE_THRESHOLD_MS = 10000; // Pane must be idle for 10 seconds before retry
 let sweeperIntervalId = null;
 
+// Per-pane input lock - panes locked by default (view-only), toggle to unlock for direct typing
+// Prevents accidental typing in agent panes while allowing programmatic sends (sendToPane/triggers)
+const inputLocked = {};
+PANE_IDS.forEach(id => { inputLocked[id] = true; }); // Default: all panes locked
+
 // Message queue for when pane is busy
 // Format: { paneId: [{ message, timestamp }, ...] }
 const messageQueue = {};
@@ -98,9 +103,10 @@ const PANE_ACTIVE_THRESHOLD_MS = 500; // Recent output threshold for "active"
 const PANE_BUSY_THRESHOLD_MS = 100;   // Very recent output threshold for "busy"
 const FOCUS_RETRY_DELAY_MS = 20;      // Delay between focus retry attempts
 const MAX_FOCUS_RETRIES = 3;          // Max focus retry attempts before giving up
-const ENTER_VERIFY_DELAY_MS = 100;    // Delay before checking if Enter succeeded
+const ENTER_VERIFY_DELAY_MS = 200;    // Delay before checking if Enter succeeded (increased to reduce double-submit risk)
 const MAX_ENTER_RETRIES = 5;          // Max Enter retry attempts if text remains
 const ENTER_RETRY_INTERVAL_MS = 200;  // Interval between checking if pane is idle for retry
+const PROMPT_READY_TIMEOUT_MS = 3000; // Max time to wait for prompt-ready detection
 
 // Terminal theme configuration
 const TERMINAL_THEME = {
@@ -264,6 +270,44 @@ function isIdleForForceInject(paneId) {
 }
 
 /**
+ * Check if a pane's input is locked (view-only mode)
+ * Locked panes block keyboard input but allow programmatic sends
+ */
+function isInputLocked(paneId) {
+  return inputLocked[paneId] === true;
+}
+
+/**
+ * Toggle input lock state for a pane
+ * Returns the new lock state (true = locked, false = unlocked)
+ */
+function toggleInputLock(paneId) {
+  inputLocked[paneId] = !inputLocked[paneId];
+  const lockIcon = document.getElementById(`lock-icon-${paneId}`);
+  if (lockIcon) {
+    lockIcon.textContent = inputLocked[paneId] ? '🔒' : '🔓';
+    lockIcon.title = inputLocked[paneId] ? 'Input locked (click to unlock)' : 'Input unlocked (click to lock)';
+    lockIcon.classList.toggle('unlocked', !inputLocked[paneId]);
+  }
+  log.info(`Terminal ${paneId}`, `Input ${inputLocked[paneId] ? 'locked' : 'unlocked'}`);
+  return inputLocked[paneId];
+}
+
+/**
+ * Set input lock state for a pane (without toggle)
+ */
+function setInputLocked(paneId, locked) {
+  inputLocked[paneId] = locked;
+  const lockIcon = document.getElementById(`lock-icon-${paneId}`);
+  if (lockIcon) {
+    lockIcon.textContent = locked ? '🔒' : '🔓';
+    lockIcon.title = locked ? 'Input locked (click to unlock)' : 'Input unlocked (click to lock)';
+    lockIcon.classList.toggle('unlocked', !locked);
+  }
+  log.info(`Terminal ${paneId}`, `Input ${locked ? 'locked' : 'unlocked'}`);
+}
+
+/**
  * Mark a pane as potentially stuck (Enter verification failed)
  * Sweeper will periodically retry Enter on these panes
  */
@@ -327,12 +371,13 @@ async function sweepStuckMessages() {
     if (textarea) {
       const focusOk = await focusWithRetry(textarea);
       if (focusOk) {
-        try {
-          await window.hivemind.pty.sendTrustedEnter();
-          log.info(`StuckSweeper ${paneId}`, 'Recovery Enter sent');
+        // Use sendEnterToPane helper (handles bypass flag + Terminal.input fallback)
+        const enterResult = await sendEnterToPane(paneId);
+        if (enterResult.success) {
+          log.info(`StuckSweeper ${paneId}`, `Recovery Enter sent via ${enterResult.method}`);
           // Don't remove from stuck list yet - wait for output to confirm success
-        } catch (err) {
-          log.error(`StuckSweeper ${paneId}`, 'Recovery Enter failed:', err);
+        } else {
+          log.error(`StuckSweeper ${paneId}`, 'Recovery Enter failed');
         }
       } else {
         log.warn(`StuckSweeper ${paneId}`, 'Focus failed for recovery');
@@ -415,15 +460,87 @@ async function focusWithRetry(textarea, retries = MAX_FOCUS_RETRIES) {
 }
 
 /**
- * Verify Enter succeeded by checking for output activity after submission
+ * Send Enter to terminal via sendTrustedEnter (native Electron keyboard events).
+ * Terminal.input() is DISABLED for Claude panes - it doesn't work with ink TUI.
+ * @param {string} paneId - The pane ID
+ * @returns {Promise<{success: boolean, method: string}>}
+ */
+async function sendEnterToPane(paneId) {
+  const terminal = terminals.get(paneId);
+
+  // NOTE: Terminal.input('\r') does NOT work for Claude's ink TUI
+  // It routes through onData → pty.write, same as direct PTY '\r' (proven no-op in Fix R)
+  // Terminal.input succeeds but Claude ignores it - messages sit until nudged
+  // MUST use sendTrustedEnter which sends native Electron keyboard events
+  //
+  // Terminal.input is disabled for Claude panes until a working focus-free path is found
+  // (Codex panes use codex-exec path, not this function)
+
+  // Always use sendTrustedEnter for Claude panes (requires focus)
+  // ROOT CAUSE FIX: sendInputEvent produces isTrusted=false, blocked by key handler
+  // Set bypass flag so attachCustomKeyEventHandler allows the Enter through
+  if (terminal) {
+    terminal._hivemindBypass = true;
+    log.debug(`sendEnterToPane ${paneId}`, 'Set _hivemindBypass=true for sendTrustedEnter');
+  }
+
+  try {
+    await window.hivemind.pty.sendTrustedEnter();
+    log.info(`sendEnterToPane ${paneId}`, 'Enter sent via sendTrustedEnter (focus-based, bypass enabled)');
+    return { success: true, method: 'sendTrustedEnter' };
+  } catch (err) {
+    log.error(`sendEnterToPane ${paneId}`, 'sendTrustedEnter failed:', err);
+    return { success: false, method: 'sendTrustedEnter' };
+  } finally {
+    // Clear bypass flag after Enter is processed (next tick to ensure event handled)
+    if (terminal) {
+      setTimeout(() => {
+        terminal._hivemindBypass = false;
+        log.debug(`sendEnterToPane ${paneId}`, 'Cleared _hivemindBypass');
+      }, 0);
+    }
+  }
+}
+
+/**
+ * Check if terminal shows a prompt (ready for input).
+ * Looks for common prompt patterns at end of current line.
+ * @param {string} paneId - The pane ID
+ * @returns {boolean}
+ */
+function isPromptReady(paneId) {
+  const terminal = terminals.get(paneId);
+  if (!terminal || !terminal.buffer || !terminal.buffer.active) return false;
+
+  try {
+    const buffer = terminal.buffer.active;
+    const cursorY = buffer.cursorY;
+    const line = buffer.getLine(cursorY + buffer.viewportY);
+    if (!line) return false;
+
+    const lineText = line.translateToString(true).trimEnd();
+    // Common prompt patterns: ends with >, $, #, :, or ? (for prompts like "Continue?")
+    // Note: May false-positive on questions in output - runtime testing needed
+    const promptPatterns = [/>\s*$/, /\$\s*$/, /#\s*$/, /:\s*$/, /\?\s*$/];
+    const hasPrompt = promptPatterns.some(p => p.test(lineText));
+
+    if (hasPrompt) {
+      log.debug(`isPromptReady ${paneId}`, `Prompt detected: "${lineText.slice(-20)}"`);
+    }
+    return hasPrompt;
+  } catch (err) {
+    log.warn(`isPromptReady ${paneId}`, 'Buffer read failed:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Verify Enter succeeded using stricter criteria:
+ * 1. Output activity started (Claude began processing)
+ * 2. AND prompt returned (Claude finished and is ready for input)
  *
- * NOTE: We inject text via PTY write, which bypasses textarea.value entirely.
- * Therefore, checking textarea.value would always show empty (false positive).
- * Instead, we verify by checking if output activity occurs after Enter,
- * which indicates Claude processed the input.
- *
- * The PRIMARY defense is the stricter idle check in processQueue() which
- * prevents injecting during active output. This verification is secondary.
+ * This prevents false positives from continuation output.
+ * Retries Enter only if focus can be established.
  *
  * @param {string} paneId - The pane ID
  * @param {HTMLElement} textarea - The textarea element (for focus operations)
@@ -431,44 +548,64 @@ async function focusWithRetry(textarea, retries = MAX_FOCUS_RETRIES) {
  * @returns {Promise<boolean>} - Whether submit appears to have succeeded
  */
 async function verifyAndRetryEnter(paneId, textarea, retriesLeft = MAX_ENTER_RETRIES) {
-  // Record output time before Enter
   const outputTimeBefore = lastOutputTime[paneId] || 0;
 
-  // Wait for Enter to be processed and potential output to start
+  // Wait for Enter to be processed
   await new Promise(resolve => setTimeout(resolve, ENTER_VERIFY_DELAY_MS));
 
-  // Check if there was output activity after Enter (indicates Claude processed input)
+  // Check for output activity (indicates Claude started processing)
   const outputTimeAfter = lastOutputTime[paneId] || 0;
   const hadOutputActivity = outputTimeAfter > outputTimeBefore;
 
   if (hadOutputActivity) {
-    log.info(`verifyAndRetryEnter ${paneId}`, 'Enter succeeded (output activity detected)');
+    // Output started - now wait for prompt-ready (stricter success criteria)
+    log.info(`verifyAndRetryEnter ${paneId}`, 'Output activity detected, waiting for prompt-ready');
+
+    const promptWaitStart = Date.now();
+    while ((Date.now() - promptWaitStart) < PROMPT_READY_TIMEOUT_MS) {
+      // Check if prompt appeared (terminal ready for input)
+      if (isPromptReady(paneId) && isIdle(paneId)) {
+        log.info(`verifyAndRetryEnter ${paneId}`, 'Enter succeeded (prompt-ready + idle)');
+        return true;
+      }
+      await new Promise(resolve => setTimeout(resolve, ENTER_RETRY_INTERVAL_MS));
+    }
+
+    // Timeout waiting for prompt, but output DID start - consider partial success
+    // This handles cases where Claude is still outputting (long response)
+    if (!isIdle(paneId)) {
+      log.info(`verifyAndRetryEnter ${paneId}`, 'Enter succeeded (output ongoing, not idle)');
+      return true;
+    }
+
+    // Pane is idle but no prompt detected - ambiguous, treat as success if output occurred
+    log.info(`verifyAndRetryEnter ${paneId}`, 'Enter likely succeeded (output occurred, now idle)');
     return true;
   }
 
-  // No output yet - could be normal delay or Enter was ignored
-  // Wait a bit longer and check for output
+  // No output activity - Enter may have been ignored
   if (retriesLeft <= 0) {
-    log.warn(`verifyAndRetryEnter ${paneId}`, 'Max retries reached, no output activity detected after Enter');
+    log.warn(`verifyAndRetryEnter ${paneId}`, 'Max retries reached, no output activity detected');
     return false;
   }
 
-  log.info(`verifyAndRetryEnter ${paneId}`, `No output activity yet, waiting for idle to retry Enter (${retriesLeft} retries left)`);
+  log.info(`verifyAndRetryEnter ${paneId}`, `No output activity, will retry Enter (${retriesLeft} left)`);
 
-  // Wait for pane to be idle (if it's outputting, Enter might still be processing)
+  // Wait for pane to be idle before retrying
   const maxWaitTime = MAX_QUEUE_TIME_MS;
   const startWait = Date.now();
 
   while (!isIdle(paneId) && (Date.now() - startWait) < maxWaitTime) {
     await new Promise(resolve => setTimeout(resolve, ENTER_RETRY_INTERVAL_MS));
-    // Check if output started during our wait
+    // Check if output started during wait
     if ((lastOutputTime[paneId] || 0) > outputTimeBefore) {
-      log.info(`verifyAndRetryEnter ${paneId}`, 'Output started during wait, Enter succeeded');
-      return true;
+      log.info(`verifyAndRetryEnter ${paneId}`, 'Output started during wait');
+      // Recurse to apply prompt-ready check
+      return verifyAndRetryEnter(paneId, textarea, retriesLeft);
     }
   }
 
-  // Still no output - retry Enter
+  // Re-query textarea
   const currentPane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
   const currentTextarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
 
@@ -477,17 +614,19 @@ async function verifyAndRetryEnter(paneId, textarea, retriesLeft = MAX_ENTER_RET
     return false;
   }
 
-  // Focus and retry Enter
+  // STRICT: Only retry Enter if focus succeeds (no "sending anyway")
   const focusOk = await focusWithRetry(currentTextarea);
   if (!focusOk) {
-    log.warn(`verifyAndRetryEnter ${paneId}`, 'Focus failed on retry');
+    log.warn(`verifyAndRetryEnter ${paneId}`, 'Focus failed on retry - aborting (would send to wrong element)');
+    return false;
   }
 
-  log.info(`verifyAndRetryEnter ${paneId}`, 'Retrying sendTrustedEnter');
-  try {
-    await window.hivemind.pty.sendTrustedEnter();
-  } catch (err) {
-    log.error(`verifyAndRetryEnter ${paneId}`, 'sendTrustedEnter failed:', err);
+  // Retry Enter using helper (prefers Terminal.input if available)
+  log.info(`verifyAndRetryEnter ${paneId}`, 'Retrying Enter');
+  const enterResult = await sendEnterToPane(paneId);
+  if (!enterResult.success) {
+    log.warn(`verifyAndRetryEnter ${paneId}`, 'Enter retry failed');
+    return false;
   }
 
   // Recurse with decremented retry count
@@ -602,6 +741,12 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
       }
       lastSelection = '';
     } else {
+      // Block paste when input is locked
+      if (inputLocked[paneId]) {
+        updatePaneStatus(paneId, 'Input locked');
+        setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
+        return;
+      }
       try {
         const text = await navigator.clipboard.readText();
         if (text) {
@@ -618,6 +763,12 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
   container.addEventListener('keydown', async (e) => {
     if (e.ctrlKey && e.key === 'v') {
       e.preventDefault();
+      // Block Ctrl+V paste when input is locked
+      if (inputLocked[paneId]) {
+        updatePaneStatus(paneId, 'Input locked');
+        setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
+        return;
+      }
       try {
         const text = await navigator.clipboard.readText();
         if (text) {
@@ -652,14 +803,39 @@ async function initTerminal(paneId) {
       lastTypedTime[paneId] = Date.now();
     }
 
-    // Allow synthetic Enter if it's from our programmatic send
-    // Check for our marker on the event or terminal-level bypass flag
-    if (event.key === 'Enter' && !event.isTrusted) {
-      if (event._hivemindBypass || terminal._hivemindBypass) {
-        log.info(`Terminal ${paneId}`, 'Allowing programmatic Enter (hivemind bypass)');
-        return true;
+    // Check if this is an Enter key (browsers use 'Enter', some use 'Return', keyCode 13)
+    const isEnterKey = event.key === 'Enter' || event.key === 'Return' || event.keyCode === 13;
+
+    // CRITICAL: Hivemind bypass check MUST come FIRST, before lock check
+    // This allows programmatic Enter from sendTrustedEnter to bypass input lock
+    // Note: sendInputEvent may produce isTrusted=true OR isTrusted=false depending on Electron version
+    if (isEnterKey && (event._hivemindBypass || terminal._hivemindBypass)) {
+      log.info(`Terminal ${paneId}`, `Allowing programmatic Enter (hivemind bypass, key=${event.key}, isTrusted=${event.isTrusted})`);
+      return true;
+    }
+
+    // Block non-trusted synthetic Enter that doesn't have bypass flag
+    if (isEnterKey && !event.isTrusted) {
+      log.info(`Terminal ${paneId}`, `Blocked synthetic Enter (isTrusted=false, no bypass, key=${event.key})`);
+      return false;
+    }
+
+    // Per-pane input lock: ESC always bypasses (for unstick), all else blocked when locked
+    if (inputLocked[paneId]) {
+      if (event.key === 'Escape') {
+        return true; // ESC bypasses lock for unstick scenarios
       }
-      log.info(`Terminal ${paneId}`, 'Blocked synthetic Enter (isTrusted=false)');
+      // Allow Ctrl+L to toggle lock even when locked
+      if (event.ctrlKey && event.key.toLowerCase() === 'l') {
+        toggleInputLock(paneId);
+        return false; // Handled, don't pass to terminal
+      }
+      return false; // Block all other input when locked
+    }
+
+    // Ctrl+L toggles lock when unlocked too
+    if (event.ctrlKey && event.key.toLowerCase() === 'l') {
+      toggleInputLock(paneId);
       return false;
     }
 
@@ -750,13 +926,39 @@ async function reattachTerminal(paneId, scrollback) {
       lastTypedTime[paneId] = Date.now();
     }
 
-    // Allow synthetic Enter if it's from our programmatic send
-    if (event.key === 'Enter' && !event.isTrusted) {
-      if (event._hivemindBypass || terminal._hivemindBypass) {
-        log.info(`Terminal ${paneId}`, 'Allowing programmatic Enter (hivemind bypass)');
-        return true;
+    // Check if this is an Enter key (browsers use 'Enter', some use 'Return', keyCode 13)
+    const isEnterKey = event.key === 'Enter' || event.key === 'Return' || event.keyCode === 13;
+
+    // CRITICAL: Hivemind bypass check MUST come FIRST, before lock check
+    // This allows programmatic Enter from sendTrustedEnter to bypass input lock
+    // Note: sendInputEvent may produce isTrusted=true OR isTrusted=false depending on Electron version
+    if (isEnterKey && (event._hivemindBypass || terminal._hivemindBypass)) {
+      log.info(`Terminal ${paneId}`, `Allowing programmatic Enter (hivemind bypass, key=${event.key}, isTrusted=${event.isTrusted})`);
+      return true;
+    }
+
+    // Block non-trusted synthetic Enter that doesn't have bypass flag
+    if (isEnterKey && !event.isTrusted) {
+      log.info(`Terminal ${paneId}`, `Blocked synthetic Enter (isTrusted=false, no bypass, key=${event.key})`);
+      return false;
+    }
+
+    // Per-pane input lock: ESC always bypasses (for unstick), all else blocked when locked
+    if (inputLocked[paneId]) {
+      if (event.key === 'Escape') {
+        return true; // ESC bypasses lock for unstick scenarios
       }
-      log.info(`Terminal ${paneId}`, 'Blocked synthetic Enter (isTrusted=false)');
+      // Allow Ctrl+L to toggle lock even when locked
+      if (event.ctrlKey && event.key.toLowerCase() === 'l') {
+        toggleInputLock(paneId);
+        return false;
+      }
+      return false; // Block all other input when locked
+    }
+
+    // Ctrl+L toggles lock when unlocked too
+    if (event.ctrlKey && event.key.toLowerCase() === 'l') {
+      toggleInputLock(paneId);
       return false;
     }
 
@@ -907,8 +1109,22 @@ function doSendToPane(paneId, message, onComplete) {
   // Save current focus to restore after injection
   const savedFocus = document.activeElement;
 
-  // Step 1: Focus terminal so sendTrustedEnter targets correct pane
-  textarea.focus();
+  // Helper to restore focus (called immediately after Enter, not after verification)
+  const restoreSavedFocus = () => {
+    if (savedFocus && savedFocus !== textarea && document.body.contains(savedFocus)) {
+      try {
+        savedFocus.focus();
+      } catch (e) {
+        // Element may not be focusable
+      }
+    }
+  };
+
+  // Step 1: Focus terminal for sendTrustedEnter (required for Enter to target correct pane)
+  // Note: Terminal.input() was disabled for Claude panes - it doesn't work with ink TUI
+  if (hasTrailingEnter) {
+    textarea.focus();
+  }
 
   // Step 2: Write text to PTY (without \r)
   window.hivemind.pty.write(id, text).catch(err => {
@@ -930,51 +1146,53 @@ function doSendToPane(paneId, message, onComplete) {
       // Guard: Abort if textarea disappeared
       if (!textarea) {
         log.warn(`doSendToPane ${id}`, 'Claude pane: textarea disappeared before Enter, aborting');
+        restoreSavedFocus();
         finishWithClear({ success: false, reason: 'textarea_disappeared' });
         return;
       }
 
-      // Ensure focus with retry (handles race conditions)
+      // Ensure focus for sendTrustedEnter (Terminal.input disabled for Claude panes)
       const focusOk = await focusWithRetry(textarea);
+
+      // STRICT: If focus failed, abort BEFORE sending Enter (would go to wrong element)
       if (!focusOk) {
-        log.warn(`doSendToPane ${id}`, 'Claude pane: focus failed after retries, sending Enter anyway');
+        log.warn(`doSendToPane ${id}`, 'Claude pane: focus failed - aborting Enter');
+        restoreSavedFocus();
+        markPotentiallyStuck(id);
+        finishWithClear({ success: false, reason: 'focus_failed' });
+        return;
       }
 
-      try {
-        await window.hivemind.pty.sendTrustedEnter();
-      } catch (err) {
-        log.error(`doSendToPane ${id}`, 'sendTrustedEnter failed:', err);
+      // Send Enter via sendTrustedEnter (Terminal.input disabled for Claude panes)
+      const enterResult = await sendEnterToPane(id);
+
+      // IMMEDIATELY restore focus after Enter sent - don't block user input during verification
+      // (Fix for focus-steal blocking command bar during trigger injections)
+      restoreSavedFocus();
+
+      if (!enterResult.success) {
+        log.error(`doSendToPane ${id}`, 'Enter send failed');
+        markPotentiallyStuck(id);
+        finishWithClear({ success: false, reason: 'enter_failed' });
+        return;
       }
-      log.info(`doSendToPane ${id}`, 'Claude pane: sendTrustedEnter for submit');
+      log.info(`doSendToPane ${id}`, `Claude pane: Enter sent via ${enterResult.method}`);
 
       // Verify Enter succeeded (textarea empty) - if not, wait for idle and retry
       // This handles force-inject during active output where Enter is ignored
+      // Note: verification runs with focus already restored to user
       const submitOk = await verifyAndRetryEnter(id, textarea);
       if (!submitOk) {
         log.warn(`doSendToPane ${id}`, 'Claude pane: Enter verification failed after retries');
         markPotentiallyStuck(id); // Register for sweeper retry
       }
 
-      // Step 4: Restore focus after injection complete
-      if (savedFocus && savedFocus !== textarea) {
-        try {
-          savedFocus.focus();
-        } catch (e) {
-          // Element may no longer be in DOM
-        }
-      }
       lastTypedTime[paneId] = Date.now();
       finishWithClear({ success: submitOk });
     }, enterDelay);
   } else {
     // No Enter needed, just restore focus
-    if (savedFocus && savedFocus !== textarea) {
-      try {
-        savedFocus.focus();
-      } catch (e) {
-        // Element may no longer be in DOM
-      }
-    }
+    restoreSavedFocus();
     lastTypedTime[paneId] = Date.now();
     finishWithClear({ success: true });
   }
@@ -1319,10 +1537,20 @@ function aggressiveNudge(paneId) {
         });
         log.info(`Terminal ${id}`, 'Aggressive nudge: PTY carriage return (Codex)');
       } else {
-        window.hivemind.pty.sendTrustedEnter().catch(err => {
+        // Claude: use sendEnterToPane helper (handles bypass flag + Terminal.input fallback)
+        const terminal = terminals.get(id);
+        if (terminal) {
+          terminal._hivemindBypass = true;
+        }
+        window.hivemind.pty.sendTrustedEnter().then(() => {
+          log.info(`Terminal ${id}`, 'Aggressive nudge: trusted Enter dispatched (Claude)');
+        }).catch(err => {
           log.error(`aggressiveNudge ${id}`, 'sendTrustedEnter failed:', err);
+        }).finally(() => {
+          if (terminal) {
+            setTimeout(() => { terminal._hivemindBypass = false; }, 0);
+          }
         });
-        log.info(`Terminal ${id}`, 'Aggressive nudge: trusted Enter dispatched (Claude)');
       }
     } else {
       // Fallback if textarea truly missing
@@ -1532,4 +1760,9 @@ module.exports = {
   startStuckMessageSweeper,
   stopStuckMessageSweeper,
   sweepStuckMessages,  // Manual trigger for testing
+  // Per-pane input lock (view-only mode)
+  inputLocked,         // Lock state map
+  isInputLocked,       // Check if pane is locked
+  toggleInputLock,     // Toggle lock state
+  setInputLocked,      // Set lock state directly
 };

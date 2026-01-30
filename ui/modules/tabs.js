@@ -444,7 +444,8 @@ function addTestResult(result) {
 
 function setTestResults(results, summary) {
   testResults = results || [];
-  testSummary = summary || { passed: 0, failed: 0, skipped: 0, total: results.length };
+  // Use testResults.length (already defaulted) to avoid null reference on results
+  testSummary = summary || { passed: 0, failed: 0, skipped: 0, total: testResults.length };
   testStatus = testSummary.failed > 0 ? 'failed' : (testSummary.passed > 0 ? 'passed' : 'idle');
 
   renderTestSummary();
@@ -472,11 +473,14 @@ async function runTests() {
   try {
     const result = await ipcRenderer.invoke('run-tests');
     if (result && result.success) {
-      setTestResults(result.results, result.summary);
-      const allPassed = result.summary.failed === 0;
+      // Defensive: ensure results is an array and summary has required fields
+      const results = Array.isArray(result.results) ? result.results : [];
+      const summary = result.summary || { passed: 0, failed: 0, skipped: 0, total: results.length };
+      setTestResults(results, summary);
+      const allPassed = summary.failed === 0;
       updateCIStatus(allPassed ? 'passing' : 'failing',
-        allPassed ? null : `${result.summary.failed} tests failed`);
-      updateConnectionStatus(`Tests complete: ${result.summary.passed} passed, ${result.summary.failed} failed`);
+        allPassed ? null : `${summary.failed} tests failed`);
+      updateConnectionStatus(`Tests complete: ${summary.passed} passed, ${summary.failed} failed`);
     } else {
       testStatus = 'idle';
       updateCIStatus('failing', result?.error || 'Test run failed');
@@ -495,7 +499,10 @@ async function loadTestResults() {
   try {
     const result = await ipcRenderer.invoke('get-test-results');
     if (result && result.success) {
-      setTestResults(result.results, result.summary);
+      // Defensive: ensure results is an array and summary has required fields
+      const results = Array.isArray(result.results) ? result.results : [];
+      const summary = result.summary || { passed: 0, failed: 0, skipped: 0, total: results.length };
+      setTestResults(results, summary);
     }
   } catch (err) {
     log.error('TR1', 'Error loading test results', err);
@@ -526,8 +533,12 @@ function setupTestsTab() {
   });
 
   ipcRenderer.on('test-complete', (event, data) => {
-    setTestResults(data.results, data.summary);
-    updateConnectionStatus(`Tests complete: ${data.summary.passed} passed, ${data.summary.failed} failed`);
+    // Defensive: ensure data and its fields are valid
+    if (!data) return;
+    const results = Array.isArray(data.results) ? data.results : [];
+    const summary = data.summary || { passed: 0, failed: 0, skipped: 0, total: results.length };
+    setTestResults(results, summary);
+    updateConnectionStatus(`Tests complete: ${summary.passed} passed, ${summary.failed} failed`);
   });
 
   loadTestResults();
@@ -1580,321 +1591,6 @@ function setupFrictionPanel() {
 }
 
 // ============================================================
-// MQ3+MQ6: MESSAGES TAB
-// ============================================================
-
-let messageHistory = [];
-let messageFilter = 'all';
-let selectedRecipients = [];
-
-const MESSAGE_AGENT_MAP = {
-  'architect': { pane: '1', name: 'Architect' },
-  'lead': { pane: '1', name: 'Architect' },
-  'orchestrator': { pane: '2', name: 'Orchestrator' },
-  'worker-a': { pane: '3', name: 'Implementer A' },
-  'implementer-a': { pane: '3', name: 'Implementer A' },
-  'worker-b': { pane: '4', name: 'Implementer B' },
-  'implementer-b': { pane: '4', name: 'Implementer B' },
-  'investigator': { pane: '5', name: 'Investigator' },
-  'reviewer': { pane: '6', name: 'Reviewer' }
-};
-
-const MESSAGE_AGENT_ALIASES = {
-  'lead': 'architect',
-  'worker-a': 'implementer-a',
-  'worker-b': 'implementer-b'
-};
-
-const PANE_TO_AGENT = {
-  '1': 'architect',
-  '2': 'orchestrator',
-  '3': 'implementer-a',
-  '4': 'implementer-b',
-  '5': 'investigator',
-  '6': 'reviewer'
-};
-
-function formatMessageTime(timestamp) {
-  const date = new Date(timestamp);
-  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-}
-
-function getAgentDisplayName(agentId) {
-  if (MESSAGE_AGENT_MAP[agentId]) return MESSAGE_AGENT_MAP[agentId].name;
-  if (AGENT_NAMES[agentId]) return AGENT_NAMES[agentId];
-  return agentId;
-}
-
-function normalizeAgentKey(value) {
-  if (!value) return null;
-  const key = String(value).toLowerCase().replace(/\s+/g, '-');
-  return MESSAGE_AGENT_ALIASES[key] || key;
-}
-
-function renderMessagesList() {
-  const listEl = document.getElementById('messagesList');
-  if (!listEl) return;
-
-  // Apply filter
-  let filtered = messageHistory;
-  if (messageFilter !== 'all') {
-    const filterKey = normalizeAgentKey(messageFilter);
-    filtered = messageHistory.filter(msg => {
-      const fromAgent = normalizeAgentKey(msg.from);
-      const toAgent = normalizeAgentKey(msg.to);
-      return fromAgent === filterKey || toAgent === filterKey;
-    });
-  }
-
-  if (filtered.length === 0) {
-    listEl.innerHTML = '<div class="messages-empty">No messages yet</div>';
-    return;
-  }
-
-  // Sort by time (newest last)
-  const sorted = [...filtered].sort((a, b) =>
-    new Date(a.time || a.timestamp) - new Date(b.time || b.timestamp)
-  );
-
-  listEl.innerHTML = sorted.map(msg => {
-    const fromName = getAgentDisplayName(msg.from);
-    const toName = msg.to ? getAgentDisplayName(msg.to) : 'All';
-    const time = formatMessageTime(msg.time || msg.timestamp);
-    const delivered = msg.delivered !== false;
-
-    return `
-      <div class="message-item ${delivered ? '' : 'unread'}">
-        <div class="message-header">
-          <span>
-            <span class="message-from">${fromName}</span>
-            <span class="message-to">→ ${toName}</span>
-          </span>
-          <span class="message-time">${time}</span>
-        </div>
-        <div class="message-body">${escapeHtml(msg.msg || msg.message || '')}</div>
-        ${delivered ? '<div class="message-delivered">✓ Delivered</div>' : '<div class="message-pending">⏳ Pending</div>'}
-      </div>
-    `;
-  }).join('');
-
-  // Auto-scroll to bottom
-  listEl.scrollTop = listEl.scrollHeight;
-}
-
-async function loadMessageHistory() {
-  try {
-    // Get messages from all queues
-    const result = await ipcRenderer.invoke('get-all-messages');
-    if (result && result.success) {
-      // Flatten all queues into single array
-      const allMessages = [];
-      for (const paneId in result.queues) {
-        const queue = result.queues[paneId];
-        if (Array.isArray(queue)) {
-          allMessages.push(...queue);
-        }
-      }
-      messageHistory = allMessages;
-      renderMessagesList();
-    }
-  } catch (err) {
-    log.error('MQ3', 'Error loading message history', err);
-  }
-}
-
-async function clearMessageHistory() {
-  if (!confirm('Clear all message history?')) return;
-
-  try {
-    // Clear all queues
-    for (const paneId of PANE_IDS) {
-      await ipcRenderer.invoke('clear-messages', paneId);
-    }
-    messageHistory = [];
-    renderMessagesList();
-    updateConnectionStatus('Message history cleared');
-  } catch (err) {
-    log.error('MQ3', 'Error clearing message history', err);
-    updateConnectionStatus('Failed to clear message history');
-  }
-}
-
-function updateSendButtonState() {
-  const sendBtn = document.getElementById('messageSendBtn');
-  const input = document.getElementById('messageComposerInput');
-
-  if (sendBtn && input) {
-    const hasRecipients = selectedRecipients.length > 0;
-    const hasMessage = input.value.trim().length > 0;
-    sendBtn.disabled = !hasRecipients || !hasMessage;
-  }
-}
-
-async function sendGroupMessage() {
-  const input = document.getElementById('messageComposerInput');
-  if (!input || !input.value.trim() || selectedRecipients.length === 0) return;
-
-  const message = input.value.trim();
-  let recipients = [];
-
-  // Expand recipient groups
-  for (const r of selectedRecipients) {
-    if (r === 'all') {
-      recipients = ['1', '2', '3', '4', '5', '6'];
-      break;
-    } else if (r === 'workers') {
-      recipients.push('3', '4', '5');
-    } else if (MESSAGE_AGENT_MAP[r]) {
-      recipients.push(MESSAGE_AGENT_MAP[r].pane);
-    }
-  }
-
-  // Remove duplicates
-  recipients = [...new Set(recipients)];
-
-  updateConnectionStatus(`Sending message to ${recipients.length} recipient(s)...`);
-
-  try {
-    // Use the API from checkpoint.md: send-group-message(fromPaneId, toPanes, content)
-    // From 'user' we use pane 0 or system indicator
-    const result = await ipcRenderer.invoke('send-group-message', 'system', recipients, message);
-
-    if (result && result.success) {
-      input.value = '';
-      updateSendButtonState();
-      await loadMessageHistory();
-      updateConnectionStatus(`Message sent to ${recipients.length} agent(s)`);
-    } else {
-      updateConnectionStatus(`Failed to send: ${result?.error || 'Unknown error'}`);
-    }
-  } catch (err) {
-    updateConnectionStatus(`Send error: ${err.message}`);
-  }
-}
-
-function setupMessagesTab() {
-  // Filter buttons
-  document.querySelectorAll('.messages-filter').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.messages-filter').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      messageFilter = btn.dataset.filter;
-      renderMessagesList();
-    });
-  });
-
-  // Recipient buttons (multi-select)
-  document.querySelectorAll('.recipient-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const recipient = btn.dataset.recipient;
-
-      // Handle "all" and "workers" - clear other selections
-      if (recipient === 'all' || recipient === 'workers') {
-        document.querySelectorAll('.recipient-btn').forEach(b => b.classList.remove('selected'));
-        btn.classList.add('selected');
-        selectedRecipients = [recipient];
-      } else {
-        // If "all" or "workers" is selected, clear it
-        const allBtn = document.querySelector('.recipient-btn[data-recipient="all"]');
-        const workersBtn = document.querySelector('.recipient-btn[data-recipient="workers"]');
-        if (allBtn) allBtn.classList.remove('selected');
-        if (workersBtn) workersBtn.classList.remove('selected');
-        selectedRecipients = selectedRecipients.filter(r => r !== 'all' && r !== 'workers');
-
-        // Toggle individual recipient
-        if (btn.classList.contains('selected')) {
-          btn.classList.remove('selected');
-          selectedRecipients = selectedRecipients.filter(r => r !== recipient);
-        } else {
-          btn.classList.add('selected');
-          selectedRecipients.push(recipient);
-        }
-      }
-
-      updateSendButtonState();
-    });
-  });
-
-  // Message input
-  // Message composer with autocomplete protection
-  const input = document.getElementById('messageComposerInput');
-  let composerInputChars = 0;
-  if (input) {
-    input.addEventListener('input', updateSendButtonState);
-
-    // Track paste events
-    input.addEventListener('paste', (e) => {
-      const pasteData = e.clipboardData?.getData('text') || '';
-      composerInputChars += pasteData.length;
-    });
-
-    input.addEventListener('keydown', (e) => {
-      // Track actual keystrokes
-      if (e.key.length === 1 && e.isTrusted && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        composerInputChars++;
-      }
-      if (e.key === 'Backspace' && composerInputChars > 0) {
-        composerInputChars--;
-      }
-
-      if (e.key === 'Enter' && !e.shiftKey && e.isTrusted && !e.isComposing) {
-        e.preventDefault();
-        // Autocomplete guard - allow if user input >= half value length
-        const value = input.value.trim();
-        if (value.length > 3 && composerInputChars < value.length / 2) {
-          log.info('MessageComposer', 'Blocked autocomplete');
-          input.value = '';
-          composerInputChars = 0;
-          return;
-        }
-        sendGroupMessage();
-        composerInputChars = 0;
-      }
-    });
-  }
-
-  // Send button
-  const sendBtn = document.getElementById('messageSendBtn');
-  if (sendBtn) {
-    sendBtn.addEventListener('click', sendGroupMessage);
-  }
-
-  // Action buttons
-  const refreshBtn = document.getElementById('refreshMessagesBtn');
-  if (refreshBtn) refreshBtn.addEventListener('click', loadMessageHistory);
-
-  const clearBtn = document.getElementById('clearMessagesBtn');
-  if (clearBtn) clearBtn.addEventListener('click', clearMessageHistory);
-
-  // Listen for message events (from checkpoint.md API)
-  ipcRenderer.on('message-queued', (event, msg) => {
-    messageHistory.push(msg);
-    renderMessagesList();
-  });
-
-  ipcRenderer.on('message-delivered', (event, data) => {
-    // Update delivery status
-    const msg = messageHistory.find(m => m.id === data.messageId);
-    if (msg) {
-      msg.delivered = true;
-      msg.deliveredAt = data.deliveredAt;
-      renderMessagesList();
-    }
-  });
-
-  ipcRenderer.on('messages-cleared', () => {
-    loadMessageHistory(); // Reload to sync state
-  });
-
-  ipcRenderer.on('direct-message-sent', (event, data) => {
-    // Direct message sent via triggers, reload history
-    loadMessageHistory();
-  });
-
-  loadMessageHistory();
-}
-
-// ============================================================
 // SCREENSHOTS
 // ============================================================
 
@@ -2514,7 +2210,6 @@ module.exports = {
   setupActivityTab,
   setupTestsTab,           // TR1: Test results panel
   setupCIStatusIndicator,  // CI2: CI status indicator
-  setupMessagesTab,        // MQ3+MQ6: Messages tab
   setupInspectorTab,       // P2-5: Message inspector
   setupFrictionPanel,
   setupRightPanel,
@@ -2528,7 +2223,6 @@ module.exports = {
   loadTemplates,
   loadActivityLog,
   loadTestResults,         // TR1: Load test results
-  loadMessageHistory,      // MQ3: Load message history
   loadSequenceState,       // P2-5: Load sequence state
   loadReliabilityStats,    // Task #8: Load reliability analytics
   addActivityEntry,
