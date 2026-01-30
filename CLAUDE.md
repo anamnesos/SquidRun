@@ -10,7 +10,7 @@
 
 ## CRITICAL CONTEXT
 
-You are an AI agent INSIDE the Hivemind app. You are one of 6 agents (Architect, Orchestrator, Implementer A, Implementer B, Investigator, Reviewer) running in panes within the Hivemind desktop app.
+You are an AI agent INSIDE the Hivemind app. You are one of 6 agents (Architect, Infra, Frontend, Backend, Analyst, Reviewer) running in panes within the Hivemind desktop app.
 
 ### 🚨 RECOGNIZE SYSTEM FAILURES - MANDATORY
 
@@ -110,12 +110,16 @@ If running in SDK mode (not PTY terminals):
 
 ## Roles and Ownership
 
-| Role | Files Owned | Tasks |
-|------|-------------|-------|
-| **Lead** | ui/main.js (state machine, IPC), coordination | Architecture decisions, state transitions |
-| **Worker A** | ui/renderer.js (UI logic), ui/index.html (layout) | UI components, panel logic |
-| **Worker B** | ui/main.js (file watchers, processes), workspace/ | File watching, process management |
-| **Reviewer** | workspace/build/reviews/, verification | Review code, test UI, verify functionality |
+| Pane | Role | Model | Domain | Trigger File |
+|------|------|-------|--------|--------------|
+| 1 | **Architect** | Claude | Architecture, coordination, delegation, git commits | architect.txt |
+| 2 | **Infra** | Codex | CI/CD, deployment, build scripts, infrastructure | infra.txt |
+| 3 | **Frontend** | Claude | UI components, renderer.js, index.html, CSS | frontend.txt |
+| 4 | **Backend** | Codex | Daemon, processes, file watching, main.js internals | backend.txt |
+| 5 | **Analyst** | Codex | Debugging, profiling, root cause analysis, investigations | analyst.txt |
+| 6 | **Reviewer** | Claude | Code review, verification, quality gates | reviewer.txt |
+
+**Note:** Old trigger names (lead.txt, orchestrator.txt, worker-a.txt, worker-b.txt, investigator.txt) still work during transition.
 
 ---
 
@@ -151,16 +155,16 @@ If running in SDK mode (not PTY terminals):
 
 **Terminal output is for talking to the USER. Trigger files are for talking to OTHER AGENTS.**
 
-When you receive a message FROM another agent (prefixed with their role like `(LEAD):` or `(WORKER-A):`):
+When you receive a message FROM another agent (prefixed with their role like `(ARCHITECT):` or `(FRONTEND):`):
 1. **DO NOT respond in terminal output** - the user is not your audience
 2. **MUST reply via trigger file** - write to their trigger file
 3. Format: `(YOUR-ROLE): Your response here`
 
 Example:
-- You receive in terminal: `(LEAD): Please review the auth changes`
-- You reply by writing to `workspace/triggers/lead.txt`:
+- You receive in terminal: `(ARCHITECT): Please review the auth changes`
+- You reply by writing to `workspace/triggers/architect.txt`:
   ```
-  (WORKER-B): Reviewed. Found 2 issues, see blockers.md
+  (BACKEND): Reviewed. Found 2 issues, see blockers.md
   ```
 
 **This is MANDATORY. Responding to agents via terminal output defeats the entire purpose of multi-agent coordination.**
@@ -207,19 +211,22 @@ To send a message directly to another agent's terminal, write to `workspace/trig
 
 | File | Targets |
 |------|---------|
-| `workspace/triggers/lead.txt` | Lead (pane 1) |
-| `workspace/triggers/worker-a.txt` | Worker A (pane 2) |
-| `workspace/triggers/worker-b.txt` | Worker B (pane 3) |
-| `workspace/triggers/reviewer.txt` | Reviewer (pane 4) |
-| `workspace/triggers/workers.txt` | Both workers (panes 2+3) |
+| `workspace/triggers/architect.txt` | Architect (pane 1) |
+| `workspace/triggers/infra.txt` | Infra (pane 2) |
+| `workspace/triggers/frontend.txt` | Frontend (pane 3) |
+| `workspace/triggers/backend.txt` | Backend (pane 4) |
+| `workspace/triggers/analyst.txt` | Analyst (pane 5) |
+| `workspace/triggers/reviewer.txt` | Reviewer (pane 6) |
+| `workspace/triggers/workers.txt` | Frontend + Backend (panes 3+4) |
+| `workspace/triggers/implementers.txt` | Infra + Frontend + Backend (panes 2+3+4) |
 | `workspace/triggers/all.txt` | All agents |
 | `workspace/triggers/others-{role}.txt` | Everyone except sender |
 
 The file watcher detects changes and injects the content into the target terminal(s). The file is cleared after sending.
 
-**Example:** To tell Lead about a bug:
+**Example:** To tell Architect about a bug:
 ```
-echo "(YOUR-ROLE #1): BUG: Fix needed in main.js line 50" > workspace/triggers/lead.txt
+echo "(YOUR-ROLE #1): BUG: Fix needed in main.js line 50" > workspace/triggers/architect.txt
 ```
 
 ### ⚠️ Message Sequence Numbers (IMPORTANT)
@@ -229,7 +236,7 @@ Messages use sequence numbers to prevent duplicates: `(ROLE #N): message`
 **The app resets sequence tracking on every restart.** This means:
 - You can start from `#1` each session
 - Don't worry about what sequence numbers were used before
-- The format is: `(LEAD #1):`, `(WORKER-A #2):`, etc.
+- The format is: `(ARCHITECT #1):`, `(FRONTEND #2):`, etc.
 
 **If your messages aren't going through:**
 1. Check the npm console for `[Trigger] SKIPPED duplicate`
@@ -273,7 +280,7 @@ Messages use sequence numbers to prevent duplicates: `(ROLE #N): message`
 
 8. **Fresh session = restart already happened.** If you're in a new session, the user already restarted the app. Don't tell them to restart. If status.md says "requires restart to test", those fixes are NOW LIVE. Ask "Should I verify X is working?" not "Restart to test X."
 
-9. **Report to Architect.** All completions, blockers, and decisions route to Architect via `workspace/triggers/lead.txt`. Architect is the coordination hub.
+9. **Report to Architect.** All completions, blockers, and decisions route to Architect via `workspace/triggers/architect.txt`. Architect is the coordination hub.
 
 10. **Never stall silently.** If your task is done, pick up the next one from the plan or message Architect for assignment. Never sit idle without telling someone.
 

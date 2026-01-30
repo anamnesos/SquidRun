@@ -8,9 +8,9 @@ const { TRIGGER_TARGETS, WORKSPACE_PATH } = require('../config');
 
 describe('Trigger System', () => {
   describe('TRIGGER_TARGETS mapping', () => {
-    test('should have 14 trigger file types', () => {
+    test('should have 25 trigger file types (new + legacy)', () => {
       const keys = Object.keys(TRIGGER_TARGETS);
-      expect(keys.length).toBe(14); // 8 base + 6 "others" triggers
+      expect(keys.length).toBe(25); // 6 new + 5 legacy + 3 broadcast + 11 "others" triggers
     });
 
     test('all trigger files should end with .txt', () => {
@@ -55,10 +55,11 @@ describe('Trigger System', () => {
         expect(TRIGGER_TARGETS['reviewer.txt']).toEqual(['6']);
       });
 
-      test('workers.txt targets execution panes', () => {
-        expect(TRIGGER_TARGETS['workers.txt']).toEqual(['3', '4', '5']);
+      test('workers.txt targets Frontend and Backend panes', () => {
+        expect(TRIGGER_TARGETS['workers.txt']).toEqual(['3', '4']);
         expect(TRIGGER_TARGETS['workers.txt']).not.toContain('1');
         expect(TRIGGER_TARGETS['workers.txt']).not.toContain('2');
+        expect(TRIGGER_TARGETS['workers.txt']).not.toContain('5');
         expect(TRIGGER_TARGETS['workers.txt']).not.toContain('6');
       });
 
@@ -110,7 +111,7 @@ describe('Trigger System', () => {
 
     test('should return correct targets for known files', () => {
       expect(getTriggerTargets('lead.txt')).toEqual(['1']);
-      expect(getTriggerTargets('workers.txt')).toEqual(['3', '4', '5']);
+      expect(getTriggerTargets('workers.txt')).toEqual(['3', '4']); // Frontend + Backend
       expect(getTriggerTargets('all.txt')).toEqual(['1', '2', '3', '4', '5', '6']);
     });
 
@@ -226,15 +227,15 @@ describe('Trigger System', () => {
     });
 
     test('workers-only trigger workflow', () => {
-      // Reviewer wants to notify only execution agents (not architect/orchestrator/reviewer)
+      // Reviewer wants to notify only execution agents (Frontend + Backend)
       const triggerFile = 'workers.txt';
       const targets = TRIGGER_TARGETS[triggerFile];
 
-      expect(targets).toContain('3'); // Implementer A
-      expect(targets).toContain('4'); // Implementer B
-      expect(targets).toContain('5'); // Investigator
+      expect(targets).toContain('3'); // Frontend
+      expect(targets).toContain('4'); // Backend
       expect(targets).not.toContain('1'); // Not Architect
-      expect(targets).not.toContain('2'); // Not Orchestrator
+      expect(targets).not.toContain('2'); // Not Infra
+      expect(targets).not.toContain('5'); // Not Analyst
       expect(targets).not.toContain('6'); // Not Reviewer
     });
   });
