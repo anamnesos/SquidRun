@@ -591,7 +591,7 @@ function handleFileChangeCore(filePath) {
     transition(States.PLAN_REVIEW);
   }
 
-  // AUTO-SYNC TRIGGERS (V14: controlled by autoSync setting)
+  // AUTO-SYNC TRIGGERS (controlled by autoSync setting)
   else if (filename === 'improvements.md' && triggers) {
     const settings = getSettings ? getSettings() : {};
     if (settings.autoSync) {
@@ -773,7 +773,7 @@ function stopTriggerWatcher() {
  * Initialize the watcher module with shared state
  * @param {BrowserWindow} window - The main Electron window
  * @param {Object} triggersModule - The triggers module reference
- * @param {Function} settingsGetter - Function to get current settings (V14: for auto-sync control)
+ * @param {Function} settingsGetter - Function to get current settings (for auto-sync control)
  */
 function init(window, triggersModule, settingsGetter = null) {
   mainWindow = window;
@@ -838,7 +838,7 @@ function getMessages(paneId, undeliveredOnly = false) {
 
 /**
  * Send a message to a pane (append to queue)
- * V10 MQ5: Direct messages bypass workflow gate
+ * Direct messages bypass workflow gate
  * @param {string} fromPaneId - Sender pane ID
  * @param {string} toPaneId - Recipient pane ID
  * @param {string} content - Message content

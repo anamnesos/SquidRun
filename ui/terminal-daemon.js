@@ -611,7 +611,7 @@ function checkAndNudgeStuckAgents() {
 }
 
 /**
- * V17: Update heartbeat timer with new interval based on current state
+ * Update heartbeat timer with new interval based on current state
  */
 function updateHeartbeatTimer() {
   const newState = getHeartbeatState();
