@@ -759,6 +759,60 @@
   transition: opacity var(--transition-normal);
 }
 
+.voice-btn {
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-bg-light);
+  color: var(--color-text);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  min-height: 44px;
+  min-width: 52px;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+}
+
+.voice-btn:hover {
+  border-color: var(--color-secondary);
+  color: var(--color-secondary);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.voice-btn.is-listening {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  box-shadow: var(--shadow-md), 0 0 14px color-mix(in srgb, var(--color-accent) 35%, transparent);
+  animation: voicePulse 1.2s ease-in-out infinite;
+}
+
+.voice-status {
+  font-size: var(--text-sm);
+  color: var(--color-text-dim);
+  min-width: 70px;
+  text-align: left;
+}
+
+.voice-status.is-listening {
+  color: var(--color-accent);
+}
+
+.command-input.voice-listening {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 15%, transparent),
+    0 0 12px color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+@keyframes voicePulse {
+  0% {
+    box-shadow: var(--shadow-sm);
+  }
+  50% {
+    box-shadow: var(--shadow-lg), 0 0 18px color-mix(in srgb, var(--color-accent) 40%, transparent);
+  }
+  100% {
+    box-shadow: var(--shadow-sm);
+  }
+}
+
 .command-delivery-status.visible {
   opacity: 1;
 }

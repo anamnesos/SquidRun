@@ -614,6 +614,16 @@ function setupEventListeners() {
   const broadcastInput = document.getElementById('broadcastInput');
   const commandTarget = document.getElementById('commandTarget');
   const commandDeliveryStatus = document.getElementById('commandDeliveryStatus');
+  const voiceInputBtn = document.getElementById('voiceInputBtn');
+  const voiceStatus = document.getElementById('voiceStatus');
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognition = null;
+  let voiceEnabled = false;
+  let voiceAutoSend = false;
+  let voiceLanguage = 'en-US';
+  let voiceListening = false;
+  let voiceBase = '';
+  let voiceSentFinal = false;
   let lastBroadcastTime = 0;
 
   // Update placeholder based on selected target
@@ -642,6 +652,129 @@ function setupEventListeners() {
     notice.style.cssText = 'color: #8fd3ff; margin-left: 8px;';
     statusBar.appendChild(notice);
     setTimeout(() => notice.remove(), timeoutMs);
+  }
+
+  function updateVoiceUI(statusText) {
+    if (voiceInputBtn) {
+      voiceInputBtn.disabled = !voiceEnabled || !SpeechRecognition;
+      voiceInputBtn.classList.toggle('is-listening', voiceListening);
+      voiceInputBtn.setAttribute('aria-pressed', voiceListening ? 'true' : 'false');
+    }
+    if (broadcastInput) {
+      broadcastInput.classList.toggle('voice-listening', voiceListening);
+    }
+    if (voiceStatus) {
+      voiceStatus.textContent = statusText;
+      voiceStatus.classList.toggle('is-listening', voiceListening);
+    }
+  }
+
+  function stopVoiceRecognition() {
+    if (recognition && voiceListening) {
+      recognition.stop();
+    }
+  }
+
+  function ensureRecognition() {
+    if (!SpeechRecognition || recognition) return;
+    recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      voiceListening = true;
+      voiceBase = (broadcastInput?.value || '').trim();
+      if (voiceBase) {
+        voiceBase += ' ';
+      }
+      voiceSentFinal = false;
+      updateVoiceUI(voiceAutoSend ? 'Listening (auto-send)' : 'Listening');
+    };
+
+    recognition.onresult = (event) => {
+      let interimTranscript = '';
+      let finalTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          finalTranscript += result[0].transcript;
+        } else {
+          interimTranscript += result[0].transcript;
+        }
+      }
+
+      const combined = `${voiceBase}${finalTranscript}${interimTranscript}`.trim();
+      if (broadcastInput) {
+        broadcastInput.value = combined;
+      }
+
+      if (finalTranscript && voiceAutoSend && combined) {
+        if (sendBroadcast(combined)) {
+          voiceSentFinal = true;
+          if (broadcastInput) {
+            broadcastInput.value = '';
+          }
+        }
+      }
+    };
+
+    recognition.onerror = (event) => {
+      log.error('Voice', 'Speech recognition error', event?.error || event);
+      voiceListening = false;
+      updateVoiceUI('Voice error');
+    };
+
+    recognition.onend = () => {
+      voiceListening = false;
+      if (!voiceEnabled) {
+        updateVoiceUI('Voice off');
+      } else if (voiceSentFinal && voiceAutoSend) {
+        updateVoiceUI('Voice ready');
+      } else {
+        updateVoiceUI('Voice ready');
+      }
+    };
+  }
+
+  function startVoiceRecognition() {
+    if (!SpeechRecognition) {
+      updateVoiceUI('Voice unsupported');
+      return;
+    }
+    if (!voiceEnabled) {
+      updateVoiceUI('Voice off');
+      return;
+    }
+    ensureRecognition();
+    if (!recognition) return;
+    recognition.lang = voiceLanguage || 'en-US';
+    try {
+      recognition.start();
+    } catch (err) {
+      log.error('Voice', 'Failed to start recognition', err);
+      updateVoiceUI('Voice error');
+    }
+  }
+
+  function refreshVoiceSettings(nextSettings) {
+    const source = nextSettings || settings.getSettings() || {};
+    voiceEnabled = !!source.voiceInputEnabled;
+    voiceAutoSend = !!source.voiceAutoSend;
+    voiceLanguage = source.voiceLanguage || 'en-US';
+    if (!SpeechRecognition) {
+      updateVoiceUI('Voice unsupported');
+      if (voiceInputBtn) {
+        voiceInputBtn.disabled = true;
+      }
+      return;
+    }
+    if (!voiceEnabled) {
+      stopVoiceRecognition();
+      updateVoiceUI('Voice off');
+      return;
+    }
+    updateVoiceUI('Voice ready');
   }
 
   async function routeNaturalTask(message) {
@@ -823,6 +956,29 @@ function setupEventListeners() {
       }
     });
   }
+
+  if (voiceInputBtn) {
+    voiceInputBtn.addEventListener('click', (e) => {
+      if (!e.isTrusted) {
+        log.info('Voice', 'Blocked untrusted click');
+        return;
+      }
+      if (!voiceEnabled) {
+        updateVoiceUI('Enable in settings');
+        return;
+      }
+      if (voiceListening) {
+        stopVoiceRecognition();
+      } else {
+        startVoiceRecognition();
+      }
+    });
+  }
+
+  window.addEventListener('hivemind-settings-updated', (event) => {
+    refreshVoiceSettings(event.detail);
+  });
+  refreshVoiceSettings(settings.getSettings());
 
   // Spawn all button
   const spawnAllBtn = document.getElementById('spawnAllBtn');
