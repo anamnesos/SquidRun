@@ -97,6 +97,10 @@ function applySettingsToUI() {
       }
     }
   });
+
+  window.dispatchEvent(new CustomEvent('hivemind-settings-updated', {
+    detail: { ...currentSettings }
+  }));
 }
 
 // Handle setting toggle
