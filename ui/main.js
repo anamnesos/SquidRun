@@ -167,7 +167,7 @@ const ACTIVITY_FILE_PATH = path.join(WORKSPACE_PATH, 'activity.json');
  */
 function logActivity(type, paneId, message, details = {}) {
   const entry = {
-    id: `act-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+    id: `act-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     timestamp: new Date().toISOString(),
     type,
     paneId,

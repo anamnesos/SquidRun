@@ -21,10 +21,10 @@ let currentConflicts = [];
 // Agent names for display
 const AGENT_NAMES = {
   '1': 'Architect',
-  '2': 'Orchestrator',
-  '3': 'Implementer A',
-  '4': 'Implementer B',
-  '5': 'Investigator',
+  '2': 'Infra',
+  '3': 'Frontend',
+  '4': 'Backend',
+  '5': 'Analyst',
   '6': 'Reviewer',
 };
 
@@ -187,10 +187,10 @@ const MAX_ACTIVITY_ENTRIES = 500;
 
 const ACTIVITY_AGENT_NAMES = {
   '1': 'Architect',
-  '2': 'Orchestrator',
-  '3': 'Implementer A',
-  '4': 'Implementer B',
-  '5': 'Investigator',
+  '2': 'Infra',
+  '3': 'Frontend',
+  '4': 'Backend',
+  '5': 'Analyst',
   '6': 'Reviewer',
   'system': 'System'
 };

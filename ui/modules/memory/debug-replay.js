@@ -137,7 +137,7 @@ function loadSession(role, options = {}) {
  * @returns {Object} Combined session data
  */
 function loadTimeRangeSession(startTime, endTime) {
-  const roles = ['Architect', 'Orchestrator', 'Implementer A', 'Implementer B', 'Investigator', 'Reviewer'];
+  const roles = ['Architect', 'Infra', 'Frontend', 'Backend', 'Analyst', 'Reviewer'];
   const allActions = [];
 
   for (const role of roles) {

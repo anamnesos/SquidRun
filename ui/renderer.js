@@ -60,10 +60,10 @@ function setSDKMode(enabled, options = {}) {
 
 const SDK_PANE_LABELS = {
   '1': { name: 'Architect', avatar: '[A]' },
-  '2': { name: 'Orchestrator', avatar: '[O]' },
-  '3': { name: 'Implementer A', avatar: '[1]' },
-  '4': { name: 'Implementer B', avatar: '[2]' },
-  '5': { name: 'Investigator', avatar: '[?]' },
+  '2': { name: 'Infra', avatar: '[I]' },
+  '3': { name: 'Frontend', avatar: '[F]' },
+  '4': { name: 'Backend', avatar: '[B]' },
+  '5': { name: 'Analyst', avatar: '[?]' },
   '6': { name: 'Reviewer', avatar: '[R]' }
 };
 
@@ -1189,10 +1189,10 @@ function initCustomTargetDropdown() {
   const options = [
     { value: '1', label: 'Architect', pane: '1' },
     { value: 'all', label: 'All Agents', pane: 'all' },
-    { value: '2', label: 'Orchestrator', pane: '2' },
-    { value: '3', label: 'Implementer A', pane: '3' },
-    { value: '4', label: 'Implementer B', pane: '4' },
-    { value: '5', label: 'Investigator', pane: '5' },
+    { value: '2', label: 'Infra', pane: '2' },
+    { value: '3', label: 'Frontend', pane: '3' },
+    { value: '4', label: 'Backend', pane: '4' },
+    { value: '5', label: 'Analyst', pane: '5' },
     { value: '6', label: 'Reviewer', pane: '6' },
   ];
 
@@ -1306,10 +1306,10 @@ function initCommandPalette() {
 
     // Navigation
     { id: 'focus-1', label: 'Focus Architect (Pane 1)', icon: '1️⃣', category: 'Navigate', shortcut: 'Alt+1', action: () => terminal.focusPane('1') },
-    { id: 'focus-2', label: 'Focus Orchestrator (Pane 2)', icon: '2️⃣', category: 'Navigate', shortcut: 'Alt+2', action: () => terminal.focusPane('2') },
-    { id: 'focus-3', label: 'Focus Implementer A (Pane 3)', icon: '3️⃣', category: 'Navigate', shortcut: 'Alt+3', action: () => terminal.focusPane('3') },
-    { id: 'focus-4', label: 'Focus Implementer B (Pane 4)', icon: '4️⃣', category: 'Navigate', shortcut: 'Alt+4', action: () => terminal.focusPane('4') },
-    { id: 'focus-5', label: 'Focus Investigator (Pane 5)', icon: '5️⃣', category: 'Navigate', shortcut: 'Alt+5', action: () => terminal.focusPane('5') },
+    { id: 'focus-2', label: 'Focus Infra (Pane 2)', icon: '2️⃣', category: 'Navigate', shortcut: 'Alt+2', action: () => terminal.focusPane('2') },
+    { id: 'focus-3', label: 'Focus Frontend (Pane 3)', icon: '3️⃣', category: 'Navigate', shortcut: 'Alt+3', action: () => terminal.focusPane('3') },
+    { id: 'focus-4', label: 'Focus Backend (Pane 4)', icon: '4️⃣', category: 'Navigate', shortcut: 'Alt+4', action: () => terminal.focusPane('4') },
+    { id: 'focus-5', label: 'Focus Analyst (Pane 5)', icon: '5️⃣', category: 'Navigate', shortcut: 'Alt+5', action: () => terminal.focusPane('5') },
     { id: 'focus-6', label: 'Focus Reviewer (Pane 6)', icon: '6️⃣', category: 'Navigate', shortcut: 'Alt+6', action: () => terminal.focusPane('6') },
 
     // Panels

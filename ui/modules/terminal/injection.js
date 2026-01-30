@@ -402,8 +402,8 @@ function createInjectionController(options = {}) {
         log.error(`doSendToPane ${id}`, 'Codex exec failed:', err);
       });
       updatePaneStatus(id, 'Working');
-      lastTypedTime[paneId] = Date.now();
-      lastOutputTime[paneId] = Date.now();
+      lastTypedTime[id] = Date.now();
+      lastOutputTime[id] = Date.now();
       finishWithClear({ success: true });
       return;
     }
@@ -538,7 +538,7 @@ function createInjectionController(options = {}) {
           markPotentiallyStuck(id); // Register for sweeper retry
         }
 
-        lastTypedTime[paneId] = Date.now();
+        lastTypedTime[id] = Date.now();
         const resultPayload = submitOk
           ? { success: true }
           // Enter was sent, but verification failed (no output/prompt yet) - treat as unverified success
@@ -548,7 +548,7 @@ function createInjectionController(options = {}) {
     } else {
       // No Enter needed, just restore focus
       restoreSavedFocus();
-      lastTypedTime[paneId] = Date.now();
+      lastTypedTime[id] = Date.now();
       finishWithClear({ success: true });
     }
   }

@@ -21,14 +21,14 @@ const log = require('./logger');
 // Pane ID to role mapping (6-pane architecture)
 const PANE_ROLES = {
   '1': 'Architect',
-  '2': 'Orchestrator',
-  '3': 'Implementer A',
-  '4': 'Implementer B',
-  '5': 'Investigator',
+  '2': 'Infra',
+  '3': 'Frontend',
+  '4': 'Backend',
+  '5': 'Analyst',
   '6': 'Reviewer',
 };
 
-// Reverse mapping - role to pane ID (supports multiple name variations)
+// Reverse mapping - role to pane ID (supports multiple name variations including legacy)
 const ROLE_TO_PANE = {
   'lead': '1',
   'Lead': '1',
@@ -37,10 +37,18 @@ const ROLE_TO_PANE = {
   'Architect': '1',
   'ARCHITECT': '1',
   '1': '1',
+  // Pane 2: Infra (legacy: Orchestrator)
+  'infra': '2',
+  'Infra': '2',
+  'INFRA': '2',
   'orchestrator': '2',
   'Orchestrator': '2',
   'ORCHESTRATOR': '2',
   '2': '2',
+  // Pane 3: Frontend (legacy: Worker A, Implementer A)
+  'frontend': '3',
+  'Frontend': '3',
+  'FRONTEND': '3',
   'worker-a': '3',
   'Worker A': '3',
   'WORKER-A': '3',
@@ -49,6 +57,10 @@ const ROLE_TO_PANE = {
   'Implementer A': '3',
   'IMPLEMENTER-A': '3',
   '3': '3',
+  // Pane 4: Backend (legacy: Worker B, Implementer B)
+  'backend': '4',
+  'Backend': '4',
+  'BACKEND': '4',
   'worker-b': '4',
   'Worker B': '4',
   'WORKER-B': '4',
@@ -57,6 +69,10 @@ const ROLE_TO_PANE = {
   'Implementer B': '4',
   'IMPLEMENTER-B': '4',
   '4': '4',
+  // Pane 5: Analyst (legacy: Investigator)
+  'analyst': '5',
+  'Analyst': '5',
+  'ANALYST': '5',
   'investigator': '5',
   'Investigator': '5',
   'INVESTIGATOR': '5',
@@ -81,10 +97,10 @@ class SDKBridge extends EventEmitter {
     // Track 6 independent sessions
     this.sessions = {
       '1': { id: null, role: 'Architect', status: 'idle' },
-      '2': { id: null, role: 'Orchestrator', status: 'idle' },
-      '3': { id: null, role: 'Implementer A', status: 'idle' },
-      '4': { id: null, role: 'Implementer B', status: 'idle' },
-      '5': { id: null, role: 'Investigator', status: 'idle' },
+      '2': { id: null, role: 'Infra', status: 'idle' },
+      '3': { id: null, role: 'Frontend', status: 'idle' },
+      '4': { id: null, role: 'Backend', status: 'idle' },
+      '5': { id: null, role: 'Analyst', status: 'idle' },
       '6': { id: null, role: 'Reviewer', status: 'idle' },
     };
 

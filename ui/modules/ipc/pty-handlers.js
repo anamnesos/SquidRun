@@ -7,7 +7,10 @@
 
 const log = require('../logger');
 
-function registerPtyHandlers(ctx, deps) {
+function registerPtyHandlers(ctx, deps = {}) {
+  if (!ctx || !ctx.ipcMain) {
+    throw new Error('registerPtyHandlers requires ctx.ipcMain');
+  }
   const { ipcMain, INSTANCE_DIRS } = ctx;
   const { broadcastClaudeState, recordSessionStart } = deps;
   const getRecoveryManager = () => deps?.recoveryManager || ctx.recoveryManager;

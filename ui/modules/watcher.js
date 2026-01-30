@@ -58,7 +58,7 @@ const States = {
   PAUSED: 'paused',
 };
 
-// Active agents per state (pane IDs: 1=Architect, 2=Orchestrator, 3=Implementer A, 4=Implementer B, 5=Investigator, 6=Reviewer)
+// Active agents per state (pane IDs: 1=Architect, 2=Infra, 3=Frontend, 4=Backend, 5=Analyst, 6=Reviewer)
 const ACTIVE_AGENTS = {
   [States.IDLE]: [],
   [States.PROJECT_SELECTED]: ['1', '2'],
@@ -106,12 +106,12 @@ function parseWorkerAssignments() {
     if (!fs.existsSync(SHARED_CONTEXT_PATH)) return {};
     const c = fs.readFileSync(SHARED_CONTEXT_PATH, 'utf-8');
     const a = {};
-    const wA = c.match(/### (Worker A|Implementer A)[\s\S]*?(?=###|$)/i);
-    const wB = c.match(/### (Worker B|Implementer B)[\s\S]*?(?=###|$)/i);
-    const inv = c.match(/### Investigator[\s\S]*?(?=###|$)/i);
-    if (wA) a['Implementer A'] = extractFilePaths(wA[0]);
-    if (wB) a['Implementer B'] = extractFilePaths(wB[0]);
-    if (inv) a['Investigator'] = extractFilePaths(inv[0]);
+    const wA = c.match(/### (Worker A|Implementer A|Frontend)[\s\S]*?(?=###|$)/i);
+    const wB = c.match(/### (Worker B|Implementer B|Backend)[\s\S]*?(?=###|$)/i);
+    const inv = c.match(/### (Investigator|Analyst)[\s\S]*?(?=###|$)/i);
+    if (wA) a['Frontend'] = extractFilePaths(wA[0]);
+    if (wB) a['Backend'] = extractFilePaths(wB[0]);
+    if (inv) a['Analyst'] = extractFilePaths(inv[0]);
     return a;
   } catch (e) { return {}; }
 }

@@ -97,10 +97,10 @@ function getMCPHealth() {
 function registerAgent(sessionId, paneId) {
   const roles = {
     '1': 'Architect',
-    '2': 'Orchestrator',
-    '3': 'Implementer A',
-    '4': 'Implementer B',
-    '5': 'Investigator',
+    '2': 'Infra',
+    '3': 'Frontend',
+    '4': 'Backend',
+    '5': 'Analyst',
     '6': 'Reviewer'
   };
 
@@ -213,10 +213,10 @@ function mcpSendMessage(sessionId, toPaneId, content, type = 'direct') {
     logFallback('send_message', err.message);
     const fromRole = {
       '1': 'Architect',
-      '2': 'Orchestrator',
-      '3': 'Implementer A',
-      '4': 'Implementer B',
-      '5': 'Investigator',
+      '2': 'Infra',
+      '3': 'Frontend',
+      '4': 'Backend',
+      '5': 'Analyst',
       '6': 'Reviewer'
     }[fromPaneId];
     const fallbackMsg = `[MSG from ${fromRole}]: ${content}`;
@@ -426,7 +426,7 @@ function getMCPToolDefinitions() {
       inputSchema: {
         type: 'object',
         properties: {
-          paneId: { type: 'string', description: 'Agent pane ID (1=Architect, 2=Orchestrator, 3=Implementer A, 4=Implementer B, 5=Investigator, 6=Reviewer)' },
+          paneId: { type: 'string', description: 'Agent pane ID (1=Architect, 2=Infra, 3=Frontend, 4=Backend, 5=Analyst, 6=Reviewer)' },
         },
         required: ['paneId'],
       },
