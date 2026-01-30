@@ -1,5 +1,5 @@
 /**
- * SDK Bridge V2 - Multi-Session Support
+ * SDK Bridge - Multi-Session Support
  *
  * Manages 6 independent SDK sessions (one per pane/agent).
  * Each agent has its own full context window - NOT subagents.
@@ -295,7 +295,7 @@ class SDKBridge extends EventEmitter {
   }
 
   /**
-   * V2: Send message to specific pane/agent
+   * Send message to specific pane/agent
    * @param {string} paneId - Target pane ('1', '2', '3', '4')
    * @param {string} message - User message
    */
@@ -326,7 +326,7 @@ class SDKBridge extends EventEmitter {
   }
 
   /**
-   * V2: Subscribe to responses from a pane
+   * Subscribe to responses from a pane
    * @param {string} paneId - Pane to subscribe to
    */
   subscribe(paneId) {
@@ -337,7 +337,7 @@ class SDKBridge extends EventEmitter {
   }
 
   /**
-   * V2: Unsubscribe from a pane's responses
+   * Unsubscribe from a pane's responses
    * @param {string} paneId - Pane to unsubscribe from
    */
   unsubscribe(paneId) {
@@ -348,7 +348,7 @@ class SDKBridge extends EventEmitter {
   }
 
   /**
-   * V2: Get all session IDs for persistence
+   * Get all session IDs for persistence
    */
   getSessionIds() {
     const ids = {};
@@ -363,7 +363,7 @@ class SDKBridge extends EventEmitter {
   }
 
   /**
-   * V2: Initialize all 6 agent sessions
+   * Initialize all 6 agent sessions
    * Note: Python auto-starts all sessions in start_all() on process launch.
    * No init-sessions command needed - just start the process.
    * @param {object} options - { workspace: string, resumeIds: { paneId: sessionId } }
@@ -633,7 +633,7 @@ class SDKBridge extends EventEmitter {
   }
 
   /**
-   * V2: Stop all sessions gracefully
+   * Stop all sessions gracefully
    * Captures session IDs before stopping for persistence
    */
   async stopSessions() {
@@ -717,7 +717,7 @@ class SDKBridge extends EventEmitter {
   }
 
   /**
-   * V2: Get status of a specific pane
+   * Get status of a specific pane
    */
   getPaneStatus(paneId) {
     const normalizedPaneId = ROLE_TO_PANE[paneId] || paneId;
@@ -725,7 +725,7 @@ class SDKBridge extends EventEmitter {
   }
 
   /**
-   * V2: Broadcast message to all panes (TRUE PARALLELISM via Python asyncio.gather)
+   * Broadcast message to all panes (TRUE PARALLELISM via Python asyncio.gather)
    * @param {string} message - Message to broadcast
    * @param {string[]} exclude - Pane IDs to exclude (optional)
    */
@@ -739,7 +739,7 @@ class SDKBridge extends EventEmitter {
   }
 
   /**
-   * V2: Interrupt a specific agent
+   * Interrupt a specific agent
    */
   interrupt(paneId) {
     const normalizedPaneId = ROLE_TO_PANE[paneId] || paneId;

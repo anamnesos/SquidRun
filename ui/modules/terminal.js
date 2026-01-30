@@ -37,11 +37,11 @@ const terminals = new Map();
 const fitAddons = new Map();
 let focusedPane = '1';
 
-// FX4-v2: Cross-pane Enter debounce tracking
+// Cross-pane Enter debounce tracking
 // Prevents ghost text submission when Enter hits multiple panes within 100ms
 const lastEnterTime = {};
 
-// FX4-v3: Track actual user typing per pane
+// Track actual user typing per pane
 // Only allow Enter if user typed something in last 2 seconds
 const lastTypedTime = {};
 
@@ -79,7 +79,7 @@ let injectionInFlight = false;
 // Updated by focusin listener on UI inputs; doSendToPane restores to this.
 let lastUserUIFocus = null;
 
-// Focus-steal fix: Track when user last typed in a UI input (not xterm).
+// Track when user last typed in a UI input (not xterm).
 // doSendToPane defers injection while user is actively typing.
 let lastUserUIKeypressTime = 0;
 const TYPING_GUARD_MS = 300; // Defer injection if user typed within this window
@@ -95,7 +95,7 @@ const QUEUE_RETRY_MS = 200;      // Check queue every 200ms
 const BROADCAST_STAGGER_MS = 100; // Delay between panes in broadcast
 const INJECTION_LOCK_TIMEOUT_MS = 1000; // Safety release if callbacks missed
 
-// Adaptive Enter delay constants (fixes race condition where Enter fires before text appears)
+// Adaptive Enter delay constants (reduce Enter-before-text race)
 const ENTER_DELAY_IDLE_MS = 50;       // Pane idle (no output > 500ms): fast Enter
 const ENTER_DELAY_ACTIVE_MS = 150;    // Pane active (output in last 500ms): medium delay
 const ENTER_DELAY_BUSY_MS = 300;      // Pane busy (output in last 100ms): longer delay
@@ -469,7 +469,7 @@ async function sendEnterToPane(paneId) {
   const terminal = terminals.get(paneId);
 
   // NOTE: Terminal.input('\r') does NOT work for Claude's ink TUI
-  // It routes through onData → pty.write, same as direct PTY '\r' (proven no-op in Fix R)
+  // It routes through onData → pty.write, same as direct PTY '\r' (no-op for ink TUI)
   // Terminal.input succeeds but Claude ignores it - messages sit until nudged
   // MUST use sendTrustedEnter which sends native Electron keyboard events
   //
@@ -477,7 +477,7 @@ async function sendEnterToPane(paneId) {
   // (Codex panes use codex-exec path, not this function)
 
   // Always use sendTrustedEnter for Claude panes (requires focus)
-  // ROOT CAUSE FIX: sendInputEvent produces isTrusted=false, blocked by key handler
+  // sendInputEvent can produce isTrusted=false, which the key handler blocks unless bypassed
   // Set bypass flag so attachCustomKeyEventHandler allows the Enter through
   if (terminal) {
     terminal._hivemindBypass = true;
@@ -578,9 +578,25 @@ async function verifyAndRetryEnter(paneId, textarea, retriesLeft = MAX_ENTER_RET
       return true;
     }
 
-    // Pane is idle but no prompt detected - ambiguous, treat as success if output occurred
-    log.info(`verifyAndRetryEnter ${paneId}`, 'Enter likely succeeded (output occurred, now idle)');
-    return true;
+    // Pane is idle but no prompt detected - DON'T assume success
+    // This is likely a false positive: Claude was already outputting, our Enter was ignored
+    if (retriesLeft > 0) {
+      log.info(`verifyAndRetryEnter ${paneId}`, 'No prompt detected after output, retrying Enter');
+      // Re-query textarea and retry
+      const currentPane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+      const currentTextarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
+      if (currentTextarea) {
+        const focusOk = await focusWithRetry(currentTextarea);
+        if (focusOk) {
+          await sendEnterToPane(paneId);
+          return verifyAndRetryEnter(paneId, currentTextarea, retriesLeft - 1);
+        }
+      }
+      log.warn(`verifyAndRetryEnter ${paneId}`, 'Could not retry Enter (focus/textarea issue)');
+    }
+    log.warn(`verifyAndRetryEnter ${paneId}`, 'Enter unverified (no prompt detected after output)');
+    markPotentiallyStuck(paneId);
+    return false;
   }
 
   // No output activity - Enter may have been ignored
@@ -798,7 +814,7 @@ async function initTerminal(paneId) {
   // Critical: block keyboard input when user is typing in a UI input/textarea
   // BUT allow xterm's own internal textarea (xterm-helper-textarea) to work normally
   terminal.attachCustomKeyEventHandler((event) => {
-    // FX4-v3: Track actual user typing (single chars, no modifiers)
+    // Track actual user typing (single chars, no modifiers)
     if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
       lastTypedTime[paneId] = Date.now();
     }
@@ -921,7 +937,7 @@ async function reattachTerminal(paneId, scrollback) {
   // Critical: block keyboard input when user is typing in a UI input/textarea
   // BUT allow xterm's own internal textarea (xterm-helper-textarea) to work normally
   terminal.attachCustomKeyEventHandler((event) => {
-    // FX4-v3: Track actual user typing (single chars, no modifiers)
+    // Track actual user typing (single chars, no modifiers)
     if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
       lastTypedTime[paneId] = Date.now();
     }
@@ -1062,7 +1078,9 @@ async function doSendToPane(paneId, message, onComplete) {
     }
   };
   const safetyTimer = setTimeout(() => {
-    finish({ success: false, reason: 'timeout' });
+    // Timeout doesn't mean failure - message may still be delivered
+    // Return success:true so delivery ack is sent, but mark as unverified
+    finish({ success: true, verified: false, reason: 'timeout' });
   }, INJECTION_LOCK_TIMEOUT_MS);
   const finishWithClear = (result) => {
     clearTimeout(safetyTimer);
@@ -1093,7 +1111,7 @@ async function doSendToPane(paneId, message, onComplete) {
   }
 
   // CLAUDE PATH: Hybrid approach (PTY write for text + DOM keyboard for Enter)
-  // PTY \r does NOT auto-submit in Claude Code's ink TUI (proven in Fix R)
+  // PTY \r does NOT auto-submit in Claude Code's ink TUI (PTY newline ignored)
   // sendTrustedEnter() sends native keyboard events via Electron which WORKS
   const terminal = terminals.get(id);
   const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
@@ -1154,6 +1172,10 @@ async function doSendToPane(paneId, message, onComplete) {
     log.info(`doSendToPane ${id}`, `Using adaptive Enter delay: ${enterDelay}ms`);
 
     setTimeout(async () => {
+      // Clear safety timer immediately - we've reached the callback, injection is proceeding
+      // (safetyTimer at 1000ms can fire during enterDelay wait, causing false abort)
+      clearTimeout(safetyTimer);
+
       // Re-query textarea in case DOM changed during delay
       const currentPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
       textarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
@@ -1164,6 +1186,23 @@ async function doSendToPane(paneId, message, onComplete) {
         restoreSavedFocus();
         finishWithClear({ success: false, reason: 'textarea_disappeared' });
         return;
+      }
+
+      // PRE-FLIGHT IDLE CHECK: Don't send Enter while Claude is outputting
+      // If we send Enter mid-output, it gets ignored and verification sees false positive
+      // (lastOutputTime comparison doesn't work if Claude was already outputting)
+      if (!isIdle(id)) {
+        log.info(`doSendToPane ${id}`, 'Claude pane: waiting for idle before Enter');
+        const idleWaitStart = Date.now();
+        const maxIdleWait = 5000; // 5s max wait for idle
+        while (!isIdle(id) && (Date.now() - idleWaitStart) < maxIdleWait) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        if (!isIdle(id)) {
+          log.warn(`doSendToPane ${id}`, 'Claude pane: still not idle after 5s, proceeding anyway');
+        } else {
+          log.info(`doSendToPane ${id}`, `Claude pane: now idle after ${Date.now() - idleWaitStart}ms`);
+        }
       }
 
       // Ensure focus for sendTrustedEnter (Terminal.input disabled for Claude panes)
@@ -1182,7 +1221,7 @@ async function doSendToPane(paneId, message, onComplete) {
       const enterResult = await sendEnterToPane(id);
 
       // IMMEDIATELY restore focus after Enter sent - don't block user input during verification
-      // (Fix for focus-steal blocking command bar during trigger injections)
+      // (Restore focus to avoid blocking command bar during trigger injections)
       restoreSavedFocus();
 
       if (!enterResult.success) {
@@ -1302,7 +1341,7 @@ async function spawnClaude(paneId) {
       } catch (err) {
         log.error(`spawnClaude ${paneId}`, 'PTY write command failed:', err);
       }
-      // FX4-v5: Mark as typed so Enter isn't blocked
+      // Mark as typed so Enter isn't blocked
       lastTypedTime[paneId] = Date.now();
       // Small delay before sending Enter
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -1475,7 +1514,7 @@ async function unstickEscalation(paneId) {
 // Nudge a stuck pane - sends Enter to unstick Claude Code
 // Uses Enter only (ESC sequences were interrupting active agents)
 function nudgePane(paneId) {
-  // FX4-v5: Mark as typed so our own Enter isn't blocked
+  // Mark as typed so our own Enter isn't blocked
   lastTypedTime[paneId] = Date.now();
   // Send Enter to prompt for new input
   window.hivemind.pty.write(String(paneId), '\r').catch(err => {
@@ -1766,8 +1805,8 @@ module.exports = {
   getReconnectedToExisting,
   updatePaneStatus,
   updateConnectionStatus,
-  lastEnterTime,  // FX4-v2: Exported for daemon coordination
-  lastTypedTime,  // FX4-v3: Track typing for Enter blocking
+  lastEnterTime,  // Exported for daemon coordination
+  lastTypedTime,  // Track typing for Enter blocking
   lastOutputTime, // Track output for idle detection
   isIdle,         // Check if pane is idle
   registerCodexPane,   // CLI Identity: mark pane as Codex
