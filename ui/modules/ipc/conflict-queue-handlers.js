@@ -14,16 +14,21 @@ function registerConflictQueueHandlers(ctx) {
     error: `${name} not available`,
   });
 
-  const getWatcher = () => {
+  const getWatcher = (required = []) => {
     const watcher = ctx.watcher;
     if (!watcher) {
       return { ok: false, error: 'state watcher' };
+    }
+    for (const fn of required) {
+      if (typeof watcher[fn] !== 'function') {
+        return { ok: false, error: `state watcher.${fn}` };
+      }
     }
     return { ok: true, watcher };
   };
 
   ipcMain.handle('request-file-access', (event, filePath, paneId, operation) => {
-    const { ok, watcher, error } = getWatcher();
+    const { ok, watcher, error } = getWatcher(['requestFileAccess']);
     if (!ok) {
       return missingDependency(error);
     }
@@ -31,7 +36,7 @@ function registerConflictQueueHandlers(ctx) {
   });
 
   ipcMain.handle('release-file-access', (event, filePath, paneId) => {
-    const { ok, watcher, error } = getWatcher();
+    const { ok, watcher, error } = getWatcher(['releaseFileAccess']);
     if (!ok) {
       return missingDependency(error);
     }
@@ -39,7 +44,7 @@ function registerConflictQueueHandlers(ctx) {
   });
 
   ipcMain.handle('get-conflict-queue-status', () => {
-    const { ok, watcher, error } = getWatcher();
+    const { ok, watcher, error } = getWatcher(['getConflictQueueStatus']);
     if (!ok) {
       return missingDependency(error);
     }
@@ -47,7 +52,7 @@ function registerConflictQueueHandlers(ctx) {
   });
 
   ipcMain.handle('clear-all-locks', () => {
-    const { ok, watcher, error } = getWatcher();
+    const { ok, watcher, error } = getWatcher(['clearAllLocks']);
     if (!ok) {
       return missingDependency(error);
     }

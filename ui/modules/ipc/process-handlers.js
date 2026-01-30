@@ -5,25 +5,12 @@
 
 const os = require('os');
 const { spawn } = require('child_process');
+const { createBackgroundProcessController } = require('./background-processes');
 
 function registerProcessHandlers(ctx) {
   const { ipcMain } = ctx;
 
-  function broadcastProcessList() {
-    if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
-      const processes = [];
-      for (const [id, { info }] of ctx.backgroundProcesses) {
-        processes.push({
-          id: info.id,
-          command: info.command,
-          args: info.args,
-          pid: info.pid,
-          status: info.status,
-        });
-      }
-      ctx.mainWindow.webContents.send('processes-changed', processes);
-    }
-  }
+  const { broadcastProcessList } = createBackgroundProcessController(ctx);
 
   ipcMain.handle('spawn-process', (event, command, args = [], cwd = null) => {
     try {
