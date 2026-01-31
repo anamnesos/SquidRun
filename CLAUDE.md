@@ -128,10 +128,13 @@ If running in SDK mode (not PTY terminals):
 ### Slim Files (READ THESE FIRST)
 | Doc | Purpose | Tokens |
 |-----|---------|--------|
-| `workspace/current_state.md` | Current session status | ~200 |
+| `workspace/session-handoff.json` | **Structured handoff** - tasks, team, blockers | ~150 |
+| `workspace/current_state.md` | Human-readable session status | ~200 |
 | `workspace/build/status.md` | Recent task completions | ~300 |
 | `workspace/build/blockers.md` | Active blockers only | ~150 |
 | `workspace/build/errors.md` | Active errors only | ~100 |
+
+**Prefer session-handoff.json** for programmatic parsing. Use current_state.md for human context.
 
 ### Full Files (READ ONLY WHEN NEEDED)
 | Doc | Purpose |
