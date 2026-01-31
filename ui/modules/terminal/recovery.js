@@ -5,7 +5,7 @@
 
 const { ipcRenderer } = require('electron');
 const log = require('../logger');
-const BYPASS_CLEAR_DELAY_MS = 75;
+const { BYPASS_CLEAR_DELAY_MS } = require('../constants');
 
 function createRecoveryController(options = {}) {
   const {
