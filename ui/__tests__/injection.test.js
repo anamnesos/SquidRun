@@ -33,6 +33,7 @@ describe('Terminal Injection', () => {
     ABSOLUTE_MAX_WAIT_MS: 60000,
     QUEUE_RETRY_MS: 100,
     INJECTION_LOCK_TIMEOUT_MS: 1000,
+    BYPASS_CLEAR_DELAY_MS: 75,
   };
 
   // Mock objects
@@ -228,8 +229,8 @@ describe('Terminal Injection', () => {
 
       await controller.sendEnterToPane('1');
 
-      // Advance past setTimeout(0)
-      jest.advanceTimersByTime(1);
+      // Advance past bypass clear delay
+      jest.advanceTimersByTime(DEFAULT_CONSTANTS.BYPASS_CLEAR_DELAY_MS + 5);
 
       expect(mockTerminal._hivemindBypass).toBe(false);
     });

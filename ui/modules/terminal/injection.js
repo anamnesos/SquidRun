@@ -40,6 +40,7 @@ function createInjectionController(options = {}) {
     ABSOLUTE_MAX_WAIT_MS,
     QUEUE_RETRY_MS,
     INJECTION_LOCK_TIMEOUT_MS,
+    BYPASS_CLEAR_DELAY_MS = 75,
   } = constants;
 
   /**
@@ -127,7 +128,7 @@ function createInjectionController(options = {}) {
         setTimeout(() => {
           terminal._hivemindBypass = false;
           log.debug(`sendEnterToPane ${paneId}`, 'Cleared _hivemindBypass');
-        }, 0);
+        }, BYPASS_CLEAR_DELAY_MS);
       }
     }
   }
@@ -434,6 +435,13 @@ function createInjectionController(options = {}) {
         }
       }
     };
+    const scheduleFocusRestore = () => {
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => restoreSavedFocus());
+      } else {
+        setTimeout(() => restoreSavedFocus(), 0);
+      }
+    };
 
     // Step 1: Focus terminal for sendTrustedEnter (required for Enter to target correct pane)
     // Note: Terminal.input() was disabled for Claude panes - it doesn't work with ink TUI
@@ -519,7 +527,7 @@ function createInjectionController(options = {}) {
 
         // IMMEDIATELY restore focus after Enter sent - don't block user input during verification
         // (Restore focus to avoid blocking command bar during trigger injections)
-        restoreSavedFocus();
+        scheduleFocusRestore();
 
         if (!enterResult.success) {
           log.error(`doSendToPane ${id}`, 'Enter send failed');
