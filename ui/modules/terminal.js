@@ -874,7 +874,7 @@ async function spawnClaude(paneId) {
 
   const terminal = terminals.get(paneId);
   if (terminal) {
-    updatePaneStatus(paneId, 'Starting agent...');
+    updatePaneStatus(paneId, 'Starting...');
     let result;
     try {
       result = await window.hivemind.claude.spawn(paneId);
@@ -927,7 +927,7 @@ async function spawnClaude(paneId) {
         log.info('spawnClaude', `Identity injected for ${role} (pane ${paneId})`);
       }, isCodex ? 5000 : 4000);
     }
-    updatePaneStatus(paneId, 'Agent running');
+    updatePaneStatus(paneId, 'Working');
   }
 }
 

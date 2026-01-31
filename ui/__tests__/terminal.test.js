@@ -632,7 +632,7 @@ describe('terminal.js module', () => {
 
       expect(mockHivemind.claude.spawn).toHaveBeenCalledWith('1');
       expect(mockHivemind.pty.write).toHaveBeenCalledWith('1', 'claude');
-      expect(statusCb).toHaveBeenCalledWith('1', 'Starting agent...');
+      expect(statusCb).toHaveBeenCalledWith('1', 'Starting...');
       jest.useFakeTimers();
     });
 
@@ -915,8 +915,8 @@ describe('terminal.js module', () => {
       await terminal.spawnClaude('1');
 
       // Should still update status but not write command
-      expect(statusCb).toHaveBeenCalledWith('1', 'Starting agent...');
-      expect(statusCb).toHaveBeenCalledWith('1', 'Agent running');
+      expect(statusCb).toHaveBeenCalledWith('1', 'Starting...');
+      expect(statusCb).toHaveBeenCalledWith('1', 'Working');
       jest.useFakeTimers();
     });
 
