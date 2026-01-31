@@ -49,7 +49,6 @@ const claudeRunning = new Map([
 
 // Track last CLI identity per pane to avoid duplicate UI updates
 const paneCliIdentity = new Map();
-const lastInterruptAt = new Map();
 
 // Register IPC forwarder once
 let cliIdentityForwarderRegistered = false;
@@ -643,7 +642,6 @@ async function initDaemonClient() {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(`pty-data-${paneId}`, data);
     }
-    lastInterruptAt.delete(paneId);
 
     // Log significant terminal output (errors, completions)
     if (data.includes('Error') || data.includes('error:') || data.includes('FAILED')) {
@@ -758,49 +756,34 @@ async function initDaemonClient() {
     }
   });
 
+  // Consolidated stuck detection (daemon is source of truth)
+  daemonClient.on('agent-stuck-detected', (payload) => {
+    const paneId = payload?.paneId;
+    if (!paneId) return;
+    const idleTime = payload?.idleMs || 0;
+    recoveryManager?.handleStuck(paneId, idleTime, 'daemon-auto-nudge');
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('agent-stuck-detected', {
+        paneId,
+        idleTime,
+        message: payload?.message || `Agent in pane ${paneId} appears stuck.`,
+      });
+    }
+
+    if (externalNotifier && typeof externalNotifier.notify === 'function') {
+      externalNotifier.notify({
+        category: 'alert',
+        title: `Agent stuck (pane ${paneId})`,
+        message: payload?.message || `Idle for ${Math.round(idleTime / 1000)}s.`,
+        meta: { paneId },
+      }).catch(() => {});
+    }
+  });
+
   const connected = await daemonClient.connect();
   if (connected) {
     log.info('Main', 'Successfully connected to terminal daemon');
-
-    // Auto-unstick timer - check for stuck terminals every 30 seconds
-    // Auto-send Ctrl+C after 120s of no output.
-    if (currentSettings.autoNudge) {
-      setInterval(() => {
-        const now = Date.now();
-        const threshold = currentSettings.stuckThreshold || 120000;
-
-        for (const [paneId, status] of claudeRunning) {
-          if (status === 'running') {
-            const lastActivity = daemonClient.getLastActivity(paneId);
-            if (lastActivity && (now - lastActivity) > threshold) {
-              const idleTime = now - lastActivity;
-              const lastInterrupt = lastInterruptAt.get(paneId) || 0;
-              if (now - lastInterrupt >= threshold) {
-                log.warn('Auto-Unstick', `Pane ${paneId} stuck for ${Math.round(idleTime / 1000)}s - sent Ctrl+C`);
-                daemonClient.write(paneId, '\x03');
-                lastInterruptAt.set(paneId, now);
-                recoveryManager?.handleStuck(paneId, idleTime, 'auto-nudge');
-              }
-              if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('agent-stuck-detected', {
-                  paneId,
-                  idleTime,
-                  message: `Agent in pane ${paneId} appears stuck. Ctrl+C sent automatically.`
-                });
-              }
-              if (externalNotifier && typeof externalNotifier.notify === 'function') {
-                externalNotifier.notify({
-                  category: 'alert',
-                  title: `Agent stuck (pane ${paneId})`,
-                  message: `Idle for ${Math.round(idleTime / 1000)}s. Auto-interrupt sent.`,
-                  meta: { paneId },
-                }).catch(() => {});
-              }
-            }
-          }
-        }
-      }, 30000); // Check every 30 seconds
-    }
   } else {
     log.error('Main', 'Failed to connect to terminal daemon');
   }

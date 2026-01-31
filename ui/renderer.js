@@ -1905,14 +1905,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   tabs.setupDebugTab();         // Task #21: Agent debugging/replay
   tabs.setupReviewTab();        // Task #18: AI-powered code review
   tabs.setupDocsTab();          // Task #23: Automated documentation generation
-  tabs.setupCostsTab();         // Task #24: Cost optimization engine
-  tabs.setupSecurityTab();      // Task #25: Security hardening
-  tabs.setupDashboardTab();     // Task #30: Multi-project dashboard
-  tabs.setupScaffoldTab();      // Task #12: Project scaffolding
-  tabs.setupDeployTab();        // Task #15: Automated deployment pipeline
-  tabs.setupCollabTab();        // Task #11: Real-time collaboration
-  tabs.setupMobileTab();        // Task #17: Mobile companion app
-
   // Setup daemon listeners (for terminal reconnection)
   // Pass markTerminalsReady callback to fix auto-spawn race condition
   daemonHandlers.setupDaemonListeners(

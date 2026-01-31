@@ -12,6 +12,11 @@ out/
 Thumbs.db
 desktop.ini
 
+# Python caches
+__pycache__/
+.mypy_cache/
+*.pyc
+
 # IDE
 .vscode/
 .idea/

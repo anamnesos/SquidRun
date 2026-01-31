@@ -1,6 +1,6 @@
 /**
  * Learning Data IPC Handler Tests
- * Target: Full coverage of learning-data-handlers.js
+ * Target: Full coverage of agent-metrics-handlers.js (learning channels)
  */
 
 const {
@@ -24,7 +24,7 @@ jest.mock('../modules/logger', () => ({
 }));
 
 const fs = require('fs');
-const { registerLearningDataHandlers } = require('../modules/ipc/learning-data-handlers');
+const { registerAgentMetricsHandlers } = require('../modules/ipc/agent-metrics-handlers');
 
 describe('Learning Data Handlers', () => {
   let harness;
@@ -47,7 +47,7 @@ describe('Learning Data Handlers', () => {
     // Default: no existing learning file
     fs.existsSync.mockReturnValue(false);
 
-    registerLearningDataHandlers(ctx);
+    registerAgentMetricsHandlers(ctx);
   });
 
   afterEach(() => {
@@ -56,11 +56,11 @@ describe('Learning Data Handlers', () => {
 
   describe('registration', () => {
     test('throws if ctx is missing', () => {
-      expect(() => registerLearningDataHandlers(null)).toThrow('requires ctx.ipcMain');
+      expect(() => registerAgentMetricsHandlers(null)).toThrow('registerAgentMetricsHandlers requires ctx.ipcMain');
     });
 
     test('throws if ipcMain is missing', () => {
-      expect(() => registerLearningDataHandlers({})).toThrow('requires ctx.ipcMain');
+      expect(() => registerAgentMetricsHandlers({})).toThrow('registerAgentMetricsHandlers requires ctx.ipcMain');
     });
   });
 

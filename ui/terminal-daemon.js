@@ -574,6 +574,25 @@ function alertUserAboutAgent(paneId) {
 }
 
 /**
+ * Broadcast per-agent stuck detection to clients
+ * Used to consolidate stuck detection in the daemon
+ */
+function broadcastAgentStuck(stuckInfo, attempt) {
+  const roleName = PANE_ROLES[stuckInfo.paneId] || `Pane ${stuckInfo.paneId}`;
+  broadcast({
+    event: 'agent-stuck-detected',
+    paneId: stuckInfo.paneId,
+    role: roleName,
+    idleMs: stuckInfo.idleTimeMs,
+    idleTimeFormatted: stuckInfo.idleTimeFormatted,
+    attempt,
+    maxAttempts: MAX_AGGRESSIVE_NUDGES,
+    timestamp: new Date().toISOString(),
+    message: `${roleName} idle for ${stuckInfo.idleTimeFormatted}. Auto-nudge attempt ${attempt}/${MAX_AGGRESSIVE_NUDGES}.`,
+  });
+}
+
+/**
  * Main auto-aggressive-nudge logic
  * Called periodically to check for stuck agents and nudge them
  */
@@ -621,6 +640,7 @@ function checkAndNudgeStuckAgents() {
         // Send nudge
         const roleName = PANE_ROLES[paneId] || `Pane ${paneId}`;
         logInfo(`[AutoNudge] ${roleName} stuck for ${stuckInfo.idleTimeFormatted} - nudge attempt ${state.attempts}/${MAX_AGGRESSIVE_NUDGES}`);
+        broadcastAgentStuck(stuckInfo, state.attempts);
         sendAggressiveNudge(paneId);
 
         // Enter recovery mode on first nudge
