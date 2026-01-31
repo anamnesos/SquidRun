@@ -132,10 +132,10 @@ describe('watcher module', () => {
     const sharedContextPath = path.join(tempDir, 'shared_context.md');
 
     fs.writeFileSync(sharedContextPath, [
-      '### Implementer A',
+      '### Frontend',
       '- `ui/modules/foo.js`',
       '',
-      '### Implementer B',
+      '### Backend',
       '- `ui/modules/foo.js`',
     ].join('\n'));
 
@@ -324,10 +324,10 @@ describe('watcher module', () => {
     const sharedContextPath = path.join(tempDir, 'shared_context.md');
 
     fs.writeFileSync(sharedContextPath, [
-      '### Implementer A',
+      '### Frontend',
       '- `ui/modules/bar.js`',
       '',
-      '### Implementer B',
+      '### Backend',
       '- `ui/modules/bar.js`',
     ].join('\n'));
 
