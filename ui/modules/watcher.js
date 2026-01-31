@@ -23,6 +23,7 @@ let messageWatcher = null; // Separate watcher for message queues
 let triggers = null; // Reference to triggers module
 let getSettings = null; // Settings getter for auto-sync control
 let notifyExternal = null; // External notification hook
+const customWatches = new Map(); // File-specific callbacks
 
 const SYNC_FILES = new Set([
   'shared_context.md',
@@ -395,6 +396,16 @@ function handleFileChangeCore(filePath) {
 
   log.info('Watcher', `File changed: ${filename} (current state: ${currentState})`);
 
+  const normalizedPath = path.resolve(filePath);
+  const customHandler = customWatches.get(normalizedPath);
+  if (customHandler) {
+    try {
+      customHandler(filePath);
+    } catch (err) {
+      log.error('Watcher', `Custom watch failed for ${normalizedPath}`, err);
+    }
+  }
+
   if (SYNC_FILES.has(filename)) {
     notifySyncFileChanged(filename);
   }
@@ -653,6 +664,21 @@ function init(window, triggersModule, settingsGetter = null) {
 
 function setExternalNotifier(fn) {
   notifyExternal = typeof fn === 'function' ? fn : null;
+}
+
+function addWatch(filePath, onChange) {
+  if (!filePath || typeof onChange !== 'function') {
+    return false;
+  }
+  customWatches.set(path.resolve(filePath), onChange);
+  return true;
+}
+
+function removeWatch(filePath) {
+  if (!filePath) {
+    return false;
+  }
+  return customWatches.delete(path.resolve(filePath));
 }
 
 // ============================================================
@@ -1010,6 +1036,8 @@ module.exports = {
   startMessageWatcher,
   stopMessageWatcher,
   handleFileChange: handleFileChangeDebounced,  // Export debounced version for external callers
+  addWatch,
+  removeWatch,
 
   // UX-9: Fast trigger watcher
   startTriggerWatcher,
