@@ -1699,6 +1699,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  ipcRenderer.on('unstick-pane', (event, data) => {
+    const paneId = data?.paneId;
+    if (paneId) {
+      terminal.sendUnstick(String(paneId));
+    }
+  });
+
   ipcRenderer.on('restart-pane', (event, data) => {
     const paneId = data?.paneId;
     if (paneId) {

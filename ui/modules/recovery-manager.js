@@ -19,9 +19,47 @@ const DEFAULT_CONFIG = {
   circuitCooldownMs: 5 * 60 * 1000,
   expectedExitTtlMs: 15000,
   resyncDelayMs: 15000,
+  ptyStuckThresholdMs: 15000,
+  ptyStuckCooldownMs: 30000,
 };
 
 const MAX_TASK_CHARS = 4000;
+const TOKEN_REGEX = /(\d+(?:\.\d+)?)\s*([kKmM]?)\s*tokens\b/g;
+const TIMER_REGEX = /(\d{1,4})s\b/g;
+const OSC_REGEX = /\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g;
+const CSI_REGEX = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+
+function stripAnsi(input) {
+  return String(input || '')
+    .replace(OSC_REGEX, '')
+    .replace(CSI_REGEX, '')
+    .replace(/\u001b[\(\)][A-Za-z0-9]/g, '')
+    .replace(/\r/g, '\n');
+}
+
+function parseTokenCount(text) {
+  if (!text) return null;
+  TOKEN_REGEX.lastIndex = 0;
+  const matches = [...text.matchAll(TOKEN_REGEX)];
+  if (!matches.length) return null;
+  const match = matches[matches.length - 1];
+  let value = Number.parseFloat(match[1]);
+  if (Number.isNaN(value)) return null;
+  const suffix = (match[2] || '').toLowerCase();
+  if (suffix === 'k') value *= 1000;
+  if (suffix === 'm') value *= 1000000;
+  return Math.round(value);
+}
+
+function parseTimerSeconds(text) {
+  if (!text) return null;
+  TIMER_REGEX.lastIndex = 0;
+  const matches = [...text.matchAll(TIMER_REGEX)];
+  if (!matches.length) return null;
+  const match = matches[matches.length - 1];
+  const value = Number.parseInt(match[1], 10);
+  return Number.isNaN(value) ? null : value;
+}
 
 const PLAYBOOKS = {
   stuck: {
@@ -63,6 +101,7 @@ function createRecoveryManager(options = {}) {
     isPaneRunning,
     isCodexPane,  // NEW: Check if pane runs Codex CLI
     requestRestart,
+    requestUnstick,
     beforeRestart,
     afterRestart,
     resendTask,
@@ -77,6 +116,7 @@ function createRecoveryManager(options = {}) {
     return {
       ...DEFAULT_CONFIG,
       stuckThresholdMs: settings?.stuckThreshold || DEFAULT_CONFIG.stuckThresholdMs,
+      ptyStuckThresholdMs: settings?.ptyStuckThreshold || DEFAULT_CONFIG.ptyStuckThresholdMs,
     };
   }
 
@@ -105,6 +145,13 @@ function createRecoveryManager(options = {}) {
         pendingRestart: false,
         restartTimer: null,
         confirmTimer: null,
+        ptyTokenCount: null,
+        ptyZeroSince: 0,
+        ptyZeroTimerSeconds: null,
+        ptyLastTimerSeconds: null,
+        ptyLastTimerAt: 0,
+        ptyLastEscAt: 0,
+        ptyStuckActive: false,
       });
     }
     return paneState.get(id);
@@ -255,6 +302,90 @@ function createRecoveryManager(options = {}) {
           scheduleTaskRetry(paneId, 'post-restart');
         }
       }, delay);
+    }
+  }
+
+  function resetPtyZero(state) {
+    state.ptyZeroSince = 0;
+    state.ptyZeroTimerSeconds = null;
+    state.ptyStuckActive = false;
+  }
+
+  function recordPtyOutput(paneId, data) {
+    if (!data) return;
+    const settings = typeof getSettings === 'function' ? getSettings() : {};
+    if (settings?.sdkMode) return;
+    if (settings?.ptyStuckDetection === false) return;
+    if (typeof isCodexPane === 'function' && isCodexPane(paneId)) return;
+
+    const text = stripAnsi(data);
+    if (!text) return;
+
+    const state = getPaneState(paneId);
+    const tokenCount = parseTokenCount(text);
+    const timerSeconds = parseTimerSeconds(text);
+    if (tokenCount === null && timerSeconds === null) return;
+
+    const now = Date.now();
+    if (tokenCount !== null) {
+      state.ptyTokenCount = tokenCount;
+    }
+    if (timerSeconds !== null) {
+      state.ptyLastTimerSeconds = timerSeconds;
+      state.ptyLastTimerAt = now;
+    }
+
+    const effectiveTokens = tokenCount !== null ? tokenCount : state.ptyTokenCount;
+    if (effectiveTokens === null) return;
+
+    if (effectiveTokens > 0) {
+      resetPtyZero(state);
+      return;
+    }
+
+    if (!state.ptyZeroSince) {
+      state.ptyZeroSince = now;
+    }
+
+    if (timerSeconds === null) return;
+
+    if (state.ptyZeroTimerSeconds === null || timerSeconds < state.ptyZeroTimerSeconds) {
+      state.ptyZeroTimerSeconds = timerSeconds;
+      state.ptyZeroSince = now;
+    }
+
+    const config = getConfig();
+    const elapsedSeconds = timerSeconds - state.ptyZeroTimerSeconds;
+    const elapsedMs = elapsedSeconds * 1000;
+
+    if (elapsedMs < config.ptyStuckThresholdMs) return;
+
+    if (now - state.ptyLastEscAt < config.ptyStuckCooldownMs) return;
+
+    state.ptyLastEscAt = now;
+    state.ptyStuckActive = true;
+
+    log.warn(
+      'Recovery',
+      `PTY stuck detected for pane ${paneId}: 0 tokens for ${elapsedSeconds}s (timer ${timerSeconds}s)`
+    );
+
+    emitEvent({
+      type: 'pty-stuck',
+      paneId: String(paneId),
+      status: 'detected',
+      message: `PTY stuck detected (0 tokens for ${elapsedSeconds}s)`,
+      tokens: effectiveTokens,
+      timerSeconds,
+      timestamp: new Date().toISOString(),
+    });
+
+    if (typeof requestUnstick === 'function') {
+      requestUnstick(paneId, {
+        reason: 'pty-stuck',
+        tokens: effectiveTokens,
+        timerSeconds,
+      });
     }
   }
 
@@ -536,6 +667,7 @@ function createRecoveryManager(options = {}) {
 
   return {
     recordActivity,
+    recordPtyOutput,
     recordTask,
     handleExit,
     handleStuck,

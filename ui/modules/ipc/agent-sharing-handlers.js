@@ -28,6 +28,8 @@ const AGENT_CONFIG_KEYS = [
   'allowAllPermissions',
   'stuckThreshold',
   'autoNudge',
+  'ptyStuckDetection',
+  'ptyStuckThreshold',
 ];
 
 function registerAgentSharingHandlers(ctx, deps) {
