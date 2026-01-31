@@ -86,6 +86,8 @@ const DEFAULT_SETTINGS = {
   recentProjects: [],  // Recent projects list (max 10)
   stuckThreshold: 120000,  // Auto-interrupt after 120 seconds of no output
   autoNudge: true,  // Enable automatic stuck detection and nudging
+  ptyStuckDetection: true,  // Enable PTY "0 tokens" stuck detection
+  ptyStuckThreshold: 15000, // PTY stuck threshold (ms)
   // Per-pane project assignments
   paneProjects: { '1': null, '2': null, '3': null, '4': null, '5': null, '6': null },
   // Per-pane CLI command (PTY mode)
@@ -297,6 +299,15 @@ function initRecoveryManager() {
     requestRestart: (paneId, info = {}) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('restart-pane', {
+          paneId: String(paneId),
+          source: 'recovery',
+          ...info,
+        });
+      }
+    },
+    requestUnstick: (paneId, info = {}) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('unstick-pane', {
           paneId: String(paneId),
           source: 'recovery',
           ...info,
@@ -636,6 +647,7 @@ async function initDaemonClient() {
   // Set up event handlers for daemon events
   daemonClient.on('data', (paneId, data) => {
     recoveryManager?.recordActivity(paneId);
+    recoveryManager?.recordPtyOutput?.(paneId, data);
     if (pluginManager?.hasHook('daemon:data')) {
       pluginManager.dispatch('daemon:data', { paneId: String(paneId), data }).catch(() => {});
     }
