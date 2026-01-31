@@ -125,16 +125,30 @@ If running in SDK mode (not PTY terminals):
 
 ## Documentation
 
+### Slim Files (READ THESE FIRST)
+| Doc | Purpose | Tokens |
+|-----|---------|--------|
+| `workspace/current_state.md` | Current session status | ~200 |
+| `workspace/build/status.md` | Recent task completions | ~300 |
+| `workspace/build/blockers.md` | Active blockers only | ~150 |
+| `workspace/build/errors.md` | Active errors only | ~100 |
+
+### Full Files (READ ONLY WHEN NEEDED)
 | Doc | Purpose |
 |-----|---------|
 | `docs/claude/REGISTRY.md` | Who's working on what (check/update first) |
 | `SPRINT.md` | Task assignments and details |
-| `workspace/build/status.md` | Task completion tracking |
-| `workspace/build/blockers.md` | Questions and blockers |
+| `workspace/shared_context.md` | Session history and context |
 | `workspace/build/friction.md` | Problems and patterns (LOG FRICTION HERE) |
-| `workspace/build/errors.md` | Active errors - CHECK THIS FIRST if stuck |
-| `workspace/shared_context.md` | Current task context for all agents |
 | `workspace/feedback.md` | Agent feedback and discussions |
+
+### Archives (ONLY FOR HISTORICAL RESEARCH)
+| Archive | Contains |
+|---------|----------|
+| `workspace/build/status-archive.md` | Sessions 1-49 task history |
+| `workspace/build/blockers-archive.md` | Resolved blockers |
+| `workspace/build/errors-archive.md` | Fixed errors |
+| `workspace/shared_context_archive.md` | Sessions 1-48 context |
 
 **Actual Code (READ THIS, NOT docs/):**
 | File | What It Does |
@@ -187,9 +201,10 @@ Tasks are tagged by mode compatibility:
 
 ### Before Starting Work
 1. **Check mode gate** - Is this task appropriate for current mode?
-2. Read `workspace/build/blockers.md` - are there blockers assigned to you?
-3. Read `workspace/build/errors.md` - are there active errors?
-4. Read `workspace/build/status.md` - what have others completed?
+2. Read `workspace/current_state.md` - slim 15-line status (NOT full status.md)
+3. Read `workspace/build/blockers.md` - active blockers only
+4. Read `workspace/build/errors.md` - active errors only
+5. **Only read archives if you need historical context for a specific investigation**
 
 ### After Completing Work
 1. Update `workspace/build/status.md` with your completion
