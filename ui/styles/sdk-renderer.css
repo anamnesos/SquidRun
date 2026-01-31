@@ -389,6 +389,7 @@
 }
 
 /* Agent role colors - subtle accent bars */
+/* Pane 1: Architect (amber) */
 .sdk-agent-lead {
   border-left: 3px solid var(--sdk-accent-amber);
 }
@@ -396,20 +397,39 @@
   color: var(--sdk-accent-amber);
 }
 
-.sdk-agent-worker-a {
+/* Pane 2: Infra (blue) */
+.sdk-agent-infra {
+  border-left: 3px solid var(--sdk-accent-blue);
+}
+.sdk-agent-infra .sdk-agent-label {
+  color: var(--sdk-accent-blue);
+}
+
+/* Pane 3: Frontend (green) */
+.sdk-agent-frontend {
   border-left: 3px solid var(--sdk-accent-green);
 }
-.sdk-agent-worker-a .sdk-agent-label {
+.sdk-agent-frontend .sdk-agent-label {
   color: var(--sdk-accent-green);
 }
 
-.sdk-agent-worker-b {
+/* Pane 4: Backend (purple) */
+.sdk-agent-backend {
   border-left: 3px solid var(--sdk-accent-purple);
 }
-.sdk-agent-worker-b .sdk-agent-label {
+.sdk-agent-backend .sdk-agent-label {
   color: var(--sdk-accent-purple);
 }
 
+/* Pane 5: Analyst (cyan) */
+.sdk-agent-analyst {
+  border-left: 3px solid #06b6d4;
+}
+.sdk-agent-analyst .sdk-agent-label {
+  color: #06b6d4;
+}
+
+/* Pane 6: Reviewer (orange) */
 .sdk-agent-reviewer {
   border-left: 3px solid #fb923c;
 }

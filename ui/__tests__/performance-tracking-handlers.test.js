@@ -1,6 +1,6 @@
 /**
  * Performance Tracking IPC Handler Tests
- * Target: Full coverage of performance-tracking-handlers.js
+ * Target: Full coverage of agent-metrics-handlers.js (performance channels)
  */
 
 const {
@@ -24,7 +24,7 @@ jest.mock('../modules/logger', () => ({
 }));
 
 const fs = require('fs');
-const { registerPerformanceTrackingHandlers } = require('../modules/ipc/performance-tracking-handlers');
+const { registerAgentMetricsHandlers } = require('../modules/ipc/agent-metrics-handlers');
 
 describe('Performance Tracking Handlers', () => {
   let harness;
@@ -47,7 +47,7 @@ describe('Performance Tracking Handlers', () => {
     // Default: no existing performance file
     fs.existsSync.mockReturnValue(false);
 
-    registerPerformanceTrackingHandlers(ctx);
+    registerAgentMetricsHandlers(ctx);
   });
 
   afterEach(() => {

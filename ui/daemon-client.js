@@ -226,6 +226,14 @@ class DaemonClient extends EventEmitter {
           this.emit('watchdog-alert', msg.message, msg.timestamp);
           break;
 
+        case 'agent-stuck-detected':
+          this.emit('agent-stuck-detected', msg);
+          break;
+
+        case 'agent-stuck-alert':
+          this.emit('agent-stuck-alert', msg);
+          break;
+
         // Handle Codex exec activity state changes
         case 'codex-activity':
           this.emit('codex-activity', msg.paneId, msg.state, msg.detail);

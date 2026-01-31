@@ -484,25 +484,6 @@ function registerApiDocsHandlers(ctx) {
       params: { fromPaneId: 'string', message: 'string' },
       returns: 'Handoff result',
     },
-    // Conflict Resolution (V6)
-    'request-file-access': {
-      category: 'Conflict Resolution',
-      description: 'Request exclusive access to a file',
-      params: { filePath: 'string', paneId: 'string', operation: 'string' },
-      returns: '{ granted, queued?, position? }',
-    },
-    'release-file-access': {
-      category: 'Conflict Resolution',
-      description: 'Release file access lock',
-      params: { filePath: 'string', paneId: 'string' },
-      returns: 'Release result',
-    },
-    'get-conflict-queue-status': {
-      category: 'Conflict Resolution',
-      description: 'Get current conflict queue status',
-      params: {},
-      returns: 'Queue status object',
-    },
     // Learning (V6)
     'record-task-outcome': {
       category: 'Learning',

@@ -479,15 +479,18 @@ describe('triggers.js module functions', () => {
 
     test('should return state with default roles', () => {
       const state = triggers.getSequenceState();
-      expect(state.sequences).toHaveProperty('lead');
-      expect(state.sequences).toHaveProperty('worker-a');
+      expect(state.sequences).toHaveProperty('architect');
+      expect(state.sequences).toHaveProperty('infra');
+      expect(state.sequences).toHaveProperty('frontend');
+      expect(state.sequences).toHaveProperty('backend');
+      expect(state.sequences).toHaveProperty('analyst');
       expect(state.sequences).toHaveProperty('reviewer');
     });
 
     test('should reflect recorded sequences', () => {
-      triggers.recordMessageSeen('reviewer', 7, 'lead');
+      triggers.recordMessageSeen('reviewer', 7, 'architect');
       const state = triggers.getSequenceState();
-      expect(state.sequences.lead.lastSeen.reviewer).toBe(7);
+      expect(state.sequences.architect.lastSeen.reviewer).toBe(7);
     });
   });
 

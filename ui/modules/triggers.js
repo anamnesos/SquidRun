@@ -284,11 +284,11 @@ function formatDuration(ms) {
 let messageState = {
   version: 1,
   sequences: {
-    'lead': { outbound: 0, lastSeen: {} },
-    'orchestrator': { outbound: 0, lastSeen: {} },
-    'worker-a': { outbound: 0, lastSeen: {} },
-    'worker-b': { outbound: 0, lastSeen: {} },
-    'investigator': { outbound: 0, lastSeen: {} },
+    'architect': { outbound: 0, lastSeen: {} },
+    'infra': { outbound: 0, lastSeen: {} },
+    'frontend': { outbound: 0, lastSeen: {} },
+    'backend': { outbound: 0, lastSeen: {} },
+    'analyst': { outbound: 0, lastSeen: {} },
     'reviewer': { outbound: 0, lastSeen: {} },
   },
 };
@@ -299,17 +299,17 @@ let messageState = {
 function loadMessageState() {
   try {
     // Reset lastSeen on app startup to prevent stale sequence blocking
-    // New Claude instances start from #1, so old "lastSeen" values would block all messages
+    // New agent instances start from #1, so old "lastSeen" values would block all messages
     // We keep the structure but clear lastSeen so fresh sessions work immediately
     log.info('MessageSeq', 'Resetting message state for fresh session');
     messageState = {
       version: 1,
       sequences: {
-        'lead': { outbound: 0, lastSeen: {} },
-        'orchestrator': { outbound: 0, lastSeen: {} },
-        'worker-a': { outbound: 0, lastSeen: {} },
-        'worker-b': { outbound: 0, lastSeen: {} },
-        'investigator': { outbound: 0, lastSeen: {} },
+        'architect': { outbound: 0, lastSeen: {} },
+        'infra': { outbound: 0, lastSeen: {} },
+        'frontend': { outbound: 0, lastSeen: {} },
+        'backend': { outbound: 0, lastSeen: {} },
+        'analyst': { outbound: 0, lastSeen: {} },
         'reviewer': { outbound: 0, lastSeen: {} },
       }
     };
@@ -683,8 +683,17 @@ function notifyAgents(agents, message) {
           message: { type: 'user', content: message }
         });
       }
-      const sent = sdkBridge.sendMessage(paneId, message);
-      if (sent) successCount++;
+      try {
+        const sent = sdkBridge.sendMessage(paneId, message);
+        if (sent) {
+          successCount++;
+        } else {
+          recordFailed('sdk', 'trigger', paneId, 'SDK send returned false');
+        }
+      } catch (err) {
+        log.error('Triggers', 'SDK send failed', { paneId, error: err.message });
+        recordFailed('sdk', 'trigger', paneId, `SDK exception: ${err.message}`);
+      }
     }
     log.info('notifyAgents SDK', `Delivered to ${successCount}/${targets.length} panes`);
     logTriggerActivity('Sent (SDK)', targets, message, { mode: 'sdk', delivered: successCount });
@@ -761,7 +770,15 @@ function notifyAllAgentsSync(triggerFile) {
             message: { type: 'user', content: message }
           });
         }
-        sdkBridge.sendMessage(paneId, message);
+        try {
+          const sent = sdkBridge.sendMessage(paneId, message);
+          if (!sent) {
+            recordFailed('sdk', 'trigger', paneId, 'SDK send returned false');
+          }
+        } catch (err) {
+          log.error('Triggers', 'SDK send failed', { paneId, error: err.message });
+          recordFailed('sdk', 'trigger', paneId, `SDK exception: ${err.message}`);
+        }
       }
     } else {
       log.info('AUTO-SYNC SDK', 'All panes recently synced, skipping');
@@ -1056,12 +1073,18 @@ function handleTriggerFile(filePath, filename) {
           message: { type: 'user', content: message }
         });
       }
-      const sent = sdkBridge.sendMessage(paneId, message);
-      if (sent) {
-        recordDelivered('sdk', 'trigger', paneId);
-      } else {
-        log.warn('Trigger SDK', `Failed to send to pane ${paneId}`);
-        recordFailed('sdk', 'trigger', paneId, 'sdk_send_failed');
+      try {
+        const sent = sdkBridge.sendMessage(paneId, message);
+        if (sent) {
+          recordDelivered('sdk', 'trigger', paneId);
+        } else {
+          log.warn('Trigger SDK', `Failed to send to pane ${paneId}`);
+          recordFailed('sdk', 'trigger', paneId, 'sdk_send_failed');
+          allSuccess = false;
+        }
+      } catch (err) {
+        log.error('Triggers', 'SDK send failed', { paneId, error: err.message });
+        recordFailed('sdk', 'trigger', paneId, `SDK exception: ${err.message}`);
         allSuccess = false;
       }
     }
@@ -1221,15 +1244,25 @@ function broadcastToAllAgents(message) {
     log.info('BROADCAST SDK', `Broadcasting to ${targets.length} pane(s)`);
     recordSent('sdk', 'broadcast', targets);
     if (targets.length === PANE_IDS.length) {
-      sdkBridge.broadcast(broadcastMessage);
-      PANE_IDS.forEach(paneId => recordDelivered('sdk', 'broadcast', paneId));
+      try {
+        sdkBridge.broadcast(broadcastMessage);
+        PANE_IDS.forEach(paneId => recordDelivered('sdk', 'broadcast', paneId));
+      } catch (err) {
+        log.error('Triggers', 'SDK broadcast failed', { error: err.message });
+        targets.forEach(paneId => recordFailed('sdk', 'broadcast', paneId, `SDK exception: ${err.message}`));
+      }
     } else {
       targets.forEach(paneId => {
-        const sent = sdkBridge.sendMessage(paneId, broadcastMessage);
-        if (sent) {
-          recordDelivered('sdk', 'broadcast', paneId);
-        } else {
-          recordFailed('sdk', 'broadcast', paneId, 'sdk_send_failed');
+        try {
+          const sent = sdkBridge.sendMessage(paneId, broadcastMessage);
+          if (sent) {
+            recordDelivered('sdk', 'broadcast', paneId);
+          } else {
+            recordFailed('sdk', 'broadcast', paneId, 'sdk_send_failed');
+          }
+        } catch (err) {
+          log.error('Triggers', 'SDK send failed', { paneId, error: err.message });
+          recordFailed('sdk', 'broadcast', paneId, `SDK exception: ${err.message}`);
         }
       });
     }
@@ -1509,12 +1542,18 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
           message: { type: 'user', content: fullMessage }
         });
       }
-      const sent = sdkBridge.sendMessage(paneId, fullMessage);
-      if (sent) {
-        recordDelivered('sdk', 'direct', paneId);
-      } else {
-        log.warn('DirectMessage SDK', `Failed to send to pane ${paneId}`);
-        recordFailed('sdk', 'direct', paneId, 'sdk_send_failed');
+      try {
+        const sent = sdkBridge.sendMessage(paneId, fullMessage);
+        if (sent) {
+          recordDelivered('sdk', 'direct', paneId);
+        } else {
+          log.warn('DirectMessage SDK', `Failed to send to pane ${paneId}`);
+          recordFailed('sdk', 'direct', paneId, 'sdk_send_failed');
+          allSuccess = false;
+        }
+      } catch (err) {
+        log.error('Triggers', 'SDK send failed', { paneId, error: err.message });
+        recordFailed('sdk', 'direct', paneId, `SDK exception: ${err.message}`);
         allSuccess = false;
       }
     }

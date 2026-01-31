@@ -1,6 +1,6 @@
 /**
  * Usage Stats IPC Handler Tests
- * Target: Full coverage of usage-stats-handlers.js
+ * Target: Full coverage of agent-metrics-handlers.js (usage stats channels)
  */
 
 const {
@@ -15,7 +15,7 @@ jest.mock('../modules/logger', () => ({
   warn: jest.fn(),
 }));
 
-const { registerUsageStatsHandlers } = require('../modules/ipc/usage-stats-handlers');
+const { registerAgentMetricsHandlers } = require('../modules/ipc/agent-metrics-handlers');
 
 describe('Usage Stats Handlers', () => {
   let harness;
@@ -55,7 +55,7 @@ describe('Usage Stats Handlers', () => {
       saveUsageStats: jest.fn(),
     };
 
-    registerUsageStatsHandlers(ctx, deps);
+    registerAgentMetricsHandlers(ctx, deps);
   });
 
   afterEach(() => {

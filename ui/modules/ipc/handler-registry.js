@@ -16,21 +16,17 @@ const { registerScreenshotHandlers } = require('./screenshot-handlers');
 const { registerProjectHandlers } = require('./project-handlers');
 const { registerSmartRoutingHandlers } = require('./smart-routing-handlers');
 const { registerAutoHandoffHandlers } = require('./auto-handoff-handlers');
-const { registerConflictQueueHandlers } = require('./conflict-queue-handlers');
-const { registerLearningDataHandlers } = require('./learning-data-handlers');
+const { registerAgentMetricsHandlers } = require('./agent-metrics-handlers');
 const { registerOutputValidationHandlers } = require('./output-validation-handlers');
 const { registerCompletionQualityHandlers } = require('./completion-quality-handlers');
 const { registerCheckpointHandlers } = require('./checkpoint-handlers');
-const { registerActivityLogHandlers } = require('./activity-log-handlers');
 const { registerAutoNudgeHandlers } = require('./auto-nudge-handlers');
 const { registerCompletionDetectionHandlers } = require('./completion-detection-handlers');
 const { registerAgentClaimsHandlers } = require('./agent-claims-handlers');
 const { registerSessionSummaryHandlers } = require('./session-summary-handlers');
-const { registerPerformanceTrackingHandlers } = require('./performance-tracking-handlers');
 const { registerTemplateHandlers } = require('./template-handlers');
 const { registerSkillMarketplaceHandlers } = require('./skill-marketplace-handlers');
 const { registerProcessHandlers } = require('./process-handlers');
-const { registerUsageStatsHandlers } = require('./usage-stats-handlers');
 const { registerSessionHistoryHandlers } = require('./session-history-handlers');
 const { registerConflictDetectionHandlers } = require('./conflict-detection-handlers');
 const { registerSettingsHandlers } = require('./settings-handlers');
@@ -45,18 +41,12 @@ const { registerSchedulerHandlers } = require('./scheduler-handlers');
 const { registerRecoveryHandlers } = require('./recovery-handlers');
 const { registerCodeReviewHandlers } = require('./code-review-handlers');
 const { registerDocGeneratorHandlers } = require('./doc-generator-handlers');
-const { registerCostOptimizerHandlers } = require('./cost-optimizer-handlers');
-const { registerSecurityHandlers } = require('./security-handlers');
 const { registerPluginHandlers } = require('./plugin-handlers');
 const { registerBackupHandlers } = require('./backup-handlers');
 const { registerResourceHandlers } = require('./resource-handlers');
-const { registerMultiProjectHandlers } = require('./multi-project-handlers');
 const { registerScaffoldingHandlers } = require('./scaffolding-handlers');
 const { registerAgentSharingHandlers } = require('./agent-sharing-handlers');
 const { registerWorkflowHandlers } = require('./workflow-handlers');
-const { registerDeploymentHandlers } = require('./deployment-handlers');
-const { registerCollaborationHandlers } = require('./collaboration-handlers');
-const { registerMobileApiHandlers } = require('./mobile-api-handlers');
 
 const DEFAULT_HANDLERS = [
   registerSdkHandlers,
@@ -77,21 +67,17 @@ const DEFAULT_HANDLERS = [
   registerProjectHandlers,
   registerSmartRoutingHandlers,
   registerAutoHandoffHandlers,
-  registerConflictQueueHandlers,
-  registerLearningDataHandlers,
+  registerAgentMetricsHandlers,
   registerOutputValidationHandlers,
   registerCompletionQualityHandlers,
   registerCheckpointHandlers,
-  registerActivityLogHandlers,
   registerAutoNudgeHandlers,
   registerCompletionDetectionHandlers,
   registerAgentClaimsHandlers,
   registerSessionSummaryHandlers,
-  registerPerformanceTrackingHandlers,
   registerTemplateHandlers,
   registerSkillMarketplaceHandlers,
   registerProcessHandlers,
-  registerUsageStatsHandlers,
   registerSessionHistoryHandlers,
   registerConflictDetectionHandlers,
   registerSettingsHandlers,
@@ -106,18 +92,12 @@ const DEFAULT_HANDLERS = [
   registerRecoveryHandlers,
   registerCodeReviewHandlers,
   registerDocGeneratorHandlers,
-  registerCostOptimizerHandlers,
-  registerSecurityHandlers,
   registerPluginHandlers,
   registerBackupHandlers,
   registerResourceHandlers,
-  registerMultiProjectHandlers,
   registerScaffoldingHandlers,
   registerAgentSharingHandlers,
   registerWorkflowHandlers,
-  registerDeploymentHandlers,
-  registerCollaborationHandlers,
-  registerMobileApiHandlers,
 ];
 
 function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {

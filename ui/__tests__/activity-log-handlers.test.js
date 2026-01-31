@@ -1,6 +1,6 @@
 /**
  * Activity Log IPC Handler Tests
- * Target: Full coverage of activity-log-handlers.js
+ * Target: Full coverage of agent-metrics-handlers.js (activity log channels)
  */
 
 const {
@@ -16,7 +16,7 @@ jest.mock('../modules/logger', () => ({
   warn: jest.fn(),
 }));
 
-const { registerActivityLogHandlers } = require('../modules/ipc/activity-log-handlers');
+const { registerAgentMetricsHandlers } = require('../modules/ipc/agent-metrics-handlers');
 
 describe('Activity Log Handlers', () => {
   let harness;
@@ -27,7 +27,7 @@ describe('Activity Log Handlers', () => {
     harness = createIpcHarness();
     ctx = createDefaultContext({ ipcMain: harness.ipcMain });
     deps = createDepsMock();
-    registerActivityLogHandlers(ctx, deps);
+    registerAgentMetricsHandlers(ctx, deps);
   });
 
   afterEach(() => {
@@ -36,11 +36,11 @@ describe('Activity Log Handlers', () => {
 
   describe('constructor validation', () => {
     test('throws when ctx is null', () => {
-      expect(() => registerActivityLogHandlers(null)).toThrow('registerActivityLogHandlers requires ctx.ipcMain');
+      expect(() => registerAgentMetricsHandlers(null)).toThrow('registerAgentMetricsHandlers requires ctx.ipcMain');
     });
 
     test('throws when ctx.ipcMain is missing', () => {
-      expect(() => registerActivityLogHandlers({})).toThrow('registerActivityLogHandlers requires ctx.ipcMain');
+      expect(() => registerAgentMetricsHandlers({})).toThrow('registerAgentMetricsHandlers requires ctx.ipcMain');
     });
   });
 
@@ -84,7 +84,7 @@ describe('Activity Log Handlers', () => {
       // Create new harness without getActivityLog
       const newHarness = createIpcHarness();
       const newCtx = createDefaultContext({ ipcMain: newHarness.ipcMain });
-      registerActivityLogHandlers(newCtx, {});
+      registerAgentMetricsHandlers(newCtx, {});
 
       const result = await newHarness.invoke('get-activity-log');
 
@@ -106,7 +106,7 @@ describe('Activity Log Handlers', () => {
     test('returns error when clearActivityLog is not a function', async () => {
       const newHarness = createIpcHarness();
       const newCtx = createDefaultContext({ ipcMain: newHarness.ipcMain });
-      registerActivityLogHandlers(newCtx, {});
+      registerAgentMetricsHandlers(newCtx, {});
 
       const result = await newHarness.invoke('clear-activity-log');
 
@@ -126,7 +126,7 @@ describe('Activity Log Handlers', () => {
     test('returns error when saveActivityLog is not a function', async () => {
       const newHarness = createIpcHarness();
       const newCtx = createDefaultContext({ ipcMain: newHarness.ipcMain });
-      registerActivityLogHandlers(newCtx, {});
+      registerAgentMetricsHandlers(newCtx, {});
 
       const result = await newHarness.invoke('save-activity-log');
 
@@ -152,7 +152,7 @@ describe('Activity Log Handlers', () => {
     test('returns error when logActivity is not a function', async () => {
       const newHarness = createIpcHarness();
       const newCtx = createDefaultContext({ ipcMain: newHarness.ipcMain });
-      registerActivityLogHandlers(newCtx, {});
+      registerAgentMetricsHandlers(newCtx, {});
 
       const result = await newHarness.invoke('log-activity', 'error', '1', 'Error');
 

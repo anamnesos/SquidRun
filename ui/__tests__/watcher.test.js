@@ -148,32 +148,6 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
-  test('conflict queue grants locks and releases to next', () => {
-    const { watcher, tempDir, mainWindow } = setupWatcher();
-    mainWindow.webContents.send.mockClear();
-
-    const first = watcher.requestFileAccess('ui/app.js', '1', 'write');
-    const second = watcher.requestFileAccess('ui/app.js', '2', 'write');
-
-    expect(first.granted).toBe(true);
-    expect(second.granted).toBe(false);
-    expect(second.position).toBe(1);
-    expect(mainWindow.webContents.send).toHaveBeenCalledWith(
-      'conflict-queued',
-      expect.objectContaining({ filePath: 'ui/app.js', paneId: '2', position: 1 }),
-    );
-
-    const release = watcher.releaseFileAccess('ui/app.js', '1');
-    expect(release.released).toBe(true);
-    expect(release.nextInQueue.paneId).toBe('2');
-    expect(mainWindow.webContents.send).toHaveBeenCalledWith(
-      'conflict-resolved',
-      expect.objectContaining({ filePath: 'ui/app.js', paneId: '2' }),
-    );
-
-    cleanupDir(tempDir);
-  });
-
   test('message queue lifecycle works', () => {
     const { watcher, tempDir, mainWindow } = setupWatcher();
 
@@ -262,34 +236,6 @@ describe('watcher module', () => {
 
     const result = watcher.releaseAgent('2');
     expect(result.success).toBe(true);
-
-    cleanupDir(tempDir);
-  });
-
-  test('requestFileAccess allows reads while locked and rejects non-holder releases', () => {
-    const { watcher, tempDir } = setupWatcher();
-    watcher.requestFileAccess('ui/readme.md', '1', 'write');
-
-    const readAccess = watcher.requestFileAccess('ui/readme.md', '2', 'read');
-    expect(readAccess.granted).toBe(true);
-    expect(readAccess.warning).toMatch(/locked by pane/i);
-
-    const wrongRelease = watcher.releaseFileAccess('ui/readme.md', '2');
-    expect(wrongRelease.released).toBe(false);
-    expect(wrongRelease.error).toBe('Not lock holder');
-
-    cleanupDir(tempDir);
-  });
-
-  test('clearAllLocks empties queues and notifies renderer', () => {
-    const { watcher, tempDir, mainWindow } = setupWatcher();
-    watcher.requestFileAccess('ui/test.js', '1', 'write');
-    watcher.requestFileAccess('ui/test.js', '2', 'edit');
-
-    const result = watcher.clearAllLocks();
-    expect(result.success).toBe(true);
-    expect(result.cleared).toBeGreaterThan(0);
-    expect(mainWindow.webContents.send).toHaveBeenCalledWith('conflicts-cleared');
 
     cleanupDir(tempDir);
   });
@@ -402,21 +348,6 @@ describe('watcher module', () => {
 
     expect(claims['1']).toBeDefined();
     expect(claims['1'].taskId).toBe('task-1');
-
-    cleanupDir(tempDir);
-  });
-
-  test('getConflictQueueStatus returns locks and queues', () => {
-    const { watcher, tempDir } = setupWatcher();
-    watcher.requestFileAccess('ui/test.js', '1', 'write');
-    watcher.requestFileAccess('ui/test.js', '2', 'write');
-
-    const status = watcher.getConflictQueueStatus();
-
-    expect(status.lockCount).toBe(1);
-    expect(status.queuedCount).toBe(1);
-    expect(status.locks['ui/test.js']).toBe('1');
-    expect(status.queues['ui/test.js'].length).toBe(1);
 
     cleanupDir(tempDir);
   });
@@ -536,31 +467,6 @@ describe('watcher module', () => {
     const conflicts = watcher.checkFileConflicts();
 
     expect(conflicts).toEqual([]);
-
-    cleanupDir(tempDir);
-  });
-
-  test('requestFileAccess allows same agent to access own lock', () => {
-    const { watcher, tempDir } = setupWatcher();
-    watcher.requestFileAccess('ui/mine.js', '1', 'write');
-
-    const result = watcher.requestFileAccess('ui/mine.js', '1', 'edit');
-
-    expect(result.granted).toBe(true);
-
-    cleanupDir(tempDir);
-  });
-
-  test('releaseFileAccess cleans up empty queue', () => {
-    const { watcher, tempDir } = setupWatcher();
-    watcher.requestFileAccess('ui/single.js', '1', 'write');
-    watcher.requestFileAccess('ui/single.js', '2', 'write');
-
-    watcher.releaseFileAccess('ui/single.js', '1');
-    watcher.releaseFileAccess('ui/single.js', '2');
-
-    const status = watcher.getConflictQueueStatus();
-    expect(status.queues['ui/single.js']).toBeUndefined();
 
     cleanupDir(tempDir);
   });
