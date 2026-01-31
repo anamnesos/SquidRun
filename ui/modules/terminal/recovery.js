@@ -5,6 +5,7 @@
 
 const { ipcRenderer } = require('electron');
 const log = require('../logger');
+const BYPASS_CLEAR_DELAY_MS = 75;
 
 function createRecoveryController(options = {}) {
   const {
@@ -368,7 +369,7 @@ function createRecoveryController(options = {}) {
             log.error(`aggressiveNudge ${id}`, 'sendTrustedEnter failed:', err);
           }).finally(() => {
             if (terminal) {
-              setTimeout(() => { terminal._hivemindBypass = false; }, 0);
+              setTimeout(() => { terminal._hivemindBypass = false; }, BYPASS_CLEAR_DELAY_MS);
             }
           });
         }
