@@ -1539,4 +1539,83 @@ describe('codex-exec runner', () => {
       expect(broadcast).toHaveBeenCalled();
     });
   });
+
+  describe('reasoning/thinking styling', () => {
+    test('applies dim+italic ANSI to reasoning item type', () => {
+      const child = createMockChild();
+      spawn.mockReturnValue(child);
+
+      const runner = createCodexExecRunner({ broadcast, logInfo });
+      const terminal = { alive: true, mode: 'codex-exec' };
+
+      runner.runCodexExec('4', terminal, 'go');
+      broadcast.mockClear();
+
+      // Codex exec reasoning item
+      const event = JSON.stringify({
+        type: 'item.completed',
+        payload: { item: { type: 'reasoning', text: 'Let me think about this...' } }
+      });
+      child.stdout.emit('data', Buffer.from(event + '\n'));
+
+      const dataPayloads = broadcast.mock.calls
+        .filter(c => c[0].event === 'data')
+        .map(c => c[0].data);
+
+      // Should contain DIM_ITALIC ANSI code (\x1b[2;3m) and RESET (\x1b[0m)
+      expect(dataPayloads.some(d => d && d.includes('\x1b[2;3m') && d.includes('Let me think'))).toBe(true);
+      expect(dataPayloads.some(d => d && d.includes('\x1b[0m'))).toBe(true);
+    });
+
+    test('does not apply styling to agent_message item type', () => {
+      const child = createMockChild();
+      spawn.mockReturnValue(child);
+
+      const runner = createCodexExecRunner({ broadcast, logInfo });
+      const terminal = { alive: true, mode: 'codex-exec' };
+
+      runner.runCodexExec('4', terminal, 'go');
+      broadcast.mockClear();
+
+      // Codex exec agent_message item (decision/response)
+      const event = JSON.stringify({
+        type: 'item.completed',
+        payload: { item: { type: 'agent_message', text: 'Here is my answer.' } }
+      });
+      child.stdout.emit('data', Buffer.from(event + '\n'));
+
+      const dataPayloads = broadcast.mock.calls
+        .filter(c => c[0].event === 'data')
+        .map(c => c[0].data);
+
+      // Should contain the text but NOT dim+italic ANSI code
+      expect(dataPayloads.some(d => d && d.includes('Here is my answer'))).toBe(true);
+      expect(dataPayloads.some(d => d && d.includes('\x1b[2;3m'))).toBe(false);
+    });
+
+    test('applies styling to delta with thinking type', () => {
+      const child = createMockChild();
+      spawn.mockReturnValue(child);
+
+      const runner = createCodexExecRunner({ broadcast, logInfo });
+      const terminal = { alive: true, mode: 'codex-exec' };
+
+      runner.runCodexExec('4', terminal, 'go');
+      broadcast.mockClear();
+
+      // Claude API format delta with thinking type
+      const event = JSON.stringify({
+        type: 'content_block_delta',
+        payload: { delta: { type: 'thinking', text: 'analyzing...' } }
+      });
+      child.stdout.emit('data', Buffer.from(event + '\n'));
+
+      const dataPayloads = broadcast.mock.calls
+        .filter(c => c[0].event === 'data')
+        .map(c => c[0].data);
+
+      // Should contain DIM_ITALIC ANSI code
+      expect(dataPayloads.some(d => d && d.includes('\x1b[2;3m') && d.includes('analyzing'))).toBe(true);
+    });
+  });
 });

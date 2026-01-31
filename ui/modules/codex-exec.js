@@ -14,6 +14,8 @@ const ANSI = {
   YELLOW: '\x1b[33m',
   BLUE: '\x1b[34m',
   MAGENTA: '\x1b[35m',
+  // Thinking/reasoning styling: dim + italic for visual distinction
+  DIM_ITALIC: '\x1b[2;3m',
 };
 
 // Strip Unicode bidirectional control characters that can cause RTL rendering
@@ -250,6 +252,25 @@ function createCodexExecRunner(options = {}) {
     return null;
   }
 
+  // Detect if an event represents reasoning/thinking content
+  // Returns: 'reasoning' | 'agent_message' | 'other'
+  function getItemType(event) {
+    if (!event || typeof event !== 'object') return 'other';
+    const payload = event.payload || event;
+
+    // Check item.type for Codex exec format
+    const itemType = payload.item?.type || payload.type || '';
+    if (itemType === 'reasoning') return 'reasoning';
+    if (itemType === 'agent_message') return 'agent_message';
+
+    // Check for delta content block types (Claude API format)
+    const deltaType = payload.delta?.type || '';
+    if (deltaType === 'thinking' || deltaType === 'reasoning') return 'reasoning';
+    if (deltaType === 'text') return 'agent_message';
+
+    return 'other';
+  }
+
   function extractCodexText(event) {
     if (!event || typeof event !== 'object') return null;
 
@@ -370,7 +391,21 @@ function createCodexExecRunner(options = {}) {
     }
     if (text) {
       const sanitized = stripBidiControls(text);
-      const formatted = isDelta ? sanitized : ensureTrailingNewline(sanitized);
+      const itemType = getItemType(event);
+
+      // Apply styling based on item type:
+      // - reasoning: dim + italic for visual distinction
+      // - agent_message: normal (bold could be optional)
+      // - other: normal (no special styling)
+      let styledText;
+      if (itemType === 'reasoning') {
+        // Wrap reasoning in dim+italic ANSI, reset at end
+        styledText = `${ANSI.DIM_ITALIC}${sanitized}${ANSI.RESET}`;
+      } else {
+        styledText = sanitized;
+      }
+
+      const formatted = isDelta ? styledText : ensureTrailingNewline(styledText);
       broadcast({ event: 'data', paneId, data: formatted });
       terminal.lastActivity = Date.now();
       appendScrollback(terminal, formatted);
