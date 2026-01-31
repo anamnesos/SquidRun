@@ -13,6 +13,23 @@ const settings = require('./modules/settings');
 const daemonHandlers = require('./modules/daemon-handlers');
 const sdkRenderer = require('./modules/sdk-renderer');
 
+// Button debounce utility - prevents rapid double-clicks
+const BUTTON_DEBOUNCE_MS = 500;
+const buttonDebounceState = {};
+
+function debounceButton(buttonId, handler) {
+  return function(...args) {
+    const now = Date.now();
+    const lastClick = buttonDebounceState[buttonId] || 0;
+    if (now - lastClick < BUTTON_DEBOUNCE_MS) {
+      log.info('UI', `Debounced rapid click on ${buttonId}`);
+      return;
+    }
+    buttonDebounceState[buttonId] = now;
+    return handler.apply(this, args);
+  };
+}
+
 // SDK mode flag - when true, use SDK renderer instead of xterm terminals
 let sdkMode = false;
 
@@ -1055,22 +1072,22 @@ function setupEventListeners() {
   });
   refreshVoiceSettings(settings.getSettings());
 
-  // Spawn all button
+  // Spawn all button (debounced)
   const spawnAllBtn = document.getElementById('spawnAllBtn');
   if (spawnAllBtn) {
-    spawnAllBtn.addEventListener('click', terminal.spawnAllClaude);
+    spawnAllBtn.addEventListener('click', debounceButton('spawnAll', terminal.spawnAllClaude));
   }
 
-  // Kill all button
+  // Kill all button (debounced)
   const killAllBtn = document.getElementById('killAllBtn');
   if (killAllBtn) {
-    killAllBtn.addEventListener('click', terminal.killAllTerminals);
+    killAllBtn.addEventListener('click', debounceButton('killAll', terminal.killAllTerminals));
   }
 
-  // Nudge all button - unstick churning agents (uses aggressive ESC+Enter)
+  // Nudge all button - unstick churning agents (uses aggressive ESC+Enter) (debounced)
   const nudgeAllBtn = document.getElementById('nudgeAllBtn');
   if (nudgeAllBtn) {
-    nudgeAllBtn.addEventListener('click', terminal.aggressiveNudgeAll);
+    nudgeAllBtn.addEventListener('click', debounceButton('nudgeAll', terminal.aggressiveNudgeAll));
   }
 
   // Agent Health Dashboard (#1) - interrupt and unstick buttons per pane
@@ -1138,10 +1155,10 @@ function setupEventListeners() {
     });
   });
 
-  // Fresh start button - kill all and start new sessions
+  // Fresh start button - kill all and start new sessions (debounced)
   const freshStartBtn = document.getElementById('freshStartBtn');
   if (freshStartBtn) {
-    freshStartBtn.addEventListener('click', terminal.freshStartAll);
+    freshStartBtn.addEventListener('click', debounceButton('freshStart', terminal.freshStartAll));
   }
 
   // Full restart button - kill daemon and reload app with fresh code
