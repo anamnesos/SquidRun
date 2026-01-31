@@ -4,6 +4,7 @@
  */
 
 const log = require('../logger');
+const { BYPASS_CLEAR_DELAY_MS: DEFAULT_BYPASS_CLEAR_DELAY_MS } = require('../constants');
 
 function createInjectionController(options = {}) {
   const {
@@ -40,7 +41,7 @@ function createInjectionController(options = {}) {
     ABSOLUTE_MAX_WAIT_MS,
     QUEUE_RETRY_MS,
     INJECTION_LOCK_TIMEOUT_MS,
-    BYPASS_CLEAR_DELAY_MS = 75,
+    BYPASS_CLEAR_DELAY_MS = DEFAULT_BYPASS_CLEAR_DELAY_MS,
   } = constants;
 
   /**

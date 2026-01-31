@@ -135,9 +135,6 @@ function registerTaskPoolHandlers(ctx) {
 
   // Watch for external changes to task-pool.json
   if (TASK_POOL_FILE && ctx.watcher) {
-    const watchDir = path.dirname(TASK_POOL_FILE);
-    const watchFile = path.basename(TASK_POOL_FILE);
-
     // Add file to watch list if watcher supports it
     if (typeof ctx.watcher.addWatch === 'function') {
       ctx.watcher.addWatch(TASK_POOL_FILE, () => {
