@@ -602,7 +602,6 @@ describe('daemon-handlers.js module', () => {
 
       expect(ipcRenderer.on).toHaveBeenCalledWith('file-conflict', expect.any(Function));
       expect(ipcRenderer.on).toHaveBeenCalledWith('conflict-resolved', expect.any(Function));
-      expect(ipcRenderer.on).toHaveBeenCalledWith('conflict-queued', expect.any(Function));
     });
   });
 
@@ -1494,21 +1493,6 @@ describe('daemon-handlers.js module', () => {
         expect(mockNotification.className).toBe('conflict-notification');
       });
 
-      test('should handle conflict-queued event', () => {
-        const mockNotification = {
-          className: '',
-          innerHTML: '',
-          classList: { add: jest.fn() },
-          remove: jest.fn(),
-        };
-        mockDocument.querySelector.mockReturnValue(null);
-        mockDocument.createElement.mockReturnValue(mockNotification);
-
-        daemonHandlers.setupConflictResolutionListener();
-        ipcHandlers['conflict-queued']({}, { file: 'main.js', agents: ['2', '3'] });
-
-        expect(mockNotification.innerHTML).toContain('main.js');
-      });
     });
 
     describe('rollback handlers', () => {
@@ -1862,25 +1846,6 @@ describe('daemon-handlers.js module', () => {
       });
 
       expect(mockNotification.innerHTML).toContain('Waiting for resolution');
-    });
-
-    test('should show queued status text', () => {
-      const mockNotification = {
-        className: '',
-        innerHTML: '',
-        classList: { add: jest.fn() },
-        remove: jest.fn(),
-      };
-      mockDocument.querySelector.mockReturnValue(null);
-      mockDocument.createElement.mockReturnValue(mockNotification);
-
-      daemonHandlers.showConflictNotification({
-        file: 'test.js',
-        agents: ['1'],
-        status: 'queued',
-      });
-
-      expect(mockNotification.innerHTML).toContain('Operations queued');
     });
 
     test('should show resolved status text', () => {

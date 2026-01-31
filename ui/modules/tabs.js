@@ -2367,7 +2367,7 @@ function setupInspectorTab() {
 // ============================================================
 
 let queueStatus = null;
-let conflictStatus = null;
+let conflictStatus = { locks: {}, queues: {}, lockCount: 0, queuedCount: 0 };
 let queueClaims = {};
 let queueEvents = [];
 let queueRefreshTimer = null;
@@ -2531,14 +2531,12 @@ async function loadQueueStatus() {
   if (queueRefreshInFlight) return;
   queueRefreshInFlight = true;
   try {
-    const [messageStatus, conflict, claims] = await Promise.all([
+    const [messageStatus, claims] = await Promise.all([
       ipcRenderer.invoke('get-message-queue-status'),
-      ipcRenderer.invoke('get-conflict-queue-status'),
       ipcRenderer.invoke('get-claims'),
     ]);
 
     queueStatus = messageStatus || { queues: {}, totalMessages: 0, undelivered: 0 };
-    conflictStatus = conflict || { locks: {}, queues: {}, lockCount: 0, queuedCount: 0 };
     queueClaims = claims || {};
   } catch (err) {
     log.error('Queue', 'Failed to load queue status', err);
@@ -2559,7 +2557,6 @@ function scheduleQueueRefresh(delay = 200) {
 function setupQueueTab() {
   const refreshBtn = document.getElementById('refreshQueueBtn');
   const clearDeliveredBtn = document.getElementById('clearDeliveredQueueBtn');
-  const clearLocksBtn = document.getElementById('clearConflictLocksBtn');
 
   if (refreshBtn) refreshBtn.addEventListener('click', loadQueueStatus);
   if (clearDeliveredBtn) {
@@ -2570,17 +2567,6 @@ function setupQueueTab() {
         loadQueueStatus();
       } catch (err) {
         addQueueEvent({ type: 'queue', message: `Clear delivered failed: ${err.message}`, severity: 'error' });
-      }
-    });
-  }
-  if (clearLocksBtn) {
-    clearLocksBtn.addEventListener('click', async () => {
-      try {
-        await ipcRenderer.invoke('clear-all-locks');
-        addQueueEvent({ type: 'queue', message: 'Cleared all conflict locks', severity: 'warning' });
-        loadQueueStatus();
-      } catch (err) {
-        addQueueEvent({ type: 'queue', message: `Clear locks failed: ${err.message}`, severity: 'error' });
       }
     });
   }
@@ -2605,15 +2591,6 @@ function setupQueueTab() {
 
   ipcRenderer.on('messages-cleared', () => {
     addQueueEvent({ type: 'queue', message: 'Message queue cleared', severity: 'warning' });
-    scheduleQueueRefresh();
-  });
-
-  ipcRenderer.on('conflict-queued', (event, data) => {
-    addQueueEvent({
-      type: 'conflict',
-      message: `Conflict queued: ${data?.filePath || 'file'} (${AGENT_NAMES[data?.paneId] || data?.paneId || 'agent'})`,
-      severity: 'warning',
-    });
     scheduleQueueRefresh();
   });
 

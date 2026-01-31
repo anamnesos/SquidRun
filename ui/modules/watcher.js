@@ -26,6 +26,7 @@ let notifyExternal = null; // External notification hook
 
 const SYNC_FILES = new Set([
   'shared_context.md',
+  'current_state.md',
   'blockers.md',
   'errors.md'
 ]);
@@ -106,12 +107,12 @@ function parseWorkerAssignments() {
     if (!fs.existsSync(SHARED_CONTEXT_PATH)) return {};
     const c = fs.readFileSync(SHARED_CONTEXT_PATH, 'utf-8');
     const a = {};
-    const wA = c.match(/### (Worker A|Implementer A|Frontend)[\s\S]*?(?=###|$)/i);
-    const wB = c.match(/### (Worker B|Implementer B|Backend)[\s\S]*?(?=###|$)/i);
-    const inv = c.match(/### (Investigator|Analyst)[\s\S]*?(?=###|$)/i);
-    if (wA) a['Frontend'] = extractFilePaths(wA[0]);
-    if (wB) a['Backend'] = extractFilePaths(wB[0]);
-    if (inv) a['Analyst'] = extractFilePaths(inv[0]);
+    const frontend = c.match(/### (Frontend)[\s\S]*?(?=###|$)/i);
+    const backend = c.match(/### (Backend)[\s\S]*?(?=###|$)/i);
+    const analyst = c.match(/### (Analyst)[\s\S]*?(?=###|$)/i);
+    if (frontend) a['Frontend'] = extractFilePaths(frontend[0]);
+    if (backend) a['Backend'] = extractFilePaths(backend[0]);
+    if (analyst) a['Analyst'] = extractFilePaths(analyst[0]);
     return a;
   } catch (e) { return {}; }
 }

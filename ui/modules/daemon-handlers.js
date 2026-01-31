@@ -776,7 +776,6 @@ function showConflictNotification(data) {
 function getConflictStatusText(status) {
   switch (status) {
     case 'pending': return 'Waiting for resolution...';
-    case 'queued': return 'Operations queued';
     case 'resolved': return 'Conflict resolved';
     default: return status;
   }
@@ -793,9 +792,6 @@ function setupConflictResolutionListener() {
     showConflictNotification({ ...data, status: 'resolved' });
   });
 
-  ipcRenderer.on('conflict-queued', (event, data) => {
-    showConflictNotification({ ...data, status: 'queued' });
-  });
 }
 
 // ============================================================
