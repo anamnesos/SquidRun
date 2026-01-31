@@ -316,6 +316,49 @@ function updateConnectionStatus(status) {
 
 // Agent Health Dashboard (#1) - update health indicators per pane
 const STUCK_THRESHOLD_MS = 60000; // 60 seconds without output = potentially stuck
+const IDLE_CLAIM_THRESHOLD_MS = 30000; // 30 seconds idle = can show claim button
+
+// Smart Parallelism Phase 3 - Domain ownership mapping
+const PANE_DOMAIN_MAP = {
+  '1': 'architecture',  // Architect
+  '2': 'infra',         // Infra
+  '3': 'frontend',      // Frontend
+  '4': 'backend',       // Backend
+  '5': 'analysis',      // Analyst
+  '6': null             // Reviewer - no self-claim domain
+};
+
+// Track available claimable tasks per domain (updated via IPC)
+let claimableTasksCache = {
+  tasks: [],
+  lastUpdated: 0
+};
+
+// Check if there are claimable tasks for a given pane's domain
+function hasClaimableTasks(paneId) {
+  const domain = PANE_DOMAIN_MAP[paneId];
+  if (!domain) return false; // Reviewer can't self-claim
+
+  return claimableTasksCache.tasks.some(task =>
+    task.status === 'open' &&
+    !task.owner &&
+    task.metadata?.domain === domain &&
+    (!task.blockedBy || task.blockedBy.length === 0)
+  );
+}
+
+// Get claimable tasks for a pane's domain
+function getClaimableTasksForPane(paneId) {
+  const domain = PANE_DOMAIN_MAP[paneId];
+  if (!domain) return [];
+
+  return claimableTasksCache.tasks.filter(task =>
+    task.status === 'open' &&
+    !task.owner &&
+    task.metadata?.domain === domain &&
+    (!task.blockedBy || task.blockedBy.length === 0)
+  );
+}
 
 function formatTimeSince(timestamp) {
   if (!timestamp) return '-';
@@ -335,6 +378,8 @@ function updateHealthIndicators() {
   paneIds.forEach(paneId => {
     const healthEl = document.getElementById(`health-${paneId}`);
     const stuckEl = document.getElementById(`stuck-${paneId}`);
+    const idleEl = document.getElementById(`idle-${paneId}`);
+    const claimBtn = document.querySelector(`.claim-btn[data-pane-id="${paneId}"]`);
     const lastOutput = lastOutputTime[paneId];
 
     if (healthEl) {
@@ -360,6 +405,23 @@ function updateHealthIndicators() {
     if (stuckEl) {
       const isStuck = lastOutput && (Date.now() - lastOutput) > STUCK_THRESHOLD_MS;
       stuckEl.classList.toggle('visible', isStuck);
+    }
+
+    // Smart Parallelism - Idle detection with claimable tasks
+    const isIdle = lastOutput && (Date.now() - lastOutput) > IDLE_CLAIM_THRESHOLD_MS;
+    const hasTasksToClaim = hasClaimableTasks(paneId);
+    const showIdleIndicator = isIdle && hasTasksToClaim;
+
+    if (idleEl) {
+      idleEl.classList.toggle('visible', showIdleIndicator);
+      if (showIdleIndicator) {
+        const tasks = getClaimableTasksForPane(paneId);
+        idleEl.title = `${tasks.length} task${tasks.length !== 1 ? 's' : ''} available to claim`;
+      }
+    }
+
+    if (claimBtn) {
+      claimBtn.classList.toggle('visible', showIdleIndicator);
     }
   });
 }
@@ -1034,6 +1096,48 @@ function setupEventListeners() {
     });
   });
 
+  // Smart Parallelism - Claim task button click handlers
+  document.querySelectorAll('.claim-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const paneId = btn.dataset.paneId;
+      if (!paneId) return;
+
+      const tasks = getClaimableTasksForPane(paneId);
+      if (tasks.length === 0) {
+        log.info('Claim', `No claimable tasks for pane ${paneId}`);
+        return;
+      }
+
+      // Claim first available task
+      const task = tasks[0];
+      log.info('Claim', `Pane ${paneId} claiming task: ${task.subject}`);
+
+      // Visual feedback
+      btn.classList.add('claiming');
+      setTimeout(() => btn.classList.remove('claiming'), 500);
+
+      try {
+        // Claim via IPC - main process handles the actual claim
+        const result = await ipcRenderer.invoke('claim-task', {
+          paneId,
+          taskId: task.id,
+          domain: PANE_DOMAIN_MAP[paneId]
+        });
+
+        if (result.success) {
+          log.info('Claim', `Task ${task.id} claimed successfully`);
+          // Notify agent via terminal injection
+          const claimMessage = `[TASK CLAIMED] Task #${task.id}: ${task.subject}`;
+          terminal.sendToPane(paneId, claimMessage + '\r');
+        } else {
+          log.warn('Claim', `Failed to claim task: ${result.error}`);
+        }
+      } catch (err) {
+        log.error('Claim', 'Claim failed:', err);
+      }
+    });
+  });
+
   // Fresh start button - kill all and start new sessions
   const freshStartBtn = document.getElementById('freshStartBtn');
   if (freshStartBtn) {
@@ -1607,6 +1711,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     panes.forEach((paneId, index) => {
       setTimeout(() => terminal.restartPane(String(paneId)), index * 200);
     });
+  });
+
+  // Smart Parallelism - Task list updates for claim button visibility
+  ipcRenderer.on('task-list-updated', (event, data) => {
+    if (data && Array.isArray(data.tasks)) {
+      claimableTasksCache.tasks = data.tasks;
+      claimableTasksCache.lastUpdated = Date.now();
+      log.info('Tasks', `Task list updated: ${data.tasks.length} tasks`);
+      // Immediately update indicators with new task data
+      updateHealthIndicators();
+    }
+  });
+
+  // Request initial task list on startup
+  ipcRenderer.invoke('get-task-list').then(tasks => {
+    if (Array.isArray(tasks)) {
+      claimableTasksCache.tasks = tasks;
+      claimableTasksCache.lastUpdated = Date.now();
+      log.info('Tasks', `Initial task list: ${tasks.length} tasks`);
+    }
+  }).catch(err => {
+    log.warn('Tasks', 'Failed to get initial task list:', err);
   });
 
   // Codex activity indicator - update pane status based on Codex exec activity

@@ -463,6 +463,60 @@
   50% { opacity: 0.6; transform: scale(0.95); }
 }
 
+/* Idle Indicator - Smart Parallelism Phase 3 */
+.idle-indicator {
+  color: var(--color-secondary);
+  font-size: var(--text-base);
+  display: none;
+  animation: idlePulse 2s ease-in-out infinite;
+  text-shadow: 0 0 8px rgba(78, 204, 163, 0.5);
+  cursor: pointer;
+}
+
+.idle-indicator.visible {
+  display: inline;
+}
+
+.idle-indicator:hover {
+  color: #6fe0b8;
+  transform: scale(1.1);
+}
+
+@keyframes idlePulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+/* Claim Task Button - Smart Parallelism Phase 3 */
+.pane-action-btn.claim-btn {
+  display: none;
+}
+
+.pane-action-btn.claim-btn.visible {
+  display: flex;
+}
+
+.pane-action-btn.claim-btn:hover {
+  border-color: var(--color-secondary);
+  color: var(--color-secondary);
+  background: rgba(78, 204, 163, 0.12);
+  box-shadow: 0 2px 4px rgba(78, 204, 163, 0.2);
+}
+
+.pane-action-btn.claim-btn:active {
+  background: rgba(78, 204, 163, 0.25);
+}
+
+.pane-action-btn.claim-btn.claiming {
+  animation: claimPulse 0.5s ease-in-out;
+}
+
+@keyframes claimPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.15); background: rgba(78, 204, 163, 0.3); }
+  100% { transform: scale(1); }
+}
+
 /* Message Delivery Visibility (#2) */
 .delivery-indicator {
   font-size: var(--text-sm);

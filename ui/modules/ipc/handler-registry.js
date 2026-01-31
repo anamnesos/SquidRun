@@ -47,6 +47,7 @@ const { registerResourceHandlers } = require('./resource-handlers');
 const { registerScaffoldingHandlers } = require('./scaffolding-handlers');
 const { registerAgentSharingHandlers } = require('./agent-sharing-handlers');
 const { registerWorkflowHandlers } = require('./workflow-handlers');
+const { registerTaskPoolHandlers } = require('./task-pool-handlers');
 
 const DEFAULT_HANDLERS = [
   registerSdkHandlers,
@@ -98,6 +99,7 @@ const DEFAULT_HANDLERS = [
   registerScaffoldingHandlers,
   registerAgentSharingHandlers,
   registerWorkflowHandlers,
+  registerTaskPoolHandlers,
 ];
 
 function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {
