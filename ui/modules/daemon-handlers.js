@@ -1036,9 +1036,9 @@ function updateAgentStatus(paneId, state) {
       // Only update badge, skip status text/class changes
     } else {
       const labels = {
-        'idle': 'Idle',
-        'starting': 'Starting agent...',
-        'running': 'Agent running',
+        'idle': 'Ready',
+        'starting': 'Starting...',
+        'running': 'Working',
       };
       const statusText = labels[state] || state;
       // Preserve activity spinner if present (Fix 4: prevent clobbering)

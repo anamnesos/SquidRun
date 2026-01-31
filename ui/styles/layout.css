@@ -378,6 +378,7 @@
 .pane-status.activity-streaming { color: var(--color-secondary); }
 .pane-status.activity-done { color: #81c784; }
 
+.pane-status.running,
 .pane-status.activity-thinking,
 .pane-status.activity-tool,
 .pane-status.activity-command,
@@ -395,6 +396,7 @@
   animation: breathe 2s ease-in-out infinite;
 }
 
+.pane-status.running .pane-spinner,
 .pane-status.working .pane-spinner,
 .pane-status.activity-thinking .pane-spinner,
 .pane-status.activity-tool .pane-spinner,
@@ -421,6 +423,7 @@
     animation: none;
     opacity: 1;
   }
+  .pane-status.running,
   .pane-status.activity-thinking,
   .pane-status.activity-tool,
   .pane-status.activity-command,
