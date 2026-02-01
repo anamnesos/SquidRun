@@ -179,7 +179,7 @@ When you receive a message FROM another agent (prefixed with their role like `(A
 
 Example:
 - You receive in terminal: `(ARCHITECT): Please review the auth changes`
-- You reply by writing to `workspace/triggers/architect.txt`:
+- You reply by writing to `D:\projects\hivemind\workspace\triggers\architect.txt`:
   ```
   (BACKEND): Reviewed. Found 2 issues, see blockers.md
   ```
@@ -229,22 +229,22 @@ To send a message directly to another agent's terminal, write to `workspace/trig
 
 | File | Targets |
 |------|---------|
-| `workspace/triggers/architect.txt` | Architect (pane 1) |
-| `workspace/triggers/infra.txt` | Infra (pane 2) |
-| `workspace/triggers/frontend.txt` | Frontend (pane 3) |
-| `workspace/triggers/backend.txt` | Backend (pane 4) |
-| `workspace/triggers/analyst.txt` | Analyst (pane 5) |
-| `workspace/triggers/reviewer.txt` | Reviewer (pane 6) |
-| `workspace/triggers/workers.txt` | Frontend + Backend (panes 3+4) |
-| `workspace/triggers/implementers.txt` | Infra + Frontend + Backend (panes 2+3+4) |
-| `workspace/triggers/all.txt` | All agents |
-| `workspace/triggers/others-{role}.txt` | Everyone except sender |
+| `D:\projects\hivemind\workspace\triggers\architect.txt` | Architect (pane 1) |
+| `D:\projects\hivemind\workspace\triggers\infra.txt` | Infra (pane 2) |
+| `D:\projects\hivemind\workspace\triggers\frontend.txt` | Frontend (pane 3) |
+| `D:\projects\hivemind\workspace\triggers\backend.txt` | Backend (pane 4) |
+| `D:\projects\hivemind\workspace\triggers\analyst.txt` | Analyst (pane 5) |
+| `D:\projects\hivemind\workspace\triggers\reviewer.txt` | Reviewer (pane 6) |
+| `D:\projects\hivemind\workspace\triggers\workers.txt` | Frontend + Backend (panes 3+4) |
+| `D:\projects\hivemind\workspace\triggers\implementers.txt` | Infra + Frontend + Backend (panes 2+3+4) |
+| `D:\projects\hivemind\workspace\triggers\all.txt` | All agents |
+| `D:\projects\hivemind\workspace\triggers\others-{role}.txt` | Everyone except sender |
 
 The file watcher detects changes and injects the content into the target terminal(s). The file is cleared after sending.
 
 **Example:** To tell Architect about a bug:
 ```
-echo "(YOUR-ROLE #1): BUG: Fix needed in main.js line 50" > workspace/triggers/architect.txt
+echo "(YOUR-ROLE #1): BUG: Fix needed in main.js line 50" > "D:\projects\hivemind\workspace\triggers\architect.txt"
 ```
 
 ### ⚠️ Message Sequence Numbers (IMPORTANT)
@@ -458,7 +458,7 @@ If any are unclear, Architect asks user BEFORE delegating to domain agents.
 
 8. **Fresh session = restart already happened.** If you're in a new session, the user already restarted the app. Don't tell them to restart. If status.md says "requires restart to test", those fixes are NOW LIVE. Ask "Should I verify X is working?" not "Restart to test X."
 
-9. **Report to Architect.** All completions, blockers, and decisions route to Architect via `workspace/triggers/architect.txt`. Architect is the coordination hub.
+9. **Report to Architect.** All completions, blockers, and decisions route to Architect via `D:\projects\hivemind\workspace\triggers\architect.txt`. Architect is the coordination hub.
 
 10. **Never stall silently.** If your task is done, pick up the next one from the plan or message Architect for assignment. Never sit idle without telling someone.
 
