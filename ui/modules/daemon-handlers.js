@@ -554,6 +554,9 @@ function processQueue(paneId) {
       });
     }
 
+    // Flash pane header immediately (visual feedback before async send)
+    flashPaneHeader(paneId);
+
     // Send to SDK and track delivery confirmation
     ipcRenderer.invoke('sdk-send-message', paneId, cleanMessage).then(() => {
       // UX-7: Message accepted by SDK - mark as delivered
@@ -569,41 +572,44 @@ function processQueue(paneId) {
       log.error('Daemon SDK', `Send failed for pane ${paneId}:`, err);
       // #2: Show delivery failed in pane header
       showDeliveryFailed(paneId, err.message || 'Send failed');
+    }).finally(() => {
+      // CRITICAL: Release queue lock and process next message AFTER SDK send completes
+      // Previously this was outside the promise chain, causing same race condition as PTY mode
+      processingPanes.delete(paneId);
+      if (queue.length > 0) {
+        setTimeout(() => processQueue(paneId), MESSAGE_DELAY);
+      }
     });
-
-    flashPaneHeader(paneId);
-    processingPanes.delete(paneId);
-    if (queue.length > 0) {
-      setTimeout(() => processQueue(paneId), MESSAGE_DELAY);
-    }
     return;
   }
 
   // PTY MODE (legacy): Normal message handling
+  // Flash pane header immediately (U2) - visual feedback before async injection
+  flashPaneHeader(paneId);
+
   terminal.sendToPane(paneId, message, {
     onComplete: (result) => {
       // #2: Show delivery status in pane header
       if (result && result.success === false) {
         log.warn('Daemon', `Trigger delivery failed for pane ${paneId}: ${result.reason || 'unknown'}`);
         showDeliveryFailed(paneId, result.reason || 'Delivery failed');
-        return;
+      } else {
+        // Success - show delivery indicator
+        showDeliveryIndicator(paneId, 'delivered');
+        if (deliveryId) {
+          ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
+        }
       }
-      // Success - show delivery indicator
-      showDeliveryIndicator(paneId, 'delivered');
-      if (deliveryId) {
-        ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
+
+      // CRITICAL: Release queue lock and process next message AFTER injection completes
+      // Previously this was outside onComplete, causing race conditions where
+      // multiple sendToPane calls could be in-flight for the same pane
+      processingPanes.delete(paneId);
+      if (queue.length > 0) {
+        setTimeout(() => processQueue(paneId), MESSAGE_DELAY);
       }
     }
   });
-
-  // Flash pane header (U2)
-  flashPaneHeader(paneId);
-
-  // Process next message after delay
-  processingPanes.delete(paneId);
-  if (queue.length > 0) {
-    setTimeout(() => processQueue(paneId), MESSAGE_DELAY);
-  }
 }
 
 // ============================================================

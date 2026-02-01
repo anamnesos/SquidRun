@@ -526,6 +526,13 @@ function createInjectionController(options = {}) {
         // Send Enter via sendTrustedEnter (Terminal.input disabled for Claude panes)
         const enterResult = await sendEnterToPane(id);
 
+        // CRITICAL: Check if focus was maintained during sendTrustedEnter IPC round-trip
+        // sendInputEvent sends to whatever is focused, so if focus changed, Enter went elsewhere
+        const focusStillCorrect = document.activeElement === textarea;
+        if (!focusStillCorrect) {
+          log.warn(`doSendToPane ${id}`, 'Claude pane: focus changed during sendTrustedEnter IPC - Enter may have gone to wrong element');
+        }
+
         // IMMEDIATELY restore focus after Enter sent - don't block user input during verification
         // (Restore focus to avoid blocking command bar during trigger injections)
         scheduleFocusRestore();
@@ -536,7 +543,7 @@ function createInjectionController(options = {}) {
           finishWithClear({ success: false, reason: 'enter_failed' });
           return;
         }
-        log.info(`doSendToPane ${id}`, `Claude pane: Enter sent via ${enterResult.method}`);
+        log.info(`doSendToPane ${id}`, `Claude pane: Enter sent via ${enterResult.method}${focusStillCorrect ? '' : ' (focus may have changed)'}`);
 
         // Verify Enter succeeded (textarea empty) - if not, wait for idle and retry
         // This handles force-inject during active output where Enter is ignored

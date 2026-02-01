@@ -26,7 +26,13 @@ jest.mock('../config', () => ({
 
 // Mock terminal module
 jest.mock('../modules/terminal', () => ({
-  sendToPane: jest.fn(),
+  sendToPane: jest.fn((paneId, message, options) => {
+    // Call onComplete callback to simulate async completion
+    if (options && options.onComplete) {
+      // Use setTimeout(0) to simulate async behavior - works with jest fake timers
+      setTimeout(() => options.onComplete({ success: true }), 0);
+    }
+  }),
   sendUnstick: jest.fn(),
   aggressiveNudge: jest.fn(),
   initTerminal: jest.fn().mockResolvedValue(),
@@ -1633,15 +1639,29 @@ describe('daemon-handlers.js module', () => {
       });
       daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
 
-      // Queue messages one at a time - each is processed before next is queued
-      // so all three are processed immediately (no throttling needed)
+      // Queue messages one at a time
+      // With the fix for race conditions, each message now waits for onComplete
+      // before processing the next message for the same pane
       injectHandler({}, { panes: ['1'], message: 'msg1' });
       injectHandler({}, { panes: ['1'], message: 'msg2' });
       injectHandler({}, { panes: ['1'], message: 'msg3' });
 
-      // All messages processed synchronously since queue is empty between each
-      expect(terminal.sendToPane).toHaveBeenCalledTimes(3);
+      // First message is sent immediately
+      expect(terminal.sendToPane).toHaveBeenCalledTimes(1);
       expect(terminal.sendToPane).toHaveBeenCalledWith('1', 'msg1', expect.any(Object));
+
+      // Advance timer to trigger the setTimeout(0) callback in mock
+      jest.advanceTimersByTime(1);
+      // Advance timer for MESSAGE_DELAY (150ms) between queue processing
+      jest.advanceTimersByTime(150);
+      expect(terminal.sendToPane).toHaveBeenCalledTimes(2);
+
+      // Process third message
+      jest.advanceTimersByTime(1);
+      jest.advanceTimersByTime(150);
+
+      // All messages processed after callbacks complete
+      expect(terminal.sendToPane).toHaveBeenCalledTimes(3);
       expect(terminal.sendToPane).toHaveBeenCalledWith('1', 'msg2', expect.any(Object));
       expect(terminal.sendToPane).toHaveBeenCalledWith('1', 'msg3', expect.any(Object));
     });
