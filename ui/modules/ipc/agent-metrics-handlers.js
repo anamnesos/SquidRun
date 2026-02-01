@@ -13,6 +13,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { formatDuration } = require('../formatters');
 const log = require('../logger');
 
 function registerAgentMetricsHandlers(ctx, deps = {}) {
@@ -329,14 +330,7 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
   });
 
   ipcMain.handle('get-usage-stats', () => {
-    const formatDuration = (ms) => {
-      const seconds = Math.floor(ms / 1000);
-      const minutes = Math.floor(seconds / 60);
-      const hours = Math.floor(minutes / 60);
-      if (hours > 0) return `${hours}h ${minutes % 60}m`;
-      if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
-      return `${seconds}s`;
-    };
+    // formatDuration imported from ../formatters
 
     const COST_PER_MINUTE = 0.05;
     const totalMinutes = ctx.usageStats.totalSessionTimeMs / 60000;
