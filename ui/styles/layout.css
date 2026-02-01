@@ -686,6 +686,40 @@
   background: rgba(78, 204, 163, 0.2);
 }
 
+/* Model selector dropdown for per-pane model switching */
+.model-selector {
+  font-size: 11px;
+  padding: 2px 4px;
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-bg-light);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  min-width: 60px;
+}
+
+.model-selector:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+
+.model-selector:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(233, 69, 96, 0.2);
+}
+
+.model-selector:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.model-selector option {
+  background: var(--color-bg-dark);
+  color: var(--color-text-primary);
+}
+
 .pane-terminal {
   flex: 1;
   padding: 4px;
