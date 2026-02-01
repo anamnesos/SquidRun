@@ -462,6 +462,8 @@ If any are unclear, Architect asks user BEFORE delegating to domain agents.
 
 10. **Never stall silently.** If your task is done, pick up the next one from the plan or message Architect for assignment. Never sit idle without telling someone.
 
+11. **Just fix it - don't instruct users.** If you know a fix or workaround, APPLY IT. Don't tell users to edit config files, run commands, or change settings themselves. Users (newcomers and devs alike) want problems solved, not instructions to follow. Your job is to fix things, not delegate fixes to users.
+
 ---
 
 ## Reviewer Gate - MANDATORY Before "Ready to Test"
