@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Model Switch IPC Handlers
  * Channels: switch-pane-model, get-pane-commands
  *
@@ -6,7 +6,9 @@
  */
 
 const path = require('path');
+const fs = require('fs');
 const log = require('../logger');
+const { INSTANCE_DIRS } = require('../../config');
 
 const VALID_PANE_IDS = ['1', '2', '3', '4', '5', '6'];
 
@@ -25,7 +27,8 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
   // Switch model for a specific pane
   ipcMain.handle('switch-pane-model', async (event, { paneId, model }) => {
     // Validate paneId
-    if (!VALID_PANE_IDS.includes(String(paneId))) {
+    const id = String(paneId);
+    if (!VALID_PANE_IDS.includes(id)) {
       log.warn('ModelSwitch', `Invalid paneId: ${paneId}`);
       return { success: false, error: 'Invalid paneId' };
     }
@@ -61,7 +64,7 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
       }, 2000);
 
       const handler = (data) => {
-        if (data && String(data.paneId) === String(paneId)) {
+        if (data && String(data.paneId) === id) {
           clearTimeout(timeout);
           ctx.daemonClient.off('exit', handler);
           resolve();
@@ -77,7 +80,7 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
     });
 
     // Update settings AFTER kill confirmed (per design review)
-    ctx.currentSettings.paneCommands[paneId] = commands[model];
+    ctx.currentSettings.paneCommands[id] = commands[model];
 
     // Persist to settings.json
     if (typeof saveSettings === 'function') {
@@ -89,6 +92,45 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
     // Signal renderer to respawn
     if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
       ctx.mainWindow.webContents.send('pane-model-changed', { paneId, model });
+
+      // Auto-inject context after a delay to allow CLI to start
+      // This solves the cold-start problem after model switch
+      // Selects context file based on model: CLAUDE.md, AGENTS.md (codex), or GEMINI.md
+      const instanceDir = INSTANCE_DIRS[id];
+      if (instanceDir && fs.existsSync(instanceDir)) {
+        setTimeout(async () => {
+          try {
+            const claudePath = path.join(instanceDir, 'CLAUDE.md');
+            const agentsPath = path.join(instanceDir, 'AGENTS.md');
+            const geminiPath = path.join(instanceDir, 'GEMINI.md');
+            let injectionText = '';
+
+            // Select primary context file based on model type
+            if (model === 'gemini' && fs.existsSync(geminiPath)) {
+              injectionText = fs.readFileSync(geminiPath, 'utf-8') + '\n';
+            } else if (model === 'codex' && fs.existsSync(agentsPath)) {
+              injectionText = fs.readFileSync(agentsPath, 'utf-8') + '\n';
+            } else if (fs.existsSync(claudePath)) {
+              injectionText = fs.readFileSync(claudePath, 'utf-8') + '\n';
+            }
+
+            if (injectionText && ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
+              const role = ctx.currentSettings.paneRoles?.[id] || `Pane ${id}`;
+              const header = `\r\n# HIVEMIND CONTEXT INJECTION: ${role} configuration\r\n`;
+              
+              log.info('ModelSwitch', `Injecting ${injectionText.length} bytes of context to pane ${id}`);
+              
+              ctx.mainWindow.webContents.send('inject-message', {
+                panes: [id],
+                message: header + injectionText + '\r',
+                meta: { source: 'model-switch-context' }
+              });
+            }
+          } catch (err) {
+            log.error('ModelSwitch', `Context injection failed for pane ${id}:`, err.message);
+          }
+        }, model === 'codex' ? 6000 : 5000); // Wait longer for Codex
+      }
     }
 
     return { success: true, paneId, model };
