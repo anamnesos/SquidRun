@@ -522,13 +522,9 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
-  // NOTE: This test documents a BUG in watcher.js (lines 579-592)
-  // The friction-resolution.md -> PLAN_REVIEW transition at line 590 is UNREACHABLE
-  // because line 579's condition (filename.endsWith('.md') && filePath.includes('friction'))
-  // always matches first, consuming the else-if chain even though inner condition fails.
-  // The state stays at FRICTION_RESOLUTION instead of transitioning to PLAN_REVIEW.
-  // TODO: Fix production code by reordering else-if conditions (specific before general)
-  test('friction-resolution.md during FRICTION_RESOLUTION stays in FRICTION_RESOLUTION (BUG)', () => {
+  // NOTE: This test validates the FIX in watcher.js (specific check before general)
+  // The friction-resolution.md -> PLAN_REVIEW transition is now reachable.
+  test('friction-resolution.md during FRICTION_RESOLUTION transitions to PLAN_REVIEW (FIX)', () => {
     jest.useFakeTimers();
     const { watcher, tempDir } = setupWatcher();
     watcher.writeState(makeState({ state: watcher.States.FRICTION_RESOLUTION }));
@@ -539,8 +535,8 @@ describe('watcher module', () => {
     watcher.handleFileChange(resolutionPath);
     jest.advanceTimersByTime(250);
 
-    // BUG: Should be PLAN_REVIEW but else-if ordering prevents transition
-    expect(watcher.readState().state).toBe(watcher.States.FRICTION_RESOLUTION);
+    // FIX: Correctly transitions to PLAN_REVIEW after condition reordering
+    expect(watcher.readState().state).toBe(watcher.States.PLAN_REVIEW);
 
     cleanupDir(tempDir);
   });

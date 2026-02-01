@@ -455,6 +455,9 @@ function handleFileChangeCore(filePath) {
   else if (filename === 'checkpoint.md' && currentState === States.CHECKPOINT_FIX) {
     transition(States.CHECKPOINT_REVIEW);
   }
+  else if (filename === 'friction-resolution.md' && currentState === States.FRICTION_RESOLUTION) {
+    transition(States.PLAN_REVIEW);
+  }
   else if (filename.endsWith('.md') && filePath.includes('friction')) {
     if (currentState !== States.FRICTION_LOGGED &&
         currentState !== States.FRICTION_SYNC &&
@@ -465,9 +468,6 @@ function handleFileChangeCore(filePath) {
       transition(States.FRICTION_LOGGED);
       setTimeout(() => transition(States.FRICTION_SYNC), 500);
     }
-  }
-  else if (filename === 'friction-resolution.md' && currentState === States.FRICTION_RESOLUTION) {
-    transition(States.PLAN_REVIEW);
   }
 
   // AUTO-SYNC TRIGGERS (controlled by autoSync setting)
