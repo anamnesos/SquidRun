@@ -12,6 +12,8 @@ const tabs = require('./modules/tabs');
 const settings = require('./modules/settings');
 const daemonHandlers = require('./modules/daemon-handlers');
 const sdkRenderer = require('./modules/sdk-renderer');
+const { showStatusNotice } = require('./modules/notifications');
+const { formatTimeSince } = require('./modules/formatters');
 const {
   BUTTON_DEBOUNCE_MS,
   SPINNER_INTERVAL_MS,
@@ -382,16 +384,7 @@ function getClaimableTasksForPane(paneId) {
   );
 }
 
-function formatTimeSince(timestamp) {
-  if (!timestamp) return '-';
-  const seconds = Math.floor((Date.now() - timestamp) / 1000);
-  if (seconds < 0) return '-';
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h`;
-}
+// formatTimeSince now imported from ./modules/formatters
 
 function updateHealthIndicators() {
   const lastOutputTime = terminal.lastOutputTime || {};
@@ -931,16 +924,7 @@ function setupEventListeners() {
     }
   }
 
-  function showStatusNotice(message, timeoutMs = 6000) {
-    const statusBar = document.querySelector('.status-bar');
-    if (!statusBar) return;
-    const notice = document.createElement('span');
-    notice.className = 'status-notice';
-    notice.textContent = ` | ${message}`;
-    notice.style.cssText = 'color: #8fd3ff; margin-left: 8px;';
-    statusBar.appendChild(notice);
-    setTimeout(() => notice.remove(), timeoutMs);
-  }
+  // showStatusNotice now imported from ./modules/notifications
 
   function updateVoiceUI(statusText) {
     if (voiceInputBtn) {
