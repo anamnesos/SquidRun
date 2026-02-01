@@ -35,7 +35,7 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
     const commands = {
       'claude': 'claude',
       'codex': 'codex',
-      'gemini': `gemini -m gemini-2.5-pro -y --include-directories "${workspacePath}"`
+      'gemini': `gemini -m gemini-3-flash -y --include-directories "${workspacePath}"`
     };
 
     if (!commands[model]) {
