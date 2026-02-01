@@ -614,6 +614,17 @@
   background: rgba(255, 200, 87, 0.25);
 }
 
+.pane-action-btn.kickoff-btn:hover {
+  border-color: #4ecdc4;
+  color: #4ecdc4;
+  background: rgba(78, 205, 196, 0.12);
+  box-shadow: 0 2px 4px rgba(78, 205, 196, 0.2);
+}
+
+.pane-action-btn.kickoff-btn:active {
+  background: rgba(78, 205, 196, 0.25);
+}
+
 .pane-header-right {
   display: flex;
   align-items: center;

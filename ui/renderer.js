@@ -1324,24 +1324,10 @@ function setupEventListeners() {
       if (!paneId) return;
 
       log.info('Kickoff', `Respawn+Kickoff for pane ${paneId}`);
-      terminal.updatePaneStatus(paneId, 'Restarting...');
-
-      // Kill first (if running)
-      try {
-        await terminal.killClaude(paneId);
-        // Small delay to let kill complete
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (err) {
-        log.warn('Kickoff', `Kill failed for pane ${paneId}: ${err.message}`);
-      }
-
-      // Spawn (includes identity message injection)
-      try {
-        await terminal.spawnClaude(paneId);
-        terminal.updatePaneStatus(paneId, 'Started');
-      } catch (err) {
-        log.error('Kickoff', `Spawn failed for pane ${paneId}: ${err.message}`);
-        terminal.updatePaneStatus(paneId, 'Spawn failed');
+      // restartPane handles: kill → wait → reset identity → spawn (with identity injection)
+      const success = await terminal.restartPane(paneId);
+      if (!success) {
+        log.warn('Kickoff', `Restart returned false for pane ${paneId}`);
       }
     }));
   });
