@@ -281,8 +281,11 @@ function createInjectionController(options = {}) {
     return verifyAndRetryEnter(paneId, currentTextarea, retriesLeft - 1);
   }
 
-  // Process queued messages for a pane
-  function processQueue(paneId) {
+  // IDLE QUEUE: Process queued messages for a pane when it becomes idle
+  // This is the SECOND queue in the two-queue system. Messages arrive here from
+  // the throttle queue (daemon-handlers.js processThrottleQueue → terminal.sendToPane).
+  // This queue waits for the pane to be idle (2s silence) before actual injection.
+  function processIdleQueue(paneId) {
     const id = String(paneId);
     const isCodex = isCodexPane(id);
 
@@ -290,7 +293,7 @@ function createInjectionController(options = {}) {
     // Codex panes use codexExec API which doesn't need focus - never block them
     if (!isCodex && getInjectionInFlight()) {
       log.debug(`processQueue ${id}`, 'Claude pane deferred - injection in flight');
-      setTimeout(() => processQueue(paneId), QUEUE_RETRY_MS);
+      setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
       return;
     }
     if (isCodex && getInjectionInFlight()) {
@@ -352,12 +355,12 @@ function createInjectionController(options = {}) {
           }
         }
         if (queue.length > 0) {
-          setTimeout(() => processQueue(paneId), QUEUE_RETRY_MS);
+          setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
         }
       });
     } else {
       // Still busy, retry later
-      setTimeout(() => processQueue(paneId), QUEUE_RETRY_MS);
+      setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
     }
   }
 
@@ -588,8 +591,8 @@ function createInjectionController(options = {}) {
       : (getInjectionInFlight() ? 'injection in flight' : (!isIdle(id) ? 'pane busy' : 'idle'));
     log.info(`Terminal ${id}`, `${reason}, queueing message`);
 
-    // Start processing queue
-    processQueue(id);
+    // Start processing idle queue
+    processIdleQueue(id);
   }
 
   return {
@@ -598,7 +601,7 @@ function createInjectionController(options = {}) {
     sendEnterToPane,
     isPromptReady,
     verifyAndRetryEnter,
-    processQueue,
+    processIdleQueue,
     doSendToPane,
     sendToPane,
   };

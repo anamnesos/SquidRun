@@ -2,7 +2,18 @@
  * Daemon handlers module
  * Handles IPC events from daemon and state changes
  *
- * SDK integration: When SDK mode is enabled, processQueue
+ * MESSAGE QUEUE SYSTEM (Two-Queue Architecture):
+ * 1. THROTTLE QUEUE (this file): Rate-limits messages (150ms between sends per pane)
+ *    - Entry: enqueueForThrottle() called by IPC inject-message handler
+ *    - Exit: processThrottleQueue() calls terminal.sendToPane()
+ *    - Handles: SDK vs PTY routing, special commands (UNSTICK, AGGRESSIVE_NUDGE)
+ *
+ * 2. IDLE QUEUE (injection.js): Waits for pane to be idle before injection
+ *    - Entry: terminal.sendToPane() calls injection.processIdleQueue()
+ *    - Exit: doSendToPane() performs actual PTY write + keyboard Enter
+ *    - Handles: Focus management, idle detection, Enter verification
+ *
+ * SDK integration: When SDK mode is enabled, processThrottleQueue
  * routes messages through SDK instead of terminal PTY.
  */
 
@@ -11,6 +22,7 @@ const path = require('path');
 const { INSTANCE_DIRS } = require('../config');
 const log = require('./logger');
 const diagnosticLog = require('./diagnostic-log');
+const { showToast } = require('./notifications');
 
 // SDK renderer for immediate message display
 let sdkRenderer = null;
@@ -36,9 +48,12 @@ function getTerminal() {
 // Pane IDs
 const PANE_IDS = ['1', '2', '3', '4', '5', '6'];
 
-// Message queue to prevent trigger flood UI glitch
-const messageQueues = new Map(); // paneId -> array of messages
-const processingPanes = new Set(); // panes currently being processed
+// THROTTLE QUEUE: Rate-limits message injection to prevent UI glitches
+// Messages flow: IPC → throttleQueues → (150ms delay) → terminal.sendToPane()
+// This is the FIRST queue in the two-queue system. The second queue (idle queue)
+// lives in injection.js and waits for the pane to be idle before actual injection.
+const throttleQueues = new Map(); // paneId -> array of messages
+const throttlingPanes = new Set(); // panes currently being processed
 const MESSAGE_DELAY = 150; // ms between messages per pane
 
 // SDK integration
@@ -432,7 +447,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
     for (const paneId of panes || []) {
       log.info('Inject', `Received inject-message for pane ${paneId}`);
       diagnosticLog.write('Inject', `Received inject-message for pane ${paneId}`);
-      queueMessage(String(paneId), message, deliveryId);
+      enqueueForThrottle(String(paneId), message, deliveryId);
     }
   });
 
@@ -466,31 +481,32 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
   });
 }
 
-// Queue a message for throttled delivery
-function queueMessage(paneId, message, deliveryId) {
-  if (!messageQueues.has(paneId)) {
-    messageQueues.set(paneId, []);
+// Enqueue a message for throttled delivery (entry point to throttle queue)
+function enqueueForThrottle(paneId, message, deliveryId) {
+  if (!throttleQueues.has(paneId)) {
+    throttleQueues.set(paneId, []);
   }
-  messageQueues.get(paneId).push({
+  throttleQueues.get(paneId).push({
     message,
     deliveryId: deliveryId || null,
   });
-  log.info('Queue', `Queued for pane ${paneId}, queue length: ${messageQueues.get(paneId).length}`);
-  diagnosticLog.write('Queue', `Queued for pane ${paneId}, queue length: ${messageQueues.get(paneId).length}`);
-  processQueue(paneId);
+  log.info('ThrottleQueue', `Queued for pane ${paneId}, queue length: ${throttleQueues.get(paneId).length}`);
+  diagnosticLog.write('ThrottleQueue', `Queued for pane ${paneId}, queue length: ${throttleQueues.get(paneId).length}`);
+  processThrottleQueue(paneId);
 }
 
-// Process message queue for a pane with throttling
-// Restore Enter for messages that include it (triggers, broadcasts)
-// Routes through SDK when SDK mode is enabled
-function processQueue(paneId) {
+// Process throttle queue for a pane (rate-limited message dispatch)
+// This is the first queue: handles 150ms delay between messages, special commands,
+// and SDK vs PTY routing. After throttling, messages go to terminal.sendToPane()
+// which enqueues them in the idle queue (injection.js) for actual injection.
+function processThrottleQueue(paneId) {
   // Already processing this pane, let it continue
-  if (processingPanes.has(paneId)) return;
+  if (throttlingPanes.has(paneId)) return;
 
-  const queue = messageQueues.get(paneId);
+  const queue = throttleQueues.get(paneId);
   if (!queue || queue.length === 0) return;
 
-  processingPanes.add(paneId);
+  throttlingPanes.add(paneId);
 
   const item = queue.shift();
   const message = typeof item === 'string' ? item : item.message;
@@ -511,9 +527,9 @@ function processQueue(paneId) {
       terminal.sendUnstick(paneId);
     }
     flashPaneHeader(paneId);
-    processingPanes.delete(paneId);
+    throttlingPanes.delete(paneId);
     if (queue.length > 0) {
-      setTimeout(() => processQueue(paneId), MESSAGE_DELAY);
+      setTimeout(() => processThrottleQueue(paneId), MESSAGE_DELAY);
     }
     return;
   }
@@ -531,9 +547,9 @@ function processQueue(paneId) {
       terminal.aggressiveNudge(paneId);
     }
     flashPaneHeader(paneId);
-    processingPanes.delete(paneId);
+    throttlingPanes.delete(paneId);
     if (queue.length > 0) {
-      setTimeout(() => processQueue(paneId), MESSAGE_DELAY);
+      setTimeout(() => processThrottleQueue(paneId), MESSAGE_DELAY);
     }
     return;
   }
@@ -575,9 +591,9 @@ function processQueue(paneId) {
     }).finally(() => {
       // CRITICAL: Release queue lock and process next message AFTER SDK send completes
       // Previously this was outside the promise chain, causing same race condition as PTY mode
-      processingPanes.delete(paneId);
+      throttlingPanes.delete(paneId);
       if (queue.length > 0) {
-        setTimeout(() => processQueue(paneId), MESSAGE_DELAY);
+        setTimeout(() => processThrottleQueue(paneId), MESSAGE_DELAY);
       }
     });
     return;
@@ -604,9 +620,9 @@ function processQueue(paneId) {
       // CRITICAL: Release queue lock and process next message AFTER injection completes
       // Previously this was outside onComplete, causing race conditions where
       // multiple sendToPane calls could be in-flight for the same pane
-      processingPanes.delete(paneId);
+      throttlingPanes.delete(paneId);
       if (queue.length > 0) {
-        setTimeout(() => processQueue(paneId), MESSAGE_DELAY);
+        setTimeout(() => processThrottleQueue(paneId), MESSAGE_DELAY);
       }
     }
   });
@@ -1107,20 +1123,7 @@ function showCostAlert(data) {
   }
 }
 
-function showToast(message, type = 'info') {
-  const existing = document.querySelector('.toast-notification');
-  if (existing) existing.remove();
-
-  const toast = document.createElement('div');
-  toast.className = `toast-notification toast-${type}`;
-  toast.textContent = message;
-  document.body.appendChild(toast);
-
-  setTimeout(() => {
-    toast.classList.add('toast-fade');
-    setTimeout(() => toast.remove(), 500);
-  }, 5000);
-}
+// showToast now imported from ./notifications
 
 function setupCostAlertListener() {
   ipcRenderer.on('cost-alert', (event, data) => {
