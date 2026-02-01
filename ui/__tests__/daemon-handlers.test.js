@@ -1264,6 +1264,15 @@ describe('daemon-handlers.js module', () => {
         expect(terminal.aggressiveNudge).toHaveBeenCalledWith('1');
       });
 
+      test('should handle AGGRESSIVE_NUDGE in SDK mode', () => {
+        daemonHandlers.setSDKMode(true);
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['inject-message']({}, { panes: ['1'], message: '(AGGRESSIVE_NUDGE)' });
+
+        expect(ipcRenderer.invoke).toHaveBeenCalledWith('sdk-interrupt', '1');
+      });
+
       test('should route messages through SDK when enabled', () => {
         daemonHandlers.setSDKMode(true);
         daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
@@ -1302,6 +1311,129 @@ describe('daemon-handlers.js module', () => {
 
         // In SDK mode, delivery ack is sent after sdk-send-message resolves
         expect(ipcRenderer.invoke).toHaveBeenCalledWith('sdk-send-message', '1', 'test');
+      });
+
+      test('should ack and update delivery indicator on SDK success', async () => {
+        const indicatorEl = {
+          textContent: '',
+          className: '',
+          classList: { remove: jest.fn() },
+        };
+        const headerEl = {
+          classList: { add: jest.fn(), remove: jest.fn() },
+          offsetWidth: 0,
+        };
+        mockDocument.getElementById.mockImplementation((id) => {
+          if (id === 'delivery-1') return indicatorEl;
+          return null;
+        });
+        mockDocument.querySelector.mockImplementation((selector) => {
+          if (selector.includes('.pane-header')) return headerEl;
+          return null;
+        });
+
+        daemonHandlers.setSDKMode(true);
+        ipcRenderer.invoke.mockResolvedValueOnce({});
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['inject-message']({}, {
+          panes: ['1'],
+          message: 'hello',
+          deliveryId: 'del-ack-1',
+        });
+
+        await Promise.resolve();
+        jest.advanceTimersByTime(200);
+        await Promise.resolve();
+
+        expect(ipcRenderer.send).toHaveBeenCalledWith('trigger-delivery-ack', {
+          deliveryId: 'del-ack-1',
+          paneId: '1',
+        });
+        expect(indicatorEl.className).toContain('delivered');
+      });
+
+      test('should show delivery failed on SDK send error', async () => {
+        const indicatorEl = {
+          textContent: '',
+          className: '',
+          classList: { remove: jest.fn() },
+        };
+        mockDocument.getElementById.mockImplementation((id) => {
+          if (id === 'delivery-1') return indicatorEl;
+          return null;
+        });
+        mockDocument.querySelector.mockReturnValue(null);
+        mockDocument.createElement.mockReturnValue({
+          className: '',
+          textContent: '',
+          classList: { add: jest.fn() },
+          remove: jest.fn(),
+        });
+
+        daemonHandlers.setSDKMode(true);
+        ipcRenderer.invoke.mockRejectedValueOnce(new Error('Send failed'));
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['inject-message']({}, {
+          panes: ['1'],
+          message: 'oops',
+          deliveryId: 'del-fail-1',
+        });
+
+        await Promise.resolve();
+        jest.advanceTimersByTime(200);
+        await Promise.resolve();
+
+        expect(ipcRenderer.send).not.toHaveBeenCalledWith('trigger-delivery-ack', {
+          deliveryId: 'del-fail-1',
+          paneId: '1',
+        });
+        expect(indicatorEl.className).toContain('failed');
+        expect(mockDocument.createElement).toHaveBeenCalledWith('div');
+      });
+
+      test('should show delivery failed on PTY send failure', async () => {
+        const indicatorEl = {
+          textContent: '',
+          className: '',
+          classList: { remove: jest.fn() },
+        };
+        mockDocument.getElementById.mockImplementation((id) => {
+          if (id === 'delivery-1') return indicatorEl;
+          return null;
+        });
+        mockDocument.querySelector.mockReturnValue(null);
+        mockDocument.createElement.mockReturnValue({
+          className: '',
+          textContent: '',
+          classList: { add: jest.fn() },
+          remove: jest.fn(),
+        });
+
+        terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
+          if (options && options.onComplete) {
+            setTimeout(() => options.onComplete({ success: false, reason: 'nope' }), 0);
+          }
+        });
+
+        daemonHandlers.setSDKMode(false);
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        ipcHandlers['inject-message']({}, {
+          panes: ['1'],
+          message: 'pty fail',
+          deliveryId: 'del-pty-fail',
+        });
+
+        jest.advanceTimersByTime(200);
+
+        expect(ipcRenderer.send).not.toHaveBeenCalledWith('trigger-delivery-ack', {
+          deliveryId: 'del-pty-fail',
+          paneId: '1',
+        });
+        expect(indicatorEl.className).toContain('failed');
+        expect(mockDocument.createElement).toHaveBeenCalledWith('div');
       });
     });
 
@@ -1429,6 +1561,75 @@ describe('daemon-handlers.js module', () => {
         ipcHandlers['completion-detected']({}, { paneId: '1', pattern: 'done' });
 
         expect(mockToast.textContent).toContain('completed task');
+      });
+
+      describe('UI Feedback', () => {
+        test('flashPaneHeader should add and remove class', () => {
+          const mockHeader = {
+            classList: { add: jest.fn(), remove: jest.fn() },
+            offsetWidth: 100,
+          };
+          const mockPane = {
+            querySelector: jest.fn().mockReturnValue(mockHeader),
+          };
+          
+          // Save original implementation
+          const originalQuerySelector = mockDocument.querySelector;
+          
+          mockDocument.querySelector.mockImplementation((selector) => {
+            if (selector.includes('.pane-header')) return mockHeader;
+            if (selector.includes('data-pane-id')) return mockPane;
+            return null;
+          });
+
+          // setup listeners so we have ipcHandlers
+          daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+          
+          daemonHandlers.setSDKMode(false);
+          // Use a fresh paneId to avoid throttle queue conflicts
+          ipcHandlers['inject-message']({}, { panes: ['97'], message: 'msg' });
+
+          expect(mockHeader.classList.add).toHaveBeenCalledWith('trigger-flash');
+          
+          // Advance timers to see removal
+          jest.advanceTimersByTime(300);
+          expect(mockHeader.classList.remove).toHaveBeenCalledWith('trigger-flash');
+          
+          // Restore original mock
+          mockDocument.querySelector = originalQuerySelector;
+        });
+      });
+
+      describe('enqueueForThrottle direct tests', () => {
+        test('should initialize queue for new pane', () => {
+          const terminal = require('../modules/terminal');
+          daemonHandlers.setSDKMode(false);
+          daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+          const testPaneId = '99';
+          ipcHandlers['inject-message']({}, { panes: [testPaneId], message: 'msg1' });
+          
+          expect(terminal.sendToPane).toHaveBeenCalledWith(testPaneId, 'msg1', expect.any(Object));
+        });
+
+        test('should handle message with deliveryId', () => {
+          const terminal = require('../modules/terminal');
+          daemonHandlers.setSDKMode(false);
+          daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+          
+          const testPaneId = '98';
+          ipcHandlers['inject-message']({}, { 
+            panes: [testPaneId], 
+            message: 'msg1', 
+            deliveryId: 'del-123' 
+          });
+          
+          expect(terminal.sendToPane).toHaveBeenCalledWith(
+            testPaneId, 
+            'msg1', 
+            expect.objectContaining({ onComplete: expect.any(Function) })
+          );
+        });
       });
     });
 
