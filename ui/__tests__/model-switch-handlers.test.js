@@ -19,6 +19,7 @@ jest.mock('../modules/logger', () => ({
 jest.mock('fs', () => ({
   existsSync: jest.fn(),
   readFileSync: jest.fn(),
+  writeFileSync: jest.fn(),
 }));
 
 // Mock config
@@ -26,7 +27,15 @@ jest.mock('../config', () => ({
   INSTANCE_DIRS: {
     '1': '/mock/instances/lead',
     '5': '/mock/instances/investigator',
-  }
+  },
+  PANE_ROLES: {
+    '1': 'Architect',
+    '2': 'Infra',
+    '3': 'Frontend',
+    '4': 'Backend',
+    '5': 'Analyst',
+    '6': 'Reviewer',
+  },
 }));
 
 const path = require('path');
@@ -60,12 +69,13 @@ describe('registerModelSwitchHandlers', () => {
         kill: jest.fn(),
         on: jest.fn((event, handler) => {
           // Store handler to be called manually
-          if (event === 'exit') {
-            mockCtx.daemonClient._exitHandler = handler;
+          // Listen for 'killed' event (not 'exit') - daemon emits 'killed' when kill() completes
+          if (event === 'killed') {
+            mockCtx.daemonClient._killedHandler = handler;
           }
         }),
         off: jest.fn(),
-        _exitHandler: null, // To store the handler
+        _killedHandler: null, // To store the handler
       },
       mainWindow: {
         isDestroyed: jest.fn().mockReturnValue(false),
@@ -73,11 +83,17 @@ describe('registerModelSwitchHandlers', () => {
           send: jest.fn(),
         },
       },
+      recoveryManager: {
+        markExpectedExit: jest.fn(),
+      },
     };
 
     // Mock dependencies passed to the function
     mockDeps = {
       saveSettings: jest.fn(),
+      contextInjection: {
+        injectContext: jest.fn().mockResolvedValue(undefined),
+      },
     };
   });
 
@@ -139,6 +155,39 @@ describe('registerModelSwitchHandlers', () => {
       expect(mockCtx.daemonClient.kill).toHaveBeenCalledWith('1');
     });
 
+    it('should call recoveryManager.markExpectedExit before daemonClient.kill', async () => {
+      // Track call order
+      const callOrder = [];
+      mockCtx.recoveryManager.markExpectedExit.mockImplementation(() => {
+        callOrder.push('markExpectedExit');
+      });
+      mockCtx.daemonClient.kill.mockImplementation(() => {
+        callOrder.push('kill');
+      });
+
+      switchHandler({}, { paneId: '2', model: 'claude' });
+
+      // Verify markExpectedExit was called before kill
+      expect(mockCtx.recoveryManager.markExpectedExit).toHaveBeenCalledWith('2', 'model-switch');
+      expect(callOrder).toEqual(['markExpectedExit', 'kill']);
+    });
+
+    it('should broadcast model switch to all agents via trigger file', async () => {
+      // Get the promise for the handler
+      const switchPromise = switchHandler({}, { paneId: '3', model: 'codex' });
+
+      // Simulate the exit event
+      mockCtx.daemonClient._killedHandler('3');
+
+      await switchPromise;
+
+      // Verify broadcast was written to all.txt trigger file
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('all.txt'),
+        '(SYSTEM): Frontend switched to Codex\n'
+      );
+    });
+
     it('should perform a full switch, save, and signal on success', async () => {
       // Get the promise for the handler
       const switchPromise = switchHandler({}, { paneId: '1', model: 'gemini' });
@@ -147,8 +196,8 @@ describe('registerModelSwitchHandlers', () => {
       expect(mockCtx.daemonClient.kill).toHaveBeenCalledWith('1');
 
       // Simulate the exit event from the daemon
-      expect(mockCtx.daemonClient._exitHandler).toBeDefined();
-      mockCtx.daemonClient._exitHandler({ paneId: '1' });
+      expect(mockCtx.daemonClient._killedHandler).toBeDefined();
+      mockCtx.daemonClient._killedHandler('1');
 
       // Wait for the handler promise to resolve
       const result = await switchPromise;
@@ -195,33 +244,29 @@ describe('registerModelSwitchHandlers', () => {
 
     it('should construct the gemini command with the correct workspace path', async () => {
       const switchPromise = switchHandler({}, { paneId: '1', model: 'gemini' });
-      mockCtx.daemonClient._exitHandler({ paneId: '1' });
+      mockCtx.daemonClient._killedHandler('1');
       await switchPromise;
 
       expect(mockCtx.currentSettings.paneCommands['1']).toMatch(/gemini --yolo --include-directories ".*workspace"/);
     });
 
     it('should auto-inject context files after model switch', async () => {
-      // Setup fs mocks
-      fs.existsSync.mockImplementation((p) => {
-        if (p.includes('instances')) return true;
-        if (p.includes('CLAUDE.md')) return true;
-        return false;
-      });
-      fs.readFileSync.mockReturnValue('mock claude content');
-
       const switchPromise = switchHandler({}, { paneId: '1', model: 'claude' });
-      mockCtx.daemonClient._exitHandler({ paneId: '1' });
+      mockCtx.daemonClient._killedHandler('1');
       await switchPromise;
 
-      // Advance timers to trigger injection
-      jest.advanceTimersByTime(5000);
+      // Verify contextInjection.injectContext was called with correct params
+      // delay is 5000ms for claude, 6000ms for codex
+      expect(mockDeps.contextInjection.injectContext).toHaveBeenCalledWith('1', 'claude', 5000);
+    });
 
-      expect(mockCtx.mainWindow.webContents.send).toHaveBeenCalledWith('inject-message', expect.objectContaining({
-        panes: ['1'],
-        message: expect.stringContaining('mock claude content'),
-        meta: { source: 'model-switch-context' }
-      }));
+    it('should use longer delay for codex context injection', async () => {
+      const switchPromise = switchHandler({}, { paneId: '1', model: 'codex' });
+      mockCtx.daemonClient._killedHandler('1');
+      await switchPromise;
+
+      // Codex gets 6000ms delay
+      expect(mockDeps.contextInjection.injectContext).toHaveBeenCalledWith('1', 'codex', 6000);
     });
 
     it('should handle missing daemonClient gracefully', async () => {
@@ -248,7 +293,7 @@ describe('registerModelSwitchHandlers', () => {
       const switchPromise = switchHandler({}, { paneId: '1', model: 'claude' });
       
       // Simulate exit
-      mockCtx.daemonClient._exitHandler({ paneId: '1' });
+      mockCtx.daemonClient._killedHandler('1');
       
       const result = await switchPromise;
       expect(result.success).toBe(true);
@@ -264,7 +309,7 @@ describe('registerModelSwitchHandlers', () => {
       const switchPromise = localSwitchHandler({}, { paneId: '1', model: 'claude' });
       
       // Simulate exit
-      mockCtx.daemonClient._exitHandler({ paneId: '1' });
+      mockCtx.daemonClient._killedHandler('1');
       
       const result = await switchPromise;
       expect(result.success).toBe(true);
@@ -274,7 +319,7 @@ describe('registerModelSwitchHandlers', () => {
       const switchPromise = switchHandler({}, { paneId: 1, model: 'claude' });
       
       // Simulate exit
-      mockCtx.daemonClient._exitHandler({ paneId: '1' });
+      mockCtx.daemonClient._killedHandler('1');
       
       const result = await switchPromise;
       expect(result.success).toBe(true);

@@ -205,7 +205,7 @@ function createRecoveryController(options = {}) {
     }
   }
 
-  async function restartPane(paneId) {
+  async function restartPane(paneId, model = null) {
     const id = String(paneId);
     if (typeof getSdkModeActive === 'function' && getSdkModeActive()) {
       log.info('Terminal', `Restart blocked for pane ${id} (SDK mode)`);
@@ -241,7 +241,7 @@ function createRecoveryController(options = {}) {
 
     if (typeof spawnClaude === 'function') {
       try {
-        await spawnClaude(id);
+        await spawnClaude(id, model);
       } catch (err) {
         log.error('Terminal', `Failed to spawn Claude for pane ${id}:`, err);
         setPaneStatus(id, 'Spawn failed');
