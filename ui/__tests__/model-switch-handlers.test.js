@@ -33,7 +33,7 @@ describe('registerModelSwitchHandlers', () => {
       currentSettings: {
         paneCommands: {
           '1': 'claude',
-          '5': 'gemini -m gemini-3-flash -y --include-directories "D:\\projects\\hivemind\\workspace"',
+          '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind\\workspace"',
         },
       },
       daemonClient: {
@@ -135,7 +135,7 @@ describe('registerModelSwitchHandlers', () => {
       const result = await switchPromise;
 
       // Verify settings were updated and saved
-      const expectedGeminiCmd = `gemini -m gemini-3-flash -y --include-directories "${path.resolve(__dirname, '..', '..', 'workspace')}"`;
+      const expectedGeminiCmd = `gemini --yolo --include-directories "${path.resolve(__dirname, '..', '..', 'workspace')}"`;
       expect(mockCtx.currentSettings.paneCommands['1']).toBe(expectedGeminiCmd);
       expect(mockDeps.saveSettings).toHaveBeenCalledWith({ paneCommands: mockCtx.currentSettings.paneCommands });
 
@@ -181,8 +181,8 @@ describe('registerModelSwitchHandlers', () => {
       await switchPromise;
 
       const expectedPath = path.resolve(__dirname, '..', '..', 'workspace');
-      const expectedCommand = `gemini -m gemini-3-flash -y --include-directories "${expectedPath}"`;
-      
+      const expectedCommand = `gemini --yolo --include-directories "${expectedPath}"`;
+
       expect(mockCtx.currentSettings.paneCommands['1']).toBe(expectedCommand);
     });
   });
