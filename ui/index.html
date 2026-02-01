@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="styles/friction-panel.css">
   <link rel="stylesheet" href="styles/tabs.css">
   <link rel="stylesheet" href="styles/sdk-renderer.css">
+  <link rel="stylesheet" href="styles/status-strip.css">
 </head>
 <body>
   <!-- Command Palette (Ctrl+K) -->
@@ -268,6 +269,59 @@
         <div class="progress-fill" id="progressFill" style="width: 0%"></div>
       </div>
       <span class="progress-text" id="progressText">0 / 0</span>
+    </div>
+  </div>
+
+  <!-- Status Strip - Task counts at a glance -->
+  <div class="status-strip" id="statusStrip">
+    <div class="status-strip-left">
+      <div class="status-segment done zero" id="statusDone" title="Completed tasks">
+        <span class="status-segment-icon">&#10003;</span>
+        <span class="status-segment-count" id="countDone">0</span>
+        <span class="status-segment-label">done</span>
+        <div class="status-dropdown" id="dropdownDone">
+          <div class="status-dropdown-header">Completed Tasks</div>
+          <div class="status-dropdown-list" id="listDone">
+            <div class="status-dropdown-empty">No completed tasks</div>
+          </div>
+        </div>
+      </div>
+      <div class="status-segment running zero" id="statusRunning" title="Tasks in progress">
+        <span class="status-segment-icon">&#8635;</span>
+        <span class="status-segment-count" id="countRunning">0</span>
+        <span class="status-segment-label">running</span>
+        <div class="status-dropdown" id="dropdownRunning">
+          <div class="status-dropdown-header">In Progress</div>
+          <div class="status-dropdown-list" id="listRunning">
+            <div class="status-dropdown-empty">No tasks running</div>
+          </div>
+        </div>
+      </div>
+      <div class="status-segment waiting zero" id="statusWaiting" title="Tasks waiting on input or dependencies">
+        <span class="status-segment-icon">&#9888;</span>
+        <span class="status-segment-count" id="countWaiting">0</span>
+        <span class="status-segment-label">waiting</span>
+        <div class="status-dropdown" id="dropdownWaiting">
+          <div class="status-dropdown-header">Waiting</div>
+          <div class="status-dropdown-list" id="listWaiting">
+            <div class="status-dropdown-empty">No tasks waiting</div>
+          </div>
+        </div>
+      </div>
+      <div class="status-segment failed zero" id="statusFailed" title="Failed tasks">
+        <span class="status-segment-icon">&#10007;</span>
+        <span class="status-segment-count" id="countFailed">0</span>
+        <span class="status-segment-label">failed</span>
+        <div class="status-dropdown" id="dropdownFailed">
+          <div class="status-dropdown-header">Failed Tasks</div>
+          <div class="status-dropdown-list" id="listFailed">
+            <div class="status-dropdown-empty">No failed tasks</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="status-strip-right">
+      <span class="session-timer" id="sessionTimer" title="Session duration">Session: 0:00</span>
     </div>
   </div>
 

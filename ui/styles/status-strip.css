@@ -1,0 +1,201 @@
+/* status-strip.css — Task status overview strip */
+
+/* ============================================================
+   STATUS STRIP - Glanceable task counts
+   ============================================================ */
+
+.status-strip {
+  background: var(--color-bg-medium);
+  padding: var(--space-1) var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--color-bg-light);
+  font-size: var(--text-sm);
+  height: 30px;
+  flex-shrink: 0;
+}
+
+.status-strip-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.status-strip-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+/* Individual status segments */
+.status-segment {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  position: relative;
+}
+
+.status-segment:hover {
+  background: var(--color-bg-light);
+}
+
+.status-segment-icon {
+  font-size: var(--text-base);
+}
+
+.status-segment-count {
+  font-weight: 600;
+  font-family: var(--font-mono);
+  min-width: 16px;
+  text-align: center;
+}
+
+.status-segment-label {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+/* Segment variants */
+.status-segment.done {
+  color: var(--color-success);
+}
+
+.status-segment.done:hover {
+  background: rgba(78, 204, 163, 0.15);
+}
+
+.status-segment.running {
+  color: var(--color-info);
+}
+
+.status-segment.running:hover {
+  background: rgba(110, 198, 255, 0.15);
+}
+
+.status-segment.running .status-segment-icon {
+  animation: spin 1.5s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.status-segment.waiting {
+  color: var(--color-warning);
+}
+
+.status-segment.waiting:hover {
+  background: rgba(255, 200, 87, 0.15);
+}
+
+.status-segment.failed {
+  color: var(--color-error);
+}
+
+.status-segment.failed:hover {
+  background: rgba(233, 69, 96, 0.15);
+}
+
+/* Zero state - dim the segment */
+.status-segment.zero {
+  opacity: 0.5;
+}
+
+.status-segment.zero:hover {
+  opacity: 1;
+}
+
+/* Dropdown for segment details */
+.status-dropdown {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  min-width: 250px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-bg-light);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-dropdown);
+  margin-bottom: var(--space-1);
+}
+
+.status-segment.open .status-dropdown {
+  display: block;
+  animation: dropdownSlideUp 0.15s ease;
+}
+
+@keyframes dropdownSlideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.status-dropdown-header {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-bg-light);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.status-dropdown-list {
+  padding: var(--space-1) 0;
+}
+
+.status-dropdown-item {
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-bottom: 1px solid var(--color-bg-dark);
+  transition: background var(--transition-fast);
+}
+
+.status-dropdown-item:last-child {
+  border-bottom: none;
+}
+
+.status-dropdown-item:hover {
+  background: var(--color-bg-medium);
+}
+
+.status-dropdown-item-title {
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.status-dropdown-item-meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.status-dropdown-empty {
+  padding: var(--space-3);
+  text-align: center;
+  color: var(--color-text-dim);
+  font-style: italic;
+  font-size: var(--text-sm);
+}
+
+/* Session timer */
+.session-timer {
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .status-segment.running .status-segment-icon {
+    animation: none;
+  }
+}
