@@ -391,8 +391,8 @@ function verifyAndRetryEnter(...args) {
   return injectionController.verifyAndRetryEnter(...args);
 }
 
-function processQueue(...args) {
-  return injectionController.processQueue(...args);
+function processIdleQueue(...args) {
+  return injectionController.processIdleQueue(...args);
 }
 
 function doSendToPane(...args) {

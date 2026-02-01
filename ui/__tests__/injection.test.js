@@ -126,7 +126,7 @@ describe('Terminal Injection', () => {
       expect(controller.sendEnterToPane).toBeDefined();
       expect(controller.isPromptReady).toBeDefined();
       expect(controller.verifyAndRetryEnter).toBeDefined();
-      expect(controller.processQueue).toBeDefined();
+      expect(controller.processIdleQueue).toBeDefined();
       expect(controller.doSendToPane).toBeDefined();
       expect(controller.sendToPane).toBeDefined();
     });
@@ -435,15 +435,15 @@ describe('Terminal Injection', () => {
     });
   });
 
-  describe('processQueue', () => {
+  describe('processIdleQueue', () => {
     test('does nothing with empty queue', () => {
       messageQueue['1'] = [];
-      controller.processQueue('1');
+      controller.processIdleQueue('1');
       expect(mockOptions.setInjectionInFlight).not.toHaveBeenCalled();
     });
 
     test('does nothing without queue', () => {
-      controller.processQueue('1');
+      controller.processIdleQueue('1');
       expect(mockOptions.setInjectionInFlight).not.toHaveBeenCalled();
     });
 
@@ -451,7 +451,7 @@ describe('Terminal Injection', () => {
       messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
       mockOptions.getInjectionInFlight.mockReturnValue(true);
 
-      controller.processQueue('1');
+      controller.processIdleQueue('1');
 
       // Should not start injection
       expect(mockOptions.setInjectionInFlight).not.toHaveBeenCalledWith(true);
@@ -462,7 +462,7 @@ describe('Terminal Injection', () => {
     test('processes string message in queue', () => {
       messageQueue['1'] = ['test message\r'];
 
-      controller.processQueue('1');
+      controller.processIdleQueue('1');
 
       // Should start injection
       expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
@@ -476,7 +476,7 @@ describe('Terminal Injection', () => {
       }];
       lastOutputTime['1'] = Date.now() - 1000;
 
-      controller.processQueue('1');
+      controller.processIdleQueue('1');
 
       expect(mockLog.warn).toHaveBeenCalledWith(
         expect.stringContaining('Terminal 1'),
@@ -493,7 +493,7 @@ describe('Terminal Injection', () => {
       mockOptions.isIdle.mockReturnValue(false); // Not normal idle
       mockOptions.isIdleForForceInject.mockReturnValue(true); // But force-inject idle
 
-      controller.processQueue('1');
+      controller.processIdleQueue('1');
 
       expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
       expect(mockLog.info).toHaveBeenCalledWith(
@@ -511,7 +511,7 @@ describe('Terminal Injection', () => {
       mockOptions.isIdle.mockReturnValue(false);
       mockOptions.isIdleForForceInject.mockReturnValue(false);
 
-      controller.processQueue('1');
+      controller.processIdleQueue('1');
 
       expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
       expect(mockLog.warn).toHaveBeenCalledWith(
@@ -524,7 +524,7 @@ describe('Terminal Injection', () => {
       messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
       mockOptions.userIsTyping.mockReturnValue(true);
 
-      controller.processQueue('1');
+      controller.processIdleQueue('1');
 
       // Should not inject
       expect(mockOptions.setInjectionInFlight).not.toHaveBeenCalled();
@@ -540,7 +540,7 @@ describe('Terminal Injection', () => {
         onComplete,
       }];
 
-      controller.processQueue('1');
+      controller.processIdleQueue('1');
 
       // Advance timers to complete injection
       await jest.advanceTimersByTimeAsync(2000);
@@ -558,7 +558,7 @@ describe('Terminal Injection', () => {
         onComplete,
       }];
 
-      controller.processQueue('1');
+      controller.processIdleQueue('1');
       await jest.advanceTimersByTimeAsync(2000);
 
       expect(mockLog.error).toHaveBeenCalledWith(
@@ -575,7 +575,7 @@ describe('Terminal Injection', () => {
         { message: 'second\r', timestamp: Date.now() },
       ];
 
-      controller.processQueue('1');
+      controller.processIdleQueue('1');
 
       // First message is being processed
       expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
