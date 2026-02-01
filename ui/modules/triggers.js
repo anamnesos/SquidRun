@@ -13,6 +13,7 @@ const { TRIGGER_TARGETS, WORKSPACE_PATH, PANE_IDS } = require('../config');
 const log = require('./logger');
 const diagnosticLog = require('./diagnostic-log');
 const smartRouting = require('./smart-routing');
+const { formatDuration } = require('./formatters');
 
 // Memory system for trigger logging
 let memory = null;
@@ -264,21 +265,7 @@ function getReliabilityStats() {
   };
 }
 
-/**
- * Format duration in human readable format
- */
-function formatDuration(ms) {
-  const seconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-
-  if (hours > 0) {
-    return `${hours}h ${minutes % 60}m`;
-  } else if (minutes > 0) {
-    return `${minutes}m ${seconds % 60}s`;
-  }
-  return `${seconds}s`;
-}
+// formatDuration now imported from ./formatters
 
 // In-memory sequence tracking (loaded from file on init)
 let messageState = {
@@ -930,12 +917,32 @@ function handleTriggerFile(filePath, filename) {
     return { success: false, reason: 'workflow_gate', message: gateCheck.reason };
   }
 
+  // ATOMIC RENAME PATTERN: Prevents race condition on rapid writes
+  // 1. Rename file to .processing (atomic, captures current content)
+  // 2. Read from .processing file
+  // 3. Process the message
+  // 4. Delete .processing file
+  // New writes create fresh file, separate watcher event, no loss
+  const processingPath = filePath + '.processing';
+  try {
+    fs.renameSync(filePath, processingPath);
+    log.info('Trigger', `Renamed ${filename} to .processing for atomic handling`);
+  } catch (renameErr) {
+    // File may have been already renamed by concurrent handler, or deleted
+    if (renameErr.code === 'ENOENT') {
+      log.info('Trigger', `File already gone (concurrent handler?): ${filename}`);
+      return { success: false, reason: 'already_processing' };
+    }
+    log.error('Trigger', `Failed to rename ${filename}: ${renameErr.message}`);
+    return { success: false, reason: 'rename_error' };
+  }
+
   // Read trigger file content with encoding normalization
   // Windows agents may write UTF-16LE (PowerShell default), UTF-8 with BOM,
   // or OEM codepage (cmd.exe echo). Normalize to clean UTF-8.
   let message;
   try {
-    const raw = fs.readFileSync(filePath);
+    const raw = fs.readFileSync(processingPath);
 
     // Detect UTF-16LE BOM (FF FE)
     if (raw.length >= 2 && raw[0] === 0xFF && raw[1] === 0xFE) {
@@ -956,11 +963,15 @@ function handleTriggerFile(filePath, filename) {
     message = message.replace(/\0/g, '').replace(/[\x01-\x08\x0B\x0C\x0E-\x1F]/g, '');
   } catch (err) {
     log.info('Trigger', `Could not read ${filename}: ${err.message}`);
+    // Clean up .processing file on read error
+    try { fs.unlinkSync(processingPath); } catch (e) { /* ignore */ }
     return { success: false, reason: 'read_error' };
   }
 
   if (!message) {
     log.info('Trigger', `Empty trigger file: ${filename}`);
+    // Clean up .processing file for empty files
+    try { fs.unlinkSync(processingPath); } catch (e) { /* ignore */ }
     return { success: false, reason: 'empty' };
   }
   if (filename === 'lead.txt') {
@@ -989,9 +1000,9 @@ function handleTriggerFile(filePath, filename) {
   });
   if (beforePayload && beforePayload.cancel) {
     try {
-      fs.writeFileSync(filePath, '', 'utf-8');
+      fs.unlinkSync(processingPath);
     } catch (err) {
-      log.info('Trigger', `Could not clear ${filename}: ${err.message}`);
+      log.info('Trigger', `Could not delete ${filename}.processing: ${err.message}`);
     }
     dispatchPluginEvent('message:afterSend', {
       type: 'trigger',
@@ -1045,9 +1056,9 @@ function handleTriggerFile(filePath, filename) {
     if (isDuplicateMessage(parsed.sender, parsed.seq, recipientRole)) {
       log.info('Trigger', `SKIPPED duplicate: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
       recordSkipped(parsed.sender, parsed.seq, recipientRole);
-      // Clear the file but don't deliver
+      // Delete the .processing file but don't deliver
       try {
-        fs.writeFileSync(filePath, '', 'utf-8');
+        fs.unlinkSync(processingPath);
       } catch (e) { /* ignore */ }
       return { success: false, reason: 'duplicate', seq: parsed.seq, sender: parsed.sender };
     }
@@ -1089,12 +1100,12 @@ function handleTriggerFile(filePath, filename) {
       }
     }
 
-    // Clear trigger file after SDK calls (even partial success)
+    // Delete .processing file after SDK calls (even partial success)
     try {
-      fs.writeFileSync(filePath, '', 'utf-8');
-      log.info('Trigger SDK', `Cleared trigger file: ${filename}`);
+      fs.unlinkSync(processingPath);
+      log.info('Trigger SDK', `Deleted ${filename}.processing after delivery`);
     } catch (err) {
-      log.info('Trigger SDK', `Could not clear ${filename}: ${err.message}`);
+      log.info('Trigger SDK', `Could not delete ${filename}.processing: ${err.message}`);
     }
 
     // Notify UI about trigger sent
@@ -1168,11 +1179,12 @@ function handleTriggerFile(filePath, filename) {
   }
   // Sequence is recorded after renderer confirms delivery (trigger-delivery-ack)
 
-  // Clear the trigger file after sending
+  // Delete the .processing file after sending
   try {
-    fs.writeFileSync(filePath, '', 'utf-8');
+    fs.unlinkSync(processingPath);
+    log.info('Trigger', `Deleted ${filename}.processing after PTY dispatch`);
   } catch (err) {
-    log.info('Trigger', `Could not clear ${filename}: ${err.message}`);
+    log.info('Trigger', `Could not delete ${filename}.processing: ${err.message}`);
   }
 
   logTriggerActivity('Trigger file (PTY)', targets, message, { file: filename, sender: parsed.sender, mode: 'pty' });
