@@ -1878,8 +1878,8 @@ ipcRenderer.on('pane-model-changed', async (event, { paneId, model }) => {
   const select = document.querySelector(`.model-selector[data-pane-id="${paneId}"]`);
 
   try {
-    // Respawn with new model - pass model to bypass stale settings cache
-    await terminal.spawnClaude(paneId, model);
+    // Respawn with new model - restartPane handles kill/create/spawn sequence
+    await terminal.restartPane(paneId, model);
     showStatusNotice(`Pane ${paneId} now running ${model}`);
     log.info('ModelSelector', `Pane ${paneId} respawned with ${model}`);
   } catch (err) {
