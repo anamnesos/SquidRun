@@ -263,6 +263,46 @@ Messages use sequence numbers to prevent duplicates: `(ROLE #N): message`
 
 **Technical detail:** `workspace/message-state.json` tracks sequences but resets `lastSeen` on app startup to prevent stale blocking.
 
+### ⚠️ CRITICAL: Use Absolute Paths (Codex Agents)
+
+**Codex agents run from instance folders, not workspace root.**
+
+If you use relative paths like `workspace/triggers/architect.txt`, they resolve WRONG:
+- Expected: `D:\projects\hivemind\workspace\triggers\architect.txt`
+- Actual: `D:\projects\hivemind\workspace\instances\YOUR-FOLDER\workspace\triggers\architect.txt`
+
+**Messages go to a ghost folder nobody watches. Use absolute paths.**
+
+### 🔧 Message Not Received - Diagnostic Checklist
+
+When an agent's message doesn't arrive, investigate in this order:
+
+**STEP 1: VERIFY SENDER MECHANICS**
+- [ ] What is sender's working directory? (`pwd`)
+- [ ] What exact command did sender run?
+- [ ] `ls -la` the TARGET path - does file exist?
+- [ ] `cat` the file - what's the content?
+
+**STEP 2: VERIFY PATH RESOLUTION**
+- [ ] Is the path ABSOLUTE (`D:\projects\...`) or relative?
+- [ ] If relative, where does it resolve from sender's cwd?
+- [ ] Check for ghost files: `ls workspace/instances/*/workspace/triggers/`
+
+**STEP 3: VERIFY WATCHER**
+- [ ] Check npm console for "file changed" events
+- [ ] Check for "SKIPPED duplicate" warnings
+- [ ] Is watcher watching correct directory?
+
+**STEP 4: VERIFY RECEIVER**
+- [ ] Is receiver pane running?
+- [ ] Did receiver show any input injection?
+- [ ] Check receiver's terminal output
+
+**STEP 5: CROSS-CHECK**
+- [ ] Have sender `ls` the absolute trigger path
+- [ ] Have receiver `ls` the same path
+- [ ] Compare - same files visible?
+
 ---
 
 ## Strategic Decision Protocol — MANDATORY
