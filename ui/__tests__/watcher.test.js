@@ -540,4 +540,51 @@ describe('watcher module', () => {
 
     cleanupDir(tempDir);
   });
+
+  test('addWatch and removeWatch manage custom file callbacks', () => {
+    jest.useFakeTimers();
+    const { watcher, tempDir } = setupWatcher();
+    const testFile = path.join(tempDir, 'custom.txt');
+    const callback = jest.fn();
+
+    // Add watch
+    const added = watcher.addWatch(testFile, callback);
+    expect(added).toBe(true);
+
+    // Trigger change
+    watcher.handleFileChange(testFile);
+    jest.advanceTimersByTime(250);
+
+    expect(callback).toHaveBeenCalledWith(testFile);
+
+    // Remove watch
+    const removed = watcher.removeWatch(testFile);
+    expect(removed).toBe(true);
+
+    // Trigger change again
+    callback.mockClear();
+    watcher.handleFileChange(testFile);
+    jest.advanceTimersByTime(250);
+
+    expect(callback).not.toHaveBeenCalled();
+
+    cleanupDir(tempDir);
+  });
+
+  test('setExternalNotifier registers notification callback', () => {
+    const { watcher, tempDir } = setupWatcher();
+    const notifier = jest.fn();
+
+    watcher.setExternalNotifier(notifier);
+
+    // Trigger a transition that calls notifier (e.g. to COMPLETE)
+    watcher.transition(watcher.States.COMPLETE);
+
+    expect(notifier).toHaveBeenCalledWith(expect.objectContaining({
+      category: 'completion',
+      meta: { state: watcher.States.COMPLETE }
+    }));
+
+    cleanupDir(tempDir);
+  });
 });
