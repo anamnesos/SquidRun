@@ -1432,7 +1432,8 @@ function setupEventListeners() {
   // Pane click: swap side pane into main, or focus if already main
   document.querySelectorAll('.pane').forEach(pane => {
     pane.addEventListener('click', (event) => {
-      if (event.target && event.target.closest('button')) {
+      // Ignore clicks on buttons and model selector dropdowns
+      if (event.target && (event.target.closest('button') || event.target.closest('.model-selector'))) {
         return;
       }
       const paneId = pane.dataset.paneId;
@@ -1877,8 +1878,8 @@ ipcRenderer.on('pane-model-changed', async (event, { paneId, model }) => {
   const select = document.querySelector(`.model-selector[data-pane-id="${paneId}"]`);
 
   try {
-    // Respawn with new model
-    await terminal.spawnClaude(paneId);
+    // Respawn with new model - pass model to bypass stale settings cache
+    await terminal.spawnClaude(paneId, model);
     showStatusNotice(`Pane ${paneId} now running ${model}`);
     log.info('ModelSelector', `Pane ${paneId} respawned with ${model}`);
   } catch (err) {

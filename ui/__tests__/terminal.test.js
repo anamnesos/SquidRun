@@ -637,6 +637,7 @@ describe('terminal.js module', () => {
     });
 
     test('should handle Codex pane differently', async () => {
+      jest.useRealTimers();
       terminal.registerCodexPane('1');
       terminal.terminals.set('1', { write: jest.fn() });
       const statusCb = jest.fn();
@@ -644,11 +645,14 @@ describe('terminal.js module', () => {
 
       await terminal.spawnClaude('1');
 
-      // Should not call spawn for Codex
-      expect(mockHivemind.claude.spawn).not.toHaveBeenCalled();
+      // Codex now calls spawn to get command (needed after model switch)
+      expect(mockHivemind.claude.spawn).toHaveBeenCalledWith('1');
+      expect(mockHivemind.pty.write).toHaveBeenCalledWith('1', 'claude');
+      expect(statusCb).toHaveBeenCalledWith('1', 'Starting Codex...');
       expect(statusCb).toHaveBeenCalledWith('1', 'Codex exec ready');
 
       terminal.unregisterCodexPane('1'); // Reset
+      jest.useFakeTimers();
     });
 
     test('should handle spawn failure', async () => {
