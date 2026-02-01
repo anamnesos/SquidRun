@@ -12,6 +12,7 @@ const log = require('../logger');
 
 // In-memory task cache (loaded from file on startup)
 let taskPool = [];
+const VALID_STATUSES = new Set(['open', 'in_progress', 'completed', 'failed', 'needs_input']);
 
 function registerTaskPoolHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -31,7 +32,14 @@ function registerTaskPoolHandlers(ctx) {
       if (fs.existsSync(TASK_POOL_FILE)) {
         const content = fs.readFileSync(TASK_POOL_FILE, 'utf-8');
         const data = JSON.parse(content);
-        return Array.isArray(data.tasks) ? data.tasks : [];
+        const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+        // Backward compat: normalize legacy status values
+        return tasks.map(task => {
+          if (task && task.status === 'claimed') {
+            return { ...task, status: 'in_progress' };
+          }
+          return task;
+        });
       }
     } catch (err) {
       log.error('TaskPool', 'Error loading task pool:', err.message);
@@ -104,7 +112,7 @@ function registerTaskPoolHandlers(ctx) {
     }
 
     // First-write-wins: claim the task
-    task.status = 'claimed';
+    task.status = 'in_progress';
     task.owner = paneId;
     task.claimedAt = new Date().toISOString();
 
@@ -129,6 +137,66 @@ function registerTaskPoolHandlers(ctx) {
         log.warn('TaskPool', 'Failed to notify Architect:', err.message);
       }
     }
+
+    return { success: true, task };
+  });
+
+  // Update task status for completion/failure/needs_input
+  ipcMain.handle('update-task-status', (event, taskId, status, metadata) => {
+    let payload = { taskId, status, metadata };
+    if (taskId && typeof taskId === 'object') {
+      payload = taskId;
+    }
+
+    const targetId = payload.taskId;
+    const nextStatus = payload.status;
+    const meta = payload.metadata;
+
+    if (!targetId || !nextStatus) {
+      return { success: false, error: 'taskId and status are required' };
+    }
+
+    if (!VALID_STATUSES.has(nextStatus)) {
+      return { success: false, error: 'Invalid status value' };
+    }
+
+    const task = taskPool.find(t => t.id === targetId);
+    if (!task) {
+      return { success: false, error: 'Task not found' };
+    }
+
+    if (nextStatus === 'failed') {
+      const errorObj = meta && meta.error ? meta.error : null;
+      if (!errorObj || typeof errorObj.message !== 'string' || !errorObj.message.trim()) {
+        return { success: false, error: 'Failed status requires metadata.error.message' };
+      }
+
+      const at = errorObj.at || new Date().toISOString();
+      task.metadata = {
+        ...(task.metadata || {}),
+        ...(meta || {}),
+        error: { message: errorObj.message, at }
+      };
+      task.failedAt = at;
+    } else {
+      if (meta) {
+        task.metadata = { ...(task.metadata || {}), ...meta };
+      }
+
+      if (nextStatus === 'completed') {
+        task.completedAt = new Date().toISOString();
+      } else if (nextStatus === 'needs_input') {
+        task.needsInputAt = new Date().toISOString();
+      }
+    }
+
+    task.status = nextStatus;
+    task.updatedAt = new Date().toISOString();
+
+    saveTaskPool(taskPool);
+    broadcastTaskUpdate();
+
+    log.info('TaskPool', `Task ${targetId} status -> ${nextStatus}`);
 
     return { success: true, task };
   });
