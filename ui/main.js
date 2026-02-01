@@ -86,7 +86,7 @@ const DEFAULT_SETTINGS = {
   recentProjects: [],  // Recent projects list (max 10)
   stuckThreshold: 120000,  // Auto-interrupt after 120 seconds of no output
   autoNudge: true,  // Enable automatic stuck detection and nudging
-  ptyStuckDetection: true,
+  ptyStuckDetection: false, // DISABLED - too aggressive, needs rework
   ptyStuckThreshold: 15000, // PTY stuck threshold (ms)
   // Per-pane project assignments
   paneProjects: { '1': null, '2': null, '3': null, '4': null, '5': null, '6': null },
