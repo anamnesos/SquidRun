@@ -39,7 +39,7 @@ let sdkModeEnabled = false;
 // ============================================================
 
 const MESSAGE_STATE_PATH = path.join(WORKSPACE_PATH, 'message-state.json');
-const DELIVERY_ACK_TIMEOUT_MS = 30000;
+const DELIVERY_ACK_TIMEOUT_MS = 65000;
 const pendingDeliveries = new Map();
 
 // ============================================================
