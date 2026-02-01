@@ -1317,6 +1317,35 @@ function setupEventListeners() {
     });
   });
 
+  // Per-pane Respawn+Kickoff button - kill and restart agent with startup prompt
+  document.querySelectorAll('.kickoff-btn').forEach(btn => {
+    btn.addEventListener('click', debounceButton(`kickoff-${btn.dataset.paneId}`, async () => {
+      const paneId = btn.dataset.paneId;
+      if (!paneId) return;
+
+      log.info('Kickoff', `Respawn+Kickoff for pane ${paneId}`);
+      terminal.updatePaneStatus(paneId, 'Restarting...');
+
+      // Kill first (if running)
+      try {
+        await terminal.killClaude(paneId);
+        // Small delay to let kill complete
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (err) {
+        log.warn('Kickoff', `Kill failed for pane ${paneId}: ${err.message}`);
+      }
+
+      // Spawn (includes identity message injection)
+      try {
+        await terminal.spawnClaude(paneId);
+        terminal.updatePaneStatus(paneId, 'Started');
+      } catch (err) {
+        log.error('Kickoff', `Spawn failed for pane ${paneId}: ${err.message}`);
+        terminal.updatePaneStatus(paneId, 'Spawn failed');
+      }
+    }));
+  });
+
   // Smart Parallelism - Claim task button click handlers
   document.querySelectorAll('.claim-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
@@ -2262,6 +2291,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   tabs.setupDebugTab();         // Task #21: Agent debugging/replay
   tabs.setupReviewTab();        // Task #18: AI-powered code review
   tabs.setupDocsTab();          // Task #23: Automated documentation generation
+  tabs.setupOracleTab();        // Oracle Visual QA tab
   // Setup daemon listeners (for terminal reconnection)
   // Pass markTerminalsReady callback to fix auto-spawn race condition
   daemonHandlers.setupDaemonListeners(

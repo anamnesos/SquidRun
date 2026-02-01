@@ -345,6 +345,7 @@
                 <button class="pane-action-btn claim-btn" data-pane-id="1" title="Claim available task">C</button>
                 <button class="pane-action-btn interrupt-btn" data-pane-id="1" title="Send Ctrl+C (interrupt)">X</button>
                 <button class="pane-action-btn unstick-btn" data-pane-id="1" title="Send ESC (unstick)">~</button>
+                <button class="pane-action-btn kickoff-btn" data-pane-id="1" title="Respawn + Kickoff">K</button>
               </div>
               <button class="pane-refresh-btn" data-pane-id="1" title="Refresh context">R</button>
               <span class="lock-icon" id="lock-icon-1" data-pane-id="1" title="Input locked (click to unlock)">L</span>
@@ -370,6 +371,7 @@
                 <button class="pane-action-btn claim-btn" data-pane-id="2" title="Claim available task">C</button>
                 <button class="pane-action-btn interrupt-btn" data-pane-id="2" title="Send Ctrl+C (interrupt)">X</button>
                 <button class="pane-action-btn unstick-btn" data-pane-id="2" title="Send ESC (unstick)">~</button>
+                <button class="pane-action-btn kickoff-btn" data-pane-id="2" title="Respawn + Kickoff">K</button>
               </div>
               <button class="pane-refresh-btn" data-pane-id="2" title="Refresh context">R</button>
               <span class="lock-icon" id="lock-icon-2" data-pane-id="2" title="Input locked (click to unlock)">L</span>
@@ -394,6 +396,7 @@
                 <button class="pane-action-btn claim-btn" data-pane-id="3" title="Claim available task">C</button>
                 <button class="pane-action-btn interrupt-btn" data-pane-id="3" title="Send Ctrl+C (interrupt)">X</button>
                 <button class="pane-action-btn unstick-btn" data-pane-id="3" title="Send ESC (unstick)">~</button>
+                <button class="pane-action-btn kickoff-btn" data-pane-id="3" title="Respawn + Kickoff">K</button>
               </div>
               <button class="pane-refresh-btn" data-pane-id="3" title="Refresh context">R</button>
               <span class="lock-icon" id="lock-icon-3" data-pane-id="3" title="Input locked (click to unlock)">L</span>
@@ -418,6 +421,7 @@
                 <button class="pane-action-btn claim-btn" data-pane-id="4" title="Claim available task">C</button>
                 <button class="pane-action-btn interrupt-btn" data-pane-id="4" title="Send Ctrl+C (interrupt)">X</button>
                 <button class="pane-action-btn unstick-btn" data-pane-id="4" title="Send ESC (unstick)">~</button>
+                <button class="pane-action-btn kickoff-btn" data-pane-id="4" title="Respawn + Kickoff">K</button>
               </div>
               <button class="pane-refresh-btn" data-pane-id="4" title="Refresh context">R</button>
               <span class="lock-icon" id="lock-icon-4" data-pane-id="4" title="Input locked (click to unlock)">L</span>
@@ -442,6 +446,7 @@
                 <button class="pane-action-btn claim-btn" data-pane-id="5" title="Claim available task">C</button>
                 <button class="pane-action-btn interrupt-btn" data-pane-id="5" title="Send Ctrl+C (interrupt)">X</button>
                 <button class="pane-action-btn unstick-btn" data-pane-id="5" title="Send ESC (unstick)">~</button>
+                <button class="pane-action-btn kickoff-btn" data-pane-id="5" title="Respawn + Kickoff">K</button>
               </div>
               <button class="pane-refresh-btn" data-pane-id="5" title="Refresh context">R</button>
               <span class="lock-icon" id="lock-icon-5" data-pane-id="5" title="Input locked (click to unlock)">L</span>
@@ -466,6 +471,7 @@
                 <button class="pane-action-btn claim-btn" data-pane-id="6" title="Claim available task">C</button>
                 <button class="pane-action-btn interrupt-btn" data-pane-id="6" title="Send Ctrl+C (interrupt)">X</button>
                 <button class="pane-action-btn unstick-btn" data-pane-id="6" title="Send ESC (unstick)">~</button>
+                <button class="pane-action-btn kickoff-btn" data-pane-id="6" title="Respawn + Kickoff">K</button>
               </div>
               <button class="pane-refresh-btn" data-pane-id="6" title="Refresh context">R</button>
               <span class="lock-icon" id="lock-icon-6" data-pane-id="6" title="Input locked (click to unlock)">L</span>
@@ -535,6 +541,7 @@
         <button class="panel-tab" data-tab="mobile" title="Mobile app connection and remote monitoring">Mobile</button>
         <button class="panel-tab" data-tab="progress" title="Build progress and usage statistics">Prog</button>
         <button class="panel-tab" data-tab="processes" title="Manage background processes">Proc</button>
+        <button class="panel-tab" data-tab="oracle" title="Gemini-powered screenshot analysis">Oracle</button>
       </div>
       <div class="panel-content">
         <div class="tab-pane active" id="tab-screenshots">
@@ -2588,6 +2595,53 @@
               </div>
             </div>
             <button class="btn" id="refreshReliabilityBtn" title="Refresh reliability stats">Refresh Stats</button>
+          </div>
+        </div>
+
+        <div class="tab-pane" id="tab-oracle">
+          <div class="tab-title">Visual QA Oracle</div>
+          <div class="tab-description">Gemini-powered screenshot analysis</div>
+
+          <div class="oracle-controls">
+            <button class="btn btn-primary" id="oracleCaptureBtn" title="Capture screenshot">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                <circle cx="12" cy="13" r="4"/>
+              </svg> Capture
+            </button>
+            <input type="text" id="oraclePromptInput"
+                   class="oracle-prompt-input"
+                   placeholder="What to check? (e.g., Check button alignment)" />
+            <button class="btn btn-primary" id="oracleAnalyzeBtn" title="Analyze with Gemini">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"/>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg> Analyze
+            </button>
+          </div>
+
+          <div class="oracle-preview">
+            <img id="oraclePreviewImg" class="oracle-preview-img" alt="Screenshot preview" />
+          </div>
+
+          <div class="oracle-results" id="oracleResults">
+            <div class="oracle-empty">Capture a screenshot and analyze to see results</div>
+          </div>
+
+          <div class="oracle-result-actions" id="oracleResultActions" style="display: none;">
+            <button class="btn btn-sm" id="oracleCopyBtn" title="Copy result to clipboard">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg> Copy
+            </button>
+          </div>
+
+          <div class="oracle-history" id="oracleHistory">
+            <div class="oracle-history-title">History</div>
+            <div class="oracle-history-list" id="oracleHistoryList">
+              <div class="oracle-history-empty">No history yet</div>
+            </div>
           </div>
         </div>
       </div>

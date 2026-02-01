@@ -1,13 +1,44 @@
 /**
  * Screenshot IPC Handlers
- * Channels: save-screenshot, list-screenshots, delete-screenshot, get-screenshot-path
+ * Channels: save-screenshot, list-screenshots, delete-screenshot, get-screenshot-path, capture-screenshot
  */
 
 const fs = require('fs');
 const path = require('path');
 
 function registerScreenshotHandlers(ctx) {
-  const { ipcMain, SCREENSHOTS_DIR } = ctx;
+  const { ipcMain, SCREENSHOTS_DIR, mainWindow } = ctx;
+
+  // Capture current window as screenshot (for Oracle Visual QA)
+  ipcMain.handle('capture-screenshot', async () => {
+    try {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        return { success: false, error: 'Window not available' };
+      }
+
+      // Capture the window contents
+      const image = await mainWindow.webContents.capturePage();
+      const buffer = image.toPNG();
+
+      if (!fs.existsSync(SCREENSHOTS_DIR)) {
+        fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+      }
+
+      const timestamp = Date.now();
+      const filename = `capture-${timestamp}.png`;
+      const filePath = path.join(SCREENSHOTS_DIR, filename);
+
+      fs.writeFileSync(filePath, buffer);
+
+      // Also save as latest.png for easy access
+      const latestPath = path.join(SCREENSHOTS_DIR, 'latest.png');
+      fs.writeFileSync(latestPath, buffer);
+
+      return { success: true, filename, path: filePath };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
 
   ipcMain.handle('save-screenshot', (event, base64Data, originalName) => {
     try {
