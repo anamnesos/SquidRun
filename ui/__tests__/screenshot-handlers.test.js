@@ -258,6 +258,14 @@ describe('Screenshot Handlers', () => {
       expect(result.success).toBe(false);
       expect(result.error).toBe('File locked');
     });
+
+    test('rejects path traversal filenames', async () => {
+      const result = await harness.invoke('delete-screenshot', '../secret.txt');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid filename');
+      expect(fs.unlinkSync).not.toHaveBeenCalled();
+    });
   });
 
   describe('get-screenshot-path', () => {

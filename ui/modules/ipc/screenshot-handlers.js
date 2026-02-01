@@ -9,6 +9,19 @@ const path = require('path');
 function registerScreenshotHandlers(ctx) {
   const { ipcMain, SCREENSHOTS_DIR, mainWindow } = ctx;
 
+  const isSafeScreenshotFilename = (name) => {
+    if (typeof name !== 'string') return false;
+    const trimmed = name.trim();
+    if (!trimmed) return false;
+    if (trimmed === '.' || trimmed === '..') return false;
+    if (trimmed.includes('/') || trimmed.includes('\\')) return false;
+    if (path.basename(trimmed) !== trimmed) return false;
+    const resolvedPath = path.resolve(SCREENSHOTS_DIR, trimmed);
+    const relative = path.relative(SCREENSHOTS_DIR, resolvedPath);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) return false;
+    return true;
+  };
+
   // Capture current window as screenshot (for Oracle Visual QA)
   ipcMain.handle('capture-screenshot', async () => {
     try {
@@ -102,7 +115,11 @@ function registerScreenshotHandlers(ctx) {
 
   ipcMain.handle('delete-screenshot', (event, filename) => {
     try {
-      const filePath = path.join(SCREENSHOTS_DIR, filename);
+      if (!isSafeScreenshotFilename(filename)) {
+        return { success: false, error: 'Invalid filename' };
+      }
+      const sanitized = filename.trim();
+      const filePath = path.join(SCREENSHOTS_DIR, sanitized);
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }

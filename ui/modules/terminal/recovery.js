@@ -242,7 +242,13 @@ function createRecoveryController(options = {}) {
     }
 
     if (typeof spawnClaude === 'function') {
-      await spawnClaude(id);
+      try {
+        await spawnClaude(id);
+      } catch (err) {
+        log.error('Terminal', `Failed to spawn Claude for pane ${id}:`, err);
+        setPaneStatus(id, 'Spawn failed');
+        return false;
+      }
     }
     return true;
   }
