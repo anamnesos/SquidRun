@@ -12,9 +12,15 @@ const tabs = require('./modules/tabs');
 const settings = require('./modules/settings');
 const daemonHandlers = require('./modules/daemon-handlers');
 const sdkRenderer = require('./modules/sdk-renderer');
+const {
+  BUTTON_DEBOUNCE_MS,
+  SPINNER_INTERVAL_MS,
+  UI_IDLE_THRESHOLD_MS,
+  UI_STUCK_THRESHOLD_MS,
+  UI_IDLE_CLAIM_THRESHOLD_MS,
+} = require('./modules/constants');
 
 // Button debounce utility - prevents rapid double-clicks
-const BUTTON_DEBOUNCE_MS = 500;
 const buttonDebounceState = {};
 
 function debounceButton(buttonId, handler) {
@@ -332,8 +338,7 @@ function updateConnectionStatus(status) {
 }
 
 // Agent Health Dashboard (#1) - update health indicators per pane
-const STUCK_THRESHOLD_MS = 60000; // 60 seconds without output = potentially stuck
-const IDLE_CLAIM_THRESHOLD_MS = 30000; // 30 seconds idle = can show claim button
+// Constants imported from modules/constants.js: UI_UI_STUCK_THRESHOLD_MS, UI_UI_IDLE_CLAIM_THRESHOLD_MS
 
 // Smart Parallelism Phase 3 - Domain ownership mapping
 const PANE_DOMAIN_MAP = {
@@ -420,12 +425,12 @@ function updateHealthIndicators() {
     }
 
     if (stuckEl) {
-      const isStuck = lastOutput && (Date.now() - lastOutput) > STUCK_THRESHOLD_MS;
+      const isStuck = lastOutput && (Date.now() - lastOutput) > UI_STUCK_THRESHOLD_MS;
       stuckEl.classList.toggle('visible', isStuck);
     }
 
     // Smart Parallelism - Idle detection with claimable tasks
-    const isIdle = lastOutput && (Date.now() - lastOutput) > IDLE_CLAIM_THRESHOLD_MS;
+    const isIdle = lastOutput && (Date.now() - lastOutput) > UI_IDLE_CLAIM_THRESHOLD_MS;
     const hasTasksToClaim = hasClaimableTasks(paneId);
     const showIdleIndicator = isIdle && hasTasksToClaim;
 
@@ -700,7 +705,7 @@ const SDK_STATUS_LABELS = {
 
 // Braille spinner frames (same as Claude Code CLI)
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const SPINNER_INTERVAL = 80; // ms
+// SPINNER_INTERVAL_MS imported from modules/constants.js
 
 // Header spinner animation intervals per pane
 const headerSpinnerIntervals = new Map();
@@ -708,7 +713,7 @@ const headerSpinnerFrameIndex = new Map();
 
 // Idle state tracking per pane
 const paneIdleState = new Map();
-const IDLE_THRESHOLD_MS = 30000; // 30 seconds before showing idle state
+// UI_UI_IDLE_THRESHOLD_MS imported from modules/constants.js
 
 /**
  * Track pane activity and manage idle state
@@ -731,13 +736,13 @@ function trackPaneActivity(paneId, isActive) {
 
     paneIdleState.set(paneId, {
       lastActive: Date.now(),
-      timerId: setTimeout(() => enterIdleState(paneId), IDLE_THRESHOLD_MS)
+      timerId: setTimeout(() => enterIdleState(paneId), UI_IDLE_THRESHOLD_MS)
     });
   }
 }
 
 /**
- * Enter idle state for a pane (called after IDLE_THRESHOLD_MS of inactivity)
+ * Enter idle state for a pane (called after UI_IDLE_THRESHOLD_MS of inactivity)
  * @param {string} paneId - Pane ID
  */
 function enterIdleState(paneId) {
@@ -810,7 +815,7 @@ function updateSDKStatus(paneId, state) {
       let frameIdx = (headerSpinnerFrameIndex.get(paneId) + 1) % SPINNER_FRAMES.length;
       headerSpinnerFrameIndex.set(paneId, frameIdx);
       statusEl.textContent = SPINNER_FRAMES[frameIdx];
-    }, SPINNER_INTERVAL);
+    }, SPINNER_INTERVAL_MS);
 
     headerSpinnerIntervals.set(paneId, interval);
   } else {

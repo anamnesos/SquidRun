@@ -11,6 +11,26 @@ const { SearchAddon } = require('@xterm/addon-search');
 const log = require('./logger');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
+const {
+  TYPING_GUARD_MS,
+  INJECTION_IDLE_THRESHOLD_MS,
+  MAX_QUEUE_TIME_MS,
+  FORCE_INJECT_IDLE_MS,
+  EXTREME_WAIT_MS,
+  ABSOLUTE_MAX_WAIT_MS,
+  QUEUE_RETRY_MS,
+  BROADCAST_STAGGER_MS,
+  INJECTION_LOCK_TIMEOUT_MS,
+  ENTER_DELAY_IDLE_MS,
+  ENTER_DELAY_ACTIVE_MS,
+  ENTER_DELAY_BUSY_MS,
+  PANE_ACTIVE_THRESHOLD_MS,
+  PANE_BUSY_THRESHOLD_MS,
+  FOCUS_RETRY_DELAY_MS,
+  ENTER_VERIFY_DELAY_MS,
+  ENTER_RETRY_INTERVAL_MS,
+  PROMPT_READY_TIMEOUT_MS,
+} = require('./constants');
 
 // Pane configuration
 const PANE_IDS = ['1', '2', '3', '4', '5', '6'];
@@ -76,31 +96,11 @@ let lastUserUIFocus = null;
 // Track when user last typed in a UI input (not xterm).
 // doSendToPane defers injection while user is actively typing.
 let lastUserUIKeypressTime = 0;
-const TYPING_GUARD_MS = 300; // Defer injection if user typed within this window
+// Timing constants imported from constants.js
 
-// Idle detection constants
-// 2000ms threshold - Claude may need more time after output stops
-const IDLE_THRESHOLD_MS = 2000;  // No output for 2s = idle
-const MAX_QUEUE_TIME_MS = 10000; // Consider force inject after 10 seconds
-const FORCE_INJECT_IDLE_MS = 500; // For force-inject, require 500ms of silence (not full 2s)
-const EXTREME_WAIT_MS = 30000;   // Log warning if message queued this long
-const ABSOLUTE_MAX_WAIT_MS = 60000; // Emergency fallback: force inject after 60s regardless
-const QUEUE_RETRY_MS = 200;      // Check queue every 200ms
-const BROADCAST_STAGGER_MS = 100; // Delay between panes in broadcast
-const INJECTION_LOCK_TIMEOUT_MS = 1000; // Safety release if callbacks missed
-
-// Adaptive Enter delay constants (reduce Enter-before-text race)
-const ENTER_DELAY_IDLE_MS = 50;       // Pane idle (no output > 500ms): fast Enter
-const ENTER_DELAY_ACTIVE_MS = 150;    // Pane active (output in last 500ms): medium delay
-const ENTER_DELAY_BUSY_MS = 300;      // Pane busy (output in last 100ms): longer delay
-const PANE_ACTIVE_THRESHOLD_MS = 500; // Recent output threshold for "active"
-const PANE_BUSY_THRESHOLD_MS = 100;   // Very recent output threshold for "busy"
-const FOCUS_RETRY_DELAY_MS = 20;      // Delay between focus retry attempts
+// Non-timing constants that stay here
 const MAX_FOCUS_RETRIES = 3;          // Max focus retry attempts before giving up
-const ENTER_VERIFY_DELAY_MS = 200;    // Delay before checking if Enter succeeded (increased to reduce double-submit risk)
 const MAX_ENTER_RETRIES = 5;          // Max Enter retry attempts if text remains
-const ENTER_RETRY_INTERVAL_MS = 200;  // Interval between checking if pane is idle for retry
-const PROMPT_READY_TIMEOUT_MS = 3000; // Max time to wait for prompt-ready detection
 
 // Terminal theme configuration
 const TERMINAL_THEME = {
@@ -256,10 +256,10 @@ function resetCodexIdentity(paneId) {
   log.info('Terminal', `Reset codex identity tracking for pane ${paneId}`);
 }
 
-// Check if a pane is idle (no output for IDLE_THRESHOLD_MS)
+// Check if a pane is idle (no output for INJECTION_IDLE_THRESHOLD_MS)
 function isIdle(paneId) {
   const lastOutput = lastOutputTime[paneId] || 0;
-  return (Date.now() - lastOutput) >= IDLE_THRESHOLD_MS;
+  return (Date.now() - lastOutput) >= INJECTION_IDLE_THRESHOLD_MS;
 }
 
 // Shorter idle check for force-inject scenario
