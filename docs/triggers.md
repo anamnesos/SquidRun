@@ -3,10 +3,24 @@
 This is the canonical reference for trigger file messaging in Hivemind.
 
 ## Where to write trigger files
-All trigger files live here:
 
+**⚠️ CRITICAL: Always use ABSOLUTE paths to avoid ghost folder bugs.**
+
+All trigger files live here:
 ```
-workspace/triggers/
+D:\projects\hivemind\workspace\triggers\
+```
+
+**Why absolute paths?** Codex agents run from `workspace/instances/{role}/`. Relative paths like `workspace/triggers/` resolve to the wrong location, creating ghost folders that nobody watches. Messages go nowhere.
+
+**Correct:**
+```
+D:\projects\hivemind\workspace\triggers\architect.txt
+```
+
+**Wrong:**
+```
+workspace/triggers/architect.txt
 ```
 
 ## Canonical trigger files (use these)
