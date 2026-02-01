@@ -843,7 +843,8 @@ function setSDKMode(enabled) {
 }
 
 // Spawn claude in a pane
-async function spawnClaude(paneId) {
+// model param: optional override for model type (used by model switch to bypass stale cache)
+async function spawnClaude(paneId, model = null) {
   // Defense in depth: Early exit if no terminal exists for this pane
   // This catches race conditions where SDK mode blocks terminal creation but
   // user somehow triggers spawn before UI fully updates
@@ -858,17 +859,45 @@ async function spawnClaude(paneId) {
     return;
   }
 
-  // Codex exec mode: no interactive CLI spawn — send identity prompt to kick off agent
-  if (isCodexPane(String(paneId))) {
-    updatePaneStatus(paneId, 'Codex exec ready');
-    // Auto-send identity message to start the Codex agent (mirrors Claude identity injection at line 716)
+  // Clear cached CLI identity when model is explicitly specified (model switch)
+  // This ensures we don't use stale identity data
+  if (model) {
+    unregisterCodexPane(paneId);
+    log.info('spawnClaude', `Cleared CLI identity cache for pane ${paneId} (model switch to ${model})`);
+  }
+
+  // Determine if this is a Codex pane
+  // If model is explicitly passed (from model switch), use it directly
+  // Otherwise fall back to checking settings/identity cache
+  const isCodex = model ? model === 'codex' : isCodexPane(String(paneId));
+
+  // Codex exec mode: spawn codex command then send identity prompt
+  if (isCodex) {
+    updatePaneStatus(paneId, 'Starting Codex...');
+    // Spawn codex command (needed after model switch when terminal is at shell prompt)
+    try {
+      const result = await window.hivemind.claude.spawn(paneId);
+      if (result.success && result.command) {
+        await window.hivemind.pty.write(String(paneId), result.command);
+        lastTypedTime[paneId] = Date.now();
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await window.hivemind.pty.write(String(paneId), '\r');
+        log.info('spawnClaude', `Codex command written for pane ${paneId}`);
+      }
+    } catch (err) {
+      log.error(`spawnClaude ${paneId}`, 'Codex spawn failed:', err);
+      updatePaneStatus(paneId, 'Spawn failed');
+      return;
+    }
+    // Send identity message after Codex starts
     setTimeout(() => {
       const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
       const timestamp = new Date().toISOString().split('T')[0];
       const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
       sendToPane(paneId, identityMsg + '\r');
       log.info('spawnClaude', `Codex exec identity sent for ${role} (pane ${paneId})`);
-    }, 2000);
+    }, 3000);
+    updatePaneStatus(paneId, 'Codex exec ready');
     return;
   }
 
