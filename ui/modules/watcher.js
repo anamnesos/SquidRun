@@ -8,6 +8,7 @@ const fs = require('fs');
 const chokidar = require('chokidar');
 const { WORKSPACE_PATH, TRIGGER_TARGETS, PANE_IDS, PANE_ROLES } = require('../config');
 const log = require('./logger');
+const { TRIGGER_READ_RETRY_MS, WATCHER_DEBOUNCE_MS } = require('./constants');
 
 const STATE_FILE_PATH = path.join(WORKSPACE_PATH, 'state.json');
 const SHARED_CONTEXT_PATH = path.join(WORKSPACE_PATH, 'shared_context.md');
@@ -34,7 +35,7 @@ const SYNC_FILES = new Set([
 
 // UX-9: Trigger file path for fast watching
 const TRIGGER_PATH = path.join(WORKSPACE_PATH, 'triggers');
-const TRIGGER_READ_RETRY_MS = 50;
+// TRIGGER_READ_RETRY_MS imported from constants.js
 const TRIGGER_READ_MAX_ATTEMPTS = 3;
 const triggerRetryTimers = new Map();
 
@@ -342,7 +343,7 @@ function transition(newState) {
 // ============================================================
 
 // Debounce state for handleFileChange
-const DEBOUNCE_DELAY_MS = 200;  // Batch events within 200ms window
+// WATCHER_DEBOUNCE_MS imported from constants.js
 let debounceTimer = null;
 let pendingFileChanges = new Set();
 
@@ -382,7 +383,7 @@ function handleFileChangeDebounced(filePath) {
     for (const file of files) {
       handleFileChangeCore(file);
     }
-  }, DEBOUNCE_DELAY_MS);
+  }, WATCHER_DEBOUNCE_MS);
 }
 
 /**
