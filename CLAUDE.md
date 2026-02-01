@@ -265,6 +265,126 @@ Messages use sequence numbers to prevent duplicates: `(ROLE #N): message`
 
 ---
 
+## Strategic Decision Protocol — MANDATORY
+
+**For architecture, process, and priority decisions, use the 3-agent pattern.**
+
+### The Decision Trio
+
+| Agent | Role in Strategic Decisions |
+|-------|----------------------------|
+| **Architect** | Propose, synthesize, decide, document |
+| **Analyst** | Systematic analysis, risk assessment, completeness check |
+| **Reviewer** | Challenge assumptions, find holes, ensure quality |
+
+### When to Use This Protocol
+
+**USE for:**
+- Architecture decisions ("How should we build X?")
+- Process changes ("Should we change our workflow?")
+- Priority discussions ("What's most important?")
+- Strategic questions ("What does autonomy require?")
+
+**DON'T USE for:**
+- Implementation details (domain agents own those)
+- Domain-specific code review (relevant agent handles)
+- Simple tasks with clear scope
+
+### The Workflow
+
+```
+User → Architect
+         ↓
+    [Strategic question?]
+         ↓ yes
+    Architect triggers Analyst + Reviewer (timeboxed)
+         ↓
+    Analyst: systematic analysis, completeness
+    Reviewer: challenge, find holes
+         ↓
+    Architect synthesizes to decision
+         ↓
+    Document WHY (not just WHAT) for implementers
+         ↓
+    Delegate to domain agents (Frontend/Backend/Infra)
+```
+
+### Rules
+
+1. **Timebox discussions** - Don't let them drift. Set expectation: "Need response in X minutes."
+2. **Require unique angles** - If responses are redundant, one voice is enough.
+3. **Force synthesis** - Architect must end with concrete decision, not open discussion.
+4. **Document rationale** - Implementers need to understand WHY, not just WHAT.
+5. **Don't bottleneck** - If the trio is stuck/offline, domain agents proceed on their work.
+
+### Why This Works
+
+- **Different thinking modes:** Builder (Architect) + Analyzer (Analyst) + Critic (Reviewer)
+- **Full decision loop:** Propose → Analyze → Challenge → Decide
+- **3 is optimal:** Small enough for real dialogue, large enough for diverse views
+- **Prevents echo chambers:** Codex (Analyst) + Claude (Reviewer) = different blind spots caught
+
+### Anti-Patterns
+
+- ❌ Broadcasting to all 5 agents for every question (noise)
+- ❌ Architect deciding alone on strategic matters (blind spots)
+- ❌ Endless back-and-forth without synthesis (drift)
+- ❌ Skipping rationale documentation (implementers confused)
+
+### Assignment Declaration (Session 54)
+
+**Architect MUST declare context when assigning work:**
+
+```
+STRATEGIC: [question] - Triggers 3-agent protocol
+CODE REVIEW: [file/feature] - Reviewer solo with quality gate
+IMPLEMENTATION: [task] - Domain agent executes
+```
+
+This prevents confusion about which protocol applies. "Add authentication" could be:
+- STRATEGIC (what approach?) → 3-agent discussion
+- CODE REVIEW (is the code correct?) → Reviewer solo
+- IMPLEMENTATION (write the code) → Backend executes
+
+### Disagreement Protocol (Session 54)
+
+**When Analyst and Reviewer disagree with Architect:**
+
+1. **Both objections must be heard** - Architect cannot override without addressing
+2. **Objections must be specific** - "I disagree" is not enough; state what breaks and why
+3. **Architect decides after synthesis** - But must document dissenting view if overriding
+4. **Escalation path:** If Architect overrides both, log to `build/decisions.md` with rationale
+5. **User is ultimate arbiter** - If trio is deadlocked, ask user
+
+**Goal:** Productive conflict, not consensus-seeking. Disagreement is signal, not noise.
+
+### Direction Gate (Session 54)
+
+**Quality gate catches wrong CODE. Direction gate catches wrong DIRECTION.**
+
+Before major work begins, Architect must verify:
+1. **User intent is understood** - What problem are we solving?
+2. **Scope is defined** - What's in, what's out?
+3. **Success criteria exist** - How do we know it's done?
+4. **Alternatives considered** - Why this approach, not another?
+
+If any are unclear, Architect asks user BEFORE delegating to domain agents.
+
+**Anti-pattern:** Building the wrong thing correctly. The trio can approve perfect code for the wrong feature.
+
+### Human in the Loop (Session 54)
+
+**We assist, we don't replace.**
+
+- User caught bugs 6 versions in a row that we missed
+- Even with 3-agent pattern, user is ultimate quality gate
+- Our job: reduce cognitive load, not eliminate oversight
+- Goal: "assign and return" - but user still verifies results
+
+**This is earned trust:** As our reliability improves, user oversight can decrease. But we don't assume trust we haven't earned.
+
+---
+
 ## Git Commit Policy — MANDATORY
 
 **Only Architect commits.** No other agent touches git.
