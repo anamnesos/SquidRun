@@ -96,7 +96,7 @@ const DEFAULT_SETTINGS = {
     '2': 'codex',
     '3': 'claude',
     '4': 'codex',
-    '5': 'codex',
+    '5': 'gemini -m gemini-2.5-pro -y',
     '6': 'claude',
   },
   // Saved templates
