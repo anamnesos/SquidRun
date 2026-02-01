@@ -7827,6 +7827,183 @@ function getDocsState() {
   };
 }
 
+// Oracle Visual QA state
+let oracleHistory = [];
+let currentScreenshot = null;
+let lastOracleResult = null;
+
+/**
+ * Setup Oracle Visual QA tab
+ * Gemini-powered screenshot analysis
+ */
+function setupOracleTab() {
+  const captureBtn = document.getElementById('oracleCaptureBtn');
+  const analyzeBtn = document.getElementById('oracleAnalyzeBtn');
+  const promptInput = document.getElementById('oraclePromptInput');
+  const previewImg = document.getElementById('oraclePreviewImg');
+  const resultsEl = document.getElementById('oracleResults');
+  const historyList = document.getElementById('oracleHistoryList');
+  const resultActions = document.getElementById('oracleResultActions');
+  const copyBtn = document.getElementById('oracleCopyBtn');
+
+  // Capture screenshot
+  if (captureBtn) {
+    captureBtn.addEventListener('click', async () => {
+      captureBtn.disabled = true;
+      const originalText = captureBtn.innerHTML;
+      captureBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Capturing...';
+      try {
+        const result = await ipcRenderer.invoke('capture-screenshot');
+        if (result.success) {
+          currentScreenshot = result.path;
+          previewImg.src = `file://${result.path}`;
+          previewImg.style.display = 'block';
+          updateConnectionStatus('Screenshot captured');
+        } else {
+          updateConnectionStatus(`Capture failed: ${result.error}`);
+        }
+      } catch (err) {
+        log.error('Oracle', 'Capture failed:', err);
+        updateConnectionStatus(`Capture error: ${err.message}`);
+      }
+      captureBtn.disabled = false;
+      captureBtn.innerHTML = originalText;
+    });
+  }
+
+  // Analyze screenshot
+  if (analyzeBtn) {
+    analyzeBtn.addEventListener('click', async () => {
+      if (!currentScreenshot) {
+        resultsEl.innerHTML = '<div class="oracle-error">Capture a screenshot first</div>';
+        return;
+      }
+
+      const prompt = promptInput?.value.trim() || 'Analyze this UI screenshot for issues';
+
+      analyzeBtn.disabled = true;
+      const originalText = analyzeBtn.innerHTML;
+      analyzeBtn.innerHTML = '<svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Analyzing...';
+      resultsEl.innerHTML = '<div class="oracle-loading">Asking Gemini...</div>';
+
+      try {
+        const result = await ipcRenderer.invoke('oracle:analyzeScreenshot', {
+          imagePath: currentScreenshot,
+          prompt: prompt
+        });
+
+        if (result.success) {
+          lastOracleResult = result.analysis;
+          const tokenInfo = result.usage?.tokens ? `${result.usage.tokens} tokens` : 'N/A';
+          const costInfo = result.usage?.cost ? ` • ~$${result.usage.cost.toFixed(4)}` : '';
+
+          resultsEl.innerHTML = `
+            <div class="oracle-result">
+              <div class="oracle-result-prompt">${escapeHtml(prompt)}</div>
+              <div class="oracle-result-analysis">${escapeHtml(result.analysis)}</div>
+              <div class="oracle-result-meta">${tokenInfo}${costInfo}</div>
+            </div>
+          `;
+
+          // Show copy button
+          if (resultActions) {
+            resultActions.style.display = 'flex';
+          }
+
+          // Add to history
+          oracleHistory.unshift({
+            time: new Date().toLocaleTimeString(),
+            prompt: prompt,
+            analysis: result.analysis,
+            tokens: result.usage?.tokens
+          });
+          renderOracleHistory();
+
+          // Save to oracle-history.json
+          saveOracleHistory();
+
+          updateConnectionStatus('Analysis complete');
+        } else {
+          resultsEl.innerHTML = `<div class="oracle-error">${escapeHtml(result.error)}</div>`;
+          updateConnectionStatus(`Analysis failed: ${result.error}`);
+        }
+      } catch (err) {
+        log.error('Oracle', 'Analysis failed:', err);
+        resultsEl.innerHTML = `<div class="oracle-error">${escapeHtml(err.message)}</div>`;
+        updateConnectionStatus(`Analysis error: ${err.message}`);
+      }
+
+      analyzeBtn.disabled = false;
+      analyzeBtn.innerHTML = originalText;
+    });
+  }
+
+  // Copy result button
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      if (lastOracleResult) {
+        navigator.clipboard.writeText(lastOracleResult).then(() => {
+          updateConnectionStatus('Result copied to clipboard');
+        }).catch(err => {
+          log.error('Oracle', 'Copy failed:', err);
+        });
+      }
+    });
+  }
+
+  // Enter key to analyze
+  if (promptInput) {
+    promptInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        analyzeBtn?.click();
+      }
+    });
+  }
+
+  function renderOracleHistory() {
+    if (!historyList) return;
+    if (oracleHistory.length === 0) {
+      historyList.innerHTML = '<div class="oracle-history-empty">No history yet</div>';
+      return;
+    }
+    historyList.innerHTML = oracleHistory.slice(0, 10).map(h => `
+      <div class="oracle-history-item">
+        <span class="oracle-history-time">${h.time}</span>
+        <span class="oracle-history-prompt">${escapeHtml(h.prompt)}</span>
+      </div>
+    `).join('');
+  }
+
+  async function saveOracleHistory() {
+    try {
+      await ipcRenderer.invoke('save-oracle-history', oracleHistory.slice(0, 50));
+    } catch (err) {
+      log.error('Oracle', 'Failed to save history:', err);
+    }
+  }
+
+  // Load history on init
+  ipcRenderer.invoke('load-oracle-history').then(history => {
+    if (Array.isArray(history)) {
+      oracleHistory = history;
+      renderOracleHistory();
+    }
+  }).catch(err => {
+    log.error('Oracle', 'Failed to load history:', err);
+  });
+
+  log.info('Oracle', 'Tab initialized');
+}
+
+// Helper to escape HTML
+function escapeHtml(text) {
+  if (!text) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
 module.exports = {
   setConnectionStatusCallback,
   togglePanel,
@@ -7932,4 +8109,5 @@ module.exports = {
   loadUndocumentedItems,     // Task #23: Load undocumented items
   exportDocumentation,       // Task #23: Export documentation
   getDocsState,              // Task #23: Get current docs state
+  setupOracleTab,            // Oracle Visual QA tab
 };

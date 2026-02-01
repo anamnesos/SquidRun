@@ -48,6 +48,7 @@ const { registerScaffoldingHandlers } = require('./scaffolding-handlers');
 const { registerAgentSharingHandlers } = require('./agent-sharing-handlers');
 const { registerWorkflowHandlers } = require('./workflow-handlers');
 const { registerTaskPoolHandlers } = require('./task-pool-handlers');
+const { registerOracleHandlers } = require('./oracle-handlers');
 
 const DEFAULT_HANDLERS = [
   registerSdkHandlers,
@@ -100,6 +101,7 @@ const DEFAULT_HANDLERS = [
   registerAgentSharingHandlers,
   registerWorkflowHandlers,
   registerTaskPoolHandlers,
+  registerOracleHandlers,
 ];
 
 function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {
