@@ -1303,24 +1303,36 @@ function listTerminals() {
   return list;
 }
 
-// Get stuck terminals (no INPUT for threshold ms)
-// Uses lastInputTime (actual commands sent to agent) not lastActivity (PTY output)
+// Get stuck terminals (no INPUT for threshold ms AND no OUTPUT for 15s)
+// Refined logic: Don't consider agent stuck if it's actively outputting data (streaming)
 function getStuckTerminals(thresholdMs = DEFAULT_STUCK_THRESHOLD) {
   const now = Date.now();
   const stuck = [];
+  const ACTIVITY_GRACE_PERIOD = 15000; // 15s grace for active output
+
   for (const [paneId, info] of terminals) {
-    // Check lastInputTime (when we last sent input TO the agent)
-    const lastInput = info.lastInputTime || info.lastActivity;
-    if (info.alive && lastInput) {
-      const idleTime = now - lastInput;
-      if (idleTime > thresholdMs) {
+    if (info.alive) {
+      const lastInput = info.lastInputTime || 0;
+      const lastActivity = info.lastActivity || 0;
+
+      const timeSinceInput = now - lastInput;
+      const timeSinceActivity = now - lastActivity;
+
+      // If agent is actively outputting data (within grace period), it's NOT stuck
+      // even if the input command was sent a long time ago.
+      if (timeSinceActivity < ACTIVITY_GRACE_PERIOD) {
+        continue;
+      }
+
+      // If meaningful time has passed since input AND it has stopped outputting
+      if (lastInput > 0 && timeSinceInput > thresholdMs) {
         stuck.push({
           paneId,
           pid: info.pid,
           lastInputTime: info.lastInputTime,
           lastActivity: info.lastActivity,
-          idleTimeMs: idleTime,
-          idleTimeFormatted: formatUptime(Math.floor(idleTime / 1000)),
+          idleTimeMs: timeSinceInput,
+          idleTimeFormatted: formatUptime(Math.floor(timeSinceInput / 1000)),
         });
       }
     }
