@@ -213,7 +213,22 @@ module.exports = router;
         type: 'text',
         content: `/**
  * Authentication middleware
+ *
+ * IMPORTANT: This is a placeholder implementation for development only.
+ * You MUST implement proper token verification before deploying to production.
  */
+
+// Example using jsonwebtoken (uncomment and install: npm install jsonwebtoken):
+// const jwt = require('jsonwebtoken');
+// const JWT_SECRET = process.env.JWT_SECRET;
+//
+// function verifyToken(token) {
+//   try {
+//     return jwt.verify(token, JWT_SECRET);
+//   } catch (err) {
+//     return null;
+//   }
+// }
 
 function authMiddleware(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
@@ -222,8 +237,23 @@ function authMiddleware(req, res, next) {
     return res.status(401).json({ error: 'No token provided' });
   }
 
-  // TODO: Verify token
-  req.user = { id: 'user-id' };
+  // WARNING: Placeholder implementation - does NOT verify tokens
+  if (process.env.NODE_ENV !== 'production') {
+    console.warn('[AUTH] Token verification skipped - implement before production!');
+  } else {
+    // In production, fail-safe: reject unverified tokens
+    console.error('[AUTH] CRITICAL: Token verification not implemented!');
+    return res.status(500).json({ error: 'Auth not configured' });
+  }
+
+  // TODO: Replace with actual verification:
+  // const decoded = verifyToken(token);
+  // if (!decoded) {
+  //   return res.status(401).json({ error: 'Invalid token' });
+  // }
+  // req.user = decoded;
+
+  req.user = { id: 'placeholder-user-id' };
   next();
 }
 
