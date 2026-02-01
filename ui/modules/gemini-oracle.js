@@ -11,6 +11,7 @@ const log = require('./logger');
 const DEFAULT_MODEL = process.env.GEMINI_ORACLE_MODEL || 'gemini-2.5-pro';
 const DEFAULT_PROMPT = 'Analyze this UI screenshot for visual or layout issues.';
 const REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_ORACLE_TIMEOUT_MS || 60000);
+const RATE_LIMIT_RETRY_DELAYS_MS = [1000, 2000, 4000];
 
 const ORACLE_HISTORY_PATH = path.join(WORKSPACE_PATH, 'oracle-history.json');
 
@@ -91,6 +92,10 @@ function extractUsage(payload) {
   };
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function callGeminiApi({ model, prompt, base64Image, mimeType }) {
   const apiKey = resolveApiKey();
   if (!apiKey) {
@@ -105,35 +110,58 @@ async function callGeminiApi({ model, prompt, base64Image, mimeType }) {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   const body = buildRequestBody(prompt, base64Image, mimeType);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let lastError;
+  for (let attempt = 0; attempt <= RATE_LIMIT_RETRY_DELAYS_MS.length; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  let response;
-  try {
-    response = await fetchFn(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      throw new Error(`Gemini API timeout after ${REQUEST_TIMEOUT_MS}ms`);
+    let response;
+    try {
+      response = await fetchFn(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        throw new Error(`Gemini API timeout after ${REQUEST_TIMEOUT_MS}ms`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
     }
-    throw err;
-  } finally {
-    clearTimeout(timeout);
+
+    const payload = await response.json().catch(() => ({}));
+    if (response.status === 429) {
+      const message = payload?.error?.message || 'Gemini API rate limited (429)';
+      const err = new Error(message);
+      err.status = response.status;
+      lastError = err;
+      if (attempt < RATE_LIMIT_RETRY_DELAYS_MS.length) {
+        const delay = RATE_LIMIT_RETRY_DELAYS_MS[attempt];
+        log.warn('Oracle', `Rate limited (429). Retrying in ${delay}ms`);
+        await sleep(delay);
+        continue;
+      }
+      throw err;
+    }
+
+    if (!response.ok || payload?.error) {
+      const message = payload?.error?.message || `Gemini API error (${response.status})`;
+      const err = new Error(message);
+      err.status = response.status;
+      throw err;
+    }
+
+    return payload;
   }
 
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload?.error) {
-    const message = payload?.error?.message || `Gemini API error (${response.status})`;
-    const err = new Error(message);
-    err.status = response.status;
-    throw err;
+  if (lastError) {
+    throw lastError;
   }
 
-  return payload;
+  throw new Error('Gemini API request failed after retries');
 }
 
 async function analyzeScreenshot({ imagePath, prompt, model } = {}) {
