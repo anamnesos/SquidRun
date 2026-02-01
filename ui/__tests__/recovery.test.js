@@ -408,7 +408,7 @@ describe('Terminal Recovery Controller', () => {
 
       expect(result).toBe(true);
       expect(mockPty.create).toHaveBeenCalledWith('2');
-      expect(log.info).toHaveBeenCalledWith('Terminal', 'Recreated PTY for Codex pane 2');
+      expect(log.info).toHaveBeenCalledWith('Terminal', 'Recreated PTY for pane 2');
     });
 
     test('handles Codex PTY creation failure', async () => {

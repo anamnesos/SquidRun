@@ -228,17 +228,15 @@ function createRecoveryController(options = {}) {
       resetCodexIdentity(id);
     }
 
-    // Codex exec panes need PTY recreated before spawnClaude
-    // spawnClaude() for Codex panes only sends identity message - doesn't create PTY
-    if (typeof isCodexPane === 'function' && isCodexPane(id)) {
-      try {
-        await window.hivemind.pty.create(id);
-        log.info('Terminal', `Recreated PTY for Codex pane ${id}`);
-      } catch (err) {
-        log.error('Terminal', `Failed to recreate PTY for Codex pane ${id}:`, err);
-        setPaneStatus(id, 'Restart failed');
-        return false;
-      }
+    // All panes need PTY recreated after kill - the kill destroys the PTY entirely
+    // This applies to Claude, Codex, AND Gemini panes
+    try {
+      await window.hivemind.pty.create(id);
+      log.info('Terminal', `Recreated PTY for pane ${id}`);
+    } catch (err) {
+      log.error('Terminal', `Failed to recreate PTY for pane ${id}:`, err);
+      setPaneStatus(id, 'Restart failed');
+      return false;
     }
 
     if (typeof spawnClaude === 'function') {
