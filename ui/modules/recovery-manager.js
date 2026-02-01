@@ -330,10 +330,6 @@ function createRecoveryManager(options = {}) {
     if (tokenCount !== null) {
       state.ptyTokenCount = tokenCount;
     }
-    if (timerSeconds !== null) {
-      state.ptyLastTimerSeconds = timerSeconds;
-      state.ptyLastTimerAt = now;
-    }
 
     const effectiveTokens = tokenCount !== null ? tokenCount : state.ptyTokenCount;
     if (effectiveTokens === null) return;
@@ -349,14 +345,25 @@ function createRecoveryManager(options = {}) {
 
     if (timerSeconds === null) return;
 
-    if (state.ptyZeroTimerSeconds === null || timerSeconds < state.ptyZeroTimerSeconds) {
-      state.ptyZeroTimerSeconds = timerSeconds;
+    const prevTimerSeconds = state.ptyLastTimerSeconds;
+    const timerAdvanced = prevTimerSeconds === null || timerSeconds > prevTimerSeconds;
+    const timerReset = prevTimerSeconds !== null && timerSeconds < prevTimerSeconds;
+
+    state.ptyLastTimerSeconds = timerSeconds;
+
+    if (timerAdvanced || timerReset) {
+      state.ptyLastTimerAt = now;
+      resetPtyZero(state);
+      return;
+    }
+
+    if (!state.ptyZeroSince) {
       state.ptyZeroSince = now;
     }
 
     const config = getConfig();
-    const elapsedSeconds = timerSeconds - state.ptyZeroTimerSeconds;
-    const elapsedMs = elapsedSeconds * 1000;
+    const lastTimerAt = state.ptyLastTimerAt || now;
+    const elapsedMs = now - lastTimerAt;
 
     if (elapsedMs < config.ptyStuckThresholdMs) return;
 
@@ -365,16 +372,18 @@ function createRecoveryManager(options = {}) {
     state.ptyLastEscAt = now;
     state.ptyStuckActive = true;
 
+    const stalledSeconds = Math.floor(elapsedMs / 1000);
+
     log.warn(
       'Recovery',
-      `PTY stuck detected for pane ${paneId}: 0 tokens for ${elapsedSeconds}s (timer ${timerSeconds}s)`
+      `PTY stuck detected for pane ${paneId}: 0 tokens, timer stalled at ${timerSeconds}s for ${stalledSeconds}s`
     );
 
     emitEvent({
       type: 'pty-stuck',
       paneId: String(paneId),
       status: 'detected',
-      message: `PTY stuck detected (0 tokens for ${elapsedSeconds}s)`,
+      message: `PTY stuck detected (0 tokens, timer stalled for ${stalledSeconds}s)`,
       tokens: effectiveTokens,
       timerSeconds,
       timestamp: new Date().toISOString(),
