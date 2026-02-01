@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Terminal management module
  * Handles xterm instances, PTY connections, and terminal operations
  */
@@ -897,6 +897,13 @@ async function spawnClaude(paneId, model = null) {
       sendToPane(paneId, identityMsg + '\r');
       log.info('spawnClaude', `Codex exec identity sent for ${role} (pane ${paneId})`);
     }, 3000);
+
+    // Finding #14: Inject context files (AGENTS.md for Codex) after startup
+    if (window.hivemind?.claude?.injectContext) {
+      window.hivemind.claude.injectContext(paneId, 'codex', 5000);
+      log.info('spawnClaude', `Context injection scheduled for Codex pane ${paneId}`);
+    }
+
     updatePaneStatus(paneId, 'Codex exec ready');
     return;
   }
@@ -955,8 +962,29 @@ async function spawnClaude(paneId, model = null) {
         sendToPane(paneId, identityMsg + '\r');
         log.info('spawnClaude', `Identity injected for ${role} (pane ${paneId})`);
       }, isCodex ? 5000 : 4000);
+
+      // Finding #14: Inject context files (CLAUDE.md/GEMINI.md) after startup
+      // Delay is after identity injection to ensure CLI is ready
+      if (window.hivemind?.claude?.injectContext) {
+        const modelType = isGeminiPane(paneId) ? 'gemini' : 'claude';
+        const contextDelay = isCodex ? 7000 : 6000;
+        window.hivemind.claude.injectContext(paneId, modelType, contextDelay);
+        log.info('spawnClaude', `Context injection scheduled for ${modelType} pane ${paneId}`);
+      }
     }
     updatePaneStatus(paneId, 'Working');
+  }
+}
+
+// Helper to check if a pane is Gemini
+function isGeminiPane(paneId) {
+  try {
+    const settings = window?.hivemind?.settings?.get?.();
+    const paneCommands = settings?.paneCommands || {};
+    const cmd = paneCommands[String(paneId)] || '';
+    return typeof cmd === 'string' && cmd.toLowerCase().includes('gemini');
+  } catch {
+    return false;
   }
 }
 
@@ -1278,3 +1306,7 @@ module.exports = {
   openTerminalSearch,  // Open search bar for pane
   closeTerminalSearch, // Close search bar
 };
+
+
+
+
