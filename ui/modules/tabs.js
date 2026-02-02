@@ -5,6 +5,7 @@
 
 const { ipcRenderer } = require('electron');
 const log = require('./logger');
+const { formatDuration } = require('./formatters');
 
 // Panel state
 let panelOpen = false;
@@ -1426,14 +1427,7 @@ function formatHistoryTime(isoString) {
   });
 }
 
-function formatDuration(ms) {
-  const seconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  if (hours > 0) return `${hours}h ${minutes % 60}m`;
-  if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
-  return `${seconds}s`;
-}
+// formatDuration now imported from ./formatters
 
 function renderHistoryList() {
   const listEl = document.getElementById('historyList');
@@ -2068,10 +2062,12 @@ function renderInspectorLog() {
                        event.status === 'skipped' || event.status === 'blocked' ? '✗' : '';
     const statusClass = event.status === 'delivered' || event.status === 'success' ? 'success' :
                         event.status === 'pending' ? 'pending' : 'failed';
-    const msgPreview = event.message ? event.message.substring(0, 60) + (event.message.length > 60 ? '...' : '') : '';
+    const msgStr = typeof event.message === 'string' ? event.message :
+                   event.message ? JSON.stringify(event.message) : '';
+    const msgPreview = msgStr ? msgStr.substring(0, 60) + (msgStr.length > 60 ? '...' : '') : '';
 
     return `
-      <div class="inspector-event" data-id="${event.id}" title="${escapeHtml(event.message || '')}">
+      <div class="inspector-event" data-id="${event.id}" title="${escapeHtml(msgStr || '')}">
         <span class="inspector-event-time">${time}</span>
         <span class="inspector-event-type ${event.type}">${event.type}</span>
         <span class="inspector-event-route">
