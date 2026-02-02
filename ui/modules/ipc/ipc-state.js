@@ -1,7 +1,7 @@
 ﻿const state = {
   mainWindow: null,
   daemonClient: null,
-  claudeRunning: null,
+  agentRunning: null,  // Renamed from claudeRunning - agents can be Claude, Codex, or Gemini
   currentSettings: null,
   watcher: null,
   triggers: null,
@@ -24,7 +24,7 @@ function initState(deps = {}) {
 
   assign('mainWindow');
   assign('daemonClient');
-  assign('claudeRunning');
+  assign('agentRunning');
   assign('currentSettings');
   assign('watcher');
   assign('triggers');
@@ -38,6 +38,15 @@ function initState(deps = {}) {
 function setDaemonClient(client) {
   state.daemonClient = client;
 }
+
+// Backward compatibility alias: state.claudeRunning -> state.agentRunning
+Object.defineProperty(state, 'claudeRunning', {
+  enumerable: false,
+  get: () => state.agentRunning,
+  set: (value) => {
+    state.agentRunning = value;
+  },
+});
 
 module.exports = {
   state,
