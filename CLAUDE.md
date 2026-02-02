@@ -596,6 +596,8 @@ If any are unclear, Architect asks user BEFORE delegating to domain agents.
 
 11. **Just fix it - don't instruct users.** If you know a fix or workaround, APPLY IT. Don't tell users to edit config files, run commands, or change settings themselves. Users (newcomers and devs alike) want problems solved, not instructions to follow. Your job is to fix things, not delegate fixes to users.
 
+12. **Check logs yourself, NEVER ask user.** We built `workspace/console.log` for DevTools output and have npm/agent terminals. Before asking user about ANY error or behavior, check the logs yourself (`tail -50 workspace/console.log`). NEVER say "can you check the console?" or "what does DevTools say?" - that defeats the entire purpose of log automation. The user is managing 6 panes and doesn't have time to relay information you can read yourself.
+
 ---
 
 ## Reviewer Gate - MANDATORY Before "Ready to Test"
