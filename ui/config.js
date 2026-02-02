@@ -35,6 +35,34 @@ const PANE_ROLES = {
   '6': 'Reviewer',
 };
 
+// Canonical role identifiers (lowercase)
+const ROLE_NAMES = ['architect', 'infra', 'frontend', 'backend', 'analyst', 'reviewer'];
+
+// Legacy role aliases -> canonical role id
+const LEGACY_ROLE_ALIASES = {
+  lead: 'architect',
+  orchestrator: 'infra',
+  'worker-a': 'frontend',
+  workera: 'frontend',
+  'implementer-a': 'frontend',
+  implementera: 'frontend',
+  'worker-b': 'backend',
+  workerb: 'backend',
+  'implementer-b': 'backend',
+  implementerb: 'backend',
+  investigator: 'analyst',
+};
+
+// Canonical role id -> pane id
+const ROLE_ID_MAP = {
+  architect: '1',
+  infra: '2',
+  frontend: '3',
+  backend: '4',
+  analyst: '5',
+  reviewer: '6',
+};
+
 const PANE_IDS = Object.keys(PANE_ROLES);
 
 // Trigger file targets - maps filename to target pane IDs
@@ -88,6 +116,9 @@ module.exports = {
   INSTANCE_DIRS,
   PANE_IDS,
   PANE_ROLES,
+  ROLE_NAMES,
+  LEGACY_ROLE_ALIASES,
+  ROLE_ID_MAP,
   TRIGGER_TARGETS,
   PROTOCOL_ACTIONS,
   PROTOCOL_EVENTS,
