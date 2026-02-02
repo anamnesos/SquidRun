@@ -14,7 +14,7 @@ Hivemind is an Electron desktop app that orchestrates 6 persistent AI agent inst
 - **Primary Mode (PTY):** 6 terminal processes managed by a persistent daemon. Full Claude/Codex/Gemini CLIs run in pseudo-terminals. Messages sent via keyboard injection. Terminals survive app restarts.
 - **Alternative Mode (SDK):** 6 Python SDK sessions orchestrated by `hivemind-sdk-v2.py`. Direct API calls instead of keyboard injection. Currently experimental.
 
-**Architecture Decision (Session 65):** PTY mode is primary/stable. SDK mode is experimental/debug path.
+**Architecture Decision (Session 65):** SDK mode is primary path. PTY mode is fallback for subscription-only users.
 
 ---
 
@@ -48,18 +48,31 @@ hivemind/
 │   │   │   ├── activity-manager.js
 │   │   │   └── ...
 │   │   │
-│   │   ├── ipc/                 # IPC handlers (58 files)
+│   │   ├── daemon-handlers.js   # Daemon lifecycle, message throttling (21KB)
+│   │   │
+│   │   ├── ipc/                 # IPC handlers (56 files)
 │   │   │   ├── handler-registry.js  # Route table
 │   │   │   ├── pty-handlers.js      # Terminal control
 │   │   │   ├── sdk-handlers.js      # SDK mode
-│   │   │   ├── daemon-handlers.js   # Daemon lifecycle
 │   │   │   └── ...
 │   │   │
 │   │   ├── terminal/            # Terminal submodules
 │   │   │   ├── injection.js     # Input injection queue
 │   │   │   └── recovery.js      # Stuck recovery
 │   │   │
-│   │   └── ...                  # UI, utilities, analysis modules
+│   │   ├── memory/              # Session memory (10 files)
+│   │   │   ├── memory-store.js      # Persistent memory
+│   │   │   ├── memory-summarizer.js # Context summarization
+│   │   │   └── ...
+│   │   │
+│   │   ├── analysis/            # Code analysis (4 files)
+│   │   │   ├── code-review.js
+│   │   │   └── cost-optimizer.js
+│   │   │
+│   │   ├── plugins/             # Plugin system (2 files)
+│   │   │   └── plugin-manager.js
+│   │   │
+│   │   └── ...                  # Other utilities
 │   │
 │   ├── styles/                  # CSS modules
 │   │   └── layout.css           # Main layout, panes, command bar
@@ -89,7 +102,7 @@ hivemind/
 │   │   ├── worker-b/            # Backend (Codex)
 │   │   ├── investigator/        # Analyst (Gemini)
 │   │   └── reviewer/            # Reviewer (Claude)
-│   │       └── CLAUDE.md        # Role-specific instructions
+│   │       └── CLAUDE.md        # Each instance has CLAUDE.md, AGENTS.md, or GEMINI.md
 │   │
 │   └── triggers/                # Agent communication files
 │       ├── architect.txt
@@ -117,10 +130,10 @@ hivemind/
 
 ### Obsolete Code (Ignore/Cleanup)
 
-- **docs/archive/python-v1/** - Dead Python architecture (156KB, no references)
+- **docs/archive/python-v1/** - Dead Python architecture (~117KB, no references)
 - **Large log files** - Already cleaned (was 360MB bloat)
 - **workspace/backups/** - 120MB of old session backups (keep last 3)
-- **Build artifacts** - `.mypy_cache/`, `__pycache__/` (already cleaned)
+- **Build artifacts** - `.mypy_cache/` (~80MB), `__pycache__/` (~73KB) - consider cleaning
 
 ---
 
@@ -131,7 +144,7 @@ hivemind/
 1. **`ui/config.js`** (3.3KB)
    Source of truth for pane roles, trigger targets, instance directories
 
-2. **`ui/main.js`** (52 lines)
+2. **`ui/main.js`** (56 lines)
    Electron lifecycle, app initialization (now modular)
 
 3. **`ui/modules/terminal.js`** (45KB)
@@ -200,7 +213,7 @@ Agent A finishes work
     ↓
 Writes to workspace/triggers/{agent-b}.txt with message format: (AGENT-A #N): message
     ↓
-watcher.js detects file change (chokidar, 500ms debounce)
+watcher.js detects file change (chokidar, 200ms debounce + 50ms fast polling for triggers)
     ↓
 Notifies renderer via IPC
     ↓
@@ -208,7 +221,7 @@ renderer.js sends to Agent B's pane (injection or SDK message)
     ↓
 Agent B receives message and continues work
     ↓
-Trigger file is cleared after delivery
+Trigger file atomically renamed to .processing, then deleted after dispatch
 ```
 
 ### State Persistence Across Restarts
@@ -281,6 +294,18 @@ On app restart:
 | `status-strip.js` | Bottom status bar |
 | `command-palette.js` | Command palette UI |
 
+### Memory & Analysis
+
+| Module | Purpose |
+|--------|---------|
+| `memory/memory-store.js` | Persistent memory storage |
+| `memory/memory-summarizer.js` | Context summarization |
+| `memory/knowledge-graph.js` | Knowledge graph structure |
+| `memory/context-manager.js` | Context management |
+| `analysis/code-review.js` | Code review utilities |
+| `analysis/cost-optimizer.js` | Token cost optimization |
+| `plugins/plugin-manager.js` | Plugin loading/management |
+
 ### Utilities & Support
 
 | Module | Purpose |
@@ -316,13 +341,13 @@ On app restart:
 ### Token Optimization
 
 **Slim files (read always):**
-- `app-status.json` (0.2KB)
-- `current_state.md` (11KB)
-- `blockers.md` (12KB)
-- `errors.md` (1.6KB)
+- `app-status.json` (~0.2KB)
+- `current_state.md` (~7.5KB)
+- `blockers.md` (~12KB)
+- `errors.md` (~1.6KB)
 
 **Full files (read when needed):**
-- `shared_context.md` (7.5KB)
+- `shared_context.md` (~7.5KB)
 - `status.md` (varies)
 
 **Archives (historical only):**
@@ -418,19 +443,19 @@ On app restart:
 
 ### PTY vs SDK Mode
 
-**PTY (Primary):**
+**SDK (Primary - Session 65 decision):**
+- 6 Python SDK sessions via `hivemind-sdk-v2.py`
+- Explicit API calls (cleaner, fails explicitly)
+- Parallelism fixed (commit `ad2989a`)
+- Preferred for API users
+
+**PTY (Fallback):**
 - 6 independent terminal processes
-- True parallelism (all agents work simultaneously)
-- Proven stable
 - Keyboard injection (quirks but reliable)
+- Required for subscription-only users (no API keys)
+- Proven stable for that use case
 
-**SDK (Alternative):**
-- 6 Python SDK sessions
-- Explicit API calls (cleaner)
-- Currently has parallelism bug (sequential execution)
-- Being debugged
-
-**Decision:** PTY is production. SDK is experimental.
+**Decision:** SDK is primary. PTY is fallback for subscriptions.
 
 ### Daemon Architecture
 
@@ -471,7 +496,7 @@ On app restart:
 | UI | Vanilla JS + CSS | - |
 | Terminal | xterm.js | 6.0 |
 | PTY | node-pty | 1.0 |
-| Daemon | Node.js | 18 |
+| Daemon | Node.js | 18+ (tested on 18.18.2) |
 | IPC | Electron IPC | - |
 | File Watching | chokidar | 3.6 |
 | Testing | Jest | 30 (2700+ tests) |
