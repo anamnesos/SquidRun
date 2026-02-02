@@ -982,19 +982,6 @@ async function spawnClaude(paneId, model = null) {
         log.info('spawnClaude', `Context injection scheduled for ${modelType} pane ${paneId}`);
       }
 
-      // Gemini startup prompt: Unlike Claude, Gemini CLI sits idle after spawn
-      // It needs an explicit first message to start working
-      // Note: GEMINI.md is auto-loaded by Gemini CLI, no need to mention it
-      // Delay: after identity injection (6s) + buffer = 8s
-      if (isGemini) {
-        const startupDelay = 8000;
-        setTimeout(() => {
-          const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
-          const startupPrompt = `Check in as ${role}. Start by reading workspace/app-status.json and workspace/current_state.md, then message Architect via trigger file.`;
-          sendToPane(paneId, startupPrompt + '\r');
-          log.info('spawnClaude', `Gemini startup prompt sent for ${role} (pane ${paneId})`);
-        }, startupDelay);
-      }
     }
     updatePaneStatus(paneId, 'Working');
   }
