@@ -973,8 +973,9 @@ async function spawnClaude(paneId, model = null) {
       // Note: Gemini CLI auto-loads GEMINI.md natively, skip injection to avoid duplicates
       if (!isGemini && window.hivemind?.claude?.injectContext) {
         const contextDelay = isCodex ? 7000 : 6000;
-        window.hivemind.claude.injectContext(paneId, 'claude', contextDelay);
-        log.info('spawnClaude', `Context injection scheduled for claude pane ${paneId}`);
+        const modelType = isCodex ? 'codex' : 'claude';
+        window.hivemind.claude.injectContext(paneId, modelType, contextDelay);
+        log.info('spawnClaude', `Context injection scheduled for ${modelType} pane ${paneId}`);
       }
 
       // Gemini startup prompt: Unlike Claude, Gemini CLI sits idle after spawn
