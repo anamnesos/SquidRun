@@ -1163,11 +1163,18 @@ class HivemindManager:
         # Confirm message received
         self._emit("message_received", {"pane_id": pane_id})
 
-        # Stream responses
-        async for response in agent.send(message):
-            response["pane_id"] = pane_id
-            # V2 FIX: Use default=str to handle any non-serializable objects
-            print(json.dumps(response, default=str), flush=True)
+        # Stream responses with exception handling
+        try:
+            async for response in agent.send(message):
+                response["pane_id"] = pane_id
+                # V2 FIX: Use default=str to handle any non-serializable objects
+                print(json.dumps(response, default=str), flush=True)
+        except Exception as e:
+            self._emit("error", {
+                "pane_id": pane_id,
+                "message": f"Agent send failed: {e}",
+                "error_type": type(e).__name__
+            })
 
     async def interrupt_agent(self, pane_id: str):
         """
@@ -1210,10 +1217,17 @@ class HivemindManager:
 
     async def _send_and_collect(self, pane_id: str, message: str):
         """Helper to send message and collect responses."""
-        async for response in self.agents[pane_id].send(message):
-            response["pane_id"] = pane_id
-            # V2 FIX: Use default=str to handle any non-serializable objects
-            print(json.dumps(response, default=str), flush=True)
+        try:
+            async for response in self.agents[pane_id].send(message):
+                response["pane_id"] = pane_id
+                # V2 FIX: Use default=str to handle any non-serializable objects
+                print(json.dumps(response, default=str), flush=True)
+        except Exception as e:
+            self._emit("error", {
+                "pane_id": pane_id,
+                "message": f"Broadcast send failed: {e}",
+                "error_type": type(e).__name__
+            })
 
     def get_all_sessions(self) -> Dict[str, str]:
         """Get all current session IDs."""
@@ -1312,6 +1326,9 @@ async def run_ipc_server(manager: HivemindManager):
     )
     reader_thread.start()
 
+    # Track running tasks for parallel execution
+    running_tasks: set = set()
+
     while True:
         try:
             line = await queue.get()
@@ -1338,7 +1355,11 @@ async def run_ipc_server(manager: HivemindManager):
                 pane_id = cmd.get("pane_id")
                 message = cmd.get("message")
                 if pane_id and message:
-                    await manager.send_message(pane_id, message)
+                    # PARALLELISM FIX: Spawn task instead of awaiting
+                    task = asyncio.create_task(manager.send_message(pane_id, message))
+                    running_tasks.add(task)
+                    # Use lambda to ensure task reference is captured
+                    task.add_done_callback(lambda t: running_tasks.discard(t))
                 else:
                     manager._emit("error", {"message": "send requires pane_id and message"})
 
@@ -1346,7 +1367,11 @@ async def run_ipc_server(manager: HivemindManager):
                 message = cmd.get("message")
                 exclude = cmd.get("exclude", [])
                 if message:
-                    await manager.broadcast(message, exclude)
+                    # PARALLELISM FIX: Spawn task instead of awaiting
+                    task = asyncio.create_task(manager.broadcast(message, exclude))
+                    running_tasks.add(task)
+                    # Use lambda to ensure task reference is captured
+                    task.add_done_callback(lambda t: running_tasks.discard(t))
                 else:
                     manager._emit("error", {"message": "broadcast requires message"})
 
@@ -1355,6 +1380,25 @@ async def run_ipc_server(manager: HivemindManager):
                 manager._emit("sessions", {"sessions": sessions})
 
             elif command == "stop":
+                # Wait for all running tasks before stopping (with timeout)
+                if running_tasks:
+                    try:
+                        results = await asyncio.wait_for(
+                            asyncio.gather(*running_tasks, return_exceptions=True),
+                            timeout=30.0
+                        )
+                        # Log any failed tasks
+                        for i, result in enumerate(results):
+                            if isinstance(result, Exception):
+                                manager._emit("warning", {
+                                    "message": f"Task failed during shutdown: {result}",
+                                    "error_type": type(result).__name__
+                                })
+                    except asyncio.TimeoutError:
+                        manager._emit("warning", {
+                            "message": f"Shutdown timeout: {len(running_tasks)} tasks still running",
+                            "pending_count": len(running_tasks)
+                        })
                 await manager.stop_all()
                 break
 
