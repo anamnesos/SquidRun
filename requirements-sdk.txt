@@ -1,4 +1,13 @@
 # Hivemind SDK Requirements
 # Install: pip install -r requirements-sdk.txt
 
+# Claude Agent SDK (already integrated)
 claude-agent-sdk>=1.0.0
+
+# OpenAI/Codex SDK (for Codex agents via MCP)
+openai>=1.0.0
+openai-agents>=0.1.0
+python-dotenv>=1.0.0
+
+# Google Gemini SDK (for Gemini agents)
+google-genai>=1.0.0

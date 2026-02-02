@@ -18,15 +18,20 @@ const fs = require('fs');
 const EventEmitter = require('events');
 const log = require('./logger');
 
-// Pane ID to role mapping (6-pane architecture)
-const PANE_ROLES = {
-  '1': 'Architect',
-  '2': 'Infra',
-  '3': 'Frontend',
-  '4': 'Backend',
-  '5': 'Analyst',
-  '6': 'Reviewer',
+// Pane configuration - role and model per pane (6-pane architecture)
+const PANE_CONFIG = {
+  '1': { role: 'Architect', model: 'claude' },
+  '2': { role: 'Infra', model: 'codex' },
+  '3': { role: 'Frontend', model: 'claude' },
+  '4': { role: 'Backend', model: 'codex' },
+  '5': { role: 'Analyst', model: 'gemini' },
+  '6': { role: 'Reviewer', model: 'claude' },
 };
+
+// Legacy: Pane ID to role mapping (derived from PANE_CONFIG for backward compatibility)
+const PANE_ROLES = Object.fromEntries(
+  Object.entries(PANE_CONFIG).map(([id, config]) => [id, config.role])
+);
 
 // Reverse mapping - role to pane ID (supports multiple name variations including legacy)
 const ROLE_TO_PANE = {
@@ -94,15 +99,13 @@ class SDKBridge extends EventEmitter {
     this.ready = false;
     this.mainWindow = null;
 
-    // Track 6 independent sessions
-    this.sessions = {
-      '1': { id: null, role: 'Architect', status: 'idle' },
-      '2': { id: null, role: 'Infra', status: 'idle' },
-      '3': { id: null, role: 'Frontend', status: 'idle' },
-      '4': { id: null, role: 'Backend', status: 'idle' },
-      '5': { id: null, role: 'Analyst', status: 'idle' },
-      '6': { id: null, role: 'Reviewer', status: 'idle' },
-    };
+    // Track 6 independent sessions (derived from PANE_CONFIG)
+    this.sessions = Object.fromEntries(
+      Object.entries(PANE_CONFIG).map(([id, config]) => [
+        id,
+        { id: null, role: config.role, model: config.model, status: 'idle' },
+      ])
+    );
 
     // Subscribers for streaming responses
     this.subscribers = new Set(['1', '2', '3', '4', '5', '6']); // All panes subscribed by default
@@ -311,8 +314,18 @@ class SDKBridge extends EventEmitter {
   }
 
   /**
+   * Get model type for a pane
+   * @param {string} paneId - Pane ID ('1' through '6')
+   * @returns {string} Model type ('claude', 'codex', or 'gemini')
+   */
+  getModelForPane(paneId) {
+    const config = PANE_CONFIG[paneId];
+    return config ? config.model : 'claude'; // Default to claude
+  }
+
+  /**
    * Send message to specific pane/agent
-   * @param {string} paneId - Target pane ('1', '2', '3', '4')
+   * @param {string} paneId - Target pane ('1', '2', '3', '4', '5', '6')
    * @param {string} message - User message
    */
   sendMessage(paneId, message) {
@@ -323,12 +336,13 @@ class SDKBridge extends EventEmitter {
       return false;
     }
 
-    // Use Python's expected key names (command, pane_id, session_id)
+    // Use Python's expected key names (command, pane_id, session_id, model)
     const cmd = {
       command: 'send',
       pane_id: normalizedPaneId,
       message: message,
       session_id: this.sessions[normalizedPaneId].id, // Include for resume
+      model: this.getModelForPane(normalizedPaneId),  // Model type for routing
     };
 
     const sent = this.sendToProcess(cmd);
@@ -798,6 +812,7 @@ function getSDKBridge() {
 module.exports = {
   SDKBridge,
   getSDKBridge,
+  PANE_CONFIG,
   PANE_ROLES,
   ROLE_TO_PANE,
   SESSION_STATE_FILE,

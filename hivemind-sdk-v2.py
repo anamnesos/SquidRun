@@ -14,6 +14,7 @@ import asyncio
 import json
 import sys
 import os
+from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -75,12 +76,14 @@ def sanitize_unicode(text: str) -> str:
 # =============================================================================
 
 PermissionMode = Literal['default', 'acceptEdits', 'plan', 'bypassPermissions']
+ModelType = Literal['claude', 'codex', 'gemini']
 
 @dataclass
 class AgentConfig:
     """Configuration for a single Hivemind agent."""
     role: str
     pane_id: str
+    model: ModelType = "claude"  # Multi-model support
     role_dir: Optional[str] = None
     allowed_tools: List[str] = field(default_factory=list)
     # V2 FIX: Use bypassPermissions for all agents - acceptEdits still prompts for reads
@@ -91,52 +94,57 @@ class AgentConfig:
         return cls(
             role="Architect",
             pane_id="1",
+            model="claude",
             role_dir="lead",
             allowed_tools=["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
         )
 
     @classmethod
-    def orchestrator(cls):
+    def infra(cls):
         return cls(
-            role="Orchestrator",
+            role="Infra",
             pane_id="2",
-            role_dir="orchestrator",
-            allowed_tools=["Read", "Edit", "Write", "Glob", "Grep"],
+            model="codex",
+            role_dir="infra",
+            allowed_tools=["Read", "Edit", "Write", "Bash", "Glob", "Grep"],
         )
 
     @classmethod
-    def implementer_a(cls):
+    def frontend(cls):
         return cls(
-            role="Implementer A",
+            role="Frontend",
             pane_id="3",
+            model="claude",
             role_dir="worker-a",
             allowed_tools=["Read", "Edit", "Write", "Glob", "Grep"],
         )
 
     @classmethod
-    def implementer_b(cls):
+    def backend(cls):
         return cls(
-            role="Implementer B",
+            role="Backend",
             pane_id="4",
+            model="codex",
             role_dir="worker-b",
             allowed_tools=["Read", "Edit", "Write", "Bash", "Glob", "Grep"],
         )
 
     @classmethod
-    def investigator(cls):
+    def analyst(cls):
         return cls(
-            role="Investigator",
+            role="Analyst",
             pane_id="5",
+            model="gemini",
             role_dir="investigator",
             allowed_tools=["Read", "Edit", "Write", "Glob", "Grep"],
         )
 
-    # Reviewer is read-only
     @classmethod
     def reviewer(cls):
         return cls(
             role="Reviewer",
             pane_id="6",
+            model="claude",
             role_dir="reviewer",
             allowed_tools=["Read", "Glob", "Grep"],  # Read-only!
             permission_mode="bypassPermissions",
@@ -148,37 +156,151 @@ class AgentConfig:
         return cls.architect()
 
     @classmethod
+    def orchestrator(cls):
+        return cls.infra()
+
+    @classmethod
+    def implementer_a(cls):
+        return cls.frontend()
+
+    @classmethod
+    def implementer_b(cls):
+        return cls.backend()
+
+    @classmethod
+    def investigator(cls):
+        return cls.analyst()
+
+    @classmethod
     def worker_a(cls):
-        return cls.implementer_a()
+        return cls.frontend()
 
     @classmethod
     def worker_b(cls):
-        return cls.implementer_b()
+        return cls.backend()
 
 
 # =============================================================================
-# HIVEMIND AGENT - Single persistent SDK session
+# BASE AGENT - Abstract base class for all models
 # =============================================================================
 
-class HivemindAgent:
+class BaseAgent(ABC):
     """
-    A single Hivemind agent with persistent ClaudeSDKClient session.
+    Abstract base for all Hivemind agents with shared history/error handling.
 
-    Each agent maintains its own:
-    - Context window (compacts independently)
-    - Session ID (survives restarts)
-    - Tool permissions
-    - Conversation history (for context restore on restart)
+    Subclasses: ClaudeAgent, CodexAgent, GeminiAgent
     """
 
     def __init__(self, config: AgentConfig, workspace: Path):
         self.config = config
         self.workspace = workspace
-        self.client: Optional[ClaudeSDKClient] = None
         self.session_id: Optional[str] = None
-        self.connected = False
-        self.conversation_history: List[Dict[str, str]] = []  # Recent messages for context restore
+        self.connected: bool = False
         self.history_file = workspace / "workspace" / "history" / f"{config.pane_id}-{config.role.lower().replace(' ', '-')}.jsonl"
+
+    @abstractmethod
+    async def connect(self, resume_id: Optional[str] = None) -> None:
+        """Connect to SDK. Must set self.connected = True on success."""
+        pass
+
+    @abstractmethod
+    def send(self, message: str) -> AsyncIterator[Dict[str, Any]]:
+        """Send message, yield normalized response dicts. Must handle errors internally."""
+        # Note: Implementations should be async generators (async def ... yield)
+        # but the abstract signature doesn't use 'async' for AsyncIterator return type
+        ...
+
+    @abstractmethod
+    async def disconnect(self) -> Optional[str]:
+        """Disconnect and return session_id for persistence."""
+        pass
+
+    async def interrupt(self) -> bool:
+        """
+        Interrupt the current operation. Override in subclasses that support interruption.
+        Returns True if interrupt was attempted, False if not supported.
+        """
+        return False  # Default: interruption not supported
+
+    def get_session_id(self) -> Optional[str]:
+        """Get current session ID for persistence."""
+        return self.session_id
+
+    def _save_to_history(self, role: str, content: str) -> None:
+        """Append a message to conversation history file."""
+        try:
+            self.history_file.parent.mkdir(parents=True, exist_ok=True)
+            entry = {
+                "timestamp": datetime.now().isoformat(),
+                "role": role,
+                "content": content[:2000]  # Limit content size
+            }
+            with open(self.history_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(entry, default=str) + '\n')
+        except Exception:
+            pass  # Don't crash on history save failure
+
+    def _load_history(self, max_entries: int = 20) -> List[Dict[str, str]]:
+        """Load recent conversation history from file."""
+        try:
+            if not self.history_file.exists():
+                return []
+            entries = []
+            with open(self.history_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        entries.append(json.loads(line.strip()))
+                    except json.JSONDecodeError:
+                        continue
+            return entries[-max_entries:]  # Return last N entries
+        except Exception:
+            return []
+
+    def get_context_restore_message(self) -> Optional[str]:
+        """Generate a context restore message from conversation history."""
+        history = self._load_history(15)  # Last 15 messages
+        if not history:
+            return None
+
+        lines = [f"[HIVEMIND CONTEXT RESTORE - {self.config.role}]"]
+        lines.append(f"Previous session ended at {history[-1].get('timestamp', 'unknown')}")
+        lines.append("Recent conversation summary:")
+
+        for entry in history:
+            role = entry.get('role', 'unknown')
+            content = entry.get('content', '')[:200]  # Truncate for summary
+            if content:
+                lines.append(f"- {role}: {content}...")
+
+        lines.append("[END CONTEXT - Continue from where we left off]")
+        return '\n'.join(lines)
+
+    def _emit(self, msg_type: str, data: Dict[str, Any]) -> None:
+        """Emit a normalized message to stdout for IPC."""
+        output = {
+            "type": msg_type,
+            "pane_id": self.config.pane_id,
+            "role": self.config.role,
+            **data,
+        }
+        print(json.dumps(output, default=str), flush=True)
+
+
+# =============================================================================
+# CLAUDE AGENT - Claude via claude_agent_sdk
+# =============================================================================
+
+class ClaudeAgent(BaseAgent):
+    """
+    Claude agent using claude_agent_sdk.
+
+    Refactored from original HivemindAgent. Uses ClaudeSDKClient for direct
+    API access with streaming support.
+    """
+
+    def __init__(self, config: AgentConfig, workspace: Path):
+        super().__init__(config, workspace)
+        self.client: Optional[ClaudeSDKClient] = None
         self._pending_context: Optional[str] = None  # Context to inject on first message after restart
 
     async def connect(self, resume_session_id: Optional[str] = None):
@@ -433,16 +555,17 @@ class HivemindAgent:
         # Unknown message type - return raw
         return {"type": "unknown", "raw": str(msg)}
 
-    def _emit(self, msg_type: str, data: Dict[str, Any]):
-        """Emit a message to stdout for IPC."""
-        output = {
-            "type": msg_type,
-            "pane_id": self.config.pane_id,
-            "role": self.config.role,
-            **data,
-        }
-        # V2 FIX: Use safe serialization to handle any non-JSON-serializable objects
-        print(json.dumps(output, default=str), flush=True)
+    # _emit() inherited from BaseAgent
+
+    async def interrupt(self) -> bool:
+        """Interrupt the current Claude operation."""
+        if self.client and self.connected:
+            try:
+                await self.client.interrupt()
+                return True
+            except Exception:
+                pass
+        return False
 
     async def disconnect(self) -> Optional[str]:
         """
@@ -468,58 +591,213 @@ class HivemindAgent:
             self._emit("status", {"state": "disconnected"})
         return self.session_id
 
-    def get_session_id(self) -> Optional[str]:
-        """Get current session ID for persistence."""
-        return self.session_id
+    # get_session_id(), _save_to_history(), _load_history(), get_context_restore_message()
+    # are all inherited from BaseAgent
 
-    def _save_to_history(self, role: str, content: str):
-        """Append a message to conversation history file."""
+
+# =============================================================================
+# CODEX AGENT - Codex via OpenAI Agents SDK (MCP)
+# =============================================================================
+
+class CodexAgent(BaseAgent):
+    """
+    Codex agent using OpenAI Agents SDK via MCP server.
+
+    Codex runs as an MCP server, Python connects via MCPServerStdio.
+    Uses elevated_windows_sandbox for safe command execution.
+    """
+
+    def __init__(self, config: AgentConfig, workspace: Path):
+        super().__init__(config, workspace)
+        self.mcp_server = None
+        self.thread_id: Optional[str] = None
+
+    async def connect(self, resume_id: Optional[str] = None) -> None:
+        """Connect to Codex MCP server."""
         try:
-            self.history_file.parent.mkdir(parents=True, exist_ok=True)
-            entry = {
-                "timestamp": datetime.now().isoformat(),
-                "role": role,
-                "content": content[:2000]  # Limit content size
+            from agents.mcp import MCPServerStdio
+
+            self.mcp_server = await MCPServerStdio(
+                name=f"Codex-{self.config.pane_id}",
+                params={"command": "npx", "args": ["-y", "codex", "mcp-server"]},
+                client_session_timeout_seconds=360000,
+            ).__aenter__()
+
+            self.thread_id = resume_id
+            self.connected = True
+            self._emit("status", {"state": "connected", "resumed": resume_id is not None})
+
+        except ImportError as e:
+            self._emit("error", {"message": f"OpenAI Agents SDK not installed: {e}"})
+            raise
+        except Exception as e:
+            self._emit("error", {"message": f"Codex connect failed: {e}"})
+            raise
+
+    async def send(self, message: str) -> AsyncIterator[Dict[str, Any]]:
+        """Send message to Codex and yield normalized responses."""
+        if not self.connected or not self.mcp_server:
+            yield {"type": "error", "message": "Codex agent not connected"}
+            return
+
+        self._save_to_history("user", message)
+        self._emit("status", {"state": "thinking"})
+
+        try:
+            if self.thread_id:
+                # Continue existing thread
+                try:
+                    result = await self.mcp_server.call_tool("codex-reply", {
+                        "threadId": self.thread_id,
+                        "prompt": message,
+                    })
+                except Exception as thread_err:
+                    # Thread may be stale - start new session
+                    if "not found" in str(thread_err).lower() or "expired" in str(thread_err).lower():
+                        self._emit("status", {"state": "thread_expired_restarting"})
+                        self.thread_id = None
+                        result = await self._start_new_session(message)
+                    else:
+                        raise
+            else:
+                result = await self._start_new_session(message)
+
+            # Extract content from MCP response
+            content = result.get("structuredContent", {}) if isinstance(result, dict) else {}
+            self.thread_id = content.get("threadId", self.thread_id)
+            response_text = content.get("content", str(result))
+
+            # Normalize to common format - emit as text_delta for consistency
+            # Codex MCP doesn't stream, so emit full response as one delta
+            yield {"type": "text_delta", "text": response_text}
+
+            self._save_to_history("assistant", response_text)
+
+            yield {
+                "type": "result",
+                "session_id": self.thread_id,
+                "is_error": False,
             }
-            with open(self.history_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(entry, default=str) + '\n')
-        except Exception:
-            pass  # Don't crash on history save failure
 
-    def _load_history(self, max_entries: int = 20) -> List[Dict[str, str]]:
-        """Load recent conversation history from file."""
+        except Exception as e:
+            yield {"type": "error", "message": f"Codex error: {e}"}
+
+        finally:
+            self._emit("status", {"state": "idle"})
+
+    async def _start_new_session(self, message: str) -> Dict[str, Any]:
+        """Start a new Codex session."""
+        assert self.mcp_server is not None, "MCP server not connected"
+        return await self.mcp_server.call_tool("codex", {
+            "prompt": message,
+            "approval-policy": "never",  # Safe: Codex runs in sandbox
+            "sandbox": "elevated_windows_sandbox",
+        })
+
+    async def disconnect(self) -> Optional[str]:
+        """Disconnect from Codex MCP server."""
+        if self.mcp_server:
+            try:
+                await self.mcp_server.__aexit__(None, None, None)
+            except Exception:
+                pass
+        self.connected = False
+        self._emit("status", {"state": "disconnected"})
+        return self.thread_id
+
+
+# =============================================================================
+# GEMINI AGENT - Gemini via google-genai SDK
+# =============================================================================
+
+class GeminiAgent(BaseAgent):
+    """
+    Gemini agent using google-genai SDK.
+
+    Uses chat sessions for conversation continuity.
+    """
+
+    def __init__(self, config: AgentConfig, workspace: Path):
+        super().__init__(config, workspace)
+        self.client = None
+        self.chat = None
+
+    async def connect(self, resume_id: Optional[str] = None) -> None:
+        """Connect to Gemini API and create chat session."""
         try:
-            if not self.history_file.exists():
-                return []
-            entries = []
-            with open(self.history_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    try:
-                        entries.append(json.loads(line.strip()))
-                    except json.JSONDecodeError:
-                        continue
-            return entries[-max_entries:]  # Return last N entries
-        except Exception:
-            return []
+            from google import genai
 
-    def get_context_restore_message(self) -> Optional[str]:
-        """Generate a context restore message from conversation history."""
-        history = self._load_history(15)  # Last 15 messages
-        if not history:
-            return None
+            client = genai.Client()
+            chat = client.chats.create(model="gemini-2.0-flash")
+            self.client = client
+            self.chat = chat
+            self.connected = True
 
-        lines = [f"[HIVEMIND CONTEXT RESTORE - {self.config.role}]"]
-        lines.append(f"Previous session ended at {history[-1].get('timestamp', 'unknown')}")
-        lines.append("Recent conversation summary:")
+            # Restore context from history if available
+            context_msg = self.get_context_restore_message()
+            if context_msg:
+                self._emit("status", {"state": "restoring_context"})
+                # Send context restore as first message to prime the chat
+                try:
+                    chat.send_message(context_msg)
+                except Exception:
+                    pass  # Non-fatal, continue without context
 
-        for entry in history:
-            role = entry.get('role', 'unknown')
-            content = entry.get('content', '')[:200]  # Truncate for summary
-            if content:
-                lines.append(f"- {role}: {content}...")
+            self._emit("status", {"state": "connected", "has_history": context_msg is not None})
 
-        lines.append("[END CONTEXT - Continue from where we left off]")
-        return '\n'.join(lines)
+        except ImportError as e:
+            self._emit("error", {"message": f"Google GenAI SDK not installed: {e}"})
+            raise
+        except Exception as e:
+            self._emit("error", {"message": f"Gemini connect failed: {e}"})
+            raise
+
+    async def send(self, message: str) -> AsyncIterator[Dict[str, Any]]:
+        """Send message to Gemini and yield normalized responses."""
+        if not self.connected or not self.chat:
+            yield {"type": "error", "message": "Gemini agent not connected"}
+            return
+
+        self._save_to_history("user", message)
+        self._emit("status", {"state": "thinking"})
+
+        response_text = ""
+
+        try:
+            # Use self.chat.send_message_stream() for conversation continuity
+            # NOT client.models.generate_content_stream() which is stateless
+            for chunk in self.chat.send_message_stream(message):
+                text = chunk.text if hasattr(chunk, 'text') else str(chunk)
+                if text:
+                    response_text += text
+                    yield {"type": "text_delta", "text": text}
+
+            self._save_to_history("assistant", response_text)
+
+            yield {
+                "type": "result",
+                "session_id": self.session_id,
+                "is_error": False,
+            }
+
+        except Exception as e:
+            error_msg = str(e)
+
+            # Handle rate limiting with backoff hint
+            if "429" in error_msg or "rate" in error_msg.lower():
+                yield {"type": "error", "message": f"Gemini rate limited: {error_msg}. Retry later."}
+            else:
+                yield {"type": "error", "message": f"Gemini error: {error_msg}"}
+
+        finally:
+            self._emit("status", {"state": "idle"})
+
+    async def disconnect(self) -> Optional[str]:
+        """Disconnect from Gemini."""
+        self.connected = False
+        self.chat = None
+        self._emit("status", {"state": "disconnected"})
+        return self.session_id
 
 
 # =============================================================================
@@ -528,10 +806,11 @@ class HivemindAgent:
 
 class HivemindManager:
     """
-    Manages 6 independent Hivemind agents.
+    Manages 6 independent Hivemind agents (Claude, Codex, Gemini).
 
     Handles:
     - Agent lifecycle (connect, disconnect)
+    - Model-aware instantiation via factory
     - Message routing
     - Session persistence
     - IPC with Electron
@@ -539,8 +818,19 @@ class HivemindManager:
 
     def __init__(self, workspace: Path):
         self.workspace = workspace
-        self.agents: Dict[str, HivemindAgent] = {}
-        self.session_file = workspace / "session-state.json"  # V2 FIX: Project root, aligned with sdk-bridge.js
+        self.agents: Dict[str, BaseAgent] = {}  # Now supports all agent types
+        self.session_file = workspace / "session-state.json"
+
+    def _create_agent(self, config: AgentConfig) -> BaseAgent:
+        """Factory method - instantiate correct agent class based on config.model."""
+        if config.model == "claude":
+            return ClaudeAgent(config, self.workspace)
+        elif config.model == "codex":
+            return CodexAgent(config, self.workspace)
+        elif config.model == "gemini":
+            return GeminiAgent(config, self.workspace)
+        else:
+            raise ValueError(f"Unknown model type: {config.model}")
 
     async def start_all(self):
         """Start all 6 agents, resuming sessions if available."""
@@ -548,18 +838,18 @@ class HivemindManager:
         # Load saved sessions
         saved_sessions = self._load_sessions()
 
-        # Create agents
+        # Create agents with new role-based config (includes model type)
         configs = [
-            AgentConfig.architect(),
-            AgentConfig.orchestrator(),
-            AgentConfig.implementer_a(),
-            AgentConfig.implementer_b(),
-            AgentConfig.investigator(),
-            AgentConfig.reviewer(),
+            AgentConfig.architect(),   # Pane 1 - Claude
+            AgentConfig.infra(),       # Pane 2 - Codex
+            AgentConfig.frontend(),    # Pane 3 - Claude
+            AgentConfig.backend(),     # Pane 4 - Codex
+            AgentConfig.analyst(),     # Pane 5 - Gemini
+            AgentConfig.reviewer(),    # Pane 6 - Claude
         ]
 
         for config in configs:
-            agent = HivemindAgent(config, self.workspace)
+            agent = self._create_agent(config)
             self.agents[config.pane_id] = agent
 
             # Resume if we have a saved session
@@ -570,12 +860,13 @@ class HivemindManager:
                 self._emit("agent_started", {
                     "pane_id": config.pane_id,
                     "role": config.role,
+                    "model": config.model,  # Include model in startup message
                     "resumed": resume_id is not None,
                 })
             except Exception as e:
                 self._emit("error", {
                     "pane_id": config.pane_id,
-                    "message": f"Failed to start {config.role}: {e}",
+                    "message": f"Failed to start {config.role} ({config.model}): {e}",
                 })
 
     async def stop_all(self):
@@ -631,10 +922,13 @@ class HivemindManager:
             self._emit("error", {"pane_id": pane_id, "message": "Agent not found"})
             return
 
-        if agent.client and agent.connected:
+        if agent.connected:
             try:
-                await agent.client.interrupt()
-                self._emit("interrupted", {"pane_id": pane_id, "role": agent.config.role})
+                success = await agent.interrupt()
+                if success:
+                    self._emit("interrupted", {"pane_id": pane_id, "role": agent.config.role})
+                else:
+                    self._emit("warning", {"pane_id": pane_id, "message": "Agent does not support interrupt"})
             except Exception as e:
                 self._emit("error", {"pane_id": pane_id, "message": f"Interrupt failed: {e}"})
 
