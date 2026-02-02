@@ -132,8 +132,8 @@ function registerCompletionQualityHandlers(ctx, deps = {}) {
     const qualityResults = [];
 
     for (const paneId of activeAgents) {
-      if (ctx.claudeRunning && typeof ctx.claudeRunning.get === 'function' &&
-          ctx.claudeRunning.get(paneId) === 'running') {
+      if (ctx.agentRunning && typeof ctx.agentRunning.get === 'function' &&
+          ctx.agentRunning.get(paneId) === 'running') {
         const result = await runQualityCheck(paneId, '');
         qualityResults.push(result);
       }

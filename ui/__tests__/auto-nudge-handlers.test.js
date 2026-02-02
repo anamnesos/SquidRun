@@ -28,10 +28,10 @@ describe('Auto-Nudge Handlers', () => {
     // Make isDestroyed a mock function
     ctx.mainWindow.isDestroyed = jest.fn(() => false);
 
-    // Add claudeRunning state
-    ctx.claudeRunning = new Map();
-    ctx.claudeRunning.set('1', 'running');
-    ctx.claudeRunning.set('2', 'idle');
+    // Add agentRunning state (renamed from claudeRunning)
+    ctx.agentRunning = new Map();
+    ctx.agentRunning.set('1', 'running');
+    ctx.agentRunning.set('2', 'idle');
 
     // Add daemon client with getLastActivity
     ctx.daemonClient = {
@@ -139,7 +139,7 @@ describe('Auto-Nudge Handlers', () => {
     });
 
     test('only nudges running agents', async () => {
-      ctx.claudeRunning.set('2', 'running');
+      ctx.agentRunning.set('2', 'running');
       ctx.daemonClient.getLastActivity.mockReturnValue(Date.now() - 120000);
 
       const result = await harness.invoke('nudge-all-stuck');
@@ -194,10 +194,10 @@ describe('Auto-Nudge Handlers', () => {
     });
 
     test('returns health data for all 6 panes', async () => {
-      ctx.claudeRunning.set('3', 'stopped');
-      ctx.claudeRunning.set('4', 'unknown');
-      ctx.claudeRunning.set('5', 'running');
-      ctx.claudeRunning.set('6', 'running');
+      ctx.agentRunning.set('3', 'stopped');
+      ctx.agentRunning.set('4', 'unknown');
+      ctx.agentRunning.set('5', 'running');
+      ctx.agentRunning.set('6', 'running');
 
       const result = await harness.invoke('get-agent-health');
 
@@ -301,7 +301,7 @@ describe('Auto-Nudge Handlers', () => {
       harness = createIpcHarness();
       ctx = createDefaultContext({ ipcMain: harness.ipcMain });
       ctx.mainWindow.isDestroyed = jest.fn(() => false);
-      ctx.claudeRunning = new Map([['1', 'running']]);
+      ctx.agentRunning = new Map([['1', 'running']]);
       ctx.daemonClient = { connected: true, getLastActivity: jest.fn(), terminals: new Map() };
 
       registerAutoNudgeHandlers(ctx, { recoveryManager: depsManager });
@@ -312,8 +312,8 @@ describe('Auto-Nudge Handlers', () => {
       expect(result.agents['1'].recovering).toBe(true);
     });
 
-    test('handles missing claudeRunning gracefully', async () => {
-      ctx.claudeRunning = null;
+    test('handles missing agentRunning gracefully', async () => {
+      ctx.agentRunning = null;
 
       const result = await harness.invoke('get-agent-health');
 

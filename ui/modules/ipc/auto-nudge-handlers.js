@@ -21,7 +21,7 @@ function registerAutoNudgeHandlers(ctx, deps) {
 
     for (let i = 1; i <= 6; i++) {
       const paneId = String(i);
-      const status = ctx.claudeRunning?.get(paneId) || 'unknown';
+      const status = ctx.agentRunning?.get(paneId) || 'unknown';
       const lastActivity = ctx.daemonClient.getLastActivity?.(paneId);
       const terminal = ctx.daemonClient.terminals?.get(paneId);
       const recovery = recoveryStatus[paneId];
@@ -115,7 +115,7 @@ function registerAutoNudgeHandlers(ctx, deps) {
 
     const nudgeMessage = message || '[HIVEMIND] Are you still working? Please respond with your current status.';
 
-    if (ctx.claudeRunning.get(paneId) !== 'running') {
+    if (ctx.agentRunning.get(paneId) !== 'running') {
       return { success: false, error: 'Agent not running in this pane' };
     }
 
@@ -136,7 +136,7 @@ function registerAutoNudgeHandlers(ctx, deps) {
     const now = Date.now();
     const nudged = [];
 
-    for (const [paneId, status] of ctx.claudeRunning) {
+    for (const [paneId, status] of ctx.agentRunning) {
       if (status === 'running') {
         const lastActivity = ctx.daemonClient.getLastActivity(paneId);
         if (lastActivity && (now - lastActivity) > stuckThreshold) {
