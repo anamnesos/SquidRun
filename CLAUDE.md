@@ -4,7 +4,44 @@
 
 **Project:** Hivemind - Multi-agent orchestration for Claude Code
 **Status:** Active Build Sprint
-**Last Updated:** January 2026
+**Last Updated:** February 2026
+
+---
+
+## HUMAN CONTEXT (READ FIRST)
+
+The human operating this system:
+- Is LEARNING software development alongside building this
+- Has no formal dev training - explain concepts, don't assume knowledge
+- Built this in 10 days with zero prior experience
+- Values accessibility over power-user features
+- Prefers "boring and stable" over "clever and fragile"
+- Works after-hours - limited time, learning pace over shipping speed
+
+**When suggesting or reviewing:**
+- Explain WHY, not just WHAT
+- Flag complexity that could be simplified
+- Prioritize stability over features
+- Use plain language with real-world analogies
+- Don't assume terminal/git/IDE knowledge
+
+---
+
+## VISION ALIGNMENT
+
+**Read `VISION.md` for full context.**
+
+**"Service as a Software"** - tools that learn the user's business, not users conforming to tools.
+
+**Design decisions favor:**
+- Accessibility over power
+- Stability over features
+- Clarity over cleverness
+- Explicit errors over silent failures
+
+**Architecture (Session 65):** SDK mode is primary path. PTY mode is fallback only.
+
+If choosing between "elegant but complex" and "simple but works" - choose simple.
 
 ---
 
