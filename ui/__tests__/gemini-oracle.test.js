@@ -71,6 +71,8 @@ describe('Gemini Oracle', () => {
 
   test('throws when API key is missing', async () => {
     delete process.env.GEMINI_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
+    delete process.env.GOOGLE_AI_API_KEY;
     await expect(analyzeScreenshot({ imagePath })).rejects.toThrow('GEMINI_API_KEY is not set');
   });
 

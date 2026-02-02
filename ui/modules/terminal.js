@@ -30,6 +30,10 @@ const {
   ENTER_VERIFY_DELAY_MS,
   ENTER_RETRY_INTERVAL_MS,
   PROMPT_READY_TIMEOUT_MS,
+  STARTUP_READY_TIMEOUT_MS,
+  STARTUP_IDENTITY_DELAY_MS,
+  STARTUP_CONTEXT_DELAY_MS,
+  STARTUP_READY_BUFFER_MAX,
 } = require('./constants');
 
 // Pane configuration
@@ -89,6 +93,9 @@ let injectionInFlight = false;
 const getInjectionInFlight = () => injectionInFlight;
 const setInjectionInFlight = (value) => { injectionInFlight = value; };
 
+// Startup injection readiness tracking (per pane)
+const startupInjectionState = new Map();
+
 // Global UI focus tracker - survives staggered multi-pane sends.
 // Updated by focusin listener on UI inputs; doSendToPane restores to this.
 let lastUserUIFocus = null;
@@ -101,6 +108,12 @@ let lastUserUIKeypressTime = 0;
 // Non-timing constants that stay here
 const MAX_FOCUS_RETRIES = 3;          // Max focus retry attempts before giving up
 const MAX_ENTER_RETRIES = 5;          // Max Enter retry attempts if text remains
+const STARTUP_OSC_REGEX = /\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g;
+const STARTUP_CSI_REGEX = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+const STARTUP_READY_PATTERNS = [
+  /(^|\n)>\s*(\n|$)/m,
+  /how can i help/i,
+];
 
 // Terminal theme configuration
 const TERMINAL_THEME = {
@@ -268,6 +281,85 @@ function isIdle(paneId) {
 function isIdleForForceInject(paneId) {
   const lastOutput = lastOutputTime[paneId] || 0;
   return (Date.now() - lastOutput) >= FORCE_INJECT_IDLE_MS;
+}
+
+function stripAnsiForStartup(input) {
+  return String(input || '')
+    .replace(STARTUP_OSC_REGEX, '')
+    .replace(STARTUP_CSI_REGEX, '')
+    .replace(/\u001b[\(\)][A-Za-z0-9]/g, '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\r/g, '\n');
+}
+
+function clearStartupInjection(paneId) {
+  const state = startupInjectionState.get(String(paneId));
+  if (!state) return;
+  if (state.timeoutId) {
+    clearTimeout(state.timeoutId);
+  }
+  startupInjectionState.delete(String(paneId));
+}
+
+function triggerStartupInjection(paneId, state, reason) {
+  if (!state || state.completed) return;
+  state.completed = true;
+  if (state.timeoutId) {
+    clearTimeout(state.timeoutId);
+  }
+  startupInjectionState.delete(String(paneId));
+
+  const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
+  const timestamp = new Date().toISOString().split('T')[0];
+  const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
+
+  setTimeout(() => {
+    sendToPane(paneId, identityMsg + '\r');
+    log.info('spawnClaude', `Identity injected for ${role} (pane ${paneId}) [ready:${reason}]`);
+  }, STARTUP_IDENTITY_DELAY_MS);
+
+  if (!state.isGemini && window.hivemind?.claude?.injectContext) {
+    window.hivemind.claude.injectContext(paneId, state.modelType, STARTUP_CONTEXT_DELAY_MS);
+    log.info('spawnClaude', `Context injection scheduled for ${state.modelType} pane ${paneId} [ready:${reason}]`);
+  }
+}
+
+function armStartupInjection(paneId, options = {}) {
+  const id = String(paneId);
+  clearStartupInjection(id);
+  const state = {
+    buffer: '',
+    completed: false,
+    modelType: options.modelType || 'claude',
+    isGemini: Boolean(options.isGemini),
+    timeoutId: null,
+  };
+
+  state.timeoutId = setTimeout(() => {
+    const current = startupInjectionState.get(id);
+    if (!current || current.completed) return;
+    log.warn('spawnClaude', `Startup ready pattern not detected for pane ${id} after ${STARTUP_READY_TIMEOUT_MS}ms, injecting anyway`);
+    triggerStartupInjection(id, current, 'timeout');
+  }, STARTUP_READY_TIMEOUT_MS);
+
+  startupInjectionState.set(id, state);
+  log.info('spawnClaude', `Startup injection armed for pane ${id} (model=${state.modelType})`);
+}
+
+function handleStartupOutput(paneId, data) {
+  const state = startupInjectionState.get(String(paneId));
+  if (!state || state.completed) return;
+
+  const cleaned = stripAnsiForStartup(data);
+  if (cleaned) {
+    state.buffer = (state.buffer + cleaned).slice(-STARTUP_READY_BUFFER_MAX);
+  }
+
+  const promptReady = isPromptReady(paneId);
+  const patternReady = STARTUP_READY_PATTERNS.some((pattern) => pattern.test(state.buffer));
+  if (promptReady || patternReady) {
+    triggerStartupInjection(paneId, state, promptReady ? 'prompt' : 'pattern');
+  }
 }
 
 /**
@@ -637,6 +729,7 @@ async function initTerminal(paneId) {
       lastOutputTime[paneId] = Date.now();
       // Clear stuck status - output means pane is working
       clearStuckStatus(paneId);
+      handleStartupOutput(paneId, data);
       if (isCodexPane(paneId)) {
         if (data.includes('[Working...]')) {
           updatePaneStatus(paneId, 'Working');
@@ -650,6 +743,7 @@ async function initTerminal(paneId) {
     window.hivemind.pty.onExit(paneId, (code) => {
       updatePaneStatus(paneId, `Exited (${code})`);
       terminal.write(`\r\n[Process exited with code ${code}]\r\n`);
+      clearStartupInjection(paneId);
     });
 
   } catch (err) {
@@ -783,6 +877,7 @@ async function reattachTerminal(paneId, scrollback) {
     lastOutputTime[paneId] = Date.now();
     // Clear stuck status - output means pane is working
     clearStuckStatus(paneId);
+    handleStartupOutput(paneId, data);
     if (isCodexPane(paneId)) {
       if (data.includes('[Working...]')) {
         updatePaneStatus(paneId, 'Working');
@@ -796,6 +891,7 @@ async function reattachTerminal(paneId, scrollback) {
   window.hivemind.pty.onExit(paneId, (code) => {
     updatePaneStatus(paneId, `Exited (${code})`);
     terminal.write(`\r\n[Process exited with code ${code}]\r\n`);
+    clearStartupInjection(paneId);
   });
 
   updatePaneStatus(paneId, 'Reconnected');
@@ -947,8 +1043,8 @@ async function spawnClaude(paneId, model = null) {
       // NOTE: Codex sandbox_mode should be pre-configured via ~/.codex/config.toml
       // (sandbox_mode = "workspace-write") to skip the first-run sandbox prompt.
       // This PTY \r is a fallback to dismiss any residual prompt if config is missing.
-      const isCodex = result.command.startsWith('codex');
-      if (isCodex) {
+      const isCodexCommand = result.command.startsWith('codex');
+      if (isCodexCommand) {
         setTimeout(() => {
           window.hivemind.pty.write(String(paneId), '\r').catch(err => {
             log.error(`spawnClaude ${paneId}`, 'Codex startup Enter failed:', err);
@@ -957,30 +1053,11 @@ async function spawnClaude(paneId, model = null) {
         }, 3000);
       }
 
-      // ID-1: Inject identity message after CLI initializes
-      // Uses sendToPane() which properly submits via keyboard events
-      // This makes sessions identifiable in /resume list
-      // Timing: Codex 5s, Gemini 6s (needs more startup time), Claude 4s
+      // ID-1 + Finding #14: Wait for CLI ready prompt before identity/context injection
+      // This avoids injecting while subscription prompts are blocking input.
       const isGemini = isGeminiPane(paneId);
-      const identityDelay = isCodex ? 5000 : (isGemini ? 6000 : 4000);
-      setTimeout(() => {
-        const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
-        const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-        const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
-        sendToPane(paneId, identityMsg + '\r');
-        log.info('spawnClaude', `Identity injected for ${role} (pane ${paneId})`);
-      }, identityDelay);
-
-      // Finding #14: Inject context files (CLAUDE.md) after startup
-      // Delay is after identity injection to ensure CLI is ready
-      // Timing: Codex 7s, Claude 6s
-      // Note: Gemini CLI auto-loads GEMINI.md natively, skip injection to avoid duplicates
-      if (!isGemini && window.hivemind?.claude?.injectContext) {
-        const contextDelay = isCodex ? 7000 : 6000;
-        const modelType = isCodex ? 'codex' : 'claude';
-        window.hivemind.claude.injectContext(paneId, modelType, contextDelay);
-        log.info('spawnClaude', `Context injection scheduled for ${modelType} pane ${paneId}`);
-      }
+      const modelType = isGemini ? 'gemini' : 'claude';
+      armStartupInjection(paneId, { modelType, isGemini });
 
     }
     updatePaneStatus(paneId, 'Working');
