@@ -11,7 +11,9 @@ This replaces the PTY/keyboard event approach with reliable SDK API calls.
 """
 
 import asyncio
+import functools
 import json
+import logging
 import sys
 import os
 from abc import ABC, abstractmethod
@@ -19,6 +21,26 @@ from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, AsyncIterator, List, Literal
+# Retry logic for resilient API calls
+try:
+    from tenacity import (
+        AsyncRetrying,
+        RetryError,
+        retry_if_exception_type,
+        stop_after_attempt,
+        wait_exponential,
+        before_sleep_log,
+    )
+    TENACITY_AVAILABLE = True
+except ImportError:
+    TENACITY_AVAILABLE = False
+    # Fallback stubs when tenacity not installed - SDK still works, just no retries
+    AsyncRetrying = None  # type: ignore[misc,assignment]
+    RetryError = Exception  # type: ignore[misc,assignment]
+    retry_if_exception_type = None  # type: ignore[misc,assignment]
+    stop_after_attempt = None  # type: ignore[misc,assignment]
+    wait_exponential = None  # type: ignore[misc,assignment]
+    before_sleep_log = None  # type: ignore[assignment]
 
 # Fix Windows console encoding
 if sys.platform == 'win32':
@@ -26,6 +48,33 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')  # type: ignore[union-attr]
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')  # type: ignore[union-attr]
     os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+
+LOGGER = logging.getLogger(__name__)
+
+RETRYABLE_EXCEPTIONS = (asyncio.TimeoutError, ConnectionError, OSError)
+
+def sdk_retry(max_attempts: int = 3, wait_multiplier: float = 1.0, max_wait: float = 5.0):
+    """
+    Decorator factory that retries async API calls on transient errors.
+    Falls back to no-op if tenacity isn't installed.
+    """
+    def decorator(func):
+        if not TENACITY_AVAILABLE:
+            # No retry capability without tenacity - just run the function
+            return func
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            async for attempt in AsyncRetrying(  # type: ignore[misc]
+                stop=stop_after_attempt(max_attempts),  # type: ignore[misc]
+                wait=wait_exponential(multiplier=wait_multiplier, min=wait_multiplier, max=max_wait),  # type: ignore[misc]
+                retry=retry_if_exception_type(RETRYABLE_EXCEPTIONS),  # type: ignore[misc]
+                reraise=True,
+                before_sleep=before_sleep_log(LOGGER, logging.WARNING),  # type: ignore[misc]
+            ):
+                with attempt:
+                    return await func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 try:
     from claude_agent_sdk import (
@@ -69,6 +118,28 @@ def sanitize_unicode(text: str) -> str:
     except (UnicodeEncodeError, UnicodeDecodeError):
         # Fallback: strip all non-BMP characters
         return ''.join(c for c in text if ord(c) < 0x10000 and not (0xD800 <= ord(c) <= 0xDFFF))
+
+
+# =============================================================================
+# RETRY HELPERS - Resilient API calls with exponential backoff
+# =============================================================================
+
+def is_retryable_error(exc: Exception) -> bool:
+    """Check if an exception is retryable (rate limit, transient network)."""
+    error_str = str(exc).lower()
+    retryable_indicators = [
+        "429", "rate limit", "too many requests",
+        "503", "service unavailable",
+        "timeout", "connection", "network"
+    ]
+    return any(indicator in error_str for indicator in retryable_indicators)
+
+
+# Retry decorator for API calls - uses sdk_retry with sensible defaults
+# api_retry is a simple alias for common case (no customization needed)
+def api_retry(func):
+    """Simple retry decorator with 3 attempts and exponential backoff."""
+    return sdk_retry(max_attempts=3, wait_multiplier=2.0, max_wait=30.0)(func)
 
 
 # =============================================================================
@@ -389,7 +460,7 @@ class ClaudeAgent(BaseAgent):
         assistant_response = ""  # Accumulate assistant text for history
 
         try:
-            await self.client.query(clean_message)
+            await self._query_with_retry(clean_message)
 
             async for msg in self.client.receive_response():
                 # Convert SDK message to JSON-serializable dict
@@ -423,11 +494,19 @@ class ClaudeAgent(BaseAgent):
                         "is_error": msg.is_error,
                     }
 
+        except RetryError as e:
+            last = e.last_attempt.exception() if hasattr(e, "last_attempt") else None
+            err_msg = last or e  # type: ignore[assignment]
+            yield {"type": "error", "message": f"Claude API retry failed: {err_msg}"}
         except Exception as e:
             yield {"type": "error", "message": str(e)}
-
         finally:
             self._emit("status", {"state": "idle"})
+
+    @sdk_retry()
+    async def _query_with_retry(self, message: str) -> None:
+        assert self.client is not None, "Claude client is not initialized"
+        await self.client.query(message)
 
     def _parse_message(self, msg: Any) -> Optional[Dict[str, Any]]:
         """Convert SDK message to JSON-serializable dict."""
@@ -609,7 +688,7 @@ class CodexAgent(BaseAgent):
 
     def __init__(self, config: AgentConfig, workspace: Path):
         super().__init__(config, workspace)
-        self.mcp_server = None
+        self.mcp_server: Any = None  # MCPServerStdio - typed as Any for mypy
         self.thread_id: Optional[str] = None
 
     async def connect(self, resume_id: Optional[str] = None) -> None:
@@ -617,11 +696,22 @@ class CodexAgent(BaseAgent):
         try:
             from agents.mcp import MCPServerStdio
 
-            self.mcp_server = await MCPServerStdio(
+            # Create MCP server instance (don't use __aenter__, use connect/cleanup)
+            self.mcp_server = MCPServerStdio(
                 name=f"Codex-{self.config.pane_id}",
                 params={"command": "npx", "args": ["-y", "codex", "mcp-server"]},
                 client_session_timeout_seconds=360000,
-            ).__aenter__()
+            )
+
+            # Connect using proper SDK pattern
+            await self.mcp_server.connect()
+
+            # Verify connection by listing tools
+            try:
+                tools = await self.mcp_server.list_tools()
+                self._emit("status", {"state": "tools_discovered", "tools": [t.name for t in tools]})
+            except Exception as tool_err:
+                self._emit("warning", {"message": f"Could not list tools: {tool_err}"})
 
             self.thread_id = resume_id
             self.connected = True
@@ -647,7 +737,7 @@ class CodexAgent(BaseAgent):
             if self.thread_id:
                 # Continue existing thread
                 try:
-                    result = await self.mcp_server.call_tool("codex-reply", {
+                    result = await self._call_codex_tool("codex-reply", {
                         "threadId": self.thread_id,
                         "prompt": message,
                     })
@@ -679,28 +769,40 @@ class CodexAgent(BaseAgent):
                 "is_error": False,
             }
 
+        except RetryError as e:
+            last = e.last_attempt.exception() if hasattr(e, "last_attempt") else None
+            err_msg = last or e  # type: ignore[assignment]
+            yield {"type": "error", "message": f"Codex API retry failed: {err_msg}"}
         except Exception as e:
             yield {"type": "error", "message": f"Codex error: {e}"}
 
         finally:
             self._emit("status", {"state": "idle"})
 
+    @sdk_retry()
     async def _start_new_session(self, message: str) -> Dict[str, Any]:
         """Start a new Codex session."""
         assert self.mcp_server is not None, "MCP server not connected"
         return await self.mcp_server.call_tool("codex", {
             "prompt": message,
             "approval-policy": "never",  # Safe: Codex runs in sandbox
-            "sandbox": "elevated_windows_sandbox",
+            "sandbox": "workspace-write",  # Valid values: read-only, workspace-write, danger-full-access
         })
+
+    @sdk_retry()
+    async def _call_codex_tool(self, tool: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Call a Codex MCP tool with retry semantics."""
+        assert self.mcp_server is not None, "MCP server not connected"
+        return await self.mcp_server.call_tool(tool, payload)
 
     async def disconnect(self) -> Optional[str]:
         """Disconnect from Codex MCP server."""
         if self.mcp_server:
             try:
-                await self.mcp_server.__aexit__(None, None, None)
+                await self.mcp_server.cleanup()
             except Exception:
-                pass
+                pass  # Best effort cleanup
+        self.mcp_server = None
         self.connected = False
         self._emit("status", {"state": "disconnected"})
         return self.thread_id
@@ -715,20 +817,150 @@ class GeminiAgent(BaseAgent):
     Gemini agent using google-genai SDK.
 
     Uses chat sessions for conversation continuity.
+    Supports tool use via Automatic Function Calling (AFC).
     """
 
     def __init__(self, config: AgentConfig, workspace: Path):
         super().__init__(config, workspace)
-        self.client = None
-        self.chat = None
+        self.client: Any = None  # google.genai.Client - typed as Any for mypy
+        self.chat: Any = None  # google.genai.Chat - typed as Any for mypy
+        self._tools_config: Any = None  # GenerateContentConfig - typed as Any for mypy
+
+    def _build_tools(self) -> list:
+        """Build tool functions based on allowed_tools config."""
+        import subprocess
+        import glob as glob_module
+
+        workspace = self.workspace
+
+        def read_file(path: str) -> str:
+            """Read content from a file.
+
+            Args:
+                path: The file path to read (absolute or relative to workspace)
+            """
+            try:
+                file_path = Path(path) if Path(path).is_absolute() else workspace / path
+                return file_path.read_text(encoding='utf-8')
+            except Exception as e:
+                return f"Error reading file: {e}"
+
+        def write_file(path: str, content: str) -> str:
+            """Write content to a file.
+
+            Args:
+                path: The file path to write (absolute or relative to workspace)
+                content: The content to write
+            """
+            try:
+                file_path = Path(path) if Path(path).is_absolute() else workspace / path
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text(content, encoding='utf-8')
+                return f"Successfully wrote {len(content)} bytes to {path}"
+            except Exception as e:
+                return f"Error writing file: {e}"
+
+        def run_bash(command: str) -> str:
+            """Execute a bash command and return output.
+
+            Args:
+                command: The bash command to execute
+            """
+            try:
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    cwd=str(workspace)
+                )
+                output = result.stdout
+                if result.stderr:
+                    output += f"\nSTDERR: {result.stderr}"
+                if result.returncode != 0:
+                    output += f"\nExit code: {result.returncode}"
+                return output or "(no output)"
+            except subprocess.TimeoutExpired:
+                return "Error: Command timed out after 120 seconds"
+            except Exception as e:
+                return f"Error running command: {e}"
+
+        def glob_files(pattern: str) -> str:
+            """Find files matching a glob pattern.
+
+            Args:
+                pattern: The glob pattern (e.g., '**/*.py')
+            """
+            try:
+                base = workspace if not Path(pattern).is_absolute() else Path('/')
+                matches = list(base.glob(pattern))
+                if not matches:
+                    return "No files found matching pattern"
+                return "\n".join(str(m) for m in matches[:100])  # Limit to 100
+            except Exception as e:
+                return f"Error in glob: {e}"
+
+        def grep_search(pattern: str, path: str = ".") -> str:
+            """Search for a pattern in files.
+
+            Args:
+                pattern: The regex pattern to search for
+                path: The path to search in (default: current directory)
+            """
+            try:
+                search_path = Path(path) if Path(path).is_absolute() else workspace / path
+                result = subprocess.run(
+                    ["grep", "-r", "-n", "--include=*.py", "--include=*.js", "--include=*.ts",
+                     "--include=*.md", "--include=*.json", pattern, str(search_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+                return result.stdout[:10000] or "No matches found"  # Limit output
+            except Exception as e:
+                return f"Error in grep: {e}"
+
+        # Map tool names to functions
+        tool_map = {
+            "Read": read_file,
+            "Write": write_file,
+            "Bash": run_bash,
+            "Glob": glob_files,
+            "Grep": grep_search,
+        }
+
+        # Return tools based on allowed_tools config
+        tools = []
+        for tool_name in self.config.allowed_tools:
+            if tool_name in tool_map:
+                tools.append(tool_map[tool_name])
+
+        return tools
 
     async def connect(self, resume_id: Optional[str] = None) -> None:
-        """Connect to Gemini API and create chat session."""
+        """Connect to Gemini API and create chat session with tools."""
         try:
             from google import genai
+            from google.genai import types
 
             client = genai.Client()
-            chat = client.chats.create(model="gemini-2.0-flash")
+
+            # Build tools based on config
+            tools = self._build_tools()
+
+            # Create chat config with tools and automatic function calling
+            if tools:
+                self._tools_config = types.GenerateContentConfig(
+                    tools=tools,
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                        disable=False,
+                        maximum_remote_calls=10
+                    )
+                )
+
+            # Create chat session with gemini-3-flash (matches PTY mode)
+            chat = client.chats.create(model="gemini-3-flash")
             self.client = client
             self.chat = chat
             self.connected = True
@@ -739,11 +971,15 @@ class GeminiAgent(BaseAgent):
                 self._emit("status", {"state": "restoring_context"})
                 # Send context restore as first message to prime the chat
                 try:
-                    chat.send_message(context_msg)
+                    chat.send_message(context_msg, config=self._tools_config)
                 except Exception:
                     pass  # Non-fatal, continue without context
 
-            self._emit("status", {"state": "connected", "has_history": context_msg is not None})
+            self._emit("status", {
+                "state": "connected",
+                "has_history": context_msg is not None,
+                "tools_enabled": len(tools) > 0
+            })
 
         except ImportError as e:
             self._emit("error", {"message": f"Google GenAI SDK not installed: {e}"})
@@ -753,7 +989,11 @@ class GeminiAgent(BaseAgent):
             raise
 
     async def send(self, message: str) -> AsyncIterator[Dict[str, Any]]:
-        """Send message to Gemini and yield normalized responses."""
+        """Send message to Gemini and yield normalized responses.
+
+        Uses Automatic Function Calling (AFC) - the SDK automatically executes
+        tool functions when the model requests them and continues the conversation.
+        """
         if not self.connected or not self.chat:
             yield {"type": "error", "message": "Gemini agent not connected"}
             return
@@ -764,13 +1004,22 @@ class GeminiAgent(BaseAgent):
         response_text = ""
 
         try:
-            # Use self.chat.send_message_stream() for conversation continuity
-            # NOT client.models.generate_content_stream() which is stateless
-            for chunk in self.chat.send_message_stream(message):
-                text = chunk.text if hasattr(chunk, 'text') else str(chunk)
+            # Use send_message_stream with tools config (collected via retry helper)
+            chunks = await self._collect_gemini_stream(message)
+            for chunk in chunks:
+                # Handle text content
+                text = chunk.text if hasattr(chunk, 'text') else ""
                 if text:
                     response_text += text
                     yield {"type": "text_delta", "text": text}
+
+                # Optionally emit tool use events for UI feedback
+                if hasattr(chunk, 'function_call') and chunk.function_call:
+                    yield {
+                        "type": "tool_use",
+                        "tool": chunk.function_call.name,
+                        "args": dict(chunk.function_call.args) if chunk.function_call.args else {}
+                    }
 
             self._save_to_history("assistant", response_text)
 
@@ -780,6 +1029,10 @@ class GeminiAgent(BaseAgent):
                 "is_error": False,
             }
 
+        except RetryError as e:
+            last = e.last_attempt.exception() if hasattr(e, "last_attempt") else None
+            err_msg = last or e  # type: ignore[assignment]
+            yield {"type": "error", "message": f"Gemini API retry failed: {err_msg}"}
         except Exception as e:
             error_msg = str(e)
 
@@ -798,6 +1051,12 @@ class GeminiAgent(BaseAgent):
         self.chat = None
         self._emit("status", {"state": "disconnected"})
         return self.session_id
+
+    @sdk_retry()
+    async def _collect_gemini_stream(self, message: str) -> List[Any]:
+        """Send a message via Gemini and collect stream chunks."""
+        assert self.chat is not None, "Gemini chat session not initialized"
+        return list(self.chat.send_message_stream(message, config=self._tools_config))
 
 
 # =============================================================================
