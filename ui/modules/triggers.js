@@ -1428,9 +1428,9 @@ const AGENT_ROLES = {
  * @returns {{ paneId: string, reason: string }}
  */
 function getBestAgent(taskType, performance, message = '') {
-  // TODO: Rename watcher.getClaudeRunning() to getAgentRunning() when updating watcher.js
-  const runningMap = (watcher && typeof watcher.getClaudeRunning === 'function')
-    ? watcher.getClaudeRunning()
+  // Note: watcher.getClaudeRunning() doesn't exist - this always uses agentRunning fallback
+  const runningMap = (watcher && typeof watcher.getAgentRunning === 'function')
+    ? watcher.getAgentRunning()
     : (agentRunning || new Map());
 
   const decision = smartRouting.getBestAgent({
