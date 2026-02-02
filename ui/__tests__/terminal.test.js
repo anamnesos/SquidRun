@@ -1112,7 +1112,7 @@ describe('terminal.js module', () => {
 
       test('should update lock icon when element exists', () => {
         const mockLockIcon = {
-          textContent: '',
+          innerHTML: '',
           title: '',
           classList: { add: jest.fn(), remove: jest.fn(), toggle: jest.fn() },
         };
@@ -1121,7 +1121,8 @@ describe('terminal.js module', () => {
         terminal.inputLocked['1'] = false;
         terminal.toggleInputLock('1');
 
-        expect(mockLockIcon.textContent).toBe('L');
+        expect(mockLockIcon.innerHTML).toContain('svg');
+        expect(mockLockIcon.innerHTML).toContain('pane-btn-icon');
         expect(mockLockIcon.classList.toggle).toHaveBeenCalledWith('unlocked', false);
       });
 
@@ -1149,7 +1150,7 @@ describe('terminal.js module', () => {
 
       test('should update lock icon when element exists', () => {
         const mockLockIcon = {
-          textContent: '',
+          innerHTML: '',
           title: '',
           classList: { add: jest.fn(), remove: jest.fn(), toggle: jest.fn() },
         };
@@ -1157,7 +1158,8 @@ describe('terminal.js module', () => {
 
         terminal.setInputLocked('1', true);
 
-        expect(mockLockIcon.textContent).toBe('L');
+        expect(mockLockIcon.innerHTML).toContain('svg');
+        expect(mockLockIcon.innerHTML).toContain('pane-btn-icon');
         expect(mockLockIcon.title).toContain('locked');
         expect(mockLockIcon.classList.toggle).toHaveBeenCalledWith('unlocked', false);
       });
