@@ -109,7 +109,7 @@ function registerPtyHandlers(ctx, deps = {}) {
 
     // Dry-run mode - simulate without spawning real agents
     if (ctx.currentSettings.dryRun) {
-      ctx.claudeRunning.set(paneId, 'running');
+      ctx.agentRunning.set(paneId, 'running');
       broadcastClaudeState();
       return { success: true, command: null, dryRun: true };
     }
@@ -118,7 +118,7 @@ function registerPtyHandlers(ctx, deps = {}) {
       return { success: false, error: 'Daemon not connected' };
     }
 
-    ctx.claudeRunning.set(paneId, 'starting');
+    ctx.agentRunning.set(paneId, 'starting');
     broadcastClaudeState();
     recordSessionStart(paneId);
 
@@ -140,7 +140,7 @@ function registerPtyHandlers(ctx, deps = {}) {
   });
 
   ipcMain.handle('get-claude-state', () => {
-    return Object.fromEntries(ctx.claudeRunning);
+    return Object.fromEntries(ctx.agentRunning);
   });
 
   ipcMain.handle('get-daemon-terminals', () => {

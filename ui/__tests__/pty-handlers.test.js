@@ -264,7 +264,7 @@ describe('PTY Handlers', () => {
       const result = await harness.invoke('spawn-claude', '1', '/dir');
 
       expect(result).toEqual({ success: true, command: null, dryRun: true });
-      expect(ctx.claudeRunning.get('1')).toBe('running');
+      expect(ctx.agentRunning.get('1')).toBe('running');
       expect(deps.broadcastClaudeState).toHaveBeenCalled();
     });
 
@@ -283,7 +283,7 @@ describe('PTY Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.command).toContain('--dangerously-skip-permissions');
-      expect(ctx.claudeRunning.get('1')).toBe('starting');
+      expect(ctx.agentRunning.get('1')).toBe('starting');
       expect(deps.broadcastClaudeState).toHaveBeenCalled();
       expect(deps.recordSessionStart).toHaveBeenCalledWith('1');
     });
@@ -349,9 +349,9 @@ describe('PTY Handlers', () => {
   });
 
   describe('get-claude-state', () => {
-    test('returns claude running state as object', async () => {
-      ctx.claudeRunning.set('1', 'running');
-      ctx.claudeRunning.set('2', 'idle');
+    test('returns agent running state as object', async () => {
+      ctx.agentRunning.set('1', 'running');
+      ctx.agentRunning.set('2', 'idle');
 
       const result = await harness.invoke('get-claude-state');
 

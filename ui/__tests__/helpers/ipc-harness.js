@@ -78,7 +78,7 @@ function createDefaultContext(overrides = {}) {
       sdkMode: false,
       dryRun: false,
     },
-    claudeRunning: new Map(),
+    agentRunning: new Map(),  // Renamed from claudeRunning - agents can be Claude, Codex, or Gemini
     daemonClient: {
       connected: false,
       spawn: jest.fn(),

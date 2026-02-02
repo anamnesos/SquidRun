@@ -42,8 +42,8 @@ describe('Completion Quality Handlers', () => {
       active_agents: ['1', '2'],
     }));
 
-    // Set up claudeRunning map
-    ctx.claudeRunning = new Map([
+    // Set up agentRunning map (renamed from claudeRunning)
+    ctx.agentRunning = new Map([
       ['1', 'running'],
       ['2', 'idle'],
     ]);
