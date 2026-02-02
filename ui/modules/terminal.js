@@ -331,6 +331,7 @@ injectionController = createInjectionController({
   lastTypedTime,
   messageQueue,
   isCodexPane,
+  isGeminiPane,
   buildCodexExecPrompt,
   isIdle,
   isIdleForForceInject,

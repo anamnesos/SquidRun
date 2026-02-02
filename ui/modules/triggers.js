@@ -476,6 +476,12 @@ const WORKER_PANES = ['3', '4'];
 const lastSyncTime = new Map(); // paneId -> timestamp
 const SYNC_DEBOUNCE_MS = 3000; // Skip sync if pane was synced within 3 seconds
 
+// SYNC Coalescing: Max 1 auto-sync per 5s window (Session 61 optimization)
+// Additional syncs during window are DROPPED (lossy > late)
+// Agent-to-agent messages bypass coalescing (only auto-sync affected)
+let lastGlobalSyncTime = 0;
+const SYNC_COALESCE_WINDOW_MS = 5000; // 5 second coalescing window
+
 // Stagger delays to avoid thundering herd when multiple panes receive messages
 const STAGGER_BASE_DELAY_MS = 150; // Base delay between panes
 const STAGGER_RANDOM_MS = 100; // Random jitter added to base delay
@@ -729,11 +735,27 @@ function notifyAgents(agents, message) {
  * AUTO-SYNC: Notify ALL agents when trigger files change
  * This enables the autonomous improvement loop
  * Routes through SDK when SDK mode is enabled
+ *
+ * COALESCING (Session 61): Max 1 sync per 5s window.
+ * Additional syncs during window are DROPPED (lossy > late).
+ * Agent-to-agent messages bypass coalescing (only auto-sync affected).
+ *
  * @param {string} triggerFile - Name of the file that changed
  */
 function notifyAllAgentsSync(triggerFile) {
-  const message = `[HIVEMIND SYNC] ${triggerFile} was updated. Read workspace/${triggerFile} and respond.`;
   const now = Date.now();
+
+  // SYNC COALESCING: Drop syncs within 5s window (lossy > late)
+  const timeSinceLastSync = now - lastGlobalSyncTime;
+  if (timeSinceLastSync < SYNC_COALESCE_WINDOW_MS) {
+    log.info('AUTO-SYNC', `DROPPED (coalescing): ${triggerFile} - only ${timeSinceLastSync}ms since last sync, window is ${SYNC_COALESCE_WINDOW_MS}ms`);
+    return [];
+  }
+
+  // Update global sync time for coalescing window
+  lastGlobalSyncTime = now;
+
+  const message = `[HIVEMIND SYNC] ${triggerFile} was updated. Read workspace/${triggerFile} and respond.`;
 
   // SDK MODE: Broadcast through SDK bridge (no running check - SDK manages sessions)
   if (isSDKModeEnabled()) {

@@ -13,6 +13,7 @@ function createInjectionController(options = {}) {
     lastTypedTime,
     messageQueue,
     isCodexPane,
+    isGeminiPane,
     buildCodexExecPrompt,
     isIdle,
     isIdleForForceInject,
@@ -288,16 +289,18 @@ function createInjectionController(options = {}) {
   function processIdleQueue(paneId) {
     const id = String(paneId);
     const isCodex = isCodexPane(id);
+    const isGemini = typeof isGeminiPane === 'function' && isGeminiPane(id);
 
     // Global lock only applies to Claude panes (need focus for sendTrustedEnter)
-    // Codex panes use codexExec API which doesn't need focus - never block them
-    if (!isCodex && getInjectionInFlight()) {
+    // Codex/Gemini panes use direct PTY write - no focus needed, never block them
+    const bypassesLock = isCodex || isGemini;
+    if (!bypassesLock && getInjectionInFlight()) {
       log.debug(`processQueue ${id}`, 'Claude pane deferred - injection in flight');
       setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
       return;
     }
-    if (isCodex && getInjectionInFlight()) {
-      log.debug(`processQueue ${id}`, 'Codex pane bypassing global lock');
+    if (bypassesLock && getInjectionInFlight()) {
+      log.debug(`processQueue ${id}`, `${isCodex ? 'Codex' : 'Gemini'} pane bypassing global lock`);
     }
     const queue = messageQueue[paneId];
     if (!queue || queue.length === 0) return;
@@ -339,12 +342,12 @@ function createInjectionController(options = {}) {
       } else if (canForceInject && !canSendNormal) {
         log.info(`Terminal ${paneId}`, `Force-injecting after ${waitTime}ms wait (pane now idle for 500ms)`);
       }
-      // Only set global lock for Claude panes (Codex uses API, no focus needed)
-      if (!isCodex) {
+      // Only set global lock for Claude panes (Codex/Gemini use direct PTY, no focus needed)
+      if (!bypassesLock) {
         setInjectionInFlight(true);
       }
       doSendToPane(paneId, queuedMessage, (result) => {
-        if (!isCodex) {
+        if (!bypassesLock) {
           setInjectionInFlight(false);
         }
         if (typeof onComplete === 'function') {
@@ -410,6 +413,27 @@ function createInjectionController(options = {}) {
       lastTypedTime[id] = Date.now();
       lastOutputTime[id] = Date.now();
       finishWithClear({ success: true });
+      return;
+    }
+
+    // GEMINI FAST PATH: Direct PTY write with newline - no focus/keyboard events needed
+    // Gemini CLI accepts PTY newlines (not Ink TUI like Claude)
+    // This eliminates focus-stealing and 2s idle wait for Gemini panes
+    const isGemini = typeof isGeminiPane === 'function' && isGeminiPane(id);
+    if (isGemini) {
+      log.info(`doSendToPane ${id}`, 'Gemini pane: using fast path (direct PTY write)');
+      try {
+        // Write text + newline directly to PTY - no keyboard events needed
+        const fullMessage = hasTrailingEnter ? text + '\r' : text;
+        await window.hivemind.pty.write(id, fullMessage);
+        log.info(`doSendToPane ${id}`, 'Gemini pane: PTY write complete (fast path)');
+        updatePaneStatus(id, 'Working');
+        lastTypedTime[id] = Date.now();
+        finishWithClear({ success: true });
+      } catch (err) {
+        log.error(`doSendToPane ${id}`, 'Gemini fast path PTY write failed:', err);
+        finishWithClear({ success: false, reason: 'pty_write_failed' });
+      }
       return;
     }
 
