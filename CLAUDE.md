@@ -116,7 +116,7 @@ If running in SDK mode (not PTY terminals):
 | 2 | **Infra** | Codex | CI/CD, deployment, build scripts, infrastructure | infra.txt |
 | 3 | **Frontend** | Claude | UI components, renderer.js, index.html, CSS | frontend.txt |
 | 4 | **Backend** | Codex | Daemon, processes, file watching, main.js internals | backend.txt |
-| 5 | **Analyst** | Codex | Debugging, profiling, root cause analysis, investigations | analyst.txt |
+| 5 | **Analyst** | Gemini | Debugging, profiling, root cause analysis, investigations | analyst.txt |
 | 6 | **Reviewer** | Claude | Code review, verification, quality gates | reviewer.txt |
 
 **Note:** Old trigger names (lead.txt, orchestrator.txt, worker-a.txt, worker-b.txt, investigator.txt) still work during transition.
@@ -223,6 +223,23 @@ Tasks are tagged by mode compatibility:
 ### Periodic Check (Every Major Task)
 Re-read blockers.md. Another instance may have found issues with your code.
 
+### 🚨 CRITICAL: Re-Read Before Responding (Session 61 Fix)
+
+**Problem:** During heavy sessions, agents cache context and respond based on stale information.
+**Result:** "I already messaged about this" or working on outdated tasks.
+
+**MANDATORY: Before each major response:**
+1. Re-read `workspace/current_state.md` - is your info still current?
+2. Check if your response is still relevant - did someone else already handle it?
+3. If stale, update your understanding before responding
+
+**This is especially important when:**
+- You receive multiple messages in quick succession
+- You've been "thinking" for a long time
+- You see [HIVEMIND SYNC] messages
+
+**Don't assume your cached context is fresh. Verify before responding.**
+
 ### Triggering Other Agents Directly (USE THIS!)
 
 To send a message directly to another agent's terminal, write to `workspace/triggers/`:
@@ -302,6 +319,78 @@ When an agent's message doesn't arrive, investigate in this order:
 - [ ] Have sender `ls` the absolute trigger path
 - [ ] Have receiver `ls` the same path
 - [ ] Compare - same files visible?
+
+---
+
+## Friction Prevention Protocols (Session 62)
+
+These protocols reduce wasted effort and communication friction. All agents agreed.
+
+### Protocol 1: Message Acknowledgment
+
+**Problem:** Sender sends multiple requests before response arrives, causing duplicate work.
+
+**Solution:**
+```
+Sender: "AWAITING [Agent] #[N] ON [topic]"
+Receiver: "RECEIVED [topic]. ETA: quick/standard/thorough (~X min)"
+Sender: Wait 3 min before re-requesting (trigger delivery can queue up to 65s)
+```
+
+**Rules:**
+- Include message # in AWAITING for tracking (e.g., "AWAITING Analyst #4 ON renderer review")
+- Receiver sends brief ack BEFORE starting detailed work
+- ETA helps sender know when to expect response
+
+### Protocol 2: Plan Verification
+
+**Problem:** Plan documents become stale faster than review cycle. Reviewers waste time analyzing already-done work.
+
+**Solution:**
+```
+Author: Run grep to verify proposed changes don't exist
+Author: Add header "VERIFIED AGAINST CODE: [timestamp]"
+Author: Note changes if updating existing plan ("Session X Update" section)
+Reviewer: First step = verify plan accuracy against codebase (not just plan quality)
+```
+
+**Rules:**
+- Plans are "living documents" - always verify against code before acting
+- If plan proposes extracting function X, grep for it first
+- Reviewer re-verifies as trust-but-verify step
+
+### Protocol 3: Implementation Gates
+
+**Problem:** Implementation starts before review completes, causing reverts and confusion.
+
+**Solution:**
+```
+Status flow: DRAFT → UNDER_REVIEW → APPROVED → IN_PROGRESS → DONE
+Status lives in plan file header (not just messages)
+No implementation until "APPROVED TO IMPLEMENT" from Architect
+Exception: "LOW RISK - PROCEED WHILE REVIEWING" for pure utilities with no dependencies
+```
+
+**Rules:**
+- Architect sends explicit gate: "APPROVED TO IMPLEMENT" or "LOW RISK - PROCEED"
+- "Submitted for review" ≠ permission to implement
+- Status in file header ensures persistence across context resets
+
+### Protocol 4: Acknowledgment Noise Reduction
+
+**Problem:** Too many "standing by" messages that add no information.
+
+**Solution:**
+```
+Only message if: (1) new info, (2) blocked, or (3) completing assigned work
+Batch: "RECEIVED [X]. No blockers. Standing by."
+Skip acks for broadcast FYIs that don't require action
+```
+
+**Rules:**
+- One batched ack, not five separate "acknowledged" messages
+- If broadcast is FYI only (no action needed), silence is fine
+- "Standing by" only needed once per checkpoint, not per message
 
 ---
 
