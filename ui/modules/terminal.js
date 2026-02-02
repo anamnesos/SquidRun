@@ -967,24 +967,25 @@ async function spawnClaude(paneId, model = null) {
         log.info('spawnClaude', `Identity injected for ${role} (pane ${paneId})`);
       }, identityDelay);
 
-      // Finding #14: Inject context files (CLAUDE.md/GEMINI.md) after startup
+      // Finding #14: Inject context files (CLAUDE.md) after startup
       // Delay is after identity injection to ensure CLI is ready
-      // Timing: Codex 7s, Gemini 8s, Claude 6s
-      if (window.hivemind?.claude?.injectContext) {
-        const modelType = isGemini ? 'gemini' : 'claude';
-        const contextDelay = isCodex ? 7000 : (isGemini ? 8000 : 6000);
-        window.hivemind.claude.injectContext(paneId, modelType, contextDelay);
-        log.info('spawnClaude', `Context injection scheduled for ${modelType} pane ${paneId}`);
+      // Timing: Codex 7s, Claude 6s
+      // Note: Gemini CLI auto-loads GEMINI.md natively, skip injection to avoid duplicates
+      if (!isGemini && window.hivemind?.claude?.injectContext) {
+        const contextDelay = isCodex ? 7000 : 6000;
+        window.hivemind.claude.injectContext(paneId, 'claude', contextDelay);
+        log.info('spawnClaude', `Context injection scheduled for claude pane ${paneId}`);
       }
 
       // Gemini startup prompt: Unlike Claude, Gemini CLI sits idle after spawn
       // It needs an explicit first message to start working
-      // Inject after context (8s) + time for context to be submitted (2s) = 10s
+      // Note: GEMINI.md is auto-loaded by Gemini CLI, no need to mention it
+      // Delay: after identity injection (6s) + buffer = 8s
       if (isGemini) {
-        const startupDelay = 10000;
+        const startupDelay = 8000;
         setTimeout(() => {
           const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
-          const startupPrompt = `Read GEMINI.md and check in as ${role}. Start by reading workspace/app-status.json and workspace/current_state.md, then message Architect via trigger file.`;
+          const startupPrompt = `Check in as ${role}. Start by reading workspace/app-status.json and workspace/current_state.md, then message Architect via trigger file.`;
           sendToPane(paneId, startupPrompt + '\r');
           log.info('spawnClaude', `Gemini startup prompt sent for ${role} (pane ${paneId})`);
         }, startupDelay);
