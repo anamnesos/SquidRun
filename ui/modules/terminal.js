@@ -282,11 +282,15 @@ function isInputLocked(paneId) {
  * Toggle input lock state for a pane
  * Returns the new lock state (true = locked, false = unlocked)
  */
+// SVG icons for lock states (Feather/Lucide style)
+const LOCK_ICON_SVG = '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+const UNLOCK_ICON_SVG = '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>';
+
 function toggleInputLock(paneId) {
   inputLocked[paneId] = !inputLocked[paneId];
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);
   if (lockIcon) {
-    lockIcon.textContent = inputLocked[paneId] ? 'L' : 'U';
+    lockIcon.innerHTML = inputLocked[paneId] ? LOCK_ICON_SVG : UNLOCK_ICON_SVG;
     lockIcon.title = inputLocked[paneId] ? 'Input locked (click to unlock)' : 'Input unlocked (click to lock)';
     lockIcon.classList.toggle('unlocked', !inputLocked[paneId]);
   }
@@ -301,7 +305,7 @@ function setInputLocked(paneId, locked) {
   inputLocked[paneId] = locked;
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);
   if (lockIcon) {
-    lockIcon.textContent = locked ? 'L' : 'U';
+    lockIcon.innerHTML = locked ? LOCK_ICON_SVG : UNLOCK_ICON_SVG;
     lockIcon.title = locked ? 'Input locked (click to unlock)' : 'Input unlocked (click to lock)';
     lockIcon.classList.toggle('unlocked', !locked);
   }
