@@ -486,6 +486,36 @@ const SYNC_COALESCE_WINDOW_MS = 5000; // 5 second coalescing window
 const STAGGER_BASE_DELAY_MS = 150; // Base delay between panes
 const STAGGER_RANDOM_MS = 100; // Random jitter added to base delay
 
+// Priority keywords that bypass stagger delay (urgent messages)
+const PRIORITY_KEYWORDS = ['STOP', 'URGENT', 'BLOCKING', 'ERROR'];
+
+/**
+ * Check if message contains priority keywords requiring immediate delivery
+ * @param {string} message - Message content
+ * @returns {boolean} true if message should bypass stagger delay
+ */
+function isPriorityMessage(message) {
+  if (!message) return false;
+  const upperMessage = message.toUpperCase();
+  return PRIORITY_KEYWORDS.some(keyword => upperMessage.includes(keyword));
+}
+
+// Reverse map: role name -> pane ID (for sender exclusion)
+const ROLE_TO_PANE = {
+  'architect': '1',
+  'infra': '2',
+  'frontend': '3',
+  'backend': '4',
+  'analyst': '5',
+  'reviewer': '6',
+  // Legacy role names (backwards compat)
+  'lead': '1',
+  'orchestrator': '2',
+  'worker-a': '3',
+  'worker-b': '4',
+  'investigator': '5',
+};
+
 /**
  * Initialize the triggers module with shared state
  * @param {BrowserWindow} window - The main Electron window
@@ -755,7 +785,7 @@ function notifyAllAgentsSync(triggerFile) {
   // Update global sync time for coalescing window
   lastGlobalSyncTime = now;
 
-  const message = `[HIVEMIND SYNC] ${triggerFile} was updated. Read workspace/${triggerFile} and respond.`;
+  const message = `[HIVEMIND SYNC] ${triggerFile} was updated. [FYI] Context updated. Do not respond.`;
 
   // SDK MODE: Broadcast through SDK bridge (no running check - SDK manages sessions)
   if (isSDKModeEnabled()) {
@@ -850,16 +880,23 @@ function notifyAllAgentsSync(triggerFile) {
 /**
  * Send message to panes with staggered timing to avoid thundering herd
  * Routes through SDK when SDK mode is enabled
+ * Priority messages (STOP, URGENT, BLOCKING, ERROR) bypass stagger delay
  * @param {string[]} panes - Target pane IDs
  * @param {string} message - Message to send
  */
 function sendStaggered(panes, message, meta = {}) {
+  // Priority messages bypass stagger delay entirely
+  const isPriority = isPriorityMessage(message);
+  if (isPriority) {
+    log.info('Stagger', `PRIORITY message detected - bypassing stagger delay`);
+  }
+
   // Route through SDK if enabled
   if (isSDKModeEnabled()) {
-    log.info('Stagger', `Sending to ${panes.length} panes via SDK`);
+    log.info('Stagger', `Sending to ${panes.length} panes via SDK${isPriority ? ' (PRIORITY)' : ''}`);
     panes.forEach((paneId, index) => {
-      // Still stagger SDK calls to avoid overwhelming API
-      const delay = index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS;
+      // Priority messages get no delay, others get staggered
+      const delay = isPriority ? 0 : (index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS);
       setTimeout(() => {
         // Remove trailing \r - SDK doesn't need it
         const cleanMessage = message.endsWith('\r') ? message.slice(0, -1) : message;
@@ -893,11 +930,12 @@ function sendStaggered(panes, message, meta = {}) {
     return;
   }
 
-  // Multiple panes - stagger to avoid thundering herd
-  log.info('Stagger', `Sending to ${panes.length} panes with staggered timing`);
-  diagnosticLog.write('Stagger', `Sending to ${panes.length} panes with staggered timing`, { panes });
+  // Multiple panes - stagger to avoid thundering herd (unless priority)
+  log.info('Stagger', `Sending to ${panes.length} panes${isPriority ? ' (PRIORITY - no delay)' : ' with staggered timing'}`);
+  diagnosticLog.write('Stagger', `Sending to ${panes.length} panes`, { panes, isPriority });
   panes.forEach((paneId, index) => {
-    const delay = index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS;
+    // Priority messages get no delay, others get staggered
+    const delay = isPriority ? 0 : (index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS);
     setTimeout(() => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         const payload = { panes: [paneId], message };
@@ -1088,6 +1126,16 @@ function handleTriggerFile(filePath, filename) {
     // NOTE: recordMessageSeen() moved to AFTER delivery (SDK/PTY paths below)
     // This prevents marking messages as "seen" before they're actually sent
     log.info('Trigger', `Accepted: ${parsed.sender} #${parsed.seq} → ${recipientRole}`);
+  }
+
+  // SENDER EXCLUSION: For all.txt broadcasts, exclude sender's own pane
+  // Prevents echo - agent shouldn't receive their own broadcast
+  if (filename === 'all.txt' && parsed.sender) {
+    const senderPaneId = ROLE_TO_PANE[parsed.sender];
+    if (senderPaneId && targets.includes(senderPaneId)) {
+      targets = targets.filter(t => t !== senderPaneId);
+      log.info('Trigger', `Excluded sender ${parsed.sender} (pane ${senderPaneId}) from all.txt broadcast`);
+    }
   }
 
   log.info('Trigger', `${filename} → panes ${targets.join(', ')}: ${message.substring(0, 50)}...`);
