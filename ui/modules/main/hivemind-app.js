@@ -125,7 +125,7 @@ class HivemindApp {
     const window = this.ctx.mainWindow;
 
     // Triggers
-    triggers.init(window, this.ctx.claudeRunning, (type, paneId, msg, details) =>
+    triggers.init(window, this.ctx.agentRunning, (type, paneId, msg, details) =>
       this.activity.logActivity(type, paneId, msg, details));
     triggers.setWatcher(watcher);
 
@@ -156,7 +156,7 @@ class HivemindApp {
     ipcHandlers.init({
       mainWindow: window,
       daemonClient: this.ctx.daemonClient,
-      claudeRunning: this.ctx.claudeRunning,
+      agentRunning: this.ctx.agentRunning,
       currentSettings: this.ctx.currentSettings,
       watcher,
       triggers,
@@ -259,7 +259,7 @@ class HivemindApp {
       getLastActivity: paneId => this.ctx.daemonClient?.getLastActivity?.(paneId),
       getAllActivity: () => this.ctx.daemonClient?.getAllActivity?.() || {},
       getDaemonTerminals: () => this.ctx.daemonClient?.getTerminals?.() || [],
-      isPaneRunning: paneId => this.ctx.claudeRunning.get(String(paneId)) === 'running',
+      isPaneRunning: paneId => this.ctx.agentRunning.get(String(paneId)) === 'running',
       isCodexPane: paneId => {
         const cmd = this.ctx.currentSettings.paneCommands?.[String(paneId)] || '';
         return cmd.includes('codex');
@@ -364,12 +364,12 @@ class HivemindApp {
 0, 100) });
       }
 
-      const currentState = this.ctx.claudeRunning.get(paneId);
+      const currentState = this.ctx.agentRunning.get(paneId);
       if (currentState === 'starting' || currentState === 'idle') {
         const lower = data.toLowerCase();
         if (data.includes('>') || lower.includes('claude') || lower.includes('codex') || lower.includes('gemini')
 ) {
-          this.ctx.claudeRunning.set(paneId, 'running');
+          this.ctx.agentRunning.set(paneId, 'running');
           this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'running' }).catch(() => {});
           this.broadcastClaudeState();
           this.activity.logActivity('state', paneId, 'Agent started', { status: 'running' });
@@ -381,7 +381,7 @@ class HivemindApp {
     this.ctx.daemonClient.on('exit', (paneId, code) => {
       this.ctx.recoveryManager?.handleExit(paneId, code);
       this.usage.recordSessionEnd(paneId);
-      this.ctx.claudeRunning.set(paneId, 'idle');
+      this.ctx.agentRunning.set(paneId, 'idle');
       this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'idle', exitCode: code }).catch(() => {});
       this.broadcastClaudeState();
       this.activity.logActivity('state', paneId, `Session ended (exit code: ${code})`, { exitCode: code });      
@@ -403,7 +403,7 @@ class HivemindApp {
       if (terminals && terminals.length > 0) {
         for (const term of terminals) {
           if (term.alive) {
-            this.ctx.claudeRunning.set(String(term.paneId), 'running');
+            this.ctx.agentRunning.set(String(term.paneId), 'running');
             const command = this.cliIdentity.getPaneCommandForIdentity(String(term.paneId));
             this.cliIdentity.inferAndEmitCliIdentity(term.paneId, command);
           }
@@ -477,7 +477,7 @@ class HivemindApp {
 
   broadcastClaudeState() {
     if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
-      this.ctx.mainWindow.webContents.send('claude-state-changed', Object.fromEntries(this.ctx.claudeRunning));  
+      this.ctx.mainWindow.webContents.send('claude-state-changed', Object.fromEntries(this.ctx.agentRunning));  
     }
   }
 

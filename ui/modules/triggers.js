@@ -25,7 +25,7 @@ try {
 
 // Module state (set by init)
 let mainWindow = null;
-let claudeRunning = null;
+let agentRunning = null;  // Renamed from claudeRunning - agents can be Claude, Codex, or Gemini
 let watcher = null; // Reference to watcher module for state checks
 let logActivityFn = null; // Activity log function from main.js
 let selfHealing = null; // Optional self-healing manager
@@ -519,12 +519,12 @@ const ROLE_TO_PANE = {
 /**
  * Initialize the triggers module with shared state
  * @param {BrowserWindow} window - The main Electron window
- * @param {Map} claudeState - Map tracking Claude running state per pane
+ * @param {Map} agentState - Map tracking agent running state per pane (Claude, Codex, or Gemini)
  * @param {Function} logActivity - Activity logging function from main.js
  */
-function init(window, claudeState, logActivity) {
+function init(window, agentState, logActivity) {
   mainWindow = window;
-  claudeRunning = claudeState;
+  agentRunning = agentState;
   logActivityFn = logActivity || null;
   // Load message sequence state from disk
   loadMessageState();
@@ -730,10 +730,10 @@ function notifyAgents(agents, message) {
     return targets; // SDK mode doesn't filter by running state
   }
 
-  // PTY MODE (legacy): Only send to panes where Claude is confirmed running
+  // PTY MODE (legacy): Only send to panes where agent is confirmed running
   const notified = [];
   for (const paneId of targets) {
-    if (claudeRunning && claudeRunning.get(paneId) === 'running') {
+    if (agentRunning && agentRunning.get(paneId) === 'running') {
       notified.push(paneId);
     }
   }
@@ -834,11 +834,11 @@ function notifyAllAgentsSync(triggerFile) {
     return eligiblePanes;
   }
 
-  // PTY mode (legacy): get list of running Claude panes, excluding recently synced
+  // PTY mode (legacy): get list of running agent panes, excluding recently synced
   const runningPanes = [];
   const skippedPanes = [];
-  if (claudeRunning) {
-    for (const [paneId, status] of claudeRunning) {
+  if (agentRunning) {
+    for (const [paneId, status] of agentRunning) {
       if (status === 'running') {
         const lastSync = lastSyncTime.get(paneId) || 0;
         if (now - lastSync > SYNC_DEBOUNCE_MS) {
@@ -1369,10 +1369,10 @@ function broadcastToAllAgents(message) {
     return { success: true, notified: targets, mode: 'sdk' };
   }
 
-  // PTY MODE (legacy): Get list of running Claude panes
+  // PTY MODE (legacy): Get list of running agent panes
   const notified = [];
-  if (claudeRunning) {
-    for (const [paneId, status] of claudeRunning) {
+  if (agentRunning) {
+    for (const [paneId, status] of agentRunning) {
       if (status === 'running' && targets.includes(paneId)) {
         notified.push(paneId);
       }
@@ -1428,9 +1428,10 @@ const AGENT_ROLES = {
  * @returns {{ paneId: string, reason: string }}
  */
 function getBestAgent(taskType, performance, message = '') {
+  // TODO: Rename watcher.getClaudeRunning() to getAgentRunning() when updating watcher.js
   const runningMap = (watcher && typeof watcher.getClaudeRunning === 'function')
     ? watcher.getClaudeRunning()
-    : (claudeRunning || new Map());
+    : (agentRunning || new Map());
 
   const decision = smartRouting.getBestAgent({
     taskType,
@@ -1514,7 +1515,7 @@ function triggerAutoHandoff(completedPaneId, completionMessage) {
 
   // Find first running agent in chain
   const runningNext = nextPanes.find(paneId =>
-    claudeRunning && claudeRunning.get(paneId) === 'running'
+    agentRunning && agentRunning.get(paneId) === 'running'
   );
 
   if (!runningNext) {
@@ -1668,7 +1669,7 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
   const notified = [];
 
   for (const paneId of targets) {
-    if (claudeRunning && claudeRunning.get(paneId) === 'running') {
+    if (agentRunning && agentRunning.get(paneId) === 'running') {
       notified.push(paneId);
     }
   }

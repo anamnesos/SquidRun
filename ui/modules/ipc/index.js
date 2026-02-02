@@ -1,7 +1,7 @@
 ﻿const DEFAULT_STATE_KEYS = [
   'mainWindow',
   'daemonClient',
-  'claudeRunning',
+  'agentRunning',  // Renamed from claudeRunning - agents can be Claude, Codex, or Gemini
   'currentSettings',
   'watcher',
   'triggers',
@@ -27,6 +27,17 @@ function createIpcContext(state, extras = {}) {
       get: () => state[key],
       set: (value) => {
         state[key] = value;
+      },
+    });
+  }
+
+  // Backward compatibility alias: claudeRunning -> agentRunning
+  if (!ctx.claudeRunning && ctx.agentRunning !== undefined) {
+    Object.defineProperty(ctx, 'claudeRunning', {
+      enumerable: false,
+      get: () => ctx.agentRunning,
+      set: (value) => {
+        ctx.agentRunning = value;
       },
     });
   }
