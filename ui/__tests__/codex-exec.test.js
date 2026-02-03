@@ -123,7 +123,8 @@ describe('codex-exec runner', () => {
         'C:\\work',
         '-',
       ]));
-      expect(options.shell).toBe(true);
+      // shell can be true (non-Windows) or explicit path (Windows)
+      expect(options.shell).toBeTruthy();
       expect(options.windowsHide).toBe(true);
 
       expect(terminal.execProcess).toBe(child);
