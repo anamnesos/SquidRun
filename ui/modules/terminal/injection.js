@@ -425,26 +425,12 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // GEMINI PATH: Hybrid approach like Claude (Session 68)
-    // PTY \r does NOT work for Gemini CLI either - tested and failed
-    // Use same approach as Claude: PTY write for text + sendTrustedEnter for Enter
+    // GEMINI PATH: PTY with delayed Enter (Session 68 - attempt 5)
+    // Root cause found: Gemini's bufferFastReturn() converts Enter to newline
+    // if it arrives within 30ms of previous keystroke. We must delay the Enter.
     const isGemini = isGeminiPane(id);
     if (isGemini) {
-      log.info(`doSendToPane ${id}`, 'Gemini pane: using hybrid path (PTY text + sendTrustedEnter)');
-
-      const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
-      const geminiTextarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
-
-      if (!geminiTextarea) {
-        log.warn(`doSendToPane ${id}`, 'Gemini pane: textarea not found, skipping injection');
-        finishWithClear({ success: false, reason: 'missing_textarea' });
-        return;
-      }
-
-      // Focus textarea if Enter needed (required for sendTrustedEnter)
-      if (hasTrailingEnter) {
-        geminiTextarea.focus();
-      }
+      log.info(`doSendToPane ${id}`, 'Gemini pane: using PTY with delayed Enter (>30ms)');
 
       // Clear any stuck input first (Ctrl+U)
       try {
@@ -454,25 +440,27 @@ function createInjectionController(options = {}) {
         log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
       }
 
-      // Write text to PTY (without \r)
+      // Write text to PTY (without Enter)
       try {
         await window.hivemind.pty.write(id, text);
-        log.info(`doSendToPane ${id}`, `Gemini pane: PTY write complete (${text.length} chars)`);
+        log.info(`doSendToPane ${id}`, `Gemini pane: PTY text write complete (${text.length} chars)`);
       } catch (err) {
         log.error(`doSendToPane ${id}`, 'Gemini PTY write failed:', err);
         finishWithClear({ success: false, reason: 'pty_write_failed' });
         return;
       }
 
-      // Send Enter via sendTrustedEnter (same as Claude path)
+      // Send Enter with delay to bypass Gemini's fast-return buffer (FAST_RETURN_TIMEOUT = 30ms)
       if (hasTrailingEnter) {
-        const enterResult = await sendEnterToPane(id);
-        if (!enterResult.success) {
-          log.error(`doSendToPane ${id}`, 'Gemini pane: Enter send failed');
+        await new Promise(resolve => setTimeout(resolve, 50)); // Wait 50ms > 30ms threshold
+        try {
+          await window.hivemind.pty.write(id, '\r');
+          log.info(`doSendToPane ${id}`, 'Gemini pane: PTY Enter sent after 50ms delay');
+        } catch (err) {
+          log.error(`doSendToPane ${id}`, 'Gemini PTY Enter failed:', err);
           finishWithClear({ success: false, reason: 'enter_failed' });
           return;
         }
-        log.info(`doSendToPane ${id}`, `Gemini pane: Enter sent via ${enterResult.method}`);
       }
 
       updatePaneStatus(id, 'Working');
