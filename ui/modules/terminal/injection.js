@@ -451,11 +451,12 @@ function createInjectionController(options = {}) {
       }
 
       // Send Enter with delay to bypass Gemini's fast-return buffer (FAST_RETURN_TIMEOUT = 30ms)
+      // Session 69: Increased from 50ms to 150ms - messages were sticking during active output
       if (hasTrailingEnter) {
-        await new Promise(resolve => setTimeout(resolve, 50)); // Wait 50ms > 30ms threshold
+        await new Promise(resolve => setTimeout(resolve, 150)); // Wait 150ms > 30ms threshold
         try {
           await window.hivemind.pty.write(id, '\r');
-          log.info(`doSendToPane ${id}`, 'Gemini pane: PTY Enter sent after 50ms delay');
+          log.info(`doSendToPane ${id}`, 'Gemini pane: PTY Enter sent after 150ms delay');
         } catch (err) {
           log.error(`doSendToPane ${id}`, 'Gemini PTY Enter failed:', err);
           finishWithClear({ success: false, reason: 'enter_failed' });
