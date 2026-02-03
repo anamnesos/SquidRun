@@ -104,8 +104,9 @@ function handleMessage(clientId, rawData) {
   // Handle agent-to-agent messages
   if (message.type === 'send') {
     const { target, content, priority } = message;
+    // Try WebSocket clients first (for future direct agent-to-agent)
     sendToTarget(target, content, { from: clientInfo.role || clientId, priority });
-    return;
+    // Don't return - let messageHandler also route to terminals
   }
 
   // Handle broadcast
