@@ -247,3 +247,40 @@
   background: #ff9800;
   color: #1a1a2e;
 }
+
+/* API Key fields */
+.api-key-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.api-key-input {
+  flex: 1;
+  padding-right: 75px;
+}
+
+.api-key-mask {
+  position: absolute;
+  right: 8px;
+  color: #666;
+  font-size: 11px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  pointer-events: none;
+}
+
+.api-key-status {
+  font-size: 11px;
+  color: #4ecca3;
+}
+
+.api-key-status.error {
+  color: #e94560;
+}
+
+.api-key-info {
+  font-size: 11px;
+  color: #666;
+  margin-top: 8px;
+  font-style: italic;
+}

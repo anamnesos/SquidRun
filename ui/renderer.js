@@ -492,6 +492,9 @@ const headerSpinnerFrameIndex = new Map();
 
 // Idle state tracking per pane
 const paneIdleState = new Map();
+
+// SDK status debouncing - track last status per pane to avoid flicker
+const lastSDKStatus = new Map();
 // UI_UI_IDLE_THRESHOLD_MS imported from modules/constants.js
 
 /**
@@ -564,6 +567,12 @@ function enterIdleState(paneId) {
 function updateSDKStatus(paneId, state) {
   const statusEl = document.getElementById(`sdk-status-${paneId}`);
   if (!statusEl) return;
+
+  // Debounce: skip if same status as last time (prevents flicker from rapid updates)
+  if (lastSDKStatus.get(paneId) === state) {
+    return;
+  }
+  lastSDKStatus.set(paneId, state);
 
   // Track activity - anything but 'idle' is activity
   if (state !== 'idle' && state !== 'disconnected') {
