@@ -317,28 +317,36 @@ function createInjectionController(options = {}) {
     const waitedExtremelyLong = waitTime >= EXTREME_WAIT_MS;
     const hitAbsoluteMax = waitTime >= ABSOLUTE_MAX_WAIT_MS;
 
-    // Normal case: pane is fully idle (2s of silence)
-    const canSendNormal = isIdle(paneId) && !userIsTyping();
+    // Codex/Gemini panes bypass idle checks entirely - they use PTY writes
+    // that don't require the careful timing Claude's ink TUI needs
+    // Session 67: Gemini CLI sends frequent cursor/status updates (~12ms) that
+    // prevent idle detection from passing, causing 60s delays without this bypass
+    const canSendBypass = bypassesLock && !userIsTyping();
+
+    // Normal case: pane is fully idle (2s of silence) - Claude panes only
+    const canSendNormal = !bypassesLock && isIdle(paneId) && !userIsTyping();
 
     // Force-inject case: waited 10s+ AND pane has at least 500ms of silence
     // This prevents injecting during active output which causes Enter to be ignored
-    const canForceInject = waitedTooLong && isIdleForForceInject(paneId) && !userIsTyping();
+    const canForceInject = !bypassesLock && waitedTooLong && isIdleForForceInject(paneId) && !userIsTyping();
 
     // Emergency fallback: 60s absolute max regardless of idle state
     // This prevents messages from being stuck forever if pane never becomes idle
-    const mustForceInject = hitAbsoluteMax && !userIsTyping();
+    const mustForceInject = !bypassesLock && hitAbsoluteMax && !userIsTyping();
 
-    // Log warning at 30s mark (only once per message via flag check)
-    if (waitedExtremelyLong && !item._warnedExtreme) {
+    // Log warning at 30s mark (only once per message via flag check) - Claude panes only
+    if (!bypassesLock && waitedExtremelyLong && !item._warnedExtreme) {
       item._warnedExtreme = true;
       const timeSinceOutput = Date.now() - (lastOutputTime[paneId] || 0);
       log.warn(`Terminal ${paneId}`, `Message queued 30s+, pane last output ${timeSinceOutput}ms ago, still waiting for idle`);
     }
 
-    if (canSendNormal || canForceInject || mustForceInject) {
+    if (canSendBypass || canSendNormal || canForceInject || mustForceInject) {
       // Remove from queue and send
       queue.shift();
-      if (mustForceInject && !canForceInject && !canSendNormal) {
+      if (canSendBypass) {
+        log.debug(`Terminal ${paneId}`, `${isCodex ? 'Codex' : 'Gemini'} pane: bypassing idle check`);
+      } else if (mustForceInject && !canForceInject && !canSendNormal) {
         log.warn(`Terminal ${paneId}`, `EMERGENCY: Force-injecting after ${waitTime}ms (60s max reached, pane may still be active)`);
       } else if (canForceInject && !canSendNormal) {
         log.info(`Terminal ${paneId}`, `Force-injecting after ${waitTime}ms wait (pane now idle for 500ms)`);
