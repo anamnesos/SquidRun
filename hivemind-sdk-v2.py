@@ -699,9 +699,10 @@ class CodexAgent(BaseAgent):
             from agents.mcp import MCPServerStdio
 
             # Create MCP server instance (don't use __aenter__, use connect/cleanup)
+            # Use GPT-5.2-Codex - the coding-optimized variant of GPT-5.2
             self.mcp_server = MCPServerStdio(
                 name=f"Codex-{self.config.pane_id}",
-                params={"command": "npx", "args": ["-y", "codex", "mcp-server"]},
+                params={"command": "npx", "args": ["-y", "codex", "mcp-server", "--model", "gpt-5.2-codex"]},
                 client_session_timeout_seconds=360000,
             )
 
