@@ -22,6 +22,7 @@ function createRecoveryController(options = {}) {
     getInjectionHelpers,
     spawnClaude,
     resetCodexIdentity,
+    resetTerminalWriteQueue,
   } = options;
 
   // Unstick escalation tracking (nudge -> interrupt -> restart)
@@ -226,6 +227,10 @@ function createRecoveryController(options = {}) {
     // Reset identity tracking so new session gets fresh identity header
     if (typeof resetCodexIdentity === 'function') {
       resetCodexIdentity(id);
+    }
+    // Reset write queue state to prevent frozen pane
+    if (typeof resetTerminalWriteQueue === 'function') {
+      resetTerminalWriteQueue(id);
     }
 
     // All panes need PTY recreated after kill - the kill destroys the PTY entirely

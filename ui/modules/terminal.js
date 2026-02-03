@@ -99,6 +99,80 @@ const setInjectionInFlight = (value) => { injectionInFlight = value; };
 // Startup injection readiness tracking (per pane)
 const startupInjectionState = new Map();
 
+// Terminal write flow control - prevents xterm buffer overflow
+// When PTY sends data faster than xterm can render, writes get discarded
+// This queue ensures writes complete before sending more data
+const terminalWriteQueues = new Map(); // paneId -> [data chunks]
+const terminalWriting = new Map(); // paneId -> boolean (write in progress)
+
+/**
+ * Reset terminal write queue state for a pane.
+ * Must be called when terminal is killed/restarted to prevent frozen state.
+ * @param {string} paneId - The pane ID
+ */
+function resetTerminalWriteQueue(paneId) {
+  const id = String(paneId);
+  terminalWriteQueues.delete(id);
+  terminalWriting.delete(id);
+}
+
+/**
+ * Write data to terminal with flow control.
+ * Queues writes and processes them one at a time, waiting for xterm's
+ * callback before sending more data. Prevents "write data discarded" errors.
+ * @param {string} paneId - The pane ID
+ * @param {Terminal} terminal - The xterm Terminal instance
+ * @param {string} data - Data to write
+ */
+function queueTerminalWrite(paneId, terminal, data) {
+  // Initialize queue for this pane if needed
+  if (!terminalWriteQueues.has(paneId)) {
+    terminalWriteQueues.set(paneId, []);
+    terminalWriting.set(paneId, false);
+  }
+
+  // Add data to queue
+  terminalWriteQueues.get(paneId).push(data);
+
+  // Start processing if not already writing
+  flushTerminalQueue(paneId, terminal);
+}
+
+/**
+ * Process terminal write queue with flow control.
+ * Writes one chunk at a time, waiting for xterm callback before next write.
+ * @param {string} paneId - The pane ID
+ * @param {Terminal} terminal - The xterm Terminal instance
+ */
+function flushTerminalQueue(paneId, terminal) {
+  // Don't start if already writing
+  if (terminalWriting.get(paneId)) {
+    return;
+  }
+
+  const queue = terminalWriteQueues.get(paneId);
+  if (!queue || queue.length === 0) {
+    return;
+  }
+
+  // Mark as writing
+  terminalWriting.set(paneId, true);
+
+  // Get next chunk
+  const data = queue.shift();
+
+  // Write with callback - xterm calls this when write is processed
+  terminal.write(data, () => {
+    // Write complete, allow next write
+    terminalWriting.set(paneId, false);
+
+    // Process next chunk if any
+    if (queue.length > 0) {
+      flushTerminalQueue(paneId, terminal);
+    }
+  });
+}
+
 // Global UI focus tracker - survives staggered multi-pane sends.
 // Updated by focusin listener on UI inputs; doSendToPane restores to this.
 let lastUserUIFocus = null;
@@ -423,6 +497,7 @@ const recoveryController = createRecoveryController({
   getInjectionHelpers: () => injectionController,
   spawnClaude,
   resetCodexIdentity,
+  resetTerminalWriteQueue,
 });
 
 injectionController = createInjectionController({
@@ -728,7 +803,8 @@ async function initTerminal(paneId) {
     }
 
     window.hivemind.pty.onData(paneId, (data) => {
-      terminal.write(data);
+      // Use flow control to prevent xterm buffer overflow
+      queueTerminalWrite(paneId, terminal, data);
       // Track output time for idle detection
       lastOutputTime[paneId] = Date.now();
       // Clear stuck status - output means pane is working
@@ -746,14 +822,14 @@ async function initTerminal(paneId) {
 
     window.hivemind.pty.onExit(paneId, (code) => {
       updatePaneStatus(paneId, `Exited (${code})`);
-      terminal.write(`\r\n[Process exited with code ${code}]\r\n`);
+      queueTerminalWrite(paneId, terminal, `\r\n[Process exited with code ${code}]\r\n`);
       clearStartupInjection(paneId);
     });
 
   } catch (err) {
     log.error(`Terminal ${paneId}`, 'Failed to create PTY', err);
     updatePaneStatus(paneId, 'Error');
-    terminal.write(`\r\n[Error: ${err.message}]\r\n`);
+    queueTerminalWrite(paneId, terminal, `\r\n[Error: ${err.message}]\r\n`);
   }
 
   container.addEventListener('click', () => {
@@ -864,7 +940,7 @@ async function reattachTerminal(paneId, scrollback) {
 
   // U1: Restore scrollback buffer if available
   if (scrollback && scrollback.length > 0) {
-    terminal.write(scrollback);
+    queueTerminalWrite(paneId, terminal, scrollback);
   }
 
   if (!isCodexPane(paneId)) {
@@ -876,7 +952,8 @@ async function reattachTerminal(paneId, scrollback) {
   }
 
   window.hivemind.pty.onData(paneId, (data) => {
-    terminal.write(data);
+    // Use flow control to prevent xterm buffer overflow
+    queueTerminalWrite(paneId, terminal, data);
     // Track output time for idle detection
     lastOutputTime[paneId] = Date.now();
     // Clear stuck status - output means pane is working
@@ -894,7 +971,7 @@ async function reattachTerminal(paneId, scrollback) {
 
   window.hivemind.pty.onExit(paneId, (code) => {
     updatePaneStatus(paneId, `Exited (${code})`);
-    terminal.write(`\r\n[Process exited with code ${code}]\r\n`);
+    queueTerminalWrite(paneId, terminal, `\r\n[Process exited with code ${code}]\r\n`);
     clearStartupInjection(paneId);
   });
 
@@ -1097,6 +1174,8 @@ async function killAllTerminals() {
   for (const paneId of PANE_IDS) {
     try {
       await window.hivemind.pty.kill(paneId);
+      // Reset write queue state to prevent frozen pane on next spawn
+      resetTerminalWriteQueue(paneId);
       updatePaneStatus(paneId, 'Killed');
     } catch (err) {
       log.error(`Terminal ${paneId}`, 'Failed to kill pane', err);
@@ -1116,8 +1195,8 @@ async function freshStartAll() {
 
   const confirmed = confirm(
     'Fresh Start will:\n\n' +
-    '• Kill all 6 terminals\n' +
-    '• Start new agent sessions with NO previous context\n\n' +
+    'ï¿½ Kill all 6 terminals\n' +
+    'ï¿½ Start new agent sessions with NO previous context\n\n' +
     'All current conversations will be lost.\n\n' +
     'Continue?'
   );
@@ -1135,6 +1214,8 @@ async function freshStartAll() {
       await window.hivemind.pty.kill(paneId);
       // Reset codex identity tracking so new session gets identity header
       resetCodexIdentity(paneId);
+      // Reset write queue state to prevent frozen pane on next spawn
+      resetTerminalWriteQueue(paneId);
     } catch (err) {
       log.error(`Terminal ${paneId}`, 'Failed to kill pane', err);
     }
@@ -1372,6 +1453,7 @@ module.exports = {
   getTerminal,
   getFocusedPane,
   setReconnectedToExisting,
+  resetTerminalWriteQueue, // Reset write queue on pane restart/kill
   getReconnectedToExisting,
   updatePaneStatus,
   updateConnectionStatus,
