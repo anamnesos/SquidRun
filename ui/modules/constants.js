@@ -53,7 +53,7 @@ const STARTUP_READY_TIMEOUT_MS = 30000;   // Max wait for CLI ready prompt befor
 const STARTUP_IDENTITY_DELAY_MS = 250;    // Delay after ready prompt before identity injection
 const STARTUP_CONTEXT_DELAY_ARCHITECT_MS = 3000; // Delay after ready prompt for Architect context injection
 const STARTUP_CONTEXT_DELAY_MS = 6000;    // Delay after ready prompt before context injection
-const STARTUP_CONTEXT_DELAY_CODEX_MS = 5000; // Delay after startup before Codex context injection
+const STARTUP_CONTEXT_DELAY_CODEX_MS = 8000; // Delay after startup before Codex context injection (must be > Architect's ready-time + 3000ms)
 const STARTUP_READY_BUFFER_MAX = 2000;    // Keep last N chars for ready-pattern detection
 
 module.exports = {
