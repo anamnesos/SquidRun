@@ -395,6 +395,8 @@ class ClaudeAgent(BaseAgent):
         # Session resume is broken in claude-agent-sdk when session no longer exists
         # Better to start fresh each time than crash trying to resume dead sessions
         options = ClaudeAgentOptions(
+            # Use Opus 4.5 - the best model
+            model="claude-opus-4-5-20251101",
             allowed_tools=self.config.allowed_tools,
             permission_mode=self.config.permission_mode,
             cwd=str(role_specific_cwd),
