@@ -918,8 +918,8 @@ function setupEventListeners() {
       if (targetPaneId === 'all') {
         terminal.broadcast(message + '\r');
       } else {
-        // Send to specific pane in PTY mode
-        terminal.sendToPane(targetPaneId, message + '\r');
+        // Send to specific pane in PTY mode - user messages get priority
+        terminal.sendToPane(targetPaneId, message + '\r', { priority: true });
       }
       showDeliveryStatus('delivered');
     }

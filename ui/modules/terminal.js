@@ -1037,9 +1037,11 @@ function blurAllTerminals() {
 
 
 // Send message to Architect only (user interacts with Architect, Architect coordinates execution)
+// User messages get PRIORITY - they jump to front of queue ahead of agent messages
 function broadcast(message) {
   // Send directly to Architect (pane 1), no broadcast prefix needed
-  sendToPane('1', message);
+  // priority: true ensures user message bypasses queued agent messages
+  sendToPane('1', message, { priority: true });
   updateConnectionStatus('Message sent to Architect');
 }
 

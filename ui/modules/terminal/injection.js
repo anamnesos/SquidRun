@@ -631,6 +631,7 @@ function createInjectionController(options = {}) {
   }
 
   // Send message to a specific pane (queues if pane is busy)
+  // options.priority = true puts message at FRONT of queue (for user messages)
   function sendToPane(paneId, message, options = {}) {
     const id = String(paneId);
 
@@ -638,11 +639,20 @@ function createInjectionController(options = {}) {
       messageQueue[id] = [];
     }
 
-    messageQueue[id].push({
+    const queueItem = {
       message: message,
       timestamp: Date.now(),
       onComplete: options.onComplete,
-    });
+      priority: options.priority || false,
+    };
+
+    // User messages (priority) go to front of queue, agent messages go to back
+    if (options.priority) {
+      messageQueue[id].unshift(queueItem);
+      log.info(`Terminal ${id}`, 'USER message queued with PRIORITY (front of queue)');
+    } else {
+      messageQueue[id].push(queueItem);
+    }
 
     const reason = userIsTyping()
       ? 'user typing'
