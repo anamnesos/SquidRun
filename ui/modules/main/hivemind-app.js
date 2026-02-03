@@ -21,6 +21,7 @@ const watcher = require('../watcher');
 const ipcHandlers = require('../ipc-handlers');
 const memory = require('../memory');
 const memoryIPC = require('../memory/ipc-handlers');
+const websocketServer = require('../websocket-server');
 
 class HivemindApp {
   constructor(appContext, managers) {
@@ -74,6 +75,18 @@ class HivemindApp {
     // 9. Setup global IPC forwarders
     this.ensureCliIdentityForwarder();
     this.ensureTriggerDeliveryAckForwarder();
+
+    // 10. Start WebSocket server for instant agent messaging
+    try {
+      await websocketServer.start({
+        port: websocketServer.DEFAULT_PORT,
+        onMessage: (data) => {
+          log.info('WebSocket', `Message from ${data.role || data.paneId}: ${JSON.stringify(data.message).substring(0, 100)}`);
+        }
+      });
+    } catch (err) {
+      log.error('WebSocket', `Failed to start server: ${err.message}`);
+    }
 
     log.info('App', 'Initialization complete');
   }
@@ -498,6 +511,7 @@ class HivemindApp {
   shutdown() {
     log.info('App', 'Shutting down Hivemind Application');
     memory.shutdown();
+    websocketServer.stop();
     watcher.stopWatcher();
     watcher.stopTriggerWatcher();
     watcher.stopMessageWatcher();
