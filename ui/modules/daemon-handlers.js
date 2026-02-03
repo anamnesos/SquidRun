@@ -374,7 +374,7 @@ function setupRefreshButtons(sendToPaneFn) {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const paneId = btn.dataset.paneId;
-      sendToPaneFn(paneId, '/read workspace/shared_context.md\n');
+      sendToPaneFn(paneId, '/read workspace/shared_context.md\r');
       updatePaneStatus(paneId, 'Refreshed');
       setTimeout(() => {
         // This is a small UI update, could be moved to uiView but okay for now
