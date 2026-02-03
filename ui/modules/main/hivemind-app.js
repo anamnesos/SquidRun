@@ -8,7 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
 const { getDaemonClient } = require('../../daemon-client');
-const { WORKSPACE_PATH } = require('../../config');
+const { WORKSPACE_PATH, ROLE_ID_MAP } = require('../../config');
 const { createPluginManager } = require('../plugins');
 const { createBackupManager } = require('../backup-manager');
 const { createRecoveryManager } = require('../recovery-manager');
@@ -82,6 +82,27 @@ class HivemindApp {
         port: websocketServer.DEFAULT_PORT,
         onMessage: (data) => {
           log.info('WebSocket', `Message from ${data.role || data.paneId}: ${JSON.stringify(data.message).substring(0, 100)}`);
+
+          // Route WebSocket messages to terminal injection
+          if (data.message && data.message.type === 'send' && this.ctx.mainWindow) {
+            const target = data.message.target;
+            const content = data.message.content;
+            const priority = data.message.priority || 'normal';
+
+            // Resolve target to paneId (could be role name or paneId)
+            const paneId = this.resolveTargetToPane(target);
+            if (paneId) {
+              log.info('WebSocket', `Routing to pane ${paneId}: ${content.substring(0, 50)}...`);
+              this.ctx.mainWindow.webContents.send('inject-message', {
+                panes: [paneId],
+                message: content + '\r',
+                source: 'websocket',
+                priority
+              });
+            } else {
+              log.warn('WebSocket', `Unknown target: ${target}`);
+            }
+          }
         }
       });
     } catch (err) {
@@ -506,6 +527,41 @@ class HivemindApp {
     ipcMain.on('trigger-delivery-ack', (event, data) => {
       if (data?.deliveryId) triggers.handleDeliveryAck(data.deliveryId, data.paneId);
     });
+  }
+
+  /**
+   * Resolve target (role name or paneId) to numeric paneId
+   * @param {string} target - Role name (e.g., 'architect') or paneId (e.g., '1')
+   * @returns {string|null} paneId or null if not found
+   */
+  resolveTargetToPane(target) {
+    if (!target) return null;
+
+    const targetLower = target.toLowerCase();
+
+    // Direct paneId (1-6)
+    if (/^[1-6]$/.test(target)) {
+      return target;
+    }
+
+    // Role name lookup
+    if (ROLE_ID_MAP[targetLower]) {
+      return ROLE_ID_MAP[targetLower];
+    }
+
+    // Legacy aliases
+    const legacyMap = {
+      lead: '1',
+      orchestrator: '1',
+      'worker-a': '3',
+      'worker-b': '4',
+      investigator: '5',
+    };
+    if (legacyMap[targetLower]) {
+      return legacyMap[targetLower];
+    }
+
+    return null;
   }
 
   shutdown() {
