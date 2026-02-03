@@ -15,7 +15,6 @@ const sdkRenderer = require('./modules/sdk-renderer');
 const { showStatusNotice } = require('./modules/notifications');
 const { formatTimeSince } = require('./modules/formatters');
 const {
-  SPINNER_INTERVAL_MS,
   UI_IDLE_THRESHOLD_MS,
   UI_STUCK_THRESHOLD_MS,
   UI_IDLE_CLAIM_THRESHOLD_MS,
@@ -282,7 +281,6 @@ window.hivemind = {
     // SDK status functions (exposed for external use)
     updateStatus: (paneId, state) => updateSDKStatus(paneId, state),
     showDelivered: (paneId) => showSDKMessageDelivered(paneId),
-    setSessionId: (paneId, sessionId, show) => setSDKSessionId(paneId, sessionId, show),
   },
   // Settings API - expose settings module for debugMode check etc.
   settings: {
@@ -472,25 +470,7 @@ function applySDKPaneLayout() {
   // Initial call happens in DOMContentLoaded event handler
 }
 
-// SDK Status update functions
-const SDK_STATUS_LABELS = {
-  disconnected: '—',
-  connected: '●',
-  idle: '○',
-  thinking: '◐',  // Will be animated
-  responding: '◑',
-  error: '✕'
-};
-
-// Braille spinner frames (same as Claude Code CLI)
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-// SPINNER_INTERVAL_MS imported from modules/constants.js
-
-// Header spinner animation intervals per pane
-const headerSpinnerIntervals = new Map();
-const headerSpinnerFrameIndex = new Map();
-
-// Idle state tracking per pane
+// SDK activity tracking (header indicators removed)
 const paneIdleState = new Map();
 
 // SDK status debouncing - track last status per pane to avoid flicker
@@ -565,9 +545,6 @@ function enterIdleState(paneId) {
 }
 
 function updateSDKStatus(paneId, state) {
-  const statusEl = document.getElementById(`sdk-status-${paneId}`);
-  if (!statusEl) return;
-
   // Debounce: skip if same status as last time (prevents flicker from rapid updates)
   if (lastSDKStatus.get(paneId) === state) {
     return;
@@ -579,63 +556,13 @@ function updateSDKStatus(paneId, state) {
     trackPaneActivity(paneId, true);
   }
 
-  // Stop any existing spinner animation
-  const existingInterval = headerSpinnerIntervals.get(paneId);
-  if (existingInterval) {
-    clearInterval(existingInterval);
-    headerSpinnerIntervals.delete(paneId);
-    headerSpinnerFrameIndex.delete(paneId);
-  }
-
-  // Remove all state classes
-  statusEl.classList.remove('disconnected', 'connected', 'idle', 'thinking', 'responding', 'error', 'delivered');
-
-  // Add new state class
-  statusEl.classList.add(state);
-  statusEl.title = `SDK: ${state}`;
-
-  // Start spinner animation for thinking/responding states
-  if (state === 'thinking' || state === 'responding') {
-    headerSpinnerFrameIndex.set(paneId, 0);
-    statusEl.textContent = SPINNER_FRAMES[0];
-
-    const interval = setInterval(() => {
-      let frameIdx = (headerSpinnerFrameIndex.get(paneId) + 1) % SPINNER_FRAMES.length;
-      headerSpinnerFrameIndex.set(paneId, frameIdx);
-      statusEl.textContent = SPINNER_FRAMES[frameIdx];
-    }, SPINNER_INTERVAL_MS);
-
-    headerSpinnerIntervals.set(paneId, interval);
-  } else {
-    statusEl.textContent = SDK_STATUS_LABELS[state] || state;
-  }
-
   log.info('SDK', `Pane ${paneId} status: ${state}`);
 }
 
 function showSDKMessageDelivered(paneId) {
-  const statusEl = document.getElementById(`sdk-status-${paneId}`);
-  if (!statusEl) return;
-
-  // Trigger delivered animation
-  statusEl.classList.add('delivered');
-  setTimeout(() => {
-    statusEl.classList.remove('delivered');
-  }, 600);
-
-  // Also show delivery indicator in pane header (using daemon-handlers version)
   daemonHandlers.showDeliveryIndicator(paneId, 'delivered');
 
   log.info('SDK', `Pane ${paneId} message delivered`);
-}
-
-function setSDKSessionId(paneId, sessionId, showInUI = false) {
-  const sessionEl = document.getElementById(`sdk-session-${paneId}`);
-  if (!sessionEl) return;
-
-  sessionEl.textContent = sessionId ? sessionId.substring(0, 8) + '...' : '';
-  sessionEl.title = sessionId || 'No session';
-  sessionEl.classList.toggle('visible', showInUI && sessionId);
 }
 
 // Wire up module callbacks
@@ -1647,23 +1574,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // SDK thinking delta - real-time thinking/reasoning indicator from Codex
+  // Shows agent's thought process (reasoning, planning) before text output
+  ipcRenderer.on('sdk-thinking-delta', (event, data) => {
+    if (!data) return;
+    const { paneId, thinking } = data;
+    if (thinking) {
+      // Show thinking indicator with the reasoning content
+      sdkRenderer.streamingIndicator(paneId, true, thinking, 'thinking');
+      // Update status to 'thinking' while reasoning
+      updateSDKStatus(paneId, 'thinking');
+    }
+  });
+
   // SDK session started - initialize panes for SDK mode
   ipcRenderer.on('sdk-session-start', (event, data) => {
     log.info('SDK', 'Session starting - enabling SDK mode');
     window.hivemind.sdk.enableMode();
-    // Update all panes to connected status
-    for (let i = 1; i <= 4; i++) {
-      updateSDKStatus(i, 'connected');
-    }
   });
 
   // SDK session ended
   ipcRenderer.on('sdk-session-end', (event, data) => {
     log.info('SDK', 'Session ended');
-    // Update all panes to disconnected status
-    for (let i = 1; i <= 4; i++) {
-      updateSDKStatus(i, 'disconnected');
-    }
   });
 
   // SDK error handler
@@ -1673,17 +1605,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const { paneId, error } = data;
     log.error('SDK', `Error in pane ${paneId}:`, error);
     sdkRenderer.addErrorMessage(paneId, error);
-    updateSDKStatus(paneId, 'error');
-  });
-
-  // SDK status change - update UI indicators
-  ipcRenderer.on('sdk-status-changed', (event, data) => {
-    if (!data) return;
-    const { paneId, status, sessionId } = data;
-    updateSDKStatus(paneId, status);
-    if (sessionId) {
-      setSDKSessionId(paneId, sessionId, window.hivemind.settings.isDebugMode());
-    }
   });
 
   // SDK message delivered confirmation

@@ -517,36 +517,6 @@
   100% { transform: scale(1); }
 }
 
-/* Message Delivery Visibility (#2) */
-.delivery-indicator {
-  font-size: var(--text-sm);
-  opacity: 0;
-  transition: opacity var(--transition-slow), transform var(--transition-normal);
-  color: var(--color-secondary);
-  transform: translateY(2px);
-}
-
-.delivery-indicator.visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.delivery-indicator.delivered {
-  animation: deliveryPop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-  text-shadow: 0 0 8px rgba(78, 204, 163, 0.5);
-}
-
-.delivery-indicator.failed {
-  color: var(--color-error);
-  text-shadow: 0 0 8px rgba(233, 69, 96, 0.5);
-}
-
-@keyframes deliveryPop {
-  0% { transform: scale(0.5) translateY(4px); opacity: 0; }
-  60% { transform: scale(1.15) translateY(-2px); opacity: 1; }
-  100% { transform: scale(1) translateY(0); opacity: 1; }
-}
-
 /* Pane header flash on delivery */
 .pane-header.delivery-flash {
   animation: deliveryFlash 0.6s ease-out;
