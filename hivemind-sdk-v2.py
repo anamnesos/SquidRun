@@ -16,7 +16,29 @@ import json
 import logging
 import sys
 import os
+import warnings
 from abc import ABC, abstractmethod
+
+# Suppress Pydantic validation warnings from Claude SDK
+# These are noisy "Failed to validate notification" warnings that fill the terminal
+# The SDK still works fine - it just can't parse some notification types
+warnings.filterwarnings('ignore', message='.*Failed to validate.*')
+warnings.filterwarnings('ignore', module='pydantic.*')
+
+# Also suppress via logging (some libraries use logging.warning instead of warnings.warn)
+class PydanticWarningFilter(logging.Filter):
+    """Filter out Pydantic validation warnings from Claude SDK."""
+    def filter(self, record):
+        msg = record.getMessage().lower()
+        # Suppress validation errors and pydantic noise
+        if 'failed to validate' in msg:
+            return False
+        if 'validation error' in msg:
+            return False
+        return True
+
+# Apply filter to root logger to catch all sources
+logging.getLogger().addFilter(PydanticWarningFilter())
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -48,6 +70,50 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')  # type: ignore[union-attr]
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')  # type: ignore[union-attr]
     os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+
+# Stderr filter to suppress noisy SDK validation warnings
+# The Claude SDK prints "WARNING: Failed to validate notification" directly to stderr
+class FilteredStderr:
+    """Wrapper that filters out Pydantic validation warnings from stderr."""
+    def __init__(self, original):
+        self._original = original
+        self._buffer = ""
+
+    def write(self, text):
+        # Buffer multi-line writes
+        self._buffer += text
+        if '\n' in self._buffer:
+            lines = self._buffer.split('\n')
+            # Keep incomplete last line in buffer
+            self._buffer = lines[-1]
+            for line in lines[:-1]:
+                # Skip validation warning lines
+                if 'Failed to validate' in line:
+                    continue
+                if 'validation error' in line.lower():
+                    continue
+                if line.strip().startswith('Input should be'):
+                    continue
+                if line.strip().startswith('For further information'):
+                    continue
+                if 'pydantic' in line.lower() and 'error' in line.lower():
+                    continue
+                # Pass through everything else
+                self._original.write(line + '\n')
+
+    def flush(self):
+        if self._buffer:
+            # Flush remaining buffer if not a warning
+            if 'Failed to validate' not in self._buffer:
+                self._original.write(self._buffer)
+            self._buffer = ""
+        self._original.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._original, name)
+
+# Install filtered stderr
+sys.stderr = FilteredStderr(sys.stderr)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -758,9 +824,23 @@ class CodexAgent(BaseAgent):
                 result = await self._start_new_session(message)
 
             # Extract content from MCP response
-            content = result.get("structuredContent", {}) if isinstance(result, dict) else {}
-            self.thread_id = content.get("threadId", self.thread_id)
-            response_text = content.get("content", str(result))
+            # Result can be dict, or MCP CallToolResult object with .content attribute
+            if isinstance(result, dict):
+                content = result.get("structuredContent", {})
+                self.thread_id = content.get("threadId", self.thread_id)
+                response_text = content.get("content", str(result))
+            elif hasattr(result, "content") and result.content:
+                # MCP CallToolResult: content is list of TextContent objects
+                text_parts = []
+                for item in result.content:
+                    if hasattr(item, "text") and item.text:
+                        text_parts.append(item.text)
+                response_text = "\n".join(text_parts) if text_parts else str(result)
+                # Try to extract threadId from structuredContent if available
+                if hasattr(result, "structuredContent") and isinstance(result.structuredContent, dict):
+                    self.thread_id = result.structuredContent.get("threadId", self.thread_id)
+            else:
+                response_text = str(result)
 
             # Normalize to common format - emit as text_delta for consistency
             # Codex MCP doesn't stream, so emit full response as one delta
