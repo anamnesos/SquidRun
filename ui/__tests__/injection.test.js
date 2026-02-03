@@ -642,11 +642,11 @@ describe('Terminal Injection', () => {
 
       const promise = controller.doSendToPane('1', 'test command\r', onComplete);
 
-      // Advance past the 50ms delay for Enter
-      await jest.advanceTimersByTimeAsync(60);
+      // Advance past the 150ms delay for Enter (Session 69: increased from 50ms)
+      await jest.advanceTimersByTimeAsync(160);
       await promise;
 
-      // Gemini uses PTY: text first, then Enter after 50ms delay
+      // Gemini uses PTY: text first, then Enter after 150ms delay
       expect(mockPty.write).toHaveBeenCalledWith('1', '\x15'); // Clear line
       expect(mockPty.write).toHaveBeenCalledWith('1', 'test command'); // Text only
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r'); // Enter after delay
