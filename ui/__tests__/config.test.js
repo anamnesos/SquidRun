@@ -41,7 +41,7 @@ describe('config.js', () => {
     test('should have paths for each pane', () => {
       expect(INSTANCE_DIRS['1']).toContain('lead');
       expect(INSTANCE_DIRS['2']).toContain('orchestrator');
-      expect(INSTANCE_DIRS['3']).toContain('worker-a');
+      expect(INSTANCE_DIRS['3']).toContain('front');
       expect(INSTANCE_DIRS['4']).toContain('worker-b');
       expect(INSTANCE_DIRS['5']).toContain('investigator');
       expect(INSTANCE_DIRS['6']).toContain('reviewer');

@@ -49,11 +49,12 @@ const FOCUS_RETRY_DELAY_MS = 20;          // Delay between focus retry attempts
 const ENTER_VERIFY_DELAY_MS = 200;        // Delay before checking if Enter succeeded
 const ENTER_RETRY_INTERVAL_MS = 200;      // Interval between checking if pane is idle
 const PROMPT_READY_TIMEOUT_MS = 3000;     // Max time to wait for prompt-ready detection
-const STARTUP_READY_TIMEOUT_MS = 30000;   // Max wait for CLI ready prompt before fallback injection
+const STARTUP_READY_TIMEOUT_MS = 5000;    // Max wait for CLI ready prompt before fallback injection (lowered from 30s to ensure Architect goes before Codex)
 const STARTUP_IDENTITY_DELAY_MS = 250;    // Delay after ready prompt before identity injection
 const STARTUP_CONTEXT_DELAY_ARCHITECT_MS = 3000; // Delay after ready prompt for Architect context injection
 const STARTUP_CONTEXT_DELAY_MS = 6000;    // Delay after ready prompt before context injection
-const STARTUP_CONTEXT_DELAY_CODEX_MS = 8000; // Delay after startup before Codex context injection (must be > Architect's ready-time + 3000ms)
+const STARTUP_IDENTITY_DELAY_CODEX_MS = 6000;  // Delay before Codex identity (after Architect's ~5.25s)
+const STARTUP_CONTEXT_DELAY_CODEX_MS = 10000;  // Delay before Codex context (after Architect's ~8s)
 const STARTUP_READY_BUFFER_MAX = 2000;    // Keep last N chars for ready-pattern detection
 
 module.exports = {
@@ -91,6 +92,7 @@ module.exports = {
   STARTUP_IDENTITY_DELAY_MS,
   STARTUP_CONTEXT_DELAY_ARCHITECT_MS,
   STARTUP_CONTEXT_DELAY_MS,
+  STARTUP_IDENTITY_DELAY_CODEX_MS,
   STARTUP_CONTEXT_DELAY_CODEX_MS,
   STARTUP_READY_BUFFER_MAX,
 };
