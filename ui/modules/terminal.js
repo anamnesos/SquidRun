@@ -33,7 +33,9 @@ const {
   PROMPT_READY_TIMEOUT_MS,
   STARTUP_READY_TIMEOUT_MS,
   STARTUP_IDENTITY_DELAY_MS,
+  STARTUP_CONTEXT_DELAY_ARCHITECT_MS,
   STARTUP_CONTEXT_DELAY_MS,
+  STARTUP_CONTEXT_DELAY_CODEX_MS,
   STARTUP_READY_BUFFER_MAX,
 } = require('./constants');
 
@@ -320,7 +322,7 @@ function triggerStartupInjection(paneId, state, reason) {
   }, STARTUP_IDENTITY_DELAY_MS);
 
   if (!state.isGemini && window.hivemind?.claude?.injectContext) {
-    const contextDelayMs = String(paneId) === '1' ? 3000 : STARTUP_CONTEXT_DELAY_MS;
+    const contextDelayMs = String(paneId) === '1' ? STARTUP_CONTEXT_DELAY_ARCHITECT_MS : STARTUP_CONTEXT_DELAY_MS;
     window.hivemind.claude.injectContext(paneId, state.modelType, contextDelayMs);
     log.info('spawnClaude', `Context injection scheduled for ${state.modelType} pane ${paneId} in ${contextDelayMs}ms [ready:${reason}]`);
   }
@@ -1003,7 +1005,7 @@ async function spawnClaude(paneId, model = null) {
 
     // Finding #14: Inject context files (AGENTS.md for Codex) after startup
     if (window.hivemind?.claude?.injectContext) {
-      window.hivemind.claude.injectContext(paneId, 'codex', 5000);
+      window.hivemind.claude.injectContext(paneId, 'codex', STARTUP_CONTEXT_DELAY_CODEX_MS);
       log.info('spawnClaude', `Context injection scheduled for Codex pane ${paneId}`);
     }
 
