@@ -391,10 +391,34 @@ function triggerStartupInjection(paneId, state, reason) {
   const timestamp = new Date().toISOString().split('T')[0];
   const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
 
-  setTimeout(() => {
-    sendToPane(paneId, identityMsg + '\r');
-    log.info('spawnClaude', `Identity injected for ${role} (pane ${paneId}) [ready:${reason}]`);
-  }, STARTUP_IDENTITY_DELAY_MS);
+  // Session 69 fix: Gemini needs longer delay - CLI takes longer to initialize input handling
+  const identityDelayMs = state.isGemini ? 1000 : STARTUP_IDENTITY_DELAY_MS;
+
+  setTimeout(async () => {
+    // Session 69: Gemini identity - match doSendToPane pattern exactly
+    // Previous attempt failed because it was missing Ctrl+U clear
+    if (state.isGemini) {
+      try {
+        // Step 1: Clear any garbage in input line (matches doSendToPane Gemini path)
+        await window.hivemind.pty.write(String(paneId), '\x15');
+        log.info('spawnClaude', `Gemini identity: cleared input line for ${role} (pane ${paneId})`);
+
+        // Step 2: Write the identity text
+        await window.hivemind.pty.write(String(paneId), identityMsg);
+        log.info('spawnClaude', `Gemini identity text written for ${role} (pane ${paneId})`);
+
+        // Step 3: Wait 500ms then send Enter (Gemini's bufferFastReturn threshold)
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await window.hivemind.pty.write(String(paneId), '\r');
+        log.info('spawnClaude', `Gemini identity Enter sent for ${role} (pane ${paneId}) [ready:${reason}]`);
+      } catch (err) {
+        log.error('spawnClaude', `Gemini identity injection failed for pane ${paneId}:`, err);
+      }
+    } else {
+      sendToPane(paneId, identityMsg + '\r');
+      log.info('spawnClaude', `Identity injected for ${role} (pane ${paneId}) [ready:${reason}]`);
+    }
+  }, identityDelayMs);
 
   if (!state.isGemini && window.hivemind?.claude?.injectContext) {
     const contextDelayMs = String(paneId) === '1' ? STARTUP_CONTEXT_DELAY_ARCHITECT_MS : STARTUP_CONTEXT_DELAY_MS;
