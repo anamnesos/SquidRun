@@ -178,6 +178,7 @@ class HivemindApp {
     // SDK Bridge
     const sdkBridge = getSDKBridge();
     sdkBridge.setMainWindow(window);
+    sdkBridge.setSettings(this.ctx.currentSettings); // Share settings for model config
     triggers.setSDKBridge(sdkBridge);
     if (this.ctx.currentSettings.sdkMode) {
       triggers.setSDKMode(true);

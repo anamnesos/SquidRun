@@ -18,8 +18,9 @@ const fs = require('fs');
 const EventEmitter = require('events');
 const log = require('./logger');
 
-// Pane configuration - role and model per pane (6-pane architecture)
-const PANE_CONFIG = {
+// Default pane configuration - role and model per pane (6-pane architecture)
+// These are defaults; actual models come from settings.paneCommands at runtime
+const DEFAULT_PANE_CONFIG = {
   '1': { role: 'Architect', model: 'claude' },
   '2': { role: 'Infra', model: 'codex' },
   '3': { role: 'Frontend', model: 'claude' },
@@ -27,6 +28,9 @@ const PANE_CONFIG = {
   '5': { role: 'Analyst', model: 'gemini' },
   '6': { role: 'Reviewer', model: 'claude' },
 };
+
+// Alias for backward compatibility (exports still reference PANE_CONFIG)
+const PANE_CONFIG = DEFAULT_PANE_CONFIG;
 
 // Legacy: Pane ID to role mapping (derived from PANE_CONFIG for backward compatibility)
 const PANE_ROLES = Object.fromEntries(
@@ -98,6 +102,7 @@ class SDKBridge extends EventEmitter {
     this.active = false;
     this.ready = false;
     this.mainWindow = null;
+    this.settings = null; // Reference to app settings (for reading paneCommands)
 
     // Track 6 independent sessions (derived from PANE_CONFIG)
     this.sessions = Object.fromEntries(
@@ -115,6 +120,15 @@ class SDKBridge extends EventEmitter {
 
     // Buffer for incomplete JSON lines
     this.buffer = '';
+  }
+
+  /**
+   * Set settings reference for reading paneCommands
+   * @param {Object} settings - Reference to currentSettings object
+   */
+  setSettings(settings) {
+    this.settings = settings;
+    log.info('SDK Bridge', 'Settings reference set');
   }
 
   /**
@@ -315,12 +329,35 @@ class SDKBridge extends EventEmitter {
 
   /**
    * Get model type for a pane
+   * Reads from settings.paneCommands (same source as PTY mode) for consistency.
+   * Falls back to DEFAULT_PANE_CONFIG if settings not available.
    * @param {string} paneId - Pane ID ('1' through '6')
    * @returns {string} Model type ('claude', 'codex', or 'gemini')
    */
   getModelForPane(paneId) {
-    const config = PANE_CONFIG[paneId];
-    return config ? config.model : 'claude'; // Default to claude
+    // Try to read from settings (single source of truth with PTY mode)
+    if (this.settings && this.settings.paneCommands && this.settings.paneCommands[paneId]) {
+      const command = this.settings.paneCommands[paneId].toLowerCase();
+      if (command.startsWith('codex')) return 'codex';
+      if (command.startsWith('gemini')) return 'gemini';
+      if (command.startsWith('claude')) return 'claude';
+    }
+    // Fall back to default config
+    const config = DEFAULT_PANE_CONFIG[paneId];
+    return config ? config.model : 'claude';
+  }
+
+  /**
+   * Update model for a specific pane at runtime
+   * Called by model-switch handler to sync SDK bridge state
+   * @param {string} paneId - Pane ID ('1' through '6')
+   * @param {string} model - Model type ('claude', 'codex', or 'gemini')
+   */
+  setModelForPane(paneId, model) {
+    if (this.sessions[paneId]) {
+      this.sessions[paneId].model = model;
+      log.info('SDK Bridge', `Updated pane ${paneId} model to ${model}`);
+    }
   }
 
   /**
