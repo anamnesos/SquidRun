@@ -139,6 +139,23 @@ function registerPtyHandlers(ctx, deps = {}) {
     return { success: true, command: agentCmd };
   });
 
+  // Context injection for agent panes (AGENTS.md, CLAUDE.md, GEMINI.md)
+  ipcMain.handle('inject-context', async (event, paneId, model, delay = 5000) => {
+    const contextInjection = ctx.contextInjection;
+    if (!contextInjection) {
+      log.warn('PTY', 'inject-context: contextInjection manager not available');
+      return { success: false, error: 'Context injection not available' };
+    }
+    try {
+      await contextInjection.injectContext(paneId, model, delay);
+      log.info('PTY', `inject-context: scheduled for pane ${paneId} (model=${model}, delay=${delay}ms)`);
+      return { success: true };
+    } catch (err) {
+      log.error('PTY', `inject-context failed for pane ${paneId}:`, err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('get-claude-state', () => {
     return Object.fromEntries(ctx.agentRunning);
   });

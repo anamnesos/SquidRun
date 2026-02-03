@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('hivemind', {
   // Claude operations
   claude: {
     spawn: (paneId, workingDir) => ipcRenderer.invoke('spawn-claude', paneId, workingDir),
+    injectContext: (paneId, model, delay) => ipcRenderer.invoke('inject-context', paneId, model, delay),
   },
 
   // Shared context operations
