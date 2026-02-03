@@ -425,13 +425,26 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // GEMINI PATH: Simple PTY write with \n (Session 67)
-    // Unlike Claude Code's ink TUI, Gemini CLI is a standard readline-based CLI
-    // that accepts PTY newline for Enter submission
-    // Note: Uses \n (LF) not \r (CR) - Gemini CLI expects line feed
+    // GEMINI PATH: Hybrid approach like Claude (Session 68)
+    // PTY \r does NOT work for Gemini CLI either - tested and failed
+    // Use same approach as Claude: PTY write for text + sendTrustedEnter for Enter
     const isGemini = isGeminiPane(id);
     if (isGemini) {
-      log.info(`doSendToPane ${id}`, 'Gemini pane: using PTY \\n path');
+      log.info(`doSendToPane ${id}`, 'Gemini pane: using hybrid path (PTY text + sendTrustedEnter)');
+
+      const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
+      const geminiTextarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
+
+      if (!geminiTextarea) {
+        log.warn(`doSendToPane ${id}`, 'Gemini pane: textarea not found, skipping injection');
+        finishWithClear({ success: false, reason: 'missing_textarea' });
+        return;
+      }
+
+      // Focus textarea if Enter needed (required for sendTrustedEnter)
+      if (hasTrailingEnter) {
+        geminiTextarea.focus();
+      }
 
       // Clear any stuck input first (Ctrl+U)
       try {
@@ -441,18 +454,30 @@ function createInjectionController(options = {}) {
         log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
       }
 
-      // Write text + \n in one PTY write (Gemini accepts PTY \n)
-      const fullMessage = hasTrailingEnter ? text + '\n' : text;
+      // Write text to PTY (without \r)
       try {
-        await window.hivemind.pty.write(id, fullMessage);
-        log.info(`doSendToPane ${id}`, `Gemini pane: PTY write complete (${fullMessage.length} chars)`);
-        updatePaneStatus(id, 'Working');
-        lastTypedTime[id] = Date.now();
-        finishWithClear({ success: true });
+        await window.hivemind.pty.write(id, text);
+        log.info(`doSendToPane ${id}`, `Gemini pane: PTY write complete (${text.length} chars)`);
       } catch (err) {
         log.error(`doSendToPane ${id}`, 'Gemini PTY write failed:', err);
         finishWithClear({ success: false, reason: 'pty_write_failed' });
+        return;
       }
+
+      // Send Enter via sendTrustedEnter (same as Claude path)
+      if (hasTrailingEnter) {
+        const enterResult = await sendEnterToPane(id);
+        if (!enterResult.success) {
+          log.error(`doSendToPane ${id}`, 'Gemini pane: Enter send failed');
+          finishWithClear({ success: false, reason: 'enter_failed' });
+          return;
+        }
+        log.info(`doSendToPane ${id}`, `Gemini pane: Enter sent via ${enterResult.method}`);
+      }
+
+      updatePaneStatus(id, 'Working');
+      lastTypedTime[id] = Date.now();
+      finishWithClear({ success: true });
       return;
     }
 

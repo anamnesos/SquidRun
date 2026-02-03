@@ -635,20 +635,19 @@ describe('Terminal Injection', () => {
       );
     });
 
-    // Session 67: Gemini PTY path tests
-    test('handles Gemini pane with PTY \\n path', async () => {
+    // Session 68: Gemini hybrid path tests (same as Claude - PTY text + sendTrustedEnter)
+    test('handles Gemini pane with hybrid path (PTY text + sendTrustedEnter)', async () => {
       mockOptions.isGeminiPane.mockReturnValue(true);
       const onComplete = jest.fn();
 
       await controller.doSendToPane('1', 'test command\r', onComplete);
 
-      // Gemini uses PTY write with \n (LF), not \r (CR) or sendTrustedEnter
+      // Gemini now uses hybrid approach like Claude: PTY for text, sendTrustedEnter for Enter
       expect(mockPty.write).toHaveBeenCalledWith('1', '\x15'); // Clear line
-      expect(mockPty.write).toHaveBeenCalledWith('1', 'test command\n'); // Text + \n
+      expect(mockPty.write).toHaveBeenCalledWith('1', 'test command'); // Text only (no \r)
+      expect(mockPty.sendTrustedEnter).toHaveBeenCalled(); // Enter via native keyboard
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
       expect(onComplete).toHaveBeenCalledWith({ success: true });
-      // Should NOT use sendTrustedEnter (that's the Claude path)
-      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
     });
 
     test('handles Gemini PTY write failure', async () => {
