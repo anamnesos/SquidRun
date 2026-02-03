@@ -635,17 +635,22 @@ describe('Terminal Injection', () => {
       );
     });
 
-    // Session 68: Gemini hybrid path tests (same as Claude - PTY text + sendTrustedEnter)
-    test('handles Gemini pane with hybrid path (PTY text + sendTrustedEnter)', async () => {
+    // Session 68: Gemini PTY path with delayed Enter (bypasses bufferFastReturn)
+    test('handles Gemini pane with delayed Enter', async () => {
       mockOptions.isGeminiPane.mockReturnValue(true);
       const onComplete = jest.fn();
 
-      await controller.doSendToPane('1', 'test command\r', onComplete);
+      const promise = controller.doSendToPane('1', 'test command\r', onComplete);
 
-      // Gemini now uses hybrid approach like Claude: PTY for text, sendTrustedEnter for Enter
+      // Advance past the 50ms delay for Enter
+      await jest.advanceTimersByTimeAsync(60);
+      await promise;
+
+      // Gemini uses PTY: text first, then Enter after 50ms delay
       expect(mockPty.write).toHaveBeenCalledWith('1', '\x15'); // Clear line
-      expect(mockPty.write).toHaveBeenCalledWith('1', 'test command'); // Text only (no \r)
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled(); // Enter via native keyboard
+      expect(mockPty.write).toHaveBeenCalledWith('1', 'test command'); // Text only
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r'); // Enter after delay
+      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled(); // No DOM events for Gemini
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
@@ -666,17 +671,17 @@ describe('Terminal Injection', () => {
       );
     });
 
-    test('skips injection when textarea not found', async () => {
-      mockPaneEl.querySelector.mockReturnValue(null);
+    test('Gemini writes text without Enter when no trailing newline', async () => {
+      mockOptions.isGeminiPane.mockReturnValue(true);
       const onComplete = jest.fn();
 
-      await controller.doSendToPane('1', 'test\r', onComplete);
+      await controller.doSendToPane('1', 'partial text', onComplete); // No trailing \r
 
-      expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'missing_textarea' });
-      expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.stringContaining('textarea not found')
-      );
+      // Text only, no Enter
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\x15'); // Clear line
+      expect(mockPty.write).toHaveBeenCalledWith('1', 'partial text'); // Text
+      expect(mockPty.write).toHaveBeenCalledTimes(2); // Only clear + text, no Enter
+      expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
 
     test('writes text to PTY', async () => {
