@@ -19,7 +19,7 @@ const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
 const INSTANCE_DIRS = {
   '1': path.join(WORKSPACE_PATH, 'instances', 'lead'),        // Architect
   '2': path.join(WORKSPACE_PATH, 'instances', 'orchestrator'), // Infra
-  '3': path.join(WORKSPACE_PATH, 'instances', 'worker-a'),     // Frontend
+  '3': path.join(WORKSPACE_PATH, 'instances', 'front'),        // Frontend
   '4': path.join(WORKSPACE_PATH, 'instances', 'worker-b'),     // Backend
   '5': path.join(WORKSPACE_PATH, 'instances', 'investigator'), // Analyst
   '6': path.join(WORKSPACE_PATH, 'instances', 'reviewer'),     // Reviewer

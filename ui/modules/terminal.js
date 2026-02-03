@@ -35,6 +35,7 @@ const {
   STARTUP_IDENTITY_DELAY_MS,
   STARTUP_CONTEXT_DELAY_ARCHITECT_MS,
   STARTUP_CONTEXT_DELAY_MS,
+  STARTUP_IDENTITY_DELAY_CODEX_MS,
   STARTUP_CONTEXT_DELAY_CODEX_MS,
   STARTUP_READY_BUFFER_MAX,
 } = require('./constants');
@@ -1071,14 +1072,14 @@ async function spawnClaude(paneId, model = null) {
       updatePaneStatus(paneId, 'Spawn failed');
       return;
     }
-    // Send identity message after Codex starts
+    // Send identity message after Codex starts (delayed to ensure Architect goes first)
     setTimeout(() => {
       const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
       const timestamp = new Date().toISOString().split('T')[0];
       const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
       sendToPane(paneId, identityMsg + '\r');
       log.info('spawnClaude', `Codex exec identity sent for ${role} (pane ${paneId})`);
-    }, 3000);
+    }, STARTUP_IDENTITY_DELAY_CODEX_MS);
 
     // Finding #14: Inject context files (AGENTS.md for Codex) after startup
     if (window.hivemind?.claude?.injectContext) {
