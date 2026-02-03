@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Terminal management module
  * Handles xterm instances, PTY connections, and terminal operations
  */
@@ -9,6 +9,7 @@ const { WebLinksAddon } = require('@xterm/addon-web-links');
 const { WebglAddon } = require('@xterm/addon-webgl');
 const { SearchAddon } = require('@xterm/addon-search');
 const log = require('./logger');
+const settings = require('./settings');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
 const {
@@ -223,8 +224,8 @@ function registerPaneCliIdentity(paneId, identity) {
 
 function isCodexFromSettings(paneId) {
   try {
-    const settings = window?.hivemind?.settings?.get?.();
-    const paneCommands = settings?.paneCommands || {};
+    const settingsObj = settings.getSettings();
+    const paneCommands = settingsObj?.paneCommands || {};
     const cmd = paneCommands[String(paneId)] || '';
     return typeof cmd === 'string' && cmd.toLowerCase().includes('codex');
   } catch {
@@ -319,8 +320,9 @@ function triggerStartupInjection(paneId, state, reason) {
   }, STARTUP_IDENTITY_DELAY_MS);
 
   if (!state.isGemini && window.hivemind?.claude?.injectContext) {
-    window.hivemind.claude.injectContext(paneId, state.modelType, STARTUP_CONTEXT_DELAY_MS);
-    log.info('spawnClaude', `Context injection scheduled for ${state.modelType} pane ${paneId} [ready:${reason}]`);
+    const contextDelayMs = String(paneId) === '1' ? 3000 : STARTUP_CONTEXT_DELAY_MS;
+    window.hivemind.claude.injectContext(paneId, state.modelType, contextDelayMs);
+    log.info('spawnClaude', `Context injection scheduled for ${state.modelType} pane ${paneId} in ${contextDelayMs}ms [ready:${reason}]`);
   }
 }
 
@@ -1067,8 +1069,8 @@ async function spawnClaude(paneId, model = null) {
 // Helper to check if a pane is Gemini
 function isGeminiPane(paneId) {
   try {
-    const settings = window?.hivemind?.settings?.get?.();
-    const paneCommands = settings?.paneCommands || {};
+    const settingsObj = settings.getSettings();
+    const paneCommands = settingsObj?.paneCommands || {};
     const cmd = paneCommands[String(paneId)] || '';
     return typeof cmd === 'string' && cmd.toLowerCase().includes('gemini');
   } catch {
@@ -1112,8 +1114,8 @@ async function freshStartAll() {
 
   const confirmed = confirm(
     'Fresh Start will:\n\n' +
-    '• Kill all 6 terminals\n' +
-    '• Start new agent sessions with NO previous context\n\n' +
+    '� Kill all 6 terminals\n' +
+    '� Start new agent sessions with NO previous context\n\n' +
     'All current conversations will be lost.\n\n' +
     'Continue?'
   );
@@ -1247,9 +1249,9 @@ function openTerminalSearch(paneId) {
     searchBar.innerHTML = `
       <input type="text" id="terminal-search-input" placeholder="Search terminal (Enter=next, Shift+Enter=prev, Esc=close)">
       <span id="terminal-search-count"></span>
-      <button id="terminal-search-prev" title="Previous (Shift+Enter)">▲</button>
-      <button id="terminal-search-next" title="Next (Enter)">▼</button>
-      <button id="terminal-search-close" title="Close (Esc)">✕</button>
+      <button id="terminal-search-prev" title="Previous (Shift+Enter)">?</button>
+      <button id="terminal-search-next" title="Next (Enter)">?</button>
+      <button id="terminal-search-close" title="Close (Esc)">?</button>
     `;
     document.body.appendChild(searchBar);
 
