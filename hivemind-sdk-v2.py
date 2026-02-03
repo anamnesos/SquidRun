@@ -959,8 +959,8 @@ class GeminiAgent(BaseAgent):
                     )
                 )
 
-            # Create chat session with gemini-2.0-flash (matches PTY mode)
-            chat = client.chats.create(model="gemini-2.0-flash")
+            # Create chat session with gemini-3-flash (matches PTY mode Auto Gemini 3)
+            chat = client.chats.create(model="gemini-3-flash")
             self.client = client
             self.chat = chat
             self.connected = True
