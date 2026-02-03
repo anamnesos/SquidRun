@@ -417,12 +417,13 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // GEMINI PATH: Simple PTY write with \r (Session 67)
+    // GEMINI PATH: Simple PTY write with \n (Session 67)
     // Unlike Claude Code's ink TUI, Gemini CLI is a standard readline-based CLI
-    // that accepts PTY carriage return for Enter submission
+    // that accepts PTY newline for Enter submission
+    // Note: Uses \n (LF) not \r (CR) - Gemini CLI expects line feed
     const isGemini = isGeminiPane(id);
     if (isGemini) {
-      log.info(`doSendToPane ${id}`, 'Gemini pane: using PTY \\r path');
+      log.info(`doSendToPane ${id}`, 'Gemini pane: using PTY \\n path');
 
       // Clear any stuck input first (Ctrl+U)
       try {
@@ -432,8 +433,8 @@ function createInjectionController(options = {}) {
         log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
       }
 
-      // Write text + \r in one PTY write (Gemini accepts PTY \r)
-      const fullMessage = hasTrailingEnter ? text + '\r' : text;
+      // Write text + \n in one PTY write (Gemini accepts PTY \n)
+      const fullMessage = hasTrailingEnter ? text + '\n' : text;
       try {
         await window.hivemind.pty.write(id, fullMessage);
         log.info(`doSendToPane ${id}`, `Gemini pane: PTY write complete (${fullMessage.length} chars)`);
