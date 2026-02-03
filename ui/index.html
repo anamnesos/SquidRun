@@ -239,6 +239,42 @@
         <button class="btn btn-sm" id="sendExternalTestBtn" title="Send a test external notification">Send test</button>
       </div>
     </div>
+
+    <!-- API Keys Section -->
+    <div class="settings-section">
+      <div class="settings-section-title">API Keys</div>
+      <div class="settings-subgrid settings-two-col">
+        <div class="setting-field">
+          <label class="setting-label">Anthropic (Claude)</label>
+          <div class="api-key-field">
+            <input type="password" class="settings-input api-key-input" id="apiKeyAnthropic"
+                   placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+            <span class="api-key-mask" id="apiKeyAnthropicMask">Not set</span>
+          </div>
+        </div>
+        <div class="setting-field">
+          <label class="setting-label">OpenAI (Codex)</label>
+          <div class="api-key-field">
+            <input type="password" class="settings-input api-key-input" id="apiKeyOpenai"
+                   placeholder="sk-..." autocomplete="off" spellcheck="false">
+            <span class="api-key-mask" id="apiKeyOpenaiMask">Not set</span>
+          </div>
+        </div>
+        <div class="setting-field">
+          <label class="setting-label">Google (Gemini)</label>
+          <div class="api-key-field">
+            <input type="password" class="settings-input api-key-input" id="apiKeyGoogle"
+                   placeholder="AIza..." autocomplete="off" spellcheck="false">
+            <span class="api-key-mask" id="apiKeyGoogleMask">Not set</span>
+          </div>
+        </div>
+      </div>
+      <div class="settings-actions">
+        <button class="btn btn-sm" id="saveApiKeysBtn" title="Save API keys to .env file">Save API Keys</button>
+        <span class="api-key-status" id="apiKeyStatus"></span>
+      </div>
+      <div class="api-key-info">Keys stored in .env (gitignored). Restart required after changes.</div>
+    </div>
   </div>
 
   <div class="friction-panel" id="frictionPanel">
