@@ -99,6 +99,7 @@ describe('Terminal Injection', () => {
       lastTypedTime,
       messageQueue,
       isCodexPane: jest.fn().mockReturnValue(false),
+      isGeminiPane: jest.fn().mockReturnValue(false),  // Session 67: Added for Gemini PTY path
       buildCodexExecPrompt: jest.fn((id, text) => `prompt: ${text}`),
       isIdle: jest.fn().mockReturnValue(true),
       isIdleForForceInject: jest.fn().mockReturnValue(true),
@@ -459,6 +460,22 @@ describe('Terminal Injection', () => {
       expect(messageQueue['1'].length).toBe(1);
     });
 
+    // Session 67: Gemini bypasses global lock (like Codex)
+    test('Gemini pane bypasses injection lock', () => {
+      messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
+      mockOptions.getInjectionInFlight.mockReturnValue(true);
+      mockOptions.isGeminiPane.mockReturnValue(true);
+
+      controller.processIdleQueue('1');
+
+      // Gemini should bypass lock and process message
+      expect(messageQueue['1'].length).toBe(0); // Message dequeued
+      expect(mockLog.debug).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('Gemini pane bypassing global lock')
+      );
+    });
+
     test('processes string message in queue', () => {
       messageQueue['1'] = ['test message\r'];
 
@@ -614,6 +631,38 @@ describe('Terminal Injection', () => {
       expect(mockLog.error).toHaveBeenCalledWith(
         expect.stringContaining('doSendToPane'),
         expect.stringContaining('Codex exec failed'),
+        expect.any(Error)
+      );
+    });
+
+    // Session 67: Gemini PTY path tests
+    test('handles Gemini pane with PTY \\r path', async () => {
+      mockOptions.isGeminiPane.mockReturnValue(true);
+      const onComplete = jest.fn();
+
+      await controller.doSendToPane('1', 'test command\r', onComplete);
+
+      // Gemini uses PTY write with \r, not sendTrustedEnter
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\x15'); // Clear line
+      expect(mockPty.write).toHaveBeenCalledWith('1', 'test command\r'); // Text + \r
+      expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
+      expect(onComplete).toHaveBeenCalledWith({ success: true });
+      // Should NOT use sendTrustedEnter (that's the Claude path)
+      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
+    });
+
+    test('handles Gemini PTY write failure', async () => {
+      mockOptions.isGeminiPane.mockReturnValue(true);
+      mockPty.write.mockResolvedValueOnce(undefined) // Clear-line succeeds
+        .mockRejectedValueOnce(new Error('Write failed')); // Text write fails
+      const onComplete = jest.fn();
+
+      await controller.doSendToPane('1', 'test\r', onComplete);
+
+      expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'pty_write_failed' });
+      expect(mockLog.error).toHaveBeenCalledWith(
+        expect.stringContaining('doSendToPane'),
+        expect.stringContaining('Gemini PTY write failed'),
         expect.any(Error)
       );
     });

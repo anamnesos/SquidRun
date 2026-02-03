@@ -13,7 +13,7 @@ function createInjectionController(options = {}) {
     lastTypedTime,
     messageQueue,
     isCodexPane,
-    // isGeminiPane removed - Session 62: Gemini uses Claude path (sendTrustedEnter)
+    isGeminiPane,  // Session 67: Re-enabled - Gemini CLI accepts PTY \r unlike Claude's ink TUI
     buildCodexExecPrompt,
     isIdle,
     isIdleForForceInject,
@@ -290,17 +290,18 @@ function createInjectionController(options = {}) {
     const id = String(paneId);
     const isCodex = isCodexPane(id);
 
-    // Global lock applies to Claude/Gemini panes (need focus for sendTrustedEnter)
-    // Only Codex bypasses - uses codex-exec API, no PTY/focus needed
-    // Session 62: Gemini no longer bypasses - uses sendTrustedEnter like Claude
-    const bypassesLock = isCodex;
+    // Global lock applies to Claude panes only (need focus for sendTrustedEnter)
+    // Codex bypasses - uses codex-exec API, no PTY/focus needed
+    // Session 67: Gemini also bypasses - uses PTY \r directly, no focus needed
+    const isGemini = isGeminiPane(id);
+    const bypassesLock = isCodex || isGemini;
     if (!bypassesLock && getInjectionInFlight()) {
-      log.debug(`processQueue ${id}`, 'Claude/Gemini pane deferred - injection in flight');
+      log.debug(`processQueue ${id}`, 'Claude pane deferred - injection in flight');
       setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
       return;
     }
     if (bypassesLock && getInjectionInFlight()) {
-      log.debug(`processQueue ${id}`, 'Codex pane bypassing global lock');
+      log.debug(`processQueue ${id}`, `${isCodex ? 'Codex' : 'Gemini'} pane bypassing global lock`);
     }
     const queue = messageQueue[paneId];
     if (!queue || queue.length === 0) return;
@@ -342,7 +343,7 @@ function createInjectionController(options = {}) {
       } else if (canForceInject && !canSendNormal) {
         log.info(`Terminal ${paneId}`, `Force-injecting after ${waitTime}ms wait (pane now idle for 500ms)`);
       }
-      // Only set global lock for Claude/Gemini panes (Codex uses exec API, no focus needed)
+      // Only set global lock for Claude panes (Codex/Gemini use focus-free paths)
       if (!bypassesLock) {
         setInjectionInFlight(true);
       }
@@ -416,8 +417,37 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // CLAUDE/GEMINI PATH: Hybrid approach (PTY write for text + DOM keyboard for Enter)
-    // Session 62: Gemini also uses Ink TUI that ignores PTY \r - removed "fast path"
+    // GEMINI PATH: Simple PTY write with \r (Session 67)
+    // Unlike Claude Code's ink TUI, Gemini CLI is a standard readline-based CLI
+    // that accepts PTY carriage return for Enter submission
+    const isGemini = isGeminiPane(id);
+    if (isGemini) {
+      log.info(`doSendToPane ${id}`, 'Gemini pane: using PTY \\r path');
+
+      // Clear any stuck input first (Ctrl+U)
+      try {
+        await window.hivemind.pty.write(id, '\x15');
+        log.debug(`doSendToPane ${id}`, 'Gemini pane: cleared input line (Ctrl+U)');
+      } catch (err) {
+        log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
+      }
+
+      // Write text + \r in one PTY write (Gemini accepts PTY \r)
+      const fullMessage = hasTrailingEnter ? text + '\r' : text;
+      try {
+        await window.hivemind.pty.write(id, fullMessage);
+        log.info(`doSendToPane ${id}`, `Gemini pane: PTY write complete (${fullMessage.length} chars)`);
+        updatePaneStatus(id, 'Working');
+        lastTypedTime[id] = Date.now();
+        finishWithClear({ success: true });
+      } catch (err) {
+        log.error(`doSendToPane ${id}`, 'Gemini PTY write failed:', err);
+        finishWithClear({ success: false, reason: 'pty_write_failed' });
+      }
+      return;
+    }
+
+    // CLAUDE PATH: Hybrid approach (PTY write for text + DOM keyboard for Enter)
     // PTY \r does NOT auto-submit in Claude Code's ink TUI (PTY newline ignored)
     // sendTrustedEnter() sends native keyboard events via Electron which WORKS
     const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
