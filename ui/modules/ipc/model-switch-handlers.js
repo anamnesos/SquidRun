@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
 const { PANE_ROLES } = require('../../config');
+const { getSDKBridge } = require('../sdk-bridge');
 
 const VALID_PANE_IDS = ['1', '2', '3', '4', '5', '6'];
 const TRIGGERS_PATH = path.join(__dirname, '..', '..', '..', 'workspace', 'triggers');
@@ -96,6 +97,16 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
     }
 
     log.info('ModelSwitch', `Pane ${paneId} now set to ${model}`);
+
+    // Update SDK bridge's internal model tracking (for SDK mode consistency)
+    try {
+      const sdkBridge = getSDKBridge();
+      if (sdkBridge && typeof sdkBridge.setModelForPane === 'function') {
+        sdkBridge.setModelForPane(id, model);
+      }
+    } catch (err) {
+      log.warn('ModelSwitch', `Failed to update SDK bridge: ${err.message}`);
+    }
 
     // Broadcast model switch to all agents
     const role = (PANE_ROLES && PANE_ROLES[id]) || `Pane ${id}`;

@@ -42,6 +42,12 @@ jest.mock('@xterm/addon-search', () => ({
   })),
 }));
 
+// Mock settings module (used by isCodexFromSettings)
+const mockSettings = {
+  getSettings: jest.fn().mockReturnValue({ paneCommands: {} }),
+};
+jest.mock('../modules/settings', () => mockSettings);
+
 // Mock window.hivemind
 const mockHivemind = {
   pty: {
@@ -307,7 +313,7 @@ describe('terminal.js module', () => {
     });
 
     test('isCodexPane should check settings fallback', () => {
-      mockHivemind.settings.get.mockReturnValue({
+      mockSettings.getSettings.mockReturnValue({
         paneCommands: { '2': 'codex --mode exec' },
       });
 
