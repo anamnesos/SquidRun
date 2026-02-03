@@ -441,11 +441,15 @@ function createCodexExecRunner(options = {}) {
       : ['exec', '--json', '--dangerously-bypass-approvals-and-sandbox', '--cd', workDir, '-'];
 
     logInfo(`[CodexExec] Spawning for pane ${paneId} (cwd: ${workDir})`);
+    // Explicitly specify shell path to avoid ENOENT when ComSpec not set
+    const shellPath = process.platform === 'win32'
+      ? (process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe')
+      : true;
     const child = spawn('codex', execArgs, {
       cwd: workDir,
       env: process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: true,
+      shell: shellPath,
       windowsHide: true,
     });
 
@@ -467,6 +471,16 @@ function createCodexExecRunner(options = {}) {
 
     child.stderr.on('data', (chunk) => {
       const errText = chunk.toString();
+
+      // Detect stale session error - clear session ID and retry with fresh session
+      if (errText.includes('Session not found') || errText.includes('session not found')) {
+        logWarn(`[CodexExec] Stale session detected for pane ${paneId}, will retry with fresh session`);
+        terminal.codexSessionId = null;
+        terminal.codexHasSession = false;
+        terminal.staleSessionRetry = prompt; // Store original prompt for retry
+        return; // Don't display error, we'll retry
+      }
+
       const msg = `\r\n[Codex exec stderr] ${errText}\r\n`;
       broadcast({ event: 'data', paneId, data: msg });
       appendScrollback(terminal, msg);
@@ -486,6 +500,20 @@ function createCodexExecRunner(options = {}) {
       }
       terminal.execProcess = null;
       terminal.lastActivity = Date.now();
+
+      // If we had a stale session error, retry with fresh session
+      if (terminal.staleSessionRetry) {
+        const retryPrompt = terminal.staleSessionRetry;
+        terminal.staleSessionRetry = null;
+        logInfo(`[CodexExec] Retrying pane ${paneId} with fresh session`);
+        const retryMsg = `\r\n${ANSI.YELLOW}[Retrying with fresh session...]${ANSI.RESET}\r\n`;
+        broadcast({ event: 'data', paneId, data: retryMsg });
+        appendScrollback(terminal, retryMsg);
+        // Small delay to ensure cleanup, then retry
+        setTimeout(() => runCodexExec(paneId, terminal, retryPrompt), 100);
+        return;
+      }
+
       emitDoneOnce(terminal, paneId, code);
     });
 
