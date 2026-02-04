@@ -406,9 +406,10 @@ function formatMessage(message) {
     const content = message.content || message.message || '';
     const displayContent = typeof content === 'string' ? content : JSON.stringify(content);
 
-    // Detect agent prefix: (ARCHITECT): (ORCHESTRATOR): (IMPLEMENTER-A #5): (INVESTIGATOR): (REVIEWER #12):
+    // Detect agent prefix: (ARCH): (FRONT #5): (ARCHITECT): etc.
     // Format: (ROLE) or (ROLE #N) where N is the sequence number
-    const agentMatch = displayContent.match(/^\((ARCHITECT|LEAD|ORCHESTRATOR|IMPLEMENTER-?A|IMPLEMENTER-?B|WORKER-?A|WORKER-?B|INVESTIGATOR|REVIEWER)(?:\s*#(\d+))?\):\s*/i);
+    // Supports: short names (ARCH, FRONT, BACK, ANA, REV) + full names + legacy names
+    const agentMatch = displayContent.match(/^\((ARCH|ARCHITECT|LEAD|INFRA|ORCHESTRATOR|FRONT|FRONTEND|IMPLEMENTER-?A|WORKER-?A|BACK|BACKEND|IMPLEMENTER-?B|WORKER-?B|ANA|ANALYST|INVESTIGATOR|REV|REVIEWER)(?:\s*#(\d+))?\):\s*/i);
 
     if (agentMatch) {
       // This is a trigger message from another agent
@@ -416,27 +417,34 @@ function formatMessage(message) {
       const seqNum = agentMatch[2] ? parseInt(agentMatch[2], 10) : null;
       const actualMessage = displayContent.slice(agentMatch[0].length);
       const roleConfig = {
-        'ARCHITECT': { class: 'lead', label: 'Architect' },
-        'LEAD': { class: 'lead', label: 'Architect' },
+        // Pane 1: Architect (short: Arch, legacy: Lead)
+        'ARCH': { class: 'lead', label: 'Arch' },
+        'ARCHITECT': { class: 'lead', label: 'Arch' },
+        'LEAD': { class: 'lead', label: 'Arch' },
         // Pane 2: Infra (legacy: Orchestrator)
         'INFRA': { class: 'infra', label: 'Infra' },
         'ORCHESTRATOR': { class: 'infra', label: 'Infra' },
-        // Pane 3: Frontend (legacy: Worker A, Implementer A)
-        'FRONTEND': { class: 'frontend', label: 'Frontend' },
-        'IMPLEMENTER-A': { class: 'frontend', label: 'Frontend' },
-        'IMPLEMENTERA': { class: 'frontend', label: 'Frontend' },
-        'WORKER-A': { class: 'frontend', label: 'Frontend' },
-        'WORKERA': { class: 'frontend', label: 'Frontend' },
-        // Pane 4: Backend (legacy: Worker B, Implementer B)
-        'BACKEND': { class: 'backend', label: 'Backend' },
-        'IMPLEMENTER-B': { class: 'backend', label: 'Backend' },
-        'IMPLEMENTERB': { class: 'backend', label: 'Backend' },
-        'WORKER-B': { class: 'backend', label: 'Backend' },
-        'WORKERB': { class: 'backend', label: 'Backend' },
-        // Pane 5: Analyst (legacy: Investigator)
-        'ANALYST': { class: 'analyst', label: 'Analyst' },
-        'INVESTIGATOR': { class: 'analyst', label: 'Analyst' },
-        'REVIEWER': { class: 'reviewer', label: 'Reviewer' }
+        // Pane 3: Frontend (short: Front, legacy: Worker A, Implementer A)
+        'FRONT': { class: 'frontend', label: 'Front' },
+        'FRONTEND': { class: 'frontend', label: 'Front' },
+        'IMPLEMENTER-A': { class: 'frontend', label: 'Front' },
+        'IMPLEMENTERA': { class: 'frontend', label: 'Front' },
+        'WORKER-A': { class: 'frontend', label: 'Front' },
+        'WORKERA': { class: 'frontend', label: 'Front' },
+        // Pane 4: Backend (short: Back, legacy: Worker B, Implementer B)
+        'BACK': { class: 'backend', label: 'Back' },
+        'BACKEND': { class: 'backend', label: 'Back' },
+        'IMPLEMENTER-B': { class: 'backend', label: 'Back' },
+        'IMPLEMENTERB': { class: 'backend', label: 'Back' },
+        'WORKER-B': { class: 'backend', label: 'Back' },
+        'WORKERB': { class: 'backend', label: 'Back' },
+        // Pane 5: Analyst (short: Ana, legacy: Investigator)
+        'ANA': { class: 'analyst', label: 'Ana' },
+        'ANALYST': { class: 'analyst', label: 'Ana' },
+        'INVESTIGATOR': { class: 'analyst', label: 'Ana' },
+        // Pane 6: Reviewer (short: Rev)
+        'REV': { class: 'reviewer', label: 'Rev' },
+        'REVIEWER': { class: 'reviewer', label: 'Rev' }
       };
       const config = roleConfig[role] || roleConfig['LEAD'];
       // Display label with sequence number if present: "Lead #7" or just "Lead"
