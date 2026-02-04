@@ -44,12 +44,12 @@ node D:/projects/hivemind/ui/scripts/hm-send.js architect "(INFRA #1): Task comp
 
 If you are **Frontend** and need to message Reviewer:
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js reviewer "(FRONTEND #1): Please review changes to renderer.js"
+node D:/projects/hivemind/ui/scripts/hm-send.js reviewer "(FRONT #1): Please review changes to renderer.js"
 ```
 
 If you are **Backend** and received a roll call:
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(BACKEND #1): Backend online. Standing by."
+node D:/projects/hivemind/ui/scripts/hm-send.js architect "(BACK #1): Backend online. Standing by."
 ```
 
 ### Message Format
@@ -61,7 +61,7 @@ Start from `#1` each session. Never reuse a number.
 
 ## CRITICAL: When Another Agent Messages You
 
-When you receive a message like `(ARCHITECT #1): Roll call - report status`:
+When you receive a message like `(ARCH #1): Roll call - report status`:
 
 1. **DO NOT just respond in your terminal** - the agent cannot see your terminal
 2. **RUN the hm-send.js command** to reply to them

@@ -71,7 +71,7 @@ This means:
 
 ### 🚨 RECOGNIZE MESSAGE ACCUMULATION BUG (CLAUDE PANES ONLY)
 
-**This affects Claude panes (1, 3, 6). Codex exec panes (2, 4, 5) are unaffected.**
+**This affects Claude panes only. Check `ui/settings.json` → `paneCommands` to see which panes run Claude.**
 
 **The Bug Pattern:** Multiple agent messages arriving in ONE conversation turn:
 ```
@@ -147,16 +147,16 @@ If running in SDK mode (not PTY terminals):
 
 ## Roles and Ownership
 
-| Pane | Role | Model | Domain | Trigger File |
-|------|------|-------|--------|--------------|
-| 1 | **Architect** | Claude | Architecture, coordination, delegation, git commits | architect.txt |
-| 2 | **Infra** | Codex | CI/CD, deployment, build scripts, infrastructure | infra.txt |
-| 3 | **Frontend** | Claude | UI components, renderer.js, index.html, CSS | frontend.txt |
-| 4 | **Backend** | Codex | Daemon, processes, file watching, main.js internals | backend.txt |
-| 5 | **Analyst** | Gemini | Debugging, profiling, root cause analysis, investigations | analyst.txt |
-| 6 | **Reviewer** | Claude | Code review, verification, quality gates | reviewer.txt |
+| Pane | Role | Domain | Trigger File |
+|------|------|--------|--------------|
+| 1 | **Architect** | Architecture, coordination, delegation, git commits | architect.txt |
+| 2 | **Infra** | CI/CD, deployment, build scripts, infrastructure | infra.txt |
+| 3 | **Frontend** | UI components, renderer.js, index.html, CSS | frontend.txt |
+| 4 | **Backend** | Daemon, processes, file watching, main.js internals | backend.txt |
+| 5 | **Analyst** | Debugging, profiling, root cause analysis, investigations | analyst.txt |
+| 6 | **Reviewer** | Code review, verification, quality gates | reviewer.txt |
 
-**Note:** Old trigger names (lead.txt, orchestrator.txt, worker-a.txt, worker-b.txt, investigator.txt) still work during transition.
+**Models are configured dynamically.** To see what model runs in each pane, read `ui/settings.json` → `paneCommands` field. DO NOT assume models from docs - they change.
 
 ---
 
@@ -209,16 +209,16 @@ If running in SDK mode (not PTY terminals):
 
 **Terminal output is for talking to the USER. Trigger files are for talking to OTHER AGENTS.**
 
-When you receive a message FROM another agent (prefixed with their role like `(ARCHITECT):` or `(FRONTEND):`):
+When you receive a message FROM another agent (prefixed with their role like `(ARCH):` or `(FRONT):`):
 1. **DO NOT respond in terminal output** - the user is not your audience
 2. **MUST reply via trigger file** - write to their trigger file
 3. Format: `(YOUR-ROLE): Your response here`
 
 Example:
-- You receive in terminal: `(ARCHITECT): Please review the auth changes`
+- You receive in terminal: `(ARCH): Please review the auth changes`
 - You reply by writing to `D:\projects\hivemind\workspace\triggers\architect.txt`:
   ```
-  (BACKEND): Reviewed. Found 2 issues, see blockers.md
+  (BACK): Reviewed. Found 2 issues, see blockers.md
   ```
 
 **This is MANDATORY. Responding to agents via terminal output defeats the entire purpose of multi-agent coordination.**
@@ -279,27 +279,33 @@ Re-read blockers.md. Another instance may have found issues with your code.
 
 ### Triggering Other Agents Directly (USE THIS!)
 
-To send a message directly to another agent's terminal, write to `workspace/triggers/`:
+**Use WebSocket messaging via `hm-send.js` - faster and more reliable than file triggers.**
 
-| File | Targets |
-|------|---------|
-| `D:\projects\hivemind\workspace\triggers\architect.txt` | Architect (pane 1) |
-| `D:\projects\hivemind\workspace\triggers\infra.txt` | Infra (pane 2) |
-| `D:\projects\hivemind\workspace\triggers\frontend.txt` | Frontend (pane 3) |
-| `D:\projects\hivemind\workspace\triggers\backend.txt` | Backend (pane 4) |
-| `D:\projects\hivemind\workspace\triggers\analyst.txt` | Analyst (pane 5) |
-| `D:\projects\hivemind\workspace\triggers\reviewer.txt` | Reviewer (pane 6) |
-| `D:\projects\hivemind\workspace\triggers\workers.txt` | Frontend + Backend (panes 3+4) |
-| `D:\projects\hivemind\workspace\triggers\implementers.txt` | Infra + Frontend + Backend (panes 2+3+4) |
-| `D:\projects\hivemind\workspace\triggers\all.txt` | All agents |
-| `D:\projects\hivemind\workspace\triggers\others-{role}.txt` | Everyone except sender |
+```bash
+node D:/projects/hivemind/ui/scripts/hm-send.js <target> "<message>"
+```
 
-The file watcher detects changes and injects the content into the target terminal(s). The file is cleared after sending.
+| Target | Reaches |
+|--------|---------|
+| `architect` | Architect (pane 1) |
+| `infra` | Infra (pane 2) |
+| `frontend` | Frontend (pane 3) |
+| `backend` | Backend (pane 4) |
+| `analyst` | Analyst (pane 5) |
+| `reviewer` | Reviewer (pane 6) |
+| `1` - `6` | Pane by number |
 
 **Example:** To tell Architect about a bug:
+```bash
+node D:/projects/hivemind/ui/scripts/hm-send.js architect "(YOUR-ROLE #1): BUG: Fix needed in main.js line 50"
 ```
-echo "(YOUR-ROLE #1): BUG: Fix needed in main.js line 50" > "D:\projects\hivemind\workspace\triggers\architect.txt"
-```
+
+**Why WebSocket over file triggers:**
+- Zero message loss (file triggers lose 40%+ under rapid messaging)
+- Faster delivery (~10ms vs 500ms+ file watcher debounce)
+- No path resolution bugs (Codex agents had issues with relative paths)
+
+**File triggers still work** as fallback: write to `workspace/triggers/{role}.txt`
 
 ### ⚠️ Message Sequence Numbers (IMPORTANT)
 
@@ -308,54 +314,19 @@ Messages use sequence numbers to prevent duplicates: `(ROLE #N): message`
 **The app resets sequence tracking on every restart.** This means:
 - You can start from `#1` each session
 - Don't worry about what sequence numbers were used before
-- The format is: `(ARCHITECT #1):`, `(FRONTEND #2):`, etc.
-
-**If your messages aren't going through:**
-1. Check the npm console for `[Trigger] SKIPPED duplicate`
-2. If you see that, use a higher sequence number
-3. This should NOT happen after the Jan 2026 fix, but if it does, restart the app
-
-**Technical detail:** `workspace/message-state.json` tracks sequences but resets `lastSeen` on app startup to prevent stale blocking.
-
-### ⚠️ CRITICAL: Use Absolute Paths (Codex Agents)
-
-**Codex agents run from instance folders, not workspace root.**
-
-If you use relative paths like `workspace/triggers/architect.txt`, they resolve WRONG:
-- Expected: `D:\projects\hivemind\workspace\triggers\architect.txt`
-- Actual: `D:\projects\hivemind\workspace\instances\YOUR-FOLDER\workspace\triggers\architect.txt`
-
-**Messages go to a ghost folder nobody watches. Use absolute paths.**
+- The format is: `(ARCH #1):`, `(FRONT #2):`, `(BACK #3):`, `(ANA #4):`, `(REV #5):`, `(INFRA #6):`
 
 ### 🔧 Message Not Received - Diagnostic Checklist
 
-When an agent's message doesn't arrive, investigate in this order:
+If using WebSocket (`hm-send.js`) and message doesn't arrive:
+1. Is Hivemind running? (WebSocket server on port 9900)
+2. Check console.log for `[Inject] Received inject-message`
+3. Is target pane busy? Messages queue until pane is idle
 
-**STEP 1: VERIFY SENDER MECHANICS**
-- [ ] What is sender's working directory? (`pwd`)
-- [ ] What exact command did sender run?
-- [ ] `ls -la` the TARGET path - does file exist?
-- [ ] `cat` the file - what's the content?
-
-**STEP 2: VERIFY PATH RESOLUTION**
-- [ ] Is the path ABSOLUTE (`D:\projects\...`) or relative?
-- [ ] If relative, where does it resolve from sender's cwd?
-- [ ] Check for ghost files: `ls workspace/instances/*/workspace/triggers/`
-
-**STEP 3: VERIFY WATCHER**
-- [ ] Check npm console for "file changed" events
-- [ ] Check for "SKIPPED duplicate" warnings
-- [ ] Is watcher watching correct directory?
-
-**STEP 4: VERIFY RECEIVER**
-- [ ] Is receiver pane running?
-- [ ] Did receiver show any input injection?
-- [ ] Check receiver's terminal output
-
-**STEP 5: CROSS-CHECK**
-- [ ] Have sender `ls` the absolute trigger path
-- [ ] Have receiver `ls` the same path
-- [ ] Compare - same files visible?
+If using file triggers (fallback) and message doesn't arrive:
+1. Use absolute paths: `D:\projects\hivemind\workspace\triggers\{role}.txt`
+2. Check npm console for `[Trigger] SKIPPED duplicate`
+3. Codex agents: relative paths resolve wrong - always use absolute
 
 ---
 

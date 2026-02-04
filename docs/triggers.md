@@ -63,7 +63,7 @@ Every message must use this exact format:
 
 **Rules:**
 - `ROLE` is the **sender's role**, not the target's role.
-  - Example: Reviewer -> Architect writes `(REVIEWER #12): ...` into `architect.txt`.
+  - Example: Reviewer -> Architect writes `(REV #12): ...` into `architect.txt`.
 - `#N` must increment per sender. Duplicates are ignored.
 - Start at `#1` each session.
 
@@ -75,7 +75,7 @@ Every message must use this exact format:
 
 **Broadcast:**
 ```
-"(ARCHITECT #1): update" | Set-Content -Path "D:\projects\hivemind\workspace\triggers\all.txt"
+"(ARCH #1): update" | Set-Content -Path "D:\projects\hivemind\workspace\triggers\all.txt"
 ```
 
 ## Bash examples
@@ -87,7 +87,7 @@ echo "(INFRA #1): message" > "/path/to/workspace/triggers/architect.txt"
 **Heredoc (multi-line):**
 ```
 cat <<'EOF' > "/path/to/workspace/triggers/architect.txt"
-(ANALYST #3): line one
+(ANA #3): line one
 line two
 EOF
 ```
