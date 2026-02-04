@@ -724,7 +724,7 @@ function createOrganicUI(options = {}) {
 
     const content = document.createElement('span');
     content.className = 'war-room-content';
-    content.textContent = msg || '';
+    content.textContent = stripAnsi(msg || '');
 
     line.appendChild(prefix);
     line.appendChild(content);
