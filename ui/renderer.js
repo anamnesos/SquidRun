@@ -57,7 +57,8 @@ function wireOrganicInput() {
     if (value) {
       if (sendBroadcastFn(value)) {
         organicUIInstance.input.value = '';
-        organicUIInstance.appendToCommandCenter(`> ${value}`);
+        // No need to append manually - sendBroadcastFn triggers triggers.broadcastToAllAgents
+        // which emits 'war-room-message' IPC, handled below by the standard stream handler.
       }
     }
   };

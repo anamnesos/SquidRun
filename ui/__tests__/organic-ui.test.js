@@ -12,12 +12,33 @@ let styleElement = null;
 function createMockElement(tagName = 'div') {
   const children = [];
   const classListSet = new Set();
+  let _innerHTML = '';
+  let _textContent = '';
 
   const el = {
     tagName: tagName.toUpperCase(),
     className: '',
-    innerHTML: '',
-    textContent: '',
+    get innerHTML() { return _innerHTML; },
+    set innerHTML(val) {
+      _innerHTML = val;
+      if (val === '') {
+        _textContent = '';
+        children.length = 0;
+      }
+    },
+    get textContent() { 
+      if (children.length > 0) {
+        return children.map(c => c.textContent).join('');
+      }
+      return _textContent; 
+    },
+    set textContent(val) {
+      _textContent = val;
+      if (val === '') {
+        _innerHTML = '';
+        children.length = 0;
+      }
+    },
     id: '',
     dataset: {},
     style: {

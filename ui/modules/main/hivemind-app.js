@@ -82,27 +82,23 @@ class HivemindApp {
       await websocketServer.start({
         port: websocketServer.DEFAULT_PORT,
         onMessage: (data) => {
-          log.info('WebSocket', `Message from ${data.role || data.paneId}: ${JSON.stringify(data.message).substring(0, 100)}`);
+          log.info('WebSocket', `Message from ${data.role || data.paneId || 'unknown'}: ${JSON.stringify(data.message).substring(0, 100)}`);
 
-          // Route WebSocket messages to terminal injection
-          if (data.message && data.message.type === 'send' && this.ctx.mainWindow) {
-            const target = data.message.target;
-            const content = data.message.content;
-            const priority = data.message.priority || 'normal';
+          if (!data.message) return;
 
-            // Resolve target to paneId (could be role name or paneId)
+          // Route WebSocket messages via triggers module (handles War Room + delivery)
+          if (data.message.type === 'send') {
+            const { target, content } = data.message;
             const paneId = this.resolveTargetToPane(target);
             if (paneId) {
-              log.info('WebSocket', `Routing to pane ${paneId}: ${content.substring(0, 50)}...`);
-              this.ctx.mainWindow.webContents.send('inject-message', {
-                panes: [paneId],
-                message: content + '\r',
-                source: 'websocket',
-                priority
-              });
+              log.info('WebSocket', `Routing 'send' to pane ${paneId} (via triggers)`);
+              triggers.sendDirectMessage([String(paneId)], content, data.role || 'unknown');
             } else {
-              log.warn('WebSocket', `Unknown target: ${target}`);
+              log.warn('WebSocket', `Unknown target for 'send': ${target}`);
             }
+          } else if (data.message.type === 'broadcast') {
+            log.info('WebSocket', `Routing 'broadcast' (via triggers)`);
+            triggers.broadcastToAllAgents(data.message.content);
           }
         }
       });

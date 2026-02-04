@@ -603,7 +603,6 @@ function sanitizeWarRoomMessage(message) {
   if (!message) return '';
   return String(message)
     .replace(/\r\n/g, '\n')
-    .replace(/\s+/g, ' ')
     .trim();
 }
 

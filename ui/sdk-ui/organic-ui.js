@@ -682,12 +682,19 @@ function createOrganicUI(options = {}) {
 
   // Append to command center (War Room) - raw text (legacy API)
   const appendToCommandCenter = text => {
+    if (!text) return;
+
     // Clear placeholder on first real message
     if (!placeholderCleared) {
-      commandContent.textContent = '';
+      commandContent.innerHTML = '';
       placeholderCleared = true;
     }
-    commandContent.textContent += text;
+
+    const line = document.createElement('div');
+    line.className = 'war-room-message is-raw';
+    line.textContent = stripAnsi(text);
+    commandContent.appendChild(line);
+
     // Keep scrolled to bottom
     commandContent.scrollTop = commandContent.scrollHeight;
   };
