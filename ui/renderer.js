@@ -12,6 +12,7 @@ const tabs = require('./modules/tabs');
 const settings = require('./modules/settings');
 const daemonHandlers = require('./modules/daemon-handlers');
 const sdkRenderer = require('./modules/sdk-renderer');
+const { createOrganicUI } = require('./sdk-ui/organic-ui');
 const { showStatusNotice } = require('./modules/notifications');
 const { formatTimeSince } = require('./modules/formatters');
 const {
@@ -27,6 +28,78 @@ const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListene
 
 // SDK mode flag - when true, use SDK renderer instead of xterm terminals
 let sdkMode = false;
+
+// Organic UI instance for SDK mode
+let organicUIInstance = null;
+
+// Reference to sendBroadcast (set after DOMContentLoaded)
+let sendBroadcastFn = null;
+
+/**
+ * Wire up organic UI input to send messages
+ * Called after organic UI is mounted and sendBroadcast is available
+ */
+function wireOrganicInput() {
+  log.info('SDK', `wireOrganicInput called: instance=${!!organicUIInstance}, input=${!!organicUIInstance?.input}, sendFn=${!!sendBroadcastFn}`);
+  if (!organicUIInstance || !organicUIInstance.input || !sendBroadcastFn) {
+    log.info('SDK', 'wireOrganicInput: missing dependency, skipping');
+    return;
+  }
+  // Prevent double-wiring
+  if (organicUIInstance._inputWired) {
+    log.info('SDK', 'wireOrganicInput: already wired, skipping');
+    return;
+  }
+  organicUIInstance._inputWired = true;
+
+  const handleSubmit = () => {
+    const value = organicUIInstance.input.value?.trim();
+    if (value) {
+      if (sendBroadcastFn(value)) {
+        organicUIInstance.input.value = '';
+        organicUIInstance.appendToCommandCenter(`> ${value}`);
+      }
+    }
+  };
+
+  organicUIInstance.input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && e.isTrusted) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  });
+
+  organicUIInstance.sendBtn.addEventListener('click', (e) => {
+    if (e.isTrusted) {
+      handleSubmit();
+    }
+  });
+
+  log.info('SDK', 'Organic UI input wired');
+}
+
+/**
+ * Update agent state in organic UI
+ * @param {string} paneId - Pane ID or agent ID
+ * @param {string} activityState - Activity state (ready, thinking, tool, etc.)
+ */
+function updateOrganicState(paneId, activityState) {
+  if (!organicUIInstance) return;
+  // Map activity states to organic UI states
+  const stateMap = {
+    ready: 'idle',
+    idle: 'idle',
+    done: 'idle',
+    thinking: 'thinking',
+    responding: 'thinking',  // SDK sends 'responding' when generating output
+    tool: 'thinking',
+    command: 'thinking',
+    file: 'thinking',
+    streaming: 'thinking',
+  };
+  const state = stateMap[activityState] || activityState;
+  organicUIInstance.updateState(paneId, state);
+}
 
 // Centralized SDK mode setter - ensures renderer-process flags stay in sync
 // Renderer flags: renderer.sdkMode, daemonHandlers.sdkModeEnabled, terminal.sdkModeActive, settings.sdkMode
@@ -183,13 +256,29 @@ function markTerminalsReady(isSDKMode = false) {
   initState.terminalsReady = true;
   log.info('Init', `Terminals ready, SDK mode: ${isSDKMode}`);
 
-  // SDK Mode: Initialize SDK panes and start sessions
+  // SDK Mode: Initialize organic bubble UI and start sessions
   if (isSDKMode) {
-    log.info('Init', 'Initializing SDK mode...');
+    log.info('Init', 'Initializing SDK mode (organic UI)...');
     setSDKMode(true, { persist: false, source: 'daemon-ready' });  // Centralized - sets all 4 SDK mode flags
-    sdkRenderer.setSDKPaneConfig();
-    applySDKPaneLayout();
-    sdkRenderer.initAllSDKPanes();
+
+    // Mount organic bubble canvas
+    const terminalsSection = document.getElementById('terminalsSection');
+    const paneLayout = terminalsSection?.querySelector('.pane-layout');
+    if (paneLayout) {
+      paneLayout.style.display = 'none';
+    }
+
+    // Hide PTY command bar (organic UI has its own input)
+    const commandBar = document.querySelector('.command-bar');
+    if (commandBar) {
+      commandBar.style.display = 'none';
+    }
+
+    if (terminalsSection && !organicUIInstance) {
+      organicUIInstance = createOrganicUI({ mount: terminalsSection });
+      log.info('Init', 'Organic UI mounted');
+      wireOrganicInput();  // Wire up input handlers
+    }
 
     // Auto-start SDK sessions (get workspace path via IPC)
     log.info('Init', 'Auto-starting SDK sessions...');
@@ -269,14 +358,51 @@ window.hivemind = {
         return;
       }
       setSDKMode(true, { source: 'sdk-enable' });  // Centralized - sets all 4 SDK mode flags
-      sdkRenderer.setSDKPaneConfig();
-      applySDKPaneLayout();
-      sdkRenderer.initAllSDKPanes();
-      log.info('SDK', 'Mode enabled');
+
+      // Mount organic UI
+      const terminalsSection = document.getElementById('terminalsSection');
+      const paneLayout = terminalsSection?.querySelector('.pane-layout');
+      if (paneLayout) {
+        paneLayout.style.display = 'none';
+      }
+
+      // Hide PTY command bar (organic UI has its own input)
+      const commandBar = document.querySelector('.command-bar');
+      if (commandBar) {
+        commandBar.style.display = 'none';
+      }
+
+      if (terminalsSection && !organicUIInstance) {
+        organicUIInstance = createOrganicUI({ mount: terminalsSection });
+        log.info('SDK', 'Organic UI mounted');
+        wireOrganicInput();  // Wire up input handlers
+      }
+
+      log.info('SDK', 'Mode enabled (organic UI v2)');
     },
     disableMode: () => {
       setSDKMode(false, { source: 'sdk-disable' });  // Centralized - clears all 4 SDK mode flags
-      log.info('SDK', 'Mode disabled');
+
+      // Unmount organic UI and restore pane layout
+      if (organicUIInstance) {
+        organicUIInstance.destroy();
+        organicUIInstance = null;
+        log.info('SDK', 'Organic UI destroyed');
+      }
+
+      const terminalsSection = document.getElementById('terminalsSection');
+      const paneLayout = terminalsSection?.querySelector('.pane-layout');
+      if (paneLayout) {
+        paneLayout.style.display = '';
+      }
+
+      // Restore PTY command bar
+      const commandBar = document.querySelector('.command-bar');
+      if (commandBar) {
+        commandBar.style.display = '';
+      }
+
+      log.info('SDK', 'Mode disabled (restored pane layout)');
     },
     // SDK status functions (exposed for external use)
     updateStatus: (paneId, state) => updateSDKStatus(paneId, state),
@@ -555,6 +681,9 @@ function updateSDKStatus(paneId, state) {
   if (state !== 'idle' && state !== 'disconnected') {
     trackPaneActivity(paneId, true);
   }
+
+  // Update organic UI visual state
+  updateOrganicState(paneId, state);
 
   log.info('SDK', `Pane ${paneId} status: ${state}`);
 }
@@ -925,6 +1054,10 @@ function setupEventListeners() {
     }
     return true;
   }
+
+  // Store reference for organic UI input wiring
+  sendBroadcastFn = sendBroadcast;
+  wireOrganicInput();  // Wire up if organic UI already mounted
 
   if (broadcastInput) {
     broadcastInput.addEventListener('keydown', (e) => {
@@ -1474,6 +1607,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       statusEl.classList.add('working', `activity-${state}`);
       startSpinnerCycle(paneId, spinnerEl);
     }
+
+    // Update organic UI state
+    updateOrganicState(paneId, state);
   });
 
   // Single agent stuck detection - notify user (we can't auto-ESC via PTY)
@@ -1640,6 +1776,32 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (pane) pane.classList.add('cli-gemini');
       terminal.unregisterCodexPane(paneId);
     }
+  });
+
+  // Organic UI: Message stream visualizations
+  // Trigger visual streams when agents communicate
+  ipcRenderer.on('direct-message-sent', (event, data) => {
+    if (!organicUIInstance || !data) return;
+    const { from, to } = data;
+    // 'to' can be an array of target panes
+    const targets = Array.isArray(to) ? to : [to];
+    for (const targetPaneId of targets) {
+      organicUIInstance.triggerMessageStream({
+        fromRole: from,
+        toRole: targetPaneId,
+        phase: 'sending'
+      });
+    }
+  });
+
+  ipcRenderer.on('auto-handoff', (event, data) => {
+    if (!organicUIInstance || !data) return;
+    const { from, to } = data;
+    organicUIInstance.triggerMessageStream({
+      fromRole: from,
+      toRole: to,
+      phase: 'sending'
+    });
   });
 
   // Setup daemon handlers
