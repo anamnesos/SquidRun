@@ -438,12 +438,16 @@ function armStartupInjection(paneId, options = {}) {
     timeoutId: null,
   };
 
+  // Gemini CLI takes 8-12s to start (github.com/google-gemini/gemini-cli/issues/4544)
+  // Use 15s timeout for Gemini so CLI is fully ready before injection
+  const timeoutMs = state.isGemini ? 15000 : STARTUP_READY_TIMEOUT_MS;
+
   state.timeoutId = setTimeout(() => {
     const current = startupInjectionState.get(id);
     if (!current || current.completed) return;
-    log.warn('spawnClaude', `Startup ready pattern not detected for pane ${id} after ${STARTUP_READY_TIMEOUT_MS}ms, injecting anyway`);
+    log.warn('spawnClaude', `Startup ready pattern not detected for pane ${id} after ${timeoutMs}ms, injecting anyway`);
     triggerStartupInjection(id, current, 'timeout');
-  }, STARTUP_READY_TIMEOUT_MS);
+  }, timeoutMs);
 
   startupInjectionState.set(id, state);
   log.info('spawnClaude', `Startup injection armed for pane ${id} (model=${state.modelType})`);
