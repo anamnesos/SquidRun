@@ -227,6 +227,7 @@
   display: flex;
   min-width: 400px;
   min-height: 0;
+  overflow: hidden;
 }
 
 .main-pane-container .pane {
