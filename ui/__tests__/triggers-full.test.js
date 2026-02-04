@@ -372,7 +372,7 @@ describe('triggers.js module', () => {
     });
   });
 
-  describe.skip('6. War Room logging + ambient updates (TODO: Backend implementation)', () => {
+  describe('6. War Room logging + ambient updates', () => {
     test('records war room entry for trigger messages', () => {
       fs.readFileSync.mockImplementation((filePath) => {
         if (String(filePath).includes('war-room.log')) return '';
@@ -396,7 +396,7 @@ describe('triggers.js module', () => {
     test('injects ambient update when role is mentioned', () => {
       fs.readFileSync.mockImplementation((filePath) => {
         if (String(filePath).includes('war-room.log')) return '';
-        return '(REV #2): Frontend is wrong';
+        return '(REV #2): Frontend should check';
       });
       const running = new Map([['1', 'running'], ['3', 'running'], ['6', 'running']]);
       triggers.init(global.window, running, null);

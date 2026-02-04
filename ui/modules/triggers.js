@@ -14,6 +14,49 @@ const log = require('./logger');
 const diagnosticLog = require('./diagnostic-log');
 const smartRouting = require('./smart-routing');
 const { formatDuration } = require('./formatters');
+const organicUI = require('./ipc/organic-ui-handlers');
+
+// ============================================================
+// WAR ROOM: Message log + ambient awareness
+// ============================================================
+
+const WAR_ROOM_LOG_PATH = path.join(WORKSPACE_PATH, 'war-room.log');
+const WAR_ROOM_MAX_ENTRIES = 100;
+const WAR_ROOM_CONTEXT_LINES = 3;
+const WAR_ROOM_CORRECTION_KEYWORDS = ['stop', 'wait', 'wrong', 'hold', 'pause', 'change', 'rethink'];
+
+const PANE_ROLE_KEYS = {
+  '1': 'architect',
+  '2': 'infra',
+  '3': 'frontend',
+  '4': 'backend',
+  '5': 'analyst',
+  '6': 'reviewer',
+};
+
+const WAR_ROOM_ROLE_LABELS = {
+  architect: 'ARCH',
+  infra: 'INFRA',
+  frontend: 'FRONT',
+  backend: 'BACK',
+  analyst: 'ANA',
+  reviewer: 'REV',
+  user: 'YOU',
+  system: 'SYSTEM',
+  unknown: 'UNKNOWN',
+};
+
+const WAR_ROOM_ROLE_MENTIONS = {
+  architect: /\b(architect|arch)\b/i,
+  infra: /\b(infra|infrastructure)\b/i,
+  frontend: /\b(frontend|front)\b/i,
+  backend: /\b(backend|back)\b/i,
+  analyst: /\b(analyst|ana)\b/i,
+  reviewer: /\b(reviewer|review|rev)\b/i,
+};
+
+let warRoomInitialized = false;
+let warRoomBuffer = [];
 
 // Memory system for trigger logging
 let memory = null;
@@ -503,11 +546,17 @@ function isPriorityMessage(message) {
 // Reverse map: role name -> pane ID (for sender exclusion)
 const ROLE_TO_PANE = {
   'architect': '1',
+  'arch': '1',
   'infra': '2',
+  'infrastructure': '2',
   'frontend': '3',
+  'front': '3',
   'backend': '4',
+  'back': '4',
   'analyst': '5',
+  'ana': '5',
   'reviewer': '6',
+  'rev': '6',
   // Legacy role names (backwards compat)
   'lead': '1',
   'orchestrator': '2',
@@ -515,6 +564,242 @@ const ROLE_TO_PANE = {
   'worker-b': '4',
   'investigator': '5',
 };
+
+function normalizeRoleKey(role) {
+  if (!role) return null;
+  const raw = String(role).trim().toLowerCase();
+  if (/^\d+$/.test(raw)) return raw;
+  return raw.replace(/[^a-z0-9-]/g, '');
+}
+
+function resolvePaneIdFromRole(role) {
+  const key = normalizeRoleKey(role);
+  if (!key) return null;
+  if (/^\d+$/.test(key)) return key;
+  return ROLE_TO_PANE[key] || null;
+}
+
+function normalizeWarRoomRole(role) {
+  if (!role) return 'unknown';
+  const key = normalizeRoleKey(role);
+  if (!key) return 'unknown';
+  if (key === 'you' || key === 'user') return 'user';
+  if (ROLE_TO_PANE[key]) {
+    const paneId = ROLE_TO_PANE[key];
+    return PANE_ROLE_KEYS[paneId] || 'unknown';
+  }
+  if (key.startsWith('plugin') || key.includes('self-healing') || key.includes('selfhealing')) {
+    return 'system';
+  }
+  return WAR_ROOM_ROLE_LABELS[key] ? key : 'system';
+}
+
+function getWarRoomLabel(roleKey) {
+  if (!roleKey) return WAR_ROOM_ROLE_LABELS.unknown;
+  return WAR_ROOM_ROLE_LABELS[roleKey] || WAR_ROOM_ROLE_LABELS.unknown;
+}
+
+function sanitizeWarRoomMessage(message) {
+  if (!message) return '';
+  return String(message)
+    .replace(/\r\n/g, '\n')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripRolePrefix(message) {
+  if (!message) return '';
+  return String(message).replace(/^\([^)]+\):\s*/i, '');
+}
+
+function ensureWarRoomLog() {
+  if (warRoomInitialized) return;
+  warRoomInitialized = true;
+  try {
+    if (!fs.existsSync(WAR_ROOM_LOG_PATH)) {
+      fs.writeFileSync(WAR_ROOM_LOG_PATH, '', 'utf-8');
+    }
+  } catch (err) {
+    log.warn('WarRoom', `Failed to ensure log file: ${err.message}`);
+  }
+}
+
+function loadWarRoomHistory() {
+  try {
+    if (!fs.existsSync(WAR_ROOM_LOG_PATH)) return;
+    const raw = fs.readFileSync(WAR_ROOM_LOG_PATH, 'utf-8');
+    const content = Buffer.isBuffer(raw) ? raw.toString('utf-8') : String(raw || '');
+    if (!content) return;
+    const lines = content.split('\n').filter(Boolean);
+    if (lines.length === 0) return;
+    const recent = lines.slice(-WAR_ROOM_MAX_ENTRIES);
+    const parsed = [];
+    for (const line of recent) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry && entry.msg) parsed.push(entry);
+      } catch {
+        // Ignore malformed lines
+      }
+    }
+    if (parsed.length > 0) {
+      warRoomBuffer = parsed;
+    }
+  } catch (err) {
+    log.warn('WarRoom', `Failed to load history: ${err.message}`);
+  }
+}
+
+function appendWarRoomEntry(entry) {
+  if (!entry) return;
+  ensureWarRoomLog();
+
+  warRoomBuffer.push(entry);
+  if (warRoomBuffer.length > WAR_ROOM_MAX_ENTRIES) {
+    warRoomBuffer = warRoomBuffer.slice(-WAR_ROOM_MAX_ENTRIES);
+  }
+
+  try {
+    fs.appendFileSync(WAR_ROOM_LOG_PATH, JSON.stringify(entry) + '\n', 'utf-8');
+  } catch (err) {
+    log.warn('WarRoom', `Failed to append log entry: ${err.message}`);
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('war-room-message', entry);
+  }
+}
+
+function buildWarRoomLine(entry) {
+  if (!entry) return '';
+  if (entry.type === 'system' || entry.from === WAR_ROOM_ROLE_LABELS.system) {
+    return `[SYSTEM]: ${entry.msg}`;
+  }
+  const toLabel = entry.to || 'ALL';
+  return `(${entry.from} -> ${toLabel}): ${entry.msg}`;
+}
+
+function containsCorrectionKeyword(message) {
+  if (!message) return false;
+  const lower = String(message).toLowerCase();
+  return WAR_ROOM_CORRECTION_KEYWORDS.some(keyword => lower.includes(keyword));
+}
+
+function isRelevantToRole(entry, roleKey) {
+  if (!entry || !roleKey) return false;
+  if (roleKey === 'architect') return true;
+  if (entry.type === 'broadcast') return true;
+  const mentionRegex = WAR_ROOM_ROLE_MENTIONS[roleKey];
+  if (mentionRegex && mentionRegex.test(entry.msg)) return true;
+  if (containsCorrectionKeyword(entry.msg)) return true;
+  return false;
+}
+
+function buildWarRoomUpdateMessage(lines) {
+  if (!lines || lines.length === 0) return '';
+  const header = `[WAR ROOM - Last ${lines.length} messages]`;
+  const footer = '[End War Room update - continue your work or adjust if relevant]';
+  return `${header}\n${lines.join('\n')}\n\n${footer}`;
+}
+
+function sendAmbientUpdate(paneIds, message) {
+  if (!message || !Array.isArray(paneIds) || paneIds.length === 0) return;
+
+  if (isSDKModeEnabled()) {
+    paneIds.forEach(paneId => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('sdk-message', {
+          paneId,
+          message: { type: 'system', content: message }
+        });
+      }
+      try {
+        sdkBridge.sendMessage(paneId, message);
+      } catch (err) {
+        log.error('WarRoom', `SDK ambient update failed for pane ${paneId}: ${err.message}`);
+      }
+    });
+    return;
+  }
+
+  sendStaggered(paneIds, message + '\r');
+}
+
+function maybeSendAmbientUpdates(entry, targets) {
+  if (!entry) return;
+  const contextLines = warRoomBuffer.slice(-WAR_ROOM_CONTEXT_LINES).map(buildWarRoomLine).filter(Boolean);
+  const updateMessage = buildWarRoomUpdateMessage(contextLines);
+  if (!updateMessage) return;
+
+  const targetSet = new Set((targets || []).map(id => String(id)));
+  const ambientTargets = [];
+
+  PANE_IDS.forEach(paneId => {
+    const roleKey = PANE_ROLE_KEYS[String(paneId)];
+    if (!roleKey) return;
+    if (targetSet.has(String(paneId))) return;
+    if (agentRunning && agentRunning.get(String(paneId)) !== 'running') return;
+    if (isRelevantToRole(entry, roleKey)) {
+      ambientTargets.push(String(paneId));
+    }
+  });
+
+  if (ambientTargets.length > 0) {
+    sendAmbientUpdate(ambientTargets, updateMessage);
+  }
+}
+
+function recordWarRoomMessage({ fromRole, targets, message, type = 'direct', source = 'unknown' }) {
+  const clean = sanitizeWarRoomMessage(message);
+  if (!clean) return;
+  const fromKey = normalizeWarRoomRole(fromRole);
+  const fromLabel = getWarRoomLabel(fromKey);
+  const targetIds = Array.isArray(targets) ? targets.map(id => String(id)) : [];
+  const targetLabels = targetIds.map(id => getWarRoomLabel(PANE_ROLE_KEYS[id])).filter(Boolean);
+
+  let toLabel = 'ALL';
+  if (targetIds.length === 1) {
+    toLabel = targetLabels[0] || 'UNKNOWN';
+  } else if (targetIds.length > 1 && targetIds.length !== PANE_IDS.length) {
+    toLabel = targetLabels.join(',');
+  }
+
+  const entry = {
+    ts: Math.floor(Date.now() / 1000),
+    from: fromLabel,
+    to: toLabel,
+    msg: clean,
+    type,
+    source,
+  };
+
+  appendWarRoomEntry(entry);
+  maybeSendAmbientUpdates(entry, targetIds);
+}
+
+function getTriggerMessageType(filename, targets) {
+  if (filename === 'all.txt' || (typeof filename === 'string' && filename.startsWith('others-'))) {
+    return 'broadcast';
+  }
+  if (Array.isArray(targets) && targets.length > 1) {
+    return 'broadcast';
+  }
+  return 'direct';
+}
+
+function emitOrganicMessageRoute(fromRole, targets) {
+  const fromPaneId = resolvePaneIdFromRole(fromRole);
+  if (!fromPaneId || !Array.isArray(targets) || targets.length === 0) return;
+
+  targets.forEach(target => {
+    const targetPaneId = String(target);
+    if (!targetPaneId || targetPaneId === fromPaneId) return;
+    const messageId = `organic-${fromPaneId}-${targetPaneId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    organicUI.messageQueued(messageId, fromPaneId, targetPaneId);
+    // Immediate cleanup keeps routes bounded; UI can react to queued event.
+    organicUI.messageDelivered(messageId);
+  });
+}
 
 /**
  * Initialize the triggers module with shared state
@@ -528,6 +813,9 @@ function init(window, agentState, logActivity) {
   logActivityFn = logActivity || null;
   // Load message sequence state from disk
   loadMessageState();
+  warRoomBuffer = [];
+  ensureWarRoomLog();
+  loadWarRoomHistory();
 }
 
 /**
@@ -1139,6 +1427,15 @@ function handleTriggerFile(filePath, filename) {
   }
 
   log.info('Trigger', `${filename} → panes ${targets.join(', ')}: ${message.substring(0, 50)}...`);
+  emitOrganicMessageRoute(parsed.sender, targets);
+  const warRoomMessage = stripRolePrefix(parsed.content || message);
+  recordWarRoomMessage({
+    fromRole: parsed.sender,
+    targets,
+    message: warRoomMessage,
+    type: getTriggerMessageType(filename, targets),
+    source: 'trigger',
+  });
 
   // SDK MODE: Route through SDK bridge (no keyboard events needed)
   if (isSDKModeEnabled()) {
@@ -1317,6 +1614,13 @@ function broadcastToAllAgents(message) {
   }
 
   const broadcastMessage = `[BROADCAST TO ALL AGENTS] ${message}`;
+  recordWarRoomMessage({
+    fromRole: 'user',
+    targets,
+    message,
+    type: 'broadcast',
+    source: 'broadcast',
+  });
 
   // SDK MODE: Broadcast through SDK bridge to all panes
   if (isSDKModeEnabled()) {
@@ -1529,6 +1833,7 @@ function triggerAutoHandoff(completedPaneId, completionMessage) {
   const handoffMessage = `[HANDOFF from ${fromRole}] ${completionMessage}`;
 
   log.info('AutoHandoff', `${fromRole} → ${toRole}: ${completionMessage.substring(0, 50)}...`);
+  emitOrganicMessageRoute(completedPaneId, [runningNext]);
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     const triggerMessage = formatTriggerMessage(handoffMessage);
@@ -1539,6 +1844,8 @@ function triggerAutoHandoff(completedPaneId, completionMessage) {
     mainWindow.webContents.send('auto-handoff', {
       from: completedPaneId,
       to: runningNext,
+      fromPaneId: completedPaneId,
+      toPaneId: runningNext,
       fromRole,
       toRole,
       message: completionMessage.substring(0, 100)
@@ -1608,6 +1915,14 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
     return { success: false, notified: [], reason: 'no_targets', mode: isSDKModeEnabled() ? 'sdk' : 'pty' };
   }
 
+  recordWarRoomMessage({
+    fromRole,
+    targets,
+    message,
+    type: 'direct',
+    source: 'direct',
+  });
+
   const prefix = fromRole ? `[MSG from ${fromRole}]: ` : '';
   const fullMessage = prefix + message;
 
@@ -1615,6 +1930,9 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
   if (isSDKModeEnabled()) {
     log.info('DirectMessage SDK', `Sending to panes ${targets.join(', ')}: ${message.substring(0, 50)}...`);
     recordSent('sdk', 'direct', targets);
+    emitOrganicMessageRoute(fromRole, targets);
+    const fromPaneId = resolvePaneIdFromRole(fromRole);
+    const targetPaneIds = targets.map(paneId => String(paneId));
 
     let allSuccess = true;
     for (const paneId of targets) {
@@ -1645,6 +1963,8 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
       mainWindow.webContents.send('direct-message-sent', {
         to: targets,
         from: fromRole,
+        fromPaneId,
+        toPaneIds: targetPaneIds,
         message: message.substring(0, 100),
         mode: 'sdk'
       });
@@ -1677,6 +1997,9 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
   if (notified.length > 0) {
     log.info('DirectMessage', `Sent to panes ${notified.join(', ')}: ${message.substring(0, 50)}...`);
     recordSent('pty', 'direct', notified);
+    emitOrganicMessageRoute(fromRole, notified);
+    const fromPaneId = resolvePaneIdFromRole(fromRole);
+    const targetPaneIds = notified.map(paneId => String(paneId));
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       const triggerMessage = formatTriggerMessage(fullMessage);
@@ -1687,6 +2010,8 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
       mainWindow.webContents.send('direct-message-sent', {
         to: notified,
         from: fromRole,
+        fromPaneId,
+        toPaneIds: targetPaneIds,
         message: message.substring(0, 100),
         mode: 'pty'
       });
