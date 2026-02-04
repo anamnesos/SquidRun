@@ -15,14 +15,15 @@ const PIPE_PATH = os.platform() === 'win32'
 const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
 
 // Instance working directories (role injection)
-// UPDATED: Short folder names matching role abbreviations
+// NOTE: Using legacy names until restart. prestart script will rename folders.
+// Target: arch, infra, front, back, ana, rev
 const INSTANCE_DIRS = {
-  '1': path.join(WORKSPACE_PATH, 'instances', 'arch'),   // Architect
-  '2': path.join(WORKSPACE_PATH, 'instances', 'infra'),  // Infra
-  '3': path.join(WORKSPACE_PATH, 'instances', 'front'),  // Frontend
-  '4': path.join(WORKSPACE_PATH, 'instances', 'back'),   // Backend
-  '5': path.join(WORKSPACE_PATH, 'instances', 'ana'),    // Analyst
-  '6': path.join(WORKSPACE_PATH, 'instances', 'rev'),    // Reviewer
+  '1': path.join(WORKSPACE_PATH, 'instances', 'lead'),         // Architect (→arch on restart)
+  '2': path.join(WORKSPACE_PATH, 'instances', 'infra'),        // Infra
+  '3': path.join(WORKSPACE_PATH, 'instances', 'front'),        // Frontend
+  '4': path.join(WORKSPACE_PATH, 'instances', 'worker-b'),     // Backend (→back on restart)
+  '5': path.join(WORKSPACE_PATH, 'instances', 'investigator'), // Analyst (→ana on restart)
+  '6': path.join(WORKSPACE_PATH, 'instances', 'reviewer'),     // Reviewer (→rev on restart)
 };
 
 // Pane roles for display - UPDATED role names
