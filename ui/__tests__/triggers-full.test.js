@@ -104,6 +104,8 @@ describe('triggers.js module', () => {
     fs.unlinkSync.mockImplementation(() => {});
     fs.readFileSync.mockReturnValue('');
     fs.writeFileSync.mockImplementation(() => {});
+    if (!fs.appendFileSync) fs.appendFileSync = jest.fn();
+    fs.appendFileSync.mockImplementation(() => {});
     fs.existsSync.mockReturnValue(true);
   });
 
@@ -367,6 +369,48 @@ describe('triggers.js module', () => {
       triggers.sendDirectMessage(['3'], 'Direct msg');
       
       expect(mockBridge.sendMessage).toHaveBeenCalledWith('3', expect.stringContaining('Direct msg'));
+    });
+  });
+
+  describe.skip('6. War Room logging + ambient updates (TODO: Backend implementation)', () => {
+    test('records war room entry for trigger messages', () => {
+      fs.readFileSync.mockImplementation((filePath) => {
+        if (String(filePath).includes('war-room.log')) return '';
+        return '(BACK #1): API ready';
+      });
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+
+      triggers.handleTriggerFile('/test/workspace/triggers/architect.txt', 'architect.txt');
+
+      expect(fs.appendFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('war-room.log'),
+        expect.stringContaining('"from":"BACK"'),
+        'utf-8'
+      );
+      expect(global.window.webContents.send).toHaveBeenCalledWith(
+        'war-room-message',
+        expect.objectContaining({ from: 'BACK', to: 'ARCH', msg: 'API ready' })
+      );
+    });
+
+    test('injects ambient update when role is mentioned', () => {
+      fs.readFileSync.mockImplementation((filePath) => {
+        if (String(filePath).includes('war-room.log')) return '';
+        return '(REV #2): Frontend is wrong';
+      });
+      const running = new Map([['1', 'running'], ['3', 'running'], ['6', 'running']]);
+      triggers.init(global.window, running, null);
+
+      triggers.handleTriggerFile('/test/workspace/triggers/architect.txt', 'architect.txt');
+
+      const injectCalls = global.window.webContents.send.mock.calls
+        .filter(([event]) => event === 'inject-message');
+      const hasFrontendAmbient = injectCalls.some(([, payload]) =>
+        Array.isArray(payload.panes) &&
+        payload.panes.includes('3') &&
+        String(payload.message || '').includes('[WAR ROOM -')
+      );
+      expect(hasFrontendAmbient).toBe(true);
     });
   });
 });

@@ -8,6 +8,14 @@
 const STYLE_ID = 'sdk-organic-ui-styles';
 const STREAM_DURATION_MS = 700;
 
+// Status dot colors
+const STATUS_COLORS = {
+  active: '#22c55e',   // Green - working
+  idle: '#eab308',     // Yellow - waiting
+  error: '#ef4444',    // Red - stuck
+  offline: '#6b7280'   // Gray - offline
+};
+
 const AGENT_CONFIG = [
   { id: 'arch', label: 'Arch', fullName: 'Architect', color: '#7C3AED' },
   { id: 'infra', label: 'Infra', fullName: 'Infrastructure', color: '#F59E0B' },
@@ -44,12 +52,9 @@ function ensureStyles() {
     .organic-ui {
       position: relative;
       width: 100%;
-      height: 100%;
-      min-height: 500px;
+      height: 100vh;
       background: var(--organic-bg);
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      grid-template-rows: 1fr auto;
+      display: flex;
       gap: 16px;
       padding: 16px;
       box-sizing: border-box;
@@ -57,16 +62,25 @@ function ensureStyles() {
       color: var(--organic-text);
     }
 
-    /* Left side: User Command Center */
+    /* Left side: War Room (~60% width) */
+    .organic-war-room {
+      flex: 0 0 60%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    /* War Room message stream */
     .organic-command-center {
-      grid-row: 1 / 2;
-      grid-column: 1 / 2;
+      flex: 1 1 auto;
       background: var(--organic-container-bg);
       border: 1px solid var(--organic-border);
       border-radius: 20px;
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      min-height: 0;
     }
 
     .organic-command-header {
@@ -90,14 +104,15 @@ function ensureStyles() {
       word-break: break-word;
     }
 
-    /* Right side: Agent grid (3x2) */
+    /* Right side: Agent grid (~40% width, 2x3) */
     .organic-agent-grid {
-      grid-row: 1 / 2;
-      grid-column: 2 / 3;
+      flex: 0 0 40%;
       display: grid;
       grid-template-columns: repeat(2, 1fr);
       grid-template-rows: repeat(3, 1fr);
       gap: 12px;
+      min-width: 0;
+      min-height: 0;
     }
 
     /* Agent container */
@@ -110,6 +125,7 @@ function ensureStyles() {
       overflow: hidden;
       transition: transform 250ms ease, box-shadow 250ms ease;
       will-change: transform;
+      min-height: 0;
     }
 
     .organic-agent.is-sending {
@@ -163,10 +179,69 @@ function ensureStyles() {
       align-items: center;
       justify-content: space-between;
       gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .organic-agent-header-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .organic-status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--status-color, #6b7280);
+      flex-shrink: 0;
+    }
+
+    .organic-status-dot.is-active {
+      background: #22c55e;
+      box-shadow: 0 0 6px #22c55e;
+    }
+
+    .organic-status-dot.is-idle {
+      background: #eab308;
+    }
+
+    .organic-status-dot.is-error {
+      background: #ef4444;
+      animation: status-pulse 1s ease-in-out infinite;
+    }
+
+    .organic-status-dot.is-offline {
+      background: #6b7280;
+      opacity: 0.5;
+    }
+
+    @keyframes status-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .organic-agent-task {
+      padding: 6px 10px;
+      font-size: 9px;
+      color: var(--organic-text-dim);
+      border-bottom: 1px solid var(--organic-border);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex-shrink: 0;
+    }
+
+    .organic-agent-task-label {
+      color: var(--organic-text-dim);
+      margin-right: 4px;
+    }
+
+    .organic-agent-task-text {
+      color: var(--organic-text);
     }
 
     .organic-agent-content {
-      flex: 1;
+      flex: 1 1 auto;
       padding: 8px 10px;
       overflow-y: auto;
       font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
@@ -175,7 +250,7 @@ function ensureStyles() {
       color: var(--organic-text);
       white-space: pre-wrap;
       word-break: break-word;
-      max-height: 120px;
+      min-height: 0;
     }
 
     .organic-agent-content:empty::before {
@@ -183,13 +258,12 @@ function ensureStyles() {
       color: var(--organic-text-dim);
     }
 
-    /* Bottom: Input bar */
+    /* Bottom: Input bar (inside War Room section) */
     .organic-input-bar {
-      grid-row: 2 / 3;
-      grid-column: 1 / 3;
       display: flex;
       gap: 12px;
       align-items: center;
+      flex-shrink: 0;
     }
 
     .organic-input-field {
@@ -285,16 +359,21 @@ function createOrganicUI(options = {}) {
   const container = document.createElement('div');
   container.className = 'organic-ui';
 
-  // User Command Center (left)
+  // War Room wrapper (left side)
+  const warRoomWrapper = document.createElement('div');
+  warRoomWrapper.className = 'organic-war-room';
+
+  // War Room message stream
   const commandCenter = document.createElement('div');
   commandCenter.className = 'organic-command-center';
 
   const commandHeader = document.createElement('div');
   commandHeader.className = 'organic-command-header';
-  commandHeader.textContent = 'Command Center';
+  commandHeader.textContent = 'War Room';
 
   const commandContent = document.createElement('div');
   commandContent.className = 'organic-command-content';
+  commandContent.textContent = 'Message stream coming soon...';
 
   commandCenter.appendChild(commandHeader);
   commandCenter.appendChild(commandContent);
@@ -310,18 +389,48 @@ function createOrganicUI(options = {}) {
     agentEl.style.setProperty('--agent-color', agent.color);
     agentEl.style.setProperty('--agent-color-rgb', hexToRgb(agent.color));
 
+    // Header with status dot
     const header = document.createElement('div');
     header.className = 'organic-agent-header';
-    header.textContent = agent.label;
 
+    const headerLeft = document.createElement('div');
+    headerLeft.className = 'organic-agent-header-left';
+
+    const label = document.createElement('span');
+    label.textContent = agent.label;
+
+    const statusDot = document.createElement('div');
+    statusDot.className = 'organic-status-dot is-offline';
+
+    headerLeft.appendChild(label);
+    header.appendChild(headerLeft);
+    header.appendChild(statusDot);
+
+    // Task line
+    const taskLine = document.createElement('div');
+    taskLine.className = 'organic-agent-task';
+
+    const taskLabel = document.createElement('span');
+    taskLabel.className = 'organic-agent-task-label';
+    taskLabel.textContent = 'Working on:';
+
+    const taskText = document.createElement('span');
+    taskText.className = 'organic-agent-task-text';
+    taskText.textContent = '—';
+
+    taskLine.appendChild(taskLabel);
+    taskLine.appendChild(taskText);
+
+    // Content area
     const content = document.createElement('div');
     content.className = 'organic-agent-content';
 
     agentEl.appendChild(header);
+    agentEl.appendChild(taskLine);
     agentEl.appendChild(content);
     agentGrid.appendChild(agentEl);
 
-    agentElements.set(agent.id, { element: agentEl, content });
+    agentElements.set(agent.id, { element: agentEl, content, statusDot, taskText });
     agentTextBuffers.set(agent.id, []);
   }
 
@@ -345,10 +454,12 @@ function createOrganicUI(options = {}) {
   const streamLayer = document.createElement('div');
   streamLayer.className = 'organic-stream-layer';
 
-  // Assemble
-  container.appendChild(commandCenter);
+  // Assemble - War Room wrapper contains command center + input
+  warRoomWrapper.appendChild(commandCenter);
+  warRoomWrapper.appendChild(inputBar);
+
+  container.appendChild(warRoomWrapper);
   container.appendChild(agentGrid);
-  container.appendChild(inputBar);
   container.appendChild(streamLayer);
   mount.appendChild(container);
 
@@ -379,13 +490,37 @@ function createOrganicUI(options = {}) {
     if (!agentData) return;
 
     const el = agentData.element;
+    const dot = agentData.statusDot;
+
+    // Update container classes
     el.classList.remove('is-thinking', 'is-offline', 'is-sending', 'is-receiving');
 
-    if (state === 'thinking' || state === 'tool') {
+    // Update status dot
+    if (dot) {
+      dot.classList.remove('is-active', 'is-idle', 'is-error', 'is-offline');
+    }
+
+    if (state === 'thinking' || state === 'tool' || state === 'active') {
       el.classList.add('is-thinking');
+      if (dot) dot.classList.add('is-active');
+    } else if (state === 'idle') {
+      if (dot) dot.classList.add('is-idle');
+    } else if (state === 'error' || state === 'stuck') {
+      if (dot) dot.classList.add('is-error');
     } else if (state === 'offline') {
       el.classList.add('is-offline');
+      if (dot) dot.classList.add('is-offline');
     }
+  };
+
+  // Set the current task for an agent
+  const setTask = (agentIdOrPane, taskText) => {
+    const agentId = resolveAgentId(agentIdOrPane);
+    if (!agentId) return;
+    const agentData = agentElements.get(agentId);
+    if (!agentData || !agentData.taskText) return;
+
+    agentData.taskText.textContent = taskText || '—';
   };
 
       // Helper to strip ANSI escape codes
@@ -492,8 +627,16 @@ function createOrganicUI(options = {}) {
     }, STREAM_DURATION_MS + 100);
   };
 
-  // Append to command center
+  // Track if placeholder has been cleared
+  let placeholderCleared = false;
+
+  // Append to command center (War Room)
   const appendToCommandCenter = text => {
+    // Clear placeholder on first real message
+    if (!placeholderCleared) {
+      commandContent.textContent = '';
+      placeholderCleared = true;
+    }
     commandContent.textContent += text;
     // Keep scrolled to bottom
     commandContent.scrollTop = commandContent.scrollHeight;
@@ -509,10 +652,12 @@ function createOrganicUI(options = {}) {
     container,
     input,
     sendBtn,
+    commandContent, // Expose for War Room message appending
     // API matching bubble-canvas
     triggerMessageStream,
     // New v2 API
     updateState,
+    setTask,
     appendText,
     setText,
     appendToCommandCenter,

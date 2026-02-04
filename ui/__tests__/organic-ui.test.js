@@ -830,4 +830,234 @@ describe('organic-ui.js module', () => {
       expect(ui.sendBtn.textContent).toBe('Send');
     });
   });
+
+  describe('War Room UI Phase 1', () => {
+    describe('layout structure', () => {
+      test('should create war room wrapper', () => {
+        createOrganicUI({ mount: mockBody });
+
+        const warRoomWrapper = createdElements.find(el => el.className === 'organic-war-room');
+        expect(warRoomWrapper).toBeDefined();
+      });
+
+      test('should create agent grid', () => {
+        createOrganicUI({ mount: mockBody });
+
+        const agentGrid = createdElements.find(el => el.className === 'organic-agent-grid');
+        expect(agentGrid).toBeDefined();
+      });
+
+      test('should have command center inside war room wrapper', () => {
+        createOrganicUI({ mount: mockBody });
+
+        const warRoomWrapper = createdElements.find(el => el.className === 'organic-war-room');
+        const commandCenter = createdElements.find(el => el.className === 'organic-command-center');
+
+        // Command center should be child of war room wrapper
+        expect(warRoomWrapper).toBeDefined();
+        expect(commandCenter).toBeDefined();
+      });
+    });
+
+    describe('setTask', () => {
+      test('should expose setTask function', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        expect(typeof ui.setTask).toBe('function');
+      });
+
+      test('should set task text for agent', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        // Find the arch agent's task text element (stored in agentElements map)
+        const taskTextEl = createdElements.find(el =>
+          el.className === 'organic-agent-task-text'
+        );
+
+        ui.setTask('arch', 'Implementing new feature');
+
+        expect(taskTextEl.textContent).toBe('Implementing new feature');
+      });
+
+      test('should resolve pane number to agent', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        const taskTextEl = createdElements.find(el =>
+          el.className === 'organic-agent-task-text'
+        );
+
+        // Pane 1 = arch
+        ui.setTask('1', 'Task via pane number');
+
+        expect(taskTextEl.textContent).toBe('Task via pane number');
+      });
+
+      test('should handle case-insensitive agent names', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        const taskTextEl = createdElements.find(el =>
+          el.className === 'organic-agent-task-text'
+        );
+
+        ui.setTask('ARCHITECT', 'Task for architect');
+
+        expect(taskTextEl.textContent).toBe('Task for architect');
+      });
+
+      test('should set dash when task is empty', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        const taskTextEl = createdElements.find(el =>
+          el.className === 'organic-agent-task-text'
+        );
+
+        ui.setTask('arch', '');
+
+        expect(taskTextEl.textContent).toBe('—');
+      });
+
+      test('should set dash when task is null', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        const taskTextEl = createdElements.find(el =>
+          el.className === 'organic-agent-task-text'
+        );
+
+        ui.setTask('arch', null);
+
+        expect(taskTextEl.textContent).toBe('—');
+      });
+
+      test('should ignore invalid agent ID', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        // Should not throw
+        expect(() => ui.setTask('invalid', 'Some task')).not.toThrow();
+      });
+    });
+
+    describe('status dots', () => {
+      test('should create status dot in each agent header', () => {
+        createOrganicUI({ mount: mockBody });
+
+        // Status dots are created with class 'organic-status-dot is-offline' initially
+        const statusDots = createdElements.filter(el =>
+          el.className === 'organic-status-dot is-offline'
+        );
+        expect(statusDots.length).toBe(6);
+      });
+
+      test('should add is-active class for active state', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        // Find the first status dot (arch)
+        const statusDot = createdElements.find(el =>
+          el.className === 'organic-status-dot is-offline'
+        );
+
+        ui.updateState('arch', 'active');
+
+        expect(statusDot.classList.add).toHaveBeenCalledWith('is-active');
+      });
+
+      test('should add is-idle class for idle state', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        const statusDot = createdElements.find(el =>
+          el.className === 'organic-status-dot is-offline'
+        );
+
+        ui.updateState('arch', 'idle');
+
+        expect(statusDot.classList.add).toHaveBeenCalledWith('is-idle');
+      });
+
+      test('should add is-error class for error state', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        const statusDot = createdElements.find(el =>
+          el.className === 'organic-status-dot is-offline'
+        );
+
+        ui.updateState('arch', 'error');
+
+        expect(statusDot.classList.add).toHaveBeenCalledWith('is-error');
+      });
+
+      test('should add is-offline class for offline state', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        const statusDot = createdElements.find(el =>
+          el.className === 'organic-status-dot is-offline'
+        );
+
+        ui.updateState('arch', 'offline');
+
+        expect(statusDot.classList.add).toHaveBeenCalledWith('is-offline');
+      });
+
+      test('should remove all status classes before applying new one', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        const statusDot = createdElements.find(el =>
+          el.className === 'organic-status-dot is-offline'
+        );
+
+        ui.updateState('arch', 'active');
+
+        expect(statusDot.classList.remove).toHaveBeenCalledWith(
+          'is-active', 'is-idle', 'is-error', 'is-offline'
+        );
+      });
+
+      test('should map thinking state to is-active for status dot', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        const statusDot = createdElements.find(el =>
+          el.className === 'organic-status-dot is-offline'
+        );
+
+        ui.updateState('arch', 'thinking');
+
+        expect(statusDot.classList.add).toHaveBeenCalledWith('is-active');
+      });
+
+      test('should map tool state to is-active for status dot', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        const statusDot = createdElements.find(el =>
+          el.className === 'organic-status-dot is-offline'
+        );
+
+        ui.updateState('arch', 'tool');
+
+        expect(statusDot.classList.add).toHaveBeenCalledWith('is-active');
+      });
+    });
+
+    describe('task line structure', () => {
+      test('should create task line container in each agent', () => {
+        createOrganicUI({ mount: mockBody });
+
+        const taskLines = createdElements.filter(el => el.className === 'organic-agent-task');
+        expect(taskLines.length).toBe(6);
+      });
+
+      test('should have Working on: label', () => {
+        createOrganicUI({ mount: mockBody });
+
+        const taskLabels = createdElements.filter(el => el.className === 'organic-agent-task-label');
+        expect(taskLabels.length).toBe(6);
+        expect(taskLabels[0].textContent).toBe('Working on:');
+      });
+
+      test('should have task text element with default dash', () => {
+        createOrganicUI({ mount: mockBody });
+
+        const taskTexts = createdElements.filter(el => el.className === 'organic-agent-task-text');
+        expect(taskTexts.length).toBe(6);
+        expect(taskTexts[0].textContent).toBe('—');
+      });
+    });
+  });
 });
