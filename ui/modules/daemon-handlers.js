@@ -105,6 +105,17 @@ function normalizePath(value) {
   return path.normalize(String(value)).replace(/\\/g, '/').toLowerCase();
 }
 
+function hasCliContent(scrollback = '') {
+  const text = String(scrollback || '');
+  if (!text) return false;
+  // CLI ready patterns - specific enough to avoid false positives from injected context
+  // Look for CLI prompts/banners, not just keywords that could appear in logs
+  return text.includes('Claude Code') ||   // Claude CLI banner
+         text.includes('codex>') ||        // Codex prompt
+         text.includes('Gemini CLI') ||    // Gemini CLI banner (specific)
+         (text.includes('> ') && text.length > 200); // Active prompt + content
+}
+
 // ============================================================
 // SYNC STATE MANAGEMENT
 // ============================================================
@@ -189,7 +200,28 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 
     if (existingTerminals && existingTerminals.length > 0) {
       updateConnectionStatus('Reconnecting to existing sessions...');
+
+      // SDK-FIX: Check terminals individually for CLI content
+      // SDK mode can leave PTY shells alive with empty scrollback
+      const panesWithCli = new Set();
+      const panesNeedingSpawn = new Set();
+
+      for (const term of existingTerminals) {
+        if (!term || !term.alive) continue;
+        const paneId = String(term.paneId);
+        if (hasCliContent(term.scrollback)) {
+          panesWithCli.add(paneId);
+        } else {
+          panesNeedingSpawn.add(paneId);
+        }
+      }
+
       setReconnectedFn(true);
+      if (panesNeedingSpawn.size > 0) {
+        log.info('Daemon', `Detected empty CLI shells, will spawn for panes: ${[...panesNeedingSpawn].join(', ')}`);
+      } else {
+        log.info('Daemon', 'All alive terminals have CLI content, skipping auto-spawn');
+      }
 
       const existingPaneIds = new Set();
       for (const term of existingTerminals) {
@@ -216,6 +248,38 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
         for (const paneId of missingPanes) {
           const terminal = require('./terminal');
           await terminal.initTerminal(paneId);
+        }
+      }
+
+      if (missingPanes.length > 0) {
+        for (const paneId of missingPanes) {
+          panesNeedingSpawn.add(String(paneId));
+        }
+      }
+
+      if (panesNeedingSpawn.size > 0) {
+        let autoSpawnEnabled = true;
+        try {
+          const settings = await ipcRenderer.invoke('get-settings');
+          if (settings && settings.autoSpawn === false) {
+            autoSpawnEnabled = false;
+          }
+        } catch (err) {
+          log.warn('Daemon', `Failed to read settings for auto-spawn: ${err.message}`);
+        }
+
+        if (autoSpawnEnabled) {
+          updateConnectionStatus(`Spawning agents in panes: ${[...panesNeedingSpawn].join(', ')}`);
+          const terminal = require('./terminal');
+          for (const paneId of panesNeedingSpawn) {
+            try {
+              await terminal.spawnClaude(paneId);
+            } catch (err) {
+              log.error('Daemon', `Failed to spawn CLI for pane ${paneId}`, err);
+            }
+          }
+        } else {
+          log.info('Daemon', `Auto-spawn disabled; leaving panes empty: ${[...panesNeedingSpawn].join(', ')}`);
         }
       }
 
@@ -671,5 +735,3 @@ module.exports = {
   STATE_DISPLAY_NAMES: uiView.STATE_DISPLAY_NAMES,
   _resetForTesting: uiView._resetForTesting,
 };
-
-

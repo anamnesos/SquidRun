@@ -45,6 +45,7 @@ jest.mock('../modules/terminal', () => ({
   sendUnstick: jest.fn(),
   aggressiveNudge: jest.fn(),
   initTerminal: jest.fn().mockResolvedValue(),
+  spawnClaude: jest.fn().mockResolvedValue(),
   restartPane: jest.fn(),
   freshStartAll: jest.fn(),
   nudgePane: jest.fn(),
@@ -518,6 +519,42 @@ describe('daemon-handlers.js module', () => {
       ipcHandlers = {};
       ipcRenderer.on.mockImplementation((channel, handler) => {
         ipcHandlers[channel] = handler;
+      });
+    });
+
+    describe('daemon-connected handler', () => {
+      test('spawns only panes without CLI content and missing panes', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        ipcRenderer.invoke.mockResolvedValueOnce({ autoSpawn: true });
+
+        const data = {
+          sdkMode: false,
+          terminals: [
+            { paneId: '1', alive: true, scrollback: 'Claude Code', cwd: '/project/instances/arch' },
+            { paneId: '2', alive: true, scrollback: '', cwd: '/project/instances/infra' },
+          ],
+        };
+
+        await ipcHandlers['daemon-connected']({}, data);
+
+        expect(setReconnectedFn).toHaveBeenCalledWith(true);
+        expect(terminal.spawnClaude).toHaveBeenCalledWith('2');
+        expect(terminal.spawnClaude).toHaveBeenCalledWith('3');
+        expect(terminal.spawnClaude).toHaveBeenCalledWith('4');
+        expect(terminal.spawnClaude).toHaveBeenCalledWith('5');
+        expect(terminal.spawnClaude).toHaveBeenCalledWith('6');
+        expect(terminal.spawnClaude).not.toHaveBeenCalledWith('1');
       });
     });
 

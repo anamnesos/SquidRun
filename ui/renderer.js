@@ -1022,6 +1022,10 @@ function setupEventListeners() {
       if (targetPaneId === 'all') {
         log.info('SDK', 'Broadcast to ALL agents');
         ['1', '2', '3', '4', '5', '6'].forEach(paneId => {
+          // Show user message in organic UI if active
+          if (organicUIInstance) {
+            organicUIInstance.appendText(paneId, `> ${actualMessage}`);
+          }
           sdkRenderer.appendMessage(paneId, { type: 'user', content: actualMessage });
         });
         ipcRenderer.invoke('sdk-broadcast', actualMessage)
@@ -1032,6 +1036,10 @@ function setupEventListeners() {
           });
       } else {
         log.info('SDK', `Targeted send to pane ${targetPaneId}: ${actualMessage.substring(0, 30)}...`);
+        // Show user message in organic UI if active
+        if (organicUIInstance) {
+          organicUIInstance.appendText(targetPaneId, `> ${actualMessage}`);
+        }
         sdkRenderer.appendMessage(targetPaneId, { type: 'user', content: actualMessage });
         ipcRenderer.invoke('sdk-send-message', targetPaneId, actualMessage)
           .then(() => showDeliveryStatus('delivered'))
@@ -1117,6 +1125,20 @@ function setupEventListeners() {
 
   window.addEventListener('hivemind-settings-updated', (event) => {
     refreshVoiceSettings(event.detail);
+
+    // Handle SDK mode toggle at runtime
+    const newSettings = event.detail;
+    if (newSettings && typeof newSettings.sdkMode !== 'undefined') {
+      const newSdkMode = !!newSettings.sdkMode;
+      if (newSdkMode !== sdkMode) {
+        log.info('Settings', `SDK mode changed: ${sdkMode} -> ${newSdkMode}`);
+        if (newSdkMode) {
+          window.hivemind.sdk.enableMode();
+        } else {
+          window.hivemind.sdk.disableMode();
+        }
+      }
+    }
   });
   refreshVoiceSettings(settings.getSettings());
 
@@ -1654,6 +1676,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Receives messages from Python SDK via IPC and routes to correct pane
   // sdk-bridge sends single object { paneId, message }, not separate args
   // Includes null check for malformed data and contextual thinking state for tool_use
+  // FIXED: Routes to organic UI when active, otherwise to sdk-renderer
   ipcRenderer.on('sdk-message', (event, data) => {
     if (!data || !data.message) {
       log.warn('SDK', 'Received malformed sdk-message:', data);
@@ -1677,6 +1700,42 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
 
+    // Route to organic UI if active, otherwise to sdk-renderer
+    if (organicUIInstance) {
+      // Extract text content for organic UI display
+      let textContent = '';
+      if (message.type === 'assistant') {
+        if (Array.isArray(message.content)) {
+          // Extract text blocks from content array
+          textContent = message.content
+            .filter(b => b.type === 'text')
+            .map(b => b.text || '')
+            .join('\n');
+        } else if (typeof message.content === 'string') {
+          textContent = message.content;
+        }
+      } else if (message.type === 'user') {
+        textContent = `> ${message.content || message.message || ''}`;
+      } else if (message.type === 'tool_use') {
+        textContent = `[Tool: ${message.name || 'unknown'}]`;
+      } else if (message.type === 'tool_result') {
+        const resultContent = typeof message.content === 'string'
+          ? message.content
+          : JSON.stringify(message.content);
+        // Truncate long results
+        textContent = resultContent.length > 100
+          ? `[Result: ${resultContent.substring(0, 100)}...]`
+          : `[Result: ${resultContent}]`;
+      } else if (message.error) {
+        textContent = `[Error: ${message.error}]`;
+      }
+
+      if (textContent) {
+        organicUIInstance.appendText(paneId, textContent);
+      }
+    }
+
+    // Also render to sdk-renderer (for detailed view when panes are shown)
     sdkRenderer.appendMessage(paneId, message);
   });
 
@@ -1700,10 +1759,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // SDK text delta - real-time typewriter streaming from Python
   // Receives partial text chunks for character-by-character display
+  // FIXED: Routes to organic UI when active
   ipcRenderer.on('sdk-text-delta', (event, data) => {
     if (!data) return;
     const { paneId, text } = data;
     if (text) {
+      // Route to organic UI for live streaming display
+      if (organicUIInstance) {
+        organicUIInstance.appendText(paneId, text);
+      }
+      // Also update sdk-renderer for detailed view
       sdkRenderer.appendTextDelta(paneId, text);
       // Update status to 'responding' while receiving text
       updateSDKStatus(paneId, 'responding');
@@ -1736,10 +1801,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // SDK error handler
   // sdk-bridge sends { paneId, error } as single object
+  // FIXED: Routes to organic UI when active
   ipcRenderer.on('sdk-error', (event, data) => {
     if (!data) return;
     const { paneId, error } = data;
     log.error('SDK', `Error in pane ${paneId}:`, error);
+    // Route to organic UI if active
+    if (organicUIInstance) {
+      organicUIInstance.appendText(paneId, `[Error: ${error}]`);
+    }
     sdkRenderer.addErrorMessage(paneId, error);
   });
 
