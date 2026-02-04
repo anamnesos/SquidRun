@@ -105,15 +105,44 @@ function normalizePath(value) {
   return path.normalize(String(value)).replace(/\\/g, '/').toLowerCase();
 }
 
-function hasCliContent(scrollback = '') {
+const CLI_TAIL_CHARS = 2000;
+const CLI_RECENT_ACTIVITY_MS = 60000;
+const CLI_PROMPT_REGEXES = [
+  /(^|\n)>\s/m, // Claude/Gemini prompt at line start
+  /(^|\n)codex>\s/m,
+  /(^|\n)gemini>\s/m,
+  /codex exec mode ready/i,
+  /gemini cli/i,
+];
+const SHELL_PROMPT_REGEXES = [
+  /(^|\n)PS [^\n>]*>\s/m,     // PowerShell prompt
+  /(^|\n)[A-Z]:\\[^\n>]*>\s/m, // cmd.exe prompt
+];
+
+function stripAnsi(value) {
+  return String(value || '')
+    .replace(/\x1B\][^\x07]*(\x07|\x1B\\)/g, '')
+    .replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
+function tailMatches(regexes, text) {
+  return regexes.some((regex) => regex.test(text));
+}
+
+function hasCliContent(scrollback = '', meta = {}) {
   const text = String(scrollback || '');
   if (!text) return false;
-  // CLI ready patterns - specific enough to avoid false positives from injected context
-  // Look for CLI prompts/banners, not just keywords that could appear in logs
-  return text.includes('Claude Code') ||   // Claude CLI banner
-         text.includes('codex>') ||        // Codex prompt
-         text.includes('Gemini CLI') ||    // Gemini CLI banner (specific)
-         (text.includes('> ') && text.length > 200); // Active prompt + content
+
+  const tail = stripAnsi(text.slice(-CLI_TAIL_CHARS));
+  if (tailMatches(CLI_PROMPT_REGEXES, tail)) return true;
+  if (tailMatches(SHELL_PROMPT_REGEXES, tail)) return false;
+
+  const lastActivity = Number(meta?.lastActivity || 0);
+  if (lastActivity > 0 && (Date.now() - lastActivity) <= CLI_RECENT_ACTIVITY_MS) {
+    return true;
+  }
+
+  return false;
 }
 
 // ============================================================
@@ -209,7 +238,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
       for (const term of existingTerminals) {
         if (!term || !term.alive) continue;
         const paneId = String(term.paneId);
-        if (hasCliContent(term.scrollback)) {
+        if (hasCliContent(term.scrollback, term)) {
           panesWithCli.add(paneId);
         } else {
           panesNeedingSpawn.add(paneId);

@@ -523,6 +523,10 @@ describe('daemon-handlers.js module', () => {
     });
 
     describe('daemon-connected handler', () => {
+      beforeEach(() => {
+        jest.setSystemTime(new Date('2026-02-04T00:00:00Z'));
+      });
+
       test('spawns only panes without CLI content and missing panes', async () => {
         const initTerminalsFn = jest.fn();
         const reattachTerminalFn = jest.fn().mockResolvedValue();
@@ -537,11 +541,12 @@ describe('daemon-handlers.js module', () => {
         );
 
         ipcRenderer.invoke.mockResolvedValueOnce({ autoSpawn: true });
+        const now = Date.now();
 
         const data = {
           sdkMode: false,
           terminals: [
-            { paneId: '1', alive: true, scrollback: 'Claude Code', cwd: '/project/instances/arch' },
+            { paneId: '1', alive: true, scrollback: 'Claude Code\n> ', lastActivity: now, cwd: '/project/instances/arch' },
             { paneId: '2', alive: true, scrollback: '', cwd: '/project/instances/infra' },
           ],
         };
@@ -555,6 +560,40 @@ describe('daemon-handlers.js module', () => {
         expect(terminal.spawnClaude).toHaveBeenCalledWith('5');
         expect(terminal.spawnClaude).toHaveBeenCalledWith('6');
         expect(terminal.spawnClaude).not.toHaveBeenCalledWith('1');
+      });
+
+      test('treats stale scrollback with shell prompt as needing spawn', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        ipcRenderer.invoke.mockResolvedValueOnce({ autoSpawn: true });
+        const now = Date.now();
+
+        const data = {
+          sdkMode: false,
+          terminals: [
+            {
+              paneId: '1',
+              alive: true,
+              scrollback: 'Claude Code\nPS C:\\Users\\the user> ',
+              lastActivity: now - 10 * 60 * 1000,
+              cwd: '/project/instances/arch'
+            },
+          ],
+        };
+
+        await ipcHandlers['daemon-connected']({}, data);
+
+        expect(terminal.spawnClaude).toHaveBeenCalledWith('1');
       });
     });
 
