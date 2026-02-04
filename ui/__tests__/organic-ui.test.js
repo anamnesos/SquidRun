@@ -1059,5 +1059,100 @@ describe('organic-ui.js module', () => {
         expect(taskTexts[0].textContent).toBe('—');
       });
     });
+
+    describe('appendWarRoomMessage (Phase 2)', () => {
+      test('should expose appendWarRoomMessage function', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        expect(typeof ui.appendWarRoomMessage).toBe('function');
+      });
+
+      test('should create war-room-message element', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        ui.appendWarRoomMessage({ from: 'arch', to: 'front', msg: 'Test message', type: 'direct' });
+
+        const messageEl = createdElements.find(el => el.className === 'war-room-message');
+        expect(messageEl).toBeDefined();
+      });
+
+      test('should add is-broadcast class for broadcast type', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        ui.appendWarRoomMessage({ from: 'arch', to: 'ALL', msg: 'Broadcast', type: 'broadcast' });
+
+        const messageEl = createdElements.find(el =>
+          el.className === 'war-room-message' || el.classList?.contains?.('war-room-message')
+        );
+        expect(messageEl.classList.add).toHaveBeenCalledWith('is-broadcast');
+      });
+
+      test('should create prefix with sender color', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        ui.appendWarRoomMessage({ from: 'arch', to: 'front', msg: 'Test', type: 'direct' });
+
+        const prefix = createdElements.find(el => el.className === 'war-room-prefix');
+        expect(prefix).toBeDefined();
+        // Arch color is #7C3AED
+        expect(prefix.style.color).toBe('#7C3AED');
+      });
+
+      test('should format message as (FROM → TO): msg', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        ui.appendWarRoomMessage({ from: 'arch', to: 'front', msg: 'Hello', type: 'direct' });
+
+        const prefix = createdElements.find(el => el.className === 'war-room-prefix');
+        expect(prefix.textContent).toBe('(ARCH → FRONT): ');
+
+        const content = createdElements.find(el => el.className === 'war-room-content');
+        expect(content.textContent).toBe('Hello');
+      });
+
+      test('should resolve full role names to short labels', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        ui.appendWarRoomMessage({ from: 'architect', to: 'frontend', msg: 'Test', type: 'direct' });
+
+        const prefix = createdElements.find(el => el.className === 'war-room-prefix');
+        expect(prefix.textContent).toBe('(ARCH → FRONT): ');
+      });
+
+      test('should handle USER as sender', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        ui.appendWarRoomMessage({ from: 'USER', to: 'arch', msg: 'User message', type: 'direct' });
+
+        const prefix = createdElements.find(el => el.className === 'war-room-prefix');
+        expect(prefix.textContent).toBe('(YOU → ARCH): ');
+        // User color is green
+        expect(prefix.style.color).toBe('#22c55e');
+      });
+
+      test('should handle ALL as recipient', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        ui.appendWarRoomMessage({ from: 'arch', to: 'ALL', msg: 'Broadcast', type: 'broadcast' });
+
+        const prefix = createdElements.find(el => el.className === 'war-room-prefix');
+        expect(prefix.textContent).toBe('(ARCH → ALL): ');
+      });
+
+      test('should ignore null data', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        expect(() => ui.appendWarRoomMessage(null)).not.toThrow();
+      });
+
+      test('should handle empty message', () => {
+        const ui = createOrganicUI({ mount: mockBody });
+
+        ui.appendWarRoomMessage({ from: 'arch', to: 'front', msg: '', type: 'direct' });
+
+        const content = createdElements.find(el => el.className === 'war-room-content');
+        expect(content.textContent).toBe('');
+      });
+    });
   });
 });

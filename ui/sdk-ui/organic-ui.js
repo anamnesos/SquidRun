@@ -104,6 +104,31 @@ function ensureStyles() {
       word-break: break-word;
     }
 
+    /* War Room message formatting */
+    .war-room-message {
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .war-room-message:last-child {
+      border-bottom: none;
+    }
+
+    .war-room-message.is-broadcast {
+      background: rgba(124, 58, 237, 0.1);
+      padding: 4px 8px;
+      margin: 2px -8px;
+      border-radius: 4px;
+    }
+
+    .war-room-prefix {
+      font-weight: 600;
+    }
+
+    .war-room-content {
+      color: var(--organic-text);
+    }
+
     /* Right side: Agent grid (~40% width, 2x3) */
     .organic-agent-grid {
       flex: 0 0 40%;
@@ -629,8 +654,33 @@ function createOrganicUI(options = {}) {
 
   // Track if placeholder has been cleared
   let placeholderCleared = false;
+  const MAX_WAR_ROOM_MESSAGES = 100;
+  const warRoomMessages = [];
 
-  // Append to command center (War Room)
+  // Get agent color by ID or alias
+  const getAgentColor = (agentIdOrAlias) => {
+    const agentId = resolveAgentId(agentIdOrAlias);
+    if (!agentId) return '#888888'; // Default gray for unknown
+    const meta = agentMeta.get(agentId);
+    return meta?.color || '#888888';
+  };
+
+  // Get agent display label by ID or alias
+  const getAgentLabel = (agentIdOrAlias) => {
+    if (!agentIdOrAlias) return '???';
+    // Handle special cases
+    const upper = String(agentIdOrAlias).toUpperCase();
+    if (upper === 'USER' || upper === 'YOU') return 'YOU';
+    if (upper === 'ALL' || upper === 'BROADCAST') return 'ALL';
+    if (upper === 'SYSTEM') return 'SYSTEM';
+
+    const agentId = resolveAgentId(agentIdOrAlias);
+    if (!agentId) return upper; // Return as-is if not found
+    const meta = agentMeta.get(agentId);
+    return meta?.label?.toUpperCase() || upper;
+  };
+
+  // Append to command center (War Room) - raw text (legacy API)
   const appendToCommandCenter = text => {
     // Clear placeholder on first real message
     if (!placeholderCleared) {
@@ -639,6 +689,55 @@ function createOrganicUI(options = {}) {
     }
     commandContent.textContent += text;
     // Keep scrolled to bottom
+    commandContent.scrollTop = commandContent.scrollHeight;
+  };
+
+  // Append formatted War Room message
+  // Format: (FROM → TO): msg
+  // Data: {ts, from, to, msg, type}
+  const appendWarRoomMessage = (data) => {
+    if (!data) return;
+
+    // Clear placeholder on first real message
+    if (!placeholderCleared) {
+      commandContent.innerHTML = '';
+      placeholderCleared = true;
+    }
+
+    const { from, to, msg, type } = data;
+    const fromLabel = getAgentLabel(from);
+    const toLabel = getAgentLabel(to);
+    const fromColor = from?.toUpperCase() === 'USER' || from?.toUpperCase() === 'YOU'
+      ? '#22c55e' // Green for user
+      : getAgentColor(from);
+
+    // Create message line element
+    const line = document.createElement('div');
+    line.className = 'war-room-message';
+    if (type === 'broadcast') line.classList.add('is-broadcast');
+
+    // Build formatted message: (FROM → TO): msg
+    const prefix = document.createElement('span');
+    prefix.className = 'war-room-prefix';
+    prefix.style.color = fromColor;
+    prefix.textContent = `(${fromLabel} → ${toLabel}): `;
+
+    const content = document.createElement('span');
+    content.className = 'war-room-content';
+    content.textContent = msg || '';
+
+    line.appendChild(prefix);
+    line.appendChild(content);
+    commandContent.appendChild(line);
+
+    // Track messages and limit to MAX
+    warRoomMessages.push(line);
+    while (warRoomMessages.length > MAX_WAR_ROOM_MESSAGES) {
+      const old = warRoomMessages.shift();
+      old.remove();
+    }
+
+    // Auto-scroll to bottom
     commandContent.scrollTop = commandContent.scrollHeight;
   };
 
@@ -661,6 +760,7 @@ function createOrganicUI(options = {}) {
     appendText,
     setText,
     appendToCommandCenter,
+    appendWarRoomMessage, // War Room formatted messages
     triggerScale,
     destroy() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
