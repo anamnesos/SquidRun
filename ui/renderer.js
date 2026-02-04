@@ -346,12 +346,12 @@ window.hivemind = {
     kill: (processId) => ipcRenderer.invoke('kill-process', processId),
     getOutput: (processId) => ipcRenderer.invoke('get-process-output', processId),
   },
-  // SDK mode API (Task #2)
-  sdk: {
-    start: (prompt) => ipcRenderer.invoke('sdk-start', prompt),
-    stop: () => ipcRenderer.invoke('sdk-stop'),
-    isActive: () => sdkMode,
-    enableMode: () => {
+      // SDK mode API (Task #2)
+      sdk: {
+        start: (prompt) => ipcRenderer.invoke('sdk-start', prompt),
+        stop: () => ipcRenderer.invoke('sdk-stop'),
+        restartSession: (paneId) => ipcRenderer.invoke('sdk-restart-session', paneId),
+        isActive: () => sdkMode,    enableMode: () => {
       // Idempotent - don't reinitialize if already enabled
       if (sdkMode) {
         log.info('SDK', 'Mode already enabled, skipping reinit');
@@ -396,15 +396,18 @@ window.hivemind = {
         paneLayout.style.display = '';
       }
 
-      // Restore PTY command bar
-      const commandBar = document.querySelector('.command-bar');
-      if (commandBar) {
-        commandBar.style.display = '';
-      }
-
-      log.info('SDK', 'Mode disabled (restored pane layout)');
-    },
-    // SDK status functions (exposed for external use)
+              // Restore PTY command bar
+              const commandBar = document.querySelector('.command-bar');
+              if (commandBar) {
+                commandBar.style.display = '';
+              }
+      
+              log.info('SDK', 'Mode disabled (restoring agents)...');
+              // Ensure PTY terminals are initialized and agents started
+              terminal.initTerminals().then(() => {
+                terminal.spawnAllClaude();
+              });
+            },    // SDK status functions (exposed for external use)
     updateStatus: (paneId, state) => updateSDKStatus(paneId, state),
     showDelivered: (paneId) => showSDKMessageDelivered(paneId),
   },

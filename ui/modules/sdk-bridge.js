@@ -389,12 +389,36 @@ class SDKBridge extends EventEmitter {
       this.sendToRenderer('sdk-message-delivered', { paneId: normalizedPaneId });
     }
 
-    return sent;
-  }
-
-  /**
-   * Subscribe to responses from a pane
-   * @param {string} paneId - Pane to subscribe to
+          return sent;
+        }
+    
+        /**
+         * Restart a single agent session (clear history)
+         * @param {string} paneId - Pane ID or role name
+         */
+        restartSession(paneId) {
+          const normalizedPaneId = ROLE_TO_PANE[paneId] || paneId;
+    
+          if (!this.sessions[normalizedPaneId]) {
+            log.error('SDK Bridge', `Unknown pane: ${paneId}`);
+            return false;
+          }
+    
+          log.info('SDK Bridge', `Restarting session for pane ${normalizedPaneId}`);
+    
+          // Clear local session ID before sending restart
+          this.sessions[normalizedPaneId].id = null;
+    
+          const cmd = {
+            command: 'restart',
+            pane_id: normalizedPaneId
+          };
+    
+          return this.sendToProcess(cmd);
+        }
+    
+        /**
+         * Subscribe to responses from a pane   * @param {string} paneId - Pane to subscribe to
    */
   subscribe(paneId) {
     const normalizedPaneId = ROLE_TO_PANE[paneId] || paneId;

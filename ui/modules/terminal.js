@@ -608,20 +608,20 @@ function sendToPane(...args) {
   return injectionController.sendToPane(...args);
 }
 
-// Initialize all terminals
-async function initTerminals() {
-  // SDK Mode Guard: Don't initialize PTY terminals in SDK mode
-  if (sdkModeActive) {
-    log.info('initTerminals', 'SDK mode active - skipping PTY terminal initialization');
-    return;
-  }
+  // Initialize all terminals
+  async function initTerminals() {
+    // SDK Mode Guard: Don't initialize PTY terminals in SDK mode
+    if (sdkModeActive) {
+      log.info('initTerminals', 'SDK mode active - skipping PTY terminal initialization');     
+      return;
+    }
 
-  for (const paneId of PANE_IDS) {
-    await initTerminal(paneId);
-  }
-  updateConnectionStatus('All terminals ready');
-  focusPane('1');
-
+    for (const paneId of PANE_IDS) {
+      if (terminals.has(paneId)) continue;
+      await initTerminal(paneId);
+    }
+    updateConnectionStatus('All terminals ready');
+    focusPane('1');
   // Start stuck message sweeper for Claude panes
   startStuckMessageSweeper();
 }
@@ -724,11 +724,11 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
   });
 }
 
-// Initialize a single terminal
-async function initTerminal(paneId) {
-  const container = document.getElementById(`terminal-${paneId}`);
-  if (!container) return;
-
+  // Initialize a single terminal
+  async function initTerminal(paneId) {
+    if (terminals.has(paneId)) return;
+    const container = document.getElementById(`terminal-${paneId}`);
+    if (!container) return;
   const terminal = new Terminal(TERMINAL_OPTIONS);
   const fitAddon = new FitAddon();
   const webLinksAddon = new WebLinksAddon();
