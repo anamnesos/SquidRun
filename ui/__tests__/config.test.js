@@ -39,13 +39,12 @@ describe('config.js', () => {
     });
 
     test('should have paths for each pane', () => {
-      // Note: Using legacy names until prestart script runs on restart
-      expect(INSTANCE_DIRS['1']).toContain('lead');
+      expect(INSTANCE_DIRS['1']).toContain('arch');
       expect(INSTANCE_DIRS['2']).toContain('infra');
       expect(INSTANCE_DIRS['3']).toContain('front');
-      expect(INSTANCE_DIRS['4']).toContain('worker-b');
-      expect(INSTANCE_DIRS['5']).toContain('investigator');
-      expect(INSTANCE_DIRS['6']).toContain('reviewer');
+      expect(INSTANCE_DIRS['4']).toContain('back');
+      expect(INSTANCE_DIRS['5']).toContain('ana');
+      expect(INSTANCE_DIRS['6']).toContain('rev');
     });
 
     test('all paths should be absolute', () => {
