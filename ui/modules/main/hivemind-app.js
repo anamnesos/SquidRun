@@ -22,6 +22,7 @@ const ipcHandlers = require('../ipc-handlers');
 const memory = require('../memory');
 const memoryIPC = require('../memory/ipc-handlers');
 const websocketServer = require('../websocket-server');
+const organicUI = require('../ipc/organic-ui-handlers');
 
 class HivemindApp {
   constructor(appContext, managers) {
@@ -383,8 +384,13 @@ class HivemindApp {
       this.ctx.recoveryManager?.recordActivity(paneId);
       this.ctx.recoveryManager?.recordPtyOutput?.(paneId, data);
 
+      // Organic UI: Mark agent as active when outputting
+      if (organicUI.getAgentState(paneId) !== 'offline') {
+        organicUI.agentActive(paneId);
+      }
+
       if (this.ctx.pluginManager?.hasHook('daemon:data')) {
-        this.ctx.pluginManager.dispatch('daemon:data', { paneId: String(paneId), data }).catch(() => {});        
+        this.ctx.pluginManager.dispatch('daemon:data', { paneId: String(paneId), data }).catch(() => {});
       }
 
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
@@ -405,6 +411,7 @@ class HivemindApp {
         if (data.includes('>') || lower.includes('claude') || lower.includes('codex') || lower.includes('gemini')
 ) {
           this.ctx.agentRunning.set(paneId, 'running');
+          organicUI.agentOnline(paneId);
           this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'running' }).catch(() => {});
           this.broadcastClaudeState();
           this.activity.logActivity('state', paneId, 'Agent started', { status: 'running' });
@@ -417,6 +424,7 @@ class HivemindApp {
       this.ctx.recoveryManager?.handleExit(paneId, code);
       this.usage.recordSessionEnd(paneId);
       this.ctx.agentRunning.set(paneId, 'idle');
+      organicUI.agentOffline(paneId);
       this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'idle', exitCode: code }).catch(() => {});
       this.broadcastClaudeState();
       this.activity.logActivity('state', paneId, `Session ended (exit code: ${code})`, { exitCode: code });      
@@ -432,20 +440,34 @@ class HivemindApp {
       this.ctx.recoveryManager?.recordActivity(paneId);
     });
 
-    this.ctx.daemonClient.on('connected', (terminals) => {
-      log.info('Daemon', `Connected. Existing terminals: ${terminals.length}`);
-
-      if (terminals && terminals.length > 0) {
-        for (const term of terminals) {
-          if (term.alive) {
-            this.ctx.agentRunning.set(String(term.paneId), 'running');
-            const command = this.cliIdentity.getPaneCommandForIdentity(String(term.paneId));
-            this.cliIdentity.inferAndEmitCliIdentity(term.paneId, command);
+        this.ctx.daemonClient.on('connected', (terminals) => {
+          log.info('Daemon', `Connected. Existing terminals: ${terminals.length}`);
+    
+          if (terminals && terminals.length > 0) {
+            for (const term of terminals) {
+              if (term.alive) {
+                // Refine: Check if terminal actually has CLI content
+                // Simple check here as we don't want to duplicate all regexes from daemon-handlers
+                const scrollback = String(term.scrollback || '');
+                const hasCli = scrollback.includes('Claude Code') || 
+                               scrollback.includes('codex>') || 
+                               scrollback.includes('Gemini CLI') ||
+                               (scrollback.includes('>') && scrollback.length > 200);
+    
+                if (hasCli) {
+                  this.ctx.agentRunning.set(String(term.paneId), 'running');
+                  organicUI.agentOnline(String(term.paneId));
+                } else {
+                  this.ctx.agentRunning.set(String(term.paneId), 'idle');
+                  organicUI.agentOffline(String(term.paneId));
+                }
+                
+                const command = this.cliIdentity.getPaneCommandForIdentity(String(term.paneId));   
+                this.cliIdentity.inferAndEmitCliIdentity(term.paneId, command);
+              }
+            }
+            this.broadcastClaudeState();
           }
-        }
-        this.broadcastClaudeState();
-      }
-
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send('daemon-connected', {
           terminals,

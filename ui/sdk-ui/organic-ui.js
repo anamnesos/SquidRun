@@ -388,17 +388,23 @@ function createOrganicUI(options = {}) {
     }
   };
 
-  // Append text to an agent's content area
-  const appendText = (agentIdOrPane, text) => {
-    const agentId = resolveAgentId(agentIdOrPane);
-    if (!agentId) return;
-    const agentData = agentElements.get(agentId);
-    if (!agentData) return;
-
-    const buffer = agentTextBuffers.get(agentId);
-    const lines = text.split('\n');
-    buffer.push(...lines);
-
+      // Helper to strip ANSI escape codes
+      const stripAnsi = (str) => {
+        return str.replace(/\x1B\][^\x07]*(\x07|\x1B\\)/g, '')
+                  .replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+      };
+  
+      // Append text to an agent's content area
+      const appendText = (agentIdOrPane, text) => {
+        const agentId = resolveAgentId(agentIdOrPane);
+        if (!agentId) return;
+        const agentData = agentElements.get(agentId);
+        if (!agentData) return;
+  
+        const buffer = agentTextBuffers.get(agentId);
+        const cleanText = stripAnsi(text);
+        const lines = cleanText.split('\n');
+        buffer.push(...lines);
     // Keep only last MAX_LINES
     while (buffer.length > MAX_LINES) {
       buffer.shift();

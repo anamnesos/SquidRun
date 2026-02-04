@@ -232,7 +232,7 @@ class AgentConfig:
             role="Architect",
             pane_id="1",
             model="claude",
-            role_dir="lead",
+            role_dir="arch",
             allowed_tools=["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
         )
 
@@ -243,7 +243,7 @@ class AgentConfig:
             pane_id="2",
             model="codex",
             role_dir="infra",
-            allowed_tools=["Read", "Edit", "Write", "Bash", "Glob", "Grep"],
+            allowed_tools=["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
         )
 
     @classmethod
@@ -252,8 +252,8 @@ class AgentConfig:
             role="Frontend",
             pane_id="3",
             model="claude",
-            role_dir="worker-a",
-            allowed_tools=["Read", "Edit", "Write", "Glob", "Grep"],
+            role_dir="front",
+            allowed_tools=["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
         )
 
     @classmethod
@@ -262,8 +262,8 @@ class AgentConfig:
             role="Backend",
             pane_id="4",
             model="codex",
-            role_dir="worker-b",
-            allowed_tools=["Read", "Edit", "Write", "Bash", "Glob", "Grep"],
+            role_dir="back",
+            allowed_tools=["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
         )
 
     @classmethod
@@ -272,8 +272,8 @@ class AgentConfig:
             role="Analyst",
             pane_id="5",
             model="gemini",
-            role_dir="investigator",
-            allowed_tools=["Read", "Edit", "Write", "Glob", "Grep"],
+            role_dir="ana",
+            allowed_tools=["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
         )
 
     @classmethod
@@ -282,8 +282,8 @@ class AgentConfig:
             role="Reviewer",
             pane_id="6",
             model="claude",
-            role_dir="reviewer",
-            allowed_tools=["Read", "Glob", "Grep"],  # Read-only!
+            role_dir="rev",
+            allowed_tools=["Read", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],  # Read-only for files, but needs Bash for hm-send.js
             permission_mode="bypassPermissions",
         )
 
@@ -315,6 +315,50 @@ class AgentConfig:
     @classmethod
     def worker_b(cls):
         return cls.backend()
+
+
+# =============================================================================
+# ROLE MARKER CLEANING - Strip legacy Human:/Assistant: markers
+# =============================================================================
+
+def clean_role_markers(text: str) -> str:
+    """
+    Strip legacy role markers like Human: and Assistant: from content.
+
+    Anthropic's legacy API and some CLI wrappers use these as turn markers.
+    Leaking them into history causes feedback loops where agents think they
+    are the human or vice-versa.
+    """
+    if not text:
+        return text
+
+    # List of markers to strip (both at start and end)
+    markers = [
+        "Human:", "Assistant:", "User:", "System:",
+        "HUMAN:", "ASSISTANT:", "USER:", "SYSTEM:"
+    ]
+
+    result = text.strip()
+
+    # Repeatedly strip markers from the beginning
+    changed = True
+    while changed:
+        changed = False
+        for m in markers:
+            if result.startswith(m):
+                result = result[len(m):].lstrip()
+                changed = True
+
+    # Repeatedly strip markers from the end
+    changed = True
+    while changed:
+        changed = False
+        for m in markers:
+            if result.endswith(m):
+                result = result[:-len(m)].rstrip()
+                changed = True
+
+    return result
 
 
 # =============================================================================
@@ -366,11 +410,20 @@ class BaseAgent(ABC):
     def _save_to_history(self, role: str, content: str) -> None:
         """Append a message to conversation history file."""
         try:
+            # V2 FIX: Clean legacy role markers before saving to history
+            # This prevents feedback loops where 'Human:' markers are re-injected
+            cleaned_content = clean_role_markers(content)
+            if not cleaned_content and content:
+                # If cleaning stripped everything but there was content,
+                # it was likely just a role marker (e.g., "Human:").
+                # Don't save empty entries.
+                return
+
             self.history_file.parent.mkdir(parents=True, exist_ok=True)
             entry = {
                 "timestamp": datetime.now().isoformat(),
                 "role": role,
-                "content": content[:2000]  # Limit content size
+                "content": cleaned_content[:2000]  # Limit content size
             }
             with open(self.history_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(entry, default=str) + '\n')
@@ -463,6 +516,9 @@ class ClaudeAgent(BaseAgent):
         options = ClaudeAgentOptions(
             # Use Opus 4.5 - the best model
             model="claude-opus-4-5-20251101",
+            # FIX: Pass model via env var - ClaudeAgentOptions.model is ignored due to CLI bug
+            # See: https://github.com/anthropics/claude-code/issues/13242
+            env={"ANTHROPIC_MODEL": "claude-opus-4-5-20251101"},
             allowed_tools=self.config.allowed_tools,
             permission_mode=self.config.permission_mode,
             cwd=str(role_specific_cwd),
@@ -551,8 +607,10 @@ class ClaudeAgent(BaseAgent):
                 if isinstance(msg, ResultMessage):
                     self.session_id = msg.session_id
                     # Save assistant response to history
-                    if assistant_response.strip():
-                        self._save_to_history("assistant", assistant_response.strip())
+                    # V2 FIX: Clean role markers (Human:/Assistant:) before saving
+                    final_response = clean_role_markers(assistant_response)
+                    if final_response:
+                        self._save_to_history("assistant", final_response)
                     yield {
                         "type": "result",
                         "session_id": msg.session_id,
@@ -583,7 +641,8 @@ class ClaudeAgent(BaseAgent):
             content_parts: List[Dict[str, Any]] = []
             for block in msg.content:
                 if isinstance(block, TextBlock):
-                    content_parts.append({"type": "text", "text": block.text})
+                    # V2 FIX: Clean role markers (Human:/Assistant:) before emitting
+                    content_parts.append({"type": "text", "text": clean_role_markers(block.text)})
                 elif isinstance(block, ThinkingBlock):
                     # Extended thinking output
                     content_parts.append({
@@ -743,405 +802,533 @@ class ClaudeAgent(BaseAgent):
 
 
 # =============================================================================
-# CODEX AGENT - Codex via OpenAI Agents SDK (MCP)
+# CODEX AGENT - Codex via CLI subprocess with JSONL streaming
 # =============================================================================
 
 class CodexAgent(BaseAgent):
     """
-    Codex agent using OpenAI Agents SDK via MCP server.
+    Codex agent using CLI subprocess with JSONL streaming.
 
-    Codex runs as an MCP server, Python connects via MCPServerStdio.
-    Uses elevated_windows_sandbox for safe command execution.
+    Spawns `codex exec --json` for each message, parsing JSONL events
+    to provide real-time thinking indicators and text streaming to UI.
+
+    Event types from Codex JSONL:
+    - thread.started: Session begins (contains thread_id)
+    - turn.started/completed/failed: Turn lifecycle
+    - item.started/completed: Operations (reasoning, commands, file changes)
+
+    Item types that indicate thinking:
+    - reasoning: Agent thinking/planning (emit as thinking_delta)
+    - agent_message: Text response (emit as text_delta)
+    - command_execution: Running commands
+    - file_change: File modifications
     """
 
     def __init__(self, config: AgentConfig, workspace: Path):
         super().__init__(config, workspace)
-        self.mcp_server: Any = None  # MCPServerStdio - typed as Any for mypy
+        self.process: Optional[asyncio.subprocess.Process] = None
         self.thread_id: Optional[str] = None
+        self._interrupt_requested: bool = False
 
     async def connect(self, resume_id: Optional[str] = None) -> None:
-        """Connect to Codex MCP server."""
-        try:
-            from agents.mcp import MCPServerStdio
-
-            # Create MCP server instance (don't use __aenter__, use connect/cleanup)
-            # NOTE: Model is configured via ~/.codex/config.toml (mcp-server doesn't accept --model)
-            # Add `model = "gpt-5.2-codex"` to config.toml for GPT-5.2
-            # Default: gpt-5-codex (macOS/Linux) or gpt-5 (Windows)
-            self.mcp_server = MCPServerStdio(
-                name=f"Codex-{self.config.pane_id}",
-                params={"command": "npx", "args": ["-y", "codex", "mcp-server"]},
-                client_session_timeout_seconds=360000,
-            )
-
-            # Connect using proper SDK pattern
-            await self.mcp_server.connect()
-
-            # Verify connection by listing tools
-            try:
-                tools = await self.mcp_server.list_tools()
-                self._emit("status", {"state": "tools_discovered", "tools": [t.name for t in tools]})
-            except Exception as tool_err:
-                self._emit("warning", {"message": f"Could not list tools: {tool_err}"})
-
-            self.thread_id = resume_id
-            self.connected = True
-            self._emit("status", {"state": "connected", "resumed": resume_id is not None})
-
-        except ImportError as e:
-            self._emit("error", {"message": f"OpenAI Agents SDK not installed: {e}"})
-            raise
-        except Exception as e:
-            self._emit("error", {"message": f"Codex connect failed: {e}"})
-            raise
+        """
+        Mark agent as ready. Codex CLI doesn't require persistent connection -
+        we spawn a new process for each message.
+        """
+        self.thread_id = resume_id
+        self.connected = True
+        self._emit("status", {"state": "connected", "resumed": resume_id is not None})
 
     async def send(self, message: str) -> AsyncIterator[Dict[str, Any]]:
-        """Send message to Codex and yield normalized responses."""
-        if not self.connected or not self.mcp_server:
+        """
+        Send message to Codex via CLI subprocess and stream JSONL events.
+
+        Spawns: codex exec --json [--resume thread_id] "message"
+        Parses JSONL from stdout for real-time event streaming.
+        """
+        if not self.connected:
             yield {"type": "error", "message": "Codex agent not connected"}
             return
 
         self._save_to_history("user", message)
         self._emit("status", {"state": "thinking"})
+        self._interrupt_requested = False
+
+        # Build command
+        # On Windows, use 'codex.cmd' because asyncio.create_subprocess_exec
+        # doesn't resolve .cmd extensions like the shell does
+        codex_cmd = "codex.cmd" if sys.platform == "win32" else "codex"
+
+        # Resume existing thread if available
+        # NOTE: 'resume' is a subcommand, not a flag: `codex exec resume <thread_id> "message"`
+        if self.thread_id:
+            cmd = [codex_cmd, "exec", "resume", self.thread_id, "--json"]
+        else:
+            cmd = [codex_cmd, "exec", "--json"]
+
+        # Add the message as final argument
+        cmd.append(message)
+
+        response_text = ""
+        has_error = False
 
         try:
-            if self.thread_id:
-                # Continue existing thread
+            # On Windows, asyncio.create_subprocess_exec doesn't search PATH reliably
+            # Use shutil.which to find the full path to codex
+            import shutil
+            codex_path = shutil.which("codex")
+            if not codex_path:
+                yield {"type": "error", "message": "Codex CLI not found in PATH. Install with: npm install -g @openai/codex"}
+                return
+
+            # Replace 'codex' with the full path
+            cmd[0] = codex_path
+
+            # Spawn subprocess
+            # On Windows, codex is a .cmd batch wrapper that requires shell=True
+            # Without shell=True, asyncio.create_subprocess_exec raises FileNotFoundError
+            use_shell = sys.platform == 'win32'
+
+            if use_shell:
+                # For shell=True, pass command as a single string
+                cmd_str = ' '.join(f'"{c}"' if ' ' in c else c for c in cmd)
+                self.process = await asyncio.create_subprocess_shell(
+                    cmd_str,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(self.workspace),
+                )
+            else:
+                self.process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(self.workspace),
+                )
+
+            # Read stdout line by line (JSONL stream)
+            assert self.process.stdout is not None
+            async for line in self.process.stdout:
+                if self._interrupt_requested:
+                    break
+
+                line_str = line.decode('utf-8', errors='replace').strip()
+                if not line_str:
+                    continue
+
                 try:
-                    result = await self._call_codex_tool("codex-reply", {
-                        "threadId": self.thread_id,
-                        "prompt": message,
-                    })
-                except Exception as thread_err:
-                    # Thread may be stale - start new session
-                    if "not found" in str(thread_err).lower() or "expired" in str(thread_err).lower():
-                        self._emit("status", {"state": "thread_expired_restarting"})
-                        self.thread_id = None
-                        result = await self._start_new_session(message)
-                    else:
-                        raise
-            else:
-                result = await self._start_new_session(message)
+                    event = json.loads(line_str)
+                    parsed = self._parse_codex_event(event)
+                    if parsed:
+                        # Accumulate text for history
+                        if parsed.get("type") == "text_delta":
+                            response_text += parsed.get("text", "")
+                        yield parsed
+                except json.JSONDecodeError:
+                    # Non-JSON output (progress to stderr, or debug output)
+                    LOGGER.debug(f"Codex non-JSON output: {line_str}")
+                    continue
 
-            # Extract content from MCP response
-            # Result can be dict, or MCP CallToolResult object with .content attribute
-            if isinstance(result, dict):
-                content = result.get("structuredContent", {})
-                self.thread_id = content.get("threadId", self.thread_id)
-                response_text = content.get("content", str(result))
-            elif hasattr(result, "content") and result.content:
-                # MCP CallToolResult: content is list of TextContent objects
-                text_parts = []
-                for item in result.content:
-                    if hasattr(item, "text") and item.text:
-                        text_parts.append(item.text)
-                response_text = "\n".join(text_parts) if text_parts else str(result)
-                # Try to extract threadId from structuredContent if available
-                if hasattr(result, "structuredContent") and isinstance(result.structuredContent, dict):
-                    self.thread_id = result.structuredContent.get("threadId", self.thread_id)
-            else:
-                response_text = str(result)
+            # Wait for process to complete
+            await self.process.wait()
 
-            # Normalize to common format - emit as text_delta for consistency
-            # Codex MCP doesn't stream, so emit full response as one delta
-            yield {"type": "text_delta", "text": response_text}
+            # Check for errors
+            if self.process.returncode != 0:
+                assert self.process.stderr is not None
+                stderr = await self.process.stderr.read()
+                stderr_text = stderr.decode('utf-8', errors='replace')
+                if stderr_text.strip():
+                    has_error = True
+                    yield {"type": "error", "message": f"Codex exit code {self.process.returncode}: {stderr_text}"}
 
-            self._save_to_history("assistant", response_text)
+            # Save response to history
+            if response_text.strip():
+                self._save_to_history("assistant", response_text.strip())
 
             yield {
                 "type": "result",
                 "session_id": self.thread_id,
-                "is_error": False,
+                "is_error": has_error,
             }
 
-        except RetryError as e:
-            last = e.last_attempt.exception() if hasattr(e, "last_attempt") else None
-            err_msg = last or e  # type: ignore[assignment]
-            yield {"type": "error", "message": f"Codex API retry failed: {err_msg}"}
+        except FileNotFoundError:
+            yield {"type": "error", "message": "Codex CLI not found. Install with: npm install -g @openai/codex"}
         except Exception as e:
             yield {"type": "error", "message": f"Codex error: {e}"}
-
         finally:
+            self.process = None
             self._emit("status", {"state": "idle"})
 
-    @sdk_retry()
-    async def _start_new_session(self, message: str) -> Dict[str, Any]:
-        """Start a new Codex session."""
-        assert self.mcp_server is not None, "MCP server not connected"
-        return await self.mcp_server.call_tool("codex", {
-            "prompt": message,
-            "approval-policy": "never",  # Safe: Codex runs in sandbox
-            "sandbox": "workspace-write",  # Valid values: read-only, workspace-write, danger-full-access
-        })
+    def _parse_codex_event(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Parse Codex JSONL event and convert to Hivemind format.
 
-    @sdk_retry()
-    async def _call_codex_tool(self, tool: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Call a Codex MCP tool with retry semantics."""
-        assert self.mcp_server is not None, "MCP server not connected"
-        return await self.mcp_server.call_tool(tool, payload)
+        Maps Codex events to:
+        - text_delta: For agent text responses (typewriter effect)
+        - thinking_delta: For reasoning/planning (thinking indicator)
+        - tool_use: For command execution, file changes
+        - status: For turn lifecycle events
+        """
+        event_type = event.get("type", "")
+
+        # Thread started - capture thread_id for session persistence
+        if event_type == "thread.started":
+            self.thread_id = event.get("thread_id")
+            return {"type": "status", "state": "thread_started", "thread_id": self.thread_id}
+
+        # Turn lifecycle
+        if event_type == "turn.started":
+            return {"type": "status", "state": "turn_started"}
+
+        if event_type == "turn.completed":
+            usage = event.get("usage", {})
+            return {
+                "type": "status",
+                "state": "turn_completed",
+                "input_tokens": usage.get("input_tokens"),
+                "output_tokens": usage.get("output_tokens"),
+            }
+
+        if event_type == "turn.failed":
+            return {"type": "error", "message": event.get("error", "Turn failed")}
+
+        # Item events - the interesting ones for UI feedback
+        if event_type == "item.started":
+            item = event.get("item", {})
+            item_type = item.get("type", "")
+
+            # Reasoning = thinking indicator
+            if item_type == "reasoning":
+                return {"type": "thinking_delta", "thinking": "Reasoning..."}
+
+            # Command execution
+            if item_type == "command_execution":
+                command = item.get("command", "")
+                return {
+                    "type": "tool_use",
+                    "name": "Bash",
+                    "input": {"command": command},
+                }
+
+            # File change
+            if item_type == "file_change":
+                file_path = item.get("file_path", "")
+                return {
+                    "type": "tool_use",
+                    "name": "Edit",
+                    "input": {"file_path": file_path},
+                }
+
+            # MCP tool call
+            if item_type == "mcp_tool_call":
+                tool_name = item.get("tool_name", "unknown")
+                return {
+                    "type": "tool_use",
+                    "name": tool_name,
+                    "input": item.get("arguments", {}),
+                }
+
+            # Web search
+            if item_type == "web_search":
+                query = item.get("query", "")
+                return {
+                    "type": "tool_use",
+                    "name": "WebSearch",
+                    "input": {"query": query},
+                }
+
+            # Plan update
+            if item_type == "plan_update":
+                return {"type": "thinking_delta", "thinking": "Updating plan..."}
+
+        if event_type == "item.completed":
+            item = event.get("item", {})
+            item_type = item.get("type", "")
+
+            # Agent message = actual text response
+            if item_type == "agent_message":
+                content = item.get("content", "")
+                if content:
+                    return {"type": "text_delta", "text": content}
+
+            # Reasoning completed - emit the reasoning content
+            if item_type == "reasoning":
+                reasoning_content = item.get("content", "")
+                if reasoning_content:
+                    return {"type": "thinking_delta", "thinking": reasoning_content}
+
+            # Command result
+            if item_type == "command_execution":
+                output = item.get("output", "")
+                exit_code = item.get("exit_code", 0)
+                return {
+                    "type": "tool_result",
+                    "content": output,
+                    "is_error": exit_code != 0,
+                }
+
+            # File change result
+            if item_type == "file_change":
+                return {
+                    "type": "tool_result",
+                    "content": f"File changed: {item.get('file_path', 'unknown')}",
+                    "is_error": False,
+                }
+
+        # Unknown event type - pass through for debugging
+        return None
+
+    async def interrupt(self) -> bool:
+        """Interrupt the current Codex process."""
+        self._interrupt_requested = True
+        if self.process and self.process.returncode is None:
+            try:
+                self.process.terminate()
+                # Give it a moment to terminate gracefully
+                try:
+                    await asyncio.wait_for(self.process.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    self.process.kill()
+                return True
+            except Exception:
+                pass
+        return False
 
     async def disconnect(self) -> Optional[str]:
-        """Disconnect from Codex MCP server."""
-        if self.mcp_server:
+        """Disconnect - terminate any running process."""
+        if self.process and self.process.returncode is None:
             try:
-                await self.mcp_server.cleanup()
+                self.process.terminate()
             except Exception:
-                pass  # Best effort cleanup
-        self.mcp_server = None
+                pass
+        self.process = None
         self.connected = False
         self._emit("status", {"state": "disconnected"})
         return self.thread_id
 
 
 # =============================================================================
-# GEMINI AGENT - Gemini via google-genai SDK
+# GEMINI AGENT - Gemini via CLI subprocess (like CodexAgent)
 # =============================================================================
 
 class GeminiAgent(BaseAgent):
     """
-    Gemini agent using google-genai SDK.
+    Gemini agent using CLI subprocess with stream-json output.
 
-    Uses chat sessions for conversation continuity.
-    Supports tool use via Automatic Function Calling (AFC).
+    Spawns `gemini` CLI for each message, parsing stream-json events
+    to provide real-time streaming to UI. Uses CLI so GEMINI.md files
+    are automatically loaded (just like CLAUDE.md for Claude agents).
+
+    Key flags:
+    - --output-format stream-json: JSONL streaming output
+    - --yolo: Auto-approve tool calls
+    - --resume: Resume previous session
     """
 
     def __init__(self, config: AgentConfig, workspace: Path):
         super().__init__(config, workspace)
-        self.client: Any = None  # google.genai.Client - typed as Any for mypy
-        self.chat: Any = None  # google.genai.Chat - typed as Any for mypy
-        self._tools_config: Any = None  # GenerateContentConfig - typed as Any for mypy
-
-    def _build_tools(self) -> list:
-        """Build tool functions based on allowed_tools config."""
-        import subprocess
-        import glob as glob_module
-
-        workspace = self.workspace
-
-        def read_file(path: str) -> str:
-            """Read content from a file.
-
-            Args:
-                path: The file path to read (absolute or relative to workspace)
-            """
-            try:
-                file_path = Path(path) if Path(path).is_absolute() else workspace / path
-                return file_path.read_text(encoding='utf-8')
-            except Exception as e:
-                return f"Error reading file: {e}"
-
-        def write_file(path: str, content: str) -> str:
-            """Write content to a file.
-
-            Args:
-                path: The file path to write (absolute or relative to workspace)
-                content: The content to write
-            """
-            try:
-                file_path = Path(path) if Path(path).is_absolute() else workspace / path
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(content, encoding='utf-8')
-                return f"Successfully wrote {len(content)} bytes to {path}"
-            except Exception as e:
-                return f"Error writing file: {e}"
-
-        def run_bash(command: str) -> str:
-            """Execute a bash command and return output.
-
-            Args:
-                command: The bash command to execute
-            """
-            try:
-                result = subprocess.run(
-                    command,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                    cwd=str(workspace)
-                )
-                output = result.stdout
-                if result.stderr:
-                    output += f"\nSTDERR: {result.stderr}"
-                if result.returncode != 0:
-                    output += f"\nExit code: {result.returncode}"
-                return output or "(no output)"
-            except subprocess.TimeoutExpired:
-                return "Error: Command timed out after 120 seconds"
-            except Exception as e:
-                return f"Error running command: {e}"
-
-        def glob_files(pattern: str) -> str:
-            """Find files matching a glob pattern.
-
-            Args:
-                pattern: The glob pattern (e.g., '**/*.py')
-            """
-            try:
-                base = workspace if not Path(pattern).is_absolute() else Path('/')
-                matches = list(base.glob(pattern))
-                if not matches:
-                    return "No files found matching pattern"
-                return "\n".join(str(m) for m in matches[:100])  # Limit to 100
-            except Exception as e:
-                return f"Error in glob: {e}"
-
-        def grep_search(pattern: str, path: str = ".") -> str:
-            """Search for a pattern in files.
-
-            Args:
-                pattern: The regex pattern to search for
-                path: The path to search in (default: current directory)
-            """
-            try:
-                search_path = Path(path) if Path(path).is_absolute() else workspace / path
-                result = subprocess.run(
-                    ["grep", "-r", "-n", "--include=*.py", "--include=*.js", "--include=*.ts",
-                     "--include=*.md", "--include=*.json", pattern, str(search_path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=60
-                )
-                return result.stdout[:10000] or "No matches found"  # Limit output
-            except Exception as e:
-                return f"Error in grep: {e}"
-
-        # Map tool names to functions
-        tool_map = {
-            "Read": read_file,
-            "Write": write_file,
-            "Bash": run_bash,
-            "Glob": glob_files,
-            "Grep": grep_search,
-        }
-
-        # Return tools based on allowed_tools config
-        tools = []
-        for tool_name in self.config.allowed_tools:
-            if tool_name in tool_map:
-                tools.append(tool_map[tool_name])
-
-        return tools
+        self.session_index: Optional[str] = None  # Gemini uses index numbers for resume
+        self.process: Optional[asyncio.subprocess.Process] = None
+        self._interrupt_requested: bool = False
 
     async def connect(self, resume_id: Optional[str] = None) -> None:
-        """Connect to Gemini API and create chat session with tools."""
-        try:
-            from google import genai
-            from google.genai import types
+        """Initialize Gemini agent state.
 
-            client = genai.Client()
-
-            # Build tools based on config
-            tools = self._build_tools()
-
-            # Create chat config with tools and automatic function calling
-            if tools:
-                self._tools_config = types.GenerateContentConfig(
-                    tools=tools,
-                    automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                        disable=False,
-                        maximum_remote_calls=10
-                    )
-                )
-
-            # Create chat session with gemini-3-flash (matches PTY mode Auto Gemini 3)
-            chat = client.chats.create(model="gemini-3-flash")
-            self.client = client
-            self.chat = chat
-            self.connected = True
-
-            # Restore context from history if available
-            context_msg = self.get_context_restore_message()
-            if context_msg:
-                self._emit("status", {"state": "restoring_context"})
-                # Send context restore as first message to prime the chat
-                try:
-                    chat.send_message(context_msg, config=self._tools_config)
-                except Exception:
-                    pass  # Non-fatal, continue without context
-
-            self._emit("status", {
-                "state": "connected",
-                "has_history": context_msg is not None,
-                "tools_enabled": len(tools) > 0
-            })
-
-        except ImportError as e:
-            self._emit("error", {"message": f"Google GenAI SDK not installed: {e}"})
-            raise
-        except Exception as e:
-            self._emit("error", {"message": f"Gemini connect failed: {e}"})
-            raise
+        Unlike SDK-based agents, CLI agents don't maintain a persistent connection.
+        Each message spawns a new subprocess.
+        """
+        self.session_index = resume_id
+        self.connected = True
+        self._emit("status", {"state": "connected", "resumed": resume_id is not None})
 
     async def send(self, message: str) -> AsyncIterator[Dict[str, Any]]:
-        """Send message to Gemini and yield normalized responses.
-
-        Uses Automatic Function Calling (AFC) - the SDK automatically executes
-        tool functions when the model requests them and continues the conversation.
         """
-        if not self.connected or not self.chat:
+        Send message to Gemini via CLI subprocess and stream JSON events.
+
+        Spawns: gemini --output-format stream-json --yolo [--resume index] -p "message"
+        Parses stream-json from stdout for real-time event streaming.
+        """
+        if not self.connected:
             yield {"type": "error", "message": "Gemini agent not connected"}
             return
 
         self._save_to_history("user", message)
         self._emit("status", {"state": "thinking"})
+        self._interrupt_requested = False
+
+        # Build command
+        # On Windows, use 'gemini.cmd' because asyncio.create_subprocess_exec
+        # doesn't resolve .cmd extensions like the shell does
+        gemini_cmd = "gemini.cmd" if sys.platform == "win32" else "gemini"
+        cmd = [gemini_cmd, "--output-format", "stream-json", "--yolo"]
+
+        # Resume existing session if available
+        if self.session_index:
+            cmd.extend(["--resume", self.session_index])
+
+        # Add the message via -p flag
+        cmd.extend(["-p", message])
 
         response_text = ""
+        has_error = False
 
         try:
-            # Use send_message_stream with tools config (collected via retry helper)
-            chunks = await self._collect_gemini_stream(message)
-            for chunk in chunks:
-                # Handle text content
-                text = chunk.text if hasattr(chunk, 'text') else ""
-                if text:
-                    response_text += text
-                    yield {"type": "text_delta", "text": text}
+            # On Windows, find full path to gemini CLI
+            import shutil
+            gemini_path = shutil.which("gemini")
+            if not gemini_path:
+                yield {"type": "error", "message": "Gemini CLI not found in PATH. Install with: npm install -g @google/gemini-cli"}
+                return
 
-                # Optionally emit tool use events for UI feedback
-                if hasattr(chunk, 'function_call') and chunk.function_call:
+            # Replace 'gemini' with the full path
+            cmd[0] = gemini_path
+
+            # Spawn subprocess
+            # On Windows, gemini is a .cmd batch wrapper that requires shell=True
+            use_shell = sys.platform == 'win32'
+
+            if use_shell:
+                # For shell=True, pass command as a single string
+                cmd_str = ' '.join(f'"{c}"' if ' ' in c else c for c in cmd)
+                self.process = await asyncio.create_subprocess_shell(
+                    cmd_str,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(self.workspace),
+                )
+            else:
+                self.process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(self.workspace),
+                )
+
+            # Read stdout line by line (stream-json)
+            assert self.process.stdout is not None
+            async for line in self.process.stdout:
+                if self._interrupt_requested:
+                    break
+
+                line_str = line.decode('utf-8', errors='replace').strip()
+                if not line_str:
+                    continue
+
+                # Try to parse as JSON
+                try:
+                    event = json.loads(line_str)
+                except json.JSONDecodeError:
+                    # Non-JSON output (e.g., plain text fallback)
+                    response_text += line_str + "\n"
+                    yield {"type": "text_delta", "text": line_str + "\n"}
+                    continue
+
+                # Handle Gemini CLI stream-json events
+                # Format verified via: gemini --output-format stream-json
+                # Events: init, message (user/assistant), result
+                event_type = event.get("type", "")
+
+                if event_type == "init":
+                    # Session started - capture session_id for potential resume
+                    session_id = event.get("session_id")
+                    if session_id:
+                        self.session_id = session_id
+
+                elif event_type == "message":
+                    role = event.get("role", "")
+                    content = event.get("content", "")
+                    is_delta = event.get("delta", False)
+
+                    if role == "assistant" and content:
+                        # Streaming assistant response
+                        response_text += content
+                        self._emit("status", {"state": "responding"})
+                        yield {"type": "text_delta", "text": content}
+
+                    # Ignore user message echoes (role == "user")
+
+                elif event_type == "tool_use":
+                    # Tool being called (may appear in some Gemini versions)
                     yield {
                         "type": "tool_use",
-                        "tool": chunk.function_call.name,
-                        "args": dict(chunk.function_call.args) if chunk.function_call.args else {}
+                        "tool": event.get("name", event.get("tool", "unknown")),
+                        "args": event.get("args", event.get("input", {}))
                     }
 
-            self._save_to_history("assistant", response_text)
+                elif event_type == "tool_result":
+                    # Tool completed
+                    yield {
+                        "type": "tool_result",
+                        "tool": event.get("name", "unknown"),
+                        "result": event.get("result", event.get("output", ""))
+                    }
+
+                elif event_type == "result":
+                    # Gemini session complete
+                    status = event.get("status", "")
+                    if status != "success":
+                        has_error = True
+
+                elif event_type == "error":
+                    has_error = True
+                    yield {"type": "error", "message": event.get("message", event.get("content", "Unknown error"))}
+
+            # Wait for process to complete
+            await self.process.wait()
+
+            # Check for errors in stderr
+            if self.process.stderr:
+                stderr = await self.process.stderr.read()
+                stderr_str = stderr.decode('utf-8', errors='replace').strip()
+                if stderr_str and self.process.returncode != 0:
+                    has_error = True
+                    yield {"type": "error", "message": f"Gemini CLI error: {stderr_str}"}
+
+            # Save response to history
+            # V2 FIX: Clean role markers before saving
+            final_response = clean_role_markers(response_text)
+            if final_response:
+                self._save_to_history("assistant", final_response)
 
             yield {
                 "type": "result",
-                "session_id": self.session_id,
-                "is_error": False,
+                "session_id": self.session_index,
+                "is_error": has_error,
             }
 
-        except RetryError as e:
-            last = e.last_attempt.exception() if hasattr(e, "last_attempt") else None
-            err_msg = last or e  # type: ignore[assignment]
-            yield {"type": "error", "message": f"Gemini API retry failed: {err_msg}"}
+        except FileNotFoundError:
+            yield {"type": "error", "message": "Gemini CLI not found. Install with: npm install -g @google/gemini-cli"}
         except Exception as e:
-            error_msg = str(e)
-
-            # Handle rate limiting with backoff hint
-            if "429" in error_msg or "rate" in error_msg.lower():
-                yield {"type": "error", "message": f"Gemini rate limited: {error_msg}. Retry later."}
-            else:
-                yield {"type": "error", "message": f"Gemini error: {error_msg}"}
-
+            yield {"type": "error", "message": f"Gemini error: {e}"}
         finally:
+            self.process = None
             self._emit("status", {"state": "idle"})
 
     async def disconnect(self) -> Optional[str]:
-        """Disconnect from Gemini."""
-        self.connected = False
-        self.chat = None
-        self._emit("status", {"state": "disconnected"})
-        return self.session_id
+        """Disconnect from Gemini (kill subprocess if running)."""
+        if self.process:
+            try:
+                self.process.terminate()
+                await asyncio.wait_for(self.process.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                self.process.kill()
+            except Exception:
+                pass
 
-    @sdk_retry()
-    async def _collect_gemini_stream(self, message: str) -> List[Any]:
-        """Send a message via Gemini and collect stream chunks."""
-        assert self.chat is not None, "Gemini chat session not initialized"
-        return list(self.chat.send_message_stream(message, config=self._tools_config))
+        self.connected = False
+        self._emit("status", {"state": "disconnected"})
+        return self.session_index
+
+    async def interrupt(self) -> bool:
+        """Interrupt current Gemini operation."""
+        self._interrupt_requested = True
+        if self.process:
+            try:
+                self.process.terminate()
+                return True
+            except Exception:
+                pass
+        return False
 
 
 # =============================================================================
@@ -1176,28 +1363,61 @@ class HivemindManager:
         else:
             raise ValueError(f"Unknown model type: {config.model}")
 
+    def _load_model_settings(self) -> Dict[str, str]:
+        """Load model assignments from settings.json."""
+        settings_path = Path(__file__).parent / "ui" / "settings.json"
+        models: Dict[str, str] = {}
+        try:
+            if settings_path.exists():
+                with open(settings_path, 'r') as f:
+                    settings = json.load(f)
+                pane_commands = settings.get("paneCommands", {})
+                for pane_id, command in pane_commands.items():
+                    cmd = command.lower()
+                    if cmd.startswith("codex"):
+                        models[pane_id] = "codex"
+                    elif cmd.startswith("gemini"):
+                        models[pane_id] = "gemini"
+                    else:
+                        models[pane_id] = "claude"
+                LOGGER.info(f"Loaded model settings: {models}")
+        except Exception as e:
+            LOGGER.warning(f"Could not load settings.json: {e}")
+        return models
+
     async def start_all(self):
         """Start all 6 agents, resuming sessions if available."""
 
         # Load saved sessions
         saved_sessions = self._load_sessions()
 
+        # Load model settings from settings.json (user's actual config)
+        model_settings = self._load_model_settings()
+
         # Create agents with new role-based config (includes model type)
         configs = [
-            AgentConfig.architect(),   # Pane 1 - Claude
-            AgentConfig.infra(),       # Pane 2 - Codex
-            AgentConfig.frontend(),    # Pane 3 - Claude
-            AgentConfig.backend(),     # Pane 4 - Codex
-            AgentConfig.analyst(),     # Pane 5 - Gemini
-            AgentConfig.reviewer(),    # Pane 6 - Claude
+            AgentConfig.architect(),   # Pane 1
+            AgentConfig.infra(),       # Pane 2
+            AgentConfig.frontend(),    # Pane 3
+            AgentConfig.backend(),     # Pane 4
+            AgentConfig.analyst(),     # Pane 5
+            AgentConfig.reviewer(),    # Pane 6
         ]
+
+        # Override models from settings.json
+        for config in configs:
+            if config.pane_id in model_settings:
+                config.model = model_settings[config.pane_id]
 
         for config in configs:
             agent = self._create_agent(config)
             self.agents[config.pane_id] = agent
 
             # Resume if we have a saved session
-            resume_id = saved_sessions.get(config.pane_id)
+            # NOTE: Codex CLI mode supports thread resume via --resume flag, but threads
+            # often expire between sessions. We try to resume but CodexAgent handles failures.
+            # Gemini doesn't support session persistence.
+            resume_id = saved_sessions.get(config.pane_id) if config.model not in ("gemini",) else None
 
             try:
                 await agent.connect(resume_id)
@@ -1231,6 +1451,39 @@ class HivemindManager:
 
         self._save_sessions(sessions)
         self._emit("all_stopped", {"sessions_saved": len(sessions)})
+
+    async def restart_agent(self, pane_id: str):
+        """Restart a single agent session (clear history)."""
+        if pane_id in self.agents:
+            agent = self.agents[pane_id]
+            LOGGER.info(f"Restarting agent {pane_id} ({agent.config.role})")
+            try:
+                await agent.disconnect()
+            except Exception as e:
+                LOGGER.error(f"Error disconnecting agent {pane_id} during restart: {e}")
+
+            # Re-create and connect (without resume_id to force fresh session)
+            config = agent.config
+            new_agent = self._create_agent(config)
+            self.agents[pane_id] = new_agent
+            
+            try:
+                await new_agent.connect()
+                self._emit("agent_restarted", {
+                    "pane_id": pane_id,
+                    "role": config.role,
+                    "model": config.model
+                })
+                self._emit("status", {
+                    "pane_id": pane_id,
+                    "state": "idle",
+                    "message": "Restarted"
+                })
+            except Exception as e:
+                self._emit("error", {
+                    "pane_id": pane_id,
+                    "message": f"Failed to restart {config.role}: {e}"
+                })
 
     async def send_message(self, pane_id: str, message: str):
         """
@@ -1463,6 +1716,13 @@ async def run_ipc_server(manager: HivemindManager):
             elif command == "get_sessions":
                 sessions = manager.get_all_sessions()
                 manager._emit("sessions", {"sessions": sessions})
+
+            elif command == "restart":
+                pane_id = cmd.get("pane_id")
+                if pane_id:
+                    await manager.restart_agent(pane_id)
+                else:
+                    manager._emit("error", {"message": "restart requires pane_id"})
 
             elif command == "stop":
                 # Wait for all running tasks before stopping (with timeout)

@@ -68,6 +68,17 @@ function registerSdkV2Handlers(ctx) {
     log.info('SDK V2', `Interrupting pane ${paneId}`);
     return { success: sdkBridge.interrupt(paneId) };
   });
+
+  ipcMain.handle('sdk-restart-session', (event, paneId) => {
+    log.info('SDK V2', `Restarting session for pane ${paneId}`);
+    try {
+      const sent = sdkBridge.restartSession(paneId);
+      return { success: sent };
+    } catch (err) {
+      log.error('SDK V2', 'Restart error:', err);
+      return { success: false, error: err.message };
+    }
+  });
 }
 
 module.exports = {
