@@ -1877,6 +1877,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  // War Room message stream - receives routed messages for display
+  // Data format: {ts, from, to, msg, type}
+  ipcRenderer.on('war-room-message', (event, data) => {
+    if (!organicUIInstance || !data) return;
+    log.info('WarRoom', `Message: (${data.from} → ${data.to}): ${(data.msg || '').substring(0, 50)}...`);
+    organicUIInstance.appendWarRoomMessage(data);
+
+    // Also trigger visual stream animation for agent-to-agent messages
+    if (data.from && data.to && data.from !== 'USER' && data.to !== 'USER') {
+      organicUIInstance.triggerMessageStream({
+        fromRole: data.from,
+        toRole: data.to,
+        phase: 'sending'
+      });
+    }
+  });
+
   // Setup daemon handlers
   daemonHandlers.setupStateListener();
   daemonHandlers.setupClaudeStateListener(daemonHandlers.handleSessionTimerState);
