@@ -1073,10 +1073,12 @@ MIT
     directories: [
       'workspace',
       'workspace/instances',
-      'workspace/instances/lead',
-      'workspace/instances/worker-a',
-      'workspace/instances/worker-b',
-      'workspace/instances/reviewer',
+      'workspace/instances/arch',
+      'workspace/instances/infra',
+      'workspace/instances/front',
+      'workspace/instances/back',
+      'workspace/instances/ana',
+      'workspace/instances/rev',
       'workspace/build',
       'workspace/build/reviews',
       'workspace/triggers',
@@ -1193,11 +1195,11 @@ _No errors logged_
 | Reviewer | OPEN | | |
 `,
       },
-      'workspace/instances/lead/CLAUDE.md': {
+      'workspace/instances/arch/CLAUDE.md': {
         type: 'text',
-        content: `# Lead Instance
+        content: `# Architect Instance
 
-You are the Lead (Architect) for this project.
+You are the Architect for this project.
 
 ## Responsibilities
 - Architecture decisions
@@ -1205,41 +1207,75 @@ You are the Lead (Architect) for this project.
 - Code review approval
 
 ## Communication
-- Receive messages: workspace/triggers/lead.txt
+- Receive messages: workspace/triggers/architect.txt
 - Broadcast: workspace/triggers/all.txt
 `,
       },
-      'workspace/instances/worker-a/CLAUDE.md': {
+      'workspace/instances/infra/CLAUDE.md': {
+        type: 'text',
+        content: `# Infra Instance
+
+You are Infra for this project.
+
+## Responsibilities
+- CI/CD pipelines
+- Build scripts
+- Infrastructure
+
+## Communication
+- Receive messages: workspace/triggers/infra.txt
+- Report to Architect: workspace/triggers/architect.txt
+`,
+      },
+      'workspace/instances/front/CLAUDE.md': {
         type: 'text',
         content: `# Frontend Instance
 
 You are Frontend for this project.
 
 ## Responsibilities
-- Implementation tasks
-- Frontend/UI work
+- UI components
+- Styling/CSS
+- Renderer logic
 
 ## Communication
 - Receive messages: workspace/triggers/frontend.txt
-- Report to Lead: workspace/triggers/architect.txt
+- Report to Architect: workspace/triggers/architect.txt
 `,
       },
-      'workspace/instances/worker-b/CLAUDE.md': {
+      'workspace/instances/back/CLAUDE.md': {
         type: 'text',
         content: `# Backend Instance
 
 You are Backend for this project.
 
 ## Responsibilities
-- Implementation tasks
-- Backend work
+- Main process logic
+- IPC handlers
+- File watching
 
 ## Communication
 - Receive messages: workspace/triggers/backend.txt
-- Report to Lead: workspace/triggers/architect.txt
+- Report to Architect: workspace/triggers/architect.txt
 `,
       },
-      'workspace/instances/reviewer/CLAUDE.md': {
+      'workspace/instances/ana/CLAUDE.md': {
+        type: 'text',
+        content: `# Analyst Instance
+
+You are Analyst for this project.
+
+## Responsibilities
+- Debugging
+- Performance profiling
+- Root cause analysis
+
+## Communication
+- Receive messages: workspace/triggers/analyst.txt
+- Report to Architect: workspace/triggers/architect.txt
+`,
+      },
+      'workspace/instances/rev/CLAUDE.md': {
         type: 'text',
         content: `# Reviewer Instance
 
@@ -1252,7 +1288,7 @@ You are the Reviewer for this project.
 
 ## Communication
 - Receive messages: workspace/triggers/reviewer.txt
-- Report to Lead: workspace/triggers/lead.txt
+- Report to Architect: workspace/triggers/architect.txt
 `,
       },
       '.gitignore': {

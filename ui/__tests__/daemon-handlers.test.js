@@ -15,12 +15,12 @@ jest.mock('electron', () => ({
 // Mock config
 jest.mock('../config', () => ({
   INSTANCE_DIRS: {
-    '1': '/project/instances/lead',
-    '2': '/project/instances/orchestrator',
-    '3': '/project/instances/worker-a',
-    '4': '/project/instances/worker-b',
-    '5': '/project/instances/investigator',
-    '6': '/project/instances/reviewer',
+    '1': '/project/instances/arch',
+    '2': '/project/instances/infra',
+    '3': '/project/instances/front',
+    '4': '/project/instances/back',
+    '5': '/project/instances/ana',
+    '6': '/project/instances/rev',
   },
   PANE_IDS: ['1', '2', '3', '4', '5', '6'],
   PANE_ROLES: {
