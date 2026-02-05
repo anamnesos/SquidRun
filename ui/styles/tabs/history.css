@@ -1,0 +1,61 @@
+/* Session History Tab Styles */
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.history-item {
+  background: var(--color-bg-dark);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  border-left: 3px solid var(--color-secondary);
+}
+
+.history-item:hover {
+  background: var(--color-bg-light);
+  transform: translateX(4px);
+  box-shadow: var(--shadow-md);
+}
+
+.history-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-1);
+}
+
+.history-item-agent {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.history-item-duration {
+  font-size: var(--text-sm);
+  color: var(--color-secondary);
+  font-family: var(--font-mono);
+}
+
+.history-item-time {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.history-empty {
+  text-align: center;
+  color: #666;
+  padding: var(--space-6) var(--space-5);
+  font-size: var(--text-base);
+  font-style: italic;
+}
+
+.history-actions {
+  margin-top: var(--space-3);
+  display: flex;
+  gap: var(--space-2);
+}

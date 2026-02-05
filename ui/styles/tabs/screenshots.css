@@ -1,0 +1,119 @@
+/* Screenshots Tab Styles */
+.screenshot-dropzone {
+  border: 2px dashed var(--color-bg-light);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  margin-bottom: var(--space-3);
+}
+
+.screenshot-dropzone:hover,
+.screenshot-dropzone.dragover {
+  border-color: var(--color-primary);
+  background: rgba(233, 69, 96, 0.1);
+  color: var(--color-text);
+  transform: scale(1.01);
+  box-shadow: 0 0 20px rgba(233, 69, 96, 0.15);
+}
+
+.screenshot-dropzone-icon {
+  font-size: 32px;
+  margin-bottom: var(--space-2);
+  transition: transform var(--transition-normal);
+}
+
+.screenshot-dropzone:hover .screenshot-dropzone-icon {
+  transform: scale(1.1);
+}
+
+.screenshot-dropzone-text {
+  font-size: var(--text-base);
+}
+
+.screenshot-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.screenshot-item {
+  background: var(--color-bg-dark);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+
+.screenshot-item:hover {
+  background: rgba(26, 26, 46, 0.8);
+  transform: translateX(2px);
+}
+
+.screenshot-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-light);
+  transition: transform var(--transition-fast);
+}
+
+.screenshot-item:hover .screenshot-thumb {
+  transform: scale(1.05);
+}
+
+.screenshot-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.screenshot-name {
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.screenshot-size {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.screenshot-actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.screenshot-btn {
+  background: transparent;
+  border: 1px solid var(--color-bg-light);
+  color: var(--color-text-muted);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.screenshot-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: rgba(233, 69, 96, 0.1);
+}
+
+.screenshot-btn:active {
+  transform: scale(0.95);
+}
+
+.screenshot-empty {
+  text-align: center;
+  color: #666;
+  padding: var(--space-5);
+  font-size: var(--text-base);
+}

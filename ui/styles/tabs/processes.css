@@ -1,0 +1,146 @@
+/* Processes Tab Styles */
+.process-spawn-form {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.process-input {
+  flex: 1;
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-bg-light);
+  color: var(--color-text);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.process-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(233, 69, 96, 0.15);
+}
+
+.process-spawn-btn {
+  background: var(--color-secondary);
+  border: 1px solid var(--color-secondary);
+  color: var(--color-bg-dark);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--text-base);
+  font-weight: 600;
+  transition: all var(--transition-fast);
+}
+
+.process-spawn-btn:hover {
+  background: #3db892;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(78, 204, 163, 0.3);
+}
+
+.process-spawn-btn:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.process-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.process-item {
+  background: var(--color-bg-dark);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+
+.process-item:hover {
+  background: rgba(26, 26, 46, 0.8);
+  transform: translateX(2px);
+}
+
+.process-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+
+.process-status-dot.running {
+  background: var(--color-secondary);
+  box-shadow: 0 0 8px var(--color-secondary);
+  animation: processPulse 2s ease-in-out infinite;
+}
+.process-status-dot.stopped { background: var(--color-text-muted); }
+.process-status-dot.error {
+  background: var(--color-error);
+  box-shadow: 0 0 8px var(--color-error);
+}
+
+@keyframes processPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.8; }
+}
+
+.process-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.process-command {
+  font-size: var(--text-base);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.process-details {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.process-kill-btn {
+  background: transparent;
+  border: 1px solid var(--color-error);
+  color: var(--color-error);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  transition: all var(--transition-fast);
+}
+
+.process-kill-btn:hover {
+  background: var(--color-error);
+  color: #fff;
+  transform: scale(1.05);
+}
+
+.process-kill-btn:active {
+  transform: scale(0.95);
+}
+
+.process-kill-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.process-empty {
+  text-align: center;
+  color: #666;
+  padding: var(--space-6) var(--space-5);
+  font-size: var(--text-base);
+}

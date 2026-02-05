@@ -1,0 +1,191 @@
+/* PT2: Performance Dashboard Styles */
+.perf-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.perf-card {
+  background: var(--color-bg-dark);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  border-left: 3px solid var(--color-secondary);
+  transition: all var(--transition-normal);
+}
+
+.perf-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.perf-card-header {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-primary);
+  margin-bottom: var(--space-2);
+}
+
+.perf-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-1);
+}
+
+.perf-value {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-secondary);
+  font-family: var(--font-mono);
+}
+
+.perf-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.perf-actions {
+  margin-top: var(--space-3);
+  display: flex;
+  gap: var(--space-2);
+}
+
+.perf-profile {
+  margin-top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.perf-profile-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.perf-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.perf-threshold {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.perf-threshold input {
+  width: 90px;
+  background: var(--color-bg-light);
+  border: 1px solid var(--color-bg-elevated);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  font-size: var(--text-sm);
+}
+
+.perf-profile-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.perf-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-3);
+}
+
+.perf-panel {
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-bg-light);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.perf-panel-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.perf-flame {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.perf-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.perf-bar-label {
+  flex: 0 0 140px;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perf-bar-track {
+  flex: 1;
+  background: var(--color-bg-light);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  height: 10px;
+}
+
+.perf-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(255, 200, 87, 0.8), rgba(233, 69, 96, 0.9));
+}
+
+.perf-bar-meta {
+  flex: 0 0 90px;
+  font-size: var(--text-xs);
+  color: var(--color-text);
+  text-align: right;
+}
+
+.perf-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.perf-list-item {
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-light);
+  border: 1px solid var(--color-bg-elevated);
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.perf-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.perf-empty {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  padding: var(--space-2);
+}
