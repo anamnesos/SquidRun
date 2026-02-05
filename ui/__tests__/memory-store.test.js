@@ -38,12 +38,12 @@ describe('Memory Store', () => {
     });
 
     test('exports PANE_ROLES mapping', () => {
-      expect(memoryStore.PANE_ROLES['1']).toBe('architect');
-      expect(memoryStore.PANE_ROLES['2']).toBe('orchestrator');
-      expect(memoryStore.PANE_ROLES['3']).toBe('implementer-a');
-      expect(memoryStore.PANE_ROLES['4']).toBe('implementer-b');
-      expect(memoryStore.PANE_ROLES['5']).toBe('investigator');
-      expect(memoryStore.PANE_ROLES['6']).toBe('reviewer');
+      expect(memoryStore.PANE_ROLES['1']).toBe('Architect');
+      expect(memoryStore.PANE_ROLES['2']).toBe('Infra');
+      expect(memoryStore.PANE_ROLES['3']).toBe('Frontend');
+      expect(memoryStore.PANE_ROLES['4']).toBe('Backend');
+      expect(memoryStore.PANE_ROLES['5']).toBe('Analyst');
+      expect(memoryStore.PANE_ROLES['6']).toBe('Reviewer');
     });
   });
 
@@ -69,8 +69,8 @@ describe('Memory Store', () => {
 
   describe('getRoleFromPaneId', () => {
     test('returns correct role for valid pane IDs', () => {
-      expect(memoryStore.getRoleFromPaneId('1')).toBe('architect');
-      expect(memoryStore.getRoleFromPaneId('6')).toBe('reviewer');
+      expect(memoryStore.getRoleFromPaneId('1')).toBe('Architect');
+      expect(memoryStore.getRoleFromPaneId('6')).toBe('Reviewer');
     });
 
     test('returns fallback for unknown pane ID', () => {
@@ -78,7 +78,7 @@ describe('Memory Store', () => {
     });
 
     test('handles numeric pane ID', () => {
-      expect(memoryStore.getRoleFromPaneId(1)).toBe('architect');
+      expect(memoryStore.getRoleFromPaneId(1)).toBe('Architect');
     });
   });
 

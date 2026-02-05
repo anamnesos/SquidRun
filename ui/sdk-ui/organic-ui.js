@@ -7,6 +7,7 @@
 
 const STYLE_ID = 'sdk-organic-ui-styles';
 const STREAM_DURATION_MS = 700;
+const SCALE_DURATION_MS = 300;
 
 // Status dot colors
 const STATUS_COLORS = {
@@ -888,7 +889,7 @@ function createOrganicUI(options = {}) {
 
     setTimeout(() => {
       el.classList.remove(className);
-    }, 300);
+    }, SCALE_DURATION_MS);
   };
 
   // Trigger message stream animation between agents
