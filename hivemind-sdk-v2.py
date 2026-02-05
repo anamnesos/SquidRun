@@ -160,7 +160,11 @@ try:
     # STR-2: StreamEvent is in types submodule for real-time text streaming
     from claude_agent_sdk.types import StreamEvent
 except ImportError:
-    print(json.dumps({"type": "error", "message": "Claude Agent SDK not installed. Run: pip install claude-agent-sdk"}))
+    print(json.dumps({
+        "type": "error", 
+        "message": "Claude Agent SDK not installed. Run: pip install claude-agent-sdk",
+        "timestamp": datetime.utcnow().isoformat()
+    }))
     sys.exit(1)
 
 
@@ -471,6 +475,7 @@ class BaseAgent(ABC):
             "type": msg_type,
             "pane_id": self.config.pane_id,
             "role": self.config.role,
+            "timestamp": datetime.utcnow().isoformat(),
             **data,
         }
         print(json.dumps(output, default=str), flush=True)
@@ -1505,6 +1510,7 @@ class HivemindManager:
         try:
             async for response in agent.send(message):
                 response["pane_id"] = pane_id
+                response["timestamp"] = datetime.utcnow().isoformat()
                 # V2 FIX: Use default=str to handle any non-serializable objects
                 print(json.dumps(response, default=str), flush=True)
         except Exception as e:
@@ -1558,6 +1564,7 @@ class HivemindManager:
         try:
             async for response in self.agents[pane_id].send(message):
                 response["pane_id"] = pane_id
+                response["timestamp"] = datetime.utcnow().isoformat()
                 # V2 FIX: Use default=str to handle any non-serializable objects
                 print(json.dumps(response, default=str), flush=True)
         except Exception as e:
@@ -1607,7 +1614,11 @@ class HivemindManager:
     def _emit(self, msg_type: str, data: Dict[str, Any]):
         """Emit a message to stdout."""
         # V2 FIX: Use default=str to handle any non-serializable objects
-        print(json.dumps({"type": msg_type, **data}, default=str), flush=True)
+        print(json.dumps({
+            "type": msg_type,
+            "timestamp": datetime.utcnow().isoformat(),
+            **data
+        }, default=str), flush=True)
 
 
 # =============================================================================

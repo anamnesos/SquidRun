@@ -32,6 +32,9 @@ let sdkMode = false;
 // Organic UI instance for SDK mode
 let organicUIInstance = null;
 
+// Pending messages for War Room (queued before organicUIInstance is ready)
+let pendingWarRoomMessages = [];
+
 // Reference to sendBroadcast (set after DOMContentLoaded)
 let sendBroadcastFn = null;
 
@@ -279,6 +282,13 @@ function markTerminalsReady(isSDKMode = false) {
       organicUIInstance = createOrganicUI({ mount: terminalsSection });
       log.info('Init', 'Organic UI mounted');
       wireOrganicInput();  // Wire up input handlers
+
+      // Replay pending messages
+      if (pendingWarRoomMessages.length > 0) {
+        log.info('Init', `Replaying ${pendingWarRoomMessages.length} queued messages`);
+        pendingWarRoomMessages.forEach(msg => organicUIInstance.appendWarRoomMessage(msg));
+        pendingWarRoomMessages = [];
+      }
     }
 
     // Auto-start SDK sessions (get workspace path via IPC)
@@ -377,6 +387,13 @@ window.hivemind = {
         organicUIInstance = createOrganicUI({ mount: terminalsSection });
         log.info('SDK', 'Organic UI mounted');
         wireOrganicInput();  // Wire up input handlers
+
+        // Replay pending messages
+        if (pendingWarRoomMessages.length > 0) {
+          log.info('SDK', `Replaying ${pendingWarRoomMessages.length} queued messages`);
+          pendingWarRoomMessages.forEach(msg => organicUIInstance.appendWarRoomMessage(msg));
+          pendingWarRoomMessages = [];
+        }
       }
 
       log.info('SDK', 'Mode enabled (organic UI v2)');
@@ -971,6 +988,9 @@ function setupEventListeners() {
   // Helper function to send broadcast - routes through SDK or PTY based on mode
   // Supports pane targeting via dropdown or /1-6 prefix
   function sendBroadcast(message) {
+    // Store reference for organic UI input wiring
+    sendBroadcastFn = sendBroadcast;
+
     const now = Date.now();
     if (now - lastBroadcastTime < 500) {
       log.info('Broadcast', 'Rate limited');
@@ -1025,8 +1045,20 @@ function setupEventListeners() {
       // Send to target(s)
       if (targetPaneId === 'all') {
         log.info('SDK', 'Broadcast to ALL agents');
+
+        // Show user message in War Room if active
+        if (organicUIInstance) {
+          organicUIInstance.appendWarRoomMessage({
+            ts: Math.floor(Date.now() / 1000),
+            from: 'YOU',
+            to: 'ALL',
+            msg: actualMessage,
+            type: 'broadcast'
+          });
+        }
+
         ['1', '2', '3', '4', '5', '6'].forEach(paneId => {
-          // Show user message in organic UI if active
+          // Show user message in organic UI agent panes if active
           if (organicUIInstance) {
             organicUIInstance.appendText(paneId, `> ${actualMessage}`);
           }
@@ -1040,6 +1072,19 @@ function setupEventListeners() {
           });
       } else {
         log.info('SDK', `Targeted send to pane ${targetPaneId}: ${actualMessage.substring(0, 30)}...`);
+
+        // Show user message in War Room if active
+        if (organicUIInstance) {
+          const toLabel = SDK_PANE_LABELS[targetPaneId]?.name || `Pane ${targetPaneId}`;
+          organicUIInstance.appendWarRoomMessage({
+            ts: Math.floor(Date.now() / 1000),
+            from: 'YOU',
+            to: toLabel.toUpperCase(),
+            msg: actualMessage,
+            type: 'direct'
+          });
+        }
+
         // Show user message in organic UI if active
         if (organicUIInstance) {
           organicUIInstance.appendText(targetPaneId, `> ${actualMessage}`);
@@ -1676,20 +1721,61 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // SDK Message Handler
-  // Receives messages from Python SDK via IPC and routes to correct pane
-  // sdk-bridge sends single object { paneId, message }, not separate args
-  // Includes null check for malformed data and contextual thinking state for tool_use
-  // FIXED: Routes to organic UI when active, otherwise to sdk-renderer
-  ipcRenderer.on('sdk-message', (event, data) => {
-    if (!data || !data.message) {
-      log.warn('SDK', 'Received malformed sdk-message:', data);
-      return;
-    }
-    const { paneId, message } = data;
-    log.info('SDK', `Message for pane ${paneId}: ${message?.type || 'unknown'}`);
+  // ============================================================
+  // SDK MESSAGE ORDERING - Buffer and sort by timestamp
+  // ============================================================
+  // Messages from Python SDK now have 'timestamp' field (ISO string).
+  // Buffer briefly then process in timestamp order to prevent stale message bugs.
 
-    // Update contextual thinking indicator for tool_use
+  const SDK_MESSAGE_BUFFER_MS = 100; // Buffer window for sorting
+  const sdkMessageBuffer = new Map(); // paneId -> { messages: [], timer: null, lastTimestamp: null }
+
+  // Initialize buffer for each pane
+  ['1', '2', '3', '4', '5', '6'].forEach(paneId => {
+    sdkMessageBuffer.set(paneId, { messages: [], timer: null, lastTimestamp: null });
+  });
+
+  // Process buffered messages for a pane (sorted by timestamp)
+  function processSDKMessageBuffer(paneId) {
+    const buffer = sdkMessageBuffer.get(paneId);
+    if (!buffer || buffer.messages.length === 0) return;
+
+    // Sort by timestamp (oldest first)
+    buffer.messages.sort((a, b) => {
+      const tsA = a.message?.timestamp ? new Date(a.message.timestamp).getTime() : 0;
+      const tsB = b.message?.timestamp ? new Date(b.message.timestamp).getTime() : 0;
+      return tsA - tsB;
+    });
+
+    // Process each message
+    for (const data of buffer.messages) {
+      const { message } = data;
+      const msgTimestamp = message?.timestamp ? new Date(message.timestamp).getTime() : null;
+
+      // Detect out-of-order arrival (message older than last processed)
+      if (msgTimestamp && buffer.lastTimestamp && msgTimestamp < buffer.lastTimestamp) {
+        log.warn('SDK', `Out-of-order message detected in pane ${paneId}: msg=${msgTimestamp}, last=${buffer.lastTimestamp}`);
+      }
+
+      // Update last timestamp
+      if (msgTimestamp) {
+        buffer.lastTimestamp = Math.max(buffer.lastTimestamp || 0, msgTimestamp);
+      }
+
+      // Process the message
+      processSDKMessage(paneId, message);
+    }
+
+    // Clear buffer
+    buffer.messages = [];
+    buffer.timer = null;
+  }
+
+  // Core message processing (extracted from original handler)
+  function processSDKMessage(paneId, message) {
+    log.info('SDK', `Processing message for pane ${paneId}: ${message?.type || 'unknown'}`);
+
+    // Update contextual thinking indicator for tool_use AND activity feed
     if (message.type === 'tool_use' || (message.type === 'assistant' && Array.isArray(message.content))) {
       // Check for tool_use blocks in assistant content
       const toolBlocks = Array.isArray(message.content)
@@ -1698,9 +1784,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (message.type === 'tool_use') {
         sdkRenderer.updateToolContext(paneId, message);
+        // Add to activity feed in organic UI
+        if (organicUIInstance && organicUIInstance.appendActivity) {
+          organicUIInstance.appendActivity(paneId, message);
+        }
       } else if (toolBlocks.length > 0) {
         // Use the first tool_use block for context
         sdkRenderer.updateToolContext(paneId, toolBlocks[0]);
+        // Add all tool_use blocks to activity feed
+        if (organicUIInstance && organicUIInstance.appendActivity) {
+          toolBlocks.forEach(block => organicUIInstance.appendActivity(paneId, block));
+        }
       }
     }
 
@@ -1736,11 +1830,57 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (textContent) {
         organicUIInstance.appendText(paneId, textContent);
+
+        // Also route assistant responses to War Room stream
+        if (message.type === 'assistant') {
+          const fromLabel = SDK_PANE_LABELS[paneId]?.name || `Pane ${paneId}`;
+          organicUIInstance.appendWarRoomMessage({
+            ts: Math.floor(Date.now() / 1000),
+            from: fromLabel.toUpperCase(),
+            to: 'YOU',
+            msg: textContent,
+            type: 'direct'
+          });
+        }
       }
     }
 
     // Also render to sdk-renderer (for detailed view when panes are shown)
     sdkRenderer.appendMessage(paneId, message);
+  }
+
+  // SDK Message Handler - buffers messages for timestamp sorting
+  // Receives messages from Python SDK via IPC and routes to correct pane
+  // sdk-bridge sends single object { paneId, message }, not separate args
+  ipcRenderer.on('sdk-message', (event, data) => {
+    if (!data || !data.message) {
+      log.warn('SDK', 'Received malformed sdk-message:', data);
+      return;
+    }
+    const { paneId, message } = data;
+
+    // For streaming deltas (text_delta, thinking_delta), process immediately (no buffering)
+    // These need real-time display for typewriter effect
+    if (message.type === 'text_delta' || message.type === 'thinking_delta') {
+      processSDKMessage(paneId, message);
+      return;
+    }
+
+    // Buffer the message
+    const buffer = sdkMessageBuffer.get(paneId);
+    if (!buffer) {
+      // Fallback: process immediately if no buffer
+      processSDKMessage(paneId, message);
+      return;
+    }
+
+    buffer.messages.push(data);
+
+    // Start/reset the buffer timer
+    if (buffer.timer) {
+      clearTimeout(buffer.timer);
+    }
+    buffer.timer = setTimeout(() => processSDKMessageBuffer(paneId), SDK_MESSAGE_BUFFER_MS);
   });
 
   // SDK streaming indicator - show when agent is thinking
@@ -1881,7 +2021,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // War Room message stream - receives routed messages for display
   // Data format: {ts, from, to, msg, type}
   ipcRenderer.on('war-room-message', (event, data) => {
-    if (!organicUIInstance || !data) return;
+    if (!data) return;
+
+    if (!organicUIInstance) {
+      log.info('WarRoom', 'Queueing message (UI not ready)');
+      pendingWarRoomMessages.push(data);
+      return;
+    }
+
     log.info('WarRoom', `Message: (${data.from} → ${data.to}): ${(data.msg || '').substring(0, 50)}...`);
     organicUIInstance.appendWarRoomMessage(data);
 
@@ -1893,6 +2040,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         phase: 'sending'
       });
     }
+  });
+
+  // Organic UI: State updates
+  ipcRenderer.on('agent-online', (event, data) => {
+    if (!organicUIInstance || !data) return;
+    updateOrganicState(data.agentId, 'idle');
+  });
+
+  ipcRenderer.on('agent-offline', (event, data) => {
+    if (!organicUIInstance || !data) return;
+    updateOrganicState(data.agentId, 'offline');
+  });
+
+  ipcRenderer.on('agent-state-changed', (event, data) => {
+    if (!organicUIInstance || !data) return;
+    updateOrganicState(data.agentId, data.state);
   });
 
   // Setup daemon handlers
