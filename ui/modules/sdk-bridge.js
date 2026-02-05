@@ -17,9 +17,11 @@ const path = require('path');
 const fs = require('fs');
 const EventEmitter = require('events');
 const log = require('./logger');
+const { PANE_ROLES } = require('../config');
 
 // Default pane configuration - role and model per pane (6-pane architecture)
 // These are defaults; actual models come from settings.paneCommands at runtime
+// PANE_ROLES imported from config.js (canonical source)
 const DEFAULT_PANE_CONFIG = {
   '1': { role: 'Architect', model: 'claude' },
   '2': { role: 'Infra', model: 'codex' },
@@ -31,11 +33,6 @@ const DEFAULT_PANE_CONFIG = {
 
 // Alias for backward compatibility (exports still reference PANE_CONFIG)
 const PANE_CONFIG = DEFAULT_PANE_CONFIG;
-
-// Legacy: Pane ID to role mapping (derived from PANE_CONFIG for backward compatibility)
-const PANE_ROLES = Object.fromEntries(
-  Object.entries(PANE_CONFIG).map(([id, config]) => [id, config.role])
-);
 
 // Reverse mapping - role to pane ID (supports multiple name variations including legacy)
 const ROLE_TO_PANE = {

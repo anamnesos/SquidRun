@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
+const { PANE_ROLES } = require('../../config');
 
 // In-memory task cache (loaded from file on startup)
 let taskPool = [];
@@ -128,8 +129,7 @@ function registerTaskPoolHandlers(ctx) {
       : null;
     if (triggerPath) {
       try {
-        const PANE_ROLES = { '1': 'ARCHITECT', '2': 'INFRA', '3': 'FRONTEND', '4': 'BACKEND', '5': 'ANALYST', '6': 'REVIEWER' };
-        const role = PANE_ROLES[paneId] || `PANE-${paneId}`;
+        const role = (PANE_ROLES[paneId] || `Pane-${paneId}`).toUpperCase();
         const notification = `(${role} #AUTO): Claimed task #${taskId}: ${task.subject}\n`;
         fs.writeFileSync(triggerPath, notification);
         log.info('TaskPool', `Notified Architect of claim`);

@@ -20,6 +20,7 @@ const {
 const fs = require('fs');
 const path = require('path');
 const log = require('./modules/logger');
+const { PANE_ROLES } = require('./config');
 
 // ============================================================
 // CONFIGURATION
@@ -54,14 +55,7 @@ const PANE_TO_AGENT = {
   '6': 'reviewer',
 };
 
-const PANE_ROLES = {
-  '1': 'Architect',
-  '2': 'Infra',
-  '3': 'Frontend',
-  '4': 'Backend',
-  '5': 'Analyst',
-  '6': 'Reviewer',
-};
+// PANE_ROLES imported from config.js (canonical source)
 
 // ============================================================
 // PARSE COMMAND LINE ARGS
