@@ -13,7 +13,7 @@ const settings = require('./modules/settings');
 const daemonHandlers = require('./modules/daemon-handlers');
 const sdkRenderer = require('./modules/sdk-renderer');
 const { createOrganicUI } = require('./sdk-ui/organic-ui');
-const { showStatusNotice } = require('./modules/notifications');
+const { showStatusNotice, showToast } = require('./modules/notifications');
 const { formatTimeSince } = require('./modules/formatters');
 const {
   UI_IDLE_THRESHOLD_MS,
@@ -473,7 +473,7 @@ function updateConnectionStatus(status) {
 }
 
 // Agent Health Dashboard (#1) - update health indicators per pane
-// Constants imported from modules/constants.js: UI_UI_STUCK_THRESHOLD_MS, UI_UI_IDLE_CLAIM_THRESHOLD_MS
+// Constants imported from modules/constants.js: UI_STUCK_THRESHOLD_MS, UI_IDLE_CLAIM_THRESHOLD_MS
 
 // Smart Parallelism Phase 3 - Domain ownership mapping
 const PANE_DOMAIN_MAP = {
@@ -1069,6 +1069,7 @@ function setupEventListeners() {
           .catch(err => {
             log.error('SDK', 'Broadcast failed:', err);
             showDeliveryStatus('failed');
+            showToast(`Broadcast failed: ${err.message}`, 'error');
           });
       } else {
         log.info('SDK', `Targeted send to pane ${targetPaneId}: ${actualMessage.substring(0, 30)}...`);
@@ -2075,31 +2076,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   daemonHandlers.setupRollbackListener();     // RB2: Rollback UI
 
   // Setup UI panels
-  tabs.setupFrictionPanel();
   settings.setupSettings();
-  tabs.setupRightPanel(terminal.handleResize);
-  tabs.setupProcessesTab();
-  tabs.setupBuildProgressTab();
-  tabs.setupHistoryTab();
-  tabs.setupProjectsTab();
-  tabs.setupPerformanceTab();   // PT2: Performance dashboard
-  tabs.setupTemplatesTab();     // TM2: Template management
-  tabs.setupActivityTab();      // OB2: Activity log
-  tabs.setupQueueTab();         // Task #3: Task queue dashboard
-  tabs.setupScheduleTab();      // Task #28: Scheduler
-  tabs.setupTestsTab();         // TR1: Test results panel
-  tabs.setupInspectorTab();     // P2-5: Message inspector
-  tabs.setupCIStatusIndicator(); // CI2: CI status indicator
-  tabs.setupMCPStatusIndicator(); // MC7: MCP status indicator
-  tabs.setupGitTab();           // Task #6: Git integration
-  tabs.setupMemoryTab();        // Task #8: Conversation history viewer
-  tabs.setupHealthTab();        // Task #29: Self-healing error recovery UI
-  tabs.setupGraphTab();         // Task #36: Knowledge graph visualization
-  tabs.setupWorkflowTab();      // Task #19: Workflow builder
-  tabs.setupDebugTab();         // Task #21: Agent debugging/replay
-  tabs.setupReviewTab();        // Task #18: AI-powered code review
-  tabs.setupDocsTab();          // Task #23: Automated documentation generation
-  tabs.setupOracleTab();        // Oracle Visual QA tab
+  tabs.setupRightPanel(terminal.handleResize);  // All tab setup now handled internally
   // Setup daemon listeners (for terminal reconnection)
   // Pass markTerminalsReady callback to fix auto-spawn race condition
   daemonHandlers.setupDaemonListeners(

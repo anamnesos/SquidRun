@@ -44,6 +44,7 @@ const { registerTaskPoolHandlers } = require('./task-pool-handlers');
 const { registerOracleHandlers } = require('./oracle-handlers');
 const { registerModelSwitchHandlers } = require('./model-switch-handlers');
 const { registerOrganicUIHandlers } = require('./organic-ui-handlers');
+const { registerDocGeneratorHandlers } = require('./doc-generator-handlers');
 
 const DEFAULT_HANDLERS = [
   registerSdkHandlers,
@@ -92,6 +93,7 @@ const DEFAULT_HANDLERS = [
   registerOracleHandlers,
   registerModelSwitchHandlers,
   registerOrganicUIHandlers,
+  registerDocGeneratorHandlers,
 ];
 
 function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {

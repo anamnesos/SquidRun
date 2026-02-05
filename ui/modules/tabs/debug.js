@@ -299,7 +299,7 @@ function renderQueueSummary() {
 
 async function loadQueueStatus() {
   try {
-    const result = await ipcRenderer.invoke('get-queue-status');
+    const result = await ipcRenderer.invoke('get-message-queue-status');
     if (result && result.success) {
       queueStatus = result.status;
       renderQueueSummary();

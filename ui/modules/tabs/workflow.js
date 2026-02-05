@@ -40,6 +40,25 @@ const workflowState = {
 };
 
 const WORKFLOW_STORAGE_KEY = 'hivemind-workflow-v2';
+
+// Knowledge Graph state
+const graphState = {
+  canvas: null,
+  ctx: null,
+  nodes: [],
+  edges: [],
+  nodePositions: new Map(),
+  selectedNode: null,
+  filter: 'all',
+  scale: 1,
+  offsetX: 0,
+  offsetY: 0,
+  isDragging: false,
+  dragStart: { x: 0, y: 0 },
+  lastUpdate: null,
+  searchQuery: ''
+};
+
 const WORKFLOW_NODE_TYPES = {
   trigger: 'Trigger',
   agent: 'Agent',
@@ -2022,6 +2041,7 @@ function getWorkflowNodeElement(nodeId) {
 
 module.exports = {
   setupWorkflowTab,
+  setupGraphTab,
   loadWorkflowNodeTypes,
   loadWorkflowTemplates,
   validateWorkflowUI,
