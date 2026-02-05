@@ -52,7 +52,7 @@ function ensureStyles() {
     .organic-ui {
       position: relative;
       width: 100%;
-      height: 100vh;
+      height: 100%;
       background: var(--organic-bg);
       display: flex;
       gap: 16px;
@@ -238,6 +238,41 @@ function ensureStyles() {
     .organic-status-dot.is-offline {
       background: #6b7280;
       opacity: 0.5;
+    }
+
+    .organic-refresh-btn {
+      width: 18px;
+      height: 18px;
+      border: none;
+      background: transparent;
+      color: var(--organic-text-dim);
+      cursor: pointer;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 3px;
+      transition: color 0.15s, background 0.15s;
+      font-size: 12px;
+      margin-left: 6px;
+    }
+
+    .organic-refresh-btn:hover {
+      color: var(--agent-color);
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .organic-refresh-btn:active {
+      transform: scale(0.9);
+    }
+
+    .organic-refresh-btn.is-spinning svg {
+      animation: refresh-spin 0.8s linear infinite;
+    }
+
+    @keyframes refresh-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
     }
 
     @keyframes status-pulse {
@@ -427,8 +462,38 @@ function createOrganicUI(options = {}) {
     const statusDot = document.createElement('div');
     statusDot.className = 'organic-status-dot is-offline';
 
+    // Refresh button (restart agent)
+    const refreshBtn = document.createElement('button');
+    refreshBtn.className = 'organic-refresh-btn';
+    refreshBtn.title = `Restart ${agent.fullName} agent`;
+    refreshBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>';
+    refreshBtn.addEventListener('click', async () => {
+      // Map agent id to pane number
+      const paneMap = { arch: '1', infra: '2', front: '3', back: '4', ana: '5', rev: '6' };
+      const paneId = paneMap[agent.id];
+
+      // Visual feedback
+      refreshBtn.classList.add('is-spinning');
+
+      try {
+        // Call IPC to restart this agent's session
+        if (window.electronAPI && window.electronAPI.invoke) {
+          await window.electronAPI.invoke('sdk-restart-session', paneId);
+        } else if (require) {
+          const { ipcRenderer } = require('electron');
+          await ipcRenderer.invoke('sdk-restart-session', paneId);
+        }
+      } catch (err) {
+        console.error(`Failed to restart agent ${agent.id}:`, err);
+      }
+
+      // Remove spinner after a delay
+      setTimeout(() => refreshBtn.classList.remove('is-spinning'), 1000);
+    });
+
     headerLeft.appendChild(label);
     header.appendChild(headerLeft);
+    header.appendChild(refreshBtn);
     header.appendChild(statusDot);
 
     // Task line
@@ -525,10 +590,10 @@ function createOrganicUI(options = {}) {
       dot.classList.remove('is-active', 'is-idle', 'is-error', 'is-offline');
     }
 
-    if (state === 'thinking' || state === 'tool' || state === 'active') {
+    if (state === 'thinking' || state === 'tool' || state === 'active' || state === 'responding') {
       el.classList.add('is-thinking');
       if (dot) dot.classList.add('is-active');
-    } else if (state === 'idle') {
+    } else if (state === 'idle' || state === 'ready') {
       if (dot) dot.classList.add('is-idle');
     } else if (state === 'error' || state === 'stuck') {
       if (dot) dot.classList.add('is-error');
@@ -558,6 +623,13 @@ function createOrganicUI(options = {}) {
       const appendText = (agentIdOrPane, text) => {
         const agentId = resolveAgentId(agentIdOrPane);
         if (!agentId) return;
+
+        // Clear placeholder on first real activity
+        if (!placeholderCleared) {
+          commandContent.textContent = '';
+          placeholderCleared = true;
+        }
+
         const agentData = agentElements.get(agentId);
         if (!agentData) return;
   
@@ -686,7 +758,7 @@ function createOrganicUI(options = {}) {
 
     // Clear placeholder on first real message
     if (!placeholderCleared) {
-      commandContent.innerHTML = '';
+      commandContent.textContent = '';
       placeholderCleared = true;
     }
 
@@ -707,7 +779,7 @@ function createOrganicUI(options = {}) {
 
     // Clear placeholder on first real message
     if (!placeholderCleared) {
-      commandContent.innerHTML = '';
+      commandContent.textContent = '';
       placeholderCleared = true;
     }
 
