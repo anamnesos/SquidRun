@@ -335,15 +335,16 @@ class SDKBridge extends EventEmitter {
    * @returns {string} Model type ('claude', 'codex', or 'gemini')
    */
   getModelForPane(paneId) {
+    const id = String(paneId);
     // Try to read from settings (single source of truth with PTY mode)
-    if (this.settings && this.settings.paneCommands && this.settings.paneCommands[paneId]) {
-      const command = this.settings.paneCommands[paneId].toLowerCase();
+    if (this.settings && this.settings.paneCommands && this.settings.paneCommands[id]) {
+      const command = this.settings.paneCommands[id].toLowerCase();
       if (command.startsWith('codex')) return 'codex';
       if (command.startsWith('gemini')) return 'gemini';
       if (command.startsWith('claude')) return 'claude';
     }
     // Fall back to default config
-    const config = DEFAULT_PANE_CONFIG[paneId];
+    const config = DEFAULT_PANE_CONFIG[id];
     return config ? config.model : 'claude';
   }
 
@@ -354,9 +355,10 @@ class SDKBridge extends EventEmitter {
    * @param {string} model - Model type ('claude', 'codex', or 'gemini')
    */
   setModelForPane(paneId, model) {
-    if (this.sessions[paneId]) {
-      this.sessions[paneId].model = model;
-      log.info('SDK Bridge', `Updated pane ${paneId} model to ${model}`);
+    const id = String(paneId);
+    if (this.sessions[id]) {
+      this.sessions[id].model = model;
+      log.info('SDK Bridge', `Updated pane ${id} model to ${model}`);
     }
   }
 
@@ -366,7 +368,7 @@ class SDKBridge extends EventEmitter {
    * @param {string} message - User message
    */
   sendMessage(paneId, message) {
-    const normalizedPaneId = ROLE_TO_PANE[paneId] || paneId;
+    const normalizedPaneId = ROLE_TO_PANE[paneId] || String(paneId);
 
     if (!this.sessions[normalizedPaneId]) {
       log.error('SDK Bridge', `Unknown pane: ${paneId}`);
@@ -389,39 +391,40 @@ class SDKBridge extends EventEmitter {
       this.sendToRenderer('sdk-message-delivered', { paneId: normalizedPaneId });
     }
 
-          return sent;
-        }
-    
-        /**
-         * Restart a single agent session (clear history)
-         * @param {string} paneId - Pane ID or role name
-         */
-        restartSession(paneId) {
-          const normalizedPaneId = ROLE_TO_PANE[paneId] || paneId;
-    
-          if (!this.sessions[normalizedPaneId]) {
-            log.error('SDK Bridge', `Unknown pane: ${paneId}`);
-            return false;
-          }
-    
-          log.info('SDK Bridge', `Restarting session for pane ${normalizedPaneId}`);
-    
-          // Clear local session ID before sending restart
-          this.sessions[normalizedPaneId].id = null;
-    
-          const cmd = {
-            command: 'restart',
-            pane_id: normalizedPaneId
-          };
-    
-          return this.sendToProcess(cmd);
-        }
-    
-        /**
-         * Subscribe to responses from a pane   * @param {string} paneId - Pane to subscribe to
+    return sent;
+  }
+
+  /**
+   * Restart a single agent session (clear history)
+   * @param {string} paneId - Pane ID or role name
+   */
+  restartSession(paneId) {
+    const normalizedPaneId = ROLE_TO_PANE[paneId] || String(paneId);
+
+    if (!this.sessions[normalizedPaneId]) {
+      log.error('SDK Bridge', `Unknown pane: ${paneId}`);
+      return false;
+    }
+
+    log.info('SDK Bridge', `Restarting session for pane ${normalizedPaneId}`);
+
+    // Clear local session ID before sending restart
+    this.sessions[normalizedPaneId].id = null;
+
+    const cmd = {
+      command: 'restart',
+      pane_id: normalizedPaneId
+    };
+
+    return this.sendToProcess(cmd);
+  }
+
+  /**
+   * Subscribe to responses from a pane
+   * @param {string} paneId - Pane to subscribe to
    */
   subscribe(paneId) {
-    const normalizedPaneId = ROLE_TO_PANE[paneId] || paneId;
+    const normalizedPaneId = ROLE_TO_PANE[paneId] || String(paneId);
     this.subscribers.add(normalizedPaneId);
     log.info('SDK Bridge', `Subscribed to pane ${normalizedPaneId}`);
     return true;
@@ -432,7 +435,7 @@ class SDKBridge extends EventEmitter {
    * @param {string} paneId - Pane to unsubscribe from
    */
   unsubscribe(paneId) {
-    const normalizedPaneId = ROLE_TO_PANE[paneId] || paneId;
+    const normalizedPaneId = ROLE_TO_PANE[paneId] || String(paneId);
     this.subscribers.delete(normalizedPaneId);
     log.info('SDK Bridge', `Unsubscribed from pane ${normalizedPaneId}`);
     return true;
@@ -539,7 +542,8 @@ class SDKBridge extends EventEmitter {
   routeMessage(msg) {
     // Python sends 'role', check both 'agent' and 'role' in ROLE_TO_PANE
     // Also check both snake_case (pane_id) and camelCase (paneId)
-    const paneId = ROLE_TO_PANE[msg.agent] || ROLE_TO_PANE[msg.role] || msg.pane_id || msg.paneId || '1';
+    const rawPaneId = ROLE_TO_PANE[msg.agent] || ROLE_TO_PANE[msg.role] || msg.pane_id || msg.paneId || '1';
+    const paneId = String(rawPaneId);
 
     // Update session state if message contains session info
     // Check both snake_case (session_id) and camelCase (sessionId)

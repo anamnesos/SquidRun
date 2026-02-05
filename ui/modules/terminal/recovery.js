@@ -54,15 +54,16 @@ function createRecoveryController(options = {}) {
    * Sweeper will periodically retry Enter on these panes
    */
   function markPotentiallyStuck(paneId) {
-    if (typeof isCodexPane === 'function' && isCodexPane(paneId)) return; // Only Claude panes can get stuck this way
+    const id = String(paneId);
+    if (typeof isCodexPane === 'function' && isCodexPane(id)) return; // Only Claude panes can get stuck this way
 
-    const existing = potentiallyStuckPanes.get(paneId);
+    const existing = potentiallyStuckPanes.get(id);
     if (existing) {
       existing.retryCount++;
-      log.info(`StuckSweeper ${paneId}`, `Re-marked as stuck (retry #${existing.retryCount})`);
+      log.info(`StuckSweeper ${id}`, `Re-marked as stuck (retry #${existing.retryCount})`);
     } else {
-      potentiallyStuckPanes.set(paneId, { timestamp: Date.now(), retryCount: 0 });
-      log.info(`StuckSweeper ${paneId}`, 'Marked as potentially stuck');
+      potentiallyStuckPanes.set(id, { timestamp: Date.now(), retryCount: 0 });
+      log.info(`StuckSweeper ${id}`, 'Marked as potentially stuck');
     }
   }
 
@@ -70,9 +71,10 @@ function createRecoveryController(options = {}) {
    * Clear stuck status for a pane (it's working again)
    */
   function clearStuckStatus(paneId) {
-    if (potentiallyStuckPanes.has(paneId)) {
-      potentiallyStuckPanes.delete(paneId);
-      log.info(`StuckSweeper ${paneId}`, 'Cleared stuck status (pane active)');
+    const id = String(paneId);
+    if (potentiallyStuckPanes.has(id)) {
+      potentiallyStuckPanes.delete(id);
+      log.info(`StuckSweeper ${id}`, 'Cleared stuck status (pane active)');
     }
   }
 
