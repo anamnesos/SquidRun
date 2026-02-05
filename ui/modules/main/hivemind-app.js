@@ -553,8 +553,8 @@ class HivemindApp {
         this.ctx.mainWindow.webContents.send('codex-activity', { paneId, state, detail });
       }
       if (this.ctx.pluginManager?.hasHook('agent:activity')) {
-        this.ctx.pluginManager.dispatch('agent:activity', { paneId: String(paneId), state, detail }).catch(() => 
-{});
+        this.ctx.pluginManager.dispatch('agent:activity', { paneId: String(paneId), state, detail })
+          .catch(err => log.error('Plugins', `Error in agent:activity hook: ${err.message}`));
       }
     });
 
@@ -645,7 +645,7 @@ class HivemindApp {
 
     const sdkBridge = getSDKBridge();
     if (sdkBridge.isActive()) {
-      sdkBridge.stopSessions().catch(() => {});
+      sdkBridge.stopSessions().catch(err => log.error('SDK', `Failed to stop SDK sessions: ${err.message}`));
     }
 
     ipcHandlers.cleanupProcesses();
