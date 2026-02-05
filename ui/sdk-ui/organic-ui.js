@@ -318,6 +318,106 @@ function ensureStyles() {
       color: var(--organic-text-dim);
     }
 
+    /* Activity Feed - shows tool_use events */
+    .organic-activity-feed {
+      max-height: 80px;
+      overflow-y: auto;
+      border-bottom: 1px solid var(--organic-border);
+      font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+      font-size: 9px;
+      flex-shrink: 0;
+    }
+
+    .organic-activity-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      animation: activity-fade-in 0.2s ease-out;
+    }
+
+    .organic-activity-item:last-child {
+      border-bottom: none;
+    }
+
+    @keyframes activity-fade-in {
+      from { opacity: 0; transform: translateX(-4px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    .organic-activity-time {
+      color: var(--organic-text-dim);
+      font-size: 8px;
+      flex-shrink: 0;
+    }
+
+    .organic-activity-icon {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 8px;
+      flex-shrink: 0;
+    }
+
+    /* Tool type colors */
+    .organic-activity-icon.tool-read {
+      background: rgba(59, 130, 246, 0.2);
+      color: #3B82F6;
+    }
+
+    .organic-activity-icon.tool-write {
+      background: rgba(34, 197, 94, 0.2);
+      color: #22C55E;
+    }
+
+    .organic-activity-icon.tool-edit {
+      background: rgba(234, 179, 8, 0.2);
+      color: #EAB308;
+    }
+
+    .organic-activity-icon.tool-bash {
+      background: rgba(239, 68, 68, 0.2);
+      color: #EF4444;
+    }
+
+    .organic-activity-icon.tool-search {
+      background: rgba(168, 85, 247, 0.2);
+      color: #A855F7;
+    }
+
+    .organic-activity-icon.tool-web {
+      background: rgba(6, 182, 212, 0.2);
+      color: #06B6D4;
+    }
+
+    .organic-activity-icon.tool-task {
+      background: rgba(236, 72, 153, 0.2);
+      color: #EC4899;
+    }
+
+    .organic-activity-icon.tool-default {
+      background: rgba(148, 163, 184, 0.2);
+      color: #94A3B8;
+    }
+
+    .organic-activity-text {
+      color: var(--organic-text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .organic-activity-path {
+      color: var(--organic-text-dim);
+      font-size: 8px;
+    }
+
     /* Bottom: Input bar (inside War Room section) */
     .organic-input-bar {
       display: flex;
@@ -511,16 +611,21 @@ function createOrganicUI(options = {}) {
     taskLine.appendChild(taskLabel);
     taskLine.appendChild(taskText);
 
+    // Activity feed (shows tool_use events)
+    const activityFeed = document.createElement('div');
+    activityFeed.className = 'organic-activity-feed';
+
     // Content area
     const content = document.createElement('div');
     content.className = 'organic-agent-content';
 
     agentEl.appendChild(header);
     agentEl.appendChild(taskLine);
+    agentEl.appendChild(activityFeed);
     agentEl.appendChild(content);
     agentGrid.appendChild(agentEl);
 
-    agentElements.set(agent.id, { element: agentEl, content, statusDot, taskText });
+    agentElements.set(agent.id, { element: agentEl, content, statusDot, taskText, activityFeed });
     agentTextBuffers.set(agent.id, []);
   }
 
@@ -611,6 +716,117 @@ function createOrganicUI(options = {}) {
     if (!agentData || !agentData.taskText) return;
 
     agentData.taskText.textContent = taskText || '—';
+  };
+
+  // Activity feed constants
+  const MAX_ACTIVITY_ITEMS = 10;
+  const activityBuffers = new Map(AGENT_CONFIG.map(a => [a.id, []]));
+
+  // Tool type to icon/class mapping
+  const TOOL_CONFIG = {
+    'Read': { icon: '📖', class: 'tool-read', label: 'Read' },
+    'Write': { icon: '✏️', class: 'tool-write', label: 'Write' },
+    'Edit': { icon: '✂️', class: 'tool-edit', label: 'Edit' },
+    'Bash': { icon: '⚡', class: 'tool-bash', label: 'Bash' },
+    'Glob': { icon: '🔍', class: 'tool-search', label: 'Find' },
+    'Grep': { icon: '🔎', class: 'tool-search', label: 'Search' },
+    'WebFetch': { icon: '🌐', class: 'tool-web', label: 'Fetch' },
+    'WebSearch': { icon: '🔍', class: 'tool-web', label: 'Web' },
+    'Task': { icon: '🚀', class: 'tool-task', label: 'Task' },
+    'TodoWrite': { icon: '📝', class: 'tool-default', label: 'Todo' },
+  };
+
+  // Extract short path (last 2 segments)
+  const getShortPath = (filePath) => {
+    if (!filePath) return '';
+    const parts = filePath.replace(/\\/g, '/').split('/');
+    return parts.slice(-2).join('/');
+  };
+
+  // Format time as HH:MM
+  const formatTime = () => {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  };
+
+  // Append activity item to an agent's activity feed
+  // toolUse: { name: string, input: { file_path?, command?, pattern?, ... } }
+  const appendActivity = (agentIdOrPane, toolUse) => {
+    const agentId = resolveAgentId(agentIdOrPane);
+    if (!agentId) return;
+    const agentData = agentElements.get(agentId);
+    if (!agentData || !agentData.activityFeed) return;
+
+    const toolName = toolUse.name || toolUse.tool || 'Unknown';
+    const input = toolUse.input || {};
+    const config = TOOL_CONFIG[toolName] || { icon: '⚙️', class: 'tool-default', label: toolName };
+
+    // Build description based on tool type
+    let description = config.label;
+    let pathInfo = '';
+
+    if (input.file_path || input.path) {
+      pathInfo = getShortPath(input.file_path || input.path);
+    } else if (input.command) {
+      description = (input.command || '').split(' ')[0] || 'cmd';
+    } else if (input.pattern) {
+      description = input.pattern.substring(0, 15) + (input.pattern.length > 15 ? '…' : '');
+    } else if (input.query) {
+      description = input.query.substring(0, 15) + (input.query.length > 15 ? '…' : '');
+    } else if (input.description) {
+      description = input.description.substring(0, 20) + (input.description.length > 20 ? '…' : '');
+    }
+
+    // Create activity item element
+    const item = document.createElement('div');
+    item.className = 'organic-activity-item';
+
+    const time = document.createElement('span');
+    time.className = 'organic-activity-time';
+    time.textContent = formatTime();
+
+    const icon = document.createElement('span');
+    icon.className = `organic-activity-icon ${config.class}`;
+    icon.textContent = config.icon;
+
+    const text = document.createElement('span');
+    text.className = 'organic-activity-text';
+    text.textContent = description;
+
+    item.appendChild(time);
+    item.appendChild(icon);
+    item.appendChild(text);
+
+    if (pathInfo) {
+      const pathEl = document.createElement('span');
+      pathEl.className = 'organic-activity-path';
+      pathEl.textContent = pathInfo;
+      item.appendChild(pathEl);
+    }
+
+    // Add to feed and buffer
+    const buffer = activityBuffers.get(agentId);
+    buffer.push(item);
+
+    // Keep only last MAX_ACTIVITY_ITEMS
+    while (buffer.length > MAX_ACTIVITY_ITEMS) {
+      const oldItem = buffer.shift();
+      oldItem.remove();
+    }
+
+    agentData.activityFeed.appendChild(item);
+    agentData.activityFeed.scrollTop = agentData.activityFeed.scrollHeight;
+  };
+
+  // Clear activity feed for an agent
+  const clearActivity = (agentIdOrPane) => {
+    const agentId = resolveAgentId(agentIdOrPane);
+    if (!agentId) return;
+    const agentData = agentElements.get(agentId);
+    if (!agentData || !agentData.activityFeed) return;
+
+    agentData.activityFeed.innerHTML = '';
+    activityBuffers.set(agentId, []);
   };
 
       // Helper to strip ANSI escape codes
@@ -841,6 +1057,9 @@ function createOrganicUI(options = {}) {
     appendToCommandCenter,
     appendWarRoomMessage, // War Room formatted messages
     triggerScale,
+    // Activity feed API (tool_use events)
+    appendActivity,
+    clearActivity,
     destroy() {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       container.remove();
