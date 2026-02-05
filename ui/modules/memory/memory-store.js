@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const config = require('../../config');
 
 // Base paths for memory storage
 const WORKSPACE_ROOT = path.resolve(__dirname, '../../../workspace');
@@ -16,19 +17,12 @@ const CONTEXT_DIR = path.join(MEMORY_ROOT, 'context');
 const SUMMARIES_DIR = path.join(MEMORY_ROOT, 'summaries');
 const INDEX_DIR = path.join(MEMORY_ROOT, 'index');
 
-// Pane ID to role mapping
-const PANE_ROLES = {
-  '1': 'architect',
-  '2': 'orchestrator',
-  '3': 'implementer-a',
-  '4': 'implementer-b',
-  '5': 'investigator',
-  '6': 'reviewer'
-};
+// Pane ID to role mapping - initialized from canonical source
+const PANE_ROLES = { ...config.PANE_ROLES };
 
 // Role to pane ID reverse mapping
 const ROLE_PANES = Object.fromEntries(
-  Object.entries(PANE_ROLES).map(([k, v]) => [v, k])
+  Object.entries(PANE_ROLES).map(([k, v]) => [v.toLowerCase(), k])
 );
 
 /**
@@ -42,8 +36,8 @@ function ensureDirectories() {
     }
   }
   // Create per-role context directories
-  for (const role of Object.values(PANE_ROLES)) {
-    const roleDir = path.join(CONTEXT_DIR, role);
+  for (const roleId of config.ROLE_NAMES) {
+    const roleDir = path.join(CONTEXT_DIR, roleId);
     if (!fs.existsSync(roleDir)) {
       fs.mkdirSync(roleDir, { recursive: true });
     }
