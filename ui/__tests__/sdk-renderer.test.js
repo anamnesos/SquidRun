@@ -3,6 +3,13 @@
  * SDK message rendering, streaming, delivery tracking
  */
 
+// Mock notifications module to prevent DOM access
+jest.mock('../modules/notifications', () => ({
+  showNotification: jest.fn(),
+  showToast: jest.fn(),
+  showStatusNotice: jest.fn(),
+}));
+
 // Track created elements to capture what initSDKPane creates
 let createdElements = [];
 
