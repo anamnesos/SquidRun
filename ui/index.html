@@ -367,7 +367,7 @@
         <div class="main-pane-container">
           <div class="pane" data-pane-id="1">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">[A]</span><span class="agent-badge idle" id="badge-1"></span>Arch<span class="role-desc">- Your Main Point of Contact</span><span class="cli-badge" id="cli-badge-1"></span><span class="pane-project" id="project-1" title="Click to change project"></span><span class="agent-task" id="task-1"></span></span>
+            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg></span><span class="agent-badge idle" id="badge-1"></span>Arch<span class="role-desc">- Your Main Point of Contact</span><span class="cli-badge" id="cli-badge-1"></span><span class="pane-project" id="project-1" title="Click to change project"></span><span class="agent-task" id="task-1"></span></span>
             <div class="pane-header-right">
               <select class="model-selector" id="model-selector-1" data-pane-id="1" title="Switch model for this pane">
                 <option value="claude">Claude</option>
@@ -376,15 +376,12 @@
               </select>
               <span class="pane-status idle" id="status-1"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-1" title="Last output time">-</span>
-              <span class="stuck-indicator" id="stuck-1" title="Agent may be stuck">!</span>
-              <span class="idle-indicator" id="idle-1" title="Agent idle - tasks available">⊕</span>
               <div class="pane-actions">
-                <button class="pane-action-btn claim-btn" data-pane-id="1" title="Claim next task"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></button>
-                <button class="pane-action-btn interrupt-btn" data-pane-id="1" title="Stop (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="1" title="Escape - unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
-                <button class="pane-action-btn kickoff-btn" data-pane-id="1" title="Restart agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                <button class="pane-action-btn interrupt-btn" data-pane-id="1" title="Send interrupt signal (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
+                <button class="pane-action-btn unstick-btn" data-pane-id="1" title="Send Escape key to unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
+                <button class="pane-action-btn kickoff-btn" data-pane-id="1" title="Kill and restart agent session"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                <button class="pane-action-btn expand-btn" data-pane-id="1" title="Expand pane to full width (ESC to collapse)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
               </div>
-              <button class="pane-refresh-btn" data-pane-id="1" title="Refresh context"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></button>
               <span class="lock-icon" id="lock-icon-1" data-pane-id="1" title="Input locked (click to unlock)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
             </div>
           </div>
@@ -394,7 +391,7 @@
         <div class="side-panes-container">
           <div class="pane" data-pane-id="2">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">[I]</span><span class="agent-badge idle" id="badge-2"></span>Infra<span class="role-desc">- The One Who Gets Things Published</span><span class="cli-badge" id="cli-badge-2"></span><span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
+            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span><span class="agent-badge idle" id="badge-2"></span>Infra<span class="role-desc">- The One Who Gets Things Published</span><span class="cli-badge" id="cli-badge-2"></span><span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
             <div class="pane-header-right">
               <select class="model-selector" id="model-selector-2" data-pane-id="2" title="Switch model for this pane">
                 <option value="claude">Claude</option>
@@ -403,15 +400,12 @@
               </select>
               <span class="pane-status idle" id="status-2"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-2" title="Last output time">-</span>
-              <span class="stuck-indicator" id="stuck-2" title="Agent may be stuck">!</span>
-              <span class="idle-indicator" id="idle-2" title="Agent idle - tasks available">⊕</span>
               <div class="pane-actions">
-                <button class="pane-action-btn claim-btn" data-pane-id="2" title="Claim next task"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></button>
-                <button class="pane-action-btn interrupt-btn" data-pane-id="2" title="Stop (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="2" title="Escape - unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
-                <button class="pane-action-btn kickoff-btn" data-pane-id="2" title="Restart agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                <button class="pane-action-btn interrupt-btn" data-pane-id="2" title="Send interrupt signal (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
+                <button class="pane-action-btn unstick-btn" data-pane-id="2" title="Send Escape key to unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
+                <button class="pane-action-btn kickoff-btn" data-pane-id="2" title="Kill and restart agent session"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                <button class="pane-action-btn expand-btn" data-pane-id="2" title="Expand pane to full width (ESC to collapse)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
               </div>
-              <button class="pane-refresh-btn" data-pane-id="2" title="Refresh context"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></button>
               <span class="lock-icon" id="lock-icon-2" data-pane-id="2" title="Input locked (click to unlock)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
             </div>
           </div>
@@ -420,7 +414,7 @@
 
         <div class="pane" data-pane-id="3">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">[F]</span><span class="agent-badge idle" id="badge-3"></span>Front<span class="role-desc">- Builds What You Can See</span><span class="cli-badge" id="cli-badge-3"></span><span class="pane-project" id="project-3" title="Click to change project"></span><span class="agent-task" id="task-3"></span></span>
+            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span><span class="agent-badge idle" id="badge-3"></span>Front<span class="role-desc">- Builds What You Can See</span><span class="cli-badge" id="cli-badge-3"></span><span class="pane-project" id="project-3" title="Click to change project"></span><span class="agent-task" id="task-3"></span></span>
             <div class="pane-header-right">
               <select class="model-selector" id="model-selector-3" data-pane-id="3" title="Switch model for this pane">
                 <option value="claude">Claude</option>
@@ -429,15 +423,12 @@
               </select>
               <span class="pane-status idle" id="status-3"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-3" title="Last output time">-</span>
-              <span class="stuck-indicator" id="stuck-3" title="Agent may be stuck">!</span>
-              <span class="idle-indicator" id="idle-3" title="Agent idle - tasks available">⊕</span>
               <div class="pane-actions">
-                <button class="pane-action-btn claim-btn" data-pane-id="3" title="Claim next task"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></button>
-                <button class="pane-action-btn interrupt-btn" data-pane-id="3" title="Stop (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="3" title="Escape - unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
-                <button class="pane-action-btn kickoff-btn" data-pane-id="3" title="Restart agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                <button class="pane-action-btn interrupt-btn" data-pane-id="3" title="Send interrupt signal (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
+                <button class="pane-action-btn unstick-btn" data-pane-id="3" title="Send Escape key to unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
+                <button class="pane-action-btn kickoff-btn" data-pane-id="3" title="Kill and restart agent session"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                <button class="pane-action-btn expand-btn" data-pane-id="3" title="Expand pane to full width (ESC to collapse)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
               </div>
-              <button class="pane-refresh-btn" data-pane-id="3" title="Refresh context"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></button>
               <span class="lock-icon" id="lock-icon-3" data-pane-id="3" title="Input locked (click to unlock)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
             </div>
           </div>
@@ -446,7 +437,7 @@
 
         <div class="pane" data-pane-id="4">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">[B]</span><span class="agent-badge idle" id="badge-4"></span>Back<span class="role-desc">- The One Who Makes It All Work</span><span class="cli-badge" id="cli-badge-4"></span><span class="pane-project" id="project-4" title="Click to change project"></span><span class="agent-task" id="task-4"></span></span>
+            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span><span class="agent-badge idle" id="badge-4"></span>Back<span class="role-desc">- The One Who Makes It All Work</span><span class="cli-badge" id="cli-badge-4"></span><span class="pane-project" id="project-4" title="Click to change project"></span><span class="agent-task" id="task-4"></span></span>
             <div class="pane-header-right">
               <select class="model-selector" id="model-selector-4" data-pane-id="4" title="Switch model for this pane">
                 <option value="claude">Claude</option>
@@ -455,15 +446,12 @@
               </select>
               <span class="pane-status idle" id="status-4"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-4" title="Last output time">-</span>
-              <span class="stuck-indicator" id="stuck-4" title="Agent may be stuck">!</span>
-              <span class="idle-indicator" id="idle-4" title="Agent idle - tasks available">⊕</span>
               <div class="pane-actions">
-                <button class="pane-action-btn claim-btn" data-pane-id="4" title="Claim next task"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></button>
-                <button class="pane-action-btn interrupt-btn" data-pane-id="4" title="Stop (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="4" title="Escape - unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
-                <button class="pane-action-btn kickoff-btn" data-pane-id="4" title="Restart agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                <button class="pane-action-btn interrupt-btn" data-pane-id="4" title="Send interrupt signal (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
+                <button class="pane-action-btn unstick-btn" data-pane-id="4" title="Send Escape key to unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
+                <button class="pane-action-btn kickoff-btn" data-pane-id="4" title="Kill and restart agent session"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                <button class="pane-action-btn expand-btn" data-pane-id="4" title="Expand pane to full width (ESC to collapse)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
               </div>
-              <button class="pane-refresh-btn" data-pane-id="4" title="Refresh context"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></button>
               <span class="lock-icon" id="lock-icon-4" data-pane-id="4" title="Input locked (click to unlock)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
             </div>
           </div>
@@ -472,7 +460,7 @@
 
         <div class="pane" data-pane-id="5">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">[?]</span><span class="agent-badge idle" id="badge-5"></span>Ana<span class="role-desc">- Finds When Things Go Wrong</span><span class="cli-badge" id="cli-badge-5"></span><span class="pane-project" id="project-5" title="Click to change project"></span><span class="agent-task" id="task-5"></span></span>
+            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><span class="agent-badge idle" id="badge-5"></span>Ana<span class="role-desc">- Finds When Things Go Wrong</span><span class="cli-badge" id="cli-badge-5"></span><span class="pane-project" id="project-5" title="Click to change project"></span><span class="agent-task" id="task-5"></span></span>
             <div class="pane-header-right">
               <select class="model-selector" id="model-selector-5" data-pane-id="5" title="Switch model for this pane">
                 <option value="claude">Claude</option>
@@ -481,15 +469,12 @@
               </select>
               <span class="pane-status idle" id="status-5"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-5" title="Last output time">-</span>
-              <span class="stuck-indicator" id="stuck-5" title="Agent may be stuck">!</span>
-              <span class="idle-indicator" id="idle-5" title="Agent idle - tasks available">⊕</span>
               <div class="pane-actions">
-                <button class="pane-action-btn claim-btn" data-pane-id="5" title="Claim next task"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></button>
-                <button class="pane-action-btn interrupt-btn" data-pane-id="5" title="Stop (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="5" title="Escape - unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
-                <button class="pane-action-btn kickoff-btn" data-pane-id="5" title="Restart agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                <button class="pane-action-btn interrupt-btn" data-pane-id="5" title="Send interrupt signal (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
+                <button class="pane-action-btn unstick-btn" data-pane-id="5" title="Send Escape key to unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
+                <button class="pane-action-btn kickoff-btn" data-pane-id="5" title="Kill and restart agent session"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                <button class="pane-action-btn expand-btn" data-pane-id="5" title="Expand pane to full width (ESC to collapse)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
               </div>
-              <button class="pane-refresh-btn" data-pane-id="5" title="Refresh context"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></button>
               <span class="lock-icon" id="lock-icon-5" data-pane-id="5" title="Input locked (click to unlock)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
             </div>
           </div>
@@ -498,7 +483,7 @@
 
         <div class="pane" data-pane-id="6">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar">[R]</span><span class="agent-badge idle" id="badge-6"></span>Rev<span class="role-desc">- The One Who Checks Everyone's Work</span><span class="cli-badge" id="cli-badge-6"></span><span class="pane-project" id="project-6" title="Click to change project"></span><span class="agent-task" id="task-6"></span></span>
+            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span><span class="agent-badge idle" id="badge-6"></span>Rev<span class="role-desc">- The One Who Checks Everyone's Work</span><span class="cli-badge" id="cli-badge-6"></span><span class="pane-project" id="project-6" title="Click to change project"></span><span class="agent-task" id="task-6"></span></span>
             <div class="pane-header-right">
               <select class="model-selector" id="model-selector-6" data-pane-id="6" title="Switch model for this pane">
                 <option value="claude">Claude</option>
@@ -507,15 +492,12 @@
               </select>
               <span class="pane-status idle" id="status-6"><span class="pane-spinner"></span>Ready</span>
               <span class="agent-health" id="health-6" title="Last output time">-</span>
-              <span class="stuck-indicator" id="stuck-6" title="Agent may be stuck">!</span>
-              <span class="idle-indicator" id="idle-6" title="Agent idle - tasks available">⊕</span>
               <div class="pane-actions">
-                <button class="pane-action-btn claim-btn" data-pane-id="6" title="Claim next task"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></button>
-                <button class="pane-action-btn interrupt-btn" data-pane-id="6" title="Stop (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="6" title="Escape - unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
-                <button class="pane-action-btn kickoff-btn" data-pane-id="6" title="Restart agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                <button class="pane-action-btn interrupt-btn" data-pane-id="6" title="Send interrupt signal (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
+                <button class="pane-action-btn unstick-btn" data-pane-id="6" title="Send Escape key to unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
+                <button class="pane-action-btn kickoff-btn" data-pane-id="6" title="Kill and restart agent session"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                <button class="pane-action-btn expand-btn" data-pane-id="6" title="Expand pane to full width (ESC to collapse)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
               </div>
-              <button class="pane-refresh-btn" data-pane-id="6" title="Refresh context"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></button>
               <span class="lock-icon" id="lock-icon-6" data-pane-id="6" title="Input locked (click to unlock)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
             </div>
           </div>
@@ -559,7 +541,6 @@
         <button class="panel-tab" data-tab="tests" title="View test results and run test suite">Tests</button>
         <button class="panel-tab" data-tab="activity" title="Real-time log of all agent activity">Activity</button>
         <button class="panel-tab" data-tab="queue" title="Task queue, message backlog, and conflict locks">Queue</button>
-        <button class="panel-tab" data-tab="schedule" title="Scheduled tasks and automation">Sched</button>
         <button class="panel-tab" data-tab="friction" title="Agent friction logs and blockers"><span id="frictionTabBadge" class="tab-badge hidden">0</span>Friction</button>
         <button class="panel-tab" data-tab="inspector" title="Debug message flow and delivery">Insp</button>
         <button class="panel-tab" data-tab="history" title="View past session history">Hist</button>
@@ -570,17 +551,10 @@
         <button class="panel-tab" data-tab="debug" title="Agent action replay and debugging">Debug</button>
         <button class="panel-tab" data-tab="review" title="AI-powered code review and suggestions">Review</button>
         <button class="panel-tab" data-tab="docs" title="Auto-generate documentation from code">Docs</button>
-        <button class="panel-tab" data-tab="costs" title="API cost tracking, predictions, and optimization">Costs</button>
-        <button class="panel-tab" data-tab="security" title="Authentication, encryption, and access control">Sec</button>
-        <button class="panel-tab" data-tab="dashboard" title="Multi-project dashboard with metrics and health scores">Dash</button>
         <button class="panel-tab" data-tab="projects" title="Quick-switch between recent projects">Proj</button>
         <button class="panel-tab" data-tab="git" title="Repository status, diffs, and commits">Git</button>
         <button class="panel-tab" data-tab="performance" title="Agent performance metrics and stats">Perf</button>
         <button class="panel-tab" data-tab="templates" title="Save and load workspace configurations">Tmpl</button>
-        <button class="panel-tab" data-tab="scaffold" title="Create new projects from templates">Scaf</button>
-        <button class="panel-tab" data-tab="deploy" title="Build automation and deployment pipeline">Dep</button>
-        <button class="panel-tab" data-tab="collab" title="Real-time collaboration and shared sessions">Collab</button>
-        <button class="panel-tab" data-tab="mobile" title="Mobile app connection and remote monitoring">Mobile</button>
         <button class="panel-tab" data-tab="progress" title="Build progress and usage statistics">Prog</button>
         <button class="panel-tab" data-tab="processes" title="Manage background processes">Proc</button>
         <button class="panel-tab" data-tab="oracle" title="Gemini-powered screenshot analysis">Oracle</button>
@@ -701,31 +675,6 @@
           <div class="queue-actions">
             <button class="btn" id="refreshQueueBtn" title="Reload queue status">Refresh</button>
             <button class="btn" id="clearDeliveredQueueBtn" title="Clear delivered messages from queues">Clear Delivered</button>
-          </div>
-        </div>
-        <div class="tab-pane" id="tab-schedule">
-          <div class="tab-title">Schedule</div>
-          <div class="tab-description">Cron-like task automation and chains</div>
-          <div class="schedule-form">
-            <input type="text" id="scheduleInput" class="schedule-input" placeholder="Describe a task to schedule..." autocomplete="off">
-            <div class="schedule-row">
-              <select id="scheduleType" class="schedule-select">
-                <option value="once">Once</option>
-                <option value="interval">Interval</option>
-                <option value="cron">Cron</option>
-                <option value="event">Event</option>
-              </select>
-              <input type="datetime-local" id="scheduleTime" class="schedule-time">
-              <input type="number" id="scheduleInterval" class="schedule-interval" min="1" placeholder="Minutes" style="display:none;">
-              <input type="text" id="scheduleCron" class="schedule-cron" placeholder="*/15 * * * *" style="display:none;">
-              <input type="text" id="scheduleEvent" class="schedule-event" placeholder="event.name" style="display:none;">
-              <input type="text" id="scheduleTimezone" class="schedule-timezone" placeholder="Local tz (e.g., America/Los_Angeles)">
-              <button class="btn btn-secondary" id="scheduleAddBtn">Add</button>
-            </div>
-          </div>
-          <div class="schedule-calendar" id="scheduleCalendar"></div>
-          <div class="schedule-list" id="scheduleList">
-            <div class="schedule-empty">No scheduled tasks</div>
           </div>
         </div>
         <div class="tab-pane" id="tab-friction">
@@ -1535,208 +1484,6 @@
           </div>
         </div>
 
-        <!-- COSTS TAB (Task #24: Cost Optimization Engine) -->
-        <div class="tab-pane" id="tab-costs">
-          <div class="tab-title">Cost Optimization</div>
-          <div class="tab-description">Track API costs, predict budgets, optimize spending</div>
-
-          <!-- Cost overview cards -->
-          <div class="cost-overview">
-            <div class="cost-card primary">
-              <div class="cost-card-value" id="costTotalValue">$0.00</div>
-              <div class="cost-card-label">Total</div>
-            </div>
-            <div class="cost-card">
-              <div class="cost-card-value" id="costTodayValue">$0.00</div>
-              <div class="cost-card-label">Today</div>
-            </div>
-            <div class="cost-card">
-              <div class="cost-card-value" id="costWeekValue">$0.00</div>
-              <div class="cost-card-label">This Week</div>
-            </div>
-            <div class="cost-card">
-              <div class="cost-card-value" id="costMonthValue">$0.00</div>
-              <div class="cost-card-label">This Month</div>
-            </div>
-          </div>
-
-          <!-- Budget progress -->
-          <div class="cost-budget-section" id="costBudgetSection">
-            <div class="cost-budget-header">
-              <span class="cost-budget-title">Daily Budget</span>
-              <span class="cost-budget-value" id="costBudgetValue">Not set</span>
-            </div>
-            <div class="cost-budget-bar">
-              <div class="cost-budget-fill" id="costBudgetFill" style="width: 0%"></div>
-            </div>
-            <div class="cost-budget-labels">
-              <span id="costBudgetUsed">$0.00 used</span>
-              <span id="costBudgetRemaining">--</span>
-            </div>
-          </div>
-
-          <!-- Predictions -->
-          <div class="cost-predictions" id="costPredictions">
-            <div class="cost-predictions-header">
-              <span class="cost-predictions-title">Predictions</span>
-              <span class="cost-predictions-trend" id="costTrend">--</span>
-            </div>
-            <div class="cost-predictions-grid">
-              <div class="cost-prediction-item">
-                <span class="cost-prediction-label">Est. Daily</span>
-                <span class="cost-prediction-value" id="costPredictDaily">--</span>
-              </div>
-              <div class="cost-prediction-item">
-                <span class="cost-prediction-label">Est. Weekly</span>
-                <span class="cost-prediction-value" id="costPredictWeekly">--</span>
-              </div>
-              <div class="cost-prediction-item">
-                <span class="cost-prediction-label">Est. Monthly</span>
-                <span class="cost-prediction-value" id="costPredictMonthly">--</span>
-              </div>
-              <div class="cost-prediction-item">
-                <span class="cost-prediction-label">Confidence</span>
-                <span class="cost-prediction-value" id="costPredictConfidence">--</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Agent breakdown -->
-          <div class="cost-breakdown" id="costBreakdown">
-            <div class="cost-breakdown-header">
-              <span class="cost-breakdown-title">Cost by Agent</span>
-              <button class="btn btn-sm" id="costViewByTaskBtn">By Task</button>
-            </div>
-            <div class="cost-breakdown-list" id="costBreakdownList">
-              <div class="cost-breakdown-empty">No cost data yet</div>
-            </div>
-          </div>
-
-          <!-- Optimizations -->
-          <div class="cost-optimizations" id="costOptimizations">
-            <div class="cost-optimizations-header">
-              <span class="cost-optimizations-title">Optimization Suggestions</span>
-              <span class="cost-optimizations-savings" id="costSavingsValue">$0.00 potential</span>
-            </div>
-            <div class="cost-optimizations-list" id="costOptimizationsList">
-              <div class="cost-optimization-empty">Analyzing spending patterns...</div>
-            </div>
-          </div>
-
-          <!-- Actions -->
-          <div class="cost-actions">
-            <button class="btn" id="costRefreshBtn" title="Refresh cost data">Refresh</button>
-            <button class="btn" id="costSetBudgetBtn" title="Set budget limits">Set Budget</button>
-            <button class="btn" id="costHistoryBtn" title="View cost history">History</button>
-            <button class="btn" id="costAlertsBtn" title="View cost alerts">
-              Alerts <span class="cost-alert-badge hidden" id="costAlertBadge">0</span>
-            </button>
-            <button class="btn btn-sm" id="costResetBtn" title="Reset all cost tracking">Reset</button>
-          </div>
-
-          <!-- Loading overlay -->
-          <div class="cost-loading hidden" id="costLoading">
-            <div class="cost-loading-spinner"></div>
-            <div class="cost-loading-text">Loading cost data...</div>
-          </div>
-        </div>
-
-        <!-- SECURITY TAB (Task #25: Security Hardening) -->
-        <div class="tab-pane" id="tab-security">
-          <div class="tab-title">Security</div>
-          <div class="tab-description">Authentication, encryption, and access control</div>
-
-          <!-- Security status -->
-          <div class="security-status" id="securityStatus">
-            <div class="security-status-indicator secure" id="securityIndicator">
-              <span class="security-icon">🔒</span>
-              <span class="security-label">Secure</span>
-            </div>
-            <div class="security-stats">
-              <div class="security-stat">
-                <span class="security-stat-value" id="secActiveSessionsCount">0</span>
-                <span class="security-stat-label">Active Sessions</span>
-              </div>
-              <div class="security-stat">
-                <span class="security-stat-value" id="secCredentialsCount">0</span>
-                <span class="security-stat-label">Stored Credentials</span>
-              </div>
-              <div class="security-stat">
-                <span class="security-stat-value" id="secAuditCount">0</span>
-                <span class="security-stat-label">Audit Events</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Credentials section -->
-          <div class="security-section" id="secCredentialsSection">
-            <div class="security-section-header">
-              <span class="security-section-title">Stored Credentials</span>
-              <button class="btn btn-sm" id="secAddCredentialBtn">+ Add</button>
-            </div>
-            <div class="security-credentials-list" id="secCredentialsList">
-              <div class="security-empty">No credentials stored</div>
-            </div>
-          </div>
-
-          <!-- Sessions section -->
-          <div class="security-section" id="secSessionsSection">
-            <div class="security-section-header">
-              <span class="security-section-title">Active Sessions</span>
-              <button class="btn btn-sm btn-danger" id="secRevokeAllBtn">Revoke All</button>
-            </div>
-            <div class="security-sessions-list" id="secSessionsList">
-              <div class="security-empty">No active sessions</div>
-            </div>
-          </div>
-
-          <!-- Roles section -->
-          <div class="security-section" id="secRolesSection">
-            <div class="security-section-header">
-              <span class="security-section-title">Roles & Permissions</span>
-            </div>
-            <div class="security-roles-list" id="secRolesList">
-              <div class="security-role-item">
-                <span class="security-role-name">admin</span>
-                <span class="security-role-desc">Full system access</span>
-              </div>
-              <div class="security-role-item">
-                <span class="security-role-name">operator</span>
-                <span class="security-role-desc">Execute agents, manage files</span>
-              </div>
-              <div class="security-role-item">
-                <span class="security-role-name">viewer</span>
-                <span class="security-role-desc">Read-only access</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Audit log section -->
-          <div class="security-section" id="secAuditSection">
-            <div class="security-section-header">
-              <span class="security-section-title">Recent Security Events</span>
-              <button class="btn btn-sm" id="secViewAuditBtn">View All</button>
-            </div>
-            <div class="security-audit-list" id="secAuditList">
-              <div class="security-empty">No recent events</div>
-            </div>
-          </div>
-
-          <!-- Actions -->
-          <div class="security-actions">
-            <button class="btn" id="secRefreshBtn" title="Refresh security data">Refresh</button>
-            <button class="btn" id="secEncryptBtn" title="Encrypt/decrypt data">Encrypt</button>
-            <button class="btn" id="secCreateSessionBtn" title="Create a new session">New Session</button>
-            <button class="btn btn-sm" id="secCleanupBtn" title="Clean expired sessions">Cleanup</button>
-          </div>
-
-          <!-- Loading overlay -->
-          <div class="security-loading hidden" id="securityLoading">
-            <div class="security-loading-spinner"></div>
-            <div class="security-loading-text">Loading security data...</div>
-          </div>
-        </div>
-
         <!-- DASHBOARD TAB (Task #30: Multi-Project Dashboard) -->
         <div class="tab-pane" id="tab-dashboard">
           <div class="tab-title">Multi-Project Dashboard</div>
@@ -1992,419 +1739,6 @@
           </div>
           <div class="template-actions">
             <button class="btn" id="refreshTemplatesBtn" title="Reload template list">Refresh</button>
-          </div>
-        </div>
-
-        <!-- SCAFFOLD TAB (Task #12: Project Templates and Scaffolding) -->
-        <div class="tab-pane" id="tab-scaffold">
-          <div class="tab-title">Project Scaffolding</div>
-          <div class="tab-description">Create new projects from pre-built templates</div>
-
-          <!-- Category filter -->
-          <div class="scaffold-categories" id="scaffoldCategories">
-            <button class="scaffold-category active" data-category="all">All</button>
-            <button class="scaffold-category" data-category="nodejs">Node.js</button>
-            <button class="scaffold-category" data-category="python">Python</button>
-            <button class="scaffold-category" data-category="frontend">Frontend</button>
-            <button class="scaffold-category" data-category="desktop">Desktop</button>
-            <button class="scaffold-category" data-category="hivemind">Hivemind</button>
-            <button class="scaffold-category" data-category="custom">Custom</button>
-          </div>
-
-          <!-- Template list -->
-          <div class="scaffold-template-list" id="scaffoldTemplateList">
-            <div class="scaffold-empty">Loading templates...</div>
-          </div>
-
-          <!-- Selected template preview -->
-          <div class="scaffold-preview hidden" id="scaffoldPreview">
-            <div class="scaffold-preview-header">
-              <span class="scaffold-preview-name" id="scaffoldPreviewName">Template Name</span>
-              <button class="btn btn-xs" id="scaffoldPreviewClose" title="Close preview">X</button>
-            </div>
-            <div class="scaffold-preview-desc" id="scaffoldPreviewDesc">Description</div>
-            <div class="scaffold-preview-structure">
-              <div class="scaffold-preview-label">Structure:</div>
-              <div class="scaffold-preview-dirs" id="scaffoldPreviewDirs"></div>
-              <div class="scaffold-preview-files" id="scaffoldPreviewFiles"></div>
-            </div>
-          </div>
-
-          <!-- Create project form -->
-          <div class="scaffold-create-form" id="scaffoldCreateForm">
-            <div class="scaffold-form-group">
-              <label>Project Name</label>
-              <input type="text" class="scaffold-input" id="scaffoldProjectName" placeholder="my-project" autocomplete="off">
-            </div>
-            <div class="scaffold-form-group">
-              <label>Description</label>
-              <input type="text" class="scaffold-input" id="scaffoldProjectDesc" placeholder="A brief description" autocomplete="off">
-            </div>
-            <div class="scaffold-form-group">
-              <label>Location</label>
-              <div class="scaffold-location-row">
-                <input type="text" class="scaffold-input scaffold-location" id="scaffoldLocation" placeholder="Select folder..." readonly>
-                <button class="btn btn-sm" id="scaffoldBrowseBtn" title="Browse for folder">Browse</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Actions -->
-          <div class="scaffold-actions">
-            <button class="btn btn-primary" id="scaffoldCreateBtn" title="Create project from selected template" disabled>Create Project</button>
-            <button class="btn" id="scaffoldImportBtn" title="Import custom template">Import</button>
-          </div>
-
-          <!-- Loading overlay -->
-          <div class="scaffold-loading hidden" id="scaffoldLoading">
-            <div class="scaffold-loading-spinner"></div>
-            <div class="scaffold-loading-text">Creating project...</div>
-          </div>
-        </div>
-
-        <!-- DEPLOY TAB (Task #15: Automated Deployment Pipeline) -->
-        <div class="tab-pane" id="tab-deploy">
-          <div class="tab-title">Deployment Pipeline</div>
-          <div class="tab-description">Build automation and CI/CD management</div>
-
-          <!-- Git and environment status -->
-          <div class="deploy-status-bar">
-            <div class="deploy-git-info" id="deployGitInfo">
-              <span class="deploy-branch" id="deployBranch">main</span>
-              <span class="deploy-commit" id="deployCommit">-</span>
-              <span class="deploy-dirty hidden" id="deployDirty" title="Uncommitted changes">*</span>
-            </div>
-            <div class="deploy-env-select">
-              <label>Environment:</label>
-              <select id="deployEnvSelect">
-                <option value="development">Development</option>
-                <option value="staging">Staging</option>
-                <option value="production">Production</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Readiness checks -->
-          <div class="deploy-readiness" id="deployReadiness">
-            <div class="deploy-readiness-title">Deployment Readiness</div>
-            <div class="deploy-checks" id="deployChecks">
-              <div class="deploy-check-loading">Checking...</div>
-            </div>
-          </div>
-
-          <!-- Pipeline stages -->
-          <div class="deploy-pipeline" id="deployPipeline">
-            <div class="deploy-pipeline-title">Pipeline Stages</div>
-            <div class="deploy-stages" id="deployStages">
-              <div class="deploy-stage" data-stage="install">
-                <div class="deploy-stage-icon">1</div>
-                <div class="deploy-stage-name">Install</div>
-                <div class="deploy-stage-status">pending</div>
-              </div>
-              <div class="deploy-stage" data-stage="lint">
-                <div class="deploy-stage-icon">2</div>
-                <div class="deploy-stage-name">Lint</div>
-                <div class="deploy-stage-status">pending</div>
-              </div>
-              <div class="deploy-stage" data-stage="test">
-                <div class="deploy-stage-icon">3</div>
-                <div class="deploy-stage-name">Test</div>
-                <div class="deploy-stage-status">pending</div>
-              </div>
-              <div class="deploy-stage" data-stage="build">
-                <div class="deploy-stage-icon">4</div>
-                <div class="deploy-stage-name">Build</div>
-                <div class="deploy-stage-status">pending</div>
-              </div>
-              <div class="deploy-stage" data-stage="package">
-                <div class="deploy-stage-icon">5</div>
-                <div class="deploy-stage-name">Package</div>
-                <div class="deploy-stage-status">pending</div>
-              </div>
-              <div class="deploy-stage" data-stage="deploy">
-                <div class="deploy-stage-icon">6</div>
-                <div class="deploy-stage-name">Deploy</div>
-                <div class="deploy-stage-status">pending</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Build output -->
-          <div class="deploy-output-section">
-            <div class="deploy-output-header">
-              <span class="deploy-output-title">Build Output</span>
-              <button class="btn btn-xs" id="deployClearOutputBtn" title="Clear output">Clear</button>
-            </div>
-            <div class="deploy-output" id="deployOutput">
-              <div class="deploy-output-empty">No build output yet</div>
-            </div>
-          </div>
-
-          <!-- Actions -->
-          <div class="deploy-actions">
-            <button class="btn btn-primary" id="deployStartBtn" title="Start build pipeline">Start Build</button>
-            <button class="btn" id="deployCancelBtn" title="Cancel current build" disabled>Cancel</button>
-            <button class="btn" id="deployQuickBtn" title="Quick development build">Quick Build</button>
-            <button class="btn" id="deployGitHubBtn" title="Deploy to GitHub Release" disabled>Deploy to GitHub</button>
-          </div>
-
-          <!-- Build history -->
-          <div class="deploy-history-section">
-            <div class="deploy-history-title">Recent Builds</div>
-            <div class="deploy-history" id="deployHistory">
-              <div class="deploy-history-empty">No builds yet</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- COLLAB TAB (Task #11: Real-time Collaboration) -->
-        <div class="tab-pane" id="tab-collab">
-          <div class="tab-title">Real-time Collaboration</div>
-          <div class="tab-description">Share sessions and work together in real-time</div>
-
-          <!-- Connection status -->
-          <div class="collab-status-bar" id="collabStatusBar">
-            <span class="collab-status-indicator disconnected" id="collabStatusIndicator"></span>
-            <span class="collab-status-text" id="collabStatusText">Not connected</span>
-            <span class="collab-user-count hidden" id="collabUserCount">0 users</span>
-          </div>
-
-          <!-- Session controls (when not in session) -->
-          <div class="collab-session-controls" id="collabSessionControls">
-            <div class="collab-section">
-              <div class="collab-section-title">Start a Session</div>
-              <div class="collab-form">
-                <div class="collab-field">
-                  <label>Session Name:</label>
-                  <input type="text" id="collabSessionName" placeholder="My Hivemind Session" />
-                </div>
-                <div class="collab-field">
-                  <label>Port:</label>
-                  <input type="number" id="collabPort" value="9876" min="1024" max="65535" />
-                </div>
-                <div class="collab-field-row">
-                  <label><input type="checkbox" id="collabAllowEdit" checked /> Allow editing</label>
-                  <label><input type="checkbox" id="collabAllowChat" checked /> Allow chat</label>
-                  <label><input type="checkbox" id="collabSyncTerminals" checked /> Sync terminals</label>
-                </div>
-                <button class="btn btn-primary" id="collabCreateBtn">Create Session</button>
-              </div>
-            </div>
-
-            <div class="collab-divider">— or —</div>
-
-            <div class="collab-section">
-              <div class="collab-section-title">Join a Session</div>
-              <div class="collab-form">
-                <div class="collab-field">
-                  <label>Host:</label>
-                  <input type="text" id="collabJoinHost" placeholder="localhost" value="localhost" />
-                </div>
-                <div class="collab-field">
-                  <label>Port:</label>
-                  <input type="number" id="collabJoinPort" placeholder="9876" />
-                </div>
-                <div class="collab-field">
-                  <label>Invite Code (optional):</label>
-                  <input type="text" id="collabJoinCode" placeholder="ABCD1234" />
-                </div>
-                <button class="btn btn-primary" id="collabJoinBtn">Join Session</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Active session view (when connected) -->
-          <div class="collab-active-session hidden" id="collabActiveSession">
-            <!-- Session info -->
-            <div class="collab-session-info" id="collabSessionInfo">
-              <div class="collab-session-name" id="collabCurrentName">-</div>
-              <div class="collab-session-role" id="collabCurrentRole">-</div>
-            </div>
-
-            <!-- Invite section -->
-            <div class="collab-invite-section" id="collabInviteSection">
-              <div class="collab-section-title">Invite Others</div>
-              <div class="collab-invite-link">
-                <input type="text" id="collabInviteLink" readonly />
-                <button class="btn btn-xs" id="collabCopyLinkBtn" title="Copy invite link">Copy</button>
-              </div>
-              <div class="collab-invite-code">
-                Code: <span id="collabInviteCode">-</span>
-                <button class="btn btn-xs" id="collabCopyCodeBtn" title="Copy code">Copy</button>
-              </div>
-            </div>
-
-            <!-- Users list -->
-            <div class="collab-users-section">
-              <div class="collab-section-title">Connected Users</div>
-              <div class="collab-users-list" id="collabUsersList">
-                <div class="collab-users-empty">No other users</div>
-              </div>
-            </div>
-
-            <!-- Chat -->
-            <div class="collab-chat-section">
-              <div class="collab-section-title">
-                Chat
-                <span class="collab-chat-badge hidden" id="collabChatBadge">0</span>
-              </div>
-              <div class="collab-chat-messages" id="collabChatMessages">
-                <div class="collab-chat-empty">No messages yet</div>
-              </div>
-              <div class="collab-chat-input">
-                <input type="text" id="collabChatInput" placeholder="Type a message..." />
-                <button class="btn btn-xs" id="collabSendBtn">Send</button>
-              </div>
-            </div>
-
-            <!-- Session settings (host only) -->
-            <div class="collab-settings-section hidden" id="collabSettingsSection">
-              <div class="collab-section-title">Session Settings</div>
-              <div class="collab-settings">
-                <label><input type="checkbox" id="collabSettingEdit" /> Allow editing</label>
-                <label><input type="checkbox" id="collabSettingChat" /> Allow chat</label>
-                <label><input type="checkbox" id="collabSettingSync" /> Sync terminals</label>
-                <label><input type="checkbox" id="collabSettingSyncSettings" /> Sync settings</label>
-                <div class="collab-field">
-                  <label>Max users:</label>
-                  <input type="number" id="collabSettingMaxUsers" min="2" max="20" value="10" />
-                </div>
-                <button class="btn btn-xs" id="collabSaveSettingsBtn">Save Settings</button>
-              </div>
-            </div>
-
-            <!-- Leave button -->
-            <div class="collab-actions">
-              <button class="btn btn-danger" id="collabLeaveBtn">Leave Session</button>
-            </div>
-          </div>
-
-          <!-- Profile settings -->
-          <div class="collab-profile-section">
-            <div class="collab-section-title">Your Profile</div>
-            <div class="collab-profile">
-              <div class="collab-field">
-                <label>Display Name:</label>
-                <input type="text" id="collabUserName" placeholder="Anonymous" />
-              </div>
-              <div class="collab-field">
-                <label>Color:</label>
-                <input type="color" id="collabUserColor" value="#4ECDC4" />
-              </div>
-              <button class="btn btn-xs" id="collabUpdateProfileBtn">Update Profile</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="tab-pane" id="tab-mobile">
-          <div class="tab-title">Mobile Companion</div>
-          <div class="tab-description">Connect mobile app for remote monitoring</div>
-
-          <!-- Server Status -->
-          <div class="mobile-status-bar" id="mobileStatusBar">
-            <span class="mobile-status-indicator stopped" id="mobileStatusIndicator"></span>
-            <span class="mobile-status-text" id="mobileStatusText">Server stopped</span>
-            <span class="mobile-client-count hidden" id="mobileClientCount">0 clients</span>
-          </div>
-
-          <!-- Server Controls -->
-          <div class="mobile-server-controls" id="mobileServerControls">
-            <div class="mobile-section">
-              <div class="mobile-section-title">API Server</div>
-              <div class="mobile-form">
-                <div class="mobile-field">
-                  <label>Port:</label>
-                  <input type="number" id="mobilePort" value="8080" min="1024" max="65535" />
-                </div>
-                <div class="mobile-field-row">
-                  <button class="btn btn-primary" id="mobileStartBtn">Start Server</button>
-                  <button class="btn" id="mobileStopBtn" disabled>Stop Server</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- QR Code -->
-            <div class="mobile-section" id="mobileQrSection">
-              <div class="mobile-section-title">Quick Connect</div>
-              <div class="mobile-qr-container">
-                <div class="mobile-qr-placeholder" id="mobileQrPlaceholder">
-                  <span class="mobile-qr-icon">📱</span>
-                  <span class="mobile-qr-text">Start server to generate QR code</span>
-                </div>
-                <div class="mobile-qr-code hidden" id="mobileQrCode">
-                  <canvas id="mobileQrCanvas" width="200" height="200"></canvas>
-                </div>
-                <div class="mobile-connection-info hidden" id="mobileConnectionInfo">
-                  <div class="mobile-info-row">
-                    <span class="mobile-info-label">Host:</span>
-                    <span class="mobile-info-value" id="mobileHost">-</span>
-                  </div>
-                  <div class="mobile-info-row">
-                    <span class="mobile-info-label">Port:</span>
-                    <span class="mobile-info-value" id="mobilePortDisplay">-</span>
-                  </div>
-                  <div class="mobile-info-row">
-                    <span class="mobile-info-label">API:</span>
-                    <span class="mobile-info-value" id="mobileApiEndpoint">-</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Sessions -->
-          <div class="mobile-section">
-            <div class="mobile-section-title">Active Sessions</div>
-            <div class="mobile-sessions-list" id="mobileSessionsList">
-              <div class="mobile-sessions-empty">No active sessions</div>
-            </div>
-            <div class="mobile-session-actions">
-              <button class="btn btn-xs" id="mobileCreateSessionBtn" disabled>Create Session</button>
-              <button class="btn btn-xs" id="mobileRefreshSessionsBtn" disabled>Refresh</button>
-            </div>
-          </div>
-
-          <!-- Push Subscriptions -->
-          <div class="mobile-section">
-            <div class="mobile-section-title">Push Subscriptions</div>
-            <div class="mobile-push-list" id="mobilePushList">
-              <div class="mobile-push-empty">No push subscriptions</div>
-            </div>
-          </div>
-
-          <!-- Notification Settings -->
-          <div class="mobile-section">
-            <div class="mobile-section-title">Notification Settings</div>
-            <div class="mobile-notification-settings">
-              <label class="mobile-checkbox">
-                <input type="checkbox" id="mobileNotifyAgentStatus" checked />
-                Agent status changes
-              </label>
-              <label class="mobile-checkbox">
-                <input type="checkbox" id="mobileNotifyAgentError" checked />
-                Agent errors
-              </label>
-              <label class="mobile-checkbox">
-                <input type="checkbox" id="mobileNotifyBuildStatus" checked />
-                Build status
-              </label>
-              <label class="mobile-checkbox">
-                <input type="checkbox" id="mobileNotifyChatMessage" />
-                Chat messages
-              </label>
-              <label class="mobile-checkbox">
-                <input type="checkbox" id="mobileNotifyTaskComplete" checked />
-                Task completions
-              </label>
-            </div>
-          </div>
-
-          <!-- Test Notification -->
-          <div class="mobile-section">
-            <div class="mobile-section-title">Test</div>
-            <div class="mobile-test-actions">
-              <button class="btn btn-xs" id="mobileTestNotifyBtn" disabled>Send Test Notification</button>
-            </div>
           </div>
         </div>
 

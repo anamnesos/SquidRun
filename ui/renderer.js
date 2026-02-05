@@ -387,6 +387,7 @@ window.hivemind = {
         organicUIInstance = createOrganicUI({ mount: terminalsSection });
         log.info('SDK', 'Organic UI mounted');
         wireOrganicInput();  // Wire up input handlers
+        initModelSelectors(true);
 
         // Replay pending messages
         if (pendingWarRoomMessages.length > 0) {
@@ -421,6 +422,7 @@ window.hivemind = {
               }
       
               log.info('SDK', 'Mode disabled (restoring agents)...');
+              initModelSelectors(false);
               // Ensure PTY terminals are initialized and agents started
               terminal.initTerminals().then(() => {
                 terminal.spawnAllClaude();
@@ -519,59 +521,34 @@ function getClaimableTasksForPane(paneId) {
 
 // formatTimeSince now imported from ./modules/formatters
 
-function updateHealthIndicators() {
-  const lastOutputTime = terminal.lastOutputTime || {};
-  const paneIds = ['1', '2', '3', '4', '5', '6'];
+// Pane expansion state
+let expandedPaneId = null;
 
-  paneIds.forEach(paneId => {
-    const healthEl = document.getElementById(`health-${paneId}`);
-    const stuckEl = document.getElementById(`stuck-${paneId}`);
-    const idleEl = document.getElementById(`idle-${paneId}`);
-    const claimBtn = document.querySelector(`.claim-btn[data-pane-id="${paneId}"]`);
-    const lastOutput = lastOutputTime[paneId];
+function toggleExpandPane(paneId) {
+  const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+  const paneLayout = document.querySelector('.pane-layout');
+  if (!pane || !paneLayout) return;
 
-    if (healthEl) {
-      const timeStr = formatTimeSince(lastOutput);
-      healthEl.textContent = timeStr;
-
-      // Color coding based on recency
-      healthEl.classList.remove('recent', 'active', 'stale');
-      if (!lastOutput) {
-        healthEl.classList.add('active');
-      } else {
-        const age = Date.now() - lastOutput;
-        if (age < 5000) {
-          healthEl.classList.add('recent'); // Green - very recent
-        } else if (age < 30000) {
-          healthEl.classList.add('active'); // Gray - recent
-        } else {
-          healthEl.classList.add('stale'); // Yellow - getting stale
-        }
-      }
+  if (pane.classList.contains('pane-expanded')) {
+    // Collapse
+    expandedPaneId = null;
+    pane.classList.remove('pane-expanded');
+    paneLayout.classList.remove('has-expanded-pane');
+  } else {
+    // Collapse any previously expanded pane
+    if (expandedPaneId) {
+      const prevPane = document.querySelector(`.pane[data-pane-id="${expandedPaneId}"]`);
+      if (prevPane) prevPane.classList.remove('pane-expanded');
     }
-
-    if (stuckEl) {
-      const isStuck = lastOutput && (Date.now() - lastOutput) > UI_STUCK_THRESHOLD_MS;
-      stuckEl.classList.toggle('visible', isStuck);
-    }
-
-    // Smart Parallelism - Idle detection with claimable tasks
-    const isIdle = lastOutput && (Date.now() - lastOutput) > UI_IDLE_CLAIM_THRESHOLD_MS;
-    const hasTasksToClaim = hasClaimableTasks(paneId);
-    const showIdleIndicator = isIdle && hasTasksToClaim;
-
-    if (idleEl) {
-      idleEl.classList.toggle('visible', showIdleIndicator);
-      if (showIdleIndicator) {
-        const tasks = getClaimableTasksForPane(paneId);
-        idleEl.title = `${tasks.length} task${tasks.length !== 1 ? 's' : ''} available to claim`;
-      }
-    }
-
-    if (claimBtn) {
-      claimBtn.classList.toggle('visible', showIdleIndicator);
-    }
-  });
+    // Expand this pane
+    expandedPaneId = paneId;
+    pane.classList.add('pane-expanded');
+    paneLayout.classList.add('has-expanded-pane');
+  }
+  // Trigger terminal resize
+  if (terminal && terminal.handleResize) {
+    setTimeout(() => terminal.handleResize(), 100);
+  }
 }
 
 // Status Strip - imported from modules/status-strip.js
@@ -722,32 +699,6 @@ settings.setConnectionStatusCallback(updateConnectionStatus);
 settings.setSettingsLoadedCallback(markSettingsLoaded);
 daemonHandlers.setStatusCallbacks(updateConnectionStatus, updatePaneStatus);
 
-// Toggle worker pane expanded state
-function toggleExpandPane(paneId) {
-  const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-  if (!pane || !pane.classList.contains('worker-pane')) return;
-
-  const isExpanded = pane.classList.toggle('expanded');
-  const expandBtn = pane.querySelector('.expand-btn');
-
-  // Update button icon
-  if (expandBtn) {
-    expandBtn.textContent = isExpanded ? '⤡' : '⤢';
-    expandBtn.title = isExpanded ? 'Collapse pane' : 'Expand pane';
-  }
-
-  // Hide/show other worker panes
-  document.querySelectorAll('.worker-pane').forEach(wp => {
-    if (wp.dataset.paneId !== paneId) {
-      wp.classList.toggle('collapsed', isExpanded);
-    }
-  });
-
-  // Refit terminals after layout change
-  setTimeout(() => {
-    terminal.handleResize();
-  }, 50);
-}
 
 // Setup event listeners
 function setupEventListeners() {
@@ -784,6 +735,18 @@ function setupEventListeners() {
     if (!broadcastInput || !commandTarget) return;
     const target = commandTarget.value;
     const targetName = commandTarget.options[commandTarget.selectedIndex]?.text || 'Architect';
+
+    const roleHints = {
+      '1': 'architecture or strategy',
+      '2': 'infrastructure or builds',
+      '3': 'frontend or UI logic',
+      '4': 'backend or daemon logic',
+      '5': 'debugging or analysis',
+      '6': 'review or verification'
+    };
+
+    const hint = roleHints[target] ? ` about ${roleHints[target]}` : '';
+
     if (target === 'auto') {
       broadcastInput.placeholder = 'Describe a task to auto-route (Enter to send)';
       broadcastInput.title = 'Auto-route a task based on description';
@@ -791,7 +754,7 @@ function setupEventListeners() {
       broadcastInput.placeholder = 'Type here to message all agents (Enter to send)';
       broadcastInput.title = 'Send message to all agents';
     } else {
-      broadcastInput.placeholder = `Type here to message ${targetName} (Enter to send)`;
+      broadcastInput.placeholder = `Type a message to ${targetName}${hint} (Enter to send)`;
       broadcastInput.title = `Send message to ${targetName}`;
     }
   }
@@ -988,9 +951,6 @@ function setupEventListeners() {
   // Helper function to send broadcast - routes through SDK or PTY based on mode
   // Supports pane targeting via dropdown or /1-6 prefix
   function sendBroadcast(message) {
-    // Store reference for organic UI input wiring
-    sendBroadcastFn = sendBroadcast;
-
     const now = Date.now();
     if (now - lastBroadcastTime < 500) {
       log.info('Broadcast', 'Rate limited');
@@ -1096,6 +1056,7 @@ function setupEventListeners() {
           .catch(err => {
             log.error('SDK', `Send to pane ${targetPaneId} failed:`, err);
             showDeliveryStatus('failed');
+            showToast(`Send failed: ${err.message}`, 'error');
           });
       }
     } else {
@@ -1252,52 +1213,29 @@ function setupEventListeners() {
     }));
   });
 
-  // Smart Parallelism - Claim task button click handlers
-  document.querySelectorAll('.claim-btn').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
+  // Expand pane button click handlers
+  document.querySelectorAll('.expand-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
       const paneId = btn.dataset.paneId;
-      if (!paneId) return;
-
-      const tasks = getClaimableTasksForPane(paneId);
-      if (tasks.length === 0) {
-        log.info('Claim', `No claimable tasks for pane ${paneId}`);
-        return;
-      }
-
-      // Claim first available task
-      const task = tasks[0];
-      log.info('Claim', `Pane ${paneId} claiming task: ${task.subject}`);
-
-      // Visual feedback
-      btn.classList.add('claiming');
-      setTimeout(() => btn.classList.remove('claiming'), 500);
-
-      try {
-        // Claim via IPC - main process handles the actual claim
-        const result = await ipcRenderer.invoke('claim-task', {
-          paneId,
-          taskId: task.id,
-          domain: PANE_DOMAIN_MAP[paneId]
-        });
-
-        if (result.success) {
-          log.info('Claim', `Task ${task.id} claimed successfully`);
-          // Notify agent via terminal injection
-          const claimMessage = `[TASK CLAIMED] Task #${task.id}: ${task.subject}`;
-          terminal.sendToPane(paneId, claimMessage + '\r');
-        } else {
-          log.warn('Claim', `Failed to claim task: ${result.error}`);
-        }
-      } catch (err) {
-        log.error('Claim', 'Claim failed:', err);
-      }
+      if (paneId) toggleExpandPane(paneId);
     });
+  });
+
+  // ESC key to collapse expanded pane
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && expandedPaneId) {
+      toggleExpandPane(expandedPaneId);
+    }
   });
 
   // Fresh start button - kill all and start new sessions (debounced)
   const freshStartBtn = document.getElementById('freshStartBtn');
   if (freshStartBtn) {
-    freshStartBtn.addEventListener('click', debounceButton('freshStart', terminal.freshStartAll));
+    freshStartBtn.addEventListener('click', debounceButton('freshStart', () => {
+      if (confirm('Start fresh with all agents?\n\nThis will kill all sessions and restart agents without injecting previous context.')) {
+        terminal.freshStartAll();
+      }
+    }));
   }
 
   // Full restart button - kill daemon and reload app with fresh code
@@ -1439,10 +1377,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Initialize global UI focus tracker for multi-pane focus restore
   terminal.initUIFocusTracker();
 
-  // Agent Health Dashboard (#1) - start health monitor interval
-  setInterval(updateHealthIndicators, 1000);
-  updateHealthIndicators(); // Initial update
-
   // Status Strip - task counts at a glance
   initStatusStrip();
 
@@ -1582,8 +1516,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       claimableTasksCache.tasks = data.tasks;
       claimableTasksCache.lastUpdated = Date.now();
       log.info('Tasks', `Task list updated: ${data.tasks.length} tasks`);
-      // Immediately update indicators with new task data
-      updateHealthIndicators();
     }
   });
 
@@ -2049,17 +1981,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Organic UI: State updates
   ipcRenderer.on('agent-online', (event, data) => {
-    if (!organicUIInstance || !data) return;
+    if (!organicUIInstance) {
+      log.debug('OrganicUI', 'agent-online received but UI not mounted');
+      return;
+    }
+    if (!data) return;
     updateOrganicState(data.agentId, 'idle');
   });
 
   ipcRenderer.on('agent-offline', (event, data) => {
-    if (!organicUIInstance || !data) return;
+    if (!organicUIInstance) {
+      log.debug('OrganicUI', 'agent-offline received but UI not mounted');
+      return;
+    }
+    if (!data) return;
     updateOrganicState(data.agentId, 'offline');
   });
 
   ipcRenderer.on('agent-state-changed', (event, data) => {
-    if (!organicUIInstance || !data) return;
+    if (!organicUIInstance) {
+      log.debug('OrganicUI', 'agent-state-changed received but UI not mounted');
+      return;
+    }
+    if (!data) return;
     updateOrganicState(data.agentId, data.state);
   });
 
