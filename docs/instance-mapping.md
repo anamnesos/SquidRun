@@ -8,7 +8,7 @@
 | `orchestrator/` | **Infra** | Codex | 2 |
 | `worker-a/` | **Frontend** | Claude | 3 |
 | `worker-b/` | **Backend** | Codex | 4 |
-| `investigator/` | **Analyst** | Codex | 5 |
+| `investigator/` | **Analyst** | Gemini | 5 |
 | `reviewer/` | **Reviewer** | Claude | 6 |
 
 ## Why the Mismatch?

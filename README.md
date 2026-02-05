@@ -43,7 +43,7 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 - **Dry-Run Mode** - Simulate multi-agent flow without spawning real AI instances
 - **Session History** - View past sessions with duration and agents involved
 - **Projects Tab** - Quick-switch between recent projects
-- **Quality Gates** - mypy, ESLint, Jest tests (433+), pre-commit hooks
+- **Quality Gates** - mypy, ESLint, Jest tests (2801+), pre-commit hooks
 - **IPC Aliases** - Frontend compatibility layer for legacy UI components
 
 ### SDK Mode (Alternative to PTY)
@@ -73,7 +73,7 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 | 2 | Infra | Codex | CI/CD, deployment, build scripts, infrastructure |
 | 3 | Frontend | Claude | UI components, renderer.js, index.html, CSS |
 | 4 | Backend | Codex | Daemon, processes, file watching, main.js internals |
-| 5 | Analyst | Codex | Debugging, profiling, root cause analysis, investigations |
+| 5 | Analyst | Gemini | Debugging, profiling, root cause analysis, investigations |
 | 6 | Reviewer | Claude | Code review, verification, quality gates |
 
 ## How Triggers Work
@@ -160,14 +160,16 @@ hivemind/
 │   ├── app-status.json          # Runtime state (mode, version)
 │   ├── triggers/                # Agent trigger files
 │   ├── instances/               # Per-agent working directories
-│   │   ├── lead/                # Architect (pane 1)
-│   │   ├── orchestrator/        # Infra (pane 2)
-│   │   ├── worker-a/            # Frontend (pane 3)
-│   │   ├── worker-b/            # Backend (pane 4)
-│   │   ├── investigator/        # Analyst (pane 5)
-│   │   └── reviewer/            # Reviewer (pane 6)
+│   │   ├── arch/                # Architect (pane 1)
+│   │   ├── infra/               # Infra (pane 2)
+│   │   ├── front/               # Frontend (pane 3)
+│   │   ├── back/                # Backend (pane 4)
+│   │   ├── ana/                 # Analyst (pane 5)
+│   │   └── rev/                 # Reviewer (pane 6)
 │   └── build/                   # Build status, reviews, blockers
 ├── docs/                        # Documentation and specs
+│   ├── roles/                   # Modular role instruction files
+│   └── models/                  # Model-specific notes
 └── CLAUDE.md                    # Master agent instructions
 ```
 
@@ -181,7 +183,7 @@ If you want to understand how Hivemind works, read these 7 files:
 4. **`ui/modules/triggers.js`** - Agent-to-agent communication, sequence tracking
 5. **`ui/terminal-daemon.js`** - PTY daemon architecture, process management
 6. **`CLAUDE.md`** - How agents are instructed (master config)
-7. **`workspace/instances/lead/CLAUDE.md`** - Example agent role configuration
+7. **`workspace/instances/arch/CLAUDE.md`** - Example agent role configuration
 
 ## Platform
 
