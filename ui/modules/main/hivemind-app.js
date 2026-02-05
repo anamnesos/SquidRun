@@ -81,10 +81,53 @@ class HivemindApp {
     try {
       await websocketServer.start({
         port: websocketServer.DEFAULT_PORT,
-        onMessage: (data) => {
+        onMessage: async (data) => {
           log.info('WebSocket', `Message from ${data.role || data.paneId || 'unknown'}: ${JSON.stringify(data.message).substring(0, 100)}`);
 
           if (!data.message) return;
+
+          // Handle screenshot requests from agents
+          if (data.message.type === 'screenshot') {
+            log.info('WebSocket', 'Screenshot request received');
+            try {
+              if (!this.ctx.mainWindow || this.ctx.mainWindow.isDestroyed()) {
+                websocketServer.sendToTarget(data.role || data.clientId, JSON.stringify({
+                  type: 'screenshot-result',
+                  success: false,
+                  error: 'Window not available'
+                }));
+                return;
+              }
+              const image = await this.ctx.mainWindow.webContents.capturePage();
+              const buffer = image.toPNG();
+              const screenshotsDir = path.join(WORKSPACE_PATH, 'screenshots');
+              if (!fs.existsSync(screenshotsDir)) {
+                fs.mkdirSync(screenshotsDir, { recursive: true });
+              }
+              const timestamp = Date.now();
+              const filename = `capture-${timestamp}.png`;
+              const filePath = path.join(screenshotsDir, filename);
+              fs.writeFileSync(filePath, buffer);
+              const latestPath = path.join(screenshotsDir, 'latest.png');
+              fs.writeFileSync(latestPath, buffer);
+              log.info('WebSocket', `Screenshot saved to ${filePath}`);
+              // Send result back - note: WebSocket clients need to listen for this
+              websocketServer.broadcast(JSON.stringify({
+                type: 'screenshot-result',
+                success: true,
+                path: latestPath,
+                filename
+              }));
+            } catch (err) {
+              log.error('WebSocket', `Screenshot failed: ${err.message}`);
+              websocketServer.broadcast(JSON.stringify({
+                type: 'screenshot-result',
+                success: false,
+                error: err.message
+              }));
+            }
+            return;
+          }
 
           // Route WebSocket messages via triggers module (handles War Room + delivery)
           if (data.message.type === 'send') {
@@ -98,7 +141,7 @@ class HivemindApp {
             }
           } else if (data.message.type === 'broadcast') {
             log.info('WebSocket', `Routing 'broadcast' (via triggers)`);
-            triggers.broadcastToAllAgents(data.message.content);
+            triggers.broadcastToAllAgents(data.message.content, data.role || 'unknown');
           }
         }
       });
@@ -235,7 +278,9 @@ class HivemindApp {
       const entry = `[${new Date().toISOString()}] [${levelNames[level] || level}] ${message}\n`;
       try {
         fs.appendFileSync(logPath, entry);
-      } catch (err) {}
+      } catch (err) {
+        log.warn('App', `Failed to append to console.log: ${err.message}`);
+      }
     });
   }
 
@@ -386,7 +431,8 @@ class HivemindApp {
       }
 
       if (this.ctx.pluginManager?.hasHook('daemon:data')) {
-        this.ctx.pluginManager.dispatch('daemon:data', { paneId: String(paneId), data }).catch(() => {});
+        this.ctx.pluginManager.dispatch('daemon:data', { paneId: String(paneId), data })
+          .catch(err => log.error('Plugins', `Error in daemon:data hook: ${err.message}`));
       }
 
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
@@ -404,11 +450,11 @@ class HivemindApp {
       const currentState = this.ctx.agentRunning.get(paneId);
       if (currentState === 'starting' || currentState === 'idle') {
         const lower = data.toLowerCase();
-        if (data.includes('>') || lower.includes('claude') || lower.includes('codex') || lower.includes('gemini')
-) {
+        if (lower.includes('>') || lower.includes('claude') || lower.includes('codex') || lower.includes('gemini') || lower.includes('cursor')) {
           this.ctx.agentRunning.set(paneId, 'running');
           organicUI.agentOnline(paneId);
-          this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'running' }).catch(() => {});
+          this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'running' })
+            .catch(err => log.error('Plugins', `Error in agent:stateChanged hook: ${err.message}`));
           this.broadcastClaudeState();
           this.activity.logActivity('state', paneId, 'Agent started', { status: 'running' });
           log.info('Agent', `Pane ${paneId} now running`);
@@ -421,7 +467,8 @@ class HivemindApp {
       this.usage.recordSessionEnd(paneId);
       this.ctx.agentRunning.set(paneId, 'idle');
       organicUI.agentOffline(paneId);
-      this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'idle', exitCode: code }).catch(() => {});
+      this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'idle', exitCode: code })
+        .catch(err => log.error('Plugins', `Error in agent:stateChanged hook: ${err.message}`));
       this.broadcastClaudeState();
       this.activity.logActivity('state', paneId, `Session ended (exit code: ${code})`, { exitCode: code });      
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
@@ -444,10 +491,11 @@ class HivemindApp {
               if (term.alive) {
                 // Refine: Check if terminal actually has CLI content
                 // Simple check here as we don't want to duplicate all regexes from daemon-handlers
-                const scrollback = String(term.scrollback || '');
-                const hasCli = scrollback.includes('Claude Code') || 
+                const scrollback = String(term.scrollback || '').toLowerCase();
+                const hasCli = scrollback.includes('claude code') || 
                                scrollback.includes('codex>') || 
-                               scrollback.includes('Gemini CLI') ||
+                               scrollback.includes('gemini cli') ||
+                               scrollback.includes('cursor>') ||
                                (scrollback.includes('>') && scrollback.length > 200);
     
                 if (hasCli) {
@@ -493,7 +541,7 @@ class HivemindApp {
           title: 'Watchdog alert',
           message,
           meta: { timestamp },
-        }).catch(() => {});
+        }).catch(err => log.error('Notifier', `Failed to send watchdog alert: ${err.message}`));
       }
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send('watchdog-alert', { message, timestamp });
