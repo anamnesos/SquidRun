@@ -39,7 +39,7 @@ class PydanticWarningFilter(logging.Filter):
 
 # Apply filter to root logger to catch all sources
 logging.getLogger().addFilter(PydanticWarningFilter())
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, AsyncIterator, List, Literal
@@ -163,7 +163,7 @@ except ImportError:
     print(json.dumps({
         "type": "error", 
         "message": "Claude Agent SDK not installed. Run: pip install claude-agent-sdk",
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }))
     sys.exit(1)
 
@@ -382,6 +382,7 @@ class BaseAgent(ABC):
         self.session_id: Optional[str] = None
         self.connected: bool = False
         self.history_file = workspace / "workspace" / "history" / f"{config.pane_id}-{config.role.lower().replace(' ', '-')}.jsonl"
+        self._send_lock = asyncio.Lock()  # Prevent concurrent send tasks per agent
 
     @abstractmethod
     async def connect(self, resume_id: Optional[str] = None) -> None:
@@ -475,7 +476,7 @@ class BaseAgent(ABC):
             "type": msg_type,
             "pane_id": self.config.pane_id,
             "role": self.config.role,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             **data,
         }
         print(json.dumps(output, default=str), flush=True)
@@ -1490,7 +1491,7 @@ class HivemindManager:
                     "message": f"Failed to restart {config.role}: {e}"
                 })
 
-    async def send_message(self, pane_id: str, message: str):
+    async def send_to_agent(self, pane_id: str, message: str):
         """
         Send a message to a specific agent.
 
@@ -1503,22 +1504,23 @@ class HivemindManager:
             self._emit("error", {"pane_id": pane_id, "message": "Agent not found"})
             return
 
-        # Confirm message received
-        self._emit("message_received", {"pane_id": pane_id})
+        async with agent._send_lock:
+            # Confirm message received
+            self._emit("message_received", {"pane_id": pane_id})
 
-        # Stream responses with exception handling
-        try:
-            async for response in agent.send(message):
-                response["pane_id"] = pane_id
-                response["timestamp"] = datetime.utcnow().isoformat()
-                # V2 FIX: Use default=str to handle any non-serializable objects
-                print(json.dumps(response, default=str), flush=True)
-        except Exception as e:
-            self._emit("error", {
-                "pane_id": pane_id,
-                "message": f"Agent send failed: {e}",
-                "error_type": type(e).__name__
-            })
+            # Stream responses with exception handling
+            try:
+                async for response in agent.send(message):
+                    response["pane_id"] = pane_id
+                    response["timestamp"] = datetime.now(timezone.utc).isoformat()
+                    # V2 FIX: Use default=str to handle any non-serializable objects
+                    print(json.dumps(response, default=str), flush=True)
+            except Exception as e:
+                self._emit("error", {
+                    "pane_id": pane_id,
+                    "message": f"Agent send failed: {e}",
+                    "error_type": type(e).__name__
+                })
 
     async def interrupt_agent(self, pane_id: str):
         """
@@ -1561,12 +1563,17 @@ class HivemindManager:
 
     async def _send_and_collect(self, pane_id: str, message: str):
         """Helper to send message and collect responses."""
+        agent = self.agents.get(pane_id)
+        if not agent:
+            return
+
         try:
-            async for response in self.agents[pane_id].send(message):
-                response["pane_id"] = pane_id
-                response["timestamp"] = datetime.utcnow().isoformat()
-                # V2 FIX: Use default=str to handle any non-serializable objects
-                print(json.dumps(response, default=str), flush=True)
+            async with agent._send_lock:
+                async for response in agent.send(message):
+                    response["pane_id"] = pane_id
+                    response["timestamp"] = datetime.now(timezone.utc).isoformat()
+                    # V2 FIX: Use default=str to handle any non-serializable objects
+                    print(json.dumps(response, default=str), flush=True)
         except Exception as e:
             self._emit("error", {
                 "pane_id": pane_id,
@@ -1616,7 +1623,7 @@ class HivemindManager:
         # V2 FIX: Use default=str to handle any non-serializable objects
         print(json.dumps({
             "type": msg_type,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             **data
         }, default=str), flush=True)
 
@@ -1705,7 +1712,7 @@ async def run_ipc_server(manager: HivemindManager):
                 message = cmd.get("message")
                 if pane_id and message:
                     # PARALLELISM FIX: Spawn task instead of awaiting
-                    task = asyncio.create_task(manager.send_message(pane_id, message))
+                    task = asyncio.create_task(manager.send_to_agent(pane_id, message))
                     running_tasks.add(task)
                     # Use lambda to ensure task reference is captured
                     task.add_done_callback(lambda t: running_tasks.discard(t))
@@ -1811,7 +1818,7 @@ async def main_async(workspace: Path, ipc_mode: bool = False):
                         parts = line[5:].split(" ", 1)
                         if len(parts) == 2:
                             pane_id, message = parts
-                            await manager.send_message(pane_id, message)
+                            await manager.send_to_agent(pane_id, message)
                         else:
                             print("Usage: send <pane_id> <message>")
                     elif line.startswith("broadcast "):
