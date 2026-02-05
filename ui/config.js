@@ -35,6 +35,19 @@ const PANE_ROLES = {
   '6': 'Reviewer',
 };
 
+// Short names for space-constrained UI elements
+const SHORT_AGENT_NAMES = {
+  '1': 'Arch',
+  '2': 'Infra',
+  '3': 'Front',
+  '4': 'Back',
+  '5': 'Ana',
+  '6': 'Rev',
+  'system': 'Sys',
+  'router': 'Rtr',
+  'user': 'User'
+};
+
 // Canonical role identifiers (lowercase)
 const ROLE_NAMES = ['architect', 'infra', 'frontend', 'backend', 'analyst', 'reviewer'];
 
@@ -51,6 +64,11 @@ const LEGACY_ROLE_ALIASES = {
   'implementer-b': 'backend',
   implementerb: 'backend',
   investigator: 'analyst',
+  ana: 'analyst',
+  front: 'frontend',
+  back: 'backend',
+  rev: 'reviewer',
+  arch: 'architect'
 };
 
 // Canonical role id -> pane id
@@ -116,6 +134,7 @@ module.exports = {
   INSTANCE_DIRS,
   PANE_IDS,
   PANE_ROLES,
+  SHORT_AGENT_NAMES,
   ROLE_NAMES,
   LEGACY_ROLE_ALIASES,
   ROLE_ID_MAP,

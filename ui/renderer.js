@@ -1197,10 +1197,14 @@ function setupEventListeners() {
     spawnAllBtn.addEventListener('click', debounceButton('spawnAll', terminal.spawnAllClaude));
   }
 
-  // Kill all button (debounced)
+  // Kill all button (debounced, with confirmation)
   const killAllBtn = document.getElementById('killAllBtn');
   if (killAllBtn) {
-    killAllBtn.addEventListener('click', debounceButton('killAll', terminal.killAllTerminals));
+    killAllBtn.addEventListener('click', debounceButton('killAll', () => {
+      if (confirm('Kill all agent sessions?\n\nThis will terminate all running agents immediately.')) {
+        terminal.killAllTerminals();
+      }
+    }));
   }
 
   // Nudge all button - unstick churning agents (uses aggressive ESC+Enter) (debounced)
@@ -1819,7 +1823,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else if (message.type === 'tool_result') {
         const resultContent = typeof message.content === 'string'
           ? message.content
-          : JSON.stringify(message.content);
+          : (message.content != null ? JSON.stringify(message.content) : '(empty)');
         // Truncate long results
         textContent = resultContent.length > 100
           ? `[Result: ${resultContent.substring(0, 100)}...]`

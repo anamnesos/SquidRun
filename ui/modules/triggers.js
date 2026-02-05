@@ -686,8 +686,14 @@ function containsCorrectionKeyword(message) {
 
 function isRelevantToRole(entry, roleKey) {
   if (!entry || !roleKey) return false;
-  if (roleKey === 'architect') return true;
+  // Removed: architect gets ALL messages - too noisy
+  // Now architect only gets messages directed to them like everyone else
   if (entry.type === 'broadcast') return true;
+
+  // Check if directed TO this role
+  const roleLabel = getWarRoomLabel(roleKey);
+  if (entry.to === roleLabel || (entry.to && entry.to.includes(roleLabel))) return true;
+
   const mentionRegex = WAR_ROOM_ROLE_MENTIONS[roleKey];
   if (mentionRegex && mentionRegex.test(entry.msg)) return true;
   if (containsCorrectionKeyword(entry.msg)) return true;
@@ -1593,13 +1599,15 @@ function handleTriggerFile(filePath, filename) {
  * Use this for user broadcasts so agents know it's going to everyone
  * When SDK mode enabled, uses SDK bridge for delivery
  * @param {string} message - Message to broadcast (will be prefixed)
+ * @param {string} fromRole - Sender role name (optional, defaults to user)
  */
-function broadcastToAllAgents(message) {
+function broadcastToAllAgents(message, fromRole = 'user') {
   let targets = [...PANE_IDS];
   const beforePayload = applyPluginHookSync('message:beforeSend', {
     type: 'broadcast',
     targets,
     message,
+    fromRole,
     mode: isSDKModeEnabled() ? 'sdk' : 'pty',
   });
   if (beforePayload && beforePayload.cancel) {
@@ -1608,13 +1616,24 @@ function broadcastToAllAgents(message) {
   if (beforePayload && typeof beforePayload.message === 'string') {
     message = beforePayload.message;
   }
+  if (beforePayload && typeof beforePayload.fromRole === 'string') {
+    fromRole = beforePayload.fromRole;
+  }
   if (beforePayload && Array.isArray(beforePayload.targets)) {
     targets = beforePayload.targets;
   }
 
+  // If fromRole is generic, try to parse it from the message prefix: (ROLE #N): or (ROLE):
+  if (!fromRole || fromRole === 'cli' || fromRole === 'unknown') {
+    const parsed = parseMessageSequence(message);
+    if (parsed.sender) {
+      fromRole = parsed.sender;
+    }
+  }
+
   const broadcastMessage = `[BROADCAST TO ALL AGENTS] ${message}`;
   recordWarRoomMessage({
-    fromRole: 'user',
+    fromRole,
     targets,
     message,
     type: 'broadcast',
@@ -1870,6 +1889,14 @@ function triggerAutoHandoff(completedPaneId, completionMessage) {
  */
 function sendDirectMessage(targetPanes, message, fromRole = null) {
   if (!message) return { success: false, error: 'No message' };
+
+  // If fromRole is generic, try to parse it from the message prefix: (ROLE #N): or (ROLE):
+  if (!fromRole || fromRole === 'cli' || fromRole === 'unknown') {
+    const parsed = parseMessageSequence(message);
+    if (parsed.sender) {
+      fromRole = parsed.sender;
+    }
+  }
 
   let targets = Array.isArray(targetPanes) ? [...targetPanes] : [];
   const beforePayload = applyPluginHookSync('message:beforeSend', {
