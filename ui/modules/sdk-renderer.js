@@ -9,6 +9,7 @@
 
 const log = require('./logger');
 const config = require('../config');
+const { showToast } = require('./notifications');
 
 // Pane configuration - initialized from canonical source (config.js)
 // Can be overridden via setPaneConfig for SDK mode if needed
@@ -59,16 +60,6 @@ function generateHoneycombHTML() {
     </div>
   `;
 }
-
-// Legacy spinner (kept for reference, not used)
-const SPINNER = {
-  interval: 80,
-  frames: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-};
-
-// Active animation state per pane (simplified - CSS handles animation now)
-const spinnerIntervals = new Map();
-const spinnerFrameIndex = new Map();
 
 // Pending messages awaiting delivery confirmation
 const pendingMessages = new Map();
@@ -533,6 +524,7 @@ function appendMessage(paneId, message, options = {}) {
     container = containers.get(paneId);
     if (!container) {
       log.error('SDK', `Failed to initialize container for pane ${paneId}`);
+      showToast(`SDK error: Failed to initialize message container for pane ${paneId}`, 'error');
       return null;
     }
   }
@@ -685,12 +677,6 @@ function streamingIndicator(paneId, active, context = null, category = 'thinking
     }
   } else if (!active && indicator) {
     // Clean up (CSS animation stops automatically when element removed)
-    const interval = spinnerIntervals.get(paneId);
-    if (interval) {
-      clearInterval(interval);
-      spinnerIntervals.delete(paneId);
-    }
-    spinnerFrameIndex.delete(paneId);
     indicator.remove();
   }
 }
