@@ -573,6 +573,13 @@ class HivemindApp {
       }
     });
 
+    this.ctx.daemonClient.on('error', (paneId, message) => {
+      log.error('Daemon', `Error in pane ${paneId}:`, message);
+      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+        this.ctx.mainWindow.webContents.send(`pty-error-${paneId}`, message);
+      }
+    });
+
     return this.ctx.daemonClient.connect();
   }
 
