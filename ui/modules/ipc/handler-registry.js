@@ -6,7 +6,6 @@ const { registerTestExecutionHandlers } = require('./test-execution-handlers');
 const { registerPrecommitHandlers } = require('./precommit-handlers');
 const { registerTestNotificationHandlers } = require('./test-notification-handlers');
 const { registerMessageQueueHandlers } = require('./message-queue-handlers');
-const { registerApiDocsHandlers } = require('./api-docs-handlers');
 const { registerPerfAuditHandlers } = require('./perf-audit-handlers');
 const { registerErrorHandlers } = require('./error-handlers');
 const { registerStateHandlers } = require('./state-handlers');
@@ -25,7 +24,6 @@ const { registerCompletionDetectionHandlers } = require('./completion-detection-
 const { registerAgentClaimsHandlers } = require('./agent-claims-handlers');
 const { registerSessionSummaryHandlers } = require('./session-summary-handlers');
 const { registerTemplateHandlers } = require('./template-handlers');
-const { registerSkillMarketplaceHandlers } = require('./skill-marketplace-handlers');
 const { registerProcessHandlers } = require('./process-handlers');
 const { registerSessionHistoryHandlers } = require('./session-history-handlers');
 const { registerConflictDetectionHandlers } = require('./conflict-detection-handlers');
@@ -34,22 +32,18 @@ const { registerExternalNotificationHandlers } = require('./external-notificatio
 const { registerPtyHandlers } = require('./pty-handlers');
 const { registerGitHandlers } = require('./git-handlers');
 const { registerKnowledgeHandlers } = require('./knowledge-handlers');
-const { registerKnowledgeGraphHandlers } = require('./knowledge-graph-handlers');
 const { registerDebugReplayHandlers } = require('./debug-replay-handlers');
 const { registerTaskParserHandlers } = require('./task-parser-handlers');
 const { registerSchedulerHandlers } = require('./scheduler-handlers');
 const { registerRecoveryHandlers } = require('./recovery-handlers');
-const { registerCodeReviewHandlers } = require('./code-review-handlers');
-const { registerDocGeneratorHandlers } = require('./doc-generator-handlers');
 const { registerPluginHandlers } = require('./plugin-handlers');
 const { registerBackupHandlers } = require('./backup-handlers');
 const { registerResourceHandlers } = require('./resource-handlers');
-const { registerScaffoldingHandlers } = require('./scaffolding-handlers');
-const { registerAgentSharingHandlers } = require('./agent-sharing-handlers');
 const { registerWorkflowHandlers } = require('./workflow-handlers');
 const { registerTaskPoolHandlers } = require('./task-pool-handlers');
 const { registerOracleHandlers } = require('./oracle-handlers');
 const { registerModelSwitchHandlers } = require('./model-switch-handlers');
+const { registerOrganicUIHandlers } = require('./organic-ui-handlers');
 
 const DEFAULT_HANDLERS = [
   registerSdkHandlers,
@@ -60,7 +54,6 @@ const DEFAULT_HANDLERS = [
   registerPrecommitHandlers,
   registerTestNotificationHandlers,
   registerMessageQueueHandlers,
-  registerApiDocsHandlers,
   registerPerfAuditHandlers,
   registerErrorHandlers,
   registerStateHandlers,
@@ -79,7 +72,6 @@ const DEFAULT_HANDLERS = [
   registerAgentClaimsHandlers,
   registerSessionSummaryHandlers,
   registerTemplateHandlers,
-  registerSkillMarketplaceHandlers,
   registerProcessHandlers,
   registerSessionHistoryHandlers,
   registerConflictDetectionHandlers,
@@ -88,22 +80,18 @@ const DEFAULT_HANDLERS = [
   registerPtyHandlers,
   registerGitHandlers,
   registerKnowledgeHandlers,
-  registerKnowledgeGraphHandlers,
   registerDebugReplayHandlers,
   registerTaskParserHandlers,
   registerSchedulerHandlers,
   registerRecoveryHandlers,
-  registerCodeReviewHandlers,
-  registerDocGeneratorHandlers,
   registerPluginHandlers,
   registerBackupHandlers,
   registerResourceHandlers,
-  registerScaffoldingHandlers,
-  registerAgentSharingHandlers,
   registerWorkflowHandlers,
   registerTaskPoolHandlers,
   registerOracleHandlers,
   registerModelSwitchHandlers,
+  registerOrganicUIHandlers,
 ];
 
 function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {

@@ -8,27 +8,12 @@
  */
 
 const log = require('./logger');
+const config = require('../config');
 
-// Pane configuration (defaults to 6-pane PTY layout; can be overridden for SDK mode)
-let PANE_IDS = ['1', '2', '3', '4', '5', '6'];
-let PANE_ROLES = {
-  '1': 'Architect',
-  '2': 'Infra',
-  '3': 'Frontend',
-  '4': 'Backend',
-  '5': 'Analyst',
-  '6': 'Reviewer'
-};
-
-const SDK_PANE_IDS = ['1', '2', '3', '4', '5', '6'];
-const SDK_PANE_ROLES = {
-  '1': 'Architect',
-  '2': 'Infra',
-  '3': 'Frontend',
-  '4': 'Backend',
-  '5': 'Analyst',
-  '6': 'Reviewer'
-};
+// Pane configuration - initialized from canonical source (config.js)
+// Can be overridden via setPaneConfig for SDK mode if needed
+let PANE_IDS = [...config.PANE_IDS];
+let PANE_ROLES = { ...config.PANE_ROLES };
 
 function setPaneConfig({ paneIds, paneRoles } = {}) {
   if (Array.isArray(paneIds)) {
@@ -40,7 +25,8 @@ function setPaneConfig({ paneIds, paneRoles } = {}) {
 }
 
 function setSDKPaneConfig() {
-  setPaneConfig({ paneIds: SDK_PANE_IDS, paneRoles: SDK_PANE_ROLES });
+  // Reset to canonical config values
+  setPaneConfig({ paneIds: [...config.PANE_IDS], paneRoles: { ...config.PANE_ROLES } });
 }
 
 // Message containers per pane

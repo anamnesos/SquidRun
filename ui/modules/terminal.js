@@ -12,6 +12,7 @@ const log = require('./logger');
 const settings = require('./settings');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
+const { PANE_IDS, PANE_ROLES } = require('../config');
 const {
   TYPING_GUARD_MS,
   INJECTION_IDLE_THRESHOLD_MS,
@@ -40,22 +41,11 @@ const {
   STARTUP_READY_BUFFER_MAX,
 } = require('./constants');
 
-// Pane configuration
-const PANE_IDS = ['1', '2', '3', '4', '5', '6'];
-
 // CLI identity tracking (dynamic)
 // Updated by renderer's pane-cli-identity handler (calls register/unregister)
 const paneCliIdentity = new Map();
 
-// ID-1: Pane roles for identity injection (makes /resume sessions identifiable)
-const PANE_ROLES = {
-  '1': 'Architect',
-  '2': 'Infra',
-  '3': 'Frontend',
-  '4': 'Backend',
-  '5': 'Analyst',
-  '6': 'Reviewer',
-};
+// Note: PANE_IDS and PANE_ROLES imported from config.js (canonical source)
 
 // Track if we reconnected to existing terminals
 let reconnectedToExisting = false;
