@@ -30,19 +30,19 @@ const WATCHER_DEBOUNCE_MS = 200;          // Batch events within 200ms window
 const TYPING_GUARD_MS = 300;              // Defer injection if user typed within this window
 
 // Idle detection for injection
-const INJECTION_IDLE_THRESHOLD_MS = 2000; // No output for 2s = idle for injection
-const MAX_QUEUE_TIME_MS = 10000;          // Consider force inject after 10 seconds
+const INJECTION_IDLE_THRESHOLD_MS = 1000; // No output for 1s = idle for injection (reduced from 2s — 3 panes = less contention)
+const MAX_QUEUE_TIME_MS = 5000;           // Consider force inject after 5 seconds (reduced from 10s)
 const FORCE_INJECT_IDLE_MS = 500;         // For force-inject, require 500ms of silence
 const EXTREME_WAIT_MS = 30000;            // Log warning if message queued this long
-const ABSOLUTE_MAX_WAIT_MS = 15000;       // Emergency fallback: force inject after 15s (reduced from 60s for Agent Teams compatibility)
-const QUEUE_RETRY_MS = 200;               // Check queue every 200ms
+const ABSOLUTE_MAX_WAIT_MS = 10000;       // Emergency fallback: force inject after 10s (reduced from 15s)
+const QUEUE_RETRY_MS = 100;               // Check queue every 100ms (reduced from 200ms)
 const BROADCAST_STAGGER_MS = 100;         // Delay between panes in broadcast
 const INJECTION_LOCK_TIMEOUT_MS = 1000;   // Safety release if callbacks missed
 
 // Adaptive Enter delay constants
 const ENTER_DELAY_IDLE_MS = 50;           // Pane idle: fast Enter
 const ENTER_DELAY_ACTIVE_MS = 150;        // Pane active: medium delay
-const ENTER_DELAY_BUSY_MS = 300;          // Pane busy: longer delay
+const ENTER_DELAY_BUSY_MS = 200;          // Pane busy: shorter delay (reduced from 300ms)
 const PANE_ACTIVE_THRESHOLD_MS = 500;     // Recent output threshold for "active"
 const PANE_BUSY_THRESHOLD_MS = 100;       // Very recent output threshold for "busy"
 const FOCUS_RETRY_DELAY_MS = 20;          // Delay between focus retry attempts

@@ -345,7 +345,7 @@ function isIdle(paneId) {
 
 // Shorter idle check for force-inject scenario
 // Requires 500ms of silence - long enough for Enter to not be ignored,
-// but shorter than full 2s idle so messages don't queue forever
+// but shorter than full 1s idle threshold so messages don't queue forever
 function isIdleForForceInject(paneId) {
   const lastOutput = lastOutputTime[paneId] || 0;
   return (Date.now() - lastOutput) >= FORCE_INJECT_IDLE_MS;
@@ -397,8 +397,8 @@ function triggerStartupInjection(paneId, state, reason) {
         await window.hivemind.pty.write(String(paneId), identityMsg);
         log.info('spawnAgent', `Gemini identity text written for ${role} (pane ${paneId})`);
 
-        // Step 3: Wait 500ms then send Enter (Gemini's bufferFastReturn threshold)
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Step 3: Wait 200ms then send Enter (Gemini's bufferFastReturn threshold = 30ms, 200ms = ~7x margin)
+        await new Promise(resolve => setTimeout(resolve, 200));
         await window.hivemind.pty.write(String(paneId), '\r');
         log.info('spawnAgent', `Gemini identity Enter sent for ${role} (pane ${paneId}) [ready:${reason}]`);
       } catch (err) {

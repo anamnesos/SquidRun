@@ -285,7 +285,7 @@ function createInjectionController(options = {}) {
   // IDLE QUEUE: Process queued messages for a pane when it becomes idle
   // This is the SECOND queue in the two-queue system. Messages arrive here from
   // the throttle queue (daemon-handlers.js processThrottleQueue → terminal.sendToPane).
-  // This queue waits for the pane to be idle (2s silence) before actual injection.
+  // This queue waits for the pane to be idle (1s silence) before actual injection.
   function processIdleQueue(paneId) {
     const id = String(paneId);
     const isCodex = isCodexPane(id);
@@ -323,7 +323,7 @@ function createInjectionController(options = {}) {
     // prevent idle detection from passing, causing 60s delays without this bypass
     const canSendBypass = bypassesLock && !userIsTyping();
 
-    // Normal case: pane is fully idle (2s of silence) - Claude panes only
+    // Normal case: pane is fully idle (1s of silence) - Claude panes only
     const canSendNormal = !bypassesLock && isIdle(paneId) && !userIsTyping();
 
     // Force-inject case: waited 10s+ AND pane has at least 500ms of silence
@@ -392,13 +392,15 @@ function createInjectionController(options = {}) {
         }
       }
     };
-    const safetyTimer = setTimeout(() => {
+    // Safety timer releases injectionInFlight lock if callbacks are missed
+    // Uses let so it can be replaced with a longer timer during Enter+verify phase
+    let safetyTimerId = setTimeout(() => {
       // Timeout doesn't mean failure - message may still be delivered
       // Return success:true so delivery ack is sent, but mark as unverified
       finish({ success: true, verified: false, reason: 'timeout' });
     }, INJECTION_LOCK_TIMEOUT_MS);
     const finishWithClear = (result) => {
-      clearTimeout(safetyTimer);
+      clearTimeout(safetyTimerId);
       finish(result || { success: true });
     };
 
@@ -451,13 +453,13 @@ function createInjectionController(options = {}) {
       }
 
       // Send Enter with delay to bypass Gemini's fast-return buffer (FAST_RETURN_TIMEOUT = 30ms)
-      // Session 69: Increased from 150ms to 500ms - OS buffering can batch writes under load
-      // Even with renderer delay, text+Enter can arrive in same stdin data event
+      // Session 82: Reduced from 500ms to 200ms — 500ms was 16x the required 30ms threshold
+      // 200ms provides ~7x safety margin while cutting 300ms of latency per message
       if (hasTrailingEnter) {
-        await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms - large buffer for OS/event-loop lag
+        await new Promise(resolve => setTimeout(resolve, 200)); // Wait 200ms - safe margin over 30ms bufferFastReturn
         try {
           await window.hivemind.pty.write(id, '\r');
-          log.info(`doSendToPane ${id}`, 'Gemini pane: PTY Enter sent after 500ms delay');
+          log.info(`doSendToPane ${id}`, 'Gemini pane: PTY Enter sent after 200ms delay');
         } catch (err) {
           log.error(`doSendToPane ${id}`, 'Gemini PTY Enter failed:', err);
           finishWithClear({ success: false, reason: 'enter_failed' });
@@ -539,9 +541,13 @@ function createInjectionController(options = {}) {
       log.info(`doSendToPane ${id}`, `Using adaptive Enter delay: ${enterDelay}ms`);
 
       setTimeout(async () => {
-        // Clear safety timer immediately - we've reached the callback, injection is proceeding
-        // (safetyTimer at 1000ms can fire during enterDelay wait, causing false abort)
-        clearTimeout(safetyTimer);
+        // Replace short safety timer with one covering the full Enter+verify cycle
+        // Pre-flight idle (5s) + focus (100ms) + sendEnter + verify (3s+) = ~10s worst case
+        clearTimeout(safetyTimerId);
+        safetyTimerId = setTimeout(() => {
+          log.warn(`doSendToPane ${id}`, 'Enter+verify safety timeout (10s) - releasing lock');
+          finish({ success: true, verified: false, reason: 'verify_timeout' });
+        }, 10000);
 
         // Re-query textarea in case DOM changed during delay
         const currentPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
