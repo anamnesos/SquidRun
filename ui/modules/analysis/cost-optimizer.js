@@ -225,8 +225,7 @@ class CostOptimizer {
   getCostsByAgent() {
     const agentNames = {
       '1': 'Architect',
-      '2': 'Infra',
-      '4': 'Backend',
+      '2': 'DevOps',
       '5': 'Analyst',
     };
 

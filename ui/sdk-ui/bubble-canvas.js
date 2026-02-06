@@ -6,9 +6,8 @@ const STREAM_STAGGER_MS = 140;
 
 const DEFAULT_AGENTS = [
   { id: 'arch', label: 'Arch', color: '#7C3AED', x: 50, y: 30, size: 170, state: 'thinking' },
-  { id: 'infra', label: 'Infra', color: '#F59E0B', x: 25, y: 55, size: 130, state: 'idle' },
-  { id: 'back', label: 'Back', color: '#3B82F6', x: 75, y: 55, size: 130, state: 'idle' },
-  { id: 'ana', label: 'Ana', color: '#EC4899', x: 50, y: 75, size: 120, state: 'idle' },
+  { id: 'devops', label: 'DevOps', color: '#F59E0B', x: 25, y: 60, size: 140, state: 'idle' },
+  { id: 'ana', label: 'Ana', color: '#EC4899', x: 75, y: 60, size: 130, state: 'idle' },
 ];
 
 function ensureStyles() {
@@ -232,15 +231,15 @@ function ensureStyles() {
 
 const ROLE_ALIASES = {
   '1': 'arch',
-  '2': 'infra',
-  '4': 'back',
+  '2': 'devops',
   '5': 'ana',
   arch: 'arch',
   architect: 'arch',
-  infra: 'infra',
-  infrastructure: 'infra',
-  back: 'back',
-  backend: 'back',
+  devops: 'devops',
+  infra: 'devops',
+  infrastructure: 'devops',
+  backend: 'devops',
+  back: 'devops',
   ana: 'ana',
   analyst: 'ana',
 };

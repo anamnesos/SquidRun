@@ -35,11 +35,10 @@ jest.mock('fs', () => ({
 
 jest.mock('../config', () => ({
   WORKSPACE_PATH: '/test/workspace',
-  PANE_IDS: ['1', '2', '4', '5'],
+  PANE_IDS: ['1', '2', '5'],
   PANE_ROLES: {
     '1': 'Architect',
-    '2': 'Infra',
-    '4': 'Backend',
+    '2': 'DevOps',
     '5': 'Analyst',
   },
 }));
@@ -65,11 +64,10 @@ describe('MCP Bridge', () => {
         expect(log.info).toHaveBeenCalledWith('MCP Bridge', expect.stringContaining('registered'));
       });
 
-      test('registers all 4 pane roles correctly', () => {
+      test('registers all 3 pane roles correctly', () => {
         const roles = {
           '1': 'Architect',
-          '2': 'Infra',
-          '4': 'Backend',
+          '2': 'DevOps',
           '5': 'Analyst',
         };
 
@@ -121,7 +119,7 @@ describe('MCP Bridge', () => {
 
     describe('heartbeat', () => {
       test('updates lastSeen for existing agent', () => {
-        mcpBridge.registerAgent('sess-hb', '4');
+        mcpBridge.registerAgent('sess-hb', '2');
         const result = mcpBridge.heartbeat('sess-hb');
 
         expect(result.success).toBe(true);
@@ -137,12 +135,12 @@ describe('MCP Bridge', () => {
 
     describe('getAgentBySession', () => {
       test('returns agent for valid session', () => {
-        mcpBridge.registerAgent('sess-get', '4');
+        mcpBridge.registerAgent('sess-get', '2');
         const agent = mcpBridge.getAgentBySession('sess-get');
 
         expect(agent).not.toBeNull();
-        expect(agent.paneId).toBe('4');
-        expect(agent.role).toBe('Backend');
+        expect(agent.paneId).toBe('2');
+        expect(agent.role).toBe('DevOps');
       });
 
       test('returns null for unknown session', () => {
@@ -256,10 +254,10 @@ describe('MCP Bridge', () => {
         const result = mcpBridge.mcpBroadcastMessage('test-session', 'Broadcast msg');
 
         expect(result.success).toBe(true);
-        expect(result.results.length).toBe(3); // All except sender (pane 1)
+        expect(result.results.length).toBe(2); // All except sender (pane 1)
 
-        // Verify it was called for panes 2, 4, 5
-        for (const paneId of ['2', '4', '5']) {
+        // Verify it was called for panes 2, 5
+        for (const paneId of ['2', '5']) {
           expect(mockWatcher.sendMessage).toHaveBeenCalledWith('1', paneId, 'Broadcast msg', 'broadcast');
         }
       });
@@ -484,8 +482,7 @@ describe('MCP Bridge', () => {
       test('writes to correct trigger files for each pane', () => {
         const paneFiles = {
           '1': 'architect.txt',
-          '2': 'infra.txt',
-          '4': 'backend.txt',
+          '2': 'devops.txt',
           '5': 'analyst.txt',
         };
 
@@ -712,7 +709,7 @@ describe('MCP Bridge', () => {
     });
 
     test('handles unregister', () => {
-      mcpBridge.registerAgent('unreg-session', '4');
+      mcpBridge.registerAgent('unreg-session', '2');
       const result = mcpBridge.handleToolCall('unreg-session', 'unregister', {});
 
       expect(result.success).toBe(true);

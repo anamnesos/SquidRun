@@ -627,7 +627,9 @@ class HivemindApp {
     const legacyMap = {
       lead: '1',
       orchestrator: '2',
-      'worker-b': '4',
+      'worker-b': '2',
+      devops: '2',
+      backend: '2',
       investigator: '5',
     };
     if (legacyMap[targetLower]) {

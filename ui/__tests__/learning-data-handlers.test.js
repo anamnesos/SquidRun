@@ -37,8 +37,7 @@ describe('Learning Data Handlers', () => {
     ctx.WORKSPACE_PATH = '/test/workspace';
     ctx.PANE_ROLES = {
       '1': 'Architect',
-      '2': 'Infra',
-      '4': 'Backend',
+      '2': 'DevOps',
       '5': 'Analyst',
     };
 
@@ -74,7 +73,7 @@ describe('Learning Data Handlers', () => {
     });
 
     test('records failed task outcome', async () => {
-      const result = await harness.invoke('record-task-outcome', 'build', '4', false, 10000);
+      const result = await harness.invoke('record-task-outcome', 'build', '2', false, 10000);
 
       expect(result.success).toBe(true);
       expect(result.successRate).toBe(0);
@@ -144,7 +143,7 @@ describe('Learning Data Handlers', () => {
       expect(result.success).toBe(true);
       expect(result.taskTypes).toEqual({});
       expect(result.routingWeights).toEqual({
-        '1': 1.0, '2': 1.0, '4': 1.0, '5': 1.0,
+        '1': 1.0, '2': 1.0, '5': 1.0,
       });
       expect(result.totalDecisions).toBe(0);
     });
@@ -181,7 +180,7 @@ describe('Learning Data Handlers', () => {
         taskTypes: {
           build: {
             agentStats: {
-              '4': { success: 8, failure: 2, totalTime: 50000, attempts: 10 },
+              '2': { success: 8, failure: 2, totalTime: 50000, attempts: 10 },
             },
             totalAttempts: 10,
           },
@@ -194,7 +193,7 @@ describe('Learning Data Handlers', () => {
 
       expect(result.insights.build.bestAgent.successRate).toBe(0.8);
       expect(result.insights.build.bestAgent.avgTime).toBe(5000);
-      expect(result.insights.build.bestAgent.role).toBe('Backend');
+      expect(result.insights.build.bestAgent.role).toBe('DevOps');
     });
   });
 
@@ -291,7 +290,7 @@ describe('Learning Data Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.weights).toEqual({
-        '1': 1.0, '2': 1.0, '4': 1.0, '5': 1.0,
+        '1': 1.0, '2': 1.0, '5': 1.0,
       });
     });
 

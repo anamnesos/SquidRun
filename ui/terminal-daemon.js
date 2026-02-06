@@ -515,8 +515,7 @@ function exitRecoveryMode() {
 // Map paneId to trigger filename
 const PANE_TRIGGER_FILES = {
   '1': 'architect.txt',
-  '2': 'infra.txt',
-  '4': 'backend.txt',
+  '2': 'devops.txt',
   '5': 'analyst.txt',
 };
 

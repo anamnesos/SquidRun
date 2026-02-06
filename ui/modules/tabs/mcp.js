@@ -9,7 +9,6 @@ const config = require('../../config');
 const mcpStatus = {
   '1': 'disconnected',
   '2': 'disconnected',
-  '4': 'disconnected',
   '5': 'disconnected'
 };
 

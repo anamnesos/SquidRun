@@ -42,15 +42,14 @@
       <span class="mcp-status-label">MCP</span>
       <div class="mcp-agent-dots">
         <div class="mcp-agent-dot disconnected" id="mcpDot1" data-pane="1" data-agent="Arch" title="Architect - Disconnected"></div>
-        <div class="mcp-agent-dot disconnected" id="mcpDot2" data-pane="2" data-agent="Infra" title="Infra - Disconnected"></div>
-        <div class="mcp-agent-dot disconnected" id="mcpDot4" data-pane="4" data-agent="Back" title="Backend - Disconnected"></div>
+        <div class="mcp-agent-dot disconnected" id="mcpDot2" data-pane="2" data-agent="DevOps" title="DevOps - Disconnected"></div>
         <div class="mcp-agent-dot disconnected" id="mcpDot5" data-pane="5" data-agent="Anly" title="Analyst - Disconnected"></div>
       </div>
-      <span class="mcp-status-summary none" id="mcpStatusSummary">0/4</span>
+      <span class="mcp-status-summary none" id="mcpStatusSummary">0/3</span>
     </div>
     <div class="header-actions">
       <button class="btn btn-folder" id="selectProjectBtn" title="Choose project folder for all agents"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Project</button>
-      <button class="btn btn-spawn" id="spawnAllBtn" title="Start agent CLIs in all 4 terminal panes"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> Spawn</button>
+      <button class="btn btn-spawn" id="spawnAllBtn" title="Start agent CLIs in all 3 terminal panes"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> Spawn</button>
       <button class="btn btn-sync" id="syncBtn" title="Broadcast shared_context.md to all agents"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Sync</button>
       <div class="dropdown" id="actionsDropdown">
         <button class="btn btn-actions" id="actionsBtn" title="Agent management actions"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg> Actions <svg class="dropdown-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
@@ -389,7 +388,7 @@
         <div class="side-panes-container">
           <div class="pane" data-pane-id="2">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span><span class="agent-badge idle" id="badge-2"></span>Infra<span class="role-desc">- The One Who Gets Things Published</span><span class="cli-badge" id="cli-badge-2"></span><span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
+            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span><span class="agent-badge idle" id="badge-2"></span>DevOps<span class="role-desc">- Infra + Backend Combined</span><span class="cli-badge" id="cli-badge-2"></span><span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
             <div class="pane-header-right">
               <select class="model-selector" id="model-selector-2" data-pane-id="2" title="Switch model for this pane">
                 <option value="claude">Claude</option>
@@ -408,29 +407,6 @@
             </div>
           </div>
           <div class="pane-terminal" id="terminal-2"></div>
-        </div>
-
-        <div class="pane" data-pane-id="4">
-          <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span><span class="agent-badge idle" id="badge-4"></span>Back<span class="role-desc">- The One Who Makes It All Work</span><span class="cli-badge" id="cli-badge-4"></span><span class="pane-project" id="project-4" title="Click to change project"></span><span class="agent-task" id="task-4"></span></span>
-            <div class="pane-header-right">
-              <select class="model-selector" id="model-selector-4" data-pane-id="4" title="Switch model for this pane">
-                <option value="claude">Claude</option>
-                <option value="codex">Codex</option>
-                <option value="gemini">Gemini</option>
-              </select>
-              <span class="pane-status idle" id="status-4"><span class="pane-spinner"></span>Ready</span>
-              <span class="agent-health" id="health-4" title="Last output time">-</span>
-              <div class="pane-actions">
-                <button class="pane-action-btn interrupt-btn" data-pane-id="4" title="Send interrupt signal (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="4" title="Send Escape key to unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
-                <button class="pane-action-btn kickoff-btn" data-pane-id="4" title="Kill and restart agent session"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
-                <button class="pane-action-btn expand-btn" data-pane-id="4" title="Expand pane to full width (ESC to collapse)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
-              </div>
-              <span class="lock-icon" id="lock-icon-4" data-pane-id="4" title="Input locked (click to unlock)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
-            </div>
-          </div>
-          <div class="pane-terminal" id="terminal-4"></div>
         </div>
 
         <div class="pane" data-pane-id="5">
@@ -466,8 +442,7 @@
             <option value="auto">Auto-route</option>
             <option value="1" selected>Architect</option>
             <option value="all">All Agents</option>
-            <option value="2">Infra</option>
-            <option value="4">Backend</option>
+            <option value="2">DevOps</option>
             <option value="5">Analyst</option>
           </select>
         </div>
@@ -656,8 +631,7 @@
             <select id="memoryAgentSelect" class="memory-agent-select">
               <option value="all">All Agents</option>
               <option value="1">Architect</option>
-              <option value="2">Infra</option>
-              <option value="4">Backend</option>
+              <option value="2">DevOps</option>
               <option value="5">Analyst</option>
             </select>
             <input type="text" id="memorySearchInput" class="memory-search-input" placeholder="Search conversations..." />
@@ -786,7 +760,7 @@
               <div class="health-agent-item" data-pane="2">
               <div class="health-agent-header">
                 <span class="health-agent-badge" id="health-badge-2">●</span>
-                <span class="health-agent-name">Infra</span>
+                <span class="health-agent-name">DevOps</span>
                 <span class="health-agent-status" id="health-status-2">Unknown</span>
               </div>
                 <div class="health-agent-details">
@@ -815,40 +789,6 @@
                 <button class="btn btn-sm btn-nudge" data-action="nudge" data-pane="2" title="Send Enter to unstick">Nudge</button>
                 <button class="btn btn-sm btn-interrupt" data-action="interrupt" data-pane="2" title="Send Ctrl+C interrupt">Interrupt</button>
                 <button class="btn btn-sm btn-restart" data-action="restart" data-pane="2" title="Kill and restart agent">Restart</button>
-              </div>
-            </div>
-              <div class="health-agent-item" data-pane="4">
-              <div class="health-agent-header">
-                <span class="health-agent-badge" id="health-badge-4">●</span>
-                <span class="health-agent-name">Backend</span>
-                <span class="health-agent-status" id="health-status-4">Unknown</span>
-              </div>
-                <div class="health-agent-details">
-                  <div class="health-metric">
-                    <span class="health-metric-label">Last Output:</span>
-                    <span class="health-metric-value" id="health-last-output-4">-</span>
-                  </div>
-                  <div class="health-metric">
-                    <span class="health-metric-label">Stuck Count:</span>
-                    <span class="health-metric-value" id="health-stuck-count-4">0</span>
-                  </div>
-                  <div class="health-metric">
-                    <span class="health-metric-label">Recovery Step:</span>
-                    <span class="health-metric-value" id="health-recovery-step-4">None</span>
-                  </div>
-                  <div class="health-metric">
-                    <span class="health-metric-label">CPU:</span>
-                    <span class="health-metric-value" id="health-cpu-4">-</span>
-                  </div>
-                  <div class="health-metric">
-                    <span class="health-metric-label">Mem:</span>
-                    <span class="health-metric-value" id="health-mem-4">-</span>
-                  </div>
-                </div>
-              <div class="health-agent-actions">
-                <button class="btn btn-sm btn-nudge" data-action="nudge" data-pane="4" title="Send Enter to unstick">Nudge</button>
-                <button class="btn btn-sm btn-interrupt" data-action="interrupt" data-pane="4" title="Send Ctrl+C interrupt">Interrupt</button>
-                <button class="btn btn-sm btn-restart" data-action="restart" data-pane="4" title="Kill and restart agent">Restart</button>
               </div>
             </div>
               <div class="health-agent-item" data-pane="5">
@@ -1111,11 +1051,8 @@
             <select class="debug-agent-select" id="debugAgentSelect">
               <option value="">Select Agent...</option>
               <option value="Architect">Architect</option>
-              <option value="Infra">Infra</option>
-              <option value="Frontend">Frontend</option>
-              <option value="Backend">Backend</option>
+              <option value="DevOps">DevOps</option>
               <option value="Analyst">Analyst</option>
-              <option value="Reviewer">Reviewer</option>
             </select>
             <button class="btn btn-sm btn-primary" id="debugLoadBtn" title="Load session for selected agent">Load</button>
             <button class="btn btn-sm" id="debugLoadAllBtn" title="Load last hour across all agents">Load All (1h)</button>
@@ -1537,16 +1474,10 @@
               <div class="perf-stat"><span class="perf-value" id="perf-success-1">--</span><span class="perf-label">Success</span></div>
             </div>
             <div class="perf-card" data-pane="2">
-              <div class="perf-card-header">Infra</div>
+              <div class="perf-card-header">DevOps</div>
               <div class="perf-stat"><span class="perf-value" id="perf-completions-2">0</span><span class="perf-label">Completions</span></div>
               <div class="perf-stat"><span class="perf-value" id="perf-avgtime-2">--</span><span class="perf-label">Avg Time</span></div>
               <div class="perf-stat"><span class="perf-value" id="perf-success-2">--</span><span class="perf-label">Success</span></div>
-            </div>
-            <div class="perf-card" data-pane="4">
-              <div class="perf-card-header">Backend</div>
-              <div class="perf-stat"><span class="perf-value" id="perf-completions-4">0</span><span class="perf-label">Completions</span></div>
-              <div class="perf-stat"><span class="perf-value" id="perf-avgtime-4">--</span><span class="perf-label">Avg Time</span></div>
-              <div class="perf-stat"><span class="perf-value" id="perf-success-4">--</span><span class="perf-label">Success</span></div>
             </div>
             <div class="perf-card" data-pane="5">
               <div class="perf-card-header">Analyst</div>
@@ -1751,25 +1682,13 @@
                 <span class="inspector-seq-name">Architect</span>
                 <span class="inspector-seq-value" id="seq-lead">-</span>
               </div>
-              <div class="inspector-sequence-item" data-agent="orchestrator">
-                <span class="inspector-seq-name">Infra</span>
-                <span class="inspector-seq-value" id="seq-orchestrator">-</span>
-              </div>
-              <div class="inspector-sequence-item" data-agent="worker-a">
-                <span class="inspector-seq-name">Frontend</span>
-                <span class="inspector-seq-value" id="seq-worker-a">-</span>
-              </div>
-              <div class="inspector-sequence-item" data-agent="worker-b">
-                <span class="inspector-seq-name">Backend</span>
-                <span class="inspector-seq-value" id="seq-worker-b">-</span>
+              <div class="inspector-sequence-item" data-agent="devops">
+                <span class="inspector-seq-name">DevOps</span>
+                <span class="inspector-seq-value" id="seq-devops">-</span>
               </div>
               <div class="inspector-sequence-item" data-agent="investigator">
                 <span class="inspector-seq-name">Analyst</span>
                 <span class="inspector-seq-value" id="seq-investigator">-</span>
-              </div>
-              <div class="inspector-sequence-item" data-agent="reviewer">
-                <span class="inspector-seq-name">Reviewer</span>
-                <span class="inspector-seq-value" id="seq-reviewer">-</span>
               </div>
             </div>
           </div>

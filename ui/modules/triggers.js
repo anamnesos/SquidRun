@@ -42,7 +42,7 @@ let sdkModeEnabled = false;
 
 // Shared constants
 const TRIGGER_PREFIX = '\x1b[1;33m[TRIGGER]\x1b[0m ';
-const WORKER_PANES = ['4'];
+const WORKER_PANES = ['2'];
 const SYNC_DEBOUNCE_MS = 3000;
 const SYNC_COALESCE_WINDOW_MS = 5000;
 const STAGGER_BASE_DELAY_MS = 150;
@@ -153,10 +153,10 @@ function isPriorityMessage(message) {
 
 // Role to Pane mapping (duplicate for local use)
 const ROLE_TO_PANE = {
-  'architect': '1', 'arch': '1', 'infra': '2', 'infrastructure': '2',
-  'backend': '4', 'back': '4',
+  'architect': '1', 'arch': '1',
+  'devops': '2', 'infra': '2', 'infrastructure': '2', 'backend': '2', 'back': '2',
   'analyst': '5', 'ana': '5',
-  'lead': '1', 'orchestrator': '2', 'worker-b': '4', 'investigator': '5',
+  'lead': '1', 'orchestrator': '2', 'worker-b': '2', 'investigator': '5',
 };
 
 function resolvePaneIdFromRole(role) {
@@ -303,10 +303,10 @@ function resolveRecipientRole(filename) {
   const role = filename.replace('.txt', '').toLowerCase();
   // Use localized versions to avoid ReferenceError if called before module-level destructuring
   const roleMap = {
-    architect: '1', infra: '2', backend: '4', analyst: '5',
+    architect: '1', devops: '2', analyst: '5',
   };
   const legacyAliases = {
-    lead: 'architect', orchestrator: 'infra', 'worker-b': 'backend', investigator: 'analyst',
+    lead: 'architect', orchestrator: 'devops', infra: 'devops', backend: 'devops', 'worker-b': 'devops', investigator: 'analyst',
   };
   
   if (roleMap[role]) return role;

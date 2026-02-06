@@ -66,7 +66,7 @@ describe('mcp-server tool handlers', () => {
     mockFileStore.clear();
     mockDirStore.clear();
     serverInstance = null;
-    process.argv = ['node', 'mcp-server.js', '--agent', 'backend'];
+    process.argv = ['node', 'mcp-server.js', '--agent', 'devops'];
     process.exit = jest.fn();
 
     jest.resetModules();
@@ -109,13 +109,13 @@ describe('mcp-server tool handlers', () => {
   });
 
   test('get_messages returns undelivered queue entries', async () => {
-    const queuePath = path.join(WORKSPACE_PATH, 'messages', 'queue-4.json');
+    const queuePath = path.join(WORKSPACE_PATH, 'messages', 'queue-2.json');
     const mockMessage = {
       id: 'msg-1',
       from: '1',
       fromRole: 'Architect',
-      to: '4',
-      toRole: 'Backend',
+      to: '2',
+      toRole: 'DevOps',
       content: 'Ping',
       timestamp: new Date().toISOString(),
       delivered: false,
@@ -147,6 +147,6 @@ describe('mcp-server tool handlers', () => {
 
     const triggerPath = path.join(WORKSPACE_PATH, 'triggers', 'analyst.txt');
     expect(mockFileStore.has(triggerPath)).toBe(true);
-    expect(mockFileStore.get(triggerPath)).toMatch(/BACKEND/);
+    expect(mockFileStore.get(triggerPath)).toMatch(/DEVOPS/);
   });
 });

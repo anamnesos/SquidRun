@@ -35,7 +35,6 @@ function registerSmartRoutingHandlers(ctx) {
     agents: {
       '1': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
       '2': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
-      '4': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
       '5': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
     },
     lastUpdated: null,

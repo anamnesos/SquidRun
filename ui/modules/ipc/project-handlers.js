@@ -163,7 +163,7 @@ function registerProjectHandlers(ctx, deps) {
 
     const settings = loadSettings();
     if (!settings.paneProjects) {
-      settings.paneProjects = { '1': null, '2': null, '4': null, '5': null };
+      settings.paneProjects = { '1': null, '2': null, '5': null };
     }
 
     settings.paneProjects[paneId] = projectPath;
@@ -213,13 +213,13 @@ function registerProjectHandlers(ctx, deps) {
     const settings = loadSettings();
     return {
       success: true,
-      paneProjects: settings.paneProjects || { '1': null, '2': null, '4': null, '5': null },
+      paneProjects: settings.paneProjects || { '1': null, '2': null, '5': null },
     };
   });
 
   ipcMain.handle('clear-pane-projects', () => {
     const settings = loadSettings();
-    settings.paneProjects = { '1': null, '2': null, '4': null, '5': null };
+    settings.paneProjects = { '1': null, '2': null, '5': null };
     saveSettings(settings);
 
     if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {

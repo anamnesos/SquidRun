@@ -19,16 +19,15 @@ const STATUS_COLORS = {
 
 const AGENT_CONFIG = [
   { id: 'arch', label: 'Arch', fullName: 'Architect', color: '#7C3AED' },
-  { id: 'infra', label: 'Infra', fullName: 'Infrastructure', color: '#F59E0B' },
-  { id: 'back', label: 'Back', fullName: 'Backend', color: '#3B82F6' },
+  { id: 'devops', label: 'DevOps', fullName: 'DevOps', color: '#F59E0B' },
   { id: 'ana', label: 'Ana', fullName: 'Analyst', color: '#EC4899' },
 ];
 
 const ROLE_ALIASES = {
-  '1': 'arch', '2': 'infra', '4': 'back', '5': 'ana',
+  '1': 'arch', '2': 'devops', '5': 'ana',
   arch: 'arch', architect: 'arch',
-  infra: 'infra', infrastructure: 'infra',
-  back: 'back', backend: 'back',
+  devops: 'devops', infra: 'devops', infrastructure: 'devops',
+  backend: 'devops', back: 'devops',
   ana: 'ana', analyst: 'ana'
 };
 
@@ -566,7 +565,7 @@ function createOrganicUI(options = {}) {
     refreshBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>';
     refreshBtn.addEventListener('click', async () => {
       // Map agent id to pane number
-      const paneMap = { arch: '1', infra: '2', back: '4', ana: '5' };
+      const paneMap = { arch: '1', devops: '2', ana: '5' };
       const paneId = paneMap[agent.id];
 
       // Visual feedback

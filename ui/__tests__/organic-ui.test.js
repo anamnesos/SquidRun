@@ -130,23 +130,23 @@ describe('organic-ui.js module', () => {
   });
 
   describe('AGENT_CONFIG constant', () => {
-    test('should have 4 agents', () => {
-      expect(AGENT_CONFIG).toHaveLength(4);
+    test('should have 3 agents', () => {
+      expect(AGENT_CONFIG).toHaveLength(3);
     });
 
     test('should have correct agent IDs', () => {
       const ids = AGENT_CONFIG.map(a => a.id);
-      expect(ids).toEqual(['arch', 'infra', 'back', 'ana']);
+      expect(ids).toEqual(['arch', 'devops', 'ana']);
     });
 
     test('should have correct labels', () => {
       const labels = AGENT_CONFIG.map(a => a.label);
-      expect(labels).toEqual(['Arch', 'Infra', 'Back', 'Ana']);
+      expect(labels).toEqual(['Arch', 'DevOps', 'Ana']);
     });
 
     test('should have full names', () => {
       expect(AGENT_CONFIG[0].fullName).toBe('Architect');
-      expect(AGENT_CONFIG[3].fullName).toBe('Analyst');
+      expect(AGENT_CONFIG[2].fullName).toBe('Analyst');
     });
 
     test('should have colors', () => {
@@ -196,11 +196,11 @@ describe('organic-ui.js module', () => {
       expect(commandCenter).toBeDefined();
     });
 
-    test('should create agent grid with 4 agents', () => {
+    test('should create agent grid with 3 agents', () => {
       createOrganicUI({ mount: mockBody });
 
       const agentElements = createdElements.filter(el => el.className === 'organic-agent');
-      expect(agentElements).toHaveLength(4);
+      expect(agentElements).toHaveLength(3);
     });
 
     test('should create input bar', () => {
@@ -495,7 +495,7 @@ describe('organic-ui.js module', () => {
       const streamLayer = createdElements.find(el => el.className === 'organic-stream-layer');
       const appendCount = streamLayer.appendChild.mock.calls.length;
 
-      ui.triggerMessageStream({ from: 'arch', to: 'infra' });
+      ui.triggerMessageStream({ from: 'arch', to: 'devops' });
 
       // No new elements should be appended
       expect(streamLayer.appendChild.mock.calls.length).toBe(appendCount);
@@ -506,7 +506,7 @@ describe('organic-ui.js module', () => {
 
       const streamLayer = createdElements.find(el => el.className === 'organic-stream-layer');
 
-      ui.triggerMessageStream({ fromRole: 'arch', toRole: 'infra' });
+      ui.triggerMessageStream({ fromRole: 'arch', toRole: 'devops' });
 
       jest.advanceTimersByTime(16); // requestAnimationFrame
 
@@ -553,7 +553,7 @@ describe('organic-ui.js module', () => {
       const appendCount = streamLayer.appendChild.mock.calls.length;
 
       // delivered phase should be ignored
-      ui.triggerMessageStream({ from: 'arch', to: 'infra', phase: 'delivered' });
+      ui.triggerMessageStream({ from: 'arch', to: 'devops', phase: 'delivered' });
 
       expect(streamLayer.appendChild.mock.calls.length).toBe(appendCount);
     });
@@ -563,7 +563,7 @@ describe('organic-ui.js module', () => {
 
       const streamLayer = createdElements.find(el => el.className === 'organic-stream-layer');
 
-      ui.triggerMessageStream({ from: 'arch', to: 'infra', phase: 'queued' });
+      ui.triggerMessageStream({ from: 'arch', to: 'devops', phase: 'queued' });
 
       jest.advanceTimersByTime(16);
 
@@ -576,24 +576,24 @@ describe('organic-ui.js module', () => {
       const archAgent = createdElements.find(el =>
         el.className === 'organic-agent' && el.dataset.agent === 'arch'
       );
-      const infraAgent = createdElements.find(el =>
-        el.className === 'organic-agent' && el.dataset.agent === 'infra'
+      const devopsAgent = createdElements.find(el =>
+        el.className === 'organic-agent' && el.dataset.agent === 'devops'
       );
 
-      ui.triggerMessageStream({ from: 'arch', to: 'infra' });
+      ui.triggerMessageStream({ from: 'arch', to: 'devops' });
 
       expect(archAgent.classList.add).toHaveBeenCalledWith('is-sending');
 
       // Target receives after delay (60% of stream duration)
       jest.advanceTimersByTime(700 * 0.6);
 
-      expect(infraAgent.classList.add).toHaveBeenCalledWith('is-receiving');
+      expect(devopsAgent.classList.add).toHaveBeenCalledWith('is-receiving');
     });
 
     test('should cleanup stream line after animation', () => {
       const ui = createOrganicUI({ mount: mockBody });
 
-      ui.triggerMessageStream({ from: 'arch', to: 'infra' });
+      ui.triggerMessageStream({ from: 'arch', to: 'devops' });
 
       jest.advanceTimersByTime(16); // requestAnimationFrame
 
@@ -611,7 +611,7 @@ describe('organic-ui.js module', () => {
 
       const streamLayer = createdElements.find(el => el.className === 'organic-stream-layer');
 
-      ui.triggerMessageStream({ fromId: 'arch', toId: 'infra' });
+      ui.triggerMessageStream({ fromId: 'arch', toId: 'devops' });
 
       jest.advanceTimersByTime(16);
 
@@ -673,24 +673,14 @@ describe('organic-ui.js module', () => {
       expect(archAgent.classList.add).toHaveBeenCalledWith('is-thinking');
     });
 
-    test('should resolve pane 2 to infra', () => {
+    test('should resolve pane 2 to devops', () => {
       const ui = createOrganicUI({ mount: mockBody });
-      const infraAgent = createdElements.find(el =>
-        el.className === 'organic-agent' && el.dataset.agent === 'infra'
+      const devopsAgent = createdElements.find(el =>
+        el.className === 'organic-agent' && el.dataset.agent === 'devops'
       );
 
       ui.updateState('2', 'thinking');
-      expect(infraAgent.classList.add).toHaveBeenCalledWith('is-thinking');
-    });
-
-    test('should resolve pane 4 to back', () => {
-      const ui = createOrganicUI({ mount: mockBody });
-      const backAgent = createdElements.find(el =>
-        el.className === 'organic-agent' && el.dataset.agent === 'back'
-      );
-
-      ui.updateState('4', 'thinking');
-      expect(backAgent.classList.add).toHaveBeenCalledWith('is-thinking');
+      expect(devopsAgent.classList.add).toHaveBeenCalledWith('is-thinking');
     });
 
     test('should resolve pane 5 to ana', () => {
@@ -713,14 +703,14 @@ describe('organic-ui.js module', () => {
       expect(archAgent.classList.add).toHaveBeenCalledWith('is-thinking');
     });
 
-    test('should resolve "backend" to back', () => {
+    test('should resolve "backend" to devops', () => {
       const ui = createOrganicUI({ mount: mockBody });
-      const backAgent = createdElements.find(el =>
-        el.className === 'organic-agent' && el.dataset.agent === 'back'
+      const devopsAgent = createdElements.find(el =>
+        el.className === 'organic-agent' && el.dataset.agent === 'devops'
       );
 
       ui.updateState('backend', 'thinking');
-      expect(backAgent.classList.add).toHaveBeenCalledWith('is-thinking');
+      expect(devopsAgent.classList.add).toHaveBeenCalledWith('is-thinking');
     });
 
     test('should resolve "analyst" to ana', () => {
@@ -926,7 +916,7 @@ describe('organic-ui.js module', () => {
         const statusDots = createdElements.filter(el =>
           el.className === 'organic-status-dot is-offline'
         );
-        expect(statusDots.length).toBe(4);
+        expect(statusDots.length).toBe(3);
       });
 
       test('should add is-active class for active state', () => {
@@ -1022,14 +1012,14 @@ describe('organic-ui.js module', () => {
         createOrganicUI({ mount: mockBody });
 
         const taskLines = createdElements.filter(el => el.className === 'organic-agent-task');
-        expect(taskLines.length).toBe(4);
+        expect(taskLines.length).toBe(3);
       });
 
       test('should have Working on: label', () => {
         createOrganicUI({ mount: mockBody });
 
         const taskLabels = createdElements.filter(el => el.className === 'organic-agent-task-label');
-        expect(taskLabels.length).toBe(4);
+        expect(taskLabels.length).toBe(3);
         expect(taskLabels[0].textContent).toBe('Working on:');
       });
 
@@ -1037,7 +1027,7 @@ describe('organic-ui.js module', () => {
         createOrganicUI({ mount: mockBody });
 
         const taskTexts = createdElements.filter(el => el.className === 'organic-agent-task-text');
-        expect(taskTexts.length).toBe(4);
+        expect(taskTexts.length).toBe(3);
         expect(taskTexts[0].textContent).toBe('—');
       });
     });
@@ -1052,7 +1042,7 @@ describe('organic-ui.js module', () => {
       test('should create war-room-message element', () => {
         const ui = createOrganicUI({ mount: mockBody });
 
-        ui.appendWarRoomMessage({ from: 'arch', to: 'infra', msg: 'Test message', type: 'direct' });
+        ui.appendWarRoomMessage({ from: 'arch', to: 'devops', msg: 'Test message', type: 'direct' });
 
         const messageEl = createdElements.find(el => el.className === 'war-room-message');
         expect(messageEl).toBeDefined();
@@ -1072,7 +1062,7 @@ describe('organic-ui.js module', () => {
       test('should create prefix with sender color', () => {
         const ui = createOrganicUI({ mount: mockBody });
 
-        ui.appendWarRoomMessage({ from: 'arch', to: 'infra', msg: 'Test', type: 'direct' });
+        ui.appendWarRoomMessage({ from: 'arch', to: 'devops', msg: 'Test', type: 'direct' });
 
         const prefix = createdElements.find(el => el.className === 'war-room-prefix');
         expect(prefix).toBeDefined();
@@ -1083,10 +1073,10 @@ describe('organic-ui.js module', () => {
       test('should format message as (FROM → TO): msg', () => {
         const ui = createOrganicUI({ mount: mockBody });
 
-        ui.appendWarRoomMessage({ from: 'arch', to: 'infra', msg: 'Hello', type: 'direct' });
+        ui.appendWarRoomMessage({ from: 'arch', to: 'devops', msg: 'Hello', type: 'direct' });
 
         const prefix = createdElements.find(el => el.className === 'war-room-prefix');
-        expect(prefix.textContent).toBe('(ARCH → INFRA): ');
+        expect(prefix.textContent).toBe('(ARCH → DEVOPS): ');
 
         const content = createdElements.find(el => el.className === 'war-room-content');
         expect(content.textContent).toBe('Hello');
@@ -1098,7 +1088,7 @@ describe('organic-ui.js module', () => {
         ui.appendWarRoomMessage({ from: 'architect', to: 'backend', msg: 'Test', type: 'direct' });
 
         const prefix = createdElements.find(el => el.className === 'war-room-prefix');
-        expect(prefix.textContent).toBe('(ARCH → BACK): ');
+        expect(prefix.textContent).toBe('(ARCH → DEVOPS): ');
       });
 
       test('should handle USER as sender', () => {
@@ -1130,7 +1120,7 @@ describe('organic-ui.js module', () => {
       test('should handle empty message', () => {
         const ui = createOrganicUI({ mount: mockBody });
 
-        ui.appendWarRoomMessage({ from: 'arch', to: 'infra', msg: '', type: 'direct' });
+        ui.appendWarRoomMessage({ from: 'arch', to: 'devops', msg: '', type: 'direct' });
 
         const content = createdElements.find(el => el.className === 'war-room-content');
         expect(content.textContent).toBe('');

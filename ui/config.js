@@ -18,24 +18,21 @@ const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
 // Short folder names - prestart script ensures folders exist with these names
 const INSTANCE_DIRS = {
   '1': path.join(WORKSPACE_PATH, 'instances', 'arch'),   // Architect (+ Frontend/Reviewer as internal teammates)
-  '2': path.join(WORKSPACE_PATH, 'instances', 'infra'),  // Infra
-  '4': path.join(WORKSPACE_PATH, 'instances', 'back'),   // Backend
+  '2': path.join(WORKSPACE_PATH, 'instances', 'infra'),  // DevOps (Infra + Backend combined)
   '5': path.join(WORKSPACE_PATH, 'instances', 'ana'),    // Analyst
 };
 
 // Pane roles for display - UPDATED role names
 const PANE_ROLES = {
   '1': 'Architect',
-  '2': 'Infra',
-  '4': 'Backend',
+  '2': 'DevOps',
   '5': 'Analyst',
 };
 
 // Short names for space-constrained UI elements
 const SHORT_AGENT_NAMES = {
   '1': 'Arch',
-  '2': 'Infra',
-  '4': 'Back',
+  '2': 'DevOps',
   '5': 'Ana',
   'system': 'Sys',
   'router': 'Rtr',
@@ -43,27 +40,31 @@ const SHORT_AGENT_NAMES = {
 };
 
 // Canonical role identifiers (lowercase)
-const ROLE_NAMES = ['architect', 'infra', 'backend', 'analyst'];
+const ROLE_NAMES = ['architect', 'devops', 'analyst'];
 
 // Legacy role aliases -> canonical role id
 const LEGACY_ROLE_ALIASES = {
   lead: 'architect',
-  orchestrator: 'infra',
-  'worker-b': 'backend',
-  workerb: 'backend',
-  'implementer-b': 'backend',
-  implementerb: 'backend',
+  orchestrator: 'devops',
+  infra: 'devops',
+  infrastructure: 'devops',
+  backend: 'devops',
+  'worker-b': 'devops',
+  workerb: 'devops',
+  'implementer-b': 'devops',
+  implementerb: 'devops',
+  back: 'devops',
   investigator: 'analyst',
   ana: 'analyst',
-  back: 'backend',
   arch: 'architect'
 };
 
 // Canonical role id -> pane id
 const ROLE_ID_MAP = {
   architect: '1',
-  infra: '2',
-  backend: '4',
+  devops: '2',
+  backend: '2',    // Legacy alias → DevOps pane
+  infra: '2',      // Legacy alias → DevOps pane
   analyst: '5',
 };
 
@@ -74,32 +75,34 @@ const PANE_IDS = Object.keys(PANE_ROLES);
 const TRIGGER_TARGETS = {
   // Primary trigger names
   'architect.txt': ['1'],
-  'infra.txt': ['2'],
-  'backend.txt': ['4'],
+  'devops.txt': ['2'],
   'analyst.txt': ['5'],
 
-  // Legacy trigger names (deprecated, kept for compatibility)
+  // Legacy trigger names (all route to current panes)
   'lead.txt': ['1'],
+  'infra.txt': ['2'],
+  'backend.txt': ['2'],
   'orchestrator.txt': ['2'],
-  'worker-b.txt': ['4'],
+  'worker-b.txt': ['2'],
   'investigator.txt': ['5'],
 
   // Broadcast triggers
-  'workers.txt': ['4'],                   // Backend only (Frontend is now internal)
-  'implementers.txt': ['2', '4'],         // Infra + Backend
-  'all.txt': ['1', '2', '4', '5'],
+  'workers.txt': ['2'],                   // DevOps only
+  'implementers.txt': ['2'],              // DevOps (was Infra + Backend, now same pane)
+  'all.txt': ['1', '2', '5'],
 
   // "Others" triggers - send to all EXCEPT the sender
-  'others-architect.txt': ['2', '4', '5'],
-  'others-infra.txt': ['1', '4', '5'],
-  'others-backend.txt': ['1', '2', '5'],
-  'others-analyst.txt': ['1', '2', '4'],
+  'others-architect.txt': ['2', '5'],
+  'others-devops.txt': ['1', '5'],
+  'others-analyst.txt': ['1', '2'],
 
   // Legacy "others" triggers
-  'others-lead.txt': ['2', '4', '5'],
-  'others-orchestrator.txt': ['1', '4', '5'],
-  'others-worker-b.txt': ['1', '2', '5'],
-  'others-investigator.txt': ['1', '2', '4'],
+  'others-lead.txt': ['2', '5'],
+  'others-infra.txt': ['1', '5'],
+  'others-backend.txt': ['1', '5'],
+  'others-orchestrator.txt': ['1', '5'],
+  'others-worker-b.txt': ['1', '5'],
+  'others-investigator.txt': ['1', '2'],
 };
 
 // Protocol actions (client -> daemon)

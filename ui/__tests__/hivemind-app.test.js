@@ -261,7 +261,7 @@ describe('HivemindApp', () => {
     it('should resolve legacy aliases', () => {
       expect(app.resolveTargetToPane('lead')).toBe('1');
       expect(app.resolveTargetToPane('orchestrator')).toBe('2');
-      expect(app.resolveTargetToPane('worker-b')).toBe('4');
+      expect(app.resolveTargetToPane('worker-b')).toBe('2');
       expect(app.resolveTargetToPane('investigator')).toBe('5');
     });
 

@@ -37,19 +37,19 @@ const MESSAGE_QUEUE_DIR = path.join(WORKSPACE_PATH, 'messages');
 const AGENT_TO_PANE = {
   'architect': '1',
   'lead': '1',
+  'devops': '2',
   'infra': '2',
   'orchestrator': '2',
-  'backend': '4',
-  'implementer-b': '4',
-  'worker-b': '4',
+  'backend': '2',
+  'implementer-b': '2',
+  'worker-b': '2',
   'analyst': '5',
   'investigator': '5',
 };
 
 const PANE_TO_AGENT = {
   '1': 'architect',
-  '2': 'infra',
-  '4': 'backend',
+  '2': 'devops',
   '5': 'analyst',
 };
 
@@ -372,12 +372,13 @@ function resolvePaneIds(target) {
     case 'backend':
     case 'implementer-b':
     case 'worker-b':
-      return ['4'];
+    case 'devops':
+      return ['2'];
     case 'analyst':
     case 'investigator':
       return ['5'];
     case 'workers':
-      return ['4', '5'];
+      return ['2', '5'];
     case 'all':
       return PANE_IDS.filter(id => id !== paneId);
     default:

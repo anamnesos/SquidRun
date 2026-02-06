@@ -398,16 +398,16 @@ function formatMessage(message) {
         'ARCH': { class: 'lead', label: 'Arch' },
         'ARCHITECT': { class: 'lead', label: 'Arch' },
         'LEAD': { class: 'lead', label: 'Arch' },
-        // Pane 2: Infra (legacy: Orchestrator)
-        'INFRA': { class: 'infra', label: 'Infra' },
-        'ORCHESTRATOR': { class: 'infra', label: 'Infra' },
-        // Pane 4: Backend (short: Back, legacy: Worker B, Implementer B)
-        'BACK': { class: 'backend', label: 'Back' },
-        'BACKEND': { class: 'backend', label: 'Back' },
-        'IMPLEMENTER-B': { class: 'backend', label: 'Back' },
-        'IMPLEMENTERB': { class: 'backend', label: 'Back' },
-        'WORKER-B': { class: 'backend', label: 'Back' },
-        'WORKERB': { class: 'backend', label: 'Back' },
+        // Pane 2: DevOps (legacy: Infra, Orchestrator, Backend, Worker B)
+        'DEVOPS': { class: 'devops', label: 'DevOps' },
+        'INFRA': { class: 'devops', label: 'DevOps' },
+        'ORCHESTRATOR': { class: 'devops', label: 'DevOps' },
+        'BACK': { class: 'devops', label: 'DevOps' },
+        'BACKEND': { class: 'devops', label: 'DevOps' },
+        'IMPLEMENTER-B': { class: 'devops', label: 'DevOps' },
+        'IMPLEMENTERB': { class: 'devops', label: 'DevOps' },
+        'WORKER-B': { class: 'devops', label: 'DevOps' },
+        'WORKERB': { class: 'devops', label: 'DevOps' },
         // Pane 5: Analyst (short: Ana, legacy: Investigator)
         'ANA': { class: 'analyst', label: 'Ana' },
         'ANALYST': { class: 'analyst', label: 'Ana' },

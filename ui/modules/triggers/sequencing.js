@@ -18,8 +18,7 @@ let messageState = {
   version: 1,
   sequences: {
     'architect': { outbound: 0, lastSeen: {} },
-    'infra': { outbound: 0, lastSeen: {} },
-    'backend': { outbound: 0, lastSeen: {} },
+    'devops': { outbound: 0, lastSeen: {} },
     'analyst': { outbound: 0, lastSeen: {} },
   },
 };
@@ -43,8 +42,7 @@ function loadMessageState() {
     messageState.version = 1;
     messageState.sequences = {
       'architect': { outbound: 0, lastSeen: {} },
-      'infra': { outbound: 0, lastSeen: {} },
-      'backend': { outbound: 0, lastSeen: {} },
+      'devops': { outbound: 0, lastSeen: {} },
       'analyst': { outbound: 0, lastSeen: {} },
     };
     saveMessageState();
