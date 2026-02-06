@@ -1203,13 +1203,6 @@ function setupEventListeners() {
     }));
   });
 
-  // Expand pane button click handlers
-  document.querySelectorAll('.expand-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const paneId = btn.dataset.paneId;
-      if (paneId) toggleExpandPane(paneId);
-    });
-  });
 
   // ESC key to collapse expanded pane
   document.addEventListener('keydown', (e) => {

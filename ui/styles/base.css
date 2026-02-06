@@ -817,63 +817,6 @@ kbd {
     0 0 20px rgba(78, 204, 163, 0.4);
 }
 
-/* ============================================================
-   PANE ZOOM/EXPAND ANIMATION
-   ============================================================ */
-
-/* Expanding pane overlay */
-.pane-expanded-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
-  z-index: 999;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--transition-normal);
-}
-
-.pane-expanded-overlay.active {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* Expanded pane container */
-.pane.expanding {
-  animation: pane-expand 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.05) forwards;
-  z-index: 1000;
-}
-
-@keyframes pane-expand {
-  0% {
-    transform: scale(1);
-  }
-  100% {
-    position: fixed;
-    top: var(--space-6);
-    left: var(--space-6);
-    right: var(--space-6);
-    bottom: var(--space-6);
-    transform: scale(1);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-xl), 0 0 60px rgba(0, 0, 0, 0.5);
-  }
-}
-
-.pane.collapsing {
-  animation: pane-collapse 0.25s ease forwards;
-}
-
-@keyframes pane-collapse {
-  0% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(0.95);
-    opacity: 0;
-  }
-}
 
 /* ============================================================
    SUCCESS PARTICLE/CONFETTI EFFECTS (CSS-only)

@@ -489,26 +489,13 @@
   background: rgba(233, 69, 96, 0.12);
 }
 
-/* Pane Expansion */
-.pane.pane-expanded {
-  position: fixed !important;
-  top: 60px;
-  left: 0;
-  right: 0;
-  bottom: 80px;
-  z-index: 1000;
-  width: 100% !important;
-  height: auto !important;
+/* Pane Expansion — side pane fills entire right column, main pane stays */
+.side-panes-container .pane.pane-expanded {
+  flex: 1 1 100%;
 }
 
-.pane-layout.has-expanded-pane .pane:not(.pane-expanded) {
+.pane-layout.has-expanded-pane .side-panes-container .pane:not(.pane-expanded) {
   display: none !important;
-}
-
-.pane-layout.has-expanded-pane .main-pane-container,
-.pane-layout.has-expanded-pane .side-panes-container {
-  width: 100% !important;
-  flex: none !important;
 }
 
 /* Pane header flash on delivery */
@@ -524,6 +511,35 @@
 .pane-actions {
   display: flex;
   gap: var(--space-1);
+}
+
+/* Pane button tooltips — positioned below to avoid .pane overflow:hidden clipping */
+.pane-actions [data-tooltip]::after,
+.lock-icon[data-tooltip]::after {
+  bottom: auto;
+  top: calc(100% + 6px);
+  transform: translateX(-50%);
+}
+
+.pane-actions [data-tooltip]:hover::after,
+.lock-icon[data-tooltip]:hover::after {
+  transform: translateX(-50%) translateY(0);
+}
+
+.pane-actions [data-tooltip]::before,
+.lock-icon[data-tooltip]::before {
+  bottom: auto;
+  top: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--color-bg-light);
+  margin-bottom: 0;
+  margin-top: -6px;
+  transform: translateX(-50%);
+}
+
+.pane-actions [data-tooltip]:hover::before,
+.lock-icon[data-tooltip]:hover::before {
+  transform: translateX(-50%) translateY(2px);
 }
 
 .pane-action-btn {
