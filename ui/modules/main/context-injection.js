@@ -15,8 +15,7 @@ const { INSTANCE_DIRS, PANE_ROLES } = require('../../config');
 // Map pane IDs to role file names
 const ROLE_FILES = {
   '1': 'ARCH.md',
-  '2': 'INFRA.md',
-  '4': 'BACK.md',
+  '2': 'DEVOPS.md',
   '5': 'ANA.md',
 };
 

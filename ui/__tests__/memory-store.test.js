@@ -39,8 +39,7 @@ describe('Memory Store', () => {
 
     test('exports PANE_ROLES mapping', () => {
       expect(memoryStore.PANE_ROLES['1']).toBe('Architect');
-      expect(memoryStore.PANE_ROLES['2']).toBe('Infra');
-      expect(memoryStore.PANE_ROLES['4']).toBe('Backend');
+      expect(memoryStore.PANE_ROLES['2']).toBe('DevOps');
       expect(memoryStore.PANE_ROLES['5']).toBe('Analyst');
     });
   });

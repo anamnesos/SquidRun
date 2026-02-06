@@ -24,12 +24,12 @@ const mockConfig = {
   TRIGGER_TARGETS: {
     'architect.txt': ['1'],
     'infra.txt': ['2'],
-    'backend.txt': ['4'],
+    'backend.txt': ['2'],
     'analyst.txt': ['5'],
-    'workers.txt': ['4'],
-    'all.txt': ['1', '2', '4', '5'],
+    'workers.txt': ['2'],
+    'all.txt': ['1', '2', '5'],
   },
-  PANE_IDS: ['1', '2', '4', '5'],
+  PANE_IDS: ['1', '2', '5'],
 };
 jest.mock('../config', () => mockConfig);
 
@@ -242,8 +242,8 @@ describe('triggers.js module', () => {
       };
       triggers.setWatcher(mockWatcher);
 
-      // Backend (4) is a worker
-      const result = triggers.checkWorkflowGate(['4']);
+      // DevOps (2) is a worker
+      const result = triggers.checkWorkflowGate(['2']);
       expect(result.allowed).toBe(true);
     });
 
@@ -253,7 +253,7 @@ describe('triggers.js module', () => {
       };
       triggers.setWatcher(mockWatcher);
 
-      const result = triggers.checkWorkflowGate(['4']); // Worker
+      const result = triggers.checkWorkflowGate(['2']); // Worker
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain('blocked during');
     });
@@ -266,7 +266,7 @@ describe('triggers.js module', () => {
 
       // Indirectly test via handleTriggerFile which calls checkWorkflowGate
       fs.readFileSync.mockReturnValue('msg');
-      // workers.txt targets '4' (Worker)
+      // workers.txt targets '2' (Worker)
       triggers.handleTriggerFile('/path/workers.txt', 'workers.txt');
 
       expect(global.window.webContents.send).toHaveBeenCalledWith('trigger-blocked', expect.anything());
@@ -381,12 +381,12 @@ describe('triggers.js module', () => {
 
       expect(fs.appendFileSync).toHaveBeenCalledWith(
         expect.stringContaining('war-room.log'),
-        expect.stringContaining('"from":"BACK"'),
+        expect.stringContaining('"from":"DEVOPS"'),
         'utf-8'
       );
       expect(global.window.webContents.send).toHaveBeenCalledWith(
         'war-room-message',
-        expect.objectContaining({ from: 'BACK', to: 'ARCH', msg: 'API ready' })
+        expect.objectContaining({ from: 'DEVOPS', to: 'ARCH', msg: 'API ready' })
       );
     });
 
@@ -395,7 +395,7 @@ describe('triggers.js module', () => {
         if (String(filePath).includes('war-room.log')) return '';
         return '(INFRA #2): Backend should check';
       });
-      const running = new Map([['1', 'running'], ['2', 'running'], ['4', 'running'], ['5', 'running']]);
+      const running = new Map([['1', 'running'], ['2', 'running'], ['5', 'running']]);
       triggers.init(global.window, running, null);
 
       // Fixed: Must be in SDK mode for ambient updates
@@ -408,7 +408,7 @@ describe('triggers.js module', () => {
       const sdkCalls = global.window.webContents.send.mock.calls
         .filter(([event]) => event === 'sdk-message');
       const hasBackendAmbient = sdkCalls.some(([, payload]) =>
-        payload.paneId === '4' &&
+        payload.paneId === '2' &&
         String(payload.message.content || '').includes('[WAR ROOM -')
       );
       expect(hasBackendAmbient).toBe(true);

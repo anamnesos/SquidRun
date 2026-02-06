@@ -15,15 +15,15 @@ const WAR_ROOM_CORRECTION_KEYWORDS = ['stop', 'wait', 'wrong', 'hold', 'pause', 
 
 const PANE_ROLE_KEYS = {
   '1': 'architect',
-  '2': 'infra',
-  '4': 'backend',
+  '2': 'devops',
   '5': 'analyst',
 };
 
 const WAR_ROOM_ROLE_LABELS = {
   architect: 'ARCH',
-  infra: 'INFRA',
-  backend: 'BACK',
+  devops: 'DEVOPS',
+  infra: 'DEVOPS',     // Legacy alias
+  backend: 'DEVOPS',   // Legacy alias
   analyst: 'ANA',
   user: 'YOU',
   system: 'SYSTEM',
@@ -32,8 +32,7 @@ const WAR_ROOM_ROLE_LABELS = {
 
 const WAR_ROOM_ROLE_MENTIONS = {
   architect: /\b(architect|arch)\b/i,
-  infra: /\b(infra|infrastructure)\b/i,
-  backend: /\b(backend|back)\b/i,
+  devops: /\b(devops|infra|infrastructure|backend|back)\b/i,
   analyst: /\b(analyst|ana)\b/i,
 };
 
@@ -63,15 +62,16 @@ function normalizeRoleKey(role) {
 const ROLE_TO_PANE = {
   'architect': '1',
   'arch': '1',
+  'devops': '2',
   'infra': '2',
   'infrastructure': '2',
-  'backend': '4',
-  'back': '4',
+  'backend': '2',
+  'back': '2',
   'analyst': '5',
   'ana': '5',
   'lead': '1',
   'orchestrator': '2',
-  'worker-b': '4',
+  'worker-b': '2',
   'investigator': '5',
 };
 

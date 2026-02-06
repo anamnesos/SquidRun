@@ -30,8 +30,7 @@ let lastFallbackWarning = null;
 const TRIGGER_DIR = path.join(WORKSPACE_PATH, 'triggers');
 const TRIGGER_FILES = {
   '1': 'architect.txt',
-  '2': 'infra.txt',
-  '4': 'backend.txt',
+  '2': 'devops.txt',
   '5': 'analyst.txt',
 };
 
@@ -408,7 +407,7 @@ function getMCPToolDefinitions() {
       inputSchema: {
         type: 'object',
         properties: {
-          paneId: { type: 'string', description: 'Agent pane ID (1=Architect, 2=Infra, 4=Backend, 5=Analyst)' },
+          paneId: { type: 'string', description: 'Agent pane ID (1=Architect, 2=DevOps, 5=Analyst)' },
         },
         required: ['paneId'],
       },

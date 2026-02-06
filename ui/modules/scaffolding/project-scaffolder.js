@@ -1099,8 +1099,7 @@ MIT
 | Role | Owner | Focus |
 |------|-------|-------|
 | Architect | Pane 1 | Architecture, coordination |
-| Infra | Pane 2 | CI/CD, deployment, infrastructure |
-| Backend | Pane 4 | Implementation, daemon, processes |
+| DevOps | Pane 2 | CI/CD, deployment, infra, backend |
 | Analyst | Pane 5 | Debugging, profiling, analysis |
 
 ## Quick Start
@@ -1131,8 +1130,8 @@ MIT
 
 | Task | Owner | Status | Notes |
 |------|-------|--------|-------|
-| Task 1 | Backend | Pending | |
-| Task 2 | Infra | Pending | |
+| Task 1 | DevOps | Pending | |
+| Task 2 | DevOps | Pending | |
 | Task 3 | Analyst | Pending | |
 
 ## Notes
@@ -1211,33 +1210,18 @@ You are the Architect for this project.
       },
       'workspace/instances/infra/CLAUDE.md': {
         type: 'text',
-        content: `# Infra Instance
+        content: `# DevOps Instance
 
-You are Infra for this project.
-
-## Responsibilities
-- CI/CD pipelines
-- Build scripts
-- Infrastructure
-
-## Communication
-- Receive messages: workspace/triggers/infra.txt
-- Report to Architect: workspace/triggers/architect.txt
-`,
-      },
-      'workspace/instances/back/CLAUDE.md': {
-        type: 'text',
-        content: `# Backend Instance
-
-You are Backend for this project.
+You are DevOps for this project.
 
 ## Responsibilities
+- CI/CD and deployment
+- Build scripts and infrastructure
 - Main process logic
-- IPC handlers
-- File watching
+- IPC handlers and file watching
 
 ## Communication
-- Receive messages: workspace/triggers/backend.txt
+- Receive messages: workspace/triggers/devops.txt
 - Report to Architect: workspace/triggers/architect.txt
 `,
       },

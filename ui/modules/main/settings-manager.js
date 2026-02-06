@@ -39,11 +39,10 @@ const DEFAULT_SETTINGS = {
   autoNudge: true,
   ptyStuckDetection: false,
   ptyStuckThreshold: 15000,
-  paneProjects: { '1': null, '2': null, '4': null, '5': null },
+  paneProjects: { '1': null, '2': null, '5': null },
   paneCommands: {
     '1': 'claude',
     '2': 'codex',
-    '4': 'codex',
     '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind"',
   },
   templates: [],

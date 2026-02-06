@@ -37,8 +37,7 @@ describe('Performance Tracking Handlers', () => {
     ctx.WORKSPACE_PATH = '/test/workspace';
     ctx.PANE_ROLES = {
       '1': 'Architect',
-      '2': 'Infra',
-      '4': 'Backend',
+      '2': 'DevOps',
       '5': 'Analyst',
     };
 
@@ -142,7 +141,7 @@ describe('Performance Tracking Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.agents).toBeDefined();
-      expect(Object.keys(result.agents).length).toBe(4);
+      expect(Object.keys(result.agents).length).toBe(3);
     });
 
     test('returns performance with roles', async () => {

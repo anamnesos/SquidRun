@@ -149,8 +149,7 @@ function setSDKMode(enabled, options = {}) {
 
 const SDK_PANE_LABELS = {
   '1': { name: 'Architect', avatar: '[A]' },
-  '2': { name: 'Infra', avatar: '[I]' },
-  '4': { name: 'Backend', avatar: '[B]' },
+  '2': { name: 'DevOps', avatar: '[D]' },
   '5': { name: 'Analyst', avatar: '[?]' },
 };
 
@@ -478,8 +477,7 @@ function updateConnectionStatus(status) {
 // Smart Parallelism Phase 3 - Domain ownership mapping
 const PANE_DOMAIN_MAP = {
   '1': 'architecture',  // Architect
-  '2': 'infra',         // Infra
-  '4': 'backend',       // Backend
+  '2': 'devops',        // DevOps (Infra + Backend)
   '5': 'analysis',      // Analyst
 };
 
@@ -734,8 +732,7 @@ function setupEventListeners() {
 
     const roleHints = {
       '1': 'architecture or strategy',
-      '2': 'infrastructure or builds',
-      '4': 'backend or daemon logic',
+      '2': 'infrastructure, builds, or backend logic',
       '5': 'debugging or analysis',
     };
 
@@ -943,7 +940,7 @@ function setupEventListeners() {
   }
 
   // Helper function to send broadcast - routes through SDK or PTY based on mode
-  // Supports pane targeting via dropdown or /1, /2, /4, /5 prefix
+  // Supports pane targeting via dropdown or /1, /2, /5 prefix
   function sendBroadcast(message) {
     const now = Date.now();
     if (now - lastBroadcastTime < 500) {
@@ -967,9 +964,9 @@ function setupEventListeners() {
     // Check SDK mode from settings
     const currentSettings = settings.getSettings();
     if (currentSettings.sdkMode || sdkMode) {
-      // Check for pane targeting prefix: /1, /2, /4, /5 or /architect, /infra, etc.
+      // Check for pane targeting prefix: /1, /2, /5 or /architect, /devops, etc.
       // /all broadcasts to all agents
-      const paneMatch = message.match(/^\/([1245]|all|lead|architect|infra|orchestrator|backend|worker-?b|implementer-?b|analyst|investigator)\s+/i);
+      const paneMatch = message.match(/^\/([125]|all|lead|architect|devops|infra|orchestrator|backend|worker-?b|implementer-?b|analyst|investigator)\s+/i);
 
       // Determine target: explicit prefix > dropdown selector > default (1)
       let targetPaneId = '1';
@@ -983,9 +980,9 @@ function setupEventListeners() {
           targetPaneId = 'all';
         } else {
           const paneMap = {
-            '1': '1', '2': '2', '4': '4', '5': '5',
-            'lead': '1', 'architect': '1', 'infra': '2', 'orchestrator': '2',
-            'backend': '4', 'worker-b': '4', 'workerb': '4', 'implementer-b': '4', 'implementerb': '4',
+            '1': '1', '2': '2', '5': '5',
+            'lead': '1', 'architect': '1',
+            'devops': '2', 'infra': '2', 'orchestrator': '2', 'backend': '2', 'worker-b': '2', 'workerb': '2',
             'analyst': '5', 'investigator': '5'
           };
           targetPaneId = paneMap[target] || '1';

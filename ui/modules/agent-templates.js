@@ -8,21 +8,18 @@ const BUILTIN_CREATED_AT = '2026-01-30T00:00:00.000Z';
 const DEFAULT_PANE_COMMANDS = {
   '1': 'claude',
   '2': 'codex',
-  '4': 'codex',
   '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind"',
 };
 
 const ALL_CLAUDE = {
   '1': 'claude',
   '2': 'claude',
-  '4': 'claude',
   '5': 'claude',
 };
 
 const ALL_CODEX = {
   '1': 'codex',
   '2': 'codex',
-  '4': 'codex',
   '5': 'codex',
 };
 

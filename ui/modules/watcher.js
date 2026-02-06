@@ -62,18 +62,18 @@ const States = {
   PAUSED: 'paused',
 };
 
-// Active agents per state (pane IDs: 1=Architect, 2=Infra, 4=Backend, 5=Analyst)
-// Frontend and Reviewer are now internal teammates of Architect (pane 1)
+// Active agents per state (pane IDs: 1=Architect, 2=DevOps, 5=Analyst)
+// Frontend and Reviewer are internal teammates of Architect (pane 1)
 const ACTIVE_AGENTS = {
   [States.IDLE]: [],
   [States.PROJECT_SELECTED]: ['1', '2'],
   [States.PLANNING]: ['1', '2'],
   [States.PLAN_REVIEW]: ['1'],
   [States.PLAN_REVISION]: ['1', '2'],
-  [States.EXECUTING]: ['4', '5'],
+  [States.EXECUTING]: ['2', '5'],
   [States.CHECKPOINT]: [],
   [States.CHECKPOINT_REVIEW]: ['1'],
-  [States.CHECKPOINT_FIX]: ['1', '4', '5'],
+  [States.CHECKPOINT_FIX]: ['1', '2', '5'],
   [States.FRICTION_LOGGED]: [],
   [States.FRICTION_SYNC]: [],
   [States.FRICTION_RESOLUTION]: ['1', '2'],

@@ -133,9 +133,9 @@ describe('Knowledge Graph', () => {
 
       knowledgeGraph.initialize('/test/workspace');
 
-      // Check all 4 agents are initialized - they have IDs like agent:1, agent:2, etc.
+      // Check all 3 agents are initialized - they have IDs like agent:1, agent:2, etc.
       const agents = knowledgeGraph.getNodesByType('agent');
-      expect(agents.length).toBe(4);
+      expect(agents.length).toBe(3);
     });
 
     test('handles load errors gracefully', () => {
@@ -659,7 +659,7 @@ describe('Knowledge Graph', () => {
       expect(knowledgeGraph.getAgentNodeId('Architect')).toBe('agent:1');
       expect(knowledgeGraph.getAgentNodeId('orchestrator')).toBe('agent:2');
       expect(knowledgeGraph.getAgentNodeId('infra')).toBe('agent:2');
-      expect(knowledgeGraph.getAgentNodeId('worker_b')).toBe('agent:4');
+      expect(knowledgeGraph.getAgentNodeId('worker_b')).toBe('agent:2');
       expect(knowledgeGraph.getAgentNodeId('investigator')).toBe('agent:5');
       expect(knowledgeGraph.getAgentNodeId('analyst')).toBe('agent:5');
     });

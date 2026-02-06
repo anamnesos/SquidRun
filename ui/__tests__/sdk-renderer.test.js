@@ -81,18 +81,18 @@ describe('sdk-renderer.js module', () => {
   });
 
   describe('PANE_IDS constant', () => {
-    test('should have 4 pane IDs', () => {
-      expect(sdkRenderer.PANE_IDS).toHaveLength(4);
+    test('should have 3 pane IDs', () => {
+      expect(sdkRenderer.PANE_IDS).toHaveLength(3);
     });
 
-    test('should be strings 1,2,4,5', () => {
-      expect(sdkRenderer.PANE_IDS).toEqual(['1', '2', '4', '5']);
+    test('should be strings 1,2,5', () => {
+      expect(sdkRenderer.PANE_IDS).toEqual(['1', '2', '5']);
     });
   });
 
   describe('PANE_ROLES constant', () => {
-    test('should have roles for all 4 panes', () => {
-      expect(Object.keys(sdkRenderer.PANE_ROLES)).toHaveLength(4);
+    test('should have roles for all 3 panes', () => {
+      expect(Object.keys(sdkRenderer.PANE_ROLES)).toHaveLength(3);
     });
 
     test('should have correct role names', () => {
@@ -130,7 +130,7 @@ describe('sdk-renderer.js module', () => {
       sdkRenderer.setPaneConfig({ paneIds: ['x', 'y'] });
       sdkRenderer.setSDKPaneConfig();
 
-      expect(sdkRenderer.PANE_IDS).toHaveLength(4);
+      expect(sdkRenderer.PANE_IDS).toHaveLength(3);
       expect(sdkRenderer.PANE_ROLES['1']).toBe('Architect');
     });
   });

@@ -16,15 +16,13 @@ const ANSI = {
 
 const AGENT_ROLES = {
   '1': { name: 'Architect', type: 'coordinator', skills: ['planning', 'coordination', 'architecture', 'ui', 'review'] },
-  '2': { name: 'Infra', type: 'coordinator', skills: ['routing', 'ci-cd', 'deployment', 'infrastructure'] },
-  '4': { name: 'Backend', type: 'worker', skills: ['backend', 'daemon', 'ipc', 'processes'] },
+  '2': { name: 'DevOps', type: 'worker', skills: ['routing', 'ci-cd', 'deployment', 'infrastructure', 'backend', 'daemon', 'ipc', 'processes'] },
   '5': { name: 'Analyst', type: 'analyst', skills: ['debugging', 'profiling', 'analysis', 'investigation'] },
 };
 
 const HANDOFF_CHAIN = {
-  '1': ['2', '4', '5'],
-  '2': ['4', '5'],
-  '4': ['1'],
+  '1': ['2', '5'],
+  '2': ['5'],
   '5': ['1'],
 };
 

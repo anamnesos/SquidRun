@@ -34,14 +34,13 @@ describe('config.js', () => {
   });
 
   describe('INSTANCE_DIRS', () => {
-    test('should have all 4 pane IDs', () => {
-      expect(Object.keys(INSTANCE_DIRS)).toEqual(['1', '2', '4', '5']);
+    test('should have all 3 pane IDs', () => {
+      expect(Object.keys(INSTANCE_DIRS)).toEqual(['1', '2', '5']);
     });
 
     test('should have paths for each pane', () => {
       expect(INSTANCE_DIRS['1']).toContain('arch');
       expect(INSTANCE_DIRS['2']).toContain('infra');
-      expect(INSTANCE_DIRS['4']).toContain('back');
       expect(INSTANCE_DIRS['5']).toContain('ana');
     });
 
@@ -53,14 +52,13 @@ describe('config.js', () => {
   });
 
   describe('PANE_ROLES', () => {
-    test('should have all 4 pane IDs', () => {
-      expect(Object.keys(PANE_ROLES)).toEqual(['1', '2', '4', '5']);
+    test('should have all 3 pane IDs', () => {
+      expect(Object.keys(PANE_ROLES)).toEqual(['1', '2', '5']);
     });
 
     test('should have correct role names', () => {
       expect(PANE_ROLES['1']).toBe('Architect');
-      expect(PANE_ROLES['2']).toBe('Infra');
-      expect(PANE_ROLES['4']).toBe('Backend');
+      expect(PANE_ROLES['2']).toBe('DevOps');
       expect(PANE_ROLES['5']).toBe('Analyst');
     });
   });
@@ -80,12 +78,12 @@ describe('config.js', () => {
       expect(TRIGGER_TARGETS['architect.txt']).toEqual(['1']);
     });
 
-    test('workers.txt should target Backend', () => {
-      expect(TRIGGER_TARGETS['workers.txt']).toEqual(['4']);
+    test('workers.txt should target DevOps', () => {
+      expect(TRIGGER_TARGETS['workers.txt']).toEqual(['2']);
     });
 
-    test('all.txt should target all 4 panes', () => {
-      expect(TRIGGER_TARGETS['all.txt']).toEqual(['1', '2', '4', '5']);
+    test('all.txt should target all 3 panes', () => {
+      expect(TRIGGER_TARGETS['all.txt']).toEqual(['1', '2', '5']);
     });
   });
 

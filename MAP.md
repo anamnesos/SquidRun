@@ -8,13 +8,13 @@
 ## Quick Start (READ THIS FIRST)
 
 **What is this app?**
-Hivemind is an Electron desktop app that orchestrates 6 persistent AI agent instances (Claude, Codex, Gemini) working in parallel. Each agent has a specialized role (Architect, Infra, Frontend, Backend, Analyst, Reviewer) and coordinates with others through file-based triggers and shared context.
+Hivemind is an Electron desktop app that orchestrates 3 persistent AI agent instances (Claude, Codex, Gemini) working in parallel. Each agent has a specialized role (Architect, DevOps, Analyst) and coordinates with others through file-based triggers and shared context. Architect (Claude) has internal Frontend and Reviewer teammates via Agent Teams.
 
 **How does it work?**
-- **Primary Mode (PTY):** 6 terminal processes managed by a persistent daemon. Native Claude/Codex CLIs and npm Gemini CLI run in pseudo-terminals. Messages sent via keyboard injection. Terminals survive app restarts.
-- **Alternative Mode (SDK):** 6 Python SDK sessions orchestrated by `hivemind-sdk-v2.py`. Direct API calls instead of keyboard injection. Supports true parallelism.
+- **Primary Mode (PTY):** 3 terminal processes managed by a persistent daemon. Native Claude/Codex CLIs and npm Gemini CLI run in pseudo-terminals. Messages sent via keyboard injection. Terminals survive app restarts.
+- **Alternative Mode (SDK):** 3 Python SDK sessions orchestrated by `hivemind-sdk-v2.py`. Direct API calls instead of keyboard injection. Supports true parallelism.
 
-**Architecture Decision (Session 73):** Hybrid Consensus. Hivemind remains outer-loop coordinator. Native Agent Teams (Opus 4.6) as opt-in per-pane enhancement. Gemini as shared vision service (Oracle). 6-pane fallback remains primary.
+**Architecture Decision (Session 73+79):** Hybrid Consensus. Hivemind remains outer-loop coordinator. Native Agent Teams (Opus 4.6) as opt-in per-pane enhancement. Gemini as shared vision service (Oracle). 3-pane layout (1=Architect, 2=DevOps, 5=Analyst).
 
 ---
 
@@ -109,11 +109,11 @@ hivemind/
 │   │   ├── errors.md            # Active errors
 │   │   └── ...
 │   │
-│   ├── instances/               # Per-agent working directories (Renamed S70)
-│   │   ├── arch/, infra/, front/, back/, ana/, rev/
+│   ├── instances/               # Per-agent working directories
+│   │   ├── arch/, infra/, ana/
 │   │
 │   └── triggers/                # Agent communication files
-│       ├── architect.txt, infra.txt, frontend.txt, etc.
+│       ├── architect.txt, devops.txt, analyst.txt, etc.
 ```
 
 ### Obsolete Code (Ignore/Cleanup)

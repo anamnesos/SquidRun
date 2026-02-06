@@ -19,13 +19,12 @@ const EventEmitter = require('events');
 const log = require('./logger');
 const { PANE_IDS, PANE_ROLES } = require('../config');
 
-// Default pane configuration - role and model per pane (4-pane architecture)
+// Default pane configuration - role and model per pane (3-pane architecture)
 // These are defaults; actual models come from settings.paneCommands at runtime
 // PANE_ROLES imported from config.js (canonical source)
 const DEFAULT_PANE_CONFIG = {
   '1': { role: 'Architect', model: 'claude' },
-  '2': { role: 'Infra', model: 'codex' },
-  '4': { role: 'Backend', model: 'codex' },
+  '2': { role: 'DevOps', model: 'codex' },
   '5': { role: 'Analyst', model: 'gemini' },
 };
 
@@ -42,26 +41,27 @@ const ROLE_TO_PANE = {
   'Architect': '1',
   'ARCHITECT': '1',
   '1': '1',
-  // Pane 2: Infra (legacy: Orchestrator)
+  // Pane 2: DevOps (legacy: Infra, Orchestrator, Backend, Worker B)
+  'devops': '2',
+  'DevOps': '2',
+  'DEVOPS': '2',
   'infra': '2',
   'Infra': '2',
   'INFRA': '2',
   'orchestrator': '2',
   'Orchestrator': '2',
   'ORCHESTRATOR': '2',
+  'backend': '2',
+  'Backend': '2',
+  'BACKEND': '2',
+  'worker-b': '2',
+  'Worker B': '2',
+  'WORKER-B': '2',
+  'worker_b': '2',
+  'implementer-b': '2',
+  'Implementer B': '2',
+  'IMPLEMENTER-B': '2',
   '2': '2',
-  // Pane 4: Backend (legacy: Worker B, Implementer B)
-  'backend': '4',
-  'Backend': '4',
-  'BACKEND': '4',
-  'worker-b': '4',
-  'Worker B': '4',
-  'WORKER-B': '4',
-  'worker_b': '4',
-  'implementer-b': '4',
-  'Implementer B': '4',
-  'IMPLEMENTER-B': '4',
-  '4': '4',
   // Pane 5: Analyst (legacy: Investigator)
   'analyst': '5',
   'Analyst': '5',
@@ -311,7 +311,7 @@ class SDKBridge extends EventEmitter {
    * Get model type for a pane
    * Reads from settings.paneCommands (same source as PTY mode) for consistency.
    * Falls back to DEFAULT_PANE_CONFIG if settings not available.
-   * @param {string} paneId - Pane ID ('1', '2', '4', or '5')
+   * @param {string} paneId - Pane ID ('1', '2', or '5')
    * @returns {string} Model type ('claude', 'codex', or 'gemini')
    */
   getModelForPane(paneId) {
@@ -331,7 +331,7 @@ class SDKBridge extends EventEmitter {
   /**
    * Update model for a specific pane at runtime
    * Called by model-switch handler to sync SDK bridge state
-   * @param {string} paneId - Pane ID ('1', '2', '4', or '5')
+   * @param {string} paneId - Pane ID ('1', '2', or '5')
    * @param {string} model - Model type ('claude', 'codex', or 'gemini')
    */
   setModelForPane(paneId, model) {
@@ -344,7 +344,7 @@ class SDKBridge extends EventEmitter {
 
   /**
    * Send message to specific pane/agent
-   * @param {string} paneId - Target pane ('1', '2', '4', '5')
+   * @param {string} paneId - Target pane ('1', '2', '5')
    * @param {string} message - User message
    */
   sendMessage(paneId, message) {

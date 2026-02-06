@@ -38,8 +38,7 @@ function initCustomTargetDropdown() {
   const options = [
     { value: '1', label: 'Architect', pane: '1' },
     { value: 'all', label: 'All Agents', pane: 'all' },
-    { value: '2', label: 'Infra', pane: '2' },
-    { value: '4', label: 'Backend', pane: '4' },
+    { value: '2', label: 'DevOps', pane: '2' },
     { value: '5', label: 'Analyst', pane: '5' },
   ];
 

@@ -71,8 +71,7 @@ function initialize(workspaceDir) {
   // Initialize agent nodes (always present)
   const agentNames = {
     '1': 'Architect',
-    '2': 'Infra',
-    '4': 'Backend',
+    '2': 'DevOps',
     '5': 'Analyst'
   };
 
@@ -565,7 +564,8 @@ function getAgentNodeId(roleOrPaneId) {
     'architect': '1',
     'orchestrator': '2',
     'infra': '2',
-    'backend': '4', 'implementer b': '4', 'implementer_b': '4', 'worker b': '4', 'worker_b': '4',
+    'backend': '2', 'implementer b': '2', 'implementer_b': '2', 'worker b': '2', 'worker_b': '2',
+    'devops': '2',
     'analyst': '5', 'investigator': '5'
   };
 
