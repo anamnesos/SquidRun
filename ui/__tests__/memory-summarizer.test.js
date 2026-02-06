@@ -7,8 +7,7 @@
 const mockMemoryStore = {
   PANE_ROLES: {
     '1': 'architect',
-    '2': 'infra',
-    '4': 'backend',
+    '2': 'devops',
     '5': 'analyst',
   },
   getRoleFromPaneId: jest.fn(id => mockMemoryStore.PANE_ROLES[String(id)] || `pane-${id}`),
@@ -563,7 +562,7 @@ describe('Memory Summarizer', () => {
       expect(result.date).toBe('2026-01-30');
       expect(result.overview).toBeDefined();
       expect(result.agentSummaries).toBeDefined();
-      expect(Object.keys(result.agentSummaries)).toHaveLength(4);
+      expect(Object.keys(result.agentSummaries)).toHaveLength(3);
     });
 
     test('calculates total entries across agents', () => {

@@ -61,11 +61,12 @@ jest.mock('../config', () => ({
   WORKSPACE_PATH: '/mock/workspace',
   ROLE_ID_MAP: {
     architect: '1',
-    infra: '2',
-    backend: '4',
+    devops: '2',
+    backend: '2',    // Legacy alias → DevOps pane
+    infra: '2',      // Legacy alias → DevOps pane
     analyst: '5',
   },
-  PANE_IDS: ['1', '2', '4', '5'],
+  PANE_IDS: ['1', '2', '5'],
 }));
 
 // Mock plugins
@@ -238,24 +239,23 @@ describe('HivemindApp', () => {
       expect(app.resolveTargetToPane(undefined)).toBeNull();
     });
 
-    it('should return paneId for direct numeric strings 1-6', () => {
+    it('should return paneId for direct numeric strings 1, 2, 5', () => {
       expect(app.resolveTargetToPane('1')).toBe('1');
       expect(app.resolveTargetToPane('2')).toBe('2');
-      expect(app.resolveTargetToPane('4')).toBe('4');
       expect(app.resolveTargetToPane('5')).toBe('5');
     });
 
     it('should resolve role names to paneIds', () => {
       expect(app.resolveTargetToPane('architect')).toBe('1');
-      expect(app.resolveTargetToPane('infra')).toBe('2');
-      expect(app.resolveTargetToPane('backend')).toBe('4');
+      expect(app.resolveTargetToPane('devops')).toBe('2');
+      expect(app.resolveTargetToPane('backend')).toBe('2');
       expect(app.resolveTargetToPane('analyst')).toBe('5');
     });
 
     it('should be case-insensitive for role names', () => {
       expect(app.resolveTargetToPane('ARCHITECT')).toBe('1');
       expect(app.resolveTargetToPane('Architect')).toBe('1');
-      expect(app.resolveTargetToPane('BACKEND')).toBe('4');
+      expect(app.resolveTargetToPane('BACKEND')).toBe('2');
     });
 
     it('should resolve legacy aliases', () => {

@@ -55,7 +55,7 @@ describe('Conflict Detection Handlers', () => {
   describe('check-file-conflicts', () => {
     test('checks for file conflicts', async () => {
       const checkResult = {
-        conflicts: [{ file: 'main.js', panes: ['1', '3'] }],
+        conflicts: [{ file: 'main.js', panes: ['1', '2'] }],
         count: 1,
       };
       ctx.watcher.checkFileConflicts.mockReturnValue(checkResult);

@@ -22,7 +22,7 @@ describe('Auto-Handoff Handlers', () => {
     ctx.triggers = {
       ...ctx.triggers,
       triggerAutoHandoff: jest.fn(() => ({ success: true, handedOff: true })),
-      HANDOFF_CHAIN: ['1', '2', '3', '4', '5', '6'],
+      HANDOFF_CHAIN: ['1', '2', '5'],
     };
 
     registerAutoHandoffHandlers(ctx);
@@ -79,7 +79,7 @@ describe('Auto-Handoff Handlers', () => {
     test('returns handoff chain', async () => {
       const result = await harness.invoke('get-handoff-chain');
 
-      expect(result).toEqual(['1', '2', '3', '4', '5', '6']);
+      expect(result).toEqual(['1', '2', '5']);
     });
 
     test('returns empty array when HANDOFF_CHAIN not defined', async () => {

@@ -184,7 +184,7 @@ function readState() {
 
 /**
  * Claim an agent role for a task
- * @param {string} paneId - The pane/agent ID (1, 2, 4, or 5)
+ * @param {string} paneId - The pane/agent ID (1, 2, or 5)
  * @param {string} taskId - The task being claimed
  * @param {string} [description] - Optional description
  * @returns {{ success: boolean, error?: string }}

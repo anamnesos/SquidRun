@@ -88,7 +88,7 @@ function getMCPHealth() {
 /**
  * Register an agent connection via MCP handshake
  * @param {string} sessionId - MCP session identifier
- * @param {string} paneId - Agent pane ID (1, 2, 4, or 5)
+ * @param {string} paneId - Agent pane ID (1, 2, or 5)
  * @returns {{ success: boolean, agent: object }}
  */
 function registerAgent(sessionId, paneId) {
@@ -418,7 +418,7 @@ function getMCPToolDefinitions() {
       inputSchema: {
         type: 'object',
         properties: {
-          to: { type: 'string', description: 'Recipient pane ID (1, 2, 4, 5)' },
+          to: { type: 'string', description: 'Recipient pane ID (1, 2, 5)' },
           content: { type: 'string', description: 'Message content' },
         },
         required: ['to', 'content'],
