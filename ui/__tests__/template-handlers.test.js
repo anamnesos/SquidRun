@@ -173,14 +173,14 @@ describe('Template Handlers', () => {
       fs.readFileSync.mockReturnValue(JSON.stringify([
         { id: 'tmpl-1', name: 'Test', paneProjects: { '1': '/new/path', '2': '/other' } },
       ]));
-      deps.loadSettings.mockReturnValue({ paneProjects: { '1': '/old', '3': '/keep' } });
+      deps.loadSettings.mockReturnValue({ paneProjects: { '1': '/old', '5': '/keep' } });
 
       await harness.invoke('load-template', 'tmpl-1');
 
       const savedSettings = deps.saveSettings.mock.calls[0][0];
       expect(savedSettings.paneProjects['1']).toBe('/new/path');
       expect(savedSettings.paneProjects['2']).toBe('/other');
-      expect(savedSettings.paneProjects['3']).toBe('/keep');
+      expect(savedSettings.paneProjects['5']).toBe('/keep');
     });
 
     test('merges config into settings', async () => {

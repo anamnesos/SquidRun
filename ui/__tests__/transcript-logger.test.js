@@ -7,8 +7,7 @@
 const mockMemoryStore = {
   PANE_ROLES: {
     '1': 'architect',
-    '2': 'infra',
-    '4': 'backend',
+    '2': 'devops',
     '5': 'analyst',
   },
   getRoleFromPaneId: jest.fn(id => mockMemoryStore.PANE_ROLES[String(id)] || `pane-${id}`),
@@ -100,7 +99,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'infra',
+        'devops',
         expect.objectContaining({
           type: 'output',
           paneId: '2',
@@ -228,11 +227,11 @@ describe('Transcript Logger', () => {
 
   describe('logSystem', () => {
     test('logs system message', () => {
-      transcriptLogger.logSystem('4', 'Process started', { pid: 1234 });
+      transcriptLogger.logSystem('2', 'Process started', { pid: 1234 });
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'backend',
+        'devops',
         expect.objectContaining({
           type: 'system',
           content: 'Process started',
@@ -441,7 +440,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'infra',
+        'devops',
         expect.objectContaining({
           type: 'output',
           content: 'Starting response',
@@ -462,7 +461,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'infra',
+        'devops',
         expect.objectContaining({
           type: 'output',
           content: 'Full message content'
@@ -479,7 +478,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'infra',
+        'devops',
         expect.objectContaining({
           type: 'tool_use',
           content: 'Tool: read_file',
@@ -500,7 +499,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'infra',
+        'devops',
         expect.objectContaining({
           content: 'Tool: unknown'
         })
@@ -517,7 +516,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'infra',
+        'devops',
         expect.objectContaining({
           type: 'tool_result',
           content: 'Tool output here',
@@ -546,7 +545,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'infra',
+        'devops',
         expect.objectContaining({
           type: 'system',
           content: 'Session: sess-789',
@@ -566,7 +565,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'infra',
+        'devops',
         expect.objectContaining({
           type: 'system',
           content: 'Message complete',
@@ -583,7 +582,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'infra',
+        'devops',
         expect.objectContaining({
           content: 'Message complete',
           metadata: expect.objectContaining({
@@ -601,7 +600,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'infra',
+        'devops',
         expect.objectContaining({
           type: 'system',
           content: 'Codex event: custom_event',
@@ -618,7 +617,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'infra',
+        'devops',
         expect.objectContaining({
           content: 'Codex event: unknown'
         })
@@ -778,13 +777,13 @@ describe('Transcript Logger', () => {
 
     test('logs across multiple roles correctly', () => {
       transcriptLogger.logInput('1', 'Architect input');
-      transcriptLogger.logInput('2', 'Infra input');
-      transcriptLogger.logInput('4', 'Backend input');
+      transcriptLogger.logInput('2', 'DevOps input');
+      transcriptLogger.logInput('5', 'Analyst input');
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith('architect', expect.anything());
-      expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith('infra', expect.anything());
-      expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith('backend', expect.anything());
+      expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith('devops', expect.anything());
+      expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith('analyst', expect.anything());
     });
   });
 });

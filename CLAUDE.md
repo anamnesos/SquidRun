@@ -187,7 +187,7 @@ If running in SDK mode (not PTY terminals):
 | `workspace/build/status-archive.md` | Sessions 1-49 task history |
 | `workspace/build/blockers-archive.md` | Resolved blockers |
 | `workspace/build/errors-archive.md` | Fixed errors |
-| `workspace/shared_context_archive.md` | Sessions 1-48 context |
+| `workspace/shared_context_archive.md` | Sessions 1-73 context |
 
 **Actual Code (READ THIS, NOT docs/):**
 | File | What It Does |

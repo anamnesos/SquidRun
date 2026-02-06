@@ -30,11 +30,10 @@ jest.mock('../config', () => ({
   },
   PANE_ROLES: {
     '1': 'Architect',
-    '2': 'Infra',
-    '4': 'Backend',
+    '2': 'DevOps',
     '5': 'Analyst',
   },
-  PANE_IDS: ['1', '2', '4', '5'],
+  PANE_IDS: ['1', '2', '5'],
 }));
 
 const path = require('path');
@@ -183,7 +182,7 @@ describe('registerModelSwitchHandlers', () => {
       // Verify broadcast was written to all.txt trigger file
       expect(fs.writeFileSync).toHaveBeenCalledWith(
         expect.stringContaining('all.txt'),
-        '(SYSTEM): Infra switched to Codex\n'
+        '(SYSTEM): DevOps switched to Codex\n'
       );
     });
 

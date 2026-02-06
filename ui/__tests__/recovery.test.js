@@ -75,7 +75,7 @@ describe('Terminal Recovery Controller', () => {
     };
 
     mockOptions = {
-      PANE_IDS: ['1', '2', '3', '4', '5', '6'],
+      PANE_IDS: ['1', '2', '5'],
       terminals,
       lastOutputTime,
       lastTypedTime,

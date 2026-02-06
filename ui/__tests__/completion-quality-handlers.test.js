@@ -29,8 +29,7 @@ describe('Completion Quality Handlers', () => {
     ctx.mainWindow.isDestroyed = jest.fn(() => false);
     ctx.PANE_ROLES = {
       '1': 'Architect',
-      '2': 'Infra',
-      '4': 'Backend',
+      '2': 'DevOps',
       '5': 'Analyst',
     };
 

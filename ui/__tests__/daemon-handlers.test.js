@@ -17,14 +17,12 @@ jest.mock('../config', () => ({
   INSTANCE_DIRS: {
     '1': '/project/instances/arch',
     '2': '/project/instances/infra',
-    '4': '/project/instances/back',
     '5': '/project/instances/ana',
   },
-  PANE_IDS: ['1', '2', '4', '5'],
+  PANE_IDS: ['1', '2', '5'],
   PANE_ROLES: {
     '1': 'Architect',
-    '2': 'Infra',
-    '4': 'Backend',
+    '2': 'DevOps',
     '5': 'Analyst',
   },
 }));
@@ -82,8 +80,7 @@ const mockUiView = {
   updateAllPaneProjects: jest.fn(), // Missing in previous mock definition
   PANE_ROLES: {
     '1': 'Architect',
-    '2': 'Infra',
-    '4': 'Backend',
+    '2': 'DevOps',
     '5': 'Analyst',
   },
   STATE_DISPLAY_NAMES: {
@@ -157,18 +154,18 @@ describe('daemon-handlers.js module', () => {
   });
 
   describe('PANE_IDS constant', () => {
-    test('should have 4 pane IDs', () => {
-      expect(daemonHandlers.PANE_IDS).toHaveLength(4);
+    test('should have 3 pane IDs', () => {
+      expect(daemonHandlers.PANE_IDS).toHaveLength(3);
     });
 
-    test('should be strings 1,2,4,5', () => {
-      expect(daemonHandlers.PANE_IDS).toEqual(['1', '2', '4', '5']);
+    test('should be strings 1,2,5', () => {
+      expect(daemonHandlers.PANE_IDS).toEqual(['1', '2', '5']);
     });
   });
 
   describe('PANE_ROLES constant', () => {
-    test('should have roles for all 4 panes', () => {
-      expect(Object.keys(daemonHandlers.PANE_ROLES)).toHaveLength(4);
+    test('should have roles for all 3 panes', () => {
+      expect(Object.keys(daemonHandlers.PANE_ROLES)).toHaveLength(3);
     });
 
     test('should have correct role names', () => {
@@ -549,7 +546,6 @@ describe('daemon-handlers.js module', () => {
 
         expect(setReconnectedFn).toHaveBeenCalledWith(true);
         expect(terminal.spawnClaude).toHaveBeenCalledWith('2');
-        expect(terminal.spawnClaude).toHaveBeenCalledWith('4');
         expect(terminal.spawnClaude).toHaveBeenCalledWith('5');
         expect(terminal.spawnClaude).not.toHaveBeenCalledWith('1');
       });
