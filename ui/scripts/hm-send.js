@@ -19,11 +19,21 @@ if (args.length < 2) {
 }
 
 const target = args[0];
-const message = args[1];
 let role = 'cli';
 let priority = 'normal';
 
-for (let i = 2; i < args.length; i++) {
+// Collect message from all args between target and first --flag
+// This handles PowerShell splitting quoted strings into multiple args
+const messageParts = [];
+let i = 1;
+for (; i < args.length; i++) {
+  if (args[i].startsWith('--')) break;
+  messageParts.push(args[i]);
+}
+const message = messageParts.join(' ');
+
+// Parse remaining --flags
+for (; i < args.length; i++) {
   if (args[i] === '--role' && args[i+1]) {
     role = args[i+1];
     i++;

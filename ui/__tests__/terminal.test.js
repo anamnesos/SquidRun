@@ -202,13 +202,13 @@ describe('terminal.js module', () => {
       expect(terminal.isIdle('1')).toBe(false);
     });
 
-    test('should use IDLE_THRESHOLD_MS (2000ms)', () => {
+    test('should use IDLE_THRESHOLD_MS (1000ms)', () => {
       // At exactly threshold
-      terminal.lastOutputTime['1'] = Date.now() - 2000;
+      terminal.lastOutputTime['1'] = Date.now() - 1000;
       expect(terminal.isIdle('1')).toBe(true);
 
       // Just under threshold
-      terminal.lastOutputTime['1'] = Date.now() - 1999;
+      terminal.lastOutputTime['1'] = Date.now() - 999;
       expect(terminal.isIdle('1')).toBe(false);
     });
   });

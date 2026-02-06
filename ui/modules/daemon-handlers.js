@@ -49,7 +49,7 @@ function getTerminal() {
 // THROTTLE QUEUE: Rate-limits message injection to prevent UI glitches
 const throttleQueues = new Map(); // paneId -> array of messages
 const throttlingPanes = new Set(); // panes currently being processed
-const MESSAGE_DELAY = 150; // ms between messages per pane
+const MESSAGE_DELAY = 100; // ms between messages per pane (reduced from 150ms — 3 panes = less contention)
 
 // SDK integration
 let sdkModeEnabled = false;
