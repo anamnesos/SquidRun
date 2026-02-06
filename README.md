@@ -1,6 +1,6 @@
 # Hivemind
 
-Multi-agent orchestration UI for AI coding assistants. Run 6 persistent AI instances (Claude, Codex, Gemini) that coordinate and trigger each other autonomously.
+Multi-agent orchestration UI for AI coding assistants. Run 3 persistent AI instances (Claude, Codex, Gemini) that coordinate and trigger each other autonomously.
 
 ## What is this?
 
@@ -11,7 +11,7 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 ## Features
 
 ### Core
-- **6 Persistent Terminals** - Each running a full AI coding instance with all its tools
+- **3 Persistent Terminals** - Each running a full AI coding instance with all its tools
 - **Multi-Model Support** - Claude Code, OpenAI Codex CLI, and Gemini CLI in the same session
 - **Daemon Architecture** - Terminals survive app restarts (PTY processes managed by separate daemon)
 - **Codex Exec Pipeline** - Codex panes use non-interactive `codex exec --json` with JSONL parsing and session resume
@@ -21,7 +21,7 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 
 ### Command Center UI
 - **Main Pane Focus** - Large left panel (60%) shows your primary agent (default: Architect)
-- **Side Column** - 5 smaller panes (40%) for other agents, click any to swap with main
+- **Side Column** - 2 smaller panes (40%) for other agents, click any to swap with main
 - **Command Bar** - Full-width input at bottom, targets main pane by default
 - **Target Dropdown** - Send to specific agent, all agents, or current main pane
 - **Delivery Status** - Visual feedback (sending/delivered/failed) on message submission
@@ -47,7 +47,7 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 - **IPC Aliases** - Frontend compatibility layer for legacy UI components
 
 ### SDK Mode (Alternative to PTY)
-- **6 Independent Claude Sessions** - Full Claude SDK instances via `hivemind-sdk-v2.py`
+- **3 Independent Agent Sessions** - Full SDK instances via `hivemind-sdk-v2.py`
 - **Honeycomb Thinking Animation** - Branded pulse animation with tool-type color coding
 - **Streaming Typewriter Effect** - Real-time character-by-character text display
 - **Session Status Indicators** - Per-pane status dots (idle, thinking, responding, error)
@@ -69,33 +69,32 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 
 | Pane | Role | CLI | Domain |
 |------|------|-----|--------|
-| 1 | Architect | Claude | Architecture decisions, coordination, delegation, git commits |
-| 2 | Infra | Codex | CI/CD, deployment, build scripts, infrastructure |
-| 3 | Frontend | Claude | UI components, renderer.js, index.html, CSS |
-| 4 | Backend | Codex | Daemon, processes, file watching, main.js internals |
+| 1 | Architect | Claude | Architecture, coordination, delegation, git commits + Frontend/Reviewer as internal Agent Teams teammates |
+| 2 | DevOps | Codex | CI/CD, deployment, infrastructure, daemon, processes, backend |
 | 5 | Analyst | Gemini | Debugging, profiling, root cause analysis, investigations |
-| 6 | Reviewer | Claude | Code review, verification, quality gates |
+
+**Note:** Frontend and Reviewer run as internal Agent Teams teammates of Architect (pane 1), not as separate panes.
 
 ## How Triggers Work
 
-Agents communicate by writing to trigger files:
+Agents communicate via WebSocket messaging (preferred) or trigger files (fallback):
+
+**WebSocket (preferred):**
+```bash
+node ui/scripts/hm-send.js <target> "(ROLE #N): message"
+```
+
+**Trigger files:**
 
 | File | Who Gets Triggered |
 |------|-------------------|
 | `workspace/triggers/architect.txt` | Architect (pane 1) |
-| `workspace/triggers/infra.txt` | Infra (pane 2) |
-| `workspace/triggers/frontend.txt` | Frontend (pane 3) |
-| `workspace/triggers/backend.txt` | Backend (pane 4) |
+| `workspace/triggers/devops.txt` | DevOps (pane 2) |
 | `workspace/triggers/analyst.txt` | Analyst (pane 5) |
-| `workspace/triggers/reviewer.txt` | Reviewer (pane 6) |
-| `workspace/triggers/workers.txt` | Frontend + Backend |
-| `workspace/triggers/implementers.txt` | Infra + Frontend + Backend |
+| `workspace/triggers/workers.txt` | DevOps + Analyst |
 | `workspace/triggers/all.txt` | Everyone |
-| `workspace/triggers/others-{role}.txt` | Everyone except sender |
 
-Example: Backend finishes a task and writes to `triggers/reviewer.txt` -> Reviewer receives the message and starts their review.
-
-**Note:** Legacy trigger names (lead.txt, orchestrator.txt, worker-a.txt, worker-b.txt, investigator.txt) still work during transition.
+Example: DevOps finishes a task and writes to `triggers/architect.txt` -> Architect receives the message.
 
 Messages use sequence numbers to prevent duplicates: `(ARCHITECT #1): message here`
 
@@ -161,11 +160,8 @@ hivemind/
 │   ├── triggers/                # Agent trigger files
 │   ├── instances/               # Per-agent working directories
 │   │   ├── arch/                # Architect (pane 1)
-│   │   ├── infra/               # Infra (pane 2)
-│   │   ├── front/               # Frontend (pane 3)
-│   │   ├── back/                # Backend (pane 4)
-│   │   ├── ana/                 # Analyst (pane 5)
-│   │   └── rev/                 # Reviewer (pane 6)
+│   │   ├── infra/               # DevOps (pane 2)
+│   │   └── ana/                 # Analyst (pane 5)
 │   └── build/                   # Build status, reviews, blockers
 ├── docs/                        # Documentation and specs
 │   ├── roles/                   # Modular role instruction files

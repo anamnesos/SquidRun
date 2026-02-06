@@ -1,29 +1,26 @@
 # Instance Folders - Name Mapping
 
-## Current Folder → Role Mapping
+## Current Architecture (3-Pane, Session 79+)
 
-| Folder Name | Current Role | Model | Pane |
-|-------------|--------------|-------|------|
-| `lead/` | **Architect** | Claude | 1 |
-| `orchestrator/` | **Infra** | Codex | 2 |
-| `worker-a/` | **Frontend** | Claude | 3 |
-| `worker-b/` | **Backend** | Codex | 4 |
-| `investigator/` | **Analyst** | Gemini | 5 |
-| `reviewer/` | **Reviewer** | Claude | 6 |
+| Folder | Role | Model | Pane | Status |
+|--------|------|-------|------|--------|
+| `arch/` | **Architect** | Claude | 1 | Active |
+| `infra/` | **DevOps** | Codex | 2 | Active (folder name is legacy — role is DevOps) |
+| `ana/` | **Analyst** | Gemini | 5 | Active |
 
-## Why the Mismatch?
+**Note:** The `infra/` folder name predates the DevOps rename (Session 79 merged Infra + Backend). The folder retains the old name but the role is DevOps.
 
-The folder names are legacy from an earlier 4-role architecture. The codebase was later expanded to 6 roles with clearer names, but renaming the folders requires updating 30+ source and test files.
+## Legacy Folders (kept for history, not active)
 
-**Current status:** Folder names are technical debt. The CLAUDE.md and AGENTS.md files inside each folder use the correct role names.
+| Folder | Former Role | Removed In |
+|--------|-------------|------------|
+| `front/` | Frontend | Session 77 (migrated to Agent Teams teammate of Architect) |
+| `back/` | Backend | Session 79 (merged into DevOps) |
+| `rev/` | Reviewer | Session 77 (migrated to Agent Teams teammate of Architect) |
 
 ## For New Agents
 
-- Your folder name doesn't match your role name - that's expected
-- Follow the instructions in your `CLAUDE.md` or `AGENTS.md` file
-- Use your **role name** (Architect, Infra, Frontend, etc.) in messages, not folder name
-- Trigger files use role names: `architect.txt`, `infra.txt`, `frontend.txt`, etc.
-
-## Future
-
-Full rename planned for future sprint. See `workspace/build/blockers.md` for status.
+- Your folder contains a `CLAUDE.md` (or `AGENTS.md` / `GEMINI.md`) with role-specific instructions
+- Follow those instructions — they define your identity and responsibilities
+- Use your **role name** (Architect, DevOps, Analyst) in messages, not folder name
+- Trigger files and WebSocket targets use role names: `architect`, `devops`, `analyst`

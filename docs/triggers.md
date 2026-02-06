@@ -2,59 +2,51 @@
 
 This is the canonical reference for trigger file messaging in Hivemind.
 
-## Where to write trigger files
+## Preferred: WebSocket Messaging
 
-**⚠️ CRITICAL: Always use ABSOLUTE paths to avoid ghost folder bugs.**
+**Use `hm-send.js` for agent-to-agent messaging — faster and more reliable than file triggers.**
+
+```bash
+node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(ROLE #N): message"
+```
+
+| Target | Reaches |
+|--------|---------|
+| `architect` | Architect (pane 1) |
+| `devops` | DevOps (pane 2) |
+| `analyst` | Analyst (pane 5) |
+
+**Why WebSocket over file triggers:**
+- Zero message loss (file triggers lose 40%+ under rapid messaging)
+- Faster delivery (~10ms vs 500ms+ file watcher debounce)
+- No path resolution bugs
+
+## Fallback: Trigger Files
+
+**Always use ABSOLUTE paths to avoid ghost folder bugs.**
 
 All trigger files live here:
 ```
 D:\projects\hivemind\workspace\triggers\
 ```
 
-**Why absolute paths?** Codex agents run from `workspace/instances/{role}/`. Relative paths like `workspace/triggers/` resolve to the wrong location, creating ghost folders that nobody watches. Messages go nowhere.
+### Canonical trigger files
 
-**Correct:**
-```
-D:\projects\hivemind\workspace\triggers\architect.txt
-```
+| Pane | Role | Trigger file |
+|------|------|--------------|
+| 1 | Architect | `architect.txt` |
+| 2 | DevOps | `devops.txt` |
+| 5 | Analyst | `analyst.txt` |
 
-**Wrong:**
-```
-workspace/triggers/architect.txt
-```
+### Broadcast and group triggers
 
-## Canonical trigger files (use these)
-| Pane | Role | Trigger file | Notes |
-|------|------|--------------|-------|
-| 1 | Architect | `architect.txt` | Primary coordinator |
-| 2 | Infra | `infra.txt` | CI/CD + build scripts |
-| 3 | Frontend | `frontend.txt` | UI/CSS/renderer |
-| 4 | Backend | `backend.txt` | Daemon/processes |
-| 5 | Analyst | `analyst.txt` | Debugging/root cause |
-| 6 | Reviewer | `reviewer.txt` | Code review |
-
-### Broadcast
-- `all.txt` -> sends to all panes
-
-### Group triggers
-- `workers.txt` -> Frontend + Backend
-- `implementers.txt` -> Infra + Frontend + Backend
-- `others-{role}.txt` -> everyone except `{role}`
-  - Examples: `others-architect.txt`, `others-infra.txt`, `others-frontend.txt`, `others-backend.txt`, `others-analyst.txt`, `others-reviewer.txt`
-  - Legacy group names still supported: `others-lead.txt`, `others-orchestrator.txt`, `others-worker-a.txt`, `others-worker-b.txt`, `others-investigator.txt`
-
-## Legacy trigger names (still supported)
-These are maintained for backward compatibility:
-
-| Legacy name | Current target |
-|------------|----------------|
-| `lead.txt` | `architect.txt` |
-| `orchestrator.txt` | `infra.txt` |
-| `worker-a.txt` | `frontend.txt` |
-| `worker-b.txt` | `backend.txt` |
-| `investigator.txt` | `analyst.txt` |
+| File | Who Gets Triggered |
+|------|-------------------|
+| `all.txt` | All pane agents |
+| `workers.txt` | DevOps + Analyst |
 
 ## Message format (required)
+
 Every message must use this exact format:
 
 ```
@@ -63,40 +55,43 @@ Every message must use this exact format:
 
 **Rules:**
 - `ROLE` is the **sender's role**, not the target's role.
-  - Example: Reviewer -> Architect writes `(REV #12): ...` into `architect.txt`.
+  - Example: DevOps -> Architect writes `(DEVOPS #1): ...` into `architect.txt`.
 - `#N` must increment per sender. Duplicates are ignored.
 - Start at `#1` each session.
 
-## Windows PowerShell examples
-**Direct message:**
-```
-"(INFRA #1): message" | Set-Content -Path "D:\projects\hivemind\workspace\triggers\architect.txt"
+## Legacy trigger names (still supported)
+
+These are maintained for backward compatibility but should not be used for new work:
+
+| Legacy name | Current target |
+|------------|----------------|
+| `lead.txt` | `architect.txt` |
+| `orchestrator.txt` | `devops.txt` |
+| `infra.txt` | `devops.txt` |
+| `backend.txt` | `devops.txt` |
+| `investigator.txt` | `analyst.txt` |
+
+**Removed (no longer routed):** `frontend.txt`, `reviewer.txt`, `worker-a.txt`, `worker-b.txt`
+
+## Examples
+
+**WebSocket (preferred):**
+```bash
+node D:/projects/hivemind/ui/scripts/hm-send.js architect "(DEVOPS #1): Build complete, ready for review"
 ```
 
-**Broadcast:**
-```
-"(ARCH #1): update" | Set-Content -Path "D:\projects\hivemind\workspace\triggers\all.txt"
-```
-
-## Bash examples
-**Direct message:**
-```
-echo "(INFRA #1): message" > "/path/to/workspace/triggers/architect.txt"
+**PowerShell trigger file:**
+```powershell
+"(DEVOPS #1): message" | Set-Content -Path "D:\projects\hivemind\workspace\triggers\architect.txt"
 ```
 
-**Heredoc (multi-line):**
+**Bash trigger file:**
+```bash
+echo "(ANA #1): message" > "D:/projects/hivemind/workspace/triggers/architect.txt"
 ```
-cat <<'EOF' > "/path/to/workspace/triggers/architect.txt"
-(ANA #3): line one
-line two
-EOF
-```
-
-## Common pitfalls
-- Single quotes + apostrophes: avoid single-quoted strings if your text contains `'`.
-- Wrong role name: messages are dropped if `ROLE` does not match expected format.
-- Sequence reset: restarting without resetting `#N` can cause "duplicate" drops.
 
 ## Notes
+
 - Trigger files are read and cleared after processing.
-- Legacy names are supported but should be avoided for new work.
+- WebSocket messaging (`hm-send.js`) is preferred over trigger files for reliability.
+- Frontend and Reviewer communicate via Agent Teams SendMessage (internal to Architect pane), not triggers.

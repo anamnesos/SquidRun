@@ -4,7 +4,7 @@
 
 **"Service as a Software"** - the tool to build tools, accessible for everyone.
 
-Multi-agent AI orchestration. 6 specialized agents working in parallel like a dev team - but usable by anyone, not just developers.
+Multi-agent AI orchestration. 3 specialized pane agents (with internal teammates) working in parallel like a dev team - but usable by anyone, not just developers.
 
 ## The Gap We Fill
 
@@ -59,16 +59,13 @@ The barriers are artificial. The gates are illusions.
 
 ## The Agents
 
-| Role | Purpose |
-|------|---------|
-| Architect | Coordination, decisions, architecture |
-| Infra | CI/CD, deployment, infrastructure |
-| Frontend | UI, user experience |
-| Backend | Core logic, processes, daemons |
-| Analyst | Debugging, profiling, investigation |
-| Reviewer | Quality, verification, code review |
+| Pane | Role | Purpose |
+|------|------|---------|
+| 1 | Architect | Coordination, decisions, architecture + Frontend/Reviewer as internal teammates |
+| 2 | DevOps | CI/CD, deployment, infrastructure, backend, daemons |
+| 5 | Analyst | Debugging, profiling, investigation |
 
-6 agents. 3 models (Claude, Codex, Gemini). Working in parallel.
+3 pane agents. 3 models (Claude, Codex, Gemini). Working in parallel.
 
 ## Success Metrics
 
