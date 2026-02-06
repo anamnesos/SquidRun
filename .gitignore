@@ -33,10 +33,49 @@ workspace/console.log
 workspace/triggers/*.txt
 ui/usage-stats.json
 ui/settings.json
+session-state.json
+ui/session-state.json
 *.tmp
 
 # Instance working directories (local context)
 workspace/instances/
+
+# Agent runtime data
+workspace/message-state.json
+workspace/messages/
+workspace/history/
+workspace/memory/
+workspace/plugins/
+workspace/backups/
+workspace/backup-config.json
+workspace/oracle-history.json
+workspace/perf-profile.json
+workspace/schedules.json
+workspace/task-pool.json
+workspace/triggers/
+
+# Agent-generated reports (ephemeral)
+workspace/!!_*
+
+# Build plans and reviews (workspace artifacts, not source)
+workspace/build/reviews/
+workspace/build/*-plan.md
+workspace/build/*-spec.md
+workspace/build/*-analysis.md
+workspace/build/codex-activity-indicators.md
+workspace/build/oracle-ui-prep.md
+workspace/build/organic-ui-performance-guide.md
+workspace/build/overnight-plan.md
+workspace/build/renderer-analysis.md
+
+# Test coverage
+ui/coverage/
+ui/coverage-output.txt
+
+# Temp scripts
+workspace/capture.ps1
+workspace/oracle-qa.js
+workspace/oracle-test.js
 
 # Screenshots (user-specific)
 workspace/screenshots/
