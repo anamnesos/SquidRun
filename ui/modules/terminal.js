@@ -480,7 +480,7 @@ function toggleInputLock(paneId) {
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);
   if (lockIcon) {
     lockIcon.innerHTML = inputLocked[paneId] ? LOCK_ICON_SVG : UNLOCK_ICON_SVG;
-    lockIcon.title = inputLocked[paneId] ? 'Input locked (click to unlock)' : 'Input unlocked (click to lock)';
+    lockIcon.dataset.tooltip = inputLocked[paneId] ? 'Locked (click to toggle)' : 'Unlocked (click to toggle)';
     lockIcon.classList.toggle('unlocked', !inputLocked[paneId]);
   }
   log.info(`Terminal ${paneId}`, `Input ${inputLocked[paneId] ? 'locked' : 'unlocked'}`);
@@ -495,7 +495,7 @@ function setInputLocked(paneId, locked) {
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);
   if (lockIcon) {
     lockIcon.innerHTML = locked ? LOCK_ICON_SVG : UNLOCK_ICON_SVG;
-    lockIcon.title = locked ? 'Input locked (click to unlock)' : 'Input unlocked (click to lock)';
+    lockIcon.dataset.tooltip = locked ? 'Locked (click to toggle)' : 'Unlocked (click to toggle)';
     lockIcon.classList.toggle('unlocked', !locked);
   }
   log.info(`Terminal ${paneId}`, `Input ${locked ? 'locked' : 'unlocked'}`);
