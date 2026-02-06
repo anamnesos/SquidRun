@@ -1169,7 +1169,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
 
   terminals.set(paneId, terminalInfo);
 
-  // Identity injection is handled by renderer (terminal.js:spawnClaude) at 4s
+  // Identity injection is handled by renderer (terminal.js:spawnAgent) at 4s
   // using keyboard events via sendToPane(). The daemon PTY write approach caused
   // issues with Codex CLI: echo commands landed in Codex's textarea instead of
   // PowerShell when the CLI started before the 800ms delay elapsed.

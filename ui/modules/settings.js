@@ -277,7 +277,7 @@ function setupSettings() {
 }
 
 // Check if should auto-spawn agents
-async function checkAutoSpawn(spawnAllClaudeFn, reconnectedToExisting) {
+async function checkAutoSpawn(spawnAllAgentsFn, reconnectedToExisting) {
   // Skip auto-spawn if reconnecting to existing terminals (they already have agents)
   if (reconnectedToExisting) {
     log.info('AutoSpawn', 'Reconnected to existing terminals, skipping auto-spawn');
@@ -293,7 +293,7 @@ async function checkAutoSpawn(spawnAllClaudeFn, reconnectedToExisting) {
 
   if (currentSettings.autoSpawn) {
     updateConnectionStatus('Auto-spawning agents in all panes...');
-    await spawnAllClaudeFn();
+    await spawnAllAgentsFn();
   }
 }
 

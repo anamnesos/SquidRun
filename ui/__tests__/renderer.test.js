@@ -95,7 +95,7 @@ jest.mock('../modules/logger', () => ({
 jest.mock('../modules/terminal', () => ({
   init: jest.fn(),
   initTerminals: jest.fn().mockResolvedValue(),
-  spawnAllClaude: jest.fn().mockResolvedValue(),
+  spawnAllAgents: jest.fn().mockResolvedValue(),
   broadcast: jest.fn(),
   sendToPane: jest.fn(),
   getPaneStatus: jest.fn().mockReturnValue({}),
@@ -106,7 +106,7 @@ jest.mock('../modules/terminal', () => ({
   setDeliveryAckCallback: jest.fn(),
   setDeliveryStatusCallback: jest.fn(),
   killPane: jest.fn(),
-  spawnClaude: jest.fn(),
+  spawnAgent: jest.fn(),
   restartPane: jest.fn(),
   aggressiveNudge: jest.fn(),
   nudgePane: jest.fn(),

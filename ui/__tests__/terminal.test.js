@@ -603,11 +603,11 @@ describe('terminal.js module', () => {
     });
   });
 
-  describe('spawnClaude', () => {
+  describe('spawnAgent', () => {
     test('should skip if no terminal exists', async () => {
       terminal.terminals.clear();
 
-      await terminal.spawnClaude('1');
+      await terminal.spawnAgent('1');
 
       expect(mockHivemind.claude.spawn).not.toHaveBeenCalled();
     });
@@ -616,7 +616,7 @@ describe('terminal.js module', () => {
       terminal.terminals.set('1', { test: true });
       terminal.setSDKMode(true);
 
-      await terminal.spawnClaude('1');
+      await terminal.spawnAgent('1');
 
       expect(mockHivemind.claude.spawn).not.toHaveBeenCalled();
 
@@ -631,7 +631,7 @@ describe('terminal.js module', () => {
       terminal.setStatusCallbacks(statusCb, null);
 
       // Just test the immediate part, not the delayed identity injection
-      const spawnPromise = terminal.spawnClaude('1');
+      const spawnPromise = terminal.spawnAgent('1');
 
       // Wait for initial spawn to complete
       await spawnPromise;
@@ -649,7 +649,7 @@ describe('terminal.js module', () => {
       const statusCb = jest.fn();
       terminal.setStatusCallbacks(statusCb, null);
 
-      await terminal.spawnClaude('1');
+      await terminal.spawnAgent('1');
 
       // Codex now calls spawn to get command (needed after model switch)
       expect(mockHivemind.claude.spawn).toHaveBeenCalledWith('1');
@@ -667,13 +667,13 @@ describe('terminal.js module', () => {
       const statusCb = jest.fn();
       terminal.setStatusCallbacks(statusCb, null);
 
-      await terminal.spawnClaude('1');
+      await terminal.spawnAgent('1');
 
       expect(statusCb).toHaveBeenCalledWith('1', 'Spawn failed');
     });
   });
 
-  describe('spawnAllClaude', () => {
+  describe('spawnAllAgents', () => {
     test('should spawn in all 3 panes', async () => {
       jest.useRealTimers();
       // Clear mock call counts from previous tests
@@ -692,7 +692,7 @@ describe('terminal.js module', () => {
       const connectionCb = jest.fn();
       terminal.setStatusCallbacks(null, connectionCb);
 
-      await terminal.spawnAllClaude();
+      await terminal.spawnAllAgents();
 
       expect(connectionCb).toHaveBeenCalledWith('Starting agents in all panes...');
       expect(mockHivemind.claude.spawn).toHaveBeenCalledTimes(3);
@@ -914,7 +914,7 @@ describe('terminal.js module', () => {
     });
   });
 
-  describe('spawnClaude edge cases', () => {
+  describe('spawnAgent edge cases', () => {
     test('should handle spawn returning failure', async () => {
       jest.useRealTimers();
       terminal.terminals.set('1', { write: jest.fn() });
@@ -922,7 +922,7 @@ describe('terminal.js module', () => {
       const statusCb = jest.fn();
       terminal.setStatusCallbacks(statusCb, null);
 
-      await terminal.spawnClaude('1');
+      await terminal.spawnAgent('1');
 
       // Should still update status but not write command
       expect(statusCb).toHaveBeenCalledWith('1', 'Starting...');
@@ -938,7 +938,7 @@ describe('terminal.js module', () => {
         command: 'codex --interactive',
       });
 
-      await terminal.spawnClaude('1');
+      await terminal.spawnAgent('1');
 
       // Should detect Codex command
       expect(mockHivemind.pty.write).toHaveBeenCalledWith('1', 'codex --interactive');

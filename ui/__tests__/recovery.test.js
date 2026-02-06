@@ -89,7 +89,7 @@ describe('Terminal Recovery Controller', () => {
         focusWithRetry: jest.fn().mockResolvedValue(true),
         sendEnterToPane: jest.fn().mockResolvedValue({ success: true, method: 'keyboard' }),
       }),
-      spawnClaude: jest.fn().mockResolvedValue(undefined),
+      spawnAgent: jest.fn().mockResolvedValue(undefined),
     };
 
     controller = createRecoveryController(mockOptions);
@@ -401,16 +401,16 @@ describe('Terminal Recovery Controller', () => {
       expect(result).toBe(true);
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Restarting...');
       expect(mockPty.kill).toHaveBeenCalledWith('1');
-      expect(mockOptions.spawnClaude).toHaveBeenCalledWith('1', null);
+      expect(mockOptions.spawnAgent).toHaveBeenCalledWith('1', null);
     });
 
-    test('passes model parameter to spawnClaude when provided', async () => {
+    test('passes model parameter to spawnAgent when provided', async () => {
       const promise = controller.restartPane('1', 'gemini');
       await jest.advanceTimersByTimeAsync(300);
       const result = await promise;
 
       expect(result).toBe(true);
-      expect(mockOptions.spawnClaude).toHaveBeenCalledWith('1', 'gemini');
+      expect(mockOptions.spawnAgent).toHaveBeenCalledWith('1', 'gemini');
     });
 
     test('handles kill failure gracefully', async () => {

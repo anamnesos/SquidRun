@@ -304,7 +304,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
           const terminal = require('./terminal');
           for (const paneId of panesNeedingSpawn) {
             try {
-              await terminal.spawnClaude(paneId);
+              await terminal.spawnAgent(paneId);
             } catch (err) {
               log.error('Daemon', `Failed to spawn CLI for pane ${paneId}`, err);
             }

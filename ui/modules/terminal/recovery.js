@@ -20,7 +20,7 @@ function createRecoveryController(options = {}) {
     getInjectionInFlight,
     userIsTyping,
     getInjectionHelpers,
-    spawnClaude,
+    spawnAgent,
     resetCodexIdentity,
     resetTerminalWriteQueue,
   } = options;
@@ -252,9 +252,9 @@ function createRecoveryController(options = {}) {
       return false;
     }
 
-    if (typeof spawnClaude === 'function') {
+    if (typeof spawnAgent === 'function') {
       try {
-        await spawnClaude(id, model);
+        await spawnAgent(id, model);
       } catch (err) {
         log.error('Terminal', `Failed to spawn Claude for pane ${id}:`, err);
         setPaneStatus(id, 'Spawn failed');

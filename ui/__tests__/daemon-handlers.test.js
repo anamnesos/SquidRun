@@ -16,7 +16,7 @@ jest.mock('electron', () => ({
 jest.mock('../config', () => ({
   INSTANCE_DIRS: {
     '1': '/project/instances/arch',
-    '2': '/project/instances/infra',
+    '2': '/project/instances/devops',
     '5': '/project/instances/ana',
   },
   PANE_IDS: ['1', '2', '5'],
@@ -39,7 +39,7 @@ jest.mock('../modules/terminal', () => ({
   sendUnstick: jest.fn(),
   aggressiveNudge: jest.fn(),
   initTerminal: jest.fn().mockResolvedValue(),
-  spawnClaude: jest.fn().mockResolvedValue(),
+  spawnAgent: jest.fn().mockResolvedValue(),
   restartPane: jest.fn(),
   freshStartAll: jest.fn(),
   nudgePane: jest.fn(),
@@ -538,16 +538,16 @@ describe('daemon-handlers.js module', () => {
           sdkMode: false,
           terminals: [
             { paneId: '1', alive: true, scrollback: 'Claude Code\n> ', lastActivity: now, cwd: '/project/instances/arch' },
-            { paneId: '2', alive: true, scrollback: '', cwd: '/project/instances/infra' },
+            { paneId: '2', alive: true, scrollback: '', cwd: '/project/instances/devops' },
           ],
         };
 
         await ipcHandlers['daemon-connected']({}, data);
 
         expect(setReconnectedFn).toHaveBeenCalledWith(true);
-        expect(terminal.spawnClaude).toHaveBeenCalledWith('2');
-        expect(terminal.spawnClaude).toHaveBeenCalledWith('5');
-        expect(terminal.spawnClaude).not.toHaveBeenCalledWith('1');
+        expect(terminal.spawnAgent).toHaveBeenCalledWith('2');
+        expect(terminal.spawnAgent).toHaveBeenCalledWith('5');
+        expect(terminal.spawnAgent).not.toHaveBeenCalledWith('1');
       });
 
       test('treats stale scrollback with shell prompt as needing spawn', async () => {
@@ -581,7 +581,7 @@ describe('daemon-handlers.js module', () => {
 
         await ipcHandlers['daemon-connected']({}, data);
 
-        expect(terminal.spawnClaude).toHaveBeenCalledWith('1');
+        expect(terminal.spawnAgent).toHaveBeenCalledWith('1');
       });
     });
 

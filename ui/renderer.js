@@ -234,7 +234,7 @@ function checkInitComplete() {
     initState.autoSpawnChecked = true;
     log.info('Init', 'Both settings and terminals ready, checking auto-spawn...');
     settings.checkAutoSpawn(
-      terminal.spawnAllClaude,
+      terminal.spawnAllAgents,
       terminal.getReconnectedToExisting()
     );
   }
@@ -422,7 +422,7 @@ window.hivemind = {
               initModelSelectors(false);
               // Ensure PTY terminals are initialized and agents started
               terminal.initTerminals().then(() => {
-                terminal.spawnAllClaude();
+                terminal.spawnAllAgents();
               });
             },    // SDK status functions (exposed for external use)
     updateStatus: (paneId, state) => updateSDKStatus(paneId, state),
@@ -1146,7 +1146,7 @@ function setupEventListeners() {
   // Spawn all button (debounced)
   const spawnAllBtn = document.getElementById('spawnAllBtn');
   if (spawnAllBtn) {
-    spawnAllBtn.addEventListener('click', debounceButton('spawnAll', terminal.spawnAllClaude));
+    spawnAllBtn.addEventListener('click', debounceButton('spawnAll', terminal.spawnAllAgents));
   }
 
   // Kill all button (debounced, with confirmation)
