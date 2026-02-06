@@ -34,7 +34,7 @@ const INJECTION_IDLE_THRESHOLD_MS = 2000; // No output for 2s = idle for injecti
 const MAX_QUEUE_TIME_MS = 10000;          // Consider force inject after 10 seconds
 const FORCE_INJECT_IDLE_MS = 500;         // For force-inject, require 500ms of silence
 const EXTREME_WAIT_MS = 30000;            // Log warning if message queued this long
-const ABSOLUTE_MAX_WAIT_MS = 60000;       // Emergency fallback: force inject after 60s
+const ABSOLUTE_MAX_WAIT_MS = 15000;       // Emergency fallback: force inject after 15s (reduced from 60s for Agent Teams compatibility)
 const QUEUE_RETRY_MS = 200;               // Check queue every 200ms
 const BROADCAST_STAGGER_MS = 100;         // Delay between panes in broadcast
 const INJECTION_LOCK_TIMEOUT_MS = 1000;   // Safety release if callbacks missed

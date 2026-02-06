@@ -130,7 +130,7 @@ async function loadSequenceState() {
     if (result && result.success && result.state) {
       const sequences = result.state.sequences || {};
 
-      for (const agent of ['lead', 'orchestrator', 'worker-a', 'worker-b', 'investigator', 'reviewer']) {
+      for (const agent of ['architect', 'infra', 'backend', 'analyst']) {
         const el = document.getElementById(`seq-${agent}`);
         if (el) {
           const agentState = sequences[agent];

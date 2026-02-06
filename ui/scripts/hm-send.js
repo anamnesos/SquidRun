@@ -11,7 +11,7 @@ const args = process.argv.slice(2);
 
 if (args.length < 2) {
   console.log('Usage: node hm-send.js <target> <message> [--role <role>] [--priority urgent]');
-  console.log('  target: paneId (1-6) or role name (architect, frontend, etc.)');
+  console.log('  target: paneId (1,2,4,5) or role name (architect, infra, backend, analyst)');
   console.log('  message: text to send');
   console.log('  --role: your role (for identification)');
   console.log('  --priority: normal or urgent');

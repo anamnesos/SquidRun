@@ -31,11 +31,10 @@ jest.mock('../config', () => ({
   PANE_ROLES: {
     '1': 'Architect',
     '2': 'Infra',
-    '3': 'Frontend',
     '4': 'Backend',
     '5': 'Analyst',
-    '6': 'Reviewer',
   },
+  PANE_IDS: ['1', '2', '4', '5'],
 }));
 
 const path = require('path');
@@ -174,17 +173,17 @@ describe('registerModelSwitchHandlers', () => {
 
     it('should broadcast model switch to all agents via trigger file', async () => {
       // Get the promise for the handler
-      const switchPromise = switchHandler({}, { paneId: '3', model: 'codex' });
+      const switchPromise = switchHandler({}, { paneId: '2', model: 'codex' });
 
       // Simulate the exit event
-      mockCtx.daemonClient._killedHandler('3');
+      mockCtx.daemonClient._killedHandler('2');
 
       await switchPromise;
 
       // Verify broadcast was written to all.txt trigger file
       expect(fs.writeFileSync).toHaveBeenCalledWith(
         expect.stringContaining('all.txt'),
-        '(SYSTEM): Frontend switched to Codex\n'
+        '(SYSTEM): Infra switched to Codex\n'
       );
     });
 

@@ -226,10 +226,8 @@ class CostOptimizer {
     const agentNames = {
       '1': 'Architect',
       '2': 'Infra',
-      '3': 'Frontend',
       '4': 'Backend',
       '5': 'Analyst',
-      '6': 'Reviewer',
     };
 
     const result = {};

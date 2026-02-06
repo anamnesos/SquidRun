@@ -33,10 +33,8 @@ function initCommandPalette() {
     // Navigation
     { id: 'focus-1', label: 'Focus Architect (Pane 1)', icon: '1️⃣', category: 'Navigate', shortcut: 'Alt+1', action: () => terminal.focusPane('1') },
     { id: 'focus-2', label: 'Focus Infra (Pane 2)', icon: '2️⃣', category: 'Navigate', shortcut: 'Alt+2', action: () => terminal.focusPane('2') },
-    { id: 'focus-3', label: 'Focus Frontend (Pane 3)', icon: '3️⃣', category: 'Navigate', shortcut: 'Alt+3', action: () => terminal.focusPane('3') },
     { id: 'focus-4', label: 'Focus Backend (Pane 4)', icon: '4️⃣', category: 'Navigate', shortcut: 'Alt+4', action: () => terminal.focusPane('4') },
     { id: 'focus-5', label: 'Focus Analyst (Pane 5)', icon: '5️⃣', category: 'Navigate', shortcut: 'Alt+5', action: () => terminal.focusPane('5') },
-    { id: 'focus-6', label: 'Focus Reviewer (Pane 6)', icon: '6️⃣', category: 'Navigate', shortcut: 'Alt+6', action: () => terminal.focusPane('6') },
 
     // Panels
     { id: 'toggle-settings', label: 'Toggle Settings Panel', icon: '⚙️', category: 'Panels', action: () => document.getElementById('settingsBtn')?.click() },

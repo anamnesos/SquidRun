@@ -62,12 +62,10 @@ jest.mock('../config', () => ({
   ROLE_ID_MAP: {
     architect: '1',
     infra: '2',
-    frontend: '3',
     backend: '4',
     analyst: '5',
-    reviewer: '6',
   },
-  PANE_IDS: ['1', '2', '3', '4', '5', '6'],
+  PANE_IDS: ['1', '2', '4', '5'],
 }));
 
 // Mock plugins
@@ -243,31 +241,26 @@ describe('HivemindApp', () => {
     it('should return paneId for direct numeric strings 1-6', () => {
       expect(app.resolveTargetToPane('1')).toBe('1');
       expect(app.resolveTargetToPane('2')).toBe('2');
-      expect(app.resolveTargetToPane('3')).toBe('3');
       expect(app.resolveTargetToPane('4')).toBe('4');
       expect(app.resolveTargetToPane('5')).toBe('5');
-      expect(app.resolveTargetToPane('6')).toBe('6');
     });
 
     it('should resolve role names to paneIds', () => {
       expect(app.resolveTargetToPane('architect')).toBe('1');
       expect(app.resolveTargetToPane('infra')).toBe('2');
-      expect(app.resolveTargetToPane('frontend')).toBe('3');
       expect(app.resolveTargetToPane('backend')).toBe('4');
       expect(app.resolveTargetToPane('analyst')).toBe('5');
-      expect(app.resolveTargetToPane('reviewer')).toBe('6');
     });
 
     it('should be case-insensitive for role names', () => {
       expect(app.resolveTargetToPane('ARCHITECT')).toBe('1');
       expect(app.resolveTargetToPane('Architect')).toBe('1');
-      expect(app.resolveTargetToPane('Frontend')).toBe('3');
+      expect(app.resolveTargetToPane('BACKEND')).toBe('4');
     });
 
     it('should resolve legacy aliases', () => {
       expect(app.resolveTargetToPane('lead')).toBe('1');
-      expect(app.resolveTargetToPane('orchestrator')).toBe('1');
-      expect(app.resolveTargetToPane('worker-a')).toBe('3');
+      expect(app.resolveTargetToPane('orchestrator')).toBe('2');
       expect(app.resolveTargetToPane('worker-b')).toBe('4');
       expect(app.resolveTargetToPane('investigator')).toBe('5');
     });

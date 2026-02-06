@@ -15,7 +15,7 @@ function registerApiDocsHandlers(ctx) {
     'pty-create': {
       category: 'PTY/Terminal',
       description: 'Create a new pseudo-terminal for a pane',
-      params: { paneId: 'string - Pane identifier (1-6)', workingDir: 'string - Working directory path' },
+      params: { paneId: 'string - Pane identifier (1, 2, 4, 5)', workingDir: 'string - Working directory path' },
       returns: '{ paneId, cwd, dryRun } | { error }',
     },
     'pty-write': {

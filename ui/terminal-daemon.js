@@ -514,12 +514,10 @@ function exitRecoveryMode() {
 
 // Map paneId to trigger filename
 const PANE_TRIGGER_FILES = {
-  '1': 'lead.txt',
-  '2': 'orchestrator.txt',
-  '3': 'worker-a.txt',
-  '4': 'worker-b.txt',
-  '5': 'investigator.txt',
-  '6': 'reviewer.txt',
+  '1': 'architect.txt',
+  '2': 'infra.txt',
+  '4': 'backend.txt',
+  '5': 'analyst.txt',
 };
 
 /**

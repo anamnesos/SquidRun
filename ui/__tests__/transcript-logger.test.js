@@ -7,11 +7,9 @@
 const mockMemoryStore = {
   PANE_ROLES: {
     '1': 'architect',
-    '2': 'orchestrator',
-    '3': 'implementer-a',
-    '4': 'implementer-b',
-    '5': 'investigator',
-    '6': 'reviewer'
+    '2': 'infra',
+    '4': 'backend',
+    '5': 'analyst',
   },
   getRoleFromPaneId: jest.fn(id => mockMemoryStore.PANE_ROLES[String(id)] || `pane-${id}`),
   appendTranscript: jest.fn(),
@@ -102,7 +100,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'orchestrator',
+        'infra',
         expect.objectContaining({
           type: 'output',
           paneId: '2',
@@ -230,11 +228,11 @@ describe('Transcript Logger', () => {
 
   describe('logSystem', () => {
     test('logs system message', () => {
-      transcriptLogger.logSystem('3', 'Process started', { pid: 1234 });
+      transcriptLogger.logSystem('4', 'Process started', { pid: 1234 });
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'implementer-a',
+        'backend',
         expect.objectContaining({
           type: 'system',
           content: 'Process started',
@@ -373,7 +371,7 @@ describe('Transcript Logger', () => {
 
   describe('logTriggerMessage', () => {
     test('logs message for both source and target', () => {
-      transcriptLogger.logTriggerMessage('1', '6', 'Please review');
+      transcriptLogger.logTriggerMessage('1', '5', 'Please review');
       transcriptLogger.forceFlush();
 
       // Should log output for source (architect)
@@ -383,15 +381,15 @@ describe('Transcript Logger', () => {
           type: 'output',
           metadata: expect.objectContaining({
             messageType: 'trigger_sent',
-            target: 'reviewer',
-            targetPaneId: '6'
+            target: 'analyst',
+            targetPaneId: '5'
           })
         })
       );
 
-      // Should log input for target (reviewer)
+      // Should log input for target (analyst)
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'reviewer',
+        'analyst',
         expect.objectContaining({
           type: 'input',
           metadata: expect.objectContaining({
@@ -404,13 +402,13 @@ describe('Transcript Logger', () => {
     });
 
     test('handles null source pane', () => {
-      transcriptLogger.logTriggerMessage(null, '6', 'System message');
+      transcriptLogger.logTriggerMessage(null, '5', 'System message');
       transcriptLogger.forceFlush();
 
       // Should only log for target
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledTimes(1);
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'reviewer',
+        'analyst',
         expect.objectContaining({
           type: 'input'
         })
@@ -443,7 +441,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'orchestrator',
+        'infra',
         expect.objectContaining({
           type: 'output',
           content: 'Starting response',
@@ -464,7 +462,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'orchestrator',
+        'infra',
         expect.objectContaining({
           type: 'output',
           content: 'Full message content'
@@ -481,7 +479,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'orchestrator',
+        'infra',
         expect.objectContaining({
           type: 'tool_use',
           content: 'Tool: read_file',
@@ -502,7 +500,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'orchestrator',
+        'infra',
         expect.objectContaining({
           content: 'Tool: unknown'
         })
@@ -519,7 +517,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'orchestrator',
+        'infra',
         expect.objectContaining({
           type: 'tool_result',
           content: 'Tool output here',
@@ -548,7 +546,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'orchestrator',
+        'infra',
         expect.objectContaining({
           type: 'system',
           content: 'Session: sess-789',
@@ -568,7 +566,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'orchestrator',
+        'infra',
         expect.objectContaining({
           type: 'system',
           content: 'Message complete',
@@ -585,7 +583,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'orchestrator',
+        'infra',
         expect.objectContaining({
           content: 'Message complete',
           metadata: expect.objectContaining({
@@ -603,7 +601,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'orchestrator',
+        'infra',
         expect.objectContaining({
           type: 'system',
           content: 'Codex event: custom_event',
@@ -620,7 +618,7 @@ describe('Transcript Logger', () => {
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith(
-        'orchestrator',
+        'infra',
         expect.objectContaining({
           content: 'Codex event: unknown'
         })
@@ -780,13 +778,13 @@ describe('Transcript Logger', () => {
 
     test('logs across multiple roles correctly', () => {
       transcriptLogger.logInput('1', 'Architect input');
-      transcriptLogger.logInput('2', 'Orchestrator input');
-      transcriptLogger.logInput('3', 'Implementer input');
+      transcriptLogger.logInput('2', 'Infra input');
+      transcriptLogger.logInput('4', 'Backend input');
       transcriptLogger.forceFlush();
 
       expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith('architect', expect.anything());
-      expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith('orchestrator', expect.anything());
-      expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith('implementer-a', expect.anything());
+      expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith('infra', expect.anything());
+      expect(mockMemoryStore.appendTranscript).toHaveBeenCalledWith('backend', expect.anything());
     });
   });
 });

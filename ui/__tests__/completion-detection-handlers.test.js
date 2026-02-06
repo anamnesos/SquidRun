@@ -74,8 +74,8 @@ describe('Completion Detection Handlers', () => {
       expect(result.completed).toBe(true);
     });
 
-    test('detects "triggered worker" pattern', async () => {
-      const result = await harness.invoke('check-completion', 'I triggered worker-a');
+    test('detects "triggered backend" pattern', async () => {
+      const result = await harness.invoke('check-completion', 'I triggered backend');
 
       expect(result.completed).toBe(true);
     });

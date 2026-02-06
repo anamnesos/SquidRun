@@ -8,7 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
 const { getDaemonClient } = require('../../daemon-client');
-const { WORKSPACE_PATH, ROLE_ID_MAP } = require('../../config');
+const { WORKSPACE_PATH, PANE_IDS, ROLE_ID_MAP } = require('../../config');
 const { createPluginManager } = require('../plugins');
 const { createBackupManager } = require('../backup-manager');
 const { createRecoveryManager } = require('../recovery-manager');
@@ -613,8 +613,8 @@ class HivemindApp {
 
     const targetLower = target.toLowerCase();
 
-    // Direct paneId (1-6)
-    if (/^[1-6]$/.test(target)) {
+    // Direct paneId
+    if (PANE_IDS.includes(target)) {
       return target;
     }
 
@@ -626,8 +626,7 @@ class HivemindApp {
     // Legacy aliases
     const legacyMap = {
       lead: '1',
-      orchestrator: '1',
-      'worker-a': '3',
+      orchestrator: '2',
       'worker-b': '4',
       investigator: '5',
     };

@@ -39,10 +39,8 @@ function initCustomTargetDropdown() {
     { value: '1', label: 'Architect', pane: '1' },
     { value: 'all', label: 'All Agents', pane: 'all' },
     { value: '2', label: 'Infra', pane: '2' },
-    { value: '3', label: 'Frontend', pane: '3' },
     { value: '4', label: 'Backend', pane: '4' },
     { value: '5', label: 'Analyst', pane: '5' },
-    { value: '6', label: 'Reviewer', pane: '6' },
   ];
 
   options.forEach(opt => {

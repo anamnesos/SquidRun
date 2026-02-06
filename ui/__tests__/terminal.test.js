@@ -141,12 +141,12 @@ describe('terminal.js module', () => {
   });
 
   describe('PANE_IDS constant', () => {
-    test('should have 6 pane IDs', () => {
-      expect(terminal.PANE_IDS).toHaveLength(6);
+    test('should have 4 pane IDs', () => {
+      expect(terminal.PANE_IDS).toHaveLength(4);
     });
 
-    test('should be strings 1-6', () => {
-      expect(terminal.PANE_IDS).toEqual(['1', '2', '3', '4', '5', '6']);
+    test('should be strings 1,2,4,5', () => {
+      expect(terminal.PANE_IDS).toEqual(['1', '2', '4', '5']);
     });
   });
 
@@ -416,14 +416,14 @@ describe('terminal.js module', () => {
   });
 
   describe('nudgeAllPanes', () => {
-    test('should nudge all 6 panes', () => {
+    test('should nudge all 4 panes', () => {
       const connectionCb = jest.fn();
       terminal.setStatusCallbacks(null, connectionCb);
 
       terminal.nudgeAllPanes();
 
       expect(connectionCb).toHaveBeenCalledWith('Nudging all agents...');
-      expect(mockHivemind.pty.write).toHaveBeenCalledTimes(6);
+      expect(mockHivemind.pty.write).toHaveBeenCalledTimes(4);
     });
   });
 
@@ -498,14 +498,14 @@ describe('terminal.js module', () => {
   });
 
   describe('killAllTerminals', () => {
-    test('should kill all 6 panes', async () => {
+    test('should kill all 4 panes', async () => {
       const connectionCb = jest.fn();
       terminal.setStatusCallbacks(null, connectionCb);
 
       await terminal.killAllTerminals();
 
       expect(connectionCb).toHaveBeenCalledWith('Killing all terminals...');
-      expect(mockHivemind.pty.kill).toHaveBeenCalledTimes(6);
+      expect(mockHivemind.pty.kill).toHaveBeenCalledTimes(4);
       expect(connectionCb).toHaveBeenCalledWith('All terminals killed');
     });
 
@@ -674,7 +674,7 @@ describe('terminal.js module', () => {
   });
 
   describe('spawnAllClaude', () => {
-    test('should spawn in all 6 panes', async () => {
+    test('should spawn in all 4 panes', async () => {
       jest.useRealTimers();
       // Clear mock call counts from previous tests
       mockHivemind.claude.spawn.mockClear();
@@ -695,7 +695,7 @@ describe('terminal.js module', () => {
       await terminal.spawnAllClaude();
 
       expect(connectionCb).toHaveBeenCalledWith('Starting agents in all panes...');
-      expect(mockHivemind.claude.spawn).toHaveBeenCalledTimes(6);
+      expect(mockHivemind.claude.spawn).toHaveBeenCalledTimes(4);
       expect(connectionCb).toHaveBeenCalledWith('All agents running');
       jest.useFakeTimers();
     });
@@ -1016,10 +1016,10 @@ describe('terminal.js module', () => {
   });
 
   describe('PANE_IDS constant', () => {
-    test('should have 6 pane IDs', () => {
-      expect(terminal.PANE_IDS).toHaveLength(6);
+    test('should have 4 pane IDs', () => {
+      expect(terminal.PANE_IDS).toHaveLength(4);
       expect(terminal.PANE_IDS).toContain('1');
-      expect(terminal.PANE_IDS).toContain('6');
+      expect(terminal.PANE_IDS).toContain('5');
     });
   });
 

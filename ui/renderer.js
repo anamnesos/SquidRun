@@ -150,10 +150,8 @@ function setSDKMode(enabled, options = {}) {
 const SDK_PANE_LABELS = {
   '1': { name: 'Architect', avatar: '[A]' },
   '2': { name: 'Infra', avatar: '[I]' },
-  '3': { name: 'Frontend', avatar: '[F]' },
   '4': { name: 'Backend', avatar: '[B]' },
   '5': { name: 'Analyst', avatar: '[?]' },
-  '6': { name: 'Reviewer', avatar: '[R]' }
 };
 
 const MAIN_PANE_CONTAINER_SELECTOR = '.main-pane-container';
@@ -481,10 +479,8 @@ function updateConnectionStatus(status) {
 const PANE_DOMAIN_MAP = {
   '1': 'architecture',  // Architect
   '2': 'infra',         // Infra
-  '3': 'frontend',      // Frontend
   '4': 'backend',       // Backend
   '5': 'analysis',      // Analyst
-  '6': null             // Reviewer - no self-claim domain
 };
 
 // Track available claimable tasks per domain (updated via IPC)
@@ -707,8 +703,8 @@ function setupEventListeners() {
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
-    // Ctrl+1-6 to focus panes
-    if (e.ctrlKey && e.key >= '1' && e.key <= '6') {
+    // Ctrl+number to focus panes
+    if (e.ctrlKey && terminal.PANE_IDS.includes(e.key)) {
       e.preventDefault();
       terminal.focusPane(e.key);
     }
@@ -739,10 +735,8 @@ function setupEventListeners() {
     const roleHints = {
       '1': 'architecture or strategy',
       '2': 'infrastructure or builds',
-      '3': 'frontend or UI logic',
       '4': 'backend or daemon logic',
       '5': 'debugging or analysis',
-      '6': 'review or verification'
     };
 
     const hint = roleHints[target] ? ` about ${roleHints[target]}` : '';
@@ -949,7 +943,7 @@ function setupEventListeners() {
   }
 
   // Helper function to send broadcast - routes through SDK or PTY based on mode
-  // Supports pane targeting via dropdown or /1-6 prefix
+  // Supports pane targeting via dropdown or /1, /2, /4, /5 prefix
   function sendBroadcast(message) {
     const now = Date.now();
     if (now - lastBroadcastTime < 500) {
@@ -973,9 +967,9 @@ function setupEventListeners() {
     // Check SDK mode from settings
     const currentSettings = settings.getSettings();
     if (currentSettings.sdkMode || sdkMode) {
-      // Check for pane targeting prefix: /1-6 or /architect, /orchestrator, etc.
+      // Check for pane targeting prefix: /1, /2, /4, /5 or /architect, /infra, etc.
       // /all broadcasts to all agents
-      const paneMatch = message.match(/^\/([1-6]|all|lead|architect|orchestrator|worker-?a|worker-?b|implementer-?a|implementer-?b|investigator|reviewer)\s+/i);
+      const paneMatch = message.match(/^\/([1245]|all|lead|architect|infra|orchestrator|backend|worker-?b|implementer-?b|analyst|investigator)\s+/i);
 
       // Determine target: explicit prefix > dropdown selector > default (1)
       let targetPaneId = '1';
@@ -989,11 +983,10 @@ function setupEventListeners() {
           targetPaneId = 'all';
         } else {
           const paneMap = {
-            '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6',
-            'lead': '1', 'architect': '1', 'orchestrator': '2',
-            'worker-a': '3', 'workera': '3', 'implementer-a': '3', 'implementera': '3',
-            'worker-b': '4', 'workerb': '4', 'implementer-b': '4', 'implementerb': '4',
-            'investigator': '5', 'reviewer': '6'
+            '1': '1', '2': '2', '4': '4', '5': '5',
+            'lead': '1', 'architect': '1', 'infra': '2', 'orchestrator': '2',
+            'backend': '4', 'worker-b': '4', 'workerb': '4', 'implementer-b': '4', 'implementerb': '4',
+            'analyst': '5', 'investigator': '5'
           };
           targetPaneId = paneMap[target] || '1';
         }
@@ -1017,7 +1010,7 @@ function setupEventListeners() {
           });
         }
 
-        ['1', '2', '3', '4', '5', '6'].forEach(paneId => {
+        terminal.PANE_IDS.forEach(paneId => {
           // Show user message in organic UI agent panes if active
           if (organicUIInstance) {
             organicUIInstance.appendText(paneId, `> ${actualMessage}`);
@@ -1504,7 +1497,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   ipcRenderer.on('restart-all-panes', () => {
-    const panes = terminal.PANE_IDS || ['1', '2', '3', '4', '5', '6'];
+    const panes = terminal.PANE_IDS;
     panes.forEach((paneId, index) => {
       setTimeout(() => terminal.restartPane(String(paneId)), index * 200);
     });
@@ -1668,7 +1661,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const sdkMessageBuffer = new Map(); // paneId -> { messages: [], timer: null, lastTimestamp: null }
 
   // Initialize buffer for each pane
-  ['1', '2', '3', '4', '5', '6'].forEach(paneId => {
+  terminal.PANE_IDS.forEach(paneId => {
     sdkMessageBuffer.set(paneId, { messages: [], timer: null, lastTimestamp: null });
   });
 

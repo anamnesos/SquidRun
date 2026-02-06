@@ -112,7 +112,7 @@ function handleMessage(clientId, rawData) {
   // Handle broadcast
   if (message.type === 'broadcast') {
     broadcast(message.content, { from: clientInfo.role || clientId, excludeSender: clientId });
-    return;
+    // Don't return - let messageHandler also route to terminals/triggers
   }
 
   // Pass to external handler if set

@@ -29,11 +29,9 @@ describe('Completion Quality Handlers', () => {
     ctx.mainWindow.isDestroyed = jest.fn(() => false);
     ctx.PANE_ROLES = {
       '1': 'Architect',
-      '2': 'Orchestrator',
-      '3': 'Implementer A',
-      '4': 'Implementer B',
-      '5': 'Investigator',
-      '6': 'Reviewer',
+      '2': 'Infra',
+      '4': 'Backend',
+      '5': 'Analyst',
     };
 
     // Set up watcher with readState

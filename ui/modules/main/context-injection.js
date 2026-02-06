@@ -16,10 +16,8 @@ const { INSTANCE_DIRS, PANE_ROLES } = require('../../config');
 const ROLE_FILES = {
   '1': 'ARCH.md',
   '2': 'INFRA.md',
-  '3': 'FRONT.md',
   '4': 'BACK.md',
   '5': 'ANA.md',
-  '6': 'REV.md',
 };
 
 // Map model types to model notes files

@@ -9,11 +9,9 @@ const mockContexts = new Map();
 const mockMemoryStore = {
   PANE_ROLES: {
     '1': 'architect',
-    '2': 'orchestrator',
-    '3': 'implementer-a',
-    '4': 'implementer-b',
-    '5': 'investigator',
-    '6': 'reviewer'
+    '2': 'infra',
+    '4': 'backend',
+    '5': 'analyst',
   },
   getRoleFromPaneId: jest.fn(id => mockMemoryStore.PANE_ROLES[String(id)] || `pane-${id}`),
   loadContext: jest.fn(role => mockContexts.get(role) || null),
@@ -535,10 +533,10 @@ describe('Context Manager', () => {
 
   describe('Collaboration Tracking', () => {
     test('recordInteraction tracks sent message', () => {
-      contextManager.recordInteraction('architect', 'reviewer', 'sent', 'Please review');
+      contextManager.recordInteraction('architect', 'analyst', 'sent', 'Please review');
 
       const context = contextManager.getContext('architect');
-      const interaction = context.lastInteractions.reviewer;
+      const interaction = context.lastInteractions.analyst;
 
       expect(interaction.sent).toBe(1);
       expect(interaction.lastDirection).toBe('sent');
@@ -546,34 +544,34 @@ describe('Context Manager', () => {
     });
 
     test('recordInteraction tracks received message', () => {
-      contextManager.recordInteraction('architect', 'reviewer', 'received', 'LGTM');
+      contextManager.recordInteraction('architect', 'analyst', 'received', 'LGTM');
 
       const context = contextManager.getContext('architect');
-      const interaction = context.lastInteractions.reviewer;
+      const interaction = context.lastInteractions.analyst;
 
       expect(interaction.received).toBe(1);
     });
 
     test('recordInteraction increments counts', () => {
-      contextManager.recordInteraction('architect', 'reviewer', 'sent', 'msg1');
-      contextManager.recordInteraction('architect', 'reviewer', 'sent', 'msg2');
-      contextManager.recordInteraction('architect', 'reviewer', 'received', 'reply');
+      contextManager.recordInteraction('architect', 'analyst', 'sent', 'msg1');
+      contextManager.recordInteraction('architect', 'analyst', 'sent', 'msg2');
+      contextManager.recordInteraction('architect', 'analyst', 'received', 'reply');
 
       const context = contextManager.getContext('architect');
-      const interaction = context.lastInteractions.reviewer;
+      const interaction = context.lastInteractions.analyst;
 
       expect(interaction.sent).toBe(2);
       expect(interaction.received).toBe(1);
     });
 
     test('getCollaborationStats returns all interactions', () => {
-      contextManager.recordInteraction('architect', 'reviewer', 'sent', 'a');
-      contextManager.recordInteraction('architect', 'implementer-a', 'sent', 'b');
+      contextManager.recordInteraction('architect', 'analyst', 'sent', 'a');
+      contextManager.recordInteraction('architect', 'backend', 'sent', 'b');
 
       const stats = contextManager.getCollaborationStats('architect');
 
-      expect(stats.reviewer).toBeDefined();
-      expect(stats['implementer-a']).toBeDefined();
+      expect(stats.analyst).toBeDefined();
+      expect(stats['backend']).toBeDefined();
     });
   });
 

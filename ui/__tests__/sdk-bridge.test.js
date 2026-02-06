@@ -87,18 +87,16 @@ describe('SDK Bridge', () => {
     test('exports PANE_ROLES mapping', () => {
       expect(PANE_ROLES['1']).toBe('Architect');
       expect(PANE_ROLES['2']).toBe('Infra');
-      expect(PANE_ROLES['3']).toBe('Frontend');
       expect(PANE_ROLES['4']).toBe('Backend');
       expect(PANE_ROLES['5']).toBe('Analyst');
-      expect(PANE_ROLES['6']).toBe('Reviewer');
     });
 
     test('exports ROLE_TO_PANE mapping', () => {
       expect(ROLE_TO_PANE['Lead']).toBe('1');
       expect(ROLE_TO_PANE['Architect']).toBe('1');
       expect(ROLE_TO_PANE['orchestrator']).toBe('2');
-      expect(ROLE_TO_PANE['worker-a']).toBe('3');
-      expect(ROLE_TO_PANE['Reviewer']).toBe('6');
+      expect(ROLE_TO_PANE['worker-b']).toBe('4');
+      expect(ROLE_TO_PANE['analyst']).toBe('5');
     });
   });
 
@@ -113,23 +111,23 @@ describe('SDK Bridge', () => {
       expect(bridge.buffer).toBe('');
     });
 
-    test('initializes 6 sessions', () => {
+    test('initializes 4 sessions', () => {
       const bridge = new SDKBridge();
 
-      expect(Object.keys(bridge.sessions)).toHaveLength(6);
-      for (let i = 1; i <= 6; i++) {
-        expect(bridge.sessions[String(i)]).toBeDefined();
-        expect(bridge.sessions[String(i)].id).toBeNull();
-        expect(bridge.sessions[String(i)].status).toBe('idle');
+      expect(Object.keys(bridge.sessions)).toHaveLength(4);
+      for (const id of ['1', '2', '4', '5']) {
+        expect(bridge.sessions[id]).toBeDefined();
+        expect(bridge.sessions[id].id).toBeNull();
+        expect(bridge.sessions[id].status).toBe('idle');
       }
     });
 
     test('initializes all panes as subscribed', () => {
       const bridge = new SDKBridge();
 
-      expect(bridge.subscribers.size).toBe(6);
-      for (let i = 1; i <= 6; i++) {
-        expect(bridge.subscribers.has(String(i))).toBe(true);
+      expect(bridge.subscribers.size).toBe(4);
+      for (const id of ['1', '2', '4', '5']) {
+        expect(bridge.subscribers.has(id)).toBe(true);
       }
     });
   });
@@ -185,9 +183,9 @@ describe('SDK Bridge', () => {
         webContents: { send: jest.fn() },
       };
       bridge.setMainWindow(mockWindow);
-      bridge.subscribers.delete('3');
+      bridge.subscribers.delete('4');
 
-      bridge.sendToRenderer('test-channel', { paneId: '3' });
+      bridge.sendToRenderer('test-channel', { paneId: '4' });
 
       expect(mockWindow.webContents.send).not.toHaveBeenCalled();
     });
@@ -468,10 +466,10 @@ describe('SDK Bridge', () => {
       bridge.setMainWindow(mockWindow);
       bridge.startProcess();
 
-      mockProcess.stderr.emit('data', Buffer.from('[Pane 3] Error'));
+      mockProcess.stderr.emit('data', Buffer.from('[Pane 4] Error'));
 
       expect(mockWindow.webContents.send).toHaveBeenCalledWith('sdk-error', expect.objectContaining({
-        paneId: '3',
+        paneId: '4',
       }));
     });
   });
@@ -603,30 +601,30 @@ describe('SDK Bridge', () => {
   describe('subscribe / unsubscribe', () => {
     test('subscribes to pane', () => {
       const bridge = new SDKBridge();
-      bridge.subscribers.delete('3');
+      bridge.subscribers.delete('4');
 
-      const result = bridge.subscribe('3');
+      const result = bridge.subscribe('4');
 
       expect(result).toBe(true);
-      expect(bridge.subscribers.has('3')).toBe(true);
+      expect(bridge.subscribers.has('4')).toBe(true);
     });
 
     test('normalizes role names for subscribe', () => {
       const bridge = new SDKBridge();
-      bridge.subscribers.delete('6');
+      bridge.subscribers.delete('5');
 
-      bridge.subscribe('Reviewer');
+      bridge.subscribe('analyst');
 
-      expect(bridge.subscribers.has('6')).toBe(true);
+      expect(bridge.subscribers.has('5')).toBe(true);
     });
 
     test('unsubscribes from pane', () => {
       const bridge = new SDKBridge();
 
-      const result = bridge.unsubscribe('3');
+      const result = bridge.unsubscribe('4');
 
       expect(result).toBe(true);
-      expect(bridge.subscribers.has('3')).toBe(false);
+      expect(bridge.subscribers.has('4')).toBe(false);
     });
 
     test('normalizes role names for unsubscribe', () => {
@@ -683,7 +681,7 @@ describe('SDK Bridge', () => {
       await bridge.startSessions();
 
       expect(mockWindow.webContents.send).toHaveBeenCalledWith('sdk-session-start', {
-        panes: ['1', '2', '3', '4', '5', '6'],
+        panes: ['1', '2', '4', '5'],
       });
     });
   });
@@ -1311,10 +1309,10 @@ describe('SDK Bridge', () => {
       bridge.startProcess();
       bridge.ready = true;
 
-      bridge.interrupt('3');
+      bridge.interrupt('4');
 
       expect(mockProcess.stdin.write).toHaveBeenCalledWith(expect.stringContaining('interrupt'));
-      expect(mockProcess.stdin.write).toHaveBeenCalledWith(expect.stringContaining('"pane_id":"3"'));
+      expect(mockProcess.stdin.write).toHaveBeenCalledWith(expect.stringContaining('"pane_id":"4"'));
     });
 
     test('normalizes role names', () => {
@@ -1322,9 +1320,9 @@ describe('SDK Bridge', () => {
       bridge.startProcess();
       bridge.ready = true;
 
-      bridge.interrupt('worker-a');
+      bridge.interrupt('worker-b');
 
-      expect(mockProcess.stdin.write).toHaveBeenCalledWith(expect.stringContaining('"pane_id":"3"'));
+      expect(mockProcess.stdin.write).toHaveBeenCalledWith(expect.stringContaining('"pane_id":"4"'));
     });
   });
 

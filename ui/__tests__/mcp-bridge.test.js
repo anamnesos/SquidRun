@@ -35,6 +35,13 @@ jest.mock('fs', () => ({
 
 jest.mock('../config', () => ({
   WORKSPACE_PATH: '/test/workspace',
+  PANE_IDS: ['1', '2', '4', '5'],
+  PANE_ROLES: {
+    '1': 'Architect',
+    '2': 'Infra',
+    '4': 'Backend',
+    '5': 'Analyst',
+  },
 }));
 
 const fs = require('fs');
@@ -58,14 +65,12 @@ describe('MCP Bridge', () => {
         expect(log.info).toHaveBeenCalledWith('MCP Bridge', expect.stringContaining('registered'));
       });
 
-      test('registers all 6 pane roles correctly', () => {
+      test('registers all 4 pane roles correctly', () => {
         const roles = {
           '1': 'Architect',
           '2': 'Infra',
-          '3': 'Frontend',
           '4': 'Backend',
           '5': 'Analyst',
-          '6': 'Reviewer',
         };
 
         for (const [paneId, expectedRole] of Object.entries(roles)) {
@@ -116,7 +121,7 @@ describe('MCP Bridge', () => {
 
     describe('heartbeat', () => {
       test('updates lastSeen for existing agent', () => {
-        mcpBridge.registerAgent('sess-hb', '3');
+        mcpBridge.registerAgent('sess-hb', '4');
         const result = mcpBridge.heartbeat('sess-hb');
 
         expect(result.success).toBe(true);
@@ -251,10 +256,10 @@ describe('MCP Bridge', () => {
         const result = mcpBridge.mcpBroadcastMessage('test-session', 'Broadcast msg');
 
         expect(result.success).toBe(true);
-        expect(result.results.length).toBe(5); // All except sender (pane 1)
+        expect(result.results.length).toBe(3); // All except sender (pane 1)
 
-        // Verify it was called for panes 2-6
-        for (const paneId of ['2', '3', '4', '5', '6']) {
+        // Verify it was called for panes 2, 4, 5
+        for (const paneId of ['2', '4', '5']) {
           expect(mockWatcher.sendMessage).toHaveBeenCalledWith('1', paneId, 'Broadcast msg', 'broadcast');
         }
       });
@@ -470,7 +475,7 @@ describe('MCP Bridge', () => {
 
         expect(result).toBe(true);
         expect(fs.writeFileSync).toHaveBeenCalledWith(
-          expect.stringContaining('lead.txt'),
+          expect.stringContaining('architect.txt'),
           'Test message',
           'utf-8'
         );
@@ -478,12 +483,10 @@ describe('MCP Bridge', () => {
 
       test('writes to correct trigger files for each pane', () => {
         const paneFiles = {
-          '1': 'lead.txt',
-          '2': 'orchestrator.txt',
-          '3': 'worker-a.txt',
-          '4': 'worker-b.txt',
-          '5': 'investigator.txt',
-          '6': 'reviewer.txt',
+          '1': 'architect.txt',
+          '2': 'infra.txt',
+          '4': 'backend.txt',
+          '5': 'analyst.txt',
         };
 
         for (const [paneId, expectedFile] of Object.entries(paneFiles)) {
@@ -709,7 +712,7 @@ describe('MCP Bridge', () => {
     });
 
     test('handles unregister', () => {
-      mcpBridge.registerAgent('unreg-session', '3');
+      mcpBridge.registerAgent('unreg-session', '4');
       const result = mcpBridge.handleToolCall('unreg-session', 'unregister', {});
 
       expect(result.success).toBe(true);

@@ -389,12 +389,12 @@
 }
 
 /* Agent role colors - subtle accent bars */
-/* Pane 1: Architect (amber) */
+/* Pane 1: Architect (red) */
 .sdk-agent-lead {
-  border-left: 3px solid var(--sdk-accent-amber);
+  border-left: 3px solid var(--sdk-accent-red);
 }
 .sdk-agent-lead .sdk-agent-label {
-  color: var(--sdk-accent-amber);
+  color: var(--sdk-accent-red);
 }
 
 /* Pane 2: Infra (blue) */
@@ -421,12 +421,12 @@
   color: var(--sdk-accent-purple);
 }
 
-/* Pane 5: Analyst (cyan) */
+/* Pane 5: Analyst (yellow) */
 .sdk-agent-analyst {
-  border-left: 3px solid #06b6d4;
+  border-left: 3px solid #eab308;
 }
 .sdk-agent-analyst .sdk-agent-label {
-  color: #06b6d4;
+  color: #eab308;
 }
 
 /* Pane 6: Reviewer (orange) */

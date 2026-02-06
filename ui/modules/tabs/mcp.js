@@ -4,23 +4,13 @@
  */
 
 const { ipcRenderer } = require('electron');
+const config = require('../../config');
 
 const mcpStatus = {
   '1': 'disconnected',
   '2': 'disconnected',
-  '3': 'disconnected',
   '4': 'disconnected',
-  '5': 'disconnected',
-  '6': 'disconnected'
-};
-
-const MCP_AGENT_NAMES = {
-  '1': 'Architect',
-  '2': 'Orchestrator',
-  '3': 'Implementer A',
-  '4': 'Implementer B',
-  '5': 'Investigator',
-  '6': 'Reviewer'
+  '5': 'disconnected'
 };
 
 function updateMCPAgentStatus(paneId, status) {
@@ -30,7 +20,7 @@ function updateMCPAgentStatus(paneId, status) {
   const dot = document.getElementById(`mcpDot${paneId}`);
   if (dot) {
     dot.className = `mcp-agent-dot ${status}`;
-    const agentName = MCP_AGENT_NAMES[paneId] || `Pane ${paneId}`;
+    const agentName = config.PANE_ROLES[paneId] || `Pane ${paneId}`;
     dot.title = `${agentName}: ${status.charAt(0).toUpperCase() + status.slice(1)}`;
   }
 }

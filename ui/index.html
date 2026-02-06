@@ -43,16 +43,14 @@
       <div class="mcp-agent-dots">
         <div class="mcp-agent-dot disconnected" id="mcpDot1" data-pane="1" data-agent="Arch" title="Architect - Disconnected"></div>
         <div class="mcp-agent-dot disconnected" id="mcpDot2" data-pane="2" data-agent="Infra" title="Infra - Disconnected"></div>
-        <div class="mcp-agent-dot disconnected" id="mcpDot3" data-pane="3" data-agent="Front" title="Frontend - Disconnected"></div>
         <div class="mcp-agent-dot disconnected" id="mcpDot4" data-pane="4" data-agent="Back" title="Backend - Disconnected"></div>
         <div class="mcp-agent-dot disconnected" id="mcpDot5" data-pane="5" data-agent="Anly" title="Analyst - Disconnected"></div>
-        <div class="mcp-agent-dot disconnected" id="mcpDot6" data-pane="6" data-agent="Rev" title="Reviewer - Disconnected"></div>
       </div>
-      <span class="mcp-status-summary none" id="mcpStatusSummary">0/6</span>
+      <span class="mcp-status-summary none" id="mcpStatusSummary">0/4</span>
     </div>
     <div class="header-actions">
       <button class="btn btn-folder" id="selectProjectBtn" title="Choose project folder for all agents"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Project</button>
-      <button class="btn btn-spawn" id="spawnAllBtn" title="Start agent CLIs in all 6 terminal panes"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> Spawn</button>
+      <button class="btn btn-spawn" id="spawnAllBtn" title="Start agent CLIs in all 4 terminal panes"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> Spawn</button>
       <button class="btn btn-sync" id="syncBtn" title="Broadcast shared_context.md to all agents"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Sync</button>
       <div class="dropdown" id="actionsDropdown">
         <button class="btn btn-actions" id="actionsBtn" title="Agent management actions"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg> Actions <svg class="dropdown-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
@@ -412,29 +410,6 @@
           <div class="pane-terminal" id="terminal-2"></div>
         </div>
 
-        <div class="pane" data-pane-id="3">
-          <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span><span class="agent-badge idle" id="badge-3"></span>Front<span class="role-desc">- Builds What You Can See</span><span class="cli-badge" id="cli-badge-3"></span><span class="pane-project" id="project-3" title="Click to change project"></span><span class="agent-task" id="task-3"></span></span>
-            <div class="pane-header-right">
-              <select class="model-selector" id="model-selector-3" data-pane-id="3" title="Switch model for this pane">
-                <option value="claude">Claude</option>
-                <option value="codex">Codex</option>
-                <option value="gemini">Gemini</option>
-              </select>
-              <span class="pane-status idle" id="status-3"><span class="pane-spinner"></span>Ready</span>
-              <span class="agent-health" id="health-3" title="Last output time">-</span>
-              <div class="pane-actions">
-                <button class="pane-action-btn interrupt-btn" data-pane-id="3" title="Send interrupt signal (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="3" title="Send Escape key to unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
-                <button class="pane-action-btn kickoff-btn" data-pane-id="3" title="Kill and restart agent session"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
-                <button class="pane-action-btn expand-btn" data-pane-id="3" title="Expand pane to full width (ESC to collapse)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
-              </div>
-              <span class="lock-icon" id="lock-icon-3" data-pane-id="3" title="Input locked (click to unlock)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
-            </div>
-          </div>
-          <div class="pane-terminal" id="terminal-3"></div>
-        </div>
-
         <div class="pane" data-pane-id="4">
           <div class="pane-header">
             <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span><span class="agent-badge idle" id="badge-4"></span>Back<span class="role-desc">- The One Who Makes It All Work</span><span class="cli-badge" id="cli-badge-4"></span><span class="pane-project" id="project-4" title="Click to change project"></span><span class="agent-task" id="task-4"></span></span>
@@ -481,28 +456,6 @@
           <div class="pane-terminal" id="terminal-5"></div>
         </div>
 
-        <div class="pane" data-pane-id="6">
-          <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span><span class="agent-badge idle" id="badge-6"></span>Rev<span class="role-desc">- The One Who Checks Everyone's Work</span><span class="cli-badge" id="cli-badge-6"></span><span class="pane-project" id="project-6" title="Click to change project"></span><span class="agent-task" id="task-6"></span></span>
-            <div class="pane-header-right">
-              <select class="model-selector" id="model-selector-6" data-pane-id="6" title="Switch model for this pane">
-                <option value="claude">Claude</option>
-                <option value="codex">Codex</option>
-                <option value="gemini">Gemini</option>
-              </select>
-              <span class="pane-status idle" id="status-6"><span class="pane-spinner"></span>Ready</span>
-              <span class="agent-health" id="health-6" title="Last output time">-</span>
-              <div class="pane-actions">
-                <button class="pane-action-btn interrupt-btn" data-pane-id="6" title="Send interrupt signal (Ctrl+C)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></button>
-                <button class="pane-action-btn unstick-btn" data-pane-id="6" title="Send Escape key to unstick agent"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg></button>
-                <button class="pane-action-btn kickoff-btn" data-pane-id="6" title="Kill and restart agent session"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
-                <button class="pane-action-btn expand-btn" data-pane-id="6" title="Expand pane to full width (ESC to collapse)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
-              </div>
-              <span class="lock-icon" id="lock-icon-6" data-pane-id="6" title="Input locked (click to unlock)"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
-            </div>
-          </div>
-          <div class="pane-terminal" id="terminal-6"></div>
-        </div>
         </div>
       </div>
 
@@ -514,10 +467,8 @@
             <option value="1" selected>Architect</option>
             <option value="all">All Agents</option>
             <option value="2">Infra</option>
-            <option value="3">Frontend</option>
             <option value="4">Backend</option>
             <option value="5">Analyst</option>
-            <option value="6">Reviewer</option>
           </select>
         </div>
         <input type="text" class="command-input" id="broadcastInput"
@@ -706,10 +657,8 @@
               <option value="all">All Agents</option>
               <option value="1">Architect</option>
               <option value="2">Infra</option>
-              <option value="3">Frontend</option>
               <option value="4">Backend</option>
               <option value="5">Analyst</option>
-              <option value="6">Reviewer</option>
             </select>
             <input type="text" id="memorySearchInput" class="memory-search-input" placeholder="Search conversations..." />
             <button class="btn btn-sm" id="memorySearchBtn" title="Search">🔍</button>
@@ -868,40 +817,6 @@
                 <button class="btn btn-sm btn-restart" data-action="restart" data-pane="2" title="Kill and restart agent">Restart</button>
               </div>
             </div>
-              <div class="health-agent-item" data-pane="3">
-              <div class="health-agent-header">
-                <span class="health-agent-badge" id="health-badge-3">●</span>
-                <span class="health-agent-name">Frontend</span>
-                <span class="health-agent-status" id="health-status-3">Unknown</span>
-              </div>
-                <div class="health-agent-details">
-                  <div class="health-metric">
-                    <span class="health-metric-label">Last Output:</span>
-                    <span class="health-metric-value" id="health-last-output-3">-</span>
-                  </div>
-                  <div class="health-metric">
-                    <span class="health-metric-label">Stuck Count:</span>
-                    <span class="health-metric-value" id="health-stuck-count-3">0</span>
-                  </div>
-                  <div class="health-metric">
-                    <span class="health-metric-label">Recovery Step:</span>
-                    <span class="health-metric-value" id="health-recovery-step-3">None</span>
-                  </div>
-                  <div class="health-metric">
-                    <span class="health-metric-label">CPU:</span>
-                    <span class="health-metric-value" id="health-cpu-3">-</span>
-                  </div>
-                  <div class="health-metric">
-                    <span class="health-metric-label">Mem:</span>
-                    <span class="health-metric-value" id="health-mem-3">-</span>
-                  </div>
-                </div>
-              <div class="health-agent-actions">
-                <button class="btn btn-sm btn-nudge" data-action="nudge" data-pane="3" title="Send Enter to unstick">Nudge</button>
-                <button class="btn btn-sm btn-interrupt" data-action="interrupt" data-pane="3" title="Send Ctrl+C interrupt">Interrupt</button>
-                <button class="btn btn-sm btn-restart" data-action="restart" data-pane="3" title="Kill and restart agent">Restart</button>
-              </div>
-            </div>
               <div class="health-agent-item" data-pane="4">
               <div class="health-agent-header">
                 <span class="health-agent-badge" id="health-badge-4">●</span>
@@ -968,40 +883,6 @@
                 <button class="btn btn-sm btn-nudge" data-action="nudge" data-pane="5" title="Send Enter to unstick">Nudge</button>
                 <button class="btn btn-sm btn-interrupt" data-action="interrupt" data-pane="5" title="Send Ctrl+C interrupt">Interrupt</button>
                 <button class="btn btn-sm btn-restart" data-action="restart" data-pane="5" title="Kill and restart agent">Restart</button>
-              </div>
-            </div>
-              <div class="health-agent-item" data-pane="6">
-              <div class="health-agent-header">
-                <span class="health-agent-badge" id="health-badge-6">●</span>
-                <span class="health-agent-name">Reviewer</span>
-                <span class="health-agent-status" id="health-status-6">Unknown</span>
-              </div>
-                <div class="health-agent-details">
-                  <div class="health-metric">
-                    <span class="health-metric-label">Last Output:</span>
-                    <span class="health-metric-value" id="health-last-output-6">-</span>
-                  </div>
-                  <div class="health-metric">
-                    <span class="health-metric-label">Stuck Count:</span>
-                    <span class="health-metric-value" id="health-stuck-count-6">0</span>
-                  </div>
-                  <div class="health-metric">
-                    <span class="health-metric-label">Recovery Step:</span>
-                    <span class="health-metric-value" id="health-recovery-step-6">None</span>
-                  </div>
-                  <div class="health-metric">
-                    <span class="health-metric-label">CPU:</span>
-                    <span class="health-metric-value" id="health-cpu-6">-</span>
-                  </div>
-                  <div class="health-metric">
-                    <span class="health-metric-label">Mem:</span>
-                    <span class="health-metric-value" id="health-mem-6">-</span>
-                  </div>
-                </div>
-              <div class="health-agent-actions">
-                <button class="btn btn-sm btn-nudge" data-action="nudge" data-pane="6" title="Send Enter to unstick">Nudge</button>
-                <button class="btn btn-sm btn-interrupt" data-action="interrupt" data-pane="6" title="Send Ctrl+C interrupt">Interrupt</button>
-                <button class="btn btn-sm btn-restart" data-action="restart" data-pane="6" title="Kill and restart agent">Restart</button>
               </div>
             </div>
           </div>
@@ -1661,12 +1542,6 @@
               <div class="perf-stat"><span class="perf-value" id="perf-avgtime-2">--</span><span class="perf-label">Avg Time</span></div>
               <div class="perf-stat"><span class="perf-value" id="perf-success-2">--</span><span class="perf-label">Success</span></div>
             </div>
-            <div class="perf-card" data-pane="3">
-              <div class="perf-card-header">Frontend</div>
-              <div class="perf-stat"><span class="perf-value" id="perf-completions-3">0</span><span class="perf-label">Completions</span></div>
-              <div class="perf-stat"><span class="perf-value" id="perf-avgtime-3">--</span><span class="perf-label">Avg Time</span></div>
-              <div class="perf-stat"><span class="perf-value" id="perf-success-3">--</span><span class="perf-label">Success</span></div>
-            </div>
             <div class="perf-card" data-pane="4">
               <div class="perf-card-header">Backend</div>
               <div class="perf-stat"><span class="perf-value" id="perf-completions-4">0</span><span class="perf-label">Completions</span></div>
@@ -1678,12 +1553,6 @@
               <div class="perf-stat"><span class="perf-value" id="perf-completions-5">0</span><span class="perf-label">Completions</span></div>
               <div class="perf-stat"><span class="perf-value" id="perf-avgtime-5">--</span><span class="perf-label">Avg Time</span></div>
               <div class="perf-stat"><span class="perf-value" id="perf-success-5">--</span><span class="perf-label">Success</span></div>
-            </div>
-            <div class="perf-card" data-pane="6">
-              <div class="perf-card-header">Reviewer</div>
-              <div class="perf-stat"><span class="perf-value" id="perf-completions-6">0</span><span class="perf-label">Completions</span></div>
-              <div class="perf-stat"><span class="perf-value" id="perf-avgtime-6">--</span><span class="perf-label">Avg Time</span></div>
-              <div class="perf-stat"><span class="perf-value" id="perf-success-6">--</span><span class="perf-label">Success</span></div>
             </div>
           </div>
             <div class="perf-actions">
@@ -2027,7 +1896,7 @@
   <div class="status-bar">
     <span id="connectionStatus">Initializing...</span>
     <span id="heartbeatIndicator" class="heartbeat-indicator idle" style="display: none;">HB: IDLE (10m)</span>
-    <span>Press Ctrl+1-6 to focus pane | Enter to send to Lead | /all to broadcast | /3 to target pane 3</span>
+    <span>Press Ctrl+1-4 to focus pane | Enter to send to Lead | /all to broadcast | /2 to target pane 2</span>
   </div>
 
   <script src="renderer.js"></script>
