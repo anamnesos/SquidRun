@@ -40,7 +40,7 @@ describe('config.js', () => {
 
     test('should have paths for each pane', () => {
       expect(INSTANCE_DIRS['1']).toContain('arch');
-      expect(INSTANCE_DIRS['2']).toContain('infra');
+      expect(INSTANCE_DIRS['2']).toContain('devops');
       expect(INSTANCE_DIRS['5']).toContain('ana');
     });
 

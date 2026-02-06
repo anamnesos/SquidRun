@@ -18,7 +18,7 @@ const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
 // Short folder names - prestart script ensures folders exist with these names
 const INSTANCE_DIRS = {
   '1': path.join(WORKSPACE_PATH, 'instances', 'arch'),   // Architect (+ Frontend/Reviewer as internal teammates)
-  '2': path.join(WORKSPACE_PATH, 'instances', 'infra'),  // DevOps (Infra + Backend combined)
+  '2': path.join(WORKSPACE_PATH, 'instances', 'devops'), // DevOps (Infra + Backend combined)
   '5': path.join(WORKSPACE_PATH, 'instances', 'ana'),    // Analyst
 };
 

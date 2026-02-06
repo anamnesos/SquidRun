@@ -1074,8 +1074,7 @@ MIT
       'workspace',
       'workspace/instances',
       'workspace/instances/arch',
-      'workspace/instances/infra',
-      'workspace/instances/back',
+      'workspace/instances/devops',
       'workspace/instances/ana',
       'workspace/build',
       'workspace/build/reviews',
@@ -1187,8 +1186,7 @@ _No errors logged_
 | Role | Status | Agent | Date |
 |------|--------|-------|------|
 | Architect | OPEN | | |
-| Infra | OPEN | | |
-| Backend | OPEN | | |
+| DevOps | OPEN | | |
 | Analyst | OPEN | | |
 `,
       },
@@ -1208,7 +1206,7 @@ You are the Architect for this project.
 - Broadcast: workspace/triggers/all.txt
 `,
       },
-      'workspace/instances/infra/CLAUDE.md': {
+      'workspace/instances/devops/CLAUDE.md': {
         type: 'text',
         content: `# DevOps Instance
 
