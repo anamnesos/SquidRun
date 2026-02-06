@@ -1079,7 +1079,7 @@ describe('terminal.js module', () => {
       terminal.inputLocked['2'] = false;
       mockDocument.getElementById.mockReturnValue({
         textContent: '',
-        title: '',
+        dataset: {},
         classList: { add: jest.fn(), remove: jest.fn(), toggle: jest.fn() },
       });
     });
@@ -1119,7 +1119,7 @@ describe('terminal.js module', () => {
       test('should update lock icon when element exists', () => {
         const mockLockIcon = {
           innerHTML: '',
-          title: '',
+          dataset: {},
           classList: { add: jest.fn(), remove: jest.fn(), toggle: jest.fn() },
         };
         mockDocument.getElementById.mockReturnValue(mockLockIcon);
@@ -1157,7 +1157,7 @@ describe('terminal.js module', () => {
       test('should update lock icon when element exists', () => {
         const mockLockIcon = {
           innerHTML: '',
-          title: '',
+          dataset: {},
           classList: { add: jest.fn(), remove: jest.fn(), toggle: jest.fn() },
         };
         mockDocument.getElementById.mockReturnValue(mockLockIcon);
@@ -1166,7 +1166,7 @@ describe('terminal.js module', () => {
 
         expect(mockLockIcon.innerHTML).toContain('svg');
         expect(mockLockIcon.innerHTML).toContain('pane-btn-icon');
-        expect(mockLockIcon.title).toContain('locked');
+        expect(mockLockIcon.dataset.tooltip).toContain('Locked');
         expect(mockLockIcon.classList.toggle).toHaveBeenCalledWith('unlocked', false);
       });
 
