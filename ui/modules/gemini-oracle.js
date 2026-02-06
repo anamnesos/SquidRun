@@ -8,7 +8,7 @@ const path = require('path');
 const { WORKSPACE_PATH } = require('../config');
 const log = require('./logger');
 
-const DEFAULT_MODEL = process.env.GEMINI_ORACLE_MODEL || 'gemini-2.5-pro';
+const DEFAULT_MODEL = process.env.GEMINI_ORACLE_MODEL || 'gemini-3-flash-preview';
 const DEFAULT_PROMPT = 'Analyze this UI screenshot for visual or layout issues.';
 const REQUEST_TIMEOUT_MS = Number(process.env.GEMINI_ORACLE_TIMEOUT_MS || 60000);
 const RATE_LIMIT_RETRY_DELAYS_MS = [1000, 2000, 4000];

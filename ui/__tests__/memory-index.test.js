@@ -9,11 +9,9 @@ const mockMemoryStore = {
   MEMORY_ROOT: '/test/memory',
   PANE_ROLES: {
     '1': 'architect',
-    '2': 'orchestrator',
-    '3': 'implementer-a',
-    '4': 'implementer-b',
-    '5': 'investigator',
-    '6': 'reviewer'
+    '2': 'infra',
+    '4': 'backend',
+    '5': 'analyst',
   },
   getRoleFromPaneId: jest.fn(id => mockMemoryStore.PANE_ROLES[String(id)] || `pane-${id}`),
   loadSharedMemory: jest.fn(() => ({ learnings: [], decisions: [] })),
@@ -334,19 +332,19 @@ describe('Memory Module (index.js)', () => {
 
   describe('Trigger Integration', () => {
     test('logTriggerMessage logs message and records interactions', () => {
-      memory.logTriggerMessage('1', '6', 'Review complete');
+      memory.logTriggerMessage('1', '5', 'Review complete');
 
-      expect(mockTranscriptLogger.logTriggerMessage).toHaveBeenCalledWith('1', '6', 'Review complete');
-      expect(mockContextManager.recordInteraction).toHaveBeenCalledWith('architect', 'reviewer', 'sent', expect.any(String));
-      expect(mockContextManager.recordInteraction).toHaveBeenCalledWith('reviewer', 'architect', 'received', expect.any(String));
+      expect(mockTranscriptLogger.logTriggerMessage).toHaveBeenCalledWith('1', '5', 'Review complete');
+      expect(mockContextManager.recordInteraction).toHaveBeenCalledWith('architect', 'analyst', 'sent', expect.any(String));
+      expect(mockContextManager.recordInteraction).toHaveBeenCalledWith('analyst', 'architect', 'received', expect.any(String));
     });
 
     test('logTriggerMessage truncates content for interaction', () => {
       const longContent = 'x'.repeat(200);
-      memory.logTriggerMessage('1', '6', longContent);
+      memory.logTriggerMessage('1', '5', longContent);
 
       expect(mockContextManager.recordInteraction).toHaveBeenCalledWith(
-        'architect', 'reviewer', 'sent',
+        'architect', 'analyst', 'sent',
         expect.stringMatching(/^x{100}$/)
       );
     });
@@ -379,13 +377,13 @@ describe('Memory Module (index.js)', () => {
     test('getCollaborationStats returns collaboration stats', () => {
       mockContextManager.getCollaborationStats.mockReturnValue({
         totalMessages: 50,
-        partners: ['reviewer', 'orchestrator']
+        partners: ['analyst', 'infra']
       });
 
       const result = memory.getCollaborationStats('1');
 
       expect(mockContextManager.getCollaborationStats).toHaveBeenCalledWith('architect');
-      expect(result.partners).toContain('reviewer');
+      expect(result.partners).toContain('analyst');
     });
 
     test('getExpertFiles returns expert files', () => {

@@ -14,10 +14,8 @@ jest.mock('../config', () => ({
   PANE_ROLES: {
     '1': 'Architect',
     '2': 'Infra',
-    '3': 'Frontend',
     '4': 'Backend',
     '5': 'Analyst',
-    '6': 'Reviewer',
   },
 }));
 
@@ -33,8 +31,8 @@ describe('organic-ui-handlers', () => {
     jest.useFakeTimers();
 
     // Reset agent states to offline before each test
-    for (let i = 1; i <= 6; i++) {
-      organicUI.setAgentState(String(i), 'offline');
+    for (const id of ['1', '2', '4', '5']) {
+      organicUI.setAgentState(id, 'offline');
     }
 
     // Mock mainWindow
@@ -60,10 +58,8 @@ describe('organic-ui-handlers', () => {
       expect(organicUI.SHORT_ROLES).toEqual({
         '1': 'arch',
         '2': 'infra',
-        '3': 'front',
         '4': 'back',
         '5': 'ana',
-        '6': 'rev',
       });
     });
   });
@@ -92,16 +88,16 @@ describe('organic-ui-handlers', () => {
     it('should emit state change event when state changes', () => {
       organicUI.registerOrganicUIHandlers({ ipcMain: mockIpcMain, mainWindow: mockMainWindow });
 
-      organicUI.setAgentState('3', 'offline');
+      organicUI.setAgentState('4', 'offline');
       mockMainWindow.webContents.send.mockClear();
 
-      organicUI.setAgentState('3', 'thinking');
+      organicUI.setAgentState('4', 'thinking');
 
       expect(mockMainWindow.webContents.send).toHaveBeenCalledWith(
         'agent-state-changed',
         expect.objectContaining({
-          agentId: '3',
-          role: 'front',
+          agentId: '4',
+          role: 'back',
           state: 'thinking',
           previousState: 'offline',
         })
@@ -124,7 +120,7 @@ describe('organic-ui-handlers', () => {
     it('should return all agent states with roles', () => {
       organicUI.setAgentState('1', 'idle');
       organicUI.setAgentState('2', 'thinking');
-      organicUI.setAgentState('3', 'active');
+      organicUI.setAgentState('4', 'active');
 
       const states = organicUI.getAllAgentStates();
 
@@ -138,10 +134,10 @@ describe('organic-ui-handlers', () => {
         role: 'infra',
         fullRole: 'Infra',
       });
-      expect(states['3']).toEqual({
+      expect(states['4']).toEqual({
         state: 'active',
-        role: 'front',
-        fullRole: 'Frontend',
+        role: 'back',
+        fullRole: 'Backend',
       });
     });
   });
@@ -198,15 +194,15 @@ describe('organic-ui-handlers', () => {
 
     describe('agentThinking', () => {
       it('should set agent to thinking', () => {
-        organicUI.agentThinking('6');
-        expect(organicUI.getAgentState('6')).toBe('thinking');
+        organicUI.agentThinking('5');
+        expect(organicUI.getAgentState('5')).toBe('thinking');
       });
 
       it('should auto-online offline agent first', () => {
-        organicUI.setAgentState('6', 'offline');
-        organicUI.agentThinking('6');
+        organicUI.setAgentState('5', 'offline');
+        organicUI.agentThinking('5');
         // Should not remain offline, should be thinking
-        expect(organicUI.getAgentState('6')).toBe('thinking');
+        expect(organicUI.getAgentState('5')).toBe('thinking');
       });
     });
 
@@ -227,22 +223,22 @@ describe('organic-ui-handlers', () => {
       });
 
       it('should reset idle timer on subsequent active calls', () => {
-        organicUI.agentActive('3');
+        organicUI.agentActive('4');
         jest.advanceTimersByTime(1500);
 
         // Still active, haven't hit timeout
-        expect(organicUI.getAgentState('3')).toBe('active');
+        expect(organicUI.getAgentState('4')).toBe('active');
 
         // Another activity - should reset timer
-        organicUI.agentActive('3');
+        organicUI.agentActive('4');
         jest.advanceTimersByTime(1500);
 
         // Still active because timer was reset
-        expect(organicUI.getAgentState('3')).toBe('active');
+        expect(organicUI.getAgentState('4')).toBe('active');
 
         // Now hit full timeout
         jest.advanceTimersByTime(500);
-        expect(organicUI.getAgentState('3')).toBe('idle');
+        expect(organicUI.getAgentState('4')).toBe('idle');
       });
 
       it('should auto-online offline agent first', () => {
@@ -259,12 +255,12 @@ describe('organic-ui-handlers', () => {
       });
 
       it('should auto-transition to thinking after 500ms', () => {
-        organicUI.agentReceiving('6');
-        expect(organicUI.getAgentState('6')).toBe('receiving');
+        organicUI.agentReceiving('5');
+        expect(organicUI.getAgentState('5')).toBe('receiving');
 
         jest.advanceTimersByTime(500);
 
-        expect(organicUI.getAgentState('6')).toBe('thinking');
+        expect(organicUI.getAgentState('5')).toBe('thinking');
       });
 
       it('should auto-online offline agent first', () => {
@@ -282,9 +278,9 @@ describe('organic-ui-handlers', () => {
       });
 
       it('should auto-online offline agent first', () => {
-        organicUI.setAgentState('3', 'offline');
-        organicUI.agentIdle('3');
-        expect(organicUI.getAgentState('3')).toBe('idle');
+        organicUI.setAgentState('4', 'offline');
+        organicUI.agentIdle('4');
+        expect(organicUI.getAgentState('4')).toBe('idle');
       });
     });
   });
@@ -316,7 +312,7 @@ describe('organic-ui-handlers', () => {
 
     describe('messageSending', () => {
       it('should emit message-routing event with sending phase', () => {
-        organicUI.messageQueued('msg-2', '3', '4');
+        organicUI.messageQueued('msg-2', '4', '5');
         mockMainWindow.webContents.send.mockClear();
 
         organicUI.messageSending('msg-2');
@@ -325,20 +321,20 @@ describe('organic-ui-handlers', () => {
           'message-routing',
           expect.objectContaining({
             messageId: 'msg-2',
-            from: '3',
-            fromRole: 'front',
-            to: '4',
-            toRole: 'back',
+            from: '4',
+            fromRole: 'back',
+            to: '5',
+            toRole: 'ana',
             phase: 'sending',
           })
         );
       });
 
       it('should mark target agent as receiving', () => {
-        organicUI.messageQueued('msg-3', '5', '6');
+        organicUI.messageQueued('msg-3', '1', '5');
         organicUI.messageSending('msg-3');
 
-        expect(organicUI.getAgentState('6')).toBe('receiving');
+        expect(organicUI.getAgentState('5')).toBe('receiving');
       });
 
       it('should do nothing for unknown message', () => {
@@ -350,7 +346,7 @@ describe('organic-ui-handlers', () => {
 
     describe('messageDelivered', () => {
       it('should emit message-routing event with delivered phase', () => {
-        organicUI.messageQueued('msg-4', '1', '6');
+        organicUI.messageQueued('msg-4', '1', '5');
         organicUI.messageSending('msg-4');
         mockMainWindow.webContents.send.mockClear();
 
@@ -362,8 +358,8 @@ describe('organic-ui-handlers', () => {
             messageId: 'msg-4',
             from: '1',
             fromRole: 'arch',
-            to: '6',
-            toRole: 'rev',
+            to: '5',
+            toRole: 'ana',
             phase: 'delivered',
             duration: expect.any(Number),
           })
@@ -371,7 +367,7 @@ describe('organic-ui-handlers', () => {
       });
 
       it('should cleanup route after 2000ms', () => {
-        organicUI.messageQueued('msg-5', '2', '3');
+        organicUI.messageQueued('msg-5', '2', '4');
         organicUI.messageDelivered('msg-5');
 
         // Route still exists immediately
@@ -461,13 +457,13 @@ describe('organic-ui-handlers', () => {
           call => call[0] === 'organic:get-agent-state'
         )[1];
 
-        organicUI.setAgentState('3', 'active');
-        const result = handler(null, '3');
+        organicUI.setAgentState('4', 'active');
+        const result = handler(null, '4');
 
         expect(result.success).toBe(true);
-        expect(result.agentId).toBe('3');
+        expect(result.agentId).toBe('4');
         expect(result.state).toBe('active');
-        expect(result.role).toBe('front');
+        expect(result.role).toBe('back');
       });
     });
 
@@ -495,7 +491,7 @@ describe('organic-ui-handlers', () => {
 
         // Create routes with unique IDs for this test
         organicUI.messageQueued('unique-route-1', '1', '2');
-        organicUI.messageQueued('unique-route-2', '3', '4');
+        organicUI.messageQueued('unique-route-2', '4', '5');
 
         const result = handler();
 
@@ -513,8 +509,8 @@ describe('organic-ui-handlers', () => {
         expect(result.routes).toContainEqual(
           expect.objectContaining({
             messageId: 'unique-route-2',
-            from: '3',
-            to: '4',
+            from: '4',
+            to: '5',
             phase: 'queued',
           })
         );

@@ -7,6 +7,7 @@
 
 const memoryStore = require('./memory-store');
 const memorySearch = require('./memory-search');
+const { formatPrecise } = require('../formatters');
 
 // Summarization settings
 const MAX_SUMMARY_ENTRIES = 100;
@@ -359,7 +360,7 @@ function summarizeContext(role) {
     role,
     generatedAt: new Date().toISOString(),
     sessionCount: context.sessionCount || 0,
-    totalActiveTime: formatDuration(context.totalActiveTime || 0),
+    totalActiveTime: formatPrecise(context.totalActiveTime || 0),
     currentState: context.currentState || 'unknown',
     currentTask: context.currentTask ? truncateContent(context.currentTask.description || context.currentTask.task, 100) : null,
     taskPerformance: {
@@ -373,17 +374,7 @@ function summarizeContext(role) {
   };
 }
 
-/**
- * Format milliseconds as human-readable duration
- * @param {number} ms
- * @returns {string}
- */
-function formatDuration(ms) {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  if (ms < 3600000) return `${(ms / 60000).toFixed(1)}m`;
-  return `${(ms / 3600000).toFixed(1)}h`;
-}
+// formatDuration now imported as formatPrecise from ../formatters
 
 // ============================================================
 // SESSION SUMMARY

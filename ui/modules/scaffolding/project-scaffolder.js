@@ -1075,10 +1075,8 @@ MIT
       'workspace/instances',
       'workspace/instances/arch',
       'workspace/instances/infra',
-      'workspace/instances/front',
       'workspace/instances/back',
       'workspace/instances/ana',
-      'workspace/instances/rev',
       'workspace/build',
       'workspace/build/reviews',
       'workspace/triggers',
@@ -1100,10 +1098,10 @@ MIT
 
 | Role | Owner | Focus |
 |------|-------|-------|
-| Lead | Pane 1 | Architecture, coordination |
-| Worker A | Pane 3 | Implementation |
-| Worker B | Pane 4 | Implementation |
-| Reviewer | Pane 6 | Code review, testing |
+| Architect | Pane 1 | Architecture, coordination |
+| Infra | Pane 2 | CI/CD, deployment, infrastructure |
+| Backend | Pane 4 | Implementation, daemon, processes |
+| Analyst | Pane 5 | Debugging, profiling, analysis |
 
 ## Quick Start
 
@@ -1133,9 +1131,9 @@ MIT
 
 | Task | Owner | Status | Notes |
 |------|-------|--------|-------|
-| Task 1 | Worker A | Pending | |
-| Task 2 | Worker B | Pending | |
-| Task 3 | Reviewer | Pending | |
+| Task 1 | Backend | Pending | |
+| Task 2 | Infra | Pending | |
+| Task 3 | Analyst | Pending | |
 
 ## Notes
 
@@ -1189,10 +1187,10 @@ _No errors logged_
 
 | Role | Status | Agent | Date |
 |------|--------|-------|------|
-| Lead | OPEN | | |
-| Worker A | OPEN | | |
-| Worker B | OPEN | | |
-| Reviewer | OPEN | | |
+| Architect | OPEN | | |
+| Infra | OPEN | | |
+| Backend | OPEN | | |
+| Analyst | OPEN | | |
 `,
       },
       'workspace/instances/arch/CLAUDE.md': {
@@ -1227,22 +1225,6 @@ You are Infra for this project.
 - Report to Architect: workspace/triggers/architect.txt
 `,
       },
-      'workspace/instances/front/CLAUDE.md': {
-        type: 'text',
-        content: `# Frontend Instance
-
-You are Frontend for this project.
-
-## Responsibilities
-- UI components
-- Styling/CSS
-- Renderer logic
-
-## Communication
-- Receive messages: workspace/triggers/frontend.txt
-- Report to Architect: workspace/triggers/architect.txt
-`,
-      },
       'workspace/instances/back/CLAUDE.md': {
         type: 'text',
         content: `# Backend Instance
@@ -1272,22 +1254,6 @@ You are Analyst for this project.
 
 ## Communication
 - Receive messages: workspace/triggers/analyst.txt
-- Report to Architect: workspace/triggers/architect.txt
-`,
-      },
-      'workspace/instances/rev/CLAUDE.md': {
-        type: 'text',
-        content: `# Reviewer Instance
-
-You are the Reviewer for this project.
-
-## Responsibilities
-- Code review
-- Testing
-- Quality assurance
-
-## Communication
-- Receive messages: workspace/triggers/reviewer.txt
 - Report to Architect: workspace/triggers/architect.txt
 `,
       },

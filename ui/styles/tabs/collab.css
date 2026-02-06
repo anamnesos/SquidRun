@@ -1,9 +1,0 @@
-/* Collab Tab Styles */
-.collab-status-bar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: var(--color-bg-secondary); border-radius: var(--radius-md); margin-bottom: var(--space-3); }
-.collab-status-indicator { width: 10px; height: 10px; border-radius: 50%; background: var(--color-text-muted); }
-.collab-status-indicator.connected { background: var(--color-success); box-shadow: 0 0 6px var(--color-success); }
-.collab-status-indicator.connecting, .collab-status-indicator.reconnecting { background: var(--color-warning); animation: collab-pulse 1s infinite; }
-.collab-section { padding: var(--space-3); background: var(--color-bg-secondary); border-radius: var(--radius-md); border: 1px solid var(--color-border); }
-.collab-user-item { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); background: var(--color-bg-tertiary); border-radius: var(--radius-sm); }
-.collab-chat-messages { height: 150px; overflow-y: auto; background: var(--color-bg-tertiary); border-radius: var(--radius-sm); padding: var(--space-2); margin-bottom: var(--space-2); }
-@keyframes collab-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }

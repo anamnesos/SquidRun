@@ -16,19 +16,15 @@ const WAR_ROOM_CORRECTION_KEYWORDS = ['stop', 'wait', 'wrong', 'hold', 'pause', 
 const PANE_ROLE_KEYS = {
   '1': 'architect',
   '2': 'infra',
-  '3': 'frontend',
   '4': 'backend',
   '5': 'analyst',
-  '6': 'reviewer',
 };
 
 const WAR_ROOM_ROLE_LABELS = {
   architect: 'ARCH',
   infra: 'INFRA',
-  frontend: 'FRONT',
   backend: 'BACK',
   analyst: 'ANA',
-  reviewer: 'REV',
   user: 'YOU',
   system: 'SYSTEM',
   unknown: 'UNKNOWN',
@@ -37,10 +33,8 @@ const WAR_ROOM_ROLE_LABELS = {
 const WAR_ROOM_ROLE_MENTIONS = {
   architect: /\b(architect|arch)\b/i,
   infra: /\b(infra|infrastructure)\b/i,
-  frontend: /\b(frontend|front)\b/i,
   backend: /\b(backend|back)\b/i,
   analyst: /\b(analyst|ana)\b/i,
-  reviewer: /\b(reviewer|review|rev)\b/i,
 };
 
 let warRoomInitialized = false;
@@ -71,17 +65,12 @@ const ROLE_TO_PANE = {
   'arch': '1',
   'infra': '2',
   'infrastructure': '2',
-  'frontend': '3',
-  'front': '3',
   'backend': '4',
   'back': '4',
   'analyst': '5',
   'ana': '5',
-  'reviewer': '6',
-  'rev': '6',
   'lead': '1',
   'orchestrator': '2',
-  'worker-a': '3',
   'worker-b': '4',
   'investigator': '5',
 };

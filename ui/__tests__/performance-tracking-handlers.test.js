@@ -37,11 +37,9 @@ describe('Performance Tracking Handlers', () => {
     ctx.WORKSPACE_PATH = '/test/workspace';
     ctx.PANE_ROLES = {
       '1': 'Architect',
-      '2': 'Orchestrator',
-      '3': 'Implementer A',
-      '4': 'Implementer B',
-      '5': 'Investigator',
-      '6': 'Reviewer',
+      '2': 'Infra',
+      '4': 'Backend',
+      '5': 'Analyst',
     };
 
     // Default: no existing performance file
@@ -144,7 +142,7 @@ describe('Performance Tracking Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.agents).toBeDefined();
-      expect(Object.keys(result.agents).length).toBe(6);
+      expect(Object.keys(result.agents).length).toBe(4);
     });
 
     test('returns performance with roles', async () => {

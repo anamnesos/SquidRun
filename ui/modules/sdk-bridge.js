@@ -1,14 +1,14 @@
 /**
  * SDK Bridge - Multi-Session Support
  *
- * Manages 6 independent SDK sessions (one per pane/agent).
+ * Manages 4 independent SDK sessions (one per pane/agent).
  * Each agent has its own full context window - NOT subagents.
  *
  * IPC Handlers:
  * - sdk-send-message(paneId, message) - send to specific agent
  * - sdk-subscribe(paneId) - stream responses back to renderer
  * - sdk-get-session-ids - for persistence on app close
- * - sdk-start-sessions - initialize all 6 agents
+ * - sdk-start-sessions - initialize all 4 agents
  * - sdk-stop-sessions - graceful shutdown with session ID capture
  */
 
@@ -17,24 +17,23 @@ const path = require('path');
 const fs = require('fs');
 const EventEmitter = require('events');
 const log = require('./logger');
-const { PANE_ROLES } = require('../config');
+const { PANE_IDS, PANE_ROLES } = require('../config');
 
-// Default pane configuration - role and model per pane (6-pane architecture)
+// Default pane configuration - role and model per pane (4-pane architecture)
 // These are defaults; actual models come from settings.paneCommands at runtime
 // PANE_ROLES imported from config.js (canonical source)
 const DEFAULT_PANE_CONFIG = {
   '1': { role: 'Architect', model: 'claude' },
   '2': { role: 'Infra', model: 'codex' },
-  '3': { role: 'Frontend', model: 'claude' },
   '4': { role: 'Backend', model: 'codex' },
   '5': { role: 'Analyst', model: 'gemini' },
-  '6': { role: 'Reviewer', model: 'claude' },
 };
 
 // Alias for backward compatibility (exports still reference PANE_CONFIG)
 const PANE_CONFIG = DEFAULT_PANE_CONFIG;
 
 // Reverse mapping - role to pane ID (supports multiple name variations including legacy)
+// Frontend (3) and Reviewer (6) removed — now internal teammates of Architect (pane 1)
 const ROLE_TO_PANE = {
   'lead': '1',
   'Lead': '1',
@@ -51,18 +50,6 @@ const ROLE_TO_PANE = {
   'Orchestrator': '2',
   'ORCHESTRATOR': '2',
   '2': '2',
-  // Pane 3: Frontend (legacy: Worker A, Implementer A)
-  'frontend': '3',
-  'Frontend': '3',
-  'FRONTEND': '3',
-  'worker-a': '3',
-  'Worker A': '3',
-  'WORKER-A': '3',
-  'worker_a': '3',
-  'implementer-a': '3',
-  'Implementer A': '3',
-  'IMPLEMENTER-A': '3',
-  '3': '3',
   // Pane 4: Backend (legacy: Worker B, Implementer B)
   'backend': '4',
   'Backend': '4',
@@ -83,10 +70,6 @@ const ROLE_TO_PANE = {
   'Investigator': '5',
   'INVESTIGATOR': '5',
   '5': '5',
-  'reviewer': '6',
-  'Reviewer': '6',
-  'REVIEWER': '6',
-  '6': '6',
 };
 
 // Session state file for persistence
@@ -101,7 +84,7 @@ class SDKBridge extends EventEmitter {
     this.mainWindow = null;
     this.settings = null; // Reference to app settings (for reading paneCommands)
 
-    // Track 6 independent sessions (derived from PANE_CONFIG)
+    // Track 4 independent sessions (derived from PANE_CONFIG)
     this.sessions = Object.fromEntries(
       Object.entries(PANE_CONFIG).map(([id, config]) => [
         id,
@@ -110,7 +93,7 @@ class SDKBridge extends EventEmitter {
     );
 
     // Subscribers for streaming responses
-    this.subscribers = new Set(['1', '2', '3', '4', '5', '6']); // All panes subscribed by default
+    this.subscribers = new Set(PANE_IDS); // All panes subscribed by default
 
     // Message queue for when process isn't ready
     this.pendingMessages = [];
@@ -328,7 +311,7 @@ class SDKBridge extends EventEmitter {
    * Get model type for a pane
    * Reads from settings.paneCommands (same source as PTY mode) for consistency.
    * Falls back to DEFAULT_PANE_CONFIG if settings not available.
-   * @param {string} paneId - Pane ID ('1' through '6')
+   * @param {string} paneId - Pane ID ('1', '2', '4', or '5')
    * @returns {string} Model type ('claude', 'codex', or 'gemini')
    */
   getModelForPane(paneId) {
@@ -348,7 +331,7 @@ class SDKBridge extends EventEmitter {
   /**
    * Update model for a specific pane at runtime
    * Called by model-switch handler to sync SDK bridge state
-   * @param {string} paneId - Pane ID ('1' through '6')
+   * @param {string} paneId - Pane ID ('1', '2', '4', or '5')
    * @param {string} model - Model type ('claude', 'codex', or 'gemini')
    */
   setModelForPane(paneId, model) {
@@ -361,7 +344,7 @@ class SDKBridge extends EventEmitter {
 
   /**
    * Send message to specific pane/agent
-   * @param {string} paneId - Target pane ('1', '2', '3', '4', '5', '6')
+   * @param {string} paneId - Target pane ('1', '2', '4', '5')
    * @param {string} message - User message
    */
   sendMessage(paneId, message) {

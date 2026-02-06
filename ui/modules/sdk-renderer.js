@@ -124,7 +124,7 @@ function updateDeliveryState(messageId, newState) {
 
 /**
  * Initialize SDK pane - replaces terminal with message container
- * @param {string} paneId - Pane ID (1-6)
+ * @param {string} paneId - Pane ID (1, 2, 4, 5)
  */
 function initSDKPane(paneId) {
   const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
@@ -401,13 +401,6 @@ function formatMessage(message) {
         // Pane 2: Infra (legacy: Orchestrator)
         'INFRA': { class: 'infra', label: 'Infra' },
         'ORCHESTRATOR': { class: 'infra', label: 'Infra' },
-        // Pane 3: Frontend (short: Front, legacy: Worker A, Implementer A)
-        'FRONT': { class: 'frontend', label: 'Front' },
-        'FRONTEND': { class: 'frontend', label: 'Front' },
-        'IMPLEMENTER-A': { class: 'frontend', label: 'Front' },
-        'IMPLEMENTERA': { class: 'frontend', label: 'Front' },
-        'WORKER-A': { class: 'frontend', label: 'Front' },
-        'WORKERA': { class: 'frontend', label: 'Front' },
         // Pane 4: Backend (short: Back, legacy: Worker B, Implementer B)
         'BACK': { class: 'backend', label: 'Back' },
         'BACKEND': { class: 'backend', label: 'Back' },
@@ -419,9 +412,11 @@ function formatMessage(message) {
         'ANA': { class: 'analyst', label: 'Ana' },
         'ANALYST': { class: 'analyst', label: 'Ana' },
         'INVESTIGATOR': { class: 'analyst', label: 'Ana' },
-        // Pane 6: Reviewer (short: Rev)
-        'REV': { class: 'reviewer', label: 'Rev' },
-        'REVIEWER': { class: 'reviewer', label: 'Rev' }
+        // Frontend and Reviewer are internal teammates of Architect (no dedicated panes)
+        'FRONT': { class: 'lead', label: 'Arch' },
+        'FRONTEND': { class: 'lead', label: 'Arch' },
+        'REV': { class: 'lead', label: 'Arch' },
+        'REVIEWER': { class: 'lead', label: 'Arch' }
       };
       const config = roleConfig[role] || roleConfig['LEAD'];
       // Display label with sequence number if present: "Lead #7" or just "Lead"
@@ -500,7 +495,7 @@ function formatMessage(message) {
 
 /**
  * Append message to pane with type-specific formatting
- * @param {string} paneId - Pane ID (1-6)
+ * @param {string} paneId - Pane ID (1, 2, 4, 5)
  * @param {Object} message - SDK message object
  * @param {Object} options - Optional settings { trackDelivery: boolean, isOutgoing: boolean }
  * @returns {string|null} Message ID if tracking delivery, null otherwise
@@ -584,7 +579,7 @@ function appendMessage(paneId, message, options = {}) {
 
 /**
  * Clear pane content
- * @param {string} paneId - Pane ID (1-6)
+ * @param {string} paneId - Pane ID (1, 2, 4, 5)
  */
 function clearPane(paneId) {
   const container = containers.get(paneId);
@@ -605,7 +600,7 @@ function clearAllPanes() {
 
 /**
  * Auto-scroll pane to bottom
- * @param {string} paneId - Pane ID (1-6)
+ * @param {string} paneId - Pane ID (1, 2, 4, 5)
  */
 function scrollToBottom(paneId) {
   const container = containers.get(paneId);
@@ -619,7 +614,7 @@ function scrollToBottom(paneId) {
  * Replaces generic braille spinner with branded honeycomb pulse.
  * UX-8: Supports contextual text based on tool use
  * ROUND-2: Intensity scaling - different pulse speeds for different operations
- * @param {string} paneId - Pane ID (1-6)
+ * @param {string} paneId - Pane ID (1, 2, 4, 5)
  * @param {boolean} active - Whether to show or hide
  * @param {string} context - Optional context text (e.g., "Reading files...")
  * @param {string} category - Optional tool category for color coding (read, write, edit, search, bash, thinking)
@@ -657,7 +652,6 @@ function streamingIndicator(paneId, active, context = null, category = 'thinking
     scrollToBottom(paneId);
 
     // CSS handles animation - no JS interval needed for honeycomb
-    // (Legacy spinnerIntervals kept for compatibility but not used)
 
   } else if (active && indicator) {
     // UX-8: Update context text and category if indicator exists (smooth transition)
@@ -684,7 +678,7 @@ function streamingIndicator(paneId, active, context = null, category = 'thinking
 /**
  * STR-5: Append text delta for typewriter streaming effect
  * Called when Python SDK sends partial text via StreamEvent
- * @param {string} paneId - Pane ID (1-6)
+ * @param {string} paneId - Pane ID (1, 2, 4, 5)
  * @param {string} text - Partial text chunk to append
  */
 function appendTextDelta(paneId, text) {
@@ -759,7 +753,7 @@ function appendTextDelta(paneId, text) {
 /**
  * STR-5: Finalize streaming message (remove cursor, mark complete)
  * Called when streaming stops for a pane
- * @param {string} paneId - Pane ID (1-6)
+ * @param {string} paneId - Pane ID (1, 2, 4, 5)
  */
 function finalizeStreamingMessage(paneId) {
   const streamState = streamingMessages.get(paneId);
@@ -780,7 +774,7 @@ function finalizeStreamingMessage(paneId) {
 
 /**
  * STR-5: Clear streaming state for a pane (on new assistant turn)
- * @param {string} paneId - Pane ID (1-6)
+ * @param {string} paneId - Pane ID (1, 2, 4, 5)
  */
 function clearStreamingState(paneId) {
   const streamState = streamingMessages.get(paneId);
@@ -797,7 +791,7 @@ function clearStreamingState(paneId) {
  * UX-8: Update streaming indicator with tool context
  * Parses tool_use messages and shows friendly descriptions
  * Color-coded by tool type for visual distinction
- * @param {string} paneId - Pane ID (1-6)
+ * @param {string} paneId - Pane ID (1, 2, 4, 5)
  * @param {Object} toolUse - Tool use message object
  */
 function updateToolContext(paneId, toolUse) {
@@ -863,7 +857,7 @@ function getFileName(filePath) {
 
 /**
  * Get session ID for a pane (for resume capability)
- * @param {string} paneId - Pane ID (1-6)
+ * @param {string} paneId - Pane ID (1, 2, 4, 5)
  * @returns {string|null} Session ID or null
  */
 function getSessionId(paneId) {
@@ -872,7 +866,7 @@ function getSessionId(paneId) {
 
 /**
  * Add a system message to pane
- * @param {string} paneId - Pane ID (1-6)
+ * @param {string} paneId - Pane ID (1, 2, 4, 5)
  * @param {string} text - System message text
  */
 function addSystemMessage(paneId, text) {
@@ -881,7 +875,7 @@ function addSystemMessage(paneId, text) {
 
 /**
  * Add an error message to pane
- * @param {string} paneId - Pane ID (1-6)
+ * @param {string} paneId - Pane ID (1, 2, 4, 5)
  * @param {string} error - Error message text
  */
 function addErrorMessage(paneId, error) {

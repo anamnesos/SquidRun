@@ -7,11 +7,9 @@
 const mockMemoryStore = {
   PANE_ROLES: {
     '1': 'architect',
-    '2': 'orchestrator',
-    '3': 'implementer-a',
-    '4': 'implementer-b',
-    '5': 'investigator',
-    '6': 'reviewer'
+    '2': 'infra',
+    '4': 'backend',
+    '5': 'analyst',
   },
   listTranscriptDates: jest.fn(() => []),
   readTranscript: jest.fn(() => []),

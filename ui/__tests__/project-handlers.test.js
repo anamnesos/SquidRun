@@ -32,7 +32,7 @@ describe('Project Handlers', () => {
     jest.clearAllMocks();
     harness = createIpcHarness();
     ctx = createDefaultContext({ ipcMain: harness.ipcMain });
-    ctx.PANE_IDS = ['1', '2', '3', '4', '5', '6'];
+    ctx.PANE_IDS = ['1', '2', '4', '5'];
     ctx.mainWindow.isDestroyed = jest.fn(() => false);
 
     // Mock dialog
@@ -331,10 +331,10 @@ describe('Project Handlers', () => {
 
   describe('select-pane-project', () => {
     test('opens dialog and assigns to pane', async () => {
-      const result = await harness.invoke('select-pane-project', '3');
+      const result = await harness.invoke('select-pane-project', '2');
 
       expect(result.success).toBe(true);
-      expect(result.paneId).toBe('3');
+      expect(result.paneId).toBe('2');
       expect(result.path).toBe('/selected/project');
     });
 
@@ -407,7 +407,7 @@ describe('Project Handlers', () => {
       const result = await harness.invoke('get-all-pane-projects');
 
       expect(result.paneProjects).toEqual({
-        '1': null, '2': null, '3': null, '4': null, '5': null, '6': null,
+        '1': null, '2': null, '4': null, '5': null,
       });
     });
   });

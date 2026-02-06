@@ -1,16 +1,14 @@
 const STYLE_ID = 'sdk-bubble-canvas-styles';
-const STREAM_POOL_SIZE = 6;
-const STREAM_PARTICLE_COUNT = 6;
+const STREAM_POOL_SIZE = 4;
+const STREAM_PARTICLE_COUNT = 4;
 const STREAM_DURATION_MS = 1600;
 const STREAM_STAGGER_MS = 140;
 
 const DEFAULT_AGENTS = [
-  { id: 'arch', label: 'Arch', color: '#7C3AED', x: 50, y: 40, size: 170, state: 'thinking' },
-  { id: 'infra', label: 'Infra', color: '#F59E0B', x: 35, y: 18, size: 120, state: 'idle' },
-  { id: 'front', label: 'Front', color: '#10B981', x: 25, y: 48, size: 130, state: 'idle' },
-  { id: 'back', label: 'Back', color: '#3B82F6', x: 75, y: 48, size: 130, state: 'idle' },
-  { id: 'ana', label: 'Ana', color: '#EC4899', x: 30, y: 72, size: 115, state: 'idle' },
-  { id: 'rev', label: 'Rev', color: '#6366F1', x: 70, y: 72, size: 115, state: 'idle' }
+  { id: 'arch', label: 'Arch', color: '#7C3AED', x: 50, y: 30, size: 170, state: 'thinking' },
+  { id: 'infra', label: 'Infra', color: '#F59E0B', x: 25, y: 55, size: 130, state: 'idle' },
+  { id: 'back', label: 'Back', color: '#3B82F6', x: 75, y: 55, size: 130, state: 'idle' },
+  { id: 'ana', label: 'Ana', color: '#EC4899', x: 50, y: 75, size: 120, state: 'idle' },
 ];
 
 function ensureStyles() {
@@ -235,22 +233,16 @@ function ensureStyles() {
 const ROLE_ALIASES = {
   '1': 'arch',
   '2': 'infra',
-  '3': 'front',
   '4': 'back',
   '5': 'ana',
-  '6': 'rev',
   arch: 'arch',
   architect: 'arch',
   infra: 'infra',
   infrastructure: 'infra',
-  front: 'front',
-  frontend: 'front',
   back: 'back',
   backend: 'back',
   ana: 'ana',
   analyst: 'ana',
-  rev: 'rev',
-  reviewer: 'rev'
 };
 
 function buildBubble(agent) {

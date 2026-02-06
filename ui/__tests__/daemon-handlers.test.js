@@ -17,19 +17,15 @@ jest.mock('../config', () => ({
   INSTANCE_DIRS: {
     '1': '/project/instances/arch',
     '2': '/project/instances/infra',
-    '3': '/project/instances/front',
     '4': '/project/instances/back',
     '5': '/project/instances/ana',
-    '6': '/project/instances/rev',
   },
-  PANE_IDS: ['1', '2', '3', '4', '5', '6'],
+  PANE_IDS: ['1', '2', '4', '5'],
   PANE_ROLES: {
     '1': 'Architect',
     '2': 'Infra',
-    '3': 'Frontend',
     '4': 'Backend',
     '5': 'Analyst',
-    '6': 'Reviewer',
   },
 }));
 
@@ -87,10 +83,8 @@ const mockUiView = {
   PANE_ROLES: {
     '1': 'Architect',
     '2': 'Infra',
-    '3': 'Frontend',
     '4': 'Backend',
     '5': 'Analyst',
-    '6': 'Reviewer',
   },
   STATE_DISPLAY_NAMES: {
     'idle': 'IDLE',
@@ -163,18 +157,18 @@ describe('daemon-handlers.js module', () => {
   });
 
   describe('PANE_IDS constant', () => {
-    test('should have 6 pane IDs', () => {
-      expect(daemonHandlers.PANE_IDS).toHaveLength(6);
+    test('should have 4 pane IDs', () => {
+      expect(daemonHandlers.PANE_IDS).toHaveLength(4);
     });
 
-    test('should be strings 1-6', () => {
-      expect(daemonHandlers.PANE_IDS).toEqual(['1', '2', '3', '4', '5', '6']);
+    test('should be strings 1,2,4,5', () => {
+      expect(daemonHandlers.PANE_IDS).toEqual(['1', '2', '4', '5']);
     });
   });
 
   describe('PANE_ROLES constant', () => {
-    test('should have roles for all 6 panes', () => {
-      expect(Object.keys(daemonHandlers.PANE_ROLES)).toHaveLength(6);
+    test('should have roles for all 4 panes', () => {
+      expect(Object.keys(daemonHandlers.PANE_ROLES)).toHaveLength(4);
     });
 
     test('should have correct role names', () => {
@@ -555,10 +549,8 @@ describe('daemon-handlers.js module', () => {
 
         expect(setReconnectedFn).toHaveBeenCalledWith(true);
         expect(terminal.spawnClaude).toHaveBeenCalledWith('2');
-        expect(terminal.spawnClaude).toHaveBeenCalledWith('3');
         expect(terminal.spawnClaude).toHaveBeenCalledWith('4');
         expect(terminal.spawnClaude).toHaveBeenCalledWith('5');
-        expect(terminal.spawnClaude).toHaveBeenCalledWith('6');
         expect(terminal.spawnClaude).not.toHaveBeenCalledWith('1');
       });
 

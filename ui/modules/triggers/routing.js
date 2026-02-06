@@ -15,21 +15,17 @@ const ANSI = {
 };
 
 const AGENT_ROLES = {
-  '1': { name: 'Architect', type: 'coordinator', skills: ['planning', 'coordination', 'architecture'] },
+  '1': { name: 'Architect', type: 'coordinator', skills: ['planning', 'coordination', 'architecture', 'ui', 'review'] },
   '2': { name: 'Infra', type: 'coordinator', skills: ['routing', 'ci-cd', 'deployment', 'infrastructure'] },
-  '3': { name: 'Frontend', type: 'worker', skills: ['ui', 'frontend', 'renderer', 'css'] },
   '4': { name: 'Backend', type: 'worker', skills: ['backend', 'daemon', 'ipc', 'processes'] },
   '5': { name: 'Analyst', type: 'analyst', skills: ['debugging', 'profiling', 'analysis', 'investigation'] },
-  '6': { name: 'Reviewer', type: 'reviewer', skills: ['review', 'testing', 'verification'] },
 };
 
 const HANDOFF_CHAIN = {
-  '1': ['2'],
-  '2': ['3', '4', '5'],
-  '3': ['6'],
-  '4': ['6'],
-  '5': ['6'],
-  '6': ['1'],
+  '1': ['2', '4', '5'],
+  '2': ['4', '5'],
+  '4': ['1'],
+  '5': ['1'],
 };
 
 // Shared state from triggers.js

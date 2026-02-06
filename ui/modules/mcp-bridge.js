@@ -16,7 +16,7 @@ const path = require('path');
 const fs = require('fs');
 const watcher = require('./watcher');
 const triggers = require('./triggers');
-const { WORKSPACE_PATH } = require('../config');
+const { WORKSPACE_PATH, PANE_IDS, PANE_ROLES } = require('../config');
 const log = require('./logger');
 
 // Track connected MCP agents
@@ -29,12 +29,10 @@ let lastFallbackWarning = null;
 // Trigger file paths for fallback
 const TRIGGER_DIR = path.join(WORKSPACE_PATH, 'triggers');
 const TRIGGER_FILES = {
-  '1': 'lead.txt',
-  '2': 'orchestrator.txt',
-  '3': 'worker-a.txt',
-  '4': 'worker-b.txt',
-  '5': 'investigator.txt',
-  '6': 'reviewer.txt',
+  '1': 'architect.txt',
+  '2': 'infra.txt',
+  '4': 'backend.txt',
+  '5': 'analyst.txt',
 };
 
 /**
@@ -91,27 +89,18 @@ function getMCPHealth() {
 /**
  * Register an agent connection via MCP handshake
  * @param {string} sessionId - MCP session identifier
- * @param {string} paneId - Agent pane ID (1-6)
+ * @param {string} paneId - Agent pane ID (1, 2, 4, or 5)
  * @returns {{ success: boolean, agent: object }}
  */
 function registerAgent(sessionId, paneId) {
-  const roles = {
-    '1': 'Architect',
-    '2': 'Infra',
-    '3': 'Frontend',
-    '4': 'Backend',
-    '5': 'Analyst',
-    '6': 'Reviewer'
-  };
-
-  if (!['1', '2', '3', '4', '5', '6'].includes(paneId)) {
-    return { success: false, error: 'Invalid paneId. Must be 1-6.' };
+  if (!PANE_IDS.includes(paneId)) {
+    return { success: false, error: `Invalid paneId. Must be one of: ${PANE_IDS.join(', ')}` };
   }
 
   const agent = {
     sessionId,
     paneId,
-    role: roles[paneId],
+    role: PANE_ROLES[paneId],
     connectedAt: new Date().toISOString(),
     lastSeen: new Date().toISOString(),
   };
@@ -211,14 +200,7 @@ function mcpSendMessage(sessionId, toPaneId, content, type = 'direct') {
   } catch (err) {
     // Fallback: Use file trigger
     logFallback('send_message', err.message);
-    const fromRole = {
-      '1': 'Architect',
-      '2': 'Infra',
-      '3': 'Frontend',
-      '4': 'Backend',
-      '5': 'Analyst',
-      '6': 'Reviewer'
-    }[fromPaneId];
+    const fromRole = PANE_ROLES[fromPaneId] || `Pane ${fromPaneId}`;
     const fallbackMsg = `[MSG from ${fromRole}]: ${content}`;
     const fallbackSuccess = writeFallbackTrigger(toPaneId, fallbackMsg);
 
@@ -247,7 +229,7 @@ function mcpBroadcastMessage(sessionId, content) {
   const fromPaneId = validation.paneId;
   const results = [];
 
-  for (const toPaneId of ['1', '2', '3', '4', '5', '6']) {
+  for (const toPaneId of PANE_IDS) {
     if (toPaneId !== fromPaneId) {
       const result = watcher.sendMessage(fromPaneId, toPaneId, content, 'broadcast');
       results.push({ toPaneId, ...result });
@@ -426,7 +408,7 @@ function getMCPToolDefinitions() {
       inputSchema: {
         type: 'object',
         properties: {
-          paneId: { type: 'string', description: 'Agent pane ID (1=Architect, 2=Infra, 3=Frontend, 4=Backend, 5=Analyst, 6=Reviewer)' },
+          paneId: { type: 'string', description: 'Agent pane ID (1=Architect, 2=Infra, 4=Backend, 5=Analyst)' },
         },
         required: ['paneId'],
       },
@@ -437,7 +419,7 @@ function getMCPToolDefinitions() {
       inputSchema: {
         type: 'object',
         properties: {
-          to: { type: 'string', description: 'Recipient pane ID (1-6)' },
+          to: { type: 'string', description: 'Recipient pane ID (1, 2, 4, 5)' },
           content: { type: 'string', description: 'Message content' },
         },
         required: ['to', 'content'],

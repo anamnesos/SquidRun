@@ -133,10 +133,12 @@ function hasCliContent(scrollback = '', meta = {}) {
   const text = String(scrollback || '');
   if (!text) return false;
 
-  const tail = stripAnsi(text.slice(-CLI_TAIL_CHARS));
-  if (tailMatches(CLI_PROMPT_REGEXES, tail)) return true;
-  if (tailMatches(SHELL_PROMPT_REGEXES, tail)) return false;
-
+      const tail = stripAnsi(text.slice(-CLI_TAIL_CHARS));
+      if (tailMatches(CLI_PROMPT_REGEXES, tail)) return true;
+      if (tailMatches(SHELL_PROMPT_REGEXES, tail)) {
+        log.info('Daemon Handlers', 'Detected shell prompt in tail, treating as empty CLI');    
+        return false;
+      }
   const lastActivity = Number(meta?.lastActivity || 0);
   if (lastActivity > 0 && (Date.now() - lastActivity) <= CLI_RECENT_ACTIVITY_MS) {
     return true;

@@ -19,10 +19,8 @@ let messageState = {
   sequences: {
     'architect': { outbound: 0, lastSeen: {} },
     'infra': { outbound: 0, lastSeen: {} },
-    'frontend': { outbound: 0, lastSeen: {} },
     'backend': { outbound: 0, lastSeen: {} },
     'analyst': { outbound: 0, lastSeen: {} },
-    'reviewer': { outbound: 0, lastSeen: {} },
   },
 };
 
@@ -46,10 +44,8 @@ function loadMessageState() {
     messageState.sequences = {
       'architect': { outbound: 0, lastSeen: {} },
       'infra': { outbound: 0, lastSeen: {} },
-      'frontend': { outbound: 0, lastSeen: {} },
       'backend': { outbound: 0, lastSeen: {} },
       'analyst': { outbound: 0, lastSeen: {} },
-      'reviewer': { outbound: 0, lastSeen: {} },
     };
     saveMessageState();
     log.info('MessageSeq', 'Fresh state initialized');

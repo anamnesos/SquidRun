@@ -3,7 +3,7 @@
  * Hivemind MCP Server
  * V11: Model Context Protocol integration for agent-to-agent communication
  *
- * Usage: node mcp-server.js --agent <architect|orchestrator|implementer-a|implementer-b|investigator|reviewer>
+ * Usage: node mcp-server.js --agent <architect|infra|backend|analyst>
  *
  * This server exposes tools for:
  * - Messaging: send_message, get_messages
@@ -20,7 +20,7 @@ const {
 const fs = require('fs');
 const path = require('path');
 const log = require('./modules/logger');
-const { PANE_ROLES } = require('./config');
+const { PANE_IDS, PANE_ROLES } = require('./config');
 
 // ============================================================
 // CONFIGURATION
@@ -37,22 +37,20 @@ const MESSAGE_QUEUE_DIR = path.join(WORKSPACE_PATH, 'messages');
 const AGENT_TO_PANE = {
   'architect': '1',
   'lead': '1',
+  'infra': '2',
   'orchestrator': '2',
-  'implementer-a': '3',
-  'worker-a': '3',
+  'backend': '4',
   'implementer-b': '4',
   'worker-b': '4',
+  'analyst': '5',
   'investigator': '5',
-  'reviewer': '6',
 };
 
 const PANE_TO_AGENT = {
-  '1': 'lead',
-  '2': 'orchestrator',
-  '3': 'worker-a',
-  '4': 'worker-b',
-  '5': 'investigator',
-  '6': 'reviewer',
+  '1': 'architect',
+  '2': 'infra',
+  '4': 'backend',
+  '5': 'analyst',
 };
 
 // PANE_ROLES imported from config.js (canonical source)
@@ -73,7 +71,7 @@ function parseArgs() {
   }
 
   if (!agentName || !AGENT_TO_PANE[agentName]) {
-    log.error('MCP', 'Usage: node mcp-server.js --agent <architect|orchestrator|implementer-a|implementer-b|investigator|reviewer>');
+    log.error('MCP', 'Usage: node mcp-server.js --agent <architect|infra|backend|analyst>');
     process.exit(1);
   }
 
@@ -368,22 +366,20 @@ function resolvePaneIds(target) {
     case 'architect':
     case 'lead':
       return ['1'];
+    case 'infra':
     case 'orchestrator':
       return ['2'];
-    case 'implementer-a':
-    case 'worker-a':
-      return ['3'];
+    case 'backend':
     case 'implementer-b':
     case 'worker-b':
       return ['4'];
+    case 'analyst':
     case 'investigator':
       return ['5'];
-    case 'reviewer':
-      return ['6'];
     case 'workers':
-      return ['3', '4', '5'];
+      return ['4', '5'];
     case 'all':
-      return ['1', '2', '3', '4', '5', '6'].filter(id => id !== paneId);
+      return PANE_IDS.filter(id => id !== paneId);
     default:
       return [];
   }

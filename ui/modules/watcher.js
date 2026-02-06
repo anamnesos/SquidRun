@@ -9,6 +9,7 @@ const chokidar = require('chokidar');
 const { WORKSPACE_PATH, TRIGGER_TARGETS, PANE_IDS, PANE_ROLES } = require('../config');
 const log = require('./logger');
 const { TRIGGER_READ_RETRY_MS, WATCHER_DEBOUNCE_MS } = require('./constants');
+const organicUI = require('./ipc/organic-ui-handlers');
 
 const STATE_FILE_PATH = path.join(WORKSPACE_PATH, 'state.json');
 const SHARED_CONTEXT_PATH = path.join(WORKSPACE_PATH, 'shared_context.md');
@@ -61,17 +62,18 @@ const States = {
   PAUSED: 'paused',
 };
 
-// Active agents per state (pane IDs: 1=Architect, 2=Infra, 3=Frontend, 4=Backend, 5=Analyst, 6=Reviewer)
+// Active agents per state (pane IDs: 1=Architect, 2=Infra, 4=Backend, 5=Analyst)
+// Frontend and Reviewer are now internal teammates of Architect (pane 1)
 const ACTIVE_AGENTS = {
   [States.IDLE]: [],
   [States.PROJECT_SELECTED]: ['1', '2'],
   [States.PLANNING]: ['1', '2'],
-  [States.PLAN_REVIEW]: ['6'],
+  [States.PLAN_REVIEW]: ['1'],
   [States.PLAN_REVISION]: ['1', '2'],
-  [States.EXECUTING]: ['3', '4', '5'],
+  [States.EXECUTING]: ['4', '5'],
   [States.CHECKPOINT]: [],
-  [States.CHECKPOINT_REVIEW]: ['6'],
-  [States.CHECKPOINT_FIX]: ['1', '3', '4', '5'],
+  [States.CHECKPOINT_REVIEW]: ['1'],
+  [States.CHECKPOINT_FIX]: ['1', '4', '5'],
   [States.FRICTION_LOGGED]: [],
   [States.FRICTION_SYNC]: [],
   [States.FRICTION_RESOLUTION]: ['1', '2'],
@@ -182,7 +184,7 @@ function readState() {
 
 /**
  * Claim an agent role for a task
- * @param {string} paneId - The pane/agent ID (1-6)
+ * @param {string} paneId - The pane/agent ID (1, 2, 4, or 5)
  * @param {string} taskId - The task being claimed
  * @param {string} [description] - Optional description
  * @returns {{ success: boolean, error?: string }}
@@ -800,6 +802,9 @@ function sendMessage(fromPaneId, toPaneId, content, type = 'direct') {
       mainWindow.webContents.send('message-queued', message);
     }
 
+    // Organic UI: Track message routing
+    organicUI.messageQueued(messageId, fromPaneId, toPaneId);
+
     return { success: true, messageId, message };
   } catch (err) {
     log.error('MessageQueue', `Error sending message: ${err.message}`);
@@ -843,6 +848,9 @@ function markMessageDelivered(paneId, messageId) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('message-delivered', { paneId, messageId });
     }
+
+    // Organic UI: Track message delivery
+    organicUI.messageDelivered(messageId);
 
     return { success: true };
   } catch (err) {

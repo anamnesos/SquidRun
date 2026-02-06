@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const memoryStore = require('./memory-store');
 const log = require('../logger');
+const { formatPrecise } = require('../formatters');
 
 // ============================================================
 // REPLAY STATE
@@ -622,16 +623,7 @@ function calculateDuration(start, end) {
   return new Date(end) - new Date(start);
 }
 
-/**
- * Format duration for display
- * @param {number} ms
- * @returns {string}
- */
-function formatDuration(ms) {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${(ms / 60000).toFixed(1)}m`;
-}
+// formatDuration now imported as formatPrecise from ../formatters
 
 // ============================================================
 // EVENT SYSTEM
@@ -749,6 +741,6 @@ module.exports = {
   // Constants
   ACTION_CATEGORIES,
 
-  // Helpers
-  formatDuration
+  // Helpers (re-export from formatters for API compatibility)
+  formatDuration: formatPrecise
 };

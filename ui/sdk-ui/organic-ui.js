@@ -20,20 +20,16 @@ const STATUS_COLORS = {
 const AGENT_CONFIG = [
   { id: 'arch', label: 'Arch', fullName: 'Architect', color: '#7C3AED' },
   { id: 'infra', label: 'Infra', fullName: 'Infrastructure', color: '#F59E0B' },
-  { id: 'front', label: 'Front', fullName: 'Frontend', color: '#10B981' },
   { id: 'back', label: 'Back', fullName: 'Backend', color: '#3B82F6' },
   { id: 'ana', label: 'Ana', fullName: 'Analyst', color: '#EC4899' },
-  { id: 'rev', label: 'Rev', fullName: 'Reviewer', color: '#6366F1' }
 ];
 
 const ROLE_ALIASES = {
-  '1': 'arch', '2': 'infra', '3': 'front', '4': 'back', '5': 'ana', '6': 'rev',
+  '1': 'arch', '2': 'infra', '4': 'back', '5': 'ana',
   arch: 'arch', architect: 'arch',
   infra: 'infra', infrastructure: 'infra',
-  front: 'front', frontend: 'front',
   back: 'back', backend: 'back',
-  ana: 'ana', analyst: 'ana',
-  rev: 'rev', reviewer: 'rev'
+  ana: 'ana', analyst: 'ana'
 };
 
 function ensureStyles() {
@@ -534,7 +530,7 @@ function createOrganicUI(options = {}) {
 
   const commandContent = document.createElement('div');
   commandContent.className = 'organic-command-content';
-  commandContent.textContent = 'Message stream coming soon...';
+  commandContent.textContent = 'Waiting for agent activity or user message...';
 
   commandCenter.appendChild(commandHeader);
   commandCenter.appendChild(commandContent);
@@ -570,7 +566,7 @@ function createOrganicUI(options = {}) {
     refreshBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>';
     refreshBtn.addEventListener('click', async () => {
       // Map agent id to pane number
-      const paneMap = { arch: '1', infra: '2', front: '3', back: '4', ana: '5', rev: '6' };
+      const paneMap = { arch: '1', infra: '2', back: '4', ana: '5' };
       const paneId = paneMap[agent.id];
 
       // Visual feedback

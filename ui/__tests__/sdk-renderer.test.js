@@ -81,23 +81,23 @@ describe('sdk-renderer.js module', () => {
   });
 
   describe('PANE_IDS constant', () => {
-    test('should have 6 pane IDs', () => {
-      expect(sdkRenderer.PANE_IDS).toHaveLength(6);
+    test('should have 4 pane IDs', () => {
+      expect(sdkRenderer.PANE_IDS).toHaveLength(4);
     });
 
-    test('should be strings 1-6', () => {
-      expect(sdkRenderer.PANE_IDS).toEqual(['1', '2', '3', '4', '5', '6']);
+    test('should be strings 1,2,4,5', () => {
+      expect(sdkRenderer.PANE_IDS).toEqual(['1', '2', '4', '5']);
     });
   });
 
   describe('PANE_ROLES constant', () => {
-    test('should have roles for all 6 panes', () => {
-      expect(Object.keys(sdkRenderer.PANE_ROLES)).toHaveLength(6);
+    test('should have roles for all 4 panes', () => {
+      expect(Object.keys(sdkRenderer.PANE_ROLES)).toHaveLength(4);
     });
 
     test('should have correct role names', () => {
       expect(sdkRenderer.PANE_ROLES['1']).toBe('Architect');
-      expect(sdkRenderer.PANE_ROLES['6']).toBe('Reviewer');
+      expect(sdkRenderer.PANE_ROLES['5']).toBe('Analyst');
     });
   });
 
@@ -130,7 +130,7 @@ describe('sdk-renderer.js module', () => {
       sdkRenderer.setPaneConfig({ paneIds: ['x', 'y'] });
       sdkRenderer.setSDKPaneConfig();
 
-      expect(sdkRenderer.PANE_IDS).toHaveLength(6);
+      expect(sdkRenderer.PANE_IDS).toHaveLength(4);
       expect(sdkRenderer.PANE_ROLES['1']).toBe('Architect');
     });
   });
@@ -203,7 +203,7 @@ describe('sdk-renderer.js module', () => {
   });
 
   describe('initAllSDKPanes', () => {
-    test('should initialize all 6 panes', () => {
+    test('should initialize all 4 panes', () => {
       // Set up a mock that returns null (pane not found)
       mockDocument.querySelector.mockReturnValue(null);
 

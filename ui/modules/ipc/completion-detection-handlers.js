@@ -11,7 +11,7 @@ function registerCompletionDetectionHandlers(ctx) {
     /completed?\s+(task|work|assignment)/i,
     /ready\s+for\s+(review|next|handoff)/i,
     /handing\s+off\s+to/i,
-    /trigger(ing|ed)?\s+(lead|worker|reviewer)/i,
+    /trigger(ing|ed)?\s+(lead|architect|infra|backend|analyst)/i,
     /✅\s*(done|complete|finished)/i,
     /DONE:/i,
     /COMPLETE:/i,

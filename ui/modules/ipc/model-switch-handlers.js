@@ -8,10 +8,8 @@
 const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
-const { PANE_ROLES } = require('../../config');
+const { PANE_IDS, PANE_ROLES } = require('../../config');
 const { getSDKBridge } = require('../sdk-bridge');
-
-const VALID_PANE_IDS = ['1', '2', '3', '4', '5', '6'];
 const TRIGGERS_PATH = path.join(__dirname, '..', '..', '..', 'workspace', 'triggers');
 
 function registerModelSwitchHandlers(ctx, deps = {}) {
@@ -31,7 +29,7 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
   ipcMain.handle('switch-pane-model', async (event, { paneId, model }) => {
     // Validate paneId
     const id = String(paneId);
-    if (!VALID_PANE_IDS.includes(id)) {
+    if (!PANE_IDS.includes(id)) {
       log.warn('ModelSwitch', `Invalid paneId: ${paneId}`);
       return { success: false, error: 'Invalid paneId' };
     }

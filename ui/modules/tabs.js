@@ -25,6 +25,8 @@ const health = require('./tabs/health');
 const git = require('./tabs/git');
 const workflow = require('./tabs/workflow');
 const review = require('./tabs/review');
+const perf = require('./tabs/perf');
+const templates = require('./tabs/templates');
 
 // Panel state
 let panelOpen = false;
@@ -103,7 +105,10 @@ function setupRightPanel(handleResizeFn) {
   health.setupHealthTab();
   git.setupGitTab();
   workflow.setupWorkflowTab();
+  workflow.setupGraphTab();
   review.setupReviewTab();
+  perf.setupPerformanceTab();
+  templates.setupTemplatesTab();
 }
 
 module.exports = {

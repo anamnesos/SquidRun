@@ -66,7 +66,7 @@ describe('mcp-server tool handlers', () => {
     mockFileStore.clear();
     mockDirStore.clear();
     serverInstance = null;
-    process.argv = ['node', 'mcp-server.js', '--agent', 'implementer-b'];
+    process.argv = ['node', 'mcp-server.js', '--agent', 'backend'];
     process.exit = jest.fn();
 
     jest.resetModules();
@@ -95,14 +95,14 @@ describe('mcp-server tool handlers', () => {
     const result = await callHandler({
       params: {
         name: 'send_message',
-        arguments: { to: 'implementer-a', content: 'Hello' },
+        arguments: { to: 'architect', content: 'Hello' },
       },
     });
 
     const payload = JSON.parse(result.content[0].text);
     expect(payload.success).toBe(true);
 
-    const queuePath = path.join(WORKSPACE_PATH, 'messages', 'queue-3.json');
+    const queuePath = path.join(WORKSPACE_PATH, 'messages', 'queue-1.json');
     expect(mockFileStore.has(queuePath)).toBe(true);
     const messages = JSON.parse(mockFileStore.get(queuePath));
     expect(messages[0].content).toBe('Hello');
@@ -115,7 +115,7 @@ describe('mcp-server tool handlers', () => {
       from: '1',
       fromRole: 'Architect',
       to: '4',
-      toRole: 'Implementer B',
+      toRole: 'Backend',
       content: 'Ping',
       timestamp: new Date().toISOString(),
       delivered: false,
@@ -141,12 +141,12 @@ describe('mcp-server tool handlers', () => {
     await callHandler({
       params: {
         name: 'trigger_agent',
-        arguments: { agent: 'reviewer', context: 'Check status' },
+        arguments: { agent: 'analyst', context: 'Check status' },
       },
     });
 
-    const triggerPath = path.join(WORKSPACE_PATH, 'triggers', 'reviewer.txt');
+    const triggerPath = path.join(WORKSPACE_PATH, 'triggers', 'analyst.txt');
     expect(mockFileStore.has(triggerPath)).toBe(true);
-    expect(mockFileStore.get(triggerPath)).toMatch(/IMPLEMENTER-B/);
+    expect(mockFileStore.get(triggerPath)).toMatch(/BACKEND/);
   });
 });

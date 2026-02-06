@@ -40,10 +40,8 @@ describe('Memory Store', () => {
     test('exports PANE_ROLES mapping', () => {
       expect(memoryStore.PANE_ROLES['1']).toBe('Architect');
       expect(memoryStore.PANE_ROLES['2']).toBe('Infra');
-      expect(memoryStore.PANE_ROLES['3']).toBe('Frontend');
       expect(memoryStore.PANE_ROLES['4']).toBe('Backend');
       expect(memoryStore.PANE_ROLES['5']).toBe('Analyst');
-      expect(memoryStore.PANE_ROLES['6']).toBe('Reviewer');
     });
   });
 
@@ -54,8 +52,8 @@ describe('Memory Store', () => {
       memoryStore.ensureDirectories();
 
       expect(fs.mkdirSync).toHaveBeenCalled();
-      // Should create base dirs + per-role context dirs (6 roles)
-      expect(fs.mkdirSync.mock.calls.length).toBeGreaterThan(5);
+      // Should create base dirs + per-role context dirs (4 roles)
+      expect(fs.mkdirSync.mock.calls.length).toBeGreaterThan(3);
     });
 
     test('skips existing directories', () => {
@@ -70,7 +68,7 @@ describe('Memory Store', () => {
   describe('getRoleFromPaneId', () => {
     test('returns correct role for valid pane IDs', () => {
       expect(memoryStore.getRoleFromPaneId('1')).toBe('Architect');
-      expect(memoryStore.getRoleFromPaneId('6')).toBe('Reviewer');
+      expect(memoryStore.getRoleFromPaneId('5')).toBe('Analyst');
     });
 
     test('returns fallback for unknown pane ID', () => {
@@ -85,12 +83,12 @@ describe('Memory Store', () => {
   describe('getPaneIdFromRole', () => {
     test('returns correct pane ID for valid roles', () => {
       expect(memoryStore.getPaneIdFromRole('architect')).toBe('1');
-      expect(memoryStore.getPaneIdFromRole('reviewer')).toBe('6');
+      expect(memoryStore.getPaneIdFromRole('analyst')).toBe('5');
     });
 
     test('is case insensitive', () => {
       expect(memoryStore.getPaneIdFromRole('ARCHITECT')).toBe('1');
-      expect(memoryStore.getPaneIdFromRole('Reviewer')).toBe('6');
+      expect(memoryStore.getPaneIdFromRole('Analyst')).toBe('5');
     });
 
     test('returns null for unknown role', () => {
