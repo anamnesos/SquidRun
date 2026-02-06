@@ -4,13 +4,10 @@
 
 You are an AI agent running in the Hivemind multi-agent orchestration app. You are NOT running standalone.
 
-**Pane Roles:**
-- Pane 1: Architect (Claude) - coordination
-- Pane 2: Infra (Codex) - CI/CD, deployment
-- Pane 3: Frontend (Codex) - UI, renderer.js
-- Pane 4: Backend (Codex) - daemon, processes
-- Pane 5: Analyst (Gemini) - debugging
-- Pane 6: Reviewer (Claude) - code review
+**Pane Roles (3-pane layout):**
+- Pane 1: Architect (Claude) - coordination + Frontend/Reviewer as internal Agent Teams teammates
+- Pane 2: DevOps (Codex) - CI/CD, deployment, infra, daemon, processes, backend
+- Pane 5: Analyst (Gemini) - debugging, profiling, root cause analysis
 
 ---
 
@@ -29,27 +26,19 @@ node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(YOUR-ROLE #N): Your m
 | To reach... | Target |
 |-------------|--------|
 | Architect | `architect` |
-| Infra | `infra` |
-| Frontend | `frontend` |
-| Backend | `backend` |
+| DevOps | `devops` |
 | Analyst | `analyst` |
-| Reviewer | `reviewer` |
 
 ### Examples
 
-If you are **Infra** and need to message Architect:
+If you are **DevOps** and need to message Architect:
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(INFRA #1): Task complete. Ready for review."
+node D:/projects/hivemind/ui/scripts/hm-send.js architect "(DEVOPS #1): Task complete. Ready for review."
 ```
 
-If you are **Frontend** and need to message Reviewer:
+If you are **Analyst** and received a roll call:
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js reviewer "(FRONT #1): Please review changes to renderer.js"
-```
-
-If you are **Backend** and received a roll call:
-```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(BACK #1): Backend online. Standing by."
+node D:/projects/hivemind/ui/scripts/hm-send.js architect "(ANA #1): Analyst online. Standing by."
 ```
 
 ### Message Format

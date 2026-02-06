@@ -1,84 +1,100 @@
 # Hivemind Sprint
 
-## Current: V3 - Developer Experience
-
-**Status:** PLANNING
-**Started:** January 24, 2026
+**Last Updated:** Session 80, February 6, 2026
 
 ---
 
-## Instance Roles
+## Architecture (3-Pane Layout)
 
-| Instance | Role | Responsibilities |
-|----------|------|------------------|
-| **Instance 1** | Lead | Coordination, architecture decisions, integration |
-| **Instance 2** | Worker A | UI/renderer work, UX features |
-| **Instance 3** | Worker B | Backend/daemon work, file operations |
-| **Instance 4** | Reviewer | Code review, testing, verification |
+| Pane | Role | Agent | CLI | Responsibilities |
+|------|------|-------|-----|------------------|
+| **1** | Architect | Claude (Opus) | `claude` | Coordination, architecture, git commits |
+| | + Frontend | Agent Teams teammate | (internal) | UI, renderer.js, CSS |
+| | + Reviewer | Agent Teams teammate | (internal) | Code review, quality gates |
+| **2** | DevOps | Codex | `codex` | CI/CD, infra, daemon, processes, backend |
+| **5** | Analyst | Gemini | `gemini` | Debugging, profiling, root cause analysis |
 
----
-
-## V3 Goals
-
-Based on team feedback from V2:
-
-1. **Dry-run mode** - Simulate multi-agent flow without spawning Claude (testing/demos)
-2. **Context handoff** - Better context persistence between agent handoffs
-3. **Session history** - Replay/review past sessions
-4. **Deferred tabs** - Projects, Live Preview (from Phase 4)
-
----
-
-## Task Assignments
-
-| Task | Owner | Status | Description |
-|------|-------|--------|-------------|
-| V3-1 | Lead | PENDING | Define V3 scope and assign tasks |
-| V3-2 | TBD | PENDING | TBD based on planning |
+**Config source of truth:** `ui/config.js` (PANE_ROLES, PANE_IDS, ROLE_ID_MAP, TRIGGER_TARGETS)
 
 ---
 
 ## File Ownership
 
-### Lead (Instance 1)
-- `ui/main.js` - State machine, IPC, coordination
-- `SPRINT.md`, `workspace/shared_context.md`
+### Architect (Pane 1 + internal teammates)
+- `ui/renderer.js` - UI logic, terminal management
+- `ui/index.html` - Layout, styling, HTML
+- `ui/modules/` - UI modules (Frontend teammate)
+- `ui/__tests__/` - Test files (Reviewer teammate)
+- `SPRINT.md`, `CLAUDE.md`, `workspace/` docs
 
-### Worker A (Instance 2)
-- `ui/renderer.js` - UI logic
-- `ui/index.html` - Layout/styling
-- `ui/modules/` - UI modules
-
-### Worker B (Instance 3)
+### DevOps (Pane 2)
+- `ui/main.js` - Electron main process
 - `ui/terminal-daemon.js` - Daemon process
 - `ui/daemon-client.js` - Client library
-- `workspace/` - File operations
+- `.github/workflows/` - CI/CD
 
-### Reviewer (Instance 4)
-- `ui/__tests__/` - Test files
+### Analyst (Pane 5)
+- Investigations, audits, profiling
 - `workspace/build/reviews/` - Review documents
+- No code ownership — reads everything, edits nothing
+
+---
+
+## Current Session (80) - Doc Cleanup Sprint
+
+| Task | Owner | Status |
+|------|-------|--------|
+| Update CLAUDE.md to 3-pane | Architect | DONE |
+| Overhaul SPRINT.md | Architect | DONE |
+| Audit + fix MAP.md | Frontend | IN PROGRESS |
+| Archive blockers.md | DevOps | ASSIGNED |
+| Archive status.md | DevOps | ASSIGNED |
+| Audit agent instruction files | Analyst | IN PROGRESS |
+| Review all changes | Reviewer | BLOCKED (waiting on above) |
 
 ---
 
 ## Previous Sprints (Complete)
 
-### V2 - Quality & Polish ✅
-- Sprint 2.1: Test suite (86 tests)
-- Sprint 2.2: Modularize (3000+ lines → 9 files)
-- Sprint 2.3: Polish (logging, health, scrollback, flash, kill all, others triggers)
+### Session 79 - 3-Pane Migration
+- Merged Pane 4 (Backend) into Pane 2 (DevOps)
+- 54 files changed, 87 test suites / 2796 tests passing
+- Committed: `1f9b7b9`
 
-### V1 - Core Features ✅
-- Electron app with 4 terminal panes
+### Session 77 - Agent Teams Migration
+- Removed Panes 3 (Frontend) and 6 (Reviewer)
+- Migrated to internal Agent Teams teammates of Architect
+
+### Session 76 - Agent Teams POC
+- Confirmed Agent Teams working with Claude 2.1.32
+- Full cycle: spawnTeam → TaskCreate → teammate → SendMessage → report
+
+### Sessions 70-73 - SDK Mode + Organic UI + Reliability
+- SDK overhaul, organic UI v2, smart watchdog
+- CLI native migration (Claude 2.1.32, Codex 0.98.0)
+
+### Sessions 50-69 - Quality + Modularization
+- Role rename, 12,955 lines dead code removed
+- Renderer modularized (2383 → 1774 lines)
+- Gemini integration, trigger race condition fix
+- Message injection reliability (WebSocket)
+
+### V2 - Quality & Polish
+- Test suite (87 suites, 2796 tests)
+- Modularize (3000+ lines → modules)
+- Polish (logging, health, scrollback)
+
+### V1 - Core Features
+- Electron app with terminal panes
 - Terminal daemon (survives app restart)
 - File-based state machine
 - Trigger system for agent coordination
-- Settings, folder picker, friction panel
 
 ---
 
 ## Communication
 
-All instances read/write to `workspace/build/` for coordination:
-- `status.md` - Task completion tracking
-- `blockers.md` - Questions and blockers
-- `reviews/` - Reviewer feedback
+Agents coordinate through:
+- **WebSocket messaging** (`hm-send.js`) - primary, fast, reliable
+- **Trigger files** (`workspace/triggers/`) - fallback
+- **Shared docs** (`workspace/build/`) - status.md, blockers.md, errors.md

@@ -6,13 +6,10 @@
 You are NOT "Claude Code running in a terminal."
 You are NOT outside the app.
 
-You are one of 6 AI instances managed by Hivemind:
-- Pane 1: Architect (Arch) - Coordination, architecture
-- Pane 2: Infra - CI/CD, build scripts
-- Pane 3: Frontend (Front) - UI, renderer, CSS
-- Pane 4: Backend (Back) - Main process, IPC
-- Pane 5: Analyst (Ana) - Debugging, investigation
-- Pane 6: Reviewer (Rev) - Code review, QA
+You are one of 3 pane agents managed by Hivemind:
+- Pane 1: Architect (Arch) - Coordination, architecture + Frontend/Reviewer as internal Agent Teams teammates
+- Pane 2: DevOps - CI/CD, infra, daemon, processes, backend
+- Pane 5: Analyst (Ana) - Debugging, investigation, profiling
 
 **NOTE:** Models can be swapped anytime. Check `ui/settings.json` for current assignments.
 
@@ -40,7 +37,7 @@ On every new session, BEFORE waiting for user input:
 node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(ROLE #N): message"
 ```
 
-**Targets:** architect, infra, frontend, backend, analyst, reviewer
+**Targets:** architect, devops, analyst
 
 **Message tags:**
 - `[ACK REQUIRED]` - Needs confirmation

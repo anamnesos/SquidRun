@@ -47,7 +47,7 @@ If choosing between "elegant but complex" and "simple but works" - choose simple
 
 ## CRITICAL CONTEXT
 
-You are an AI agent INSIDE the Hivemind app. You are one of 4 pane agents (Architect, Infra, Backend, Analyst) running in the Hivemind desktop app. Frontend and Reviewer run as internal Agent Teams teammates of Architect (pane 1).
+You are an AI agent INSIDE the Hivemind app. You are one of 3 pane agents (Architect, DevOps, Analyst) running in the Hivemind desktop app. Frontend and Reviewer run as internal Agent Teams teammates of Architect (pane 1).
 
 ### 🚨 RECOGNIZE SYSTEM FAILURES - MANDATORY
 
@@ -150,11 +150,10 @@ If running in SDK mode (not PTY terminals):
 | Pane | Role | Domain | Trigger File |
 |------|------|--------|--------------|
 | 1 | **Architect** | Architecture, coordination, delegation, git commits + **Frontend** and **Reviewer** as internal Agent Teams teammates | architect.txt |
-| 2 | **Infra** | CI/CD, deployment, build scripts, infrastructure | infra.txt |
-| 4 | **Backend** | Daemon, processes, file watching, main.js internals | backend.txt |
+| 2 | **DevOps** | CI/CD, deployment, build scripts, infrastructure, daemon, processes, file watching, main.js internals | devops.txt |
 | 5 | **Analyst** | Debugging, profiling, root cause analysis, investigations | analyst.txt |
 
-**Note:** Panes 3 (Frontend) and 6 (Reviewer) were removed in Session 77. Those roles now run as internal teammates of Architect in pane 1 via Agent Teams.
+**Note:** Panes 3 (Frontend) and 6 (Reviewer) removed in Session 77 — now internal teammates of Architect. Pane 4 (Backend) merged into Pane 2 (DevOps) in Session 79. 3-pane layout is final.
 
 **Models are configured dynamically.** To see what model runs in each pane, read `ui/settings.json` → `paneCommands` field. DO NOT assume models from docs - they change.
 
@@ -209,7 +208,7 @@ If running in SDK mode (not PTY terminals):
 
 **Terminal output is for talking to the USER. Trigger files are for talking to OTHER AGENTS.**
 
-When you receive a message FROM another agent (prefixed with their role like `(ARCH):` or `(FRONT):`):
+When you receive a message FROM another agent (prefixed with their role like `(ARCH):` or `(DEVOPS):`):
 1. **DO NOT respond in terminal output** - the user is not your audience
 2. **MUST reply via trigger file** - write to their trigger file
 3. Format: `(YOUR-ROLE): Your response here`
@@ -218,7 +217,7 @@ Example:
 - You receive in terminal: `(ARCH): Please review the auth changes`
 - You reply by writing to `D:\projects\hivemind\workspace\triggers\architect.txt`:
   ```
-  (BACK): Reviewed. Found 2 issues, see blockers.md
+  (DEVOPS): Reviewed. Found 2 issues, see blockers.md
   ```
 
 **This is MANDATORY. Responding to agents via terminal output defeats the entire purpose of multi-agent coordination.**
@@ -288,10 +287,9 @@ node D:/projects/hivemind/ui/scripts/hm-send.js <target> "<message>"
 | Target | Reaches |
 |--------|---------|
 | `architect` | Architect (pane 1) |
-| `infra` | Infra (pane 2) |
-| `backend` | Backend (pane 4) |
+| `devops` | DevOps (pane 2) |
 | `analyst` | Analyst (pane 5) |
-| `1`, `2`, `4`, `5` | Pane by number |
+| `1`, `2`, `5` | Pane by number |
 
 **Example:** To tell Architect about a bug:
 ```bash
@@ -312,7 +310,7 @@ Messages use sequence numbers to prevent duplicates: `(ROLE #N): message`
 **The app resets sequence tracking on every restart.** This means:
 - You can start from `#1` each session
 - Don't worry about what sequence numbers were used before
-- The format is: `(ARCH #1):`, `(INFRA #2):`, `(BACK #3):`, `(ANA #4):`
+- The format is: `(ARCH #1):`, `(DEVOPS #2):`, `(ANA #3):`
 
 ### 🔧 Message Not Received - Diagnostic Checklist
 
@@ -447,7 +445,7 @@ User → Architect
          ↓
     Document WHY (not just WHAT) for implementers
          ↓
-    Delegate to domain agents (Frontend/Backend/Infra)
+    Delegate to domain agents (Frontend/DevOps)
 ```
 
 ### Rules
@@ -463,11 +461,11 @@ User → Architect
 - **Different thinking modes:** Builder (Architect) + Analyzer (Analyst) + Critic (Reviewer)
 - **Full decision loop:** Propose → Analyze → Challenge → Decide
 - **3 is optimal:** Small enough for real dialogue, large enough for diverse views
-- **Prevents echo chambers:** Codex (Analyst) + Claude (Reviewer) = different blind spots caught
+- **Prevents echo chambers:** Gemini (Analyst) + Claude (Reviewer) = different blind spots caught
 
 ### Anti-Patterns
 
-- ❌ Broadcasting to all 5 agents for every question (noise)
+- ❌ Broadcasting to all 3 agents for every question (noise)
 - ❌ Architect deciding alone on strategic matters (blind spots)
 - ❌ Endless back-and-forth without synthesis (drift)
 - ❌ Skipping rationale documentation (implementers confused)
@@ -485,7 +483,7 @@ IMPLEMENTATION: [task] - Domain agent executes
 This prevents confusion about which protocol applies. "Add authentication" could be:
 - STRATEGIC (what approach?) → 3-agent discussion
 - CODE REVIEW (is the code correct?) → Reviewer solo
-- IMPLEMENTATION (write the code) → Backend executes
+- IMPLEMENTATION (write the code) → DevOps executes
 
 ### Disagreement Protocol (Session 54)
 
@@ -565,7 +563,7 @@ If any are unclear, Architect asks user BEFORE delegating to domain agents.
 
 11. **Just fix it - don't instruct users.** If you know a fix or workaround, APPLY IT. Don't tell users to edit config files, run commands, or change settings themselves. Users (newcomers and devs alike) want problems solved, not instructions to follow. Your job is to fix things, not delegate fixes to users.
 
-12. **Check logs yourself, NEVER ask user.** We built `workspace/console.log` for DevTools output and have npm/agent terminals. Before asking user about ANY error or behavior, check the logs yourself (`tail -50 workspace/console.log`). NEVER say "can you check the console?" or "what does DevTools say?" - that defeats the entire purpose of log automation. The user is managing 6 panes and doesn't have time to relay information you can read yourself.
+12. **Check logs yourself, NEVER ask user.** We built `workspace/console.log` for DevTools output and have npm/agent terminals. Before asking user about ANY error or behavior, check the logs yourself (`tail -50 workspace/console.log`). NEVER say "can you check the console?" or "what does DevTools say?" - that defeats the entire purpose of log automation. The user is managing 3 panes and doesn't have time to relay information you can read yourself.
 
 ---
 
@@ -619,7 +617,7 @@ cd ui && npm install
 # Run the app
 cd ui && npm start
 
-# Check if Electron launches with 4 terminal panes
+# Check if Electron launches with 3 terminal panes
 ```
 
 ---

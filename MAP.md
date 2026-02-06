@@ -1,6 +1,6 @@
 # Hivemind Codebase Map
 
-**Last Updated:** 2026-02-05
+**Last Updated:** 2026-02-06
 **Purpose:** Navigation guide for developers (human and AI agents)
 
 ---
@@ -35,7 +35,7 @@ hivemind/
 │   ├── mcp-server.js            # MCP protocol server
 │   ├── package.json             # Dependencies (xterm.js, node-pty, chokidar)
 │   │
-│   ├── modules/                 # Feature modules (116 files, ~1.5MB)
+│   ├── modules/                 # Feature modules (143 files)
 │   │   ├── terminal.js          # xterm management, PTY, injection
 │   │   ├── triggers.js          # Agent-to-agent messaging (modular)
 │   │   ├── watcher.js           # File system watching (chokidar)
@@ -50,7 +50,7 @@ hivemind/
 │   │   │
 │   │   ├── daemon-handlers.js   # Daemon lifecycle, message throttling
 │   │   │
-│   │   ├── ipc/                 # IPC handlers (56 files)
+│   │   ├── ipc/                 # IPC handlers (57 files)
 │   │   │   ├── handler-registry.js  # Route table
 │   │   │   ├── pty-handlers.js      # Terminal control
 │   │   │   ├── sdk-handlers.js      # SDK mode
@@ -81,17 +81,32 @@ hivemind/
 │   │   ├── plugins/             # Plugin system (2 files)
 │   │   │   └── plugin-manager.js
 │   │   │
+│   │   ├── scaffolding/         # Project scaffolding (1 file)
+│   │   │   └── project-scaffolder.js
+│   │   │
+│   │   ├── security/            # Security management (1 file)
+│   │   │   └── security-manager.js
+│   │   │
+│   │   ├── websocket-server.js  # WebSocket server for agent messaging
+│   │   ├── sdk-renderer.js      # SDK mode renderer
+│   │   ├── model-selector.js    # Model selection logic
+│   │   ├── smart-routing.js     # Smart message routing
+│   │   ├── gemini-oracle.js     # Gemini Oracle integration
 │   │   └── ...                  # Other utilities
 │   │
 │   ├── sdk-ui/                  # Organic UI v2
 │   │   ├── organic-ui.js        # Rounded containers, visual streams
 │   │   └── bubble-canvas.js     # Legacy bubble UI
 │   │
+│   ├── scripts/                 # Utility scripts
+│   │   ├── hm-send.js           # WebSocket messaging CLI
+│   │   └── hm-screenshot.js     # Screenshot utility
+│   │
 │   ├── styles/                  # CSS modules
 │   │   ├── layout.css           # Main layout
-│   │   └── tabs/                # Modular tab styles (21 files)
+│   │   └── tabs/                # Modular tab styles (20 files)
 │   │
-│   └── __tests__/               # Jest tests (2800+ tests)
+│   └── __tests__/               # Jest tests (87 suites, ~2800 tests)
 │       └── ...
 │
 ├── hivemind-sdk-v2.py           # Python SDK orchestrator (locked parallelism)
@@ -110,16 +125,17 @@ hivemind/
 │   │   └── ...
 │   │
 │   ├── instances/               # Per-agent working directories
-│   │   ├── arch/, infra/, ana/
+│   │   ├── arch/, infra/, ana/  # Active (panes 1, 2, 5)
+│   │   ├── back/, front/, rev/  # Legacy dirs (panes removed, dirs kept for history)
 │   │
-│   └── triggers/                # Agent communication files
-│       ├── architect.txt, devops.txt, analyst.txt, etc.
+│   └── triggers/                # Agent communication files (created at runtime)
+│       ├── architect.txt, devops.txt, analyst.txt, workers.txt, all.txt
 ```
 
 ### Obsolete Code (Ignore/Cleanup)
 
 - **docs/archive/python-v1/** - Dead Python architecture
-- **ui/modules/tabs.js** - Refactored to sub-modules (only ~110 lines)
+- **ui/modules/tabs.js** - Refactored to sub-modules (only ~126 lines, coordinator stub)
 - **Large log files** - workspace/console.log, ui/daemon.log (Safe to delete)
 
 ---
@@ -180,7 +196,7 @@ hivemind/
 | CLIs | Native (Claude/Codex), npm (Gemini) | - |
 | Daemon | Node.js | 18+ |
 | File Watching | chokidar | 3.6 |
-| Testing | Jest | 30 (2800+ tests) |
+| Testing | Jest | 30 (87 suites, ~2800 tests) |
 | Python SDK | Multi-agent | Claude SDK, OpenAI Agents, Google GenAI |
 | Message Protocol | MCP | 1.25 |
 
