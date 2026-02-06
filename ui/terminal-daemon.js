@@ -137,6 +137,33 @@ const SCROLLBACK_MAX_SIZE = 50000;
 // Default stuck threshold (60 seconds)
 const DEFAULT_STUCK_THRESHOLD = 60000;
 
+// Smart Watchdog: Threshold for churning stalls (30 seconds)
+const MEANINGFUL_ACTIVITY_TIMEOUT_MS = 30000;
+
+// Allowlist of spinner characters to ignore during churning stall detection
+const SPINNER_CHARS = ['|', '/', '-', '\\', '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/**
+ * Check if the PTY output contains meaningful content (not just spinners/ANSI/whitespace)
+ */
+function isMeaningfulActivity(data) {
+  if (!data) return false;
+  // Strip ANSI, control characters, and whitespace
+  const clean = stripAnsi(data)
+    .replace(/[\x00-\x1F\x7F]/g, '')
+    .replace(/\s/g, '');
+  
+  if (clean.length === 0) return false;
+  
+  // If the remaining string contains any character NOT in our spinner allowlist, it's meaningful
+  for (let i = 0; i < clean.length; i++) {
+    if (!SPINNER_CHARS.includes(clean[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ============================================================
 // Ghost text deduplication
 // ============================================================
@@ -941,6 +968,13 @@ function sendMockData(paneId, text, callback) {
       }
       // Broadcast character
       broadcast({ event: 'data', paneId, data: char });
+
+      // Update activity timers for Dry-run mode
+      terminal.lastActivity = Date.now();
+      if (isMeaningfulActivity(char)) {
+        terminal.lastMeaningfulActivity = Date.now();
+      }
+
       index++;
       setTimeout(sendChar, DRY_RUN_TYPING_DELAY);
     } else if (callback) {
@@ -1056,6 +1090,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       mode: 'dry-run',
       inputBuffer: '', // Buffer for accumulating input
       lastActivity: Date.now(), // Track last activity
+      lastMeaningfulActivity: Date.now(), // Smart Watchdog: last non-spinner output
       lastInputTime: Date.now(), // Track last user INPUT
     };
 
@@ -1097,6 +1132,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       codexHasSession: !!restoredSessionId,
       codexSessionId: restoredSessionId || null,
       lastActivity: Date.now(),
+      lastMeaningfulActivity: Date.now(), // Smart Watchdog
       lastInputTime: Date.now(),
     };
 
@@ -1130,6 +1166,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     dryRun: false,
     mode: 'pty',
     lastActivity: Date.now(), // Track last PTY output
+    lastMeaningfulActivity: Date.now(), // Smart Watchdog: last non-spinner output
     lastInputTime: Date.now(), // Track last user INPUT (not output)
   };
 
@@ -1144,6 +1181,12 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   ptyProcess.onData((data) => {
     // Track last activity time
     terminalInfo.lastActivity = Date.now();
+
+    // Smart Watchdog: Track last meaningful activity (ignore churning spinners)
+    if (isMeaningfulActivity(data)) {
+      terminalInfo.lastMeaningfulActivity = Date.now();
+    }
+
     // Codex approval prompt fallback (best-effort)
     maybeAutoApprovePrompt(paneId, data);
 
@@ -1297,6 +1340,7 @@ function listTerminals() {
         scrollback: info.scrollback || '',
         dryRun: info.dryRun || false,
         lastActivity: info.lastActivity || null,
+        lastMeaningfulActivity: info.lastMeaningfulActivity || null, // Smart Watchdog
         lastInputTime: info.lastInputTime || null,
     });
   }
@@ -1314,23 +1358,32 @@ function getStuckTerminals(thresholdMs = DEFAULT_STUCK_THRESHOLD) {
     if (info.alive) {
       const lastInput = info.lastInputTime || 0;
       const lastActivity = info.lastActivity || 0;
+      const lastMeaningful = info.lastMeaningfulActivity || lastActivity;
 
       const timeSinceInput = now - lastInput;
       const timeSinceActivity = now - lastActivity;
+      const timeSinceMeaningful = now - lastMeaningful;
 
       // If agent is actively outputting data (within grace period), it's NOT stuck
-      // even if the input command was sent a long time ago.
+      // UNLESS it's just churning (no meaningful output for a while)
       if (timeSinceActivity < ACTIVITY_GRACE_PERIOD) {
-        continue;
+        // Only skip if it has also had meaningful activity recently
+        if (timeSinceMeaningful < MEANINGFUL_ACTIVITY_TIMEOUT_MS) {
+          continue;
+        }
+        // If we fall through, it's considered stuck (churning stall)
+        logWarn(`[SmartWatchdog] Detected churning stall in pane ${paneId} (last meaningful: ${Math.round(timeSinceMeaningful/1000)}s ago)`);
       }
 
-      // If meaningful time has passed since input AND it has stopped outputting
+      // If meaningful time has passed since input AND it has stopped outputting (or is churning)
       if (lastInput > 0 && timeSinceInput > thresholdMs) {
         stuck.push({
           paneId,
           pid: info.pid,
           lastInputTime: info.lastInputTime,
           lastActivity: info.lastActivity,
+          lastMeaningfulActivity: info.lastMeaningfulActivity || lastActivity,
+          isChurning: timeSinceActivity < ACTIVITY_GRACE_PERIOD,
           idleTimeMs: timeSinceInput,
           idleTimeFormatted: formatUptime(Math.floor(timeSinceInput / 1000)),
         });
