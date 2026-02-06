@@ -391,29 +391,29 @@ function triggerStartupInjection(paneId, state, reason) {
       try {
         // Step 1: Clear any garbage in input line (matches doSendToPane Gemini path)
         await window.hivemind.pty.write(String(paneId), '\x15');
-        log.info('spawnClaude', `Gemini identity: cleared input line for ${role} (pane ${paneId})`);
+        log.info('spawnAgent', `Gemini identity: cleared input line for ${role} (pane ${paneId})`);
 
         // Step 2: Write the identity text
         await window.hivemind.pty.write(String(paneId), identityMsg);
-        log.info('spawnClaude', `Gemini identity text written for ${role} (pane ${paneId})`);
+        log.info('spawnAgent', `Gemini identity text written for ${role} (pane ${paneId})`);
 
         // Step 3: Wait 500ms then send Enter (Gemini's bufferFastReturn threshold)
         await new Promise(resolve => setTimeout(resolve, 500));
         await window.hivemind.pty.write(String(paneId), '\r');
-        log.info('spawnClaude', `Gemini identity Enter sent for ${role} (pane ${paneId}) [ready:${reason}]`);
+        log.info('spawnAgent', `Gemini identity Enter sent for ${role} (pane ${paneId}) [ready:${reason}]`);
       } catch (err) {
-        log.error('spawnClaude', `Gemini identity injection failed for pane ${paneId}:`, err);
+        log.error('spawnAgent', `Gemini identity injection failed for pane ${paneId}:`, err);
       }
     } else {
       sendToPane(paneId, identityMsg + '\r');
-      log.info('spawnClaude', `Identity injected for ${role} (pane ${paneId}) [ready:${reason}]`);
+      log.info('spawnAgent', `Identity injected for ${role} (pane ${paneId}) [ready:${reason}]`);
     }
   }, identityDelayMs);
 
   if (!state.isGemini && window.hivemind?.claude?.injectContext) {
     const contextDelayMs = String(paneId) === '1' ? STARTUP_CONTEXT_DELAY_ARCHITECT_MS : STARTUP_CONTEXT_DELAY_MS;
     window.hivemind.claude.injectContext(paneId, state.modelType, contextDelayMs);
-    log.info('spawnClaude', `Context injection scheduled for ${state.modelType} pane ${paneId} in ${contextDelayMs}ms [ready:${reason}]`);
+    log.info('spawnAgent', `Context injection scheduled for ${state.modelType} pane ${paneId} in ${contextDelayMs}ms [ready:${reason}]`);
   }
 }
 
@@ -435,12 +435,12 @@ function armStartupInjection(paneId, options = {}) {
   state.timeoutId = setTimeout(() => {
     const current = startupInjectionState.get(id);
     if (!current || current.completed) return;
-    log.warn('spawnClaude', `Startup ready pattern not detected for pane ${id} after ${timeoutMs}ms, injecting anyway`);
+    log.warn('spawnAgent', `Startup ready pattern not detected for pane ${id} after ${timeoutMs}ms, injecting anyway`);
     triggerStartupInjection(id, current, 'timeout');
   }, timeoutMs);
 
   startupInjectionState.set(id, state);
-  log.info('spawnClaude', `Startup injection armed for pane ${id} (model=${state.modelType})`);
+  log.info('spawnAgent', `Startup injection armed for pane ${id} (model=${state.modelType})`);
 }
 
 function handleStartupOutput(paneId, data) {
@@ -514,7 +514,7 @@ const recoveryController = createRecoveryController({
   getInjectionInFlight,
   userIsTyping,
   getInjectionHelpers: () => injectionController,
-  spawnClaude,
+  spawnAgent,
   resetCodexIdentity,
   resetTerminalWriteQueue,
 });
@@ -1045,20 +1045,20 @@ function setSDKMode(enabled) {
   log.info('Terminal', `SDK mode ${enabled ? 'enabled' : 'disabled'} - PTY spawn operations ${enabled ? 'blocked' : 'allowed'}`);
 }
 
-// Spawn claude in a pane
+// Spawn agent CLI in a pane
 // model param: optional override for model type (used by model switch to bypass stale cache)
-async function spawnClaude(paneId, model = null) {
+async function spawnAgent(paneId, model = null) {
   // Defense in depth: Early exit if no terminal exists for this pane
   // This catches race conditions where SDK mode blocks terminal creation but
   // user somehow triggers spawn before UI fully updates
   if (!terminals.has(paneId)) {
-    log.info('spawnClaude', `No terminal for pane ${paneId}, skipping`);
+    log.info('spawnAgent', `No terminal for pane ${paneId}, skipping`);
     return;
   }
 
   // SDK Mode Guard: Don't spawn CLI Claude when SDK mode is active
   if (sdkModeActive) {
-    log.info('spawnClaude', `SDK mode active - blocking CLI spawn for pane ${paneId}`);
+    log.info('spawnAgent', `SDK mode active - blocking CLI spawn for pane ${paneId}`);
     return;
   }
 
@@ -1066,7 +1066,7 @@ async function spawnClaude(paneId, model = null) {
   // This ensures we don't use stale identity data
   if (model) {
     unregisterCodexPane(paneId);
-    log.info('spawnClaude', `Cleared CLI identity cache for pane ${paneId} (model switch to ${model})`);
+    log.info('spawnAgent', `Cleared CLI identity cache for pane ${paneId} (model switch to ${model})`);
   }
 
   // Determine if this is a Codex pane
@@ -1085,10 +1085,10 @@ async function spawnClaude(paneId, model = null) {
         lastTypedTime[paneId] = Date.now();
         await new Promise(resolve => setTimeout(resolve, 100));
         await window.hivemind.pty.write(String(paneId), '\r');
-        log.info('spawnClaude', `Codex command written for pane ${paneId}`);
+        log.info('spawnAgent', `Codex command written for pane ${paneId}`);
       }
     } catch (err) {
-      log.error(`spawnClaude ${paneId}`, 'Codex spawn failed:', err);
+      log.error(`spawnAgent ${paneId}`, 'Codex spawn failed:', err);
       updatePaneStatus(paneId, 'Spawn failed');
       return;
     }
@@ -1098,13 +1098,13 @@ async function spawnClaude(paneId, model = null) {
       const timestamp = new Date().toISOString().split('T')[0];
       const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
       sendToPane(paneId, identityMsg + '\r');
-      log.info('spawnClaude', `Codex exec identity sent for ${role} (pane ${paneId})`);
+      log.info('spawnAgent', `Codex exec identity sent for ${role} (pane ${paneId})`);
     }, STARTUP_IDENTITY_DELAY_CODEX_MS);
 
     // Finding #14: Inject context files (AGENTS.md for Codex) after startup
     if (window.hivemind?.claude?.injectContext) {
       window.hivemind.claude.injectContext(paneId, 'codex', STARTUP_CONTEXT_DELAY_CODEX_MS);
-      log.info('spawnClaude', `Context injection scheduled for Codex pane ${paneId}`);
+      log.info('spawnAgent', `Context injection scheduled for Codex pane ${paneId}`);
     }
 
     updatePaneStatus(paneId, 'Codex exec ready');
@@ -1118,7 +1118,7 @@ async function spawnClaude(paneId, model = null) {
     try {
       result = await window.hivemind.claude.spawn(paneId);
     } catch (err) {
-      log.error(`spawnClaude ${paneId}`, 'Spawn failed:', err);
+      log.error(`spawnAgent ${paneId}`, 'Spawn failed:', err);
       updatePaneStatus(paneId, 'Spawn failed');
       return;
     }
@@ -1128,7 +1128,7 @@ async function spawnClaude(paneId, model = null) {
       try {
         await window.hivemind.pty.write(String(paneId), result.command);
       } catch (err) {
-        log.error(`spawnClaude ${paneId}`, 'PTY write command failed:', err);
+        log.error(`spawnAgent ${paneId}`, 'PTY write command failed:', err);
       }
       // Mark as typed so Enter isn't blocked
       lastTypedTime[paneId] = Date.now();
@@ -1137,7 +1137,7 @@ async function spawnClaude(paneId, model = null) {
       try {
         await window.hivemind.pty.write(String(paneId), '\r');
       } catch (err) {
-        log.error(`spawnClaude ${paneId}`, 'PTY write Enter failed:', err);
+        log.error(`spawnAgent ${paneId}`, 'PTY write Enter failed:', err);
       }
 
       // Codex CLI needs an extra Enter after startup to dismiss its welcome prompt
@@ -1149,9 +1149,9 @@ async function spawnClaude(paneId, model = null) {
       if (isCodexCommand) {
         setTimeout(() => {
           window.hivemind.pty.write(String(paneId), '\r').catch(err => {
-            log.error(`spawnClaude ${paneId}`, 'Codex startup Enter failed:', err);
+            log.error(`spawnAgent ${paneId}`, 'Codex startup Enter failed:', err);
           });
-          log.info('spawnClaude', `Codex pane ${paneId}: PTY \\r to dismiss any startup prompt`);
+          log.info('spawnAgent', `Codex pane ${paneId}: PTY \\r to dismiss any startup prompt`);
         }, 3000);
       }
 
@@ -1178,11 +1178,11 @@ function isGeminiPane(paneId) {
   }
 }
 
-// Spawn claude in all panes
-async function spawnAllClaude() {
+// Spawn agents in all panes
+async function spawnAllAgents() {
   updateConnectionStatus('Starting agents in all panes...');
   for (const paneId of PANE_IDS) {
-    await spawnClaude(paneId);
+    await spawnAgent(paneId);
     // Small delay between panes to prevent race conditions
     await new Promise(resolve => setTimeout(resolve, 200));
   }
@@ -1267,7 +1267,7 @@ async function freshStartAll() {
 
   // Spawn agents with fresh sessions
   for (const paneId of PANE_IDS) {
-    await spawnClaude(paneId);
+    await spawnAgent(paneId);
   }
 
   updateConnectionStatus('Fresh start complete - new sessions started');
@@ -1457,8 +1457,8 @@ module.exports = {
   blurAllTerminals,
   sendToPane,
   broadcast,
-  spawnClaude,
-  spawnAllClaude,
+  spawnAgent,
+  spawnAllAgents,
   killAllTerminals,
   nudgePane,
   nudgeAllPanes,
