@@ -47,7 +47,7 @@ If choosing between "elegant but complex" and "simple but works" - choose simple
 
 ## CRITICAL CONTEXT
 
-You are an AI agent INSIDE the Hivemind app. You are one of 6 agents (Architect, Infra, Frontend, Backend, Analyst, Reviewer) running in panes within the Hivemind desktop app.
+You are an AI agent INSIDE the Hivemind app. You are one of 4 pane agents (Architect, Infra, Backend, Analyst) running in the Hivemind desktop app. Frontend and Reviewer run as internal Agent Teams teammates of Architect (pane 1).
 
 ### 🚨 RECOGNIZE SYSTEM FAILURES - MANDATORY
 
@@ -149,12 +149,12 @@ If running in SDK mode (not PTY terminals):
 
 | Pane | Role | Domain | Trigger File |
 |------|------|--------|--------------|
-| 1 | **Architect** | Architecture, coordination, delegation, git commits | architect.txt |
+| 1 | **Architect** | Architecture, coordination, delegation, git commits + **Frontend** and **Reviewer** as internal Agent Teams teammates | architect.txt |
 | 2 | **Infra** | CI/CD, deployment, build scripts, infrastructure | infra.txt |
-| 3 | **Frontend** | UI components, renderer.js, index.html, CSS | frontend.txt |
 | 4 | **Backend** | Daemon, processes, file watching, main.js internals | backend.txt |
 | 5 | **Analyst** | Debugging, profiling, root cause analysis, investigations | analyst.txt |
-| 6 | **Reviewer** | Code review, verification, quality gates | reviewer.txt |
+
+**Note:** Panes 3 (Frontend) and 6 (Reviewer) were removed in Session 77. Those roles now run as internal teammates of Architect in pane 1 via Agent Teams.
 
 **Models are configured dynamically.** To see what model runs in each pane, read `ui/settings.json` → `paneCommands` field. DO NOT assume models from docs - they change.
 
@@ -289,11 +289,9 @@ node D:/projects/hivemind/ui/scripts/hm-send.js <target> "<message>"
 |--------|---------|
 | `architect` | Architect (pane 1) |
 | `infra` | Infra (pane 2) |
-| `frontend` | Frontend (pane 3) |
 | `backend` | Backend (pane 4) |
 | `analyst` | Analyst (pane 5) |
-| `reviewer` | Reviewer (pane 6) |
-| `1` - `6` | Pane by number |
+| `1`, `2`, `4`, `5` | Pane by number |
 
 **Example:** To tell Architect about a bug:
 ```bash
@@ -314,7 +312,7 @@ Messages use sequence numbers to prevent duplicates: `(ROLE #N): message`
 **The app resets sequence tracking on every restart.** This means:
 - You can start from `#1` each session
 - Don't worry about what sequence numbers were used before
-- The format is: `(ARCH #1):`, `(FRONT #2):`, `(BACK #3):`, `(ANA #4):`, `(REV #5):`, `(INFRA #6):`
+- The format is: `(ARCH #1):`, `(INFRA #2):`, `(BACK #3):`, `(ANA #4):`
 
 ### 🔧 Message Not Received - Diagnostic Checklist
 
