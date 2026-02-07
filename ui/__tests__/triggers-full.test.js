@@ -19,19 +19,7 @@ jest.mock('electron', () => ({
 }));
 
 // Mock config
-const mockConfig = {
-  WORKSPACE_PATH: '/test/workspace',
-  TRIGGER_TARGETS: {
-    'architect.txt': ['1'],
-    'infra.txt': ['2'],
-    'backend.txt': ['2'],
-    'analyst.txt': ['5'],
-    'workers.txt': ['2'],
-    'all.txt': ['1', '2', '5'],
-  },
-  PANE_IDS: ['1', '2', '5'],
-};
-jest.mock('../config', () => mockConfig);
+jest.mock('../config', () => require('./helpers/mock-config').mockDefaultConfig);
 
 // Mock logger
 const mockLog = {

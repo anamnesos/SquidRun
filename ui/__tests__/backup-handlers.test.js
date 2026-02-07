@@ -13,10 +13,8 @@ jest.mock('../modules/backup-manager', () => ({
   createBackupManager: jest.fn(),
 }));
 
-// Mock config - path relative to source file location
-jest.mock('../config', () => ({
-  WORKSPACE_PATH: '/test/workspace',
-}));
+// Mock config
+jest.mock('../config', () => require('./helpers/mock-config').mockWorkspaceOnly);
 
 const backupModule = require('../modules/backup-manager');
 const { registerBackupHandlers } = require('../modules/ipc/backup-handlers');

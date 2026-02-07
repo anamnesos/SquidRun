@@ -12,9 +12,7 @@ jest.mock('fs', () => ({
   renameSync: jest.fn(),
 }));
 
-jest.mock('../config', () => ({
-  WORKSPACE_PATH: '/test/workspace',
-}));
+jest.mock('../config', () => require('./helpers/mock-config').mockWorkspaceOnly);
 
 jest.mock('../modules/logger', () => ({
   info: jest.fn(),

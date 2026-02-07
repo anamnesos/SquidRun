@@ -13,19 +13,7 @@ jest.mock('electron', () => ({
 }));
 
 // Mock config
-jest.mock('../config', () => ({
-  INSTANCE_DIRS: {
-    '1': '/project/instances/arch',
-    '2': '/project/instances/devops',
-    '5': '/project/instances/ana',
-  },
-  PANE_IDS: ['1', '2', '5'],
-  PANE_ROLES: {
-    '1': 'Architect',
-    '2': 'DevOps',
-    '5': 'Analyst',
-  },
-}));
+jest.mock('../config', () => require('./helpers/mock-config').mockDefaultConfig);
 
 // Mock terminal module
 jest.mock('../modules/terminal', () => ({
