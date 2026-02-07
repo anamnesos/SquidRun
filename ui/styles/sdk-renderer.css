@@ -1,19 +1,19 @@
 /* sdk-renderer.css — SDK Renderer Styles - Modern 2026 Design */
 
-/* SDK Color Palette (Dark Mode) */
+/* SDK Color Palette (Cyberpunk Dark Mode) */
 :root {
-  --sdk-bg-primary: #0f0f17;
-  --sdk-bg-secondary: #1a1a2e;
-  --sdk-bg-tertiary: #252542;
-  --sdk-text-primary: #e2e8f0;
-  --sdk-text-secondary: #94a3b8;
-  --sdk-text-muted: #64748b;
-  --sdk-accent-blue: #3b82f6;
-  --sdk-accent-purple: #8b5cf6;
-  --sdk-accent-green: #10b981;
-  --sdk-accent-amber: #f59e0b;
-  --sdk-accent-red: #ef4444;
-  --sdk-border: #1e293b;
+  --sdk-bg-primary: #0a0a0f;
+  --sdk-bg-secondary: #0d0d18;
+  --sdk-bg-tertiary: #151525;
+  --sdk-text-primary: #e8eaf0;
+  --sdk-text-secondary: #8a8fa8;
+  --sdk-text-muted: #555a70;
+  --sdk-accent-blue: #3a7bff;
+  --sdk-accent-purple: #bb86fc;
+  --sdk-accent-green: #00e676;
+  --sdk-accent-amber: #f0a000;
+  --sdk-accent-red: #ff2040;
+  --sdk-border: #1a1a2e;
 }
 
 /* Base pane container */
@@ -131,7 +131,7 @@
   border: none;
   margin-left: 20%;
   border-radius: 16px 16px 4px 16px;
-  box-shadow: 0 2px 12px rgba(59, 130, 246, 0.25);
+  box-shadow: 0 2px 12px rgba(58, 123, 255, 0.25);
   padding: 12px 18px;
   padding-top: 10px;
   max-width: 80%;
@@ -354,7 +354,7 @@
 }
 
 .sdk-error-content {
-  color: #fca5a5;
+  color: #ff8a9e;
   font-size: 13px;
   margin: 0;
 }
@@ -397,7 +397,7 @@
   color: var(--sdk-accent-red);
 }
 
-/* Pane 2: Infra (blue) */
+/* Pane 2: DevOps (blue) */
 .sdk-agent-infra {
   border-left: 3px solid var(--sdk-accent-blue);
 }
@@ -405,36 +405,12 @@
   color: var(--sdk-accent-blue);
 }
 
-/* Pane 3: Frontend (green) */
-.sdk-agent-frontend {
-  border-left: 3px solid var(--sdk-accent-green);
-}
-.sdk-agent-frontend .sdk-agent-label {
-  color: var(--sdk-accent-green);
-}
-
-/* Pane 4: Backend (purple) */
-.sdk-agent-backend {
-  border-left: 3px solid var(--sdk-accent-purple);
-}
-.sdk-agent-backend .sdk-agent-label {
-  color: var(--sdk-accent-purple);
-}
-
-/* Pane 5: Analyst (yellow) */
+/* Pane 5: Analyst (amber) */
 .sdk-agent-analyst {
-  border-left: 3px solid #eab308;
+  border-left: 3px solid var(--sdk-accent-amber);
 }
 .sdk-agent-analyst .sdk-agent-label {
-  color: #eab308;
-}
-
-/* Pane 6: Reviewer (orange) */
-.sdk-agent-reviewer {
-  border-left: 3px solid #fb923c;
-}
-.sdk-agent-reviewer .sdk-agent-label {
-  color: #fb923c;
+  color: var(--sdk-accent-amber);
 }
 
 /* ===== WARNING ===== */
@@ -483,8 +459,8 @@
   flex-direction: row;
   align-items: center;
   gap: 16px;
-  background: rgba(255, 200, 87, 0.06);
-  border-left: 3px solid var(--hive-color, #ffc857);
+  background: rgba(240, 160, 0, 0.06);
+  border-left: 3px solid var(--hive-color, #f0a000);
   border-radius: 0 8px 8px 0;
   transition: border-color 0.3s ease, background 0.3s ease;
 }
@@ -502,11 +478,11 @@
   position: absolute;
   width: 14px;
   height: 16px;
-  background: var(--hive-color, #ffc857);
+  background: var(--hive-color, #f0a000);
   clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
   opacity: 0.25;
   animation: hexPulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  filter: drop-shadow(0 0 3px var(--hive-color, #ffc857));
+  filter: drop-shadow(0 0 3px var(--hive-color, #f0a000));
   transition: background 0.3s ease;
 }
 
@@ -524,12 +500,12 @@
   0%, 100% {
     opacity: 0.25;
     transform: scale(0.92);
-    filter: drop-shadow(0 0 2px var(--hive-color, #ffc857));
+    filter: drop-shadow(0 0 2px var(--hive-color, #f0a000));
   }
   50% {
     opacity: 1;
     transform: scale(1.08);
-    filter: drop-shadow(0 0 10px var(--hive-color, #ffc857));
+    filter: drop-shadow(0 0 10px var(--hive-color, #f0a000));
   }
 }
 
@@ -548,34 +524,34 @@
 
 /* ===== TOOL-SPECIFIC COLORS ===== */
 .sdk-streaming[data-tool="thinking"] {
-  --hive-color: #ffc857;
-  border-left-color: #ffc857;
-  background: rgba(255, 200, 87, 0.06);
+  --hive-color: #f0a000;
+  border-left-color: #f0a000;
+  background: rgba(240, 160, 0, 0.06);
 }
 
 .sdk-streaming[data-tool="read"] {
-  --hive-color: #4ecca3;
-  border-left-color: #4ecca3;
-  background: rgba(78, 204, 163, 0.06);
+  --hive-color: #00f0ff;
+  border-left-color: #00f0ff;
+  background: rgba(0, 240, 255, 0.06);
 }
 
 .sdk-streaming[data-tool="write"],
 .sdk-streaming[data-tool="edit"] {
-  --hive-color: #ff6b6b;
-  border-left-color: #ff6b6b;
-  background: rgba(255, 107, 107, 0.06);
+  --hive-color: #ff2040;
+  border-left-color: #ff2040;
+  background: rgba(255, 32, 64, 0.06);
 }
 
 .sdk-streaming[data-tool="search"] {
-  --hive-color: #74b9ff;
-  border-left-color: #74b9ff;
-  background: rgba(116, 185, 255, 0.06);
+  --hive-color: #3a7bff;
+  border-left-color: #3a7bff;
+  background: rgba(58, 123, 255, 0.06);
 }
 
 .sdk-streaming[data-tool="bash"] {
-  --hive-color: #a29bfe;
-  border-left-color: #a29bfe;
-  background: rgba(162, 155, 254, 0.06);
+  --hive-color: #bb86fc;
+  border-left-color: #bb86fc;
+  background: rgba(187, 134, 252, 0.06);
 }
 
 /* ===== INTENSITY SCALING ===== */
@@ -583,7 +559,7 @@
 /* LOW intensity - gentle, contemplative */
 .sdk-streaming[data-intensity="low"] .hive-hex {
   animation-duration: 3.2s;
-  filter: drop-shadow(0 0 2px var(--hive-color, #ffc857));
+  filter: drop-shadow(0 0 2px var(--hive-color, #f0a000));
 }
 .sdk-streaming[data-intensity="low"] .hive-hex-0 {
   opacity: 0.35;
@@ -597,7 +573,7 @@
 /* HIGH intensity - urgent, active */
 .sdk-streaming[data-intensity="high"] .hive-hex {
   animation-duration: 1.6s;
-  filter: drop-shadow(0 0 12px var(--hive-color, #ffc857));
+  filter: drop-shadow(0 0 12px var(--hive-color, #f0a000));
 }
 .sdk-streaming[data-intensity="high"] .hive-hex-0 {
   opacity: 0.6;
@@ -611,12 +587,12 @@
   0%, 100% {
     opacity: 0.3;
     transform: scale(0.88);
-    filter: drop-shadow(0 0 4px var(--hive-color, #ffc857));
+    filter: drop-shadow(0 0 4px var(--hive-color, #f0a000));
   }
   50% {
     opacity: 1;
     transform: scale(1.15);
-    filter: drop-shadow(0 0 16px var(--hive-color, #ffc857));
+    filter: drop-shadow(0 0 16px var(--hive-color, #f0a000));
   }
 }
 
@@ -626,7 +602,7 @@
     animation: none;
     opacity: 0.7;
     transform: scale(1);
-    filter: drop-shadow(0 0 4px var(--hive-color, #ffc857));
+    filter: drop-shadow(0 0 4px var(--hive-color, #f0a000));
   }
   .hive-hex-0 {
     opacity: 1;
@@ -703,8 +679,8 @@
 
 /* Responding state header indicator */
 .sdk-status.responding {
-  color: #4ecca3;
-  background: rgba(78, 204, 163, 0.15);
+  color: var(--sdk-accent-green);
+  background: rgba(0, 230, 118, 0.15);
 }
 
 /* ===== MESSAGE DELIVERY STATES ===== */

@@ -1631,7 +1631,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (statusBar) {
       const alert = document.createElement('span');
       alert.textContent = ` | Pane ${paneId} may be stuck - click pane and press ESC`;
-      alert.style.cssText = 'color: #ffc857; cursor: pointer;';
+      alert.style.cssText = 'color: #f0a000; cursor: pointer;';
       alert.onclick = () => {
         terminal.focusPane(paneId);
         alert.remove();

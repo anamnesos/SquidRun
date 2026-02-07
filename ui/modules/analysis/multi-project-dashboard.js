@@ -625,8 +625,8 @@ class MultiProjectDashboard {
    */
   _generateColor(id) {
     const colors = [
-      '#e94560', '#3b82f6', '#22c55e', '#f59e0b',
-      '#8b5cf6', '#ec4899', '#14b8a6', '#f97316',
+      '#ff2040', '#3a7bff', '#00e676', '#f0a000',
+      '#bb86fc', '#ff4088', '#00f0ff', '#ff9040',
     ];
     const hash = id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
     return colors[hash % colors.length];

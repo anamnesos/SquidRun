@@ -61,7 +61,7 @@
 
 .mcp-agent-dot.connected {
   background: var(--color-secondary);
-  box-shadow: 0 0 8px rgba(78, 204, 163, 0.5);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.5);
 }
 
 .mcp-agent-dot.disconnected {
@@ -91,13 +91,13 @@
 }
 
 .mcp-status-summary.all-connected {
-  color: #4ecca3;
+  color: var(--color-success);
 }
 
 .mcp-status-summary.partial {
-  color: #ffc857;
+  color: var(--color-warning);
 }
 
 .mcp-status-summary.none {
-  color: #666;
+  color: var(--color-text-muted);
 }

@@ -20,7 +20,7 @@
 .process-input:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(233, 69, 96, 0.15);
+  box-shadow: 0 0 0 3px rgba(255, 32, 64, 0.15);
 }
 
 .process-spawn-btn {
@@ -36,9 +36,9 @@
 }
 
 .process-spawn-btn:hover {
-  background: #3db892;
+  background: rgba(0, 240, 255, 0.8);
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(78, 204, 163, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 240, 255, 0.3);
 }
 
 .process-spawn-btn:active {

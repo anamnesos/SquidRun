@@ -25,12 +25,12 @@
 .progress-state-badge.planning {
   background: var(--color-warning);
   color: var(--color-bg-dark);
-  box-shadow: 0 0 12px rgba(255, 200, 87, 0.3);
+  box-shadow: 0 0 12px rgba(240, 160, 0, 0.3);
 }
 .progress-state-badge.executing {
   background: var(--color-secondary);
   color: var(--color-bg-dark);
-  box-shadow: 0 0 12px rgba(78, 204, 163, 0.3);
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.3);
   animation: executingGlow 2s ease-in-out infinite;
 }
 .progress-state-badge.checkpoint {
@@ -41,16 +41,16 @@
 .progress-state-badge.complete {
   background: var(--color-secondary);
   color: var(--color-bg-dark);
-  box-shadow: 0 0 12px rgba(78, 204, 163, 0.3);
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.3);
 }
 .progress-state-badge.error {
   background: var(--color-error);
-  box-shadow: 0 0 12px rgba(233, 69, 96, 0.3);
+  box-shadow: 0 0 12px rgba(255, 32, 64, 0.3);
 }
 
 @keyframes executingGlow {
-  0%, 100% { box-shadow: 0 0 12px rgba(78, 204, 163, 0.3); }
-  50% { box-shadow: 0 0 20px rgba(78, 204, 163, 0.5); }
+  0%, 100% { box-shadow: 0 0 12px rgba(0, 240, 255, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(0, 240, 255, 0.5); }
 }
 
 .progress-checkpoints {
@@ -72,7 +72,7 @@
   height: 100%;
   background: linear-gradient(90deg, var(--color-secondary) 0%, #6ee4b8 100%);
   transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 0 8px rgba(78, 204, 163, 0.4);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
 }
 
 .checkpoint-text {
@@ -101,7 +101,7 @@
 
 .active-agent-badge:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(78, 204, 163, 0.3);
+  box-shadow: 0 4px 8px rgba(0, 240, 255, 0.3);
 }
 
 .no-agents {
@@ -114,7 +114,7 @@
   font-size: 28px;
   font-weight: 700;
   color: var(--color-warning);
-  text-shadow: 0 0 12px rgba(255, 200, 87, 0.3);
+  text-shadow: 0 0 12px rgba(240, 160, 0, 0.3);
 }
 
 /* Usage Stats */
@@ -155,12 +155,12 @@
   margin-top: var(--space-1);
 }
 .usage-stat.cost-estimate {
-  background: rgba(78, 204, 163, 0.08);
-  border-color: rgba(78, 204, 163, 0.25);
+  background: rgba(0, 240, 255, 0.08);
+  border-color: rgba(0, 240, 255, 0.25);
 }
 .usage-stat.cost-estimate:hover {
-  background: rgba(78, 204, 163, 0.12);
-  box-shadow: 0 4px 12px rgba(78, 204, 163, 0.15);
+  background: rgba(0, 240, 255, 0.12);
+  box-shadow: 0 4px 12px rgba(0, 240, 255, 0.15);
 }
 .usage-stat.cost-estimate .usage-stat-value {
   color: var(--color-secondary);
@@ -168,27 +168,27 @@
 
 /* Cost alert warning state */
 .usage-stat.cost-estimate.alert {
-  background: rgba(233, 69, 96, 0.15);
-  border-color: rgba(233, 69, 96, 0.5);
+  background: rgba(255, 32, 64, 0.15);
+  border-color: rgba(255, 32, 64, 0.5);
   animation: costAlertPulse 1.5s ease-in-out infinite;
 }
 .usage-stat.cost-estimate.alert .usage-stat-value {
   color: var(--color-error);
-  text-shadow: 0 0 8px rgba(233, 69, 96, 0.5);
+  text-shadow: 0 0 8px rgba(255, 32, 64, 0.5);
 }
 @keyframes costAlertPulse {
   0%, 100% {
     transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(233, 69, 96, 0.4);
+    box-shadow: 0 0 0 0 rgba(255, 32, 64, 0.4);
   }
   50% {
     transform: scale(1.02);
-    box-shadow: 0 0 12px 4px rgba(233, 69, 96, 0.2);
+    box-shadow: 0 0 12px 4px rgba(255, 32, 64, 0.2);
   }
 }
 
 .error-display {
-  background: rgba(233, 69, 96, 0.12);
+  background: rgba(255, 32, 64, 0.12);
   border: 1px solid var(--color-error);
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
