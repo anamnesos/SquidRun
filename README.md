@@ -43,7 +43,7 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 - **Dry-Run Mode** - Simulate multi-agent flow without spawning real AI instances
 - **Session History** - View past sessions with duration and agents involved
 - **Projects Tab** - Quick-switch between recent projects
-- **Quality Gates** - mypy, ESLint, Jest tests (2801+), pre-commit hooks
+- **Quality Gates** - mypy, ESLint, Jest tests (2796+), pre-commit hooks
 - **IPC Aliases** - Frontend compatibility layer for legacy UI components
 
 ### SDK Mode (Alternative to PTY)
@@ -160,7 +160,7 @@ hivemind/
 │   ├── triggers/                # Agent trigger files
 │   ├── instances/               # Per-agent working directories
 │   │   ├── arch/                # Architect (pane 1)
-│   │   ├── infra/               # DevOps (pane 2)
+│   │   ├── devops/              # DevOps (pane 2)
 │   │   └── ana/                 # Analyst (pane 5)
 │   └── build/                   # Build status, reviews, blockers
 ├── docs/                        # Documentation and specs

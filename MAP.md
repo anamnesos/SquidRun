@@ -125,11 +125,21 @@ hivemind/
 │   │   └── ...
 │   │
 │   ├── instances/               # Per-agent working directories
-│   │   ├── arch/, infra/, ana/  # Active (panes 1, 2, 5)
-│   │   ├── back/, front/, rev/  # Legacy dirs (panes removed, dirs kept for history)
+│   │   ├── arch/, devops/, ana/ # Active (panes 1, 2, 5)
+│   │   ├── front/, rev/         # Legacy dirs (panes removed, dirs kept for history)
 │   │
-│   └── triggers/                # Agent communication files (created at runtime)
-│       ├── architect.txt, devops.txt, analyst.txt, workers.txt, all.txt
+│   ├── triggers/                # Agent communication files (created at runtime)
+│   │   ├── architect.txt, devops.txt, analyst.txt, workers.txt, all.txt
+│   │
+│   ├── intent/                 # Shared intent board (JSON per-agent status)
+│   │   ├── 1.json, 2.json, 5.json
+│   │
+│   ├── references/             # Agent capability references
+│   │   └── agent-capabilities.md
+│   │
+│   └── scripts/                # Hook scripts for agent automation
+│       ├── arch-hooks.js       # Architect lifecycle hooks (Claude Code)
+│       └── ana-hooks.js        # Analyst lifecycle hooks (Gemini CLI)
 ```
 
 ### Obsolete Code (Ignore/Cleanup)
