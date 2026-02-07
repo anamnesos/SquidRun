@@ -20,7 +20,7 @@ let messageHandler = null; // External handler for incoming messages
  * @returns {Promise<WebSocketServer>}
  */
 function start(options = {}) {
-  const port = options.port || DEFAULT_PORT;
+  const port = options.port ?? DEFAULT_PORT;
   messageHandler = options.onMessage || null;
 
   return new Promise((resolve, reject) => {
@@ -245,7 +245,14 @@ function isRunning() {
  * @returns {number|null}
  */
 function getPort() {
-  return wss?.options?.port || null;
+  if (!wss) return null;
+  if (typeof wss.address === 'function') {
+    const address = wss.address();
+    if (address && typeof address === 'object' && address.port) {
+      return address.port;
+    }
+  }
+  return wss.options?.port || null;
 }
 
 module.exports = {

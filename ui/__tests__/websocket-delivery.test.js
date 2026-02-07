@@ -64,17 +64,42 @@ function closeClient(ws) {
       resolve();
       return;
     }
-    ws.on('close', () => resolve());
+    const timeout = setTimeout(() => {
+      if (ws.readyState !== ws.CLOSED) {
+        ws.terminate();
+      }
+      resolve();
+    }, 500);
+
+    ws.on('close', () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+
     ws.close();
   });
 }
 
 describe('WebSocket Delivery Audit', () => {
   let port;
+  let activeClients = new Set();
 
   beforeAll(async () => {
-    port = 9900 + Math.floor(Math.random() * 500);
-    await websocketServer.start({ port });
+    await websocketServer.start({ port: 0 });
+    port = websocketServer.getPort();
+    if (!port || port === 0) {
+      throw new Error('WebSocket server failed to bind an ephemeral port');
+    }
+  });
+
+  beforeEach(() => {
+    activeClients = new Set();
+  });
+
+  afterEach(async () => {
+    const clients = Array.from(activeClients);
+    activeClients.clear();
+    await Promise.all(clients.map(closeClient));
   });
 
   afterAll(async () => {
@@ -83,7 +108,9 @@ describe('WebSocket Delivery Audit', () => {
 
   test('delivers send message to target pane', async () => {
     const receiver = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    activeClients.add(receiver);
     const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(sender);
 
     const delivery = waitForMessage(receiver, (msg) => msg.type === 'message' && msg.content === 'ping');
 
@@ -96,7 +123,24 @@ describe('WebSocket Delivery Audit', () => {
 
     const received = await delivery;
     expect(received.from).toBe('architect');
+  });
 
-    await Promise.all([closeClient(sender), closeClient(receiver)]);
+  test('delivers send message to target role', async () => {
+    const receiver = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    activeClients.add(receiver);
+    const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(sender);
+
+    const delivery = waitForMessage(receiver, (msg) => msg.type === 'message' && msg.content === 'role-ping');
+
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'devops',
+      content: 'role-ping',
+      priority: 'normal',
+    }));
+
+    const received = await delivery;
+    expect(received.from).toBe('architect');
   });
 });
