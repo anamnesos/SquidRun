@@ -422,6 +422,20 @@ class HivemindApp {
     // Update IPC handlers with daemon client
     ipcHandlers.setDaemonClient(this.ctx.daemonClient);
 
+    const handlePaneExit = (paneId, code) => {
+      this.ctx.recoveryManager?.handleExit(paneId, code);
+      this.usage.recordSessionEnd(paneId);
+      this.ctx.agentRunning.set(paneId, 'idle');
+      organicUI.agentOffline(paneId);
+      this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'idle', exitCode: code })
+        .catch(err => log.error('Plugins', `Error in agent:stateChanged hook: ${err.message}`));
+      this.broadcastClaudeState();
+      this.activity.logActivity('state', paneId, `Session ended (exit code: ${code})`, { exitCode: code });
+      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+        this.ctx.mainWindow.webContents.send(`pty-exit-${paneId}`, code);
+      }
+    };
+
     this.ctx.daemonClient.on('data', (paneId, data) => {
       this.ctx.recoveryManager?.recordActivity(paneId);
       this.ctx.recoveryManager?.recordPtyOutput?.(paneId, data);
@@ -464,17 +478,7 @@ class HivemindApp {
     });
 
     this.ctx.daemonClient.on('exit', (paneId, code) => {
-      this.ctx.recoveryManager?.handleExit(paneId, code);
-      this.usage.recordSessionEnd(paneId);
-      this.ctx.agentRunning.set(paneId, 'idle');
-      organicUI.agentOffline(paneId);
-      this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'idle', exitCode: code })
-        .catch(err => log.error('Plugins', `Error in agent:stateChanged hook: ${err.message}`));
-      this.broadcastClaudeState();
-      this.activity.logActivity('state', paneId, `Session ended (exit code: ${code})`, { exitCode: code });      
-      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
-        this.ctx.mainWindow.webContents.send(`pty-exit-${paneId}`, code);
-      }
+      handlePaneExit(paneId, code);
     });
 
     this.ctx.daemonClient.on('spawned', (paneId, pid) => {
@@ -484,35 +488,43 @@ class HivemindApp {
       this.ctx.recoveryManager?.recordActivity(paneId);
     });
 
-        this.ctx.daemonClient.on('connected', (terminals) => {
-          log.info('Daemon', `Connected. Existing terminals: ${terminals.length}`);
-    
-          if (terminals && terminals.length > 0) {
-            for (const term of terminals) {
-              if (term.alive) {
-                // Refine: Check if terminal actually has CLI content
-                // Simple check here as we don't want to duplicate all regexes from daemon-handlers
-                const scrollback = String(term.scrollback || '').toLowerCase();
-                const hasCli = scrollback.includes('claude code') || 
-                               scrollback.includes('codex>') || 
-                               scrollback.includes('gemini cli') ||
-                               scrollback.includes('cursor>') ||
-                               (scrollback.includes('>') && scrollback.length > 200);
-    
-                if (hasCli) {
-                  this.ctx.agentRunning.set(String(term.paneId), 'running');
-                  organicUI.agentOnline(String(term.paneId));
-                } else {
-                  this.ctx.agentRunning.set(String(term.paneId), 'idle');
-                  organicUI.agentOffline(String(term.paneId));
-                }
-                
-                const command = this.cliIdentity.getPaneCommandForIdentity(String(term.paneId));   
-                this.cliIdentity.inferAndEmitCliIdentity(term.paneId, command);
-              }
+    this.ctx.daemonClient.on('connected', (terminals) => {
+      log.info('Daemon', `Connected. Existing terminals: ${terminals.length}`);
+
+      if (terminals && terminals.length > 0) {
+        for (const term of terminals) {
+          if (term.alive) {
+            // Refine: Check if terminal actually has CLI content
+            // Simple check here as we don't want to duplicate all regexes from daemon-handlers
+            const scrollback = String(term.scrollback || '').toLowerCase();
+            const hasCli = scrollback.includes('claude code') || 
+                           scrollback.includes('codex>') || 
+                           scrollback.includes('gemini cli') ||
+                           scrollback.includes('cursor>') ||
+                           (scrollback.includes('>') && scrollback.length > 200);
+
+            if (hasCli) {
+              this.ctx.agentRunning.set(String(term.paneId), 'running');
+              organicUI.agentOnline(String(term.paneId));
+            } else {
+              this.ctx.agentRunning.set(String(term.paneId), 'idle');
+              organicUI.agentOffline(String(term.paneId));
             }
-            this.broadcastClaudeState();
+            
+            const command = this.cliIdentity.getPaneCommandForIdentity(String(term.paneId));   
+            this.cliIdentity.inferAndEmitCliIdentity(term.paneId, command);
           }
+        }
+        this.broadcastClaudeState();
+      }
+      if (terminals && terminals.length > 0) {
+        const deadTerminals = terminals.filter(term => term.alive === false);
+        for (const term of deadTerminals) {
+          const paneId = String(term.paneId);
+          log.warn('Daemon', `Detected dead terminal for pane ${paneId} on connect - scheduling recovery`);
+          handlePaneExit(paneId, -1);
+        }
+      }
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send('daemon-connected', {
           terminals,

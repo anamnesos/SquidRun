@@ -7,7 +7,6 @@ const { WebSocketServer } = require('ws');
 const log = require('./logger');
 
 const DEFAULT_PORT = 9900;
-
 let wss = null;
 let clients = new Map(); // clientId -> { ws, paneId, role }
 let clientIdCounter = 0;
