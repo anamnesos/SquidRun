@@ -305,79 +305,38 @@
 .pane[data-pane-id="2"] { border-color: rgba(0, 240, 255, 0.3); }
 .pane[data-pane-id="5"] { border-color: rgba(187, 134, 252, 0.3); }
 
-/* Per-agent focused glow */
+/* Per-agent focused border (no large glow shadows — they bleed between panes) */
 .pane.focused { outline: none; }
 
 .pane[data-pane-id="1"].focused {
   border-color: rgba(240, 160, 0, 0.7);
-  box-shadow:
-    0 0 24px rgba(240, 160, 0, 0.6),
-    0 0 48px rgba(240, 160, 0, 0.25),
-    inset 0 0 8px rgba(240, 160, 0, 0.1);
   animation: paneBreathe1 3.5s ease-in-out infinite;
 }
 
 .pane[data-pane-id="2"].focused {
   border-color: rgba(0, 240, 255, 0.7);
-  box-shadow:
-    0 0 24px rgba(0, 240, 255, 0.6),
-    0 0 48px rgba(0, 240, 255, 0.25),
-    inset 0 0 8px rgba(0, 240, 255, 0.1);
   animation: paneBreathe2 3.5s ease-in-out infinite;
 }
 
 .pane[data-pane-id="5"].focused {
   border-color: rgba(187, 134, 252, 0.7);
-  box-shadow:
-    0 0 24px rgba(187, 134, 252, 0.6),
-    0 0 48px rgba(187, 134, 252, 0.25),
-    inset 0 0 8px rgba(187, 134, 252, 0.1);
   animation: paneBreathe5 3.5s ease-in-out infinite;
 }
 
+/* Subtle border-color pulse instead of box-shadow halos */
 @keyframes paneBreathe1 {
-  0%, 100% {
-    box-shadow:
-      0 0 20px rgba(240, 160, 0, 0.5),
-      0 0 40px rgba(240, 160, 0, 0.2),
-      inset 0 0 6px rgba(240, 160, 0, 0.08);
-  }
-  50% {
-    box-shadow:
-      0 0 32px rgba(240, 160, 0, 0.7),
-      0 0 60px rgba(240, 160, 0, 0.3),
-      inset 0 0 10px rgba(240, 160, 0, 0.15);
-  }
+  0%, 100% { border-color: rgba(240, 160, 0, 0.5); }
+  50% { border-color: rgba(240, 160, 0, 0.85); }
 }
 
 @keyframes paneBreathe2 {
-  0%, 100% {
-    box-shadow:
-      0 0 20px rgba(0, 240, 255, 0.5),
-      0 0 40px rgba(0, 240, 255, 0.2),
-      inset 0 0 6px rgba(0, 240, 255, 0.08);
-  }
-  50% {
-    box-shadow:
-      0 0 32px rgba(0, 240, 255, 0.7),
-      0 0 60px rgba(0, 240, 255, 0.3),
-      inset 0 0 10px rgba(0, 240, 255, 0.15);
-  }
+  0%, 100% { border-color: rgba(0, 240, 255, 0.5); }
+  50% { border-color: rgba(0, 240, 255, 0.85); }
 }
 
 @keyframes paneBreathe5 {
-  0%, 100% {
-    box-shadow:
-      0 0 20px rgba(187, 134, 252, 0.5),
-      0 0 40px rgba(187, 134, 252, 0.2),
-      inset 0 0 6px rgba(187, 134, 252, 0.08);
-  }
-  50% {
-    box-shadow:
-      0 0 32px rgba(187, 134, 252, 0.7),
-      0 0 60px rgba(187, 134, 252, 0.3),
-      inset 0 0 10px rgba(187, 134, 252, 0.15);
-  }
+  0%, 100% { border-color: rgba(187, 134, 252, 0.5); }
+  50% { border-color: rgba(187, 134, 252, 0.85); }
 }
 
 /* Dim inactive panes to emphasize focused pane */
