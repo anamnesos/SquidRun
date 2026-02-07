@@ -14,6 +14,8 @@
   justify-content: space-between;
   border-bottom: 1px solid rgba(0, 240, 255, 0.1);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  position: relative;
+  z-index: var(--z-dropdown);
 }
 
 .header h1 {
@@ -118,7 +120,7 @@
   border: 1px solid var(--color-primary);
   border-radius: var(--radius-lg);
   min-width: 180px;
-  z-index: var(--z-dropdown);
+  z-index: var(--z-modal);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   overflow: hidden;
   animation: dropdownFadeIn var(--transition-fast) ease-out;
@@ -284,7 +286,7 @@
 }
 
 .pane {
-  background: rgba(10, 10, 15, 0.6);
+  background: rgba(10, 10, 15, 0.45);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   display: flex;
@@ -299,93 +301,93 @@
 }
 
 /* Per-agent pane border tint (unfocused) */
-.pane[data-pane-id="1"] { border-color: rgba(240, 160, 0, 0.12); }
-.pane[data-pane-id="2"] { border-color: rgba(0, 240, 255, 0.12); }
-.pane[data-pane-id="5"] { border-color: rgba(187, 134, 252, 0.12); }
+.pane[data-pane-id="1"] { border-color: rgba(240, 160, 0, 0.3); }
+.pane[data-pane-id="2"] { border-color: rgba(0, 240, 255, 0.3); }
+.pane[data-pane-id="5"] { border-color: rgba(187, 134, 252, 0.3); }
 
 /* Per-agent focused glow */
 .pane.focused { outline: none; }
 
 .pane[data-pane-id="1"].focused {
-  border-color: rgba(240, 160, 0, 0.5);
+  border-color: rgba(240, 160, 0, 0.7);
   box-shadow:
-    0 0 12px rgba(240, 160, 0, 0.3),
-    0 0 24px rgba(240, 160, 0, 0.1),
-    inset 0 0 4px rgba(240, 160, 0, 0.05);
+    0 0 24px rgba(240, 160, 0, 0.6),
+    0 0 48px rgba(240, 160, 0, 0.25),
+    inset 0 0 8px rgba(240, 160, 0, 0.1);
   animation: paneBreathe1 3.5s ease-in-out infinite;
 }
 
 .pane[data-pane-id="2"].focused {
-  border-color: rgba(0, 240, 255, 0.5);
+  border-color: rgba(0, 240, 255, 0.7);
   box-shadow:
-    0 0 12px rgba(0, 240, 255, 0.3),
-    0 0 24px rgba(0, 240, 255, 0.1),
-    inset 0 0 4px rgba(0, 240, 255, 0.05);
+    0 0 24px rgba(0, 240, 255, 0.6),
+    0 0 48px rgba(0, 240, 255, 0.25),
+    inset 0 0 8px rgba(0, 240, 255, 0.1);
   animation: paneBreathe2 3.5s ease-in-out infinite;
 }
 
 .pane[data-pane-id="5"].focused {
-  border-color: rgba(187, 134, 252, 0.5);
+  border-color: rgba(187, 134, 252, 0.7);
   box-shadow:
-    0 0 12px rgba(187, 134, 252, 0.3),
-    0 0 24px rgba(187, 134, 252, 0.1),
-    inset 0 0 4px rgba(187, 134, 252, 0.05);
+    0 0 24px rgba(187, 134, 252, 0.6),
+    0 0 48px rgba(187, 134, 252, 0.25),
+    inset 0 0 8px rgba(187, 134, 252, 0.1);
   animation: paneBreathe5 3.5s ease-in-out infinite;
 }
 
 @keyframes paneBreathe1 {
   0%, 100% {
     box-shadow:
-      0 0 10px rgba(240, 160, 0, 0.25),
-      0 0 20px rgba(240, 160, 0, 0.08),
-      inset 0 0 4px rgba(240, 160, 0, 0.04);
+      0 0 20px rgba(240, 160, 0, 0.5),
+      0 0 40px rgba(240, 160, 0, 0.2),
+      inset 0 0 6px rgba(240, 160, 0, 0.08);
   }
   50% {
     box-shadow:
-      0 0 16px rgba(240, 160, 0, 0.4),
-      0 0 32px rgba(240, 160, 0, 0.15),
-      inset 0 0 6px rgba(240, 160, 0, 0.08);
+      0 0 32px rgba(240, 160, 0, 0.7),
+      0 0 60px rgba(240, 160, 0, 0.3),
+      inset 0 0 10px rgba(240, 160, 0, 0.15);
   }
 }
 
 @keyframes paneBreathe2 {
   0%, 100% {
     box-shadow:
-      0 0 10px rgba(0, 240, 255, 0.25),
-      0 0 20px rgba(0, 240, 255, 0.08),
-      inset 0 0 4px rgba(0, 240, 255, 0.04);
+      0 0 20px rgba(0, 240, 255, 0.5),
+      0 0 40px rgba(0, 240, 255, 0.2),
+      inset 0 0 6px rgba(0, 240, 255, 0.08);
   }
   50% {
     box-shadow:
-      0 0 16px rgba(0, 240, 255, 0.4),
-      0 0 32px rgba(0, 240, 255, 0.15),
-      inset 0 0 6px rgba(0, 240, 255, 0.08);
+      0 0 32px rgba(0, 240, 255, 0.7),
+      0 0 60px rgba(0, 240, 255, 0.3),
+      inset 0 0 10px rgba(0, 240, 255, 0.15);
   }
 }
 
 @keyframes paneBreathe5 {
   0%, 100% {
     box-shadow:
-      0 0 10px rgba(187, 134, 252, 0.25),
-      0 0 20px rgba(187, 134, 252, 0.08),
-      inset 0 0 4px rgba(187, 134, 252, 0.04);
+      0 0 20px rgba(187, 134, 252, 0.5),
+      0 0 40px rgba(187, 134, 252, 0.2),
+      inset 0 0 6px rgba(187, 134, 252, 0.08);
   }
   50% {
     box-shadow:
-      0 0 16px rgba(187, 134, 252, 0.4),
-      0 0 32px rgba(187, 134, 252, 0.15),
-      inset 0 0 6px rgba(187, 134, 252, 0.08);
+      0 0 32px rgba(187, 134, 252, 0.7),
+      0 0 60px rgba(187, 134, 252, 0.3),
+      inset 0 0 10px rgba(187, 134, 252, 0.15);
   }
 }
 
 /* Dim inactive panes to emphasize focused pane */
 .pane:not(.focused) {
-  filter: brightness(0.65);
+  filter: brightness(0.75);
   transition: filter var(--transition-normal);
 }
 
 .pane:not(.focused):hover {
-  filter: brightness(0.80);
+  filter: brightness(0.88);
 }
 
 .pane.focused {
@@ -426,20 +428,20 @@
 
 /* Pane 1: Architect / Claude — Amber neon */
 .pane[data-pane-id="1"] .pane-header {
-  border-bottom: 1px solid rgba(240, 160, 0, 0.25);
-  box-shadow: inset 0 -1px 8px rgba(240, 160, 0, 0.06);
+  border-bottom: 1px solid rgba(240, 160, 0, 0.4);
+  box-shadow: inset 0 -2px 12px rgba(240, 160, 0, 0.12);
 }
 
 /* Pane 2: DevOps / Codex — Cyan neon */
 .pane[data-pane-id="2"] .pane-header {
-  border-bottom: 1px solid rgba(0, 240, 255, 0.25);
-  box-shadow: inset 0 -1px 8px rgba(0, 240, 255, 0.06);
+  border-bottom: 1px solid rgba(0, 240, 255, 0.4);
+  box-shadow: inset 0 -2px 12px rgba(0, 240, 255, 0.12);
 }
 
 /* Pane 5: Analyst / Gemini — Purple neon */
 .pane[data-pane-id="5"] .pane-header {
-  border-bottom: 1px solid rgba(187, 134, 252, 0.25);
-  box-shadow: inset 0 -1px 8px rgba(187, 134, 252, 0.06);
+  border-bottom: 1px solid rgba(187, 134, 252, 0.4);
+  box-shadow: inset 0 -2px 12px rgba(187, 134, 252, 0.12);
 }
 
 .agent-avatar {
@@ -460,33 +462,33 @@
 
 /* Per-agent avatar glow */
 .pane[data-pane-id="1"] .agent-avatar {
-  background: rgba(240, 160, 0, 0.08);
-  border-color: rgba(240, 160, 0, 0.2);
+  background: rgba(240, 160, 0, 0.1);
+  border-color: rgba(240, 160, 0, 0.3);
 }
 .pane[data-pane-id="1"].focused .agent-avatar {
-  box-shadow: 0 0 10px rgba(240, 160, 0, 0.3);
-  border-color: rgba(240, 160, 0, 0.4);
-  background: rgba(240, 160, 0, 0.12);
+  box-shadow: 0 0 14px rgba(240, 160, 0, 0.5);
+  border-color: rgba(240, 160, 0, 0.6);
+  background: rgba(240, 160, 0, 0.18);
 }
 
 .pane[data-pane-id="2"] .agent-avatar {
-  background: rgba(0, 240, 255, 0.08);
-  border-color: rgba(0, 240, 255, 0.2);
+  background: rgba(0, 240, 255, 0.1);
+  border-color: rgba(0, 240, 255, 0.3);
 }
 .pane[data-pane-id="2"].focused .agent-avatar {
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
-  border-color: rgba(0, 240, 255, 0.4);
-  background: rgba(0, 240, 255, 0.12);
+  box-shadow: 0 0 14px rgba(0, 240, 255, 0.5);
+  border-color: rgba(0, 240, 255, 0.6);
+  background: rgba(0, 240, 255, 0.18);
 }
 
 .pane[data-pane-id="5"] .agent-avatar {
-  background: rgba(187, 134, 252, 0.08);
-  border-color: rgba(187, 134, 252, 0.2);
+  background: rgba(187, 134, 252, 0.1);
+  border-color: rgba(187, 134, 252, 0.3);
 }
 .pane[data-pane-id="5"].focused .agent-avatar {
-  box-shadow: 0 0 10px rgba(187, 134, 252, 0.3);
-  border-color: rgba(187, 134, 252, 0.4);
-  background: rgba(187, 134, 252, 0.12);
+  box-shadow: 0 0 14px rgba(187, 134, 252, 0.5);
+  border-color: rgba(187, 134, 252, 0.6);
+  background: rgba(187, 134, 252, 0.18);
 }
 
 .pane-header.trigger-flash {

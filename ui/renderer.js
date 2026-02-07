@@ -1281,7 +1281,7 @@ function setupEventListeners() {
     });
   }
 
-  // Pane click: swap side pane into main, or focus if already main
+  // Pane click: focus the pane (pane positions are fixed)
   document.querySelectorAll('.pane').forEach(pane => {
     pane.addEventListener('click', (event) => {
       // Ignore clicks on buttons and model selector dropdowns
@@ -1289,15 +1289,8 @@ function setupEventListeners() {
         return;
       }
       const paneId = pane.dataset.paneId;
-      const mainContainer = document.querySelector(MAIN_PANE_CONTAINER_SELECTOR);
       if (!paneId) return;
-
-      if (pane.parentElement === mainContainer || paneId === getMainPaneId()) {
-        terminal.focusPane(paneId);
-        return;
-      }
-
-      swapToMainPane(paneId);
+      terminal.focusPane(paneId);
     });
   });
 
