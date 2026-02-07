@@ -59,7 +59,7 @@
 
 .memory-view-tab.active {
   color: var(--color-secondary);
-  background: rgba(78, 204, 163, 0.1);
+  background: rgba(0, 240, 255, 0.1);
   font-weight: 500;
 }
 
@@ -183,11 +183,11 @@
   color: var(--color-text);
 }
 
-.memory-timeline-type.input { background: rgba(233, 69, 96, 0.18); color: var(--color-primary); }
-.memory-timeline-type.output { background: rgba(78, 204, 163, 0.18); color: var(--color-secondary); }
-.memory-timeline-type.tool-use { background: rgba(255, 200, 87, 0.18); color: var(--color-accent); }
+.memory-timeline-type.input { background: rgba(255, 32, 64, 0.18); color: var(--color-primary); }
+.memory-timeline-type.output { background: rgba(0, 240, 255, 0.18); color: var(--color-secondary); }
+.memory-timeline-type.tool-use { background: rgba(240, 160, 0, 0.18); color: var(--color-accent); }
 .memory-timeline-type.tool-result { background: rgba(74, 158, 255, 0.18); color: var(--color-info); }
-.memory-timeline-type.decision { background: rgba(255, 200, 87, 0.18); color: var(--color-accent); }
+.memory-timeline-type.decision { background: rgba(240, 160, 0, 0.18); color: var(--color-accent); }
 .memory-timeline-type.error { background: rgba(255, 85, 85, 0.18); color: var(--color-error); }
 .memory-timeline-type.system { background: rgba(160, 166, 198, 0.18); color: var(--color-text-dim); }
 .memory-timeline-type.state { background: rgba(255, 121, 198, 0.18); color: var(--color-accent); }

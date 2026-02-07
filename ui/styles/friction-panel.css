@@ -1,8 +1,8 @@
 /* friction-panel.css — Friction list + actions */
 
 .friction-panel {
-  background: #16213e;
-  border-bottom: 1px solid #0f3460;
+  background: var(--color-bg-medium);
+  border-bottom: 1px solid var(--color-bg-light);
   overflow: hidden;
   max-height: 0;
   transition: max-height 0.3s ease, padding 0.3s ease;
@@ -24,12 +24,12 @@
 .friction-title {
   font-size: 13px;
   font-weight: 600;
-  color: #ffc857;
+  color: var(--color-secondary);
 }
 
 .friction-count {
-  background: #ffc857;
-  color: #1a1a2e;
+  background: var(--color-secondary);
+  color: var(--color-bg-dark);
   padding: 2px 8px;
   border-radius: 10px;
   font-size: 11px;
@@ -45,7 +45,7 @@
 }
 
 .friction-item {
-  background: #1a1a2e;
+  background: var(--color-bg-dark);
   padding: 8px 12px;
   border-radius: 4px;
   cursor: pointer;
@@ -56,26 +56,26 @@
 }
 
 .friction-item:hover {
-  background: #0f3460;
+  background: var(--color-bg-light);
 }
 
 .friction-item.selected {
-  border: 1px solid #ffc857;
+  border: 1px solid var(--color-secondary);
 }
 
 .friction-item-name {
   font-size: 12px;
-  color: #eee;
+  color: var(--color-text);
   font-family: 'Consolas', 'Monaco', monospace;
 }
 
 .friction-item-time {
   font-size: 10px;
-  color: #888;
+  color: var(--color-text-muted);
 }
 
 .friction-empty {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 12px;
   text-align: center;
   padding: 20px;
@@ -89,15 +89,15 @@
 
 .btn-friction {
   background: transparent;
-  border: 1px solid #ffc857;
-  color: #ffc857;
+  border: 1px solid var(--color-secondary);
+  color: var(--color-secondary);
 }
 
 .btn-friction:hover {
-  background: #ffc857;
-  color: #1a1a2e;
+  background: var(--color-secondary);
+  color: var(--color-bg-dark);
 }
 
 .btn-friction.active {
-  background: #0f3460;
+  background: var(--color-bg-light);
 }

@@ -95,7 +95,7 @@ function displayConflicts(conflicts) {
   if (conflicts.length > 0 && errorSection && errorDisplay) {
     errorSection.style.display = 'block';
     errorDisplay.textContent = `Warning: File Conflict: ${conflicts.map(c => c.file).join(', ')}`;
-    errorDisplay.style.color = '#ffc857';
+    errorDisplay.style.color = '#f0a000';
   }
 }
 

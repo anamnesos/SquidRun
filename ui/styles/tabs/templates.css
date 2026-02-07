@@ -33,7 +33,7 @@
 .template-input:focus {
   border-color: var(--color-secondary);
   outline: none;
-  box-shadow: 0 0 0 3px rgba(78, 204, 163, 0.15);
+  box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.15);
 }
 
 .template-list {

@@ -68,7 +68,7 @@
 }
 
 .status-segment.done:hover {
-  background: rgba(78, 204, 163, 0.15);
+  background: rgba(0, 240, 255, 0.15);
 }
 
 .status-segment.running {
@@ -93,7 +93,7 @@
 }
 
 .status-segment.waiting:hover {
-  background: rgba(255, 200, 87, 0.15);
+  background: rgba(240, 160, 0, 0.15);
 }
 
 .status-segment.failed {
@@ -101,7 +101,7 @@
 }
 
 .status-segment.failed:hover {
-  background: rgba(233, 69, 96, 0.15);
+  background: rgba(255, 32, 64, 0.15);
 }
 
 /* Zero state - dim the segment */

@@ -37,7 +37,7 @@
 
 .workflow-canvas.connect-mode {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px rgba(233, 69, 96, 0.15);
+  box-shadow: 0 0 0 2px rgba(255, 32, 64, 0.15);
 }
 
 .workflow-edges {
@@ -82,12 +82,12 @@
 
 .workflow-node.selected {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px rgba(233, 69, 96, 0.25);
+  box-shadow: 0 0 0 2px rgba(255, 32, 64, 0.25);
 }
 
 .workflow-node.connect-source {
   border-color: var(--color-secondary);
-  box-shadow: 0 0 0 2px rgba(78, 204, 163, 0.25);
+  box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.25);
 }
 
 .workflow-node.type-agent {
@@ -127,7 +127,7 @@
 .workflow-node-input:focus {
   outline: none;
   border-color: var(--color-primary);
-  background: rgba(233, 69, 96, 0.08);
+  background: rgba(255, 32, 64, 0.08);
 }
 
 .workflow-empty {
@@ -187,7 +187,7 @@
 .workflow-inspector-input:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px rgba(233, 69, 96, 0.15);
+  box-shadow: 0 0 0 2px rgba(255, 32, 64, 0.15);
 }
 
 .workflow-footer {

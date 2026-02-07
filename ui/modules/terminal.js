@@ -185,21 +185,21 @@ const STARTUP_READY_PATTERNS = [
   /how can i help/i,
 ];
 
-// Terminal theme configuration
+// Terminal theme configuration — Cyberpunk
 const TERMINAL_THEME = {
-  background: '#1a1a2e',
-  foreground: '#eee',
-  cursor: '#e94560',
-  cursorAccent: '#1a1a2e',
-  selection: 'rgba(233, 69, 96, 0.3)',
-  black: '#1a1a2e',
-  red: '#e94560',
-  green: '#4ecca3',
-  yellow: '#ffc857',
-  blue: '#0f3460',
-  magenta: '#9b59b6',
-  cyan: '#00d9ff',
-  white: '#eee',
+  background: '#0a0a0f',
+  foreground: '#e8eaf0',
+  cursor: '#00f0ff',
+  cursorAccent: '#0a0a0f',
+  selection: 'rgba(0, 240, 255, 0.25)',
+  black: '#0a0a0f',
+  red: '#ff2040',
+  green: '#00e676',
+  yellow: '#f0a000',
+  blue: '#3a7bff',
+  magenta: '#bb86fc',
+  cyan: '#00f0ff',
+  white: '#e8eaf0',
 };
 
 // Terminal options

@@ -1,8 +1,8 @@
 /* settings-panel.css — Settings panel, toggles, permissions, cost alerts, project/folder picker, button variants */
 
 .settings-panel {
-  background: #16213e;
-  border-bottom: 1px solid #0f3460;
+  background: var(--color-bg-medium);
+  border-bottom: 1px solid var(--color-bg-light);
   overflow: hidden;
   max-height: 0;
   transition: max-height 0.3s ease, padding 0.3s ease;
@@ -22,24 +22,24 @@
 .settings-section-title {
   font-size: 12px;
   font-weight: 600;
-  color: #ffc857;
+  color: var(--color-primary);
   margin-bottom: 8px;
   text-transform: uppercase;
 }
 
 .permissions-warning {
   font-size: 11px;
-  color: #e94560;
+  color: var(--color-accent);
   margin-top: 8px;
   padding: 8px;
-  background: rgba(233, 69, 96, 0.1);
+  background: rgba(255, 32, 64, 0.1);
   border-radius: 4px;
 }
 
 .settings-title {
   font-size: 13px;
   font-weight: 600;
-  color: #e94560;
+  color: var(--color-primary);
   margin-bottom: 12px;
 }
 
@@ -57,7 +57,7 @@
 
 .setting-label {
   font-size: 12px;
-  color: #ccc;
+  color: var(--color-text);
 }
 
 /* External notification inputs */
@@ -81,15 +81,15 @@
 .settings-input {
   width: 100%;
   padding: 6px 8px;
-  background: #0f0f1a;
-  border: 1px solid #333;
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
   border-radius: 4px;
-  color: #e0e0e0;
+  color: var(--color-text);
   font-size: 12px;
 }
 
 .settings-input:focus {
-  border-color: #4ecca3;
+  border-color: var(--color-primary);
   outline: none;
 }
 
@@ -114,14 +114,14 @@
 .threshold-input {
   width: 80px;
   padding: 4px 8px;
-  background: #0f0f1a;
-  border: 1px solid #333;
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
   border-radius: 4px;
-  color: #4ecca3;
+  color: var(--color-primary);
   font-size: 13px;
 }
 .threshold-input:focus {
-  border-color: #4ecca3;
+  border-color: var(--color-primary);
   outline: none;
 }
 
@@ -130,14 +130,14 @@
   position: relative;
   width: 36px;
   height: 20px;
-  background: #0f3460;
+  background: var(--color-bg-light);
   border-radius: 10px;
   cursor: pointer;
   transition: background 0.2s;
 }
 
 .toggle.active {
-  background: #4ecca3;
+  background: var(--color-primary);
 }
 
 .toggle::after {
@@ -147,7 +147,7 @@
   left: 2px;
   width: 16px;
   height: 16px;
-  background: #eee;
+  background: var(--color-text);
   border-radius: 50%;
   transition: transform 0.2s;
 }
@@ -158,16 +158,16 @@
 
 .btn.settings-btn {
   background: transparent;
-  border: 1px solid #888;
+  border: 1px solid var(--color-text-muted);
 }
 
 .btn.settings-btn:hover {
-  border-color: #e94560;
+  border-color: var(--color-primary);
 }
 
 .btn.settings-btn.active {
-  background: #0f3460;
-  border-color: #e94560;
+  background: var(--color-bg-light);
+  border-color: var(--color-primary);
 }
 
 /* Project/Folder picker */
@@ -180,7 +180,7 @@
 }
 
 .project-path {
-  color: #4ecca3;
+  color: var(--color-primary);
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 11px;
   white-space: nowrap;
@@ -190,63 +190,63 @@
 }
 
 .project-path.no-project {
-  color: #888;
+  color: var(--color-text-muted);
   font-style: italic;
 }
 
 .btn-folder {
-  background: #4ecca3;
-  border: 1px solid #4ecca3;
-  color: #1a1a2e;
+  background: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  color: var(--color-bg-dark);
 }
 
 .btn-folder:hover {
-  background: #3db892;
-  border-color: #3db892;
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
 }
 
 .btn-danger {
   background: transparent;
-  border: 1px solid #e94560;
-  color: #e94560;
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
 }
 
 .btn-danger:hover {
-  background: #e94560;
+  background: var(--color-accent);
   color: #fff;
 }
 
 .btn-nudge {
   background: transparent;
-  border: 1px solid #ffc857;
-  color: #ffc857;
+  border: 1px solid var(--color-secondary);
+  color: var(--color-secondary);
 }
 
 .btn-nudge:hover {
-  background: #ffc857;
-  color: #1a1a2e;
+  background: var(--color-secondary);
+  color: var(--color-bg-dark);
 }
 
 .btn-fresh {
   background: transparent;
-  border: 1px solid #00d9ff;
-  color: #00d9ff;
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
 }
 
 .btn-fresh:hover {
-  background: #00d9ff;
-  color: #1a1a2e;
+  background: var(--color-primary);
+  color: var(--color-bg-dark);
 }
 
 .btn-restart {
   background: transparent;
-  border: 1px solid #ff9800;
-  color: #ff9800;
+  border: 1px solid var(--color-warning);
+  color: var(--color-warning);
 }
 
 .btn-restart:hover {
-  background: #ff9800;
-  color: #1a1a2e;
+  background: var(--color-warning);
+  color: var(--color-bg-dark);
 }
 
 /* API Key fields */
@@ -264,7 +264,7 @@
 .api-key-mask {
   position: absolute;
   right: 8px;
-  color: #666;
+  color: var(--color-text-muted);
   font-size: 11px;
   font-family: 'Consolas', 'Monaco', monospace;
   pointer-events: none;
@@ -272,16 +272,16 @@
 
 .api-key-status {
   font-size: 11px;
-  color: #4ecca3;
+  color: var(--color-success);
 }
 
 .api-key-status.error {
-  color: #e94560;
+  color: var(--color-accent);
 }
 
 .api-key-info {
   font-size: 11px;
-  color: #666;
+  color: var(--color-text-muted);
   margin-top: 8px;
   font-style: italic;
 }

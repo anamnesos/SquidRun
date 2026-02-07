@@ -200,15 +200,15 @@ function injectWorkingAnimation() {
   const style = document.createElement('style');
   style.textContent = `
     @keyframes pulse-working {
-      0%, 100% { opacity: 1; box-shadow: 0 0 5px #4ecca3; }
-      50% { opacity: 0.6; box-shadow: 0 0 15px #4ecca3, 0 0 25px #4ecca3; }
+      0%, 100% { opacity: 1; box-shadow: 0 0 5px #00f0ff; }
+      50% { opacity: 0.6; box-shadow: 0 0 15px #00f0ff, 0 0 25px #00f0ff; }
     }
     .agent-badge.working {
-      background: #4ecca3 !important;
+      background: #00f0ff !important;
       animation: pulse-working 1s ease-in-out infinite;
     }
     .agent-badge.starting {
-      background: #ffc857 !important;
+      background: #f0a000 !important;
       animation: pulse-working 0.5s ease-in-out infinite;
     }
   `;
@@ -517,7 +517,7 @@ function updateProjectDisplay(projectPath) {
 function showCostAlert(data) {
   const costEl = document.getElementById('usageEstCost');
   if (costEl) {
-    costEl.style.color = '#e94560';
+    costEl.style.color = '#ff2040';
     costEl.textContent = `$${data.cost}`;
     const parent = costEl.closest('.usage-stat.cost-estimate');
     if (parent) {

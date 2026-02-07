@@ -32,9 +32,9 @@
     box-shadow var(--transition-normal), transform var(--transition-normal);
 }
 
-.state-value.idle { background: #555; }
+.state-value.idle { background: var(--color-text-muted); }
 .state-value.planning { background: var(--color-warning); color: var(--color-bg-dark); }
-.state-value.plan_review { background: #9b59b6; }
+.state-value.plan_review { background: #bb86fc; }
 .state-value.executing { background: var(--color-secondary); color: var(--color-bg-dark); animation: statePulse 2.4s ease-in-out infinite; }
 .state-value.checkpoint { background: var(--color-info); color: var(--color-bg-dark); animation: statePulse 2.8s ease-in-out infinite; }
 .state-value.complete { background: var(--color-secondary); color: var(--color-bg-dark); }
@@ -72,7 +72,7 @@
   height: 8px;
   border-radius: 50%;
   margin-right: 6px;
-  background: #555;
+  background: var(--color-text-muted);
   transition: background var(--transition-normal), box-shadow var(--transition-normal), transform var(--transition-normal);
 }
 
@@ -83,7 +83,7 @@
 }
 
 .agent-badge.idle {
-  background: #555;
+  background: var(--color-text-muted);
 }
 
 @keyframes statePulse {

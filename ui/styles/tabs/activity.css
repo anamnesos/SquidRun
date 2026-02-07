@@ -32,7 +32,7 @@
   background: var(--color-secondary);
   border-color: var(--color-secondary);
   color: var(--color-bg-dark);
-  box-shadow: 0 2px 8px rgba(78, 204, 163, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 240, 255, 0.3);
 }
 
 .activity-search {
@@ -50,7 +50,7 @@
 .activity-search:focus {
   border-color: var(--color-secondary);
   outline: none;
-  box-shadow: 0 0 0 3px rgba(78, 204, 163, 0.15);
+  box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.15);
 }
 
 .activity-log {
@@ -110,9 +110,9 @@
   letter-spacing: 0.3px;
 }
 
-.activity-type.error { background: rgba(233, 69, 96, 0.2); color: var(--color-error); }
-.activity-type.file { background: rgba(255, 200, 87, 0.2); color: var(--color-warning); }
-.activity-type.state { background: rgba(78, 204, 163, 0.2); color: var(--color-secondary); }
+.activity-type.error { background: rgba(255, 32, 64, 0.2); color: var(--color-error); }
+.activity-type.file { background: rgba(240, 160, 0, 0.2); color: var(--color-warning); }
+.activity-type.state { background: rgba(0, 240, 255, 0.2); color: var(--color-secondary); }
 .activity-type.output { background: rgba(168, 85, 247, 0.2); color: #a855f7; }
 
 .activity-message {

@@ -27,8 +27,8 @@
 
 .project-item.active {
   border-left-color: var(--color-primary);
-  background: rgba(233, 69, 96, 0.1);
-  box-shadow: inset 0 0 12px rgba(233, 69, 96, 0.1);
+  background: rgba(255, 32, 64, 0.1);
+  box-shadow: inset 0 0 12px rgba(255, 32, 64, 0.1);
 }
 
 .project-item-info {
