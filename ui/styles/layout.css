@@ -5,13 +5,15 @@
    ============================================================ */
 
 .header {
-  background: var(--color-bg-medium);
+  background: rgba(13, 13, 24, 0.7);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   padding: var(--space-2) var(--space-4);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--color-bg-light);
-  box-shadow: var(--shadow-sm);
+  border-bottom: 1px solid rgba(0, 240, 255, 0.1);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
 }
 
 .header h1 {
@@ -282,9 +284,9 @@
 }
 
 .pane {
-  background: rgba(10, 10, 15, 0.65);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(10, 10, 15, 0.6);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -292,21 +294,46 @@
   min-height: 0;
   min-width: 200px;
   border-radius: var(--radius-sm);
-  border: 1px solid rgba(240, 160, 0, 0.15);
-  box-shadow: 0 0 6px rgba(240, 160, 0, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.3);
 }
 
-.pane.focused {
-  outline: none;
+/* Per-agent pane border tint (unfocused) */
+.pane[data-pane-id="1"] { border-color: rgba(240, 160, 0, 0.12); }
+.pane[data-pane-id="2"] { border-color: rgba(0, 240, 255, 0.12); }
+.pane[data-pane-id="5"] { border-color: rgba(187, 134, 252, 0.12); }
+
+/* Per-agent focused glow */
+.pane.focused { outline: none; }
+
+.pane[data-pane-id="1"].focused {
   border-color: rgba(240, 160, 0, 0.5);
   box-shadow:
     0 0 12px rgba(240, 160, 0, 0.3),
     0 0 24px rgba(240, 160, 0, 0.1),
     inset 0 0 4px rgba(240, 160, 0, 0.05);
-  animation: paneBreathe 3.5s ease-in-out infinite;
+  animation: paneBreathe1 3.5s ease-in-out infinite;
 }
 
-@keyframes paneBreathe {
+.pane[data-pane-id="2"].focused {
+  border-color: rgba(0, 240, 255, 0.5);
+  box-shadow:
+    0 0 12px rgba(0, 240, 255, 0.3),
+    0 0 24px rgba(0, 240, 255, 0.1),
+    inset 0 0 4px rgba(0, 240, 255, 0.05);
+  animation: paneBreathe2 3.5s ease-in-out infinite;
+}
+
+.pane[data-pane-id="5"].focused {
+  border-color: rgba(187, 134, 252, 0.5);
+  box-shadow:
+    0 0 12px rgba(187, 134, 252, 0.3),
+    0 0 24px rgba(187, 134, 252, 0.1),
+    inset 0 0 4px rgba(187, 134, 252, 0.05);
+  animation: paneBreathe5 3.5s ease-in-out infinite;
+}
+
+@keyframes paneBreathe1 {
   0%, 100% {
     box-shadow:
       0 0 10px rgba(240, 160, 0, 0.25),
@@ -318,6 +345,36 @@
       0 0 16px rgba(240, 160, 0, 0.4),
       0 0 32px rgba(240, 160, 0, 0.15),
       inset 0 0 6px rgba(240, 160, 0, 0.08);
+  }
+}
+
+@keyframes paneBreathe2 {
+  0%, 100% {
+    box-shadow:
+      0 0 10px rgba(0, 240, 255, 0.25),
+      0 0 20px rgba(0, 240, 255, 0.08),
+      inset 0 0 4px rgba(0, 240, 255, 0.04);
+  }
+  50% {
+    box-shadow:
+      0 0 16px rgba(0, 240, 255, 0.4),
+      0 0 32px rgba(0, 240, 255, 0.15),
+      inset 0 0 6px rgba(0, 240, 255, 0.08);
+  }
+}
+
+@keyframes paneBreathe5 {
+  0%, 100% {
+    box-shadow:
+      0 0 10px rgba(187, 134, 252, 0.25),
+      0 0 20px rgba(187, 134, 252, 0.08),
+      inset 0 0 4px rgba(187, 134, 252, 0.04);
+  }
+  50% {
+    box-shadow:
+      0 0 16px rgba(187, 134, 252, 0.4),
+      0 0 32px rgba(187, 134, 252, 0.15),
+      inset 0 0 6px rgba(187, 134, 252, 0.08);
   }
 }
 
@@ -349,28 +406,87 @@
 }
 
 .pane-header {
-  background: linear-gradient(180deg, rgba(13, 13, 24, 0.95) 0%, rgba(10, 10, 15, 0.85) 100%);
+  background: rgba(13, 13, 24, 0.55);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   padding: var(--space-1) var(--space-2);
   display: flex;
   align-items: center;
   justify-content: space-between;
   font-size: var(--text-base);
-  border-bottom: 1px solid rgba(0, 240, 255, 0.1);
-  transition: background-color var(--transition-fast);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
   position: relative;
   z-index: 1;
+}
+
+/* ============================================================
+   PER-AGENT PANE HEADER COLOR IDENTITY
+   ============================================================ */
+
+/* Pane 1: Architect / Claude — Amber neon */
+.pane[data-pane-id="1"] .pane-header {
+  border-bottom: 1px solid rgba(240, 160, 0, 0.25);
+  box-shadow: inset 0 -1px 8px rgba(240, 160, 0, 0.06);
+}
+
+/* Pane 2: DevOps / Codex — Cyan neon */
+.pane[data-pane-id="2"] .pane-header {
+  border-bottom: 1px solid rgba(0, 240, 255, 0.25);
+  box-shadow: inset 0 -1px 8px rgba(0, 240, 255, 0.06);
+}
+
+/* Pane 5: Analyst / Gemini — Purple neon */
+.pane[data-pane-id="5"] .pane-header {
+  border-bottom: 1px solid rgba(187, 134, 252, 0.25);
+  box-shadow: inset 0 -1px 8px rgba(187, 134, 252, 0.06);
 }
 
 .agent-avatar {
   font-size: var(--text-lg);
   margin-right: var(--space-1);
   filter: grayscale(0.3);
-  transition: filter var(--transition-normal);
+  transition: filter var(--transition-normal), box-shadow var(--transition-normal);
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .pane:hover .agent-avatar,
 .pane.focused .agent-avatar {
   filter: grayscale(0);
+}
+
+/* Per-agent avatar glow */
+.pane[data-pane-id="1"] .agent-avatar {
+  background: rgba(240, 160, 0, 0.08);
+  border-color: rgba(240, 160, 0, 0.2);
+}
+.pane[data-pane-id="1"].focused .agent-avatar {
+  box-shadow: 0 0 10px rgba(240, 160, 0, 0.3);
+  border-color: rgba(240, 160, 0, 0.4);
+  background: rgba(240, 160, 0, 0.12);
+}
+
+.pane[data-pane-id="2"] .agent-avatar {
+  background: rgba(0, 240, 255, 0.08);
+  border-color: rgba(0, 240, 255, 0.2);
+}
+.pane[data-pane-id="2"].focused .agent-avatar {
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
+  border-color: rgba(0, 240, 255, 0.4);
+  background: rgba(0, 240, 255, 0.12);
+}
+
+.pane[data-pane-id="5"] .agent-avatar {
+  background: rgba(187, 134, 252, 0.08);
+  border-color: rgba(187, 134, 252, 0.2);
+}
+.pane[data-pane-id="5"].focused .agent-avatar {
+  box-shadow: 0 0 10px rgba(187, 134, 252, 0.3);
+  border-color: rgba(187, 134, 252, 0.4);
+  background: rgba(187, 134, 252, 0.12);
 }
 
 .pane-header.trigger-flash {
@@ -1138,8 +1254,10 @@
 
 .panel-tabs {
   display: flex;
-  background: var(--color-bg-medium);
-  border-bottom: 1px solid var(--color-bg-dark);
+  background: rgba(13, 13, 24, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(0, 240, 255, 0.08);
   overflow-x: auto;
   scrollbar-width: thin;
 }
