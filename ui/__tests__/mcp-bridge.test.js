@@ -33,15 +33,7 @@ jest.mock('fs', () => ({
   existsSync: jest.fn(() => true),
 }));
 
-jest.mock('../config', () => ({
-  WORKSPACE_PATH: '/test/workspace',
-  PANE_IDS: ['1', '2', '5'],
-  PANE_ROLES: {
-    '1': 'Architect',
-    '2': 'DevOps',
-    '5': 'Analyst',
-  },
-}));
+jest.mock('../config', () => require('./helpers/mock-config').mockDefaultConfig);
 
 const fs = require('fs');
 const log = require('../modules/logger');

@@ -57,17 +57,7 @@ jest.mock('../daemon-client', () => ({
 }));
 
 // Mock config
-jest.mock('../config', () => ({
-  WORKSPACE_PATH: '/mock/workspace',
-  ROLE_ID_MAP: {
-    architect: '1',
-    devops: '2',
-    backend: '2',    // Legacy alias → DevOps pane
-    infra: '2',      // Legacy alias → DevOps pane
-    analyst: '5',
-  },
-  PANE_IDS: ['1', '2', '5'],
-}));
+jest.mock('../config', () => require('./helpers/mock-config').mockDefaultConfig);
 
 // Mock plugins
 jest.mock('../modules/plugins', () => ({

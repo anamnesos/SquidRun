@@ -23,18 +23,7 @@ jest.mock('fs', () => ({
 }));
 
 // Mock config
-jest.mock('../config', () => ({
-  INSTANCE_DIRS: {
-    '1': '/mock/instances/arch',
-    '5': '/mock/instances/ana',
-  },
-  PANE_ROLES: {
-    '1': 'Architect',
-    '2': 'DevOps',
-    '5': 'Analyst',
-  },
-  PANE_IDS: ['1', '2', '5'],
-}));
+jest.mock('../config', () => require('./helpers/mock-config').mockDefaultConfig);
 
 const path = require('path');
 const fs = require('fs');

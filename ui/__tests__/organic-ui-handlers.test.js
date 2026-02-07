@@ -10,13 +10,7 @@ jest.mock('../modules/logger', () => ({
   error: jest.fn(),
 }));
 
-jest.mock('../config', () => ({
-  PANE_ROLES: {
-    '1': 'Architect',
-    '2': 'DevOps',
-    '5': 'Analyst',
-  },
-}));
+jest.mock('../config', () => require('./helpers/mock-config').mockDefaultConfig);
 
 // Import module under test
 const organicUI = require('../modules/ipc/organic-ui-handlers');
