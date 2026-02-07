@@ -157,8 +157,7 @@ class HivemindApp {
       width: 1400,
       height: 800,
       icon: path.join(__dirname, '..', '..', 'assets', 'hivemind-icon.svg'),
-      transparent: true,
-      backgroundColor: '#00000000',
+      backgroundColor: '#0a0a0f',
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false,
