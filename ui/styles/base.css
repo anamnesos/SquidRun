@@ -97,10 +97,6 @@
    BASE STYLES
    ============================================================ */
 
-html {
-  background: transparent;
-}
-
 body {
   font-family: var(--font-system);
   font-size: var(--text-base);
@@ -121,7 +117,7 @@ body {
     ),
     radial-gradient(ellipse at 30% 20%, rgba(240, 160, 0, 0.04) 0%, transparent 50%),
     radial-gradient(ellipse at 70% 80%, rgba(187, 134, 252, 0.04) 0%, transparent 50%),
-    rgba(10, 10, 15, 0.88);
+    var(--color-bg-dark);
   color: var(--color-text);
   height: 100vh;
   display: flex;
