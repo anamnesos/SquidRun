@@ -11,7 +11,7 @@
 | **1** | Architect | Claude (Opus) | `claude` | Coordination, architecture, git commits |
 | | + Frontend | Agent Teams teammate | (internal) | UI, renderer.js, CSS |
 | | + Reviewer | Agent Teams teammate | (internal) | Code review, quality gates |
-| **2** | DevOps | Codex | `codex` | CI/CD, infra, daemon, processes, backend |
+| **2** | DevOps | Codex | `codex` | CI/CD, deployment, daemon, processes, backend |
 | **5** | Analyst | Gemini | `gemini` | Debugging, profiling, root cause analysis |
 
 **Config source of truth:** `ui/config.js` (PANE_ROLES, PANE_IDS, ROLE_ID_MAP, TRIGGER_TARGETS)
@@ -40,21 +40,30 @@
 
 ---
 
-## Current Session (80) - Doc Cleanup Sprint
+## Current Session (81) - Rename Sprint + Instance Cleanup
 
 | Task | Owner | Status |
 |------|-------|--------|
-| Update CLAUDE.md to 3-pane | Architect | DONE |
-| Overhaul SPRINT.md | Architect | DONE |
-| Audit + fix MAP.md | Frontend | IN PROGRESS |
-| Archive blockers.md | DevOps | ASSIGNED |
-| Archive status.md | DevOps | ASSIGNED |
-| Audit agent instruction files | Analyst | IN PROGRESS |
-| Review all changes | Reviewer | BLOCKED (waiting on above) |
+| Audit instance dirs for stale refs | Analyst | DONE |
+| Doc cleanup (ana/, infra/ AGENTS.md/GEMINI.md) | Architect | DONE |
+| Delete stale back/, front/AGENTS.md, nul artifacts | Architect | DONE |
+| Remove Pane 4 from settings.json | DevOps | DONE |
+| spawnClaude → spawnAgent rename (50+ refs) | Architect | DONE |
+| spawnAllClaude → spawnAllAgents rename | Architect | DONE |
+| infra/ → devops/ instance dir rename | Architect | DONE |
+| Reviewer gate | Reviewer | APPROVED |
+| Delete stale infra/ directory | — | BLOCKED (needs restart) |
+| Runtime verification of 3-pane UI | — | BLOCKED (needs restart) |
 
 ---
 
 ## Previous Sprints (Complete)
+
+### Session 80 - Doc Cleanup Sprint
+- Updated 20+ doc files to 3-pane references
+- Archived blockers.md, status.md, shared_context.md
+- Source JSDoc + test mock audit (14 test files aligned)
+- Commits: a7ac5e6, 8b1ffc9, 5a4848a, bd64803, d143270
 
 ### Session 79 - 3-Pane Migration
 - Merged Pane 4 (Backend) into Pane 2 (DevOps)

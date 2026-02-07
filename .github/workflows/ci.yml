@@ -152,7 +152,7 @@ jobs:
       - name: Build app
         run: |
           cd ui
-          npm run build:${{ matrix.platform }} || npm run build || echo "Build script not found, skipping"
+          npm run build:${{ matrix.platform }} || npm run build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -160,7 +160,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           cd ui
-          npm run package:${{ matrix.platform }} || npm run package || echo "Package script not found, skipping"
+          npm run package:${{ matrix.platform }} || npm run package
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -199,7 +199,7 @@ jobs:
           npm audit --audit-level=high || true
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.20.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -250,7 +250,7 @@ jobs:
     needs: [build, test]
     if: |
       github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
       !failure() && !cancelled()
     environment:
       name: production
@@ -282,6 +282,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Deploy to production
+        if: github.ref == 'refs/heads/main'
         run: |
           echo "Deploying to production environment..."
           # Add production deployment scripts here
