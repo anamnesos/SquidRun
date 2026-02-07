@@ -412,10 +412,14 @@ function triggerStartupInjection(paneId, state, reason) {
     }
   }, identityDelayMs);
 
-  if (!state.isGemini && window.hivemind?.claude?.injectContext) {
-    const contextDelayMs = String(paneId) === '1' ? STARTUP_CONTEXT_DELAY_ARCHITECT_MS : STARTUP_CONTEXT_DELAY_MS;
-    window.hivemind.claude.injectContext(paneId, state.modelType, contextDelayMs);
-    log.info('spawnAgent', `Context injection scheduled for ${state.modelType} pane ${paneId} in ${contextDelayMs}ms [ready:${reason}]`);
+  if (window.hivemind?.claude?.injectContext) {
+    // Gemini gets longer delay (CLI takes 8-12s to initialize input handling)
+    const contextDelayMs = state.isGemini ? 12000
+      : String(paneId) === '1' ? STARTUP_CONTEXT_DELAY_ARCHITECT_MS
+      : STARTUP_CONTEXT_DELAY_MS;
+    const modelType = state.isGemini ? 'gemini' : state.modelType;
+    window.hivemind.claude.injectContext(paneId, modelType, contextDelayMs);
+    log.info('spawnAgent', `Context injection scheduled for ${modelType} pane ${paneId} in ${contextDelayMs}ms [ready:${reason}]`);
   }
 }
 

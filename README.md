@@ -43,7 +43,7 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 - **Dry-Run Mode** - Simulate multi-agent flow without spawning real AI instances
 - **Session History** - View past sessions with duration and agents involved
 - **Projects Tab** - Quick-switch between recent projects
-- **Quality Gates** - mypy, ESLint, Jest tests (2796+), pre-commit hooks
+- **Quality Gates** - mypy, ESLint, Jest tests (2803+), pre-commit hooks
 - **IPC Aliases** - Frontend compatibility layer for legacy UI components
 
 ### SDK Mode (Alternative to PTY)
@@ -53,9 +53,10 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 - **Session Status Indicators** - Per-pane status dots (idle, thinking, responding, error)
 
 ### Self-Healing
+- **PTY Health Monitoring** - Daemon-level alive/idle detection with status cascade (dead > stuck > stale > healthy)
+- **Auto-Restart on Dead Panes** - Detects dead terminals on daemon connect and restarts them automatically
 - **Auto-Nudge** - Detect and nudge frozen agents automatically with escalation
 - **Stuck Message Sweeper** - Periodic retry for messages stuck in textarea
-- **Adaptive Heartbeat** - Dynamic check intervals based on system activity
 - **Agent Claims** - Track which agent owns which task
 - **Session Persistence** - Context summaries saved between sessions
 - **Focus Steal Prevention** - Saves/restores user focus during message injection
@@ -162,7 +163,8 @@ hivemind/
 │   │   ├── arch/                # Architect (pane 1)
 │   │   ├── devops/              # DevOps (pane 2)
 │   │   └── ana/                 # Analyst (pane 5)
-│   └── build/                   # Build status, reviews, blockers
+│   ├── build/                   # Build status, reviews, blockers
+│   └── intent/                  # Shared intent board (per-agent JSON status)
 ├── docs/                        # Documentation and specs
 │   ├── roles/                   # Modular role instruction files
 │   └── models/                  # Model-specific notes

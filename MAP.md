@@ -1,6 +1,6 @@
 # Hivemind Codebase Map
 
-**Last Updated:** 2026-02-06
+**Last Updated:** 2026-02-07
 **Purpose:** Navigation guide for developers (human and AI agents)
 
 ---
@@ -87,7 +87,7 @@ hivemind/
 │   │   ├── security/            # Security management (1 file)
 │   │   │   └── security-manager.js
 │   │   │
-│   │   ├── websocket-server.js  # WebSocket server for agent messaging
+│   │   ├── websocket-server.js  # WebSocket server for agent messaging (port 0 for ephemeral binding in tests)
 │   │   ├── sdk-renderer.js      # SDK mode renderer
 │   │   ├── model-selector.js    # Model selection logic
 │   │   ├── smart-routing.js     # Smart message routing
@@ -106,7 +106,7 @@ hivemind/
 │   │   ├── layout.css           # Main layout
 │   │   └── tabs/                # Modular tab styles (20 files)
 │   │
-│   └── __tests__/               # Jest tests (87 suites, ~2800 tests)
+│   └── __tests__/               # Jest tests (89 suites, 2803 tests)
 │       └── ...
 │
 ├── hivemind-sdk-v2.py           # Python SDK orchestrator (locked parallelism)
@@ -161,7 +161,7 @@ hivemind/
    Electron lifecycle, Central app initialization.
 
 3. **`ui/modules/main/hivemind-app.js`**
-   Central app controller, coordinates managers and daemon.
+   Central app controller, coordinates managers and daemon. Includes PTY health monitoring and auto-restart on dead panes.
 
 4. **`ui/modules/terminal.js`**
    Terminal management, PTY connections, injection queue.
@@ -206,7 +206,7 @@ hivemind/
 | CLIs | Native (Claude/Codex), npm (Gemini) | - |
 | Daemon | Node.js | 18+ |
 | File Watching | chokidar | 3.6 |
-| Testing | Jest | 30 (87 suites, ~2800 tests) |
+| Testing | Jest | 30 (89 suites, 2803 tests) |
 | Python SDK | Multi-agent | Claude SDK, OpenAI Agents, Google GenAI |
 | Message Protocol | MCP | 1.25 |
 
