@@ -218,6 +218,15 @@ describe('Auto-Nudge Handlers', () => {
       expect(result.agents['1'].lastOutput).toBe(testTime);
     });
 
+    test('marks dead when terminal is not alive', async () => {
+      ctx.daemonClient.terminals.set('1', { alive: false });
+
+      const result = await harness.invoke('get-agent-health');
+
+      expect(result.agents['1'].status).toBe('dead');
+      expect(result.agents['1'].alive).toBe(false);
+    });
+
     test('handles null lastActivity', async () => {
       ctx.daemonClient.getLastActivity.mockReturnValue(null);
 
