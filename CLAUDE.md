@@ -164,13 +164,12 @@ If running in SDK mode (not PTY terminals):
 ### Slim Files (READ THESE FIRST)
 | Doc | Purpose | Tokens |
 |-----|---------|--------|
-| `workspace/session-handoff.json` | **Structured handoff** - tasks, team, blockers | ~150 |
-| `workspace/current_state.md` | Human-readable session status | ~200 |
+| `workspace/session-handoff.json` | **Structured handoff** - tasks, team, blockers, roadmap, issues, stats | ~300 |
 | `workspace/build/status.md` | Recent task completions | ~300 |
 | `workspace/build/blockers.md` | Active blockers only | ~150 |
 | `workspace/build/errors.md` | Active errors only | ~100 |
 
-**Prefer session-handoff.json** for programmatic parsing. Use current_state.md for human context.
+**session-handoff.json is the primary state file.** Contains session status, completed tasks, roadmap, known issues, architecture, and test stats.
 
 ### Full Files (READ ONLY WHEN NEEDED)
 | Doc | Purpose |
@@ -240,7 +239,7 @@ Tasks are tagged by mode compatibility:
 
 ### Before Starting Work
 1. **Check mode gate** - Is this task appropriate for current mode?
-2. Read `workspace/current_state.md` - slim 15-line status (NOT full status.md)
+2. Read `workspace/session-handoff.json` - structured session state
 3. Read `workspace/build/blockers.md` - active blockers only
 4. Read `workspace/build/errors.md` - active errors only
 5. **Only read archives if you need historical context for a specific investigation**
@@ -265,7 +264,7 @@ Re-read blockers.md. Another instance may have found issues with your code.
 **Result:** "I already messaged about this" or working on outdated tasks.
 
 **MANDATORY: Before each major response:**
-1. Re-read `workspace/current_state.md` - is your info still current?
+1. Re-read `workspace/session-handoff.json` - is your info still current?
 2. Check if your response is still relevant - did someone else already handle it?
 3. If stale, update your understanding before responding
 
