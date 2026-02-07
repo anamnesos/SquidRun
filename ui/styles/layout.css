@@ -333,6 +333,8 @@
   font-size: var(--text-base);
   border-bottom: 1px solid var(--color-bg-light);
   transition: background-color var(--transition-fast);
+  position: relative;
+  z-index: 1;
 }
 
 .agent-avatar {
