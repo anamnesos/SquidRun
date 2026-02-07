@@ -7,6 +7,7 @@ const {
   createIpcHarness,
   createDefaultContext,
 } = require('./helpers/ipc-harness');
+const { PANE_IDS } = require('../config');
 
 // Mock logger
 jest.mock('../modules/logger', () => ({
@@ -193,19 +194,18 @@ describe('Auto-Nudge Handlers', () => {
       expect(result).toEqual({ success: false, error: 'Daemon not connected' });
     });
 
-    test('returns health data for all 6 panes', async () => {
-      ctx.agentRunning.set('3', 'stopped');
-      ctx.agentRunning.set('4', 'unknown');
-      ctx.agentRunning.set('5', 'running');
-      ctx.agentRunning.set('6', 'running');
+    test('returns health data for all configured panes', async () => {
+      const extraPane = PANE_IDS.find(id => id !== '1' && id !== '2');
+      if (extraPane) {
+        ctx.agentRunning.set(extraPane, 'running');
+      }
 
       const result = await harness.invoke('get-agent-health');
 
       expect(result.success).toBe(true);
-      expect(Object.keys(result.agents)).toHaveLength(6);
+      expect(Object.keys(result.agents)).toHaveLength(PANE_IDS.length);
       expect(result.agents['1'].alive).toBe(true);
       expect(result.agents['1'].status).toBe('running');
-      expect(result.agents['3'].alive).toBe(false);
     });
 
     test('includes lastActivity from daemonClient', async () => {
@@ -319,6 +319,17 @@ describe('Auto-Nudge Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.agents['1'].status).toBe('unknown');
+    });
+
+    test('marks stale when running and idle beyond threshold', async () => {
+      ctx.currentSettings.stuckThreshold = 1000;
+      ctx.daemonClient.getLastActivity.mockReturnValue(Date.now() - 2000);
+      ctx.daemonClient.terminals.set('1', { alive: true });
+
+      const result = await harness.invoke('get-agent-health');
+
+      expect(result.agents['1'].status).toBe('stale');
+      expect(result.agents['1'].idleMs).toBeGreaterThan(1000);
     });
   });
 
@@ -443,13 +454,13 @@ describe('Auto-Nudge Handlers', () => {
       expect(result).toEqual({ success: false, error: 'Daemon not connected' });
     });
 
-    test('marks expected exit for all 6 panes', async () => {
+    test('marks expected exit for all configured panes', async () => {
       const result = await harness.invoke('restart-all-panes');
 
       expect(result.success).toBe(true);
-      expect(ctx.recoveryManager.markExpectedExit).toHaveBeenCalledTimes(6);
-      for (let i = 1; i <= 6; i++) {
-        expect(ctx.recoveryManager.markExpectedExit).toHaveBeenCalledWith(String(i), 'manual-restart-all');
+      expect(ctx.recoveryManager.markExpectedExit).toHaveBeenCalledTimes(PANE_IDS.length);
+      for (const paneId of PANE_IDS) {
+        expect(ctx.recoveryManager.markExpectedExit).toHaveBeenCalledWith(String(paneId), 'manual-restart-all');
       }
     });
 

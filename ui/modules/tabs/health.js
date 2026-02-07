@@ -5,7 +5,7 @@
 
 const { ipcRenderer } = require('electron');
 const log = require('../logger');
-const { PANE_ROLES } = require('../../config');
+const { PANE_IDS, PANE_ROLES } = require('../../config');
 
 const healthState = {
   agents: new Map(),
@@ -13,8 +13,8 @@ const healthState = {
 };
 
 function initHealthState() {
-  for (let i = 1; i <= 6; i++) {
-    healthState.agents.set(String(i), { status: 'unknown', lastOutput: null, stuckCount: 0, recoveryStep: 'none' });
+  for (const paneId of PANE_IDS) {
+    healthState.agents.set(String(paneId), { status: 'unknown', lastOutput: null, stuckCount: 0, recoveryStep: 'none' });
   }
 }
 

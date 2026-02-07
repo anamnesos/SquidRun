@@ -5,6 +5,7 @@
  */
 
 const log = require('../logger');
+const { PANE_IDS } = require('../../config');
 
 function registerAutoNudgeHandlers(ctx, deps) {
   const { ipcMain } = ctx;
@@ -18,22 +19,37 @@ function registerAutoNudgeHandlers(ctx, deps) {
 
     const agents = {};
     const recoveryStatus = getRecoveryManager()?.getStatus?.() || {};
+    const now = Date.now();
+    const stuckThreshold = ctx.currentSettings?.stuckThreshold || 60000;
 
-    for (let i = 1; i <= 6; i++) {
-      const paneId = String(i);
-      const status = ctx.agentRunning?.get(paneId) || 'unknown';
+    for (const paneId of PANE_IDS) {
+      const baseStatus = ctx.agentRunning?.get(paneId) || 'unknown';
       const lastActivity = ctx.daemonClient.getLastActivity?.(paneId);
       const terminal = ctx.daemonClient.terminals?.get(paneId);
       const recovery = recoveryStatus[paneId];
       const recoveryStep = recovery?.recoveryStep
         || (recovery?.status === 'restarting' ? 'restart' : recovery?.status === 'stuck' ? 'interrupt' : 'none');
       const recovering = recovery?.status === 'restarting' || recovery?.status === 'stuck';
+      const terminalAlive = terminal ? terminal.alive !== false : null;
+      const idleMs = lastActivity ? now - lastActivity : null;
+
+      let status = baseStatus;
+      if (terminalAlive === false) {
+        status = 'dead';
+      } else if (recovery?.status === 'restarting') {
+        status = 'restarting';
+      } else if (recovery?.status === 'stuck') {
+        status = 'stuck';
+      } else if (baseStatus === 'running' && idleMs !== null && idleMs > stuckThreshold) {
+        status = 'stale';
+      }
 
       agents[paneId] = {
-        alive: status === 'running',
+        alive: terminalAlive !== null ? terminalAlive : status === 'running',
         status,
         lastActivity: lastActivity || null,
         lastOutput: lastActivity || null,
+        idleMs,
         stuckCount: recovery?.stuckCount ?? terminal?.stuckCount ?? 0,
         recoveryStep,
         recovering
@@ -94,8 +110,8 @@ function registerAutoNudgeHandlers(ctx, deps) {
 
     const recoveryManager = getRecoveryManager();
     if (recoveryManager?.markExpectedExit) {
-      for (let i = 1; i <= 6; i++) {
-        recoveryManager.markExpectedExit(String(i), 'manual-restart-all');
+      for (const paneId of PANE_IDS) {
+        recoveryManager.markExpectedExit(String(paneId), 'manual-restart-all');
       }
     }
 
