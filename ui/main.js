@@ -7,6 +7,11 @@ const path = require('path');
 const { app } = require('electron');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
+// Suppress EPIPE errors on stdout/stderr — broken pipes from console.log
+// must not crash the app (common when renderer disconnects or pipes close)
+process.stdout.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
+process.stderr.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
+
 const appContext = require('./modules/main/app-context');
 const SettingsManager = require('./modules/main/settings-manager');
 const ActivityManager = require('./modules/main/activity-manager');

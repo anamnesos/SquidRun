@@ -43,6 +43,7 @@ function createInjectionController(options = {}) {
     QUEUE_RETRY_MS,
     INJECTION_LOCK_TIMEOUT_MS,
     BYPASS_CLEAR_DELAY_MS = DEFAULT_BYPASS_CLEAR_DELAY_MS,
+    TYPING_GUARD_MS = 300,
   } = constants;
 
   /**
@@ -376,22 +377,26 @@ function createInjectionController(options = {}) {
     const waitedExtremelyLong = waitTime >= EXTREME_WAIT_MS;
     const hitAbsoluteMax = waitTime >= ABSOLUTE_MAX_WAIT_MS;
 
+    const paneLastTypedAt = (lastTypedTime && lastTypedTime[id]) || 0;
+    const paneRecentlyTyped = paneLastTypedAt && (now - paneLastTypedAt) < TYPING_GUARD_MS;
+    const typingBlocked = userIsTyping() || paneRecentlyTyped;
+
     // Codex/Gemini panes bypass idle checks entirely - they use PTY writes
     // that don't require the careful timing Claude's ink TUI needs
     // Session 67: Gemini CLI sends frequent cursor/status updates (~12ms) that
     // prevent idle detection from passing, causing 60s delays without this bypass
-    const canSendBypass = bypassesLock && !userIsTyping();
+    const canSendBypass = bypassesLock && !typingBlocked;
 
     // Normal case: pane is fully idle (1s of silence) - Claude panes only
-    const canSendNormal = !bypassesLock && isIdle(paneId) && !userIsTyping();
+    const canSendNormal = !bypassesLock && isIdle(paneId) && !typingBlocked;
 
     // Force-inject case: waited 5s+ AND pane has at least 500ms of silence
     // This prevents injecting during active output which causes Enter to be ignored
-    const canForceInject = !bypassesLock && waitedTooLong && isIdleForForceInject(paneId) && !userIsTyping();
+    const canForceInject = !bypassesLock && waitedTooLong && isIdleForForceInject(paneId) && !typingBlocked;
 
     // Emergency fallback: 10s absolute max regardless of idle state
     // This prevents messages from being stuck forever if pane never becomes idle
-    const mustForceInject = !bypassesLock && hitAbsoluteMax && !userIsTyping();
+    const mustForceInject = !bypassesLock && hitAbsoluteMax && !typingBlocked;
 
     // Log warning at 8s mark (only once per message via flag check) - Claude panes only
     if (!bypassesLock && waitedExtremelyLong && !item._warnedExtreme) {
