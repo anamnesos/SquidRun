@@ -33,7 +33,7 @@ jest.mock('fs', () => ({
   existsSync: jest.fn(() => true),
 }));
 
-jest.mock('../config', () => require('./helpers/mock-config').mockDefaultConfig);
+jest.mock('../config', () => require('./helpers/real-config').mockDefaultConfig);
 
 const fs = require('fs');
 const log = require('../modules/logger');
