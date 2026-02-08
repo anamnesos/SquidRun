@@ -1,6 +1,6 @@
 /**
- * Activity Log Tab Module
- * Handles rendering and managing the activity log
+ * Activity Feed Tab Module
+ * Chat-style feed for agent activity, messages, and events
  */
 
 const { ipcRenderer } = require('electron');
@@ -10,7 +10,12 @@ const { PANE_ROLES } = require('../../config');
 let activityLog = [];
 let activityFilter = 'all';
 let activitySearchText = '';
+let searchDebounceTimer = null;
 const MAX_ACTIVITY_ENTRIES = 500;
+const SEARCH_DEBOUNCE_MS = 100;
+
+// Noise types to filter out
+const NOISE_TYPES = new Set(['text_delta', 'content_block_delta']);
 
 // Extend PANE_ROLES with system entry for activity log
 const ACTIVITY_AGENT_NAMES = { ...PANE_ROLES, 'system': 'System' };
@@ -21,12 +26,15 @@ function formatActivityTime(timestamp) {
 }
 
 function addActivityEntry(entry) {
+  // Filter out noise events
+  if (entry && NOISE_TYPES.has(entry.type)) return;
+
   const entryWithMeta = {
     id: Date.now(),
     timestamp: new Date().toISOString(),
     ...entry
   };
-  
+
   activityLog.push(entryWithMeta);
 
   // Trim to max entries
@@ -34,39 +42,78 @@ function addActivityEntry(entry) {
     activityLog = activityLog.slice(-MAX_ACTIVITY_ENTRIES);
   }
 
-  // Optimized: If no filters active and tab is visible, just append
+  // Optimized: If no filters active, just append the DOM node
   const logEl = document.getElementById('activityLog');
   const isFiltered = activityFilter !== 'all' || activitySearchText !== '';
-  
+
   if (logEl && !isFiltered) {
-    // Only append if it's the latest and we aren't at max entries yet
-    // Actually, simple is better for now: only re-render if needed, otherwise append
-    const entryHtml = renderEntry(entryWithMeta);
-    const div = document.createElement('div');
-    div.innerHTML = entryHtml;
-    logEl.appendChild(div.firstElementChild);
-    
+    // Remove empty placeholder if present
+    const empty = logEl.querySelector('.activity-empty');
+    if (empty) empty.remove();
+
+    const node = createEntryNode(entryWithMeta);
+    logEl.appendChild(node);
+
     // Auto-scroll to bottom
     logEl.scrollTop = logEl.scrollHeight;
-    
-    // If we exceeded max, remove the first one
+
+    // Cap DOM children
     if (logEl.children.length > MAX_ACTIVITY_ENTRIES) {
       logEl.removeChild(logEl.firstChild);
     }
   } else {
     renderActivityLog();
   }
+
+  // Check for awaiting human state
+  if (entry.type === 'state' && entry.message && entry.message.includes('awaiting_human')) {
+    showAwaitingHuman(true);
+  } else if (entry.type === 'state' && entry.message && entry.message.includes('active')) {
+    showAwaitingHuman(false);
+  }
 }
 
-function renderEntry(entry) {
-  return `
-    <div class="activity-entry" data-type="${entry.type}">
+function showAwaitingHuman(visible) {
+  const banner = document.getElementById('awaitingHumanBanner');
+  if (banner) {
+    banner.classList.toggle('hidden', !visible);
+  }
+}
+
+function createEntryNode(entry) {
+  const div = document.createElement('div');
+  div.className = 'activity-entry';
+  div.dataset.type = entry.type || '';
+
+  const isMessage = entry.type === 'message';
+
+  if (isMessage) {
+    // Chat-style message rendering
+    div.classList.add('activity-message-entry');
+    div.innerHTML = `
+      <div class="activity-chat-header">
+        <span class="activity-agent" data-agent="${entry.agent || ''}">${ACTIVITY_AGENT_NAMES[entry.agent] || entry.agent || 'Unknown'}</span>
+        <span class="activity-time">${formatActivityTime(entry.timestamp)}</span>
+      </div>
+      <div class="activity-chat-body">${escapeHtml(entry.message || '')}</div>
+    `;
+  } else {
+    // Standard log-line rendering
+    div.innerHTML = `
       <span class="activity-time">${formatActivityTime(entry.timestamp)}</span>
-      <span class="activity-agent" data-agent="${entry.agent}">${ACTIVITY_AGENT_NAMES[entry.agent] || entry.agent}</span>
-      <span class="activity-type ${entry.type}">${entry.type}</span>
-      <span class="activity-message">${entry.message}</span>
-    </div>
-  `;
+      <span class="activity-agent" data-agent="${entry.agent || ''}">${ACTIVITY_AGENT_NAMES[entry.agent] || entry.agent || ''}</span>
+      <span class="activity-type ${entry.type || ''}">${entry.type || ''}</span>
+      <span class="activity-msg">${escapeHtml(entry.message || '')}</span>
+    `;
+  }
+
+  return div;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
 }
 
 function renderActivityLog() {
@@ -93,7 +140,13 @@ function renderActivityLog() {
     return;
   }
 
-  logEl.innerHTML = filtered.map(entry => renderEntry(entry)).join('');
+  // Build with document fragment for performance
+  const frag = document.createDocumentFragment();
+  for (const entry of filtered) {
+    frag.appendChild(createEntryNode(entry));
+  }
+  logEl.innerHTML = '';
+  logEl.appendChild(frag);
 
   // Auto-scroll to bottom
   logEl.scrollTop = logEl.scrollHeight;
@@ -103,7 +156,7 @@ async function loadActivityLog() {
   try {
     const result = await ipcRenderer.invoke('get-activity-log');
     if (result && result.success) {
-      activityLog = result.entries || [];
+      activityLog = (result.entries || []).filter(e => !NOISE_TYPES.has(e.type));
       renderActivityLog();
     }
   } catch (err) {
@@ -143,12 +196,15 @@ function setupActivityTab() {
     });
   });
 
-  // Search box
+  // Search box with debounce
   const searchInput = document.getElementById('activitySearch');
   if (searchInput) {
     searchInput.addEventListener('input', () => {
-      activitySearchText = searchInput.value;
-      renderActivityLog();
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        activitySearchText = searchInput.value;
+        renderActivityLog();
+      }, SEARCH_DEBOUNCE_MS);
     });
   }
 

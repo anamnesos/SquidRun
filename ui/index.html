@@ -450,27 +450,31 @@
 
     <div class="right-panel" id="rightPanel">
       <div class="panel-tabs">
-        <button class="panel-tab active" data-tab="screenshots" title="Drag & drop images for agents to reference">Shots</button>
-        <button class="panel-tab" data-tab="tests" title="View test results and run test suite">Tests</button>
-        <button class="panel-tab" data-tab="activity" title="Real-time log of all agent activity">Activity</button>
-        <button class="panel-tab" data-tab="queue" title="Task queue, message backlog, and conflict locks">Queue</button>
-        <button class="panel-tab" data-tab="friction" title="Agent friction logs and blockers"><span id="frictionTabBadge" class="tab-badge hidden">0</span>Friction</button>
-        <button class="panel-tab" data-tab="inspector" title="Debug message flow and delivery">Insp</button>
-        <button class="panel-tab" data-tab="history" title="View past session history">Hist</button>
-        <button class="panel-tab" data-tab="memory" title="Agent conversation history and context">Mem</button>
-        <button class="panel-tab" data-tab="health" title="Agent health monitoring and recovery controls">Health</button>
-        <button class="panel-tab" data-tab="graph" title="Knowledge graph - relationships between files, agents, decisions">Graph</button>
-        <button class="panel-tab" data-tab="workflow" title="Drag-and-drop workflow builder">Flow</button>
-        <button class="panel-tab" data-tab="debug" title="Agent action replay and debugging">Debug</button>
-        <button class="panel-tab" data-tab="review" title="AI-powered code review and suggestions">Review</button>
-        <button class="panel-tab" data-tab="docs" title="Auto-generate documentation from code">Docs</button>
-        <button class="panel-tab" data-tab="projects" title="Quick-switch between recent projects">Proj</button>
-        <button class="panel-tab" data-tab="git" title="Repository status, diffs, and commits">Git</button>
-        <button class="panel-tab" data-tab="performance" title="Agent performance metrics and stats">Perf</button>
-        <button class="panel-tab" data-tab="templates" title="Save and load workspace configurations">Tmpl</button>
-        <button class="panel-tab" data-tab="progress" title="Build progress and usage statistics">Prog</button>
-        <button class="panel-tab" data-tab="processes" title="Manage background processes">Proc</button>
-        <button class="panel-tab" data-tab="oracle" title="Gemini-powered screenshot analysis">Oracle</button>
+        <!-- Primary tabs (always visible) -->
+        <button class="panel-tab" data-tab="activity" data-tab-group="primary" title="Real-time log of all agent activity">Feed</button>
+        <button class="panel-tab active" data-tab="screenshots" data-tab-group="primary" title="Drag & drop images for agents to reference">Shots</button>
+        <button class="panel-tab" data-tab="oracle" data-tab-group="primary" title="Gemini-powered screenshot analysis">Oracle</button>
+        <button class="panel-tab" data-tab="git" data-tab-group="primary" title="Repository status, diffs, and commits">Git</button>
+        <!-- Dev Tools toggle -->
+        <button class="panel-tab devtools-toggle" id="devtoolsToggle" title="Show/hide developer tabs">Dev</button>
+        <!-- Dev Tools tabs (hidden by default) -->
+        <button class="panel-tab" data-tab="tests" data-tab-group="devtools" title="View test results and run test suite">Tests</button>
+        <button class="panel-tab" data-tab="queue" data-tab-group="devtools" title="Task queue, message backlog, and conflict locks">Queue</button>
+        <button class="panel-tab" data-tab="friction" data-tab-group="devtools" title="Agent friction logs and blockers"><span id="frictionTabBadge" class="tab-badge hidden">0</span>Friction</button>
+        <button class="panel-tab" data-tab="inspector" data-tab-group="devtools" title="Debug message flow and delivery">Insp</button>
+        <button class="panel-tab" data-tab="history" data-tab-group="devtools" title="View past session history">Hist</button>
+        <button class="panel-tab" data-tab="memory" data-tab-group="devtools" title="Agent conversation history and context">Mem</button>
+        <button class="panel-tab" data-tab="health" data-tab-group="devtools" title="Agent health monitoring and recovery controls">Health</button>
+        <button class="panel-tab" data-tab="graph" data-tab-group="devtools" title="Knowledge graph - relationships between files, agents, decisions">Graph</button>
+        <button class="panel-tab" data-tab="workflow" data-tab-group="devtools" title="Drag-and-drop workflow builder">Flow</button>
+        <button class="panel-tab" data-tab="debug" data-tab-group="devtools" title="Agent action replay and debugging">Debug</button>
+        <button class="panel-tab" data-tab="review" data-tab-group="devtools" title="AI-powered code review and suggestions">Review</button>
+        <button class="panel-tab" data-tab="docs" data-tab-group="devtools" title="Auto-generate documentation from code">Docs</button>
+        <button class="panel-tab" data-tab="projects" data-tab-group="devtools" title="Quick-switch between recent projects">Proj</button>
+        <button class="panel-tab" data-tab="performance" data-tab-group="devtools" title="Agent performance metrics and stats">Perf</button>
+        <button class="panel-tab" data-tab="templates" data-tab-group="devtools" title="Save and load workspace configurations">Tmpl</button>
+        <button class="panel-tab" data-tab="progress" data-tab-group="devtools" title="Build progress and usage statistics">Prog</button>
+        <button class="panel-tab" data-tab="processes" data-tab-group="devtools" title="Manage background processes">Proc</button>
       </div>
       <div class="panel-content">
         <div class="tab-pane active" id="tab-screenshots">
@@ -519,17 +523,19 @@
           </div>
         </div>
         <div class="tab-pane" id="tab-activity">
-          <div class="tab-title">Activity Log</div>
-          <div class="tab-description">Real-time agent activity and events</div>
+          <div class="tab-title">Feed</div>
+          <div class="tab-description">Live agent activity, messages, and events</div>
           <div class="activity-controls">
             <div class="activity-filters">
               <button class="activity-filter active" data-filter="all">All</button>
+              <button class="activity-filter" data-filter="message">Messages</button>
               <button class="activity-filter" data-filter="error">Errors</button>
               <button class="activity-filter" data-filter="file" title="Show file change events">Files</button>
               <button class="activity-filter" data-filter="state" title="Show state transition events">State</button>
             </div>
             <input type="text" class="activity-search" id="activitySearch" placeholder="Search..." title="Filter activity by text" autocomplete="off">
           </div>
+          <div id="awaitingHumanBanner" class="awaiting-human-banner hidden">AWAITING HUMAN INPUT</div>
           <div class="activity-log" id="activityLog">
             <div class="activity-empty">No activity yet</div>
           </div>
