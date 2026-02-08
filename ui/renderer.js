@@ -1238,22 +1238,6 @@ function setupEventListeners() {
     });
   }
 
-  // Sync button
-  const syncBtn = document.getElementById('syncBtn');
-  if (syncBtn) {
-    syncBtn.addEventListener('click', async () => {
-      try {
-        const synced = await terminal.syncSharedContext();
-        if (synced) {
-          daemonHandlers.markManualSync('shared_context.md');
-        }
-      } catch (err) {
-        log.error('Sync', 'Sync failed:', err);
-        updateConnectionStatus('Sync failed');
-      }
-    });
-  }
-
   // Select Project button
   const selectProjectBtn = document.getElementById('selectProjectBtn');
   if (selectProjectBtn) {

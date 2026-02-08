@@ -570,39 +570,6 @@ describe('terminal.js module', () => {
     });
   });
 
-  describe('syncSharedContext', () => {
-    test('should read context and broadcast', async () => {
-      const connectionCb = jest.fn();
-      terminal.setStatusCallbacks(null, connectionCb);
-
-      await terminal.syncSharedContext();
-
-      expect(mockHivemind.context.read).toHaveBeenCalled();
-      expect(connectionCb).toHaveBeenCalledWith('Syncing shared context...');
-      expect(connectionCb).toHaveBeenCalledWith('Shared context synced to all panes');
-    });
-
-    test('should handle read failure', async () => {
-      mockHivemind.context.read.mockResolvedValueOnce({ success: false, error: 'read error' });
-      const connectionCb = jest.fn();
-      terminal.setStatusCallbacks(null, connectionCb);
-
-      await terminal.syncSharedContext();
-
-      expect(connectionCb).toHaveBeenCalledWith('Sync failed: read error');
-    });
-
-    test('should handle exception', async () => {
-      mockHivemind.context.read.mockRejectedValueOnce(new Error('network error'));
-      const connectionCb = jest.fn();
-      terminal.setStatusCallbacks(null, connectionCb);
-
-      await terminal.syncSharedContext();
-
-      expect(connectionCb).toHaveBeenCalledWith('Sync error: network error');
-    });
-  });
-
   describe('spawnAgent', () => {
     test('should skip if no terminal exists', async () => {
       terminal.terminals.clear();
@@ -942,26 +909,6 @@ describe('terminal.js module', () => {
 
       // Should detect Codex command
       expect(mockHivemind.pty.write).toHaveBeenCalledWith('1', 'codex --interactive');
-      jest.useFakeTimers();
-    });
-  });
-
-  describe('syncSharedContext details', () => {
-    test('should format sync message correctly', async () => {
-      jest.useRealTimers();
-      terminal.lastOutputTime['1'] = Date.now(); // Keep pane busy
-      mockHivemind.context.read.mockResolvedValueOnce({
-        success: true,
-        content: 'test content here',
-      });
-
-      await terminal.syncSharedContext();
-
-      // Should have queued a sync message
-      expect(terminal.messageQueue['1']).toBeDefined();
-      const lastItem = terminal.messageQueue['1'][terminal.messageQueue['1'].length - 1];
-      expect(lastItem.message).toContain('[HIVEMIND SYNC]');
-      expect(lastItem.message).toContain('test content here');
       jest.useFakeTimers();
     });
   });

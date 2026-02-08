@@ -475,13 +475,6 @@ describe('daemon-handlers.js module', () => {
     });
   });
 
-  describe('markManualSync', () => {
-    test('should mark sync file and update chip', () => {
-      daemonHandlers.markManualSync('shared_context.md');
-      expect(uiView.updateSyncChip).toHaveBeenCalledWith('shared_context.md', expect.any(Object));
-    });
-  });
-
   describe('setupSyncIndicator', () => {
     test('should initialize UI and register listeners', () => {
       daemonHandlers.setupSyncIndicator();
