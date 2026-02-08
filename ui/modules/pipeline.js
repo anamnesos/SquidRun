@@ -90,9 +90,12 @@ function excerpt(msg) {
  */
 function extractTitle(msg) {
   if (!msg) return 'Untitled';
+  // Remove AGENT_MESSAGE_PREFIX
+  let clean = String(msg).replace(/^\[AGENT MSG - reply via hm-send\.js\]\s*/i, '').trim();
   // Remove structured tags
-  let clean = String(msg).replace(/\[(?:PROPOSAL|ACCEPT|DONE|REVIEW|APPROVED|ASSIGNED)\]/gi, '').trim();
-  // Remove role prefix like (ARCH): or (ANA ->DEVOPS):
+  clean = clean.replace(/\[(?:PROPOSAL|ACCEPT|DONE|REVIEW|APPROVED|ASSIGNED)\]/gi, '').trim();
+  // Remove role prefix like (ARCH #1): or (ANA -> DEVOPS #2):
+  clean = clean.replace(/^\([^)]*#\d+\):\s*/, '').trim();
   clean = clean.replace(/^\([^)]*\):\s*/, '').trim();
   // Take first sentence or first 80 chars
   const firstSentence = clean.split(/[.!?\n]/)[0].trim();
