@@ -80,8 +80,7 @@ function setupIPCHandlers(deps) {
  * Cleanup all IPC handlers and their resources
  */
 function cleanup() {
-  const { unregisterAllHandlers } = require('./ipc/handler-registry');
-  unregisterAllHandlers(registry);
+  registry.unsetup(ctx);
 }
 
 const backgroundController = createBackgroundProcessController(ctx);
