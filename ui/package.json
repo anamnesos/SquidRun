@@ -4,8 +4,6 @@
   "description": "Multi-pane Claude Code orchestration UI",
   "main": "main.js",
   "scripts": {
-    "rename-instances": "node scripts/rename-instances.js",
-    "prestart": "node scripts/rename-instances.js || true",
     "start": "electron .",
     "dev": "electron . --dev",
     "test": "jest",
