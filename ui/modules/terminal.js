@@ -37,10 +37,7 @@ const {
   PROMPT_READY_TIMEOUT_MS,
   STARTUP_READY_TIMEOUT_MS,
   STARTUP_IDENTITY_DELAY_MS,
-  STARTUP_CONTEXT_DELAY_ARCHITECT_MS,
-  STARTUP_CONTEXT_DELAY_MS,
   STARTUP_IDENTITY_DELAY_CODEX_MS,
-  STARTUP_CONTEXT_DELAY_CODEX_MS,
   STARTUP_READY_BUFFER_MAX,
 } = require('./constants');
 
@@ -486,15 +483,7 @@ function triggerStartupInjection(paneId, state, reason) {
     }
   }, identityDelayMs);
 
-  if (window.hivemind?.claude?.injectContext) {
-    // Gemini gets longer delay (CLI takes 8-12s to initialize input handling)
-    const contextDelayMs = state.isGemini ? 12000
-      : String(paneId) === '1' ? STARTUP_CONTEXT_DELAY_ARCHITECT_MS
-      : STARTUP_CONTEXT_DELAY_MS;
-    const modelType = state.isGemini ? 'gemini' : state.modelType;
-    window.hivemind.claude.injectContext(paneId, modelType, contextDelayMs);
-    log.info('spawnAgent', `Context injection scheduled for ${modelType} pane ${paneId} in ${contextDelayMs}ms [ready:${reason}]`);
-  }
+  // Startup context injection disabled: CLI tools load context natively.
 }
 
 function armStartupInjection(paneId, options = {}) {
@@ -1250,11 +1239,7 @@ async function spawnAgent(paneId, model = null) {
       log.info('spawnAgent', `Codex exec identity sent for ${role} (pane ${paneId})`);
     }, STARTUP_IDENTITY_DELAY_CODEX_MS);
 
-    // Finding #14: Inject context files (AGENTS.md for Codex) after startup
-    if (window.hivemind?.claude?.injectContext) {
-      window.hivemind.claude.injectContext(paneId, 'codex', STARTUP_CONTEXT_DELAY_CODEX_MS);
-      log.info('spawnAgent', `Context injection scheduled for Codex pane ${paneId}`);
-    }
+    // Startup context injection disabled: Codex loads context natively.
 
     updatePaneStatus(paneId, 'Codex exec ready');
     return;
