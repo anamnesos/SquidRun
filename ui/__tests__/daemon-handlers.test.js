@@ -13,7 +13,7 @@ jest.mock('electron', () => ({
 }));
 
 // Mock config
-jest.mock('../config', () => require('./helpers/mock-config').mockDefaultConfig);
+jest.mock('../config', () => require('./helpers/real-config').mockDefaultConfig);
 
 // Mock terminal module
 jest.mock('../modules/terminal', () => ({

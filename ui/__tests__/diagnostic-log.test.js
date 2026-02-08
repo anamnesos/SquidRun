@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 jest.mock('fs');
-jest.mock('../config', () => require('./helpers/mock-config').mockWorkspaceOnly);
+jest.mock('../config', () => require('./helpers/real-config').mockWorkspaceOnly);
 
 const diagnosticLog = require('../modules/diagnostic-log');
 
@@ -93,7 +93,7 @@ describe('diagnostic-log', () => {
 describe('diagnostic-log with null workspace', () => {
   beforeEach(() => {
     jest.resetModules();
-    jest.mock('../config', () => require('./helpers/mock-config').mockCreateConfig({ WORKSPACE_PATH: null }));
+    jest.mock('../config', () => require('./helpers/real-config').mockCreateConfig({ WORKSPACE_PATH: null }));
   });
 
   test('handles null workspace path', () => {
