@@ -227,6 +227,11 @@ function createInjectionController(options = {}) {
     // Check for output activity (indicates Claude started processing)
     const outputTimeAfter = lastOutputTime[paneId] || 0;
     const hadOutputActivity = outputTimeAfter > outputTimeBefore;
+    if (textarea && textarea.value) {
+      log.warn(`verifyAndRetryEnter ${paneId}`, 'Textarea still has input after Enter - treating as failure');
+      markPotentiallyStuck(paneId);
+      return false;
+    }
 
     if (hadOutputActivity) {
       // Output started - now wait for prompt-ready (stricter success criteria)
@@ -610,7 +615,11 @@ function createInjectionController(options = {}) {
             await new Promise(resolve => setTimeout(resolve, 100));
           }
           if (!isIdle(id)) {
-            log.warn(`doSendToPane ${id}`, 'Claude pane: still not idle after 5s, proceeding anyway');
+            log.warn(`doSendToPane ${id}`, 'Claude pane: still not idle after 5s, aborting Enter');
+            restoreSavedFocus();
+            markPotentiallyStuck(id);
+            finishWithClear({ success: false, reason: 'busy_timeout' });
+            return;
           } else {
             log.info(`doSendToPane ${id}`, `Claude pane: now idle after ${Date.now() - idleWaitStart}ms`);
           }
