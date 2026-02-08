@@ -113,4 +113,14 @@ function registerTaskParserHandlers(ctx) {
   });
 }
 
+function unregisterTaskParserHandlers(ctx) {
+  const { ipcMain } = ctx;
+  if (ipcMain) {
+    ipcMain.removeHandler('parse-task-input');
+    ipcMain.removeHandler('route-task-input');
+  }
+}
+
+registerTaskParserHandlers.unregister = unregisterTaskParserHandlers;
+
 module.exports = { registerTaskParserHandlers };

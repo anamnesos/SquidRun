@@ -230,4 +230,24 @@ function registerProjectHandlers(ctx, deps) {
   });
 }
 
+function unregisterProjectHandlers(ctx) {
+  const { ipcMain } = ctx;
+  if (ipcMain) {
+    ipcMain.removeHandler('select-project');
+    ipcMain.removeHandler('get-project');
+    ipcMain.removeHandler('get-recent-projects');
+    ipcMain.removeHandler('add-recent-project');
+    ipcMain.removeHandler('remove-recent-project');
+    ipcMain.removeHandler('clear-recent-projects');
+    ipcMain.removeHandler('switch-project');
+    ipcMain.removeHandler('set-pane-project');
+    ipcMain.removeHandler('select-pane-project');
+    ipcMain.removeHandler('get-pane-project');
+    ipcMain.removeHandler('get-all-pane-projects');
+    ipcMain.removeHandler('clear-pane-projects');
+  }
+}
+
+registerProjectHandlers.unregister = unregisterProjectHandlers;
+
 module.exports = { registerProjectHandlers };

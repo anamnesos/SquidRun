@@ -117,4 +117,17 @@ function registerSettingsHandlers(ctx, deps) {
   });
 }
 
+function unregisterSettingsHandlers(ctx) {
+  const { ipcMain } = ctx;
+  if (ipcMain) {
+    ipcMain.removeHandler('get-settings');
+    ipcMain.removeHandler('set-setting');
+    ipcMain.removeHandler('get-all-settings');
+    ipcMain.removeHandler('get-api-keys');
+    ipcMain.removeHandler('set-api-keys');
+  }
+}
+
+registerSettingsHandlers.unregister = unregisterSettingsHandlers;
+
 module.exports = { registerSettingsHandlers };

@@ -170,6 +170,19 @@ function registerErrorHandlers(ctx, deps = {}) {
   });
 }
 
+function unregisterErrorHandlers(ctx) {
+  const { ipcMain } = ctx;
+  if (ipcMain) {
+    ipcMain.removeHandler('get-error-message');
+    ipcMain.removeHandler('show-error-toast');
+    ipcMain.removeHandler('list-error-codes');
+    ipcMain.removeHandler('handle-error');
+    ipcMain.removeHandler('full-restart');
+  }
+}
+
+registerErrorHandlers.unregister = unregisterErrorHandlers;
+
 module.exports = {
   registerErrorHandlers,
 };

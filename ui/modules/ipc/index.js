@@ -10,6 +10,7 @@
   'backupManager',
   'usageStats',
   'sessionStartTimes',
+  'contextInjection',
   'costAlertSent',
   'backgroundProcesses',
   'processIdCounter',

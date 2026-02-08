@@ -618,9 +618,9 @@ describe('terminal.js module', () => {
 
       await terminal.spawnAgent('1');
 
-      // Codex now calls spawn to get command (needed after model switch)
-      expect(mockHivemind.claude.spawn).toHaveBeenCalledWith('1');
-      expect(mockHivemind.pty.write).toHaveBeenCalledWith('1', 'claude');
+      // Codex exec mode: no claude.spawn or pty.write — uses codex-exec IPC
+      expect(mockHivemind.claude.spawn).not.toHaveBeenCalled();
+      expect(mockHivemind.pty.write).not.toHaveBeenCalled();
       expect(statusCb).toHaveBeenCalledWith('1', 'Starting Codex...');
       expect(statusCb).toHaveBeenCalledWith('1', 'Codex exec ready');
 
@@ -629,14 +629,17 @@ describe('terminal.js module', () => {
     });
 
     test('should handle spawn failure', async () => {
-      terminal.terminals.set('1', { write: jest.fn() });
+      jest.useRealTimers();
+      terminal.unregisterCodexPane('5'); // Ensure pane 5 is not codex
+      terminal.terminals.set('5', { write: jest.fn() });
       mockHivemind.claude.spawn.mockRejectedValueOnce(new Error('spawn failed'));
       const statusCb = jest.fn();
       terminal.setStatusCallbacks(statusCb, null);
 
-      await terminal.spawnAgent('1');
+      await terminal.spawnAgent('5');
 
-      expect(statusCb).toHaveBeenCalledWith('1', 'Spawn failed');
+      expect(statusCb).toHaveBeenCalledWith('5', 'Spawn failed');
+      jest.useFakeTimers();
     });
   });
 
@@ -884,31 +887,33 @@ describe('terminal.js module', () => {
   describe('spawnAgent edge cases', () => {
     test('should handle spawn returning failure', async () => {
       jest.useRealTimers();
-      terminal.terminals.set('1', { write: jest.fn() });
+      terminal.unregisterCodexPane('5'); // Ensure pane 5 is not codex
+      terminal.terminals.set('5', { write: jest.fn() });
       mockHivemind.claude.spawn.mockResolvedValueOnce({ success: false });
       const statusCb = jest.fn();
       terminal.setStatusCallbacks(statusCb, null);
 
-      await terminal.spawnAgent('1');
+      await terminal.spawnAgent('5');
 
       // Should still update status but not write command
-      expect(statusCb).toHaveBeenCalledWith('1', 'Starting...');
-      expect(statusCb).toHaveBeenCalledWith('1', 'Working');
+      expect(statusCb).toHaveBeenCalledWith('5', 'Starting...');
+      expect(statusCb).toHaveBeenCalledWith('5', 'Working');
       jest.useFakeTimers();
     });
 
     test('should handle Codex command detection', async () => {
       jest.useRealTimers();
-      terminal.terminals.set('1', { write: jest.fn() });
+      terminal.unregisterCodexPane('5'); // Ensure pane 5 is not codex
+      terminal.terminals.set('5', { write: jest.fn() });
       mockHivemind.claude.spawn.mockResolvedValueOnce({
         success: true,
         command: 'codex --interactive',
       });
 
-      await terminal.spawnAgent('1');
+      await terminal.spawnAgent('5');
 
-      // Should detect Codex command
-      expect(mockHivemind.pty.write).toHaveBeenCalledWith('1', 'codex --interactive');
+      // Should detect Codex command and write it via PTY
+      expect(mockHivemind.pty.write).toHaveBeenCalledWith('5', 'codex --interactive');
       jest.useFakeTimers();
     });
   });

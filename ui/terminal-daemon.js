@@ -1225,7 +1225,8 @@ function writeTerminal(paneId, data) {
 
   // Codex exec terminals are non-interactive; ignore PTY writes
   if (terminal.mode === 'codex-exec') {
-    return false;
+    logWarn(`Ignored PTY write to non-interactive Codex pane ${paneId}`);
+    return true; // Return true so caller doesn't think terminal is missing
   }
 
   // DRY-RUN MODE: Handle input simulation

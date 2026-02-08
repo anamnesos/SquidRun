@@ -212,6 +212,43 @@ let lastUserUIFocus = null;
 let lastUserUIKeypressTime = 0;
 // Timing constants imported from constants.js
 
+const SPINNER_CHARS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+const ACTIVITY_OSC_REGEX = /\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g;
+const ACTIVITY_CSI_REGEX = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+
+/**
+ * Strip ANSI escape codes from string (OSC + CSI + charset sequences)
+ */
+function stripAnsi(text) {
+  if (typeof text !== 'string') return text;
+  return text
+    .replace(ACTIVITY_OSC_REGEX, '')
+    .replace(ACTIVITY_CSI_REGEX, '')
+    .replace(/\u001b[\(\)][A-Za-z0-9]/g, '');
+}
+
+/**
+ * Check if the PTY output contains meaningful content (not just spinners/ANSI/whitespace)
+ */
+function isMeaningfulActivity(data) {
+  if (!data) return false;
+  // Strip ANSI, control characters, and whitespace
+  const clean = stripAnsi(data)
+    .replace(/[\x00-\x1F\x7F]/g, '')
+    .replace(/\s/g, '');
+  
+  if (clean.length === 0) return false;
+  
+  // If the remaining string contains any character NOT in our spinner allowlist, it's meaningful
+  for (let i = 0; i < clean.length; i++) {
+    if (!SPINNER_CHARS.includes(clean[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Non-timing constants that stay here
 const MAX_FOCUS_RETRIES = 3;          // Max focus retry attempts before giving up
 const MAX_ENTER_RETRIES = 5;          // Max Enter retry attempts if text remains
@@ -927,8 +964,11 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
     window.hivemind.pty.onData(paneId, (data) => {
       // Use flow control to prevent xterm buffer overflow
       queueTerminalWrite(paneId, terminal, data);
-      // Track output time for idle detection
-      lastOutputTime[paneId] = Date.now();
+      // Track output time for idle detection - only for meaningful activity
+      // This ensures spinners/ANSI don't block programmatic injections
+      if (isMeaningfulActivity(data)) {
+        lastOutputTime[paneId] = Date.now();
+      }
       // Clear stuck status - output means pane is working
       clearStuckStatus(paneId);
       handleStartupOutput(paneId, data);
@@ -1082,8 +1122,11 @@ async function reattachTerminal(paneId, scrollback) {
   window.hivemind.pty.onData(paneId, (data) => {
     // Use flow control to prevent xterm buffer overflow
     queueTerminalWrite(paneId, terminal, data);
-    // Track output time for idle detection
-    lastOutputTime[paneId] = Date.now();
+    // Track output time for idle detection - only for meaningful activity
+    // This ensures spinners/ANSI don't block programmatic injections
+    if (isMeaningfulActivity(data)) {
+      lastOutputTime[paneId] = Date.now();
+    }
     // Clear stuck status - output means pane is working
     clearStuckStatus(paneId);
     handleStartupOutput(paneId, data);
@@ -1190,24 +1233,14 @@ async function spawnAgent(paneId, model = null) {
   // Otherwise fall back to checking settings/identity cache
   const isCodex = model ? model === 'codex' : isCodexPane(String(paneId));
 
-  // Codex exec mode: spawn codex command then send identity prompt
+  // Codex exec mode: non-interactive request/response
   if (isCodex) {
     updatePaneStatus(paneId, 'Starting Codex...');
-    // Spawn codex command (needed after model switch when terminal is at shell prompt)
-    try {
-      const result = await window.hivemind.claude.spawn(paneId);
-      if (result.success && result.command) {
-        await window.hivemind.pty.write(String(paneId), result.command);
-        lastTypedTime[paneId] = Date.now();
-        await new Promise(resolve => setTimeout(resolve, 100));
-        await window.hivemind.pty.write(String(paneId), '\r');
-        log.info('spawnAgent', `Codex command written for pane ${paneId}`);
-      }
-    } catch (err) {
-      log.error(`spawnAgent ${paneId}`, 'Codex spawn failed:', err);
-      updatePaneStatus(paneId, 'Spawn failed');
-      return;
-    }
+    // We don't write the 'codex' command to the terminal because the daemon 
+    // uses a virtual terminal (no PTY) for codex-exec mode.
+    // Identity injection will happen via codex-exec IPC in the timeout below.
+    log.info('spawnAgent', `Codex pane ${paneId} ready (codex-exec mode)`);
+
     // Send identity message after Codex starts (delayed to ensure Architect goes first)
     setTimeout(() => {
       const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
@@ -1389,36 +1422,6 @@ async function freshStartAll() {
   updateConnectionStatus('Fresh start complete - new sessions started');
 }
 
-// Sync shared context to all panes
-async function syncSharedContext() {
-  updateConnectionStatus('Syncing shared context...');
-
-  try {
-    const result = await window.hivemind.context.read();
-
-    if (!result.success) {
-      updateConnectionStatus(`Sync failed: ${result.error}`);
-      return false;
-    }
-
-    const syncMessage = `[HIVEMIND SYNC] Please read and acknowledge the following shared context:
-
----
-${result.content}
----
-
-Acknowledge receipt and summarize the key points.\r`;
-
-    broadcast(syncMessage);
-    updateConnectionStatus('Shared context synced to all panes');
-    return true;
-
-  } catch (err) {
-    updateConnectionStatus(`Sync error: ${err.message}`);
-  }
-  return false;
-}
-
 // Handle window resize
 function handleResize() {
   for (const [paneId, fitAddon] of fitAddons) {
@@ -1585,7 +1588,6 @@ module.exports = {
   aggressiveNudge,     // ESC + Enter for more forceful unstick
   aggressiveNudgeAll,  // Aggressive nudge all panes with stagger
   freshStartAll,
-  syncSharedContext,
   handleResize,
   getTerminal,
   getFocusedPane,

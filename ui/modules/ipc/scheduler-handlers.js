@@ -61,4 +61,23 @@ function registerSchedulerHandlers(ctx) {
   });
 }
 
+function unregisterSchedulerHandlers(ctx) {
+  if (ctx.scheduler) {
+    ctx.scheduler.stop();
+    ctx.scheduler = null;
+  }
+  const { ipcMain } = ctx;
+  if (ipcMain) {
+    ipcMain.removeHandler('get-schedules');
+    ipcMain.removeHandler('add-schedule');
+    ipcMain.removeHandler('update-schedule');
+    ipcMain.removeHandler('delete-schedule');
+    ipcMain.removeHandler('run-schedule-now');
+    ipcMain.removeHandler('emit-schedule-event');
+    ipcMain.removeHandler('complete-schedule');
+  }
+}
+
+registerSchedulerHandlers.unregister = unregisterSchedulerHandlers;
+
 module.exports = { registerSchedulerHandlers };
