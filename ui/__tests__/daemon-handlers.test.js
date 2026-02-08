@@ -53,7 +53,6 @@ const mockUiView = {
   showDeliveryIndicator: jest.fn(),
   showDeliveryFailed: jest.fn(),
   updatePaneProject: jest.fn(),
-  updateStateDisplay: jest.fn(),
   updateAgentTasks: jest.fn(),
   showHandoffNotification: jest.fn(),
   showAutoTriggerFeedback: jest.fn(),
@@ -70,11 +69,6 @@ const mockUiView = {
     '1': 'Architect',
     '2': 'DevOps',
     '5': 'Analyst',
-  },
-  STATE_DISPLAY_NAMES: {
-    'idle': 'IDLE',
-    'executing': 'EXECUTING',
-    'error': 'ERROR',
   },
   SYNC_FILES: {
     'shared_context.md': { label: 'CTX' },
@@ -208,19 +202,6 @@ describe('daemon-handlers.js module', () => {
     });
   });
 
-  describe('updateStateDisplay', () => {
-    test('should delegate to uiView.updateStateDisplay', () => {
-      const state = {
-        state: 'executing',
-        current_checkpoint: 2,
-        total_checkpoints: 5,
-        active_agents: ['1', '2'],
-      };
-      daemonHandlers.updateStateDisplay(state);
-      expect(uiView.updateStateDisplay).toHaveBeenCalledWith(state);
-    });
-  });
-
   describe('updateAgentTasks', () => {
     test('should delegate to uiView.updateAgentTasks', () => {
       const claims = { '1': 'Review PR #123' };
@@ -288,13 +269,6 @@ describe('daemon-handlers.js module', () => {
       expect(ipcRenderer.on).toHaveBeenCalledWith('daemon-reconnected', expect.any(Function));
       expect(ipcRenderer.on).toHaveBeenCalledWith('daemon-disconnected', expect.any(Function));
       expect(ipcRenderer.on).toHaveBeenCalledWith('inject-message', expect.any(Function));
-    });
-  });
-
-  describe('setupStateListener', () => {
-    test('should register state-changed listener', () => {
-      daemonHandlers.setupStateListener();
-      expect(ipcRenderer.on).toHaveBeenCalledWith('state-changed', expect.any(Function));
     });
   });
 
@@ -563,14 +537,6 @@ describe('daemon-handlers.js module', () => {
         await ipcHandlers['daemon-connected']({}, data);
 
         expect(terminal.spawnAgent).toHaveBeenCalledWith('1');
-      });
-    });
-
-    describe('state-changed handler', () => {
-      test('should update state display via uiView', () => {
-        daemonHandlers.setupStateListener();
-        ipcHandlers['state-changed']({}, { state: 'executing' });
-        expect(uiView.updateStateDisplay).toHaveBeenCalledWith({ state: 'executing' });
       });
     });
 

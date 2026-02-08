@@ -416,14 +416,6 @@ function setupAutoTriggerListener() {
   });
 }
 
-function setupStateListener() {
-  ipcRenderer.on('state-changed', (event, state) => {
-    log.info('State', 'Received state change:', state);
-    uiView.updateStateDisplay(state);
-    updateConnectionStatus(`State: ${uiView.STATE_DISPLAY_NAMES[state.state] || state.state}`);
-  });
-}
-
 function setupProjectListener() {
   ipcRenderer.on('project-changed', (event, projectPath) => {
     log.info('Project', 'Changed to:', projectPath);
@@ -723,7 +715,6 @@ module.exports = {
   setupHandoffListener,
   setupConflictResolutionListener,
   setupAutoTriggerListener,
-  setupStateListener,
   setupProjectListener,
   setupCostAlertListener,
   setupClaudeStateListener,
@@ -741,7 +732,6 @@ module.exports = {
     if (!projects) return;
     Object.entries(projects).forEach(([id, path]) => uiView.updatePaneProject(id, path));
   },
-  updateStateDisplay: uiView.updateStateDisplay,
   updateAgentTasks: uiView.updateAgentTasks,
   showHandoffNotification: uiView.showHandoffNotification,
   showAutoTriggerFeedback: uiView.showAutoTriggerFeedback,
@@ -751,6 +741,5 @@ module.exports = {
   flashPaneHeader: uiView.flashPaneHeader,
   PANE_IDS,
   PANE_ROLES: uiView.PANE_ROLES,
-  STATE_DISPLAY_NAMES: uiView.STATE_DISPLAY_NAMES,
   _resetForTesting: uiView._resetForTesting,
 };
