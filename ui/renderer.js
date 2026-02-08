@@ -1922,7 +1922,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!data) return;
 
     if (!organicUIInstance) {
-      log.info('WarRoom', 'Queueing message (UI not ready)');
+      if (pendingWarRoomMessages.length === 0) {
+        log.info('WarRoom', 'Queueing messages (UI not ready)');
+      }
       pendingWarRoomMessages.push(data);
       return;
     }
