@@ -56,4 +56,22 @@ function registerPluginHandlers(ctx, deps) {
   });
 }
 
+function unregisterPluginHandlers(ctx) {
+  const manager = ctx.pluginManager;
+  if (manager && typeof manager.shutdown === 'function') {
+    manager.shutdown();
+  }
+  const { ipcMain } = ctx;
+  if (ipcMain) {
+    ipcMain.removeHandler('list-plugins');
+    ipcMain.removeHandler('enable-plugin');
+    ipcMain.removeHandler('disable-plugin');
+    ipcMain.removeHandler('reload-plugin');
+    ipcMain.removeHandler('reload-plugins');
+    ipcMain.removeHandler('run-plugin-command');
+  }
+}
+
+registerPluginHandlers.unregister = unregisterPluginHandlers;
+
 module.exports = { registerPluginHandlers };

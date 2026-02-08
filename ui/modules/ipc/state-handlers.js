@@ -109,4 +109,19 @@ function registerStateHandlers(ctx) {
   });
 }
 
+function unregisterStateHandlers(ctx) {
+  const { ipcMain } = ctx;
+  if (ipcMain) {
+    ipcMain.removeHandler('get-state');
+    ipcMain.removeHandler('set-state');
+    ipcMain.removeHandler('trigger-sync');
+    ipcMain.removeHandler('broadcast-message');
+    ipcMain.removeHandler('start-planning');
+    ipcMain.removeHandler('get-message-state');
+    ipcMain.removeHandler('get-reliability-stats');
+  }
+}
+
+registerStateHandlers.unregister = unregisterStateHandlers;
+
 module.exports = { registerStateHandlers };

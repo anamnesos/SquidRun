@@ -180,4 +180,26 @@ function registerPtyHandlers(ctx, deps = {}) {
   });
 }
 
+function unregisterPtyHandlers(ctx) {
+  const { ipcMain } = ctx;
+  if (ipcMain) {
+    ipcMain.removeHandler('pty-create');
+    ipcMain.removeHandler('pty-write');
+    ipcMain.removeHandler('pty-pause');
+    ipcMain.removeHandler('pty-resume');
+    ipcMain.removeHandler('interrupt-pane');
+    ipcMain.removeHandler('codex-exec');
+    ipcMain.removeHandler('send-trusted-enter');
+    ipcMain.removeHandler('clipboard-paste-text');
+    ipcMain.removeHandler('pty-resize');
+    ipcMain.removeHandler('pty-kill');
+    ipcMain.removeHandler('spawn-claude');
+    ipcMain.removeHandler('inject-context');
+    ipcMain.removeHandler('get-claude-state');
+    ipcMain.removeHandler('get-daemon-terminals');
+  }
+}
+
+registerPtyHandlers.unregister = unregisterPtyHandlers;
+
 module.exports = { registerPtyHandlers };

@@ -56,4 +56,23 @@ function registerBackupHandlers(ctx) {
   });
 }
 
+function unregisterBackupHandlers(ctx) {
+  if (ctx.backupManager) {
+    ctx.backupManager.stop();
+    ctx.backupManager = null;
+  }
+  const { ipcMain } = ctx;
+  if (ipcMain) {
+    ipcMain.removeHandler('backup-list');
+    ipcMain.removeHandler('backup-create');
+    ipcMain.removeHandler('backup-restore');
+    ipcMain.removeHandler('backup-delete');
+    ipcMain.removeHandler('backup-get-config');
+    ipcMain.removeHandler('backup-update-config');
+    ipcMain.removeHandler('backup-prune');
+  }
+}
+
+registerBackupHandlers.unregister = unregisterBackupHandlers;
+
 module.exports = { registerBackupHandlers };

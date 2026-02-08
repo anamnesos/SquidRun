@@ -383,6 +383,14 @@ function createPluginManager(options = {}) {
     return false;
   }
 
+  function shutdown() {
+    for (const record of registry.values()) {
+      unloadPlugin(record);
+    }
+    registry.clear();
+    log.info('Plugins', 'Manager shutdown complete');
+  }
+
   function runHookSync(record, hook, payload) {
     try {
       const result = hook(payload, record.api);
@@ -475,6 +483,7 @@ function createPluginManager(options = {}) {
     dispatch,
     applyHookSync,
     hasHook,
+    shutdown,
     getState: () => ({ ...state }),
   };
 }

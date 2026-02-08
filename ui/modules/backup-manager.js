@@ -384,6 +384,13 @@ function createBackupManager(options = {}) {
     }, intervalMs);
   }
 
+  function stop() {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  }
+
   function init() {
     ensureDir(backupRoot);
     loadConfig();
@@ -401,6 +408,7 @@ function createBackupManager(options = {}) {
     restoreBackup,
     deleteBackup,
     pruneBackups,
+    stop,
   };
 }
 

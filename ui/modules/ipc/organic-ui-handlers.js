@@ -354,6 +354,26 @@ function registerOrganicUIHandlers(ctx) {
   log.info('OrganicUI', 'Handlers registered');
 }
 
+function unregisterOrganicUIHandlers(ctx) {
+  // Clear all active idle timers
+  for (const timer of idleTimers.values()) {
+    clearTimeout(timer);
+  }
+  idleTimers.clear();
+  activeRoutes.clear();
+
+  const { ipcMain } = ctx;
+  if (ipcMain) {
+    ipcMain.removeHandler('organic:get-agent-states');
+    ipcMain.removeHandler('organic:get-agent-state');
+    ipcMain.removeHandler('organic:set-agent-state');
+    ipcMain.removeHandler('organic:get-active-routes');
+  }
+  log.info('OrganicUI', 'Handlers unregistered');
+}
+
+registerOrganicUIHandlers.unregister = unregisterOrganicUIHandlers;
+
 module.exports = {
   registerOrganicUIHandlers,
   // State management

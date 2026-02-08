@@ -91,4 +91,23 @@ function registerRecoveryHandlers(ctx, deps) {
   });
 }
 
+function unregisterRecoveryHandlers(ctx) {
+  const manager = ctx.recoveryManager;
+  if (manager && typeof manager.stop === 'function') {
+    manager.stop();
+  }
+  const { ipcMain } = ctx;
+  if (ipcMain) {
+    ipcMain.removeHandler('get-recovery-status');
+    ipcMain.removeHandler('get-health-snapshot');
+    ipcMain.removeHandler('get-recovery-playbooks');
+    ipcMain.removeHandler('trigger-recovery');
+    ipcMain.removeHandler('reset-recovery-circuit');
+    ipcMain.removeHandler('retry-recovery-task');
+    ipcMain.removeHandler('record-recovery-task');
+  }
+}
+
+registerRecoveryHandlers.unregister = unregisterRecoveryHandlers;
+
 module.exports = { registerRecoveryHandlers };

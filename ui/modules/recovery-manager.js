@@ -640,6 +640,24 @@ function createRecoveryManager(options = {}) {
     });
   }
 
+  function stop() {
+    for (const state of paneState.values()) {
+      if (state.taskRetryTimer) {
+        clearTimeout(state.taskRetryTimer);
+        state.taskRetryTimer = null;
+      }
+      if (state.restartTimer) {
+        clearTimeout(state.restartTimer);
+        state.restartTimer = null;
+      }
+      if (state.confirmTimer) {
+        clearTimeout(state.confirmTimer);
+        state.confirmTimer = null;
+      }
+    }
+    log.info('Recovery', 'Manager stopped (timers cleared)');
+  }
+
   function getStatus() {
     const status = {};
     const activity = getAllActivity ? getAllActivity() : {};
@@ -687,6 +705,7 @@ function createRecoveryManager(options = {}) {
     getPlaybooks: () => PLAYBOOKS,
     scheduleRestart,
     scheduleTaskRetry,
+    stop,
   };
 }
 

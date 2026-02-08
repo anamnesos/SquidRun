@@ -66,6 +66,24 @@
   });
 }
 
+function unregisterMessageQueueHandlers(ctx) {
+  const { ipcMain } = ctx;
+  if (ipcMain) {
+    ipcMain.removeHandler('init-message-queue');
+    ipcMain.removeHandler('send-message');
+    ipcMain.removeHandler('send-broadcast-message');
+    ipcMain.removeHandler('send-group-message');
+    ipcMain.removeHandler('get-messages');
+    ipcMain.removeHandler('get-all-messages');
+    ipcMain.removeHandler('mark-message-delivered');
+    ipcMain.removeHandler('clear-messages');
+    ipcMain.removeHandler('get-message-queue-status');
+    ipcMain.removeHandler('start-message-watcher');
+  }
+}
+
+registerMessageQueueHandlers.unregister = unregisterMessageQueueHandlers;
+
 module.exports = {
   registerMessageQueueHandlers,
 };
