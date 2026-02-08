@@ -14,6 +14,7 @@ const { createBackupManager } = require('../backup-manager');
 const { createRecoveryManager } = require('../recovery-manager');
 const { createExternalNotifier } = require('../external-notifications');
 const { getSDKBridge } = require('../sdk-bridge');
+const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 
 // Import sub-modules
 const triggers = require('../triggers');
@@ -86,6 +87,12 @@ class HivemindApp {
 
           if (!data.message) return;
 
+          const withAgentPrefix = (content) => {
+            if (typeof content !== 'string') return content;
+            if (content.startsWith(AGENT_MESSAGE_PREFIX)) return content;
+            return `${AGENT_MESSAGE_PREFIX}${content}`;
+          };
+
           // Handle screenshot requests from agents
           if (data.message.type === 'screenshot') {
             log.info('WebSocket', 'Screenshot request received');
@@ -135,13 +142,13 @@ class HivemindApp {
             const paneId = this.resolveTargetToPane(target);
             if (paneId) {
               log.info('WebSocket', `Routing 'send' to pane ${paneId} (via triggers)`);
-              triggers.sendDirectMessage([String(paneId)], content, data.role || 'unknown');
+              triggers.sendDirectMessage([String(paneId)], withAgentPrefix(content), data.role || 'unknown');
             } else {
               log.warn('WebSocket', `Unknown target for 'send': ${target}`);
             }
           } else if (data.message.type === 'broadcast') {
             log.info('WebSocket', `Routing 'broadcast' (via triggers)`);
-            triggers.broadcastToAllAgents(data.message.content, data.role || 'unknown');
+            triggers.broadcastToAllAgents(withAgentPrefix(data.message.content), data.role || 'unknown');
           }
         }
       });

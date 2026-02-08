@@ -245,6 +245,18 @@ Tasks tagged `[PTY]`, `[SDK]`, or `[BOTH]`. Check `workspace/app-status.json` be
 
 **Why:** If something breaks, small commits let us revert one change instead of losing an entire sprint. Git blame stays useful. Progress is preserved even if a session crashes.
 
+### Review Sign-off Gate (Pre-commit Gate 7)
+
+**Code-enforced, not protocol-enforced.** Before committing, `workspace/review.json` must have `result: "approved"`.
+
+**Schema:** `{ reviewer, model, author, author_model, change_type, result, findings, tests_touched, timestamp }`
+
+**Tiered enforcement:**
+- `change_type: "routine"` (UI fixes, CSS, small bugs) → any reviewer, same-model OK
+- `change_type: "architectural|state|concurrency|recovery"` → cross-model review REQUIRED (`model !== author_model`)
+
+**Workflow:** Author fills author fields + change_type → Reviewer fills review fields → Pre-commit checks → After commit, review.json resets to pending.
+
 ---
 
 ## Core Rules
