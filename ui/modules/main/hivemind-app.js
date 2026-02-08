@@ -730,6 +730,7 @@ class HivemindApp {
       sdkBridge.stopSessions().catch(err => log.error('SDK', `Failed to stop SDK sessions: ${err.message}`));
     }
 
+    ipcHandlers.cleanup();
     ipcHandlers.cleanupProcesses();
   }
 }

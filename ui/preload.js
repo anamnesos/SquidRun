@@ -101,4 +101,31 @@ contextBridge.exposeInMainWorld('hivemind', {
 
   // Broadcast to all panes (will be implemented in renderer)
   broadcast: null, // Placeholder, implemented in renderer
+
+  // Workflow Builder operations
+  workflow: {
+    list: () => ipcRenderer.invoke('workflow-list'),
+    save: (name, workflow, overwrite) => ipcRenderer.invoke('workflow-save', { name, workflow, overwrite }),
+    load: (name) => ipcRenderer.invoke('workflow-load', { name }),
+    delete: (name) => ipcRenderer.invoke('workflow-delete', { name }),
+    duplicate: (name, newName) => ipcRenderer.invoke('workflow-duplicate', { name, newName }),
+    validate: (workflow, options) => ipcRenderer.invoke('workflow-validate', { workflow, options }),
+    generatePlan: (workflow) => ipcRenderer.invoke('workflow-generate-plan', { workflow }),
+    exportFile: (workflow, defaultName) => ipcRenderer.invoke('workflow-export-file', { workflow, defaultName }),
+    importFile: () => ipcRenderer.invoke('workflow-import-file'),
+    getNodeTypes: () => ipcRenderer.invoke('workflow-get-node-types'),
+    getTemplates: () => ipcRenderer.invoke('workflow-get-templates'),
+    applyTemplate: (templateId) => ipcRenderer.invoke('workflow-apply-template', { templateId }),
+  },
+
+  // Knowledge Graph operations
+  graph: {
+    query: (query, options) => ipcRenderer.invoke('graph-query', { query, ...options }),
+    visualize: (filter) => ipcRenderer.invoke('graph-visualize', { filter }),
+    stats: () => ipcRenderer.invoke('graph-stats'),
+    related: (nodeId, depth) => ipcRenderer.invoke('graph-related', { nodeId, depth }),
+    recordConcept: (name, description, relatedTo) => ipcRenderer.invoke('graph-record-concept', { name, description, relatedTo }),
+    save: () => ipcRenderer.invoke('graph-save'),
+    getNodesByType: (type) => ipcRenderer.invoke('graph-nodes-by-type', { type }),
+  },
 });

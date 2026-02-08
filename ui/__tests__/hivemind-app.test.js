@@ -121,6 +121,7 @@ jest.mock('../modules/ipc-handlers', () => ({
   registerHandlers: jest.fn(),
   setExternalNotifier: jest.fn(),
   cleanupProcesses: jest.fn(),
+  cleanup: jest.fn(),
 }));
 
 // Mock memory

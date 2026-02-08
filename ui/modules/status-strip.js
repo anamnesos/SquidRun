@@ -12,6 +12,9 @@ let sessionStartTime = Date.now();
 // Cached task pool data
 let cachedTaskPool = { tasks: [] };
 
+let sessionTimerInterval = null;
+let pollInterval = null;
+
 /**
  * Update session timer display
  */
@@ -208,7 +211,7 @@ function initStatusStrip() {
   fetchTaskPool().then(() => updateStatusStrip());
 
   // Poll every 5 seconds as backup
-  setInterval(async () => {
+  pollInterval = setInterval(async () => {
     await fetchTaskPool();
     updateStatusStrip();
   }, 5000);
@@ -223,13 +226,28 @@ function initStatusStrip() {
 
   // Update session timer every minute
   updateSessionTimer();
-  setInterval(updateSessionTimer, 60000);
+  sessionTimerInterval = setInterval(updateSessionTimer, 60000);
 
   log.info('StatusStrip', 'Initialized');
 }
 
+/**
+ * Shutdown status strip and clear intervals
+ */
+function shutdownStatusStrip() {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+  if (sessionTimerInterval) {
+    clearInterval(sessionTimerInterval);
+    sessionTimerInterval = null;
+  }
+}
+
 module.exports = {
   initStatusStrip,
+  shutdownStatusStrip,
   fetchTaskPool,
   updateStatusStrip,
 };
