@@ -470,12 +470,12 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // GEMINI PATH: PTY with delayed Enter (Session 68 - attempt 5)
-    // Root cause found: Gemini's bufferFastReturn() converts Enter to newline
-    // if it arrives within 30ms of previous keystroke. We must delay the Enter.
+    // GEMINI PATH: PTY text-only, no Enter (Session 95 - Item 14 fix)
+    // Sending Enter to Gemini PTY causes shell command execution.
+    // Text is written to input buffer; Enter is intentionally skipped.
     const isGemini = isGeminiPane(id);
     if (isGemini) {
-      log.info(`doSendToPane ${id}`, 'Gemini pane: using PTY with delayed Enter (>30ms)');
+      log.info(`doSendToPane ${id}`, 'Gemini pane: PTY text-only (no Enter)');
 
       // Clear any stuck input first (Ctrl+U)
       try {
@@ -495,19 +495,10 @@ function createInjectionController(options = {}) {
         return;
       }
 
-      // Send Enter with delay to bypass Gemini's fast-return buffer (FAST_RETURN_TIMEOUT = 30ms)
-      // Session 82: Reduced from 500ms to 200ms — 500ms was 16x the required 30ms threshold
-      // 200ms provides ~7x safety margin while cutting 300ms of latency per message
       if (hasTrailingEnter) {
-        await new Promise(resolve => setTimeout(resolve, 200)); // Wait 200ms - safe margin over 30ms bufferFastReturn
-        try {
-          await window.hivemind.pty.write(id, '\r');
-          log.info(`doSendToPane ${id}`, 'Gemini pane: PTY Enter sent after 200ms delay');
-        } catch (err) {
-          log.error(`doSendToPane ${id}`, 'Gemini PTY Enter failed:', err);
-          finishWithClear({ success: false, reason: 'enter_failed' });
-          return;
-        }
+        // Gemini panes should not auto-submit via PTY Enter — it can execute shell commands.
+        // Leave text in input and let the agent decide when to submit.
+        log.info(`doSendToPane ${id}`, 'Gemini pane: skipping PTY Enter (leaving input pending)');
       }
 
       updatePaneStatus(id, 'Working');

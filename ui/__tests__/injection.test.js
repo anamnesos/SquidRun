@@ -663,21 +663,18 @@ describe('Terminal Injection', () => {
       );
     });
 
-    // Session 68: Gemini PTY path with delayed Enter (bypasses bufferFastReturn)
-    test('handles Gemini pane with delayed Enter', async () => {
+    // Session 95: Gemini PTY path should NOT auto-submit via Enter
+    test('handles Gemini pane without sending Enter', async () => {
       mockOptions.isGeminiPane.mockReturnValue(true);
       const onComplete = jest.fn();
 
       const promise = controller.doSendToPane('1', 'test command\r', onComplete);
-
-      // Advance past the 500ms delay for Enter (Session 69: increased for OS buffering)
-      await jest.advanceTimersByTimeAsync(510);
       await promise;
 
-      // Gemini uses PTY: text first, then Enter after 500ms delay
+      // Gemini uses PTY: text only, no Enter
       expect(mockPty.write).toHaveBeenCalledWith('1', '\x15'); // Clear line
       expect(mockPty.write).toHaveBeenCalledWith('1', 'test command'); // Text only
-      expect(mockPty.write).toHaveBeenCalledWith('1', '\r'); // Enter after delay
+      expect(mockPty.write).not.toHaveBeenCalledWith('1', '\r'); // No Enter
       expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled(); // No DOM events for Gemini
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
       expect(onComplete).toHaveBeenCalledWith({ success: true });
