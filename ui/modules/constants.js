@@ -33,7 +33,7 @@ const TYPING_GUARD_MS = 300;              // Defer injection if user typed withi
 const INJECTION_IDLE_THRESHOLD_MS = 1000; // No output for 1s = idle for injection (reduced from 2s — 3 panes = less contention)
 const MAX_QUEUE_TIME_MS = 5000;           // Consider force inject after 5 seconds (reduced from 10s)
 const FORCE_INJECT_IDLE_MS = 500;         // For force-inject, require 500ms of silence
-const EXTREME_WAIT_MS = 30000;            // Log warning if message queued this long
+const EXTREME_WAIT_MS = 8000;             // Log warning if message queued this long (must be < ABSOLUTE_MAX_WAIT_MS)
 const ABSOLUTE_MAX_WAIT_MS = 10000;       // Emergency fallback: force inject after 10s (reduced from 15s)
 const QUEUE_RETRY_MS = 100;               // Check queue every 100ms (reduced from 200ms)
 const BROADCAST_STAGGER_MS = 100;         // Delay between panes in broadcast
