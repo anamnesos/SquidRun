@@ -10,6 +10,8 @@ const { WORKSPACE_PATH } = require('../../config');
 const log = require('../logger');
 
 const MESSAGE_STATE_PATH = path.join(WORKSPACE_PATH, 'message-state.json');
+// Matches the prefix added by hivemind-app.js for WebSocket agent messages
+const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const DELIVERY_ACK_TIMEOUT_MS = 65000;
 const pendingDeliveries = new Map();
 
@@ -71,7 +73,13 @@ function saveMessageState() {
  * Format: "(ROLE #SEQ): message" per Reviewer spec
  */
 function parseMessageSequence(message) {
-  const seqMatch = message.match(/^\((\w+(?:-\w+)?)\s*#(\d+)\):\s*(.*)$/s);
+  // Strip WebSocket agent prefix before parsing (see hivemind-app.js)
+  let cleanMessage = message;
+  if (message.startsWith(AGENT_MESSAGE_PREFIX)) {
+    cleanMessage = message.substring(AGENT_MESSAGE_PREFIX.length);
+  }
+
+  const seqMatch = cleanMessage.match(/^\((\w+(?:-\w+)?)\s*#(\d+)\):\s*(.*)$/s);
   if (seqMatch) {
     return {
       seq: parseInt(seqMatch[2], 10),
@@ -80,12 +88,12 @@ function parseMessageSequence(message) {
     };
   }
 
-  const roleMatch = message.match(/^\((\w+(?:-\w+)?)\):\s*(.*)$/s);
+  const roleMatch = cleanMessage.match(/^\((\w+(?:-\w+)?)\):\s*(.*)$/s);
   if (roleMatch) {
     return {
       seq: null,
       sender: roleMatch[1].toLowerCase(),
-      content: message,
+      content: cleanMessage,
     };
   }
 
