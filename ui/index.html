@@ -37,19 +37,8 @@
       <span class="ci-status-icon" id="ciStatusIcon">-</span>
       <span class="ci-status-text" id="ciStatusText">CI Idle</span>
     </div>
-    <!-- MC7: MCP Status Indicator -->
-    <div class="mcp-status-indicator" id="mcpStatusIndicator" title="MCP connection status per agent">
-      <span class="mcp-status-label">MCP</span>
-      <div class="mcp-agent-dots">
-        <div class="mcp-agent-dot disconnected" id="mcpDot1" data-pane="1" data-agent="Arch" title="Architect - Disconnected"></div>
-        <div class="mcp-agent-dot disconnected" id="mcpDot2" data-pane="2" data-agent="DevOps" title="DevOps - Disconnected"></div>
-        <div class="mcp-agent-dot disconnected" id="mcpDot5" data-pane="5" data-agent="Anly" title="Analyst - Disconnected"></div>
-      </div>
-      <span class="mcp-status-summary none" id="mcpStatusSummary">0/3</span>
-    </div>
     <div class="header-actions">
       <button class="btn btn-folder" id="selectProjectBtn" title="Choose project folder for all agents"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Project</button>
-      <button class="btn btn-spawn" id="spawnAllBtn" title="Start agent CLIs in all 3 terminal panes"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> Spawn</button>
       <button class="btn btn-sync" id="syncBtn" title="Broadcast shared_context.md to all agents"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Sync</button>
       <div class="dropdown" id="actionsDropdown">
         <button class="btn btn-actions" id="actionsBtn" title="Agent management actions"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg> Actions <svg class="dropdown-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
@@ -61,7 +50,6 @@
           <button class="dropdown-item btn-restart" id="fullRestartBtn" title="Shutdown cleanly (run 'npm start' to restart)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Shutdown</button>
         </div>
       </div>
-      <span class="cost-alert-badge" id="costAlertBadge" title="Cost threshold exceeded - click to view"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Cost</span>
       <button class="btn settings-btn" id="settingsBtn" title="Configure Hivemind settings and permissions"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Settings</button>
       <button class="btn btn-panel" id="panelBtn" title="Toggle right panel (Screenshots, Tests, Activity, etc.)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg> Panel</button>
     </div>
@@ -1298,80 +1286,6 @@
           <div class="docs-loading hidden" id="docsLoading">
             <div class="docs-loading-spinner"></div>
             <div class="docs-loading-text">Generating documentation...</div>
-          </div>
-        </div>
-
-        <!-- DASHBOARD TAB (Task #30: Multi-Project Dashboard) -->
-        <div class="tab-pane" id="tab-dashboard">
-          <div class="tab-title">Multi-Project Dashboard</div>
-          <div class="tab-description">Manage projects, track metrics, and monitor health</div>
-
-          <!-- Dashboard summary -->
-          <div class="dashboard-summary" id="dashboardSummary">
-            <div class="dashboard-stat">
-              <span class="dashboard-stat-value" id="dashTotalProjects">0</span>
-              <span class="dashboard-stat-label">Projects</span>
-            </div>
-            <div class="dashboard-stat">
-              <span class="dashboard-stat-value" id="dashActiveProjects">0</span>
-              <span class="dashboard-stat-label">Active</span>
-            </div>
-            <div class="dashboard-stat">
-              <span class="dashboard-stat-value" id="dashAvgHealth">--</span>
-              <span class="dashboard-stat-label">Avg Health</span>
-            </div>
-          </div>
-
-          <!-- Active project indicator -->
-          <div class="dashboard-active-project" id="dashboardActiveProject">
-            <span class="dashboard-active-label">Active:</span>
-            <span class="dashboard-active-name" id="dashActiveProjectName">None</span>
-            <button class="btn btn-xs" id="dashSwitchProjectBtn" title="Switch project">Switch</button>
-          </div>
-
-          <!-- Project list section -->
-          <div class="dashboard-section">
-            <div class="dashboard-section-header">
-              <span class="dashboard-section-title">Projects</span>
-              <button class="btn btn-xs btn-primary" id="dashAddProjectBtn" title="Register new project">+ Add</button>
-            </div>
-            <div class="dashboard-project-list" id="dashboardProjectList">
-              <div class="dashboard-empty">No projects registered</div>
-            </div>
-          </div>
-
-          <!-- Health scores section -->
-          <div class="dashboard-section">
-            <div class="dashboard-section-header">
-              <span class="dashboard-section-title">Health Scores</span>
-              <button class="btn btn-xs" id="dashRefreshHealthBtn" title="Refresh health scores">Refresh</button>
-            </div>
-            <div class="dashboard-health-list" id="dashboardHealthList">
-              <div class="dashboard-empty">No health data</div>
-            </div>
-          </div>
-
-          <!-- Recent activity section -->
-          <div class="dashboard-section">
-            <div class="dashboard-section-header">
-              <span class="dashboard-section-title">Recent Activity</span>
-            </div>
-            <div class="dashboard-activity-list" id="dashboardActivityList">
-              <div class="dashboard-empty">No recent activity</div>
-            </div>
-          </div>
-
-          <!-- Dashboard actions -->
-          <div class="dashboard-actions">
-            <button class="btn btn-sm" id="dashExportBtn" title="Export project data">Export</button>
-            <button class="btn btn-sm" id="dashImportBtn" title="Import project data">Import</button>
-            <button class="btn btn-sm" id="dashCompareBtn" title="Compare selected projects">Compare</button>
-          </div>
-
-          <!-- Loading overlay -->
-          <div class="dashboard-loading hidden" id="dashboardLoading">
-            <div class="dashboard-loading-spinner"></div>
-            <div class="dashboard-loading-text">Loading dashboard data...</div>
           </div>
         </div>
 

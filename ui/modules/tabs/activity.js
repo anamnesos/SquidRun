@@ -160,7 +160,7 @@ function setupActivityTab() {
   if (exportBtn) exportBtn.addEventListener('click', exportActivityLog);
 
   // Listen for activity events
-  ipcRenderer.on('activity-entry', (event, entry) => {
+  ipcRenderer.on('activity-logged', (event, entry) => {
     addActivityEntry(entry);
   });
 
