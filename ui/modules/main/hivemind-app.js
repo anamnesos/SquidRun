@@ -24,6 +24,8 @@ const memory = require('../memory');
 const memoryIPC = require('../memory/ipc-handlers');
 const websocketServer = require('../websocket-server');
 const organicUI = require('../ipc/organic-ui-handlers');
+const pipeline = require('../pipeline');
+const warRoom = require('../triggers/war-room');
 
 class HivemindApp {
   constructor(appContext, managers) {
@@ -265,6 +267,24 @@ class HivemindApp {
     });
 
     memoryIPC.registerHandlers({ mainWindow: window });
+
+    // Pipeline
+    pipeline.init({
+      mainWindow: window,
+      sendDirectMessage: (targets, message, fromRole) => triggers.sendDirectMessage(targets, message, fromRole),
+    });
+    warRoom.setPipelineHook(pipeline.onMessage);
+
+    // Pipeline IPC handlers
+    ipcMain.handle('pipeline-get-items', (event, stageFilter) => {
+      return pipeline.getItems(stageFilter || null);
+    });
+    ipcMain.handle('pipeline-get-active', () => {
+      return pipeline.getActiveItems();
+    });
+    ipcMain.handle('pipeline-mark-committed', (event, itemId) => {
+      return pipeline.markCommitted(itemId);
+    });
   }
 
   setupWindowListeners() {
