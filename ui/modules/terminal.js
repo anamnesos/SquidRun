@@ -98,6 +98,11 @@ const startupInjectionState = new Map();
 // This queue ensures writes complete before sending more data
 const terminalWriteQueues = new Map(); // paneId -> [data chunks]
 const terminalWriting = new Map(); // paneId -> boolean (write in progress)
+const terminalWatermarks = new Map(); // paneId -> number (bytes in flight)
+const terminalPaused = new Map(); // paneId -> boolean (is PTY paused)
+
+const HIGH_WATERMARK = 500000; // 500KB - pause producer
+const LOW_WATERMARK = 50000;   // 50KB - resume producer
 
 /**
  * Reset terminal write queue state for a pane.
@@ -108,6 +113,8 @@ function resetTerminalWriteQueue(paneId) {
   const id = String(paneId);
   terminalWriteQueues.delete(id);
   terminalWriting.delete(id);
+  terminalWatermarks.set(id, 0);
+  terminalPaused.set(id, false);
 }
 
 /**
@@ -119,10 +126,25 @@ function resetTerminalWriteQueue(paneId) {
  * @param {string} data - Data to write
  */
 function queueTerminalWrite(paneId, terminal, data) {
-  // Initialize queue for this pane if needed
+  // Initialize state for this pane if needed
   if (!terminalWriteQueues.has(paneId)) {
     terminalWriteQueues.set(paneId, []);
     terminalWriting.set(paneId, false);
+    terminalWatermarks.set(paneId, 0);
+    terminalPaused.set(paneId, false);
+  }
+
+  // Update watermark (bytes in flight to xterm)
+  const currentWatermark = (terminalWatermarks.get(paneId) || 0) + data.length;
+  terminalWatermarks.set(paneId, currentWatermark);
+
+  // If watermark exceeds high threshold, pause the PTY producer
+  if (currentWatermark > HIGH_WATERMARK && !terminalPaused.get(paneId)) {
+    if (window.hivemind?.pty?.pause) {
+      window.hivemind.pty.pause(paneId);
+      terminalPaused.set(paneId, true);
+      log.info(`Terminal ${paneId}`, `High watermark reached (${currentWatermark} bytes) - PTY paused`);
+    }
   }
 
   // Add data to queue
@@ -159,6 +181,20 @@ function flushTerminalQueue(paneId, terminal) {
   terminal.write(data, () => {
     // Write complete, allow next write
     terminalWriting.set(paneId, false);
+
+    // Update watermark
+    const oldWatermark = terminalWatermarks.get(paneId) || 0;
+    const newWatermark = Math.max(0, oldWatermark - data.length);
+    terminalWatermarks.set(paneId, newWatermark);
+
+    // If watermark drops below low threshold, resume the PTY producer
+    if (newWatermark < LOW_WATERMARK && terminalPaused.get(paneId)) {
+      if (window.hivemind?.pty?.resume) {
+        window.hivemind.pty.resume(paneId);
+        terminalPaused.set(paneId, false);
+        log.info(`Terminal ${paneId}`, `Low watermark reached (${newWatermark} bytes) - PTY resumed`);
+      }
+    }
 
     // Process next chunk if any
     if (queue.length > 0) {

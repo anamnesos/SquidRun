@@ -342,6 +342,28 @@ class DaemonClient extends EventEmitter {
   }
 
   /**
+   * Pause terminal output
+   * @param {string} paneId - The pane identifier
+   */
+  pause(paneId) {
+    return this._send({
+      action: 'pause',
+      paneId,
+    });
+  }
+
+  /**
+   * Resume terminal output
+   * @param {string} paneId - The pane identifier
+   */
+  resume(paneId) {
+    return this._send({
+      action: 'resume',
+      paneId,
+    });
+  }
+
+  /**
    * Run Codex exec (non-interactive) for a pane
    * @param {string} paneId - The pane identifier
    * @param {string} prompt - Prompt text to send
