@@ -8,6 +8,13 @@
 
 ---
 
+## USER PROFILE
+
+**Read `workspace/user-profile.json` for user name, experience level, and preferences.**
+Adapt your communication style based on the profile. Do NOT hardcode user assumptions.
+
+---
+
 ## VISION ALIGNMENT
 
 **Read `VISION.md` for full context.**
