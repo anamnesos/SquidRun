@@ -228,7 +228,23 @@ function createInjectionController(options = {}) {
     const outputTimeAfter = lastOutputTime[paneId] || 0;
     const hadOutputActivity = outputTimeAfter > outputTimeBefore;
     if (textarea && textarea.value) {
-      log.warn(`verifyAndRetryEnter ${paneId}`, 'Textarea still has input after Enter - treating as failure');
+      // Textarea still has content — most direct signal that Enter failed.
+      // Retry Enter instead of giving up, using the same retry budget.
+      if (retriesLeft > 0) {
+        log.warn(`verifyAndRetryEnter ${paneId}`, `Textarea still has input after Enter, retrying (${retriesLeft} left)`);
+        const currentPane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+        const currentTextarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
+        if (currentTextarea) {
+          const focusOk = await focusWithRetry(currentTextarea);
+          if (focusOk) {
+            await sendEnterToPane(paneId);
+            return verifyAndRetryEnter(paneId, currentTextarea, retriesLeft - 1);
+          }
+        }
+        log.warn(`verifyAndRetryEnter ${paneId}`, 'Could not retry Enter for stuck textarea (focus/textarea issue)');
+      } else {
+        log.warn(`verifyAndRetryEnter ${paneId}`, 'Textarea still has input after Enter - max retries reached');
+      }
       markPotentiallyStuck(paneId);
       return false;
     }
@@ -470,10 +486,13 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // GEMINI PATH: PTY write text + PTY Enter (Session 95 fix revised)
-    // Gemini CLI accepts PTY \r for submission. Text is sanitized (trailing
-    // newlines stripped) before write, then \r is sent separately so it acts
-    // as a clean submit rather than embedding newlines in the message body.
+    // GEMINI PATH: PTY write sanitized text + always send Enter via PTY \r
+    // Gemini CLI uses readline which accepts PTY \r as submit. The body is
+    // sanitized first: embedded \r/\n replaced with spaces to prevent readline
+    // from treating them as partial submit signals. A single \r is then sent
+    // unconditionally to submit the text — same pattern as Claude's shouldSendEnter.
+    // Payloads may or may not include trailing \r — Enter is sent unconditionally
+    // regardless, so injection.js owns the submit decision for all pane types.
     const isGemini = isGeminiPane(id);
     if (isGemini) {
       log.info(`doSendToPane ${id}`, 'Gemini pane: PTY text + Enter');
@@ -486,8 +505,9 @@ function createInjectionController(options = {}) {
         log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
       }
 
-      // Strip trailing \r and \n from message body before writing
-      const sanitizedText = text.replace(/[\r\n]+$/, '');
+      // Replace embedded \r/\n with spaces to prevent readline partial execution,
+      // then strip trailing whitespace.
+      const sanitizedText = text.replace(/[\r\n]/g, ' ').trimEnd();
 
       // Write sanitized text to PTY
       try {
@@ -499,16 +519,14 @@ function createInjectionController(options = {}) {
         return;
       }
 
-      // Send Enter via PTY \r to submit the message to Gemini CLI
-      if (hasTrailingEnter) {
-        try {
-          await window.hivemind.pty.write(id, '\r');
-          log.info(`doSendToPane ${id}`, 'Gemini pane: PTY Enter sent');
-        } catch (err) {
-          log.error(`doSendToPane ${id}`, 'Gemini PTY Enter failed:', err);
-          finishWithClear({ success: false, reason: 'pty_enter_failed' });
-          return;
-        }
+      // Always send Enter via PTY \r — Gemini readline needs it to submit
+      try {
+        await window.hivemind.pty.write(id, '\r');
+        log.info(`doSendToPane ${id}`, 'Gemini pane: PTY Enter sent');
+      } catch (err) {
+        log.error(`doSendToPane ${id}`, 'Gemini PTY Enter failed:', err);
+        finishWithClear({ success: false, reason: 'pty_enter_failed' });
+        return;
       }
 
       updatePaneStatus(id, 'Working');
@@ -520,6 +538,13 @@ function createInjectionController(options = {}) {
     // CLAUDE PATH: Hybrid approach (PTY write for text + DOM keyboard for Enter)
     // PTY \r does NOT auto-submit in Claude Code's ink TUI (PTY newline ignored)
     // sendTrustedEnter() sends native keyboard events via Electron which WORKS
+    //
+    // Claude panes ALWAYS need Enter sent via sendTrustedEnter. Unlike Gemini
+    // (where PTY \r triggers readline execution), Claude's ink TUI only
+    // responds to native keyboard Enter events. Agent chat messages may not
+    // include trailing \r (to prevent Gemini command execution), so we force
+    // Enter for Claude panes unconditionally.
+    const shouldSendEnter = true;
     const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
     let textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
 
@@ -553,7 +578,7 @@ function createInjectionController(options = {}) {
 
     // Step 1: Focus terminal for sendTrustedEnter (required for Enter to target correct pane)
     // Note: Terminal.input() was disabled for Claude panes - it doesn't work with ink TUI
-    if (hasTrailingEnter) {
+    if (shouldSendEnter) {
       textarea.focus();
     }
 
@@ -578,8 +603,10 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // Step 4: If message needs Enter, use sendTrustedEnter after adaptive delay
-    if (hasTrailingEnter) {
+    // Step 4: Send Enter via sendTrustedEnter after adaptive delay
+    // Claude panes always need Enter (shouldSendEnter = true) because ink TUI
+    // only responds to native keyboard events, not PTY \r
+    if (shouldSendEnter) {
       // Calculate delay based on pane activity (busy panes need more time)
       const enterDelay = getAdaptiveEnterDelay(id);
       log.info(`doSendToPane ${id}`, `Using adaptive Enter delay: ${enterDelay}ms`);
@@ -635,22 +662,25 @@ function createInjectionController(options = {}) {
           log.warn(`doSendToPane ${id}`, 'Claude pane: focus changed during sendTrustedEnter IPC - Enter may have gone to wrong element');
         }
 
-        // IMMEDIATELY restore focus after Enter sent - don't block user input during verification
-        // (Restore focus to avoid blocking command bar during trigger injections)
-        scheduleFocusRestore();
-
         if (!enterResult.success) {
           log.error(`doSendToPane ${id}`, 'Enter send failed');
           markPotentiallyStuck(id);
+          scheduleFocusRestore();
           finishWithClear({ success: false, reason: 'enter_failed' });
           return;
         }
         log.info(`doSendToPane ${id}`, `Claude pane: Enter sent via ${enterResult.method}${focusStillCorrect ? '' : ' (focus may have changed)'}`);
 
-        // Verify Enter succeeded (textarea empty) - if not, wait for idle and retry
-        // This handles force-inject during active output where Enter is ignored
-        // Note: verification runs with focus already restored to user
+        // Verify Enter succeeded (textarea empty) - if not, retry Enter with focus
+        // Focus restoration is DEFERRED until after verification so that retries
+        // inside verifyAndRetryEnter can re-focus the textarea without fighting
+        // a restored user focus. This eliminates the race condition where focus
+        // was restored immediately after the first Enter, making retries fail.
         const submitOk = await verifyAndRetryEnter(id, textarea);
+
+        // NOW restore focus (verification + retries complete)
+        scheduleFocusRestore();
+
         if (!submitOk) {
           log.warn(`doSendToPane ${id}`, 'Claude pane: Enter verification failed after retries');
           markPotentiallyStuck(id); // Register for sweeper retry
