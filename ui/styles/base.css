@@ -333,7 +333,6 @@ select:focus-visible {
   z-index: 10000;
   padding: var(--space-1) 0;
   animation: contextMenuIn 0.15s ease;
-  backdrop-filter: blur(8px);
 }
 
 @keyframes contextMenuIn {
@@ -353,7 +352,7 @@ select:focus-visible {
   align-items: center;
   gap: var(--space-3);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
   color: var(--color-text);
   font-size: var(--text-sm);
 }
@@ -541,7 +540,6 @@ button:active {
   color: var(--color-text);
   white-space: nowrap;
   box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(8px);
 }
 
 /* Tooltip arrow */
@@ -726,42 +724,32 @@ kbd {
 
 /* Base glass effect mixin class */
 .glass {
-  background: rgba(10, 10, 15, 0.75);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: #0c0c14;
   border: 1px solid rgba(0, 240, 255, 0.08);
 }
 
 .glass-dark {
-  background: rgba(10, 10, 15, 0.9);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: #0a0a0f;
   border: 1px solid rgba(0, 240, 255, 0.05);
 }
 
 .glass-light {
-  background: rgba(0, 240, 255, 0.08);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: #10131e;
   border: 1px solid rgba(0, 240, 255, 0.15);
 }
 
 /* Glass overlay for modals */
 .glass-overlay {
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.7);
 }
 
 /* Glass card component */
 .glass-card {
   background: linear-gradient(
     135deg,
-    rgba(13, 13, 24, 0.85) 0%,
-    rgba(10, 10, 15, 0.7) 100%
+    #0e0e1a 0%,
+    #0b0b12 100%
   );
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(0, 240, 255, 0.1);
   border-radius: var(--radius-lg);
   box-shadow:
@@ -772,11 +760,9 @@ kbd {
 /* Glass button variant */
 .btn-glass {
   background: rgba(0, 240, 255, 0.1);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   border: 1px solid rgba(0, 240, 255, 0.25);
   color: var(--color-primary);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .btn-glass:hover {

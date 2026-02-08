@@ -28,7 +28,7 @@ input:focus {
 .activity-filter,
 .pane-refresh-btn,
 .process-spawn-btn {
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
 }
 
 .btn-secondary {

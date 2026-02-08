@@ -28,7 +28,7 @@
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   color: var(--sdk-text-primary);
   display: flex;
-  transition: all 0.2s ease-out;
+  transition: opacity 0.2s ease-out;
   flex-direction: column;
   box-sizing: border-box;
 }
@@ -457,7 +457,6 @@
   clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
   opacity: 0.25;
   animation: hexPulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  filter: drop-shadow(0 0 3px var(--hive-color, #f0a000));
   transition: background 0.3s ease;
 }
 
@@ -475,12 +474,10 @@
   0%, 100% {
     opacity: 0.25;
     transform: scale(0.92);
-    filter: drop-shadow(0 0 2px var(--hive-color, #f0a000));
   }
   50% {
     opacity: 1;
     transform: scale(1.08);
-    filter: drop-shadow(0 0 10px var(--hive-color, #f0a000));
   }
 }
 
@@ -534,7 +531,6 @@
 /* LOW intensity - gentle, contemplative */
 .sdk-streaming[data-intensity="low"] .hive-hex {
   animation-duration: 3.2s;
-  filter: drop-shadow(0 0 2px var(--hive-color, #f0a000));
 }
 .sdk-streaming[data-intensity="low"] .hive-hex-0 {
   opacity: 0.35;
@@ -548,7 +544,6 @@
 /* HIGH intensity - urgent, active */
 .sdk-streaming[data-intensity="high"] .hive-hex {
   animation-duration: 1.6s;
-  filter: drop-shadow(0 0 12px var(--hive-color, #f0a000));
 }
 .sdk-streaming[data-intensity="high"] .hive-hex-0 {
   opacity: 0.6;
@@ -562,12 +557,10 @@
   0%, 100% {
     opacity: 0.3;
     transform: scale(0.88);
-    filter: drop-shadow(0 0 4px var(--hive-color, #f0a000));
   }
   50% {
     opacity: 1;
     transform: scale(1.15);
-    filter: drop-shadow(0 0 16px var(--hive-color, #f0a000));
   }
 }
 
@@ -577,7 +570,6 @@
     animation: none;
     opacity: 0.7;
     transform: scale(1);
-    filter: drop-shadow(0 0 4px var(--hive-color, #f0a000));
   }
   .hive-hex-0 {
     opacity: 1;
@@ -676,14 +668,9 @@
   50% { opacity: 1; }
 }
 
-/* ===== IDLE STATE BREATHING ===== */
+/* ===== IDLE STATE ===== */
 .pane.idle .sdk-pane {
-  animation: breathe 4s ease-in-out infinite;
-}
-
-@keyframes breathe {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 0.8; }
+  opacity: 0.7;
 }
 
 .sdk-idle-indicator {
@@ -702,12 +689,7 @@
   height: 6px;
   border-radius: 50%;
   background: var(--sdk-accent-green);
-  animation: breatheDot 4s ease-in-out infinite;
-}
-
-@keyframes breatheDot {
-  0%, 100% { opacity: 0.3; transform: scale(0.8); }
-  50% { opacity: 0.6; transform: scale(1); }
+  opacity: 0.45;
 }
 
 .sdk-idle-text {
@@ -735,10 +717,8 @@
 /* ===== ACCESSIBILITY: Reduced Motion (global SDK) ===== */
 @media (prefers-reduced-motion: reduce) {
   .sdk-streaming-bar,
-  .pane.idle .sdk-pane,
   .sdk-msg,
-  .sdk-delivery-state.sending .sdk-delivery-icon,
-  .sdk-idle-dot {
+  .sdk-delivery-state.sending .sdk-delivery-icon {
     animation: none !important;
     transition: none !important;
   }
