@@ -72,11 +72,24 @@ function registerPtyHandlers(ctx, deps = {}) {
   });
 
   // Send trusted keyboard Enter via Electron's native input API
-  ipcMain.handle('send-trusted-enter', (event) => {
-    if (ctx.mainWindow && ctx.mainWindow.webContents) {
+  ipcMain.handle('send-trusted-enter', async () => {
+    if (!ctx.mainWindow || !ctx.mainWindow.webContents) {
+      return { success: false, error: 'mainWindow not available' };
+    }
+    try {
+      if (typeof ctx.mainWindow.focus === 'function') {
+        ctx.mainWindow.focus();
+      }
+      if (typeof ctx.mainWindow.webContents.focus === 'function') {
+        ctx.mainWindow.webContents.focus();
+      }
       ctx.mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
       ctx.mainWindow.webContents.sendInputEvent({ type: 'char', keyCode: 'Return' });
       ctx.mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+      return { success: true };
+    } catch (err) {
+      log.error('PTY', 'send-trusted-enter failed:', err);
+      return { success: false, error: err.message };
     }
   });
 

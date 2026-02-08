@@ -117,12 +117,50 @@ function createInjectionController(options = {}) {
       log.debug(`sendEnterToPane ${paneId}`, 'Set _hivemindBypass=true for sendTrustedEnter');
     }
 
+    const tryDomFallback = () => {
+      if (typeof document === 'undefined') return false;
+      const paneEl = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+      const textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
+      if (!textarea) return false;
+
+      try {
+        textarea.focus();
+        const makeEvent = (type) => {
+          const evt = new KeyboardEvent(type, {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true,
+          });
+          evt._hivemindBypass = true;
+          return evt;
+        };
+        textarea.dispatchEvent(makeEvent('keydown'));
+        textarea.dispatchEvent(makeEvent('keypress'));
+        textarea.dispatchEvent(makeEvent('keyup'));
+        log.info(`sendEnterToPane ${paneId}`, 'Enter sent via DOM fallback dispatch');
+        return true;
+      } catch (err) {
+        log.warn(`sendEnterToPane ${paneId}`, 'DOM fallback failed:', err);
+        return false;
+      }
+    };
+
     try {
-      await window.hivemind.pty.sendTrustedEnter();
+      const result = await window.hivemind.pty.sendTrustedEnter();
+      if (result && result.success === false) {
+        throw new Error(result.error || 'sendTrustedEnter failed');
+      }
       log.info(`sendEnterToPane ${paneId}`, 'Enter sent via sendTrustedEnter (focus-based, bypass enabled)');
       return { success: true, method: 'sendTrustedEnter' };
     } catch (err) {
       log.error(`sendEnterToPane ${paneId}`, 'sendTrustedEnter failed:', err);
+      const fallbackOk = tryDomFallback();
+      if (fallbackOk) {
+        return { success: true, method: 'domFallback' };
+      }
       return { success: false, method: 'sendTrustedEnter' };
     } finally {
       // Clear bypass flag after Enter is processed (next tick to ensure event handled)

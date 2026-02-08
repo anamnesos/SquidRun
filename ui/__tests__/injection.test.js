@@ -33,7 +33,7 @@ describe('Terminal Injection', () => {
     ABSOLUTE_MAX_WAIT_MS: 60000,
     QUEUE_RETRY_MS: 100,
     INJECTION_LOCK_TIMEOUT_MS: 1000,
-    BYPASS_CLEAR_DELAY_MS: 75,
+    BYPASS_CLEAR_DELAY_MS: 250,
   };
 
   // Mock objects
@@ -244,6 +244,34 @@ describe('Terminal Injection', () => {
       expect(result.success).toBe(false);
       expect(result.method).toBe('sendTrustedEnter');
       expect(mockLog.error).toHaveBeenCalled();
+    });
+
+    test('falls back to DOM dispatch when sendTrustedEnter fails', async () => {
+      mockPty.sendTrustedEnter.mockRejectedValue(new Error('Enter failed'));
+      const mockTerminal = { _hivemindBypass: false };
+      terminals.set('1', mockTerminal);
+
+      mockTextarea.dispatchEvent = jest.fn();
+      const originalKeyboardEvent = global.KeyboardEvent;
+      if (!originalKeyboardEvent) {
+        global.KeyboardEvent = function KeyboardEvent(type, options) {
+          return { type, ...options };
+        };
+      }
+
+      const result = await controller.sendEnterToPane('1');
+
+      if (!originalKeyboardEvent) {
+        delete global.KeyboardEvent;
+      }
+
+      expect(result.success).toBe(true);
+      expect(result.method).toBe('domFallback');
+      expect(mockTextarea.dispatchEvent).toHaveBeenCalledTimes(3);
+      const dispatchedEvents = mockTextarea.dispatchEvent.mock.calls.map(call => call[0]);
+      dispatchedEvents.forEach((evt) => {
+        expect(evt._hivemindBypass).toBe(true);
+      });
     });
 
     test('works without terminal in map', async () => {
