@@ -39,6 +39,9 @@ const WAR_ROOM_ROLE_MENTIONS = {
 let warRoomInitialized = false;
 let warRoomBuffer = [];
 
+// Pipeline hook (set via setPipelineHook)
+let pipelineOnMessage = null;
+
 // Shared triggers state (passed from triggers.js)
 let triggersState = {
   mainWindow: null,
@@ -49,6 +52,10 @@ let triggersState = {
 
 function setTriggersState(state) {
   Object.assign(triggersState, state);
+}
+
+function setPipelineHook(onMessageFn) {
+  pipelineOnMessage = typeof onMessageFn === 'function' ? onMessageFn : null;
 }
 
 function normalizeRoleKey(role) {
@@ -158,6 +165,15 @@ function appendWarRoomEntry(entry) {
   if (triggersState.mainWindow && !triggersState.mainWindow.isDestroyed()) {
     triggersState.mainWindow.webContents.send('war-room-message', entry);
   }
+
+  // Pipeline observation hook
+  if (typeof pipelineOnMessage === 'function') {
+    try {
+      pipelineOnMessage(entry);
+    } catch (err) {
+      log.warn('WarRoom', `Pipeline hook error: ${err.message}`);
+    }
+  }
 }
 
 function buildWarRoomLine(entry) {
@@ -249,6 +265,7 @@ function recordWarRoomMessage({ fromRole, targets, message, type = 'direct', sou
 
 module.exports = {
   setTriggersState,
+  setPipelineHook,
   loadWarRoomHistory,
   recordWarRoomMessage,
   WAR_ROOM_ROLE_LABELS,
