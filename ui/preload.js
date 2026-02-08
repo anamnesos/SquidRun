@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('hivemind', {
   pty: {
     create: (paneId, workingDir) => ipcRenderer.invoke('pty-create', paneId, workingDir),
     write: (paneId, data) => ipcRenderer.invoke('pty-write', paneId, data),
+    pause: (paneId) => ipcRenderer.invoke('pty-pause', paneId),
+    resume: (paneId) => ipcRenderer.invoke('pty-resume', paneId),
     codexExec: (paneId, prompt) => ipcRenderer.invoke('codex-exec', paneId, prompt),
     resize: (paneId, cols, rows) => ipcRenderer.invoke('pty-resize', paneId, cols, rows),
     kill: (paneId) => ipcRenderer.invoke('pty-kill', paneId),

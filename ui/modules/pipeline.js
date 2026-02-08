@@ -90,11 +90,12 @@ function excerpt(msg) {
  */
 function extractTitle(msg) {
   if (!msg) return 'Untitled';
-  // Remove AGENT_MESSAGE_PREFIX
+  // Remove AGENT_MESSAGE_PREFIX (handles both with and without trailing space)
   let clean = String(msg).replace(/^\[AGENT MSG - reply via hm-send\.js\]\s*/i, '').trim();
   // Remove structured tags
   clean = clean.replace(/\[(?:PROPOSAL|ACCEPT|DONE|REVIEW|APPROVED|ASSIGNED)\]/gi, '').trim();
   // Remove role prefix like (ARCH #1): or (ANA -> DEVOPS #2):
+  // Optimized regex to handle sequence and arrow indicators
   clean = clean.replace(/^\([^)]*#\d+\):\s*/, '').trim();
   clean = clean.replace(/^\([^)]*\):\s*/, '').trim();
   // Take first sentence or first 80 chars

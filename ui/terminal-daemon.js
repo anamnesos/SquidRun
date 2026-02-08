@@ -1152,6 +1152,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     rows: 24,
     cwd: workDir,
     env: process.env,
+    handleFlowControl: true,
   });
 
   const terminalInfo = {
@@ -1482,6 +1483,26 @@ function handleMessage(client, message) {
           event: 'list',
           terminals: terminalList,
         });
+        break;
+      }
+
+      case 'pause': {
+        const terminal = terminals.get(msg.paneId);
+        if (terminal && terminal.pty) {
+          // write XOFF (\x13) to pause when handleFlowControl is enabled
+          terminal.pty.write('\x13');
+          logInfo(`PTY paused for pane ${msg.paneId}`);
+        }
+        break;
+      }
+
+      case 'resume': {
+        const terminal = terminals.get(msg.paneId);
+        if (terminal && terminal.pty) {
+          // write XON (\x11) to resume when handleFlowControl is enabled
+          terminal.pty.write('\x11');
+          logInfo(`PTY resumed for pane ${msg.paneId}`);
+        }
         break;
       }
 

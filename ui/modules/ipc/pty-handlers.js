@@ -38,6 +38,18 @@ function registerPtyHandlers(ctx, deps = {}) {
     }
   });
 
+  ipcMain.handle('pty-pause', (event, paneId) => {
+    if (ctx.daemonClient && ctx.daemonClient.connected) {
+      ctx.daemonClient.pause(paneId);
+    }
+  });
+
+  ipcMain.handle('pty-resume', (event, paneId) => {
+    if (ctx.daemonClient && ctx.daemonClient.connected) {
+      ctx.daemonClient.resume(paneId);
+    }
+  });
+
   ipcMain.handle('interrupt-pane', (event, paneId) => {
     if (!ctx.daemonClient || !ctx.daemonClient.connected) {
       return { success: false, error: 'Daemon not connected' };
