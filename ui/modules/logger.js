@@ -52,12 +52,16 @@ function formatMsg(level, subsystem, message, extra) {
 function write(level, subsystem, message, extra) {
   if (LEVELS[level] < minLevel) return;
   const parts = formatMsg(level, subsystem, message, extra);
-  if (level === 'error') {
-    console.error(...parts);
-  } else if (level === 'warn') {
-    console.warn(...parts);
-  } else {
-    console.log(...parts);
+  try {
+    if (level === 'error') {
+      console.error(...parts);
+    } else if (level === 'warn') {
+      console.warn(...parts);
+    } else {
+      console.log(...parts);
+    }
+  } catch (_) {
+    // EPIPE / broken stdout pipe — fall through to file logging
   }
 
   ensureLogDir();
