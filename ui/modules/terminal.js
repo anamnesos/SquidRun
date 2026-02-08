@@ -14,6 +14,7 @@ const log = require('./logger');
 const settings = require('./settings');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
+const { attachAgentColors } = require('./terminal/agent-colors');
 const { PANE_IDS, PANE_ROLES, WORKSPACE_PATH } = require('../config');
 const {
   TYPING_GUARD_MS,
@@ -808,6 +809,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
 
   terminal.open(container);
   fitAddon.fit();
+  attachAgentColors(paneId, terminal);
 
   // Critical: block keyboard input when user is typing in a UI input/textarea
   // BUT allow xterm's own internal textarea (xterm-helper-textarea) to work normally
@@ -961,6 +963,7 @@ async function reattachTerminal(paneId, scrollback) {
 
   terminal.open(container);
   fitAddon.fit();
+  attachAgentColors(paneId, terminal);
 
   // Critical: block keyboard input when user is typing in a UI input/textarea
   // BUT allow xterm's own internal textarea (xterm-helper-textarea) to work normally
