@@ -270,8 +270,7 @@ async function searchGraph() {
   graphState.searchQuery = input.value.trim();
 
   try {
-    const result = await window.ipcRenderer.invoke('graph-query', {
-      query: graphState.searchQuery,
+    const result = await window.hivemind.graph.query(graphState.searchQuery, {
       maxDepth: 3,
       maxResults: 100
     });
@@ -296,7 +295,7 @@ async function searchGraph() {
  */
 async function refreshGraphData() {
   try {
-    const result = await window.ipcRenderer.invoke('graph-visualize', {});
+    const result = await window.hivemind.graph.visualize(graphState.filter);
 
     if (result.success) {
       graphState.nodes = result.data.nodes || [];
@@ -326,7 +325,7 @@ async function refreshGraphData() {
  */
 async function saveGraph() {
   try {
-    const result = await window.ipcRenderer.invoke('graph-save');
+    const result = await window.hivemind.graph.save();
     if (result.success) {
       console.log('[GraphTab] Graph saved');
     }
@@ -557,7 +556,7 @@ async function selectNode(node) {
   // Get related nodes
   if (relatedEl) {
     try {
-      const result = await window.ipcRenderer.invoke('graph-related', { nodeId: node.id, depth: 1 });
+      const result = await window.hivemind.graph.related(node.id, 1);
       if (result.success && result.results.nodes.length > 1) {
         const related = result.results.nodes.filter(n => n.id !== node.id);
         relatedEl.innerHTML = related.slice(0, 8).map(rel => {
@@ -768,7 +767,7 @@ function setupWorkflowTab() {
  */
 async function loadWorkflowNodeTypes() {
   try {
-    const result = await window.ipcRenderer.invoke('workflow-get-node-types');
+    const result = await window.hivemind.workflow.getNodeTypes();
     if (result.success) {
       workflowState.nodeTypes = result.nodeTypes;
     }
@@ -782,7 +781,7 @@ async function loadWorkflowNodeTypes() {
  */
 async function loadWorkflowTemplates() {
   try {
-    const result = await window.ipcRenderer.invoke('workflow-get-templates');
+    const result = await window.hivemind.workflow.getTemplates();
     if (result.success) {
       workflowState.templates = result.templates;
     }
@@ -1088,7 +1087,7 @@ async function validateWorkflowUI() {
       edges: workflowState.edges
     };
 
-    const result = await window.ipcRenderer.invoke('workflow-validate', { workflow, options: { strict: true } });
+    const result = await window.hivemind.workflow.validate(workflow, { strict: true });
     workflowState.validationResult = result;
 
     if (result.valid) {
@@ -1116,7 +1115,7 @@ async function generateWorkflowPlan() {
       edges: workflowState.edges
     };
 
-    const result = await window.ipcRenderer.invoke('workflow-generate-plan', { workflow });
+    const result = await window.hivemind.workflow.generatePlan(workflow);
 
     if (result.success) {
       workflowState.executionPlan = result.plan;
@@ -1175,7 +1174,7 @@ async function saveWorkflowToFile() {
       edges: workflowState.edges
     };
 
-    const result = await window.ipcRenderer.invoke('workflow-save', { name, workflow, overwrite: true });
+    const result = await window.hivemind.workflow.save(name, workflow, true);
 
     if (result.success) {
       workflowState.workflowName = name;
@@ -1198,7 +1197,7 @@ async function saveWorkflowToFile() {
  */
 async function showWorkflowLoadDialog() {
   try {
-    const result = await window.ipcRenderer.invoke('workflow-list');
+    const result = await window.hivemind.workflow.list();
     if (!result.success || !result.workflows.length) {
       setWorkflowStatus('No saved workflows');
       return;
@@ -1208,7 +1207,7 @@ async function showWorkflowLoadDialog() {
     const name = prompt(`Load workflow:\n${names.map((n, i) => `${i + 1}. ${n}`).join('\n')}\n\nEnter name:`, names[0]);
     if (!name) return;
 
-    const loadResult = await window.ipcRenderer.invoke('workflow-load', { name });
+    const loadResult = await window.hivemind.workflow.load(name);
     if (loadResult.success) {
       pushWorkflowUndoState();
       workflowState.nodes = loadResult.workflow.nodes || [];
@@ -1239,10 +1238,10 @@ async function exportWorkflowToFile() {
       edges: workflowState.edges
     };
 
-    const result = await window.ipcRenderer.invoke('workflow-export-file', {
+    const result = await window.hivemind.workflow.exportFile(
       workflow,
-      defaultName: workflowState.workflowName
-    });
+      workflowState.workflowName
+    );
 
     if (result.success) {
       setWorkflowStatus('Workflow exported');
@@ -1261,7 +1260,7 @@ async function exportWorkflowToFile() {
  */
 async function importWorkflowFromFile() {
   try {
-    const result = await window.ipcRenderer.invoke('workflow-import-file');
+    const result = await window.hivemind.workflow.importFile();
 
     if (result.success) {
       pushWorkflowUndoState();
@@ -1304,7 +1303,7 @@ async function showWorkflowTemplates() {
   const template = templates[index];
 
   try {
-    const result = await window.ipcRenderer.invoke('workflow-apply-template', { templateId: template.id });
+    const result = await window.hivemind.workflow.applyTemplate(template.id);
     if (result.success) {
       pushWorkflowUndoState();
       workflowState.nodes = result.workflow.nodes;

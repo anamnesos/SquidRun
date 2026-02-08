@@ -60,6 +60,17 @@ function createIpcRegistry() {
         registerFn(ctx, deps);
       }
     },
+    unsetup(ctx, deps) {
+      for (const registerFn of modules) {
+        // Many handlers have companion unregister functions
+        const unregisterName = registerFn.name.replace('register', 'unregister');
+        // This requires the module to export the unregister function
+        // or for it to be reachable via the registerFn object if assigned
+        if (registerFn.unregister) {
+          registerFn.unregister(ctx, deps);
+        }
+      }
+    },
     list() {
       return modules.map(fn => fn.name || 'anonymous');
     },

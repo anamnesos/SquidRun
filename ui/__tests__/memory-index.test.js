@@ -27,6 +27,7 @@ const mockTranscriptLogger = {
   getRecentTranscript: jest.fn(() => []),
   getTranscriptStats: jest.fn(() => ({})),
   forceFlush: jest.fn(),
+  shutdown: jest.fn(),
   startSession: jest.fn(),
   endSession: jest.fn(),
 };
@@ -99,7 +100,7 @@ describe('Memory Module (index.js)', () => {
     test('shutdown flushes logs and ends sessions', () => {
       memory.shutdown();
 
-      expect(mockTranscriptLogger.forceFlush).toHaveBeenCalled();
+      expect(mockTranscriptLogger.shutdown).toHaveBeenCalled();
       // Should end sessions for all roles
       expect(mockContextManager.endSession).toHaveBeenCalled();
     });

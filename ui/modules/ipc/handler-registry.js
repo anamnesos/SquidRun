@@ -32,6 +32,7 @@ const { registerExternalNotificationHandlers } = require('./external-notificatio
 const { registerPtyHandlers } = require('./pty-handlers');
 const { registerGitHandlers } = require('./git-handlers');
 const { registerKnowledgeHandlers } = require('./knowledge-handlers');
+const { registerKnowledgeGraphHandlers } = require('./knowledge-graph-handlers');
 const { registerDebugReplayHandlers } = require('./debug-replay-handlers');
 const { registerTaskParserHandlers } = require('./task-parser-handlers');
 const { registerSchedulerHandlers } = require('./scheduler-handlers');
@@ -81,6 +82,7 @@ const DEFAULT_HANDLERS = [
   registerPtyHandlers,
   registerGitHandlers,
   registerKnowledgeHandlers,
+  registerKnowledgeGraphHandlers,
   registerDebugReplayHandlers,
   registerTaskParserHandlers,
   registerSchedulerHandlers,
@@ -105,4 +107,11 @@ function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {
   }
 }
 
-module.exports = { registerAllHandlers, DEFAULT_HANDLERS };
+function unregisterAllHandlers(registry) {
+  if (!registry || typeof registry.unsetup !== 'function') {
+    return;
+  }
+  registry.unsetup();
+}
+
+module.exports = { registerAllHandlers, unregisterAllHandlers, DEFAULT_HANDLERS };

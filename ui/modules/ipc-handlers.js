@@ -76,6 +76,14 @@ function setupIPCHandlers(deps) {
   registry.setup(ctx, deps);
 }
 
+/**
+ * Cleanup all IPC handlers and their resources
+ */
+function cleanup() {
+  const { unregisterAllHandlers } = require('./ipc/handler-registry');
+  unregisterAllHandlers(registry);
+}
+
 const backgroundController = createBackgroundProcessController(ctx);
 const broadcastProcessList = backgroundController.broadcastProcessList;
 const getBackgroundProcesses = backgroundController.getBackgroundProcesses;
@@ -88,5 +96,6 @@ module.exports = {
   setupIPCHandlers,
   getBackgroundProcesses,
   cleanupProcesses,
+  cleanup,
 };
 

@@ -75,8 +75,8 @@ function initialize() {
  */
 function shutdown() {
   try {
-    // Flush any pending logs
-    transcriptLogger.forceFlush();
+    // Shutdown logger and clear timers
+    transcriptLogger.shutdown();
 
     // End all active sessions
     for (const role of Object.values(memoryStore.PANE_ROLES)) {

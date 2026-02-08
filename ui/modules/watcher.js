@@ -538,6 +538,11 @@ function stopWatcher() {
     workspaceWatcher.close();
     workspaceWatcher = null;
   }
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+  }
+  pendingFileChanges.clear();
 }
 
 // ============================================================
@@ -652,6 +657,11 @@ function stopTriggerWatcher() {
     triggerWatcher = null;
     log.info('FastTrigger', 'Stopped');
   }
+  // Clear any pending retry timers
+  for (const timer of triggerRetryTimers.values()) {
+    clearTimeout(timer);
+  }
+  triggerRetryTimers.clear();
 }
 
 /**

@@ -207,6 +207,26 @@ function registerPerfAuditHandlers(ctx) {
   }, 60000);
 }
 
+function unregisterPerfAuditHandlers(ctx) {
+  if (ctx.perfAuditInterval) {
+    clearInterval(ctx.perfAuditInterval);
+    ctx.perfAuditInterval = null;
+  }
+  const { ipcMain } = ctx;
+  if (ipcMain) {
+    ipcMain.removeHandler('get-perf-profile');
+    ipcMain.removeHandler('set-perf-enabled');
+    ipcMain.removeHandler('set-slow-threshold');
+    ipcMain.removeHandler('reset-perf-profile');
+    ipcMain.removeHandler('save-perf-profile');
+    ipcMain.removeHandler('get-slow-handlers');
+    ipcMain.removeHandler('get-handler-perf');
+    ipcMain.removeHandler('benchmark-handler');
+  }
+}
+
+registerPerfAuditHandlers.unregister = unregisterPerfAuditHandlers;
+
 module.exports = {
   registerPerfAuditHandlers,
 };

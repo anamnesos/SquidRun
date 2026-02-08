@@ -398,6 +398,13 @@ function forceFlush() {
 }
 
 /**
+ * Shutdown the logger and clear timers
+ */
+function shutdown() {
+  forceFlush();
+}
+
+/**
  * Truncate content to reasonable size
  * @param {string} content
  * @param {number} [maxLength=10000]
@@ -508,6 +515,7 @@ module.exports = {
   startSession,
   endSession,
   forceFlush,
+  shutdown,
 
   // Query functions
   getRecentTranscript,
