@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Expose protected methods to the renderer process
-contextBridge.exposeInMainWorld('hivemind', {
+// Build the API object
+const hivemindApi = {
   // PTY operations
   pty: {
     create: (paneId, workingDir) => ipcRenderer.invoke('pty-create', paneId, workingDir),
@@ -128,4 +128,12 @@ contextBridge.exposeInMainWorld('hivemind', {
     save: () => ipcRenderer.invoke('graph-save'),
     getNodesByType: (type) => ipcRenderer.invoke('graph-nodes-by-type', { type }),
   },
-});
+};
+
+// Expose to renderer: use contextBridge when contextIsolation is enabled,
+// fall back to direct window assignment when it's disabled
+if (process.contextIsolated) {
+  contextBridge.exposeInMainWorld('hivemind', hivemindApi);
+} else {
+  window.hivemind = hivemindApi;
+}
