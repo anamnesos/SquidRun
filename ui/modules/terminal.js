@@ -458,7 +458,9 @@ function handleStartupOutput(paneId, data) {
     state.buffer = (state.buffer + cleaned).slice(-STARTUP_READY_BUFFER_MAX);
   }
 
-  const promptReady = isPromptReady(paneId);
+  // Gemini CLI takes 8-12s to start and its prompt is easily confused with shell prompt.
+  // We ONLY trust patternReady (e.g. "how can i help" or a clean "> ") or timeout for Gemini.
+  const promptReady = state.isGemini ? false : isPromptReady(paneId);
   const patternReady = STARTUP_READY_PATTERNS.some((pattern) => pattern.test(state.buffer));
   if (promptReady || patternReady) {
     triggerStartupInjection(paneId, state, promptReady ? 'prompt' : 'pattern');
@@ -561,7 +563,6 @@ function shouldIgnoreExit(paneId) {
     ignoreExitUntil.delete(id);
     return false;
   }
-  ignoreExitUntil.delete(id);
   return true;
 }
 
@@ -1233,7 +1234,7 @@ async function spawnAgent(paneId, model = null) {
 
       // ID-1 + Finding #14: Wait for CLI ready prompt before identity/context injection
       // This avoids injecting while subscription prompts are blocking input.
-      const isGemini = isGeminiPane(paneId);
+      const isGemini = model ? model === 'gemini' : isGeminiPane(paneId);
       const modelType = isGemini ? 'gemini' : 'claude';
       armStartupInjection(paneId, { modelType, isGemini });
 
