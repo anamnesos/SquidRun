@@ -34,6 +34,7 @@ describe('Terminal Injection', () => {
     QUEUE_RETRY_MS: 100,
     INJECTION_LOCK_TIMEOUT_MS: 1000,
     BYPASS_CLEAR_DELAY_MS: 250,
+    TYPING_GUARD_MS: 300,
   };
 
   // Mock objects
@@ -575,6 +576,28 @@ describe('Terminal Injection', () => {
       expect(mockOptions.setInjectionInFlight).not.toHaveBeenCalled();
       // Message should still be in queue
       expect(messageQueue['1'].length).toBe(1);
+    });
+
+    test('per-pane typing guard defers injection when pane recently typed', () => {
+      messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
+      mockOptions.userIsTyping.mockReturnValue(false);
+      lastTypedTime['1'] = Date.now() - 100; // within TYPING_GUARD_MS
+
+      controller.processIdleQueue('1');
+
+      expect(mockOptions.setInjectionInFlight).not.toHaveBeenCalled();
+      expect(messageQueue['1'].length).toBe(1);
+    });
+
+    test('per-pane typing guard allows injection after typing window', () => {
+      messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
+      mockOptions.userIsTyping.mockReturnValue(false);
+      lastTypedTime['1'] = Date.now() - 500; // beyond TYPING_GUARD_MS
+
+      controller.processIdleQueue('1');
+
+      expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
+      expect(messageQueue['1'].length).toBe(0);
     });
 
     test('calls onComplete callback after injection', async () => {

@@ -73,6 +73,7 @@ const lastOutputTime = {};
 
 // Codex exec mode: track identity injection per pane
 const codexIdentityInjected = new Set();
+const codexIdentityTimeouts = new Map();
 
 // Per-pane input lock - panes locked by default (view-only), toggle to unlock for direct typing
 // Prevents accidental typing in agent panes while allowing programmatic sends (sendToPane/triggers)
@@ -406,7 +407,13 @@ function buildCodexExecPrompt(paneId, text) {
 // Reset codex identity injection tracking for a pane (used on restart)
 // This ensures the identity header is re-injected when the pane restarts
 function resetCodexIdentity(paneId) {
-  codexIdentityInjected.delete(String(paneId));
+  const id = String(paneId);
+  codexIdentityInjected.delete(id);
+  const timeoutId = codexIdentityTimeouts.get(id);
+  if (timeoutId) {
+    clearTimeout(timeoutId);
+    codexIdentityTimeouts.delete(id);
+  }
   log.info('Terminal', `Reset codex identity tracking for pane ${paneId}`);
 }
 
@@ -679,6 +686,7 @@ injectionController = createInjectionController({
     ABSOLUTE_MAX_WAIT_MS,
     QUEUE_RETRY_MS,
     INJECTION_LOCK_TIMEOUT_MS,
+    TYPING_GUARD_MS,
   },
 });
 
@@ -1231,13 +1239,16 @@ async function spawnAgent(paneId, model = null) {
     log.info('spawnAgent', `Codex pane ${paneId} ready (codex-exec mode)`);
 
     // Send identity message after Codex starts (delayed to ensure Architect goes first)
-    setTimeout(() => {
+    resetCodexIdentity(paneId);
+    const timeoutId = setTimeout(() => {
       const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
       const timestamp = new Date().toISOString().split('T')[0];
       const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
       sendToPane(paneId, identityMsg + '\r');
       log.info('spawnAgent', `Codex exec identity sent for ${role} (pane ${paneId})`);
+      codexIdentityTimeouts.delete(String(paneId));
     }, STARTUP_IDENTITY_DELAY_CODEX_MS);
+    codexIdentityTimeouts.set(String(paneId), timeoutId);
 
     // Startup context injection disabled: Codex loads context natively.
 
