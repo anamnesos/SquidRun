@@ -71,6 +71,12 @@ async function updateUsageStats() {
       if (sessionsTodayEl) sessionsTodayEl.textContent = stats.sessionsToday || 0;
       if (totalTimeEl) totalTimeEl.textContent = stats.totalSessionTime || '0s';
       if (estCostEl) estCostEl.textContent = `$${stats.estimatedCost || '0.00'}`;
+
+      // Update status bar cost indicator
+      const costIndicator = document.getElementById('costIndicator');
+      if (costIndicator && stats.estimatedCost) {
+        costIndicator.textContent = `$${stats.estimatedCost}`;
+      }
     }
   } catch (err) {
     log.error('Build', 'Error loading usage stats', err);

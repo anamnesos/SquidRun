@@ -113,6 +113,11 @@
   opacity: 1;
 }
 
+/* Hide waiting segment when count is zero */
+.status-segment.waiting.zero {
+  display: none;
+}
+
 /* Dropdown for segment details */
 .status-dropdown {
   display: none;
@@ -185,6 +190,17 @@
   color: var(--color-text-dim);
   font-style: italic;
   font-size: var(--text-sm);
+}
+
+/* Cost indicator */
+.cost-indicator {
+  font-family: var(--font-mono);
+  color: var(--color-text-dim);
+  font-size: var(--text-xs);
+}
+
+.cost-indicator:empty {
+  display: none;
 }
 
 /* Session timer */

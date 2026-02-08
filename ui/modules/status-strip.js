@@ -14,6 +14,7 @@ let cachedTaskPool = { tasks: [] };
 
 let sessionTimerInterval = null;
 let pollInterval = null;
+let initialized = false;
 
 /**
  * Update session timer display
@@ -186,6 +187,8 @@ function updateStatusStrip() {
  * Initialize status strip event handlers
  */
 function initStatusStrip() {
+  if (initialized) return;
+  initialized = true;
   const segments = document.querySelectorAll('.status-segment');
 
   segments.forEach(segment => {
@@ -235,6 +238,7 @@ function initStatusStrip() {
  * Shutdown status strip and clear intervals
  */
 function shutdownStatusStrip() {
+  initialized = false;
   if (pollInterval) {
     clearInterval(pollInterval);
     pollInterval = null;

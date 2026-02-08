@@ -525,10 +525,20 @@ function showCostAlert(data) {
     }
   }
 
-  const alertBadge = document.getElementById('costAlertBadge');
-  if (alertBadge) {
-    alertBadge.style.display = 'inline-block';
+  // Update status bar cost indicator
+  updateCostIndicator(data.cost, true);
+}
+
+function updateCostIndicator(cost, isAlert) {
+  const indicator = document.getElementById('costIndicator');
+  if (!indicator) return;
+  if (cost == null || cost === 0) {
+    indicator.textContent = '';
+    return;
   }
+  const formatted = typeof cost === 'number' ? cost.toFixed(2) : cost;
+  indicator.textContent = `$${formatted}`;
+  indicator.style.color = isAlert ? '#ff2040' : '';
 }
 
 /**
@@ -558,6 +568,7 @@ module.exports = {
   updateStateDisplay,
   updateProjectDisplay,
   showCostAlert,
+  updateCostIndicator,
   init,
   _resetForTesting() { },
 };
