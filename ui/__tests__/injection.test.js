@@ -833,10 +833,11 @@ describe('Terminal Injection', () => {
       );
     });
 
-    test('proceeds after idle wait timeout', async () => {
+    test('aborts after idle wait timeout with busy_timeout', async () => {
       mockOptions.isIdle.mockReturnValue(false);
+      const onComplete = jest.fn();
 
-      await controller.doSendToPane('1', 'test\r', jest.fn());
+      await controller.doSendToPane('1', 'test\r', onComplete);
 
       // Advance past delay and idle wait
       await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_DELAY_IDLE_MS + 6000);
@@ -845,6 +846,8 @@ describe('Terminal Injection', () => {
         expect.any(String),
         expect.stringContaining('still not idle')
       );
+      expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'busy_timeout' });
+      expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
     });
 
     test('aborts Enter if focus fails', async () => {
@@ -1013,6 +1016,25 @@ describe('Terminal Injection', () => {
       await promise;
 
       expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
+    });
+
+    test('returns false and marks stuck when textarea still has input after Enter', async () => {
+      lastOutputTime['1'] = Date.now();
+
+      // Textarea still has text (Enter was not consumed)
+      mockTextarea.value = 'stuck text';
+
+      const promise = controller.verifyAndRetryEnter('1', mockTextarea, 3);
+
+      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_VERIFY_DELAY_MS + 100);
+
+      const result = await promise;
+      expect(result).toBe(false);
+      expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('Textarea still has input after Enter')
+      );
     });
 
     test('handles textarea disappearing during wait', async () => {
