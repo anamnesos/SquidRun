@@ -61,7 +61,7 @@
   cursor: pointer;
   font-size: var(--text-base);
   font-weight: 500;
-  transition: all var(--transition-normal);
+  transition: background var(--transition-normal), color var(--transition-normal), transform var(--transition-normal), box-shadow var(--transition-normal);
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
@@ -147,7 +147,7 @@
   font-size: var(--text-base);
   cursor: pointer;
   text-align: left;
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), padding-left var(--transition-fast);
 }
 
 .dropdown-item:hover {
@@ -264,7 +264,7 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: var(--text-sm);
-  transition: all var(--transition-fast);
+  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -278,9 +278,7 @@
 }
 
 .pane {
-  background: rgba(10, 10, 15, 0.45);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: #0b0b14;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -302,34 +300,16 @@
 
 .pane[data-pane-id="1"].focused {
   border-color: rgba(240, 160, 0, 0.7);
-  animation: paneBreathe1 3.5s ease-in-out infinite;
 }
 
 .pane[data-pane-id="2"].focused {
   border-color: rgba(0, 240, 255, 0.7);
-  animation: paneBreathe2 3.5s ease-in-out infinite;
 }
 
 .pane[data-pane-id="5"].focused {
   border-color: rgba(187, 134, 252, 0.7);
-  animation: paneBreathe5 3.5s ease-in-out infinite;
 }
 
-/* Subtle border-color pulse instead of box-shadow halos */
-@keyframes paneBreathe1 {
-  0%, 100% { border-color: rgba(240, 160, 0, 0.5); }
-  50% { border-color: rgba(240, 160, 0, 0.85); }
-}
-
-@keyframes paneBreathe2 {
-  0%, 100% { border-color: rgba(0, 240, 255, 0.5); }
-  50% { border-color: rgba(0, 240, 255, 0.85); }
-}
-
-@keyframes paneBreathe5 {
-  0%, 100% { border-color: rgba(187, 134, 252, 0.5); }
-  50% { border-color: rgba(187, 134, 252, 0.85); }
-}
 
 /* Dim inactive panes to emphasize focused pane */
 .pane:not(.focused) {
@@ -350,18 +330,10 @@
   outline: 2px dashed var(--color-primary);
   outline-offset: -2px;
   box-shadow: 0 0 20px rgba(0, 240, 255, 0.5), inset 0 0 8px rgba(0, 240, 255, 0.15);
-  animation: previewPulse 0.8s ease-in-out infinite;
-}
-
-@keyframes previewPulse {
-  0%, 100% { box-shadow: 0 0 20px rgba(0, 240, 255, 0.5), inset 0 0 8px rgba(0, 240, 255, 0.15); }
-  50% { box-shadow: 0 0 30px rgba(0, 240, 255, 0.7), inset 0 0 12px rgba(0, 240, 255, 0.25); }
 }
 
 .pane-header {
-  background: rgba(13, 13, 24, 0.55);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: #0e0e1c;
   padding: var(--space-1) var(--space-2);
   display: flex;
   align-items: center;
@@ -630,7 +602,7 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: var(--text-sm);
-  transition: all var(--transition-fast);
+  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -705,7 +677,7 @@
   height: 22px;
   padding: 0;
   border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), transform var(--transition-fast);
   user-select: none;
   display: flex;
   align-items: center;
@@ -739,7 +711,7 @@
   border-radius: var(--radius-sm);
   color: var(--color-text-muted);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: border-color var(--transition-fast), color var(--transition-fast);
   min-width: 60px;
 }
 
@@ -1025,7 +997,7 @@
   padding: 1px var(--space-1);
   font-size: 9px;
   line-height: 1.2;
-  transition: all var(--transition-fast);
+  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
 }
 
 .sync-chip.dirty {
@@ -1191,9 +1163,7 @@
 
 .panel-tabs {
   display: flex;
-  background: rgba(13, 13, 24, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: #0d0d18;
   border-bottom: 1px solid rgba(0, 240, 255, 0.08);
   overflow-x: auto;
   scrollbar-width: thin;
@@ -1207,7 +1177,7 @@
   font-size: var(--text-sm);
   cursor: pointer;
   border-bottom: 2px solid transparent;
-  transition: all var(--transition-fast);
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
   position: relative;
 }
 
@@ -1288,7 +1258,7 @@
   background: var(--color-primary);
   border: 1px solid var(--color-primary);
   color: var(--color-text);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .btn-panel:hover {
@@ -1360,7 +1330,7 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: var(--text-sm);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 #terminal-search-bar button:hover {
@@ -1632,7 +1602,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  transition: all var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .custom-target-button:hover {
@@ -1687,7 +1657,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast), transform var(--transition-fast);
   border-bottom: 1px solid var(--color-bg-medium);
 }
 
