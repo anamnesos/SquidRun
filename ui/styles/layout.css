@@ -454,6 +454,7 @@
 .pane-status.activity-streaming {
   animation: activityPulse 2.2s ease-in-out infinite;
   text-shadow: 0 0 10px color-mix(in srgb, currentColor 35%, transparent);
+  will-change: transform, opacity;
 }
 
 /* Glyph spinner for working status (Claude TUI style) */
@@ -461,7 +462,6 @@
   display: none;
   margin-right: var(--space-1);
   font-size: var(--text-base);
-  animation: breathe 2s ease-in-out infinite;
 }
 
 .pane-status.running .pane-spinner,
@@ -472,6 +472,8 @@
 .pane-status.activity-file .pane-spinner,
 .pane-status.activity-streaming .pane-spinner {
   display: inline-block;
+  animation: breathe 2s ease-in-out infinite;
+  will-change: opacity;
 }
 
 /* Breathing opacity animation */
@@ -900,6 +902,7 @@
   color: var(--color-accent);
   box-shadow: var(--shadow-md), 0 0 14px color-mix(in srgb, var(--color-accent) 35%, transparent);
   animation: voicePulse 1.2s ease-in-out infinite;
+  will-change: box-shadow;
 }
 
 .voice-status {
@@ -938,6 +941,7 @@
 .command-delivery-status.sending {
   color: var(--color-warning);
   animation: sendingPulse 1s ease-in-out infinite;
+  will-change: opacity;
 }
 
 .command-delivery-status.delivered {
@@ -1139,11 +1143,6 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  transition: margin-right 0.3s ease;
-}
-
-.terminals-section.panel-open {
-  margin-right: 0;
 }
 
 /* Right Panel */

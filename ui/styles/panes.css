@@ -136,8 +136,6 @@
   z-index: 10000;
   animation: handoffSlideIn var(--transition-normal, 0.35s) ease;
   box-shadow: var(--shadow-lg, 0 10px 30px rgba(0, 0, 0, 0.35));
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 
 .handoff-notification.fade-out {
@@ -223,8 +221,6 @@
   z-index: 10000;
   animation: conflictSlideIn var(--transition-normal, 0.35s) ease;
   box-shadow: var(--shadow-lg, 0 10px 30px rgba(0, 0, 0, 0.4));
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
 }
 
 .conflict-notification.fade-out {
@@ -311,7 +307,6 @@
   z-index: 10000;
   animation: autoTriggerSlideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
   box-shadow: var(--shadow-lg), 0 0 20px rgba(0, 240, 255, 0.2);
-  backdrop-filter: blur(8px);
 }
 
 .auto-trigger-indicator.fade-out {
