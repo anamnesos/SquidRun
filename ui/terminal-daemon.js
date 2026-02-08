@@ -42,11 +42,9 @@ function log(level, message) {
     process.stdout.write(entry);
   }
 
-  try {
-    fs.appendFileSync(LOG_FILE_PATH, entry);
-  } catch (err) {
+  fs.appendFile(LOG_FILE_PATH, entry, () => {
     // If we can't write to log file, at least console still works
-  }
+  });
 }
 
 // Convenience log functions
@@ -367,6 +365,7 @@ let lastHeartbeatTime = 0;
 let awaitingLeadResponse = false;
 let currentHeartbeatState = 'idle';  // Track current state
 let heartbeatTimerId = null;  // Dynamic timer reference
+let heartbeatStateCheckTimerId = null;  // Periodic state check reference
 let isRecovering = false;  // Recovery state after stuck detection
 
 // Track aggressive nudge attempts per pane
@@ -911,6 +910,9 @@ function heartbeatTick() {
 
 // Start heartbeat timer with initial adaptive interval
 function initHeartbeatTimer() {
+  if (!heartbeatEnabled) {
+    return;
+  }
   const initialState = getHeartbeatState();
   const initialInterval = HEARTBEAT_INTERVALS[initialState];
   currentHeartbeatState = initialState;
@@ -923,7 +925,7 @@ function initHeartbeatTimer() {
 
   // Periodic state check (every 30 seconds) to detect state changes
   // This catches state changes between heartbeat ticks
-  setInterval(() => {
+  heartbeatStateCheckTimerId = setInterval(() => {
     if (heartbeatEnabled) {
       updateHeartbeatTimer();
     }
@@ -1563,6 +1565,9 @@ function handleMessage(client, message) {
       case 'heartbeat-enable': {
         heartbeatEnabled = true;
         logInfo('[Heartbeat] Enabled via protocol');
+        if (!heartbeatTimerId) {
+          initHeartbeatTimer();
+        }
         sendToClient(client, { event: 'heartbeat-status', enabled: true });
         break;
       }
@@ -1570,6 +1575,14 @@ function handleMessage(client, message) {
       case 'heartbeat-disable': {
         heartbeatEnabled = false;
         logInfo('[Heartbeat] Disabled via protocol');
+        if (heartbeatTimerId) {
+          clearInterval(heartbeatTimerId);
+          heartbeatTimerId = null;
+        }
+        if (heartbeatStateCheckTimerId) {
+          clearInterval(heartbeatStateCheckTimerId);
+          heartbeatStateCheckTimerId = null;
+        }
         sendToClient(client, { event: 'heartbeat-status', enabled: false });
         break;
       }

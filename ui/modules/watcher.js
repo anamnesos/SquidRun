@@ -629,8 +629,8 @@ function startTriggerWatcher() {
     ignoreInitial: true,
     persistent: true,
     usePolling: true,
-    interval: 50,           // UX-9: 50ms polling for triggers (was 1000ms)
-    binaryInterval: 50,
+    interval: 300,           // S94: 300ms polling (was 50ms). WebSocket is primary channel now.
+    binaryInterval: 300,
     awaitWriteFinish: false, // Don't wait - immediate processing
     atomic: false,           // Skip atomic write detection for speed
     ignored: [
@@ -645,7 +645,7 @@ function startTriggerWatcher() {
     log.error('FastTrigger', 'Trigger watcher error', err);
   });
 
-  log.info('FastTrigger', `Watching ${TRIGGER_PATH} with 50ms polling`);
+  log.info('FastTrigger', `Watching ${TRIGGER_PATH} with 300ms polling`);
 }
 
 /**

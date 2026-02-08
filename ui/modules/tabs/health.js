@@ -44,7 +44,7 @@ function setupHealthTab() {
   healthState.refreshInterval = setInterval(() => {
     const healthTab = document.getElementById('tab-health');
     if (healthTab?.classList.contains('active')) refreshHealthData();
-  }, 5000);
+  }, 10000);
 
   refreshHealthData();
 }

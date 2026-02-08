@@ -372,7 +372,7 @@ describe('watcher module', () => {
     watcher.startTriggerWatcher();
     expect(chokidarMock.watch).toHaveBeenCalledWith(
       watcher.TRIGGER_PATH,
-      expect.objectContaining({ interval: 50 })
+      expect.objectContaining({ interval: 300 })
     );
 
     watcher.stopTriggerWatcher();
