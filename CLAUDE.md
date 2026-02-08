@@ -8,25 +8,6 @@
 
 ---
 
-## HUMAN CONTEXT (READ FIRST)
-
-The human operating this system:
-- Is LEARNING software development alongside building this
-- Has no formal dev training - explain concepts, don't assume knowledge
-- Built this in 10 days with zero prior experience
-- Values accessibility over power-user features
-- Prefers "boring and stable" over "clever and fragile"
-- Works after-hours - limited time, learning pace over shipping speed
-
-**When suggesting or reviewing:**
-- Explain WHY, not just WHAT
-- Flag complexity that could be simplified
-- Prioritize stability over features
-- Use plain language with real-world analogies
-- Don't assume terminal/git/IDE knowledge
-
----
-
 ## VISION ALIGNMENT
 
 **Read `VISION.md` for full context.**
@@ -201,86 +182,14 @@ If running in SDK mode (not PTY terminals):
 
 ## Communication Protocol - MANDATORY
 
-**You are not alone. Other instances are working in parallel. Communicate through files.**
+**Terminal output = USER. Trigger files / WebSocket = OTHER AGENTS.**
 
-### ⚠️ CRITICAL: Agent-to-Agent Communication
+When you receive a message from another agent (`(ARCH):`, `(DEVOPS):`), reply via their trigger file or WebSocket — not terminal output.
 
-**Terminal output is for talking to the USER. Trigger files are for talking to OTHER AGENTS.**
-
-When you receive a message FROM another agent (prefixed with their role like `(ARCH):` or `(DEVOPS):`):
-1. **DO NOT respond in terminal output** - the user is not your audience
-2. **MUST reply via trigger file** - write to their trigger file
-3. Format: `(YOUR-ROLE): Your response here`
-
-Example:
-- You receive in terminal: `(ARCH): Please review the auth changes`
-- You reply by writing to `D:\projects\hivemind\workspace\triggers\architect.txt`:
-  ```
-  (DEVOPS): Reviewed. Found 2 issues, see blockers.md
-  ```
-
-**This is MANDATORY. Responding to agents via terminal output defeats the entire purpose of multi-agent coordination.**
-
----
-
-### Mode Gate - MANDATORY
-
-Tasks are tagged by mode compatibility:
-- `[PTY]` - Only work on in PTY mode
-- `[SDK]` - Only work on in SDK mode
-- `[BOTH]` - Work on in either mode
-
-**Before accepting any task:**
-1. Read `workspace/app-status.json` → check `sdkMode` field
-2. Check task tag in status.md or assignment
-3. If mode mismatch → flag to Lead, don't start work
-
-**Source of truth:** `app-status.json` (not shared_context.md)
-
-### Before Starting Work
-1. **Check mode gate** - Is this task appropriate for current mode?
-2. Read `workspace/session-handoff.json` - structured session state
-3. Read `workspace/build/blockers.md` - active blockers only
-4. Read `workspace/build/errors.md` - active errors only
-5. **Only read archives if you need historical context for a specific investigation**
-
-### After Completing Work
-1. Update `workspace/build/status.md` with your completion
-2. Check `workspace/build/blockers.md` again - did Reviewer find issues?
-3. If you created blockers for others, they're in blockers.md
-4. **Message relevant agents via triggers** about your completion
-
-### When You Find Issues
-1. Write to `workspace/build/blockers.md` with owner and suggested fix
-2. Write to `workspace/build/errors.md` if it's a runtime error
-3. **Message the affected agent via triggers** - don't assume user will relay
-
-### Periodic Check (Every Major Task)
-Re-read blockers.md. Another instance may have found issues with your code.
-
-### 🚨 CRITICAL: Re-Read Before Responding (Session 61 Fix)
-
-**Problem:** During heavy sessions, agents cache context and respond based on stale information.
-**Result:** "I already messaged about this" or working on outdated tasks.
-
-**MANDATORY: Before each major response:**
-1. Re-read `workspace/session-handoff.json` - is your info still current?
-2. Check if your response is still relevant - did someone else already handle it?
-3. If stale, update your understanding before responding
-
-**This is especially important when:**
-- You receive multiple messages in quick succession
-- You've been "thinking" for a long time
-- You see [HIVEMIND SYNC] messages
-
-**Don't assume your cached context is fresh. Verify before responding.**
-
-### Triggering Other Agents Directly (USE THIS!)
-
-**Use WebSocket messaging via `hm-send.js` - faster and more reliable than file triggers.**
+### Agent Messaging (WebSocket — preferred)
 
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js <target> "<message>"
+node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(YOUR-ROLE #N): message"
 ```
 
 | Target | Reaches |
@@ -290,236 +199,29 @@ node D:/projects/hivemind/ui/scripts/hm-send.js <target> "<message>"
 | `analyst` | Analyst (pane 5) |
 | `1`, `2`, `5` | Pane by number |
 
-**Example:** To tell Architect about a bug:
-```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(YOUR-ROLE #1): BUG: Fix needed in main.js line 50"
-```
+**File trigger fallback:** write to `workspace/triggers/{role}.txt` (absolute paths only).
 
-**Why WebSocket over file triggers:**
-- Zero message loss (file triggers lose 40%+ under rapid messaging)
-- Faster delivery (~10ms vs 500ms+ file watcher debounce)
-- No path resolution bugs (Codex agents had issues with relative paths)
+### Message Format
 
-**File triggers still work** as fallback: write to `workspace/triggers/{role}.txt`
+Sequence numbers prevent duplicates: `(ROLE #N): message`. Start from `#1` each session.
 
-### ⚠️ Message Sequence Numbers (IMPORTANT)
+### Message Tags
 
-Messages use sequence numbers to prevent duplicates: `(ROLE #N): message`
+- `[ACK REQUIRED]` — Sender needs confirmation (approvals, assignments, blockers)
+- `[FYI]` — Informational only, DO NOT RESPOND (silence = received)
+- `[URGENT]` — Priority, bypasses queue, requires immediate attention
 
-**The app resets sequence tracking on every restart.** This means:
-- You can start from `#1` each session
-- Don't worry about what sequence numbers were used before
-- The format is: `(ARCH #1):`, `(DEVOPS #2):`, `(ANA #3):`
+No content-free acks. Either add information or stay silent.
 
-### 🔧 Message Not Received - Diagnostic Checklist
+### Mode Gate
 
-If using WebSocket (`hm-send.js`) and message doesn't arrive:
-1. Is Hivemind running? (WebSocket server on port 9900)
-2. Check console.log for `[Inject] Received inject-message`
-3. Is target pane busy? Messages queue until pane is idle
+Tasks tagged `[PTY]`, `[SDK]`, or `[BOTH]`. Check `workspace/app-status.json` before starting. Mode mismatch = flag to Lead.
 
-If using file triggers (fallback) and message doesn't arrive:
-1. Use absolute paths: `D:\projects\hivemind\workspace\triggers\{role}.txt`
-2. Check npm console for `[Trigger] SKIPPED duplicate`
-3. Codex agents: relative paths resolve wrong - always use absolute
+### Work Cycle
 
----
-
-## Friction Prevention Protocols (Session 62)
-
-These protocols reduce wasted effort and communication friction. All agents agreed.
-
-### Protocol 1: Message Acknowledgment
-
-**Problem:** Sender sends multiple requests before response arrives, causing duplicate work.
-
-**Solution:**
-```
-Sender: "AWAITING [Agent] #[N] ON [topic]"
-Receiver: "RECEIVED [topic]. ETA: quick/standard/thorough (~X min)"
-Sender: Wait 3 min before re-requesting (trigger delivery can queue up to 65s)
-```
-
-**Rules:**
-- Include message # in AWAITING for tracking (e.g., "AWAITING Analyst #4 ON renderer review")
-- Receiver sends brief ack BEFORE starting detailed work
-- ETA helps sender know when to expect response
-
-### Protocol 2: Plan Verification
-
-**Problem:** Plan documents become stale faster than review cycle. Reviewers waste time analyzing already-done work.
-
-**Solution:**
-```
-Author: Run grep to verify proposed changes don't exist
-Author: Add header "VERIFIED AGAINST CODE: [timestamp]"
-Author: Note changes if updating existing plan ("Session X Update" section)
-Reviewer: First step = verify plan accuracy against codebase (not just plan quality)
-```
-
-**Rules:**
-- Plans are "living documents" - always verify against code before acting
-- If plan proposes extracting function X, grep for it first
-- Reviewer re-verifies as trust-but-verify step
-
-### Protocol 3: Implementation Gates
-
-**Problem:** Implementation starts before review completes, causing reverts and confusion.
-
-**Solution:**
-```
-Status flow: DRAFT → UNDER_REVIEW → APPROVED → IN_PROGRESS → DONE
-Status lives in plan file header (not just messages)
-No implementation until "APPROVED TO IMPLEMENT" from Architect
-Exception: "LOW RISK - PROCEED WHILE REVIEWING" for pure utilities with no dependencies
-```
-
-**Rules:**
-- Architect sends explicit gate: "APPROVED TO IMPLEMENT" or "LOW RISK - PROCEED"
-- "Submitted for review" ≠ permission to implement
-- Status in file header ensures persistence across context resets
-
-### Protocol 4: Acknowledgment Noise Reduction
-
-**Problem:** Too many "standing by" messages that add no information.
-
-**Solution:**
-```
-Only respond if: (1) blocking, (2) approval requested, or (3) new information to add
-Silence is acknowledgment for [FYI] messages
-NEVER send content-free acks like "Received. Standing by."
-```
-
-**Message Tags (MANDATORY):**
-- `[ACK REQUIRED]` - Sender needs confirmation (approvals, assignments, blockers)
-- `[FYI]` - Informational only, DO NOT RESPOND
-- `[URGENT]` - Priority message, bypasses queue, requires immediate attention
-
-**Rules:**
-- If message is tagged `[FYI]`, do NOT respond (silence = received)
-- If message is tagged `[ACK REQUIRED]`, respond with substance (not just "acknowledged")
-- Content-free responses ("Received. Standing by.") are spam - add information or stay silent
-- Reviewer will flag ack spam in reviews → findings go to Hotfixes section
-
----
-
-## Strategic Decision Protocol — MANDATORY
-
-**For architecture, process, and priority decisions, use the 3-agent pattern.**
-
-### The Decision Trio
-
-| Agent | Role in Strategic Decisions |
-|-------|----------------------------|
-| **Architect** | Propose, synthesize, decide, document |
-| **Analyst** | Systematic analysis, risk assessment, completeness check |
-| **Reviewer** | Challenge assumptions, find holes, ensure quality |
-
-### When to Use This Protocol
-
-**USE for:**
-- Architecture decisions ("How should we build X?")
-- Process changes ("Should we change our workflow?")
-- Priority discussions ("What's most important?")
-- Strategic questions ("What does autonomy require?")
-
-**DON'T USE for:**
-- Implementation details (domain agents own those)
-- Domain-specific code review (relevant agent handles)
-- Simple tasks with clear scope
-
-### The Workflow
-
-```
-User → Architect
-         ↓
-    [Strategic question?]
-         ↓ yes
-    Architect triggers Analyst + Reviewer (timeboxed)
-         ↓
-    Analyst: systematic analysis, completeness
-    Reviewer: challenge, find holes
-         ↓
-    Architect synthesizes to decision
-         ↓
-    Document WHY (not just WHAT) for implementers
-         ↓
-    Delegate to domain agents (Frontend/DevOps)
-```
-
-### Rules
-
-1. **Timebox discussions** - Don't let them drift. Set expectation: "Need response in X minutes."
-2. **Require unique angles** - If responses are redundant, one voice is enough.
-3. **Force synthesis** - Architect must end with concrete decision, not open discussion.
-4. **Document rationale** - Implementers need to understand WHY, not just WHAT.
-5. **Don't bottleneck** - If the trio is stuck/offline, domain agents proceed on their work.
-
-### Why This Works
-
-- **Different thinking modes:** Builder (Architect) + Analyzer (Analyst) + Critic (Reviewer)
-- **Full decision loop:** Propose → Analyze → Challenge → Decide
-- **3 is optimal:** Small enough for real dialogue, large enough for diverse views
-- **Prevents echo chambers:** Gemini (Analyst) + Claude (Reviewer) = different blind spots caught
-
-### Anti-Patterns
-
-- ❌ Broadcasting to all 3 agents for every question (noise)
-- ❌ Architect deciding alone on strategic matters (blind spots)
-- ❌ Endless back-and-forth without synthesis (drift)
-- ❌ Skipping rationale documentation (implementers confused)
-
-### Assignment Declaration (Session 54)
-
-**Architect MUST declare context when assigning work:**
-
-```
-STRATEGIC: [question] - Triggers 3-agent protocol
-CODE REVIEW: [file/feature] - Reviewer solo with quality gate
-IMPLEMENTATION: [task] - Domain agent executes
-```
-
-This prevents confusion about which protocol applies. "Add authentication" could be:
-- STRATEGIC (what approach?) → 3-agent discussion
-- CODE REVIEW (is the code correct?) → Reviewer solo
-- IMPLEMENTATION (write the code) → DevOps executes
-
-### Disagreement Protocol (Session 54)
-
-**When Analyst and Reviewer disagree with Architect:**
-
-1. **Both objections must be heard** - Architect cannot override without addressing
-2. **Objections must be specific** - "I disagree" is not enough; state what breaks and why
-3. **Architect decides after synthesis** - But must document dissenting view if overriding
-4. **Escalation path:** If Architect overrides both, log to `build/decisions.md` with rationale
-5. **User is ultimate arbiter** - If trio is deadlocked, ask user
-
-**Goal:** Productive conflict, not consensus-seeking. Disagreement is signal, not noise.
-
-### Direction Gate (Session 54)
-
-**Quality gate catches wrong CODE. Direction gate catches wrong DIRECTION.**
-
-Before major work begins, Architect must verify:
-1. **User intent is understood** - What problem are we solving?
-2. **Scope is defined** - What's in, what's out?
-3. **Success criteria exist** - How do we know it's done?
-4. **Alternatives considered** - Why this approach, not another?
-
-If any are unclear, Architect asks user BEFORE delegating to domain agents.
-
-**Anti-pattern:** Building the wrong thing correctly. The trio can approve perfect code for the wrong feature.
-
-### Human in the Loop (Session 54)
-
-**We assist, we don't replace.**
-
-- User caught bugs 6 versions in a row that we missed
-- Even with 3-agent pattern, user is ultimate quality gate
-- Our job: reduce cognitive load, not eliminate oversight
-- Goal: "assign and return" - but user still verifies results
-
-**This is earned trust:** As our reliability improves, user oversight can decrease. But we don't assume trust we haven't earned.
+**Before:** Read `session-handoff.json` + `blockers.md` + `errors.md`. Re-read before each major response (stale context causes duplicate work).
+**After:** Update `status.md`, check `blockers.md`, message relevant agents.
+**Issues:** Write to `blockers.md` / `errors.md`, message affected agent.
 
 ---
 
