@@ -29,6 +29,7 @@
   background: var(--color-secondary);
   box-shadow: var(--glow-secondary);
   animation: agentPulse 2s ease-in-out infinite;
+  will-change: transform, opacity;
 }
 
 .agent-badge.idle {

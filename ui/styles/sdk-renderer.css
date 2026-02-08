@@ -458,6 +458,7 @@
   opacity: 0.25;
   animation: hexPulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   transition: background 0.3s ease;
+  will-change: transform, opacity;
 }
 
 /* Honeycomb layout: 1 center + 6 surrounding */
@@ -661,6 +662,7 @@
 /* Sending animation (hollow circle pulse) */
 .sdk-delivery-state.sending .sdk-delivery-icon {
   animation: sendPulse 1s ease-in-out infinite;
+  will-change: opacity;
 }
 
 @keyframes sendPulse {
