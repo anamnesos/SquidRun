@@ -27,6 +27,7 @@ const organicUI = require('../ipc/organic-ui-handlers');
 const pipeline = require('../pipeline');
 const warRoom = require('../triggers/war-room');
 const sharedState = require('../shared-state');
+const contextCompressor = require('../context-compressor');
 
 class HivemindApp {
   constructor(appContext, managers) {
@@ -303,6 +304,19 @@ class HivemindApp {
     });
     ipcMain.handle('shared-state-mark-seen', (event, paneId) => {
       sharedState.markPaneSeen(paneId);
+    });
+
+    // Context Compressor (P4)
+    contextCompressor.init({
+      sharedState,
+      memory,
+      mainWindow: window,
+      watcher,
+    });
+
+    ipcMain.handle('context-snapshot-refresh', (event, paneId) => {
+      if (paneId) return contextCompressor.refresh(paneId);
+      return contextCompressor.refreshAll();
     });
   }
 
@@ -701,6 +715,7 @@ class HivemindApp {
   shutdown() {
     log.info('App', 'Shutting down Hivemind Application');
     memory.shutdown();
+    contextCompressor.shutdown();
     websocketServer.stop();
     watcher.stopWatcher();
     watcher.stopTriggerWatcher();
