@@ -57,14 +57,32 @@
 .screenshot-thumb {
   width: 48px;
   height: 48px;
-  object-fit: cover;
+  object-fit: contain;
   border-radius: var(--radius-md);
   background: var(--color-bg-light);
-  transition: transform var(--transition-fast);
+  cursor: pointer;
+  transition: width var(--transition-normal), height var(--transition-normal), transform var(--transition-fast);
 }
 
-.screenshot-item:hover .screenshot-thumb {
+.screenshot-item:hover .screenshot-thumb:not(.expanded) {
   transform: scale(1.05);
+}
+
+.screenshot-thumb.expanded {
+  width: 100%;
+  height: auto;
+  max-height: 400px;
+  border-radius: var(--radius-md);
+}
+
+.screenshot-item.has-expanded-thumb {
+  flex-wrap: wrap;
+}
+
+.screenshot-item.has-expanded-thumb .screenshot-thumb {
+  order: 3;
+  flex-basis: 100%;
+  margin-top: var(--space-2);
 }
 
 .screenshot-info {
