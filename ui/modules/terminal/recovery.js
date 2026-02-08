@@ -212,15 +212,15 @@ function createRecoveryController(options = {}) {
   async function restartPane(paneId, model = null) {
     const id = String(paneId);
     if (typeof getSdkModeActive === 'function' && getSdkModeActive()) {
-          log.info('Terminal', `Requesting SDK restart for pane ${id}`);
-          setPaneStatus(id, 'Restarting (SDK)...');
-          try {
-            await window.hivemind.sdk.restartSession(id);
-            setPaneStatus(id, 'Idle');
-            return true;
-          } catch (err) {
-            log.error('Terminal', `SDK restart failed for pane ${id}:`, err);
-            setPaneStatus(id, 'Restart failed');
+      log.info('Terminal', `Requesting SDK restart for pane ${id}`);
+      setPaneStatus(id, 'Restarting (SDK)...');
+      try {
+        await window.hivemind.sdk.restartSession(id);
+        setPaneStatus(id, 'Idle');
+        return true;
+      } catch (err) {
+        log.error('Terminal', `SDK restart failed for pane ${id}:`, err);
+        setPaneStatus(id, 'Restart failed');
         return false;
       }
     }
@@ -244,6 +244,13 @@ function createRecoveryController(options = {}) {
     // Reset write queue state to prevent frozen pane
     if (typeof resetTerminalWriteQueue === 'function') {
       resetTerminalWriteQueue(id);
+    }
+
+    // Clear terminal display so we don't detect stale prompts from the previous session
+    const terminal = terminals.get(id);
+    if (terminal) {
+      terminal.clear();
+      log.info('Terminal', `Cleared xterm for pane ${id} during restart`);
     }
 
     // All panes need PTY recreated after kill - the kill destroys the PTY entirely
