@@ -4,6 +4,16 @@
 
 const log = require('../logger');
 
+function attachExpandToggle(item) {
+  const thumb = item.querySelector('.screenshot-thumb');
+  if (!thumb) return;
+  thumb.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isExpanded = thumb.classList.toggle('expanded');
+    item.classList.toggle('has-expanded-thumb', isExpanded);
+  });
+}
+
 async function handleScreenshotDrop(files, updateStatusFn) {
   const listEl = document.getElementById('screenshotList');
   if (!listEl) return;
@@ -59,6 +69,7 @@ async function handleScreenshotDrop(files, updateStatusFn) {
         } catch (err) {}
       });
 
+      attachExpandToggle(item);
       listEl.appendChild(item);
     };
     reader.readAsDataURL(file);
@@ -114,6 +125,7 @@ async function loadScreenshots(updateStatusFn) {
         } catch (err) {}
       });
 
+      attachExpandToggle(item);
       listEl.appendChild(item);
     }
   } catch (err) {
