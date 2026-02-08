@@ -481,11 +481,6 @@ function createCodexExecRunner(options = {}) {
         return; // Don't display error, we'll retry
       }
 
-      // Suppress internal Codex CLI noise (not a Hivemind error)
-      if (errText.includes('state db missing rollout path')) {
-        return;
-      }
-
       const msg = `\r\n[Codex exec stderr] ${errText}\r\n`;
       broadcast({ event: 'data', paneId, data: msg });
       appendScrollback(terminal, msg);
