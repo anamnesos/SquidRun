@@ -308,6 +308,7 @@ function markTerminalsReady(isSDKMode = false) {
 }
 
 // Create hivemind API (merges with preload bridge to preserve workflow/graph/memory APIs)
+window.hivemind = window.hivemind || {};
 Object.assign(window.hivemind, {
   pty: {
     create: (paneId, workingDir) => ipcRenderer.invoke('pty-create', paneId, workingDir),
