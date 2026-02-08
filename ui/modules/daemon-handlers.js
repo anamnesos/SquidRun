@@ -198,17 +198,6 @@ function setupSyncIndicator() {
   });
 }
 
-function markManualSync(file) {
-  if (!uiView.SYNC_FILES[file]) return;
-  setSyncState(file, {
-    status: 'synced',
-    syncedAt: Date.now(),
-    notified: ['manual'],
-    mode: 'manual',
-    source: 'manual'
-  });
-}
-
 // ============================================================
 // DAEMON LISTENERS
 // ============================================================
@@ -729,7 +718,6 @@ module.exports = {
   loadInitialProject,
   setSDKMode,
   isSDKModeEnabled,
-  markManualSync,
   // Individual listeners for renderer.js
   setupRollbackListener,
   setupHandoffListener,

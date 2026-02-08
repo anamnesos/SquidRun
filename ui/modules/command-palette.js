@@ -28,8 +28,6 @@ function initCommandPalette() {
     { id: 'kill-all', label: 'Kill All Agents', icon: '💀', category: 'Agents', action: () => document.getElementById('killAllBtn')?.click() },
     { id: 'nudge-all', label: 'Nudge All (ESC+Enter)', icon: '👋', category: 'Agents', action: () => document.getElementById('nudgeAllBtn')?.click() },
     { id: 'fresh-start', label: 'Fresh Start', icon: '🔄', category: 'Agents', action: () => document.getElementById('freshStartBtn')?.click() },
-    { id: 'sync-context', label: 'Sync Context', icon: '📡', category: 'Agents', action: () => document.getElementById('syncBtn')?.click() },
-
     // Navigation
     { id: 'focus-1', label: 'Focus Architect (Pane 1)', icon: '1️⃣', category: 'Navigate', shortcut: 'Alt+1', action: () => terminal.focusPane('1') },
     { id: 'focus-2', label: 'Focus DevOps (Pane 2)', icon: '2️⃣', category: 'Navigate', shortcut: 'Alt+2', action: () => terminal.focusPane('2') },
