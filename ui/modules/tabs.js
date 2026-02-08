@@ -30,7 +30,11 @@ const templates = require('./tabs/templates');
 
 // Panel state
 let panelOpen = false;
+let devtoolsOpen = false;
 let onConnectionStatusUpdate = null;
+
+const PRIMARY_TABS = new Set(['activity', 'screenshots', 'oracle', 'git']);
+const DEVTOOLS_STORAGE_KEY = 'hivemind-devtools-open';
 
 function setConnectionStatusCallback(cb) {
   onConnectionStatusUpdate = cb;
@@ -73,6 +77,33 @@ function switchTab(tabId) {
   });
 }
 
+function toggleDevtools() {
+  const panelTabs = document.querySelector('.panel-tabs');
+  if (!panelTabs) return;
+
+  devtoolsOpen = !devtoolsOpen;
+  panelTabs.classList.toggle('show-devtools', devtoolsOpen);
+
+  // If closing devtools and current active tab is a devtools tab, switch to first primary tab
+  if (!devtoolsOpen) {
+    const activeTab = document.querySelector('.panel-tab.active');
+    if (activeTab && activeTab.dataset.tabGroup === 'devtools') {
+      switchTab('activity');
+    }
+  }
+
+  // Persist
+  try {
+    localStorage.setItem(DEVTOOLS_STORAGE_KEY, devtoolsOpen ? '1' : '0');
+  } catch (e) {
+    // localStorage may be unavailable
+  }
+}
+
+function isDevtoolsOpen() {
+  return devtoolsOpen;
+}
+
 function setupRightPanel(handleResizeFn) {
   const panelBtn = document.getElementById('panelBtn');
   if (panelBtn) {
@@ -81,9 +112,28 @@ function setupRightPanel(handleResizeFn) {
 
   document.querySelectorAll('.panel-tab').forEach(tab => {
     tab.addEventListener('click', () => {
+      if (tab.id === 'devtoolsToggle') return; // handled separately
       switchTab(tab.dataset.tab);
     });
   });
+
+  // Dev Tools toggle
+  const devtoolsBtn = document.getElementById('devtoolsToggle');
+  if (devtoolsBtn) {
+    devtoolsBtn.addEventListener('click', toggleDevtools);
+  }
+
+  // Restore devtools state from localStorage
+  try {
+    const stored = localStorage.getItem(DEVTOOLS_STORAGE_KEY);
+    if (stored === '1') {
+      devtoolsOpen = true;
+      const panelTabs = document.querySelector('.panel-tabs');
+      if (panelTabs) panelTabs.classList.add('show-devtools');
+    }
+  } catch (e) {
+    // localStorage may be unavailable
+  }
 
   // Initialize all modular tabs
   activity.setupActivityTab();
@@ -116,6 +166,8 @@ module.exports = {
   togglePanel,
   isPanelOpen,
   switchTab,
+  toggleDevtools,
+  isDevtoolsOpen,
   setupRightPanel,
   // Re-export key functions for backward compatibility/other modules
   updateBuildProgress: build.updateBuildProgress,
