@@ -237,7 +237,7 @@ function notifyAgents(agents, message) {
   const notified = [];
   for (const paneId of targets) { if (agentRunning && agentRunning.get(paneId) === 'running') notified.push(paneId); }
   if (notified.length > 0) {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('inject-message', { panes: notified, message: formatTriggerMessage(message) + '\r' });
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('inject-message', { panes: notified, message: formatTriggerMessage(message) });
     logTriggerActivity('Sent (PTY)', notified, message, { mode: 'pty' });
   }
   return notified;
@@ -270,7 +270,7 @@ function notifyAllAgentsSync(triggerFile) {
     }
   }
   if (runningPanes.length > 0) {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('inject-message', { panes: runningPanes, message: formatTriggerMessage(message) + '\r' });
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('inject-message', { panes: runningPanes, message: formatTriggerMessage(message) });
   }
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sync-triggered', { file: triggerFile, notified: runningPanes });
   return runningPanes;
@@ -385,7 +385,7 @@ function handleTriggerFile(filePath, filename) {
     deliveryId = sequencing.createDeliveryId(parsed.sender, parsed.seq, recipientRole);
     sequencing.startDeliveryTracking(deliveryId, parsed.sender, parsed.seq, recipientRole, targets, 'trigger', 'pty');
   }
-  sendStaggered(targets, formatTriggerMessage(message) + '\r', { deliveryId });
+  sendStaggered(targets, formatTriggerMessage(message), { deliveryId });
   try { fs.unlinkSync(processingPath); } catch (e) {}
   logTriggerActivity('Trigger file (PTY)', targets, message, { file: filename, sender: parsed.sender, mode: 'pty' });
   return { success: true, notified: targets, mode: 'pty', deliveryId };
@@ -407,7 +407,7 @@ function broadcastToAllAgents(message, fromRole = 'user') {
 
   const notified = [];
   if (agentRunning) { for (const [p, s] of agentRunning) { if (s === 'running' && targets.includes(p)) notified.push(p); } }
-  if (notified.length > 0) { metrics.recordSent('pty', 'broadcast', notified); sendStaggered(notified, `[BROADCAST] ${message}\r`); notified.forEach(p => metrics.recordDelivered('pty', 'broadcast', p)); }
+  if (notified.length > 0) { metrics.recordSent('pty', 'broadcast', notified); sendStaggered(notified, `[BROADCAST] ${message}`); notified.forEach(p => metrics.recordDelivered('pty', 'broadcast', p)); }
   return { success: true, notified, mode: 'pty' };
 }
 
@@ -434,7 +434,7 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
 
   const notified = [];
   if (agentRunning) { for (const paneId of targets) { if (agentRunning.get(paneId) === 'running') notified.push(paneId); } }
-  if (notified.length > 0) { metrics.recordSent('pty', 'direct', notified); sendStaggered(notified, fullMessage + '\r'); notified.forEach(p => metrics.recordDelivered('pty', 'direct', p)); }
+  if (notified.length > 0) { metrics.recordSent('pty', 'direct', notified); sendStaggered(notified, fullMessage); notified.forEach(p => metrics.recordDelivered('pty', 'direct', p)); }
   return { success: true, notified, mode: 'pty' };
 }
 

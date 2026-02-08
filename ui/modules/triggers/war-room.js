@@ -105,7 +105,6 @@ function getWarRoomLabel(roleKey) {
 function sanitizeWarRoomMessage(message) {
   if (!message) return '';
   return String(message)
-    .replace(/\r\n/g, '\n')
     .trim();
 }
 

@@ -696,16 +696,17 @@ describe('Terminal Injection', () => {
       );
     });
 
-    test('Gemini writes text without Enter when no trailing newline', async () => {
+    test('Gemini always sends Enter even without trailing newline', async () => {
       mockOptions.isGeminiPane.mockReturnValue(true);
       const onComplete = jest.fn();
 
       await controller.doSendToPane('1', 'partial text', onComplete); // No trailing \r
 
-      // Text only, no Enter
+      // Gemini always sends Enter unconditionally (same as Claude's shouldSendEnter)
       expect(mockPty.write).toHaveBeenCalledWith('1', '\x15'); // Clear line
       expect(mockPty.write).toHaveBeenCalledWith('1', 'partial text'); // Text
-      expect(mockPty.write).toHaveBeenCalledTimes(2); // Only clear + text, no Enter
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r'); // Enter always sent
+      expect(mockPty.write).toHaveBeenCalledTimes(3); // Clear + text + Enter
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
 
@@ -758,12 +759,18 @@ describe('Terminal Injection', () => {
       expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
     });
 
-    test('does not send Enter without trailing \\r', async () => {
+    test('Claude pane always sends Enter even without trailing \\r', async () => {
+      lastOutputTime['1'] = Date.now() - 1000; // Idle
+      document.activeElement = mockTextarea; // Focus succeeds
+
       const onComplete = jest.fn();
       await controller.doSendToPane('1', 'test', onComplete);
 
-      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
-      expect(onComplete).toHaveBeenCalledWith({ success: true });
+      // Advance past adaptive delay
+      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_DELAY_IDLE_MS + 100);
+
+      // Claude panes always send Enter (via sendTrustedEnter)
+      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
     });
 
     test('times out and returns unverified success', async () => {
@@ -887,6 +894,8 @@ describe('Terminal Injection', () => {
         throw new Error('Callback error');
       });
 
+      // Use Gemini path which has simpler flow for testing onComplete errors
+      mockOptions.isGeminiPane.mockReturnValue(true);
       await controller.doSendToPane('1', 'test', onComplete);
 
       expect(mockLog.error).toHaveBeenCalledWith(
@@ -1003,13 +1012,37 @@ describe('Terminal Injection', () => {
       expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
     });
 
-    test('returns false and marks stuck when textarea still has input after Enter', async () => {
+    test('retries Enter when textarea still has input and eventually marks stuck', async () => {
+      lastOutputTime['1'] = Date.now();
+
+      // Textarea still has text (Enter was not consumed)
+      mockTextarea.value = 'stuck text';
+      // Focus will succeed for retry
+      document.activeElement = mockTextarea;
+
+      const promise = controller.verifyAndRetryEnter('1', mockTextarea, 2);
+
+      // Advance past verify delay + retries (each retry waits ENTER_VERIFY_DELAY_MS)
+      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_VERIFY_DELAY_MS * 5 + 1000);
+
+      const result = await promise;
+      expect(result).toBe(false);
+      expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
+      // Should have attempted retry Enter via sendTrustedEnter
+      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('Textarea still has input')
+      );
+    });
+
+    test('returns false immediately when textarea stuck and no retries left', async () => {
       lastOutputTime['1'] = Date.now();
 
       // Textarea still has text (Enter was not consumed)
       mockTextarea.value = 'stuck text';
 
-      const promise = controller.verifyAndRetryEnter('1', mockTextarea, 3);
+      const promise = controller.verifyAndRetryEnter('1', mockTextarea, 0);
 
       await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_VERIFY_DELAY_MS + 100);
 
@@ -1018,7 +1051,7 @@ describe('Terminal Injection', () => {
       expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
       expect(mockLog.warn).toHaveBeenCalledWith(
         expect.any(String),
-        expect.stringContaining('Textarea still has input after Enter')
+        expect.stringContaining('max retries reached')
       );
     });
 
