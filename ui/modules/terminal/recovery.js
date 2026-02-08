@@ -23,6 +23,7 @@ function createRecoveryController(options = {}) {
     spawnAgent,
     resetCodexIdentity,
     resetTerminalWriteQueue,
+    markIgnoreNextExit,
   } = options;
 
   // Unstick escalation tracking (nudge -> interrupt -> restart)
@@ -208,9 +209,9 @@ function createRecoveryController(options = {}) {
     }
   }
 
-      async function restartPane(paneId, model = null) {
-        const id = String(paneId);
-        if (typeof getSdkModeActive === 'function' && getSdkModeActive()) {
+  async function restartPane(paneId, model = null) {
+    const id = String(paneId);
+    if (typeof getSdkModeActive === 'function' && getSdkModeActive()) {
           log.info('Terminal', `Requesting SDK restart for pane ${id}`);
           setPaneStatus(id, 'Restarting (SDK)...');
           try {
@@ -220,11 +221,15 @@ function createRecoveryController(options = {}) {
           } catch (err) {
             log.error('Terminal', `SDK restart failed for pane ${id}:`, err);
             setPaneStatus(id, 'Restart failed');
-            return false;
-          }
-        }
-  
-        setPaneStatus(id, 'Restarting...');    try {
+        return false;
+      }
+    }
+
+    setPaneStatus(id, 'Restarting...');
+    if (typeof markIgnoreNextExit === 'function') {
+      markIgnoreNextExit(id);
+    }
+    try {
       await window.hivemind.pty.kill(id);
     } catch (err) {
       log.error('Terminal', `Failed to kill pane ${id} for restart:`, err);
