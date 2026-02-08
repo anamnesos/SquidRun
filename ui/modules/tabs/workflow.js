@@ -5,6 +5,8 @@
  */
 
 
+let workflowTabInitialized = false;
+
 // Workflow builder state
 const workflowState = {
   nodes: [],
@@ -653,9 +655,23 @@ function getGraphState() {
 // WORKFLOW BUILDER TAB (Task #19)
 // ============================================================================
 
+function handleWorkflowResize() {
+  updateWorkflowEdges();
+}
+
+function cleanupWorkflowTab() {
+  document.removeEventListener('mousemove', handleWorkflowPanMove);
+  document.removeEventListener('mouseup', handleWorkflowPanEnd);
+  document.removeEventListener('keydown', handleWorkflowKeyboard);
+  window.removeEventListener('resize', handleWorkflowResize);
+  workflowTabInitialized = false;
+}
+
 function setupWorkflowTab() {
+  if (workflowTabInitialized) return;
   const tab = document.getElementById('tab-workflow');
   if (!tab) return;
+  workflowTabInitialized = true;
 
   workflowState.canvas = tab.querySelector('#workflowCanvas');
   workflowState.nodesEl = tab.querySelector('#workflowNodes');
@@ -749,9 +765,7 @@ function setupWorkflowTab() {
   // Keyboard shortcuts
   document.addEventListener('keydown', handleWorkflowKeyboard);
 
-  window.addEventListener('resize', () => {
-    updateWorkflowEdges();
-  });
+  window.addEventListener('resize', handleWorkflowResize);
 
   // Load node types from IPC
   loadWorkflowNodeTypes();
@@ -2040,6 +2054,7 @@ function getWorkflowNodeElement(nodeId) {
 
 module.exports = {
   setupWorkflowTab,
+  cleanupWorkflowTab,
   setupGraphTab,
   loadWorkflowNodeTypes,
   loadWorkflowTemplates,
