@@ -26,6 +26,7 @@ const websocketServer = require('../websocket-server');
 const organicUI = require('../ipc/organic-ui-handlers');
 const pipeline = require('../pipeline');
 const warRoom = require('../triggers/war-room');
+const sharedState = require('../shared-state');
 
 class HivemindApp {
   constructor(appContext, managers) {
@@ -284,6 +285,24 @@ class HivemindApp {
     });
     ipcMain.handle('pipeline-mark-committed', (event, itemId) => {
       return pipeline.markCommitted(itemId);
+    });
+
+    // Shared State (P3)
+    sharedState.init({
+      watcher,
+      mainWindow: window,
+    });
+
+    // Shared State IPC handlers
+    ipcMain.handle('shared-state-get', () => {
+      return sharedState.getState();
+    });
+    ipcMain.handle('shared-state-changelog', (event, { paneId, since } = {}) => {
+      if (paneId) return sharedState.getChangelogForPane(paneId);
+      return sharedState.getChangesSince(since || 0);
+    });
+    ipcMain.handle('shared-state-mark-seen', (event, paneId) => {
+      sharedState.markPaneSeen(paneId);
     });
   }
 
