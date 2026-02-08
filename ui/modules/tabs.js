@@ -32,6 +32,7 @@ const templates = require('./tabs/templates');
 let panelOpen = false;
 let devtoolsOpen = false;
 let onConnectionStatusUpdate = null;
+let storedResizeFn = null;
 
 const PRIMARY_TABS = new Set(['activity', 'screenshots', 'oracle', 'git']);
 const DEVTOOLS_STORAGE_KEY = 'hivemind-devtools-open';
@@ -75,6 +76,16 @@ function switchTab(tabId) {
   document.querySelectorAll('.tab-pane').forEach(pane => {
     pane.classList.toggle('active', pane.id === `tab-${tabId}`);
   });
+
+  // Screenshots tab gets a wider panel
+  const panel = document.getElementById('rightPanel');
+  if (panel) {
+    const wasWide = panel.classList.contains('panel-wide');
+    panel.classList.toggle('panel-wide', tabId === 'screenshots');
+    if (wasWide !== (tabId === 'screenshots') && storedResizeFn) {
+      setTimeout(storedResizeFn, 350);
+    }
+  }
 }
 
 function toggleDevtools() {
@@ -105,6 +116,8 @@ function isDevtoolsOpen() {
 }
 
 function setupRightPanel(handleResizeFn) {
+  storedResizeFn = handleResizeFn;
+
   const panelBtn = document.getElementById('panelBtn');
   if (panelBtn) {
     panelBtn.addEventListener('click', () => togglePanel(handleResizeFn));
