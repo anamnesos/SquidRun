@@ -369,19 +369,19 @@ function createInjectionController(options = {}) {
     // Normal case: pane is fully idle (1s of silence) - Claude panes only
     const canSendNormal = !bypassesLock && isIdle(paneId) && !userIsTyping();
 
-    // Force-inject case: waited 10s+ AND pane has at least 500ms of silence
+    // Force-inject case: waited 5s+ AND pane has at least 500ms of silence
     // This prevents injecting during active output which causes Enter to be ignored
     const canForceInject = !bypassesLock && waitedTooLong && isIdleForForceInject(paneId) && !userIsTyping();
 
-    // Emergency fallback: 60s absolute max regardless of idle state
+    // Emergency fallback: 10s absolute max regardless of idle state
     // This prevents messages from being stuck forever if pane never becomes idle
     const mustForceInject = !bypassesLock && hitAbsoluteMax && !userIsTyping();
 
-    // Log warning at 30s mark (only once per message via flag check) - Claude panes only
+    // Log warning at 8s mark (only once per message via flag check) - Claude panes only
     if (!bypassesLock && waitedExtremelyLong && !item._warnedExtreme) {
       item._warnedExtreme = true;
       const timeSinceOutput = Date.now() - (lastOutputTime[paneId] || 0);
-      log.warn(`Terminal ${paneId}`, `Message queued 30s+, pane last output ${timeSinceOutput}ms ago, still waiting for idle`);
+      log.warn(`Terminal ${paneId}`, `Message queued 8s+, pane last output ${timeSinceOutput}ms ago, still waiting for idle`);
     }
 
     if (canSendBypass || canSendNormal || canForceInject || mustForceInject) {
@@ -390,7 +390,7 @@ function createInjectionController(options = {}) {
       if (canSendBypass) {
         log.debug(`Terminal ${paneId}`, `${isCodex ? 'Codex' : 'Gemini'} pane: bypassing idle check`);
       } else if (mustForceInject && !canForceInject && !canSendNormal) {
-        log.warn(`Terminal ${paneId}`, `EMERGENCY: Force-injecting after ${waitTime}ms (60s max reached, pane may still be active)`);
+        log.warn(`Terminal ${paneId}`, `EMERGENCY: Force-injecting after ${waitTime}ms (${ABSOLUTE_MAX_WAIT_MS}ms max reached, pane may still be active)`);
       } else if (canForceInject && !canSendNormal) {
         log.info(`Terminal ${paneId}`, `Force-injecting after ${waitTime}ms wait (pane now idle for 500ms)`);
       }
@@ -470,12 +470,13 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // GEMINI PATH: PTY text-only, no Enter (Session 95 - Item 14 fix)
-    // Sending Enter to Gemini PTY causes shell command execution.
-    // Text is written to input buffer; Enter is intentionally skipped.
+    // GEMINI PATH: PTY write text + PTY Enter (Session 95 fix revised)
+    // Gemini CLI accepts PTY \r for submission. Text is sanitized (trailing
+    // newlines stripped) before write, then \r is sent separately so it acts
+    // as a clean submit rather than embedding newlines in the message body.
     const isGemini = isGeminiPane(id);
     if (isGemini) {
-      log.info(`doSendToPane ${id}`, 'Gemini pane: PTY text-only (no Enter)');
+      log.info(`doSendToPane ${id}`, 'Gemini pane: PTY text + Enter');
 
       // Clear any stuck input first (Ctrl+U)
       try {
@@ -485,20 +486,29 @@ function createInjectionController(options = {}) {
         log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
       }
 
-      // Write text to PTY (without Enter)
+      // Strip trailing \r and \n from message body before writing
+      const sanitizedText = text.replace(/[\r\n]+$/, '');
+
+      // Write sanitized text to PTY
       try {
-        await window.hivemind.pty.write(id, text);
-        log.info(`doSendToPane ${id}`, `Gemini pane: PTY text write complete (${text.length} chars)`);
+        await window.hivemind.pty.write(id, sanitizedText);
+        log.info(`doSendToPane ${id}`, `Gemini pane: PTY text write complete (${sanitizedText.length} chars)`);
       } catch (err) {
         log.error(`doSendToPane ${id}`, 'Gemini PTY write failed:', err);
         finishWithClear({ success: false, reason: 'pty_write_failed' });
         return;
       }
 
+      // Send Enter via PTY \r to submit the message to Gemini CLI
       if (hasTrailingEnter) {
-        // Gemini panes should not auto-submit via PTY Enter — it can execute shell commands.
-        // Leave text in input and let the agent decide when to submit.
-        log.info(`doSendToPane ${id}`, 'Gemini pane: skipping PTY Enter (leaving input pending)');
+        try {
+          await window.hivemind.pty.write(id, '\r');
+          log.info(`doSendToPane ${id}`, 'Gemini pane: PTY Enter sent');
+        } catch (err) {
+          log.error(`doSendToPane ${id}`, 'Gemini PTY Enter failed:', err);
+          finishWithClear({ success: false, reason: 'pty_enter_failed' });
+          return;
+        }
       }
 
       updatePaneStatus(id, 'Working');
@@ -576,7 +586,7 @@ function createInjectionController(options = {}) {
 
       setTimeout(async () => {
         // Replace short safety timer with one covering the full Enter+verify cycle
-        // Pre-flight idle (5s) + focus (100ms) + sendEnter + verify (3s+) = ~10s worst case
+        // Focus (100ms + 200ms retry) + sendEnter + verify (3s+) = ~5s worst case
         clearTimeout(safetyTimerId);
         safetyTimerId = setTimeout(() => {
           log.warn(`doSendToPane ${id}`, 'Enter+verify safety timeout (10s) - releasing lock');
@@ -595,37 +605,24 @@ function createInjectionController(options = {}) {
           return;
         }
 
-        // PRE-FLIGHT IDLE CHECK: Don't send Enter while Claude is outputting
-        // If we send Enter mid-output, it gets ignored and verification sees false positive
-        // (lastOutputTime comparison doesn't work if Claude was already outputting)
-        if (!isIdle(id)) {
-          log.info(`doSendToPane ${id}`, 'Claude pane: waiting for idle before Enter');
-          const idleWaitStart = Date.now();
-          const maxIdleWait = 5000; // 5s max wait for idle
-          while (!isIdle(id) && (Date.now() - idleWaitStart) < maxIdleWait) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
-          if (!isIdle(id)) {
-            log.warn(`doSendToPane ${id}`, 'Claude pane: still not idle after 5s, aborting Enter');
-            restoreSavedFocus();
-            markPotentiallyStuck(id);
-            finishWithClear({ success: false, reason: 'busy_timeout' });
-            return;
-          } else {
-            log.info(`doSendToPane ${id}`, `Claude pane: now idle after ${Date.now() - idleWaitStart}ms`);
-          }
-        }
+        // NOTE: No pre-flight idle check here. processIdleQueue already handles
+        // idle timing with tiered thresholds (1s normal, 500ms force after 10s,
+        // emergency after 60s). doSendToPane trusts that the queue gated entry.
 
         // Ensure focus for sendTrustedEnter (Terminal.input disabled for Claude panes)
-        const focusOk = await focusWithRetry(textarea);
+        let focusOk = await focusWithRetry(textarea);
 
-        // STRICT: If focus failed, abort BEFORE sending Enter (would go to wrong element)
+        // If focus failed, retry once after a short delay (focus drift is recoverable)
         if (!focusOk) {
-          log.warn(`doSendToPane ${id}`, 'Claude pane: focus failed - aborting Enter');
-          restoreSavedFocus();
-          markPotentiallyStuck(id);
-          finishWithClear({ success: false, reason: 'focus_failed' });
-          return;
+          log.warn(`doSendToPane ${id}`, 'Claude pane: focus failed, retrying after 200ms');
+          await new Promise(resolve => setTimeout(resolve, 200));
+          // Re-query textarea in case DOM changed
+          const retryPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
+          textarea = retryPane ? retryPane.querySelector('.xterm-helper-textarea') : textarea;
+          focusOk = await focusWithRetry(textarea);
+          if (!focusOk) {
+            log.warn(`doSendToPane ${id}`, 'Claude pane: focus retry failed, proceeding with Enter anyway');
+          }
         }
 
         // Send Enter via sendTrustedEnter (Terminal.input disabled for Claude panes)

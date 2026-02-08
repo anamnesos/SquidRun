@@ -28,9 +28,9 @@ describe('Terminal Injection', () => {
     MAX_ENTER_RETRIES: 3,
     ENTER_RETRY_INTERVAL_MS: 100,
     PROMPT_READY_TIMEOUT_MS: 5000,
-    MAX_QUEUE_TIME_MS: 10000,
-    EXTREME_WAIT_MS: 30000,
-    ABSOLUTE_MAX_WAIT_MS: 60000,
+    MAX_QUEUE_TIME_MS: 5000,
+    EXTREME_WAIT_MS: 8000,
+    ABSOLUTE_MAX_WAIT_MS: 10000,
     QUEUE_RETRY_MS: 100,
     INJECTION_LOCK_TIMEOUT_MS: 1000,
     BYPASS_CLEAR_DELAY_MS: 250,
@@ -513,8 +513,8 @@ describe('Terminal Injection', () => {
       expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
     });
 
-    test('logs warning at 30s+ wait time', () => {
-      const oldTimestamp = Date.now() - 35000; // 35 seconds ago
+    test('logs warning at 8s+ wait time', () => {
+      const oldTimestamp = Date.now() - 9000; // 9 seconds ago (exceeds EXTREME_WAIT_MS=8000)
       messageQueue['1'] = [{
         message: 'test\r',
         timestamp: oldTimestamp,
@@ -525,12 +525,12 @@ describe('Terminal Injection', () => {
 
       expect(mockLog.warn).toHaveBeenCalledWith(
         expect.stringContaining('Terminal 1'),
-        expect.stringContaining('30s+')
+        expect.stringContaining('8s+')
       );
     });
 
     test('force injects after MAX_QUEUE_TIME_MS', () => {
-      const oldTimestamp = Date.now() - 15000; // 15 seconds ago
+      const oldTimestamp = Date.now() - 6000; // 6 seconds ago (exceeds MAX_QUEUE_TIME_MS=5000)
       messageQueue['1'] = [{
         message: 'test\r',
         timestamp: oldTimestamp,
@@ -548,7 +548,7 @@ describe('Terminal Injection', () => {
     });
 
     test('emergency force inject after ABSOLUTE_MAX_WAIT_MS', () => {
-      const veryOldTimestamp = Date.now() - 65000; // 65 seconds ago
+      const veryOldTimestamp = Date.now() - 11000; // 11 seconds ago (exceeds ABSOLUTE_MAX_WAIT_MS=10000)
       messageQueue['1'] = [{
         message: 'test\r',
         timestamp: veryOldTimestamp,
@@ -663,18 +663,18 @@ describe('Terminal Injection', () => {
       );
     });
 
-    // Session 95: Gemini PTY path should NOT auto-submit via Enter
-    test('handles Gemini pane without sending Enter', async () => {
+    // Gemini PTY path: sanitize text, then send Enter via PTY \r
+    test('handles Gemini pane with PTY Enter', async () => {
       mockOptions.isGeminiPane.mockReturnValue(true);
       const onComplete = jest.fn();
 
       const promise = controller.doSendToPane('1', 'test command\r', onComplete);
       await promise;
 
-      // Gemini uses PTY: text only, no Enter
+      // Gemini uses PTY: clear, sanitized text, then Enter via \r
       expect(mockPty.write).toHaveBeenCalledWith('1', '\x15'); // Clear line
-      expect(mockPty.write).toHaveBeenCalledWith('1', 'test command'); // Text only
-      expect(mockPty.write).not.toHaveBeenCalledWith('1', '\r'); // No Enter
+      expect(mockPty.write).toHaveBeenCalledWith('1', 'test command'); // Sanitized text (trailing \r stripped)
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r'); // Enter sent via PTY
       expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled(); // No DOM events for Gemini
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
       expect(onComplete).toHaveBeenCalledWith({ success: true });
@@ -767,21 +767,21 @@ describe('Terminal Injection', () => {
     });
 
     test('times out and returns unverified success', async () => {
-      // Use busy delay to trigger timeout before Enter completes
-      lastOutputTime['1'] = Date.now(); // Very recent output = busy delay
+      // Simulate Enter+verify taking too long by making sendTrustedEnter hang
+      mockPty.sendTrustedEnter.mockReturnValue(new Promise(() => {})); // Never resolves
       const onComplete = jest.fn();
 
       const promise = controller.doSendToPane('1', 'test\r', onComplete);
 
-      // Advance past safety timeout (before Enter delay completes)
-      // Safety timeout is 1000ms, busy delay is 300ms
-      // Safety timer fires during busy delay wait
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.INJECTION_LOCK_TIMEOUT_MS + 50);
+      // Advance past Enter delay to enter the setTimeout callback
+      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_DELAY_IDLE_MS + 50);
+
+      // Advance past the 10s Enter+verify safety timeout
+      await jest.advanceTimersByTimeAsync(10100);
 
       await promise;
 
-      // Note: The test may get different results based on timing
-      // The important thing is onComplete was called
+      // Safety timer should have fired with unverified success
       expect(onComplete).toHaveBeenCalled();
     });
 
@@ -815,39 +815,25 @@ describe('Terminal Injection', () => {
       });
     });
 
-    test('waits for idle before sending Enter', async () => {
-      mockOptions.isIdle.mockReturnValue(false);
-
-      await controller.doSendToPane('1', 'test\r', jest.fn());
-
-      // Advance past delay
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_DELAY_IDLE_MS);
-
-      // Should start waiting for idle
-      expect(mockLog.info).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.stringContaining('waiting for idle')
-      );
-    });
-
-    test('aborts after idle wait timeout with busy_timeout', async () => {
+    test('sends Enter without pre-flight idle check (trusts processIdleQueue)', async () => {
       mockOptions.isIdle.mockReturnValue(false);
       const onComplete = jest.fn();
 
       await controller.doSendToPane('1', 'test\r', onComplete);
 
-      // Advance past delay and idle wait
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_DELAY_IDLE_MS + 6000);
+      // Advance past Enter delay + focus retry delay (200ms) + buffer
+      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_DELAY_IDLE_MS + 500);
 
-      expect(mockLog.warn).toHaveBeenCalledWith(
+      // Should NOT log "waiting for idle" — no pre-flight idle check in doSendToPane
+      expect(mockLog.info).not.toHaveBeenCalledWith(
         expect.any(String),
-        expect.stringContaining('still not idle')
+        expect.stringContaining('waiting for idle')
       );
-      expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'busy_timeout' });
-      expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
+      // Enter should have been sent regardless of idle state
+      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
     });
 
-    test('aborts Enter if focus fails', async () => {
+    test('proceeds with Enter after focus retry fails', async () => {
       document.activeElement = null; // Focus will fail
       const onComplete = jest.fn();
 
@@ -860,14 +846,16 @@ describe('Terminal Injection', () => {
 
       await testController.doSendToPane('1', 'test\r', onComplete);
 
-      // Advance timers for focus retries
+      // Advance timers for Enter delay + focus retries + 200ms focus retry delay
       await jest.advanceTimersByTimeAsync(2000);
 
-      expect(onComplete).toHaveBeenCalledWith({
-        success: false,
-        reason: 'focus_failed',
-      });
-      expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
+      // Should log focus retry warning but proceed anyway
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('focus retry failed, proceeding with Enter anyway')
+      );
+      // Enter should still be sent (not abandoned)
+      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
     });
 
     test('handles Enter send failure', async () => {
