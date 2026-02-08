@@ -318,6 +318,8 @@ Object.assign(window.hivemind, {
     clipboardPasteText: (text) => ipcRenderer.invoke('clipboard-paste-text', text),
     resize: (paneId, cols, rows) => ipcRenderer.invoke('pty-resize', paneId, cols, rows),
     kill: (paneId) => ipcRenderer.invoke('pty-kill', paneId),
+    pause: (paneId) => ipcRenderer.invoke('pty-pause', paneId),
+    resume: (paneId) => ipcRenderer.invoke('pty-resume', paneId),
     onData: (paneId, callback) => {
       ipcRenderer.on(`pty-data-${paneId}`, (event, data) => callback(data));
     },
