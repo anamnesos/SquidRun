@@ -394,7 +394,7 @@ function handleTriggerFile(filePath, filename) {
 function broadcastToAllAgents(message, fromRole = 'user') {
   let targets = [...PANE_IDS];
   const parsed = sequencing.parseMessageSequence(message);
-  if ((!fromRole || fromRole === 'user' || fromRole === 'unknown') && parsed.sender) fromRole = parsed.sender;
+  if ((!fromRole || fromRole === 'cli' || fromRole === 'user' || fromRole === 'unknown') && parsed.sender) fromRole = parsed.sender;
 
   warRoom.recordWarRoomMessage({ fromRole, targets, message, type: 'broadcast', source: 'broadcast' });
 
@@ -414,7 +414,7 @@ function broadcastToAllAgents(message, fromRole = 'user') {
 function sendDirectMessage(targetPanes, message, fromRole = null) {
   if (!message) return { success: false, error: 'No message' };
   const parsed = sequencing.parseMessageSequence(message);
-  if (!fromRole && parsed.sender) fromRole = parsed.sender;
+  if ((!fromRole || fromRole === 'cli' || fromRole === 'user' || fromRole === 'unknown') && parsed.sender) fromRole = parsed.sender;
   let targets = Array.isArray(targetPanes) ? [...targetPanes] : [];
 
   warRoom.recordWarRoomMessage({ fromRole, targets, message, type: 'direct', source: 'direct' });
