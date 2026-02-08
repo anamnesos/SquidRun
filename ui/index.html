@@ -10,7 +10,6 @@
   <link rel="stylesheet" href="styles/panes.css">
   <link rel="stylesheet" href="styles/state-bar.css">
   <link rel="stylesheet" href="styles/settings-panel.css">
-  <link rel="stylesheet" href="styles/friction-panel.css">
   <link rel="stylesheet" href="styles/tabs.css">
   <link rel="stylesheet" href="styles/sdk-renderer.css">
   <link rel="stylesheet" href="styles/status-strip.css">
@@ -258,19 +257,6 @@
         <span class="api-key-status" id="apiKeyStatus"></span>
       </div>
       <div class="api-key-info">Keys stored in .env (gitignored). Restart required after changes.</div>
-    </div>
-  </div>
-
-  <div class="friction-panel" id="frictionPanel">
-    <div class="friction-header">
-      <span class="friction-title" title="Issues and blockers reported by agents">Friction Logs</span>
-      <div class="friction-actions">
-        <button class="btn btn-friction" id="refreshFrictionBtn" title="Reload friction logs from workspace">Refresh</button>
-        <button class="btn btn-friction" id="clearFrictionBtn" title="Delete all resolved friction logs">Clear Resolved</button>
-      </div>
-    </div>
-    <div class="friction-list" id="frictionList">
-      <div class="friction-empty">No friction logs found</div>
     </div>
   </div>
 

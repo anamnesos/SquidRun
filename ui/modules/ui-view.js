@@ -395,8 +395,6 @@ function updateAgentTasks(claims = {}) {
       const task = claims[paneId];
       if (task) {
         taskEl.textContent = task;
-        taskEl.innerText = task;
-        taskEl.innerText = task;
         taskEl.classList.add('has-task');
         taskEl.title = `Current task: ${task}`;
       } else {
