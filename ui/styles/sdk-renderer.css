@@ -388,31 +388,6 @@
   line-height: 1.6;
 }
 
-/* Agent role colors - subtle accent bars */
-/* Pane 1: Architect (red) */
-.sdk-agent-lead {
-  border-left: 3px solid var(--sdk-accent-red);
-}
-.sdk-agent-lead .sdk-agent-label {
-  color: var(--sdk-accent-red);
-}
-
-/* Pane 2: DevOps (blue) */
-.sdk-agent-infra {
-  border-left: 3px solid var(--sdk-accent-blue);
-}
-.sdk-agent-infra .sdk-agent-label {
-  color: var(--sdk-accent-blue);
-}
-
-/* Pane 5: Analyst (amber) */
-.sdk-agent-analyst {
-  border-left: 3px solid var(--sdk-accent-amber);
-}
-.sdk-agent-analyst .sdk-agent-label {
-  color: var(--sdk-accent-amber);
-}
-
 /* ===== WARNING ===== */
 .sdk-warning {
   background: rgba(245, 158, 11, 0.1);
@@ -623,25 +598,6 @@
     opacity: 1;
     transform: translateX(0);
   }
-}
-
-/* Legacy shimmer bar (deprecated, keeping for fallback) */
-.sdk-streaming-bar {
-  height: 4px;
-  border-radius: 2px;
-  background: linear-gradient(90deg, transparent, var(--sdk-accent-green), transparent);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s ease-in-out infinite;
-}
-
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-
-@keyframes sdkPulse {
-  0%, 100% { opacity: 0.3; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1); }
 }
 
 /* ===== STR-6: TYPEWRITER STREAMING TEXT ===== */
