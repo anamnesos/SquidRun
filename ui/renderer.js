@@ -1971,7 +1971,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Setup daemon handlers
-  daemonHandlers.setupStateListener();
   daemonHandlers.setupClaudeStateListener(daemonHandlers.handleSessionTimerState);
   daemonHandlers.setupCostAlertListener();
   daemonHandlers.setupRefreshButtons(terminal.sendToPane);

@@ -1,4 +1,4 @@
-/* state-bar.css — State display, progress bar, agent activity badges */
+/* state-bar.css — Project display bar, agent activity badges */
 
 .state-bar {
   background: var(--color-bg-medium);
@@ -10,59 +10,8 @@
   font-size: var(--text-base);
 }
 
-.state-indicator {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
 .state-label {
   color: var(--color-text-muted);
-}
-
-.state-value {
-  background: var(--color-primary);
-  color: var(--color-text);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-sm);
-  font-weight: 600;
-  text-transform: uppercase;
-  font-size: var(--text-sm);
-  transition: background var(--transition-normal), color var(--transition-normal),
-    box-shadow var(--transition-normal), transform var(--transition-normal);
-}
-
-.state-value.idle { background: var(--color-text-muted); }
-.state-value.planning { background: var(--color-warning); color: var(--color-bg-dark); }
-.state-value.plan_review { background: #bb86fc; }
-.state-value.executing { background: var(--color-secondary); color: var(--color-bg-dark); animation: statePulse 2.4s ease-in-out infinite; }
-.state-value.checkpoint { background: var(--color-info); color: var(--color-bg-dark); animation: statePulse 2.8s ease-in-out infinite; }
-.state-value.complete { background: var(--color-secondary); color: var(--color-bg-dark); }
-.state-value.error { background: var(--color-error); }
-
-.progress-indicator {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.progress-bar {
-  width: 100px;
-  height: 6px;
-  background: var(--color-bg-light);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.progress-fill {
-  height: 100%;
-  background: var(--color-secondary);
-  transition: width var(--transition-slow), background var(--transition-normal);
-}
-
-.progress-text {
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
 }
 
 /* Agent activity badges */
@@ -86,19 +35,12 @@
   background: var(--color-text-muted);
 }
 
-@keyframes statePulse {
-  0%, 100% { box-shadow: 0 0 0 transparent; transform: translateY(0); }
-  50% { box-shadow: var(--glow-secondary); transform: translateY(-1px); }
-}
-
 @keyframes agentPulse {
   0%, 100% { transform: scale(1); opacity: 0.9; }
   50% { transform: scale(1.15); opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .state-value.executing,
-  .state-value.checkpoint,
   .agent-badge.active {
     animation: none;
   }

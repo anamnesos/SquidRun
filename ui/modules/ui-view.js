@@ -8,25 +8,6 @@ const { PANE_ROLES, PANE_IDS } = require('../config');
 const log = require('./logger');
 const notifications = require('./notifications');
 
-// State display names
-const STATE_DISPLAY_NAMES = {
-  'idle': 'IDLE',
-  'project_selected': 'PROJECT SELECTED',
-  'planning': 'PLANNING',
-  'plan_review': 'PLAN REVIEW',
-  'plan_revision': 'PLAN REVISION',
-  'executing': 'EXECUTING',
-  'checkpoint': 'CHECKPOINT',
-  'checkpoint_review': 'CHECKPOINT REVIEW',
-  'checkpoint_fix': 'CHECKPOINT FIX',
-  'friction_logged': 'FRICTION LOGGED',
-  'friction_sync': 'FRICTION SYNC',
-  'friction_resolution': 'FRICTION RESOLUTION',
-  'complete': 'COMPLETE',
-  'error': 'ERROR',
-  'paused': 'PAUSED',
-};
-
 // Sync indicator files
 const SYNC_FILES = {
   'shared_context.md': { label: 'CTX' },
@@ -459,41 +440,6 @@ function showAutoTriggerFeedback(data) {
 }
 
 /**
- * Update overall state display
- * @param {object} state - Application state
- */
-function updateStateDisplay(state) {
-  const stateDisplay = document.getElementById('stateDisplay');
-  if (stateDisplay) {
-    const stateName = state.state || 'idle';
-    stateDisplay.textContent = STATE_DISPLAY_NAMES[stateName] || stateName.toUpperCase();
-    stateDisplay.className = 'state-value ' + stateName.replace(/_/g, '_');
-  }
-
-  const progressFill = document.getElementById('progressFill');
-  const progressText = document.getElementById('progressText');
-  if (progressFill && progressText) {
-    const current = state.current_checkpoint || 0;
-    const total = state.total_checkpoints || 0;
-    const percent = total > 0 ? (current / total) * 100 : 0;
-    progressFill.style.width = `${percent}%`;
-    progressText.textContent = `${current} / ${total}`;
-  }
-
-  const activeAgents = state.active_agents || [];
-  for (const paneId of PANE_IDS) {
-    const badge = document.getElementById(`badge-${paneId}`);
-    if (badge) {
-      const isActive = activeAgents.includes(paneId);
-      badge.classList.toggle('active', isActive);
-      badge.classList.toggle('idle', !isActive);
-    }
-  }
-
-  updateAgentTasks(state.agent_claims || {});
-}
-
-/**
  * Update main project path display
  * @param {string} projectPath - Path to project
  */
@@ -551,7 +497,6 @@ function init() {
 module.exports = {
   PANE_IDS,
   PANE_ROLES,
-  STATE_DISPLAY_NAMES,
   SYNC_FILES,
   flashPaneHeader,
   showDeliveryIndicator,
@@ -565,7 +510,6 @@ module.exports = {
   updatePaneProject,
   updateAgentTasks,
   showAutoTriggerFeedback,
-  updateStateDisplay,
   updateProjectDisplay,
   showCostAlert,
   updateCostIndicator,
