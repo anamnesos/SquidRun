@@ -1160,6 +1160,10 @@
   width: 350px;
 }
 
+.right-panel.open.panel-wide {
+  width: 62%;
+}
+
 .panel-tabs {
   display: flex;
   background: #0d0d18;
