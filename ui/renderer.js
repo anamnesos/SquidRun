@@ -307,8 +307,8 @@ function markTerminalsReady(isSDKMode = false) {
   checkInitComplete();
 }
 
-// Create hivemind API (replaces preload bridge)
-window.hivemind = {
+// Create hivemind API (merges with preload bridge to preserve workflow/graph/memory APIs)
+Object.assign(window.hivemind, {
   pty: {
     create: (paneId, workingDir) => ipcRenderer.invoke('pty-create', paneId, workingDir),
     write: (paneId, data) => ipcRenderer.invoke('pty-write', paneId, data),
@@ -434,7 +434,7 @@ window.hivemind = {
     get: () => settings.getSettings(),
     isDebugMode: () => settings.getSettings()?.debugMode || false,
   },
-};
+});
 
 // Status update functions (shared across modules)
 function updatePaneStatus(paneId, status) {
