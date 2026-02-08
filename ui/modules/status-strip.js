@@ -213,11 +213,11 @@ function initStatusStrip() {
   // Initial fetch and update
   fetchTaskPool().then(() => updateStatusStrip());
 
-  // Poll every 5 seconds as backup
+  // Poll every 30 seconds as backup (primary updates come via task-list-updated IPC event)
   pollInterval = setInterval(async () => {
     await fetchTaskPool();
     updateStatusStrip();
-  }, 5000);
+  }, 30000);
 
   // Listen for immediate task updates from main process
   ipcRenderer.on('task-list-updated', (event, data) => {

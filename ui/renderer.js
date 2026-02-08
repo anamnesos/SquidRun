@@ -1525,7 +1525,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const timerId = setInterval(() => {
       index = (index + 1) % SPINNER_GLYPHS.length;
       spinnerEl.textContent = SPINNER_GLYPHS[index];
-    }, 150);
+    }, 500);
     spinnerTimers.set(paneId, timerId);
   }
 
