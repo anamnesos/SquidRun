@@ -545,6 +545,26 @@ function setInputLocked(paneId, locked) {
 }
 
 let injectionController = null;
+const ignoreExitUntil = new Map();
+
+function markIgnoreNextExit(paneId, timeoutMs = 15000) {
+  const id = String(paneId);
+  ignoreExitUntil.set(id, Date.now() + timeoutMs);
+  log.info('Terminal', `Exit ignore window armed for pane ${id} (${timeoutMs}ms)`);
+}
+
+function shouldIgnoreExit(paneId) {
+  const id = String(paneId);
+  const until = ignoreExitUntil.get(id);
+  if (!until) return false;
+  if (Date.now() > until) {
+    ignoreExitUntil.delete(id);
+    return false;
+  }
+  ignoreExitUntil.delete(id);
+  return true;
+}
+
 const recoveryController = createRecoveryController({
   PANE_IDS,
   terminals,
@@ -560,6 +580,7 @@ const recoveryController = createRecoveryController({
   spawnAgent,
   resetCodexIdentity,
   resetTerminalWriteQueue,
+  markIgnoreNextExit,
 });
 
 injectionController = createInjectionController({
@@ -883,6 +904,10 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
     });
 
     window.hivemind.pty.onExit(paneId, (code) => {
+      if (shouldIgnoreExit(paneId)) {
+        log.info('Terminal', `Ignoring exit for pane ${paneId} (restart in progress)`);
+        return;
+      }
       updatePaneStatus(paneId, `Exited (${code})`);
       queueTerminalWrite(paneId, terminal, `\r\n[Process exited with code ${code}]\r\n`);
       clearStartupInjection(paneId);
@@ -1032,12 +1057,16 @@ async function reattachTerminal(paneId, scrollback) {
     }
   });
 
-  window.hivemind.pty.onExit(paneId, (code) => {
-    updatePaneStatus(paneId, `Exited (${code})`);
-    queueTerminalWrite(paneId, terminal, `\r\n[Process exited with code ${code}]\r\n`);
-    clearStartupInjection(paneId);
-    updateIntentFile(paneId, 'Offline');
-  });
+    window.hivemind.pty.onExit(paneId, (code) => {
+      if (shouldIgnoreExit(paneId)) {
+        log.info('Terminal', `Ignoring exit for pane ${paneId} (restart in progress)`);
+        return;
+      }
+      updatePaneStatus(paneId, `Exited (${code})`);
+      queueTerminalWrite(paneId, terminal, `\r\n[Process exited with code ${code}]\r\n`);
+      clearStartupInjection(paneId);
+      updateIntentFile(paneId, 'Offline');
+    });
 
   updatePaneStatus(paneId, 'Reconnected');
 
