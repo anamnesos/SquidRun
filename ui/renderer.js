@@ -326,6 +326,7 @@ window.hivemind = {
   },
   claude: {
     spawn: (paneId, workingDir) => ipcRenderer.invoke('spawn-claude', paneId, workingDir),
+    injectContext: (paneId, model, delay) => ipcRenderer.invoke('inject-context', paneId, model, delay),
   },
   context: {
     read: () => ipcRenderer.invoke('read-shared-context'),
