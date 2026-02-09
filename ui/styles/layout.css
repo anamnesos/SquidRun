@@ -228,6 +228,7 @@
 .main-pane-container {
   flex: 3;
   display: flex;
+  flex-direction: column;
   min-width: 400px;
   min-height: 0;
   overflow: hidden;
@@ -797,11 +798,12 @@
   display: none;
 }
 
-/* Command bar - full width at bottom */
+/* Command bar - under pane 1 only */
 .command-bar {
   background: var(--color-bg-medium);
   padding: var(--space-2) var(--space-3);
   display: flex;
+  align-items: flex-end;
   gap: var(--space-2);
   border-top: 1px solid var(--color-bg-light);
   flex-shrink: 0;
@@ -817,6 +819,13 @@
   font-family: var(--font-mono);
   font-size: var(--text-lg);
   min-height: 44px;
+  max-height: 120px;
+  resize: none;
+  overflow-y: auto;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  line-height: 1.4;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 

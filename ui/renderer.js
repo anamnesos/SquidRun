@@ -821,6 +821,7 @@ function setupEventListeners() {
       const combined = `${voiceBase}${finalTranscript}${interimTranscript}`.trim();
       if (broadcastInput) {
         broadcastInput.value = combined;
+        broadcastInput.dispatchEvent(new Event('input'));
       }
 
       if (finalTranscript && voiceAutoSend && combined) {
@@ -828,6 +829,7 @@ function setupEventListeners() {
           voiceSentFinal = true;
           if (broadcastInput) {
             broadcastInput.value = '';
+            broadcastInput.style.height = '';
           }
         }
       }
@@ -1085,6 +1087,13 @@ function setupEventListeners() {
   wireOrganicInput();  // Wire up if organic UI already mounted
 
   if (broadcastInput) {
+    // Auto-grow textarea as user types
+    const autoGrow = () => {
+      broadcastInput.style.height = 'auto';
+      broadcastInput.style.height = Math.min(broadcastInput.scrollHeight, 120) + 'px';
+    };
+    broadcastInput.addEventListener('input', autoGrow);
+
     broadcastInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         // Only allow trusted (real user) Enter presses
@@ -1098,6 +1107,7 @@ function setupEventListeners() {
         if (input.value && input.value.trim()) {
           if (sendBroadcast(input.value.trim())) {
             input.value = '';
+            input.style.height = '';
           }
         }
       }
@@ -1117,6 +1127,7 @@ function setupEventListeners() {
       if (input && input.value && input.value.trim()) {
         if (sendBroadcast(input.value.trim())) {
           input.value = '';
+          input.style.height = '';
         }
       }
     });
