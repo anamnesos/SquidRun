@@ -1217,11 +1217,12 @@ function blurAllTerminals() {
 
 
 // Send message to Architect only (user interacts with Architect, Architect coordinates execution)
-// User messages get PRIORITY - they jump to front of queue ahead of agent messages
+// User messages get PRIORITY + IMMEDIATE - bypass queue ordering AND idle gating
 function broadcast(message) {
   // Send directly to Architect (pane 1), no broadcast prefix needed
-  // priority: true ensures user message bypasses queued agent messages
-  sendToPane('1', message, { priority: true });
+  // priority: true ensures user message jumps to front of queue
+  // immediate: true bypasses idle threshold checks (user wants to send NOW)
+  sendToPane('1', message, { priority: true, immediate: true });
   updateConnectionStatus('Message sent to Architect');
 }
 

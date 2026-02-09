@@ -356,6 +356,43 @@ function createInjectionController(options = {}) {
     // Session 67: Gemini also bypasses - uses PTY \r directly, no focus needed
     const isGemini = isGeminiPane(id);
     const bypassesLock = isCodex || isGemini;
+
+    // Peek at front item for immediate flag (user-initiated messages)
+    const peekQueue = messageQueue[paneId];
+    const peekItem = peekQueue && peekQueue.length > 0 ? peekQueue[0] : null;
+    const isImmediate = peekItem && peekItem.immediate;
+
+    // Immediate messages (user input) bypass idle/typing guards entirely.
+    // Only gate: injectionInFlight (focus mutex for Claude panes).
+    // Retry on a tight 50ms loop instead of normal 100ms with idle checks.
+    if (isImmediate && !bypassesLock) {
+      if (getInjectionInFlight()) {
+        log.debug(`processQueue ${id}`, 'User message waiting for injection lock (50ms poll)');
+        setTimeout(() => processIdleQueue(paneId), 50);
+        return;
+      }
+      // Lock is clear — send immediately, skip all idle/typing checks
+      peekQueue.shift();
+      const queuedMessage = typeof peekItem === 'string' ? peekItem : peekItem.message;
+      const onComplete = peekItem && typeof peekItem === 'object' ? peekItem.onComplete : null;
+      log.info(`Terminal ${id}`, 'User message: immediate send (bypassing idle checks)');
+      setInjectionInFlight(true);
+      doSendToPane(paneId, queuedMessage, (result) => {
+        setInjectionInFlight(false);
+        if (typeof onComplete === 'function') {
+          try {
+            onComplete(result);
+          } catch (err) {
+            log.error('Terminal', 'queue onComplete failed', err);
+          }
+        }
+        if (peekQueue.length > 0) {
+          setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+        }
+      });
+      return;
+    }
+
     if (!bypassesLock && getInjectionInFlight()) {
       log.debug(`processQueue ${id}`, 'Claude pane deferred - injection in flight');
       setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
@@ -726,6 +763,7 @@ function createInjectionController(options = {}) {
       timestamp: Date.now(),
       onComplete: options.onComplete,
       priority: options.priority || false,
+      immediate: options.immediate || false,
     };
 
     // User messages (priority) go to front of queue, agent messages go to back
