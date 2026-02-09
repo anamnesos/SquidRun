@@ -554,17 +554,7 @@ function toggleExpandPane(paneId) {
     pane.classList.add('pane-expanded');
     paneLayout.classList.add('has-expanded-pane');
   }
-  // Trigger terminal resize after CSS transition completes (200ms var(--transition-normal))
-  if (terminal && terminal.handleResize) {
-    const onTransitionEnd = () => {
-      pane.removeEventListener('transitionend', onTransitionEnd);
-      clearTimeout(fallback);
-      terminal.handleResize();
-    };
-    pane.addEventListener('transitionend', onTransitionEnd, { once: true });
-    // Fallback in case transitionend doesn't fire (e.g., display:none, no transition)
-    const fallback = setTimeout(onTransitionEnd, 300);
-  }
+  // ResizeObserver in terminal.js handles resize automatically when element dimensions change
 }
 
 // Status Strip - imported from modules/status-strip.js
@@ -718,8 +708,7 @@ daemonHandlers.setStatusCallbacks(updateConnectionStatus, updatePaneStatus);
 
 // Setup event listeners
 function setupEventListeners() {
-  // Window resize
-  window.addEventListener('resize', () => scheduleTerminalResize());
+  // Window resize handled by ResizeObserver in terminal.js (observes .pane-terminal containers)
 
   // Keyboard shortcuts (consolidated — Ctrl+N focus + ESC collapse)
   document.addEventListener('keydown', (e) => {

@@ -955,6 +955,9 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
   terminals.set(paneId, terminal);
   fitAddons.set(paneId, fitAddon);
 
+  // Setup ResizeObserver to auto-resize terminal when container size changes
+  setupResizeObserver(paneId);
+
   try {
     await window.hivemind.pty.create(paneId, process.cwd());
     updatePaneStatus(paneId, 'Connected');
@@ -1128,6 +1131,9 @@ async function reattachTerminal(paneId, scrollback) {
   terminals.set(paneId, terminal);
   fitAddons.set(paneId, fitAddon);
   searchAddons.set(paneId, searchAddon);
+
+  // Setup ResizeObserver to auto-resize terminal when container size changes
+  setupResizeObserver(paneId);
 
   // U1: Restore scrollback buffer if available
   if (scrollback && scrollback.length > 0) {
@@ -1368,6 +1374,7 @@ async function killAllTerminals() {
       await window.hivemind.pty.kill(paneId);
       // Reset write queue state to prevent frozen pane on next spawn
       resetTerminalWriteQueue(paneId);
+      cleanupResizeObserver(paneId);
       updatePaneStatus(paneId, 'Killed');
     } catch (err) {
       log.error(`Terminal ${paneId}`, 'Failed to kill pane', err);
@@ -1408,6 +1415,7 @@ async function freshStartAll() {
       resetCodexIdentity(paneId);
       // Reset write queue state to prevent frozen pane on next spawn
       resetTerminalWriteQueue(paneId);
+      cleanupResizeObserver(paneId);
     } catch (err) {
       log.error(`Terminal ${paneId}`, 'Failed to kill pane', err);
     }
@@ -1444,36 +1452,55 @@ async function freshStartAll() {
   updateConnectionStatus('Fresh start complete - new sessions started');
 }
 
-// Handle window resize — prioritize focused pane, defer background panes
-let deferredResizeTimer = null;
+// ResizeObserver-based resize — fires when .pane-terminal elements actually change size
+// Replaces window 'resize' event + transitionend listeners with a single mechanism
+const resizeObservers = new Map();    // paneId -> ResizeObserver
+const resizeDebounceTimers = new Map(); // paneId -> timer ID
 
-function handleResize() {
-  const focused = focusedPane;
-  const hasFocusedTerminal = focused && fitAddons.has(focused);
+const RESIZE_OBSERVER_DEBOUNCE_MS = 50;
 
-  // If no focused pane (or focused pane has no terminal), resize all synchronously
-  if (!hasFocusedTerminal) {
-    for (const [paneId] of fitAddons) {
+function setupResizeObserver(paneId) {
+  cleanupResizeObserver(paneId);
+  const container = document.getElementById(`terminal-${paneId}`);
+  if (!container) return;
+
+  const observer = new ResizeObserver(() => {
+    // Debounce: don't fire fit() on every pixel during drag resize
+    const existingTimer = resizeDebounceTimers.get(paneId);
+    if (existingTimer) clearTimeout(existingTimer);
+
+    // Focused pane resizes immediately, background panes defer 200ms
+    const isFocused = (paneId === focusedPane);
+    const delay = isFocused ? RESIZE_OBSERVER_DEBOUNCE_MS : 200;
+
+    resizeDebounceTimers.set(paneId, setTimeout(() => {
+      resizeDebounceTimers.delete(paneId);
       resizeSinglePane(paneId);
-    }
-    return;
-  }
+    }, delay));
+  });
 
-  // Resize focused pane immediately for responsiveness
-  resizeSinglePane(focused);
+  observer.observe(container);
+  resizeObservers.set(paneId, observer);
+}
 
-  // Defer background panes to avoid 3x synchronous fit+IPC
-  if (deferredResizeTimer) {
-    clearTimeout(deferredResizeTimer);
+function cleanupResizeObserver(paneId) {
+  const observer = resizeObservers.get(paneId);
+  if (observer) {
+    observer.disconnect();
+    resizeObservers.delete(paneId);
   }
-  deferredResizeTimer = setTimeout(() => {
-    deferredResizeTimer = null;
-    for (const [paneId] of fitAddons) {
-      if (paneId !== focused) {
-        resizeSinglePane(paneId);
-      }
-    }
-  }, 200);
+  const timer = resizeDebounceTimers.get(paneId);
+  if (timer) {
+    clearTimeout(timer);
+    resizeDebounceTimers.delete(paneId);
+  }
+}
+
+// Explicit resize all — kept for programmatic calls (e.g., right panel toggle)
+function handleResize() {
+  for (const [paneId] of fitAddons) {
+    resizeSinglePane(paneId);
+  }
 }
 
 function resizeSinglePane(paneId) {
