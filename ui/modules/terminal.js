@@ -1435,6 +1435,12 @@ function setupResizeObserver(paneId) {
   if (!container) return;
 
   const observer = new ResizeObserver(() => {
+    // Skip resize while settings overlay is open — its max-height transition
+    // triggers layout reflow on all terminal containers, and fitAddon.fit()
+    // with the WebGL renderer stalls the main thread (Item 23).
+    const settingsPanel = document.getElementById('settingsPanel');
+    if (settingsPanel && settingsPanel.classList.contains('open')) return;
+
     // Debounce: don't fire fit() on every pixel during drag resize
     const existingTimer = resizeDebounceTimers.get(paneId);
     if (existingTimer) clearTimeout(existingTimer);
