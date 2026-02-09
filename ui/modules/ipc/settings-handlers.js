@@ -42,7 +42,8 @@ function registerSettingsHandlers(ctx, deps) {
     const keys = {
       ANTHROPIC_API_KEY: null,
       OPENAI_API_KEY: null,
-      GOOGLE_API_KEY: null
+      GOOGLE_API_KEY: null,
+      RECRAFT_API_KEY: null
     };
 
     if (fs.existsSync(ENV_PATH)) {
@@ -51,7 +52,7 @@ function registerSettingsHandlers(ctx, deps) {
         const lines = content.split('\n');
 
         for (const line of lines) {
-          const match = line.match(/^(ANTHROPIC_API_KEY|OPENAI_API_KEY|GOOGLE_API_KEY)=(.+)$/);
+          const match = line.match(/^(ANTHROPIC_API_KEY|OPENAI_API_KEY|GOOGLE_API_KEY|RECRAFT_API_KEY)=(.+)$/);
           if (match) {
             const [, keyName, value] = match;
             // Return masked version: show only last 4 chars
@@ -74,7 +75,8 @@ function registerSettingsHandlers(ctx, deps) {
     const validators = {
       ANTHROPIC_API_KEY: v => !v || v.startsWith('sk-ant-'),
       OPENAI_API_KEY: v => !v || v.startsWith('sk-'),
-      GOOGLE_API_KEY: v => !v || v.startsWith('AIza')
+      GOOGLE_API_KEY: v => !v || v.startsWith('AIza'),
+      RECRAFT_API_KEY: v => !v || v.length > 0
     };
 
     for (const [key, value] of Object.entries(updates)) {

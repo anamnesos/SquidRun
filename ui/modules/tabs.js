@@ -9,6 +9,7 @@ const activity = require('./tabs/activity');
 const screenshots = require('./tabs/screenshots');
 const oracle = require('./tabs/oracle');
 const git = require('./tabs/git');
+const apiKeys = require('./tabs/api-keys');
 
 // Panel state
 let panelOpen = false;
@@ -80,6 +81,7 @@ function setupRightPanel(handleResizeFn) {
   screenshots.setupScreenshots(updateConnectionStatus);
   oracle.setupOracleTab(updateConnectionStatus);
   git.setupGitTab();
+  apiKeys.setupApiKeysTab();
 }
 
 module.exports = {
