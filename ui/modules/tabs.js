@@ -37,13 +37,6 @@ function togglePanel(handleResizeFn) {
   if (terminalsSection) terminalsSection.classList.toggle('panel-open', panelOpen);
   if (panelBtn) panelBtn.classList.toggle('active', panelOpen);
 
-  // Hide side panes when wide panel (screenshots) is open so pane 1 keeps full width
-  const sidePanes = document.querySelector('.side-panes-container');
-  if (sidePanes) {
-    const isWide = panel && panel.classList.contains('panel-wide');
-    sidePanes.classList.toggle('side-panes-hidden', panelOpen && isWide);
-  }
-
   if (handleResizeFn) {
     setTimeout(handleResizeFn, 350);
   }
@@ -62,22 +55,9 @@ function switchTab(tabId) {
     pane.classList.toggle('active', pane.id === `tab-${tabId}`);
   });
 
-  // Screenshots tab gets a wider panel
-  const panel = document.getElementById('rightPanel');
-  if (panel) {
-    const wasWide = panel.classList.contains('panel-wide');
-    const isScreenshots = tabId === 'screenshots';
-    panel.classList.toggle('panel-wide', isScreenshots);
-
-    // Hide side panes when screenshots tab is active so pane 1 keeps full width
-    const sidePanes = document.querySelector('.side-panes-container');
-    if (sidePanes) {
-      sidePanes.classList.toggle('side-panes-hidden', isScreenshots && panelOpen);
-    }
-
-    if (wasWide !== isScreenshots && storedResizeFn) {
-      setTimeout(storedResizeFn, 350);
-    }
+  // Trigger resize when switching tabs (panel size may differ by content)
+  if (storedResizeFn) {
+    setTimeout(storedResizeFn, 350);
   }
 }
 
