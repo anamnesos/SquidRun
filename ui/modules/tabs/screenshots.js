@@ -59,6 +59,8 @@ async function handleScreenshotDrop(files, updateStatusFn) {
             listEl.innerHTML = '<div class="screenshot-empty">No screenshots yet</div>';
           }
           if (updateStatusFn) updateStatusFn(`Deleted ${savedFilename}`);
+        } else {
+          if (updateStatusFn) updateStatusFn(`Failed to delete ${savedFilename}: ${delResult.error || 'Unknown error'}`);
         }
       });
 
@@ -115,6 +117,9 @@ async function loadScreenshots(updateStatusFn) {
           if (listEl.children.length === 0) {
             listEl.innerHTML = '<div class="screenshot-empty">No screenshots yet</div>';
           }
+          if (updateStatusFn) updateStatusFn(`Deleted ${savedFilename}`);
+        } else {
+          if (updateStatusFn) updateStatusFn(`Failed to delete ${savedFilename}: ${delResult.error || 'Unknown error'}`);
         }
       });
 

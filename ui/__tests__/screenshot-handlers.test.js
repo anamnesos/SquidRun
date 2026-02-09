@@ -215,6 +215,17 @@ describe('Screenshot Handlers', () => {
       });
     });
 
+    test('filters out latest.png from listing', async () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readdirSync.mockReturnValue(['screenshot-1.png', 'latest.png', 'screenshot-2.png']);
+      fs.statSync.mockReturnValue({ size: 1000, mtime: new Date() });
+
+      const result = await harness.invoke('list-screenshots');
+
+      expect(result.files.length).toBe(2);
+      expect(result.files.map(f => f.name)).not.toContain('latest.png');
+    });
+
     test('handles readdir error', async () => {
       fs.existsSync.mockReturnValue(true);
       fs.readdirSync.mockImplementation(() => {

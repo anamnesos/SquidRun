@@ -37,6 +37,13 @@ function togglePanel(handleResizeFn) {
   if (terminalsSection) terminalsSection.classList.toggle('panel-open', panelOpen);
   if (panelBtn) panelBtn.classList.toggle('active', panelOpen);
 
+  // Hide side panes when wide panel (screenshots) is open so pane 1 keeps full width
+  const sidePanes = document.querySelector('.side-panes-container');
+  if (sidePanes) {
+    const isWide = panel && panel.classList.contains('panel-wide');
+    sidePanes.classList.toggle('side-panes-hidden', panelOpen && isWide);
+  }
+
   if (handleResizeFn) {
     setTimeout(handleResizeFn, 350);
   }
@@ -59,8 +66,16 @@ function switchTab(tabId) {
   const panel = document.getElementById('rightPanel');
   if (panel) {
     const wasWide = panel.classList.contains('panel-wide');
-    panel.classList.toggle('panel-wide', tabId === 'screenshots');
-    if (wasWide !== (tabId === 'screenshots') && storedResizeFn) {
+    const isScreenshots = tabId === 'screenshots';
+    panel.classList.toggle('panel-wide', isScreenshots);
+
+    // Hide side panes when screenshots tab is active so pane 1 keeps full width
+    const sidePanes = document.querySelector('.side-panes-container');
+    if (sidePanes) {
+      sidePanes.classList.toggle('side-panes-hidden', isScreenshots && panelOpen);
+    }
+
+    if (wasWide !== isScreenshots && storedResizeFn) {
       setTimeout(storedResizeFn, 350);
     }
   }

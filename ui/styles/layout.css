@@ -1159,7 +1159,12 @@
 }
 
 .right-panel.open.panel-wide {
-  width: 62%;
+  width: 420px;
+}
+
+/* When shots panel is open, hide side panes so pane 1 keeps full width */
+.side-panes-container.side-panes-hidden {
+  display: none;
 }
 
 .panel-tabs {
