@@ -194,33 +194,6 @@ describe('terminal.js module', () => {
     });
   });
 
-  describe('isIdle', () => {
-    test('should return true when no output recorded', () => {
-      terminal.lastOutputTime['1'] = 0;
-      expect(terminal.isIdle('1')).toBe(true);
-    });
-
-    test('should return true when output was long ago', () => {
-      terminal.lastOutputTime['1'] = Date.now() - 5000; // 5 seconds ago
-      expect(terminal.isIdle('1')).toBe(true);
-    });
-
-    test('should return false when output was recent', () => {
-      terminal.lastOutputTime['1'] = Date.now() - 500; // 0.5 seconds ago
-      expect(terminal.isIdle('1')).toBe(false);
-    });
-
-    test('should use IDLE_THRESHOLD_MS (1000ms)', () => {
-      // At exactly threshold
-      terminal.lastOutputTime['1'] = Date.now() - 1000;
-      expect(terminal.isIdle('1')).toBe(true);
-
-      // Just under threshold
-      terminal.lastOutputTime['1'] = Date.now() - 999;
-      expect(terminal.isIdle('1')).toBe(false);
-    });
-  });
-
   describe('focusPane', () => {
     test('should focus pane and update focusedPane', () => {
       const mockPane = {
@@ -331,23 +304,22 @@ describe('terminal.js module', () => {
   });
 
   describe('sendToPane', () => {
-    test('should queue message when pane is busy', () => {
-      // Stay on fake timers - set lastOutputTime to "now" to simulate busy pane
-      const now = Date.now();
-      jest.setSystemTime(now);
-      terminal.lastOutputTime['1'] = now; // Recent output = busy
+    test('should queue message when injection in flight', () => {
+      // Block immediate processing with injection lock
+      terminal.setInjectionInFlight(true);
 
       terminal.sendToPane('1', 'test message');
 
       expect(terminal.messageQueue['1']).toHaveLength(1);
       expect(terminal.messageQueue['1'][0].message).toBe('test message');
-      // Clear any pending processQueue timers
+      // Clear lock and pending processQueue timers
+      terminal.setInjectionInFlight(false);
       jest.runAllTimers();
     });
 
     test('should include timestamp in queued message', () => {
       jest.useRealTimers();
-      terminal.lastOutputTime['1'] = Date.now(); // Keep pane busy
+      terminal.setInjectionInFlight(true); // Block immediate processing
       const before = Date.now();
       terminal.sendToPane('1', 'test');
       const after = Date.now();
@@ -357,18 +329,20 @@ describe('terminal.js module', () => {
       const timestamp = terminal.messageQueue['1'][terminal.messageQueue['1'].length - 1].timestamp;
       expect(timestamp).toBeGreaterThanOrEqual(before);
       expect(timestamp).toBeLessThanOrEqual(after);
+      terminal.setInjectionInFlight(false);
       jest.useFakeTimers();
     });
 
     test('should include onComplete callback if provided', () => {
       jest.useRealTimers();
-      terminal.lastOutputTime['1'] = Date.now(); // Keep pane busy
+      terminal.setInjectionInFlight(true); // Block immediate processing
       const callback = jest.fn();
       terminal.sendToPane('1', 'test', { onComplete: callback });
 
       expect(terminal.messageQueue['1']).toBeDefined();
       const lastItem = terminal.messageQueue['1'][terminal.messageQueue['1'].length - 1];
       expect(lastItem.onComplete).toBe(callback);
+      terminal.setInjectionInFlight(false);
       jest.useFakeTimers();
     });
 
@@ -681,25 +655,27 @@ describe('terminal.js module', () => {
   });
 
   describe('message queue processing', () => {
-    test('should process queue when pane becomes idle', () => {
+    test('should process queue when injection lock clears', () => {
       jest.useRealTimers();
-      // Queue a message while busy
-      terminal.lastOutputTime['1'] = Date.now();
+      // Queue a message while injection is in flight
+      terminal.setInjectionInFlight(true);
       terminal.sendToPane('1', 'test message\r');
 
       expect(terminal.messageQueue['1'].length).toBeGreaterThan(0);
+      terminal.setInjectionInFlight(false);
       jest.useFakeTimers();
     });
 
-    test('should track message timestamp for timeout logic', () => {
+    test('should track message timestamp in queued item', () => {
       jest.useRealTimers();
-      terminal.lastOutputTime['1'] = Date.now(); // Keep pane busy
+      terminal.setInjectionInFlight(true); // Block immediate processing
       terminal.sendToPane('1', 'test');
 
       expect(terminal.messageQueue['1']).toBeDefined();
       const item = terminal.messageQueue['1'][terminal.messageQueue['1'].length - 1];
       expect(item.timestamp).toBeDefined();
       expect(typeof item.timestamp).toBe('number');
+      terminal.setInjectionInFlight(false);
       jest.useFakeTimers();
     });
   });
@@ -833,11 +809,6 @@ describe('terminal.js module', () => {
       expect(() => terminal.handleResize()).not.toThrow();
     });
 
-    test('isIdle should handle missing pane', () => {
-      delete terminal.lastOutputTime['999'];
-      expect(terminal.isIdle('999')).toBe(true);
-    });
-
     test('nudgePane should handle PTY write rejection', async () => {
       mockHivemind.pty.write.mockRejectedValueOnce(new Error('write error'));
       expect(() => terminal.nudgePane('1')).not.toThrow();
@@ -938,17 +909,16 @@ describe('terminal.js module', () => {
   });
 
   describe('sendToPane edge cases', () => {
-    test('should queue message when pane is busy', () => {
-      // Stay on fake timers - set lastOutputTime to "now" to simulate busy pane
-      const now = Date.now();
-      jest.setSystemTime(now);
-      terminal.lastOutputTime['1'] = now; // Keep pane busy
+    test('should queue message when injection in flight', () => {
+      // Block immediate processing with injection lock
+      terminal.setInjectionInFlight(true);
 
       terminal.sendToPane('1', 'Test message');
 
       expect(terminal.messageQueue['1']).toBeDefined();
       expect(terminal.messageQueue['1'].length).toBeGreaterThan(0);
-      // Clear any pending processQueue timers
+      // Clear lock and pending processQueue timers
+      terminal.setInjectionInFlight(false);
       jest.runAllTimers();
     });
 
@@ -1158,25 +1128,6 @@ describe('terminal.js module', () => {
     // Note: openTerminalSearch and closeTerminalSearch are tightly coupled
     // to DOM state (module-level searchBar variable) making isolated unit
     // testing difficult. Integration tests via renderer.test.js cover these.
-  });
-
-  describe('Idle Detection', () => {
-    describe('isIdle', () => {
-      test('should return true when pane has been idle', () => {
-        terminal.lastOutputTime['1'] = Date.now() - 10000; // 10 seconds ago
-        expect(terminal.isIdle('1')).toBe(true);
-      });
-
-      test('should return false when pane has recent output', () => {
-        terminal.lastOutputTime['1'] = Date.now() - 500; // 0.5 seconds ago
-        expect(terminal.isIdle('1')).toBe(false);
-      });
-
-      test('should return true for undefined pane', () => {
-        delete terminal.lastOutputTime['3'];
-        expect(terminal.isIdle('3')).toBe(true);
-      });
-    });
   });
 
   describe('Stuck Message Sweeper', () => {
