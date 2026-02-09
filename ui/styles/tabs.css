@@ -26,8 +26,7 @@ input:focus {
 .btn,
 .panel-tab,
 .activity-filter,
-.pane-refresh-btn,
-.process-spawn-btn {
+.pane-refresh-btn {
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
 }
 
@@ -58,18 +57,8 @@ input:focus {
 }
 
 .screenshot-empty,
-.history-empty,
-.projects-empty,
-.template-empty,
-.process-empty,
-.friction-empty,
 .activity-empty,
-.test-empty,
-.memory-empty,
-.inspector-empty,
-.queue-empty,
 .git-empty,
-.docs-preview-empty,
 .oracle-empty {
   text-align: center;
   color: var(--color-border-light);
@@ -96,18 +85,8 @@ input:focus {
 }
 
 .activity-actions,
-.history-actions,
-.projects-actions,
-.perf-actions,
-.template-actions,
-.progress-actions,
-.test-actions,
-.inspector-actions,
-.queue-actions,
 .git-actions,
-.docs-actions,
-.oracle-result-actions,
-.workflow-footer {
+.oracle-result-actions {
   margin-top: var(--space-4);
   padding-top: var(--space-3);
   border-top: 1px solid var(--color-bg-light);
@@ -117,21 +96,5 @@ input:focus {
 
 /* Import modular components */
 @import "./tabs/activity.css";
-@import "./tabs/processes.css";
-@import "./tabs/projects.css";
-@import "./tabs/history.css";
-@import "./tabs/build.css";
 @import "./tabs/screenshots.css";
-@import "./tabs/tests.css";
-@import "./tabs/mcp.css";
-@import "./tabs/memory.css";
-@import "./tabs/health.css";
-@import "./tabs/workflow.css";
-@import "./tabs/review.css";
-@import "./tabs/docs.css";
 @import "./tabs/oracle.css";
-@import "./tabs/ci.css";
-@import "./tabs/graph.css";
-@import "./tabs/debug-replay.css";
-@import "./tabs/perf.css";
-@import "./tabs/templates.css";
