@@ -554,9 +554,16 @@ function toggleExpandPane(paneId) {
     pane.classList.add('pane-expanded');
     paneLayout.classList.add('has-expanded-pane');
   }
-  // Trigger terminal resize
+  // Trigger terminal resize after CSS transition completes (200ms var(--transition-normal))
   if (terminal && terminal.handleResize) {
-    setTimeout(() => terminal.handleResize(), 100);
+    const onTransitionEnd = () => {
+      pane.removeEventListener('transitionend', onTransitionEnd);
+      clearTimeout(fallback);
+      terminal.handleResize();
+    };
+    pane.addEventListener('transitionend', onTransitionEnd, { once: true });
+    // Fallback in case transitionend doesn't fire (e.g., display:none, no transition)
+    const fallback = setTimeout(onTransitionEnd, 300);
   }
 }
 
