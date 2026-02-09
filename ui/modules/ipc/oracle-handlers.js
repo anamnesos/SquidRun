@@ -1,29 +1,26 @@
 /**
  * Oracle IPC Handlers
- * Channels: oracle:analyzeScreenshot, save-oracle-history, load-oracle-history
+ * Channels: oracle:generateImage, save-oracle-history, load-oracle-history
  */
 
 const fs = require('fs');
-const path = require('path');
-const { analyzeScreenshot } = require('../gemini-oracle');
+const { generateImage, IMAGE_HISTORY_PATH } = require('../image-gen');
 
 function registerOracleHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerOracleHandlers requires ctx.ipcMain');
   }
 
-  const { ipcMain, WORKSPACE_PATH } = ctx;
-  const ORACLE_HISTORY_PATH = path.join(WORKSPACE_PATH || '.', 'oracle-history.json');
+  const { ipcMain } = ctx;
 
-  ipcMain.handle('oracle:analyzeScreenshot', async (event, payload = {}) => {
-    const imagePath = payload?.imagePath;
-    const prompt = payload?.prompt;
+  ipcMain.handle('oracle:generateImage', async (event, payload = {}) => {
+    const { prompt, provider, style, size } = payload;
     try {
-      const result = await analyzeScreenshot({ imagePath, prompt });
+      const result = await generateImage({ prompt, provider, style, size });
       return {
         success: true,
-        analysis: result.analysis,
-        usage: result.usage,
+        imagePath: result.imagePath,
+        provider: result.provider,
       };
     } catch (err) {
       return { success: false, error: err.message };
@@ -33,7 +30,7 @@ function registerOracleHandlers(ctx) {
   // Save oracle history to file
   ipcMain.handle('save-oracle-history', async (event, history) => {
     try {
-      fs.writeFileSync(ORACLE_HISTORY_PATH, JSON.stringify(history, null, 2));
+      fs.writeFileSync(IMAGE_HISTORY_PATH, JSON.stringify(history, null, 2));
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -43,8 +40,8 @@ function registerOracleHandlers(ctx) {
   // Load oracle history from file
   ipcMain.handle('load-oracle-history', async () => {
     try {
-      if (fs.existsSync(ORACLE_HISTORY_PATH)) {
-        const data = fs.readFileSync(ORACLE_HISTORY_PATH, 'utf8');
+      if (fs.existsSync(IMAGE_HISTORY_PATH)) {
+        const data = fs.readFileSync(IMAGE_HISTORY_PATH, 'utf8');
         return JSON.parse(data);
       }
       return [];

@@ -7,6 +7,7 @@
 @import "./tabs/activity.css";
 @import "./tabs/screenshots.css";
 @import "./tabs/oracle.css";
+@import "./tabs/api-keys.css";
 
 /* Shared common styles for all tabs */
 [title] {
@@ -64,7 +65,8 @@ input:focus {
 .screenshot-empty,
 .activity-empty,
 .git-empty,
-.oracle-empty {
+.oracle-empty,
+.api-keys-empty {
   text-align: center;
   color: var(--color-border-light);
   padding: var(--space-6) var(--space-4);

@@ -223,41 +223,6 @@
       </div>
     </div>
 
-    <!-- API Keys Section -->
-    <div class="settings-section">
-      <div class="settings-section-title">API Keys</div>
-      <div class="settings-subgrid settings-two-col">
-        <div class="setting-field">
-          <label class="setting-label">Anthropic (Claude)</label>
-          <div class="api-key-field">
-            <input type="password" class="settings-input api-key-input" id="apiKeyAnthropic"
-                   placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
-            <span class="api-key-mask" id="apiKeyAnthropicMask">Not set</span>
-          </div>
-        </div>
-        <div class="setting-field">
-          <label class="setting-label">OpenAI (Codex)</label>
-          <div class="api-key-field">
-            <input type="password" class="settings-input api-key-input" id="apiKeyOpenai"
-                   placeholder="sk-..." autocomplete="off" spellcheck="false">
-            <span class="api-key-mask" id="apiKeyOpenaiMask">Not set</span>
-          </div>
-        </div>
-        <div class="setting-field">
-          <label class="setting-label">Google (Gemini)</label>
-          <div class="api-key-field">
-            <input type="password" class="settings-input api-key-input" id="apiKeyGoogle"
-                   placeholder="AIza..." autocomplete="off" spellcheck="false">
-            <span class="api-key-mask" id="apiKeyGoogleMask">Not set</span>
-          </div>
-        </div>
-      </div>
-      <div class="settings-actions">
-        <button class="btn btn-sm" id="saveApiKeysBtn" title="Save API keys to .env file">Save API Keys</button>
-        <span class="api-key-status" id="apiKeyStatus"></span>
-      </div>
-      <div class="api-key-info">Keys stored in .env (gitignored). Restart required after changes.</div>
-    </div>
   </div>
 
   <div class="state-bar">
@@ -428,8 +393,9 @@
         <!-- Primary tabs (always visible) -->
         <button class="panel-tab" data-tab="activity" data-tab-group="primary" title="Real-time log of all agent activity">Feed</button>
         <button class="panel-tab active" data-tab="screenshots" data-tab-group="primary" title="Drag & drop images for agents to reference">Shots</button>
-        <button class="panel-tab" data-tab="oracle" data-tab-group="primary" title="Gemini-powered screenshot analysis">Oracle</button>
+        <button class="panel-tab" data-tab="oracle" data-tab-group="primary" title="AI image generation">Image</button>
         <button class="panel-tab" data-tab="git" data-tab-group="primary" title="Repository status, diffs, and commits">Git</button>
+        <button class="panel-tab" data-tab="api-keys" data-tab-group="primary" title="API key management">Keys</button>
       </div>
       <div class="panel-content">
         <div class="tab-pane active" id="tab-screenshots">
@@ -542,37 +508,57 @@
           </div>
         </div>
         <div class="tab-pane" id="tab-oracle">
-          <div class="tab-title">Visual QA Oracle</div>
-          <div class="tab-description">Gemini-powered screenshot analysis</div>
+          <div class="tab-title">Image Generation</div>
+          <div class="tab-description">Generate images with AI</div>
 
           <div class="oracle-controls">
-            <button class="btn btn-primary" id="oracleCaptureBtn" title="Capture screenshot">
+            <textarea id="oraclePromptInput"
+                      class="oracle-prompt-input"
+                      rows="3"
+                      placeholder="Describe the image you want to generate..."></textarea>
+            <div class="oracle-options">
+              <div class="oracle-option">
+                <label class="oracle-option-label">Style</label>
+                <select id="oracleStyleSelect" class="oracle-select">
+                  <option value="realistic_image">Realistic</option>
+                  <option value="digital_illustration">Digital Illustration</option>
+                  <option value="vector_illustration">Vector</option>
+                </select>
+              </div>
+              <div class="oracle-option">
+                <label class="oracle-option-label">Size</label>
+                <select id="oracleSizeSelect" class="oracle-select">
+                  <option value="1024x1024">Square (1024x1024)</option>
+                  <option value="1365x1024">Landscape (1365x1024)</option>
+                  <option value="1024x1365">Portrait (1024x1365)</option>
+                </select>
+              </div>
+            </div>
+            <button class="btn btn-primary" id="oracleGenerateBtn" title="Generate image">
               <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-                <circle cx="12" cy="13" r="4"/>
-              </svg> Capture
-            </button>
-            <input type="text" id="oraclePromptInput"
-                   class="oracle-prompt-input"
-                   placeholder="What to check? (e.g., Check button alignment)" />
-            <button class="btn btn-primary" id="oracleAnalyzeBtn" title="Analyze with Gemini">
-              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="11" cy="11" r="8"/>
-                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-              </svg> Analyze
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+              </svg> Generate
             </button>
           </div>
 
           <div class="oracle-preview">
-            <img id="oraclePreviewImg" class="oracle-preview-img" alt="Screenshot preview" />
+            <img id="oraclePreviewImg" class="oracle-preview-img" alt="Generated image preview" />
+            <div class="oracle-provider-badge" id="oracleProviderBadge" style="display: none;"></div>
           </div>
 
           <div class="oracle-results" id="oracleResults">
-            <div class="oracle-empty">Capture a screenshot and analyze to see results</div>
+            <div class="oracle-empty">Enter a prompt and click Generate to create an image</div>
           </div>
 
           <div class="oracle-result-actions" id="oracleResultActions" style="display: none;">
-            <button class="btn btn-sm" id="oracleCopyBtn" title="Copy result to clipboard">
+            <button class="btn btn-sm" id="oracleDownloadBtn" title="Download image">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg> Download
+            </button>
+            <button class="btn btn-sm" id="oracleCopyBtn" title="Copy image to clipboard">
               <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -586,6 +572,49 @@
               <div class="oracle-history-empty">No history yet</div>
             </div>
           </div>
+        </div>
+        <div class="tab-pane" id="tab-api-keys">
+          <div class="tab-title">API Keys</div>
+          <div class="tab-description">Manage API keys for AI services</div>
+          <div class="api-keys-grid">
+            <div class="api-keys-field">
+              <label class="api-keys-label">Anthropic (Claude)</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyAnthropic"
+                       placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyAnthropicMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">OpenAI (Codex / Image Gen)</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyOpenai"
+                       placeholder="sk-..." autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyOpenaiMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">Google (Gemini)</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyGoogle"
+                       placeholder="AIza..." autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyGoogleMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">Recraft (Image Gen)</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyRecraft"
+                       placeholder="Recraft API key" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyRecraftMask">Not set</span>
+              </div>
+            </div>
+          </div>
+          <div class="api-keys-actions">
+            <button class="btn btn-primary btn-sm" id="saveApiKeysBtn" title="Save API keys to .env file">Save Keys</button>
+            <span class="api-keys-status" id="apiKeyStatus"></span>
+          </div>
+          <div class="api-keys-info">Keys stored in .env (gitignored). Restart required after changes.</div>
         </div>
       </div>
     </div>

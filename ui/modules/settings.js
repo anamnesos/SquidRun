@@ -120,75 +120,6 @@ function getSettings() {
   return currentSettings;
 }
 
-// Load and display masked API keys
-async function loadApiKeys() {
-  try {
-    const keys = await ipcRenderer.invoke('get-api-keys');
-
-    const maskAnth = document.getElementById('apiKeyAnthropicMask');
-    const maskOai = document.getElementById('apiKeyOpenaiMask');
-    const maskGoogle = document.getElementById('apiKeyGoogleMask');
-
-    if (maskAnth) maskAnth.textContent = keys.ANTHROPIC_API_KEY || 'Not set';
-    if (maskOai) maskOai.textContent = keys.OPENAI_API_KEY || 'Not set';
-    if (maskGoogle) maskGoogle.textContent = keys.GOOGLE_API_KEY || 'Not set';
-  } catch (err) {
-    log.error('Settings', 'Error loading API keys', err);
-  }
-}
-
-// Save API keys to .env
-async function saveApiKeys() {
-  const updates = {};
-  const statusEl = document.getElementById('apiKeyStatus');
-
-  const anthInput = document.getElementById('apiKeyAnthropic');
-  const oaiInput = document.getElementById('apiKeyOpenai');
-  const googleInput = document.getElementById('apiKeyGoogle');
-
-  if (anthInput?.value) updates.ANTHROPIC_API_KEY = anthInput.value;
-  if (oaiInput?.value) updates.OPENAI_API_KEY = oaiInput.value;
-  if (googleInput?.value) updates.GOOGLE_API_KEY = googleInput.value;
-
-  if (Object.keys(updates).length === 0) {
-    if (statusEl) {
-      statusEl.textContent = 'Enter at least one key';
-      statusEl.classList.add('error');
-    }
-    return;
-  }
-
-  try {
-    const result = await ipcRenderer.invoke('set-api-keys', updates);
-
-    if (result.success) {
-      if (statusEl) {
-        statusEl.textContent = 'Saved! Restart to apply.';
-        statusEl.classList.remove('error');
-      }
-      // Clear inputs after save (security)
-      if (anthInput) anthInput.value = '';
-      if (oaiInput) oaiInput.value = '';
-      if (googleInput) googleInput.value = '';
-      // Reload masked display
-      loadApiKeys();
-      log.info('Settings', 'API keys saved to .env');
-    } else {
-      if (statusEl) {
-        statusEl.textContent = result.error || 'Save failed';
-        statusEl.classList.add('error');
-      }
-      log.warn('Settings', 'API key save failed:', result.error);
-    }
-  } catch (err) {
-    log.error('Settings', 'Error saving API keys', err);
-    if (statusEl) {
-      statusEl.textContent = 'Error: ' + err.message;
-      statusEl.classList.add('error');
-    }
-  }
-}
-
 // Setup settings panel
 function setupSettings() {
   // Settings button toggle
@@ -265,15 +196,8 @@ function setupSettings() {
     });
   }
 
-  // API Keys save button
-  const saveApiKeysBtn = document.getElementById('saveApiKeysBtn');
-  if (saveApiKeysBtn) {
-    saveApiKeysBtn.addEventListener('click', saveApiKeys);
-  }
-
-  // Load settings and API keys
+  // Load settings
   loadSettings();
-  loadApiKeys();
 }
 
 // Check if should auto-spawn agents
