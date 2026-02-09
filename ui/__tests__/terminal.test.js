@@ -395,10 +395,11 @@ describe('terminal.js module', () => {
 
       terminal.broadcast('test broadcast');
 
-      // Should queue message for pane 1
+      // broadcast routes to pane 1 with priority + immediate
+      // Immediate messages are processed instantly (bypass idle checks),
+      // so the queue may already be empty. Verify the message was routed
+      // to pane 1 via the connection status callback.
       expect(terminal.messageQueue['1']).toBeDefined();
-      const lastItem = terminal.messageQueue['1'][terminal.messageQueue['1'].length - 1];
-      expect(lastItem.message).toBe('test broadcast');
       expect(connectionCb).toHaveBeenCalledWith('Message sent to Architect');
       jest.useFakeTimers();
     });

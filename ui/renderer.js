@@ -1072,8 +1072,8 @@ function setupEventListeners() {
       if (targetPaneId === 'all') {
         terminal.broadcast(message + '\r');
       } else {
-        // Send to specific pane in PTY mode - user messages get priority
-        terminal.sendToPane(targetPaneId, message + '\r', { priority: true });
+        // Send to specific pane in PTY mode - user messages get priority + immediate
+        terminal.sendToPane(targetPaneId, message + '\r', { priority: true, immediate: true });
       }
       showDeliveryStatus('delivered');
     }
