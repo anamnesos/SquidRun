@@ -1130,6 +1130,7 @@
 .main-content {
   flex: 1;
   display: flex;
+  position: relative;
   min-height: 0;
   overflow: hidden;
 }
@@ -1143,28 +1144,24 @@
   overflow: hidden;
 }
 
-/* Right Panel */
+/* Right Panel — overlays panes 2/5 area, pane 1 untouched */
 .right-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
   width: 0;
   background: var(--color-bg-elevated);
-  border-left: 1px solid var(--color-bg-medium);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: width var(--transition-normal);
+  z-index: 10;
 }
 
 .right-panel.open {
-  width: 350px;
-}
-
-.right-panel.open.panel-wide {
-  width: 420px;
-}
-
-/* When shots panel is open, hide side panes so pane 1 keeps full width */
-.side-panes-container.side-panes-hidden {
-  display: none;
+  /* Cover the side-panes area: 2 of (3+2) = 40% */
+  width: 40%;
+  border-left: 1px solid var(--color-bg-medium);
 }
 
 .panel-tabs {
