@@ -883,6 +883,13 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
   fitAddon.fit();
   attachAgentColors(paneId, terminal);
 
+  // Sync PTY size to fitted terminal dimensions (PTY spawns at 80x24 by default)
+  try {
+    window.hivemind.pty.resize(paneId, terminal.cols, terminal.rows);
+  } catch (err) {
+    log.warn(`Terminal ${paneId}`, 'Initial PTY resize failed (PTY may not exist yet):', err);
+  }
+
   // Critical: block keyboard input when user is typing in a UI input/textarea
   // BUT allow xterm's own internal textarea (xterm-helper-textarea) to work normally
   terminal.attachCustomKeyEventHandler((event) => {
@@ -951,6 +958,15 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
   try {
     await window.hivemind.pty.create(paneId, process.cwd());
     updatePaneStatus(paneId, 'Connected');
+
+    // Now that PTY exists, sync size again (initial resize may have fired before PTY was created)
+    try {
+      fitAddon.fit();
+      window.hivemind.pty.resize(paneId, terminal.cols, terminal.rows);
+      log.info(`Terminal ${paneId}`, `PTY size synced: ${terminal.cols}x${terminal.rows}`);
+    } catch (resizeErr) {
+      log.warn(`Terminal ${paneId}`, 'Post-create PTY resize failed:', resizeErr);
+    }
 
     if (!isCodexPane(paneId)) {
       terminal.onData((data) => {
@@ -1039,6 +1055,14 @@ async function reattachTerminal(paneId, scrollback) {
   terminal.open(container);
   fitAddon.fit();
   attachAgentColors(paneId, terminal);
+
+  // Sync PTY size to fitted terminal dimensions (PTY already exists during reattach)
+  try {
+    window.hivemind.pty.resize(paneId, terminal.cols, terminal.rows);
+    log.info(`Terminal ${paneId}`, `Reattach PTY size synced: ${terminal.cols}x${terminal.rows}`);
+  } catch (err) {
+    log.warn(`Terminal ${paneId}`, 'Reattach PTY resize failed:', err);
+  }
 
   // Critical: block keyboard input when user is typing in a UI input/textarea
   // BUT allow xterm's own internal textarea (xterm-helper-textarea) to work normally
