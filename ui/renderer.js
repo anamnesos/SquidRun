@@ -156,6 +156,18 @@ const SDK_PANE_LABELS = {
 const MAIN_PANE_CONTAINER_SELECTOR = '.main-pane-container';
 const SIDE_PANES_CONTAINER_SELECTOR = '.side-panes-container';
 let mainPaneId = '1';
+const RESIZE_DEBOUNCE_MS = 175;
+let resizeDebounceTimer = null;
+
+function scheduleTerminalResize(delayMs = RESIZE_DEBOUNCE_MS) {
+  if (resizeDebounceTimer) {
+    clearTimeout(resizeDebounceTimer);
+  }
+  resizeDebounceTimer = setTimeout(() => {
+    resizeDebounceTimer = null;
+    terminal.handleResize();
+  }, delayMs);
+}
 
 function getPaneElement(paneId) {
   return document.querySelector(`.pane[data-pane-id="${paneId}"]`);
@@ -210,8 +222,7 @@ function swapToMainPane(targetPaneId) {
   terminal.focusPane(targetId);
 
   requestAnimationFrame(() => {
-    terminal.handleResize();
-    setTimeout(() => terminal.handleResize(), 50);
+    scheduleTerminalResize(0);
   });
 }
 
@@ -701,7 +712,7 @@ daemonHandlers.setStatusCallbacks(updateConnectionStatus, updatePaneStatus);
 // Setup event listeners
 function setupEventListeners() {
   // Window resize
-  window.addEventListener('resize', terminal.handleResize);
+  window.addEventListener('resize', () => scheduleTerminalResize());
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {

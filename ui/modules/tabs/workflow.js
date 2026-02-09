@@ -655,7 +655,18 @@ function getGraphState() {
 // WORKFLOW BUILDER TAB (Task #19)
 // ============================================================================
 
+function isWorkflowTabVisible() {
+  const tab = document.getElementById('tab-workflow');
+  if (!tab || !tab.classList.contains('active')) return false;
+
+  const panel = document.getElementById('rightPanel');
+  if (panel && !panel.classList.contains('open')) return false;
+
+  return tab.getClientRects().length > 0;
+}
+
 function handleWorkflowResize() {
+  if (!isWorkflowTabVisible()) return;
   updateWorkflowEdges();
 }
 

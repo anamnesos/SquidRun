@@ -19,7 +19,7 @@
   border-radius: var(--radius-md);
   font-size: var(--text-base);
   font-weight: 600;
-  transition: all var(--transition-normal);
+  transition: background var(--transition-normal), color var(--transition-normal), box-shadow var(--transition-normal);
 }
 
 .progress-state-badge.planning {
@@ -95,7 +95,7 @@
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
   font-weight: 600;
-  transition: all var(--transition-fast);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
   cursor: default;
 }
 
@@ -131,7 +131,7 @@
   background: rgba(110, 198, 255, 0.08);
   border-radius: var(--radius-md);
   border: 1px solid rgba(110, 198, 255, 0.25);
-  transition: all var(--transition-normal);
+  transition: background var(--transition-normal), transform var(--transition-normal), box-shadow var(--transition-normal);
 }
 .usage-stat:hover {
   background: rgba(110, 198, 255, 0.12);
