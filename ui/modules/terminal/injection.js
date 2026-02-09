@@ -15,8 +15,6 @@ function createInjectionController(options = {}) {
     isCodexPane,
     isGeminiPane,  // Session 67: Re-enabled - Gemini CLI accepts PTY \r unlike Claude's ink TUI
     buildCodexExecPrompt,
-    isIdle,
-    isIdleForForceInject,
     userIsTyping,
     userInputFocused,
     updatePaneStatus,
@@ -27,47 +25,14 @@ function createInjectionController(options = {}) {
   } = options;
 
   const {
-    ENTER_DELAY_IDLE_MS,
-    ENTER_DELAY_ACTIVE_MS,
-    ENTER_DELAY_BUSY_MS,
-    PANE_ACTIVE_THRESHOLD_MS,
-    PANE_BUSY_THRESHOLD_MS,
     FOCUS_RETRY_DELAY_MS,
     MAX_FOCUS_RETRIES,
-    ENTER_VERIFY_DELAY_MS,
-    MAX_ENTER_RETRIES,
-    ENTER_RETRY_INTERVAL_MS,
-    PROMPT_READY_TIMEOUT_MS,
-    MAX_QUEUE_TIME_MS,
-    EXTREME_WAIT_MS,
-    ABSOLUTE_MAX_WAIT_MS,
     QUEUE_RETRY_MS,
     INJECTION_LOCK_TIMEOUT_MS,
     BYPASS_CLEAR_DELAY_MS = DEFAULT_BYPASS_CLEAR_DELAY_MS,
     TYPING_GUARD_MS = 300,
     GEMINI_ENTER_DELAY_MS = 75,
   } = constants;
-
-  /**
-   * Calculate adaptive Enter delay based on pane activity level
-   * Under load, the terminal needs more time for text to appear before Enter
-   * @param {string} paneId - The pane ID
-   * @returns {number} - Delay in milliseconds before sending Enter
-   */
-  function getAdaptiveEnterDelay(paneId) {
-    const lastOutput = lastOutputTime[paneId] || 0;
-    const timeSinceOutput = Date.now() - lastOutput;
-
-    if (timeSinceOutput < PANE_BUSY_THRESHOLD_MS) {
-      // Very recent output (< 100ms) - pane is busy, use longer delay
-      return ENTER_DELAY_BUSY_MS;
-    } else if (timeSinceOutput < PANE_ACTIVE_THRESHOLD_MS) {
-      // Recent output (< 500ms) - pane is active, use medium delay
-      return ENTER_DELAY_ACTIVE_MS;
-    }
-    // No recent output - pane is idle, fast Enter is safe
-    return ENTER_DELAY_IDLE_MS;
-  }
 
   /**
    * Attempt to focus textarea with retries
@@ -178,7 +143,7 @@ function createInjectionController(options = {}) {
 
   /**
    * Check if terminal shows a prompt (ready for input).
-   * Looks for common prompt patterns at end of current line.
+   * Used by terminal.js startup detection to know when a pane is ready.
    * @param {string} paneId - The pane ID
    * @returns {boolean}
    */
@@ -193,8 +158,6 @@ function createInjectionController(options = {}) {
       if (!line) return false;
 
       const lineText = line.translateToString(true).trimEnd();
-      // Common prompt patterns: ends with >, $, #, :, or ? (for prompts like "Continue?")
-      // Note: May false-positive on questions in output - runtime testing needed
       const promptPatterns = [/>\s*$/, /\$\s*$/, /#\s*$/, /:\s*$/, /\?\s*$/];
       const hasPrompt = promptPatterns.some(p => p.test(lineText));
 
@@ -208,288 +171,76 @@ function createInjectionController(options = {}) {
     }
   }
 
-  /**
-   * Verify Enter succeeded using stricter criteria:
-   * 1. Output activity started (Claude began processing)
-   * 2. AND prompt returned (Claude finished and is ready for input)
-   *
-   * This prevents false positives from continuation output.
-   * Retries Enter only if focus can be established.
-   *
-   * @param {string} paneId - The pane ID
-   * @param {HTMLElement} textarea - The textarea element (for focus operations)
-   * @param {number} retriesLeft - Remaining retry attempts
-   * @returns {Promise<boolean>} - Whether submit appears to have succeeded
-   */
-  async function verifyAndRetryEnter(paneId, textarea, retriesLeft = MAX_ENTER_RETRIES) {
-    const outputTimeBefore = lastOutputTime[paneId] || 0;
-
-    // Wait for Enter to be processed
-    await new Promise(resolve => setTimeout(resolve, ENTER_VERIFY_DELAY_MS));
-
-    // Check for output activity (indicates Claude started processing)
-    const outputTimeAfter = lastOutputTime[paneId] || 0;
-    const hadOutputActivity = outputTimeAfter > outputTimeBefore;
-    if (textarea && textarea.value) {
-      // Textarea still has content — most direct signal that Enter failed.
-      // Retry Enter instead of giving up, using the same retry budget.
-      if (retriesLeft > 0) {
-        log.warn(`verifyAndRetryEnter ${paneId}`, `Textarea still has input after Enter, retrying (${retriesLeft} left)`);
-        const currentPane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-        const currentTextarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
-        if (currentTextarea) {
-          const focusOk = await focusWithRetry(currentTextarea);
-          if (focusOk) {
-            await sendEnterToPane(paneId);
-            return verifyAndRetryEnter(paneId, currentTextarea, retriesLeft - 1);
-          }
-        }
-        log.warn(`verifyAndRetryEnter ${paneId}`, 'Could not retry Enter for stuck textarea (focus/textarea issue)');
-      } else {
-        log.warn(`verifyAndRetryEnter ${paneId}`, 'Textarea still has input after Enter - max retries reached');
-      }
-      markPotentiallyStuck(paneId);
-      return false;
-    }
-
-    if (hadOutputActivity) {
-      // Output started - now wait for prompt-ready (stricter success criteria)
-      log.info(`verifyAndRetryEnter ${paneId}`, 'Output activity detected, waiting for prompt-ready');
-
-      const promptWaitStart = Date.now();
-      while ((Date.now() - promptWaitStart) < PROMPT_READY_TIMEOUT_MS) {
-        // Check if prompt appeared (terminal ready for input)
-        if (isPromptReady(paneId) && isIdle(paneId)) {
-          log.info(`verifyAndRetryEnter ${paneId}`, 'Enter succeeded (prompt-ready + idle)');
-          return true;
-        }
-        await new Promise(resolve => setTimeout(resolve, ENTER_RETRY_INTERVAL_MS));
-      }
-
-      // Timeout waiting for prompt, but output DID start - consider partial success
-      // This handles cases where Claude is still outputting (long response)
-      if (!isIdle(paneId)) {
-        log.info(`verifyAndRetryEnter ${paneId}`, 'Enter succeeded (output ongoing, not idle)');
-        return true;
-      }
-
-      // Pane is idle but no prompt detected - DON'T assume success
-      // This is likely a false positive: Claude was already outputting, our Enter was ignored
-      if (retriesLeft > 0) {
-        log.info(`verifyAndRetryEnter ${paneId}`, 'No prompt detected after output, retrying Enter');
-        // Re-query textarea and retry
-        const currentPane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-        const currentTextarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
-        if (currentTextarea) {
-          const focusOk = await focusWithRetry(currentTextarea);
-          if (focusOk) {
-            await sendEnterToPane(paneId);
-            return verifyAndRetryEnter(paneId, currentTextarea, retriesLeft - 1);
-          }
-        }
-        log.warn(`verifyAndRetryEnter ${paneId}`, 'Could not retry Enter (focus/textarea issue)');
-      }
-      log.warn(`verifyAndRetryEnter ${paneId}`, 'Enter unverified (no prompt detected after output)');
-      markPotentiallyStuck(paneId);
-      return false;
-    }
-
-    // No output activity - Enter may have been ignored
-    if (retriesLeft <= 0) {
-      log.warn(`verifyAndRetryEnter ${paneId}`, 'Max retries reached, no output activity detected');
-      return false;
-    }
-
-    log.info(`verifyAndRetryEnter ${paneId}`, `No output activity, will retry Enter (${retriesLeft} left)`);
-
-    // Wait for pane to be idle before retrying
-    const maxWaitTime = MAX_QUEUE_TIME_MS;
-    const startWait = Date.now();
-
-    while (!isIdle(paneId) && (Date.now() - startWait) < maxWaitTime) {
-      await new Promise(resolve => setTimeout(resolve, ENTER_RETRY_INTERVAL_MS));
-      // Check if output started during wait
-      if ((lastOutputTime[paneId] || 0) > outputTimeBefore) {
-        log.info(`verifyAndRetryEnter ${paneId}`, 'Output started during wait');
-        // Recurse to apply prompt-ready check
-        return verifyAndRetryEnter(paneId, textarea, retriesLeft);
-      }
-    }
-
-    // Re-query textarea
-    const currentPane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-    const currentTextarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
-
-    if (!currentTextarea) {
-      log.warn(`verifyAndRetryEnter ${paneId}`, 'textarea disappeared during wait');
-      return false;
-    }
-
-    // STRICT: Only retry Enter if focus succeeds (no "sending anyway")
-    const focusOk = await focusWithRetry(currentTextarea);
-    if (!focusOk) {
-      log.warn(`verifyAndRetryEnter ${paneId}`, 'Focus failed on retry - aborting (would send to wrong element)');
-      return false;
-    }
-
-    // Retry Enter using helper (prefers Terminal.input if available)
-    log.info(`verifyAndRetryEnter ${paneId}`, 'Retrying Enter');
-    const enterResult = await sendEnterToPane(paneId);
-    if (!enterResult.success) {
-      log.warn(`verifyAndRetryEnter ${paneId}`, 'Enter retry failed');
-      return false;
-    }
-
-    // Recurse with decremented retry count
-    return verifyAndRetryEnter(paneId, currentTextarea, retriesLeft - 1);
-  }
-
-  // IDLE QUEUE: Process queued messages for a pane when it becomes idle
-  // This is the SECOND queue in the two-queue system. Messages arrive here from
-  // the throttle queue (daemon-handlers.js processThrottleQueue → terminal.sendToPane).
-  // This queue waits for the pane to be idle (1s silence) before actual injection.
+  // IDLE QUEUE: Process queued messages for a pane.
+  // Messages arrive here from the throttle queue (daemon-handlers.js
+  // processThrottleQueue → terminal.sendToPane). For Claude panes, the only
+  // gates are injectionInFlight (focus mutex) and userInputFocused (composing
+  // guard). No idle/busy timing — messages send immediately like user input.
   function processIdleQueue(paneId) {
     const id = String(paneId);
     const isCodex = isCodexPane(id);
-
-    // Global lock applies to Claude panes only (need focus for sendTrustedEnter)
-    // Codex bypasses - uses codex-exec API, no PTY/focus needed
-    // Session 67: Gemini also bypasses - uses PTY \r directly, no focus needed
     const isGemini = isGeminiPane(id);
     const bypassesLock = isCodex || isGemini;
 
-    // Peek at front item for immediate flag (user-initiated messages)
-    const peekQueue = messageQueue[paneId];
-    const peekItem = peekQueue && peekQueue.length > 0 ? peekQueue[0] : null;
-    const isImmediate = peekItem && peekItem.immediate;
+    const queue = messageQueue[paneId];
+    if (!queue || queue.length === 0) return;
 
-    // Immediate messages (user input) bypass idle/typing guards entirely.
-    // Only gate: injectionInFlight (focus mutex for Claude panes).
-    // Retry on a tight 50ms loop instead of normal 100ms with idle checks.
-    if (isImmediate && !bypassesLock) {
-      if (getInjectionInFlight()) {
-        log.debug(`processQueue ${id}`, 'User message waiting for injection lock (50ms poll)');
-        setTimeout(() => processIdleQueue(paneId), 50);
-        return;
-      }
-      // Lock is clear — send immediately, skip all idle/typing checks
-      peekQueue.shift();
-      const queuedMessage = typeof peekItem === 'string' ? peekItem : peekItem.message;
-      const onComplete = peekItem && typeof peekItem === 'object' ? peekItem.onComplete : null;
-      log.info(`Terminal ${id}`, 'User message: immediate send (bypassing idle checks)');
-      setInjectionInFlight(true);
-      doSendToPane(paneId, queuedMessage, (result) => {
-        setInjectionInFlight(false);
-        if (typeof onComplete === 'function') {
-          try {
-            onComplete(result);
-          } catch (err) {
-            log.error('Terminal', 'queue onComplete failed', err);
-          }
-        }
-        if (peekQueue.length > 0) {
-          setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
-        }
-      });
-      return;
-    }
-
+    // Gate 1: injectionInFlight — focus mutex for Claude panes.
+    // Codex/Gemini bypass (focus-free paths).
     if (!bypassesLock && getInjectionInFlight()) {
       log.debug(`processQueue ${id}`, 'Claude pane deferred - injection in flight');
-      setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+      setTimeout(() => processIdleQueue(paneId), 50);
       return;
     }
     if (bypassesLock && getInjectionInFlight()) {
       log.debug(`processQueue ${id}`, `${isCodex ? 'Codex' : 'Gemini'} pane bypassing global lock`);
     }
 
-    // Focus isolation: defer agent messages while user has a UI input focused.
-    // This is stronger than typingBlocked (which only lasts 300ms after last keypress).
-    // While the user is composing in broadcastInput, agent injections must wait —
-    // they would steal focus via textarea.focus() in doSendToPane.
-    // Codex/Gemini panes bypass (they use PTY writes, no focus needed).
-    // Immediate messages (user's own send) already handled above.
+    // Gate 2: userInputFocused — defer while user is composing in broadcastInput.
+    // Codex/Gemini bypass (PTY writes, no focus steal).
     if (!bypassesLock && typeof userInputFocused === 'function' && userInputFocused()) {
       log.debug(`processQueue ${id}`, 'Claude pane deferred - user input focused (composing)');
       setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
       return;
     }
 
-    const queue = messageQueue[paneId];
-    if (!queue || queue.length === 0) return;
+    // For Codex/Gemini: still respect per-pane typing guard
+    if (bypassesLock) {
+      const paneLastTypedAt = (lastTypedTime && lastTypedTime[id]) || 0;
+      const paneRecentlyTyped = paneLastTypedAt && (Date.now() - paneLastTypedAt) < TYPING_GUARD_MS;
+      if (userIsTyping() || paneRecentlyTyped) {
+        setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+        return;
+      }
+    }
 
-    const now = Date.now();
-    const item = queue[0];
+    // Dequeue and send immediately
+    const item = queue.shift();
     const queuedMessage = typeof item === 'string' ? item : item.message;
     const onComplete = item && typeof item === 'object' ? item.onComplete : null;
 
-    // Check timing conditions
-    const waitTime = now - (item.timestamp || now);
-    const waitedTooLong = waitTime >= MAX_QUEUE_TIME_MS;
-    const waitedExtremelyLong = waitTime >= EXTREME_WAIT_MS;
-    const hitAbsoluteMax = waitTime >= ABSOLUTE_MAX_WAIT_MS;
-
-    const paneLastTypedAt = (lastTypedTime && lastTypedTime[id]) || 0;
-    const paneRecentlyTyped = paneLastTypedAt && (now - paneLastTypedAt) < TYPING_GUARD_MS;
-    const typingBlocked = userIsTyping() || paneRecentlyTyped;
-
-    // Codex/Gemini panes bypass idle checks entirely - they use PTY writes
-    // that don't require the careful timing Claude's ink TUI needs
-    // Session 67: Gemini CLI sends frequent cursor/status updates (~12ms) that
-    // prevent idle detection from passing, causing 60s delays without this bypass
-    const canSendBypass = bypassesLock && !typingBlocked;
-
-    // Normal case: pane is fully idle (1s of silence) - Claude panes only
-    const canSendNormal = !bypassesLock && isIdle(paneId) && !typingBlocked;
-
-    // Force-inject case: waited 5s+ AND pane has at least 500ms of silence
-    // This prevents injecting during active output which causes Enter to be ignored
-    const canForceInject = !bypassesLock && waitedTooLong && isIdleForForceInject(paneId) && !typingBlocked;
-
-    // Emergency fallback: 10s absolute max regardless of idle state
-    // This prevents messages from being stuck forever if pane never becomes idle
-    const mustForceInject = !bypassesLock && hitAbsoluteMax && !typingBlocked;
-
-    // Log warning at 8s mark (only once per message via flag check) - Claude panes only
-    if (!bypassesLock && waitedExtremelyLong && !item._warnedExtreme) {
-      item._warnedExtreme = true;
-      const timeSinceOutput = Date.now() - (lastOutputTime[paneId] || 0);
-      log.warn(`Terminal ${paneId}`, `Message queued 8s+, pane last output ${timeSinceOutput}ms ago, still waiting for idle`);
-    }
-
-    if (canSendBypass || canSendNormal || canForceInject || mustForceInject) {
-      // Remove from queue and send
-      queue.shift();
-      if (canSendBypass) {
-        log.debug(`Terminal ${paneId}`, `${isCodex ? 'Codex' : 'Gemini'} pane: bypassing idle check`);
-      } else if (mustForceInject && !canForceInject && !canSendNormal) {
-        log.warn(`Terminal ${paneId}`, `EMERGENCY: Force-injecting after ${waitTime}ms (${ABSOLUTE_MAX_WAIT_MS}ms max reached, pane may still be active)`);
-      } else if (canForceInject && !canSendNormal) {
-        log.info(`Terminal ${paneId}`, `Force-injecting after ${waitTime}ms wait (pane now idle for 500ms)`);
-      }
-      // Only set global lock for Claude panes (Codex/Gemini use focus-free paths)
-      if (!bypassesLock) {
-        setInjectionInFlight(true);
-      }
-      doSendToPane(paneId, queuedMessage, (result) => {
-        if (!bypassesLock) {
-          setInjectionInFlight(false);
-        }
-        if (typeof onComplete === 'function') {
-          try {
-            onComplete(result);
-          } catch (err) {
-            log.error('Terminal', 'queue onComplete failed', err);
-          }
-        }
-        if (queue.length > 0) {
-          setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
-        }
-      });
+    if (bypassesLock) {
+      log.debug(`Terminal ${paneId}`, `${isCodex ? 'Codex' : 'Gemini'} pane: immediate send`);
     } else {
-      // Still busy, retry later
-      setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+      log.info(`Terminal ${id}`, 'Claude pane: immediate send');
+      setInjectionInFlight(true);
     }
+
+    doSendToPane(paneId, queuedMessage, (result) => {
+      if (!bypassesLock) {
+        setInjectionInFlight(false);
+      }
+      if (typeof onComplete === 'function') {
+        try {
+          onComplete(result);
+        } catch (err) {
+          log.error('Terminal', 'queue onComplete failed', err);
+        }
+      }
+      if (queue.length > 0) {
+        setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+      }
+    });
   }
 
   // Actually send message to pane (internal - use sendToPane for idle detection)
@@ -520,7 +271,6 @@ function createInjectionController(options = {}) {
       finish(result || { success: true });
     };
 
-    const hasTrailingEnter = message.endsWith('\r');
     const text = message.replace(/\r$/, '');
     const id = String(paneId);
     const isCodex = isCodexPane(id);
@@ -547,7 +297,7 @@ function createInjectionController(options = {}) {
     // Gemini CLI uses readline which accepts PTY \r as submit. The body is
     // sanitized first: embedded \r/\n replaced with spaces to prevent readline
     // from treating them as partial submit signals. A single \r is then sent
-    // unconditionally to submit the text — same pattern as Claude's shouldSendEnter.
+    // unconditionally to submit the text — same as the Claude path.
     // Payloads may or may not include trailing \r — Enter is sent unconditionally
     // regardless, so injection.js owns the submit decision for all pane types.
     const isGemini = isGeminiPane(id);
@@ -597,16 +347,9 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // CLAUDE PATH: Hybrid approach (PTY write for text + DOM keyboard for Enter)
-    // PTY \r does NOT auto-submit in Claude Code's ink TUI (PTY newline ignored)
-    // sendTrustedEnter() sends native keyboard events via Electron which WORKS
-    //
-    // Claude panes ALWAYS need Enter sent via sendTrustedEnter. Unlike Gemini
-    // (where PTY \r triggers readline execution), Claude's ink TUI only
-    // responds to native keyboard Enter events. Agent chat messages may not
-    // include trailing \r (to prevent Gemini command execution), so we force
-    // Enter for Claude panes unconditionally.
-    const shouldSendEnter = true;
+    // CLAUDE PATH: PTY write for text + sendTrustedEnter for Enter
+    // PTY \r does NOT auto-submit in Claude Code's ink TUI — must use native
+    // Electron keyboard events via sendTrustedEnter. Enter is always sent.
     const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
     let textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
 
@@ -639,10 +382,7 @@ function createInjectionController(options = {}) {
     };
 
     // Step 1: Focus terminal for sendTrustedEnter (required for Enter to target correct pane)
-    // Note: Terminal.input() was disabled for Claude panes - it doesn't work with ink TUI
-    if (shouldSendEnter) {
-      textarea.focus();
-    }
+    textarea.focus();
 
     // Step 2: Clear any stuck input BEFORE writing new text
     // Ctrl+U (0x15) clears the current input line - prevents accumulation if previous Enter failed
@@ -665,116 +405,69 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // Step 4: Send Enter via sendTrustedEnter after adaptive delay
-    // Claude panes always need Enter (shouldSendEnter = true) because ink TUI
-    // only responds to native keyboard events, not PTY \r
-    if (shouldSendEnter) {
-      // Calculate delay based on pane activity (busy panes need more time)
-      const enterDelay = getAdaptiveEnterDelay(id);
-      log.info(`doSendToPane ${id}`, `Using adaptive Enter delay: ${enterDelay}ms`);
+    // Step 4: Send Enter via sendTrustedEnter after short fixed delay
+    // Claude panes always need Enter because ink TUI only responds to native
+    // keyboard events, not PTY \r. Use a short fixed delay (50ms) to let the
+    // PTY text write settle before sending Enter.
+    const CLAUDE_ENTER_DELAY_MS = 50;
 
-      setTimeout(async () => {
-        // Replace short safety timer with one covering the full Enter+verify cycle
-        // Focus (100ms + 200ms retry) + sendEnter + verify (3s+) = ~5s worst case
+    setTimeout(async () => {
+      // Re-query textarea in case DOM changed during delay
+      const currentPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
+      textarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
+
+      // Guard: Abort if textarea disappeared
+      if (!textarea) {
+        log.warn(`doSendToPane ${id}`, 'Claude pane: textarea disappeared before Enter, aborting');
+        restoreSavedFocus();
+        finishWithClear({ success: false, reason: 'textarea_disappeared' });
+        return;
+      }
+
+      // Focus isolation: if user focused an input during the Enter delay,
+      // wait for them to blur before stealing focus for sendTrustedEnter.
+      // Poll every 100ms, give up after 5s to prevent message starvation.
+      // Extend the safety timer to 6s so it outlasts the 5s poll + overhead,
+      // preventing premature lock release that could allow a second message
+      // to write PTY text while this message's Enter hasn't fired yet.
+      if (typeof userInputFocused === 'function' && userInputFocused()) {
         clearTimeout(safetyTimerId);
         safetyTimerId = setTimeout(() => {
-          log.warn(`doSendToPane ${id}`, 'Enter+verify safety timeout (10s) - releasing lock');
-          finish({ success: true, verified: false, reason: 'verify_timeout' });
-        }, 10000);
-
-        // Re-query textarea in case DOM changed during delay
-        const currentPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
-        textarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
-
-        // Guard: Abort if textarea disappeared
-        if (!textarea) {
-          log.warn(`doSendToPane ${id}`, 'Claude pane: textarea disappeared before Enter, aborting');
-          restoreSavedFocus();
-          finishWithClear({ success: false, reason: 'textarea_disappeared' });
-          return;
+          finish({ success: true, verified: false, reason: 'timeout' });
+        }, 6000);
+        log.info(`doSendToPane ${id}`, 'User input focused before Enter — waiting for blur');
+        const focusWaitStart = Date.now();
+        while (userInputFocused() && (Date.now() - focusWaitStart) < 5000) {
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
-
-        // NOTE: No pre-flight idle check here. processIdleQueue already handles
-        // idle timing with tiered thresholds (1s normal, 500ms force after 10s,
-        // emergency after 60s). doSendToPane trusts that the queue gated entry.
-
-        // Focus isolation: if user focused an input during the Enter delay,
-        // wait for them to blur before stealing focus for sendTrustedEnter.
-        // Poll every 100ms, give up after 5s to prevent message starvation.
-        if (typeof userInputFocused === 'function' && userInputFocused()) {
-          log.info(`doSendToPane ${id}`, 'User input focused before Enter — waiting for blur');
-          const focusWaitStart = Date.now();
-          while (userInputFocused() && (Date.now() - focusWaitStart) < 5000) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
-          if (userInputFocused()) {
-            log.warn(`doSendToPane ${id}`, 'User input still focused after 5s — proceeding with Enter');
-          }
+        if (userInputFocused()) {
+          log.warn(`doSendToPane ${id}`, 'User input still focused after 5s — proceeding with Enter');
         }
+      }
 
-        // Ensure focus for sendTrustedEnter (Terminal.input disabled for Claude panes)
-        let focusOk = await focusWithRetry(textarea);
+      // Ensure focus for sendTrustedEnter
+      const focusOk = await focusWithRetry(textarea);
+      if (!focusOk) {
+        log.warn(`doSendToPane ${id}`, 'Claude pane: focus failed, proceeding with Enter anyway');
+      }
 
-        // If focus failed, retry once after a short delay (focus drift is recoverable)
-        if (!focusOk) {
-          log.warn(`doSendToPane ${id}`, 'Claude pane: focus failed, retrying after 200ms');
-          await new Promise(resolve => setTimeout(resolve, 200));
-          // Re-query textarea in case DOM changed
-          const retryPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
-          textarea = retryPane ? retryPane.querySelector('.xterm-helper-textarea') : textarea;
-          focusOk = await focusWithRetry(textarea);
-          if (!focusOk) {
-            log.warn(`doSendToPane ${id}`, 'Claude pane: focus retry failed, proceeding with Enter anyway');
-          }
-        }
+      // Send Enter
+      const enterResult = await sendEnterToPane(id);
 
-        // Send Enter via sendTrustedEnter (Terminal.input disabled for Claude panes)
-        const enterResult = await sendEnterToPane(id);
+      // Restore focus immediately after Enter (no verification loop)
+      scheduleFocusRestore();
 
-        // CRITICAL: Check if focus was maintained during sendTrustedEnter IPC round-trip
-        // sendInputEvent sends to whatever is focused, so if focus changed, Enter went elsewhere
-        const focusStillCorrect = document.activeElement === textarea;
-        if (!focusStillCorrect) {
-          log.warn(`doSendToPane ${id}`, 'Claude pane: focus changed during sendTrustedEnter IPC - Enter may have gone to wrong element');
-        }
+      if (!enterResult.success) {
+        log.error(`doSendToPane ${id}`, 'Enter send failed');
+        markPotentiallyStuck(id);
+        finishWithClear({ success: false, reason: 'enter_failed' });
+        return;
+      }
 
-        if (!enterResult.success) {
-          log.error(`doSendToPane ${id}`, 'Enter send failed');
-          markPotentiallyStuck(id);
-          scheduleFocusRestore();
-          finishWithClear({ success: false, reason: 'enter_failed' });
-          return;
-        }
-        log.info(`doSendToPane ${id}`, `Claude pane: Enter sent via ${enterResult.method}${focusStillCorrect ? '' : ' (focus may have changed)'}`);
-
-        // Verify Enter succeeded (textarea empty) - if not, retry Enter with focus
-        // Focus restoration is DEFERRED until after verification so that retries
-        // inside verifyAndRetryEnter can re-focus the textarea without fighting
-        // a restored user focus. This eliminates the race condition where focus
-        // was restored immediately after the first Enter, making retries fail.
-        const submitOk = await verifyAndRetryEnter(id, textarea);
-
-        // NOW restore focus (verification + retries complete)
-        scheduleFocusRestore();
-
-        if (!submitOk) {
-          log.warn(`doSendToPane ${id}`, 'Claude pane: Enter verification failed after retries');
-          markPotentiallyStuck(id); // Register for sweeper retry
-        }
-
-        lastTypedTime[id] = Date.now();
-        const resultPayload = submitOk
-          ? { success: true }
-          // Enter was sent, but verification failed (no output/prompt yet) - treat as unverified success
-          : { success: true, verified: false, reason: 'verification_failed' };
-        finishWithClear(resultPayload);
-      }, enterDelay);
-    } else {
-      // No Enter needed, just restore focus
-      restoreSavedFocus();
+      log.info(`doSendToPane ${id}`, `Claude pane: Enter sent via ${enterResult.method}`);
       lastTypedTime[id] = Date.now();
       finishWithClear({ success: true });
-    }
+    }, CLAUDE_ENTER_DELAY_MS);
   }
 
   // Send message to a specific pane (queues if pane is busy)
@@ -804,7 +497,7 @@ function createInjectionController(options = {}) {
 
     const reason = userIsTyping()
       ? 'user typing'
-      : (getInjectionInFlight() ? 'injection in flight' : (!isIdle(id) ? 'pane busy' : 'idle'));
+      : (getInjectionInFlight() ? 'injection in flight' : 'ready');
     log.info(`Terminal ${id}`, `${reason}, queueing message`);
 
     // Start processing idle queue
@@ -812,11 +505,9 @@ function createInjectionController(options = {}) {
   }
 
   return {
-    getAdaptiveEnterDelay,
     focusWithRetry,
     sendEnterToPane,
     isPromptReady,
-    verifyAndRetryEnter,
     processIdleQueue,
     doSendToPane,
     sendToPane,

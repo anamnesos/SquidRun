@@ -18,23 +18,9 @@ const { attachAgentColors } = require('./terminal/agent-colors');
 const { PANE_IDS, PANE_ROLES, WORKSPACE_PATH } = require('../config');
 const {
   TYPING_GUARD_MS,
-  INJECTION_IDLE_THRESHOLD_MS,
-  MAX_QUEUE_TIME_MS,
-  FORCE_INJECT_IDLE_MS,
-  EXTREME_WAIT_MS,
-  ABSOLUTE_MAX_WAIT_MS,
   QUEUE_RETRY_MS,
-  BROADCAST_STAGGER_MS,
   INJECTION_LOCK_TIMEOUT_MS,
-  ENTER_DELAY_IDLE_MS,
-  ENTER_DELAY_ACTIVE_MS,
-  ENTER_DELAY_BUSY_MS,
-  PANE_ACTIVE_THRESHOLD_MS,
-  PANE_BUSY_THRESHOLD_MS,
   FOCUS_RETRY_DELAY_MS,
-  ENTER_VERIFY_DELAY_MS,
-  ENTER_RETRY_INTERVAL_MS,
-  PROMPT_READY_TIMEOUT_MS,
   STARTUP_READY_TIMEOUT_MS,
   STARTUP_IDENTITY_DELAY_MS,
   STARTUP_IDENTITY_DELAY_CODEX_MS,
@@ -250,7 +236,6 @@ function isMeaningfulActivity(data) {
 
 // Non-timing constants that stay here
 const MAX_FOCUS_RETRIES = 3;          // Max focus retry attempts before giving up
-const MAX_ENTER_RETRIES = 5;          // Max Enter retry attempts if text remains
 const STARTUP_OSC_REGEX = /\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g;
 const STARTUP_CSI_REGEX = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const STARTUP_READY_PATTERNS = [
@@ -431,19 +416,6 @@ function resetCodexIdentity(paneId) {
   log.info('Terminal', `Reset codex identity tracking for pane ${paneId}`);
 }
 
-// Check if a pane is idle (no output for INJECTION_IDLE_THRESHOLD_MS)
-function isIdle(paneId) {
-  const lastOutput = lastOutputTime[paneId] || 0;
-  return (Date.now() - lastOutput) >= INJECTION_IDLE_THRESHOLD_MS;
-}
-
-// Shorter idle check for force-inject scenario
-// Requires 500ms of silence - long enough for Enter to not be ignored,
-// but shorter than full 1s idle threshold so messages don't queue forever
-function isIdleForForceInject(paneId) {
-  const lastOutput = lastOutputTime[paneId] || 0;
-  return (Date.now() - lastOutput) >= FORCE_INJECT_IDLE_MS;
-}
 
 function stripAnsiForStartup(input) {
   return String(input || '')
@@ -676,8 +648,6 @@ injectionController = createInjectionController({
   isCodexPane,
   isGeminiPane,
   buildCodexExecPrompt,
-  isIdle,
-  isIdleForForceInject,
   userIsTyping,
   userInputFocused,
   updatePaneStatus,
@@ -685,20 +655,8 @@ injectionController = createInjectionController({
   getInjectionInFlight,
   setInjectionInFlight,
   constants: {
-    ENTER_DELAY_IDLE_MS,
-    ENTER_DELAY_ACTIVE_MS,
-    ENTER_DELAY_BUSY_MS,
-    PANE_ACTIVE_THRESHOLD_MS,
-    PANE_BUSY_THRESHOLD_MS,
     FOCUS_RETRY_DELAY_MS,
     MAX_FOCUS_RETRIES,
-    ENTER_VERIFY_DELAY_MS,
-    MAX_ENTER_RETRIES,
-    ENTER_RETRY_INTERVAL_MS,
-    PROMPT_READY_TIMEOUT_MS,
-    MAX_QUEUE_TIME_MS,
-    EXTREME_WAIT_MS,
-    ABSOLUTE_MAX_WAIT_MS,
     QUEUE_RETRY_MS,
     INJECTION_LOCK_TIMEOUT_MS,
     TYPING_GUARD_MS,
@@ -734,9 +692,6 @@ function isPromptReady(...args) {
   return injectionController.isPromptReady(...args);
 }
 
-function verifyAndRetryEnter(...args) {
-  return injectionController.verifyAndRetryEnter(...args);
-}
 
 function processIdleQueue(...args) {
   return injectionController.processIdleQueue(...args);
@@ -1694,11 +1649,12 @@ module.exports = {
   lastEnterTime,  // Exported for daemon coordination
   lastTypedTime,  // Track typing for Enter blocking
   lastOutputTime, // Track output for idle detection
-  isIdle,         // Check if pane is idle
   registerCodexPane,   // CLI Identity: mark pane as Codex
   unregisterCodexPane, // CLI Identity: unmark pane as Codex
   isCodexPane,         // CLI Identity: query Codex status
   messageQueue,   // Message queue for busy panes
+  getInjectionInFlight, // Check injection lock state
+  setInjectionInFlight, // Set injection lock (for testing)
   // Stuck message sweeper
   potentiallyStuckPanes, // Tracking for sweeper
   startStuckMessageSweeper,

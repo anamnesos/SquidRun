@@ -17,20 +17,8 @@ const { createInjectionController } = require('../modules/terminal/injection');
 describe('Terminal Injection', () => {
   // Default constants matching the module
   const DEFAULT_CONSTANTS = {
-    ENTER_DELAY_IDLE_MS: 50,
-    ENTER_DELAY_ACTIVE_MS: 150,
-    ENTER_DELAY_BUSY_MS: 300,
-    PANE_ACTIVE_THRESHOLD_MS: 500,
-    PANE_BUSY_THRESHOLD_MS: 100,
     FOCUS_RETRY_DELAY_MS: 50,
     MAX_FOCUS_RETRIES: 3,
-    ENTER_VERIFY_DELAY_MS: 200,
-    MAX_ENTER_RETRIES: 3,
-    ENTER_RETRY_INTERVAL_MS: 100,
-    PROMPT_READY_TIMEOUT_MS: 5000,
-    MAX_QUEUE_TIME_MS: 5000,
-    EXTREME_WAIT_MS: 8000,
-    ABSOLUTE_MAX_WAIT_MS: 10000,
     QUEUE_RETRY_MS: 100,
     INJECTION_LOCK_TIMEOUT_MS: 1000,
     BYPASS_CLEAR_DELAY_MS: 250,
@@ -102,8 +90,6 @@ describe('Terminal Injection', () => {
       isCodexPane: jest.fn().mockReturnValue(false),
       isGeminiPane: jest.fn().mockReturnValue(false),  // Session 67: Added for Gemini PTY path
       buildCodexExecPrompt: jest.fn((id, text) => `prompt: ${text}`),
-      isIdle: jest.fn().mockReturnValue(true),
-      isIdleForForceInject: jest.fn().mockReturnValue(true),
       userIsTyping: jest.fn().mockReturnValue(false),
       updatePaneStatus: jest.fn(),
       markPotentiallyStuck: jest.fn(),
@@ -123,11 +109,9 @@ describe('Terminal Injection', () => {
 
   describe('createInjectionController', () => {
     test('creates controller with all methods', () => {
-      expect(controller.getAdaptiveEnterDelay).toBeDefined();
       expect(controller.focusWithRetry).toBeDefined();
       expect(controller.sendEnterToPane).toBeDefined();
       expect(controller.isPromptReady).toBeDefined();
-      expect(controller.verifyAndRetryEnter).toBeDefined();
       expect(controller.processIdleQueue).toBeDefined();
       expect(controller.doSendToPane).toBeDefined();
       expect(controller.sendToPane).toBeDefined();
@@ -135,32 +119,7 @@ describe('Terminal Injection', () => {
 
     test('works with default empty options', () => {
       const emptyController = createInjectionController({});
-      expect(emptyController.getAdaptiveEnterDelay).toBeDefined();
-    });
-  });
-
-  describe('getAdaptiveEnterDelay', () => {
-    test('returns busy delay for very recent output', () => {
-      lastOutputTime['1'] = Date.now() - 50; // 50ms ago (< 100ms threshold)
-      const delay = controller.getAdaptiveEnterDelay('1');
-      expect(delay).toBe(DEFAULT_CONSTANTS.ENTER_DELAY_BUSY_MS);
-    });
-
-    test('returns active delay for recent output', () => {
-      lastOutputTime['1'] = Date.now() - 200; // 200ms ago (< 500ms but > 100ms)
-      const delay = controller.getAdaptiveEnterDelay('1');
-      expect(delay).toBe(DEFAULT_CONSTANTS.ENTER_DELAY_ACTIVE_MS);
-    });
-
-    test('returns idle delay for no recent output', () => {
-      lastOutputTime['1'] = Date.now() - 1000; // 1s ago
-      const delay = controller.getAdaptiveEnterDelay('1');
-      expect(delay).toBe(DEFAULT_CONSTANTS.ENTER_DELAY_IDLE_MS);
-    });
-
-    test('returns idle delay when no output time recorded', () => {
-      const delay = controller.getAdaptiveEnterDelay('1');
-      expect(delay).toBe(DEFAULT_CONSTANTS.ENTER_DELAY_IDLE_MS);
+      expect(emptyController.focusWithRetry).toBeDefined();
     });
   });
 
@@ -458,10 +417,9 @@ describe('Terminal Injection', () => {
       expect(mockLog.info).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('injection in flight'));
     });
 
-    test('logs pane busy state', () => {
-      mockOptions.isIdle.mockReturnValue(false);
+    test('logs ready state when not typing and not in flight', () => {
       controller.sendToPane('1', 'test\r');
-      expect(mockLog.info).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('pane busy'));
+      expect(mockLog.info).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('ready'));
     });
   });
 
@@ -514,90 +472,29 @@ describe('Terminal Injection', () => {
       expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
     });
 
-    test('logs warning at 8s+ wait time', () => {
-      const oldTimestamp = Date.now() - 9000; // 9 seconds ago (exceeds EXTREME_WAIT_MS=8000)
-      messageQueue['1'] = [{
-        message: 'test\r',
-        timestamp: oldTimestamp,
-      }];
-      lastOutputTime['1'] = Date.now() - 1000;
-
-      controller.processIdleQueue('1');
-
-      expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.stringContaining('Terminal 1'),
-        expect.stringContaining('8s+')
-      );
-    });
-
-    test('force injects after MAX_QUEUE_TIME_MS', () => {
-      const oldTimestamp = Date.now() - 6000; // 6 seconds ago (exceeds MAX_QUEUE_TIME_MS=5000)
-      messageQueue['1'] = [{
-        message: 'test\r',
-        timestamp: oldTimestamp,
-      }];
-      mockOptions.isIdle.mockReturnValue(false); // Not normal idle
-      mockOptions.isIdleForForceInject.mockReturnValue(true); // But force-inject idle
-
-      controller.processIdleQueue('1');
-
-      expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
-      expect(mockLog.info).toHaveBeenCalledWith(
-        expect.stringContaining('Terminal 1'),
-        expect.stringContaining('Force-injecting')
-      );
-    });
-
-    test('emergency force inject after ABSOLUTE_MAX_WAIT_MS', () => {
-      const veryOldTimestamp = Date.now() - 11000; // 11 seconds ago (exceeds ABSOLUTE_MAX_WAIT_MS=10000)
-      messageQueue['1'] = [{
-        message: 'test\r',
-        timestamp: veryOldTimestamp,
-      }];
-      mockOptions.isIdle.mockReturnValue(false);
-      mockOptions.isIdleForForceInject.mockReturnValue(false);
-
-      controller.processIdleQueue('1');
-
-      expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
-      expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.stringContaining('Terminal 1'),
-        expect.stringContaining('EMERGENCY')
-      );
-    });
-
-    test('retries later if user is typing', () => {
+    test('sends Claude pane message immediately (no idle gating)', () => {
       messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
-      mockOptions.userIsTyping.mockReturnValue(true);
 
       controller.processIdleQueue('1');
 
-      // Should not inject
-      expect(mockOptions.setInjectionInFlight).not.toHaveBeenCalled();
-      // Message should still be in queue
-      expect(messageQueue['1'].length).toBe(1);
-    });
-
-    test('per-pane typing guard defers injection when pane recently typed', () => {
-      messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
-      mockOptions.userIsTyping.mockReturnValue(false);
-      lastTypedTime['1'] = Date.now() - 100; // within TYPING_GUARD_MS
-
-      controller.processIdleQueue('1');
-
-      expect(mockOptions.setInjectionInFlight).not.toHaveBeenCalled();
-      expect(messageQueue['1'].length).toBe(1);
-    });
-
-    test('per-pane typing guard allows injection after typing window', () => {
-      messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
-      mockOptions.userIsTyping.mockReturnValue(false);
-      lastTypedTime['1'] = Date.now() - 500; // beyond TYPING_GUARD_MS
-
-      controller.processIdleQueue('1');
-
+      // Should immediately set injection lock and dequeue
       expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
       expect(messageQueue['1'].length).toBe(0);
+      expect(mockLog.info).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringContaining('immediate send')
+      );
+    });
+
+    test('defers Claude pane when userInputFocused', () => {
+      mockOptions.userInputFocused = jest.fn().mockReturnValue(true);
+      const ctrl = createInjectionController(mockOptions);
+      messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
+
+      ctrl.processIdleQueue('1');
+
+      expect(mockOptions.setInjectionInFlight).not.toHaveBeenCalled();
+      expect(messageQueue['1'].length).toBe(1);
     });
 
     test('calls onComplete callback after injection', async () => {
@@ -775,44 +672,39 @@ describe('Terminal Injection', () => {
       expect(mockTextarea.focus).toHaveBeenCalled();
     });
 
-    test('sends Enter after adaptive delay', async () => {
-      lastOutputTime['1'] = Date.now() - 1000; // Idle
+    test('sends Enter after fixed delay', async () => {
       document.activeElement = mockTextarea; // Focus succeeds
 
       await controller.doSendToPane('1', 'test\r', jest.fn());
 
-      // Advance past adaptive delay
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_DELAY_IDLE_MS + 100);
+      // Advance past fixed 50ms delay
+      await jest.advanceTimersByTimeAsync(100);
 
       expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
     });
 
     test('Claude pane always sends Enter even without trailing \\r', async () => {
-      lastOutputTime['1'] = Date.now() - 1000; // Idle
       document.activeElement = mockTextarea; // Focus succeeds
 
       const onComplete = jest.fn();
       await controller.doSendToPane('1', 'test', onComplete);
 
-      // Advance past adaptive delay
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_DELAY_IDLE_MS + 100);
+      // Advance past fixed delay
+      await jest.advanceTimersByTimeAsync(100);
 
       // Claude panes always send Enter (via sendTrustedEnter)
       expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
     });
 
     test('times out and returns unverified success', async () => {
-      // Simulate Enter+verify taking too long by making sendTrustedEnter hang
+      // Simulate Enter taking too long by making sendTrustedEnter hang
       mockPty.sendTrustedEnter.mockReturnValue(new Promise(() => {})); // Never resolves
       const onComplete = jest.fn();
 
       const promise = controller.doSendToPane('1', 'test\r', onComplete);
 
-      // Advance past Enter delay to enter the setTimeout callback
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_DELAY_IDLE_MS + 50);
-
-      // Advance past the 10s Enter+verify safety timeout
-      await jest.advanceTimersByTimeAsync(10100);
+      // Advance past fixed delay + safety timeout
+      await jest.advanceTimersByTimeAsync(2000);
 
       await promise;
 
@@ -842,7 +734,7 @@ describe('Terminal Injection', () => {
       mockPaneEl.querySelector.mockReturnValue(null);
       document.querySelector.mockReturnValue(mockPaneEl);
 
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_DELAY_IDLE_MS + 100);
+      await jest.advanceTimersByTimeAsync(100);
 
       expect(onComplete).toHaveBeenCalledWith({
         success: false,
@@ -850,25 +742,7 @@ describe('Terminal Injection', () => {
       });
     });
 
-    test('sends Enter without pre-flight idle check (trusts processIdleQueue)', async () => {
-      mockOptions.isIdle.mockReturnValue(false);
-      const onComplete = jest.fn();
-
-      await controller.doSendToPane('1', 'test\r', onComplete);
-
-      // Advance past Enter delay + focus retry delay (200ms) + buffer
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_DELAY_IDLE_MS + 500);
-
-      // Should NOT log "waiting for idle" — no pre-flight idle check in doSendToPane
-      expect(mockLog.info).not.toHaveBeenCalledWith(
-        expect.any(String),
-        expect.stringContaining('waiting for idle')
-      );
-      // Enter should have been sent regardless of idle state
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
-    });
-
-    test('proceeds with Enter after focus retry fails', async () => {
+    test('proceeds with Enter after focus fails', async () => {
       document.activeElement = null; // Focus will fail
       const onComplete = jest.fn();
 
@@ -881,13 +755,13 @@ describe('Terminal Injection', () => {
 
       await testController.doSendToPane('1', 'test\r', onComplete);
 
-      // Advance timers for Enter delay + focus retries + 200ms focus retry delay
+      // Advance timers for fixed delay + focus retries
       await jest.advanceTimersByTimeAsync(2000);
 
-      // Should log focus retry warning but proceed anyway
+      // Should log focus warning but proceed anyway
       expect(mockLog.warn).toHaveBeenCalledWith(
         expect.any(String),
-        expect.stringContaining('focus retry failed, proceeding with Enter anyway')
+        expect.stringContaining('focus failed, proceeding with Enter anyway')
       );
       // Enter should still be sent (not abandoned)
       expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
@@ -937,201 +811,4 @@ describe('Terminal Injection', () => {
     });
   });
 
-  describe('verifyAndRetryEnter', () => {
-    test('succeeds when output activity detected and prompt ready', async () => {
-      const outputTimeStart = Date.now();
-      lastOutputTime['1'] = outputTimeStart;
-
-      // Setup terminal with prompt
-      terminals.set('1', {
-        buffer: {
-          active: {
-            cursorY: 0,
-            viewportY: 0,
-            getLine: jest.fn().mockReturnValue({
-              translateToString: () => 'user@host> ',
-            }),
-          },
-        },
-      });
-
-      const promise = controller.verifyAndRetryEnter('1', mockTextarea, 3);
-
-      // Simulate output after Enter
-      lastOutputTime['1'] = Date.now() + 100;
-
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_VERIFY_DELAY_MS + 500);
-
-      const result = await promise;
-      expect(result).toBe(true);
-    });
-
-    test('succeeds when output ongoing (not idle)', async () => {
-      lastOutputTime['1'] = Date.now();
-      mockOptions.isIdle.mockReturnValue(false);
-
-      const promise = controller.verifyAndRetryEnter('1', mockTextarea, 3);
-
-      // Simulate output activity
-      lastOutputTime['1'] = Date.now() + 100;
-
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_VERIFY_DELAY_MS + 6000);
-
-      const result = await promise;
-      expect(result).toBe(true);
-    });
-
-    test('retries Enter when no output activity', async () => {
-      document.activeElement = mockTextarea;
-      lastOutputTime['1'] = Date.now();
-
-      const promise = controller.verifyAndRetryEnter('1', mockTextarea, 2);
-
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_VERIFY_DELAY_MS + 1000);
-
-      // Should log retry
-      expect(mockLog.info).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.stringContaining('will retry Enter')
-      );
-    });
-
-    test('fails after max retries with no output', async () => {
-      document.activeElement = null; // Focus will fail on retry
-      lastOutputTime['1'] = 0;
-
-      const promise = controller.verifyAndRetryEnter('1', mockTextarea, 0);
-
-      // Advance past verify delay
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_VERIFY_DELAY_MS + 100);
-
-      const result = await promise;
-
-      expect(result).toBe(false);
-      expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.stringContaining('Max retries reached')
-      );
-    });
-
-    test('marks pane as stuck when verification fails', async () => {
-      lastOutputTime['1'] = Date.now();
-      mockOptions.isIdle.mockReturnValue(true);
-
-      // No prompt detected
-      terminals.set('1', {
-        buffer: {
-          active: {
-            cursorY: 0,
-            viewportY: 0,
-            getLine: jest.fn().mockReturnValue({
-              translateToString: () => 'Processing...',
-            }),
-          },
-        },
-      });
-
-      const promise = controller.verifyAndRetryEnter('1', mockTextarea, 0);
-
-      // Simulate output activity
-      lastOutputTime['1'] = Date.now() + 100;
-
-      await jest.advanceTimersByTimeAsync(10000);
-
-      await promise;
-
-      expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
-    });
-
-    test('retries Enter when textarea still has input and eventually marks stuck', async () => {
-      lastOutputTime['1'] = Date.now();
-
-      // Textarea still has text (Enter was not consumed)
-      mockTextarea.value = 'stuck text';
-      // Focus will succeed for retry
-      document.activeElement = mockTextarea;
-
-      const promise = controller.verifyAndRetryEnter('1', mockTextarea, 2);
-
-      // Advance past verify delay + retries (each retry waits ENTER_VERIFY_DELAY_MS)
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_VERIFY_DELAY_MS * 5 + 1000);
-
-      const result = await promise;
-      expect(result).toBe(false);
-      expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
-      // Should have attempted retry Enter via sendTrustedEnter
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
-      expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.stringContaining('Textarea still has input')
-      );
-    });
-
-    test('returns false immediately when textarea stuck and no retries left', async () => {
-      lastOutputTime['1'] = Date.now();
-
-      // Textarea still has text (Enter was not consumed)
-      mockTextarea.value = 'stuck text';
-
-      const promise = controller.verifyAndRetryEnter('1', mockTextarea, 0);
-
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_VERIFY_DELAY_MS + 100);
-
-      const result = await promise;
-      expect(result).toBe(false);
-      expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
-      expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.stringContaining('max retries reached')
-      );
-    });
-
-    test('handles textarea disappearing during wait', async () => {
-      lastOutputTime['1'] = 0;
-      mockOptions.isIdle.mockReturnValue(false);
-
-      // Textarea disappears
-      document.querySelector.mockReturnValue(null);
-
-      const promise = controller.verifyAndRetryEnter('1', mockTextarea, 1);
-
-      await jest.advanceTimersByTimeAsync(15000);
-
-      const result = await promise;
-      expect(result).toBe(false);
-      expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.stringContaining('textarea disappeared')
-      );
-    });
-
-    test('handles case where output starts during idle wait', async () => {
-      // This tests the code path where output starts while waiting for pane to become idle
-      // The function should detect this and handle it
-      lastOutputTime['1'] = 0; // No initial output
-      mockOptions.isIdle.mockReturnValue(false); // Pane not idle
-
-      // No prompt - function won't find one
-      terminals.set('1', {
-        buffer: {
-          active: {
-            cursorY: 0,
-            viewportY: 0,
-            getLine: jest.fn().mockReturnValue({
-              translateToString: () => 'Processing...',
-            }),
-          },
-        },
-      });
-
-      const promise = controller.verifyAndRetryEnter('1', mockTextarea, 0);
-
-      // Advance past verify delay - with no output activity and no retries left
-      await jest.advanceTimersByTimeAsync(DEFAULT_CONSTANTS.ENTER_VERIFY_DELAY_MS + 100);
-
-      const result = await promise;
-      // With 0 retries and no output activity, should return false
-      expect(result).toBe(false);
-    });
-  });
 });

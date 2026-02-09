@@ -31,7 +31,7 @@ function createRecoveryController(options = {}) {
   const unstickState = new Map();
 
   // Stuck message sweeper - safety net for failed Enter submissions
-  // Tracks panes where verifyAndRetryEnter exhausted retries but message may still be stuck
+  // Tracks panes where Enter send failed or timed out but message may still be stuck
   const potentiallyStuckPanes = new Map(); // paneId -> { timestamp, retryCount }
   const SWEEPER_INTERVAL_MS = 30000;       // Check every 30 seconds
   const SWEEPER_MAX_AGE_MS = 300000;       // Give up after 5 minutes
