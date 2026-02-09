@@ -721,12 +721,17 @@ function setupEventListeners() {
   // Window resize
   window.addEventListener('resize', () => scheduleTerminalResize());
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts (consolidated — Ctrl+N focus + ESC collapse)
   document.addEventListener('keydown', (e) => {
     // Ctrl+number to focus panes
     if (e.ctrlKey && terminal.PANE_IDS.includes(e.key)) {
       e.preventDefault();
       terminal.focusPane(e.key);
+      return;
+    }
+    // ESC to collapse expanded pane
+    if (e.key === 'Escape' && expandedPaneId) {
+      toggleExpandPane(expandedPaneId);
     }
   });
 
@@ -1226,12 +1231,7 @@ function setupEventListeners() {
   });
 
 
-  // ESC key to collapse expanded pane
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && expandedPaneId) {
-      toggleExpandPane(expandedPaneId);
-    }
-  });
+  // ESC collapse handler consolidated into setupEventListeners keyboard shortcuts listener
 
   // Fresh start button - kill all and start new sessions (debounced)
   const freshStartBtn = document.getElementById('freshStartBtn');
