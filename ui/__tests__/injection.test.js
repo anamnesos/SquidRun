@@ -692,6 +692,8 @@ describe('Terminal Injection', () => {
       const onComplete = jest.fn();
 
       const promise = controller.doSendToPane('1', 'test command\r', onComplete);
+      // Advance past GEMINI_ENTER_DELAY_MS (75ms delay between text and Enter)
+      await jest.advanceTimersByTimeAsync(100);
       await promise;
 
       // Gemini uses PTY: clear, sanitized text, then Enter via \r
@@ -723,7 +725,10 @@ describe('Terminal Injection', () => {
       mockOptions.isGeminiPane.mockReturnValue(true);
       const onComplete = jest.fn();
 
-      await controller.doSendToPane('1', 'partial text', onComplete); // No trailing \r
+      const promise = controller.doSendToPane('1', 'partial text', onComplete); // No trailing \r
+      // Advance past GEMINI_ENTER_DELAY_MS (75ms delay between text and Enter)
+      await jest.advanceTimersByTimeAsync(100);
+      await promise;
 
       // Gemini always sends Enter unconditionally (same as Claude's shouldSendEnter)
       expect(mockPty.write).toHaveBeenCalledWith('1', '\x15'); // Clear line
@@ -919,7 +924,10 @@ describe('Terminal Injection', () => {
 
       // Use Gemini path which has simpler flow for testing onComplete errors
       mockOptions.isGeminiPane.mockReturnValue(true);
-      await controller.doSendToPane('1', 'test', onComplete);
+      const promise = controller.doSendToPane('1', 'test', onComplete);
+      // Advance past GEMINI_ENTER_DELAY_MS (75ms delay between text and Enter)
+      await jest.advanceTimersByTimeAsync(100);
+      await promise;
 
       expect(mockLog.error).toHaveBeenCalledWith(
         'Terminal',

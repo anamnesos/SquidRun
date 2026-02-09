@@ -56,6 +56,7 @@ const STARTUP_CONTEXT_DELAY_MS = 6000;    // Delay after ready prompt before con
 const STARTUP_IDENTITY_DELAY_CODEX_MS = 6000;  // Delay before Codex identity (after Architect's ~5.25s)
 const STARTUP_CONTEXT_DELAY_CODEX_MS = 10000;  // Delay before Codex context (after Architect's ~8s)
 const STARTUP_READY_BUFFER_MAX = 2000;    // Keep last N chars for ready-pattern detection
+const GEMINI_ENTER_DELAY_MS = 75;         // Delay between text write and Enter for Gemini (readline needs time to process text)
 
 module.exports = {
   // Existing
@@ -95,4 +96,5 @@ module.exports = {
   STARTUP_IDENTITY_DELAY_CODEX_MS,
   STARTUP_CONTEXT_DELAY_CODEX_MS,
   STARTUP_READY_BUFFER_MAX,
+  GEMINI_ENTER_DELAY_MS,
 };

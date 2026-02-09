@@ -44,6 +44,7 @@ function createInjectionController(options = {}) {
     INJECTION_LOCK_TIMEOUT_MS,
     BYPASS_CLEAR_DELAY_MS = DEFAULT_BYPASS_CLEAR_DELAY_MS,
     TYPING_GUARD_MS = 300,
+    GEMINI_ENTER_DELAY_MS = 75,
   } = constants;
 
   /**
@@ -523,6 +524,11 @@ function createInjectionController(options = {}) {
         finishWithClear({ success: false, reason: 'pty_write_failed' });
         return;
       }
+
+      // Delay before Enter so Gemini readline can process the text
+      // Without this, text and Enter arrive in the same millisecond and readline
+      // submits before the text is fully ingested, causing intermittent failures
+      await new Promise(resolve => setTimeout(resolve, GEMINI_ENTER_DELAY_MS));
 
       // Always send Enter via PTY \r — Gemini readline needs it to submit
       try {
