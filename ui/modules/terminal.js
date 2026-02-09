@@ -282,7 +282,7 @@ const TERMINAL_OPTIONS = {
   fontSize: 13,
   cursorBlink: true,
   cursorStyle: 'block',
-  scrollback: 5000,
+  scrollback: 2000,
   rightClickSelectsWord: true,
   allowProposedApi: true,
 };
@@ -1444,18 +1444,49 @@ async function freshStartAll() {
   updateConnectionStatus('Fresh start complete - new sessions started');
 }
 
-// Handle window resize
+// Handle window resize — prioritize focused pane, defer background panes
+let deferredResizeTimer = null;
+
 function handleResize() {
-  for (const [paneId, fitAddon] of fitAddons) {
-    try {
-      fitAddon.fit();
-      const terminal = terminals.get(paneId);
-      if (terminal) {
-        window.hivemind.pty.resize(paneId, terminal.cols, terminal.rows);
-      }
-    } catch (err) {
-      log.error(`Terminal ${paneId}`, 'Error resizing pane', err);
+  const focused = focusedPane;
+  const hasFocusedTerminal = focused && fitAddons.has(focused);
+
+  // If no focused pane (or focused pane has no terminal), resize all synchronously
+  if (!hasFocusedTerminal) {
+    for (const [paneId] of fitAddons) {
+      resizeSinglePane(paneId);
     }
+    return;
+  }
+
+  // Resize focused pane immediately for responsiveness
+  resizeSinglePane(focused);
+
+  // Defer background panes to avoid 3x synchronous fit+IPC
+  if (deferredResizeTimer) {
+    clearTimeout(deferredResizeTimer);
+  }
+  deferredResizeTimer = setTimeout(() => {
+    deferredResizeTimer = null;
+    for (const [paneId] of fitAddons) {
+      if (paneId !== focused) {
+        resizeSinglePane(paneId);
+      }
+    }
+  }, 200);
+}
+
+function resizeSinglePane(paneId) {
+  const fitAddon = fitAddons.get(paneId);
+  if (!fitAddon) return;
+  try {
+    fitAddon.fit();
+    const terminal = terminals.get(paneId);
+    if (terminal) {
+      window.hivemind.pty.resize(paneId, terminal.cols, terminal.rows);
+    }
+  } catch (err) {
+    log.error(`Terminal ${paneId}`, 'Error resizing pane', err);
   }
 }
 
