@@ -730,14 +730,13 @@ function setupEventListeners() {
   const commandDeliveryStatus = document.getElementById('commandDeliveryStatus');
   const voiceInputBtn = document.getElementById('voiceInputBtn');
   const voiceStatus = document.getElementById('voiceStatus');
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let recognition = null;
   let voiceEnabled = false;
   let voiceAutoSend = false;
-  let voiceLanguage = 'en-US';
   let voiceListening = false;
   let voiceBase = '';
-  let voiceSentFinal = false;
+  let mediaRecorder = null;
+  let audioChunks = [];
+  let audioStream = null;
   let lastBroadcastTime = 0;
 
   // Update placeholder based on selected target
@@ -770,7 +769,7 @@ function setupEventListeners() {
 
   function updateVoiceUI(statusText) {
     if (voiceInputBtn) {
-      voiceInputBtn.disabled = !voiceEnabled || !SpeechRecognition;
+      voiceInputBtn.disabled = !voiceEnabled;
       voiceInputBtn.classList.toggle('is-listening', voiceListening);
       voiceInputBtn.setAttribute('aria-pressed', voiceListening ? 'true' : 'false');
     }
@@ -783,106 +782,83 @@ function setupEventListeners() {
     }
   }
 
-  function stopVoiceRecognition() {
-    if (recognition && voiceListening) {
-      recognition.stop();
-    }
-  }
+  async function stopVoiceRecording() {
+    if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+    return new Promise((resolve) => {
+      mediaRecorder.onstop = async () => {
+        voiceListening = false;
+        updateVoiceUI('Transcribing...');
 
-  function ensureRecognition() {
-    if (!SpeechRecognition || recognition) return;
-    recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        audioChunks = [];
 
-    recognition.onstart = () => {
-      voiceListening = true;
-      voiceBase = (broadcastInput?.value || '').trim();
-      if (voiceBase) {
-        voiceBase += ' ';
-      }
-      voiceSentFinal = false;
-      updateVoiceUI(voiceAutoSend ? 'Listening (auto-send)' : 'Listening');
-    };
-
-    recognition.onresult = (event) => {
-      let interimTranscript = '';
-      let finalTranscript = '';
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          finalTranscript += result[0].transcript;
-        } else {
-          interimTranscript += result[0].transcript;
-        }
-      }
-
-      const combined = `${voiceBase}${finalTranscript}${interimTranscript}`.trim();
-      if (broadcastInput) {
-        broadcastInput.value = combined;
-        broadcastInput.dispatchEvent(new Event('input'));
-      }
-
-      if (finalTranscript && voiceAutoSend && combined) {
-        if (sendBroadcast(combined)) {
-          voiceSentFinal = true;
-          if (broadcastInput) {
-            broadcastInput.value = '';
-            broadcastInput.style.height = '';
+        try {
+          const arrayBuf = await audioBlob.arrayBuffer();
+          const result = await window.hivemind.voice.transcribe(Buffer.from(arrayBuf));
+          if (result.success && result.text) {
+            const combined = `${voiceBase}${result.text}`.trim();
+            if (broadcastInput) {
+              broadcastInput.value = combined;
+              broadcastInput.dispatchEvent(new Event('input'));
+            }
+            if (voiceAutoSend && combined) {
+              if (sendBroadcast(combined)) {
+                if (broadcastInput) {
+                  broadcastInput.value = '';
+                  broadcastInput.style.height = '';
+                }
+              }
+            }
+            updateVoiceUI('Voice ready');
+          } else {
+            log.error('Voice', 'Whisper transcription failed:', result.error);
+            updateVoiceUI(result.error === 'OPENAI_API_KEY not set in .env' ? 'No API key' : 'Transcription failed');
           }
+        } catch (err) {
+          log.error('Voice', 'Whisper IPC error:', err);
+          updateVoiceUI('Voice error');
         }
-      }
-    };
 
-    recognition.onerror = (event) => {
-      const errorType = event?.error || 'unknown';
-      log.error('Voice', 'Speech recognition error', errorType);
-      voiceListening = false;
-
-      if (errorType === 'network') {
-        // Electron/Chromium limitation - Google Speech API not available
-        updateVoiceUI('Unavailable in Electron');
-        showStatusNotice('Voice input requires Chrome browser or local speech support (coming soon)', 10000);
-      } else if (errorType === 'not-allowed') {
-        updateVoiceUI('Mic blocked');
-        showStatusNotice('Microphone access denied. Check browser permissions.', 8000);
-      } else if (errorType === 'no-speech') {
-        updateVoiceUI('No speech detected');
-      } else {
-        updateVoiceUI('Voice error');
-      }
-    };
-
-    recognition.onend = () => {
-      voiceListening = false;
-      if (!voiceEnabled) {
-        updateVoiceUI('Voice off');
-      } else if (voiceSentFinal && voiceAutoSend) {
-        updateVoiceUI('Voice ready');
-      } else {
-        updateVoiceUI('Voice ready');
-      }
-    };
+        // Release mic
+        if (audioStream) {
+          audioStream.getTracks().forEach(t => t.stop());
+          audioStream = null;
+        }
+        mediaRecorder = null;
+        resolve();
+      };
+      mediaRecorder.stop();
+    });
   }
 
-  function startVoiceRecognition() {
-    if (!SpeechRecognition) {
-      updateVoiceUI('Voice unsupported');
-      return;
-    }
+  async function startVoiceRecording() {
     if (!voiceEnabled) {
       updateVoiceUI('Voice off');
       return;
     }
-    ensureRecognition();
-    if (!recognition) return;
-    recognition.lang = voiceLanguage || 'en-US';
     try {
-      recognition.start();
+      audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm' });
+      audioChunks = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunks.push(e.data);
+      };
+
+      voiceBase = (broadcastInput?.value || '').trim();
+      if (voiceBase) voiceBase += ' ';
+
+      mediaRecorder.start();
+      voiceListening = true;
+      updateVoiceUI(voiceAutoSend ? 'Recording (auto-send)' : 'Recording');
     } catch (err) {
-      log.error('Voice', 'Failed to start recognition', err);
-      updateVoiceUI('Voice error');
+      log.error('Voice', 'Mic access failed:', err);
+      if (err.name === 'NotAllowedError') {
+        updateVoiceUI('Mic blocked');
+        showStatusNotice('Microphone access denied. Check system permissions.', 8000);
+      } else {
+        updateVoiceUI('Mic error');
+      }
     }
   }
 
@@ -890,16 +866,8 @@ function setupEventListeners() {
     const source = nextSettings || settings.getSettings() || {};
     voiceEnabled = !!source.voiceInputEnabled;
     voiceAutoSend = !!source.voiceAutoSend;
-    voiceLanguage = source.voiceLanguage || 'en-US';
-    if (!SpeechRecognition) {
-      updateVoiceUI('Voice unsupported');
-      if (voiceInputBtn) {
-        voiceInputBtn.disabled = true;
-      }
-      return;
-    }
     if (!voiceEnabled) {
-      stopVoiceRecognition();
+      stopVoiceRecording();
       updateVoiceUI('Voice off');
       return;
     }
@@ -1144,9 +1112,9 @@ function setupEventListeners() {
         return;
       }
       if (voiceListening) {
-        stopVoiceRecognition();
+        stopVoiceRecording();
       } else {
-        startVoiceRecognition();
+        startVoiceRecording();
       }
     });
   }

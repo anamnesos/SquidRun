@@ -99,6 +99,11 @@ const hivemindApi = {
       ipcRenderer.invoke('memory:analyze-tool-usage', toolName, options),
   },
 
+  // Voice input (Whisper transcription)
+  voice: {
+    transcribe: (audioBuffer) => ipcRenderer.invoke('voice:transcribe', audioBuffer),
+  },
+
   // Broadcast to all panes (will be implemented in renderer)
   broadcast: null, // Placeholder, implemented in renderer
 

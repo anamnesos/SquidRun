@@ -46,6 +46,7 @@ const { registerOracleHandlers } = require('./oracle-handlers');
 const { registerModelSwitchHandlers } = require('./model-switch-handlers');
 const { registerOrganicUIHandlers } = require('./organic-ui-handlers');
 const { registerDocGeneratorHandlers } = require('./doc-generator-handlers');
+const { registerWhisperHandlers } = require('./whisper-handlers');
 
 const DEFAULT_HANDLERS = [
   registerSdkHandlers,
@@ -96,6 +97,7 @@ const DEFAULT_HANDLERS = [
   registerModelSwitchHandlers,
   registerOrganicUIHandlers,
   registerDocGeneratorHandlers,
+  registerWhisperHandlers,
 ];
 
 function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {
