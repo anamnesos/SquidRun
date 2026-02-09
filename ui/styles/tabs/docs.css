@@ -21,7 +21,7 @@
   color: var(--color-text-muted);
   font-size: 11px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: color 0.15s ease, background 0.15s ease;
 }
 
 .docs-mode-btn:hover {

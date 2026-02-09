@@ -5,9 +5,7 @@
    ============================================================ */
 
 .header {
-  background: rgba(13, 13, 24, 0.7);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: rgba(13, 13, 24, 0.95);
   padding: var(--space-2) var(--space-4);
   display: flex;
   align-items: center;

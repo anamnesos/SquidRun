@@ -49,7 +49,7 @@
   font-size: var(--text-sm);
   cursor: pointer;
   border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
+  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
 .memory-view-tab:hover {
@@ -103,7 +103,7 @@
   padding: var(--space-3);
   font-size: var(--text-sm);
   border-left: 3px solid var(--color-bg-light);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast);
 }
 
 .transcript-entry:hover {
@@ -149,7 +149,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  transition: all var(--transition-fast);
+  transition: background var(--transition-fast);
 }
 
 .memory-timeline-item:hover {
