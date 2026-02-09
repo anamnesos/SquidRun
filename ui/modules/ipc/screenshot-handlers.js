@@ -94,7 +94,7 @@ function registerScreenshotHandlers(ctx) {
 
       const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
       const files = fs.readdirSync(SCREENSHOTS_DIR)
-        .filter(f => imageExts.includes(path.extname(f).toLowerCase()))
+        .filter(f => f !== 'latest.png' && imageExts.includes(path.extname(f).toLowerCase()))
         .map(f => {
           const filePath = path.join(SCREENSHOTS_DIR, f);
           const stats = fs.statSync(filePath);
