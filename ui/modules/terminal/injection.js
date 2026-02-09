@@ -18,6 +18,7 @@ function createInjectionController(options = {}) {
     isIdle,
     isIdleForForceInject,
     userIsTyping,
+    userInputFocused,
     updatePaneStatus,
     markPotentiallyStuck,
     getInjectionInFlight,
@@ -401,6 +402,19 @@ function createInjectionController(options = {}) {
     if (bypassesLock && getInjectionInFlight()) {
       log.debug(`processQueue ${id}`, `${isCodex ? 'Codex' : 'Gemini'} pane bypassing global lock`);
     }
+
+    // Focus isolation: defer agent messages while user has a UI input focused.
+    // This is stronger than typingBlocked (which only lasts 300ms after last keypress).
+    // While the user is composing in broadcastInput, agent injections must wait —
+    // they would steal focus via textarea.focus() in doSendToPane.
+    // Codex/Gemini panes bypass (they use PTY writes, no focus needed).
+    // Immediate messages (user's own send) already handled above.
+    if (!bypassesLock && typeof userInputFocused === 'function' && userInputFocused()) {
+      log.debug(`processQueue ${id}`, 'Claude pane deferred - user input focused (composing)');
+      setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+      return;
+    }
+
     const queue = messageQueue[paneId];
     if (!queue || queue.length === 0) return;
 
@@ -683,6 +697,20 @@ function createInjectionController(options = {}) {
         // NOTE: No pre-flight idle check here. processIdleQueue already handles
         // idle timing with tiered thresholds (1s normal, 500ms force after 10s,
         // emergency after 60s). doSendToPane trusts that the queue gated entry.
+
+        // Focus isolation: if user focused an input during the Enter delay,
+        // wait for them to blur before stealing focus for sendTrustedEnter.
+        // Poll every 100ms, give up after 5s to prevent message starvation.
+        if (typeof userInputFocused === 'function' && userInputFocused()) {
+          log.info(`doSendToPane ${id}`, 'User input focused before Enter — waiting for blur');
+          const focusWaitStart = Date.now();
+          while (userInputFocused() && (Date.now() - focusWaitStart) < 5000) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          if (userInputFocused()) {
+            log.warn(`doSendToPane ${id}`, 'User input still focused after 5s — proceeding with Enter');
+          }
+        }
 
         // Ensure focus for sendTrustedEnter (Terminal.input disabled for Claude panes)
         let focusOk = await focusWithRetry(textarea);

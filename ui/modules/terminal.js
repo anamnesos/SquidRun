@@ -323,6 +323,19 @@ function userIsTyping() {
   return (Date.now() - lastUserUIKeypressTime) < TYPING_GUARD_MS;
 }
 
+// Returns true if a non-terminal UI input currently has focus.
+// Stronger than userIsTyping() — blocks injection for the ENTIRE duration
+// the user has focus in broadcastInput (or any UI input), not just 300ms
+// after last keypress. Agent injections must not steal focus while user
+// is composing a message.
+function userInputFocused() {
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = el.tagName?.toUpperCase();
+  return (tag === 'INPUT' || tag === 'TEXTAREA') &&
+    !el.classList.contains('xterm-helper-textarea');
+}
+
 // Status update callbacks
 let onStatusUpdate = null;
 let onConnectionStatusUpdate = null;
@@ -666,6 +679,7 @@ injectionController = createInjectionController({
   isIdle,
   isIdleForForceInject,
   userIsTyping,
+  userInputFocused,
   updatePaneStatus,
   markPotentiallyStuck: recoveryController.markPotentiallyStuck,
   getInjectionInFlight,
