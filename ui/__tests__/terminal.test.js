@@ -112,6 +112,14 @@ global.KeyboardEvent = class KeyboardEvent {
   }
 };
 
+// Mock ResizeObserver (not available in jsdom)
+global.ResizeObserver = class ResizeObserver {
+  constructor(cb) { this._cb = cb; }
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
+
 const terminal = require('../modules/terminal');
 
 describe('terminal.js module', () => {
