@@ -47,7 +47,7 @@ function registerSettingsHandlers(ctx, deps) {
 
     if (fs.existsSync(ENV_PATH)) {
       try {
-        const content = fs.readFileSync(ENV_PATH, 'utf-8');
+        const content = fs.readFileSync(ENV_PATH, 'utf-8').replace(/\r/g, '');
         const lines = content.split('\n');
 
         for (const line of lines) {
