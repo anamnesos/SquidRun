@@ -13,6 +13,8 @@ const path = require('path');
 const log = require('./logger');
 const bus = require('./event-bus');
 const settings = require('./settings');
+const compactionDetector = require('./compaction-detector');
+const contracts = require('./contracts');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
 
@@ -712,6 +714,12 @@ const {
   aggressiveNudgeAll,
 } = recoveryController;
 
+// Initialize contracts (registers 4 day-1 enforced contracts on the bus)
+contracts.init(bus);
+
+// Initialize compaction detector (subscribes to inject.requested events on the bus)
+compactionDetector.init(bus);
+
 function focusWithRetry(...args) {
   return injectionController.focusWithRetry(...args);
 }
@@ -989,6 +997,8 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
       if (isMeaningfulActivity(data)) {
         lastOutputTime[paneId] = Date.now();
       }
+      // Feed PTY output to compaction detector for multi-signal analysis
+      compactionDetector.processChunk(paneId, data);
       // Clear stuck status - output means pane is working
       clearStuckStatus(paneId);
       handleStartupOutput(paneId, data);
@@ -1159,6 +1169,8 @@ async function reattachTerminal(paneId, scrollback) {
     if (isMeaningfulActivity(data)) {
       lastOutputTime[paneId] = Date.now();
     }
+    // Feed PTY output to compaction detector for multi-signal analysis
+    compactionDetector.processChunk(paneId, data);
     // Clear stuck status - output means pane is working
     clearStuckStatus(paneId);
     handleStartupOutput(paneId, data);
