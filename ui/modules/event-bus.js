@@ -40,7 +40,14 @@ let safeModeTimer = null;
 let telemetryEnabled = true;
 const BUFFER_MAX_SIZE = 1000;
 const BUFFER_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
+const BUFFER_HARD_CAP = 7500; // Absolute safety valve for sustained bursts
 let ringBuffer = [];
+let noisyTypeCounters = new Map();
+const NOISY_TELEMETRY_RULES = Object.freeze([
+  { pattern: /^pty\.data\.received$/, keepEvery: 20 },
+  { pattern: /^daemon\.write\.(requested|ack)$/, keepEvery: 10 },
+  { pattern: /^contract\.checked$/, keepEvery: 10 },
+]);
 
 // --- Default State Vector ---
 function defaultStateVector() {
@@ -273,8 +280,14 @@ function deliverToListeners(event) {
 function recordToBuffer(event) {
   if (!telemetryEnabled) return;
   try {
+    if (shouldDropNoisyTelemetry(event)) {
+      stats.totalDropped++;
+      return;
+    }
+
     ringBuffer.push(event);
     evictBuffer();
+    enforceHardBufferCap();
     stats.bufferSize = ringBuffer.length;
   } catch (e) {
     // Lane B failure must not affect Lane A
@@ -282,6 +295,18 @@ function recordToBuffer(event) {
       emitInternal('bus.error', { paneId: 'system', payload: { error: String(e), lane: 'B' } });
     } catch { /* truly catastrophic, silently ignore */ }
   }
+}
+
+function shouldDropNoisyTelemetry(event) {
+  if (!event || typeof event.type !== 'string') return false;
+  for (const rule of NOISY_TELEMETRY_RULES) {
+    if (!rule.pattern.test(event.type)) continue;
+    const key = rule.pattern.toString();
+    const next = (noisyTypeCounters.get(key) || 0) + 1;
+    noisyTypeCounters.set(key, next);
+    return (next % rule.keepEvery) !== 1;
+  }
+  return false;
 }
 
 function evictBuffer() {
@@ -296,6 +321,13 @@ function evictBuffer() {
       break; // Oldest event is within time window — keep it (burst expansion)
     }
   }
+}
+
+function enforceHardBufferCap() {
+  if (ringBuffer.length <= BUFFER_HARD_CAP) return;
+  const toDrop = ringBuffer.length - BUFFER_HARD_CAP;
+  ringBuffer.splice(0, toDrop);
+  stats.totalDropped += toDrop;
 }
 
 // --- Public API ---
@@ -544,7 +576,17 @@ function query({ correlationId: corrId, paneId, type, types, since, until, limit
  * Get ring buffer statistics (Lane B)
  */
 function getBufferStats() {
-  if (!telemetryEnabled) return { size: 0, maxSize: BUFFER_MAX_SIZE, oldestTs: null, newestTs: null, droppedCount: stats.totalDropped, eventTypeCounts: {} };
+  if (!telemetryEnabled) {
+    return {
+      size: 0,
+      maxSize: BUFFER_MAX_SIZE,
+      hardCap: BUFFER_HARD_CAP,
+      oldestTs: null,
+      newestTs: null,
+      droppedCount: stats.totalDropped,
+      eventTypeCounts: {},
+    };
+  }
   try {
     const eventTypeCounts = {};
     for (const event of ringBuffer) {
@@ -553,13 +595,22 @@ function getBufferStats() {
     return {
       size: ringBuffer.length,
       maxSize: BUFFER_MAX_SIZE,
+      hardCap: BUFFER_HARD_CAP,
       oldestTs: ringBuffer.length > 0 ? ringBuffer[0].ts : null,
       newestTs: ringBuffer.length > 0 ? ringBuffer[ringBuffer.length - 1].ts : null,
       droppedCount: stats.totalDropped,
       eventTypeCounts,
     };
   } catch (e) {
-    return { size: 0, maxSize: BUFFER_MAX_SIZE, oldestTs: null, newestTs: null, droppedCount: 0, eventTypeCounts: {} };
+    return {
+      size: 0,
+      maxSize: BUFFER_MAX_SIZE,
+      hardCap: BUFFER_HARD_CAP,
+      oldestTs: null,
+      newestTs: null,
+      droppedCount: 0,
+      eventTypeCounts: {},
+    };
   }
 }
 
@@ -677,6 +728,7 @@ function reset() {
   if (safeModeTimer) { clearTimeout(safeModeTimer); safeModeTimer = null; }
   telemetryEnabled = true;
   ringBuffer = [];
+  noisyTypeCounters = new Map();
   stats = { totalEmitted: 0, totalDropped: 0, contractViolations: 0, bufferSize: 0 };
   initPaneStates();
 }

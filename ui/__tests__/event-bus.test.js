@@ -570,6 +570,26 @@ describe('event-bus', () => {
       expect(newEvents.length).toBe(600);
     });
 
+    test('hard cap trims oldest entries during sustained bursts', () => {
+      for (let i = 0; i < 7600; i++) {
+        bus.emit('hardcap.fill', { paneId: '1', source: 'test' });
+      }
+
+      const buf = bus.getBuffer();
+      expect(buf.length).toBeLessThanOrEqual(7500);
+      expect(buf[0].type).toBe('hardcap.fill');
+    });
+
+    test('noisy telemetry is sampled for pty.data.received', () => {
+      for (let i = 0; i < 40; i++) {
+        bus.emit('pty.data.received', { paneId: '1', source: 'test' });
+      }
+
+      const sampled = bus.query({ type: 'pty.data.received' });
+      expect(sampled.length).toBe(2);
+      expect(bus.getStats().totalDropped).toBe(38);
+    });
+
     test('getBuffer returns a copy', () => {
       bus.emit('test', { paneId: '1', source: 'test' });
       const buf1 = bus.getBuffer();
@@ -1375,6 +1395,11 @@ describe('event-bus', () => {
       expect(stats.maxSize).toBe(1000);
     });
 
+    test('returns hardCap', () => {
+      const stats = bus.getBufferStats();
+      expect(stats.hardCap).toBe(7500);
+    });
+
     test('returns oldest and newest timestamps', () => {
       const now = Date.now();
       bus.emit('first', { paneId: '1', source: 'test' });
@@ -1424,6 +1449,7 @@ describe('event-bus', () => {
       bus.setTelemetryEnabled(false);
       const stats = bus.getBufferStats();
       expect(stats.size).toBe(0);
+      expect(stats.hardCap).toBe(7500);
       expect(stats.eventTypeCounts).toEqual({});
     });
   });

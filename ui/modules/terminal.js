@@ -97,6 +97,17 @@ const terminalPaused = new Map(); // paneId -> boolean (is PTY paused)
 
 const HIGH_WATERMARK = 500000; // 500KB - pause producer
 const LOW_WATERMARK = 50000;   // 50KB - resume producer
+const TERMINAL_QUEUE_MAX_BYTES = 2 * 1024 * 1024; // 2MB absolute per-pane queue cap
+
+function maybeResumePtyProducer(paneId, watermark) {
+  if (watermark < LOW_WATERMARK && terminalPaused.get(paneId)) {
+    if (window.hivemind?.pty?.resume) {
+      window.hivemind.pty.resume(paneId);
+      terminalPaused.set(paneId, false);
+      log.info(`Terminal ${paneId}`, `Low watermark reached (${watermark} bytes) - PTY resumed`);
+    }
+  }
+}
 
 /**
  * Reset terminal write queue state for a pane.
@@ -120,6 +131,9 @@ function resetTerminalWriteQueue(paneId) {
  * @param {string} data - Data to write
  */
 function queueTerminalWrite(paneId, terminal, data) {
+  const payload = typeof data === 'string' ? data : String(data ?? '');
+  const byteLen = Buffer.byteLength(payload, 'utf8');
+
   // Initialize state for this pane if needed
   if (!terminalWriteQueues.has(paneId)) {
     terminalWriteQueues.set(paneId, []);
@@ -128,8 +142,41 @@ function queueTerminalWrite(paneId, terminal, data) {
     terminalPaused.set(paneId, false);
   }
 
-  // Update watermark (bytes in flight to xterm)
-  const currentWatermark = (terminalWatermarks.get(paneId) || 0) + data.length;
+  const queue = terminalWriteQueues.get(paneId);
+  let currentWatermark = terminalWatermarks.get(paneId) || 0;
+  let droppedBytes = 0;
+  let droppedEntries = 0;
+
+  // Drop oldest queued chunks when hitting absolute queue cap.
+  // This prevents unbounded per-pane memory growth when renderer is backpressured.
+  while ((currentWatermark + byteLen) > TERMINAL_QUEUE_MAX_BYTES && queue.length > 0) {
+    const dropped = queue.shift();
+    const droppedByteLen = typeof dropped === 'string'
+      ? Buffer.byteLength(dropped, 'utf8')
+      : Number(dropped?.byteLen) || Buffer.byteLength(String(dropped?.data ?? ''), 'utf8');
+    currentWatermark = Math.max(0, currentWatermark - droppedByteLen);
+    droppedBytes += droppedByteLen;
+    droppedEntries += 1;
+  }
+
+  // If a single incoming chunk cannot fit (in-flight bytes already exceed cap),
+  // drop the new chunk instead of allowing unbounded growth.
+  if ((currentWatermark + byteLen) > TERMINAL_QUEUE_MAX_BYTES) {
+    terminalWatermarks.set(paneId, currentWatermark);
+    maybeResumePtyProducer(paneId, currentWatermark);
+    if (droppedEntries > 0) {
+      log.warn(`Terminal ${paneId}`, `Dropped ${droppedEntries} queued chunk(s), ${droppedBytes} bytes to enforce queue cap`);
+    }
+    log.warn(`Terminal ${paneId}`, `Dropped incoming terminal chunk (${byteLen} bytes) - queue cap ${TERMINAL_QUEUE_MAX_BYTES} reached`);
+    return;
+  }
+
+  if (droppedEntries > 0) {
+    log.warn(`Terminal ${paneId}`, `Dropped ${droppedEntries} queued chunk(s), ${droppedBytes} bytes to enforce queue cap`);
+  }
+
+  // Update watermark (bytes in flight + queued to xterm)
+  currentWatermark += byteLen;
   terminalWatermarks.set(paneId, currentWatermark);
 
   // If watermark exceeds high threshold, pause the PTY producer
@@ -142,7 +189,7 @@ function queueTerminalWrite(paneId, terminal, data) {
   }
 
   // Add data to queue
-  terminalWriteQueues.get(paneId).push(data);
+  queue.push({ data: payload, byteLen });
 
   // Start processing if not already writing
   flushTerminalQueue(paneId, terminal);
@@ -169,7 +216,15 @@ function flushTerminalQueue(paneId, terminal) {
   terminalWriting.set(paneId, true);
 
   // Get next chunk
-  const data = queue.shift();
+  const entry = queue.shift();
+  if (!entry) {
+    terminalWriting.set(paneId, false);
+    return;
+  }
+  const data = typeof entry === 'string' ? entry : String(entry.data ?? '');
+  const byteLen = typeof entry === 'string'
+    ? Buffer.byteLength(entry, 'utf8')
+    : (Number(entry.byteLen) || Buffer.byteLength(data, 'utf8'));
 
   // Write with callback - xterm calls this when write is processed
   terminal.write(data, () => {
@@ -178,17 +233,11 @@ function flushTerminalQueue(paneId, terminal) {
 
     // Update watermark
     const oldWatermark = terminalWatermarks.get(paneId) || 0;
-    const newWatermark = Math.max(0, oldWatermark - data.length);
+    const newWatermark = Math.max(0, oldWatermark - byteLen);
     terminalWatermarks.set(paneId, newWatermark);
 
     // If watermark drops below low threshold, resume the PTY producer
-    if (newWatermark < LOW_WATERMARK && terminalPaused.get(paneId)) {
-      if (window.hivemind?.pty?.resume) {
-        window.hivemind.pty.resume(paneId);
-        terminalPaused.set(paneId, false);
-        log.info(`Terminal ${paneId}`, `Low watermark reached (${newWatermark} bytes) - PTY resumed`);
-      }
-    }
+    maybeResumePtyProducer(paneId, newWatermark);
 
     // Process next chunk if any
     if (queue.length > 0) {
