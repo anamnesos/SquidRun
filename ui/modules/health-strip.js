@@ -4,7 +4,7 @@
  * a compact status strip showing activity, gates, and connectivity per pane.
  */
 
-const { PANE_IDS, PANE_ROLES } = require('../config');
+const { PANE_IDS, PANE_ROLES, SHORT_AGENT_NAMES } = require('../config');
 
 let container = null;
 let busRef = null;
@@ -101,7 +101,7 @@ function createPaneIndicator(paneId) {
 
   const label = document.createElement('span');
   label.className = 'health-strip-label';
-  label.textContent = (PANE_ROLES[paneId] || paneId).substring(0, 4);
+  label.textContent = SHORT_AGENT_NAMES[paneId] || PANE_ROLES[paneId] || paneId;
 
   const dot = document.createElement('span');
   dot.className = 'health-strip-dot';

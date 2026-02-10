@@ -10,6 +10,11 @@ jest.mock('../config', () => ({
     '2': 'DevOps',
     '5': 'Analyst',
   },
+  SHORT_AGENT_NAMES: {
+    '1': 'Arch',
+    '2': 'DevOps',
+    '5': 'Ana',
+  },
 }));
 
 // Lightweight DOM mock that supports health-strip's usage patterns
@@ -192,8 +197,8 @@ describe('health-strip', () => {
       const labels = container.querySelectorAll('.health-strip-label');
       expect(labels.length).toBe(3);
       expect(labels[0].textContent).toBe('Arch');
-      expect(labels[1].textContent).toBe('DevO');
-      expect(labels[2].textContent).toBe('Anal');
+      expect(labels[1].textContent).toBe('DevOps');
+      expect(labels[2].textContent).toBe('Ana');
     });
 
     test('creates activity dots for each pane', () => {
