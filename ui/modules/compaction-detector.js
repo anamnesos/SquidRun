@@ -27,6 +27,7 @@ const CONFIDENCE_DECAY_MS = 500;
 const COOLDOWN_MS = 1500;
 const RAPID_SUSPECT_WINDOW_MS = 2000;
 const RAPID_SUSPECT_COUNT = 3;
+const MAX_CONFIRMED_MS = 30000; // Safety: max time in confirmed state (real compaction is 5-15s)
 
 // --- Lexical patterns ---
 const LEXICAL_PATTERNS = [
@@ -225,12 +226,11 @@ function transition(paneId, confidence, signals) {
     }
 
     case 'confirmed': {
-      // Check for end conditions
-      const hasPrompt = PROMPT_READY_PATTERNS.some(p => {
-        // We need the raw data for prompt check, but we only have signals here
-        // Prompt detection is handled in processChunk directly
-        return false;
-      });
+      // Safety timeout: force cooldown if confirmed too long (false positive protection)
+      if (detector.confirmedAt && (now - detector.confirmedAt) > MAX_CONFIRMED_MS) {
+        enterCooldown(paneId, 'max_duration_timeout');
+        break;
+      }
 
       if (confidence < 0.2) {
         if (!detector.sustainedSince) {
@@ -385,6 +385,7 @@ module.exports = {
   CONFIDENCE_DECAY_MS,
   RAPID_SUSPECT_WINDOW_MS,
   RAPID_SUSPECT_COUNT,
+  MAX_CONFIRMED_MS,
   LEXICAL_PATTERNS,
   STRUCTURED_PATTERNS,
   PROMPT_READY_PATTERNS,

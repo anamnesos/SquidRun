@@ -35,7 +35,11 @@ function createInjectionController(options = {}) {
     BYPASS_CLEAR_DELAY_MS = DEFAULT_BYPASS_CLEAR_DELAY_MS,
     TYPING_GUARD_MS = 300,
     GEMINI_ENTER_DELAY_MS = 75,
+    MAX_COMPACTION_DEFER_MS = 30000,
   } = constants;
+
+  // Track when compaction deferral started per pane (false positive safety valve)
+  const compactionDeferStart = new Map();
 
   /**
    * Attempt to focus textarea with retries
@@ -189,19 +193,33 @@ function createInjectionController(options = {}) {
     if (!queue || queue.length === 0) return;
 
     // Compaction gate: never inject while compaction is confirmed on this pane.
+    // Only applies to Claude panes — Codex/Gemini don't do Claude-style compaction.
     // This closes the Item 20 failure mode where queued messages were submitted
     // into compaction output and appeared delivered despite being swallowed.
+    // Safety valve: if gate has been stuck for > MAX_COMPACTION_DEFER_MS, force-clear
+    // as a false positive (real compaction lasts 5-15s, never 30s+).
     const paneState = (typeof bus.getState === 'function') ? bus.getState(id) : null;
-    if (paneState?.gates?.compacting === 'confirmed') {
-      log.debug(`processQueue ${id}`, 'Pane deferred - compaction gate active (confirmed)');
-      setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
-      return;
+    if (!bypassesLock && paneState?.gates?.compacting === 'confirmed') {
+      if (!compactionDeferStart.has(id)) {
+        compactionDeferStart.set(id, Date.now());
+      }
+      const deferDuration = Date.now() - compactionDeferStart.get(id);
+      if (deferDuration < MAX_COMPACTION_DEFER_MS) {
+        log.info(`processQueue ${id}`, 'Pane deferred - compaction gate active (confirmed)');
+        setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+        return;
+      }
+      log.warn(`processQueue ${id}`, `Compaction gate stuck ${deferDuration}ms — forcing clear (false positive safety)`);
+      bus.updateState(id, { gates: { compacting: 'none' } });
+      compactionDeferStart.delete(id);
+    } else {
+      compactionDeferStart.delete(id);
     }
 
     // Gate 1: injectionInFlight — focus mutex for Claude panes.
     // Codex/Gemini bypass (focus-free paths).
     if (!bypassesLock && getInjectionInFlight()) {
-      log.debug(`processQueue ${id}`, 'Claude pane deferred - injection in flight');
+      log.info(`processQueue ${id}`, 'Claude pane deferred - injection in flight');
       setTimeout(() => processIdleQueue(paneId), 50);
       return;
     }
@@ -212,7 +230,7 @@ function createInjectionController(options = {}) {
     // Gate 2: userInputFocused — defer while user is composing in broadcastInput.
     // Codex/Gemini bypass (PTY writes, no focus steal).
     if (!bypassesLock && typeof userInputFocused === 'function' && userInputFocused()) {
-      log.debug(`processQueue ${id}`, 'Claude pane deferred - user input focused (composing)');
+      log.info(`processQueue ${id}`, 'Claude pane deferred - user input focused (composing)');
       setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
       return;
     }
