@@ -5,8 +5,16 @@
  */
 
 const WebSocket = require('ws');
+const fs = require('fs');
+const path = require('path');
+const { WORKSPACE_PATH, LEGACY_ROLE_ALIASES, ROLE_ID_MAP } = require('../config');
 
-const PORT = 9900;
+const parsedPort = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
+const PORT = Number.isFinite(parsedPort) ? parsedPort : 9900;
+const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
+const DEFAULT_ACK_TIMEOUT_MS = 1200;
+const DEFAULT_RETRIES = 3;
+const MAX_RETRIES = 5;
 const args = process.argv.slice(2);
 
 if (args.length < 2) {
@@ -15,12 +23,18 @@ if (args.length < 2) {
   console.log('  message: text to send');
   console.log('  --role: your role (for identification)');
   console.log('  --priority: normal or urgent');
+  console.log('  --timeout: ack timeout in ms (default: 1200)');
+  console.log('  --retries: retry count after first send (default: 3)');
+  console.log('  --no-fallback: disable trigger file fallback');
   process.exit(1);
 }
 
 const target = args[0];
 let role = 'cli';
 let priority = 'normal';
+let ackTimeoutMs = DEFAULT_ACK_TIMEOUT_MS;
+let retries = DEFAULT_RETRIES;
+let enableFallback = true;
 
 // Collect message from all args between target and first --flag
 // This handles PowerShell splitting quoted strings into multiple args
@@ -30,7 +44,6 @@ for (; i < args.length; i++) {
   if (args[i].startsWith('--')) break;
   messageParts.push(args[i]);
 }
-const message = messageParts.join(' ');
 
 // Parse remaining --flags
 for (; i < args.length; i++) {
@@ -42,38 +55,280 @@ for (; i < args.length; i++) {
     priority = args[i+1];
     i++;
   }
+  if (args[i] === '--timeout' && args[i+1]) {
+    const parsed = Number.parseInt(args[i + 1], 10);
+    if (Number.isFinite(parsed) && parsed >= 100) {
+      ackTimeoutMs = parsed;
+    }
+    i++;
+  }
+  if (args[i] === '--retries' && args[i+1]) {
+    const parsed = Number.parseInt(args[i + 1], 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      retries = Math.min(parsed, MAX_RETRIES);
+    }
+    i++;
+  }
+  if (args[i] === '--no-fallback') {
+    enableFallback = false;
+  }
 }
 
-const ws = new WebSocket('ws://127.0.0.1:' + PORT);
+const message = messageParts.join(' ');
+if (!message) {
+  console.error('Message cannot be empty.');
+  process.exit(1);
+}
 
-ws.on('open', () => {
-  // Register first
+function parseJSON(raw) {
+  try {
+    return JSON.parse(raw.toString());
+  } catch (err) {
+    return null;
+  }
+}
+
+function waitForMatch(ws, predicate, timeoutMs, timeoutLabel) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(timeoutLabel || 'Timed out waiting for socket response'));
+    }, timeoutMs);
+
+    const onMessage = (raw) => {
+      const msg = parseJSON(raw);
+      if (!msg) return;
+      if (!predicate(msg)) return;
+      cleanup();
+      resolve(msg);
+    };
+
+    const onClose = () => {
+      cleanup();
+      reject(new Error('Socket closed before response'));
+    };
+
+    const onError = (err) => {
+      cleanup();
+      reject(err);
+    };
+
+    function cleanup() {
+      clearTimeout(timeout);
+      ws.off('message', onMessage);
+      ws.off('close', onClose);
+      ws.off('error', onError);
+    }
+
+    ws.on('message', onMessage);
+    ws.on('close', onClose);
+    ws.on('error', onError);
+  });
+}
+
+function closeSocket(ws) {
+  return new Promise((resolve) => {
+    if (!ws || ws.readyState === ws.CLOSED) {
+      resolve();
+      return;
+    }
+    const timeout = setTimeout(() => {
+      try {
+        ws.terminate();
+      } catch (err) {
+        // no-op
+      }
+      resolve();
+    }, 250);
+
+    ws.once('close', () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+
+    try {
+      ws.close();
+    } catch (err) {
+      clearTimeout(timeout);
+      resolve();
+    }
+  });
+}
+
+function normalizeRole(targetInput) {
+  const paneToRole = {
+    '1': 'architect',
+    '2': 'devops',
+    '5': 'analyst',
+  };
+
+  const targetValue = String(targetInput || '').trim().toLowerCase();
+  if (!targetValue) return null;
+  if (paneToRole[targetValue]) return paneToRole[targetValue];
+
+  if (targetValue === 'architect' || targetValue === 'devops' || targetValue === 'analyst') {
+    return targetValue;
+  }
+
+  if (LEGACY_ROLE_ALIASES[targetValue]) {
+    return LEGACY_ROLE_ALIASES[targetValue];
+  }
+
+  const mappedPane = ROLE_ID_MAP[targetValue];
+  if (mappedPane && paneToRole[String(mappedPane)]) {
+    return paneToRole[String(mappedPane)];
+  }
+
+  return null;
+}
+
+function writeTriggerFallback(targetInput, content) {
+  const roleName = normalizeRole(targetInput);
+  if (!roleName) {
+    return {
+      ok: false,
+      error: `Cannot map target '${targetInput}' to trigger file`,
+    };
+  }
+
+  const triggersDir = path.join(WORKSPACE_PATH, 'triggers');
+  const triggerPath = path.join(triggersDir, `${roleName}.txt`);
+  try {
+    fs.mkdirSync(triggersDir, { recursive: true });
+    fs.writeFileSync(triggerPath, content, 'utf8');
+    return { ok: true, role: roleName, path: triggerPath };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+function shouldRetryAck(ack) {
+  if (!ack || ack.ok) return false;
+  const status = String(ack.status || '').toLowerCase();
+  if (!status) return true;
+  if (status === 'invalid_target') return false;
+  return true;
+}
+
+function previewMessage(content) {
+  if (content.length <= 50) return content;
+  return `${content.substring(0, 50)}...`;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getBackoffDelayMs(baseTimeoutMs, attempt) {
+  return baseTimeoutMs * Math.pow(2, attempt - 1);
+}
+
+async function sendViaWebSocketWithAck() {
+  const socketUrl = `ws://127.0.0.1:${PORT}`;
+  const ws = new WebSocket(socketUrl);
+
+  await waitForMatch(ws, (msg) => msg.type === 'welcome', DEFAULT_CONNECT_TIMEOUT_MS, 'Connection timeout');
+
   ws.send(JSON.stringify({ type: 'register', role }));
-  
-  // Then send
-  ws.send(JSON.stringify({
-    type: 'send',
-    target,
-    content: message,
-    priority
-  }));
-  
-  // Close after brief delay
-  setTimeout(() => {
-    ws.close();
-    console.log('Sent to ' + target + ': ' + message.substring(0, 50) + '...');
+  await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
+
+  const messageId = `hm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const attempts = retries + 1;
+  let lastAck = null;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    ws.send(JSON.stringify({
+      type: 'send',
+      target,
+      content: message,
+      priority,
+      messageId,
+      ackRequired: true,
+      attempt,
+      maxAttempts: attempts,
+    }));
+
+    try {
+      const ack = await waitForMatch(
+        ws,
+        (msg) => msg.type === 'send-ack' && msg.messageId === messageId,
+        ackTimeoutMs,
+        `ACK timeout after ${ackTimeoutMs}ms`
+      );
+      lastAck = ack;
+
+      if (ack.ok) {
+        await closeSocket(ws);
+        return {
+          ok: true,
+          ack,
+          attemptsUsed: attempt,
+        };
+      }
+
+      if (attempt >= attempts || !shouldRetryAck(ack)) {
+        break;
+      }
+
+      const backoffDelay = getBackoffDelayMs(ackTimeoutMs, attempt);
+      await sleep(backoffDelay);
+    } catch (err) {
+      lastError = err;
+      if (attempt >= attempts) {
+        break;
+      }
+
+      const backoffDelay = getBackoffDelayMs(ackTimeoutMs, attempt);
+      await sleep(backoffDelay);
+    }
+  }
+
+  await closeSocket(ws);
+  return {
+    ok: false,
+    ack: lastAck,
+    error: lastError ? lastError.message : null,
+    attemptsUsed: attempts,
+  };
+}
+
+async function main() {
+  let sendResult = null;
+  let wsError = null;
+
+  try {
+    sendResult = await sendViaWebSocketWithAck();
+  } catch (err) {
+    wsError = err;
+  }
+
+  if (sendResult?.ok) {
+    console.log(`Sent to ${target}: ${previewMessage(message)} (ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed})`);
     process.exit(0);
-  }, 100);
-});
+  }
 
-ws.on('error', (err) => {
-  console.error('WebSocket error:', err.message);
-  console.error('Is Hivemind running?');
+  if (enableFallback) {
+    const fallbackResult = writeTriggerFallback(target, message);
+    if (fallbackResult.ok) {
+      const reason = sendResult?.ack
+        ? `ack=${sendResult.ack.status}`
+        : (sendResult?.error || wsError?.message || 'no_ack');
+      console.warn(`WebSocket send unverified (${reason}). Wrote trigger fallback: ${fallbackResult.path}`);
+      process.exit(0);
+    }
+    console.error(`WebSocket failed and fallback failed: ${fallbackResult.error}`);
+    process.exit(1);
+  }
+
+  const reason = sendResult?.ack
+    ? `ACK failed (${sendResult.ack.status})`
+    : (sendResult?.error || wsError?.message || 'unknown error');
+  console.error(`Send failed: ${reason}`);
+  process.exit(1);
+}
+
+main().catch((err) => {
+  console.error('Fatal error:', err.message);
   process.exit(1);
 });
-
-// Timeout if server doesn't respond
-setTimeout(() => {
-  console.error('Connection timeout');
-  process.exit(1);
-}, 3000);
