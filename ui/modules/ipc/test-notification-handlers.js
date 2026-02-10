@@ -110,6 +110,20 @@ function registerTestNotificationHandlers(ctx, deps = {}) {
   });
 }
 
+
+function unregisterTestNotificationHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('notify-test-failure');
+    ipcMain.removeHandler('get-test-notification-settings');
+    ipcMain.removeHandler('set-test-notification-settings');
+    ipcMain.removeHandler('should-block-on-test-failure');
+  if (typeof ipcMain.removeAllListeners === 'function') {
+      ipcMain.removeAllListeners('test-run-complete');
+  }
+}
+
+registerTestNotificationHandlers.unregister = unregisterTestNotificationHandlers;
 module.exports = {
   registerTestNotificationHandlers,
 };

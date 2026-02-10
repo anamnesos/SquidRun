@@ -207,4 +207,12 @@ function registerResourceHandlers(ctx) {
   });
 }
 
+
+function unregisterResourceHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('resource:get-usage');
+}
+
+registerResourceHandlers.unregister = unregisterResourceHandlers;
 module.exports = { registerResourceHandlers };

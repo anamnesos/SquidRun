@@ -31,4 +31,13 @@ function registerCompletionDetectionHandlers(ctx) {
   });
 }
 
+
+function unregisterCompletionDetectionHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('check-completion');
+    ipcMain.removeHandler('get-completion-patterns');
+}
+
+registerCompletionDetectionHandlers.unregister = unregisterCompletionDetectionHandlers;
 module.exports = { registerCompletionDetectionHandlers };

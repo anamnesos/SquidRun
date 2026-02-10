@@ -106,4 +106,12 @@ function callWhisperAPI(apiKey, audioBuffer) {
   });
 }
 
+
+function unregisterWhisperHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('voice:transcribe');
+}
+
+registerWhisperHandlers.unregister = unregisterWhisperHandlers;
 module.exports = { registerWhisperHandlers };

@@ -461,4 +461,22 @@ function registerScaffoldingHandlers(ctx, deps) {
   });
 }
 
+
+function unregisterScaffoldingHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('scaffolding-get-templates');
+    ipcMain.removeHandler('scaffolding-get-template');
+    ipcMain.removeHandler('scaffolding-preview');
+    ipcMain.removeHandler('scaffolding-create');
+    ipcMain.removeHandler('scaffolding-select-folder');
+    ipcMain.removeHandler('scaffolding-add-custom');
+    ipcMain.removeHandler('scaffolding-remove-custom');
+    ipcMain.removeHandler('scaffolding-export-template');
+    ipcMain.removeHandler('scaffolding-import-template');
+    ipcMain.removeHandler('scaffolding-get-categories');
+    ipcMain.removeHandler('scaffolding-create-from-existing');
+}
+
+registerScaffoldingHandlers.unregister = unregisterScaffoldingHandlers;
 module.exports = { registerScaffoldingHandlers };

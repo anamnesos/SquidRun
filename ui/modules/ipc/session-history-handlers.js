@@ -33,4 +33,12 @@ function registerSessionHistoryHandlers(ctx) {
   });
 }
 
+
+function unregisterSessionHistoryHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('get-session-history');
+}
+
+registerSessionHistoryHandlers.unregister = unregisterSessionHistoryHandlers;
 module.exports = { registerSessionHistoryHandlers };

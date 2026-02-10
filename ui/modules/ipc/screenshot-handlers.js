@@ -135,4 +135,16 @@ function registerScreenshotHandlers(ctx) {
   });
 }
 
+
+function unregisterScreenshotHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('capture-screenshot');
+    ipcMain.removeHandler('save-screenshot');
+    ipcMain.removeHandler('list-screenshots');
+    ipcMain.removeHandler('delete-screenshot');
+    ipcMain.removeHandler('get-screenshot-path');
+}
+
+registerScreenshotHandlers.unregister = unregisterScreenshotHandlers;
 module.exports = { registerScreenshotHandlers };

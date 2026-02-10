@@ -27,4 +27,12 @@ function registerExternalNotificationHandlers(ctx) {
   });
 }
 
+
+function unregisterExternalNotificationHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('notify-external-test');
+}
+
+registerExternalNotificationHandlers.unregister = unregisterExternalNotificationHandlers;
 module.exports = { registerExternalNotificationHandlers };

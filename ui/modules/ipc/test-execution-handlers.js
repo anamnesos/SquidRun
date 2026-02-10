@@ -212,6 +212,17 @@ function registerTestExecutionHandlers(ctx) {
   });
 }
 
+
+function unregisterTestExecutionHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('detect-test-framework');
+    ipcMain.removeHandler('run-tests');
+    ipcMain.removeHandler('get-test-results');
+    ipcMain.removeHandler('get-test-status');
+}
+
+registerTestExecutionHandlers.unregister = unregisterTestExecutionHandlers;
 module.exports = {
   registerTestExecutionHandlers,
 };

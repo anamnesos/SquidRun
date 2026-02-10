@@ -155,6 +155,17 @@ function registerPrecommitHandlers(ctx) {
   });
 }
 
+
+function unregisterPrecommitHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('run-pre-commit-checks');
+    ipcMain.removeHandler('get-ci-status');
+    ipcMain.removeHandler('set-ci-enabled');
+    ipcMain.removeHandler('should-block-commit');
+}
+
+registerPrecommitHandlers.unregister = unregisterPrecommitHandlers;
 module.exports = {
   registerPrecommitHandlers,
 };

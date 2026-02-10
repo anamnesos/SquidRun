@@ -131,4 +131,13 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
   });
 }
 
+
+function unregisterModelSwitchHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('get-pane-commands');
+    ipcMain.removeHandler('switch-pane-model');
+}
+
+registerModelSwitchHandlers.unregister = unregisterModelSwitchHandlers;
 module.exports = { registerModelSwitchHandlers };

@@ -431,4 +431,29 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
   });
 }
 
+
+function unregisterAgentMetricsHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('record-completion');
+    ipcMain.removeHandler('record-error');
+    ipcMain.removeHandler('record-response-time');
+    ipcMain.removeHandler('get-performance');
+    ipcMain.removeHandler('get-performance-stats');
+    ipcMain.removeHandler('reset-performance');
+    ipcMain.removeHandler('reset-performance-stats');
+    ipcMain.removeHandler('record-task-outcome');
+    ipcMain.removeHandler('get-learning-data');
+    ipcMain.removeHandler('get-best-agent-for-task');
+    ipcMain.removeHandler('reset-learning');
+    ipcMain.removeHandler('get-routing-weights');
+    ipcMain.removeHandler('get-usage-stats');
+    ipcMain.removeHandler('reset-usage-stats');
+    ipcMain.removeHandler('get-activity-log');
+    ipcMain.removeHandler('clear-activity-log');
+    ipcMain.removeHandler('save-activity-log');
+    ipcMain.removeHandler('log-activity');
+}
+
+registerAgentMetricsHandlers.unregister = unregisterAgentMetricsHandlers;
 module.exports = { registerAgentMetricsHandlers };

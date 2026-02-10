@@ -88,4 +88,14 @@ function registerSmartRoutingHandlers(ctx) {
   });
 }
 
+
+function unregisterSmartRoutingHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('route-task');
+    ipcMain.removeHandler('get-best-agent');
+    ipcMain.removeHandler('get-agent-roles');
+}
+
+registerSmartRoutingHandlers.unregister = unregisterSmartRoutingHandlers;
 module.exports = { registerSmartRoutingHandlers };

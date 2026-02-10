@@ -59,6 +59,21 @@ function registerMcpHandlers(ctx) {
   });
 }
 
+
+function unregisterMcpHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('mcp-register-agent');
+    ipcMain.removeHandler('mcp-unregister-agent');
+    ipcMain.removeHandler('mcp-get-connected-agents');
+    ipcMain.removeHandler('mcp-tool-call');
+    ipcMain.removeHandler('mcp-get-tool-definitions');
+    ipcMain.removeHandler('mcp-validate-session');
+    ipcMain.removeHandler('get-mcp-health');
+    ipcMain.removeHandler('get-mcp-status');
+}
+
+registerMcpHandlers.unregister = unregisterMcpHandlers;
 module.exports = {
   registerMcpHandlers,
 };

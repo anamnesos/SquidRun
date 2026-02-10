@@ -58,6 +58,18 @@ function registerSdkHandlers(ctx) {
   });
 }
 
+
+function unregisterSdkHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('sdk-start');
+    ipcMain.removeHandler('sdk-stop');
+    ipcMain.removeHandler('sdk-write');
+    ipcMain.removeHandler('sdk-status');
+    ipcMain.removeHandler('sdk-broadcast');
+}
+
+registerSdkHandlers.unregister = unregisterSdkHandlers;
 module.exports = {
   registerSdkHandlers,
 };

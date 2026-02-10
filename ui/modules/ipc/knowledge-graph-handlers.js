@@ -141,4 +141,18 @@ function registerKnowledgeGraphHandlers(ctx) {
   });
 }
 
+
+function unregisterKnowledgeGraphHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('graph-query');
+    ipcMain.removeHandler('graph-visualize');
+    ipcMain.removeHandler('graph-stats');
+    ipcMain.removeHandler('graph-related');
+    ipcMain.removeHandler('graph-record-concept');
+    ipcMain.removeHandler('graph-save');
+    ipcMain.removeHandler('graph-nodes-by-type');
+}
+
+registerKnowledgeGraphHandlers.unregister = unregisterKnowledgeGraphHandlers;
 module.exports = { registerKnowledgeGraphHandlers };
