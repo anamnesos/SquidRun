@@ -737,6 +737,14 @@ function setupEventListeners() {
   let mediaRecorder = null;
   let audioChunks = [];
   let audioStream = null;
+  let recordingStartTime = 0;
+  const MIN_REC[private-live-ops]NG_MS = 500;
+  const WHISPER_HALLUCINATIONS = new Set([
+    'you', 'thank you', 'thanks', 'bye', 'goodbye', 'hey',
+    'thanks for watching', 'thank you for watching',
+    'please subscribe', 'like and subscribe',
+    'the end', 'so', 'um', 'uh', 'hmm', 'ah', 'oh',
+  ]);
   let lastBroadcastTime = 0;
 
   // Update placeholder based on selected target
@@ -787,29 +795,49 @@ function setupEventListeners() {
     return new Promise((resolve) => {
       mediaRecorder.onstop = async () => {
         voiceListening = false;
-        updateVoiceUI('Transcribing...');
 
+        const elapsed = Date.now() - recordingStartTime;
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
         audioChunks = [];
+
+        // Gate: discard recordings shorter than MIN_REC[private-live-ops]NG_MS
+        if (elapsed < MIN_REC[private-live-ops]NG_MS) {
+          log.info('Voice', `Recording too short (${elapsed}ms), discarding`);
+          updateVoiceUI('Too short');
+          if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+          mediaRecorder = null;
+          resolve();
+          return;
+        }
+
+        updateVoiceUI('Transcribing...');
 
         try {
           const arrayBuf = await audioBlob.arrayBuffer();
           const result = await window.hivemind.voice.transcribe(Buffer.from(arrayBuf));
           if (result.success && result.text) {
-            const combined = `${voiceBase}${result.text}`.trim();
-            if (broadcastInput) {
-              broadcastInput.value = combined;
-              broadcastInput.dispatchEvent(new Event('input'));
-            }
-            if (voiceAutoSend && combined) {
-              if (sendBroadcast(combined)) {
-                if (broadcastInput) {
-                  broadcastInput.value = '';
-                  broadcastInput.style.height = '';
+            const trimmed = result.text.trim();
+            // Filter known Whisper silence hallucinations
+            if (WHISPER_HALLUCINATIONS.has(trimmed.toLowerCase().replace(/[.!?,]+$/g, ''))) {
+              log.info('Voice', `Filtered hallucination: "${trimmed}"`);
+              updateVoiceUI('No speech detected');
+            } else {
+              const combined = `${voiceBase}${trimmed}`.trim();
+              if (broadcastInput) {
+                broadcastInput.value = combined;
+                broadcastInput.dispatchEvent(new Event('input'));
+              }
+              if (voiceAutoSend && combined) {
+                if (sendBroadcast(combined)) {
+                  if (broadcastInput) {
+                    broadcastInput.value = '';
+                    broadcastInput.style.height = '';
+                    broadcastInput.blur();
+                  }
                 }
               }
+              updateVoiceUI('Voice ready');
             }
-            updateVoiceUI('Voice ready');
           } else {
             log.error('Voice', 'Whisper transcription failed:', result.error);
             updateVoiceUI(result.error === 'OPENAI_API_KEY not set in .env' ? 'No API key' : 'Transcription failed');
@@ -849,6 +877,7 @@ function setupEventListeners() {
       if (voiceBase) voiceBase += ' ';
 
       mediaRecorder.start();
+      recordingStartTime = Date.now();
       voiceListening = true;
       updateVoiceUI(voiceAutoSend ? 'Recording (auto-send)' : 'Recording');
     } catch (err) {
@@ -1076,6 +1105,8 @@ function setupEventListeners() {
           if (sendBroadcast(input.value.trim())) {
             input.value = '';
             input.style.height = '';
+            // Blur so injection.js userInputFocused gate releases
+            input.blur();
           }
         }
       }
@@ -1096,6 +1127,7 @@ function setupEventListeners() {
         if (sendBroadcast(input.value.trim())) {
           input.value = '';
           input.style.height = '';
+          input.blur();
         }
       }
     });

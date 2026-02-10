@@ -135,7 +135,7 @@ async function callRecraftApi({ prompt, style, size }) {
   const effectiveStyle = RECRAFT_STYLES.includes(style) ? style : 'realistic_image';
   const effectiveSize = RECRAFT_SIZES.includes(size) ? size : '1024x1024';
 
-  const payload = await fetchWithRetry('https://api.recraft.ai/v1/images/generations', {
+  const payload = await fetchWithRetry('https://external.api.recraft.ai/v1/images/generations', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

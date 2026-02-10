@@ -120,7 +120,7 @@ describe('Image Generation Module', () => {
 
       // Verify Recraft API call
       const [recraftUrl, recraftOpts] = global.fetch.mock.calls[0];
-      expect(recraftUrl).toBe('https://api.recraft.ai/v1/images/generations');
+      expect(recraftUrl).toBe('https://external.api.recraft.ai/v1/images/generations');
       const body = JSON.parse(recraftOpts.body);
       expect(body.prompt).toBe('a cat');
       expect(body.model).toBe('recraftv3');
