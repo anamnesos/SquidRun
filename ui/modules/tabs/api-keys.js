@@ -51,7 +51,7 @@ async function saveApiKeys() {
 
     if (result.success) {
       if (statusEl) {
-        statusEl.textContent = 'Saved! Restart to apply.';
+        statusEl.textContent = 'Saved! Available immediately.';
         statusEl.className = 'api-keys-status success';
       }
       if (anthInput) anthInput.value = '';
