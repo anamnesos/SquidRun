@@ -5,15 +5,212 @@
 
 const { WebSocketServer } = require('ws');
 const log = require('./logger');
+const { LEGACY_ROLE_ALIASES, ROLE_ID_MAP } = require('../config');
 
 const DEFAULT_PORT = 9900;
 const MESSAGE_ACK_TTL_MS = 60000;
+const HEARTBEAT_INTERVAL_MS = 30000;
+const HEARTBEAT_STALE_MS = 60000;
+const CANONICAL_ROLE_IDS = ['architect', 'devops', 'analyst'];
+const CANONICAL_ROLE_TO_PANE = new Map(
+  CANONICAL_ROLE_IDS
+    .map((role) => [role, String(ROLE_ID_MAP?.[role] || '')])
+    .filter(([, paneId]) => Boolean(paneId))
+);
+const PANE_TO_CANONICAL_ROLE = new Map(
+  Array.from(CANONICAL_ROLE_TO_PANE.entries()).map(([role, paneId]) => [paneId, role])
+);
 let wss = null;
 let clients = new Map(); // clientId -> { ws, paneId, role }
 let clientIdCounter = 0;
 let messageHandler = null; // External handler for incoming messages
 let recentMessageAcks = new Map(); // messageId -> { ackPayload, expiresAt }
 let pendingMessageAcks = new Map(); // messageId -> Promise<ackPayload>
+let roleHeartbeats = new Map(); // role -> { role, paneId, lastSeen, clientId, source }
+let paneHeartbeats = new Map(); // paneId -> { role, paneId, lastSeen, clientId, source }
+
+function normalizePaneId(paneId) {
+  if (paneId === null || paneId === undefined) return null;
+  const normalized = String(paneId).trim();
+  return normalized ? normalized : null;
+}
+
+function normalizeRoleId(role) {
+  if (typeof role !== 'string') return null;
+  const normalized = role.trim().toLowerCase();
+  if (!normalized) return null;
+  if (CANONICAL_ROLE_IDS.includes(normalized)) return normalized;
+  if (LEGACY_ROLE_ALIASES?.[normalized]) {
+    return LEGACY_ROLE_ALIASES[normalized];
+  }
+  const mappedPaneId = ROLE_ID_MAP?.[normalized];
+  if (mappedPaneId) {
+    return PANE_TO_CANONICAL_ROLE.get(String(mappedPaneId)) || null;
+  }
+  return null;
+}
+
+function getPaneIdForRole(role) {
+  if (!role) return null;
+  return CANONICAL_ROLE_TO_PANE.get(role) || null;
+}
+
+function getRoleForPaneId(paneId) {
+  if (!paneId) return null;
+  return PANE_TO_CANONICAL_ROLE.get(String(paneId)) || null;
+}
+
+function touchHeartbeat(role, paneId, clientId, source = 'heartbeat', now = Date.now()) {
+  const normalizedRole = normalizeRoleId(role);
+  const normalizedPaneId = normalizePaneId(paneId);
+
+  if (normalizedRole) {
+    const resolvedPaneId = normalizedPaneId || getPaneIdForRole(normalizedRole);
+    const roleEntry = {
+      role: normalizedRole,
+      paneId: resolvedPaneId || null,
+      lastSeen: now,
+      clientId,
+      source,
+    };
+    roleHeartbeats.set(normalizedRole, roleEntry);
+    if (resolvedPaneId) {
+      paneHeartbeats.set(String(resolvedPaneId), roleEntry);
+    }
+    return roleEntry;
+  }
+
+  if (normalizedPaneId) {
+    const inferredRole = getRoleForPaneId(normalizedPaneId);
+    const paneEntry = {
+      role: inferredRole || null,
+      paneId: normalizedPaneId,
+      lastSeen: now,
+      clientId,
+      source,
+    };
+    paneHeartbeats.set(normalizedPaneId, paneEntry);
+    if (inferredRole) {
+      roleHeartbeats.set(inferredRole, paneEntry);
+    }
+    return paneEntry;
+  }
+
+  return null;
+}
+
+function markClientSeen(clientId, source = 'message', now = Date.now()) {
+  const clientInfo = clients.get(clientId);
+  if (!clientInfo) return null;
+  clientInfo.lastSeen = now;
+  return touchHeartbeat(clientInfo.role, clientInfo.paneId, clientId, source, now);
+}
+
+function coerceStaleAfterMs(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return HEARTBEAT_STALE_MS;
+  }
+  return parsed;
+}
+
+function resolveTargetIdentity(target) {
+  if (target === null || target === undefined) {
+    return { role: null, paneId: null };
+  }
+
+  const rawTarget = String(target).trim().toLowerCase();
+  if (!rawTarget) {
+    return { role: null, paneId: null };
+  }
+
+  const paneId = normalizePaneId(rawTarget);
+  if (paneId && PANE_TO_CANONICAL_ROLE.has(paneId)) {
+    return {
+      role: getRoleForPaneId(paneId),
+      paneId,
+    };
+  }
+
+  const role = normalizeRoleId(rawTarget);
+  if (!role) {
+    return { role: null, paneId: null };
+  }
+
+  return {
+    role,
+    paneId: getPaneIdForRole(role),
+  };
+}
+
+function getRoutingHealth(target, staleAfterMs = HEARTBEAT_STALE_MS, now = Date.now()) {
+  const staleThresholdMs = coerceStaleAfterMs(staleAfterMs);
+  const identity = resolveTargetIdentity(target);
+  if (!identity.role && !identity.paneId) {
+    return {
+      healthy: false,
+      status: 'invalid_target',
+      role: null,
+      paneId: null,
+      lastSeen: null,
+      ageMs: null,
+      staleThresholdMs,
+      heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+      source: null,
+    };
+  }
+
+  const fromRole = identity.role ? roleHeartbeats.get(identity.role) : null;
+  const fromPane = identity.paneId ? paneHeartbeats.get(identity.paneId) : null;
+  const heartbeat = fromRole || fromPane;
+
+  if (!heartbeat || !Number.isFinite(heartbeat.lastSeen)) {
+    return {
+      healthy: false,
+      status: 'no_heartbeat',
+      role: identity.role || heartbeat?.role || null,
+      paneId: identity.paneId || heartbeat?.paneId || null,
+      lastSeen: null,
+      ageMs: null,
+      staleThresholdMs,
+      heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+      source: null,
+    };
+  }
+
+  const ageMs = Math.max(0, now - heartbeat.lastSeen);
+  const healthy = ageMs <= staleThresholdMs;
+
+  return {
+    healthy,
+    status: healthy ? 'healthy' : 'stale',
+    role: identity.role || heartbeat.role || null,
+    paneId: identity.paneId || heartbeat.paneId || null,
+    lastSeen: heartbeat.lastSeen,
+    ageMs,
+    staleThresholdMs,
+    heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+    source: heartbeat.source || null,
+  };
+}
+
+async function emitCommsMetric(clientId, clientInfo, eventType, payload = {}) {
+  if (!messageHandler || !eventType) return;
+  try {
+    await messageHandler({
+      clientId,
+      paneId: clientInfo?.paneId,
+      role: clientInfo?.role,
+      message: {
+        type: 'comms-metric',
+        eventType,
+        payload,
+      },
+    });
+  } catch (err) {
+    log.warn('WebSocket', `Failed to emit comms metric ${eventType}: ${err.message}`);
+  }
+}
 
 function sendJson(ws, payload) {
   if (!ws || ws.readyState !== 1) return false;
@@ -83,6 +280,8 @@ function start(options = {}) {
   messageHandler = options.onMessage || null;
   recentMessageAcks.clear();
   pendingMessageAcks.clear();
+  roleHeartbeats.clear();
+  paneHeartbeats.clear();
 
   return new Promise((resolve, reject) => {
     try {
@@ -95,7 +294,8 @@ function start(options = {}) {
 
       wss.on('connection', (ws, req) => {
         const clientId = ++clientIdCounter;
-        const clientInfo = { ws, paneId: null, role: null, connectedAt: Date.now() };
+        const now = Date.now();
+        const clientInfo = { ws, paneId: null, role: null, connectedAt: now, lastSeen: now };
         clients.set(clientId, clientInfo);
 
         log.info('WebSocket', `Client ${clientId} connected from ${req.socket.remoteAddress}`);
@@ -153,13 +353,54 @@ async function handleMessage(clientId, rawData) {
   }
 
   log.info('WebSocket', `Received from client ${clientId}: ${JSON.stringify(message).substring(0, 100)}`);
+  // Refresh route health on any inbound frame so active panes stay fresh without heartbeat-only traffic.
+  markClientSeen(clientId, 'message');
 
   // Handle registration messages
   if (message.type === 'register') {
-    clientInfo.paneId = message.paneId || null;
-    clientInfo.role = message.role || null;
-    log.info('WebSocket', `Client ${clientId} registered as pane=${message.paneId} role=${message.role}`);
-    sendJson(clientInfo.ws, { type: 'registered', paneId: message.paneId, role: message.role });
+    const normalizedRole = normalizeRoleId(message.role) || message.role || null;
+    const normalizedPaneId = normalizePaneId(message.paneId) || getPaneIdForRole(normalizeRoleId(message.role));
+    clientInfo.paneId = normalizedPaneId || null;
+    clientInfo.role = normalizedRole || null;
+    markClientSeen(clientId, 'register');
+    log.info('WebSocket', `Client ${clientId} registered as pane=${clientInfo.paneId} role=${clientInfo.role}`);
+    sendJson(clientInfo.ws, { type: 'registered', paneId: clientInfo.paneId, role: clientInfo.role });
+    return;
+  }
+
+  if (message.type === 'heartbeat') {
+    const normalizedRole = normalizeRoleId(message.role);
+    const normalizedPaneId = normalizePaneId(message.paneId);
+    if (normalizedRole) {
+      clientInfo.role = normalizedRole;
+    }
+    if (normalizedPaneId) {
+      clientInfo.paneId = normalizedPaneId;
+    } else if (!clientInfo.paneId && normalizedRole) {
+      clientInfo.paneId = getPaneIdForRole(normalizedRole);
+    }
+    const heartbeat = markClientSeen(clientId, 'heartbeat');
+    sendJson(clientInfo.ws, {
+      type: 'heartbeat-ack',
+      role: heartbeat?.role || null,
+      paneId: heartbeat?.paneId || null,
+      lastSeen: heartbeat?.lastSeen || Date.now(),
+      staleThresholdMs: HEARTBEAT_STALE_MS,
+      heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+      status: 'ok',
+    });
+    return;
+  }
+
+  if (message.type === 'health-check') {
+    const health = getRoutingHealth(message.target, message.staleAfterMs);
+    sendJson(clientInfo.ws, {
+      type: 'health-check-result',
+      requestId: typeof message.requestId === 'string' ? message.requestId : null,
+      target: message.target || null,
+      timestamp: Date.now(),
+      ...health,
+    });
     return;
   }
 
@@ -171,12 +412,23 @@ async function handleMessage(clientId, rawData) {
 
     const cached = recentMessageAcks.get(messageId);
     if (cached?.ackPayload) {
+      void emitCommsMetric(clientId, clientInfo, 'comms.dedupe.hit', {
+        mode: 'cache',
+        messageId,
+        target: message?.target || null,
+        status: cached.ackPayload?.status || null,
+      });
       sendJson(clientInfo.ws, cached.ackPayload);
       return;
     }
 
     const pending = pendingMessageAcks.get(messageId);
     if (pending) {
+      void emitCommsMetric(clientId, clientInfo, 'comms.dedupe.hit', {
+        mode: 'pending',
+        messageId,
+        target: message?.target || null,
+      });
       try {
         const pendingAck = await pending;
         if (pendingAck) {
@@ -384,6 +636,7 @@ function getClients() {
     paneId: info.paneId,
     role: info.role,
     connectedAt: info.connectedAt,
+    lastSeen: info.lastSeen || null,
     ready: info.ws.readyState === 1,
   }));
 }
@@ -405,6 +658,8 @@ function stop() {
     clients.clear();
     recentMessageAcks.clear();
     pendingMessageAcks.clear();
+    roleHeartbeats.clear();
+    paneHeartbeats.clear();
 
     wss.close(() => {
       log.info('WebSocket', 'Server stopped');
@@ -443,8 +698,11 @@ module.exports = {
   isRunning,
   getPort,
   getClients,
+  getRoutingHealth,
   sendToTarget,
   sendToPane,
   broadcast,
   DEFAULT_PORT,
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_STALE_MS,
 };
