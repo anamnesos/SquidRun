@@ -25,6 +25,8 @@ const { initCommandPalette } = require('./modules/command-palette');
 const { initCustomTargetDropdown } = require('./modules/target-dropdown');
 const { initStatusStrip } = require('./modules/status-strip');
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener } = require('./modules/model-selector');
+const bus = require('./modules/event-bus');
+const healthStrip = require('./modules/health-strip');
 
 // SDK mode flag - when true, use SDK renderer instead of xterm terminals
 let sdkMode = false;
@@ -2032,4 +2034,109 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Auto-spawn now handled by checkInitComplete() when both
   // settings are loaded AND terminals are ready (no more race condition)
+
+  // ============================================================
+  // Event Kernel Phase 4: Wire renderer events to event bus
+  // ============================================================
+
+  // 1. Overlay events — observe settings panel + command palette open/close
+  const settingsPanel = document.getElementById('settingsPanel');
+  const cmdPaletteOverlay = document.getElementById('commandPaletteOverlay');
+
+  // Aggregate overlay state: open if ANY overlay is open
+  function updateOverlayState() {
+    const settingsOpen = settingsPanel && settingsPanel.classList.contains('open');
+    const paletteOpen = cmdPaletteOverlay && cmdPaletteOverlay.classList.contains('open');
+    bus.updateState('system', { overlay: { open: !!(settingsOpen || paletteOpen) } });
+  }
+
+  if (settingsPanel) {
+    const overlayObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.attributeName === 'class') {
+          const isOpen = settingsPanel.classList.contains('open');
+          bus.emit(isOpen ? 'overlay.opened' : 'overlay.closed', { paneId: 'system', payload: { overlay: 'settings' }, source: 'renderer.js' });
+          updateOverlayState();
+        }
+      }
+    });
+    overlayObserver.observe(settingsPanel, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  if (cmdPaletteOverlay) {
+    const paletteObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.attributeName === 'class') {
+          const isOpen = cmdPaletteOverlay.classList.contains('open');
+          bus.emit(isOpen ? 'overlay.opened' : 'overlay.closed', { paneId: 'system', payload: { overlay: 'command-palette' }, source: 'renderer.js' });
+          updateOverlayState();
+        }
+      }
+    });
+    paletteObserver.observe(cmdPaletteOverlay, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  // 2. resize.requested — window resize events
+  window.addEventListener('resize', () => {
+    bus.emit('resize.requested', {
+      paneId: 'system',
+      payload: { trigger: 'window_resize' },
+      source: 'renderer.js',
+    });
+  });
+
+  // 3. resize.requested — panel toggle (right panel)
+  const panelBtn = document.getElementById('panelBtn');
+  if (panelBtn) {
+    panelBtn.addEventListener('click', () => {
+      bus.emit('resize.requested', {
+        paneId: 'system',
+        payload: { trigger: 'panel_toggle' },
+        source: 'renderer.js',
+      });
+    });
+  }
+
+  // 4. pane.visibility.changed — pane expand/collapse
+  document.querySelectorAll('.expand-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const paneId = btn.dataset.paneId;
+      if (paneId) {
+        const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+        const visible = pane ? pane.classList.contains('pane-expanded') : true;
+        bus.emit('pane.visibility.changed', {
+          paneId,
+          payload: { paneId, visible },
+          source: 'renderer.js',
+        });
+      }
+    });
+  });
+
+  // 5. ui.longtask.detected — PerformanceObserver for long tasks
+  if (typeof PerformanceObserver !== 'undefined') {
+    try {
+      const longTaskObserver = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          bus.emit('ui.longtask.detected', {
+            paneId: 'system',
+            payload: { durationMs: entry.duration, startTime: entry.startTime },
+            source: 'renderer.js',
+          });
+        }
+      });
+      longTaskObserver.observe({ entryTypes: ['longtask'] });
+    } catch (e) {
+      // PerformanceObserver for longtask not supported — skip gracefully
+    }
+  }
+
+  // 6. Health Strip — real-time pane status indicators
+  const terminalsSection = document.getElementById('terminalsSection');
+  if (terminalsSection) {
+    const healthContainer = document.createElement('div');
+    healthContainer.id = 'health-strip-container';
+    terminalsSection.appendChild(healthContainer);
+    healthStrip.init(bus, healthContainer);
+  }
 });

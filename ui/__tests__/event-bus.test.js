@@ -1208,4 +1208,279 @@ describe('event-bus', () => {
       expect(bus.getStats().bufferSize).toBeGreaterThan(0);
     });
   });
+
+  // ──────────────────────────────────────────
+  // 16. pane.state.changed — no-op detection
+  // ──────────────────────────────────────────
+  describe('pane.state.changed no-op detection', () => {
+    test('does not emit pane.state.changed when state does not change', () => {
+      const handler = jest.fn();
+      bus.on('pane.state.changed', handler);
+
+      // Set initial state
+      bus.updateState('1', { activity: 'injecting' });
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      handler.mockClear();
+
+      // Set same state again — should NOT emit
+      bus.updateState('1', { activity: 'injecting' });
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    test('emits pane.state.changed when state actually changes', () => {
+      const handler = jest.fn();
+      bus.on('pane.state.changed', handler);
+
+      bus.updateState('1', { activity: 'injecting' });
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      handler.mockClear();
+
+      bus.updateState('1', { activity: 'idle' });
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    test('no infinite loop: pane.state.changed handler calling updateState does not re-trigger', () => {
+      let callCount = 0;
+      bus.on('pane.state.changed', () => {
+        callCount++;
+        // This should NOT trigger another pane.state.changed if state is same
+        if (callCount < 5) {
+          bus.updateState('1', { activity: 'injecting' }); // same value — no emit
+        }
+      });
+
+      bus.updateState('1', { activity: 'injecting' });
+      // Should only fire once (the initial change from idle -> injecting)
+      expect(callCount).toBe(1);
+    });
+  });
+
+  // ──────────────────────────────────────────
+  // 17. Enhanced query API (Phase 4)
+  // ──────────────────────────────────────────
+  describe('enhanced query', () => {
+    test('query returns results newest first', () => {
+      bus.emit('alpha', { paneId: '1', source: 'test' });
+      jest.advanceTimersByTime(100);
+      bus.emit('beta', { paneId: '1', source: 'test' });
+
+      const results = bus.query({ types: ['alpha', 'beta'] });
+      expect(results.length).toBe(2);
+      expect(results[0].type).toBe('beta'); // newest first
+      expect(results[1].type).toBe('alpha');
+    });
+
+    test('query with prefix type matching', () => {
+      bus.emit('inject.requested', { paneId: '1', source: 'test' });
+      bus.emit('inject.applied', { paneId: '1', source: 'test' });
+      bus.emit('resize.started', { paneId: '1', source: 'test' });
+
+      const results = bus.query({ type: 'inject.*' });
+      expect(results.length).toBe(2);
+      expect(results.every(e => e.type.startsWith('inject.'))).toBe(true);
+    });
+
+    test('query with types array', () => {
+      bus.emit('alpha', { paneId: '1', source: 'test' });
+      bus.emit('beta', { paneId: '1', source: 'test' });
+      bus.emit('gamma', { paneId: '1', source: 'test' });
+
+      const results = bus.query({ types: ['alpha', 'gamma'] });
+      expect(results.length).toBe(2);
+    });
+
+    test('query with types array supporting wildcards', () => {
+      bus.emit('inject.requested', { paneId: '1', source: 'test' });
+      bus.emit('resize.started', { paneId: '1', source: 'test' });
+      bus.emit('focus.changed', { paneId: '1', source: 'test' });
+
+      const results = bus.query({ types: ['inject.*', 'resize.*'] });
+      expect(results.length).toBe(2);
+    });
+
+    test('query with since filter', () => {
+      const now = Date.now();
+      bus.emit('early', { paneId: '1', source: 'test' });
+      jest.advanceTimersByTime(1000);
+      bus.emit('late', { paneId: '1', source: 'test' });
+
+      const results = bus.query({ since: now + 500 });
+      const userEvents = results.filter(e => e.type === 'late');
+      expect(userEvents.length).toBe(1);
+    });
+
+    test('query with until filter', () => {
+      const now = Date.now();
+      bus.emit('early', { paneId: '1', source: 'test' });
+      jest.advanceTimersByTime(1000);
+      bus.emit('late', { paneId: '1', source: 'test' });
+
+      const results = bus.query({ type: 'early', until: now + 500 });
+      expect(results.length).toBe(1);
+      expect(results[0].type).toBe('early');
+    });
+
+    test('query with limit', () => {
+      for (let i = 0; i < 10; i++) {
+        bus.emit('flood', { paneId: '1', source: 'test' });
+      }
+
+      const results = bus.query({ type: 'flood', limit: 3 });
+      expect(results.length).toBe(3);
+    });
+
+    test('query with combined filters', () => {
+      const corrId = bus.startCorrelation();
+      bus.emit('inject.requested', { paneId: '1', source: 'test' });
+      bus.emit('inject.requested', { paneId: '2', source: 'test' });
+      bus.startCorrelation();
+      bus.emit('inject.requested', { paneId: '1', source: 'test' });
+
+      const results = bus.query({ correlationId: corrId, paneId: '1', type: 'inject.requested' });
+      expect(results.length).toBe(1);
+    });
+
+    test('query returns empty when no matches', () => {
+      bus.emit('alpha', { paneId: '1', source: 'test' });
+      const results = bus.query({ type: 'nonexistent' });
+      expect(results).toEqual([]);
+    });
+
+    test('legacy timeRange still works', () => {
+      const now = Date.now();
+      bus.emit('test', { paneId: '1', source: 'test' });
+      jest.advanceTimersByTime(1000);
+      bus.emit('test', { paneId: '1', source: 'test' });
+
+      const results = bus.query({ type: 'test', timeRange: { start: now, end: now + 500 } });
+      expect(results.length).toBe(1);
+    });
+  });
+
+  // ──────────────────────────────────────────
+  // 18. getBufferStats (Phase 4)
+  // ──────────────────────────────────────────
+  describe('getBufferStats', () => {
+    test('returns correct size', () => {
+      bus.emit('alpha', { paneId: '1', source: 'test' });
+      bus.emit('beta', { paneId: '1', source: 'test' });
+      const stats = bus.getBufferStats();
+      expect(stats.size).toBeGreaterThanOrEqual(2);
+    });
+
+    test('returns maxSize', () => {
+      const stats = bus.getBufferStats();
+      expect(stats.maxSize).toBe(1000);
+    });
+
+    test('returns oldest and newest timestamps', () => {
+      const now = Date.now();
+      bus.emit('first', { paneId: '1', source: 'test' });
+      jest.advanceTimersByTime(1000);
+      bus.emit('last', { paneId: '1', source: 'test' });
+
+      const stats = bus.getBufferStats();
+      expect(stats.oldestTs).toBeLessThanOrEqual(stats.newestTs);
+    });
+
+    test('returns null timestamps when buffer empty', () => {
+      const stats = bus.getBufferStats();
+      expect(stats.oldestTs).toBeNull();
+      expect(stats.newestTs).toBeNull();
+    });
+
+    test('returns event type counts', () => {
+      bus.emit('alpha', { paneId: '1', source: 'test' });
+      bus.emit('alpha', { paneId: '1', source: 'test' });
+      bus.emit('beta', { paneId: '1', source: 'test' });
+
+      const stats = bus.getBufferStats();
+      expect(stats.eventTypeCounts['alpha']).toBe(2);
+      expect(stats.eventTypeCounts['beta']).toBe(1);
+    });
+
+    test('returns droppedCount', () => {
+      bus.registerContract({
+        id: 'dropper',
+        version: 1,
+        owner: 'test',
+        appliesTo: ['drop.me'],
+        preconditions: [() => false],
+        severity: 'block',
+        action: 'drop',
+        fallbackAction: 'drop',
+        mode: 'enforced',
+        emitOnViolation: 'contract.violation',
+      });
+      bus.emit('drop.me', { paneId: '1', source: 'test' });
+
+      const stats = bus.getBufferStats();
+      expect(stats.droppedCount).toBe(1);
+    });
+
+    test('returns empty stats when telemetry disabled', () => {
+      bus.setTelemetryEnabled(false);
+      const stats = bus.getBufferStats();
+      expect(stats.size).toBe(0);
+      expect(stats.eventTypeCounts).toEqual({});
+    });
+  });
+
+  // ──────────────────────────────────────────
+  // 19. getCorrelationChain (Phase 4)
+  // ──────────────────────────────────────────
+  describe('getCorrelationChain', () => {
+    test('returns all events in a correlation', () => {
+      const corrId = bus.startCorrelation();
+      bus.emit('step.a', { paneId: '1', source: 'test' });
+      bus.emit('step.b', { paneId: '1', source: 'test' });
+      bus.emit('step.c', { paneId: '1', source: 'test' });
+
+      const chain = bus.getCorrelationChain(corrId);
+      const userEvents = chain.filter(e => e.type.startsWith('step.'));
+      expect(userEvents.length).toBe(3);
+    });
+
+    test('returns events ordered by causation chain', () => {
+      const corrId = bus.startCorrelation();
+      const root = bus.emit('root', { paneId: '1', source: 'test' });
+      const child = bus.emit('child', {
+        paneId: '1',
+        source: 'test',
+        causationId: root.eventId,
+      });
+      bus.emit('grandchild', {
+        paneId: '1',
+        source: 'test',
+        causationId: child.eventId,
+      });
+
+      const chain = bus.getCorrelationChain(corrId);
+      const userEvents = chain.filter(e => ['root', 'child', 'grandchild'].includes(e.type));
+      expect(userEvents[0].type).toBe('root');
+      expect(userEvents[1].type).toBe('child');
+      expect(userEvents[2].type).toBe('grandchild');
+    });
+
+    test('returns empty for unknown correlationId', () => {
+      const chain = bus.getCorrelationChain('nonexistent-corr-id');
+      expect(chain).toEqual([]);
+    });
+
+    test('returns empty for null correlationId', () => {
+      const chain = bus.getCorrelationChain(null);
+      expect(chain).toEqual([]);
+    });
+
+    test('handles events with no causation (all roots)', () => {
+      const corrId = bus.startCorrelation();
+      bus.emit('a', { paneId: '1', source: 'test' });
+      bus.emit('b', { paneId: '1', source: 'test' });
+
+      const chain = bus.getCorrelationChain(corrId);
+      expect(chain.length).toBeGreaterThanOrEqual(2);
+    });
+  });
 });
