@@ -22,7 +22,14 @@ jest.mock('../modules/logger', () => ({
 
 const fs = require('fs');
 const log = require('../modules/logger');
-const { generateImage, resolveProvider, RECRAFT_STYLES, RECRAFT_SIZES, OPENAI_SIZES } = require('../modules/image-gen');
+const {
+  generateImage,
+  removeHistoryEntryByPath,
+  resolveProvider,
+  RECRAFT_STYLES,
+  RECRAFT_SIZES,
+  OPENAI_SIZES,
+} = require('../modules/image-gen');
 
 const createResponse = ({ ok = true, status = 200, payload = {} } = {}) => ({
   ok,
@@ -298,6 +305,26 @@ describe('Image Generation Module', () => {
       await jest.advanceTimersByTimeAsync(4000);
 
       await expectation;
+    });
+  });
+
+  describe('history writer helpers', () => {
+    test('removeHistoryEntryByPath drops matching path and rewrites history', () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockReturnValue(JSON.stringify([
+        { imagePath: 'D:\\projects\\hivemind\\workspace\\generated-images\\keep.png' },
+        { imagePath: 'D:\\projects\\hivemind\\workspace\\generated-images\\drop.png' },
+      ]));
+
+      removeHistoryEntryByPath('D:\\projects\\hivemind\\workspace\\generated-images\\drop.png');
+
+      const writeCall = fs.writeFileSync.mock.calls.find(call =>
+        String(call[0]).includes('image-gen-history.json.tmp')
+      );
+      expect(writeCall).toBeTruthy();
+      expect(writeCall[1]).toContain('keep.png');
+      expect(writeCall[1]).not.toContain('drop.png');
+      expect(fs.renameSync).toHaveBeenCalled();
     });
   });
 

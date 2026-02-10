@@ -1,11 +1,15 @@
 /**
  * Oracle IPC Handlers
- * Channels: oracle:generateImage, oracle:deleteImage, save-oracle-history, load-oracle-history
+ * Channels: oracle:generateImage, oracle:deleteImage, oracle:listImages
  */
 
 const fs = require('fs');
 const path = require('path');
-const { generateImage, IMAGE_HISTORY_PATH, GENERATED_IMAGES_DIR } = require('../image-gen');
+const {
+  generateImage,
+  removeHistoryEntryByPath,
+  GENERATED_IMAGES_DIR,
+} = require('../image-gen');
 
 function mapOracleError(err) {
   const message = err && err.message ? err.message : 'Image generation failed';
@@ -34,6 +38,9 @@ function registerOracleHandlers(ctx, deps = {}) {
 
   const { ipcMain } = ctx;
   const generateImageFn = typeof deps.generateImage === 'function' ? deps.generateImage : generateImage;
+  const removeHistoryByPathFn = typeof deps.removeHistoryEntryByPath === 'function'
+    ? deps.removeHistoryEntryByPath
+    : removeHistoryEntryByPath;
 
   ipcMain.handle('oracle:generateImage', async (event, payload = {}) => {
     const { prompt, provider, style, size } = payload;
@@ -65,15 +72,11 @@ function registerOracleHandlers(ctx, deps = {}) {
         fs.unlinkSync(resolved);
       }
 
-      // Remove from history
-      if (fs.existsSync(IMAGE_HISTORY_PATH)) {
-        try {
-          const history = JSON.parse(fs.readFileSync(IMAGE_HISTORY_PATH, 'utf8'));
-          const filtered = history.filter(h => path.resolve(h.imagePath) !== resolved);
-          fs.writeFileSync(IMAGE_HISTORY_PATH, JSON.stringify(filtered, null, 2));
-        } catch {
-          // History file corrupt — not critical
-        }
+      // Canonical history writer lives in image-gen module.
+      try {
+        removeHistoryByPathFn(resolved);
+      } catch {
+        // Non-fatal: image file delete still succeeds.
       }
 
       return { success: true };
@@ -81,70 +84,56 @@ function registerOracleHandlers(ctx, deps = {}) {
       return { success: false, error: err.message };
     }
   });
-
-  // Save oracle history to file
-  ipcMain.handle('save-oracle-history', async (event, history) => {
-    try {
-      fs.writeFileSync(IMAGE_HISTORY_PATH, JSON.stringify(history, null, 2));
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  });
-
-  // Load oracle history from file
-  ipcMain.handle('load-oracle-history', async () => {
-    try {
-      if (fs.existsSync(IMAGE_HISTORY_PATH)) {
-        const data = fs.readFileSync(IMAGE_HISTORY_PATH, 'utf8');
-        return JSON.parse(data);
-      }
-      return [];
-    } catch (err) {
-      return [];
-    }
-  });
-
-  // Detect MIME type from file magic bytes (handles WEBP-in-.png mislabeling)
-  function detectMime(filePath) {
-    try {
-      const fd = fs.openSync(filePath, 'r');
-      const buf = Buffer.alloc(12);
-      fs.readSync(fd, buf, 0, 12, 0);
-      fs.closeSync(fd);
-      // PNG: 89 50 4E 47
-      if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
-      // JPEG: FF D8 FF
-      if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'image/jpeg';
-      // GIF: GIF8
-      if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return 'image/gif';
-      // WEBP: RIFF....WEBP
-      if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
-          buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
-      // SVG: starts with < (text)
-      if (buf[0] === 0x3C) return 'image/svg+xml';
-      return 'image/png'; // fallback
-    } catch {
-      return 'image/png';
-    }
-  }
 
   // List all image files in generated-images directory (sorted newest first)
-  // Returns file paths (CSP allows file: protocol). No base64 — too large for IPC.
+  // Returns file paths (CSP allows file: protocol). No base64 because IPC payloads can get large.
   const MIN_IMAGE_SIZE = 10000; // Skip icon-sized files (16x16, 32x32, 64x64 variants)
+
+  // Fix legacy WEBP-in-.png files: rename to .webp based on magic bytes
+  function fixMismatchedExtension(fullPath) {
+    try {
+      if (!fullPath.endsWith('.png')) return fullPath;
+      const fd = fs.openSync(fullPath, 'r');
+      const header = Buffer.alloc(12);
+      fs.readSync(fd, header, 0, 12, 0);
+      fs.closeSync(fd);
+      if (header[0] === 0x52 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x46 &&
+          header[8] === 0x57 && header[9] === 0x45 && header[10] === 0x42 && header[11] === 0x50) {
+        const webpPath = fullPath.replace(/\.png$/i, '.webp');
+        fs.renameSync(fullPath, webpPath);
+        return webpPath;
+      }
+    } catch { /* non-fatal */ }
+    return fullPath;
+  }
+
   ipcMain.handle('oracle:listImages', async () => {
     try {
       if (!fs.existsSync(GENERATED_IMAGES_DIR)) return [];
       const files = fs.readdirSync(GENERATED_IMAGES_DIR)
         .filter(f => /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(f));
+
+      // Build set of bases that have -converted versions (prefer converted over raw)
+      const convertedBases = new Set();
+      for (const f of files) {
+        const match = f.match(/^(.+?)[.-]converted\.png$/i);
+        if (match) convertedBases.add(match[1]);
+      }
+
       const results = [];
       for (const f of files) {
-        const fullPath = path.join(GENERATED_IMAGES_DIR, f);
+        // Skip raw file if a -converted version exists
+        const baseMatch = f.match(/^(.+?)\.(png|jpg|jpeg|gif|webp|svg)$/i);
+        if (baseMatch && !f.includes('converted') && convertedBases.has(baseMatch[1])) continue;
+
+        let fullPath = path.join(GENERATED_IMAGES_DIR, f);
         try {
           const stat = fs.statSync(fullPath);
-          // Skip tiny icon variants
           if (stat.size < MIN_IMAGE_SIZE) continue;
-          results.push({ filename: f, path: fullPath, mtime: stat.mtimeMs });
+          // Fix mismatched WEBP-in-.png on the fly
+          fullPath = fixMismatchedExtension(fullPath);
+          const filename = path.basename(fullPath);
+          results.push({ filename, path: fullPath, mtime: stat.mtimeMs });
         } catch {
           // Skip unreadable files
         }
@@ -157,4 +146,14 @@ function registerOracleHandlers(ctx, deps = {}) {
   });
 }
 
+
+function unregisterOracleHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('oracle:generateImage');
+    ipcMain.removeHandler('oracle:deleteImage');
+    ipcMain.removeHandler('oracle:listImages');
+}
+
+registerOracleHandlers.unregister = unregisterOracleHandlers;
 module.exports = { registerOracleHandlers, mapOracleError };
