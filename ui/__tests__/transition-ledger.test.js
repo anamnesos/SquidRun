@@ -183,6 +183,54 @@ describe('transition-ledger', () => {
     expect(found.outcome.reasonCode).toBe('enter_failed');
   });
 
+  test('inject.dropped settles transition with dropped terminal phase', () => {
+    emitRequested('corr-dropped');
+    bus.emit('inject.dropped', {
+      paneId: '1',
+      correlationId: 'corr-dropped',
+      source: 'injection.js',
+      payload: { reason: 'overlay_fit_exclusion' },
+    });
+
+    const transitions = ledger.listTransitions({ includeClosed: true, limit: 10 });
+    const found = transitions.find((item) => item.correlationId === 'corr-dropped');
+    expect(found.closed).toBe(true);
+    expect(found.phase).toBe('dropped');
+    expect(found.lifecycle).toBe('dropped');
+    expect(found.verification.outcome).toBe('fail');
+    expect(found.outcome.reasonCode).toBe('overlay_fit_exclusion');
+  });
+
+  test('prunes oldest closed transitions once storage exceeds max retention', () => {
+    const total = 505;
+    for (let i = 0; i < total; i++) {
+      const corr = `corr-prune-${i}`;
+      emitRequested(corr);
+      bus.emit('inject.dropped', {
+        paneId: '1',
+        correlationId: corr,
+        source: 'injection.js',
+        payload: { reason: 'prune_test' },
+      });
+    }
+
+    const all = ledger.listTransitions({ includeClosed: true, limit: 1000 });
+    expect(all.length).toBe(500);
+    expect(all.some((item) => item.correlationId === 'corr-prune-0')).toBe(false);
+    expect(all.some((item) => item.correlationId === 'corr-prune-4')).toBe(false);
+    expect(all.some((item) => item.correlationId === 'corr-prune-5')).toBe(true);
+    expect(all.some((item) => item.correlationId === 'corr-prune-504')).toBe(true);
+  });
+
+  test('getByCorrelation scans all panes when paneId is omitted', () => {
+    emitRequested('corr-scan-all', '2');
+    const transition = ledger.getByCorrelation('corr-scan-all');
+
+    expect(transition).toBeTruthy();
+    expect(transition.paneId).toBe('2');
+    expect(transition.correlationId).toBe('corr-scan-all');
+  });
+
   test('supports query by phase and reasonCode', () => {
     emitRequested('corr-q1');
     bus.emit('inject.submit.sent', { paneId: '1', correlationId: 'corr-q1', source: 'injection.js' });
