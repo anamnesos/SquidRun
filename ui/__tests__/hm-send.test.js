@@ -3,8 +3,10 @@
  */
 
 const path = require('path');
+const fs = require('fs');
 const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
+const { WORKSPACE_PATH } = require('../config');
 
 function runHmSend(args, env = {}) {
   return new Promise((resolve, reject) => {
@@ -200,5 +202,81 @@ describe('hm-send retry behavior', () => {
     expect(result.code).toBe(0);
     expect(sendAttempts).toHaveLength(1);
     expect(result.stdout).toContain('ack: routed');
+  });
+
+  test('falls back to trigger file with complete message after websocket retries exhaust', async () => {
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+    const triggerPath = path.join(WORKSPACE_PATH, 'triggers', 'devops.txt');
+    const hadOriginal = fs.existsSync(triggerPath);
+    const originalContent = hadOriginal ? fs.readFileSync(triggerPath, 'utf8') : null;
+    const uniqueSuffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const message = `(TEST #4): fallback-integrity ${uniqueSuffix} ${'A'.repeat(1200)}`;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'heartbeat') {
+          ws.send(JSON.stringify({
+            type: 'heartbeat-ack',
+            role: msg.role || null,
+            paneId: msg.paneId || null,
+            status: 'ok',
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          // Intentionally do not ACK so hm-send exhausts retries and uses fallback.
+          sendAttempts.push(msg);
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['devops', message, '--timeout', '80', '--retries', '1'],
+        { HM_SEND_PORT: String(port) }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(2);
+      expect(result.stderr).toContain('Wrote trigger fallback');
+      expect(fs.existsSync(triggerPath)).toBe(true);
+      expect(fs.readFileSync(triggerPath, 'utf8')).toBe(message);
+    } finally {
+      if (hadOriginal) {
+        fs.writeFileSync(triggerPath, originalContent, 'utf8');
+      } else if (fs.existsSync(triggerPath)) {
+        fs.unlinkSync(triggerPath);
+      }
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 });
