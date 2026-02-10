@@ -39,4 +39,14 @@ function registerSharedContextHandlers(ctx) {
   });
 }
 
+
+function unregisterSharedContextHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('read-shared-context');
+    ipcMain.removeHandler('write-shared-context');
+    ipcMain.removeHandler('get-shared-context-path');
+}
+
+registerSharedContextHandlers.unregister = unregisterSharedContextHandlers;
 module.exports = { registerSharedContextHandlers };

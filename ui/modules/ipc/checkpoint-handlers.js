@@ -217,4 +217,17 @@ function registerCheckpointHandlers(ctx) {
   });
 }
 
+
+function unregisterCheckpointHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('create-checkpoint');
+    ipcMain.removeHandler('list-checkpoints');
+    ipcMain.removeHandler('get-checkpoint-diff');
+    ipcMain.removeHandler('rollback-checkpoint');
+    ipcMain.removeHandler('apply-rollback');
+    ipcMain.removeHandler('delete-checkpoint');
+}
+
+registerCheckpointHandlers.unregister = unregisterCheckpointHandlers;
 module.exports = { registerCheckpointHandlers };

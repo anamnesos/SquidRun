@@ -154,4 +154,14 @@ function registerOutputValidationHandlers(ctx) {
   });
 }
 
+
+function unregisterOutputValidationHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('validate-output');
+    ipcMain.removeHandler('validate-file');
+    ipcMain.removeHandler('get-validation-patterns');
+}
+
+registerOutputValidationHandlers.unregister = unregisterOutputValidationHandlers;
 module.exports = { registerOutputValidationHandlers };

@@ -474,4 +474,23 @@ function registerDocGeneratorHandlers(ctx) {
   });
 }
 
+
+function unregisterDocGeneratorHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('docs-generate-file');
+    ipcMain.removeHandler('docs-generate-directory');
+    ipcMain.removeHandler('docs-generate-project');
+    ipcMain.removeHandler('docs-preview');
+    ipcMain.removeHandler('docs-export');
+    ipcMain.removeHandler('docs-get-config');
+    ipcMain.removeHandler('docs-set-config');
+    ipcMain.removeHandler('docs-get-coverage');
+    ipcMain.removeHandler('docs-get-undocumented');
+    ipcMain.removeHandler('docs-generate-ipc');
+    ipcMain.removeHandler('docs-get-cached');
+    ipcMain.removeHandler('docs-clear-cache');
+}
+
+registerDocGeneratorHandlers.unregister = unregisterDocGeneratorHandlers;
 module.exports = { registerDocGeneratorHandlers };

@@ -81,6 +81,22 @@ function registerSdkV2Handlers(ctx) {
   });
 }
 
+
+function unregisterSdkV2Handlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('sdk-send-message');
+    ipcMain.removeHandler('sdk-subscribe');
+    ipcMain.removeHandler('sdk-unsubscribe');
+    ipcMain.removeHandler('sdk-get-session-ids');
+    ipcMain.removeHandler('sdk-start-sessions');
+    ipcMain.removeHandler('sdk-stop-sessions');
+    ipcMain.removeHandler('sdk-pane-status');
+    ipcMain.removeHandler('sdk-interrupt');
+    ipcMain.removeHandler('sdk-restart-session');
+}
+
+registerSdkV2Handlers.unregister = unregisterSdkV2Handlers;
 module.exports = {
   registerSdkV2Handlers,
 };

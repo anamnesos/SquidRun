@@ -172,4 +172,17 @@ function registerAutoNudgeHandlers(ctx, deps) {
   });
 }
 
+
+function unregisterAutoNudgeHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('get-agent-health');
+    ipcMain.removeHandler('nudge-pane');
+    ipcMain.removeHandler('restart-pane');
+    ipcMain.removeHandler('restart-all-panes');
+    ipcMain.removeHandler('nudge-agent');
+    ipcMain.removeHandler('nudge-all-stuck');
+}
+
+registerAutoNudgeHandlers.unregister = unregisterAutoNudgeHandlers;
 module.exports = { registerAutoNudgeHandlers };

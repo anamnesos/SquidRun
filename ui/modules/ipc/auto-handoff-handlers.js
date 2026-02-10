@@ -42,4 +42,13 @@ function registerAutoHandoffHandlers(ctx) {
   });
 }
 
+
+function unregisterAutoHandoffHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('trigger-handoff');
+    ipcMain.removeHandler('get-handoff-chain');
+}
+
+registerAutoHandoffHandlers.unregister = unregisterAutoHandoffHandlers;
 module.exports = { registerAutoHandoffHandlers };

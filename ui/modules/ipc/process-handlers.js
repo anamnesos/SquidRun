@@ -129,4 +129,15 @@ function registerProcessHandlers(ctx) {
   });
 }
 
+
+function unregisterProcessHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('spawn-process');
+    ipcMain.removeHandler('list-processes');
+    ipcMain.removeHandler('kill-process');
+    ipcMain.removeHandler('get-process-output');
+}
+
+registerProcessHandlers.unregister = unregisterProcessHandlers;
 module.exports = { registerProcessHandlers };

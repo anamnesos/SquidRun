@@ -72,6 +72,16 @@ function registerMcpAutoconfigHandlers(ctx) {
   });
 }
 
+
+function unregisterMcpAutoconfigHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('mcp-configure-agent');
+    ipcMain.removeHandler('mcp-reconnect-agent');
+    ipcMain.removeHandler('mcp-remove-agent-config');
+}
+
+registerMcpAutoconfigHandlers.unregister = unregisterMcpAutoconfigHandlers;
 module.exports = {
   registerMcpAutoconfigHandlers,
 };

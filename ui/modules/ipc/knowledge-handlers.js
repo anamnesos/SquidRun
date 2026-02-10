@@ -51,4 +51,14 @@ function registerKnowledgeHandlers(ctx) {
   });
 }
 
+
+function unregisterKnowledgeHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('knowledge-ingest');
+    ipcMain.removeHandler('knowledge-search');
+    ipcMain.removeHandler('knowledge-stats');
+}
+
+registerKnowledgeHandlers.unregister = unregisterKnowledgeHandlers;
 module.exports = { registerKnowledgeHandlers };

@@ -23,4 +23,15 @@ function registerAgentClaimsHandlers(ctx) {
   });
 }
 
+
+function unregisterAgentClaimsHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('claim-agent');
+    ipcMain.removeHandler('release-agent');
+    ipcMain.removeHandler('get-claims');
+    ipcMain.removeHandler('clear-claims');
+}
+
+registerAgentClaimsHandlers.unregister = unregisterAgentClaimsHandlers;
 module.exports = { registerAgentClaimsHandlers };

@@ -92,4 +92,15 @@ function registerSessionSummaryHandlers(ctx) {
   });
 }
 
+
+function unregisterSessionSummaryHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('save-session-summary');
+    ipcMain.removeHandler('get-session-summaries');
+    ipcMain.removeHandler('get-latest-summary');
+    ipcMain.removeHandler('clear-session-summaries');
+}
+
+registerSessionSummaryHandlers.unregister = unregisterSessionSummaryHandlers;
 module.exports = { registerSessionSummaryHandlers };

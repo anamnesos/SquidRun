@@ -160,4 +160,14 @@ function registerCompletionQualityHandlers(ctx, deps = {}) {
   });
 }
 
+
+function unregisterCompletionQualityHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('check-completion-quality');
+    ipcMain.removeHandler('validate-state-transition');
+    ipcMain.removeHandler('get-quality-rules');
+}
+
+registerCompletionQualityHandlers.unregister = unregisterCompletionQualityHandlers;
 module.exports = { registerCompletionQualityHandlers };

@@ -444,4 +444,21 @@ function parseDiff(diffText) {
   return files;
 }
 
+
+function unregisterGitHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('git-status');
+    ipcMain.removeHandler('git-diff');
+    ipcMain.removeHandler('git-log');
+    ipcMain.removeHandler('git-stage');
+    ipcMain.removeHandler('git-unstage');
+    ipcMain.removeHandler('git-commit');
+    ipcMain.removeHandler('git-branch');
+    ipcMain.removeHandler('git-files-changed');
+    ipcMain.removeHandler('git-show');
+    ipcMain.removeHandler('git-is-repo');
+}
+
+registerGitHandlers.unregister = unregisterGitHandlers;
 module.exports = { registerGitHandlers };

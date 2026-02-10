@@ -66,6 +66,20 @@ describe('IPC handler registration', () => {
     const missing = results.filter(entry => entry.added === 0);
     expect(missing).toEqual([]);
   });
+
+  test('all IPC register functions expose unregister cleanup hooks', () => {
+    for (const { file } of listIpcModules()) {
+      const mod = require(`../modules/ipc/${file}`);
+      const registerFns = Object.values(mod).filter(
+        fn => typeof fn === 'function' && fn.name.startsWith('register')
+      );
+
+      expect(registerFns.length).toBeGreaterThan(0);
+      for (const registerFn of registerFns) {
+        expect(typeof registerFn.unregister).toBe('function');
+      }
+    }
+  });
 });
 
 describe('IPC handler behavior samples', () => {

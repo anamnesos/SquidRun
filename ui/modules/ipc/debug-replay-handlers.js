@@ -401,4 +401,30 @@ function registerDebugReplayHandlers(ctx) {
   });
 }
 
+
+function unregisterDebugReplayHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('debug-load-session');
+    ipcMain.removeHandler('debug-load-timerange');
+    ipcMain.removeHandler('debug-step-forward');
+    ipcMain.removeHandler('debug-step-backward');
+    ipcMain.removeHandler('debug-jump-to');
+    ipcMain.removeHandler('debug-jump-to-time');
+    ipcMain.removeHandler('debug-play');
+    ipcMain.removeHandler('debug-pause');
+    ipcMain.removeHandler('debug-reset');
+    ipcMain.removeHandler('debug-set-filter');
+    ipcMain.removeHandler('debug-search');
+    ipcMain.removeHandler('debug-get-state');
+    ipcMain.removeHandler('debug-get-actions');
+    ipcMain.removeHandler('debug-get-context');
+    ipcMain.removeHandler('debug-add-breakpoint');
+    ipcMain.removeHandler('debug-remove-breakpoint');
+    ipcMain.removeHandler('debug-clear-breakpoints');
+    ipcMain.removeHandler('debug-export');
+    ipcMain.removeHandler('debug-get-stats');
+}
+
+registerDebugReplayHandlers.unregister = unregisterDebugReplayHandlers;
 module.exports = { registerDebugReplayHandlers };

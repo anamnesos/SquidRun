@@ -217,4 +217,14 @@ function registerTaskPoolHandlers(ctx) {
   }
 }
 
+
+function unregisterTaskPoolHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('get-task-list');
+    ipcMain.removeHandler('claim-task');
+    ipcMain.removeHandler('update-task-status');
+}
+
+registerTaskPoolHandlers.unregister = unregisterTaskPoolHandlers;
 module.exports = { registerTaskPoolHandlers };

@@ -78,4 +78,15 @@ function registerFrictionHandlers(ctx) {
   });
 }
 
+
+function unregisterFrictionHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('list-friction');
+    ipcMain.removeHandler('read-friction');
+    ipcMain.removeHandler('delete-friction');
+    ipcMain.removeHandler('clear-friction');
+}
+
+registerFrictionHandlers.unregister = unregisterFrictionHandlers;
 module.exports = { registerFrictionHandlers };

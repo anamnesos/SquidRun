@@ -858,6 +858,25 @@ function registerWorkflowHandlers(ctx = {}) {
   console.log('[WorkflowHandlers] Registered 14 IPC handlers');
 }
 
+
+function unregisterWorkflowHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('workflow-list');
+    ipcMain.removeHandler('workflow-save');
+    ipcMain.removeHandler('workflow-load');
+    ipcMain.removeHandler('workflow-delete');
+    ipcMain.removeHandler('workflow-duplicate');
+    ipcMain.removeHandler('workflow-validate');
+    ipcMain.removeHandler('workflow-generate-plan');
+    ipcMain.removeHandler('workflow-export-file');
+    ipcMain.removeHandler('workflow-import-file');
+    ipcMain.removeHandler('workflow-get-node-types');
+    ipcMain.removeHandler('workflow-get-templates');
+    ipcMain.removeHandler('workflow-apply-template');
+}
+
+registerWorkflowHandlers.unregister = unregisterWorkflowHandlers;
 module.exports = {
   registerWorkflowHandlers,
   validateWorkflow,
