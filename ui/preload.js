@@ -5,17 +5,23 @@ const hivemindApi = {
   // PTY operations
   pty: {
     create: (paneId, workingDir) => ipcRenderer.invoke('pty-create', paneId, workingDir),
-    write: (paneId, data) => ipcRenderer.invoke('pty-write', paneId, data),
+    write: (paneId, data, kernelMeta = null) => ipcRenderer.invoke('pty-write', paneId, data, kernelMeta),
     pause: (paneId) => ipcRenderer.invoke('pty-pause', paneId),
     resume: (paneId) => ipcRenderer.invoke('pty-resume', paneId),
     codexExec: (paneId, prompt) => ipcRenderer.invoke('codex-exec', paneId, prompt),
-    resize: (paneId, cols, rows) => ipcRenderer.invoke('pty-resize', paneId, cols, rows),
+    resize: (paneId, cols, rows, kernelMeta = null) => ipcRenderer.invoke('pty-resize', paneId, cols, rows, kernelMeta),
     kill: (paneId) => ipcRenderer.invoke('pty-kill', paneId),
     onData: (paneId, callback) => {
       ipcRenderer.on(`pty-data-${paneId}`, (event, data) => callback(data));
     },
     onExit: (paneId, callback) => {
       ipcRenderer.on(`pty-exit-${paneId}`, (event, code) => callback(code));
+    },
+    onKernelBridgeEvent: (callback) => {
+      ipcRenderer.on('kernel:bridge-event', (event, data) => callback(data));
+    },
+    onKernelBridgeStats: (callback) => {
+      ipcRenderer.on('kernel:bridge-stats', (event, data) => callback(data));
     },
   },
 

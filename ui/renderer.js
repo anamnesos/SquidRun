@@ -323,11 +323,11 @@ window.hivemind = window.hivemind || {};
 Object.assign(window.hivemind, {
   pty: {
     create: (paneId, workingDir) => ipcRenderer.invoke('pty-create', paneId, workingDir),
-    write: (paneId, data) => ipcRenderer.invoke('pty-write', paneId, data),
+    write: (paneId, data, kernelMeta = null) => ipcRenderer.invoke('pty-write', paneId, data, kernelMeta),
     codexExec: (paneId, prompt) => ipcRenderer.invoke('codex-exec', paneId, prompt),
     sendTrustedEnter: () => ipcRenderer.invoke('send-trusted-enter'),
     clipboardPasteText: (text) => ipcRenderer.invoke('clipboard-paste-text', text),
-    resize: (paneId, cols, rows) => ipcRenderer.invoke('pty-resize', paneId, cols, rows),
+    resize: (paneId, cols, rows, kernelMeta = null) => ipcRenderer.invoke('pty-resize', paneId, cols, rows, kernelMeta),
     kill: (paneId) => ipcRenderer.invoke('pty-kill', paneId),
     pause: (paneId) => ipcRenderer.invoke('pty-pause', paneId),
     resume: (paneId) => ipcRenderer.invoke('pty-resume', paneId),
@@ -336,6 +336,12 @@ Object.assign(window.hivemind, {
     },
     onExit: (paneId, callback) => {
       ipcRenderer.on(`pty-exit-${paneId}`, (event, code) => callback(code));
+    },
+    onKernelBridgeEvent: (callback) => {
+      ipcRenderer.on('kernel:bridge-event', (event, data) => callback(data));
+    },
+    onKernelBridgeStats: (callback) => {
+      ipcRenderer.on('kernel:bridge-stats', (event, data) => callback(data));
     },
   },
   claude: {

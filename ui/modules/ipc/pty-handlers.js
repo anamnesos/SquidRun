@@ -32,9 +32,13 @@ function registerPtyHandlers(ctx, deps = {}) {
     return { paneId, cwd, dryRun: ctx.currentSettings.dryRun };
   });
 
-  ipcMain.handle('pty-write', (event, paneId, data) => {
+  ipcMain.handle('pty-write', (event, paneId, data, kernelMeta = null) => {
     if (ctx.daemonClient && ctx.daemonClient.connected) {
-      ctx.daemonClient.write(paneId, data);
+      if (kernelMeta) {
+        ctx.daemonClient.write(paneId, data, kernelMeta);
+      } else {
+        ctx.daemonClient.write(paneId, data);
+      }
     }
   });
 
@@ -109,9 +113,13 @@ function registerPtyHandlers(ctx, deps = {}) {
     }
   });
 
-  ipcMain.handle('pty-resize', (event, paneId, cols, rows) => {
+  ipcMain.handle('pty-resize', (event, paneId, cols, rows, kernelMeta = null) => {
     if (ctx.daemonClient && ctx.daemonClient.connected) {
-      ctx.daemonClient.resize(paneId, cols, rows);
+      if (kernelMeta) {
+        ctx.daemonClient.resize(paneId, cols, rows, kernelMeta);
+      } else {
+        ctx.daemonClient.resize(paneId, cols, rows);
+      }
     }
   });
 

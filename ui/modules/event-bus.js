@@ -352,6 +352,38 @@ function emit(type, { paneId, payload, correlationId: corrId, causationId, sourc
 }
 
 /**
+ * Ingest a pre-built envelope event from external sources (daemon/bridge).
+ * External events bypass local contract checks and keep original envelope IDs/sequences.
+ */
+function ingest(event) {
+  if (!event || typeof event !== 'object' || !event.type) return null;
+
+  const source = event.source || 'external';
+  const seq = Number.isFinite(event.seq) ? event.seq : nextSeq(source);
+
+  if (!seqCounters[source] || seq > seqCounters[source]) {
+    seqCounters[source] = seq;
+  }
+
+  const normalized = {
+    eventId: event.eventId || generateId(),
+    correlationId: event.correlationId || generateId(),
+    causationId: event.causationId !== undefined ? event.causationId : null,
+    type: event.type,
+    source,
+    paneId: event.paneId || 'system',
+    ts: Number.isFinite(event.ts) ? event.ts : (typeof Date.now === 'function' ? Date.now() : Date.now()),
+    seq,
+    payload: sanitizePayload(event.payload || {}),
+  };
+
+  stats.totalEmitted++;
+  deliverToListeners(normalized);
+  recordToBuffer(normalized);
+  return normalized;
+}
+
+/**
  * Subscribe to an event type (supports wildcards like 'inject.*')
  */
 function on(type, handler) {
@@ -533,6 +565,7 @@ function reset() {
 module.exports = {
   // Lane A
   emit,
+  ingest,
   on,
   off,
   registerContract,

@@ -1075,6 +1075,38 @@ describe('event-bus', () => {
     });
   });
 
+  describe('ingest external events', () => {
+    test('ingest delivers external envelope without re-wrapping IDs', () => {
+      const handler = jest.fn();
+      bus.on('daemon.write.ack', handler);
+
+      const external = {
+        eventId: 'evt-ext-1',
+        correlationId: 'corr-ext-1',
+        causationId: 'cause-ext-1',
+        type: 'daemon.write.ack',
+        source: 'daemon',
+        paneId: '2',
+        ts: 12345,
+        seq: 7,
+        payload: { status: 'accepted' },
+      };
+
+      const ingested = bus.ingest(external);
+
+      expect(ingested.eventId).toBe('evt-ext-1');
+      expect(ingested.correlationId).toBe('corr-ext-1');
+      expect(ingested.seq).toBe(7);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0][0].type).toBe('daemon.write.ack');
+    });
+
+    test('ingest ignores invalid events', () => {
+      expect(bus.ingest(null)).toBeNull();
+      expect(bus.ingest({})).toBeNull();
+    });
+  });
+
   // ──────────────────────────────────────────
   // 14. Reset utility
   // ──────────────────────────────────────────

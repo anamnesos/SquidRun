@@ -167,6 +167,24 @@ describe('DaemonClient', () => {
       const result = client.write('1', 'test');
       expect(result).toBe(false);
     });
+
+    test('should include kernelMeta when provided', async () => {
+      await client.connect();
+
+      client.write('1', 'hello', {
+        eventId: 'evt-1',
+        correlationId: 'corr-1',
+        source: 'injection.js',
+      });
+
+      const sentData = mockSocket.write.mock.calls[0][0];
+      const parsed = JSON.parse(sentData.replace('\n', ''));
+      expect(parsed.kernelMeta).toEqual({
+        eventId: 'evt-1',
+        correlationId: 'corr-1',
+        source: 'injection.js',
+      });
+    });
   });
 
   describe('resize', () => {
@@ -183,6 +201,16 @@ describe('DaemonClient', () => {
       expect(parsed.paneId).toBe('1');
       expect(parsed.cols).toBe(120);
       expect(parsed.rows).toBe(40);
+    });
+
+    test('should include kernelMeta for resize when provided', async () => {
+      await client.connect();
+
+      client.resize('1', 120, 40, { correlationId: 'corr-2', source: 'terminal.js' });
+
+      const sentData = mockSocket.write.mock.calls[0][0];
+      const parsed = JSON.parse(sentData.replace('\n', ''));
+      expect(parsed.kernelMeta).toEqual({ correlationId: 'corr-2', source: 'terminal.js' });
     });
   });
 
@@ -294,6 +322,42 @@ describe('DaemonClient', () => {
       // Complete the message
       mockSocket.emit('data', 'Id":"1","data":"test"}\n');
       expect(dataHandler).toHaveBeenCalledWith('1', 'test');
+    });
+
+    test('should emit kernel-event envelopes', async () => {
+      const kernelHandler = jest.fn();
+      client.on('kernel-event', kernelHandler);
+
+      await client.connect();
+
+      const eventData = {
+        eventId: 'evt-k1',
+        correlationId: 'corr-k1',
+        causationId: null,
+        type: 'daemon.write.ack',
+        source: 'daemon',
+        paneId: '1',
+        ts: Date.now(),
+        seq: 1,
+        payload: { status: 'accepted' },
+      };
+      const msg = JSON.stringify({ event: 'kernel-event', eventData }) + '\n';
+      mockSocket.emit('data', msg);
+
+      expect(kernelHandler).toHaveBeenCalledWith(eventData);
+    });
+
+    test('should emit kernel-stats diagnostics', async () => {
+      const statsHandler = jest.fn();
+      client.on('kernel-stats', statsHandler);
+
+      await client.connect();
+
+      const stats = { droppedCount: 2, queueDepth: 5 };
+      const msg = JSON.stringify({ event: 'kernel-stats', stats }) + '\n';
+      mockSocket.emit('data', msg);
+
+      expect(statsHandler).toHaveBeenCalledWith(stats);
     });
   });
 

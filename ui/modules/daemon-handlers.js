@@ -21,6 +21,7 @@ const { ipcRenderer } = require('electron');
 const path = require('path');
 const { INSTANCE_DIRS, PANE_IDS } = require('../config');
 const log = require('./logger');
+const bus = require('./event-bus');
 const diagnosticLog = require('./diagnostic-log');
 const { showToast } = require('./notifications');
 const uiView = require('./ui-view');
@@ -203,6 +204,16 @@ function setupSyncIndicator() {
 // ============================================================
 
 function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnectedFn, onTerminalsReadyFn) {       
+  ipcRenderer.on('kernel:bridge-event', (event, envelope) => {
+    if (!envelope || typeof envelope !== 'object' || !envelope.event) return;
+    bus.ingest(envelope.event);
+  });
+
+  ipcRenderer.on('kernel:bridge-stats', (event, stats) => {
+    if (!stats || typeof stats !== 'object') return;
+    log.debug('KernelBridge', `Stats update: forwarded=${stats.forwardedCount || 0} dropped=${stats.droppedCount || 0}`);
+  });
+
   // Handle initial daemon connection with existing terminals
   ipcRenderer.on('daemon-connected', async (event, data) => {
     const { terminals: existingTerminals, sdkMode } = data;

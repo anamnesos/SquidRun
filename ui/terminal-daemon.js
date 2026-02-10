@@ -14,6 +14,7 @@ const net = require('net');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const pty = require('node-pty');
 const { createCodexExecRunner } = require('./modules/codex-exec');
 const { PIPE_PATH, INSTANCE_DIRS, PANE_ROLES } = require('./config');
@@ -76,6 +77,55 @@ function formatUptime(seconds) {
 const terminals = new Map();
 // Cache Codex exec session IDs so restarts can resume
 const codexSessionCache = new Map(); // paneId -> codexSessionId
+
+// Event Kernel: daemon-side event envelope sequencing
+let daemonKernelSeq = 0;
+
+function generateKernelId() {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `daemon-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+}
+
+function nextDaemonKernelSeq() {
+  daemonKernelSeq += 1;
+  return daemonKernelSeq;
+}
+
+function buildDaemonKernelEvent(type, {
+  paneId = 'system',
+  payload = {},
+  kernelMeta = null,
+  correlationId = null,
+  causationId,
+} = {}) {
+  const meta = (kernelMeta && typeof kernelMeta === 'object') ? kernelMeta : {};
+  return {
+    eventId: generateKernelId(),
+    correlationId: correlationId || meta.correlationId || generateKernelId(),
+    causationId: causationId !== undefined ? causationId : (meta.eventId || null),
+    type,
+    source: 'daemon',
+    paneId: String(paneId || 'system'),
+    ts: Date.now(),
+    seq: nextDaemonKernelSeq(),
+    payload,
+  };
+}
+
+function sendKernelEvent(client, type, details = {}) {
+  const eventData = buildDaemonKernelEvent(type, details);
+  sendToClient(client, { event: 'kernel-event', eventData });
+  return eventData;
+}
+
+function broadcastKernelEvent(type, details = {}) {
+  const eventData = buildDaemonKernelEvent(type, details);
+  broadcast({ event: 'kernel-event', eventData });
+  return eventData;
+}
 
 // ============================================================
 // CODEX AUTO-APPROVAL FALLBACK
@@ -160,6 +210,66 @@ function isMeaningfulActivity(data) {
     }
   }
   return false;
+}
+
+// Event Kernel: coalesced PTY metadata emissions to avoid telemetry storms
+const PTY_KERNEL_COALESCE_MS = 75;
+const PTY_KERNEL_META_TTL_MS = 2000;
+const pendingPtyKernelData = new Map(); // paneId -> aggregate
+
+function queuePtyDataKernelEvent(paneId, data, terminalInfo) {
+  const paneKey = String(paneId);
+  const now = Date.now();
+  const meaningful = isMeaningfulActivity(data);
+  const byteLen = Buffer.byteLength(String(data || ''), 'utf8');
+
+  let entry = pendingPtyKernelData.get(paneKey);
+  if (!entry) {
+    entry = {
+      byteLen: 0,
+      chunkCount: 0,
+      meaningfulCount: 0,
+      firstTs: now,
+      timer: null,
+    };
+  }
+
+  entry.byteLen += byteLen;
+  entry.chunkCount += 1;
+  if (meaningful) {
+    entry.meaningfulCount += 1;
+  }
+
+  if (!entry.timer) {
+    entry.timer = setTimeout(() => {
+      pendingPtyKernelData.delete(paneKey);
+
+      const chunkType = entry.meaningfulCount === 0
+        ? 'non_meaningful'
+        : (entry.meaningfulCount === entry.chunkCount ? 'meaningful' : 'mixed');
+
+      let kernelMeta = null;
+      if (terminalInfo && terminalInfo.lastKernelMeta && terminalInfo.lastKernelMetaAt) {
+        if ((Date.now() - terminalInfo.lastKernelMetaAt) <= PTY_KERNEL_META_TTL_MS) {
+          kernelMeta = terminalInfo.lastKernelMeta;
+        }
+      }
+
+      broadcastKernelEvent('pty.data.received', {
+        paneId: paneKey,
+        payload: {
+          paneId: paneKey,
+          byteLen: entry.byteLen,
+          meaningful: entry.meaningfulCount > 0,
+          chunkType,
+          chunkCount: entry.chunkCount,
+        },
+        kernelMeta,
+      });
+    }, PTY_KERNEL_COALESCE_MS);
+  }
+
+  pendingPtyKernelData.set(paneKey, entry);
 }
 
 // ============================================================
@@ -1106,7 +1216,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       }
     }, 300);
 
-    return { paneId, pid: mockPid, dryRun: true };
+    return { paneId, pid: mockPid, dryRun: true, mode: 'dry-run' };
   }
 
   // CODEX EXEC MODE: Create a virtual terminal entry without PTY
@@ -1202,6 +1312,8 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       paneId,
       data,
     });
+
+    queuePtyDataKernelEvent(paneId, data, terminalInfo);
   });
 
   // Handle PTY exit
@@ -1213,22 +1325,31 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       paneId,
       code: exitCode,
     });
+
+    broadcastKernelEvent('pty.down', {
+      paneId,
+      payload: { paneId: String(paneId), code: exitCode, reason: 'process_exit' },
+      kernelMeta: terminalInfo.lastKernelMeta || null,
+    });
   });
 
-  return { paneId, pid: ptyProcess.pid, dryRun: false };
+  return { paneId, pid: ptyProcess.pid, dryRun: false, mode: 'pty' };
 }
 
 // Write data to a terminal
 function writeTerminal(paneId, data) {
   const terminal = terminals.get(paneId);
-  if (!terminal || !terminal.alive) {
-    return false;
+  if (!terminal) {
+    return { ok: false, status: 'rejected_terminal_missing' };
+  }
+  if (!terminal.alive) {
+    return { ok: false, status: 'rejected_not_alive' };
   }
 
   // Codex exec terminals are non-interactive; ignore PTY writes
   if (terminal.mode === 'codex-exec') {
     logWarn(`Ignored PTY write to non-interactive Codex pane ${paneId}`);
-    return true; // Return true so caller doesn't think terminal is missing
+    return { ok: false, status: 'rejected_mode_noninteractive' };
   }
 
   // DRY-RUN MODE: Handle input simulation
@@ -1267,7 +1388,7 @@ function writeTerminal(paneId, data) {
       terminal.scrollback += data;
       terminal.inputBuffer += data;
     }
-    return true;
+    return { ok: true, status: 'accepted' };
   }
 
   // NORMAL MODE: Write to real PTY
@@ -1275,9 +1396,9 @@ function writeTerminal(paneId, data) {
     // Track last INPUT time (for stuck detection)
     terminal.lastInputTime = Date.now();
     terminal.pty.write(data);
-    return true;
+    return { ok: true, status: 'accepted' };
   }
-  return false;
+  return { ok: false, status: 'error' };
 }
 
 // Append to scrollback buffer with max size trimming
@@ -1409,10 +1530,32 @@ function handleMessage(client, message) {
           pid: result.pid,
           dryRun: result.dryRun || false,
         });
+        broadcastKernelEvent('pty.up', {
+          paneId: msg.paneId,
+          payload: {
+            paneId: String(msg.paneId),
+            pid: result.pid,
+            mode: result.mode || 'pty',
+            dryRun: result.dryRun || false,
+          },
+          kernelMeta: msg.kernelMeta || null,
+        });
         break;
       }
 
       case 'write': {
+        const paneId = String(msg.paneId || 'system');
+        const requestedEvent = sendKernelEvent(client, 'daemon.write.requested', {
+          paneId,
+          payload: {
+            paneId,
+            dataLen: Buffer.byteLength(String(msg.data || ''), 'utf8'),
+            mode: terminals.get(paneId)?.mode || 'unknown',
+            requestedBy: msg?.kernelMeta?.source || 'unknown',
+          },
+          kernelMeta: msg.kernelMeta || null,
+        });
+
         // Ghost text deduplication - block duplicate inputs across panes
         const ghostCheck = checkGhostText(msg.paneId, msg.data);
         if (ghostCheck.isGhost) {
@@ -1439,11 +1582,44 @@ function handleMessage(client, message) {
             timestamp: new Date().toISOString(),
           });
 
+          sendKernelEvent(client, 'daemon.write.ack', {
+            paneId,
+            payload: {
+              paneId,
+              status: 'blocked_ghost_dedup',
+              reason: `duplicate_input_within_${GHOST_DEDUP_WINDOW_MS}ms`,
+            },
+            kernelMeta: msg.kernelMeta || null,
+            correlationId: requestedEvent.correlationId,
+            causationId: requestedEvent.eventId,
+          });
+
           break; // Don't write the ghost text
         }
 
-        const success = writeTerminal(msg.paneId, msg.data);
-        if (!success) {
+        const writeResult = writeTerminal(msg.paneId, msg.data);
+        if (writeResult.ok) {
+          const terminal = terminals.get(msg.paneId);
+          if (terminal && msg.kernelMeta) {
+            terminal.lastKernelMeta = { ...msg.kernelMeta };
+            terminal.lastKernelMetaAt = Date.now();
+          }
+        }
+
+        sendKernelEvent(client, 'daemon.write.ack', {
+          paneId,
+          payload: {
+            paneId,
+            status: writeResult.status,
+            reason: writeResult.ok ? undefined : 'write_not_applied',
+            bytesAccepted: writeResult.ok ? Buffer.byteLength(String(msg.data || ''), 'utf8') : 0,
+          },
+          kernelMeta: msg.kernelMeta || null,
+          correlationId: requestedEvent.correlationId,
+          causationId: requestedEvent.eventId,
+        });
+
+        if (!writeResult.ok && (writeResult.status === 'rejected_terminal_missing' || writeResult.status === 'rejected_not_alive')) {
           sendToClient(client, {
             event: 'error',
             paneId: msg.paneId,
@@ -1467,16 +1643,37 @@ function handleMessage(client, message) {
       }
 
       case 'resize': {
-        resizeTerminal(msg.paneId, msg.cols, msg.rows);
+        const resized = resizeTerminal(msg.paneId, msg.cols, msg.rows);
+        sendKernelEvent(client, 'pty.resize.ack', {
+          paneId: String(msg.paneId || 'system'),
+          payload: {
+            paneId: String(msg.paneId || 'system'),
+            cols: msg.cols,
+            rows: msg.rows,
+            status: resized ? 'accepted' : 'rejected_terminal_missing',
+          },
+          kernelMeta: msg.kernelMeta || null,
+        });
         break;
       }
 
       case 'kill': {
+        const existing = terminals.get(msg.paneId);
         killTerminal(msg.paneId);
         sendToClient(client, {
           event: 'killed',
           paneId: msg.paneId,
         });
+        if (existing && (existing.dryRun || existing.mode === 'codex-exec')) {
+          broadcastKernelEvent('pty.down', {
+            paneId: msg.paneId,
+            payload: {
+              paneId: String(msg.paneId),
+              reason: 'killed',
+            },
+            kernelMeta: existing.lastKernelMeta || null,
+          });
+        }
         break;
       }
 
