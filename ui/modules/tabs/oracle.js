@@ -134,6 +134,33 @@ function setupOracleTab(updateStatusFn) {
     });
   }
 
+  // Listen for agent-triggered image generation results pushed from main process
+  ipcRenderer.on('oracle:image-generated', (event, data) => {
+    if (!data || !data.imagePath) return;
+
+    lastImagePath = data.imagePath;
+    if (previewImg) {
+      previewImg.src = `file://${data.imagePath}?t=${Date.now()}`;
+      previewImg.style.display = 'block';
+    }
+    if (providerBadge) {
+      providerBadge.textContent = data.provider || '';
+      providerBadge.style.display = 'inline-block';
+    }
+    if (resultsEl) resultsEl.innerHTML = '';
+    if (resultActions) resultActions.style.display = 'flex';
+    if (updateStatusFn) updateStatusFn(`Image generated via ${data.provider} (agent)`);
+
+    oracleHistory.unshift({
+      time: data.time || new Date().toLocaleTimeString(),
+      prompt: data.prompt || '(agent-generated)',
+      provider: data.provider || '',
+      imagePath: data.imagePath,
+    });
+    renderOracleHistory();
+    saveOracleHistory();
+  });
+
   ipcRenderer.invoke('load-oracle-history').then(history => {
     if (Array.isArray(history)) {
       oracleHistory = history;

@@ -140,6 +140,40 @@ class HivemindApp {
             return;
           }
 
+          // Handle image generation requests from agents
+          if (data.message.type === 'image-gen') {
+            const { prompt, style, size } = data.message;
+            log.info('WebSocket', `Image gen request from ${data.role || 'unknown'}: "${(prompt || '').substring(0, 60)}"`);
+            try {
+              const { generateImage } = require('../image-gen');
+              const result = await generateImage({ prompt, style, size });
+              // Push result to renderer UI
+              if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+                this.ctx.mainWindow.webContents.send('oracle:image-generated', {
+                  imagePath: result.imagePath,
+                  provider: result.provider,
+                  prompt: prompt,
+                  time: new Date().toLocaleTimeString(),
+                });
+              }
+              // Send result back to the requesting WebSocket client
+              websocketServer.sendToTarget(data.role || String(data.clientId), JSON.stringify({
+                type: 'image-gen-result',
+                success: true,
+                imagePath: result.imagePath,
+                provider: result.provider,
+              }));
+            } catch (err) {
+              log.error('WebSocket', `Image gen failed: ${err.message}`);
+              websocketServer.sendToTarget(data.role || String(data.clientId), JSON.stringify({
+                type: 'image-gen-result',
+                success: false,
+                error: err.message,
+              }));
+            }
+            return;
+          }
+
           // Route WebSocket messages via triggers module (handles War Room + delivery)
           if (data.message.type === 'send') {
             const { target, content } = data.message;
