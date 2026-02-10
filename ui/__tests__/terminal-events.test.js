@@ -21,8 +21,14 @@ const mockBus = {
   off: jest.fn(),
   getState: jest.fn(),
   reset: jest.fn(),
+  registerContract: jest.fn(),
 };
 jest.mock('../modules/event-bus', () => mockBus);
+
+// Mock contracts module (initialized by terminal.js on load)
+jest.mock('../modules/contracts', () => ({
+  init: jest.fn(),
+}));
 
 // Mock settings
 jest.mock('../modules/settings', () => ({

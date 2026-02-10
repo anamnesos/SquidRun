@@ -48,6 +48,7 @@ function defaultStateVector() {
     activity: 'idle',
     gates: { focusLocked: false, compacting: 'none', safeMode: false },
     connectivity: { bridge: 'up', pty: 'up' },
+    overlay: { open: false },
   };
 }
 
@@ -454,6 +455,9 @@ function updateState(paneId, patch) {
   if (patch.connectivity) {
     if (patch.connectivity.bridge !== undefined) state.connectivity.bridge = patch.connectivity.bridge;
     if (patch.connectivity.pty !== undefined) state.connectivity.pty = patch.connectivity.pty;
+  }
+  if (patch.overlay) {
+    if (patch.overlay.open !== undefined) state.overlay.open = patch.overlay.open;
   }
 
   // Emit state change event
