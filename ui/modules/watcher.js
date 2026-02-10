@@ -567,12 +567,26 @@ function handleTriggerChange(filePath) {
 
 /**
  * Retry reading trigger files if write hasn't flushed yet.
- * Avoids empty reads when file change event fires before content is written.
+ * Avoids partial reads when file change fires before content is fully written.
  * @param {string} filePath - Path to trigger file
  * @param {string} filename - Trigger filename
  * @param {number} attempt - Current retry attempt
+ * @param {?number} lastKnownSize - Previous observed file size
  */
-function handleTriggerFileWithRetry(filePath, filename, attempt = 0) {
+function scheduleTriggerReadRetry(filePath, filename, attempt, lastKnownSize = null) {
+  const existing = triggerRetryTimers.get(filePath);
+  if (existing) {
+    clearTimeout(existing);
+  }
+
+  const timer = setTimeout(() => {
+    triggerRetryTimers.delete(filePath);
+    handleTriggerFileWithRetry(filePath, filename, attempt + 1, lastKnownSize);
+  }, TRIGGER_READ_RETRY_MS);
+  triggerRetryTimers.set(filePath, timer);
+}
+
+function handleTriggerFileWithRetry(filePath, filename, attempt = 0, lastKnownSize = null) {
   if (!triggers) return;
 
   let stats;
@@ -583,23 +597,25 @@ function handleTriggerFileWithRetry(filePath, filename, attempt = 0) {
     return;
   }
 
-  if (stats.size === 0) {
+  const size = stats.size;
+  if (size === 0) {
     if (attempt < TRIGGER_READ_MAX_ATTEMPTS) {
-      const existing = triggerRetryTimers.get(filePath);
-      if (existing) {
-        clearTimeout(existing);
-      }
-      const timer = setTimeout(() => {
-        triggerRetryTimers.delete(filePath);
-        handleTriggerFileWithRetry(filePath, filename, attempt + 1);
-      }, TRIGGER_READ_RETRY_MS);
-      triggerRetryTimers.set(filePath, timer);
+      scheduleTriggerReadRetry(filePath, filename, attempt, null);
       return;
     }
 
     // Expected post-clear noise: trigger was delivered then cleared, watcher sees empty file
     log.debug('Trigger', `Empty trigger file after ${TRIGGER_READ_MAX_ATTEMPTS} retries: ${filename}`);
     return;
+  }
+
+  // Require one stable-size observation before processing to avoid split/mangled reads.
+  if (lastKnownSize === null || size !== lastKnownSize) {
+    if (attempt < TRIGGER_READ_MAX_ATTEMPTS) {
+      scheduleTriggerReadRetry(filePath, filename, attempt, size);
+      return;
+    }
+    log.warn('Trigger', `Size not stable after ${TRIGGER_READ_MAX_ATTEMPTS} retries, processing anyway: ${filename} (${size} bytes)`);
   }
 
   triggers.handleTriggerFile(filePath, filename);
