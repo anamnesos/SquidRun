@@ -65,14 +65,45 @@ function appendHistory(entry) {
   safeWriteJson(IMAGE_HISTORY_PATH, history);
 }
 
+function removeHistoryEntryByPath(imagePath) {
+  if (!imagePath) return;
+  const resolved = path.resolve(String(imagePath));
+  const history = safeReadJson(IMAGE_HISTORY_PATH, []);
+  const filtered = history.filter((entry) => {
+    if (!entry || !entry.imagePath) return false;
+    return path.resolve(String(entry.imagePath)) !== resolved;
+  });
+  safeWriteJson(IMAGE_HISTORY_PATH, filtered);
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function generateFilename() {
+function detectImageExt(buffer) {
+  if (!buffer || buffer.length < 12) return '.png';
+  // WEBP: starts with RIFF....WEBP
+  if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+      buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
+    return '.webp';
+  }
+  // JPEG: starts with FF D8 FF
+  if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return '.jpg';
+  // GIF: starts with GIF8
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) return '.gif';
+  // PNG: starts with 89 50 4E 47
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return '.png';
+  return '.png';
+}
+
+function generateBasename() {
   const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const hash = Math.random().toString(36).slice(2, 8);
-  return `${ts}-${hash}.png`;
+  return `${ts}-${hash}`;
+}
+
+function generateFilename() {
+  return generateBasename() + '.png';
 }
 
 async function fetchWithRetry(url, options) {
@@ -223,10 +254,9 @@ async function generateImage({ prompt, provider: preferredProvider, style, size 
   }
 
   ensureDir(GENERATED_IMAGES_DIR);
-  const filename = generateFilename();
-  const destPath = path.join(GENERATED_IMAGES_DIR, filename);
+  const basename = generateBasename();
+  let destPath = path.join(GENERATED_IMAGES_DIR, basename + '.png');
 
-  let result;
   let usedProvider;
 
   if (resolvedProvider === 'recraft') {
@@ -251,6 +281,19 @@ async function generateImage({ prompt, provider: preferredProvider, style, size 
     usedProvider = 'openai';
   }
 
+  // Detect actual image type and rename if extension is wrong
+  try {
+    const savedBuffer = fs.readFileSync(destPath);
+    const correctExt = detectImageExt(savedBuffer);
+    if (correctExt !== '.png') {
+      const correctedPath = path.join(GENERATED_IMAGES_DIR, basename + correctExt);
+      fs.renameSync(destPath, correctedPath);
+      destPath = correctedPath;
+    }
+  } catch (renameErr) {
+    log.warn('ImageGen', `MIME detection/rename failed: ${renameErr.message}`);
+  }
+
   const entry = {
     id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     timestamp: new Date().toISOString(),
@@ -272,7 +315,9 @@ async function generateImage({ prompt, provider: preferredProvider, style, size 
 
 module.exports = {
   generateImage,
+  removeHistoryEntryByPath,
   resolveProvider,
+  detectImageExt,
   RECRAFT_STYLES,
   RECRAFT_SIZES,
   OPENAI_SIZES,

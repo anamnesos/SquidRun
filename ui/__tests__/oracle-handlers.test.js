@@ -4,11 +4,11 @@
 
 jest.mock('../modules/image-gen', () => ({
   generateImage: jest.fn(),
-  IMAGE_HISTORY_PATH: 'D:\\projects\\hivemind\\workspace\\image-gen-history.json',
+  removeHistoryEntryByPath: jest.fn(),
   GENERATED_IMAGES_DIR: 'D:\\projects\\hivemind\\workspace\\generated-images',
 }));
 
-const { generateImage } = require('../modules/image-gen');
+const { generateImage, removeHistoryEntryByPath } = require('../modules/image-gen');
 const { createIpcHarness, createDefaultContext } = require('./helpers/ipc-harness');
 const { registerOracleHandlers } = require('../modules/ipc/oracle-handlers');
 
@@ -39,5 +39,22 @@ describe('oracle handlers', () => {
 
     expect(result.success).toBe(false);
     expect(result.code).toBe('MISSING_OPENAI_KEY');
+  });
+
+  test('registers no renderer history writer handlers', () => {
+    expect(harness.handlers.has('save-oracle-history')).toBe(false);
+    expect(harness.handlers.has('load-oracle-history')).toBe(false);
+  });
+
+  test('oracle:deleteImage routes history updates through image-gen canonical writer', async () => {
+    const result = await harness.invoke(
+      'oracle:deleteImage',
+      'D:\\projects\\hivemind\\workspace\\generated-images\\icon-test.png'
+    );
+
+    expect(result.success).toBe(true);
+    expect(removeHistoryEntryByPath).toHaveBeenCalledWith(
+      expect.stringContaining('generated-images')
+    );
   });
 });
