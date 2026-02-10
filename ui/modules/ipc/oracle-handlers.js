@@ -1,10 +1,11 @@
 /**
  * Oracle IPC Handlers
- * Channels: oracle:generateImage, save-oracle-history, load-oracle-history
+ * Channels: oracle:generateImage, oracle:deleteImage, save-oracle-history, load-oracle-history
  */
 
 const fs = require('fs');
-const { generateImage, IMAGE_HISTORY_PATH } = require('../image-gen');
+const path = require('path');
+const { generateImage, IMAGE_HISTORY_PATH, GENERATED_IMAGES_DIR } = require('../image-gen');
 
 function registerOracleHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -22,6 +23,38 @@ function registerOracleHandlers(ctx) {
         imagePath: result.imagePath,
         provider: result.provider,
       };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Delete an image from disk and remove its history entry
+  ipcMain.handle('oracle:deleteImage', async (event, imagePath) => {
+    try {
+      // Security: only allow deleting files inside generated-images directory
+      const resolved = path.resolve(imagePath);
+      const imagesDir = path.resolve(GENERATED_IMAGES_DIR);
+      if (!resolved.startsWith(imagesDir + path.sep) && resolved !== imagesDir) {
+        return { success: false, error: 'Path outside generated-images directory' };
+      }
+
+      // Delete file from disk
+      if (fs.existsSync(resolved)) {
+        fs.unlinkSync(resolved);
+      }
+
+      // Remove from history
+      if (fs.existsSync(IMAGE_HISTORY_PATH)) {
+        try {
+          const history = JSON.parse(fs.readFileSync(IMAGE_HISTORY_PATH, 'utf8'));
+          const filtered = history.filter(h => path.resolve(h.imagePath) !== resolved);
+          fs.writeFileSync(IMAGE_HISTORY_PATH, JSON.stringify(filtered, null, 2));
+        } catch {
+          // History file corrupt — not critical
+        }
+      }
+
+      return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
     }

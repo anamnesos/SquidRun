@@ -10,6 +10,11 @@ const { escapeHtml } = require('./utils');
 let oracleHistory = [];
 let lastImagePath = null;
 
+/** Convert a Windows path to a proper file:/// URL */
+function toFileUrl(filePath) {
+  return 'file:///' + filePath.replace(/\\/g, '/');
+}
+
 function renderOracleHistory() {
   const historyList = document.getElementById('oracleHistoryList');
   if (!historyList) return;
@@ -17,13 +22,25 @@ function renderOracleHistory() {
     historyList.innerHTML = '<div class="oracle-history-empty">No history yet</div>';
     return;
   }
-  historyList.innerHTML = oracleHistory.slice(0, 10).map(h => `
-    <div class="oracle-history-item">
+  historyList.innerHTML = oracleHistory.slice(0, 10).map((h, i) => `
+    <div class="oracle-history-item" data-index="${i}">
       <span class="oracle-history-time">${h.time}</span>
       <span class="oracle-history-provider">${escapeHtml(h.provider || '')}</span>
       <span class="oracle-history-prompt">${escapeHtml(h.prompt)}</span>
+      <button class="oracle-history-delete" data-index="${i}" title="Delete">&times;</button>
     </div>
   `).join('');
+
+  // Attach delete handlers via event delegation
+  historyList.querySelectorAll('.oracle-history-delete').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = parseInt(btn.dataset.index, 10);
+      if (idx >= 0 && idx < oracleHistory.length) {
+        deleteHistoryItem(idx);
+      }
+    });
+  });
 }
 
 async function saveOracleHistory() {
@@ -32,6 +49,37 @@ async function saveOracleHistory() {
   } catch (err) {
     log.error('Oracle', 'Failed to save history:', err);
   }
+}
+
+async function deleteHistoryItem(index) {
+  const entry = oracleHistory[index];
+  if (!entry) return;
+
+  // Delete file from disk + backend history via IPC
+  if (entry.imagePath) {
+    try {
+      await ipcRenderer.invoke('oracle:deleteImage', entry.imagePath);
+    } catch (err) {
+      log.error('Oracle', 'Failed to delete image:', err);
+    }
+  }
+
+  // Remove from renderer history
+  oracleHistory.splice(index, 1);
+
+  // If deleted item was the currently previewed image, clear preview
+  if (lastImagePath === entry.imagePath) {
+    lastImagePath = null;
+    const previewImg = document.getElementById('oraclePreviewImg');
+    const providerBadge = document.getElementById('oracleProviderBadge');
+    const resultActions = document.getElementById('oracleResultActions');
+    if (previewImg) { previewImg.style.display = 'none'; previewImg.src = ''; }
+    if (providerBadge) providerBadge.style.display = 'none';
+    if (resultActions) resultActions.style.display = 'none';
+  }
+
+  renderOracleHistory();
+  saveOracleHistory();
 }
 
 function setupOracleTab(updateStatusFn) {
@@ -45,6 +93,7 @@ function setupOracleTab(updateStatusFn) {
   const resultActions = document.getElementById('oracleResultActions');
   const downloadBtn = document.getElementById('oracleDownloadBtn');
   const copyBtn = document.getElementById('oracleCopyBtn');
+  const deleteBtn = document.getElementById('oracleDeleteBtn');
 
   if (generateBtn) {
     generateBtn.addEventListener('click', async () => {
@@ -72,7 +121,7 @@ function setupOracleTab(updateStatusFn) {
         if (result.success) {
           lastImagePath = result.imagePath;
           if (previewImg) {
-            previewImg.src = `file://${result.imagePath}`;
+            previewImg.src = toFileUrl(result.imagePath);
             previewImg.style.display = 'block';
           }
           if (providerBadge) {
@@ -108,7 +157,7 @@ function setupOracleTab(updateStatusFn) {
     downloadBtn.addEventListener('click', () => {
       if (!lastImagePath) return;
       const a = document.createElement('a');
-      a.href = `file://${lastImagePath}`;
+      a.href = toFileUrl(lastImagePath);
       a.download = lastImagePath.split(/[\\/]/).pop();
       a.click();
     });
@@ -134,13 +183,36 @@ function setupOracleTab(updateStatusFn) {
     });
   }
 
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', async () => {
+      if (!lastImagePath) return;
+      // Find the history entry for the current preview
+      const idx = oracleHistory.findIndex(h => h.imagePath === lastImagePath);
+      if (idx >= 0) {
+        await deleteHistoryItem(idx);
+      } else {
+        // Not in history but still previewed — just delete file
+        try {
+          await ipcRenderer.invoke('oracle:deleteImage', lastImagePath);
+        } catch (err) {
+          log.error('Oracle', 'Failed to delete image:', err);
+        }
+        lastImagePath = null;
+        if (previewImg) { previewImg.style.display = 'none'; previewImg.src = ''; }
+        if (providerBadge) providerBadge.style.display = 'none';
+        if (resultActions) resultActions.style.display = 'none';
+      }
+      if (updateStatusFn) updateStatusFn('Image deleted');
+    });
+  }
+
   // Listen for agent-triggered image generation results pushed from main process
   ipcRenderer.on('oracle:image-generated', (event, data) => {
     if (!data || !data.imagePath) return;
 
     lastImagePath = data.imagePath;
     if (previewImg) {
-      previewImg.src = `file://${data.imagePath}?t=${Date.now()}`;
+      previewImg.src = toFileUrl(data.imagePath) + `?t=${Date.now()}`;
       previewImg.style.display = 'block';
     }
     if (providerBadge) {
