@@ -13,6 +13,9 @@ const parsedPort = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
 const PORT = Number.isFinite(parsedPort) ? parsedPort : 9900;
 const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
 const DEFAULT_ACK_TIMEOUT_MS = 1200;
+const DEFAULT_HEALTH_TIMEOUT_MS = 500;
+const TARGET_HEARTBEAT_STALE_MS = 60000;
+const TARGET_HEARTBEAT_INTERVAL_MS = 30000;
 const DEFAULT_RETRIES = 3;
 const MAX_RETRIES = 5;
 const args = process.argv.slice(2);
@@ -78,6 +81,20 @@ const message = messageParts.join(' ');
 if (!message) {
   console.error('Message cannot be empty.');
   process.exit(1);
+}
+
+function inferRoleFromMessage(content) {
+  if (typeof content !== 'string') return null;
+  const match = content.match(/\(([A-Za-z-]+)\s+#\d+\):/);
+  if (!match || !match[1]) return null;
+  return normalizeRole(match[1]);
+}
+
+if (role === 'cli') {
+  const inferred = inferRoleFromMessage(message);
+  if (inferred) {
+    role = inferred;
+  }
 }
 
 function parseJSON(raw) {
@@ -251,6 +268,61 @@ function getBackoffDelayMs(baseTimeoutMs, attempt) {
   return baseTimeoutMs * Math.pow(2, attempt - 1);
 }
 
+async function emitHeartbeatBestEffort(ws, senderRole) {
+  const normalizedRole = normalizeRole(senderRole);
+  const paneId = normalizedRole ? String(ROLE_ID_MAP[normalizedRole] || '') : '';
+  const heartbeatPayload = {
+    type: 'heartbeat',
+    role: normalizedRole || senderRole || null,
+    paneId: paneId || null,
+    intervalMs: TARGET_HEARTBEAT_INTERVAL_MS,
+  };
+
+  try {
+    ws.send(JSON.stringify(heartbeatPayload));
+    await waitForMatch(
+      ws,
+      (msg) => msg.type === 'heartbeat-ack',
+      DEFAULT_HEALTH_TIMEOUT_MS,
+      'Heartbeat ack timeout'
+    );
+  } catch (err) {
+    // Health support can lag server/client versions; proceed without heartbeat gating.
+  }
+}
+
+async function queryTargetHealthBestEffort(ws) {
+  const requestId = `health-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  try {
+    ws.send(JSON.stringify({
+      type: 'health-check',
+      target,
+      requestId,
+      staleAfterMs: TARGET_HEARTBEAT_STALE_MS,
+    }));
+
+    const health = await waitForMatch(
+      ws,
+      (msg) => msg.type === 'health-check-result' && msg.requestId === requestId,
+      DEFAULT_HEALTH_TIMEOUT_MS,
+      'Health check timeout'
+    );
+    return health;
+  } catch (err) {
+    return null;
+  }
+}
+
+function isTargetHeartbeatUnhealthy(health) {
+  if (!health || typeof health !== 'object') return false;
+  const status = String(health.status || '').toLowerCase();
+  if (status === 'stale' || status === 'no_heartbeat') {
+    return true;
+  }
+  return false;
+}
+
 async function emitCommsEventBestEffort(eventType, payload = {}) {
   const socketUrl = `ws://127.0.0.1:${PORT}`;
   let ws = null;
@@ -291,6 +363,19 @@ async function sendViaWebSocketWithAck() {
 
   ws.send(JSON.stringify({ type: 'register', role }));
   await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
+  await emitHeartbeatBestEffort(ws, role);
+
+  const health = await queryTargetHealthBestEffort(ws);
+  if (isTargetHeartbeatUnhealthy(health)) {
+    await closeSocket(ws);
+    return {
+      ok: false,
+      skippedByHealth: true,
+      health,
+      attemptsUsed: 0,
+      messageId: null,
+    };
+  }
 
   const messageId = `hm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const attempts = retries + 1;
@@ -375,6 +460,8 @@ async function main() {
     if (fallbackResult.ok) {
       const reason = sendResult?.ack
         ? `ack=${sendResult.ack.status}`
+        : sendResult?.skippedByHealth
+          ? `health=${sendResult?.health?.status || 'unknown'}`
         : (sendResult?.error || wsError?.message || 'no_ack');
       await emitCommsEventBestEffort('comms.delivery.failed', {
         messageId: sendResult?.messageId || null,
@@ -396,6 +483,8 @@ async function main() {
 
   const reason = sendResult?.ack
     ? `ACK failed (${sendResult.ack.status})`
+    : sendResult?.skippedByHealth
+      ? `target health ${sendResult?.health?.status || 'unhealthy'}`
     : (sendResult?.error || wsError?.message || 'unknown error');
   console.error(`Send failed: ${reason}`);
   process.exit(1);

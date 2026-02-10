@@ -235,10 +235,107 @@ describe('WebSocket Delivery Audit', () => {
     const routedSendCalls = onMessageSpy.mock.calls
       .map(([payload]) => payload?.message)
       .filter((msg) => msg?.type === 'send' && msg?.messageId === messageId);
+    const dedupeMetricCalls = onMessageSpy.mock.calls
+      .map(([payload]) => payload?.message)
+      .filter((msg) => msg?.type === 'comms-metric' && msg?.eventType === 'comms.dedupe.hit');
 
     expect(deliveredCount).toBe(1);
     expect(routedSendCalls).toHaveLength(1);
+    expect(dedupeMetricCalls).toHaveLength(1);
+    expect(dedupeMetricCalls[0].payload.mode).toBe('cache');
     expect(secondAck.ok).toBe(true);
     expect(secondAck.status).toBe('delivered.websocket');
+  });
+
+  test('tracks heartbeat health and reports stale targets by threshold', async () => {
+    const targetClient = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    activeClients.add(targetClient);
+    const probeClient = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(probeClient);
+
+    const heartbeatAckPromise = waitForMessage(targetClient, (msg) => msg.type === 'heartbeat-ack');
+    targetClient.send(JSON.stringify({
+      type: 'heartbeat',
+      role: 'devops',
+      paneId: '2',
+    }));
+    await heartbeatAckPromise;
+
+    const freshRequestId = 'health-fresh-1';
+    const freshHealthPromise = waitForMessage(
+      probeClient,
+      (msg) => msg.type === 'health-check-result' && msg.requestId === freshRequestId
+    );
+    probeClient.send(JSON.stringify({
+      type: 'health-check',
+      target: 'devops',
+      requestId: freshRequestId,
+    }));
+    const freshHealth = await freshHealthPromise;
+    expect(freshHealth.healthy).toBe(true);
+    expect(freshHealth.status).toBe('healthy');
+    expect(freshHealth.role).toBe('devops');
+    expect(freshHealth.paneId).toBe('2');
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const staleRequestId = 'health-stale-1';
+    const staleHealthPromise = waitForMessage(
+      probeClient,
+      (msg) => msg.type === 'health-check-result' && msg.requestId === staleRequestId
+    );
+    probeClient.send(JSON.stringify({
+      type: 'health-check',
+      target: 'devops',
+      requestId: staleRequestId,
+      staleAfterMs: 1,
+    }));
+    const staleHealth = await staleHealthPromise;
+    expect(staleHealth.healthy).toBe(false);
+    expect(staleHealth.status).toBe('stale');
+  });
+
+  test('refreshes target health on non-heartbeat message activity', async () => {
+    const targetClient = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    activeClients.add(targetClient);
+    const probeClient = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(probeClient);
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const staleRequestId = 'health-before-send-1';
+    const staleHealthPromise = waitForMessage(
+      probeClient,
+      (msg) => msg.type === 'health-check-result' && msg.requestId === staleRequestId
+    );
+    probeClient.send(JSON.stringify({
+      type: 'health-check',
+      target: 'devops',
+      requestId: staleRequestId,
+      staleAfterMs: 1,
+    }));
+    const staleHealth = await staleHealthPromise;
+    expect(staleHealth.healthy).toBe(false);
+
+    targetClient.send(JSON.stringify({
+      type: 'send',
+      target: 'missing-role',
+      content: 'presence-refresh-ping',
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const freshRequestId = 'health-after-send-1';
+    const freshHealthPromise = waitForMessage(
+      probeClient,
+      (msg) => msg.type === 'health-check-result' && msg.requestId === freshRequestId
+    );
+    probeClient.send(JSON.stringify({
+      type: 'health-check',
+      target: 'devops',
+      requestId: freshRequestId,
+      staleAfterMs: 100,
+    }));
+    const freshHealth = await freshHealthPromise;
+    expect(freshHealth.healthy).toBe(true);
+    expect(freshHealth.status).toBe('healthy');
   });
 });
