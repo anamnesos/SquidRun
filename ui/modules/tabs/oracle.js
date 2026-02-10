@@ -1,14 +1,13 @@
 /**
  * Oracle Image Generation Module
  * AI-powered image generation (Recraft V3 / OpenAI gpt-image-1)
+ * Gallery view: shows all generated images, newest first
  */
 
 const { ipcRenderer } = require('electron');
 const log = require('../logger');
 const { escapeHtml } = require('./utils');
 
-let oracleHistory = [];
-let lastImagePath = null;
 let imageGenAvailable = true; // optimistic default until capabilities load
 
 /** Convert a Windows path to a proper file:/// URL */
@@ -16,71 +15,82 @@ function toFileUrl(filePath) {
   return 'file:///' + filePath.replace(/\\/g, '/');
 }
 
-function renderOracleHistory() {
-  const historyList = document.getElementById('oracleHistoryList');
-  if (!historyList) return;
-  if (oracleHistory.length === 0) {
-    historyList.innerHTML = '<div class="oracle-history-empty">No history yet</div>';
-    return;
-  }
-  historyList.innerHTML = oracleHistory.slice(0, 10).map((h, i) => `
-    <div class="oracle-history-item" data-index="${i}">
-      <span class="oracle-history-time">${h.time}</span>
-      <span class="oracle-history-provider">${escapeHtml(h.provider || '')}</span>
-      <span class="oracle-history-prompt">${escapeHtml(h.prompt)}</span>
-      <button class="oracle-history-delete" data-index="${i}" title="Delete">&times;</button>
-    </div>
-  `).join('');
+/** Load and render all images from generated-images directory */
+async function loadGallery() {
+  const galleryList = document.getElementById('oracleGalleryList');
+  if (!galleryList) return;
 
-  // Attach delete handlers via event delegation
-  historyList.querySelectorAll('.oracle-history-delete').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const idx = parseInt(btn.dataset.index, 10);
-      if (idx >= 0 && idx < oracleHistory.length) {
-        deleteHistoryItem(idx);
-      }
-    });
-  });
-}
-
-async function saveOracleHistory() {
   try {
-    await ipcRenderer.invoke('save-oracle-history', oracleHistory.slice(0, 50));
-  } catch (err) {
-    log.error('Oracle', 'Failed to save history:', err);
-  }
-}
-
-async function deleteHistoryItem(index) {
-  const entry = oracleHistory[index];
-  if (!entry) return;
-
-  // Delete file from disk + backend history via IPC
-  if (entry.imagePath) {
-    try {
-      await ipcRenderer.invoke('oracle:deleteImage', entry.imagePath);
-    } catch (err) {
-      log.error('Oracle', 'Failed to delete image:', err);
+    const images = await ipcRenderer.invoke('oracle:listImages');
+    if (!images || images.length === 0) {
+      galleryList.innerHTML = '<div class="oracle-gallery-empty">No images yet</div>';
+      return;
     }
+
+    galleryList.innerHTML = images.map(img => {
+      const fileUrl = toFileUrl(img.path);
+      const name = escapeHtml(img.filename);
+      return `
+        <div class="oracle-gallery-item" data-path="${escapeHtml(img.path)}">
+          <img class="oracle-gallery-img" src="${fileUrl}?t=${Date.now()}" alt="${name}" loading="lazy" />
+          <div class="oracle-gallery-overlay">
+            <span class="oracle-gallery-name">${name}</span>
+            <div class="oracle-gallery-actions">
+              <button class="btn btn-sm oracle-gallery-copy" title="Copy to clipboard">Copy</button>
+              <button class="btn btn-sm btn-danger oracle-gallery-delete" title="Delete image">Delete</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Attach event handlers
+    galleryList.querySelectorAll('.oracle-gallery-delete').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const item = btn.closest('.oracle-gallery-item');
+        const imagePath = item?.dataset.path;
+        if (!imagePath) return;
+        try {
+          await ipcRenderer.invoke('oracle:deleteImage', imagePath);
+          item.remove();
+          // If gallery is now empty, show placeholder
+          if (galleryList.children.length === 0) {
+            galleryList.innerHTML = '<div class="oracle-gallery-empty">No images yet</div>';
+          }
+        } catch (err) {
+          log.error('Oracle', 'Failed to delete image:', err);
+        }
+      });
+    });
+
+    galleryList.querySelectorAll('.oracle-gallery-copy').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const item = btn.closest('.oracle-gallery-item');
+        const img = item?.querySelector('.oracle-gallery-img');
+        if (!img) return;
+        try {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          ctx.drawImage(img, 0, 0);
+          const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+          if (blob) {
+            await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+          }
+        } catch (err) {
+          log.error('Oracle', 'Copy to clipboard failed:', err);
+        }
+      });
+    });
+  } catch (err) {
+    log.error('Oracle', 'Failed to load gallery:', err);
+    galleryList.innerHTML = '<div class="oracle-gallery-empty">Failed to load images</div>';
   }
-
-  // Remove from renderer history
-  oracleHistory.splice(index, 1);
-
-  // If deleted item was the currently previewed image, clear preview
-  if (lastImagePath === entry.imagePath) {
-    lastImagePath = null;
-    const previewImg = document.getElementById('oraclePreviewImg');
-    const providerBadge = document.getElementById('oracleProviderBadge');
-    const resultActions = document.getElementById('oracleResultActions');
-    if (previewImg) { previewImg.style.display = 'none'; previewImg.src = ''; }
-    if (providerBadge) providerBadge.style.display = 'none';
-    if (resultActions) resultActions.style.display = 'none';
-  }
-
-  renderOracleHistory();
-  saveOracleHistory();
 }
 
 /** Update Generate button state based on image generation capability */
@@ -118,13 +128,7 @@ function setupOracleTab(updateStatusFn) {
   const promptInput = document.getElementById('oraclePromptInput');
   const styleSelect = document.getElementById('oracleStyleSelect');
   const sizeSelect = document.getElementById('oracleSizeSelect');
-  const previewImg = document.getElementById('oraclePreviewImg');
-  const providerBadge = document.getElementById('oracleProviderBadge');
   const resultsEl = document.getElementById('oracleResults');
-  const resultActions = document.getElementById('oracleResultActions');
-  const downloadBtn = document.getElementById('oracleDownloadBtn');
-  const copyBtn = document.getElementById('oracleCopyBtn');
-  const deleteBtn = document.getElementById('oracleDeleteBtn');
 
   // Fetch initial feature capabilities
   ipcRenderer.invoke('get-feature-capabilities').then(caps => {
@@ -148,9 +152,6 @@ function setupOracleTab(updateStatusFn) {
       const originalText = generateBtn.innerHTML;
       generateBtn.textContent = 'Generating...';
       if (resultsEl) resultsEl.innerHTML = '<div class="oracle-loading">Generating image...</div>';
-      if (previewImg) previewImg.style.display = 'none';
-      if (providerBadge) providerBadge.style.display = 'none';
-      if (resultActions) resultActions.style.display = 'none';
 
       try {
         const result = await ipcRenderer.invoke('oracle:generateImage', {
@@ -160,27 +161,10 @@ function setupOracleTab(updateStatusFn) {
         });
 
         if (result.success) {
-          lastImagePath = result.imagePath;
-          if (previewImg) {
-            previewImg.src = toFileUrl(result.imagePath);
-            previewImg.style.display = 'block';
-          }
-          if (providerBadge) {
-            providerBadge.textContent = result.provider;
-            providerBadge.style.display = 'inline-block';
-          }
           if (resultsEl) resultsEl.innerHTML = '';
-          if (resultActions) resultActions.style.display = 'flex';
           if (updateStatusFn) updateStatusFn(`Image generated via ${result.provider}`);
-
-          oracleHistory.unshift({
-            time: new Date().toLocaleTimeString(),
-            prompt,
-            provider: result.provider,
-            imagePath: result.imagePath,
-          });
-          renderOracleHistory();
-          saveOracleHistory();
+          // Refresh gallery to show the new image at top
+          await loadGallery();
         } else {
           if (resultsEl) resultsEl.innerHTML = `<div class="oracle-error">${escapeHtml(result.error)}</div>`;
         }
@@ -194,92 +178,18 @@ function setupOracleTab(updateStatusFn) {
     });
   }
 
-  if (downloadBtn) {
-    downloadBtn.addEventListener('click', () => {
-      if (!lastImagePath) return;
-      const a = document.createElement('a');
-      a.href = toFileUrl(lastImagePath);
-      a.download = lastImagePath.split(/[\\/]/).pop();
-      a.click();
-    });
-  }
-
-  if (copyBtn) {
-    copyBtn.addEventListener('click', async () => {
-      if (!lastImagePath || !previewImg?.src) return;
-      try {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = previewImg.naturalWidth;
-        canvas.height = previewImg.naturalHeight;
-        ctx.drawImage(previewImg, 0, 0);
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-        if (blob) {
-          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-          if (updateStatusFn) updateStatusFn('Image copied to clipboard');
-        }
-      } catch (err) {
-        log.error('Oracle', 'Copy to clipboard failed:', err);
-      }
-    });
-  }
-
-  if (deleteBtn) {
-    deleteBtn.addEventListener('click', async () => {
-      if (!lastImagePath) return;
-      // Find the history entry for the current preview
-      const idx = oracleHistory.findIndex(h => h.imagePath === lastImagePath);
-      if (idx >= 0) {
-        await deleteHistoryItem(idx);
-      } else {
-        // Not in history but still previewed — just delete file
-        try {
-          await ipcRenderer.invoke('oracle:deleteImage', lastImagePath);
-        } catch (err) {
-          log.error('Oracle', 'Failed to delete image:', err);
-        }
-        lastImagePath = null;
-        if (previewImg) { previewImg.style.display = 'none'; previewImg.src = ''; }
-        if (providerBadge) providerBadge.style.display = 'none';
-        if (resultActions) resultActions.style.display = 'none';
-      }
-      if (updateStatusFn) updateStatusFn('Image deleted');
-    });
-  }
-
   // Listen for agent-triggered image generation results pushed from main process
   ipcRenderer.on('oracle:image-generated', (event, data) => {
     if (!data || !data.imagePath) return;
 
-    lastImagePath = data.imagePath;
-    if (previewImg) {
-      previewImg.src = toFileUrl(data.imagePath) + `?t=${Date.now()}`;
-      previewImg.style.display = 'block';
-    }
-    if (providerBadge) {
-      providerBadge.textContent = data.provider || '';
-      providerBadge.style.display = 'inline-block';
-    }
     if (resultsEl) resultsEl.innerHTML = '';
-    if (resultActions) resultActions.style.display = 'flex';
     if (updateStatusFn) updateStatusFn(`Image generated via ${data.provider} (agent)`);
-
-    oracleHistory.unshift({
-      time: data.time || new Date().toLocaleTimeString(),
-      prompt: data.prompt || '(agent-generated)',
-      provider: data.provider || '',
-      imagePath: data.imagePath,
-    });
-    renderOracleHistory();
-    saveOracleHistory();
+    // Refresh gallery to show the new image
+    loadGallery();
   });
 
-  ipcRenderer.invoke('load-oracle-history').then(history => {
-    if (Array.isArray(history)) {
-      oracleHistory = history;
-      renderOracleHistory();
-    }
-  }).catch(() => {});
+  // Load gallery on startup
+  loadGallery();
 }
 
 module.exports = {

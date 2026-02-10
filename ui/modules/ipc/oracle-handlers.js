@@ -104,6 +104,29 @@ function registerOracleHandlers(ctx, deps = {}) {
       return [];
     }
   });
+
+  // List all image files in generated-images directory (sorted newest first)
+  ipcMain.handle('oracle:listImages', async () => {
+    try {
+      if (!fs.existsSync(GENERATED_IMAGES_DIR)) return [];
+      const files = fs.readdirSync(GENERATED_IMAGES_DIR)
+        .filter(f => /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(f));
+      // Get file stats for sorting by mtime (newest first)
+      const withStats = files.map(f => {
+        const fullPath = path.join(GENERATED_IMAGES_DIR, f);
+        try {
+          const stat = fs.statSync(fullPath);
+          return { filename: f, path: fullPath, mtime: stat.mtimeMs };
+        } catch {
+          return { filename: f, path: fullPath, mtime: 0 };
+        }
+      });
+      withStats.sort((a, b) => b.mtime - a.mtime);
+      return withStats;
+    } catch (err) {
+      return [];
+    }
+  });
 }
 
 module.exports = { registerOracleHandlers, mapOracleError };
