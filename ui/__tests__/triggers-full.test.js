@@ -416,5 +416,25 @@ describe('triggers.js module', () => {
       );
       expect(hasBackendAmbient).toBe(true);
     });
+
+    test('sanitizes carriage returns before war room emit/log', () => {
+      fs.readFileSync.mockImplementation((filePath) => {
+        if (String(filePath).includes('war-room.log')) return '';
+        return '(BACK #3): first line\r\nsecond line\r';
+      });
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+
+      triggers.handleTriggerFile('/test/workspace/triggers/architect.txt', 'architect.txt');
+
+      expect(fs.appendFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('war-room.log'),
+        expect.not.stringContaining('\\r'),
+        'utf-8'
+      );
+      expect(global.window.webContents.send).toHaveBeenCalledWith(
+        'war-room-message',
+        expect.objectContaining({ msg: 'first line\nsecond line' })
+      );
+    });
   });
 });
