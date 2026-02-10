@@ -338,4 +338,36 @@ describe('WebSocket Delivery Audit', () => {
     expect(freshHealth.healthy).toBe(true);
     expect(freshHealth.status).toBe('healthy');
   });
+
+  test('includes handler error details in send-ack when message handler throws', async () => {
+    const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(sender);
+
+    onMessageSpy.mockImplementation((payload) => {
+      if (payload?.message?.type === 'send' && payload?.message?.messageId === 'ack-handler-error-1') {
+        throw new Error('simulated handler failure');
+      }
+      return undefined;
+    });
+
+    const ackPromise = waitForMessage(
+      sender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === 'ack-handler-error-1'
+    );
+
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'missing-role',
+      content: 'handler-should-fail',
+      messageId: 'ack-handler-error-1',
+      ackRequired: true,
+    }));
+
+    const ack = await ackPromise;
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('handler_error');
+    expect(ack.error).toBe('simulated handler failure');
+
+    onMessageSpy.mockImplementation(() => undefined);
+  });
 });
