@@ -1,11 +1,41 @@
 /**
  * PTY IPC Handlers (via Daemon)
- * Channels: pty-create, pty-write, codex-exec, send-trusted-enter,
+ * Channels: pty-create, pty-write, pty-write-chunked, codex-exec, send-trusted-enter,
  *           clipboard-paste-text, pty-resize, pty-kill, spawn-claude,
  *           get-claude-state, get-daemon-terminals
  */
 
 const log = require('../logger');
+const DEFAULT_CHUNK_SIZE = 192;
+const MIN_CHUNK_SIZE = 128;
+const MAX_CHUNK_SIZE = 256;
+
+function clampChunkSize(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return DEFAULT_CHUNK_SIZE;
+  }
+  return Math.max(MIN_CHUNK_SIZE, Math.min(MAX_CHUNK_SIZE, Math.floor(numeric)));
+}
+
+function normalizeYieldEveryChunks(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return 0;
+  }
+  return Math.floor(numeric);
+}
+
+function buildChunkKernelMeta(kernelMeta, chunkIndex) {
+  if (!kernelMeta || typeof kernelMeta !== 'object') {
+    return null;
+  }
+  const baseEventId = kernelMeta.eventId || `chunk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return {
+    ...kernelMeta,
+    eventId: `${baseEventId}-c${chunkIndex + 1}`,
+  };
+}
 
 function registerPtyHandlers(ctx, deps = {}) {
   if (!ctx || !ctx.ipcMain) {
@@ -40,6 +70,44 @@ function registerPtyHandlers(ctx, deps = {}) {
         ctx.daemonClient.write(paneId, data);
       }
     }
+  });
+
+  ipcMain.handle('pty-write-chunked', async (event, paneId, fullText, options = {}, kernelMeta = null) => {
+    if (!ctx.daemonClient || !ctx.daemonClient.connected) {
+      return;
+    }
+
+    const text = String(fullText ?? '');
+    const chunkSize = clampChunkSize(options?.chunkSize);
+    const yieldEveryChunks = normalizeYieldEveryChunks(options?.yieldEveryChunks);
+
+    let chunkCount = 0;
+    if (text.length === 0) {
+      if (kernelMeta) {
+        ctx.daemonClient.write(paneId, '', kernelMeta);
+      } else {
+        ctx.daemonClient.write(paneId, '');
+      }
+      return { success: true, chunks: 1, chunkSize };
+    }
+
+    for (let offset = 0; offset < text.length; offset += chunkSize) {
+      const chunk = text.slice(offset, offset + chunkSize);
+      const chunkKernelMeta = buildChunkKernelMeta(kernelMeta, chunkCount);
+      if (chunkKernelMeta) {
+        ctx.daemonClient.write(paneId, chunk, chunkKernelMeta);
+      } else {
+        ctx.daemonClient.write(paneId, chunk);
+      }
+      chunkCount += 1;
+
+      const hasMore = (offset + chunkSize) < text.length;
+      if (hasMore && yieldEveryChunks > 0 && (chunkCount % yieldEveryChunks) === 0) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
+
+    return { success: true, chunks: chunkCount, chunkSize };
   });
 
   ipcMain.handle('pty-pause', (event, paneId) => {
@@ -206,6 +274,7 @@ function unregisterPtyHandlers(ctx) {
   if (ipcMain) {
     ipcMain.removeHandler('pty-create');
     ipcMain.removeHandler('pty-write');
+    ipcMain.removeHandler('pty-write-chunked');
     ipcMain.removeHandler('pty-pause');
     ipcMain.removeHandler('pty-resume');
     ipcMain.removeHandler('interrupt-pane');

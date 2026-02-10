@@ -543,26 +543,26 @@ function createInjectionController(options = {}) {
         log.warn(`doSendToPane ${id}`, 'Claude pane: Home reset failed, continuing:', homeErr);
       }
 
+      if (typeof window.hivemind?.pty?.writeChunked !== 'function') {
+        throw new Error('writeChunked API not available');
+      }
+
       const chunkSize = Math.max(128, Math.min(256, Number(CLAUDE_CHUNK_SIZE) || 192));
-      const chunks = [];
-      for (let offset = 0; offset < normalizedText.length; offset += chunkSize) {
-        chunks.push(normalizedText.slice(offset, offset + chunkSize));
-      }
-      if (chunks.length === 0) chunks.push('');
+      const yieldEveryChunks = (Math.max(0, Number(CLAUDE_CHUNK_YIELD_MS) || 0) > 0) ? 1 : 0;
+      const chunkResult = await window.hivemind.pty.writeChunked(
+        id,
+        normalizedText,
+        { chunkSize, yieldEveryChunks },
+        createKernelMeta()
+      );
+      const fallbackChunkCount = normalizedText.length > 0
+        ? Math.ceil(normalizedText.length / chunkSize)
+        : 1;
+      const chunkCount = Number.isFinite(Number(chunkResult?.chunks))
+        ? Number(chunkResult.chunks)
+        : fallbackChunkCount;
 
-      for (let index = 0; index < chunks.length; index++) {
-        await window.hivemind.pty.write(id, chunks[index], createKernelMeta());
-        if (index < chunks.length - 1) {
-          const yieldMs = Math.max(0, Number(CLAUDE_CHUNK_YIELD_MS) || 0);
-          if (yieldMs > 0) {
-            await new Promise(resolve => setTimeout(resolve, yieldMs));
-          } else {
-            await Promise.resolve();
-          }
-        }
-      }
-
-      log.info(`doSendToPane ${id}`, `Claude pane: PTY write text complete (${chunks.length} chunk(s))`);
+      log.info(`doSendToPane ${id}`, `Claude pane: PTY write text complete (${chunkCount} chunk(s))`);
       bus.emit('inject.applied', {
         paneId: id,
         payload: { method: 'claude-pty', textLen: text.length },

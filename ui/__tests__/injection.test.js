@@ -57,6 +57,7 @@ describe('Terminal Injection', () => {
     mockPty = {
       sendTrustedEnter: jest.fn().mockResolvedValue(undefined),
       write: jest.fn().mockResolvedValue(undefined),
+      writeChunked: jest.fn().mockResolvedValue({ success: true, chunks: 1, chunkSize: 192 }),
       codexExec: jest.fn().mockResolvedValue(undefined),
     };
     global.window = {
@@ -688,14 +689,19 @@ describe('Terminal Injection', () => {
 
       expect(mockPty.write).toHaveBeenCalledWith('1', '\x15', expect.any(Object)); // Clear line
       expect(mockPty.write).toHaveBeenCalledWith('1', '\x1b[H', expect.any(Object)); // Home reset
-      expect(mockPty.write).toHaveBeenCalledWith('1', 'test message', expect.any(Object));
+      expect(mockPty.writeChunked).toHaveBeenCalledWith(
+        '1',
+        'test message',
+        { chunkSize: 192, yieldEveryChunks: 0 },
+        expect.any(Object)
+      );
     });
 
     test('handles PTY write failure', async () => {
       mockPty.write
         .mockResolvedValueOnce(undefined) // Clear-line succeeds
-        .mockResolvedValueOnce(undefined) // Home reset succeeds
-        .mockRejectedValueOnce(new Error('Write failed')); // Text write fails
+        .mockResolvedValueOnce(undefined); // Home reset succeeds
+      mockPty.writeChunked.mockRejectedValueOnce(new Error('Write failed')); // Chunked write fails
       const onComplete = jest.fn();
 
       await controller.doSendToPane('1', 'test\r', onComplete);
@@ -705,13 +711,14 @@ describe('Terminal Injection', () => {
 
     test('handles PTY clear-line failure gracefully', async () => {
       mockPty.write.mockRejectedValueOnce(new Error('Clear failed'))
-        .mockResolvedValueOnce(undefined)
         .mockResolvedValueOnce(undefined);
+      mockPty.writeChunked.mockResolvedValueOnce({ success: true, chunks: 1, chunkSize: 192 });
 
       await controller.doSendToPane('1', 'test\r', jest.fn());
 
       // Should continue with text write
-      expect(mockPty.write).toHaveBeenCalledTimes(3);
+      expect(mockPty.write).toHaveBeenCalledTimes(2);
+      expect(mockPty.writeChunked).toHaveBeenCalledTimes(1);
       expect(mockLog.warn).toHaveBeenCalledWith(
         expect.any(String),
         expect.stringContaining('PTY clear-line failed'),
@@ -721,15 +728,17 @@ describe('Terminal Injection', () => {
 
     test('chunks long Claude writes and logs pre-write fingerprint', async () => {
       const longText = `${'A'.repeat(420)}\r`; // trailing \r removed before writes
+      mockPty.writeChunked.mockResolvedValueOnce({ success: true, chunks: 3, chunkSize: 192 });
       await controller.doSendToPane('1', longText, jest.fn());
 
-      const payloadWrites = mockPty.write.mock.calls.map(call => call[1]);
-      expect(payloadWrites[0]).toBe('\x15'); // Ctrl+U
-      expect(payloadWrites[1]).toBe('\x1b[H'); // Home reset
-      expect(payloadWrites[2].length).toBe(192);
-      expect(payloadWrites[3].length).toBe(192);
-      expect(payloadWrites[4].length).toBe(36);
-      expect(payloadWrites[2] + payloadWrites[3] + payloadWrites[4]).toBe('A'.repeat(420));
+      const ptyWrites = mockPty.write.mock.calls.map(call => call[1]);
+      expect(ptyWrites).toEqual(['\x15', '\x1b[H']); // Ctrl+U + Home reset
+      expect(mockPty.writeChunked).toHaveBeenCalledWith(
+        '1',
+        'A'.repeat(420),
+        { chunkSize: 192, yieldEveryChunks: 0 },
+        expect.any(Object)
+      );
 
       expect(mockLog.info).toHaveBeenCalledWith(
         expect.stringContaining('doSendToPane'),
