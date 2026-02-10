@@ -11,9 +11,12 @@ const { SearchAddon } = require('@xterm/addon-search');
 const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
+const bus = require('./event-bus');
 const settings = require('./settings');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
+
+const TERMINAL_EVENT_SOURCE = 'terminal.js';
 const { attachAgentColors } = require('./terminal/agent-colors');
 const { PANE_IDS, PANE_ROLES, WORKSPACE_PATH } = require('../config');
 const {
@@ -66,6 +69,9 @@ const codexIdentityTimeouts = new Map();
 // Prevents accidental typing in agent panes while allowing programmatic sends (sendToPane/triggers)
 const inputLocked = {};
 PANE_IDS.forEach(id => { inputLocked[id] = true; }); // Default: all panes locked
+
+// Per-pane typing idle timers for event bus typing.idle emission
+const typingIdleTimers = {};
 
 // Message queue for when pane is busy
 // Format: { paneId: [{ message, timestamp }, ...] }
@@ -602,6 +608,32 @@ function setInputLocked(paneId, locked) {
   log.info(`Terminal ${paneId}`, `Input ${locked ? 'locked' : 'unlocked'}`);
 }
 
+/**
+ * Track user typing for event bus emissions.
+ * Emits typing.activity immediately, and typing.idle after TYPING_GUARD_MS of no typing.
+ */
+function trackTypingEvent(paneId) {
+  bus.emit('typing.activity', {
+    paneId,
+    payload: {},
+    source: TERMINAL_EVENT_SOURCE,
+  });
+  bus.updateState(paneId, { gates: { focusLocked: true } });
+
+  if (typingIdleTimers[paneId]) {
+    clearTimeout(typingIdleTimers[paneId]);
+  }
+  typingIdleTimers[paneId] = setTimeout(() => {
+    bus.emit('typing.idle', {
+      paneId,
+      payload: {},
+      source: TERMINAL_EVENT_SOURCE,
+    });
+    bus.updateState(paneId, { gates: { focusLocked: false } });
+    typingIdleTimers[paneId] = null;
+  }, TYPING_GUARD_MS);
+}
+
 let injectionController = null;
 const ignoreExitUntil = new Map();
 
@@ -865,6 +897,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
     // Track actual user typing (single chars, no modifiers)
     if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
       lastTypedTime[paneId] = Date.now();
+      trackTypingEvent(paneId);
     }
 
     // Check if this is an Enter key (browsers use 'Enter', some use 'Return', keyCode 13)
@@ -1042,6 +1075,7 @@ async function reattachTerminal(paneId, scrollback) {
     // Track actual user typing (single chars, no modifiers)
     if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
       lastTypedTime[paneId] = Date.now();
+      trackTypingEvent(paneId);
     }
 
     // Check if this is an Enter key (browsers use 'Enter', some use 'Return', keyCode 13)
@@ -1158,6 +1192,7 @@ async function reattachTerminal(paneId, scrollback) {
 
 // Focus a specific pane
 function focusPane(paneId) {
+  const prevPane = focusedPane;
   document.querySelectorAll('.pane').forEach(pane => {
     pane.classList.remove('focused');
   });
@@ -1173,6 +1208,14 @@ function focusPane(paneId) {
   }
 
   focusedPane = paneId;
+
+  if (prevPane !== paneId) {
+    bus.emit('focus.changed', {
+      paneId: paneId,
+      payload: { prevPane, newPane: paneId },
+      source: TERMINAL_EVENT_SOURCE,
+    });
+  }
 }
 
 // Blur all terminals - used when input fields get focus
@@ -1439,7 +1482,14 @@ function setupResizeObserver(paneId) {
     // triggers layout reflow on all terminal containers, and fitAddon.fit()
     // with the WebGL renderer stalls the main thread (Item 23).
     const settingsPanel = document.getElementById('settingsPanel');
-    if (settingsPanel && settingsPanel.classList.contains('open')) return;
+    if (settingsPanel && settingsPanel.classList.contains('open')) {
+      bus.emit('fit.skipped', {
+        paneId,
+        payload: { reason: 'overlay_open' },
+        source: TERMINAL_EVENT_SOURCE,
+      });
+      return;
+    }
 
     // Debounce: don't fire fit() on every pixel during drag resize
     const existingTimer = resizeDebounceTimers.get(paneId);
@@ -1489,10 +1539,32 @@ function resizeSinglePane(paneId) {
   try {
     const prevCols = terminal.cols;
     const prevRows = terminal.rows;
+    bus.emit('resize.started', {
+      paneId,
+      payload: { prevCols, prevRows },
+      source: TERMINAL_EVENT_SOURCE,
+    });
     fitAddon.fit();
     // Skip pty.resize IPC if geometry hasn't changed (avoids flooding during drag-resize)
-    if (terminal.cols === prevCols && terminal.rows === prevRows) return;
+    if (terminal.cols === prevCols && terminal.rows === prevRows) {
+      bus.emit('fit.skipped', {
+        paneId,
+        payload: { reason: 'geometry_unchanged', cols: terminal.cols, rows: terminal.rows },
+        source: TERMINAL_EVENT_SOURCE,
+      });
+      return;
+    }
+    bus.emit('pty.resize.requested', {
+      paneId,
+      payload: { cols: terminal.cols, rows: terminal.rows, prevCols, prevRows },
+      source: TERMINAL_EVENT_SOURCE,
+    });
     window.hivemind.pty.resize(paneId, terminal.cols, terminal.rows);
+    bus.emit('resize.completed', {
+      paneId,
+      payload: { cols: terminal.cols, rows: terminal.rows },
+      source: TERMINAL_EVENT_SOURCE,
+    });
   } catch (err) {
     log.error(`Terminal ${paneId}`, 'Error resizing pane', err);
   }
