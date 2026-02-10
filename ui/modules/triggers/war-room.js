@@ -105,6 +105,8 @@ function getWarRoomLabel(roleKey) {
 function sanitizeWarRoomMessage(message) {
   if (!message) return '';
   return String(message)
+    .replace(/\r+/g, '')
+    .replace(/\u0000/g, '')
     .trim();
 }
 
@@ -133,7 +135,12 @@ function loadWarRoomHistory() {
     for (const line of recent) {
       try {
         const entry = JSON.parse(line);
-        if (entry && entry.msg) parsed.push(entry);
+        if (entry && entry.msg) {
+          entry.msg = sanitizeWarRoomMessage(entry.msg);
+          if (entry.msg) {
+            parsed.push(entry);
+          }
+        }
       } catch {
         // Ignore malformed lines
       }
@@ -150,25 +157,31 @@ function appendWarRoomEntry(entry) {
   if (!entry) return;
   ensureWarRoomLog();
 
-  warRoomBuffer.push(entry);
+  const safeEntry = {
+    ...entry,
+    msg: sanitizeWarRoomMessage(entry.msg),
+  };
+  if (!safeEntry.msg) return;
+
+  warRoomBuffer.push(safeEntry);
   if (warRoomBuffer.length > WAR_ROOM_MAX_ENTRIES) {
     warRoomBuffer = warRoomBuffer.slice(-WAR_ROOM_MAX_ENTRIES);
   }
 
   try {
-    fs.appendFileSync(WAR_ROOM_LOG_PATH, JSON.stringify(entry) + '\n', 'utf-8');
+    fs.appendFileSync(WAR_ROOM_LOG_PATH, JSON.stringify(safeEntry) + '\n', 'utf-8');
   } catch (err) {
     log.warn('WarRoom', `Failed to append log entry: ${err.message}`);
   }
 
   if (triggersState.mainWindow && !triggersState.mainWindow.isDestroyed()) {
-    triggersState.mainWindow.webContents.send('war-room-message', entry);
+    triggersState.mainWindow.webContents.send('war-room-message', safeEntry);
   }
 
   // Pipeline observation hook
   if (typeof pipelineOnMessage === 'function') {
     try {
-      pipelineOnMessage(entry);
+      pipelineOnMessage(safeEntry);
     } catch (err) {
       log.warn('WarRoom', `Pipeline hook error: ${err.message}`);
     }
@@ -177,11 +190,13 @@ function appendWarRoomEntry(entry) {
 
 function buildWarRoomLine(entry) {
   if (!entry) return '';
+  const message = sanitizeWarRoomMessage(entry.msg);
+  if (!message) return '';
   if (entry.type === 'system' || entry.from === WAR_ROOM_ROLE_LABELS.system) {
-    return `[SYSTEM]: ${entry.msg}`;
+    return `[SYSTEM]: ${message}`;
   }
   const toLabel = entry.to || 'ALL';
-  return `(${entry.from} -> ${toLabel}): ${entry.msg}`;
+  return `(${entry.from} -> ${toLabel}): ${message}`;
 }
 
 function containsCorrectionKeyword(message) {
