@@ -69,12 +69,29 @@ function attachAgentColors(paneId, terminal) {
             const offset = y - (buf.baseY + buf.cursorY);
             const marker = terminal.registerMarker(offset);
             if (marker) {
+              const lineLen = line.length;
+              const matchEnd = match.index + match[0].length;
               terminal.registerDecoration({
                 marker,
                 foregroundColor: color,
                 x: match.index,
-                width: match[0].length,
+                width: Math.min(match[0].length, lineLen - match.index),
+                height: 1,
+                layer: 'top',
               });
+              // Reset decoration after the colored tag to prevent bleed
+              if (matchEnd < lineLen) {
+                const resetMarker = terminal.registerMarker(offset);
+                if (resetMarker) {
+                  terminal.registerDecoration({
+                    marker: resetMarker,
+                    x: matchEnd,
+                    width: lineLen - matchEnd,
+                    height: 1,
+                    layer: 'top',
+                  });
+                }
+              }
             }
           } catch (e) {
             log.warn(`AgentColors ${paneId}`, `Decoration failed: ${e.message}`);
