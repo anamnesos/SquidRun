@@ -886,22 +886,41 @@
   transition: opacity var(--transition-normal);
 }
 
-.voice-btn {
+/* Command bar button icons (mic, send) */
+.cmd-btn-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+/* Shared sizing for command bar action buttons */
+.voice-btn,
+.send-btn {
   background: var(--color-bg-dark);
   border: 1px solid var(--color-bg-light);
   color: var(--color-text);
-  padding: var(--space-2) var(--space-3);
+  padding: 0;
   border-radius: var(--radius-md);
-  min-height: 44px;
-  min-width: 52px;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
 }
 
-.voice-btn:hover {
+.voice-btn:hover,
+.send-btn:hover {
   border-color: var(--color-secondary);
   color: var(--color-secondary);
   box-shadow: var(--shadow-sm);
   transform: translateY(-1px);
+}
+
+.send-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .voice-btn.is-listening {
@@ -912,11 +931,14 @@
   will-change: box-shadow;
 }
 
+/* Voice status — now in the status bar strip */
 .voice-status {
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--color-text-dim);
-  min-width: 70px;
-  text-align: left;
+}
+
+.voice-status:empty {
+  display: none;
 }
 
 .voice-status.is-listening {
