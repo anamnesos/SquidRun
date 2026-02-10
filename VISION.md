@@ -2,81 +2,82 @@
 
 ## What This Is
 
-**"Service as a Software"** - the tool to build tools, accessible for everyone.
+**"Service as a Software"** — cross-model AI orchestration for everyone.
 
-Multi-agent AI orchestration. 3 specialized pane agents (with internal teammates) working in parallel like a dev team - but usable by anyone, not just developers.
+One app. Multiple AI models — Claude, OpenAI, Gemini — working together in organized panes. Each pane can run its own agent team behind the scenes, so you get the power of many agents without your screen drowning in windows.
 
 ## The Gap We Fill
 
-| Current Options | Problem |
-|-----------------|---------|
-| Dev tools | Assume dev knowledge (gatekeeping) |
-| AI coding assistants | Help devs go faster (not accessible to non-devs) |
-| No-code platforms | Ceilings, vendor lock-in, "vibey apps" that aren't real software |
+Today's AI tools tend to serve one end of the spectrum:
 
-**Hivemind:** Real software creation, no prior experience required, no ceiling.
+| Tool Type | Strength | Limitation |
+|-----------|----------|------------|
+| AI coding assistants | Speed up experienced devs | Single-agent, single-model, one window |
+| No-code platforms | Low barrier to entry | Ceilings, vendor lock-in, limited customization |
+| Multi-model setups | Diverse AI strengths | Manual coordination, no shared context, window chaos |
+
+**Hivemind:** Multiple AI models orchestrated in one interface with shared context. No provider lock-in. No window flooding. Scales from simple tasks to complex multi-agent workflows.
+
+## Why Cross-Model Matters
+
+Different AI models have different strengths. Claude thinks differently than Codex thinks differently than Gemini. When they work together:
+
+- **Blind spots cancel out** — one model catches what another misses
+- **Different reasoning styles** — architectural thinking, infrastructure expertise, investigative analysis
+- **No vendor lock-in** — use what you have, swap models as the landscape evolves
+- **Cross-model review** — code written by one AI, verified by another, catches more bugs than same-model review
+
+You're not limited to one AI's perspective. That's the core advantage.
 
 ## Service as a Software
 
-**Traditional SaaS:** Here's a box. Conform to it.
+**Traditional SaaS:** Here's a rigid box. Conform to it.
 
-**Our model:** Software that learns YOU and YOUR BUSINESS.
+**Our model:** Software that adapts to YOU and YOUR workflow.
 
-A plumber's workflow shouldn't work like a lawyer's. But they both use the same "one-size-fits-all" SaaS today. That's backwards.
-
-## Origin
-
-Built by someone with zero dev experience, 8 months after discovering AI, in 10 days of after-work time. No IDE - just terminals and AI.
-
-This isn't a limitation story. It's proof the vision works.
+Every business, every project, every user works differently. Hivemind doesn't force a single workflow — it orchestrates AI agents around yours.
 
 ## Design Principles
 
-1. **If it requires dev knowledge to use, redesign it**
-2. **Stability over features** - boring and reliable beats exciting and broken
-3. **Clarity over cleverness** - explain WHY, not just WHAT
-4. **Explicit over silent** - when something fails, say so clearly
-5. **Learning pace over shipping speed** - this is a journey
+1. **Accessible AND powerful** — approachable for beginners, no ceiling for experts
+2. **Stability over features** — reliable beats exciting
+3. **Clarity over cleverness** — explain WHY, not just WHAT
+4. **Explicit over silent** — when something fails, say so clearly
+5. **Works with what you have** — one model or three, the app adapts
+
+## How It's Organized
+
+3 panes, each running an AI agent with a specific role. But each pane can spawn internal teammates — so the real agent count scales beyond 3.
+
+| Pane | Role | What It Does |
+|------|------|--------------|
+| 1 | Architect | Coordination + spawns internal Frontend & Reviewer teammates |
+| 2 | DevOps | Infrastructure, deployment, backend, daemons |
+| 3 | Analyst | Debugging, profiling, investigation |
+
+**The pane model keeps things organized.** Instead of 6 floating terminal windows, you get 3 clean panes with agents working behind the scenes. More agents, less noise.
+
+The app auto-detects which AI CLIs you have installed and configures itself. Have all three? Full cross-model power. Just Claude? All panes run Claude — still useful, still parallel.
 
 ## Architecture Decision: SDK over PTY
 
-**Decision (Session 65):** SDK mode is the primary path. PTY mode enters maintenance.
+**SDK mode** is the primary path. PTY (terminal injection) is maintained as fallback for subscription-only users.
 
-| Mode | Role | Why |
-|------|------|-----|
-| SDK | Primary | Reliable API calls, explicit errors, no timing races |
-| PTY | Fallback | For subscription-only users minimizing API costs |
-
-**Rationale:** PTY (keyboard injection into terminals) fails silently. Non-devs can't debug "why didn't my message arrive?" SDK fails explicitly with error messages anyone can understand.
-
-PTY was debugged for 60+ sessions with persistent issues. Diminishing returns. SDK aligns with "Service as a Software" - services don't have focus-stealing and ghost typing.
+SDK = reliable API calls, explicit errors, predictable behavior. Aligns with "Service as a Software."
 
 ## Who This Is For
 
-Everyone. Domain experts who know their business but not software. People who were told they "need to learn to code first." People who hit ceilings on no-code platforms.
+**Everyone.** That's not a slogan — it's a design constraint.
 
-The barriers are artificial. The gates are illusions.
-
-## The Agents
-
-| Pane | Role | Purpose |
-|------|------|---------|
-| 1 | Architect | Coordination, decisions, architecture + Frontend/Reviewer as internal teammates |
-| 2 | DevOps | CI/CD, deployment, infrastructure, backend, daemons |
-| 5 | Analyst | Debugging, profiling, investigation |
-
-3 pane agents. 3 models (Claude, Codex, Gemini). Working in parallel.
+- Developers who want multi-agent, cross-model orchestration in one interface
+- Founders who want to prototype with a full AI team, not a single chatbot
+- Domain experts who know their business and want to build tools for it
+- Anyone who's outgrown single-agent AI and wants coordinated, parallel AI power
 
 ## Success Metrics
 
-Not "developer throughput." **Non-dev autonomy.**
-
-- Can someone with no coding background use this?
-- When it fails, do they understand why?
-- Does it adapt to their workflow, or force them to adapt?
-
----
-
-*"The builder didn't hold the complexity; they orchestrated us to hold it."* - Analyst
-
-*"We are the tools, but the user is the true Architect."* - Analyst
+- Can someone pick this up and start building in minutes?
+- When it fails, do they understand why and what to do?
+- Does it scale from simple tasks to complex multi-file projects?
+- Does it work with whatever AI providers the user has?
+- Does the multi-model approach actually catch more issues than single-model?

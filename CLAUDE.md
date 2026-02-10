@@ -22,10 +22,11 @@ Adapt your communication style based on the profile. Do NOT hardcode user assump
 **"Service as a Software"** - tools that learn the user's business, not users conforming to tools.
 
 **Design decisions favor:**
-- Accessibility over power
+- Accessible AND powerful — no ceiling for experts, no cliff for beginners
 - Stability over features
 - Clarity over cleverness
 - Explicit errors over silent failures
+- Works with what you have — adapts to available models and API keys
 
 **Architecture (Session 65):** SDK mode is primary path. PTY mode is fallback only.
 
@@ -255,6 +256,11 @@ Tasks tagged `[PTY]`, `[SDK]`, or `[BOTH]`. Check `workspace/app-status.json` be
 - `change_type: "routine"` (UI fixes, CSS, small bugs) → any reviewer, same-model OK
 - `change_type: "architectural|state|concurrency|recovery"` → cross-model review REQUIRED (`model !== author_model`)
 
+**CRITICAL: "Cross-model" means a DIFFERENT AI MODEL FAMILY — not a different role running the same model.**
+- Claude reviewing Claude code is NOT cross-model, even if one is "Reviewer" and one is "Frontend"
+- A different AI family (Codex, Gemini, etc.) reviewing Claude code IS cross-model
+- For cross-model verification, send to Ana (pane 5) or DevOps (pane 2) via hm-send.js — check `ui/settings.json` → `paneCommands` for what model they're running
+
 **Workflow:** Author fills author fields + change_type → Reviewer fills review fields → Pre-commit checks → After commit, review.json resets to pending.
 
 ---
@@ -293,11 +299,13 @@ Tasks tagged `[PTY]`, `[SDK]`, or `[BOTH]`. Check `workspace/app-status.json` be
 
 Before ANY feature is marked "APPROVED FOR TESTING":
 
-1. **Reviewer must audit ALL files involved** - not just the primary file
-2. **Check cross-file contracts** - if A calls B, verify B expects what A sends
-3. **Check IPC protocols** - sender and receiver must agree on message shape
-4. **Check data format compatibility** - snake_case vs camelCase, nested vs flat
-5. **Document findings in blockers.md** - even if they seem minor
+1. **Verify runtime reachability FIRST** - Is the changed file actually loaded/imported/executed? Trace the chain from entry point to the changed file. A perfect fix in an unreachable file is worthless.
+2. **Reviewer must audit ALL files involved** - not just the primary file
+3. **Check cross-file contracts** - if A calls B, verify B expects what A sends
+4. **Check IPC protocols** - sender and receiver must agree on message shape
+5. **Check data format compatibility** - snake_case vs camelCase, nested vs flat
+6. **For CSS: trace the @import chain** - index.html → link tags → @import statements → target file. @import after regular rules is silently ignored per CSS spec.
+7. **Document findings in blockers.md** - even if they seem minor
 
 **Anti-pattern (what went wrong with SDK V2):**
 - ❌ Reviewer checked hivemind-sdk-v2.py in isolation
