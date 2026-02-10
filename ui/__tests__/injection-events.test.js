@@ -426,8 +426,11 @@ describe('Injection Events', () => {
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('1', mockTerminal);
       global.document.activeElement = mockTextarea;
-      // First write (Ctrl+U) succeeds, second (text) fails
-      mockPty.write.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('write error'));
+      // First write (Ctrl+U) succeeds, second (Home reset) succeeds, third (text) fails
+      mockPty.write
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('write error'));
 
       const resultPromise = new Promise((resolve) => {
         controller.doSendToPane('1', 'test', resolve);
