@@ -188,6 +188,16 @@ function createInjectionController(options = {}) {
     const queue = messageQueue[paneId];
     if (!queue || queue.length === 0) return;
 
+    // Compaction gate: never inject while compaction is confirmed on this pane.
+    // This closes the Item 20 failure mode where queued messages were submitted
+    // into compaction output and appeared delivered despite being swallowed.
+    const paneState = (typeof bus.getState === 'function') ? bus.getState(id) : null;
+    if (paneState?.gates?.compacting === 'confirmed') {
+      log.debug(`processQueue ${id}`, 'Pane deferred - compaction gate active (confirmed)');
+      setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+      return;
+    }
+
     // Gate 1: injectionInFlight — focus mutex for Claude panes.
     // Codex/Gemini bypass (focus-free paths).
     if (!bypassesLock && getInjectionInFlight()) {

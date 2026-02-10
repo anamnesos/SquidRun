@@ -13,6 +13,7 @@ const mockLog = {
 jest.mock('../modules/logger', () => mockLog);
 
 const { createInjectionController } = require('../modules/terminal/injection');
+const bus = require('../modules/event-bus');
 
 describe('Terminal Injection', () => {
   // Default constants matching the module
@@ -41,6 +42,7 @@ describe('Terminal Injection', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();
+    bus.reset();
 
     // Reset mock objects
     terminals = new Map();
@@ -495,6 +497,23 @@ describe('Terminal Injection', () => {
 
       expect(mockOptions.setInjectionInFlight).not.toHaveBeenCalled();
       expect(messageQueue['1'].length).toBe(1);
+    });
+
+    test('defers queue processing while compaction gate is confirmed', () => {
+      messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
+      bus.updateState('1', { gates: { compacting: 'confirmed' } });
+
+      controller.processIdleQueue('1');
+
+      expect(mockOptions.setInjectionInFlight).not.toHaveBeenCalled();
+      expect(mockPty.write).not.toHaveBeenCalled();
+      expect(messageQueue['1'].length).toBe(1);
+
+      bus.updateState('1', { gates: { compacting: 'none' } });
+      jest.advanceTimersByTime(DEFAULT_CONSTANTS.QUEUE_RETRY_MS + 5);
+
+      expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
+      expect(messageQueue['1'].length).toBe(0);
     });
 
     test('calls onComplete callback after injection', async () => {
