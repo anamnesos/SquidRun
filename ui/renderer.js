@@ -741,6 +741,7 @@ function setupEventListeners() {
   let voiceEnabled = false;
   let voiceAutoSend = false;
   let voiceListening = false;
+  let voiceCapabilityAvailable = true; // optimistic until capabilities load
   let voiceBase = '';
   let mediaRecorder = null;
   let audioChunks = [];
@@ -785,9 +786,14 @@ function setupEventListeners() {
 
   function updateVoiceUI(statusText) {
     if (voiceInputBtn) {
-      voiceInputBtn.disabled = !voiceEnabled;
+      voiceInputBtn.disabled = !voiceEnabled || !voiceCapabilityAvailable;
       voiceInputBtn.classList.toggle('is-listening', voiceListening);
       voiceInputBtn.setAttribute('aria-pressed', voiceListening ? 'true' : 'false');
+      if (!voiceCapabilityAvailable) {
+        voiceInputBtn.title = 'Set OpenAI key in Keys tab for voice input';
+      } else {
+        voiceInputBtn.title = 'Toggle voice input';
+      }
     }
     if (broadcastInput) {
       broadcastInput.classList.toggle('voice-listening', voiceListening);
@@ -1177,6 +1183,22 @@ function setupEventListeners() {
     }
   });
   refreshVoiceSettings(settings.getSettings());
+
+  // Fetch initial voice capability
+  ipcRenderer.invoke('get-feature-capabilities').then(caps => {
+    if (caps) {
+      voiceCapabilityAvailable = !!caps.voiceTranscriptionAvailable;
+      updateVoiceUI(voiceCapabilityAvailable ? 'Voice ready' : 'No API key');
+    }
+  }).catch(() => {});
+
+  // Listen for dynamic capability updates
+  ipcRenderer.on('feature-capabilities-updated', (event, caps) => {
+    if (caps) {
+      voiceCapabilityAvailable = !!caps.voiceTranscriptionAvailable;
+      updateVoiceUI(voiceCapabilityAvailable ? 'Voice ready' : 'No API key');
+    }
+  });
 
   // Spawn all button (debounced)
   const spawnAllBtn = document.getElementById('spawnAllBtn');
