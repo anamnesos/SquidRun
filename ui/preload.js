@@ -6,6 +6,8 @@ const hivemindApi = {
   pty: {
     create: (paneId, workingDir) => ipcRenderer.invoke('pty-create', paneId, workingDir),
     write: (paneId, data, kernelMeta = null) => ipcRenderer.invoke('pty-write', paneId, data, kernelMeta),
+    writeChunked: (paneId, fullText, options = {}, kernelMeta = null) =>
+      ipcRenderer.invoke('pty-write-chunked', paneId, fullText, options, kernelMeta),
     pause: (paneId) => ipcRenderer.invoke('pty-pause', paneId),
     resume: (paneId) => ipcRenderer.invoke('pty-resume', paneId),
     codexExec: (paneId, prompt) => ipcRenderer.invoke('codex-exec', paneId, prompt),

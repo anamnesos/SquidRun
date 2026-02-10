@@ -59,6 +59,7 @@ describe('Injection Events', () => {
     mockPty = {
       sendTrustedEnter: jest.fn().mockResolvedValue(undefined),
       write: jest.fn().mockResolvedValue(undefined),
+      writeChunked: jest.fn().mockResolvedValue({ success: true, chunks: 1, chunkSize: 192 }),
       codexExec: jest.fn().mockResolvedValue(undefined),
     };
     global.window = {
@@ -426,11 +427,11 @@ describe('Injection Events', () => {
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('1', mockTerminal);
       global.document.activeElement = mockTextarea;
-      // First write (Ctrl+U) succeeds, second (Home reset) succeeds, third (text) fails
+      // First write (Ctrl+U) succeeds, second (Home reset) succeeds, chunked text write fails
       mockPty.write
         .mockResolvedValueOnce(undefined)
-        .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(new Error('write error'));
+        .mockResolvedValueOnce(undefined);
+      mockPty.writeChunked.mockRejectedValueOnce(new Error('write error'));
 
       const resultPromise = new Promise((resolve) => {
         controller.doSendToPane('1', 'test', resolve);

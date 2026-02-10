@@ -132,6 +132,58 @@ describe('PTY Handlers', () => {
     });
   });
 
+  describe('pty-write-chunked', () => {
+    test('writes chunked data when daemon connected', async () => {
+      ctx.daemonClient.connected = true;
+      const payload = 'A'.repeat(420);
+      const result = await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 192 });
+
+      expect(result).toEqual({ success: true, chunks: 3, chunkSize: 192 });
+      expect(ctx.daemonClient.write).toHaveBeenCalledTimes(3);
+      const sent = ctx.daemonClient.write.mock.calls.map(call => call[1]).join('');
+      expect(sent).toBe(payload);
+    });
+
+    test('does nothing when daemon not connected', async () => {
+      ctx.daemonClient.connected = false;
+      const result = await harness.invoke('pty-write-chunked', '1', 'test data', { chunkSize: 192 });
+
+      expect(result).toBeUndefined();
+      expect(ctx.daemonClient.write).not.toHaveBeenCalled();
+    });
+
+    test('clamps chunk size to allowed bounds', async () => {
+      ctx.daemonClient.connected = true;
+      const payload = 'B'.repeat(600);
+
+      const result = await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 9999 });
+
+      expect(result).toEqual({ success: true, chunks: 3, chunkSize: 256 });
+      expect(ctx.daemonClient.write).toHaveBeenCalledTimes(3);
+      expect(ctx.daemonClient.write.mock.calls[0][1]).toHaveLength(256);
+    });
+
+    test('forwards chunk kernel metadata with unique event ids', async () => {
+      ctx.daemonClient.connected = true;
+      const payload = 'C'.repeat(300);
+      const kernelMeta = { eventId: 'evt-1', correlationId: 'corr-1', source: 'injection.js' };
+
+      await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 192 }, kernelMeta);
+
+      expect(ctx.daemonClient.write).toHaveBeenCalledTimes(2);
+      expect(ctx.daemonClient.write.mock.calls[0][2]).toEqual(expect.objectContaining({
+        correlationId: 'corr-1',
+        source: 'injection.js',
+        eventId: 'evt-1-c1',
+      }));
+      expect(ctx.daemonClient.write.mock.calls[1][2]).toEqual(expect.objectContaining({
+        correlationId: 'corr-1',
+        source: 'injection.js',
+        eventId: 'evt-1-c2',
+      }));
+    });
+  });
+
   describe('interrupt-pane', () => {
     test('returns error when daemon not connected', async () => {
       ctx.daemonClient.connected = false;
