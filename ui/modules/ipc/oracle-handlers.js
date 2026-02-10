@@ -7,24 +7,46 @@ const fs = require('fs');
 const path = require('path');
 const { generateImage, IMAGE_HISTORY_PATH, GENERATED_IMAGES_DIR } = require('../image-gen');
 
-function registerOracleHandlers(ctx) {
+function mapOracleError(err) {
+  const message = err && err.message ? err.message : 'Image generation failed';
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes('no image generation api key available')) {
+    return {
+      code: 'MISSING_IMAGE_KEY',
+      error: 'Image generation requires RECRAFT_API_KEY or OPENAI_API_KEY.',
+    };
+  }
+  if (normalized.includes('openai_api_key') && normalized.includes('not set')) {
+    return { code: 'MISSING_OPENAI_KEY', error: 'OPENAI_API_KEY is not configured.' };
+  }
+  if (normalized.includes('recraft_api_key') && normalized.includes('not set')) {
+    return { code: 'MISSING_RECRAFT_KEY', error: 'RECRAFT_API_KEY is not configured.' };
+  }
+
+  return { code: 'IMAGE_GENERATION_FAILED', error: message };
+}
+
+function registerOracleHandlers(ctx, deps = {}) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerOracleHandlers requires ctx.ipcMain');
   }
 
   const { ipcMain } = ctx;
+  const generateImageFn = typeof deps.generateImage === 'function' ? deps.generateImage : generateImage;
 
   ipcMain.handle('oracle:generateImage', async (event, payload = {}) => {
     const { prompt, provider, style, size } = payload;
     try {
-      const result = await generateImage({ prompt, provider, style, size });
+      const result = await generateImageFn({ prompt, provider, style, size });
       return {
         success: true,
         imagePath: result.imagePath,
         provider: result.provider,
       };
     } catch (err) {
-      return { success: false, error: err.message };
+      const mapped = mapOracleError(err);
+      return { success: false, code: mapped.code, error: mapped.error };
     }
   });
 
@@ -84,4 +106,4 @@ function registerOracleHandlers(ctx) {
   });
 }
 
-module.exports = { registerOracleHandlers };
+module.exports = { registerOracleHandlers, mapOracleError };

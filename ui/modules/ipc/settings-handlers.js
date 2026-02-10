@@ -1,10 +1,12 @@
 /**
  * Settings IPC Handlers
- * Channels: get-settings, set-setting, get-all-settings, get-api-keys, set-api-keys
+ * Channels: get-settings, set-setting, get-all-settings, get-api-keys,
+ *           set-api-keys, get-feature-capabilities
  */
 
 const fs = require('fs');
 const path = require('path');
+const { getFeatureCapabilities } = require('../feature-capabilities');
 
 // Path to .env file (project root)
 const ENV_PATH = path.join(__dirname, '..', '..', '..', '.env');
@@ -35,6 +37,10 @@ function registerSettingsHandlers(ctx, deps) {
 
   ipcMain.handle('get-all-settings', () => {
     return loadSettings();
+  });
+
+  ipcMain.handle('get-feature-capabilities', () => {
+    return getFeatureCapabilities(process.env);
   });
 
   // Get masked API keys for display (never returns full keys)
@@ -111,7 +117,13 @@ function registerSettingsHandlers(ctx, deps) {
       fs.writeFileSync(ENV_PATH, content.trim() + '\n', 'utf-8');
       console.log('[Settings] API keys updated in .env');
 
-      return { success: true };
+      const capabilities = getFeatureCapabilities(process.env);
+      const mainWindow = ctx.mainWindow;
+      if (mainWindow && !mainWindow.isDestroyed?.() && mainWindow.webContents?.send) {
+        mainWindow.webContents.send('feature-capabilities-updated', capabilities);
+      }
+
+      return { success: true, capabilities };
     } catch (err) {
       console.error('[Settings] Error saving API keys:', err.message);
       return { success: false, error: err.message };
@@ -127,6 +139,7 @@ function unregisterSettingsHandlers(ctx) {
     ipcMain.removeHandler('get-all-settings');
     ipcMain.removeHandler('get-api-keys');
     ipcMain.removeHandler('set-api-keys');
+    ipcMain.removeHandler('get-feature-capabilities');
   }
 }
 

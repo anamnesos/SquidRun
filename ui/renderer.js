@@ -848,7 +848,7 @@ function setupEventListeners() {
             }
           } else {
             log.error('Voice', 'Whisper transcription failed:', result.error);
-            updateVoiceUI(result.error === 'OPENAI_API_KEY not set in .env' ? 'No API key' : 'Transcription failed');
+            updateVoiceUI(result.code === 'MISSING_OPENAI_KEY' ? 'No API key' : 'Transcription failed');
           }
         } catch (err) {
           log.error('Voice', 'Whisper IPC error:', err);

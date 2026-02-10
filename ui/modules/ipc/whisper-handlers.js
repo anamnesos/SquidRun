@@ -7,27 +7,46 @@
 const https = require('https');
 const log = require('../logger');
 
-function registerWhisperHandlers(ctx) {
+function mapWhisperError(err) {
+  const message = err && err.message ? err.message : 'Whisper transcription failed';
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes('timeout')) {
+    return { code: 'WHISPER_TIMEOUT', error: 'Whisper API request timed out.' };
+  }
+  if (normalized.includes('whisper api 401') || normalized.includes('whisper api 403')) {
+    return { code: 'OPENAI_AUTH_ERROR', error: 'OpenAI API key was rejected by Whisper.' };
+  }
+  if (normalized.includes('failed to parse whisper response')) {
+    return { code: 'WHISPER_RESPONSE_INVALID', error: 'Whisper API returned an invalid response.' };
+  }
+
+  return { code: 'WHISPER_TRANSCRIPTION_FAILED', error: message };
+}
+
+function registerWhisperHandlers(ctx, deps = {}) {
   const { ipcMain } = ctx;
+  const transcribeFn = typeof deps.callWhisperApi === 'function' ? deps.callWhisperApi : callWhisperAPI;
 
   ipcMain.handle('voice:transcribe', async (_event, audioBuffer) => {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      return { success: false, error: 'OPENAI_API_KEY not set in .env' };
+      return { success: false, code: 'MISSING_OPENAI_KEY', error: 'OPENAI_API_KEY is not configured.' };
     }
 
     if (!audioBuffer || !Buffer.isBuffer(audioBuffer) && !(audioBuffer instanceof Uint8Array)) {
-      return { success: false, error: 'Invalid audio data' };
+      return { success: false, code: 'INVALID_AUDIO_DATA', error: 'Invalid audio data.' };
     }
 
     const buf = Buffer.isBuffer(audioBuffer) ? audioBuffer : Buffer.from(audioBuffer);
 
     try {
-      const transcript = await callWhisperAPI(apiKey, buf);
+      const transcript = await transcribeFn(apiKey, buf);
       return { success: true, text: transcript };
     } catch (err) {
       log.error('Whisper', 'Transcription failed:', err.message);
-      return { success: false, error: err.message };
+      const mapped = mapWhisperError(err);
+      return { success: false, code: mapped.code, error: mapped.error };
     }
   });
 }
