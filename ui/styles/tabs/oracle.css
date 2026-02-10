@@ -236,3 +236,17 @@
 .oracle-history-delete:hover {
   color: var(--color-danger);
 }
+
+/* Capability gating hint */
+.oracle-capability-hint {
+  font-size: var(--text-xs);
+  margin-top: var(--space-1);
+}
+
+.oracle-capability-active {
+  color: var(--color-text-muted);
+}
+
+.oracle-capability-missing {
+  color: var(--color-warning, #f0a000);
+}

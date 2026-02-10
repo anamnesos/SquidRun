@@ -9,6 +9,7 @@ const { escapeHtml } = require('./utils');
 
 let oracleHistory = [];
 let lastImagePath = null;
+let imageGenAvailable = true; // optimistic default until capabilities load
 
 /** Convert a Windows path to a proper file:/// URL */
 function toFileUrl(filePath) {
@@ -82,6 +83,36 @@ async function deleteHistoryItem(index) {
   saveOracleHistory();
 }
 
+/** Update Generate button state based on image generation capability */
+function applyImageGenCapability(generateBtn, capabilities) {
+  if (!generateBtn) return;
+  imageGenAvailable = !!capabilities.imageGenAvailable;
+
+  // Update provider hint element (created once, reused)
+  let hint = document.getElementById('oracleCapabilityHint');
+  if (!hint) {
+    hint = document.createElement('div');
+    hint.id = 'oracleCapabilityHint';
+    hint.className = 'oracle-capability-hint';
+    generateBtn.parentNode.insertBefore(hint, generateBtn.nextSibling);
+  }
+
+  if (imageGenAvailable) {
+    generateBtn.disabled = false;
+    generateBtn.title = 'Generate image';
+    const provider = capabilities.recraftAvailable ? 'Recraft' : 'OpenAI';
+    hint.textContent = `Using ${provider}`;
+    hint.classList.remove('oracle-capability-missing');
+    hint.classList.add('oracle-capability-active');
+  } else {
+    generateBtn.disabled = true;
+    generateBtn.title = 'Set a Recraft or OpenAI key in the Keys tab';
+    hint.textContent = 'Set a Recraft or OpenAI key in the Keys tab';
+    hint.classList.remove('oracle-capability-active');
+    hint.classList.add('oracle-capability-missing');
+  }
+}
+
 function setupOracleTab(updateStatusFn) {
   const generateBtn = document.getElementById('oracleGenerateBtn');
   const promptInput = document.getElementById('oraclePromptInput');
@@ -94,6 +125,16 @@ function setupOracleTab(updateStatusFn) {
   const downloadBtn = document.getElementById('oracleDownloadBtn');
   const copyBtn = document.getElementById('oracleCopyBtn');
   const deleteBtn = document.getElementById('oracleDeleteBtn');
+
+  // Fetch initial feature capabilities
+  ipcRenderer.invoke('get-feature-capabilities').then(caps => {
+    if (caps) applyImageGenCapability(generateBtn, caps);
+  }).catch(() => {});
+
+  // Listen for dynamic capability updates (e.g. keys added/removed)
+  ipcRenderer.on('feature-capabilities-updated', (event, caps) => {
+    if (caps) applyImageGenCapability(generateBtn, caps);
+  });
 
   if (generateBtn) {
     generateBtn.addEventListener('click', async () => {
@@ -148,7 +189,7 @@ function setupOracleTab(updateStatusFn) {
         if (resultsEl) resultsEl.innerHTML = `<div class="oracle-error">Generation failed: ${escapeHtml(err.message)}</div>`;
       }
 
-      generateBtn.disabled = false;
+      generateBtn.disabled = !imageGenAvailable;
       generateBtn.innerHTML = originalText;
     });
   }
@@ -242,5 +283,6 @@ function setupOracleTab(updateStatusFn) {
 }
 
 module.exports = {
-  setupOracleTab
+  setupOracleTab,
+  applyImageGenCapability,
 };
