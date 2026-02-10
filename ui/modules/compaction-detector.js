@@ -28,6 +28,7 @@ const COOLDOWN_MS = 1500;
 const RAPID_SUSPECT_WINDOW_MS = 2000;
 const RAPID_SUSPECT_COUNT = 3;
 const MAX_CONFIRMED_MS = 30000; // Safety: max time in confirmed state (real compaction is 5-15s)
+const EVIDENCE_DECAY_RESET_MS = 5000; // Reset detector if stream is inactive for this window
 
 // --- Lexical patterns ---
 const LEXICAL_PATTERNS = [
@@ -66,11 +67,77 @@ function createPaneState() {
     lastChunkTime: null,
     chunksSincePrompt: 0,     // chunks received without a prompt-ready signal
     lastInjectTime: null,     // last time inject.requested was seen for this pane
+    lastEvidenceAt: null,     // last time lexical/structured evidence was observed
+    evidenceDecayTimer: null, // timer handle for stale-evidence reset
+    lexicalSeenSinceSuspected: false, // require lexical marker before confirming
   };
 }
 
 let bus = null;
 const paneDetectors = new Map(); // paneId -> pane state
+
+function clearEvidenceDecayTimer(detector) {
+  if (!detector || !detector.evidenceDecayTimer) return;
+  clearTimeout(detector.evidenceDecayTimer);
+  detector.evidenceDecayTimer = null;
+}
+
+function hasCompactionEvidence(signals) {
+  return signals.has('lexical') || signals.has('structured');
+}
+
+function resetToNone(paneId, reason = 'chunk_inactivity_timeout') {
+  const detector = getDetector(paneId);
+  const now = typeof Date.now === 'function' ? Date.now() : Date.now();
+  const wasConfirmed = detector.state === 'confirmed';
+  const durationMs = detector.confirmedAt ? now - detector.confirmedAt : 0;
+
+  clearEvidenceDecayTimer(detector);
+  detector.state = 'none';
+  detector.confidence = 0;
+  detector.activeSignals = new Set();
+  detector.sustainedSince = null;
+  detector.confirmedAt = null;
+  detector.cooldownAt = null;
+  detector.suspectHits = [];
+  detector.chunksSincePrompt = 0;
+  detector.lastEvidenceAt = null;
+  detector.lexicalSeenSinceSuspected = false;
+
+  if (wasConfirmed) {
+    emitEvent(paneId, 'cli.compaction.ended', {
+      durationMs,
+      endReason: reason,
+    });
+  }
+  updateGate(paneId, 'none');
+}
+
+function scheduleEvidenceDecayReset(paneId) {
+  const detector = getDetector(paneId);
+  clearEvidenceDecayTimer(detector);
+
+  detector.evidenceDecayTimer = setTimeout(() => {
+    const live = getDetector(paneId);
+    if (live.state === 'none') {
+      clearEvidenceDecayTimer(live);
+      return;
+    }
+    const now = typeof Date.now === 'function' ? Date.now() : Date.now();
+    if (!live.lastChunkTime || (now - live.lastChunkTime) >= EVIDENCE_DECAY_RESET_MS) {
+      resetToNone(paneId, 'chunk_inactivity_timeout');
+      return;
+    }
+    scheduleEvidenceDecayReset(paneId);
+  }, EVIDENCE_DECAY_RESET_MS);
+}
+
+function recordCompactionEvidence(paneId, signals) {
+  const detector = getDetector(paneId);
+  if (!hasCompactionEvidence(signals)) return;
+  detector.lastEvidenceAt = typeof Date.now === 'function' ? Date.now() : Date.now();
+  scheduleEvidenceDecayReset(paneId);
+}
 
 /**
  * Get or create detector state for a pane
@@ -140,11 +207,12 @@ function scoreSignals(paneId, data) {
 function transition(paneId, confidence, signals) {
   const detector = getDetector(paneId);
   const now = typeof Date.now === 'function' ? Date.now() : Date.now();
-  const prevState = detector.state;
+  const hasLexicalNow = signals.has('lexical');
 
   detector.confidence = confidence;
   detector.activeSignals = signals;
   detector.lastChunkTime = now;
+  recordCompactionEvidence(paneId, signals);
 
   switch (detector.state) {
     case 'none': {
@@ -156,6 +224,7 @@ function transition(paneId, confidence, signals) {
           detector.state = 'suspected';
           detector.sustainedSince = now; // reset for next transition
           detector.suspectHits.push(now);
+          detector.lexicalSeenSinceSuspected = hasLexicalNow;
           emitEvent(paneId, 'cli.compaction.suspected', {
             confidence,
             detectorVersion: DETECTOR_VERSION,
@@ -170,6 +239,10 @@ function transition(paneId, confidence, signals) {
     }
 
     case 'suspected': {
+      if (hasLexicalNow) {
+        detector.lexicalSeenSinceSuspected = true;
+      }
+
       // Track suspect hits for rapid-fire detection
       if (confidence >= T_SUSPECT) {
         detector.suspectHits.push(now);
@@ -181,7 +254,8 @@ function transition(paneId, confidence, signals) {
 
       // Check for promotion to confirmed
       const rapidFire = detector.suspectHits.length >= RAPID_SUSPECT_COUNT;
-      if (confidence >= T_CONFIRM) {
+      const hasLexicalEvidence = detector.lexicalSeenSinceSuspected;
+      if (confidence >= T_CONFIRM && hasLexicalEvidence) {
         if (!detector.sustainedSince) {
           detector.sustainedSince = now;
         }
@@ -189,6 +263,7 @@ function transition(paneId, confidence, signals) {
           detector.state = 'confirmed';
           detector.confirmedAt = now;
           detector.sustainedSince = null;
+          detector.lexicalSeenSinceSuspected = false;
           emitEvent(paneId, 'cli.compaction.started', {
             confidence,
             detectorVersion: DETECTOR_VERSION,
@@ -196,11 +271,12 @@ function transition(paneId, confidence, signals) {
           });
           updateGate(paneId, 'confirmed');
         }
-      } else if (rapidFire && signals.size >= 2) {
+      } else if (rapidFire && signals.size >= 2 && hasLexicalEvidence) {
         // Rapid suspect hits can promote without T_CONFIRM, but require multi-signal evidence
         detector.state = 'confirmed';
         detector.confirmedAt = now;
         detector.sustainedSince = null;
+        detector.lexicalSeenSinceSuspected = false;
         emitEvent(paneId, 'cli.compaction.started', {
           confidence,
           detectorVersion: DETECTOR_VERSION,
@@ -216,6 +292,7 @@ function transition(paneId, confidence, signals) {
           detector.state = 'none';
           detector.sustainedSince = null;
           detector.suspectHits = [];
+          detector.lexicalSeenSinceSuspected = false;
           updateGate(paneId, 'none');
         }
       } else {
@@ -247,23 +324,27 @@ function transition(paneId, confidence, signals) {
 
     case 'cooldown': {
       if (confidence >= T_SUSPECT) {
-        // Renewed evidence — go back to confirmed
-        detector.state = 'confirmed';
-        detector.confirmedAt = now;
-        detector.cooldownAt = null;
-        detector.sustainedSince = null;
-        emitEvent(paneId, 'cli.compaction.started', {
-          confidence,
-          detectorVersion: DETECTOR_VERSION,
-          transitionReason: 'renewed_evidence',
-        });
-        updateGate(paneId, 'confirmed');
+        // Renewed evidence: only promote to confirmed when lexical evidence is present.
+        if (hasLexicalNow) {
+          detector.state = 'confirmed';
+          detector.confirmedAt = now;
+          detector.cooldownAt = null;
+          detector.sustainedSince = null;
+          detector.lexicalSeenSinceSuspected = false;
+          emitEvent(paneId, 'cli.compaction.started', {
+            confidence,
+            detectorVersion: DETECTOR_VERSION,
+            transitionReason: 'renewed_evidence',
+          });
+          updateGate(paneId, 'confirmed');
+        }
       } else if (now - detector.cooldownAt >= COOLDOWN_MS) {
         detector.state = 'none';
         detector.cooldownAt = null;
         detector.sustainedSince = null;
         detector.suspectHits = [];
         detector.chunksSincePrompt = 0;
+        detector.lexicalSeenSinceSuspected = false;
         updateGate(paneId, 'none');
       }
       break;
@@ -282,6 +363,7 @@ function enterCooldown(paneId, reason) {
   detector.state = 'cooldown';
   detector.cooldownAt = now;
   detector.sustainedSince = null;
+  detector.lexicalSeenSinceSuspected = false;
 
   emitEvent(paneId, 'cli.compaction.ended', {
     durationMs,
@@ -323,6 +405,11 @@ function processChunk(paneId, data) {
   if (!data || typeof data !== 'string') return;
 
   const detector = getDetector(paneId);
+  detector.lastChunkTime = typeof Date.now === 'function' ? Date.now() : Date.now();
+  if (detector.state !== 'none') {
+    // Any ongoing stream activity should keep the gate alive.
+    scheduleEvidenceDecayReset(paneId);
+  }
 
   // Check for prompt-ready (end of compaction signal)
   const hasPrompt = PROMPT_READY_PATTERNS.some(p => p.test(data));
@@ -331,12 +418,18 @@ function processChunk(paneId, data) {
     detector.chunksSincePrompt = 0;
     if (detector.state === 'confirmed') {
       enterCooldown(paneId, 'prompt_ready');
+      scheduleEvidenceDecayReset(paneId);
       return;
     }
   }
 
   const { score, signals } = scoreSignals(paneId, data);
   transition(paneId, score, signals);
+  if (detector.state !== 'none') {
+    scheduleEvidenceDecayReset(paneId);
+  } else {
+    clearEvidenceDecayTimer(detector);
+  }
 }
 
 /**
@@ -366,6 +459,9 @@ function getState(paneId) {
  * Reset all detector state (for testing)
  */
 function reset() {
+  for (const detector of paneDetectors.values()) {
+    clearEvidenceDecayTimer(detector);
+  }
   paneDetectors.clear();
   bus = null;
 }
@@ -386,6 +482,7 @@ module.exports = {
   RAPID_SUSPECT_WINDOW_MS,
   RAPID_SUSPECT_COUNT,
   MAX_CONFIRMED_MS,
+  EVIDENCE_DECAY_RESET_MS,
   LEXICAL_PATTERNS,
   STRUCTURED_PATTERNS,
   PROMPT_READY_PATTERNS,

@@ -24,6 +24,7 @@ describe('Terminal Injection', () => {
     INJECTION_LOCK_TIMEOUT_MS: 1000,
     BYPASS_CLEAR_DELAY_MS: 250,
     TYPING_GUARD_MS: 300,
+    MAX_COMPACTION_DEFER_MS: 8000,
   };
 
   // Mock objects
@@ -514,6 +515,32 @@ describe('Terminal Injection', () => {
 
       expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
       expect(messageQueue['1'].length).toBe(0);
+    });
+
+    test('force-clears stuck compaction gate after max defer timeout', async () => {
+      const ctrl = createInjectionController({
+        ...mockOptions,
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          MAX_COMPACTION_DEFER_MS: 500,
+          QUEUE_RETRY_MS: 100,
+        },
+      });
+      messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
+      bus.updateState('1', { gates: { compacting: 'confirmed' } });
+
+      ctrl.processIdleQueue('1');
+      expect(messageQueue['1'].length).toBe(1);
+
+      await jest.advanceTimersByTimeAsync(700);
+
+      expect(bus.getState('1').gates.compacting).toBe('none');
+      expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
+      expect(messageQueue['1'].length).toBe(0);
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.stringContaining('processQueue 1'),
+        expect.stringContaining('Compaction gate stuck')
+      );
     });
 
     test('calls onComplete callback after injection', async () => {
