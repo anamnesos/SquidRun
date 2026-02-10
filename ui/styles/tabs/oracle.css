@@ -297,6 +297,7 @@
   display: block;
   width: 100%;
   height: auto;
+  min-height: 100px;
   object-fit: contain;
   background: var(--color-bg-dark);
 }
