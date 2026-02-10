@@ -15,6 +15,7 @@ const bus = require('./event-bus');
 const settings = require('./settings');
 const compactionDetector = require('./compaction-detector');
 const contracts = require('./contracts');
+const transitionLedger = require('./transition-ledger');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
 
@@ -716,6 +717,9 @@ const {
 
 // Initialize contracts (registers 4 day-1 enforced contracts on the bus)
 contracts.init(bus);
+
+// Initialize transition ledger scaffold (phase 2 transition objects)
+transitionLedger.init(bus);
 
 // Initialize compaction detector (subscribes to inject.requested events on the bus)
 compactionDetector.init(bus);
