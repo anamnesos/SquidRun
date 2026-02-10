@@ -105,24 +105,52 @@ function registerOracleHandlers(ctx, deps = {}) {
     }
   });
 
+  // Detect MIME type from file magic bytes (handles WEBP-in-.png mislabeling)
+  function detectMime(filePath) {
+    try {
+      const fd = fs.openSync(filePath, 'r');
+      const buf = Buffer.alloc(12);
+      fs.readSync(fd, buf, 0, 12, 0);
+      fs.closeSync(fd);
+      // PNG: 89 50 4E 47
+      if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
+      // JPEG: FF D8 FF
+      if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'image/jpeg';
+      // GIF: GIF8
+      if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return 'image/gif';
+      // WEBP: RIFF....WEBP
+      if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+          buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
+      // SVG: starts with < (text)
+      if (buf[0] === 0x3C) return 'image/svg+xml';
+      return 'image/png'; // fallback
+    } catch {
+      return 'image/png';
+    }
+  }
+
   // List all image files in generated-images directory (sorted newest first)
+  // Returns file paths (CSP allows file: protocol). No base64 — too large for IPC.
+  const MIN_IMAGE_SIZE = 10000; // Skip icon-sized files (16x16, 32x32, 64x64 variants)
   ipcMain.handle('oracle:listImages', async () => {
     try {
       if (!fs.existsSync(GENERATED_IMAGES_DIR)) return [];
       const files = fs.readdirSync(GENERATED_IMAGES_DIR)
         .filter(f => /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(f));
-      // Get file stats for sorting by mtime (newest first)
-      const withStats = files.map(f => {
+      const results = [];
+      for (const f of files) {
         const fullPath = path.join(GENERATED_IMAGES_DIR, f);
         try {
           const stat = fs.statSync(fullPath);
-          return { filename: f, path: fullPath, mtime: stat.mtimeMs };
+          // Skip tiny icon variants
+          if (stat.size < MIN_IMAGE_SIZE) continue;
+          results.push({ filename: f, path: fullPath, mtime: stat.mtimeMs });
         } catch {
-          return { filename: f, path: fullPath, mtime: 0 };
+          // Skip unreadable files
         }
-      });
-      withStats.sort((a, b) => b.mtime - a.mtime);
-      return withStats;
+      }
+      results.sort((a, b) => b.mtime - a.mtime);
+      return results;
     } catch (err) {
       return [];
     }

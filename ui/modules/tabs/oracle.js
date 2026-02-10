@@ -28,11 +28,12 @@ async function loadGallery() {
     }
 
     galleryList.innerHTML = images.map(img => {
-      const fileUrl = toFileUrl(img.path);
       const name = escapeHtml(img.filename);
+      // Use file:// URL (CSP allows file: protocol for images)
+      const src = toFileUrl(img.path);
       return `
         <div class="oracle-gallery-item" data-path="${escapeHtml(img.path)}">
-          <img class="oracle-gallery-img" src="${fileUrl}?t=${Date.now()}" alt="${name}" loading="lazy" />
+          <img class="oracle-gallery-img" src="${src}" alt="${name}" />
           <div class="oracle-gallery-overlay">
             <span class="oracle-gallery-name">${name}</span>
             <div class="oracle-gallery-actions">
