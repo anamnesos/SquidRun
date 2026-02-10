@@ -460,11 +460,15 @@ function updateState(paneId, patch) {
     if (patch.overlay.open !== undefined) state.overlay.open = patch.overlay.open;
   }
 
-  // Emit state change event
-  emitInternal('pane.state.changed', {
-    paneId,
-    payload: { prev, next: JSON.parse(JSON.stringify(state)) },
-  });
+  // Only emit state change event if state actually changed
+  const nextSnapshot = JSON.parse(JSON.stringify(state));
+  const changed = JSON.stringify(prev) !== JSON.stringify(nextSnapshot);
+  if (changed) {
+    emitInternal('pane.state.changed', {
+      paneId,
+      payload: { prev, next: nextSnapshot },
+    });
+  }
 
   // Check if gate cleared — resume deferred events
   const gateCleared = (prev.gates.focusLocked && !state.gates.focusLocked) ||
@@ -493,22 +497,133 @@ function getCurrentCorrelation() {
 
 /**
  * Query ring buffer (Lane B)
+ * Supports: correlationId, paneId, type (exact or prefix with *), types[], since, until, limit
+ * Returns matching events, newest first
  */
-function query({ correlationId: corrId, paneId, type, timeRange } = {}) {
+function query({ correlationId: corrId, paneId, type, types, since, until, limit: maxResults, timeRange } = {}) {
   if (!telemetryEnabled) return [];
   try {
     let results = [...ringBuffer];
     if (corrId) results = results.filter(e => e.correlationId === corrId);
     if (paneId) results = results.filter(e => e.paneId === paneId);
-    if (type) results = results.filter(e => e.type === type);
+    if (type) {
+      if (type.includes('*')) {
+        results = results.filter(e => matchesWildcard(type, e.type));
+      } else {
+        results = results.filter(e => e.type === type);
+      }
+    }
+    if (types && Array.isArray(types) && types.length > 0) {
+      results = results.filter(e => types.some(t => {
+        if (t.includes('*')) return matchesWildcard(t, e.type);
+        return t === e.type;
+      }));
+    }
+    if (since !== undefined) results = results.filter(e => e.ts >= since);
+    if (until !== undefined) results = results.filter(e => e.ts <= until);
+    // Legacy timeRange support
     if (timeRange) {
       const { start, end } = timeRange;
       if (start) results = results.filter(e => e.ts >= start);
       if (end) results = results.filter(e => e.ts <= end);
     }
+    // Newest first
+    results.reverse();
+    // Apply limit
+    if (maxResults && maxResults > 0) {
+      results = results.slice(0, maxResults);
+    }
     return results;
   } catch (e) {
     // Lane B failure
+    return [];
+  }
+}
+
+/**
+ * Get ring buffer statistics (Lane B)
+ */
+function getBufferStats() {
+  if (!telemetryEnabled) return { size: 0, maxSize: BUFFER_MAX_SIZE, oldestTs: null, newestTs: null, droppedCount: stats.totalDropped, eventTypeCounts: {} };
+  try {
+    const eventTypeCounts = {};
+    for (const event of ringBuffer) {
+      eventTypeCounts[event.type] = (eventTypeCounts[event.type] || 0) + 1;
+    }
+    return {
+      size: ringBuffer.length,
+      maxSize: BUFFER_MAX_SIZE,
+      oldestTs: ringBuffer.length > 0 ? ringBuffer[0].ts : null,
+      newestTs: ringBuffer.length > 0 ? ringBuffer[ringBuffer.length - 1].ts : null,
+      droppedCount: stats.totalDropped,
+      eventTypeCounts,
+    };
+  } catch (e) {
+    return { size: 0, maxSize: BUFFER_MAX_SIZE, oldestTs: null, newestTs: null, droppedCount: 0, eventTypeCounts: {} };
+  }
+}
+
+/**
+ * Get all events in a correlation chain, ordered by causation DAG then timestamp
+ */
+function getCorrelationChain(corrId) {
+  if (!telemetryEnabled || !corrId) return [];
+  try {
+    const events = ringBuffer.filter(e => e.correlationId === corrId);
+    if (events.length === 0) return [];
+
+    // Build causation DAG: eventId -> [child events]
+    const byId = new Map();
+    const children = new Map();
+    const roots = [];
+
+    for (const event of events) {
+      byId.set(event.eventId, event);
+      if (!children.has(event.eventId)) children.set(event.eventId, []);
+    }
+
+    for (const event of events) {
+      if (event.causationId && byId.has(event.causationId)) {
+        if (!children.has(event.causationId)) children.set(event.causationId, []);
+        children.get(event.causationId).push(event);
+      } else {
+        roots.push(event);
+      }
+    }
+
+    // Sort roots and children by timestamp
+    roots.sort((a, b) => a.ts - b.ts);
+    for (const [, kids] of children) {
+      kids.sort((a, b) => a.ts - b.ts);
+    }
+
+    // BFS traversal for topological order
+    const result = [];
+    const visited = new Set();
+    const queue = [...roots];
+
+    while (queue.length > 0) {
+      const node = queue.shift();
+      if (visited.has(node.eventId)) continue;
+      visited.add(node.eventId);
+      result.push(node);
+      const kids = children.get(node.eventId) || [];
+      for (const child of kids) {
+        if (!visited.has(child.eventId)) {
+          queue.push(child);
+        }
+      }
+    }
+
+    // Add any orphans (events whose causationId doesn't match any event in the chain)
+    for (const event of events) {
+      if (!visited.has(event.eventId)) {
+        result.push(event);
+      }
+    }
+
+    return result;
+  } catch (e) {
     return [];
   }
 }
@@ -580,6 +695,8 @@ module.exports = {
   // Lane B
   query,
   getBuffer,
+  getBufferStats,
+  getCorrelationChain,
   setTelemetryEnabled,
   // Utilities
   reset,
