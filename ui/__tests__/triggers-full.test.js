@@ -215,6 +215,21 @@ describe('triggers.js module', () => {
       // Fixed: Check reliability metrics record failed
       // Or check log output if that's what we want
     });
+
+    test('sendDirectMessage in PTY mode delivers even when target is not running', () => {
+      triggers.setSDKMode(false);
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['5', 'idle']]), null);
+
+      const result = triggers.sendDirectMessage(['2'], 'Direct msg', 'architect');
+
+      expect(result).toEqual({ success: true, notified: ['2'], mode: 'pty' });
+
+      jest.runAllTimers();
+      expect(global.window.webContents.send).toHaveBeenCalledWith('inject-message', expect.objectContaining({
+        panes: ['2'],
+        message: expect.stringContaining('[MSG from architect]: Direct msg'),
+      }));
+    });
   });
 
   describe('3. Workflow Gate (checkWorkflowGate)', () => {
