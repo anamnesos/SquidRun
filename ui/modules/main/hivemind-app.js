@@ -50,10 +50,15 @@ class HivemindApp {
     // 1. Load settings
     this.settings.loadSettings();
 
-    // 2. Pre-configure Codex
+    // 2. Auto-detect installed CLIs and patch invalid paneCommands (startup only)
+    if (typeof this.settings.autoDetectPaneCommandsOnStartup === 'function') {
+      this.settings.autoDetectPaneCommandsOnStartup();
+    }
+
+    // 3. Pre-configure Codex
     this.settings.ensureCodexConfig();
 
-    // 3. Setup external notifications
+    // 4. Setup external notifications
     this.ctx.setExternalNotifier(createExternalNotifier({
       getSettings: () => this.ctx.currentSettings,
       log,
@@ -65,26 +70,26 @@ class HivemindApp {
       watcher.setExternalNotifier((payload) => this.ctx.externalNotifier?.notify(payload));
     }
 
-    // 4. Initial app status
+    // 5. Initial app status
     this.settings.writeAppStatus();
 
-    // 5. Load activity log
+    // 6. Load activity log
     this.activity.loadActivityLog();
 
-    // 6. Load usage stats
+    // 7. Load usage stats
     this.usage.loadUsageStats();
 
-    // 7. Initialize PTY daemon connection
+    // 8. Initialize PTY daemon connection
     await this.initDaemonClient();
 
-    // 8. Create main window
+    // 9. Create main window
     await this.createWindow();
 
-    // 9. Setup global IPC forwarders
+    // 10. Setup global IPC forwarders
     this.ensureCliIdentityForwarder();
     this.ensureTriggerDeliveryAckForwarder();
 
-    // 10. Start WebSocket server for instant agent messaging
+    // 11. Start WebSocket server for instant agent messaging
     try {
       await websocketServer.start({
         port: websocketServer.DEFAULT_PORT,

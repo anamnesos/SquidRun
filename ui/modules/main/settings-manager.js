@@ -6,8 +6,48 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { spawnSync } = require('child_process');
 const log = require('../logger');
 const { WORKSPACE_PATH } = require('../../config');
+
+const CLI_NAMES = ['claude', 'codex', 'gemini'];
+const CLI_PREFERENCES = {
+  '1': ['claude', 'codex', 'gemini'],
+  '2': ['codex', 'claude', 'gemini'],
+  '5': ['gemini', 'codex', 'claude'],
+};
+const CLI_DISCOVERY_TIMEOUT_MS = 2000;
+const CLI_VERSION_TIMEOUT_MS = 2500;
+
+function buildGeminiCommand() {
+  return `gemini --yolo --include-directories "${WORKSPACE_PATH}"`;
+}
+
+function buildCommandForCli(cli) {
+  if (cli === 'codex') return 'codex';
+  if (cli === 'gemini') return buildGeminiCommand();
+  return 'claude';
+}
+
+function extractCliFromCommand(command) {
+  if (typeof command !== 'string') return null;
+  const trimmed = command.trim();
+  if (!trimmed) return null;
+  const lowered = trimmed.toLowerCase();
+  if (lowered.startsWith('claude')) return 'claude';
+  if (lowered.startsWith('codex')) return 'codex';
+  if (lowered.startsWith('gemini')) return 'gemini';
+
+  const tokenMatch = trimmed.match(/^"([^"]+)"|^'([^']+)'|^(\S+)/);
+  const token = tokenMatch ? (tokenMatch[1] || tokenMatch[2] || tokenMatch[3]) : trimmed.split(/\s+/)[0];
+  if (!token) return null;
+
+  const base = path.basename(token).toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
+  if (base.includes('claude')) return 'claude';
+  if (base.includes('codex')) return 'codex';
+  if (base.includes('gemini')) return 'gemini';
+  return null;
+}
 
 const DEFAULT_SETTINGS = {
   autoSpawn: false,
@@ -43,7 +83,7 @@ const DEFAULT_SETTINGS = {
   paneCommands: {
     '1': 'claude',
     '2': 'codex',
-    '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind"',
+    '5': buildGeminiCommand(),
   },
   templates: [],
   voiceInputEnabled: false,
@@ -152,6 +192,92 @@ class SettingsManager {
       fs.writeFileSync(configPath, content, 'utf-8');
     } catch (err) {
       log.error('Codex', 'Failed to ensure config.toml:', err.message);
+    }
+  }
+
+  detectInstalledClis() {
+    const installed = { claude: false, codex: false, gemini: false };
+    const locator = process.platform === 'win32' ? 'where.exe' : 'which';
+
+    for (const cli of CLI_NAMES) {
+      let found = false;
+      try {
+        const locate = spawnSync(locator, [cli], {
+          windowsHide: true,
+          timeout: CLI_DISCOVERY_TIMEOUT_MS,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        });
+        found = Boolean(locate && locate.status === 0 && String(locate.stdout || '').trim());
+      } catch (_) {
+        found = false;
+      }
+      if (!found) continue;
+
+      try {
+        const version = spawnSync(cli, ['--version'], {
+          windowsHide: true,
+          timeout: CLI_VERSION_TIMEOUT_MS,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        });
+        installed[cli] = Boolean(version && version.status === 0);
+      } catch (_) {
+        installed[cli] = false;
+      }
+    }
+
+    return installed;
+  }
+
+  resolvePaneCommandsFromAvailability(installed) {
+    const paneCommands = {};
+    for (const paneId of Object.keys(CLI_PREFERENCES)) {
+      const preferred = CLI_PREFERENCES[paneId];
+      const selectedCli = preferred.find(cli => installed[cli]) || preferred[0];
+      paneCommands[paneId] = buildCommandForCli(selectedCli);
+    }
+    return paneCommands;
+  }
+
+  commandNeedsRewrite(command, installed) {
+    if (typeof command !== 'string' || !command.trim()) return true;
+    const cli = extractCliFromCommand(command);
+    if (cli && installed[cli] === false) return true;
+    return false;
+  }
+
+  autoDetectPaneCommandsOnStartup() {
+    try {
+      const installed = this.detectInstalledClis();
+      const anyInstalled = Object.values(installed).some(Boolean);
+      if (!anyInstalled) {
+        log.warn('Settings', 'CLI auto-detection found no installed CLIs; keeping existing paneCommands');
+        return { changed: false, installed, updatedPanes: [] };
+      }
+
+      const recommended = this.resolvePaneCommandsFromAvailability(installed);
+      const current = { ...(this.ctx.currentSettings.paneCommands || {}) };
+      const updatedPanes = [];
+
+      for (const paneId of Object.keys(CLI_PREFERENCES)) {
+        if (this.commandNeedsRewrite(current[paneId], installed)) {
+          current[paneId] = recommended[paneId];
+          updatedPanes.push(paneId);
+        }
+      }
+
+      if (updatedPanes.length > 0) {
+        this.saveSettings({ paneCommands: current });
+        log.info('Settings', `CLI auto-detection updated paneCommands for panes: ${updatedPanes.join(', ')}`);
+        return { changed: true, installed, updatedPanes, paneCommands: current };
+      }
+
+      log.debug('Settings', 'CLI auto-detection found no paneCommands changes');
+      return { changed: false, installed, updatedPanes: [] };
+    } catch (err) {
+      log.warn('Settings', `CLI auto-detection failed: ${err.message}`);
+      return { changed: false, error: err.message, updatedPanes: [] };
     }
   }
 }
