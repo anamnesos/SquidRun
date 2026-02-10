@@ -224,6 +224,27 @@ fi
 echo ""
 
 # =============================================================================
+# Gate 7: Build Doc Hygiene Lint (staged docs only)
+# =============================================================================
+
+echo "Gate 7: Build doc hygiene lint..."
+
+if [ -f "ui/scripts/doc-lint.js" ]; then
+    node ui/scripts/doc-lint.js --staged
+    if [ $? -ne 0 ]; then
+        echo "âŒ Doc hygiene lint failed"
+        echo "   Run: node ui/scripts/doc-lint.js"
+        FAILED=1
+    else
+        echo "âœ… Build doc hygiene lint passed"
+    fi
+else
+    echo "âš ï¸  ui/scripts/doc-lint.js not found, skipping build doc lint"
+fi
+
+echo ""
+
+# =============================================================================
 # Summary
 # =============================================================================
 

@@ -10,6 +10,7 @@
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
     "lint": "eslint modules/*.js renderer.js main.js",
+    "lint:docs": "node scripts/doc-lint.js",
     "lint:fix": "eslint modules/*.js renderer.js main.js --fix",
     "rebuild": "npx @electron/rebuild -f -w node-pty",
     "build": "echo 'Building Hivemind...' && npm run lint && npm run test",
