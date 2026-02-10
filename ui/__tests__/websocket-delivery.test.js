@@ -83,9 +83,14 @@ function closeClient(ws) {
 describe('WebSocket Delivery Audit', () => {
   let port;
   let activeClients = new Set();
+  let onMessageSpy;
 
   beforeAll(async () => {
-    await websocketServer.start({ port: 0 });
+    onMessageSpy = jest.fn();
+    await websocketServer.start({
+      port: 0,
+      onMessage: (payload) => onMessageSpy(payload),
+    });
     port = websocketServer.getPort();
     if (!port || port === 0) {
       throw new Error('WebSocket server failed to bind an ephemeral port');
@@ -94,6 +99,7 @@ describe('WebSocket Delivery Audit', () => {
 
   beforeEach(() => {
     activeClients = new Set();
+    onMessageSpy.mockClear();
   });
 
   afterEach(async () => {
@@ -142,5 +148,97 @@ describe('WebSocket Delivery Audit', () => {
 
     const received = await delivery;
     expect(received.from).toBe('architect');
+  });
+
+  test('returns send-ack when ackRequired is true and route is delivered', async () => {
+    const receiver = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    activeClients.add(receiver);
+    const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(sender);
+
+    const messageId = 'ack-delivered-1';
+    const ackPromise = waitForMessage(sender, (msg) => msg.type === 'send-ack' && msg.messageId === messageId);
+    const delivery = waitForMessage(receiver, (msg) => msg.type === 'message' && msg.content === 'needs-ack');
+
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'devops',
+      content: 'needs-ack',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const [ack, received] = await Promise.all([ackPromise, delivery]);
+    expect(ack.ok).toBe(true);
+    expect(ack.status).toBe('delivered.websocket');
+    expect(received.from).toBe('architect');
+  });
+
+  test('returns unrouted send-ack when ackRequired is true and no route exists', async () => {
+    const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(sender);
+
+    const messageId = 'ack-unrouted-1';
+    const ackPromise = waitForMessage(sender, (msg) => msg.type === 'send-ack' && msg.messageId === messageId);
+
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'missing-role',
+      content: 'no-route',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const ack = await ackPromise;
+    expect(ack.ok).toBe(false);
+    expect(ack.status).toBe('unrouted');
+  });
+
+  test('deduplicates ackRequired send by messageId and reuses prior ack', async () => {
+    const receiver = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    activeClients.add(receiver);
+    const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(sender);
+
+    const messageId = 'ack-dedup-1';
+    let deliveredCount = 0;
+    receiver.on('message', (raw) => {
+      const msg = JSON.parse(raw.toString());
+      if (msg.type === 'message' && msg.content === 'dedup-payload') {
+        deliveredCount++;
+      }
+    });
+
+    const firstAck = waitForMessage(sender, (msg) => msg.type === 'send-ack' && msg.messageId === messageId);
+    const firstDelivery = waitForMessage(receiver, (msg) => msg.type === 'message' && msg.content === 'dedup-payload');
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'devops',
+      content: 'dedup-payload',
+      messageId,
+      ackRequired: true,
+    }));
+    await Promise.all([firstAck, firstDelivery]);
+
+    const secondAckPromise = waitForMessage(sender, (msg) => msg.type === 'send-ack' && msg.messageId === messageId);
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'devops',
+      content: 'dedup-payload',
+      messageId,
+      ackRequired: true,
+    }));
+    const secondAck = await secondAckPromise;
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const routedSendCalls = onMessageSpy.mock.calls
+      .map(([payload]) => payload?.message)
+      .filter((msg) => msg?.type === 'send' && msg?.messageId === messageId);
+
+    expect(deliveredCount).toBe(1);
+    expect(routedSendCalls).toHaveLength(1);
+    expect(secondAck.ok).toBe(true);
+    expect(secondAck.status).toBe('delivered.websocket');
   });
 });

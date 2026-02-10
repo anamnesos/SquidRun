@@ -7,10 +7,69 @@ const { WebSocketServer } = require('ws');
 const log = require('./logger');
 
 const DEFAULT_PORT = 9900;
+const MESSAGE_ACK_TTL_MS = 60000;
 let wss = null;
 let clients = new Map(); // clientId -> { ws, paneId, role }
 let clientIdCounter = 0;
 let messageHandler = null; // External handler for incoming messages
+let recentMessageAcks = new Map(); // messageId -> { ackPayload, expiresAt }
+let pendingMessageAcks = new Map(); // messageId -> Promise<ackPayload>
+
+function sendJson(ws, payload) {
+  if (!ws || ws.readyState !== 1) return false;
+  try {
+    ws.send(JSON.stringify(payload));
+    return true;
+  } catch (err) {
+    log.error('WebSocket', `Failed to send JSON payload: ${err.message}`);
+    return false;
+  }
+}
+
+function coerceAckResult(result) {
+  if (!result || typeof result !== 'object') return null;
+  if (Object.prototype.hasOwnProperty.call(result, 'ok')) {
+    return {
+      ok: Boolean(result.ok),
+      status: result.status || (result.ok ? 'ok' : 'failed'),
+      details: result,
+    };
+  }
+  if (Object.prototype.hasOwnProperty.call(result, 'success')) {
+    return {
+      ok: Boolean(result.success),
+      status: result.success ? 'ok' : 'failed',
+      details: result,
+    };
+  }
+  return null;
+}
+
+function isAckEligibleMessage(message) {
+  return Boolean(message?.ackRequired && (message.type === 'send' || message.type === 'broadcast'));
+}
+
+function getNormalizedMessageId(message) {
+  if (!message || typeof message.messageId !== 'string') return null;
+  const trimmed = message.messageId.trim();
+  return trimmed ? trimmed : null;
+}
+
+function pruneExpiredMessageAcks(now = Date.now()) {
+  for (const [messageId, entry] of recentMessageAcks.entries()) {
+    if (!entry || entry.expiresAt <= now) {
+      recentMessageAcks.delete(messageId);
+    }
+  }
+}
+
+function cacheMessageAck(messageId, ackPayload, now = Date.now()) {
+  if (!messageId || !ackPayload) return;
+  recentMessageAcks.set(messageId, {
+    ackPayload,
+    expiresAt: now + MESSAGE_ACK_TTL_MS,
+  });
+}
 
 /**
  * Start the WebSocket server
@@ -22,6 +81,8 @@ let messageHandler = null; // External handler for incoming messages
 function start(options = {}) {
   const port = options.port ?? DEFAULT_PORT;
   messageHandler = options.onMessage || null;
+  recentMessageAcks.clear();
+  pendingMessageAcks.clear();
 
   return new Promise((resolve, reject) => {
     try {
@@ -40,7 +101,9 @@ function start(options = {}) {
         log.info('WebSocket', `Client ${clientId} connected from ${req.socket.remoteAddress}`);
 
         ws.on('message', (data) => {
-          handleMessage(clientId, data);
+          handleMessage(clientId, data).catch((err) => {
+            log.error('WebSocket', `Unhandled message error for client ${clientId}: ${err.message}`);
+          });
         });
 
         ws.on('close', (code, reason) => {
@@ -76,7 +139,7 @@ function start(options = {}) {
  * @param {number} clientId - Client identifier
  * @param {Buffer|string} rawData - Raw message data
  */
-function handleMessage(clientId, rawData) {
+async function handleMessage(clientId, rawData) {
   const clientInfo = clients.get(clientId);
   if (!clientInfo) return;
 
@@ -96,33 +159,146 @@ function handleMessage(clientId, rawData) {
     clientInfo.paneId = message.paneId || null;
     clientInfo.role = message.role || null;
     log.info('WebSocket', `Client ${clientId} registered as pane=${message.paneId} role=${message.role}`);
-    clientInfo.ws.send(JSON.stringify({ type: 'registered', paneId: message.paneId, role: message.role }));
+    sendJson(clientInfo.ws, { type: 'registered', paneId: message.paneId, role: message.role });
     return;
   }
+
+  const ackEligible = isAckEligibleMessage(message);
+  const messageId = ackEligible ? getNormalizedMessageId(message) : null;
+
+  if (ackEligible && messageId) {
+    pruneExpiredMessageAcks();
+
+    const cached = recentMessageAcks.get(messageId);
+    if (cached?.ackPayload) {
+      sendJson(clientInfo.ws, cached.ackPayload);
+      return;
+    }
+
+    const pending = pendingMessageAcks.get(messageId);
+    if (pending) {
+      try {
+        const pendingAck = await pending;
+        if (pendingAck) {
+          sendJson(clientInfo.ws, pendingAck);
+        }
+      } catch (err) {
+        const failedAck = {
+          type: 'send-ack',
+          messageId,
+          ok: false,
+          status: 'handler_error',
+          error: err.message,
+          timestamp: Date.now(),
+        };
+        sendJson(clientInfo.ws, failedAck);
+      }
+      return;
+    }
+  }
+
+  let resolvePendingAck = null;
+  let rejectPendingAck = null;
+  if (ackEligible && messageId) {
+    const pending = new Promise((resolve, reject) => {
+      resolvePendingAck = resolve;
+      rejectPendingAck = reject;
+    });
+    pendingMessageAcks.set(messageId, pending);
+  }
+
+  function finalizeAckTracking(ackPayload, err) {
+    if (!ackEligible || !messageId) return;
+    pendingMessageAcks.delete(messageId);
+    if (ackPayload) {
+      cacheMessageAck(messageId, ackPayload);
+      if (resolvePendingAck) resolvePendingAck(ackPayload);
+      return;
+    }
+    if (rejectPendingAck) {
+      rejectPendingAck(err || new Error('ACK processing failed'));
+    }
+  }
+
+  let wsDeliveryCount = 0;
 
   // Handle agent-to-agent messages
   if (message.type === 'send') {
     const { target, content, priority } = message;
     // Try WebSocket clients first (for future direct agent-to-agent)
-    sendToTarget(target, content, { from: clientInfo.role || clientId, priority });
+    if (sendToTarget(target, content, { from: clientInfo.role || clientId, priority })) {
+      wsDeliveryCount = 1;
+    }
     // Don't return - let messageHandler also route to terminals
   }
 
   // Handle broadcast
   if (message.type === 'broadcast') {
-    broadcast(message.content, { from: clientInfo.role || clientId, excludeSender: clientId });
+    wsDeliveryCount = broadcast(message.content, { from: clientInfo.role || clientId, excludeSender: clientId });
     // Don't return - let messageHandler also route to terminals/triggers
   }
 
+  let handlerResult = null;
+
   // Pass to external handler if set
   if (messageHandler) {
-    messageHandler({
-      clientId,
-      paneId: clientInfo.paneId,
-      role: clientInfo.role,
-      message,
-    });
+    try {
+      handlerResult = await messageHandler({
+        clientId,
+        paneId: clientInfo.paneId,
+        role: clientInfo.role,
+        message,
+      });
+    } catch (err) {
+      log.error('WebSocket', `messageHandler failed for client ${clientId}: ${err.message}`);
+      if (message.ackRequired && (message.type === 'send' || message.type === 'broadcast')) {
+        const ackPayload = {
+          type: 'send-ack',
+          messageId: message.messageId || null,
+          ok: false,
+          status: 'handler_error',
+          error: err.message,
+          wsDeliveryCount,
+          timestamp: Date.now(),
+        };
+        sendJson(clientInfo.ws, ackPayload);
+        finalizeAckTracking(ackPayload, err);
+      }
+      else {
+        finalizeAckTracking(null, err);
+      }
+      return;
+    }
   }
+
+  if (message.ackRequired && (message.type === 'send' || message.type === 'broadcast')) {
+    const handlerAck = coerceAckResult(handlerResult);
+    const websocketDelivered = wsDeliveryCount > 0;
+    const ok = websocketDelivered || Boolean(handlerAck?.ok);
+
+    let status = websocketDelivered ? 'delivered.websocket' : 'unrouted';
+    if (handlerAck?.status) {
+      status = handlerAck.status;
+      if (websocketDelivered && handlerAck.ok === false) {
+        status = 'delivered.websocket';
+      }
+    }
+
+    const ackPayload = {
+      type: 'send-ack',
+      messageId: message.messageId || null,
+      ok,
+      status,
+      wsDeliveryCount,
+      handlerResult: handlerAck?.details || null,
+      timestamp: Date.now(),
+    };
+    sendJson(clientInfo.ws, ackPayload);
+    finalizeAckTracking(ackPayload);
+    return;
+  }
+
+  finalizeAckTracking(null);
 }
 
 /**
@@ -132,6 +308,8 @@ function handleMessage(clientId, rawData) {
  * @param {object} meta - Metadata (from, priority)
  */
 function sendToTarget(target, content, meta = {}) {
+  const targetStr = String(target);
+  const targetRole = targetStr.toLowerCase();
   const payload = JSON.stringify({
     type: 'message',
     from: meta.from || 'system',
@@ -142,7 +320,9 @@ function sendToTarget(target, content, meta = {}) {
 
   let sent = false;
   for (const [clientId, info] of clients) {
-    if (info.paneId === target || info.role === target) {
+    const paneMatch = info.paneId !== null && String(info.paneId) === targetStr;
+    const roleMatch = typeof info.role === 'string' && info.role.toLowerCase() === targetRole;
+    if (paneMatch || roleMatch) {
       if (info.ws.readyState === 1) { // WebSocket.OPEN
         info.ws.send(payload);
         sent = true;
@@ -223,6 +403,8 @@ function stop() {
       info.ws.close(1000, 'Server shutting down');
     }
     clients.clear();
+    recentMessageAcks.clear();
+    pendingMessageAcks.clear();
 
     wss.close(() => {
       log.info('WebSocket', 'Server stopped');
