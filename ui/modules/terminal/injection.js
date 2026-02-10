@@ -36,6 +36,8 @@ function createInjectionController(options = {}) {
     TYPING_GUARD_MS = 300,
     GEMINI_ENTER_DELAY_MS = 75,
     MAX_COMPACTION_DEFER_MS = 8000,
+    CLAUDE_CHUNK_SIZE = 192,
+    CLAUDE_CHUNK_YIELD_MS = 2,
   } = constants;
 
   // Track when compaction deferral started per pane (false positive safety valve)
@@ -524,10 +526,43 @@ function createInjectionController(options = {}) {
       // Continue anyway - text write may still work
     }
 
-    // Step 3: Write text to PTY (without \r)
+    // Step 3: Reset cursor + write text to PTY in chunks (without \r)
     try {
-      await window.hivemind.pty.write(id, text, createKernelMeta());
-      log.info(`doSendToPane ${id}`, 'Claude pane: PTY write text complete');
+      const normalizedText = String(text || '');
+      const first32 = normalizedText.slice(0, 32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+      const last32 = normalizedText.slice(-32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+      log.info(
+        `doSendToPane ${id}`,
+        `Claude pane: pre-PTY fingerprint textLen=${normalizedText.length} first32="${first32}" last32="${last32}"`
+      );
+
+      // Home key reset before first write to avoid non-zero cursor corruption on long payloads.
+      try {
+        await window.hivemind.pty.write(id, '\x1b[H', createKernelMeta());
+      } catch (homeErr) {
+        log.warn(`doSendToPane ${id}`, 'Claude pane: Home reset failed, continuing:', homeErr);
+      }
+
+      const chunkSize = Math.max(128, Math.min(256, Number(CLAUDE_CHUNK_SIZE) || 192));
+      const chunks = [];
+      for (let offset = 0; offset < normalizedText.length; offset += chunkSize) {
+        chunks.push(normalizedText.slice(offset, offset + chunkSize));
+      }
+      if (chunks.length === 0) chunks.push('');
+
+      for (let index = 0; index < chunks.length; index++) {
+        await window.hivemind.pty.write(id, chunks[index], createKernelMeta());
+        if (index < chunks.length - 1) {
+          const yieldMs = Math.max(0, Number(CLAUDE_CHUNK_YIELD_MS) || 0);
+          if (yieldMs > 0) {
+            await new Promise(resolve => setTimeout(resolve, yieldMs));
+          } else {
+            await Promise.resolve();
+          }
+        }
+      }
+
+      log.info(`doSendToPane ${id}`, `Claude pane: PTY write text complete (${chunks.length} chunk(s))`);
       bus.emit('inject.applied', {
         paneId: id,
         payload: { method: 'claude-pty', textLen: text.length },

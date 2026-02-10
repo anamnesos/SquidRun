@@ -25,6 +25,8 @@ describe('Terminal Injection', () => {
     BYPASS_CLEAR_DELAY_MS: 250,
     TYPING_GUARD_MS: 300,
     MAX_COMPACTION_DEFER_MS: 8000,
+    CLAUDE_CHUNK_SIZE: 192,
+    CLAUDE_CHUNK_YIELD_MS: 0,
   };
 
   // Mock objects
@@ -685,11 +687,14 @@ describe('Terminal Injection', () => {
       await controller.doSendToPane('1', 'test message\r', jest.fn());
 
       expect(mockPty.write).toHaveBeenCalledWith('1', '\x15', expect.any(Object)); // Clear line
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\x1b[H', expect.any(Object)); // Home reset
       expect(mockPty.write).toHaveBeenCalledWith('1', 'test message', expect.any(Object));
     });
 
     test('handles PTY write failure', async () => {
-      mockPty.write.mockRejectedValueOnce(undefined) // Clear-line succeeds
+      mockPty.write
+        .mockResolvedValueOnce(undefined) // Clear-line succeeds
+        .mockResolvedValueOnce(undefined) // Home reset succeeds
         .mockRejectedValueOnce(new Error('Write failed')); // Text write fails
       const onComplete = jest.fn();
 
@@ -700,16 +705,35 @@ describe('Terminal Injection', () => {
 
     test('handles PTY clear-line failure gracefully', async () => {
       mockPty.write.mockRejectedValueOnce(new Error('Clear failed'))
+        .mockResolvedValueOnce(undefined)
         .mockResolvedValueOnce(undefined);
 
       await controller.doSendToPane('1', 'test\r', jest.fn());
 
       // Should continue with text write
-      expect(mockPty.write).toHaveBeenCalledTimes(2);
+      expect(mockPty.write).toHaveBeenCalledTimes(3);
       expect(mockLog.warn).toHaveBeenCalledWith(
         expect.any(String),
         expect.stringContaining('PTY clear-line failed'),
         expect.any(Error)
+      );
+    });
+
+    test('chunks long Claude writes and logs pre-write fingerprint', async () => {
+      const longText = `${'A'.repeat(420)}\r`; // trailing \r removed before writes
+      await controller.doSendToPane('1', longText, jest.fn());
+
+      const payloadWrites = mockPty.write.mock.calls.map(call => call[1]);
+      expect(payloadWrites[0]).toBe('\x15'); // Ctrl+U
+      expect(payloadWrites[1]).toBe('\x1b[H'); // Home reset
+      expect(payloadWrites[2].length).toBe(192);
+      expect(payloadWrites[3].length).toBe(192);
+      expect(payloadWrites[4].length).toBe(36);
+      expect(payloadWrites[2] + payloadWrites[3] + payloadWrites[4]).toBe('A'.repeat(420));
+
+      expect(mockLog.info).toHaveBeenCalledWith(
+        expect.stringContaining('doSendToPane'),
+        expect.stringContaining('pre-PTY fingerprint textLen=420')
       );
     });
 
