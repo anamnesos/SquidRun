@@ -208,7 +208,7 @@ class HivemindApp {
     this.ctx.mainWindow = new BrowserWindow({
       width: 1400,
       height: 800,
-      icon: path.join(__dirname, '..', '..', 'assets', 'hivemind-icon.svg'),
+      icon: path.join(__dirname, '..', '..', 'assets', process.platform === 'win32' ? 'hivemind-icon.ico' : 'hivemind-icon.png'),
       backgroundColor: '#0a0a0f',
       webPreferences: {
         nodeIntegration: true,
