@@ -140,7 +140,99 @@ jest.mock('../modules/health-strip', () => ({
   destroy: jest.fn(),
 }));
 
-// We test event emissions on the bus directly since renderer.js wires them in DOMContentLoaded
+// Integration tests: MutationObserver callback → event bus (matches renderer.js production wiring pattern)
+// Uses a simulated MutationObserver since jest-environment-jsdom is not installed.
+describe('MutationObserver → event bus integration', () => {
+  let bus;
+
+  beforeEach(() => {
+    jest.resetModules();
+    bus = require('../modules/event-bus');
+    bus.reset();
+  });
+
+  afterEach(() => {
+    bus.reset();
+  });
+
+  // Simulate the exact callback renderer.js passes to MutationObserver
+  function makeOverlayCallback(classListContainsOpen) {
+    return (mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.attributeName === 'class') {
+          const isOpen = classListContainsOpen();
+          bus.emit(isOpen ? 'overlay.opened' : 'overlay.closed', {
+            paneId: 'system', payload: { overlay: 'settings' }, source: 'renderer.js',
+          });
+          bus.updateState('system', { overlay: { open: isOpen } });
+        }
+      }
+    };
+  }
+
+  test('class mutation with open=true emits overlay.opened and updates state', () => {
+    const handler = jest.fn();
+    bus.on('overlay.opened', handler);
+
+    const callback = makeOverlayCallback(() => true);
+    // Simulate what MutationObserver delivers when class attribute changes
+    callback([{ attributeName: 'class' }]);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0].type).toBe('overlay.opened');
+    expect(handler.mock.calls[0][0].payload.overlay).toBe('settings');
+    expect(bus.getState('system').overlay.open).toBe(true);
+  });
+
+  test('class mutation with open=false emits overlay.closed and updates state', () => {
+    bus.updateState('system', { overlay: { open: true } });
+    const handler = jest.fn();
+    bus.on('overlay.closed', handler);
+
+    const callback = makeOverlayCallback(() => false);
+    callback([{ attributeName: 'class' }]);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0][0].type).toBe('overlay.closed');
+    expect(bus.getState('system').overlay.open).toBe(false);
+  });
+
+  test('non-class attribute mutations are ignored', () => {
+    const openedHandler = jest.fn();
+    const closedHandler = jest.fn();
+    bus.on('overlay.opened', openedHandler);
+    bus.on('overlay.closed', closedHandler);
+
+    const callback = makeOverlayCallback(() => false);
+    // data-* attribute change should be filtered out
+    callback([{ attributeName: 'data-test' }]);
+
+    expect(openedHandler).not.toHaveBeenCalled();
+    expect(closedHandler).not.toHaveBeenCalled();
+  });
+
+  test('multiple mutations in single batch are all processed', () => {
+    let isOpen = false;
+    const handler = jest.fn();
+    bus.on('overlay.opened', handler);
+    bus.on('overlay.closed', handler);
+
+    const callback = makeOverlayCallback(() => isOpen);
+
+    // First mutation: closed
+    isOpen = false;
+    callback([{ attributeName: 'class' }]);
+    // Second mutation: opened
+    isOpen = true;
+    callback([{ attributeName: 'class' }]);
+
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler.mock.calls[0][0].type).toBe('overlay.closed');
+    expect(handler.mock.calls[1][0].type).toBe('overlay.opened');
+  });
+});
+
+// Direct bus emission tests (original suite)
 describe('renderer event bus wiring', () => {
   let bus;
 
