@@ -432,8 +432,9 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
     return { success: allSuccess, notified: targets, mode: 'sdk' };
   }
 
-  const notified = [];
-  if (agentRunning) { for (const paneId of targets) { if (agentRunning.get(paneId) === 'running') notified.push(paneId); } }
+  // Direct agent-to-agent messages must not be dropped based on runtime state.
+  // agentRunning can be stale during startup/reconnect and caused silent delivery loss.
+  const notified = [...targets];
   if (notified.length > 0) { metrics.recordSent('pty', 'direct', notified); sendStaggered(notified, fullMessage); notified.forEach(p => metrics.recordDelivered('pty', 'direct', p)); }
   return { success: true, notified, mode: 'pty' };
 }
