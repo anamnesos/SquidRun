@@ -35,7 +35,7 @@ function createInjectionController(options = {}) {
     BYPASS_CLEAR_DELAY_MS = DEFAULT_BYPASS_CLEAR_DELAY_MS,
     TYPING_GUARD_MS = 300,
     GEMINI_ENTER_DELAY_MS = 75,
-    MAX_COMPACTION_DEFER_MS = 30000,
+    MAX_COMPACTION_DEFER_MS = 8000,
   } = constants;
 
   // Track when compaction deferral started per pane (false positive safety valve)
@@ -197,7 +197,7 @@ function createInjectionController(options = {}) {
     // This closes the Item 20 failure mode where queued messages were submitted
     // into compaction output and appeared delivered despite being swallowed.
     // Safety valve: if gate has been stuck for > MAX_COMPACTION_DEFER_MS, force-clear
-    // as a false positive (real compaction lasts 5-15s, never 30s+).
+    // as a false positive (real compaction lasts 5-15s, never indefinitely).
     const paneState = (typeof bus.getState === 'function') ? bus.getState(id) : null;
     if (!bypassesLock && paneState?.gates?.compacting === 'confirmed') {
       if (!compactionDeferStart.has(id)) {

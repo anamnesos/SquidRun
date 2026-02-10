@@ -243,6 +243,24 @@ describe('compaction-detector', () => {
       expect(detector.getState('1').state).toBe('confirmed');
     });
 
+    test('does not confirm from burst_no_prompt + no_causation alone', () => {
+      // Build suspected state without lexical/structured evidence.
+      buildBurstSignal('1', 6);
+      jest.advanceTimersByTime(300);
+      detector.processChunk('1', 'streaming output without lexical markers\n');
+      expect(detector.getState('1').state).toBe('suspected');
+      expect(detector.getState('1').activeSignals.has('lexical')).toBe(false);
+
+      // Rapid suspect hits should NOT promote without lexical evidence.
+      jest.advanceTimersByTime(100);
+      detector.processChunk('1', 'streaming output without lexical markers\n');
+      jest.advanceTimersByTime(100);
+      detector.processChunk('1', 'streaming output without lexical markers\n');
+
+      expect(detector.getState('1').state).toBe('suspected');
+      expect(bus.getState('1').gates.compacting).toBe('suspected');
+    });
+
     test('emits cli.compaction.started event', () => {
       const handler = jest.fn();
       bus.on('cli.compaction.started', handler);
@@ -510,6 +528,52 @@ describe('compaction-detector', () => {
       jest.advanceTimersByTime(500);
       detector.processChunk('1', neutralChunk());
       expect(detector.getState('1').state).toBe('cooldown');
+    });
+
+    test('ongoing chunks keep confirmed state active past inactivity window', () => {
+      // Reach confirmed
+      detector.processChunk('1', lexicalChunk());
+      jest.advanceTimersByTime(300);
+      detector.processChunk('1', lexicalChunk());
+      jest.advanceTimersByTime(100);
+      detector.processChunk('1', lexicalChunk());
+      jest.advanceTimersByTime(100);
+      detector.processChunk('1', lexicalChunk());
+      expect(detector.getState('1').state).toBe('confirmed');
+
+      // Continue receiving non-lexical output; should NOT decay while stream is active.
+      for (let i = 0; i < 7; i++) {
+        jest.advanceTimersByTime(1000);
+        detector.processChunk('1', 'streaming output still in progress\n');
+        expect(detector.getState('1').state).toBe('confirmed');
+      }
+
+      expect(bus.getState('1').gates.compacting).toBe('confirmed');
+    });
+
+    test('inactivity timer resets confirmed state to none', () => {
+      const ended = jest.fn();
+      bus.on('cli.compaction.ended', ended);
+
+      // Reach confirmed
+      detector.processChunk('1', lexicalChunk());
+      jest.advanceTimersByTime(300);
+      detector.processChunk('1', lexicalChunk());
+      jest.advanceTimersByTime(100);
+      detector.processChunk('1', lexicalChunk());
+      jest.advanceTimersByTime(100);
+      detector.processChunk('1', lexicalChunk());
+      expect(detector.getState('1').state).toBe('confirmed');
+      expect(bus.getState('1').gates.compacting).toBe('confirmed');
+
+      // No new chunks: inactivity timer should force reset.
+      jest.advanceTimersByTime(detector.EVIDENCE_DECAY_RESET_MS + 10);
+
+      expect(detector.getState('1').state).toBe('none');
+      expect(bus.getState('1').gates.compacting).toBe('none');
+      expect(ended).toHaveBeenCalled();
+      const lastCall = ended.mock.calls[ended.mock.calls.length - 1][0];
+      expect(lastCall.payload.endReason).toBe('chunk_inactivity_timeout');
     });
   });
 
