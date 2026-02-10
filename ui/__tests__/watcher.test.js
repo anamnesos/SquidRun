@@ -214,6 +214,37 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
+  test('trigger files wait for stable size before routing', () => {
+    jest.useFakeTimers();
+    const { watcher, tempDir, triggers } = setupWatcher();
+    const triggerPath = path.join(tempDir, 'triggers');
+    fs.mkdirSync(triggerPath, { recursive: true });
+    const triggerFile = path.join(triggerPath, 'lead.txt');
+    fs.writeFileSync(triggerFile, 'Ping', 'utf-8');
+
+    const realStatSync = fs.statSync.bind(fs);
+    const resolvedTriggerFile = path.resolve(triggerFile);
+    let observedCount = 0;
+    const statSpy = jest.spyOn(fs, 'statSync').mockImplementation((filePath) => {
+      if (path.resolve(filePath) === resolvedTriggerFile) {
+        observedCount += 1;
+        if (observedCount === 1) return { size: 2 };
+        if (observedCount === 2) return { size: 4 };
+        return { size: 4 };
+      }
+      return realStatSync(filePath);
+    });
+
+    watcher.handleFileChange(triggerFile);
+    jest.advanceTimersByTime(350); // 200ms debounce + 2x trigger retry (50ms each)
+
+    expect(triggers.handleTriggerFile).toHaveBeenCalledWith(triggerFile, 'lead.txt');
+    expect(observedCount).toBeGreaterThanOrEqual(3);
+
+    statSpy.mockRestore();
+    cleanupDir(tempDir);
+  });
+
   test('claimAgent prevents duplicate claims and clearClaims resets', () => {
     const { watcher, tempDir, mainWindow } = setupWatcher();
 

@@ -193,11 +193,39 @@ function writeTriggerFallback(targetInput, content) {
 
   const triggersDir = path.join(WORKSPACE_PATH, 'triggers');
   const triggerPath = path.join(triggersDir, `${roleName}.txt`);
+  const tempPath = path.join(
+    triggersDir,
+    `.${roleName}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
+  );
   try {
     fs.mkdirSync(triggersDir, { recursive: true });
-    fs.writeFileSync(triggerPath, content, 'utf8');
+    fs.writeFileSync(tempPath, content, 'utf8');
+    try {
+      fs.renameSync(tempPath, triggerPath);
+    } catch (renameErr) {
+      // Windows rename does not replace existing files; unlink then retry.
+      if (renameErr.code === 'EEXIST' || renameErr.code === 'EPERM' || renameErr.code === 'EACCES') {
+        try {
+          fs.unlinkSync(triggerPath);
+        } catch (unlinkErr) {
+          if (unlinkErr.code !== 'ENOENT') {
+            throw unlinkErr;
+          }
+        }
+        fs.renameSync(tempPath, triggerPath);
+      } else {
+        throw renameErr;
+      }
+    }
     return { ok: true, role: roleName, path: triggerPath };
   } catch (err) {
+    try {
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+    } catch {
+      // Best-effort cleanup only.
+    }
     return { ok: false, error: err.message };
   }
 }
@@ -221,6 +249,38 @@ function sleep(ms) {
 
 function getBackoffDelayMs(baseTimeoutMs, attempt) {
   return baseTimeoutMs * Math.pow(2, attempt - 1);
+}
+
+async function emitCommsEventBestEffort(eventType, payload = {}) {
+  const socketUrl = `ws://127.0.0.1:${PORT}`;
+  let ws = null;
+  try {
+    ws = new WebSocket(socketUrl);
+    await waitForMatch(ws, (msg) => msg.type === 'welcome', DEFAULT_CONNECT_TIMEOUT_MS, 'Connection timeout');
+
+    ws.send(JSON.stringify({ type: 'register', role }));
+    await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
+
+    ws.send(JSON.stringify({
+      type: 'comms-event',
+      eventType,
+      payload,
+    }));
+
+    // Give the socket a short tick to flush before closing.
+    await sleep(25);
+    await closeSocket(ws);
+    return true;
+  } catch (err) {
+    if (ws) {
+      try {
+        await closeSocket(ws);
+      } catch {
+        // ignore close failures
+      }
+    }
+    return false;
+  }
 }
 
 async function sendViaWebSocketWithAck() {
@@ -262,6 +322,7 @@ async function sendViaWebSocketWithAck() {
         await closeSocket(ws);
         return {
           ok: true,
+          messageId,
           ack,
           attemptsUsed: attempt,
         };
@@ -287,6 +348,7 @@ async function sendViaWebSocketWithAck() {
   await closeSocket(ws);
   return {
     ok: false,
+    messageId,
     ack: lastAck,
     error: lastError ? lastError.message : null,
     attemptsUsed: attempts,
@@ -314,6 +376,17 @@ async function main() {
       const reason = sendResult?.ack
         ? `ack=${sendResult.ack.status}`
         : (sendResult?.error || wsError?.message || 'no_ack');
+      await emitCommsEventBestEffort('comms.delivery.failed', {
+        messageId: sendResult?.messageId || null,
+        target,
+        role,
+        reason,
+        attemptsUsed: sendResult?.attemptsUsed ?? (retries + 1),
+        maxAttempts: retries + 1,
+        fallbackUsed: true,
+        fallbackPath: fallbackResult.path,
+        ts: Date.now(),
+      });
       console.warn(`WebSocket send unverified (${reason}). Wrote trigger fallback: ${fallbackResult.path}`);
       process.exit(0);
     }
