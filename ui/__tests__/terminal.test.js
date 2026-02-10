@@ -500,24 +500,35 @@ describe('terminal.js module', () => {
   });
 
   describe('handleResize', () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
     test('should fit and resize all terminals', () => {
-      const mockFitAddon = { fit: jest.fn() };
+      jest.useFakeTimers();
       const mockTerminalObj = { cols: 80, rows: 24 };
+      const mockFitAddon = { fit: jest.fn(() => { mockTerminalObj.cols = 120; mockTerminalObj.rows = 40; }) };
 
       terminal.fitAddons.set('1', mockFitAddon);
       terminal.terminals.set('1', mockTerminalObj);
 
       terminal.handleResize();
+      jest.advanceTimersByTime(150);
 
       expect(mockFitAddon.fit).toHaveBeenCalled();
-      expect(mockHivemind.pty.resize).toHaveBeenCalledWith('1', 80, 24);
+      expect(mockHivemind.pty.resize).toHaveBeenCalledWith('1', 120, 40);
     });
 
     test('should handle resize errors gracefully', () => {
+      jest.useFakeTimers();
       const mockFitAddon = { fit: jest.fn().mockImplementation(() => { throw new Error('fit error'); }) };
       terminal.fitAddons.set('1', mockFitAddon);
+      terminal.terminals.set('1', { cols: 80, rows: 24 });
 
-      expect(() => terminal.handleResize()).not.toThrow();
+      terminal.handleResize();
+      jest.advanceTimersByTime(150);
+
+      // Should not throw — errors are caught internally
     });
   });
 

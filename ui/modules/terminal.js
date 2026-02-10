@@ -1427,7 +1427,7 @@ async function freshStartAll() {
 const resizeObservers = new Map();    // paneId -> ResizeObserver
 const resizeDebounceTimers = new Map(); // paneId -> timer ID
 
-const RESIZE_OBSERVER_DEBOUNCE_MS = 50;
+const RESIZE_OBSERVER_DEBOUNCE_MS = 150;
 
 function setupResizeObserver(paneId) {
   cleanupResizeObserver(paneId);
@@ -1445,9 +1445,9 @@ function setupResizeObserver(paneId) {
     const existingTimer = resizeDebounceTimers.get(paneId);
     if (existingTimer) clearTimeout(existingTimer);
 
-    // Focused pane resizes immediately, background panes defer 200ms
+    // Focused pane gets shorter debounce, background panes defer longer
     const isFocused = (paneId === focusedPane);
-    const delay = isFocused ? RESIZE_OBSERVER_DEBOUNCE_MS : 200;
+    const delay = isFocused ? RESIZE_OBSERVER_DEBOUNCE_MS : 300;
 
     resizeDebounceTimers.set(paneId, setTimeout(() => {
       resizeDebounceTimers.delete(paneId);
@@ -1473,21 +1473,26 @@ function cleanupResizeObserver(paneId) {
 }
 
 // Explicit resize all — kept for programmatic calls (e.g., right panel toggle)
+// Staggers pane resizes by 50ms to avoid 3 simultaneous WebGL renders
 function handleResize() {
+  let i = 0;
   for (const [paneId] of fitAddons) {
-    resizeSinglePane(paneId);
+    setTimeout(() => resizeSinglePane(paneId), i * 50);
+    i++;
   }
 }
 
 function resizeSinglePane(paneId) {
   const fitAddon = fitAddons.get(paneId);
-  if (!fitAddon) return;
+  const terminal = terminals.get(paneId);
+  if (!fitAddon || !terminal) return;
   try {
+    const prevCols = terminal.cols;
+    const prevRows = terminal.rows;
     fitAddon.fit();
-    const terminal = terminals.get(paneId);
-    if (terminal) {
-      window.hivemind.pty.resize(paneId, terminal.cols, terminal.rows);
-    }
+    // Skip pty.resize IPC if geometry hasn't changed (avoids flooding during drag-resize)
+    if (terminal.cols === prevCols && terminal.rows === prevRows) return;
+    window.hivemind.pty.resize(paneId, terminal.cols, terminal.rows);
   } catch (err) {
     log.error(`Terminal ${paneId}`, 'Error resizing pane', err);
   }
