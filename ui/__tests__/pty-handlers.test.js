@@ -121,6 +121,15 @@ describe('PTY Handlers', () => {
       await harness.invoke('pty-write', '1', 'test data');
       // Should not throw
     });
+
+    test('passes optional kernelMeta to daemon client', async () => {
+      ctx.daemonClient.connected = true;
+      const kernelMeta = { eventId: 'evt-1', correlationId: 'corr-1', source: 'injection.js' };
+
+      await harness.invoke('pty-write', '1', 'test data', kernelMeta);
+
+      expect(ctx.daemonClient.write).toHaveBeenCalledWith('1', 'test data', kernelMeta);
+    });
   });
 
   describe('interrupt-pane', () => {
@@ -232,6 +241,15 @@ describe('PTY Handlers', () => {
       await harness.invoke('pty-resize', '1', 120, 40);
 
       expect(ctx.daemonClient.resize).not.toHaveBeenCalled();
+    });
+
+    test('passes optional kernelMeta to daemon resize', async () => {
+      ctx.daemonClient.connected = true;
+      const kernelMeta = { correlationId: 'corr-resize', source: 'renderer.js' };
+
+      await harness.invoke('pty-resize', '1', 120, 40, kernelMeta);
+
+      expect(ctx.daemonClient.resize).toHaveBeenCalledWith('1', 120, 40, kernelMeta);
     });
   });
 

@@ -239,6 +239,16 @@ class DaemonClient extends EventEmitter {
           this.emit('codex-activity', msg.paneId, msg.state, msg.detail);
           break;
 
+        // Event Kernel: daemon-side event envelope
+        case 'kernel-event':
+          this.emit('kernel-event', msg.eventData || null);
+          break;
+
+        // Event Kernel: daemon-side diagnostics
+        case 'kernel-stats':
+          this.emit('kernel-stats', msg.stats || {});
+          break;
+
         default:
           log.warn('DaemonClient', 'Unknown event', msg.event);
       }
@@ -332,12 +342,14 @@ class DaemonClient extends EventEmitter {
    * Write data to a terminal
    * @param {string} paneId - The pane identifier
    * @param {string} data - Data to write
+   * @param {Object|null} kernelMeta - Optional event-kernel metadata
    */
-  write(paneId, data) {
+  write(paneId, data, kernelMeta = null) {
     return this._send({
       action: 'write',
       paneId,
       data,
+      kernelMeta: kernelMeta || undefined,
     });
   }
 
@@ -381,13 +393,15 @@ class DaemonClient extends EventEmitter {
    * @param {string} paneId - The pane identifier
    * @param {number} cols - Number of columns
    * @param {number} rows - Number of rows
+   * @param {Object|null} kernelMeta - Optional event-kernel metadata
    */
-  resize(paneId, cols, rows) {
+  resize(paneId, cols, rows, kernelMeta = null) {
     return this._send({
       action: 'resize',
       paneId,
       cols,
       rows,
+      kernelMeta: kernelMeta || undefined,
     });
   }
 

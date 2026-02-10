@@ -14,6 +14,7 @@ const { createBackupManager } = require('../backup-manager');
 const { createRecoveryManager } = require('../recovery-manager');
 const { createExternalNotifier } = require('../external-notifications');
 const { getSDKBridge } = require('../sdk-bridge');
+const { createKernelBridge } = require('./kernel-bridge');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 
 // Import sub-modules
@@ -37,6 +38,7 @@ class HivemindApp {
     this.usage = managers.usage;
     this.cliIdentity = managers.cliIdentity;
     this.contextInjection = managers.contextInjection;
+    this.kernelBridge = createKernelBridge(() => this.ctx.mainWindow);
 
     this.cliIdentityForwarderRegistered = false;
     this.triggerAckForwarderRegistered = false;
@@ -407,6 +409,11 @@ class HivemindApp {
               terminals,
               sdkMode: this.ctx.currentSettings.sdkMode || false
             });
+            this.kernelBridge.emitBridgeEvent('bridge.connected', {
+              transport: 'daemon-client',
+              terminalCount: terminals.length,
+              resumed: true,
+            });
           }
         }
       } catch (err) {
@@ -626,12 +633,47 @@ class HivemindApp {
           sdkMode: this.ctx.currentSettings.sdkMode || false
         });
       }
+
+      this.kernelBridge.emitBridgeEvent('bridge.connected', {
+        transport: 'daemon-client',
+        terminalCount: terminals?.length || 0,
+      });
     });
 
-    this.ctx.daemonClient.on('disconnected', () => log.warn('Daemon', 'Disconnected'));
+    this.ctx.daemonClient.on('disconnected', () => {
+      log.warn('Daemon', 'Disconnected');
+      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+        this.ctx.mainWindow.webContents.send('daemon-disconnected');
+      }
+      this.kernelBridge.emitBridgeEvent('bridge.disconnected', {
+        transport: 'daemon-client',
+      });
+    });
+
     this.ctx.daemonClient.on('reconnected', () => {
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send('daemon-reconnected');
+      }
+      this.kernelBridge.emitBridgeEvent('bridge.connected', {
+        transport: 'daemon-client',
+        resumed: true,
+      });
+    });
+
+    this.ctx.daemonClient.on('kernel-event', (eventData) => {
+      this.kernelBridge.forwardDaemonEvent(eventData);
+    });
+
+    this.ctx.daemonClient.on('kernel-stats', (stats) => {
+      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+        try {
+          this.ctx.mainWindow.webContents.send('kernel:bridge-stats', {
+            source: 'daemon',
+            ...stats,
+          });
+        } catch (err) {
+          log.warn('KernelBridge', `Failed forwarding daemon kernel stats: ${err.message}`);
+        }
       }
     });
 
