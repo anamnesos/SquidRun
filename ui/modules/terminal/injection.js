@@ -4,7 +4,10 @@
  */
 
 const log = require('../logger');
+const bus = require('../event-bus');
 const { BYPASS_CLEAR_DELAY_MS: DEFAULT_BYPASS_CLEAR_DELAY_MS } = require('../constants');
+
+const EVENT_SOURCE = 'injection.js';
 
 function createInjectionController(options = {}) {
   const {
@@ -218,6 +221,24 @@ function createInjectionController(options = {}) {
     const item = queue.shift();
     const queuedMessage = typeof item === 'string' ? item : item.message;
     const onComplete = item && typeof item === 'object' ? item.onComplete : null;
+    const itemCorrId = (item && typeof item === 'object' && item.correlationId) || bus.getCurrentCorrelation();
+
+    const mode = isCodex ? 'codex-exec' : (isGemini ? 'gemini-pty' : 'claude-pty');
+    bus.emit('inject.mode.selected', {
+      paneId: id,
+      payload: { mode },
+      correlationId: itemCorrId,
+      source: EVENT_SOURCE,
+    });
+
+    bus.emit('queue.depth.changed', {
+      paneId: id,
+      payload: { depth: queue.length },
+      correlationId: itemCorrId,
+      source: EVENT_SOURCE,
+    });
+
+    bus.updateState(id, { activity: 'injecting' });
 
     if (bypassesLock) {
       log.debug(`Terminal ${paneId}`, `${isCodex ? 'Codex' : 'Gemini'} pane: immediate send`);
@@ -230,6 +251,7 @@ function createInjectionController(options = {}) {
       if (!bypassesLock) {
         setInjectionInFlight(false);
       }
+      bus.updateState(id, { activity: 'idle' });
       if (typeof onComplete === 'function') {
         try {
           onComplete(result);
@@ -240,13 +262,13 @@ function createInjectionController(options = {}) {
       if (queue.length > 0) {
         setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
       }
-    });
+    }, itemCorrId);
   }
 
   // Actually send message to pane (internal - use sendToPane for idle detection)
   // Triggers actual DOM keyboard events on xterm textarea with bypass marker
   // Includes diagnostic logging and focus steal prevention (save/restore user focus)
-  async function doSendToPane(paneId, message, onComplete) {
+  async function doSendToPane(paneId, message, onComplete, correlationId = null) {
     let completed = false;
     const finish = (result) => {
       if (completed) return;
@@ -264,6 +286,11 @@ function createInjectionController(options = {}) {
     let safetyTimerId = setTimeout(() => {
       // Timeout doesn't mean failure - message may still be delivered
       // Return success:true so delivery ack is sent, but mark as unverified
+      bus.emit('inject.timeout', {
+        paneId: id,
+        payload: { timeoutMs: INJECTION_LOCK_TIMEOUT_MS },
+        source: EVENT_SOURCE,
+      });
       finish({ success: true, verified: false, reason: 'timeout' });
     }, INJECTION_LOCK_TIMEOUT_MS);
     const finishWithClear = (result) => {
@@ -274,17 +301,47 @@ function createInjectionController(options = {}) {
     const text = message.replace(/\r$/, '');
     const id = String(paneId);
     const isCodex = isCodexPane(id);
+    const createKernelMeta = () => ({
+      eventId: `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      correlationId: correlationId || bus.getCurrentCorrelation() || undefined,
+      source: EVENT_SOURCE,
+    });
 
     // Codex exec mode: bypass PTY/textarea injection
     if (isCodex) {
+      const corrId = bus.getCurrentCorrelation();
+      bus.emit('inject.transform.applied', {
+        paneId: id,
+        payload: { transform: 'codex-exec-prompt' },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
       const prompt = buildCodexExecPrompt(id, text);
       // Echo user input to xterm so it's visible
       const terminal = terminals.get(id);
       if (terminal) {
         terminal.write(`\r\n\x1b[36m> ${text}\x1b[0m\r\n`);
       }
+      bus.emit('inject.applied', {
+        paneId: id,
+        payload: { method: 'codex-exec', textLen: text.length },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
+      bus.emit('inject.submit.sent', {
+        paneId: id,
+        payload: { method: 'codex-exec' },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
       window.hivemind.pty.codexExec(id, prompt).catch(err => {
         log.error(`doSendToPane ${id}`, 'Codex exec failed:', err);
+        bus.emit('inject.failed', {
+          paneId: id,
+          payload: { reason: 'codex_exec_error', error: String(err) },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
       });
       updatePaneStatus(id, 'Working');
       lastTypedTime[id] = Date.now();
@@ -302,11 +359,12 @@ function createInjectionController(options = {}) {
     // regardless, so injection.js owns the submit decision for all pane types.
     const isGemini = isGeminiPane(id);
     if (isGemini) {
+      const corrId = bus.getCurrentCorrelation();
       log.info(`doSendToPane ${id}`, 'Gemini pane: PTY text + Enter');
 
       // Clear any stuck input first (Ctrl+U)
       try {
-        await window.hivemind.pty.write(id, '\x15');
+        await window.hivemind.pty.write(id, '\x15', createKernelMeta());
         log.debug(`doSendToPane ${id}`, 'Gemini pane: cleared input line (Ctrl+U)');
       } catch (err) {
         log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
@@ -315,28 +373,64 @@ function createInjectionController(options = {}) {
       // Replace embedded \r/\n with spaces to prevent readline partial execution,
       // then strip trailing whitespace.
       const sanitizedText = text.replace(/[\r\n]/g, ' ').trimEnd();
+      if (sanitizedText !== text.trimEnd()) {
+        bus.emit('inject.transform.applied', {
+          paneId: id,
+          payload: { transform: 'gemini-sanitize', originalLen: text.length, sanitizedLen: sanitizedText.length },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
+      }
 
       // Write sanitized text to PTY
       try {
-        await window.hivemind.pty.write(id, sanitizedText);
+        await window.hivemind.pty.write(id, sanitizedText, createKernelMeta());
         log.info(`doSendToPane ${id}`, `Gemini pane: PTY text write complete (${sanitizedText.length} chars)`);
+        bus.emit('inject.applied', {
+          paneId: id,
+          payload: { method: 'gemini-pty', textLen: sanitizedText.length },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
       } catch (err) {
         log.error(`doSendToPane ${id}`, 'Gemini PTY write failed:', err);
+        bus.emit('inject.failed', {
+          paneId: id,
+          payload: { reason: 'pty_write_failed', error: String(err) },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
         finishWithClear({ success: false, reason: 'pty_write_failed' });
         return;
       }
 
       // Delay before Enter so Gemini readline can process the text
-      // Without this, text and Enter arrive in the same millisecond and readline
-      // submits before the text is fully ingested, causing intermittent failures
       await new Promise(resolve => setTimeout(resolve, GEMINI_ENTER_DELAY_MS));
 
       // Always send Enter via PTY \r — Gemini readline needs it to submit
+      bus.emit('inject.submit.requested', {
+        paneId: id,
+        payload: { method: 'gemini-pty-enter' },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
       try {
-        await window.hivemind.pty.write(id, '\r');
+        await window.hivemind.pty.write(id, '\r', createKernelMeta());
         log.info(`doSendToPane ${id}`, 'Gemini pane: PTY Enter sent');
+        bus.emit('inject.submit.sent', {
+          paneId: id,
+          payload: { method: 'gemini-pty-enter' },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
       } catch (err) {
         log.error(`doSendToPane ${id}`, 'Gemini PTY Enter failed:', err);
+        bus.emit('inject.failed', {
+          paneId: id,
+          payload: { reason: 'pty_enter_failed', error: String(err) },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
         finishWithClear({ success: false, reason: 'pty_enter_failed' });
         return;
       }
@@ -350,12 +444,19 @@ function createInjectionController(options = {}) {
     // CLAUDE PATH: PTY write for text + sendTrustedEnter for Enter
     // PTY \r does NOT auto-submit in Claude Code's ink TUI — must use native
     // Electron keyboard events via sendTrustedEnter. Enter is always sent.
+    const corrId = bus.getCurrentCorrelation();
     const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
     let textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
 
     // Guard: Skip if textarea not found (prevents Enter going to wrong element)
     if (!textarea) {
       log.warn(`doSendToPane ${id}`, 'Claude pane: textarea not found, skipping injection');
+      bus.emit('inject.failed', {
+        paneId: id,
+        payload: { reason: 'missing_textarea' },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
       finishWithClear({ success: false, reason: 'missing_textarea' });
       return;
     }
@@ -388,7 +489,7 @@ function createInjectionController(options = {}) {
     // Ctrl+U (0x15) clears the current input line - prevents accumulation if previous Enter failed
     // This is harmless if line is already empty
     try {
-      await window.hivemind.pty.write(id, '\x15');
+      await window.hivemind.pty.write(id, '\x15', createKernelMeta());
       log.info(`doSendToPane ${id}`, 'Claude pane: cleared input line (Ctrl+U)');
     } catch (err) {
       log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
@@ -397,10 +498,22 @@ function createInjectionController(options = {}) {
 
     // Step 3: Write text to PTY (without \r)
     try {
-      await window.hivemind.pty.write(id, text);
+      await window.hivemind.pty.write(id, text, createKernelMeta());
       log.info(`doSendToPane ${id}`, 'Claude pane: PTY write text complete');
+      bus.emit('inject.applied', {
+        paneId: id,
+        payload: { method: 'claude-pty', textLen: text.length },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
     } catch (err) {
       log.error(`doSendToPane ${id}`, 'PTY write failed:', err);
+      bus.emit('inject.failed', {
+        paneId: id,
+        payload: { reason: 'pty_write_failed', error: String(err) },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
       finishWithClear({ success: false, reason: 'pty_write_failed' });
       return;
     }
@@ -452,6 +565,12 @@ function createInjectionController(options = {}) {
       }
 
       // Send Enter
+      bus.emit('inject.submit.requested', {
+        paneId: id,
+        payload: { method: 'sendTrustedEnter' },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
       const enterResult = await sendEnterToPane(id);
 
       // Restore focus immediately after Enter (no verification loop)
@@ -459,11 +578,23 @@ function createInjectionController(options = {}) {
 
       if (!enterResult.success) {
         log.error(`doSendToPane ${id}`, 'Enter send failed');
+        bus.emit('inject.failed', {
+          paneId: id,
+          payload: { reason: 'enter_failed', method: enterResult.method },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
         markPotentiallyStuck(id);
         finishWithClear({ success: false, reason: 'enter_failed' });
         return;
       }
 
+      bus.emit('inject.submit.sent', {
+        paneId: id,
+        payload: { method: enterResult.method },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
       log.info(`doSendToPane ${id}`, `Claude pane: Enter sent via ${enterResult.method}`);
       lastTypedTime[id] = Date.now();
       finishWithClear({ success: true });
@@ -474,6 +605,14 @@ function createInjectionController(options = {}) {
   // options.priority = true puts message at FRONT of queue (for user messages)
   function sendToPane(paneId, message, options = {}) {
     const id = String(paneId);
+    const corrId = bus.startCorrelation();
+
+    bus.emit('inject.requested', {
+      paneId: id,
+      payload: { priority: options.priority || false, messageLen: message.length },
+      correlationId: corrId,
+      source: EVENT_SOURCE,
+    });
 
     if (!messageQueue[id]) {
       messageQueue[id] = [];
@@ -485,6 +624,7 @@ function createInjectionController(options = {}) {
       onComplete: options.onComplete,
       priority: options.priority || false,
       immediate: options.immediate || false,
+      correlationId: corrId,
     };
 
     // User messages (priority) go to front of queue, agent messages go to back
@@ -494,6 +634,19 @@ function createInjectionController(options = {}) {
     } else {
       messageQueue[id].push(queueItem);
     }
+
+    bus.emit('inject.queued', {
+      paneId: id,
+      payload: { depth: messageQueue[id].length, priority: queueItem.priority },
+      correlationId: corrId,
+      source: EVENT_SOURCE,
+    });
+    bus.emit('queue.depth.changed', {
+      paneId: id,
+      payload: { depth: messageQueue[id].length },
+      correlationId: corrId,
+      source: EVENT_SOURCE,
+    });
 
     const reason = userIsTyping()
       ? 'user typing'

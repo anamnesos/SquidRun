@@ -594,9 +594,9 @@ describe('Terminal Injection', () => {
       await promise;
 
       // Gemini uses PTY: clear, sanitized text, then Enter via \r
-      expect(mockPty.write).toHaveBeenCalledWith('1', '\x15'); // Clear line
-      expect(mockPty.write).toHaveBeenCalledWith('1', 'test command'); // Sanitized text (trailing \r stripped)
-      expect(mockPty.write).toHaveBeenCalledWith('1', '\r'); // Enter sent via PTY
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\x15', expect.any(Object)); // Clear line
+      expect(mockPty.write).toHaveBeenCalledWith('1', 'test command', expect.any(Object)); // Sanitized text (trailing \r stripped)
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object)); // Enter sent via PTY
       expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled(); // No DOM events for Gemini
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
       expect(onComplete).toHaveBeenCalledWith({ success: true });
@@ -628,9 +628,9 @@ describe('Terminal Injection', () => {
       await promise;
 
       // Gemini always sends Enter unconditionally (same as Claude's shouldSendEnter)
-      expect(mockPty.write).toHaveBeenCalledWith('1', '\x15'); // Clear line
-      expect(mockPty.write).toHaveBeenCalledWith('1', 'partial text'); // Text
-      expect(mockPty.write).toHaveBeenCalledWith('1', '\r'); // Enter always sent
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\x15', expect.any(Object)); // Clear line
+      expect(mockPty.write).toHaveBeenCalledWith('1', 'partial text', expect.any(Object)); // Text
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object)); // Enter always sent
       expect(mockPty.write).toHaveBeenCalledTimes(3); // Clear + text + Enter
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
@@ -638,8 +638,8 @@ describe('Terminal Injection', () => {
     test('writes text to PTY', async () => {
       await controller.doSendToPane('1', 'test message\r', jest.fn());
 
-      expect(mockPty.write).toHaveBeenCalledWith('1', '\x15'); // Clear line
-      expect(mockPty.write).toHaveBeenCalledWith('1', 'test message');
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\x15', expect.any(Object)); // Clear line
+      expect(mockPty.write).toHaveBeenCalledWith('1', 'test message', expect.any(Object));
     });
 
     test('handles PTY write failure', async () => {
