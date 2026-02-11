@@ -121,6 +121,7 @@ global.ResizeObserver = class ResizeObserver {
 };
 
 const terminal = require('../modules/terminal');
+const { Terminal } = require('@xterm/xterm');
 
 describe('terminal.js module', () => {
   beforeEach(() => {
@@ -774,6 +775,17 @@ describe('terminal.js module', () => {
       expect(terminal.terminals.has('1')).toBe(true);
       expect(terminal.fitAddons.has('1')).toBe(true);
     });
+
+    test('should enforce xterm scrollback cap in constructor options', async () => {
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+
+      await terminal.initTerminal('1');
+
+      expect(Terminal).toHaveBeenCalledWith(expect.objectContaining({ scrollback: 5000 }));
+    });
   });
 
   describe('reattachTerminal', () => {
@@ -806,6 +818,28 @@ describe('terminal.js module', () => {
       await terminal.reattachTerminal('1', 'scrollback content');
 
       expect(terminal.terminals.has('1')).toBe(true);
+    });
+
+    test('should trim restored scrollback to xterm cap lines', async () => {
+      terminal.terminals.delete('99');
+      const mockContainer = {
+        addEventListener: jest.fn(),
+      };
+      mockDocument.getElementById.mockReturnValue(mockContainer);
+      const longScrollback = Array.from({ length: 6000 }, (_, i) => `line-${i + 1}`).join('\n');
+
+      await terminal.reattachTerminal('99', longScrollback);
+
+      const terminalInstance = terminal.terminals.get('99');
+      const writeCall = terminalInstance.write.mock.calls.find(
+        (args) => typeof args[0] === 'string' && args[0].includes('line-'),
+      );
+      expect(writeCall).toBeDefined();
+      const restored = writeCall[0];
+      expect(restored).toContain('line-6000');
+      expect(restored.startsWith('line-1001')).toBe(true);
+      expect(restored).not.toContain('line-1000\n');
+      expect(restored.split('\n')).toHaveLength(5000);
     });
   });
 
