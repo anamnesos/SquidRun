@@ -197,6 +197,59 @@ CREATE INDEX IF NOT EXISTS idx_verdicts_incident_version
   ON ledger_verdicts(incident_id, version DESC);
 `;
 
+const SCHEMA_V3_SQL = `
+CREATE TABLE IF NOT EXISTS ledger_decisions (
+  decision_id TEXT PRIMARY KEY,
+  session_id TEXT,
+  category TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  author TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  superseded_by TEXT,
+  incident_id TEXT,
+  tags_json TEXT DEFAULT '[]',
+  meta_json TEXT DEFAULT '{}',
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_decisions_category_status
+  ON ledger_decisions(category, status, updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_decisions_session
+  ON ledger_decisions(session_id, created_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_decisions_status_updated
+  ON ledger_decisions(status, updated_at_ms DESC);
+
+CREATE TABLE IF NOT EXISTS ledger_sessions (
+  session_id TEXT PRIMARY KEY,
+  session_number INTEGER NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'PTY',
+  started_at_ms INTEGER NOT NULL,
+  ended_at_ms INTEGER,
+  summary TEXT,
+  stats_json TEXT DEFAULT '{}',
+  team_json TEXT DEFAULT '{}',
+  meta_json TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_number
+  ON ledger_sessions(session_number DESC);
+
+CREATE TABLE IF NOT EXISTS ledger_context_snapshots (
+  snapshot_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  content_json TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  trigger TEXT NOT NULL DEFAULT 'manual'
+);
+
+CREATE INDEX IF NOT EXISTS idx_snapshots_session
+  ON ledger_context_snapshots(session_id, created_at_ms DESC);
+`;
+
 function toMs(value, fallback) {
   const numeric = Number(value);
   if (Number.isFinite(numeric) && numeric >= 0) {
@@ -309,6 +362,7 @@ class EvidenceLedgerStore {
     if (!this.db) return;
     this.db.exec(SCHEMA_V1_SQL);
     this.db.exec(SCHEMA_V2_SQL);
+    this.db.exec(SCHEMA_V3_SQL);
   }
 
   isAvailable() {
