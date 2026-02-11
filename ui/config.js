@@ -6,6 +6,16 @@
 const path = require('path');
 const os = require('os');
 
+function envFlagEnabled(name, defaultValue = true) {
+  const raw = process.env[name];
+  if (typeof raw !== 'string') return defaultValue;
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized) return defaultValue;
+  if (['0', 'false', 'off', 'no', 'disabled'].includes(normalized)) return false;
+  if (['1', 'true', 'on', 'yes', 'enabled'].includes(normalized)) return true;
+  return defaultValue;
+}
+
 // Named pipe path (Windows) or Unix socket
 const PIPE_PATH = os.platform() === 'win32'
   ? '\\\\.\\pipe\\hivemind-terminal'
@@ -111,6 +121,10 @@ const PROTOCOL_ACTIONS = ['spawn', 'write', 'resize', 'kill', 'list', 'attach', 
 // Protocol events (daemon -> client)
 const PROTOCOL_EVENTS = ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected', 'shutdown', 'health'];
 
+// Slice 1 evidence ledger gate.
+// Default enabled across dev/prod; runtime degrades if DB open fails.
+const evidenceLedgerEnabled = envFlagEnabled('HIVEMIND_EVIDENCE_LEDGER_ENABLED', true);
+
 module.exports = {
   PIPE_PATH,
   WORKSPACE_PATH,
@@ -122,6 +136,7 @@ module.exports = {
   LEGACY_ROLE_ALIASES,
   ROLE_ID_MAP,
   TRIGGER_TARGETS,
+  evidenceLedgerEnabled,
   PROTOCOL_ACTIONS,
   PROTOCOL_EVENTS,
 };

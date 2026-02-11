@@ -6,12 +6,20 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { WORKSPACE_PATH } = require('../../config');
+const { WORKSPACE_PATH, evidenceLedgerEnabled: CONFIG_EVIDENCE_LEDGER_ENABLED } = require('../../config');
 const { prepareEventForStorage } = require('./evidence-ledger-ingest');
 
 const DEFAULT_DB_PATH = path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
 const DEFAULT_MAX_ROWS = 2_000_000;
 const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const LOGGED_DEGRADE_KEYS = new Set();
+
+function logDegradedOnce(level, key, message) {
+  if (LOGGED_DEGRADE_KEYS.has(key)) return;
+  LOGGED_DEGRADE_KEYS.add(key);
+  const logger = (level === 'error') ? log.error : (level === 'info' ? log.info : log.warn);
+  logger('EvidenceLedger', message);
+}
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS ledger_events (
@@ -131,7 +139,8 @@ class EvidenceLedgerStore {
     this.maxRows = Math.max(1, Number(options.maxRows) || DEFAULT_MAX_ROWS);
     this.retentionMs = Math.max(1_000, Number(options.retentionMs) || DEFAULT_RETENTION_MS);
     this.sessionId = typeof options.sessionId === 'string' ? options.sessionId : null;
-    this.enabled = options.enabled !== false;
+    this.configEnabled = CONFIG_EVIDENCE_LEDGER_ENABLED !== false;
+    this.enabled = this.configEnabled && options.enabled !== false;
 
     this.db = null;
     this.driverName = null;
@@ -142,6 +151,7 @@ class EvidenceLedgerStore {
   init() {
     if (!this.enabled) {
       this.degradedReason = 'disabled';
+      logDegradedOnce('warn', 'disabled', 'Ledger disabled by config/flag; running in degraded mode');
       return { ok: false, reason: this.degradedReason };
     }
 
@@ -150,14 +160,14 @@ class EvidenceLedgerStore {
       fs.mkdirSync(runtimeDir, { recursive: true });
     } catch (err) {
       this.degradedReason = `runtime_dir_error:${err.message}`;
-      log.error('EvidenceLedger', `Failed to create runtime dir: ${err.message}`);
+      logDegradedOnce('error', 'runtime_dir_error', `Failed to create runtime dir: ${err.message}`);
       return { ok: false, reason: this.degradedReason };
     }
 
     const driver = loadSqliteDriver();
     if (!driver) {
       this.degradedReason = 'sqlite_driver_unavailable';
-      log.warn('EvidenceLedger', 'SQLite driver unavailable (node:sqlite/better-sqlite3 missing)');
+      logDegradedOnce('warn', 'sqlite_driver_unavailable', 'SQLite driver unavailable (node:sqlite/better-sqlite3 missing)');
       return { ok: false, reason: this.degradedReason };
     }
 
@@ -173,7 +183,7 @@ class EvidenceLedgerStore {
       this.available = false;
       this.db = null;
       this.degradedReason = `open_failed:${err.message}`;
-      log.error('EvidenceLedger', `Failed to initialize store: ${err.message}`);
+      logDegradedOnce('error', 'open_failed', `Failed to initialize store: ${err.message}`);
       return { ok: false, reason: this.degradedReason };
     }
   }
@@ -203,6 +213,7 @@ class EvidenceLedgerStore {
       dbPath: this.dbPath,
       maxRows: this.maxRows,
       retentionMs: this.retentionMs,
+      configEnabled: this.configEnabled,
       degradedReason: this.degradedReason,
     };
   }
