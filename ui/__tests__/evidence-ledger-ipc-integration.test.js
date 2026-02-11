@@ -132,4 +132,94 @@ maybeDescribe('evidence-ledger IPC integration', () => {
     expect(Array.isArray(incidents)).toBe(true);
     expect(incidents.some((incident) => incident.incidentId === createIncident.incidentId)).toBe(true);
   });
+
+  test('memory flow: record decisions across categories -> query context shape', async () => {
+    const startSession = await harness.invoke('evidence-ledger:record-session-start', {
+      sessionId: 'ses-ipc-memory-1',
+      sessionNumber: 222,
+      mode: 'PTY',
+      stats: { test_suites: 120, tests_passed: 4001 },
+      team: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+    });
+    expect(startSession.ok).toBe(true);
+    expect(startSession.sessionId).toBe('ses-ipc-memory-1');
+
+    const records = [
+      {
+        category: 'architecture',
+        title: 'Evidence ledger is startup source of truth',
+        body: 'getLatestContext replaces manual handoff read',
+        author: 'architect',
+      },
+      {
+        category: 'directive',
+        title: 'Always verify runtime before closeout',
+        body: 'User directive',
+        author: 'user',
+      },
+      {
+        category: 'completion',
+        title: 'Slice 3 Phase B delivered',
+        body: 'IPC + CLI + seed utility',
+        author: 'devops',
+      },
+      {
+        category: 'issue',
+        title: 'ERR-MEM-IPC-01',
+        body: 'Context drift between sessions',
+        author: 'analyst',
+      },
+      {
+        category: 'roadmap',
+        title: 'Slice 3 Phase C',
+        body: 'Snapshots + prune extensions',
+        author: 'architect',
+      },
+    ];
+
+    for (const decision of records) {
+      const recorded = await harness.invoke('evidence-ledger:record-decision', {
+        ...decision,
+        sessionId: 'ses-ipc-memory-1',
+      });
+      expect(recorded.ok).toBe(true);
+      expect(typeof recorded.decisionId).toBe('string');
+    }
+
+    const context = await harness.invoke('evidence-ledger:get-context', {});
+    expect(context.source).toBe('ledger');
+    expect(context.session).toBe(222);
+    expect(context.mode).toBe('PTY');
+    expect(Array.isArray(context.completed)).toBe(true);
+    expect(Array.isArray(context.important_notes)).toBe(true);
+    expect(Array.isArray(context.roadmap)).toBe(true);
+    expect(Array.isArray(context.not_yet_done)).toBe(true);
+    expect(typeof context.known_issues).toBe('object');
+    expect(typeof context.architecture).toBe('object');
+    expect(typeof context.stats).toBe('object');
+    expect(typeof context.team).toBe('object');
+
+    expect(context.completed.some((item) => item.includes('Slice 3 Phase B delivered'))).toBe(true);
+    expect(context.important_notes.some((item) => item.includes('Always verify runtime before closeout'))).toBe(true);
+    expect(context.roadmap.some((item) => item.includes('Slice 3 Phase C'))).toBe(true);
+    expect(context.not_yet_done.some((item) => item.includes('Slice 3 Phase C'))).toBe(true);
+    expect(context.known_issues['ERR-MEM-IPC-01']).toBe('Context drift between sessions');
+    expect(context.architecture.decisions.some((item) => item.title.includes('Evidence ledger'))).toBe(true);
+
+    const directives = await harness.invoke('evidence-ledger:get-directives', { limit: 5 });
+    expect(Array.isArray(directives)).toBe(true);
+    expect(directives.some((item) => item.title.includes('Always verify runtime'))).toBe(true);
+
+    const completions = await harness.invoke('evidence-ledger:get-completions', { limit: 5 });
+    expect(Array.isArray(completions)).toBe(true);
+    expect(completions.some((item) => item.title.includes('Slice 3 Phase B delivered'))).toBe(true);
+
+    const issues = await harness.invoke('evidence-ledger:get-issues', { limit: 5 });
+    expect(Array.isArray(issues)).toBe(true);
+    expect(issues.some((item) => item.title === 'ERR-MEM-IPC-01')).toBe(true);
+
+    const roadmap = await harness.invoke('evidence-ledger:get-roadmap', { limit: 5 });
+    expect(Array.isArray(roadmap)).toBe(true);
+    expect(roadmap.some((item) => item.title.includes('Slice 3 Phase C'))).toBe(true);
+  });
 });
