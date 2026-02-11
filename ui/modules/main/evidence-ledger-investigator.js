@@ -3,6 +3,10 @@
  * Incident/assertion/verdict CRUD layer on top of EvidenceLedgerStore.
  */
 
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+
 const { generateId } = require('./evidence-ledger-ingest');
 
 const INCIDENT_STATUSES = new Set(['open', 'investigating', 'resolved', 'closed', 'stale']);
@@ -52,6 +56,12 @@ function asObject(value) {
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function normalizeHash(value) {
+  const raw = asNonEmptyString(value, '').toLowerCase();
+  if (!raw) return '';
+  return raw.startsWith('sha256:') ? raw : `sha256:${raw}`;
 }
 
 class EvidenceLedgerInvestigator {
@@ -687,6 +697,133 @@ class EvidenceLedgerInvestigator {
 
     if (Number(result?.changes || 0) === 0) return { ok: false, reason: 'not_found' };
     return { ok: true };
+  }
+
+  computeFileSnapshotHash(filePath, opts = {}) {
+    const inputPath = asNonEmptyString(filePath);
+    if (!inputPath) return { ok: false, reason: 'file_path_required' };
+
+    const baseDir = asNonEmptyString(opts.baseDir, process.cwd());
+    const resolvedPath = path.isAbsolute(inputPath)
+      ? inputPath
+      : path.resolve(baseDir, inputPath);
+    const lineNumber = Number.isInteger(Number(opts.fileLine))
+      ? Number(opts.fileLine)
+      : null;
+
+    let source;
+    try {
+      source = fs.readFileSync(resolvedPath, 'utf8');
+    } catch (err) {
+      return {
+        ok: false,
+        reason: 'read_failed',
+        error: err.message,
+        filePath: resolvedPath,
+      };
+    }
+
+    let material = source;
+    if (Number.isInteger(lineNumber) && lineNumber > 0) {
+      const lines = source.split(/\r?\n/);
+      material = lines[lineNumber - 1] ?? '';
+    }
+
+    const digest = crypto.createHash('sha256').update(material, 'utf8').digest('hex');
+    return {
+      ok: true,
+      filePath: resolvedPath,
+      hash: `sha256:${digest}`,
+      mode: Number.isInteger(lineNumber) && lineNumber > 0 ? 'line' : 'file',
+      bytes: Buffer.byteLength(material, 'utf8'),
+    };
+  }
+
+  refreshFileLineBindingStaleness(options = {}) {
+    const db = this._db();
+    if (!db) return this._unavailable();
+
+    const clauses = [
+      "kind = 'file_line_ref'",
+      'snapshot_hash IS NOT NULL',
+      "TRIM(snapshot_hash) != ''",
+    ];
+    const params = [];
+
+    if (options.bindingId) {
+      clauses.push('binding_id = ?');
+      params.push(String(options.bindingId));
+    }
+    if (options.incidentId) {
+      clauses.push('incident_id = ?');
+      params.push(String(options.incidentId));
+    }
+    if (options.assertionId) {
+      clauses.push('assertion_id = ?');
+      params.push(String(options.assertionId));
+    }
+    if (options.includeAlreadyStale !== true) {
+      clauses.push('stale = 0');
+    }
+
+    const limit = Math.max(1, Math.min(10_000, Number(options.limit) || 1000));
+    const rows = db.prepare(`
+      SELECT binding_id, file_path, file_line, snapshot_hash, stale
+      FROM ledger_evidence_bindings
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY created_at_ms ASC
+      LIMIT ?
+    `).all(...params, limit);
+
+    const staleIds = [];
+    const unchangedIds = [];
+    const missingFiles = [];
+    const baseDir = asNonEmptyString(options.baseDir, process.cwd());
+
+    for (const row of rows) {
+      const hashResult = this.computeFileSnapshotHash(row.file_path, {
+        baseDir,
+        fileLine: row.file_line,
+      });
+      if (!hashResult.ok) {
+        staleIds.push(row.binding_id);
+        missingFiles.push({
+          bindingId: row.binding_id,
+          filePath: row.file_path,
+          reason: hashResult.reason,
+          error: hashResult.error || null,
+        });
+        continue;
+      }
+
+      const expected = normalizeHash(row.snapshot_hash);
+      const actual = normalizeHash(hashResult.hash);
+      if (!expected || expected !== actual) {
+        staleIds.push(row.binding_id);
+      } else {
+        unchangedIds.push(row.binding_id);
+      }
+    }
+
+    let markedStale = 0;
+    if (staleIds.length > 0) {
+      const placeholders = staleIds.map(() => '?').join(', ');
+      const updateResult = db.prepare(`
+        UPDATE ledger_evidence_bindings
+        SET stale = 1
+        WHERE binding_id IN (${placeholders})
+      `).run(...staleIds);
+      markedStale = Number(updateResult?.changes || 0);
+    }
+
+    return {
+      ok: true,
+      checked: rows.length,
+      markedStale,
+      staleBindingIds: staleIds,
+      unchangedBindingIds: unchangedIds,
+      missingFiles,
+    };
   }
 
   recordVerdict(incidentId, opts = {}) {
