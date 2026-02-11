@@ -564,6 +564,19 @@ describe('Terminal Injection', () => {
       expect(messageQueue['1'].length).toBe(1);
     });
 
+    test('does not defer Claude pane when UI focus is stale (no recent typing)', () => {
+      const lastUiActivity = Date.now() - 3000;
+      mockOptions.userInputFocused = jest.fn(() => (Date.now() - lastUiActivity) <= 2000);
+      const ctrl = createInjectionController(mockOptions);
+      messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
+
+      ctrl.processIdleQueue('1');
+
+      expect(mockOptions.userInputFocused).toHaveBeenCalled();
+      expect(mockOptions.setInjectionInFlight).toHaveBeenCalledWith(true);
+      expect(messageQueue['1'].length).toBe(0);
+    });
+
     test('defers queue processing while compaction gate is confirmed', () => {
       messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
       bus.updateState('1', { gates: { compacting: 'confirmed' } });

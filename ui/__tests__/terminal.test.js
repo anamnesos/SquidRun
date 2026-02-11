@@ -1265,6 +1265,13 @@ describe('terminal.js module', () => {
       expect(mockDocument.addEventListener).toHaveBeenCalledWith('keydown', expect.any(Function));
     });
 
+    test('should attach input event listener', () => {
+      mockDocument.addEventListener.mockClear();
+      terminal.initUIFocusTracker();
+
+      expect(mockDocument.addEventListener).toHaveBeenCalledWith('input', expect.any(Function));
+    });
+
     test('focusin handler should track UI input focus', () => {
       mockDocument.addEventListener.mockClear();
       terminal.initUIFocusTracker();
@@ -1320,6 +1327,77 @@ describe('terminal.js module', () => {
 
       keydownHandler({ target: mockInput });
       // Handler updates lastUserUIKeypressTime internally
+    });
+
+    test('userInputFocused returns true while UI input has recent key activity', () => {
+      mockDocument.addEventListener.mockClear();
+      terminal.initUIFocusTracker();
+
+      const focusinHandler = mockDocument.addEventListener.mock.calls.find(
+        call => call[0] === 'focusin'
+      )[1];
+      const keydownHandler = mockDocument.addEventListener.mock.calls.find(
+        call => call[0] === 'keydown'
+      )[1];
+
+      const mockInput = {
+        tagName: 'INPUT',
+        classList: { contains: jest.fn().mockReturnValue(false) },
+      };
+
+      mockDocument.activeElement = mockInput;
+      focusinHandler({ target: mockInput });
+      keydownHandler({ target: mockInput });
+
+      expect(terminal.userInputFocused()).toBe(true);
+    });
+
+    test('userInputFocused returns true while UI input has recent input activity', () => {
+      mockDocument.addEventListener.mockClear();
+      terminal.initUIFocusTracker();
+
+      const focusinHandler = mockDocument.addEventListener.mock.calls.find(
+        call => call[0] === 'focusin'
+      )[1];
+      const inputHandler = mockDocument.addEventListener.mock.calls.find(
+        call => call[0] === 'input'
+      )[1];
+
+      const mockInput = {
+        tagName: 'TEXTAREA',
+        classList: { contains: jest.fn().mockReturnValue(false) },
+      };
+
+      mockDocument.activeElement = mockInput;
+      focusinHandler({ target: mockInput });
+      inputHandler({ target: mockInput });
+
+      expect(terminal.userInputFocused()).toBe(true);
+    });
+
+    test('userInputFocused returns false after compose activity goes stale (>2s)', () => {
+      mockDocument.addEventListener.mockClear();
+      terminal.initUIFocusTracker();
+
+      const focusinHandler = mockDocument.addEventListener.mock.calls.find(
+        call => call[0] === 'focusin'
+      )[1];
+      const keydownHandler = mockDocument.addEventListener.mock.calls.find(
+        call => call[0] === 'keydown'
+      )[1];
+
+      const mockInput = {
+        tagName: 'INPUT',
+        classList: { contains: jest.fn().mockReturnValue(false) },
+      };
+
+      mockDocument.activeElement = mockInput;
+      focusinHandler({ target: mockInput });
+      keydownHandler({ target: mockInput });
+
+      expect(terminal.userInputFocused()).toBe(true);
+      jest.advanceTimersByTime(2100);
+      expect(terminal.userInputFocused()).toBe(false);
     });
   });
 
