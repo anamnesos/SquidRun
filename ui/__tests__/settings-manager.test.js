@@ -86,7 +86,7 @@ describe('SettingsManager CLI auto-detection', () => {
     });
   });
 
-  test('rewrites only missing/blank/unavailable paneCommands using preference matrix', () => {
+  test('rewrites only missing/blank paneCommands, preserves user choices even if CLI unavailable', () => {
     mockCliAvailability({ claude: true, codex: true, gemini: false });
     ctx.currentSettings.paneCommands = {
       '1': '   ',
@@ -97,17 +97,18 @@ describe('SettingsManager CLI auto-detection', () => {
     const result = manager.autoDetectPaneCommandsOnStartup();
 
     expect(result.changed).toBe(true);
-    expect(result.updatedPanes.sort()).toEqual(['1', '5']);
+    // Only pane 1 (blank) gets rewritten — pane 5 (gemini, user-chosen) is preserved
+    expect(result.updatedPanes).toEqual(['1']);
     expect(ctx.currentSettings.paneCommands).toEqual({
       '1': 'claude',
       '2': 'codex --yolo',
-      '5': 'codex',
+      '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind\\workspace"',
     });
     expect(manager.saveSettings).toHaveBeenCalledWith({
       paneCommands: {
         '1': 'claude',
         '2': 'codex --yolo',
-        '5': 'codex',
+        '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind\\workspace"',
       },
     });
   });

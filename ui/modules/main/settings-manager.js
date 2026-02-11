@@ -241,9 +241,9 @@ class SettingsManager {
   }
 
   commandNeedsRewrite(command, installed) {
+    // Only rewrite empty/missing commands — never override user's explicit model choice.
+    // If a CLI is uninstalled, the pane will show a spawn error (visible feedback).
     if (typeof command !== 'string' || !command.trim()) return true;
-    const cli = extractCliFromCommand(command);
-    if (cli && installed[cli] === false) return true;
     return false;
   }
 

@@ -25,6 +25,8 @@ const AGENT_PATTERNS = [
   { pattern: /\[AGENT MSG[^\]]*\]/,         color: AGENT_COLORS.generic },
 ];
 
+const DEFAULT_FOREGROUND = '#e8eaf0';
+
 /**
  * Attach agent message color decorations to a terminal instance.
  * Listens for new writes and scans new lines for agent message patterns,
@@ -46,6 +48,7 @@ function attachAgentColors(paneId, terminal) {
     const buf = terminal.buffer?.active;
     if (!buf) return;
     const currentLine = buf.baseY + buf.cursorY;
+    const defaultForeground = terminal?.options?.theme?.foreground || DEFAULT_FOREGROUND;
 
     // Nothing new to scan
     if (currentLine < lastScannedLine) {
@@ -85,12 +88,36 @@ function attachAgentColors(paneId, terminal) {
                 if (resetMarker) {
                   terminal.registerDecoration({
                     marker: resetMarker,
+                    foregroundColor: defaultForeground,
                     x: matchEnd,
                     width: lineLen - matchEnd,
                     height: 1,
                     layer: 'top',
                   });
                 }
+              }
+
+              // Wrapped continuation lines can inherit style runs; explicitly reset them.
+              let continuationLine = y + 1;
+              for (;;) {
+                const wrappedLine = buf.getLine(continuationLine);
+                if (!wrappedLine || wrappedLine.isWrapped !== true) break;
+                const wrappedLen = wrappedLine.length;
+                if (wrappedLen > 0) {
+                  const wrappedOffset = continuationLine - currentLine;
+                  const wrappedMarker = terminal.registerMarker(wrappedOffset);
+                  if (wrappedMarker) {
+                    terminal.registerDecoration({
+                      marker: wrappedMarker,
+                      foregroundColor: defaultForeground,
+                      x: 0,
+                      width: wrappedLen,
+                      height: 1,
+                      layer: 'top',
+                    });
+                  }
+                }
+                continuationLine += 1;
               }
             }
           } catch (e) {
