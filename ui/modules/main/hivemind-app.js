@@ -29,6 +29,7 @@ const pipeline = require('../pipeline');
 const warRoom = require('../triggers/war-room');
 const sharedState = require('../shared-state');
 const contextCompressor = require('../context-compressor');
+const { executeEvidenceLedgerOperation } = require('../ipc/evidence-ledger-handlers');
 
 class HivemindApp {
   constructor(appContext, managers) {
@@ -129,6 +130,20 @@ class HivemindApp {
             if (content.startsWith(AGENT_MESSAGE_PREFIX)) return content;
             return `${AGENT_MESSAGE_PREFIX}${content}`;
           };
+
+          if (data.message.type === 'evidence-ledger') {
+            return executeEvidenceLedgerOperation(
+              data.message.action,
+              data.message.payload || {},
+              {
+                source: {
+                  via: 'websocket',
+                  role: data.role || 'system',
+                  paneId: data.paneId || null,
+                },
+              }
+            );
+          }
 
           if (data.message.type === 'comms-event' || data.message.type === 'comms-metric') {
             return emitKernelCommsEvent(

@@ -452,6 +452,7 @@ async function handleMessage(clientId, rawData) {
   const traceEligible = (message.type === 'send' || message.type === 'broadcast');
   const ackEligible = isAckEligibleMessage(message);
   const messageId = ackEligible ? getNormalizedMessageId(message) : null;
+  const requestId = toNonEmptyString(message.requestId);
   const ingressTraceContext = traceEligible ? buildTraceContext(message) : null;
   const dispatchTraceContext = ingressTraceContext
     ? {
@@ -568,6 +569,15 @@ async function handleMessage(clientId, rawData) {
       });
     } catch (err) {
       log.error('WebSocket', `messageHandler failed for client ${clientId}: ${err.message}`);
+      if (requestId && !ackEligible) {
+        sendJson(clientInfo.ws, {
+          type: 'response',
+          requestId,
+          ok: false,
+          error: err.message,
+          timestamp: Date.now(),
+        });
+      }
       if (message.ackRequired && (message.type === 'send' || message.type === 'broadcast')) {
         const ackPayload = {
           type: 'send-ack',
@@ -588,6 +598,18 @@ async function handleMessage(clientId, rawData) {
       }
       return;
     }
+  }
+
+  if (requestId && !ackEligible) {
+    sendJson(clientInfo.ws, {
+      type: 'response',
+      requestId,
+      ok: true,
+      result: handlerResult,
+      timestamp: Date.now(),
+    });
+    finalizeAckTracking(null);
+    return;
   }
 
   if (message.ackRequired && (message.type === 'send' || message.type === 'broadcast')) {
