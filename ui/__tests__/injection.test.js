@@ -93,6 +93,7 @@ describe('Terminal Injection', () => {
       lastOutputTime,
       lastTypedTime,
       messageQueue,
+      getPaneCapabilities: jest.fn().mockReturnValue(null),
       isCodexPane: jest.fn().mockReturnValue(false),
       isGeminiPane: jest.fn().mockReturnValue(false),  // Session 67: Added for Gemini PTY path
       buildCodexExecPrompt: jest.fn((id, text) => `prompt: ${text}`),
@@ -678,6 +679,97 @@ describe('Terminal Injection', () => {
   });
 
   describe('doSendToPane', () => {
+    test('uses capability-driven safe default path for unknown runtimes', async () => {
+      const capabilityOptions = {
+        ...mockOptions,
+        getPaneCapabilities: jest.fn().mockImplementation((paneId) => {
+          if (paneId === '7') {
+            return {
+              mode: 'pty',
+              modeLabel: 'generic-pty',
+              appliedMethod: 'generic-pty',
+              submitMethod: 'pty-enter',
+              bypassGlobalLock: true,
+              applyCompactionGate: false,
+              requiresFocusForEnter: false,
+              enterMethod: 'pty',
+              enterDelayMs: 25,
+              sanitizeMultiline: false,
+              clearLineBeforeWrite: true,
+              useChunkedWrite: true,
+              homeResetBeforeWrite: true,
+              verifySubmitAccepted: true,
+              deferSubmitWhilePaneActive: true,
+              typingGuardWhenBypassing: true,
+            };
+          }
+          return null;
+        }),
+      };
+      const capabilityController = createInjectionController(capabilityOptions);
+
+      // No textarea should still succeed because focus is not required.
+      document.querySelector.mockReturnValue(null);
+      terminals.set('7', { buffer: { active: null } });
+
+      const onComplete = jest.fn();
+      await capabilityController.doSendToPane('7', 'hello runtime\r', onComplete);
+      await jest.advanceTimersByTimeAsync(200);
+
+      expect(mockPty.writeChunked).toHaveBeenCalledWith(
+        '7',
+        'hello runtime',
+        { chunkSize: 192, yieldEveryChunks: 0 },
+        expect.any(Object)
+      );
+      expect(mockPty.write).toHaveBeenCalledWith('7', '\r', expect.any(Object));
+      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
+      expect(onComplete).toHaveBeenCalledWith({
+        success: true,
+        verified: true,
+        signal: 'prompt_probe_unavailable',
+      });
+    });
+
+    test('respects capability override for submit verification on focus-free path', async () => {
+      const capabilityOptions = {
+        ...mockOptions,
+        getPaneCapabilities: jest.fn().mockImplementation((paneId) => {
+          if (paneId === '8') {
+            return {
+              mode: 'pty',
+              modeLabel: 'custom-pty',
+              appliedMethod: 'custom-pty',
+              submitMethod: 'custom-pty-enter',
+              bypassGlobalLock: true,
+              applyCompactionGate: false,
+              requiresFocusForEnter: false,
+              enterMethod: 'pty',
+              enterDelayMs: 0,
+              sanitizeMultiline: false,
+              clearLineBeforeWrite: true,
+              useChunkedWrite: false,
+              homeResetBeforeWrite: false,
+              verifySubmitAccepted: false,
+              deferSubmitWhilePaneActive: false,
+              typingGuardWhenBypassing: true,
+            };
+          }
+          return null;
+        }),
+      };
+      const capabilityController = createInjectionController(capabilityOptions);
+      terminals.set('8', {});
+
+      const onComplete = jest.fn();
+      await capabilityController.doSendToPane('8', 'custom message', onComplete);
+      await jest.advanceTimersByTimeAsync(50);
+
+      expect(mockPty.write).toHaveBeenCalledWith('8', 'custom message', expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith('8', '\r', expect.any(Object));
+      expect(onComplete).toHaveBeenCalledWith({ success: true });
+    });
+
     test('handles Codex pane differently', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
       const mockTerminal = { write: jest.fn() };

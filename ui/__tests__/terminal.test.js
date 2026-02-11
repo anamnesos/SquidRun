@@ -304,6 +304,43 @@ describe('terminal.js module', () => {
     });
   });
 
+  describe('getPaneInjectionCapabilities', () => {
+    test('returns safe generic defaults for unknown runtimes', () => {
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '9': 'my-custom-cli --run' },
+      });
+
+      const caps = terminal.getPaneInjectionCapabilities('9');
+      expect(caps.mode).toBe('pty');
+      expect(caps.modeLabel).toBe('generic-pty');
+      expect(caps.enterMethod).toBe('pty');
+      expect(caps.requiresFocusForEnter).toBe(false);
+      expect(caps.useChunkedWrite).toBe(true);
+      expect(caps.verifySubmitAccepted).toBe(true);
+    });
+
+    test('applies injection capability overrides from settings', () => {
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '9': 'my-custom-cli --run' },
+        injectionCapabilities: {
+          panes: {
+            '9': {
+              modeLabel: 'custom-pane-pty',
+              verifySubmitAccepted: false,
+              useChunkedWrite: false,
+            },
+          },
+        },
+      });
+
+      const caps = terminal.getPaneInjectionCapabilities('9');
+      expect(caps.modeLabel).toBe('custom-pane-pty');
+      expect(caps.verifySubmitAccepted).toBe(false);
+      expect(caps.useChunkedWrite).toBe(false);
+      expect(caps.enterMethod).toBe('pty');
+    });
+  });
+
   describe('sendToPane', () => {
     test('should queue message when injection in flight', () => {
       // Block immediate processing with injection lock

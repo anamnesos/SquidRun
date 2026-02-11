@@ -453,15 +453,168 @@ function registerPaneCliIdentity(paneId, identity) {
   });
 }
 
-function isCodexFromSettings(paneId) {
+function getSettingsSafe() {
   try {
-    const settingsObj = settings.getSettings();
-    const paneCommands = settingsObj?.paneCommands || {};
-    const cmd = paneCommands[String(paneId)] || '';
-    return typeof cmd === 'string' && cmd.toLowerCase().includes('codex');
+    return settings.getSettings() || {};
   } catch {
-    return false;
+    return {};
   }
+}
+
+function getPaneCommandFromSettings(paneId) {
+  const settingsObj = getSettingsSafe();
+  const paneCommands = settingsObj?.paneCommands || {};
+  const cmd = paneCommands[String(paneId)] || '';
+  return typeof cmd === 'string' ? cmd : '';
+}
+
+function classifyRuntimeFromIdentity(paneId) {
+  const id = String(paneId);
+  const entry = paneCliIdentity.get(id);
+  const command = getPaneCommandFromSettings(id);
+  const parts = [
+    entry?.provider,
+    entry?.label,
+    entry?.key,
+    command,
+  ].filter(Boolean).map((value) => String(value).toLowerCase());
+  const runtimeHint = parts.join(' ');
+
+  if (runtimeHint.includes('codex')) return 'codex';
+  if (runtimeHint.includes('gemini')) return 'gemini';
+  if (runtimeHint.includes('claude')) return 'claude';
+  if (!String(command || '').trim()) {
+    // Preserve legacy behavior when runtime is unspecified.
+    return 'claude';
+  }
+  return 'unknown';
+}
+
+function getInjectionCapabilityOverrides(paneId, runtimeKey) {
+  const settingsObj = getSettingsSafe();
+  const overridesRoot = settingsObj?.injectionCapabilities;
+  if (!overridesRoot || typeof overridesRoot !== 'object') {
+    return {};
+  }
+
+  const id = String(paneId);
+  const paneOverrides = (overridesRoot.panes && typeof overridesRoot.panes === 'object')
+    ? (overridesRoot.panes[id] || {})
+    : (overridesRoot[id] || {});
+  const runtimeOverrides = (overridesRoot.runtimes && typeof overridesRoot.runtimes === 'object')
+    ? (overridesRoot.runtimes[runtimeKey] || {})
+    : (overridesRoot[runtimeKey] || {});
+
+  const merged = {};
+  if (paneOverrides && typeof paneOverrides === 'object') {
+    Object.assign(merged, paneOverrides);
+  }
+  if (runtimeOverrides && typeof runtimeOverrides === 'object') {
+    Object.assign(merged, runtimeOverrides);
+  }
+  return merged;
+}
+
+function getPaneInjectionCapabilities(paneId) {
+  const runtimeKey = classifyRuntimeFromIdentity(paneId);
+  const baseByRuntime = {
+    codex: {
+      mode: 'codex-exec',
+      modeLabel: 'codex-exec',
+      appliedMethod: 'codex-exec',
+      submitMethod: 'codex-exec',
+      bypassGlobalLock: true,
+      applyCompactionGate: false,
+      requiresFocusForEnter: false,
+      enterMethod: 'none',
+      enterDelayMs: 0,
+      sanitizeMultiline: false,
+      clearLineBeforeWrite: false,
+      useChunkedWrite: false,
+      homeResetBeforeWrite: false,
+      verifySubmitAccepted: false,
+      deferSubmitWhilePaneActive: false,
+      typingGuardWhenBypassing: true,
+      sanitizeTransform: 'none',
+      enterFailureReason: 'enter_failed',
+      displayName: 'Codex',
+    },
+    gemini: {
+      mode: 'pty',
+      modeLabel: 'gemini-pty',
+      appliedMethod: 'gemini-pty',
+      submitMethod: 'gemini-pty-enter',
+      bypassGlobalLock: true,
+      applyCompactionGate: false,
+      requiresFocusForEnter: false,
+      enterMethod: 'pty',
+      enterDelayMs: GEMINI_ENTER_DELAY_MS,
+      sanitizeMultiline: true,
+      clearLineBeforeWrite: true,
+      useChunkedWrite: false,
+      homeResetBeforeWrite: false,
+      verifySubmitAccepted: false,
+      deferSubmitWhilePaneActive: false,
+      typingGuardWhenBypassing: true,
+      sanitizeTransform: 'gemini-sanitize',
+      enterFailureReason: 'pty_enter_failed',
+      displayName: 'Gemini',
+    },
+    claude: {
+      mode: 'pty',
+      modeLabel: 'claude-pty',
+      appliedMethod: 'claude-pty',
+      submitMethod: 'sendTrustedEnter',
+      bypassGlobalLock: false,
+      applyCompactionGate: true,
+      requiresFocusForEnter: true,
+      enterMethod: 'trusted',
+      enterDelayMs: 50,
+      sanitizeMultiline: false,
+      clearLineBeforeWrite: true,
+      useChunkedWrite: true,
+      homeResetBeforeWrite: true,
+      verifySubmitAccepted: true,
+      deferSubmitWhilePaneActive: true,
+      typingGuardWhenBypassing: false,
+      sanitizeTransform: 'none',
+      enterFailureReason: 'enter_failed',
+      displayName: 'Claude',
+    },
+    unknown: {
+      mode: 'pty',
+      modeLabel: 'generic-pty',
+      appliedMethod: 'generic-pty',
+      submitMethod: 'pty-enter',
+      bypassGlobalLock: true,
+      applyCompactionGate: false,
+      requiresFocusForEnter: false,
+      enterMethod: 'pty',
+      enterDelayMs: 50,
+      sanitizeMultiline: false,
+      clearLineBeforeWrite: true,
+      useChunkedWrite: true,
+      homeResetBeforeWrite: true,
+      verifySubmitAccepted: true,
+      deferSubmitWhilePaneActive: true,
+      typingGuardWhenBypassing: true,
+      sanitizeTransform: 'sanitize-multiline',
+      enterFailureReason: 'enter_failed',
+      displayName: 'Generic',
+    },
+  };
+
+  const base = { ...(baseByRuntime[runtimeKey] || baseByRuntime.unknown) };
+  const overrides = getInjectionCapabilityOverrides(paneId, runtimeKey);
+  if (overrides && typeof overrides === 'object') {
+    Object.assign(base, overrides);
+  }
+
+  return base;
+}
+
+function isCodexFromSettings(paneId) {
+  return getPaneCommandFromSettings(paneId).toLowerCase().includes('codex');
 }
 
 function isCodexPane(paneId) {
@@ -762,6 +915,7 @@ injectionController = createInjectionController({
   lastOutputTime,
   lastTypedTime,
   messageQueue,
+  getPaneCapabilities: getPaneInjectionCapabilities,
   isCodexPane,
   isGeminiPane,
   buildCodexExecPrompt,
@@ -1456,14 +1610,7 @@ async function spawnAgent(paneId, model = null) {
 
 // Helper to check if a pane is Gemini
 function isGeminiPane(paneId) {
-  try {
-    const settingsObj = settings.getSettings();
-    const paneCommands = settingsObj?.paneCommands || {};
-    const cmd = paneCommands[String(paneId)] || '';
-    return typeof cmd === 'string' && cmd.toLowerCase().includes('gemini');
-  } catch {
-    return false;
-  }
+  return classifyRuntimeFromIdentity(paneId) === 'gemini';
 }
 
 // Spawn agents in all panes
@@ -1834,6 +1981,7 @@ module.exports = {
   registerCodexPane,   // CLI Identity: mark pane as Codex
   unregisterCodexPane, // CLI Identity: unmark pane as Codex
   isCodexPane,         // CLI Identity: query Codex status
+  getPaneInjectionCapabilities, // Runtime capability profile for injection paths
   messageQueue,   // Message queue for busy panes
   getInjectionInFlight, // Check injection lock state
   setInjectionInFlight, // Set injection lock (for testing)
