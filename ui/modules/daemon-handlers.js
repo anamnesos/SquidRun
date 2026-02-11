@@ -217,7 +217,15 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
   // Handle initial daemon connection with existing terminals
   ipcRenderer.on('daemon-connected', async (event, data) => {
     const { terminals: existingTerminals, sdkMode } = data;
-    log.info('Daemon', 'Connected, existing terminals:', existingTerminals, 'SDK mode:', sdkMode);
+    const terminalList = Array.isArray(existingTerminals) ? existingTerminals : [];
+    const aliveCount = terminalList.filter((term) => term?.alive).length;
+    const paneSummary = terminalList
+      .map((term) => `${String(term?.paneId ?? '?')}:${term?.alive ? 'up' : 'down'}`)
+      .join(', ');
+    log.info(
+      'Daemon',
+      `Connected: terminals=${terminalList.length}, alive=${aliveCount}, panes=[${paneSummary || 'none'}], sdkMode=${Boolean(sdkMode)}`
+    );
 
     if (sdkMode) {
       setSDKMode(true);
