@@ -2069,7 +2069,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Setup UI panels
   settings.setupSettings();
-  tabs.setupRightPanel(terminal.handleResize);  // All tab setup now handled internally
+  tabs.setupRightPanel(terminal.handleResize, bus);  // All tab setup now handled internally
   // Setup daemon listeners (for terminal reconnection)
   // Pass markTerminalsReady callback to fix auto-spawn race condition
   daemonHandlers.setupDaemonListeners(
