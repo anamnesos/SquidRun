@@ -623,6 +623,8 @@ class EvidenceLedgerStore {
     let removedByAge = 0;
     let removedByCap = 0;
     let removedEdges = 0;
+    let removedArchivedDecisions = 0;
+    let removedSnapshots = 0;
 
     try {
       this.db.exec('BEGIN IMMEDIATE;');
@@ -655,6 +657,32 @@ class EvidenceLedgerStore {
       const edgeResult = edgeCleanup.run();
       removedEdges = Number(edgeResult?.changes || 0);
 
+      const archivedDecisionCleanup = this.db.prepare(`
+        DELETE FROM ledger_decisions
+        WHERE status = 'archived'
+          AND updated_at_ms < ?
+      `);
+      const archivedDecisionResult = archivedDecisionCleanup.run(cutoff);
+      removedArchivedDecisions = Number(archivedDecisionResult?.changes || 0);
+
+      const snapshotCleanup = this.db.prepare(`
+        DELETE FROM ledger_context_snapshots
+        WHERE created_at_ms < ?
+          AND snapshot_id NOT IN (
+            SELECT keep.snapshot_id
+            FROM ledger_context_snapshots AS keep
+            WHERE keep.snapshot_id = (
+              SELECT candidate.snapshot_id
+              FROM ledger_context_snapshots AS candidate
+              WHERE candidate.session_id = keep.session_id
+              ORDER BY candidate.created_at_ms DESC, candidate.snapshot_id DESC
+              LIMIT 1
+            )
+          )
+      `);
+      const snapshotResult = snapshotCleanup.run(cutoff);
+      removedSnapshots = Number(snapshotResult?.changes || 0);
+
       this.db.exec('COMMIT;');
       return {
         ok: true,
@@ -662,6 +690,8 @@ class EvidenceLedgerStore {
         removedByAge,
         removedByCap,
         removedEdges,
+        removedArchivedDecisions,
+        removedSnapshots,
       };
     } catch (err) {
       try { this.db.exec('ROLLBACK;'); } catch {}

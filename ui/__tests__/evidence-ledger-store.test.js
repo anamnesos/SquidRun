@@ -134,6 +134,160 @@ maybeDescribe('evidence-ledger-store', () => {
     expect(all.length).toBeLessThanOrEqual(3);
     expect(all.every((evt) => evt.ts >= 9000)).toBe(true);
   });
+
+  test('prune removes archived decisions and stale snapshots while preserving sessions', () => {
+    expect(store.init().ok).toBe(true);
+
+    store.db.prepare(`
+      INSERT INTO ledger_sessions (
+        session_id, session_number, mode, started_at_ms, ended_at_ms,
+        summary, stats_json, team_json, meta_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'ses-a',
+      501,
+      'PTY',
+      100,
+      200,
+      'Session A',
+      '{}',
+      '{}',
+      '{}'
+    );
+
+    store.db.prepare(`
+      INSERT INTO ledger_sessions (
+        session_id, session_number, mode, started_at_ms, ended_at_ms,
+        summary, stats_json, team_json, meta_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'ses-b',
+      502,
+      'PTY',
+      300,
+      null,
+      null,
+      '{}',
+      '{}',
+      '{}'
+    );
+
+    store.db.prepare(`
+      INSERT INTO ledger_decisions (
+        decision_id, session_id, category, title, body, author, status, superseded_by,
+        incident_id, tags_json, meta_json, created_at_ms, updated_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'dec-archived-old',
+      'ses-a',
+      'issue',
+      'Old archived issue',
+      'prune me',
+      'analyst',
+      'archived',
+      null,
+      null,
+      '[]',
+      '{}',
+      100,
+      100
+    );
+
+    store.db.prepare(`
+      INSERT INTO ledger_decisions (
+        decision_id, session_id, category, title, body, author, status, superseded_by,
+        incident_id, tags_json, meta_json, created_at_ms, updated_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'dec-active-old',
+      'ses-a',
+      'directive',
+      'Persistent directive',
+      'do not prune',
+      'user',
+      'active',
+      null,
+      null,
+      '[]',
+      '{}',
+      100,
+      100
+    );
+
+    store.db.prepare(`
+      INSERT INTO ledger_decisions (
+        decision_id, session_id, category, title, body, author, status, superseded_by,
+        incident_id, tags_json, meta_json, created_at_ms, updated_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'dec-archived-recent',
+      'ses-b',
+      'completion',
+      'Recent archived completion',
+      'still within retention',
+      'devops',
+      'archived',
+      null,
+      null,
+      '[]',
+      '{}',
+      9500,
+      9500
+    );
+
+    store.db.prepare(`
+      INSERT INTO ledger_context_snapshots (
+        snapshot_id, session_id, content_json, created_at_ms, trigger
+      ) VALUES (?, ?, ?, ?, ?)
+    `).run('snap-a-old-1', 'ses-a', '{"v":1}', 100, 'manual');
+
+    store.db.prepare(`
+      INSERT INTO ledger_context_snapshots (
+        snapshot_id, session_id, content_json, created_at_ms, trigger
+      ) VALUES (?, ?, ?, ?, ?)
+    `).run('snap-a-old-2', 'ses-a', '{"v":2}', 200, 'manual');
+
+    store.db.prepare(`
+      INSERT INTO ledger_context_snapshots (
+        snapshot_id, session_id, content_json, created_at_ms, trigger
+      ) VALUES (?, ?, ?, ?, ?)
+    `).run('snap-a-latest', 'ses-a', '{"v":3}', 9800, 'session_end');
+
+    store.db.prepare(`
+      INSERT INTO ledger_context_snapshots (
+        snapshot_id, session_id, content_json, created_at_ms, trigger
+      ) VALUES (?, ?, ?, ?, ?)
+    `).run('snap-b-only-old', 'ses-b', '{"v":4}', 300, 'manual');
+
+    const pruned = store.prune({ nowMs: 10000, retentionMs: 1000, maxRows: 1000 });
+    expect(pruned.ok).toBe(true);
+    expect(pruned.removedArchivedDecisions).toBe(1);
+    expect(pruned.removedSnapshots).toBe(2);
+
+    const decisions = store.db.prepare(`
+      SELECT decision_id, status
+      FROM ledger_decisions
+      ORDER BY decision_id ASC
+    `).all();
+    expect(decisions).toEqual([
+      { decision_id: 'dec-active-old', status: 'active' },
+      { decision_id: 'dec-archived-recent', status: 'archived' },
+    ]);
+
+    const snapshots = store.db.prepare(`
+      SELECT snapshot_id
+      FROM ledger_context_snapshots
+      ORDER BY snapshot_id ASC
+    `).all();
+    expect(snapshots.map((row) => row.snapshot_id)).toEqual(['snap-a-latest', 'snap-b-only-old']);
+
+    const sessions = store.db.prepare(`
+      SELECT session_id
+      FROM ledger_sessions
+      ORDER BY session_id ASC
+    `).all();
+    expect(sessions.map((row) => row.session_id)).toEqual(['ses-a', 'ses-b']);
+  });
 });
 
 describe('evidence-ledger-store degraded mode', () => {
