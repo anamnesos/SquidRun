@@ -254,6 +254,7 @@ let lastUserUIFocus = null;
 // doSendToPane defers injection while user is actively typing.
 let lastUserUIKeypressTime = 0;
 // Timing constants imported from constants.js
+const UI_FOCUS_TYPING_WINDOW_MS = 2000;
 
 const SPINNER_CHARS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -363,26 +364,33 @@ function trimScrollbackToMaxLines(scrollback, maxLines = XTERM_SCROLLBACK_LINES)
 
 // Track when user focuses any UI input (not xterm textareas).
 // Call once from renderer.js after DOMContentLoaded.
+function isNonTerminalUiInput(el) {
+  const tag = el?.tagName?.toUpperCase();
+  return (tag === 'INPUT' || tag === 'TEXTAREA') &&
+    !el?.classList?.contains?.('xterm-helper-textarea');
+}
+
+function markUserUiActivity(el) {
+  if (isNonTerminalUiInput(el)) {
+    lastUserUIKeypressTime = Date.now();
+  }
+}
+
 function initUIFocusTracker() {
   document.addEventListener('focusin', (e) => {
     const el = e.target;
-    const tag = el?.tagName?.toUpperCase();
-    const isUI = (tag === 'INPUT' || tag === 'TEXTAREA') &&
-      !el.classList.contains('xterm-helper-textarea');
-    if (isUI) {
+    if (isNonTerminalUiInput(el)) {
       lastUserUIFocus = el;
     }
   });
 
-  // Track user keystrokes in UI inputs for typing guard
+  // Track user activity in UI inputs for typing guard.
+  // keydown captures direct typing; input captures IME/paste/programmatic edits.
   document.addEventListener('keydown', (e) => {
-    const el = e.target;
-    const tag = el?.tagName?.toUpperCase();
-    const isUI = (tag === 'INPUT' || tag === 'TEXTAREA') &&
-      !el.classList.contains('xterm-helper-textarea');
-    if (isUI) {
-      lastUserUIKeypressTime = Date.now();
-    }
+    markUserUiActivity(e.target);
+  });
+  document.addEventListener('input', (e) => {
+    markUserUiActivity(e.target);
   });
 }
 
@@ -390,24 +398,18 @@ function initUIFocusTracker() {
 function userIsTyping() {
   if (!lastUserUIFocus) return false;
   const el = document.activeElement;
-  const tag = el?.tagName?.toUpperCase();
-  const isUI = (tag === 'INPUT' || tag === 'TEXTAREA') &&
-    !el.classList.contains('xterm-helper-textarea');
-  if (!isUI) return false;
+  if (!isNonTerminalUiInput(el)) return false;
   return (Date.now() - lastUserUIKeypressTime) < TYPING_GUARD_MS;
 }
 
 // Returns true if a non-terminal UI input currently has focus.
-// Stronger than userIsTyping() — blocks injection for the ENTIRE duration
-// the user has focus in broadcastInput (or any UI input), not just 300ms
-// after last keypress. Agent injections must not steal focus while user
-// is composing a message.
+// Defer window is activity-based: focus alone does NOT block injection.
+// This prevents stale focus from deadlocking injections while still
+// protecting active composition in broadcastInput and similar fields.
 function userInputFocused() {
   const el = document.activeElement;
-  if (!el) return false;
-  const tag = el.tagName?.toUpperCase();
-  return (tag === 'INPUT' || tag === 'TEXTAREA') &&
-    !el.classList.contains('xterm-helper-textarea');
+  if (!isNonTerminalUiInput(el)) return false;
+  return (Date.now() - lastUserUIKeypressTime) <= UI_FOCUS_TYPING_WINDOW_MS;
 }
 
 // Status update callbacks
@@ -1798,6 +1800,7 @@ module.exports = {
   setStatusCallbacks,
   setSDKMode,           // SDK mode guard for PTY operations
   initUIFocusTracker,   // Global UI focus tracking for multi-pane restore
+  userInputFocused,     // Active UI composition guard (focus + recent typing)
   initTerminals,
   initTerminal,
   reattachTerminal,

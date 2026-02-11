@@ -394,7 +394,8 @@ function createInjectionController(options = {}) {
       log.debug(`processQueue ${id}`, `${isCodex ? 'Codex' : 'Gemini'} pane bypassing global lock`);
     }
 
-    // Gate 2: userInputFocused — defer while user is composing in broadcastInput.
+    // Gate 2: userInputFocused — defer while user is actively composing in UI input.
+    // Focus alone does not block; terminal.js reports true only for recent activity.
     // Codex/Gemini bypass (PTY writes, no focus steal).
     if (!bypassesLock && typeof userInputFocused === 'function' && userInputFocused()) {
       scheduleDeferredRetry(paneId, 'user input focused (composing)');
@@ -769,21 +770,21 @@ function createInjectionController(options = {}) {
         finish({ success: true, verified: false, reason: 'timeout' });
       }, CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS);
 
-      // Focus isolation: if user focused an input during the Enter delay,
-      // wait for them to blur before stealing focus for sendTrustedEnter.
+      // Focus isolation: if user is actively composing during the Enter delay,
+      // wait briefly for the compose window to clear before sending Enter.
       // Poll every 100ms, give up after 5s to prevent message starvation.
       if (typeof userInputFocused === 'function' && userInputFocused()) {
         clearTimeout(safetyTimerId);
         safetyTimerId = setTimeout(() => {
           finish({ success: true, verified: false, reason: 'timeout' });
         }, CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS);
-        log.info(`doSendToPane ${id}`, 'User input focused before Enter - waiting for blur');
+        log.info(`doSendToPane ${id}`, 'User actively composing before Enter - waiting for idle');
         const focusWaitStart = Date.now();
         while (userInputFocused() && (Date.now() - focusWaitStart) < 5000) {
           await sleep(100);
         }
         if (userInputFocused()) {
-          log.warn(`doSendToPane ${id}`, 'User input still focused after 5s - proceeding with Enter');
+          log.warn(`doSendToPane ${id}`, 'User composition still active after 5s - proceeding with Enter');
         }
       }
 
