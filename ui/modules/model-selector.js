@@ -6,6 +6,7 @@
 const { ipcRenderer } = require('electron');
 const log = require('./logger');
 const terminal = require('./terminal');
+const settings = require('./settings');
 const { showStatusNotice } = require('./notifications');
 
 /**
@@ -85,6 +86,7 @@ function setupModelChangeListener() {
     const select = document.querySelector(`.model-selector[data-pane-id="${paneId}"]`);
 
     try {
+      await settings.refreshSettingsFromMain();
       // Respawn with new model - restartPane handles kill/create/spawn sequence
       await terminal.restartPane(paneId, model);
       showStatusNotice(`Pane ${paneId} now running ${model}`);
