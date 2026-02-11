@@ -38,6 +38,15 @@ function createInjectionController(options = {}) {
     MAX_COMPACTION_DEFER_MS = 8000,
     CLAUDE_CHUNK_SIZE = 192,
     CLAUDE_CHUNK_YIELD_MS = 2,
+    CLAUDE_ENTER_DELAY_MS = 50,
+    SUBMIT_ACCEPT_VERIFY_WINDOW_MS = 400,
+    SUBMIT_ACCEPT_POLL_MS = 50,
+    SUBMIT_ACCEPT_RETRY_BACKOFF_MS = 250,
+    SUBMIT_ACCEPT_MAX_ATTEMPTS = 2,
+    SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS = 350,
+    SUBMIT_DEFER_MAX_WAIT_MS = 2000,
+    SUBMIT_DEFER_POLL_MS = 100,
+    CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS = 9000,
   } = constants;
 
   // Track when compaction deferral started per pane (false positive safety valve)
@@ -178,6 +187,81 @@ function createInjectionController(options = {}) {
       log.warn(`isPromptReady ${paneId}`, 'Buffer read failed:', err.message);
       return false;
     }
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function getLastOutputTimestamp(paneId) {
+    const ts = Number(lastOutputTime?.[paneId]);
+    return Number.isFinite(ts) ? ts : 0;
+  }
+
+  function paneHasRecentOutput(paneId, windowMs = SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS) {
+    const ts = getLastOutputTimestamp(paneId);
+    if (!ts) return false;
+    return (Date.now() - ts) <= windowMs;
+  }
+
+  function canProbePromptState(paneId) {
+    const terminal = terminals.get(paneId);
+    const buffer = terminal?.buffer?.active;
+    return !!(buffer && typeof buffer.getLine === 'function');
+  }
+
+  async function deferSubmitWhilePaneActive(paneId) {
+    const start = Date.now();
+    while (paneHasRecentOutput(paneId) && (Date.now() - start) < SUBMIT_DEFER_MAX_WAIT_MS) {
+      await sleep(SUBMIT_DEFER_POLL_MS);
+    }
+
+    const waitedMs = Date.now() - start;
+    if (waitedMs <= 0) {
+      return;
+    }
+
+    if (paneHasRecentOutput(paneId)) {
+      log.warn(
+        `doSendToPane ${paneId}`,
+        `Claude pane still active after ${waitedMs}ms defer window; proceeding with submit`
+      );
+      return;
+    }
+
+    log.info(
+      `doSendToPane ${paneId}`,
+      `Deferred submit ${waitedMs}ms while pane reported active output`
+    );
+  }
+
+  async function verifySubmitAccepted(paneId, baseline = {}) {
+    const {
+      outputTsBefore = 0,
+      promptProbeAvailable = false,
+      promptWasReady = false,
+    } = baseline;
+
+    // Fallback when prompt probing is unavailable (mock/test edge cases).
+    if (!promptProbeAvailable) {
+      return { accepted: true, signal: 'prompt_probe_unavailable' };
+    }
+
+    const start = Date.now();
+    while ((Date.now() - start) < SUBMIT_ACCEPT_VERIFY_WINDOW_MS) {
+      const outputTsAfter = getLastOutputTimestamp(paneId);
+      if (outputTsAfter > outputTsBefore) {
+        return { accepted: true, signal: 'output_transition' };
+      }
+
+      if (promptWasReady && !isPromptReady(paneId)) {
+        return { accepted: true, signal: 'prompt_transition' };
+      }
+
+      await sleep(SUBMIT_ACCEPT_POLL_MS);
+    }
+
+    return { accepted: false, signal: 'no_acceptance_signal' };
   }
 
   // IDLE QUEUE: Process queued messages for a pane.
@@ -581,12 +665,9 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // Step 4: Send Enter via sendTrustedEnter after short fixed delay
-    // Claude panes always need Enter because ink TUI only responds to native
-    // keyboard events, not PTY \r. Use a short fixed delay (50ms) to let the
-    // PTY text write settle before sending Enter.
-    const CLAUDE_ENTER_DELAY_MS = 50;
-
+    // Step 4: 2-phase submit
+    // 1) dispatch Enter
+    // 2) verify submit accepted (prompt/output transition), retry once if needed
     setTimeout(async () => {
       // Re-query textarea in case DOM changed during delay
       const currentPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
@@ -600,67 +681,116 @@ function createInjectionController(options = {}) {
         return;
       }
 
+      // Extend safety timer for active-output defer + verify + retry.
+      clearTimeout(safetyTimerId);
+      safetyTimerId = setTimeout(() => {
+        finish({ success: true, verified: false, reason: 'timeout' });
+      }, CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS);
+
       // Focus isolation: if user focused an input during the Enter delay,
       // wait for them to blur before stealing focus for sendTrustedEnter.
       // Poll every 100ms, give up after 5s to prevent message starvation.
-      // Extend the safety timer to 6s so it outlasts the 5s poll + overhead,
-      // preventing premature lock release that could allow a second message
-      // to write PTY text while this message's Enter hasn't fired yet.
       if (typeof userInputFocused === 'function' && userInputFocused()) {
         clearTimeout(safetyTimerId);
         safetyTimerId = setTimeout(() => {
           finish({ success: true, verified: false, reason: 'timeout' });
-        }, 6000);
-        log.info(`doSendToPane ${id}`, 'User input focused before Enter — waiting for blur');
+        }, CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS);
+        log.info(`doSendToPane ${id}`, 'User input focused before Enter - waiting for blur');
         const focusWaitStart = Date.now();
         while (userInputFocused() && (Date.now() - focusWaitStart) < 5000) {
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await sleep(100);
         }
         if (userInputFocused()) {
-          log.warn(`doSendToPane ${id}`, 'User input still focused after 5s — proceeding with Enter');
+          log.warn(`doSendToPane ${id}`, 'User input still focused after 5s - proceeding with Enter');
         }
       }
 
-      // Ensure focus for sendTrustedEnter
-      const focusOk = await focusWithRetry(textarea);
-      if (!focusOk) {
-        log.warn(`doSendToPane ${id}`, 'Claude pane: focus failed, proceeding with Enter anyway');
+      let submitAccepted = null;
+
+      for (let attempt = 1; attempt <= SUBMIT_ACCEPT_MAX_ATTEMPTS; attempt += 1) {
+        await deferSubmitWhilePaneActive(id);
+
+        const promptProbeAvailable = canProbePromptState(id);
+        const attemptBaseline = {
+          outputTsBefore: getLastOutputTimestamp(id),
+          promptProbeAvailable,
+          promptWasReady: promptProbeAvailable ? isPromptReady(id) : false,
+        };
+
+        // Ensure focus for sendTrustedEnter
+        const focusOk = await focusWithRetry(textarea);
+        if (!focusOk) {
+          log.warn(`doSendToPane ${id}`, 'Claude pane: focus failed, proceeding with Enter anyway');
+        }
+
+        bus.emit('inject.submit.requested', {
+          paneId: id,
+          payload: { method: 'sendTrustedEnter', attempt, maxAttempts: SUBMIT_ACCEPT_MAX_ATTEMPTS },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
+        const enterResult = await sendEnterToPane(id);
+
+        // Restore focus immediately after Enter dispatch.
+        scheduleFocusRestore();
+
+        if (!enterResult.success) {
+          log.error(`doSendToPane ${id}`, 'Enter send failed');
+          bus.emit('inject.failed', {
+            paneId: id,
+            payload: { reason: 'enter_failed', method: enterResult.method },
+            correlationId: corrId,
+            source: EVENT_SOURCE,
+          });
+          markPotentiallyStuck(id);
+          finishWithClear({ success: false, reason: 'enter_failed' });
+          return;
+        }
+
+        bus.emit('inject.submit.sent', {
+          paneId: id,
+          payload: { method: enterResult.method, attempt, maxAttempts: SUBMIT_ACCEPT_MAX_ATTEMPTS },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
+        log.info(
+          `doSendToPane ${id}`,
+          `Claude pane: Enter sent via ${enterResult.method} (attempt ${attempt}/${SUBMIT_ACCEPT_MAX_ATTEMPTS})`
+        );
+
+        const verifyResult = await verifySubmitAccepted(id, attemptBaseline);
+        if (verifyResult.accepted) {
+          submitAccepted = verifyResult;
+          break;
+        }
+
+        if (attempt < SUBMIT_ACCEPT_MAX_ATTEMPTS) {
+          log.warn(
+            `doSendToPane ${id}`,
+            `Submit acceptance not observed after attempt ${attempt}; retrying in ${SUBMIT_ACCEPT_RETRY_BACKOFF_MS}ms`
+          );
+          await sleep(SUBMIT_ACCEPT_RETRY_BACKOFF_MS);
+        }
       }
 
-      // Send Enter
-      bus.emit('inject.submit.requested', {
-        paneId: id,
-        payload: { method: 'sendTrustedEnter' },
-        correlationId: corrId,
-        source: EVENT_SOURCE,
-      });
-      const enterResult = await sendEnterToPane(id);
-
-      // Restore focus immediately after Enter (no verification loop)
-      scheduleFocusRestore();
-
-      if (!enterResult.success) {
-        log.error(`doSendToPane ${id}`, 'Enter send failed');
+      if (!submitAccepted) {
         bus.emit('inject.failed', {
           paneId: id,
-          payload: { reason: 'enter_failed', method: enterResult.method },
+          payload: { reason: 'submit_not_accepted', attempts: SUBMIT_ACCEPT_MAX_ATTEMPTS },
           correlationId: corrId,
           source: EVENT_SOURCE,
         });
         markPotentiallyStuck(id);
-        finishWithClear({ success: false, reason: 'enter_failed' });
+        finishWithClear({ success: false, reason: 'submit_not_accepted' });
         return;
       }
 
-      bus.emit('inject.submit.sent', {
-        paneId: id,
-        payload: { method: enterResult.method },
-        correlationId: corrId,
-        source: EVENT_SOURCE,
-      });
-      log.info(`doSendToPane ${id}`, `Claude pane: Enter sent via ${enterResult.method}`);
       lastTypedTime[id] = Date.now();
-      finishWithClear({ success: true });
+      finishWithClear({
+        success: true,
+        verified: true,
+        signal: submitAccepted.signal,
+      });
     }, CLAUDE_ENTER_DELAY_MS);
   }
 

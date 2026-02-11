@@ -782,8 +782,8 @@ describe('Terminal Injection', () => {
 
       const promise = controller.doSendToPane('1', 'test\r', onComplete);
 
-      // Advance past fixed delay + safety timeout
-      await jest.advanceTimersByTimeAsync(2000);
+      // Advance past fixed delay + extended Claude submit safety timeout
+      await jest.advanceTimersByTimeAsync(10000);
 
       await promise;
 
@@ -858,6 +858,68 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({
         success: false,
         reason: 'enter_failed',
+      });
+    });
+
+    test('retries submit once and succeeds when prompt transitions on retry', async () => {
+      let promptText = 'ready> ';
+      let enterCalls = 0;
+      terminals.set('1', {
+        _hivemindBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
+      document.activeElement = mockTextarea;
+      mockPty.sendTrustedEnter.mockImplementation(async () => {
+        enterCalls += 1;
+        if (enterCalls === 2) {
+          promptText = 'running...';
+        }
+      });
+      const onComplete = jest.fn();
+
+      await controller.doSendToPane('1', 'test\r', onComplete);
+      await jest.advanceTimersByTimeAsync(2500);
+
+      expect(mockPty.sendTrustedEnter).toHaveBeenCalledTimes(2);
+      expect(onComplete).toHaveBeenCalledWith({
+        success: true,
+        verified: true,
+        signal: 'prompt_transition',
+      });
+    });
+
+    test('fails submit when acceptance signal is never observed after retry', async () => {
+      terminals.set('1', {
+        _hivemindBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => 'ready> ',
+            })),
+          },
+        },
+      });
+      document.activeElement = mockTextarea;
+      const onComplete = jest.fn();
+
+      await controller.doSendToPane('1', 'test\r', onComplete);
+      await jest.advanceTimersByTimeAsync(2500);
+
+      expect(mockPty.sendTrustedEnter).toHaveBeenCalledTimes(2);
+      expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
+      expect(onComplete).toHaveBeenCalledWith({
+        success: false,
+        reason: 'submit_not_accepted',
       });
     });
 
