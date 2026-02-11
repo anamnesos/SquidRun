@@ -8,13 +8,13 @@
 ## Quick Start (READ THIS FIRST)
 
 **What is this app?**
-Hivemind is an Electron desktop app that orchestrates 3 persistent AI agent instances (Claude, Codex) working in parallel. Each agent has a specialized role (Architect, DevOps, Analyst) and coordinates with others through WebSocket messaging and file-based trigger fallback. Architect (Claude) has internal Frontend and Reviewer teammates via Agent Teams.
+Hivemind is an Electron desktop app that orchestrates 3 persistent AI agent instances (Claude, Gemini, Codex) working in parallel. Each agent has a specialized role (Architect, DevOps, Analyst) and coordinates with others through WebSocket messaging and file-based trigger fallback. Architect (Claude) has internal Frontend and Reviewer teammates via Agent Teams.
 
 **How does it work?**
 - **Primary Mode (PTY):** 3 terminal processes managed by a persistent daemon. Native Claude/Codex CLIs and npm Gemini CLI run in pseudo-terminals. Messages sent via keyboard injection. Terminals survive app restarts.
 - **Alternative Mode (SDK):** 3 Python SDK sessions orchestrated by `hivemind-sdk-v2.py`. Direct API calls instead of keyboard injection. Supports true parallelism.
 
-**Architecture Decision (Session 73+79):** Hybrid Consensus. Hivemind remains outer-loop coordinator. Native Agent Teams (Opus 4.6) as opt-in per-pane enhancement. Gemini as shared vision service (Oracle). 3-pane layout (1=Architect, 2=DevOps, 5=Analyst).
+**Architecture Decision (Session 73+79):** Hybrid Consensus. Hivemind remains outer-loop coordinator. Native Agent Teams as opt-in per-pane enhancement. 3-pane layout (1=Architect, 2=DevOps, 5=Analyst). **Models are runtime config** — any pane can run any supported CLI (Claude, Codex, Gemini). Check `ui/settings.json` → `paneCommands` for current assignments.
 
 ---
 
@@ -189,13 +189,13 @@ hivemind/
 - **Compaction Gate:** Lexical evidence required for confirmed state, chunk-inactivity decay (5s quiet), MAX_COMPACTION_DEFER_MS=8s safety valve. Runtime validated S108: 122-727ms injection latency.
 - **Bridge Tab:** `ui/modules/tabs/bridge.js` — user-facing dashboard with agent status, system metrics, live event stream.
 
-### Evidence Ledger (In Progress — Slice 1)
+### Evidence Ledger (Slice 1 COMPLETE, Slice 2 in progress)
 
 - **Purpose:** Unified causal event log replacing prose handoffs with queryable evidence system.
 - **Three views:** Pipeline trace graph (DevOps), investigation timeline (Analyst), session memory (Architect).
-- **Storage:** SQLite WAL mode, single writer in daemon/main. Tables: events, edges, spans.
-- **Spec:** `workspace/build/evidence-ledger-slice1-spec.md` (infra), `evidence-ledger-query-spec.md` (query).
-- **Phasing:** Slice 1 (pipeline ledger) → Slice 2 (investigator workspace) → Slice 3 (cross-session decision memory).
+- **Storage:** SQLite WAL mode, single writer in daemon/main. Tables: events, edges, spans + Slice 2: incidents, assertions, verdicts, evidence bindings.
+- **Spec:** `workspace/build/evidence-ledger-slice1-spec.md` (infra), `evidence-ledger-query-spec.md` (query), `evidence-ledger-slice2-spec.md` (investigator workspace).
+- **Phasing:** Slice 1 (pipeline ledger) DONE → Slice 2 (investigator workspace) IN PROGRESS → Slice 3 (cross-session decision memory).
 
 ### Comms Reliability (v3, S111)
 
