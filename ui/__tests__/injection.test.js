@@ -783,6 +783,19 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'pty_write_failed' });
     });
 
+    test('treats writeChunked success=false as PTY write failure', async () => {
+      mockPty.write
+        .mockResolvedValueOnce(undefined) // Clear-line succeeds
+        .mockResolvedValueOnce(undefined); // Home reset succeeds
+      mockPty.writeChunked.mockResolvedValueOnce({ success: false, error: 'write ack timeout after 2500ms' });
+      const onComplete = jest.fn();
+
+      await controller.doSendToPane('1', 'test\r', onComplete);
+
+      expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'pty_write_failed' });
+      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
+    });
+
     test('handles PTY clear-line failure gracefully', async () => {
       mockPty.write.mockRejectedValueOnce(new Error('Clear failed'))
         .mockResolvedValueOnce(undefined);

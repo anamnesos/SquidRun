@@ -9,6 +9,7 @@ const log = require('../logger');
 const DEFAULT_CHUNK_SIZE = 192;
 const MIN_CHUNK_SIZE = 128;
 const MAX_CHUNK_SIZE = 256;
+const WRITE_ACK_TIMEOUT_MS = 2500;
 
 function clampChunkSize(value) {
   const numeric = Number(value);
@@ -35,6 +36,23 @@ function buildChunkKernelMeta(kernelMeta, chunkIndex) {
     ...kernelMeta,
     eventId: `${baseEventId}-c${chunkIndex + 1}`,
   };
+}
+
+async function writeWithAckIfAvailable(daemonClient, paneId, data, kernelMeta = null) {
+  if (!daemonClient) {
+    return { success: false, status: 'daemon_missing', error: 'daemonClient not available' };
+  }
+
+  if (typeof daemonClient.writeAndWaitAck === 'function') {
+    return daemonClient.writeAndWaitAck(paneId, data, kernelMeta, { timeoutMs: WRITE_ACK_TIMEOUT_MS });
+  }
+
+  const sent = kernelMeta
+    ? daemonClient.write(paneId, data, kernelMeta)
+    : daemonClient.write(paneId, data);
+  return sent === false
+    ? { success: false, status: 'send_failed', error: 'Failed to send write to daemon' }
+    : { success: true, status: 'sent_without_ack' };
 }
 
 function registerPtyHandlers(ctx, deps = {}) {
@@ -83,10 +101,14 @@ function registerPtyHandlers(ctx, deps = {}) {
 
     let chunkCount = 0;
     if (text.length === 0) {
-      if (kernelMeta) {
-        ctx.daemonClient.write(paneId, '', kernelMeta);
-      } else {
-        ctx.daemonClient.write(paneId, '');
+      const ack = await writeWithAckIfAvailable(ctx.daemonClient, paneId, '', kernelMeta);
+      if (!ack?.success) {
+        return {
+          success: false,
+          chunks: 0,
+          chunkSize,
+          error: ack?.error || ack?.status || 'chunk write failed',
+        };
       }
       return { success: true, chunks: 1, chunkSize };
     }
@@ -94,10 +116,14 @@ function registerPtyHandlers(ctx, deps = {}) {
     for (let offset = 0; offset < text.length; offset += chunkSize) {
       const chunk = text.slice(offset, offset + chunkSize);
       const chunkKernelMeta = buildChunkKernelMeta(kernelMeta, chunkCount);
-      if (chunkKernelMeta) {
-        ctx.daemonClient.write(paneId, chunk, chunkKernelMeta);
-      } else {
-        ctx.daemonClient.write(paneId, chunk);
+      const ack = await writeWithAckIfAvailable(ctx.daemonClient, paneId, chunk, chunkKernelMeta);
+      if (!ack?.success) {
+        return {
+          success: false,
+          chunks: chunkCount,
+          chunkSize,
+          error: ack?.error || ack?.status || 'chunk write failed',
+        };
       }
       chunkCount += 1;
 

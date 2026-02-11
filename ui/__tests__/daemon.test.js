@@ -185,6 +185,45 @@ describe('DaemonClient', () => {
         source: 'injection.js',
       });
     });
+
+    test('writeAndWaitAck resolves on matching daemon.write.ack', async () => {
+      await client.connect();
+
+      const writePromise = client.writeAndWaitAck(
+        '1',
+        'hello',
+        { eventId: 'evt-ack-1', correlationId: 'corr-ack-1', source: 'injection.js' },
+        { timeoutMs: 200 }
+      );
+
+      const ackMsg = JSON.stringify({
+        event: 'kernel-event',
+        eventData: {
+          type: 'daemon.write.ack',
+          payload: { status: 'accepted', requestedByEventId: 'evt-ack-1' },
+        },
+      }) + '\n';
+      mockSocket.emit('data', ackMsg);
+
+      const result = await writePromise;
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('accepted');
+      expect(result.requestEventId).toBe('evt-ack-1');
+    });
+
+    test('writeAndWaitAck times out when no ack arrives', async () => {
+      await client.connect();
+
+      const result = await client.writeAndWaitAck(
+        '1',
+        'hello',
+        { eventId: 'evt-ack-timeout', correlationId: 'corr-ack-timeout', source: 'injection.js' },
+        { timeoutMs: 10 }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe('ack_timeout');
+    });
   });
 
   describe('resize', () => {

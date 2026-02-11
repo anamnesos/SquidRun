@@ -1545,6 +1545,7 @@ function handleMessage(client, message) {
 
       case 'write': {
         const paneId = String(msg.paneId || 'system');
+        const requestedByEventId = msg?.kernelMeta?.eventId || null;
         const requestedEvent = sendKernelEvent(client, 'daemon.write.requested', {
           paneId,
           payload: {
@@ -1552,6 +1553,7 @@ function handleMessage(client, message) {
             dataLen: Buffer.byteLength(String(msg.data || ''), 'utf8'),
             mode: terminals.get(paneId)?.mode || 'unknown',
             requestedBy: msg?.kernelMeta?.source || 'unknown',
+            requestedByEventId,
           },
           kernelMeta: msg.kernelMeta || null,
         });
@@ -1588,6 +1590,7 @@ function handleMessage(client, message) {
               paneId,
               status: 'blocked_ghost_dedup',
               reason: `duplicate_input_within_${GHOST_DEDUP_WINDOW_MS}ms`,
+              requestedByEventId,
             },
             kernelMeta: msg.kernelMeta || null,
             correlationId: requestedEvent.correlationId,
@@ -1613,6 +1616,7 @@ function handleMessage(client, message) {
             status: writeResult.status,
             reason: writeResult.ok ? undefined : 'write_not_applied',
             bytesAccepted: writeResult.ok ? Buffer.byteLength(String(msg.data || ''), 'utf8') : 0,
+            requestedByEventId,
           },
           kernelMeta: msg.kernelMeta || null,
           correlationId: requestedEvent.correlationId,

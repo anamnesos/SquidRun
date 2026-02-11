@@ -722,6 +722,9 @@ function createInjectionController(options = {}) {
         { chunkSize, yieldEveryChunks },
         createKernelMeta()
       );
+      if (chunkResult && chunkResult.success === false) {
+        throw new Error(chunkResult.error || 'writeChunked returned failure');
+      }
       const fallbackChunkCount = normalizedText.length > 0
         ? Math.ceil(normalizedText.length / chunkSize)
         : 1;
