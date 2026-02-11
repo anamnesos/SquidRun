@@ -115,8 +115,14 @@ const REQUIRED_FIELDS = Object.freeze([
 
 const DEFAULT_EVIDENCE_SPEC = Object.freeze({
   requiredClass: 'strong',
-  acceptedSignals: ['verify.pass', 'inject.verified', 'daemon.write.ack', 'pty.data.received'],
-  disallowedSignals: ['pty.data.received'],
+  acceptedSignals: [
+    'verify.pass',
+    'inject.verified',
+    'daemon.write.ack',
+    'pty.data.received',
+    'inject.submit.sent',
+  ],
+  disallowedSignals: [],
 });
 
 const DEFAULT_TIMEOUT_BUDGET = Object.freeze({
@@ -133,11 +139,13 @@ const DEFAULT_FALLBACK_POLICY = Object.freeze({
 });
 
 const OWNER_MUTATION_EVENTS = new Set([
-  'inject.requested',
   'inject.queued',
   'inject.applied',
   'inject.submit.requested',
   'inject.submit.sent',
+  'inject.failed',
+  'inject.dropped',
+  'inject.timeout',
 ]);
 
 let bus = null;
@@ -254,6 +262,31 @@ function summarizePayload(payload) {
   return summary;
 }
 
+function normalizeEvidenceSpec(event) {
+  const candidate = event?.payload?.evidenceSpec;
+  if (!candidate || typeof candidate !== 'object') {
+    return clone(DEFAULT_EVIDENCE_SPEC);
+  }
+
+  const requiredClass = typeof candidate.requiredClass === 'string'
+    ? candidate.requiredClass
+    : DEFAULT_EVIDENCE_SPEC.requiredClass;
+
+  const acceptedSignals = Array.isArray(candidate.acceptedSignals)
+    ? candidate.acceptedSignals.filter((item) => typeof item === 'string')
+    : clone(DEFAULT_EVIDENCE_SPEC.acceptedSignals);
+
+  const disallowedSignals = Array.isArray(candidate.disallowedSignals)
+    ? candidate.disallowedSignals.filter((item) => typeof item === 'string')
+    : clone(DEFAULT_EVIDENCE_SPEC.disallowedSignals);
+
+  return {
+    requiredClass,
+    acceptedSignals,
+    disallowedSignals,
+  };
+}
+
 function emitLedgerEvent(type, transition, event, payload = {}) {
   if (!bus) return null;
   return bus.emit(type, {
@@ -302,7 +335,7 @@ function createTransitionFromEvent(event) {
       leaseTtlMs: DEFAULT_OWNER_LEASE_TTL_MS,
     },
     preconditions: [],
-    evidenceSpec: clone(DEFAULT_EVIDENCE_SPEC),
+    evidenceSpec: normalizeEvidenceSpec(event),
     timeoutBudget: clone(DEFAULT_TIMEOUT_BUDGET),
     fallbackPolicy: clone(DEFAULT_FALLBACK_POLICY),
     phase: TRANSITION_PHASE.REQUESTED,
@@ -390,8 +423,12 @@ function markInvalid(transition, event, reasonCode, payload = {}) {
 }
 
 function ensureOwnerInvariant(transition, event) {
+  if (!transition || !event) return true;
   if (!OWNER_MUTATION_EVENTS.has(event?.type)) return true;
-  if (!event?.source) return true;
+  if (!event?.source) {
+    markInvalid(transition, event, 'owner_source_missing');
+    return false;
+  }
   if (event.source !== transition.owner.module) {
     markInvalid(transition, event, 'ownership_conflict', {
       expectedOwner: transition.owner.module,
@@ -404,6 +441,31 @@ function ensureOwnerInvariant(transition, event) {
     return false;
   }
   return true;
+}
+
+function promoteToAppliedWithPreconditions(transition, event, note = 'submit_without_explicit_apply') {
+  if (!transition || transition.closed) return false;
+
+  if (transition.phase === TRANSITION_PHASE.REQUESTED || transition.phase === TRANSITION_PHASE.DEFERRED) {
+    if (!evaluatePreconditionsForApply(transition, event)) {
+      if (transition.phase === TRANSITION_PHASE.REQUESTED) {
+        setPhase(transition, TRANSITION_PHASE.DEFERRED, event, 'precondition_failed_before_apply');
+      }
+      return false;
+    }
+    if (transition.phase === TRANSITION_PHASE.REQUESTED) {
+      if (!setPhase(transition, TRANSITION_PHASE.ACCEPTED, event)) return false;
+    }
+  }
+
+  if (transition.phase === TRANSITION_PHASE.ACCEPTED) {
+    if (!evaluatePreconditionsForApply(transition, event)) {
+      return false;
+    }
+    if (!setPhase(transition, TRANSITION_PHASE.APPLIED, event, note)) return false;
+  }
+
+  return transition.phase === TRANSITION_PHASE.APPLIED || transition.phase === TRANSITION_PHASE.VERIFYING;
 }
 
 function setPhase(transition, nextPhase, event, note = '') {
@@ -464,16 +526,27 @@ function evaluatePreconditionsForApply(transition, event) {
 
 function classifyEvidence(event, transition = null) {
   if (!event || !event.type) return EVIDENCE_CLASS.NONE;
+  const signalType = event.type;
+  const disallowedSignals = transition?.evidenceSpec?.disallowedSignals;
+  const acceptedSignals = transition?.evidenceSpec?.acceptedSignals;
 
-  if (event.type === 'verify.pass' || event.type === 'inject.verified') {
+  if (Array.isArray(disallowedSignals) && disallowedSignals.includes(signalType)) {
+    return EVIDENCE_CLASS.DISALLOWED;
+  }
+
+  if (Array.isArray(acceptedSignals) && !acceptedSignals.includes(signalType)) {
+    return EVIDENCE_CLASS.DISALLOWED;
+  }
+
+  if (signalType === 'verify.pass' || signalType === 'inject.verified') {
     return EVIDENCE_CLASS.STRONG;
   }
 
-  if (event.type === 'daemon.write.ack') {
+  if (signalType === 'daemon.write.ack') {
     return event?.payload?.status === 'accepted' ? EVIDENCE_CLASS.WEAK : EVIDENCE_CLASS.NONE;
   }
 
-  if (event.type === 'pty.data.received') {
+  if (signalType === 'pty.data.received') {
     const state = transition && bus && typeof bus.getState === 'function'
       ? bus.getState(transition.paneId)
       : null;
@@ -483,7 +556,7 @@ function classifyEvidence(event, transition = null) {
     return EVIDENCE_CLASS.WEAK;
   }
 
-  if (event.type === 'inject.submit.sent') {
+  if (signalType === 'inject.submit.sent') {
     return EVIDENCE_CLASS.WEAK;
   }
 
@@ -520,11 +593,98 @@ function hasEvidence(transition, cls) {
   return transition.evidence.some((entry) => entry.class === cls);
 }
 
+function enforceEvidenceSpec(transition, terminalPhase, event, reasonCode, options = {}) {
+  const requiredClass = transition?.evidenceSpec?.requiredClass || 'strong';
+  const hasStrong = hasEvidence(transition, EVIDENCE_CLASS.STRONG);
+  const hasWeak = hasEvidence(transition, EVIDENCE_CLASS.WEAK);
+  const hasDisallowed = hasEvidence(transition, EVIDENCE_CLASS.DISALLOWED);
+
+  if (hasDisallowed && !options.manualOverride) {
+    markInvalid(transition, event, 'evidence_spec_disallowed', {
+      requiredClass,
+      attemptedPhase: terminalPhase,
+    });
+    return {
+      terminalPhase: TRANSITION_PHASE.FAILED,
+      reasonCode: 'disallowed_evidence',
+      options: {
+        ...options,
+        verificationOutcome: VERIFICATION_OUTCOME.FAIL,
+      },
+    };
+  }
+
+  if (terminalPhase !== TRANSITION_PHASE.VERIFIED) {
+    return { terminalPhase, reasonCode, options };
+  }
+
+  if (requiredClass === 'manual_only' && !options.manualOverride) {
+    markInvalid(transition, event, 'evidence_spec_manual_only', { attemptedPhase: terminalPhase });
+    return {
+      terminalPhase: TRANSITION_PHASE.FAILED,
+      reasonCode: 'manual_verification_required',
+      options: {
+        ...options,
+        verificationOutcome: VERIFICATION_OUTCOME.UNKNOWN,
+      },
+    };
+  }
+
+  if (requiredClass === 'weak_allowed') {
+    if (hasStrong || hasWeak) {
+      return { terminalPhase, reasonCode, options };
+    }
+    markInvalid(transition, event, 'evidence_spec_missing_required', { requiredClass });
+    return {
+      terminalPhase: TRANSITION_PHASE.TIMED_OUT,
+      reasonCode: 'evidence_missing_required',
+      options: {
+        ...options,
+        resolvedBy: options.resolvedBy || 'fallback',
+        verificationOutcome: VERIFICATION_OUTCOME.UNKNOWN,
+      },
+    };
+  }
+
+  // Default policy: strong evidence required for clean verify.
+  if (hasStrong) {
+    return { terminalPhase, reasonCode, options };
+  }
+
+  markInvalid(transition, event, 'evidence_spec_missing_required', { requiredClass });
+  if (hasWeak) {
+    return {
+      terminalPhase: TRANSITION_PHASE.TIMED_OUT,
+      reasonCode: 'evidence_below_required',
+      options: {
+        ...options,
+        resolvedBy: options.resolvedBy || 'fallback',
+        verificationOutcome: VERIFICATION_OUTCOME.RISKED_PASS,
+      },
+    };
+  }
+
+  return {
+    terminalPhase: TRANSITION_PHASE.TIMED_OUT,
+    reasonCode: 'evidence_missing_required',
+    options: {
+      ...options,
+      resolvedBy: options.resolvedBy || 'fallback',
+      verificationOutcome: VERIFICATION_OUTCOME.UNKNOWN,
+    },
+  };
+}
+
 function finalizeTransition(transition, terminalPhase, event, reasonCode, options = {}) {
   if (!transition || transition.closed) return;
-  if (!setPhase(transition, terminalPhase, event, reasonCode)) {
+  const enforced = enforceEvidenceSpec(transition, terminalPhase, event, reasonCode, options);
+  const effectivePhase = enforced.terminalPhase;
+  const effectiveReason = enforced.reasonCode || reasonCode;
+  const effectiveOptions = enforced.options || options;
+
+  if (!setPhase(transition, effectivePhase, event, effectiveReason)) {
     // Don't force-close on phase violation. Keep transition open and invalid for triage.
-    markInvalid(transition, event, 'terminal_phase_set_failed', { attemptedPhase: terminalPhase });
+    markInvalid(transition, event, 'terminal_phase_set_failed', { attemptedPhase: effectivePhase });
     return;
   }
 
@@ -534,19 +694,19 @@ function finalizeTransition(transition, terminalPhase, event, reasonCode, option
   clearTransitionTimeout(transition.transitionId);
   removeFromActiveIndex(transition);
 
-  transition.outcome.reasonCode = reasonCode || 'unknown';
-  transition.outcome.resolvedBy = options.resolvedBy || 'normal';
+  transition.outcome.reasonCode = effectiveReason || 'unknown';
+  transition.outcome.resolvedBy = effectiveOptions.resolvedBy || 'normal';
 
-  if (terminalPhase === TRANSITION_PHASE.VERIFIED) {
+  if (effectivePhase === TRANSITION_PHASE.VERIFIED) {
     stats.settledVerified += 1;
     transition.verification.outcome = VERIFICATION_OUTCOME.PASS;
     transition.verification.verifiedAt = transition.closedAt;
     transition.outcome.status = 'success';
     transition.lifecycle = TRANSITION_STATES.DELIVERED_VERIFIED;
-  } else if (terminalPhase === TRANSITION_PHASE.TIMED_OUT) {
+  } else if (effectivePhase === TRANSITION_PHASE.TIMED_OUT) {
     stats.timedOut += 1;
-    if (options.verificationOutcome) {
-      transition.verification.outcome = options.verificationOutcome;
+    if (effectiveOptions.verificationOutcome) {
+      transition.verification.outcome = effectiveOptions.verificationOutcome;
     } else {
       transition.verification.outcome = VERIFICATION_OUTCOME.UNKNOWN;
     }
@@ -558,7 +718,7 @@ function finalizeTransition(transition, terminalPhase, event, reasonCode, option
     if (transition.verification.outcome === VERIFICATION_OUTCOME.RISKED_PASS) {
       stats.settledUnverified += 1;
     }
-  } else if (terminalPhase === TRANSITION_PHASE.DROPPED) {
+  } else if (effectivePhase === TRANSITION_PHASE.DROPPED) {
     stats.dropped += 1;
     transition.verification.outcome = VERIFICATION_OUTCOME.FAIL;
     transition.outcome.status = 'failure';
@@ -671,11 +831,19 @@ function handleInjectSubmitRequested(event) {
   if (!ensureOwnerInvariant(transition, event)) {
     return;
   }
-  if (transition.phase === TRANSITION_PHASE.REQUESTED || transition.phase === TRANSITION_PHASE.DEFERRED) {
-    setPhase(transition, TRANSITION_PHASE.ACCEPTED, event);
-    setPhase(transition, TRANSITION_PHASE.APPLIED, event, 'submit_without_explicit_apply');
+
+  if (!promoteToAppliedWithPreconditions(transition, event, 'submit_without_explicit_apply')) {
+    return;
   }
-  setPhase(transition, TRANSITION_PHASE.VERIFYING, event);
+
+  if (transition.phase === TRANSITION_PHASE.APPLIED) {
+    setPhase(transition, TRANSITION_PHASE.VERIFYING, event);
+    scheduleTransitionTimeout(transition, event);
+  } else if (transition.phase !== TRANSITION_PHASE.VERIFYING) {
+    markInvalid(transition, event, 'submit_requested_out_of_phase', { currentPhase: transition.phase });
+  } else {
+    scheduleTransitionTimeout(transition, event);
+  }
 }
 
 function handleInjectSubmitSent(event) {
@@ -683,12 +851,28 @@ function handleInjectSubmitSent(event) {
   if (!ensureOwnerInvariant(transition, event)) {
     return;
   }
+
   if (transition.phase === TRANSITION_PHASE.REQUESTED || transition.phase === TRANSITION_PHASE.DEFERRED) {
-    setPhase(transition, TRANSITION_PHASE.ACCEPTED, event, 'submit_sent_without_accept');
-    setPhase(transition, TRANSITION_PHASE.APPLIED, event, 'submit_sent_without_apply');
-    setPhase(transition, TRANSITION_PHASE.VERIFYING, event, 'submit_sent');
-  } else if (transition.phase === TRANSITION_PHASE.ACCEPTED) {
-    setPhase(transition, TRANSITION_PHASE.APPLIED, event, 'submit_sent_without_apply');
+    if (!evaluatePreconditionsForApply(transition, event)) {
+      if (transition.phase === TRANSITION_PHASE.REQUESTED) {
+        setPhase(transition, TRANSITION_PHASE.DEFERRED, event, 'precondition_failed_before_apply');
+      }
+      return;
+    }
+    if (transition.phase === TRANSITION_PHASE.REQUESTED) {
+      if (!setPhase(transition, TRANSITION_PHASE.ACCEPTED, event, 'submit_sent_without_accept')) {
+        return;
+      }
+    }
+  }
+
+  if (transition.phase === TRANSITION_PHASE.ACCEPTED) {
+    if (!evaluatePreconditionsForApply(transition, event)) {
+      return;
+    }
+    if (!setPhase(transition, TRANSITION_PHASE.APPLIED, event, 'submit_sent_without_apply')) {
+      return;
+    }
     setPhase(transition, TRANSITION_PHASE.VERIFYING, event, 'submit_sent');
   } else if (transition.phase === TRANSITION_PHASE.APPLIED) {
     setPhase(transition, TRANSITION_PHASE.VERIFYING, event, 'submit_sent');
@@ -711,6 +895,9 @@ function handleDaemonWriteAck(event) {
   }
 
   if (status && status !== 'accepted') {
+    if (!ensureOwnerInvariant(transition, event)) {
+      return;
+    }
     finalizeTransition(transition, TRANSITION_PHASE.FAILED, event, `daemon_write_${status}`);
   }
 }
@@ -724,6 +911,9 @@ function handlePtyData(event) {
 
   recordEvidence(transition, event, evidenceClass);
   if (evidenceClass === EVIDENCE_CLASS.DISALLOWED) {
+    if (!ensureOwnerInvariant(transition, event)) {
+      return;
+    }
     finalizeTransition(transition, TRANSITION_PHASE.FAILED, event, 'disallowed_evidence');
   }
 }
@@ -731,12 +921,21 @@ function handlePtyData(event) {
 function handleStrongVerification(event) {
   const transition = getTransitionForEvent(event, { create: false });
   if (!transition || transition.closed) return;
-  recordEvidence(transition, event, EVIDENCE_CLASS.STRONG);
+  if (!ensureOwnerInvariant(transition, event)) {
+    return;
+  }
+  const evidenceClass = classifyEvidence(event, transition);
+  if (evidenceClass !== EVIDENCE_CLASS.NONE) {
+    recordEvidence(transition, event, evidenceClass);
+  }
   finalizeTransition(transition, TRANSITION_PHASE.VERIFIED, event, 'strong_verification');
 }
 
 function handleInjectFailed(event) {
   const transition = getTransitionForEvent(event, { create: true });
+  if (!ensureOwnerInvariant(transition, event)) {
+    return;
+  }
   recordEvidence(transition, event, EVIDENCE_CLASS.WEAK);
   if (transition.phase === TRANSITION_PHASE.REQUESTED || transition.phase === TRANSITION_PHASE.DEFERRED) {
     setPhase(transition, TRANSITION_PHASE.ACCEPTED, event, 'failure_without_apply');
@@ -746,12 +945,18 @@ function handleInjectFailed(event) {
 
 function handleInjectDropped(event) {
   const transition = getTransitionForEvent(event, { create: true });
+  if (!ensureOwnerInvariant(transition, event)) {
+    return;
+  }
   recordEvidence(transition, event, EVIDENCE_CLASS.WEAK);
   finalizeTransition(transition, TRANSITION_PHASE.DROPPED, event, event?.payload?.reason || 'inject_dropped');
 }
 
 function handleInjectTimeout(event) {
   const transition = getTransitionForEvent(event, { create: true });
+  if (!ensureOwnerInvariant(transition, event)) {
+    return;
+  }
   recordEvidence(transition, event, EVIDENCE_CLASS.WEAK);
   if (transition.phase === TRANSITION_PHASE.REQUESTED || transition.phase === TRANSITION_PHASE.DEFERRED) {
     setPhase(transition, TRANSITION_PHASE.ACCEPTED, event, 'timeout_without_apply');
