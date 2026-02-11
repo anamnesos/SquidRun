@@ -36,6 +36,47 @@ let organicUIInstance = null;
 
 // Pending messages for War Room (queued before organicUIInstance is ready)
 let pendingWarRoomMessages = [];
+const MAX_PENDING_WAR_ROOM_MESSAGES = 500;
+let pendingWarRoomDroppedCount = 0;
+
+function enqueuePendingWarRoomMessage(message) {
+  if (!message) return;
+  pendingWarRoomMessages.push(message);
+
+  if (pendingWarRoomMessages.length <= MAX_PENDING_WAR_ROOM_MESSAGES) {
+    return;
+  }
+
+  const overflowCount = pendingWarRoomMessages.length - MAX_PENDING_WAR_ROOM_MESSAGES;
+  pendingWarRoomMessages.splice(0, overflowCount);
+  pendingWarRoomDroppedCount += overflowCount;
+
+  if (pendingWarRoomDroppedCount === overflowCount || (pendingWarRoomDroppedCount % 100) === 0) {
+    log.warn(
+      'WarRoom',
+      `Dropped ${pendingWarRoomDroppedCount} queued message(s) while UI not ready (cap=${MAX_PENDING_WAR_ROOM_MESSAGES})`,
+    );
+  }
+}
+
+function replayPendingWarRoomMessages() {
+  if (!organicUIInstance || pendingWarRoomMessages.length === 0) {
+    return;
+  }
+
+  if (pendingWarRoomDroppedCount > 0) {
+    log.info(
+      'WarRoom',
+      `Replaying ${pendingWarRoomMessages.length} queued messages (dropped oldest ${pendingWarRoomDroppedCount} at cap=${MAX_PENDING_WAR_ROOM_MESSAGES})`,
+    );
+  } else {
+    log.info('WarRoom', `Replaying ${pendingWarRoomMessages.length} queued messages`);
+  }
+
+  pendingWarRoomMessages.forEach(msg => organicUIInstance.appendWarRoomMessage(msg));
+  pendingWarRoomMessages = [];
+  pendingWarRoomDroppedCount = 0;
+}
 
 // Reference to sendBroadcast (set after DOMContentLoaded)
 let sendBroadcastFn = null;
@@ -294,11 +335,7 @@ function markTerminalsReady(isSDKMode = false) {
       wireOrganicInput();  // Wire up input handlers
 
       // Replay pending messages
-      if (pendingWarRoomMessages.length > 0) {
-        log.info('Init', `Replaying ${pendingWarRoomMessages.length} queued messages`);
-        pendingWarRoomMessages.forEach(msg => organicUIInstance.appendWarRoomMessage(msg));
-        pendingWarRoomMessages = [];
-      }
+      replayPendingWarRoomMessages();
     }
 
     // Auto-start SDK sessions (get workspace path via IPC)
@@ -412,11 +449,7 @@ Object.assign(window.hivemind, {
         initModelSelectors(true);
 
         // Replay pending messages
-        if (pendingWarRoomMessages.length > 0) {
-          log.info('SDK', `Replaying ${pendingWarRoomMessages.length} queued messages`);
-          pendingWarRoomMessages.forEach(msg => organicUIInstance.appendWarRoomMessage(msg));
-          pendingWarRoomMessages = [];
-        }
+        replayPendingWarRoomMessages();
       }
 
       log.info('SDK', 'Mode enabled (organic UI v2)');
@@ -1978,7 +2011,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (pendingWarRoomMessages.length === 0) {
         log.info('WarRoom', 'Queueing messages (UI not ready)');
       }
-      pendingWarRoomMessages.push(data);
+      enqueuePendingWarRoomMessage(data);
       return;
     }
 
