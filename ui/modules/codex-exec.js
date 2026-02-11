@@ -117,6 +117,13 @@ function createCodexExecRunner(options = {}) {
     return /[\r\n]$/.test(text) ? text : `${text}\r\n`;
   }
 
+  // xterm expects CRLF for stable carriage positioning. Some streamed deltas
+  // contain bare LF, which can cause stair-stepped wrapping in the pane.
+  function normalizeTerminalEol(text) {
+    if (typeof text !== 'string' || text.length === 0) return text;
+    return text.replace(/\r?\n/g, '\r\n');
+  }
+
   function formatTaggedLine(tag, detail, color = ANSI.RESET) {
     const clean = truncateDetail(normalizeDetail(detail));
     if (!clean) return null;
@@ -322,7 +329,7 @@ function createCodexExecRunner(options = {}) {
     try {
       event = JSON.parse(line);
     } catch {
-      const raw = stripBidiControls(line) + '\r\n';
+      const raw = normalizeTerminalEol(stripBidiControls(line) + '\r\n');
       broadcast({ event: 'data', paneId, data: raw });
       terminal.lastActivity = Date.now();
       appendScrollback(terminal, raw);
@@ -405,7 +412,8 @@ function createCodexExecRunner(options = {}) {
         styledText = sanitized;
       }
 
-      const formatted = isDelta ? styledText : ensureTrailingNewline(styledText);
+      const normalizedText = normalizeTerminalEol(styledText);
+      const formatted = isDelta ? normalizedText : ensureTrailingNewline(normalizedText);
       broadcast({ event: 'data', paneId, data: formatted });
       terminal.lastActivity = Date.now();
       appendScrollback(terminal, formatted);
@@ -486,7 +494,7 @@ function createCodexExecRunner(options = {}) {
         return;
       }
 
-      const msg = `\r\n[Codex exec stderr] ${errText}\r\n`;
+      const msg = normalizeTerminalEol(`\r\n[Codex exec stderr] ${errText}\r\n`);
       broadcast({ event: 'data', paneId, data: msg });
       appendScrollback(terminal, msg);
     });

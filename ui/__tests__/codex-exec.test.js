@@ -255,6 +255,28 @@ describe('codex-exec runner', () => {
       expect(broadcastData).toContain('Hello');
     });
 
+    test('normalizes bare LF in streamed delta output to CRLF', () => {
+      const child = createMockChild();
+      spawn.mockReturnValue(child);
+
+      const runner = createCodexExecRunner({ broadcast, logInfo });
+      const terminal = { alive: true, mode: 'codex-exec' };
+
+      runner.runCodexExec('4', terminal, 'go');
+      broadcast.mockClear();
+
+      const deltaLine = JSON.stringify({
+        type: 'response.output_text.delta',
+        delta: { text: 'line one\nline two' },
+      }) + '\n';
+      child.stdout.emit('data', Buffer.from(deltaLine));
+
+      const dataEvents = broadcast.mock.calls
+        .filter((call) => call[0].event === 'data')
+        .map((call) => call[0].data);
+      expect(dataEvents).toContain('line one\r\nline two');
+    });
+
     test('captures thread.started thread_id', () => {
       const child = createMockChild();
       spawn.mockReturnValue(child);
@@ -1198,6 +1220,24 @@ describe('codex-exec runner', () => {
         paneId: '4',
         data: expect.stringContaining('[Codex exec stderr]'),
       }));
+    });
+
+    test('normalizes bare LF in stderr output to CRLF', () => {
+      const child = createMockChild();
+      spawn.mockReturnValue(child);
+
+      const runner = createCodexExecRunner({ broadcast, logInfo });
+      const terminal = { alive: true, mode: 'codex-exec' };
+
+      runner.runCodexExec('4', terminal, 'go');
+      broadcast.mockClear();
+      child.stderr.emit('data', Buffer.from('stderr line 1\nstderr line 2'));
+
+      const stderrEvent = broadcast.mock.calls.find((call) =>
+        call[0].event === 'data' && String(call[0].data || '').includes('[Codex exec stderr]')
+      );
+      expect(stderrEvent).toBeDefined();
+      expect(stderrEvent[0].data).toContain('stderr line 1\r\nstderr line 2');
     });
   });
 
