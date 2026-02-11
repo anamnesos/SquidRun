@@ -215,6 +215,32 @@ maybeDescribe('evidence-ledger-investigator', () => {
     expect(invalidBinding.ok).toBe(false);
     expect(invalidBinding.reason).toBe('query_required');
 
+    const invalidEventBinding = investigator.bindEvidence(assertion.assertionId, {
+      kind: 'event_ref',
+      relation: 'supports',
+    });
+    expect(invalidEventBinding.ok).toBe(false);
+    expect(invalidEventBinding.reason).toBe('event_id_required');
+
+    const invalidFileBinding = investigator.bindEvidence(assertion.assertionId, {
+      kind: 'file_line_ref',
+      relation: 'supports',
+      filePath: '',
+      fileLine: 10,
+    });
+    expect(invalidFileBinding.ok).toBe(false);
+    expect(invalidFileBinding.reason).toBe('file_path_required');
+
+    const invalidLogBinding = investigator.bindEvidence(assertion.assertionId, {
+      kind: 'log_slice_ref',
+      relation: 'context',
+      logSource: 'main',
+      logStartMs: 6300,
+      logEndMs: 6200,
+    });
+    expect(invalidLogBinding.ok).toBe(false);
+    expect(invalidLogBinding.reason).toBe('invalid_log_window');
+
     const byAssertion = investigator.listBindings(assertion.assertionId);
     expect(byAssertion).toHaveLength(4);
     expect(byAssertion.map((item) => item.kind).sort()).toEqual([
@@ -230,6 +256,63 @@ maybeDescribe('evidence-ledger-investigator', () => {
     const byIncident = investigator.listBindingsForIncident(created.incidentId);
     const stale = byIncident.find((item) => item.bindingId === fileBinding.bindingId);
     expect(stale.stale).toBe(true);
+  });
+
+  test('stale detection utility marks changed file_line_ref bindings', () => {
+    const created = investigator.createIncident({
+      title: 'ERR-STALE-DETECT',
+      createdBy: 'devops',
+      nowMs: 8000,
+    });
+    expect(created.ok).toBe(true);
+
+    const assertion = investigator.addAssertion(created.incidentId, {
+      claim: 'File snapshot should go stale after mutation',
+      confidence: 0.8,
+      author: 'devops',
+      evidenceBindings: [{ kind: 'event_ref', eventId: 'evt-stale-seed' }],
+      nowMs: 8010,
+    });
+    expect(assertion.ok).toBe(true);
+
+    const snapshotFile = path.join(tempDir, 'stale-probe.txt');
+    fs.writeFileSync(snapshotFile, 'line-one\nline-two\n', 'utf8');
+
+    const initialHash = investigator.computeFileSnapshotHash(snapshotFile, { fileLine: 2 });
+    expect(initialHash.ok).toBe(true);
+
+    const bound = investigator.bindEvidence(assertion.assertionId, {
+      kind: 'file_line_ref',
+      relation: 'supports',
+      filePath: snapshotFile,
+      fileLine: 2,
+      snapshotHash: initialHash.hash,
+      nowMs: 8020,
+    });
+    expect(bound.ok).toBe(true);
+
+    const firstPass = investigator.refreshFileLineBindingStaleness({
+      bindingId: bound.bindingId,
+    });
+    expect(firstPass.ok).toBe(true);
+    expect(firstPass.checked).toBe(1);
+    expect(firstPass.markedStale).toBe(0);
+    expect(firstPass.unchangedBindingIds).toContain(bound.bindingId);
+
+    fs.writeFileSync(snapshotFile, 'line-one\nline-two-mutated\n', 'utf8');
+
+    const secondPass = investigator.refreshFileLineBindingStaleness({
+      bindingId: bound.bindingId,
+      includeAlreadyStale: true,
+    });
+    expect(secondPass.ok).toBe(true);
+    expect(secondPass.checked).toBe(1);
+    expect(secondPass.markedStale).toBe(1);
+    expect(secondPass.staleBindingIds).toContain(bound.bindingId);
+
+    const bindings = investigator.listBindings(assertion.assertionId);
+    const mutated = bindings.find((item) => item.bindingId === bound.bindingId);
+    expect(mutated.stale).toBe(true);
   });
 
   test('verdict versioning and summary/timeline queries', () => {
@@ -308,6 +391,8 @@ describe('evidence-ledger-investigator degraded mode', () => {
     expect(investigator.addAssertion('inc-1', { claim: 'c' })).toEqual({ ok: false, reason: 'unavailable' });
     expect(investigator.bindEvidence('ast-1', { kind: 'event_ref', eventId: 'evt-1' })).toEqual({ ok: false, reason: 'unavailable' });
     expect(investigator.recordVerdict('inc-1', { value: 'v', confidence: 0.5 })).toEqual({ ok: false, reason: 'unavailable' });
+    expect(investigator.refreshFileLineBindingStaleness()).toEqual({ ok: false, reason: 'unavailable' });
+    expect(investigator.computeFileSnapshotHash('x.txt').ok).toBe(false);
     expect(investigator.getIncident('inc-1')).toEqual({ ok: false, reason: 'unavailable' });
   });
 });
