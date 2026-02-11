@@ -21,7 +21,7 @@ function logDegradedOnce(level, key, message) {
   logger('EvidenceLedger', message);
 }
 
-const SCHEMA_SQL = `
+const SCHEMA_V1_SQL = `
 CREATE TABLE IF NOT EXISTS ledger_events (
   row_id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_id TEXT NOT NULL UNIQUE,
@@ -87,6 +87,114 @@ CREATE INDEX IF NOT EXISTS idx_ledger_events_parent
 
 CREATE INDEX IF NOT EXISTS idx_ledger_edges_trace
   ON ledger_edges(trace_id, created_at_ms);
+`;
+
+const SCHEMA_V2_SQL = `
+CREATE TABLE IF NOT EXISTS ledger_incidents (
+  incident_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  severity TEXT NOT NULL DEFAULT 'medium',
+  created_by TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  closed_at_ms INTEGER,
+  session_id TEXT,
+  tags_json TEXT DEFAULT '[]',
+  meta_json TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_status_updated
+  ON ledger_incidents(status, updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_session
+  ON ledger_incidents(session_id, created_at_ms DESC);
+
+CREATE TABLE IF NOT EXISTS ledger_incident_traces (
+  incident_id TEXT NOT NULL,
+  trace_id TEXT NOT NULL,
+  linked_at_ms INTEGER NOT NULL,
+  linked_by TEXT NOT NULL,
+  note TEXT,
+  PRIMARY KEY (incident_id, trace_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_incident_traces_trace
+  ON ledger_incident_traces(trace_id);
+
+CREATE TABLE IF NOT EXISTS ledger_assertions (
+  assertion_id TEXT PRIMARY KEY,
+  incident_id TEXT NOT NULL,
+  claim TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'hypothesis',
+  confidence REAL NOT NULL DEFAULT 0.5,
+  status TEXT NOT NULL DEFAULT 'active',
+  author TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  superseded_by TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  reasoning TEXT,
+  meta_json TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_assertions_incident
+  ON ledger_assertions(incident_id, updated_at_ms DESC);
+
+CREATE INDEX IF NOT EXISTS idx_assertions_status
+  ON ledger_assertions(status, confidence DESC);
+
+CREATE TABLE IF NOT EXISTS ledger_evidence_bindings (
+  binding_id TEXT PRIMARY KEY,
+  assertion_id TEXT NOT NULL,
+  incident_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  relation TEXT NOT NULL DEFAULT 'supports',
+  event_id TEXT,
+  trace_id TEXT,
+  span_id TEXT,
+  file_path TEXT,
+  file_line INTEGER,
+  file_column INTEGER,
+  snapshot_hash TEXT,
+  log_start_ms INTEGER,
+  log_end_ms INTEGER,
+  log_source TEXT,
+  log_filter_json TEXT,
+  query_json TEXT,
+  query_result_hash TEXT,
+  note TEXT,
+  created_at_ms INTEGER NOT NULL,
+  created_by TEXT NOT NULL,
+  stale INTEGER NOT NULL DEFAULT 0,
+  meta_json TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_bindings_assertion
+  ON ledger_evidence_bindings(assertion_id);
+
+CREATE INDEX IF NOT EXISTS idx_bindings_incident
+  ON ledger_evidence_bindings(incident_id);
+
+CREATE INDEX IF NOT EXISTS idx_bindings_event
+  ON ledger_evidence_bindings(event_id);
+
+CREATE TABLE IF NOT EXISTS ledger_verdicts (
+  verdict_id TEXT PRIMARY KEY,
+  incident_id TEXT NOT NULL,
+  value TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  version INTEGER NOT NULL,
+  reason TEXT,
+  key_assertion_ids_json TEXT DEFAULT '[]',
+  author TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  meta_json TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_verdicts_incident_version
+  ON ledger_verdicts(incident_id, version DESC);
 `;
 
 function toMs(value, fallback) {
@@ -199,7 +307,8 @@ class EvidenceLedgerStore {
 
   _migrate() {
     if (!this.db) return;
-    this.db.exec(SCHEMA_SQL);
+    this.db.exec(SCHEMA_V1_SQL);
+    this.db.exec(SCHEMA_V2_SQL);
   }
 
   isAvailable() {
