@@ -1,10 +1,10 @@
 # Hivemind
 
-Multi-agent orchestration UI for AI coding assistants. Run 3 persistent AI instances (Claude, Codex, Gemini) that coordinate and trigger each other autonomously.
+Multi-agent orchestration UI for AI coding assistants. Run 3 persistent AI instances (Claude, Codex) that coordinate and trigger each other autonomously.
 
 ## What is this?
 
-Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel. Each agent has a role, persists across app restarts, and can trigger other agents through file-based communication.
+Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel. Each agent has a role, persists across app restarts, and coordinates through WebSocket messaging and file-based triggers.
 
 **Watch AI agents coordinate and hand off work without manual intervention.**
 
@@ -12,12 +12,12 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 
 ### Core
 - **3 Persistent Terminals** - Each running a full AI coding instance with all its tools
-- **Multi-Model Support** - Claude Code, OpenAI Codex CLI, and Gemini CLI in the same session
+- **Multi-Model Support** - Claude Code and OpenAI Codex CLI in the same session
 - **Daemon Architecture** - Terminals survive app restarts (PTY processes managed by separate daemon)
-- **Codex Exec Pipeline** - Codex panes use non-interactive `codex exec --json` with JSONL parsing and session resume
-- **Agent-to-Agent Triggers** - Agents can trigger specific agents or groups via trigger files
+- **Agent-to-Agent Triggers** - Agents trigger specific agents or groups via WebSocket (preferred) or trigger files (fallback)
 - **Auto-Sync** - Changes to shared context files automatically notify all agents
-- **Role-Based Context** - Each agent has its own working directory with role-specific CLAUDE.md/AGENTS.md
+- **Role-Based Context** - Each agent has its own working directory with role-specific instructions
+- **Image Generation** - Built-in AI image generation via Recraft V3 / OpenAI gpt-image-1
 
 ### Command Center UI
 - **Main Pane Focus** - Large left panel (60%) shows your primary agent (default: Architect)
@@ -25,26 +25,36 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 - **Command Bar** - Full-width input at bottom, targets main pane by default
 - **Target Dropdown** - Send to specific agent, all agents, or current main pane
 - **Delivery Status** - Visual feedback (sending/delivered/failed) on message submission
+- **Bridge Tab** - User-facing dashboard with agent status, system metrics, and live event stream
 
 ### Communication
-- **MCP Integration** - Model Context Protocol for structured agent messaging
-- **Message Queue** - Persistent message history with delivery confirmation
+- **WebSocket Messaging** - Primary inter-agent communication with ACK-timeout-resend and server-side dedup
+- **Trigger File Fallback** - Automatic fallback when WebSocket is stale
+- **Comms Reliability Stack** - ACK-timeout-resend, server dedup, heartbeat health, chunked PTY writes with ack barrier, active-typing deferral
 - **Group Messaging** - Send to individuals, groups, or broadcast to all
 - **Sequence Numbers** - Duplicate message prevention with auto-reset on restart
-- **Stuck Message Sweeper** - Auto-retry Enter on stuck messages every 30s
+
+### Event Kernel (Phases 1-4 Complete)
+- **Interaction Kernel** - Contracts, state vector, injection/terminal/renderer events
+- **Telemetry** - Ring buffer with query API, health strip
+- **Daemon Bridge** - Event propagation between main process and daemon
+- **Transition Ledger** - State transition tracking with evidence spec signals
+- **Compaction Gate** - Lexical evidence required for confirmed state, chunk-inactivity decay, safety valve (injection latency: 122-727ms)
 
 ### Observability
 - **Message Inspector** - Real-time view of trigger events, sequences, delivery status
 - **Reliability Analytics** - Success rates, latency tracking, per-pane breakdowns
 - **Agent Health Dashboard** - Per-pane indicators (last output, stuck warnings)
 - **CLI Identity Badges** - Visual indicators showing which CLI each pane runs
+- **Comms Metrics** - Health strip with per-metric bucket tracking
 
 ### Developer Experience
 - **Dry-Run Mode** - Simulate multi-agent flow without spawning real AI instances
 - **Session History** - View past sessions with duration and agents involved
 - **Projects Tab** - Quick-switch between recent projects
-- **Quality Gates** - mypy, ESLint, Jest tests (2803+), pre-commit hooks
-- **IPC Aliases** - Frontend compatibility layer for legacy UI components
+- **Quality Gates** - ESLint, Jest tests (108 suites, 3300 tests), pre-commit hooks, doc-lint gate
+- **Shared Intent Board** - Per-agent JSON status files for cross-agent awareness
+- **Session Handoff** - Structured JSON handoff for session continuity across restarts
 
 ### SDK Mode (Alternative to PTY)
 - **3 Independent Agent Sessions** - Full SDK instances via `hivemind-sdk-v2.py`
@@ -56,10 +66,8 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 - **PTY Health Monitoring** - Daemon-level alive/idle detection with status cascade (dead > stuck > stale > healthy)
 - **Auto-Restart on Dead Panes** - Detects dead terminals on daemon connect and restarts them automatically
 - **Auto-Nudge** - Detect and nudge frozen agents automatically with escalation
-- **Stuck Message Sweeper** - Periodic retry for messages stuck in textarea
-- **Agent Claims** - Track which agent owns which task
-- **Session Persistence** - Context summaries saved between sessions
-- **Focus Steal Prevention** - Saves/restores user focus during message injection
+- **Focus Steal Prevention** - Saves/restores user focus during message injection (active-typing deferral, not focus-only)
+- **2-Phase Submit Verification** - Enter dispatch with acceptance verification and retry+backoff
 
 ### Smart Automation
 - **Smart Routing** - Auto-assign tasks to best-performing agent
@@ -72,7 +80,7 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 |------|------|-----|--------|
 | 1 | Architect | Claude | Architecture, coordination, delegation, git commits + Frontend/Reviewer as internal Agent Teams teammates |
 | 2 | DevOps | Codex | CI/CD, deployment, infrastructure, daemon, processes, backend |
-| 5 | Analyst | Gemini | Debugging, profiling, root cause analysis, investigations |
+| 5 | Analyst | Codex | Debugging, profiling, root cause analysis, investigations |
 
 **Note:** Frontend and Reviewer run as internal Agent Teams teammates of Architect (pane 1), not as separate panes.
 
@@ -101,14 +109,13 @@ Messages use sequence numbers to prevent duplicates: `(ARCHITECT #1): message he
 
 ## Tech Stack
 
-- **Electron** - Desktop app shell
-- **Node.js** - Backend/main process
-- **xterm.js 6.0** - Terminal emulation
-- **node-pty** - Pseudo-terminal for spawning shells
+- **Electron 28** - Desktop app shell
+- **Node.js 18+** - Backend/main process
+- **xterm.js 6.0** - Terminal emulation (WebGL-accelerated)
+- **node-pty 1.1.0** - Pseudo-terminal for spawning shells
 - **chokidar** - File system watching
 - **Claude Code CLI** - AI coding assistant (Anthropic)
 - **Codex CLI** - AI coding assistant (OpenAI)
-- **Gemini CLI** - AI coding assistant (Google)
 
 ## Getting Started
 
@@ -141,47 +148,55 @@ hivemind/
 │   │   ├── tabs.css             # Right panel tabs
 │   │   └── ...
 │   └── modules/
-│       ├── terminal.js          # Terminal management, input injection, sweeper
-│       ├── triggers.js          # Trigger file routing, sequence tracking
+│       ├── terminal.js          # Terminal management, PTY connections
+│       ├── terminal/injection.js # Input injection queue, focus deferral, submit verification
+│       ├── triggers.js          # Agent-to-agent messaging, sequence tracking
 │       ├── watcher.js           # File system watcher with debounce
-│       ├── codex-exec.js        # Codex exec pipeline (non-interactive)
-│       ├── sdk-bridge.js        # Python SDK <-> Electron bridge
-│       ├── sdk-renderer.js      # SDK mode message display + animations
-│       ├── daemon-handlers.js   # Daemon event handlers
-│       ├── settings.js          # Settings panel logic
-│       ├── tabs.js              # Right panel tab UI
+│       ├── event-bus.js         # Event kernel, ring buffer telemetry
+│       ├── websocket-server.js  # WebSocket server for agent messaging
+│       ├── daemon-handlers.js   # Daemon event handlers, message throttling
+│       ├── main/
+│       │   ├── hivemind-app.js  # Central app controller
+│       │   ├── kernel-bridge.js # Event kernel daemon bridge
+│       │   └── ...
+│       ├── tabs/
+│       │   ├── bridge.js        # Bridge tab (agent status, metrics, events)
+│       │   └── ...
 │       └── ipc/                 # IPC handler modules
-│           ├── state-handlers.js
-│           ├── checkpoint-handlers.js
+│           ├── handler-registry.js # Route table
+│           ├── pty-handlers.js     # Terminal control
 │           └── ...
 ├── hivemind-sdk-v2.py           # Python SDK orchestrator (SDK mode)
 ├── workspace/                   # Shared workspace
+│   ├── session-handoff.json     # Primary session state (tasks, roadmap, issues, stats)
 │   ├── shared_context.md        # Shared context for all agents
 │   ├── app-status.json          # Runtime state (mode, version)
+│   ├── review.json              # Pre-commit review gate (Gate 7)
 │   ├── triggers/                # Agent trigger files
 │   ├── instances/               # Per-agent working directories
 │   │   ├── arch/                # Architect (pane 1)
 │   │   ├── devops/              # DevOps (pane 2)
 │   │   └── ana/                 # Analyst (pane 5)
-│   ├── build/                   # Build status, reviews, blockers
-│   └── intent/                  # Shared intent board (per-agent JSON status)
+│   ├── build/                   # Build status, reviews, blockers, specs
+│   ├── intent/                  # Shared intent board (per-agent JSON status)
+│   └── scripts/                 # Agent lifecycle hooks
 ├── docs/                        # Documentation and specs
-│   ├── roles/                   # Modular role instruction files
-│   └── models/                  # Model-specific notes
 └── CLAUDE.md                    # Master agent instructions
 ```
 
 ## Key Files for Understanding the Codebase
 
-If you want to understand how Hivemind works, read these 7 files:
+If you want to understand how Hivemind works, read these files:
 
-1. **`ui/main.js`** - Electron main process, state machine, IPC handlers
-2. **`ui/renderer.js`** - UI logic, pane management, command bar input
-3. **`ui/modules/terminal.js`** - Terminal management, PTY injection, stuck sweeper
-4. **`ui/modules/triggers.js`** - Agent-to-agent communication, sequence tracking
-5. **`ui/terminal-daemon.js`** - PTY daemon architecture, process management
-6. **`CLAUDE.md`** - How agents are instructed (master config)
-7. **`workspace/instances/arch/CLAUDE.md`** - Example agent role configuration
+1. **`ui/config.js`** - Source of truth for pane roles, trigger targets, instance directories
+2. **`ui/main.js`** - Electron main process, app initialization
+3. **`ui/modules/main/hivemind-app.js`** - Central app controller, coordinates managers and daemon
+4. **`ui/renderer.js`** - UI logic, pane management, command bar input
+5. **`ui/modules/terminal.js`** - Terminal management, PTY connections
+6. **`ui/modules/terminal/injection.js`** - Input injection queue, focus deferral, submit verification
+7. **`ui/modules/triggers.js`** - Agent-to-agent communication, sequence tracking
+8. **`ui/terminal-daemon.js`** - PTY daemon architecture, process management
+9. **`CLAUDE.md`** - How agents are instructed (master config)
 
 ## Platform
 
