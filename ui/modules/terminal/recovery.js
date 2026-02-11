@@ -23,6 +23,7 @@ function createRecoveryController(options = {}) {
     spawnAgent,
     resetCodexIdentity,
     resetTerminalWriteQueue,
+    syncTerminalInputBridge,
     markIgnoreNextExit,
   } = options;
 
@@ -267,6 +268,9 @@ function createRecoveryController(options = {}) {
     if (typeof spawnAgent === 'function') {
       try {
         await spawnAgent(id, model);
+        if (typeof syncTerminalInputBridge === 'function') {
+          syncTerminalInputBridge(id, { modelHint: model });
+        }
       } catch (err) {
         log.error('Terminal', `Failed to spawn Claude for pane ${id}:`, err);
         setPaneStatus(id, 'Spawn failed');

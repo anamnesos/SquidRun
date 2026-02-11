@@ -120,6 +120,19 @@ function getSettings() {
   return currentSettings;
 }
 
+async function refreshSettingsFromMain({ applyUi = false } = {}) {
+  try {
+    currentSettings = await ipcRenderer.invoke('get-settings');
+    if (applyUi) {
+      applySettingsToUI();
+    }
+    return currentSettings;
+  } catch (err) {
+    log.error('Settings', 'Error refreshing settings cache', err);
+    return currentSettings;
+  }
+}
+
 // Setup settings panel
 function setupSettings() {
   // Settings button toggle
@@ -228,6 +241,7 @@ module.exports = {
   applySettingsToUI,
   toggleSetting,
   getSettings,
+  refreshSettingsFromMain,
   setupSettings,
   checkAutoSpawn,
 };

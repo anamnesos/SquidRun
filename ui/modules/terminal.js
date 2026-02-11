@@ -67,6 +67,7 @@ const lastOutputTime = {};
 // Codex exec mode: track identity injection per pane
 const codexIdentityInjected = new Set();
 const codexIdentityTimeouts = new Map();
+const terminalInputBridgeDisposables = new Map();
 
 // Per-pane input lock - panes locked by default (view-only), toggle to unlock for direct typing
 // Prevents accidental typing in agent panes while allowing programmatic sends (sendToPane/triggers)
@@ -660,6 +661,56 @@ function resetCodexIdentity(paneId) {
   log.info('Terminal', `Reset codex identity tracking for pane ${paneId}`);
 }
 
+function detachTerminalInputBridge(paneId) {
+  const id = String(paneId);
+  const disposable = terminalInputBridgeDisposables.get(id);
+  if (disposable && typeof disposable.dispose === 'function') {
+    disposable.dispose();
+  }
+  terminalInputBridgeDisposables.delete(id);
+}
+
+function attachTerminalInputBridge(paneId) {
+  const id = String(paneId);
+  if (terminalInputBridgeDisposables.has(id)) {
+    return true;
+  }
+
+  const terminal = terminals.get(id);
+  if (!terminal || typeof terminal.onData !== 'function') {
+    return false;
+  }
+
+  const disposable = terminal.onData((data) => {
+    window.hivemind.pty.write(id, data).catch(err => {
+      log.error(`Terminal ${id}`, 'PTY write failed:', err);
+    });
+  });
+  terminalInputBridgeDisposables.set(id, disposable);
+  return true;
+}
+
+function syncTerminalInputBridge(paneId, options = {}) {
+  const id = String(paneId);
+  const modelHint = typeof options?.modelHint === 'string' ? options.modelHint.toLowerCase() : '';
+
+  let shouldAttach;
+  if (modelHint === 'codex') {
+    shouldAttach = false;
+  } else if (modelHint) {
+    shouldAttach = true;
+  } else {
+    shouldAttach = !isCodexPane(id);
+  }
+
+  if (!shouldAttach) {
+    detachTerminalInputBridge(id);
+    return false;
+  }
+
+  return attachTerminalInputBridge(id);
+}
+
 
 function stripAnsiForStartup(input) {
   return String(input || '')
@@ -907,6 +958,7 @@ const recoveryController = createRecoveryController({
   spawnAgent,
   resetCodexIdentity,
   resetTerminalWriteQueue,
+  syncTerminalInputBridge,
   markIgnoreNextExit,
 });
 
@@ -1221,13 +1273,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
       log.warn(`Terminal ${paneId}`, 'Post-create PTY resize failed:', resizeErr);
     }
 
-    if (!isCodexPane(paneId)) {
-      terminal.onData((data) => {
-        window.hivemind.pty.write(paneId, data).catch(err => {
-          log.error(`Terminal ${paneId}`, 'PTY write failed:', err);
-        });
-      });
-    }
+    syncTerminalInputBridge(paneId);
 
     window.hivemind.pty.onData(paneId, (data) => {
       // Use flow control to prevent xterm buffer overflow
@@ -1393,13 +1439,7 @@ async function reattachTerminal(paneId, scrollback) {
     queueTerminalWrite(paneId, terminal, trimScrollbackToMaxLines(scrollback));
   }
 
-  if (!isCodexPane(paneId)) {
-    terminal.onData((data) => {
-      window.hivemind.pty.write(paneId, data).catch(err => {
-        log.error(`Terminal ${paneId}`, 'PTY write failed:', err);
-      });
-    });
-  }
+  syncTerminalInputBridge(paneId);
 
   window.hivemind.pty.onData(paneId, (data) => {
     // Use flow control to prevent xterm buffer overflow
@@ -1530,6 +1570,7 @@ async function spawnAgent(paneId, model = null) {
   // Codex exec mode: non-interactive request/response
   if (isCodex) {
     updatePaneStatus(paneId, 'Starting Codex...');
+    syncTerminalInputBridge(paneId, { modelHint: 'codex' });
     // We don't write the 'codex' command to the terminal because the daemon 
     // uses a virtual terminal (no PTY) for codex-exec mode.
     // Identity injection will happen via codex-exec IPC in the timeout below.
@@ -1556,6 +1597,7 @@ async function spawnAgent(paneId, model = null) {
   const terminal = terminals.get(paneId);
   if (terminal) {
     updatePaneStatus(paneId, 'Starting...');
+    syncTerminalInputBridge(paneId, { modelHint: model });
     let result;
     try {
       result = await window.hivemind.claude.spawn(paneId);

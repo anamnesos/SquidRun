@@ -90,6 +90,7 @@ describe('Terminal Recovery Controller', () => {
         sendEnterToPane: jest.fn().mockResolvedValue({ success: true, method: 'keyboard' }),
       }),
       spawnAgent: jest.fn().mockResolvedValue(undefined),
+      syncTerminalInputBridge: jest.fn(),
     };
 
     controller = createRecoveryController(mockOptions);
@@ -411,6 +412,7 @@ describe('Terminal Recovery Controller', () => {
 
       expect(result).toBe(true);
       expect(mockOptions.spawnAgent).toHaveBeenCalledWith('1', 'gemini');
+      expect(mockOptions.syncTerminalInputBridge).toHaveBeenCalledWith('1', { modelHint: 'gemini' });
     });
 
     test('handles kill failure gracefully', async () => {
