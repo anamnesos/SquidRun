@@ -518,7 +518,7 @@ function startWatcher() {
       /\.git/,
       /instances\//,
       /backups\//,
-      /logs\//,
+      /logs[\\/]/,
       /state\.json$/,
       /triggers\//,    // UX-9: Triggers handled by fast watcher
     ],

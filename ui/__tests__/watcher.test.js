@@ -350,6 +350,20 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
+  test('workspace watcher ignores logs paths for both slash styles', () => {
+    const { watcher, chokidarMock, tempDir } = setupWatcher();
+
+    watcher.startWatcher();
+    const options = chokidarMock.watch.mock.calls[0][1];
+    const logsPattern = options.ignored.find((entry) => entry instanceof RegExp && entry.source.includes('logs'));
+
+    expect(logsPattern).toBeDefined();
+    expect(logsPattern.test('C:\\workspace\\logs\\app.log')).toBe(true);
+    expect(logsPattern.test('/workspace/logs/app.log')).toBe(true);
+
+    cleanupDir(tempDir);
+  });
+
   test('getLastConflicts returns cached conflicts', () => {
     const { watcher, tempDir } = setupWatcher();
     const sharedContextPath = path.join(tempDir, 'shared_context.md');
