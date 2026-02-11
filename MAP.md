@@ -1,6 +1,6 @@
 # Hivemind Codebase Map
 
-**Last Updated:** 2026-02-07
+**Last Updated:** 2026-02-11
 **Purpose:** Navigation guide for developers (human and AI agents)
 
 ---
@@ -8,7 +8,7 @@
 ## Quick Start (READ THIS FIRST)
 
 **What is this app?**
-Hivemind is an Electron desktop app that orchestrates 3 persistent AI agent instances (Claude, Codex, Gemini) working in parallel. Each agent has a specialized role (Architect, DevOps, Analyst) and coordinates with others through file-based triggers and shared context. Architect (Claude) has internal Frontend and Reviewer teammates via Agent Teams.
+Hivemind is an Electron desktop app that orchestrates 3 persistent AI agent instances (Claude, Codex) working in parallel. Each agent has a specialized role (Architect, DevOps, Analyst) and coordinates with others through WebSocket messaging and file-based trigger fallback. Architect (Claude) has internal Frontend and Reviewer teammates via Agent Teams.
 
 **How does it work?**
 - **Primary Mode (PTY):** 3 terminal processes managed by a persistent daemon. Native Claude/Codex CLIs and npm Gemini CLI run in pseudo-terminals. Messages sent via keyboard injection. Terminals survive app restarts.
@@ -42,8 +42,9 @@ hivemind/
 │   │   ├── sdk-bridge.js        # Python SDK orchestration
 │   │   ├── codex-exec.js        # Codex non-interactive pipeline
 │   │   │
-│   │   ├── main/                # App managers (7 files)
+│   │   ├── main/                # App managers
 │   │   │   ├── hivemind-app.js  # Main controller
+│   │   │   ├── kernel-bridge.js # Event kernel daemon bridge
 │   │   │   ├── settings-manager.js
 │   │   │   ├── activity-manager.js
 │   │   │   └── ...
@@ -57,7 +58,7 @@ hivemind/
 │   │   │   └── ...
 │   │   │
 │   │   ├── terminal/            # Terminal submodules
-│   │   │   ├── injection.js     # Input injection queue
+│   │   │   ├── injection.js     # Input injection queue, focus deferral, submit verification
 │   │   │   └── recovery.js      # Stuck recovery
 │   │   │
 │   │   ├── triggers/            # Modular trigger logic
@@ -74,18 +75,11 @@ hivemind/
 │   │   │   ├── memory-summarizer.js # Context summarization
 │   │   │   └── ...
 │   │   │
-│   │   ├── analysis/            # Code analysis (4 files)
-│   │   │   ├── code-review.js
-│   │   │   └── cost-optimizer.js
-│   │   │
 │   │   ├── plugins/             # Plugin system (2 files)
 │   │   │   └── plugin-manager.js
 │   │   │
 │   │   ├── scaffolding/         # Project scaffolding (1 file)
 │   │   │   └── project-scaffolder.js
-│   │   │
-│   │   ├── security/            # Security management (1 file)
-│   │   │   └── security-manager.js
 │   │   │
 │   │   ├── websocket-server.js  # WebSocket server for agent messaging (port 0 for ephemeral binding in tests)
 │   │   ├── sdk-renderer.js      # SDK mode renderer
@@ -106,7 +100,7 @@ hivemind/
 │   │   ├── layout.css           # Main layout
 │   │   └── tabs/                # Modular tab styles (20 files)
 │   │
-│   └── __tests__/               # Jest tests (89 suites, 2803 tests)
+│   └── __tests__/               # Jest tests (108 suites, 3300 tests)
 │       └── ...
 │
 ├── hivemind-sdk-v2.py           # Python SDK orchestrator (locked parallelism)
@@ -146,6 +140,7 @@ hivemind/
 - **docs/archive/python-v1/** - Dead Python architecture
 - **ui/modules/tabs.js** - Refactored to sub-modules (only ~126 lines, coordinator stub)
 - **Large log files** - workspace/console.log, ui/daemon.log (Safe to delete)
+- **Deleted S112:** agent-skills.js, analysis/code-review.js, analysis/cost-optimizer.js, ipc/scaffolding-handlers.js, security/security-manager.js (~2,700 lines of confirmed dead code removed)
 
 ---
 
@@ -185,6 +180,31 @@ hivemind/
 - **Oracle:** Gemini-powered shared vision and visual QA service.
 - **PTY:** Remains the primary, stable fallback for all users.
 
+### Event Kernel (Phases 1-4 Complete)
+
+- **Lane A (Interaction Kernel):** Contracts, state vector, injection/terminal/renderer events.
+- **Lane B (Telemetry):** Ring buffer with query API, health strip.
+- **Daemon Bridge:** `ui/modules/main/kernel-bridge.js` — event propagation between main process and daemon.
+- **Transition Ledger:** `ui/modules/transition-ledger.js` — state transition tracking with evidence spec signals (21 tests).
+- **Compaction Gate:** Lexical evidence required for confirmed state, chunk-inactivity decay (5s quiet), MAX_COMPACTION_DEFER_MS=8s safety valve. Runtime validated S108: 122-727ms injection latency.
+- **Bridge Tab:** `ui/modules/tabs/bridge.js` — user-facing dashboard with agent status, system metrics, live event stream.
+
+### Evidence Ledger (In Progress — Slice 1)
+
+- **Purpose:** Unified causal event log replacing prose handoffs with queryable evidence system.
+- **Three views:** Pipeline trace graph (DevOps), investigation timeline (Analyst), session memory (Architect).
+- **Storage:** SQLite WAL mode, single writer in daemon/main. Tables: events, edges, spans.
+- **Spec:** `workspace/build/evidence-ledger-slice1-spec.md` (infra), `evidence-ledger-query-spec.md` (query).
+- **Phasing:** Slice 1 (pipeline ledger) → Slice 2 (investigator workspace) → Slice 3 (cross-session decision memory).
+
+### Comms Reliability (v3, S111)
+
+- **ACK-timeout-resend** with server-side dedup.
+- **Trigger file fallback** when WebSocket goes stale (~60s idle).
+- **Chunked PTY writes** with ack barrier before Enter dispatch (86c4ccd).
+- **Active-typing deferral** — injection defers only on active typing, not focus alone (b7a7d73).
+- **2-phase submit verification** — Enter dispatch → acceptance verification with retry+backoff (0c1a452).
+
 ### Message Sequencing
 
 - Every agent message includes sequence: `(ARCHITECT #1): message`
@@ -201,11 +221,11 @@ hivemind/
 | Desktop App | Electron | 28 |
 | UI | Vanilla JS + CSS | - |
 | Terminal | xterm.js | 6.0 |
-| PTY | node-pty | 1.0 |
-| CLIs | Native (Claude/Codex), npm (Gemini) | - |
+| PTY | node-pty | 1.1.0 |
+| CLIs | Native (Claude/Codex) | - |
 | Daemon | Node.js | 18+ |
 | File Watching | chokidar | 3.6 |
-| Testing | Jest | 30 (89 suites, 2803 tests) |
+| Testing | Jest | 30 (108 suites, 3300 tests) |
 | Python SDK | Multi-agent | Claude SDK, OpenAI Agents, Google GenAI |
 | Message Protocol | MCP | 1.25 |
 
