@@ -1,0 +1,170 @@
+/* ========================================
+   Bridge System Dashboard Tab
+   ======================================== */
+
+/* --- Agent Status Cards --- */
+
+.bridge-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: var(--space-3);
+}
+
+.bridge-agent-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.bridge-agent-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bridge-agent-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.bridge-agent-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.bridge-agent-gates {
+  display: flex;
+  gap: 3px;
+}
+
+.bridge-gate {
+  display: inline-block;
+  padding: 0 3px;
+  font-size: 9px;
+  font-weight: bold;
+  border-radius: 2px;
+  background: rgba(255, 152, 0, 0.3);
+  color: #ff9800;
+}
+
+.bridge-gate.pulse {
+  animation: bridge-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes bridge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.bridge-agent-conn {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.bridge-conn-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+/* --- System Metrics --- */
+
+.bridge-metrics {
+  display: flex;
+  gap: 8px;
+  margin-bottom: var(--space-3);
+  padding: 8px 10px;
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  flex-wrap: wrap;
+}
+
+.bridge-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  min-width: 60px;
+}
+
+.bridge-metric-value {
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+}
+
+.bridge-metric-label {
+  font-size: 10px;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* --- Event Stream --- */
+
+.bridge-stream {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 400px;
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.bridge-stream-entry {
+  padding: 2px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bridge-stream-entry:last-child {
+  border-bottom: none;
+}
+
+.bridge-stream-time {
+  color: var(--color-text-dim);
+  margin-right: 4px;
+}
+
+.bridge-stream-type {
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.bridge-stream-pane {
+  color: var(--color-text-muted);
+  margin-right: 4px;
+}
+
+.bridge-stream-payload {
+  color: var(--color-text-dim);
+  font-size: 10px;
+}
+
+.bridge-stream-empty {
+  text-align: center;
+  color: var(--color-border-light);
+  padding: var(--space-6) var(--space-4);
+  font-size: var(--text-base);
+  font-style: italic;
+  font-family: inherit;
+}

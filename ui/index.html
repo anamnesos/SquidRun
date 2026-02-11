@@ -390,6 +390,7 @@
     <div class="right-panel" id="rightPanel">
       <div class="panel-tabs">
         <!-- Primary tabs (always visible) -->
+        <button class="panel-tab" data-tab="bridge" data-tab-group="primary" title="System dashboard — agents, metrics, events">Bridge</button>
         <button class="panel-tab" data-tab="activity" data-tab-group="primary" title="Real-time log of all agent activity">Feed</button>
         <button class="panel-tab active" data-tab="screenshots" data-tab-group="primary" title="Drag & drop images for agents to reference">Shots</button>
         <button class="panel-tab" data-tab="oracle" data-tab-group="primary" title="AI image generation">Image</button>
@@ -397,6 +398,15 @@
         <button class="panel-tab" data-tab="api-keys" data-tab-group="primary" title="API key management">Keys</button>
       </div>
       <div class="panel-content">
+        <div class="tab-pane" id="tab-bridge">
+          <div class="tab-title">Bridge</div>
+          <div class="tab-description">Agent status, system metrics, event stream</div>
+          <div class="bridge-agents" id="bridgeAgents"></div>
+          <div class="bridge-metrics" id="bridgeMetrics"></div>
+          <div class="bridge-stream" id="bridgeStream">
+            <div class="bridge-stream-empty">Waiting for events...</div>
+          </div>
+        </div>
         <div class="tab-pane active" id="tab-screenshots">
           <div class="tab-title">Screenshots</div>
           <div class="tab-description">Drag & drop images or paste from clipboard</div>

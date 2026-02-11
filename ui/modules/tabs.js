@@ -10,6 +10,7 @@ const screenshots = require('./tabs/screenshots');
 const oracle = require('./tabs/oracle');
 const git = require('./tabs/git');
 const apiKeys = require('./tabs/api-keys');
+const bridge = require('./tabs/bridge');
 
 // Panel state
 let panelOpen = false;
@@ -62,7 +63,7 @@ function switchTab(tabId) {
   }
 }
 
-function setupRightPanel(handleResizeFn) {
+function setupRightPanel(handleResizeFn, busInstance) {
   storedResizeFn = handleResizeFn;
 
   const panelBtn = document.getElementById('panelBtn');
@@ -82,6 +83,7 @@ function setupRightPanel(handleResizeFn) {
   oracle.setupOracleTab(updateConnectionStatus);
   git.setupGitTab();
   apiKeys.setupApiKeysTab();
+  if (busInstance) bridge.setupBridgeTab(busInstance);
 }
 
 module.exports = {

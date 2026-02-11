@@ -4,6 +4,7 @@
  */
 
 /* Import modular components — must be before any rules per CSS spec */
+@import "./tabs/bridge.css";
 @import "./tabs/activity.css";
 @import "./tabs/screenshots.css";
 @import "./tabs/oracle.css";
@@ -66,7 +67,8 @@ input:focus {
 .activity-empty,
 .git-empty,
 .oracle-empty,
-.api-keys-empty {
+.api-keys-empty,
+.bridge-stream-empty {
   text-align: center;
   color: var(--color-border-light);
   padding: var(--space-6) var(--space-4);
