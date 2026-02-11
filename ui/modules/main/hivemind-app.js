@@ -98,11 +98,39 @@ class HivemindApp {
 
           if (!data.message) return;
 
+          const emitKernelCommsEvent = (eventType, payload = {}, paneId = 'system') => {
+            if (typeof eventType !== 'string' || !eventType.startsWith('comms.')) {
+              return {
+                ok: false,
+                status: 'invalid_comms_event',
+                eventType,
+              };
+            }
+            this.kernelBridge.emitBridgeEvent(eventType, {
+              ...payload,
+              role: data.role || null,
+              clientId: data.clientId,
+            }, paneId);
+            return {
+              ok: true,
+              status: 'comms_event_emitted',
+              eventType,
+            };
+          };
+
           const withAgentPrefix = (content) => {
             if (typeof content !== 'string') return content;
             if (content.startsWith(AGENT_MESSAGE_PREFIX)) return content;
             return `${AGENT_MESSAGE_PREFIX}${content}`;
           };
+
+          if (data.message.type === 'comms-event' || data.message.type === 'comms-metric') {
+            return emitKernelCommsEvent(
+              data.message.eventType,
+              data.message.payload || {},
+              data.message?.payload?.paneId || 'system'
+            );
+          }
 
           // Handle screenshot requests from agents
           if (data.message.type === 'screenshot') {
@@ -184,17 +212,57 @@ class HivemindApp {
           // Route WebSocket messages via triggers module (handles War Room + delivery)
           if (data.message.type === 'send') {
             const { target, content } = data.message;
+            const attempt = Number(data.message.attempt || 1);
+            const maxAttempts = Number(data.message.maxAttempts || 1);
+            const messageId = data.message.messageId || null;
+
+            if (attempt === 1) {
+              emitKernelCommsEvent('comms.send.started', {
+                messageId,
+                target: target || null,
+                attempt,
+                maxAttempts,
+              });
+            } else if (attempt > 1) {
+              emitKernelCommsEvent('comms.retry.attempted', {
+                messageId,
+                target: target || null,
+                attempt,
+                maxAttempts,
+              });
+            }
+
             const paneId = this.resolveTargetToPane(target);
             if (paneId) {
               log.info('WebSocket', `Routing 'send' to pane ${paneId} (via triggers)`);
-              triggers.sendDirectMessage([String(paneId)], withAgentPrefix(content), data.role || 'unknown');
+              const result = triggers.sendDirectMessage([String(paneId)], withAgentPrefix(content), data.role || 'unknown');
+              return {
+                ok: Boolean(result?.success),
+                status: result?.success ? 'routed' : 'send_failed',
+                paneId: String(paneId),
+                mode: result?.mode || null,
+                notified: Array.isArray(result?.notified) ? result.notified : [],
+              };
             } else {
               log.warn('WebSocket', `Unknown target for 'send': ${target}`);
+              return {
+                ok: false,
+                status: 'invalid_target',
+                target,
+              };
             }
           } else if (data.message.type === 'broadcast') {
             log.info('WebSocket', `Routing 'broadcast' (via triggers)`);
-            triggers.broadcastToAllAgents(withAgentPrefix(data.message.content), data.role || 'unknown');
+            const result = triggers.broadcastToAllAgents(withAgentPrefix(data.message.content), data.role || 'unknown');
+            return {
+              ok: Boolean(result?.success),
+              status: result?.success ? 'broadcasted' : 'broadcast_failed',
+              mode: result?.mode || null,
+              notified: Array.isArray(result?.notified) ? result.notified : [],
+            };
           }
+
+          return null;
         }
       });
     } catch (err) {
