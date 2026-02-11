@@ -47,6 +47,7 @@ const { registerModelSwitchHandlers } = require('./model-switch-handlers');
 const { registerOrganicUIHandlers } = require('./organic-ui-handlers');
 const { registerDocGeneratorHandlers } = require('./doc-generator-handlers');
 const { registerWhisperHandlers } = require('./whisper-handlers');
+const { registerEvidenceLedgerHandlers } = require('./evidence-ledger-handlers');
 
 const DEFAULT_HANDLERS = [
   registerSdkHandlers,
@@ -98,6 +99,7 @@ const DEFAULT_HANDLERS = [
   registerOrganicUIHandlers,
   registerDocGeneratorHandlers,
   registerWhisperHandlers,
+  registerEvidenceLedgerHandlers,
 ];
 
 function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {
