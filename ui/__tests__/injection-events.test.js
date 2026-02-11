@@ -464,6 +464,40 @@ describe('Injection Events', () => {
       expect(failed).toBeDefined();
       expect(failed[1].payload.reason).toBe('enter_failed');
     });
+
+    test('emits inject.failed with submit_not_accepted after retry exhaustion', async () => {
+      let promptText = 'ready> ';
+      terminals.set('1', {
+        _hivemindBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
+      global.document.activeElement = mockTextarea;
+      mockPty.sendTrustedEnter.mockResolvedValue(undefined);
+
+      const resultPromise = new Promise((resolve) => {
+        controller.doSendToPane('1', 'test', resolve);
+      });
+
+      await jest.advanceTimersByTimeAsync(2500);
+      const result = await resultPromise;
+
+      expect(result.success).toBe(false);
+      const submitSentCalls = mockBus.emit.mock.calls.filter(c => c[0] === 'inject.submit.sent');
+      expect(submitSentCalls.length).toBe(2);
+
+      const failed = mockBus.emit.mock.calls.find(
+        c => c[0] === 'inject.failed' && c[1]?.payload?.reason === 'submit_not_accepted'
+      );
+      expect(failed).toBeDefined();
+    });
   });
 
   // ──────────────────────────────────────────
