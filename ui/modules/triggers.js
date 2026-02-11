@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { TRIGGER_TARGETS, WORKSPACE_PATH, PANE_IDS, ROLE_ID_MAP, LEGACY_ROLE_ALIASES } = require('../config');
 const log = require('./logger');
 const diagnosticLog = require('./diagnostic-log');
@@ -52,6 +53,46 @@ const PRIORITY_KEYWORDS = ['STOP', 'URGENT', 'BLOCKING', 'ERROR'];
 // Local state
 const lastSyncTime = new Map();
 let lastGlobalSyncTime = 0;
+
+function generateTraceToken(prefix = 'trc') {
+  try {
+    return `${prefix}-${crypto.randomUUID()}`;
+  } catch (err) {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+function toNonEmptyString(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeTraceContext(traceContext = null, fallback = {}) {
+  const ctx = (traceContext && typeof traceContext === 'object') ? traceContext : {};
+  const traceId = toNonEmptyString(ctx.traceId)
+    || toNonEmptyString(ctx.correlationId)
+    || toNonEmptyString(fallback.traceId)
+    || toNonEmptyString(fallback.correlationId)
+    || generateTraceToken('trc');
+  const parentEventId = toNonEmptyString(ctx.parentEventId)
+    || toNonEmptyString(ctx.causationId)
+    || toNonEmptyString(fallback.parentEventId)
+    || toNonEmptyString(fallback.causationId)
+    || null;
+  const eventId = toNonEmptyString(ctx.eventId)
+    || toNonEmptyString(fallback.eventId)
+    || generateTraceToken('evt');
+
+  return {
+    ...ctx,
+    traceId,
+    parentEventId,
+    eventId,
+    correlationId: traceId,
+    causationId: parentEventId,
+  };
+}
 
 // Connect sub-modules
 sequencing.setMetricsFunctions(metrics.recordTimeout, metrics.recordDelivered);
@@ -278,6 +319,10 @@ function notifyAllAgentsSync(triggerFile) {
 
 function sendStaggered(panes, message, meta = {}) {
   const isPriority = isPriorityMessage(message);
+  const traceContext = normalizeTraceContext(meta?.traceContext, {
+    traceId: meta?.deliveryId || null,
+    parentEventId: meta?.parentEventId || null,
+  });
   if (isSDKModeEnabled()) {
     panes.forEach((paneId, index) => {
       const delay = isPriority ? 0 : (index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS);
@@ -294,7 +339,14 @@ function sendStaggered(panes, message, meta = {}) {
   panes.forEach((paneId, index) => {
     const delay = panes.length === 1 || isPriority ? 0 : (index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS);
     setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('inject-message', { panes: [paneId], message, deliveryId });
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('inject-message', {
+          panes: [paneId],
+          message,
+          deliveryId,
+          traceContext,
+        });
+      }
     }, delay);
   });
 }
@@ -385,16 +437,18 @@ function handleTriggerFile(filePath, filename) {
     deliveryId = sequencing.createDeliveryId(parsed.sender, parsed.seq, recipientRole);
     sequencing.startDeliveryTracking(deliveryId, parsed.sender, parsed.seq, recipientRole, targets, 'trigger', 'pty');
   }
-  sendStaggered(targets, formatTriggerMessage(message), { deliveryId });
+  const traceContext = normalizeTraceContext(null, { traceId: deliveryId || null });
+  sendStaggered(targets, formatTriggerMessage(message), { deliveryId, traceContext });
   try { fs.unlinkSync(processingPath); } catch (e) {}
   logTriggerActivity('Trigger file (PTY)', targets, message, { file: filename, sender: parsed.sender, mode: 'pty' });
   return { success: true, notified: targets, mode: 'pty', deliveryId };
 }
 
-function broadcastToAllAgents(message, fromRole = 'user') {
+function broadcastToAllAgents(message, fromRole = 'user', options = {}) {
   let targets = [...PANE_IDS];
   const parsed = sequencing.parseMessageSequence(message);
   if ((!fromRole || fromRole === 'cli' || fromRole === 'user' || fromRole === 'unknown') && parsed.sender) fromRole = parsed.sender;
+  const traceContext = normalizeTraceContext(options?.traceContext);
 
   warRoom.recordWarRoomMessage({ fromRole, targets, message, type: 'broadcast', source: 'broadcast' });
 
@@ -407,15 +461,20 @@ function broadcastToAllAgents(message, fromRole = 'user') {
 
   const notified = [];
   if (agentRunning) { for (const [p, s] of agentRunning) { if (s === 'running' && targets.includes(p)) notified.push(p); } }
-  if (notified.length > 0) { metrics.recordSent('pty', 'broadcast', notified); sendStaggered(notified, `[BROADCAST] ${message}`); notified.forEach(p => metrics.recordDelivered('pty', 'broadcast', p)); }
+  if (notified.length > 0) {
+    metrics.recordSent('pty', 'broadcast', notified);
+    sendStaggered(notified, `[BROADCAST] ${message}`, { traceContext });
+    notified.forEach(p => metrics.recordDelivered('pty', 'broadcast', p));
+  }
   return { success: true, notified, mode: 'pty' };
 }
 
-function sendDirectMessage(targetPanes, message, fromRole = null) {
+function sendDirectMessage(targetPanes, message, fromRole = null, options = {}) {
   if (!message) return { success: false, error: 'No message' };
   const parsed = sequencing.parseMessageSequence(message);
   if ((!fromRole || fromRole === 'cli' || fromRole === 'user' || fromRole === 'unknown') && parsed.sender) fromRole = parsed.sender;
   let targets = Array.isArray(targetPanes) ? [...targetPanes] : [];
+  const traceContext = normalizeTraceContext(options?.traceContext);
 
   warRoom.recordWarRoomMessage({ fromRole, targets, message, type: 'direct', source: 'direct' });
   const fullMessage = (fromRole ? `[MSG from ${fromRole}]: ` : '') + message;
@@ -435,7 +494,11 @@ function sendDirectMessage(targetPanes, message, fromRole = null) {
   // Direct agent-to-agent messages must not be dropped based on runtime state.
   // agentRunning can be stale during startup/reconnect and caused silent delivery loss.
   const notified = [...targets];
-  if (notified.length > 0) { metrics.recordSent('pty', 'direct', notified); sendStaggered(notified, fullMessage); notified.forEach(p => metrics.recordDelivered('pty', 'direct', p)); }
+  if (notified.length > 0) {
+    metrics.recordSent('pty', 'direct', notified);
+    sendStaggered(notified, fullMessage, { traceContext });
+    notified.forEach(p => metrics.recordDelivered('pty', 'direct', p));
+  }
   return { success: true, notified, mode: 'pty' };
 }
 

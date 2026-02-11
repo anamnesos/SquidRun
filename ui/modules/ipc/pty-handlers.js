@@ -27,14 +27,43 @@ function normalizeYieldEveryChunks(value) {
   return Math.floor(numeric);
 }
 
-function buildChunkKernelMeta(kernelMeta, chunkIndex) {
+function toNonEmptyString(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeKernelMetaForTrace(kernelMeta) {
   if (!kernelMeta || typeof kernelMeta !== 'object') {
     return null;
   }
-  const baseEventId = kernelMeta.eventId || `chunk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const traceId = toNonEmptyString(kernelMeta.traceId)
+    || toNonEmptyString(kernelMeta.correlationId)
+    || null;
+  const parentEventId = toNonEmptyString(kernelMeta.parentEventId)
+    || toNonEmptyString(kernelMeta.causationId)
+    || null;
   return {
     ...kernelMeta,
+    traceId: traceId || undefined,
+    correlationId: traceId || undefined,
+    parentEventId: parentEventId || undefined,
+    causationId: parentEventId || undefined,
+  };
+}
+
+function buildChunkKernelMeta(kernelMeta, chunkIndex) {
+  const normalized = normalizeKernelMetaForTrace(kernelMeta);
+  if (!normalized) {
+    return null;
+  }
+  const baseEventId = normalized.eventId || `chunk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const parentEventId = normalized.parentEventId || normalized.eventId || null;
+  return {
+    ...normalized,
     eventId: `${baseEventId}-c${chunkIndex + 1}`,
+    parentEventId: parentEventId || undefined,
+    causationId: parentEventId || undefined,
   };
 }
 
@@ -82,8 +111,9 @@ function registerPtyHandlers(ctx, deps = {}) {
 
   ipcMain.handle('pty-write', (event, paneId, data, kernelMeta = null) => {
     if (ctx.daemonClient && ctx.daemonClient.connected) {
+      const normalizedKernelMeta = normalizeKernelMetaForTrace(kernelMeta);
       if (kernelMeta) {
-        ctx.daemonClient.write(paneId, data, kernelMeta);
+        ctx.daemonClient.write(paneId, data, normalizedKernelMeta || kernelMeta);
       } else {
         ctx.daemonClient.write(paneId, data);
       }
@@ -101,7 +131,12 @@ function registerPtyHandlers(ctx, deps = {}) {
 
     let chunkCount = 0;
     if (text.length === 0) {
-      const ack = await writeWithAckIfAvailable(ctx.daemonClient, paneId, '', kernelMeta);
+      const ack = await writeWithAckIfAvailable(
+        ctx.daemonClient,
+        paneId,
+        '',
+        normalizeKernelMetaForTrace(kernelMeta)
+      );
       if (!ack?.success) {
         return {
           success: false,
@@ -209,8 +244,9 @@ function registerPtyHandlers(ctx, deps = {}) {
 
   ipcMain.handle('pty-resize', (event, paneId, cols, rows, kernelMeta = null) => {
     if (ctx.daemonClient && ctx.daemonClient.connected) {
+      const normalizedKernelMeta = normalizeKernelMetaForTrace(kernelMeta);
       if (kernelMeta) {
-        ctx.daemonClient.resize(paneId, cols, rows, kernelMeta);
+        ctx.daemonClient.resize(paneId, cols, rows, normalizedKernelMeta || kernelMeta);
       } else {
         ctx.daemonClient.resize(paneId, cols, rows);
       }

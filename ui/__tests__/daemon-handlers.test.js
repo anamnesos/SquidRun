@@ -593,6 +593,38 @@ describe('daemon-handlers.js module', () => {
         injectHandler({}, { panes: ['1'], message: 'msg' });
         expect(uiView.flashPaneHeader).toHaveBeenCalledWith('1');
       });
+
+      test('should forward traceContext from inject-message to terminal.sendToPane', () => {
+        daemonHandlers.setSDKMode(false);
+        let injectHandler;
+        ipcRenderer.on.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['2'],
+          message: 'msg',
+          deliveryId: 'delivery-1',
+          traceContext: {
+            traceId: 'trace-1',
+            parentEventId: 'evt-parent-1',
+          },
+        });
+
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          'msg',
+          expect.objectContaining({
+            traceContext: expect.objectContaining({
+              traceId: 'trace-1',
+              correlationId: 'trace-1',
+              parentEventId: 'evt-parent-1',
+              causationId: 'evt-parent-1',
+            }),
+          })
+        );
+      });
     });
   });
 });

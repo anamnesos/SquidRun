@@ -98,7 +98,7 @@ class HivemindApp {
 
           if (!data.message) return;
 
-          const emitKernelCommsEvent = (eventType, payload = {}, paneId = 'system') => {
+          const emitKernelCommsEvent = (eventType, payload = {}, paneId = 'system', traceContext = null) => {
             if (typeof eventType !== 'string' || !eventType.startsWith('comms.')) {
               return {
                 ok: false,
@@ -106,10 +106,16 @@ class HivemindApp {
                 eventType,
               };
             }
+            const traceId = traceContext?.traceId || traceContext?.correlationId || null;
+            const parentEventId = traceContext?.parentEventId || traceContext?.causationId || null;
             this.kernelBridge.emitBridgeEvent(eventType, {
               ...payload,
               role: data.role || null,
               clientId: data.clientId,
+              traceId,
+              parentEventId,
+              correlationId: traceId,
+              causationId: parentEventId,
             }, paneId);
             return {
               ok: true,
@@ -215,6 +221,7 @@ class HivemindApp {
             const attempt = Number(data.message.attempt || 1);
             const maxAttempts = Number(data.message.maxAttempts || 1);
             const messageId = data.message.messageId || null;
+            const traceContext = data.traceContext || data.message.traceContext || null;
 
             if (attempt === 1) {
               emitKernelCommsEvent('comms.send.started', {
@@ -222,26 +229,32 @@ class HivemindApp {
                 target: target || null,
                 attempt,
                 maxAttempts,
-              });
+              }, 'system', traceContext);
             } else if (attempt > 1) {
               emitKernelCommsEvent('comms.retry.attempted', {
                 messageId,
                 target: target || null,
                 attempt,
                 maxAttempts,
-              });
+              }, 'system', traceContext);
             }
 
             const paneId = this.resolveTargetToPane(target);
             if (paneId) {
               log.info('WebSocket', `Routing 'send' to pane ${paneId} (via triggers)`);
-              const result = triggers.sendDirectMessage([String(paneId)], withAgentPrefix(content), data.role || 'unknown');
+              const result = triggers.sendDirectMessage(
+                [String(paneId)],
+                withAgentPrefix(content),
+                data.role || 'unknown',
+                { traceContext }
+              );
               return {
                 ok: Boolean(result?.success),
                 status: result?.success ? 'routed' : 'send_failed',
                 paneId: String(paneId),
                 mode: result?.mode || null,
                 notified: Array.isArray(result?.notified) ? result.notified : [],
+                traceId: traceContext?.traceId || traceContext?.correlationId || null,
               };
             } else {
               log.warn('WebSocket', `Unknown target for 'send': ${target}`);
@@ -249,16 +262,23 @@ class HivemindApp {
                 ok: false,
                 status: 'invalid_target',
                 target,
+                traceId: traceContext?.traceId || traceContext?.correlationId || null,
               };
             }
           } else if (data.message.type === 'broadcast') {
             log.info('WebSocket', `Routing 'broadcast' (via triggers)`);
-            const result = triggers.broadcastToAllAgents(withAgentPrefix(data.message.content), data.role || 'unknown');
+            const traceContext = data.traceContext || data.message.traceContext || null;
+            const result = triggers.broadcastToAllAgents(
+              withAgentPrefix(data.message.content),
+              data.role || 'unknown',
+              { traceContext }
+            );
             return {
               ok: Boolean(result?.success),
               status: result?.success ? 'broadcasted' : 'broadcast_failed',
               mode: result?.mode || null,
               notified: Array.isArray(result?.notified) ? result.notified : [],
+              traceId: traceContext?.traceId || traceContext?.correlationId || null,
             };
           }
 

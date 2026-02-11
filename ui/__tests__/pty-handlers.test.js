@@ -128,7 +128,16 @@ describe('PTY Handlers', () => {
 
       await harness.invoke('pty-write', '1', 'test data', kernelMeta);
 
-      expect(ctx.daemonClient.write).toHaveBeenCalledWith('1', 'test data', kernelMeta);
+      expect(ctx.daemonClient.write).toHaveBeenCalledWith(
+        '1',
+        'test data',
+        expect.objectContaining({
+          eventId: 'evt-1',
+          correlationId: 'corr-1',
+          traceId: 'corr-1',
+          source: 'injection.js',
+        })
+      );
     });
   });
 
@@ -166,18 +175,27 @@ describe('PTY Handlers', () => {
     test('forwards chunk kernel metadata with unique event ids', async () => {
       ctx.daemonClient.connected = true;
       const payload = 'C'.repeat(300);
-      const kernelMeta = { eventId: 'evt-1', correlationId: 'corr-1', source: 'injection.js' };
+      const kernelMeta = {
+        eventId: 'evt-1',
+        correlationId: 'corr-1',
+        parentEventId: 'evt-parent-1',
+        source: 'injection.js',
+      };
 
       await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 192 }, kernelMeta);
 
       expect(ctx.daemonClient.write).toHaveBeenCalledTimes(2);
       expect(ctx.daemonClient.write.mock.calls[0][2]).toEqual(expect.objectContaining({
         correlationId: 'corr-1',
+        traceId: 'corr-1',
+        parentEventId: 'evt-parent-1',
         source: 'injection.js',
         eventId: 'evt-1-c1',
       }));
       expect(ctx.daemonClient.write.mock.calls[1][2]).toEqual(expect.objectContaining({
         correlationId: 'corr-1',
+        traceId: 'corr-1',
+        parentEventId: 'evt-parent-1',
         source: 'injection.js',
         eventId: 'evt-1-c2',
       }));
@@ -327,7 +345,16 @@ describe('PTY Handlers', () => {
 
       await harness.invoke('pty-resize', '1', 120, 40, kernelMeta);
 
-      expect(ctx.daemonClient.resize).toHaveBeenCalledWith('1', 120, 40, kernelMeta);
+      expect(ctx.daemonClient.resize).toHaveBeenCalledWith(
+        '1',
+        120,
+        40,
+        expect.objectContaining({
+          correlationId: 'corr-resize',
+          traceId: 'corr-resize',
+          source: 'renderer.js',
+        })
+      );
     });
   });
 

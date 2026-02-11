@@ -4,6 +4,7 @@
  */
 
 const { WebSocketServer } = require('ws');
+const crypto = require('crypto');
 const log = require('./logger');
 const { LEGACY_ROLE_ALIASES, ROLE_ID_MAP } = require('../config');
 
@@ -28,6 +29,20 @@ let recentMessageAcks = new Map(); // messageId -> { ackPayload, expiresAt }
 let pendingMessageAcks = new Map(); // messageId -> Promise<ackPayload>
 let roleHeartbeats = new Map(); // role -> { role, paneId, lastSeen, clientId, source }
 let paneHeartbeats = new Map(); // paneId -> { role, paneId, lastSeen, clientId, source }
+
+function generateTraceToken(prefix = 'evt') {
+  try {
+    return `${prefix}-${crypto.randomUUID()}`;
+  } catch (err) {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+function toNonEmptyString(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
 
 function normalizePaneId(paneId) {
   if (paneId === null || paneId === undefined) return null;
@@ -252,6 +267,36 @@ function getNormalizedMessageId(message) {
   return trimmed ? trimmed : null;
 }
 
+function buildTraceContext(message = {}) {
+  const nested = (message?.traceContext && typeof message.traceContext === 'object')
+    ? message.traceContext
+    : {};
+  const messageId = getNormalizedMessageId(message);
+  const traceId = toNonEmptyString(nested.traceId)
+    || toNonEmptyString(nested.correlationId)
+    || toNonEmptyString(message.traceId)
+    || toNonEmptyString(message.correlationId)
+    || messageId
+    || generateTraceToken('trc');
+  const parentEventId = toNonEmptyString(nested.parentEventId)
+    || toNonEmptyString(nested.causationId)
+    || toNonEmptyString(message.parentEventId)
+    || toNonEmptyString(message.causationId)
+    || null;
+  const eventId = toNonEmptyString(nested.eventId)
+    || toNonEmptyString(message.eventId)
+    || generateTraceToken('evt');
+
+  return {
+    traceId,
+    parentEventId,
+    eventId,
+    correlationId: traceId,
+    causationId: parentEventId,
+    messageId,
+  };
+}
+
 function pruneExpiredMessageAcks(now = Date.now()) {
   for (const [messageId, entry] of recentMessageAcks.entries()) {
     if (!entry || entry.expiresAt <= now) {
@@ -404,8 +449,17 @@ async function handleMessage(clientId, rawData) {
     return;
   }
 
+  const traceEligible = (message.type === 'send' || message.type === 'broadcast');
   const ackEligible = isAckEligibleMessage(message);
   const messageId = ackEligible ? getNormalizedMessageId(message) : null;
+  const ingressTraceContext = traceEligible ? buildTraceContext(message) : null;
+  const dispatchTraceContext = ingressTraceContext
+    ? {
+      ...ingressTraceContext,
+      parentEventId: ingressTraceContext.eventId,
+      causationId: ingressTraceContext.eventId,
+    }
+    : null;
 
   if (ackEligible && messageId) {
     pruneExpiredMessageAcks();
@@ -441,6 +495,8 @@ async function handleMessage(clientId, rawData) {
           ok: false,
           status: 'handler_error',
           error: err.message,
+          traceId: ingressTraceContext?.traceId || null,
+          parentEventId: ingressTraceContext?.parentEventId || null,
           timestamp: Date.now(),
         };
         sendJson(clientInfo.ws, failedAck);
@@ -478,7 +534,11 @@ async function handleMessage(clientId, rawData) {
   if (message.type === 'send') {
     const { target, content, priority } = message;
     // Try WebSocket clients first (for future direct agent-to-agent)
-    if (sendToTarget(target, content, { from: clientInfo.role || clientId, priority })) {
+    if (sendToTarget(target, content, {
+      from: clientInfo.role || clientId,
+      priority,
+      traceContext: dispatchTraceContext,
+    })) {
       wsDeliveryCount = 1;
     }
     // Don't return - let messageHandler also route to terminals
@@ -486,7 +546,11 @@ async function handleMessage(clientId, rawData) {
 
   // Handle broadcast
   if (message.type === 'broadcast') {
-    wsDeliveryCount = broadcast(message.content, { from: clientInfo.role || clientId, excludeSender: clientId });
+    wsDeliveryCount = broadcast(message.content, {
+      from: clientInfo.role || clientId,
+      excludeSender: clientId,
+      traceContext: dispatchTraceContext,
+    });
     // Don't return - let messageHandler also route to terminals/triggers
   }
 
@@ -499,7 +563,8 @@ async function handleMessage(clientId, rawData) {
         clientId,
         paneId: clientInfo.paneId,
         role: clientInfo.role,
-        message,
+        message: dispatchTraceContext ? { ...message, traceContext: dispatchTraceContext } : message,
+        traceContext: dispatchTraceContext,
       });
     } catch (err) {
       log.error('WebSocket', `messageHandler failed for client ${clientId}: ${err.message}`);
@@ -511,6 +576,8 @@ async function handleMessage(clientId, rawData) {
           status: 'handler_error',
           error: err.message,
           wsDeliveryCount,
+          traceId: ingressTraceContext?.traceId || null,
+          parentEventId: ingressTraceContext?.parentEventId || null,
           timestamp: Date.now(),
         };
         sendJson(clientInfo.ws, ackPayload);
@@ -543,6 +610,8 @@ async function handleMessage(clientId, rawData) {
       status,
       wsDeliveryCount,
       handlerResult: handlerAck?.details || null,
+      traceId: ingressTraceContext?.traceId || null,
+      parentEventId: ingressTraceContext?.parentEventId || null,
       timestamp: Date.now(),
     };
     sendJson(clientInfo.ws, ackPayload);
@@ -562,11 +631,15 @@ async function handleMessage(clientId, rawData) {
 function sendToTarget(target, content, meta = {}) {
   const targetStr = String(target);
   const targetRole = targetStr.toLowerCase();
+  const traceContext = meta?.traceContext || null;
   const payload = JSON.stringify({
     type: 'message',
     from: meta.from || 'system',
     priority: meta.priority || 'normal',
     content,
+    traceId: traceContext?.traceId || null,
+    parentEventId: traceContext?.parentEventId || null,
+    eventId: traceContext?.eventId || null,
     timestamp: Date.now(),
   });
 
@@ -596,10 +669,14 @@ function sendToTarget(target, content, meta = {}) {
  * @param {object} options - Options (from, excludeSender)
  */
 function broadcast(content, options = {}) {
+  const traceContext = options?.traceContext || null;
   const payload = JSON.stringify({
     type: 'broadcast',
     from: options.from || 'system',
     content,
+    traceId: traceContext?.traceId || null,
+    parentEventId: traceContext?.parentEventId || null,
+    eventId: traceContext?.eventId || null,
     timestamp: Date.now(),
   });
 
