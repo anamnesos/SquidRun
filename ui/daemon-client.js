@@ -30,6 +30,8 @@ class DaemonClient extends EventEmitter {
     this.reconnecting = false;
     this.terminals = new Map(); // Cache of known terminals
     this.lastActivity = new Map(); // Track last activity time per pane
+    this.pendingWriteAcks = new Map(); // requestEventId -> { resolve, timer }
+    this.writeAckSeq = 0;
   }
 
   /**
@@ -114,6 +116,7 @@ class DaemonClient extends EventEmitter {
       log.warn('DaemonClient', 'Connection closed');
       this.connected = false;
       this.client = null;
+      this._rejectPendingWriteAcks('daemon_disconnected');
       this.emit('disconnected');
 
       // Attempt reconnect
@@ -125,6 +128,7 @@ class DaemonClient extends EventEmitter {
     this.client.on('error', (err) => {
       log.error('DaemonClient', 'Connection error', err.message);
       this.connected = false;
+      this._rejectPendingWriteAcks('daemon_connection_error');
     });
   }
 
@@ -242,6 +246,23 @@ class DaemonClient extends EventEmitter {
         // Event Kernel: daemon-side event envelope
         case 'kernel-event':
           this.emit('kernel-event', msg.eventData || null);
+          if (msg.eventData?.type === 'daemon.write.ack') {
+            const requestEventId = msg.eventData?.payload?.requestedByEventId;
+            if (requestEventId) {
+              const pending = this.pendingWriteAcks.get(requestEventId);
+              if (pending) {
+                clearTimeout(pending.timer);
+                this.pendingWriteAcks.delete(requestEventId);
+                pending.resolve({
+                  success: true,
+                  requestEventId,
+                  eventData: msg.eventData,
+                  status: msg.eventData?.payload?.status,
+                });
+              }
+            }
+            this.emit('write-ack', msg.eventData);
+          }
           break;
 
         // Event Kernel: daemon-side diagnostics
@@ -350,6 +371,80 @@ class DaemonClient extends EventEmitter {
       paneId,
       data,
       kernelMeta: kernelMeta || undefined,
+    });
+  }
+
+  _nextWriteAckEventId() {
+    this.writeAckSeq += 1;
+    return `write-${Date.now()}-${this.writeAckSeq}`;
+  }
+
+  _rejectPendingWriteAcks(reason = 'daemon_disconnected') {
+    for (const [eventId, pending] of this.pendingWriteAcks.entries()) {
+      clearTimeout(pending.timer);
+      pending.resolve({
+        success: false,
+        requestEventId: eventId,
+        status: 'ack_timeout',
+        error: reason,
+      });
+    }
+    this.pendingWriteAcks.clear();
+  }
+
+  /**
+   * Write data and wait for daemon.write.ack for this specific write.
+   * requestEventId is carried in kernelMeta.eventId and echoed by daemon ack.
+   * @param {string} paneId
+   * @param {string} data
+   * @param {Object|null} kernelMeta
+   * @param {Object} [options]
+   * @param {number} [options.timeoutMs=2000]
+   * @returns {Promise<{success:boolean,status?:string,error?:string,requestEventId?:string,eventData?:Object}>}
+   */
+  async writeAndWaitAck(paneId, data, kernelMeta = null, options = {}) {
+    const timeoutMs = Math.max(100, Number(options?.timeoutMs) || 2000);
+    const normalizedMeta = (kernelMeta && typeof kernelMeta === 'object')
+      ? { ...kernelMeta }
+      : {};
+    if (!normalizedMeta.eventId) {
+      normalizedMeta.eventId = this._nextWriteAckEventId();
+    }
+    const requestEventId = normalizedMeta.eventId;
+
+    if (!this.connected || !this.client) {
+      return {
+        success: false,
+        requestEventId,
+        status: 'not_connected',
+        error: 'Daemon not connected',
+      };
+    }
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingWriteAcks.delete(requestEventId);
+        resolve({
+          success: false,
+          requestEventId,
+          status: 'ack_timeout',
+          error: `write ack timeout after ${timeoutMs}ms`,
+        });
+      }, timeoutMs);
+
+      this.pendingWriteAcks.set(requestEventId, { resolve, timer });
+
+      const sent = this.write(paneId, data, normalizedMeta);
+      if (!sent) {
+        clearTimeout(timer);
+        this.pendingWriteAcks.delete(requestEventId);
+        resolve({
+          success: false,
+          requestEventId,
+          status: 'send_failed',
+          error: 'Failed to send write to daemon',
+        });
+      }
     });
   }
 
@@ -517,6 +612,7 @@ class DaemonClient extends EventEmitter {
    * Disconnect from daemon (doesn't kill terminals)
    */
   disconnect() {
+    this._rejectPendingWriteAcks('daemon_disconnected');
     if (this.client) {
       this.client.destroy();
       this.client = null;

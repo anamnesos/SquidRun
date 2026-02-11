@@ -182,6 +182,32 @@ describe('PTY Handlers', () => {
         eventId: 'evt-1-c2',
       }));
     });
+
+    test('uses writeAndWaitAck when daemon supports ack handshake', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.writeAndWaitAck = jest.fn().mockResolvedValue({ success: true, status: 'accepted' });
+      const payload = 'D'.repeat(420);
+
+      const result = await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 192 });
+
+      expect(result).toEqual({ success: true, chunks: 3, chunkSize: 192 });
+      expect(ctx.daemonClient.writeAndWaitAck).toHaveBeenCalledTimes(3);
+    });
+
+    test('returns failure when writeAndWaitAck fails', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.writeAndWaitAck = jest.fn().mockResolvedValue({
+        success: false,
+        status: 'ack_timeout',
+        error: 'write ack timeout after 2500ms',
+      });
+
+      const result = await harness.invoke('pty-write-chunked', '1', 'hello world', { chunkSize: 192 });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('write ack timeout');
+      expect(ctx.daemonClient.writeAndWaitAck).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('interrupt-pane', () => {
