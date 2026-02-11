@@ -55,6 +55,42 @@ const MESSAGE_DELAY = 100; // ms between messages per pane (reduced from 150ms â
 // SDK integration
 let sdkModeEnabled = false;
 
+function toNonEmptyString(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeTraceContext(traceContext = null, fallback = {}) {
+  const ctx = (traceContext && typeof traceContext === 'object') ? traceContext : {};
+  const traceId = toNonEmptyString(ctx.traceId)
+    || toNonEmptyString(ctx.correlationId)
+    || toNonEmptyString(fallback.traceId)
+    || toNonEmptyString(fallback.correlationId)
+    || null;
+  const parentEventId = toNonEmptyString(ctx.parentEventId)
+    || toNonEmptyString(ctx.causationId)
+    || toNonEmptyString(fallback.parentEventId)
+    || toNonEmptyString(fallback.causationId)
+    || null;
+  const eventId = toNonEmptyString(ctx.eventId)
+    || toNonEmptyString(fallback.eventId)
+    || null;
+
+  if (!traceId && !parentEventId && !eventId) {
+    return null;
+  }
+
+  return {
+    ...ctx,
+    traceId,
+    parentEventId,
+    eventId,
+    correlationId: traceId,
+    causationId: parentEventId,
+  };
+}
+
 // Sync indicator state
 const syncState = new Map();
 let syncIndicatorSetup = false;
@@ -346,11 +382,23 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
   });
 
   ipcRenderer.on('inject-message', (event, data) => {
-    const { panes, message, deliveryId } = data || {};
+    const { panes, message, deliveryId, traceContext, traceCtx } = data || {};
+    const normalizedTraceContext = normalizeTraceContext(traceContext || traceCtx, {
+      traceId: deliveryId || null,
+    });
     for (const paneId of panes || []) {
       log.info('Inject', `Received inject-message for pane ${paneId}`);
       diagnosticLog.write('Inject', `Received inject-message for pane ${paneId}`);
-      enqueueForThrottle(String(paneId), message, deliveryId);
+      const corrId = normalizedTraceContext?.traceId || normalizedTraceContext?.correlationId || undefined;
+      const causationId = normalizedTraceContext?.parentEventId || normalizedTraceContext?.causationId || undefined;
+      bus.emit('inject.route.received', {
+        paneId: String(paneId),
+        payload: { deliveryId: deliveryId || null },
+        correlationId: corrId,
+        causationId,
+        source: 'daemon-handlers.js',
+      });
+      enqueueForThrottle(String(paneId), message, deliveryId, normalizedTraceContext);
     }
   });
 
@@ -529,13 +577,14 @@ async function loadPaneProjects() {
 // THROTTLE QUEUE
 // ============================================================
 
-function enqueueForThrottle(paneId, message, deliveryId) {
+function enqueueForThrottle(paneId, message, deliveryId, traceContext = null) {
   if (!throttleQueues.has(paneId)) {
     throttleQueues.set(paneId, []);
   }
   throttleQueues.get(paneId).push({
     message,
     deliveryId: deliveryId || null,
+    traceContext: traceContext || null,
   });
   log.info('ThrottleQueue', `Queued for pane ${paneId}, queue length: ${throttleQueues.get(paneId).length}`);    
   diagnosticLog.write('ThrottleQueue', `Queued for pane ${paneId}, queue length: ${throttleQueues.get(paneId).length}`);
@@ -553,6 +602,9 @@ function processThrottleQueue(paneId) {
   const item = queue.shift();
   const message = typeof item === 'string' ? item : item.message;
   const deliveryId = item && typeof item === 'object' ? item.deliveryId : null;
+  const traceContext = item && typeof item === 'object' ? (item.traceContext || null) : null;
+  const corrId = traceContext?.traceId || traceContext?.correlationId || undefined;
+  const causationId = traceContext?.parentEventId || traceContext?.causationId || undefined;
 
   const terminal = require('./terminal');
 
@@ -593,6 +645,13 @@ function processThrottleQueue(paneId) {
   }
 
   if (sdkModeEnabled) {
+    bus.emit('inject.route.dispatched', {
+      paneId: String(paneId),
+      payload: { deliveryId: deliveryId || null, mode: 'sdk' },
+      correlationId: corrId,
+      causationId,
+      source: 'daemon-handlers.js',
+    });
     const cleanMessage = message.endsWith('\r') ? message.slice(0, -1) : message;
     log.info('Daemon SDK', `Sending to pane ${paneId} via SDK: ${cleanMessage.substring(0, 50)}...`);
 
@@ -627,8 +686,16 @@ function processThrottleQueue(paneId) {
   }
 
   uiView.flashPaneHeader(paneId);
+  bus.emit('inject.route.dispatched', {
+    paneId: String(paneId),
+    payload: { deliveryId: deliveryId || null, mode: 'pty' },
+    correlationId: corrId,
+    causationId,
+    source: 'daemon-handlers.js',
+  });
 
   terminal.sendToPane(paneId, message, {
+    traceContext: traceContext || undefined,
     onComplete: (result) => {
       if (result && result.success === false) {
         log.warn('Daemon', `Trigger delivery failed for pane ${paneId}: ${result.reason || 'unknown'}`);

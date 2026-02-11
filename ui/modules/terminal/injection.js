@@ -343,6 +343,28 @@ function createInjectionController(options = {}) {
     setTimeout(() => processIdleQueue(paneId), delayMs);
   }
 
+  function toNonEmptyString(value) {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+
+  function normalizeTraceContext(traceContext = null) {
+    const ctx = (traceContext && typeof traceContext === 'object') ? traceContext : {};
+    const traceId = toNonEmptyString(ctx.traceId) || toNonEmptyString(ctx.correlationId) || null;
+    const parentEventId = toNonEmptyString(ctx.parentEventId) || toNonEmptyString(ctx.causationId) || null;
+    const eventId = toNonEmptyString(ctx.eventId) || null;
+    if (!traceId && !parentEventId && !eventId) return null;
+    return {
+      ...ctx,
+      traceId,
+      parentEventId,
+      eventId,
+      correlationId: traceId,
+      causationId: parentEventId,
+    };
+  }
+
   // IDLE QUEUE: Process queued messages for a pane.
   // Messages arrive here from the throttle queue (daemon-handlers.js
   // processThrottleQueue → terminal.sendToPane). For Claude panes, the only
@@ -418,13 +440,19 @@ function createInjectionController(options = {}) {
     const item = queue.shift();
     const queuedMessage = typeof item === 'string' ? item : item.message;
     const onComplete = item && typeof item === 'object' ? item.onComplete : null;
-    const itemCorrId = (item && typeof item === 'object' && item.correlationId) || bus.getCurrentCorrelation();
+    const itemTraceContext = normalizeTraceContext(item && typeof item === 'object' ? item.traceContext : null);
+    const itemCorrId = itemTraceContext?.traceId
+      || itemTraceContext?.correlationId
+      || (item && typeof item === 'object' && item.correlationId)
+      || bus.getCurrentCorrelation();
+    const itemCausationId = itemTraceContext?.parentEventId || itemTraceContext?.causationId || undefined;
 
     const mode = isCodex ? 'codex-exec' : (isGemini ? 'gemini-pty' : 'claude-pty');
     bus.emit('inject.mode.selected', {
       paneId: id,
       payload: { mode },
       correlationId: itemCorrId,
+      causationId: itemCausationId,
       source: EVENT_SOURCE,
     });
 
@@ -432,6 +460,7 @@ function createInjectionController(options = {}) {
       paneId: id,
       payload: { depth: queue.length },
       correlationId: itemCorrId,
+      causationId: itemCausationId,
       source: EVENT_SOURCE,
     });
 
@@ -459,13 +488,19 @@ function createInjectionController(options = {}) {
       if (queue.length > 0) {
         setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
       }
-    }, itemCorrId);
+    }, itemTraceContext || {
+      traceId: itemCorrId || null,
+      parentEventId: itemCausationId || null,
+      correlationId: itemCorrId || null,
+      causationId: itemCausationId || null,
+      eventId: itemTraceContext?.eventId || null,
+    });
   }
 
   // Actually send message to pane (internal - use sendToPane for idle detection)
   // Triggers actual DOM keyboard events on xterm textarea with bypass marker
   // Includes diagnostic logging and focus steal prevention (save/restore user focus)
-  async function doSendToPane(paneId, message, onComplete, correlationId = null) {
+  async function doSendToPane(paneId, message, onComplete, traceContext = null) {
     let completed = false;
     const finish = (result) => {
       if (completed) return;
@@ -498,15 +533,31 @@ function createInjectionController(options = {}) {
     const text = message.replace(/\r$/, '');
     const id = String(paneId);
     const isCodex = isCodexPane(id);
-    const createKernelMeta = () => ({
-      eventId: `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-      correlationId: correlationId || bus.getCurrentCorrelation() || undefined,
-      source: EVENT_SOURCE,
-    });
+    const normalizedTraceContext = normalizeTraceContext(traceContext);
+    const corrId = normalizedTraceContext?.traceId
+      || normalizedTraceContext?.correlationId
+      || bus.getCurrentCorrelation()
+      || undefined;
+    let currentParentEventId = normalizedTraceContext?.parentEventId
+      || normalizedTraceContext?.causationId
+      || normalizedTraceContext?.eventId
+      || null;
+    const createKernelMeta = () => {
+      const eventId = `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const kernelMeta = {
+        eventId,
+        correlationId: corrId,
+        traceId: corrId,
+        parentEventId: currentParentEventId || undefined,
+        causationId: currentParentEventId || undefined,
+        source: EVENT_SOURCE,
+      };
+      currentParentEventId = eventId;
+      return kernelMeta;
+    };
 
     // Codex exec mode: bypass PTY/textarea injection
     if (isCodex) {
-      const corrId = bus.getCurrentCorrelation();
       bus.emit('inject.transform.applied', {
         paneId: id,
         payload: { transform: 'codex-exec-prompt' },
@@ -556,7 +607,6 @@ function createInjectionController(options = {}) {
     // regardless, so injection.js owns the submit decision for all pane types.
     const isGemini = isGeminiPane(id);
     if (isGemini) {
-      const corrId = bus.getCurrentCorrelation();
       log.info(`doSendToPane ${id}`, 'Gemini pane: PTY text + Enter');
 
       // Clear any stuck input first (Ctrl+U)
@@ -641,7 +691,6 @@ function createInjectionController(options = {}) {
     // CLAUDE PATH: PTY write for text + sendTrustedEnter for Enter
     // PTY \r does NOT auto-submit in Claude Code's ink TUI — must use native
     // Electron keyboard events via sendTrustedEnter. Enter is always sent.
-    const corrId = bus.getCurrentCorrelation();
     const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
     let textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
 
@@ -884,18 +933,34 @@ function createInjectionController(options = {}) {
   // options.priority = true puts message at FRONT of queue (for user messages)
   function sendToPane(paneId, message, options = {}) {
     const id = String(paneId);
-    const corrId = bus.startCorrelation();
+    const incomingTraceContext = normalizeTraceContext(options.traceContext);
+    const corrId = incomingTraceContext?.traceId
+      || incomingTraceContext?.correlationId
+      || bus.startCorrelation();
+    const causationId = incomingTraceContext?.parentEventId
+      || incomingTraceContext?.causationId
+      || undefined;
 
-    bus.emit('inject.requested', {
+    const requestedEvent = bus.emit('inject.requested', {
       paneId: id,
       payload: { priority: options.priority || false, messageLen: message.length },
       correlationId: corrId,
+      causationId,
       source: EVENT_SOURCE,
     });
+    const requestedEventId = requestedEvent?.eventId || incomingTraceContext?.eventId || null;
 
     if (!messageQueue[id]) {
       messageQueue[id] = [];
     }
+
+    const queueTraceContext = {
+      traceId: corrId,
+      correlationId: corrId,
+      parentEventId: requestedEventId || causationId || null,
+      causationId: requestedEventId || causationId || null,
+      eventId: requestedEventId,
+    };
 
     const queueItem = {
       message: message,
@@ -904,6 +969,7 @@ function createInjectionController(options = {}) {
       priority: options.priority || false,
       immediate: options.immediate || false,
       correlationId: corrId,
+      traceContext: queueTraceContext,
     };
 
     // User messages (priority) go to front of queue, agent messages go to back
@@ -918,12 +984,14 @@ function createInjectionController(options = {}) {
       paneId: id,
       payload: { depth: messageQueue[id].length, priority: queueItem.priority },
       correlationId: corrId,
+      causationId: queueTraceContext.parentEventId || undefined,
       source: EVENT_SOURCE,
     });
     bus.emit('queue.depth.changed', {
       paneId: id,
       payload: { depth: messageQueue[id].length },
       correlationId: corrId,
+      causationId: queueTraceContext.parentEventId || undefined,
       source: EVENT_SOURCE,
     });
 

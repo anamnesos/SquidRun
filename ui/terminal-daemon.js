@@ -99,13 +99,27 @@ function buildDaemonKernelEvent(type, {
   payload = {},
   kernelMeta = null,
   correlationId = null,
+  traceId = null,
+  parentEventId,
   causationId,
 } = {}) {
   const meta = (kernelMeta && typeof kernelMeta === 'object') ? kernelMeta : {};
+  const resolvedTraceId = traceId
+    || meta.traceId
+    || correlationId
+    || meta.correlationId
+    || generateKernelId();
+  const resolvedParentEventId = parentEventId !== undefined
+    ? parentEventId
+    : (causationId !== undefined
+      ? causationId
+      : (meta.parentEventId || meta.causationId || meta.eventId || null));
   return {
     eventId: generateKernelId(),
-    correlationId: correlationId || meta.correlationId || generateKernelId(),
-    causationId: causationId !== undefined ? causationId : (meta.eventId || null),
+    traceId: resolvedTraceId,
+    parentEventId: resolvedParentEventId,
+    correlationId: resolvedTraceId,
+    causationId: resolvedParentEventId,
     type,
     source: 'daemon',
     paneId: String(paneId || 'system'),

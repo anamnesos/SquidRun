@@ -171,7 +171,42 @@ describe('WebSocket Delivery Audit', () => {
     const [ack, received] = await Promise.all([ackPromise, delivery]);
     expect(ack.ok).toBe(true);
     expect(ack.status).toBe('delivered.websocket');
+    expect(ack.traceId).toBe(messageId);
     expect(received.from).toBe('architect');
+  });
+
+  test('forwards trace context to message handler for routed send', async () => {
+    const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(sender);
+    const messageId = 'trace-forward-1';
+
+    const ackPromise = waitForMessage(
+      sender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === messageId
+    );
+
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'missing-role',
+      content: 'trace-forward',
+      messageId,
+      ackRequired: true,
+    }));
+
+    await ackPromise;
+    const routedSend = onMessageSpy.mock.calls
+      .map(([payload]) => payload)
+      .find((payload) => payload?.message?.messageId === messageId);
+
+    expect(routedSend).toBeDefined();
+    expect(routedSend.traceContext).toEqual(expect.objectContaining({
+      traceId: messageId,
+      correlationId: messageId,
+    }));
+    expect(routedSend.message.traceContext).toEqual(expect.objectContaining({
+      traceId: messageId,
+      correlationId: messageId,
+    }));
   });
 
   test('returns unrouted send-ack when ackRequired is true and no route exists', async () => {

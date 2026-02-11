@@ -164,6 +164,22 @@ describe('Injection Events', () => {
       controller.sendToPane('1', 'test');
       expect(mockBus.startCorrelation).toHaveBeenCalledTimes(1);
     });
+
+    test('reuses incoming trace context instead of starting new correlation', () => {
+      const mockTerminal = { buffer: { active: {} } };
+      terminals.set('1', mockTerminal);
+      controller.sendToPane('1', 'test', {
+        traceContext: {
+          traceId: 'trace-incoming-1',
+          parentEventId: 'evt-parent-1',
+        },
+      });
+
+      expect(mockBus.startCorrelation).not.toHaveBeenCalled();
+      const requested = mockBus.emit.mock.calls.find(c => c[0] === 'inject.requested');
+      expect(requested[1].correlationId).toBe('trace-incoming-1');
+      expect(requested[1].causationId).toBe('evt-parent-1');
+    });
   });
 
   // ──────────────────────────────────────────
