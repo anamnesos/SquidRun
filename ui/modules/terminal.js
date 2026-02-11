@@ -325,10 +325,41 @@ const TERMINAL_OPTIONS = {
   fontSize: 13,
   cursorBlink: true,
   cursorStyle: 'block',
-  scrollback: 2000,
+  scrollback: 5000,
   rightClickSelectsWord: true,
   allowProposedApi: true,
 };
+
+const XTERM_SCROLLBACK_LINES = TERMINAL_OPTIONS.scrollback;
+
+function createTerminalInstance() {
+  const terminal = new Terminal(TERMINAL_OPTIONS);
+  // Defensive re-enforcement to avoid downstream option mutation.
+  if (terminal?.options && terminal.options.scrollback !== XTERM_SCROLLBACK_LINES) {
+    terminal.options.scrollback = XTERM_SCROLLBACK_LINES;
+  }
+  return terminal;
+}
+
+function trimScrollbackToMaxLines(scrollback, maxLines = XTERM_SCROLLBACK_LINES) {
+  if (!scrollback || maxLines <= 0) {
+    return '';
+  }
+
+  const text = typeof scrollback === 'string' ? scrollback : String(scrollback);
+  let newlineCount = 0;
+
+  for (let i = text.length - 1; i >= 0; i -= 1) {
+    if (text[i] === '\n') {
+      newlineCount += 1;
+      if (newlineCount >= maxLines) {
+        return text.slice(i + 1);
+      }
+    }
+  }
+
+  return text;
+}
 
 // Track when user focuses any UI input (not xterm textareas).
 // Call once from renderer.js after DOMContentLoaded.
@@ -919,7 +950,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
     if (terminals.has(paneId)) return;
     const container = document.getElementById(`terminal-${paneId}`);
     if (!container) return;
-  const terminal = new Terminal(TERMINAL_OPTIONS);
+  const terminal = createTerminalInstance();
   const fitAddon = new FitAddon();
   const webLinksAddon = new WebLinksAddon();
   const searchAddon = new SearchAddon();
@@ -1098,7 +1129,7 @@ async function reattachTerminal(paneId, scrollback) {
     return;
   }
 
-  const terminal = new Terminal(TERMINAL_OPTIONS);
+  const terminal = createTerminalInstance();
   const fitAddon = new FitAddon();
   const webLinksAddon = new WebLinksAddon();
   const searchAddon = new SearchAddon();
@@ -1203,7 +1234,7 @@ async function reattachTerminal(paneId, scrollback) {
 
   // U1: Restore scrollback buffer if available
   if (scrollback && scrollback.length > 0) {
-    queueTerminalWrite(paneId, terminal, scrollback);
+    queueTerminalWrite(paneId, terminal, trimScrollbackToMaxLines(scrollback));
   }
 
   if (!isCodexPane(paneId)) {
