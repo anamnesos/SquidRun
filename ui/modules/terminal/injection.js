@@ -15,8 +15,9 @@ function createInjectionController(options = {}) {
     lastOutputTime,
     lastTypedTime,
     messageQueue,
+    getPaneCapabilities,
     isCodexPane,
-    isGeminiPane,  // Session 67: Re-enabled - Gemini CLI accepts PTY \r unlike Claude's ink TUI
+    isGeminiPane,
     buildCodexExecPrompt,
     userIsTyping,
     userInputFocused,
@@ -50,6 +51,7 @@ function createInjectionController(options = {}) {
     SUBMIT_DEFER_MAX_WAIT_MS = 2000,
     SUBMIT_DEFER_POLL_MS = 100,
     CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS = 9000,
+    SAFE_DEFAULT_ENTER_DELAY_MS = 50,
   } = constants;
 
   // Track when compaction deferral started per pane (false positive safety valve)
@@ -365,6 +367,163 @@ function createInjectionController(options = {}) {
     };
   }
 
+  function normalizeBoolean(value, fallback = false) {
+    return typeof value === 'boolean' ? value : fallback;
+  }
+
+  function normalizeModeLabel(value, fallback = 'claude-pty') {
+    const normalized = toNonEmptyString(value);
+    return normalized || fallback;
+  }
+
+  function normalizeEnterMethod(value, fallback = 'trusted') {
+    const normalized = toNonEmptyString(value);
+    if (normalized === 'none' || normalized === 'pty' || normalized === 'trusted') {
+      return normalized;
+    }
+    return fallback;
+  }
+
+  function resolveLegacyCapabilities(paneId) {
+    const id = String(paneId);
+    const isCodex = typeof isCodexPane === 'function' ? isCodexPane(id) : false;
+    if (isCodex) {
+      return {
+        mode: 'codex-exec',
+        modeLabel: 'codex-exec',
+        appliedMethod: 'codex-exec',
+        submitMethod: 'codex-exec',
+        bypassGlobalLock: true,
+        applyCompactionGate: false,
+        requiresFocusForEnter: false,
+        enterMethod: 'none',
+        enterDelayMs: 0,
+        sanitizeMultiline: false,
+        clearLineBeforeWrite: false,
+        useChunkedWrite: false,
+        homeResetBeforeWrite: false,
+        verifySubmitAccepted: false,
+        deferSubmitWhilePaneActive: false,
+        typingGuardWhenBypassing: true,
+        sanitizeTransform: 'none',
+        enterFailureReason: 'enter_failed',
+        displayName: 'Codex',
+      };
+    }
+
+    const isGemini = typeof isGeminiPane === 'function' ? isGeminiPane(id) : false;
+    if (isGemini) {
+      return {
+        mode: 'pty',
+        modeLabel: 'gemini-pty',
+        appliedMethod: 'gemini-pty',
+        submitMethod: 'gemini-pty-enter',
+        bypassGlobalLock: true,
+        applyCompactionGate: false,
+        requiresFocusForEnter: false,
+        enterMethod: 'pty',
+        enterDelayMs: GEMINI_ENTER_DELAY_MS,
+        sanitizeMultiline: true,
+        clearLineBeforeWrite: true,
+        useChunkedWrite: false,
+        homeResetBeforeWrite: false,
+        verifySubmitAccepted: false,
+        deferSubmitWhilePaneActive: false,
+        typingGuardWhenBypassing: true,
+        sanitizeTransform: 'gemini-sanitize',
+        enterFailureReason: 'pty_enter_failed',
+        displayName: 'Gemini',
+      };
+    }
+
+    return {
+      mode: 'pty',
+      modeLabel: 'claude-pty',
+      appliedMethod: 'claude-pty',
+      submitMethod: 'sendTrustedEnter',
+      bypassGlobalLock: false,
+      applyCompactionGate: true,
+      requiresFocusForEnter: true,
+      enterMethod: 'trusted',
+      enterDelayMs: CLAUDE_ENTER_DELAY_MS,
+      sanitizeMultiline: false,
+      clearLineBeforeWrite: true,
+      useChunkedWrite: true,
+      homeResetBeforeWrite: true,
+      verifySubmitAccepted: true,
+      deferSubmitWhilePaneActive: true,
+      typingGuardWhenBypassing: false,
+      sanitizeTransform: 'none',
+      enterFailureReason: 'enter_failed',
+      displayName: 'Claude',
+    };
+  }
+
+  function normalizeCapabilities(raw, fallbackCaps, paneId) {
+    const id = String(paneId);
+    const source = (raw && typeof raw === 'object') ? raw : fallbackCaps;
+    const modeValue = toNonEmptyString(source.mode) || toNonEmptyString(source.deliveryMode) || fallbackCaps.mode || 'pty';
+    const mode = modeValue === 'codex-exec' ? 'codex-exec' : 'pty';
+    const fallbackEnterMethod = mode === 'codex-exec' ? 'none' : (fallbackCaps.enterMethod || 'pty');
+    const enterMethod = normalizeEnterMethod(source.enterMethod, fallbackEnterMethod);
+    const requiresFocusForEnter = normalizeBoolean(
+      source.requiresFocusForEnter,
+      enterMethod === 'trusted'
+    );
+    const bypassGlobalLock = normalizeBoolean(
+      source.bypassGlobalLock,
+      !requiresFocusForEnter
+    );
+
+    return {
+      paneId: id,
+      mode,
+      modeLabel: normalizeModeLabel(source.modeLabel, fallbackCaps.modeLabel || (mode === 'codex-exec' ? 'codex-exec' : 'generic-pty')),
+      appliedMethod: normalizeModeLabel(source.appliedMethod, fallbackCaps.appliedMethod || (mode === 'codex-exec' ? 'codex-exec' : 'generic-pty')),
+      submitMethod: normalizeModeLabel(
+        source.submitMethod,
+        fallbackCaps.submitMethod || (enterMethod === 'trusted' ? 'sendTrustedEnter' : (enterMethod === 'pty' ? 'pty-enter' : 'none'))
+      ),
+      bypassGlobalLock,
+      applyCompactionGate: normalizeBoolean(source.applyCompactionGate, !bypassGlobalLock),
+      requiresFocusForEnter,
+      enterMethod,
+      enterDelayMs: Number.isFinite(Number(source.enterDelayMs))
+        ? Math.max(0, Number(source.enterDelayMs))
+        : (Number.isFinite(Number(fallbackCaps.enterDelayMs))
+          ? Math.max(0, Number(fallbackCaps.enterDelayMs))
+          : SAFE_DEFAULT_ENTER_DELAY_MS),
+      sanitizeMultiline: normalizeBoolean(source.sanitizeMultiline, false),
+      clearLineBeforeWrite: normalizeBoolean(source.clearLineBeforeWrite, mode !== 'codex-exec'),
+      useChunkedWrite: normalizeBoolean(source.useChunkedWrite, mode !== 'codex-exec'),
+      homeResetBeforeWrite: normalizeBoolean(source.homeResetBeforeWrite, mode !== 'codex-exec'),
+      verifySubmitAccepted: normalizeBoolean(source.verifySubmitAccepted, false),
+      deferSubmitWhilePaneActive: normalizeBoolean(source.deferSubmitWhilePaneActive, false),
+      typingGuardWhenBypassing: normalizeBoolean(source.typingGuardWhenBypassing, bypassGlobalLock),
+      sanitizeTransform: normalizeModeLabel(source.sanitizeTransform, fallbackCaps.sanitizeTransform || 'sanitize-multiline'),
+      enterFailureReason: normalizeModeLabel(source.enterFailureReason, fallbackCaps.enterFailureReason || 'enter_failed'),
+      displayName: normalizeModeLabel(source.displayName, fallbackCaps.displayName || fallbackCaps.modeLabel || 'Pane'),
+    };
+  }
+
+  function getPaneInjectionCapabilities(paneId) {
+    const fallbackCaps = resolveLegacyCapabilities(paneId);
+    if (typeof getPaneCapabilities !== 'function') {
+      return fallbackCaps;
+    }
+
+    try {
+      const runtimeCaps = getPaneCapabilities(String(paneId));
+      if (!runtimeCaps || typeof runtimeCaps !== 'object') {
+        return fallbackCaps;
+      }
+      return normalizeCapabilities(runtimeCaps, fallbackCaps, paneId);
+    } catch (err) {
+      log.warn(`processQueue ${paneId}`, `Failed to resolve pane capabilities, using fallback: ${err.message}`);
+      return fallbackCaps;
+    }
+  }
+
   // IDLE QUEUE: Process queued messages for a pane.
   // Messages arrive here from the throttle queue (daemon-handlers.js
   // processThrottleQueue → terminal.sendToPane). For Claude panes, the only
@@ -372,9 +531,8 @@ function createInjectionController(options = {}) {
   // guard). No idle/busy timing — messages send immediately like user input.
   function processIdleQueue(paneId) {
     const id = String(paneId);
-    const isCodex = isCodexPane(id);
-    const isGemini = isGeminiPane(id);
-    const bypassesLock = isCodex || isGemini;
+    const capabilities = getPaneInjectionCapabilities(id);
+    const bypassesLock = capabilities.bypassGlobalLock;
 
     const queue = messageQueue[paneId];
     if (!queue || queue.length === 0) {
@@ -390,7 +548,7 @@ function createInjectionController(options = {}) {
     // Safety valve: if gate has been stuck for > MAX_COMPACTION_DEFER_MS, force-clear
     // as a false positive (real compaction lasts 5-15s, never indefinitely).
     const paneState = (typeof bus.getState === 'function') ? bus.getState(id) : null;
-    if (!bypassesLock && paneState?.gates?.compacting === 'confirmed') {
+    if (capabilities.applyCompactionGate && paneState?.gates?.compacting === 'confirmed') {
       if (!compactionDeferStart.has(id)) {
         compactionDeferStart.set(id, Date.now());
       }
@@ -413,7 +571,7 @@ function createInjectionController(options = {}) {
       return;
     }
     if (bypassesLock && getInjectionInFlight()) {
-      log.debug(`processQueue ${id}`, `${isCodex ? 'Codex' : 'Gemini'} pane bypassing global lock`);
+      log.debug(`processQueue ${id}`, `${capabilities.displayName} pane bypassing global lock`);
     }
 
     // Gate 2: userInputFocused — defer while user is actively composing in UI input.
@@ -424,8 +582,7 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // For Codex/Gemini: still respect per-pane typing guard
-    if (bypassesLock) {
+    if (bypassesLock && capabilities.typingGuardWhenBypassing) {
       const paneLastTypedAt = (lastTypedTime && lastTypedTime[id]) || 0;
       const paneRecentlyTyped = paneLastTypedAt && (Date.now() - paneLastTypedAt) < TYPING_GUARD_MS;
       if (userIsTyping() || paneRecentlyTyped) {
@@ -447,10 +604,14 @@ function createInjectionController(options = {}) {
       || bus.getCurrentCorrelation();
     const itemCausationId = itemTraceContext?.parentEventId || itemTraceContext?.causationId || undefined;
 
-    const mode = isCodex ? 'codex-exec' : (isGemini ? 'gemini-pty' : 'claude-pty');
     bus.emit('inject.mode.selected', {
       paneId: id,
-      payload: { mode },
+      payload: {
+        mode: capabilities.modeLabel,
+        enterMethod: capabilities.enterMethod,
+        verifySubmitAccepted: capabilities.verifySubmitAccepted,
+        useChunkedWrite: capabilities.useChunkedWrite,
+      },
       correlationId: itemCorrId,
       causationId: itemCausationId,
       source: EVENT_SOURCE,
@@ -467,9 +628,9 @@ function createInjectionController(options = {}) {
     bus.updateState(id, { activity: 'injecting' });
 
     if (bypassesLock) {
-      log.debug(`Terminal ${paneId}`, `${isCodex ? 'Codex' : 'Gemini'} pane: immediate send`);
+      log.debug(`Terminal ${paneId}`, `${capabilities.displayName} pane: immediate send`);
     } else {
-      log.info(`Terminal ${id}`, 'Claude pane: immediate send');
+      log.info(`Terminal ${id}`, `${capabilities.modeLabel} pane: immediate send`);
       setInjectionInFlight(true);
     }
 
@@ -532,7 +693,8 @@ function createInjectionController(options = {}) {
 
     const text = message.replace(/\r$/, '');
     const id = String(paneId);
-    const isCodex = isCodexPane(id);
+    const capabilities = getPaneInjectionCapabilities(id);
+    const isCodex = capabilities.mode === 'codex-exec';
     const normalizedTraceContext = normalizeTraceContext(traceContext);
     const corrId = normalizedTraceContext?.traceId
       || normalizedTraceContext?.correlationId
@@ -572,13 +734,13 @@ function createInjectionController(options = {}) {
       }
       bus.emit('inject.applied', {
         paneId: id,
-        payload: { method: 'codex-exec', textLen: text.length },
+        payload: { method: capabilities.appliedMethod || 'codex-exec', textLen: text.length },
         correlationId: corrId,
         source: EVENT_SOURCE,
       });
       bus.emit('inject.submit.sent', {
         paneId: id,
-        payload: { method: 'codex-exec' },
+        payload: { method: capabilities.submitMethod || 'codex-exec' },
         correlationId: corrId,
         source: EVENT_SOURCE,
       });
@@ -598,105 +760,11 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // GEMINI PATH: PTY write sanitized text + always send Enter via PTY \r
-    // Gemini CLI uses readline which accepts PTY \r as submit. The body is
-    // sanitized first: embedded \r/\n replaced with spaces to prevent readline
-    // from treating them as partial submit signals. A single \r is then sent
-    // unconditionally to submit the text — same as the Claude path.
-    // Payloads may or may not include trailing \r — Enter is sent unconditionally
-    // regardless, so injection.js owns the submit decision for all pane types.
-    const isGemini = isGeminiPane(id);
-    if (isGemini) {
-      log.info(`doSendToPane ${id}`, 'Gemini pane: PTY text + Enter');
-
-      // Clear any stuck input first (Ctrl+U)
-      try {
-        await window.hivemind.pty.write(id, '\x15', createKernelMeta());
-        log.debug(`doSendToPane ${id}`, 'Gemini pane: cleared input line (Ctrl+U)');
-      } catch (err) {
-        log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
-      }
-
-      // Replace embedded \r/\n with spaces to prevent readline partial execution,
-      // then strip trailing whitespace.
-      const sanitizedText = text.replace(/[\r\n]/g, ' ').trimEnd();
-      if (sanitizedText !== text.trimEnd()) {
-        bus.emit('inject.transform.applied', {
-          paneId: id,
-          payload: { transform: 'gemini-sanitize', originalLen: text.length, sanitizedLen: sanitizedText.length },
-          correlationId: corrId,
-          source: EVENT_SOURCE,
-        });
-      }
-
-      // Write sanitized text to PTY
-      try {
-        await window.hivemind.pty.write(id, sanitizedText, createKernelMeta());
-        log.info(`doSendToPane ${id}`, `Gemini pane: PTY text write complete (${sanitizedText.length} chars)`);
-        bus.emit('inject.applied', {
-          paneId: id,
-          payload: { method: 'gemini-pty', textLen: sanitizedText.length },
-          correlationId: corrId,
-          source: EVENT_SOURCE,
-        });
-      } catch (err) {
-        log.error(`doSendToPane ${id}`, 'Gemini PTY write failed:', err);
-        bus.emit('inject.failed', {
-          paneId: id,
-          payload: { reason: 'pty_write_failed', error: String(err) },
-          correlationId: corrId,
-          source: EVENT_SOURCE,
-        });
-        finishWithClear({ success: false, reason: 'pty_write_failed' });
-        return;
-      }
-
-      // Delay before Enter so Gemini readline can process the text
-      await new Promise(resolve => setTimeout(resolve, GEMINI_ENTER_DELAY_MS));
-
-      // Always send Enter via PTY \r — Gemini readline needs it to submit
-      bus.emit('inject.submit.requested', {
-        paneId: id,
-        payload: { method: 'gemini-pty-enter' },
-        correlationId: corrId,
-        source: EVENT_SOURCE,
-      });
-      try {
-        await window.hivemind.pty.write(id, '\r', createKernelMeta());
-        log.info(`doSendToPane ${id}`, 'Gemini pane: PTY Enter sent');
-        bus.emit('inject.submit.sent', {
-          paneId: id,
-          payload: { method: 'gemini-pty-enter' },
-          correlationId: corrId,
-          source: EVENT_SOURCE,
-        });
-      } catch (err) {
-        log.error(`doSendToPane ${id}`, 'Gemini PTY Enter failed:', err);
-        bus.emit('inject.failed', {
-          paneId: id,
-          payload: { reason: 'pty_enter_failed', error: String(err) },
-          correlationId: corrId,
-          source: EVENT_SOURCE,
-        });
-        finishWithClear({ success: false, reason: 'pty_enter_failed' });
-        return;
-      }
-
-      updatePaneStatus(id, 'Working');
-      lastTypedTime[id] = Date.now();
-      finishWithClear({ success: true });
-      return;
-    }
-
-    // CLAUDE PATH: PTY write for text + sendTrustedEnter for Enter
-    // PTY \r does NOT auto-submit in Claude Code's ink TUI — must use native
-    // Electron keyboard events via sendTrustedEnter. Enter is always sent.
     const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
     let textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
 
-    // Guard: Skip if textarea not found (prevents Enter going to wrong element)
-    if (!textarea) {
-      log.warn(`doSendToPane ${id}`, 'Claude pane: textarea not found, skipping injection');
+    if (capabilities.requiresFocusForEnter && !textarea) {
+      log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: textarea not found, skipping injection`);
       bus.emit('inject.failed', {
         paneId: id,
         payload: { reason: 'missing_textarea' },
@@ -707,20 +775,18 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // Save current focus to restore after injection
     const savedFocus = document.activeElement;
-
-    // Helper to restore focus (called immediately after Enter, not after verification)
     const restoreSavedFocus = () => {
-      if (savedFocus && savedFocus !== textarea && document.body.contains(savedFocus)) {
-        try {
-          savedFocus.focus();
-        } catch {
-          // Element may not be focusable
-        }
+      if (!savedFocus || !textarea || savedFocus === textarea) return;
+      if (!document.body.contains(savedFocus)) return;
+      try {
+        savedFocus.focus();
+      } catch {
+        // Ignore non-focusable elements.
       }
     };
     const scheduleFocusRestore = () => {
+      if (!capabilities.requiresFocusForEnter) return;
       if (typeof requestAnimationFrame === 'function') {
         requestAnimationFrame(() => restoreSavedFocus());
       } else {
@@ -728,68 +794,85 @@ function createInjectionController(options = {}) {
       }
     };
 
-    // Step 1: Focus terminal for sendTrustedEnter (required for Enter to target correct pane)
-    textarea.focus();
-
-    // Step 2: Clear any stuck input BEFORE writing new text
-    // Ctrl+U (0x15) clears the current input line - prevents accumulation if previous Enter failed
-    // This is harmless if line is already empty
-    try {
-      await window.hivemind.pty.write(id, '\x15', createKernelMeta());
-      log.info(`doSendToPane ${id}`, 'Claude pane: cleared input line (Ctrl+U)');
-    } catch (err) {
-      log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
-      // Continue anyway - text write may still work
+    if (capabilities.requiresFocusForEnter && textarea) {
+      textarea.focus();
     }
 
-    // Step 3: Reset cursor + write text to PTY in chunks (without \r)
-    try {
-      const normalizedText = String(text || '');
-      const first32 = normalizedText.slice(0, 32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
-      const last32 = normalizedText.slice(-32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
-      log.info(
-        `doSendToPane ${id}`,
-        `Claude pane: pre-PTY fingerprint textLen=${normalizedText.length} first32="${first32}" last32="${last32}"`
-      );
-
-      // Home key reset before first write to avoid non-zero cursor corruption on long payloads.
+    if (capabilities.clearLineBeforeWrite) {
       try {
-        await window.hivemind.pty.write(id, '\x1b[H', createKernelMeta());
-      } catch (homeErr) {
-        log.warn(`doSendToPane ${id}`, 'Claude pane: Home reset failed, continuing:', homeErr);
+        await window.hivemind.pty.write(id, '\x15', createKernelMeta());
+        log.info(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: cleared input line (Ctrl+U)`);
+      } catch (err) {
+        log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
+      }
+    }
+
+    const normalizedText = String(text || '');
+    const payloadText = capabilities.sanitizeMultiline
+      ? normalizedText.replace(/[\r\n]/g, ' ').trimEnd()
+      : normalizedText;
+
+    if (capabilities.sanitizeMultiline && payloadText !== normalizedText.trimEnd()) {
+      bus.emit('inject.transform.applied', {
+        paneId: id,
+        payload: {
+          transform: capabilities.sanitizeTransform || 'sanitize-multiline',
+          originalLen: normalizedText.length,
+          sanitizedLen: payloadText.length,
+        },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
+    }
+
+    try {
+      if (capabilities.useChunkedWrite) {
+        const first32 = payloadText.slice(0, 32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+        const last32 = payloadText.slice(-32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+        log.info(
+          `doSendToPane ${id}`,
+          `${capabilities.modeLabel} pane: pre-PTY fingerprint textLen=${payloadText.length} first32="${first32}" last32="${last32}"`
+        );
+
+        if (capabilities.homeResetBeforeWrite) {
+          try {
+            await window.hivemind.pty.write(id, '\x1b[H', createKernelMeta());
+          } catch (homeErr) {
+            log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: Home reset failed, continuing:`, homeErr);
+          }
+        }
+
+        if (typeof window.hivemind?.pty?.writeChunked !== 'function') {
+          throw new Error('writeChunked API not available');
+        }
+
+        const chunkSize = Math.max(128, Math.min(256, Number(CLAUDE_CHUNK_SIZE) || 192));
+        const yieldEveryChunks = (Math.max(0, Number(CLAUDE_CHUNK_YIELD_MS) || 0) > 0) ? 1 : 0;
+        const chunkResult = await window.hivemind.pty.writeChunked(
+          id,
+          payloadText,
+          { chunkSize, yieldEveryChunks },
+          createKernelMeta()
+        );
+        if (chunkResult && chunkResult.success === false) {
+          throw new Error(chunkResult.error || 'writeChunked returned failure');
+        }
+      } else {
+        await window.hivemind.pty.write(id, payloadText, createKernelMeta());
       }
 
-      if (typeof window.hivemind?.pty?.writeChunked !== 'function') {
-        throw new Error('writeChunked API not available');
-      }
-
-      const chunkSize = Math.max(128, Math.min(256, Number(CLAUDE_CHUNK_SIZE) || 192));
-      const yieldEveryChunks = (Math.max(0, Number(CLAUDE_CHUNK_YIELD_MS) || 0) > 0) ? 1 : 0;
-      const chunkResult = await window.hivemind.pty.writeChunked(
-        id,
-        normalizedText,
-        { chunkSize, yieldEveryChunks },
-        createKernelMeta()
-      );
-      if (chunkResult && chunkResult.success === false) {
-        throw new Error(chunkResult.error || 'writeChunked returned failure');
-      }
-      const fallbackChunkCount = normalizedText.length > 0
-        ? Math.ceil(normalizedText.length / chunkSize)
-        : 1;
-      const chunkCount = Number.isFinite(Number(chunkResult?.chunks))
-        ? Number(chunkResult.chunks)
-        : fallbackChunkCount;
-
-      log.info(`doSendToPane ${id}`, `Claude pane: PTY write text complete (${chunkCount} chunk(s))`);
       bus.emit('inject.applied', {
         paneId: id,
-        payload: { method: 'claude-pty', textLen: text.length },
+        payload: { method: capabilities.appliedMethod, textLen: payloadText.length },
         correlationId: corrId,
         source: EVENT_SOURCE,
       });
     } catch (err) {
-      log.error(`doSendToPane ${id}`, 'PTY write failed:', err);
+      if (capabilities.displayName === 'Gemini') {
+        log.error(`doSendToPane ${id}`, 'Gemini PTY write failed:', err);
+      } else {
+        log.error(`doSendToPane ${id}`, 'PTY write failed:', err);
+      }
       bus.emit('inject.failed', {
         paneId: id,
         payload: { reason: 'pty_write_failed', error: String(err) },
@@ -800,36 +883,44 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // Step 4: 2-phase submit
-    // 1) dispatch Enter
-    // 2) verify submit accepted (prompt/output transition), retry once if needed
-    setTimeout(async () => {
-      // Re-query textarea in case DOM changed during delay
-      const currentPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
-      textarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
+    const submitEnter = async () => {
+      if (capabilities.enterMethod === 'trusted') {
+        return sendEnterToPane(id);
+      }
+      if (capabilities.enterMethod === 'pty') {
+        try {
+          await window.hivemind.pty.write(id, '\r', createKernelMeta());
+          return { success: true, method: capabilities.submitMethod };
+        } catch (err) {
+          log.error(`doSendToPane ${id}`, 'PTY Enter failed:', err);
+          return {
+            success: false,
+            method: capabilities.submitMethod,
+            reason: capabilities.enterFailureReason || 'enter_failed',
+          };
+        }
+      }
+      return { success: true, method: 'none' };
+    };
 
-      // Guard: Abort if textarea disappeared
-      if (!textarea) {
-        log.warn(`doSendToPane ${id}`, 'Claude pane: textarea disappeared before Enter, aborting');
-        restoreSavedFocus();
-        finishWithClear({ success: false, reason: 'textarea_disappeared' });
-        return;
+    setTimeout(async () => {
+      if (capabilities.requiresFocusForEnter) {
+        const currentPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
+        textarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
+        if (!textarea) {
+          log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: textarea disappeared before Enter, aborting`);
+          restoreSavedFocus();
+          finishWithClear({ success: false, reason: 'textarea_disappeared' });
+          return;
+        }
       }
 
-      // Extend safety timer for active-output defer + verify + retry.
       clearTimeout(safetyTimerId);
       safetyTimerId = setTimeout(() => {
         finish({ success: true, verified: false, reason: 'timeout' });
       }, CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS);
 
-      // Focus isolation: if user is actively composing during the Enter delay,
-      // wait briefly for the compose window to clear before sending Enter.
-      // Poll every 100ms, give up after 5s to prevent message starvation.
-      if (typeof userInputFocused === 'function' && userInputFocused()) {
-        clearTimeout(safetyTimerId);
-        safetyTimerId = setTimeout(() => {
-          finish({ success: true, verified: false, reason: 'timeout' });
-        }, CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS);
+      if (capabilities.requiresFocusForEnter && typeof userInputFocused === 'function' && userInputFocused()) {
         log.info(`doSendToPane ${id}`, 'User actively composing before Enter - waiting for idle');
         const focusWaitStart = Date.now();
         while (userInputFocused() && (Date.now() - focusWaitStart) < 5000) {
@@ -841,9 +932,12 @@ function createInjectionController(options = {}) {
       }
 
       let submitAccepted = null;
+      const maxSubmitAttempts = capabilities.verifySubmitAccepted ? SUBMIT_ACCEPT_MAX_ATTEMPTS : 1;
 
-      for (let attempt = 1; attempt <= SUBMIT_ACCEPT_MAX_ATTEMPTS; attempt += 1) {
-        await deferSubmitWhilePaneActive(id);
+      for (let attempt = 1; attempt <= maxSubmitAttempts; attempt += 1) {
+        if (capabilities.deferSubmitWhilePaneActive) {
+          await deferSubmitWhilePaneActive(id);
+        }
 
         const promptProbeAvailable = canProbePromptState(id);
         const attemptBaseline = {
@@ -852,28 +946,27 @@ function createInjectionController(options = {}) {
           promptWasReady: promptProbeAvailable ? isPromptReady(id) : false,
         };
 
-        // Ensure focus for sendTrustedEnter
-        const focusOk = await focusWithRetry(textarea);
-        if (!focusOk) {
-          log.warn(`doSendToPane ${id}`, 'Claude pane: focus failed, proceeding with Enter anyway');
+        if (capabilities.requiresFocusForEnter && textarea) {
+          const focusOk = await focusWithRetry(textarea);
+          if (!focusOk) {
+            log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: focus failed, proceeding with Enter anyway`);
+          }
         }
 
         bus.emit('inject.submit.requested', {
           paneId: id,
-          payload: { method: 'sendTrustedEnter', attempt, maxAttempts: SUBMIT_ACCEPT_MAX_ATTEMPTS },
+          payload: { method: capabilities.submitMethod, attempt, maxAttempts: maxSubmitAttempts },
           correlationId: corrId,
           source: EVENT_SOURCE,
         });
-        const enterResult = await sendEnterToPane(id);
 
-        // Restore focus immediately after Enter dispatch.
+        const enterResult = await submitEnter();
         scheduleFocusRestore();
 
         if (!enterResult.success) {
-          log.error(`doSendToPane ${id}`, 'Enter send failed');
           bus.emit('inject.failed', {
             paneId: id,
-            payload: { reason: 'enter_failed', method: enterResult.method },
+            payload: { reason: enterResult.reason || 'enter_failed', method: enterResult.method },
             correlationId: corrId,
             source: EVENT_SOURCE,
           });
@@ -884,14 +977,15 @@ function createInjectionController(options = {}) {
 
         bus.emit('inject.submit.sent', {
           paneId: id,
-          payload: { method: enterResult.method, attempt, maxAttempts: SUBMIT_ACCEPT_MAX_ATTEMPTS },
+          payload: { method: enterResult.method, attempt, maxAttempts: maxSubmitAttempts },
           correlationId: corrId,
           source: EVENT_SOURCE,
         });
-        log.info(
-          `doSendToPane ${id}`,
-          `Claude pane: Enter sent via ${enterResult.method} (attempt ${attempt}/${SUBMIT_ACCEPT_MAX_ATTEMPTS})`
-        );
+
+        if (!capabilities.verifySubmitAccepted) {
+          submitAccepted = { accepted: true, signal: 'verification_disabled' };
+          break;
+        }
 
         const verifyResult = await verifySubmitAccepted(id, attemptBaseline);
         if (verifyResult.accepted) {
@@ -899,7 +993,7 @@ function createInjectionController(options = {}) {
           break;
         }
 
-        if (attempt < SUBMIT_ACCEPT_MAX_ATTEMPTS) {
+        if (attempt < maxSubmitAttempts) {
           log.warn(
             `doSendToPane ${id}`,
             `Submit acceptance not observed after attempt ${attempt}; retrying in ${SUBMIT_ACCEPT_RETRY_BACKOFF_MS}ms`
@@ -911,7 +1005,7 @@ function createInjectionController(options = {}) {
       if (!submitAccepted) {
         bus.emit('inject.failed', {
           paneId: id,
-          payload: { reason: 'submit_not_accepted', attempts: SUBMIT_ACCEPT_MAX_ATTEMPTS },
+          payload: { reason: 'submit_not_accepted', attempts: maxSubmitAttempts },
           correlationId: corrId,
           source: EVENT_SOURCE,
         });
@@ -920,15 +1014,19 @@ function createInjectionController(options = {}) {
         return;
       }
 
+      updatePaneStatus(id, 'Working');
       lastTypedTime[id] = Date.now();
+      if (capabilities.mode !== 'codex-exec') {
+        lastOutputTime[id] = Date.now();
+      }
+      const successResult = capabilities.verifySubmitAccepted
+        ? { success: true, verified: true, signal: submitAccepted.signal }
+        : { success: true };
       finishWithClear({
-        success: true,
-        verified: true,
-        signal: submitAccepted.signal,
+        ...successResult,
       });
-    }, CLAUDE_ENTER_DELAY_MS);
+    }, capabilities.enterDelayMs);
   }
-
   // Send message to a specific pane (queues if pane is busy)
   // options.priority = true puts message at FRONT of queue (for user messages)
   function sendToPane(paneId, message, options = {}) {
