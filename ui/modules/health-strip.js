@@ -9,8 +9,18 @@ const { PANE_IDS, PANE_ROLES, SHORT_AGENT_NAMES } = require('../config');
 let container = null;
 let busRef = null;
 let stateHandler = null;
+let commsHandler = null;
 let styleEl = null;
 let paneElements = {};
+let metricsElement = null;
+
+const METRIC_WINDOW_MS = 5 * 60 * 1000;
+const commsMetrics = {
+  sendStarted: [],
+  retry: [],
+  failed: [],
+  dedupe: [],
+};
 
 const ACTIVITY_COLORS = {
   idle: '#4caf50',       // green
@@ -85,6 +95,17 @@ function injectStyles() {
       width: 6px;
       height: 6px;
       border-radius: 50%;
+    }
+    .health-strip-metrics {
+      margin-left: auto;
+      display: flex;
+      gap: 8px;
+      color: #9aa0ad;
+      font-size: 10px;
+      letter-spacing: 0.2px;
+    }
+    .health-strip-metric {
+      opacity: 0.9;
     }
     @keyframes health-pulse {
       0%, 100% { opacity: 1; }
@@ -173,6 +194,33 @@ function updateIndicator(paneId, state) {
   }
 }
 
+function pruneMetricBuckets(now = Date.now()) {
+  const cutoff = now - METRIC_WINDOW_MS;
+  Object.keys(commsMetrics).forEach((key) => {
+    commsMetrics[key] = commsMetrics[key].filter((ts) => ts >= cutoff);
+  });
+}
+
+function metricRate(numerator, denominator) {
+  if (!denominator) return 0;
+  return Math.round((numerator / denominator) * 100);
+}
+
+function renderCommsMetrics() {
+  if (!metricsElement) return;
+  pruneMetricBuckets();
+  const sends = commsMetrics.sendStarted.length;
+  const retryRate = metricRate(commsMetrics.retry.length, sends);
+  const failRate = metricRate(commsMetrics.failed.length, sends);
+  const dedupeRate = metricRate(commsMetrics.dedupe.length, sends);
+
+  metricsElement.innerHTML = `
+    <span class="health-strip-metric" title="Retry rate (5m): ${commsMetrics.retry.length}/${sends}">R:${retryRate}%</span>
+    <span class="health-strip-metric" title="Fallback/failure rate (5m): ${commsMetrics.failed.length}/${sends}">F:${failRate}%</span>
+    <span class="health-strip-metric" title="Dedup hit rate (5m): ${commsMetrics.dedupe.length}/${sends}">D:${dedupeRate}%</span>
+  `;
+}
+
 function init(busInstance, containerElement) {
   if (!busInstance || !containerElement) return;
 
@@ -196,6 +244,11 @@ function init(busInstance, containerElement) {
     updateIndicator(paneId, currentState);
   }
 
+  metricsElement = document.createElement('span');
+  metricsElement.className = 'health-strip-metrics';
+  strip.appendChild(metricsElement);
+  renderCommsMetrics();
+
   container.appendChild(strip);
 
   // Subscribe to state changes
@@ -206,11 +259,36 @@ function init(busInstance, containerElement) {
     }
   };
   busRef.on('pane.state.changed', stateHandler);
+
+  commsHandler = (event) => {
+    const now = event?.ts || Date.now();
+    switch (event?.type) {
+      case 'comms.send.started':
+        commsMetrics.sendStarted.push(now);
+        break;
+      case 'comms.retry.attempted':
+        commsMetrics.retry.push(now);
+        break;
+      case 'comms.delivery.failed':
+        commsMetrics.failed.push(now);
+        break;
+      case 'comms.dedupe.hit':
+        commsMetrics.dedupe.push(now);
+        break;
+      default:
+        return;
+    }
+    renderCommsMetrics();
+  };
+  busRef.on('comms.*', commsHandler);
 }
 
 function destroy() {
   if (busRef && stateHandler) {
     busRef.off('pane.state.changed', stateHandler);
+  }
+  if (busRef && commsHandler) {
+    busRef.off('comms.*', commsHandler);
   }
   if (styleEl && styleEl.parentNode) {
     styleEl.parentNode.removeChild(styleEl);
@@ -222,8 +300,14 @@ function destroy() {
   container = null;
   busRef = null;
   stateHandler = null;
+  commsHandler = null;
   styleEl = null;
   paneElements = {};
+  metricsElement = null;
+  commsMetrics.sendStarted = [];
+  commsMetrics.retry = [];
+  commsMetrics.failed = [];
+  commsMetrics.dedupe = [];
 }
 
 module.exports = { init, destroy };
