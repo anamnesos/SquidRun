@@ -453,6 +453,67 @@ describe('Terminal Injection', () => {
       expect(messageQueue['1'].length).toBe(1);
     });
 
+    test('uses exponential backoff while repeatedly deferred', () => {
+      const timeoutSpy = jest.spyOn(global, 'setTimeout');
+      messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
+      mockOptions.getInjectionInFlight.mockReturnValue(true);
+
+      controller.processIdleQueue('1');
+      controller.processIdleQueue('1');
+      controller.processIdleQueue('1');
+      controller.processIdleQueue('1');
+
+      const delays = timeoutSpy.mock.calls
+        .map(call => call[1])
+        .filter(value => typeof value === 'number')
+        .slice(0, 4);
+      expect(delays).toEqual([100, 200, 400, 800]);
+      timeoutSpy.mockRestore();
+    });
+
+    test('resets defer backoff after queue resumes', () => {
+      const timeoutSpy = jest.spyOn(global, 'setTimeout');
+      messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
+      mockOptions.getInjectionInFlight.mockReturnValue(true);
+
+      controller.processIdleQueue('1'); // 100ms
+
+      // Resume/clear path should reset backoff state
+      messageQueue['1'] = [];
+      controller.processIdleQueue('1');
+
+      messageQueue['1'] = [{ message: 'test again\r', timestamp: Date.now() }];
+      controller.processIdleQueue('1'); // should restart at 100ms
+
+      const delays = timeoutSpy.mock.calls
+        .map(call => call[1])
+        .filter(value => typeof value === 'number')
+        .slice(0, 2);
+      expect(delays).toEqual([100, 100]);
+      timeoutSpy.mockRestore();
+    });
+
+    test('throttles defer logs and emits summary when defer reason changes', () => {
+      mockOptions.userInputFocused = jest.fn().mockReturnValue(false);
+      const ctrl = createInjectionController(mockOptions);
+      messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];
+      mockOptions.getInjectionInFlight.mockReturnValue(true);
+
+      ctrl.processIdleQueue('1');
+      ctrl.processIdleQueue('1');
+      ctrl.processIdleQueue('1');
+
+      // Change defer reason: injection lock clears, user is now composing.
+      mockOptions.getInjectionInFlight.mockReturnValue(false);
+      mockOptions.userInputFocused.mockReturnValue(true);
+      ctrl.processIdleQueue('1');
+
+      const infoMessages = mockLog.info.mock.calls.map(call => call[1]);
+      expect(infoMessages.filter(m => m.includes('Pane deferred - injection in flight')).length).toBe(1);
+      expect(infoMessages.some(m => m.includes('Pane defer repeats suppressed: injection in flight'))).toBe(true);
+      expect(infoMessages.filter(m => m.includes('Pane deferred - user input focused (composing)')).length).toBe(1);
+    });
+
     // Session 67: Gemini bypasses global lock (like Codex)
     test('Gemini pane bypasses injection lock', () => {
       messageQueue['1'] = [{ message: 'test\r', timestamp: Date.now() }];

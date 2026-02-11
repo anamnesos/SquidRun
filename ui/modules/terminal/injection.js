@@ -31,6 +31,9 @@ function createInjectionController(options = {}) {
     FOCUS_RETRY_DELAY_MS,
     MAX_FOCUS_RETRIES,
     QUEUE_RETRY_MS,
+    QUEUE_DEFER_BACKOFF_START_MS = 100,
+    QUEUE_DEFER_BACKOFF_MAX_MS = 2000,
+    QUEUE_DEFER_BACKOFF_MULTIPLIER = 2,
     INJECTION_LOCK_TIMEOUT_MS,
     BYPASS_CLEAR_DELAY_MS = DEFAULT_BYPASS_CLEAR_DELAY_MS,
     TYPING_GUARD_MS = 300,
@@ -51,6 +54,9 @@ function createInjectionController(options = {}) {
 
   // Track when compaction deferral started per pane (false positive safety valve)
   const compactionDeferStart = new Map();
+  // Track per-pane queue defer retry backoff and deferred-log suppression state.
+  const queueDeferBackoffMs = new Map();
+  const queueDeferLogState = new Map();
 
   /**
    * Attempt to focus textarea with retries
@@ -264,6 +270,79 @@ function createInjectionController(options = {}) {
     return { accepted: false, signal: 'no_acceptance_signal' };
   }
 
+  function getBackoffStartMs() {
+    return Math.max(100, Number(QUEUE_RETRY_MS) || 0, Number(QUEUE_DEFER_BACKOFF_START_MS) || 100);
+  }
+
+  function getBackoffMaxMs() {
+    return Math.max(getBackoffStartMs(), Number(QUEUE_DEFER_BACKOFF_MAX_MS) || 2000);
+  }
+
+  function getBackoffMultiplier() {
+    const parsed = Number(QUEUE_DEFER_BACKOFF_MULTIPLIER);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 2;
+  }
+
+  function nextDeferredRetryDelayMs(paneId) {
+    const id = String(paneId);
+    const startMs = getBackoffStartMs();
+    const maxMs = getBackoffMaxMs();
+    const multiplier = getBackoffMultiplier();
+    const delayMs = queueDeferBackoffMs.get(id) ?? startMs;
+    const nextMs = Math.min(maxMs, Math.round(delayMs * multiplier));
+    queueDeferBackoffMs.set(id, nextMs);
+    return delayMs;
+  }
+
+  function emitDeferredSummaryIfNeeded(paneId, nextState = null) {
+    const id = String(paneId);
+    const state = queueDeferLogState.get(id);
+    if (!state) return;
+
+    if (state.suppressedCount > 0) {
+      const elapsedMs = Math.max(0, Date.now() - state.startedAt);
+      const suffix = nextState ? ` (state -> ${nextState})` : ' (state -> resumed)';
+      log.info(
+        `processQueue ${id}`,
+        `Pane defer repeats suppressed: ${state.reason} repeated ${state.suppressedCount}x over ${elapsedMs}ms${suffix}`
+      );
+    }
+
+    queueDeferLogState.delete(id);
+  }
+
+  function clearDeferredState(paneId) {
+    const id = String(paneId);
+    emitDeferredSummaryIfNeeded(id);
+    queueDeferBackoffMs.delete(id);
+  }
+
+  function noteDeferredState(paneId, reason, delayMs) {
+    const id = String(paneId);
+    const state = queueDeferLogState.get(id);
+    if (!state) {
+      log.info(`processQueue ${id}`, `Pane deferred - ${reason}; retry in ${delayMs}ms (backoff)`);
+      queueDeferLogState.set(id, { reason, suppressedCount: 0, startedAt: Date.now() });
+      return;
+    }
+
+    if (state.reason === reason) {
+      state.suppressedCount += 1;
+      queueDeferLogState.set(id, state);
+      return;
+    }
+
+    emitDeferredSummaryIfNeeded(id, reason);
+    log.info(`processQueue ${id}`, `Pane deferred - ${reason}; retry in ${delayMs}ms (backoff)`);
+    queueDeferLogState.set(id, { reason, suppressedCount: 0, startedAt: Date.now() });
+  }
+
+  function scheduleDeferredRetry(paneId, reason) {
+    const delayMs = nextDeferredRetryDelayMs(paneId);
+    noteDeferredState(paneId, reason, delayMs);
+    setTimeout(() => processIdleQueue(paneId), delayMs);
+  }
+
   // IDLE QUEUE: Process queued messages for a pane.
   // Messages arrive here from the throttle queue (daemon-handlers.js
   // processThrottleQueue → terminal.sendToPane). For Claude panes, the only
@@ -276,7 +355,11 @@ function createInjectionController(options = {}) {
     const bypassesLock = isCodex || isGemini;
 
     const queue = messageQueue[paneId];
-    if (!queue || queue.length === 0) return;
+    if (!queue || queue.length === 0) {
+      clearDeferredState(id);
+      compactionDeferStart.delete(id);
+      return;
+    }
 
     // Compaction gate: never inject while compaction is confirmed on this pane.
     // Only applies to Claude panes — Codex/Gemini don't do Claude-style compaction.
@@ -291,8 +374,7 @@ function createInjectionController(options = {}) {
       }
       const deferDuration = Date.now() - compactionDeferStart.get(id);
       if (deferDuration < MAX_COMPACTION_DEFER_MS) {
-        log.info(`processQueue ${id}`, 'Pane deferred - compaction gate active (confirmed)');
-        setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+        scheduleDeferredRetry(paneId, 'compaction gate active (confirmed)');
         return;
       }
       log.warn(`processQueue ${id}`, `Compaction gate stuck ${deferDuration}ms — forcing clear (false positive safety)`);
@@ -305,8 +387,7 @@ function createInjectionController(options = {}) {
     // Gate 1: injectionInFlight — focus mutex for Claude panes.
     // Codex/Gemini bypass (focus-free paths).
     if (!bypassesLock && getInjectionInFlight()) {
-      log.info(`processQueue ${id}`, 'Claude pane deferred - injection in flight');
-      setTimeout(() => processIdleQueue(paneId), 50);
+      scheduleDeferredRetry(paneId, 'injection in flight');
       return;
     }
     if (bypassesLock && getInjectionInFlight()) {
@@ -316,8 +397,7 @@ function createInjectionController(options = {}) {
     // Gate 2: userInputFocused — defer while user is composing in broadcastInput.
     // Codex/Gemini bypass (PTY writes, no focus steal).
     if (!bypassesLock && typeof userInputFocused === 'function' && userInputFocused()) {
-      log.info(`processQueue ${id}`, 'Claude pane deferred - user input focused (composing)');
-      setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+      scheduleDeferredRetry(paneId, 'user input focused (composing)');
       return;
     }
 
@@ -326,10 +406,12 @@ function createInjectionController(options = {}) {
       const paneLastTypedAt = (lastTypedTime && lastTypedTime[id]) || 0;
       const paneRecentlyTyped = paneLastTypedAt && (Date.now() - paneLastTypedAt) < TYPING_GUARD_MS;
       if (userIsTyping() || paneRecentlyTyped) {
-        setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+        scheduleDeferredRetry(paneId, 'typing guard active');
         return;
       }
     }
+
+    clearDeferredState(id);
 
     // Dequeue and send immediately
     const item = queue.shift();
