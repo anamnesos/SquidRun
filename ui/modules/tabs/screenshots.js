@@ -138,37 +138,65 @@ async function loadScreenshots(updateStatusFn) {
   }
 }
 
+// Track DOM listener cleanup functions
+let domCleanupFns = [];
+
 function setupScreenshots(updateStatusFn) {
+  // Clean up previous listeners before re-init
+  destroyScreenshots();
+
   const dropzone = document.getElementById('screenshotDropzone');
   if (dropzone) {
-    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
-    dropzone.addEventListener('dragleave', () => { dropzone.classList.remove('dragover'); });
-    dropzone.addEventListener('drop', (e) => {
+    const dragoverHandler = (e) => { e.preventDefault(); dropzone.classList.add('dragover'); };
+    const dragleaveHandler = () => { dropzone.classList.remove('dragover'); };
+    const dropHandler = (e) => {
       e.preventDefault();
       dropzone.classList.remove('dragover');
       handleScreenshotDrop(e.dataTransfer.files, updateStatusFn);
-    });
-    dropzone.addEventListener('click', () => {
+    };
+    const clickHandler = () => {
       const input = document.createElement('input');
       input.type = 'file'; input.accept = 'image/*'; input.multiple = true;
       input.onchange = () => handleScreenshotDrop(input.files, updateStatusFn);
       input.click();
-    });
+    };
+
+    dropzone.addEventListener('dragover', dragoverHandler);
+    dropzone.addEventListener('dragleave', dragleaveHandler);
+    dropzone.addEventListener('drop', dropHandler);
+    dropzone.addEventListener('click', clickHandler);
+
+    domCleanupFns.push(
+      () => dropzone.removeEventListener('dragover', dragoverHandler),
+      () => dropzone.removeEventListener('dragleave', dragleaveHandler),
+      () => dropzone.removeEventListener('drop', dropHandler),
+      () => dropzone.removeEventListener('click', clickHandler)
+    );
   }
 
-  document.addEventListener('paste', (e) => {
+  const pasteHandler = (e) => {
     const items = e.clipboardData.items;
     const files = [];
     for (const item of items) {
       if (item.type.startsWith('image/')) files.push(item.getAsFile());
     }
     if (files.length > 0) handleScreenshotDrop(files, updateStatusFn);
-  });
+  };
+  document.addEventListener('paste', pasteHandler);
+  domCleanupFns.push(() => document.removeEventListener('paste', pasteHandler));
 
   loadScreenshots(updateStatusFn);
 }
 
+function destroyScreenshots() {
+  for (const fn of domCleanupFns) {
+    try { fn(); } catch (_) {}
+  }
+  domCleanupFns = [];
+}
+
 module.exports = {
   setupScreenshots,
+  destroyScreenshots,
   loadScreenshots
 };

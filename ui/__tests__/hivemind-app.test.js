@@ -119,6 +119,8 @@ jest.mock('../modules/watcher', () => ({
 // Mock ipc-handlers
 jest.mock('../modules/ipc-handlers', () => ({
   registerHandlers: jest.fn(),
+  setupIPCHandlers: jest.fn(),
+  setDaemonClient: jest.fn(),
   setExternalNotifier: jest.fn(),
   cleanupProcesses: jest.fn(),
   cleanup: jest.fn(),
@@ -322,6 +324,37 @@ describe('HivemindApp', () => {
 
       expect(mockBridge.isActive).toHaveBeenCalled();
       expect(mockBridge.stopSessions).toHaveBeenCalled();
+    });
+  });
+
+  describe('initDaemonClient', () => {
+    it('cleans up existing daemon client listeners before re-attaching on re-init', async () => {
+      const { getDaemonClient } = require('../daemon-client');
+      const ipcHandlers = require('../modules/ipc-handlers');
+      const sharedDaemonClient = {
+        on: jest.fn(),
+        off: jest.fn(),
+        connect: jest.fn().mockResolvedValue(),
+        disconnect: jest.fn(),
+      };
+      getDaemonClient.mockReturnValue(sharedDaemonClient);
+
+      const ctx = {
+        ...mockAppContext,
+        daemonClient: sharedDaemonClient,
+        agentRunning: new Map(),
+      };
+      const app = new HivemindApp(ctx, mockManagers);
+
+      await app.initDaemonClient();
+      const firstAttachCount = sharedDaemonClient.on.mock.calls.length;
+      expect(firstAttachCount).toBeGreaterThanOrEqual(10);
+      expect(ipcHandlers.setDaemonClient).toHaveBeenCalled();
+
+      await app.initDaemonClient();
+
+      expect(sharedDaemonClient.off).toHaveBeenCalledTimes(firstAttachCount);
+      expect(sharedDaemonClient.on.mock.calls.length).toBe(firstAttachCount * 2);
     });
   });
 

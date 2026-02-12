@@ -47,13 +47,28 @@ async function loadGitStatus() {
   } catch (err) { log.error('Git', 'Status failed', err); }
 }
 
+let domCleanupFns = [];
+
 function setupGitTab() {
+  destroyGitTab();
+
   const refreshBtn = document.getElementById('gitRefreshBtn');
-  if (refreshBtn) refreshBtn.addEventListener('click', loadGitStatus);
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', loadGitStatus);
+    domCleanupFns.push(() => refreshBtn.removeEventListener('click', loadGitStatus));
+  }
   loadGitStatus();
+}
+
+function destroyGitTab() {
+  for (const fn of domCleanupFns) {
+    try { fn(); } catch (_) {}
+  }
+  domCleanupFns = [];
 }
 
 module.exports = {
   setupGitTab,
+  destroyGitTab,
   loadGitStatus
 };

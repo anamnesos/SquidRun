@@ -46,6 +46,7 @@ class HivemindApp {
     this.contextInjection = managers.contextInjection;
     this.kernelBridge = createKernelBridge(() => this.ctx.mainWindow);
     this.lastDaemonOutputAtMs = Date.now();
+    this.daemonClientListeners = [];
 
     this.cliIdentityForwarderRegistered = false;
     this.triggerAckForwarderRegistered = false;
@@ -648,7 +649,42 @@ class HivemindApp {
     return manager;
   }
 
+  clearDaemonClientListeners(client = this.ctx.daemonClient) {
+    if (!client || this.daemonClientListeners.length === 0) {
+      return;
+    }
+
+    const removeListener = typeof client.off === 'function'
+      ? client.off.bind(client)
+      : (typeof client.removeListener === 'function' ? client.removeListener.bind(client) : null);
+
+    if (typeof removeListener !== 'function') {
+      this.daemonClientListeners = [];
+      return;
+    }
+
+    for (const { eventName, listener } of this.daemonClientListeners) {
+      try {
+        removeListener(eventName, listener);
+      } catch (err) {
+        log.warn('Daemon', `Failed removing listener ${eventName}: ${err.message}`);
+      }
+    }
+
+    this.daemonClientListeners = [];
+  }
+
+  attachDaemonClientListener(eventName, listener) {
+    if (!this.ctx.daemonClient || typeof this.ctx.daemonClient.on !== 'function') {
+      return;
+    }
+    this.ctx.daemonClient.on(eventName, listener);
+    this.daemonClientListeners.push({ eventName, listener });
+  }
+
   async initDaemonClient() {
+    // Re-inits happen on reload; clear previously attached singleton listeners first.
+    this.clearDaemonClientListeners(this.ctx.daemonClient);
     this.ctx.daemonClient = getDaemonClient();
 
     // Update IPC handlers with daemon client
@@ -668,7 +704,7 @@ class HivemindApp {
       }
     };
 
-    this.ctx.daemonClient.on('data', (paneId, data) => {
+    this.attachDaemonClientListener('data', (paneId, data) => {
       this.lastDaemonOutputAtMs = Date.now();
       this.ctx.recoveryManager?.recordActivity(paneId);
       this.ctx.recoveryManager?.recordPtyOutput?.(paneId, data);
@@ -710,18 +746,18 @@ class HivemindApp {
       }
     });
 
-    this.ctx.daemonClient.on('exit', (paneId, code) => {
+    this.attachDaemonClientListener('exit', (paneId, code) => {
       handlePaneExit(paneId, code);
     });
 
-    this.ctx.daemonClient.on('spawned', (paneId, pid) => {
+    this.attachDaemonClientListener('spawned', (paneId, pid) => {
       log.info('Daemon', `Terminal spawned for pane ${paneId}, PID: ${pid}`);
       const command = this.cliIdentity.getPaneCommandForIdentity(String(paneId));
       this.cliIdentity.inferAndEmitCliIdentity(paneId, command);
       this.ctx.recoveryManager?.recordActivity(paneId);
     });
 
-    this.ctx.daemonClient.on('connected', (terminals) => {
+    this.attachDaemonClientListener('connected', (terminals) => {
       log.info('Daemon', `Connected. Existing terminals: ${terminals.length}`);
 
       if (terminals && terminals.length > 0) {
@@ -771,7 +807,7 @@ class HivemindApp {
       });
     });
 
-    this.ctx.daemonClient.on('disconnected', () => {
+    this.attachDaemonClientListener('disconnected', () => {
       log.warn('Daemon', 'Disconnected');
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send('daemon-disconnected');
@@ -781,7 +817,7 @@ class HivemindApp {
       });
     });
 
-    this.ctx.daemonClient.on('reconnected', () => {
+    this.attachDaemonClientListener('reconnected', () => {
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send('daemon-reconnected');
       }
@@ -791,11 +827,11 @@ class HivemindApp {
       });
     });
 
-    this.ctx.daemonClient.on('kernel-event', (eventData) => {
+    this.attachDaemonClientListener('kernel-event', (eventData) => {
       this.kernelBridge.forwardDaemonEvent(eventData);
     });
 
-    this.ctx.daemonClient.on('kernel-stats', (stats) => {
+    this.attachDaemonClientListener('kernel-stats', (stats) => {
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         try {
           this.ctx.mainWindow.webContents.send('kernel:bridge-stats', {
@@ -808,13 +844,13 @@ class HivemindApp {
       }
     });
 
-    this.ctx.daemonClient.on('heartbeat-state-changed', (state, interval) => {
+    this.attachDaemonClientListener('heartbeat-state-changed', (state, interval) => {
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send('heartbeat-state-changed', { state, interval });
       }
     });
 
-    this.ctx.daemonClient.on('watchdog-alert', (message, timestamp) => {
+    this.attachDaemonClientListener('watchdog-alert', (message, timestamp) => {
       log.warn('Watchdog', `Alert: ${message}`);
       if (this.ctx.externalNotifier && typeof this.ctx.externalNotifier.notify === 'function') {
         this.ctx.externalNotifier.notify({
@@ -829,7 +865,7 @@ class HivemindApp {
       }
     });
 
-    this.ctx.daemonClient.on('codex-activity', (paneId, state, detail) => {
+    this.attachDaemonClientListener('codex-activity', (paneId, state, detail) => {
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send('codex-activity', { paneId, state, detail });
       }
@@ -839,7 +875,7 @@ class HivemindApp {
       }
     });
 
-    this.ctx.daemonClient.on('agent-stuck-detected', (payload) => {
+    this.attachDaemonClientListener('agent-stuck-detected', (payload) => {
       const paneId = payload?.paneId;
       if (!paneId) return;
       const idleTime = payload?.idleMs || 0;
@@ -854,7 +890,7 @@ class HivemindApp {
       }
     });
 
-    this.ctx.daemonClient.on('error', (paneId, message) => {
+    this.attachDaemonClientListener('error', (paneId, message) => {
       log.error('Daemon', `Error in pane ${paneId}:`, message);
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send(`pty-error-${paneId}`, message);
@@ -935,6 +971,7 @@ class HivemindApp {
     watcher.stopMessageWatcher();
 
     if (this.ctx.daemonClient) {
+      this.clearDaemonClientListeners(this.ctx.daemonClient);
       this.ctx.daemonClient.disconnect();
     }
 

@@ -186,35 +186,51 @@ function exportActivityLog() {
   URL.revokeObjectURL(url);
 }
 
+// Track DOM listener cleanup functions
+let domCleanupFns = [];
+
 function setupActivityTab() {
+  // Clean up previous DOM listeners before re-init
+  destroyActivityTab();
+
   // Filter buttons
   document.querySelectorAll('.activity-filter').forEach(btn => {
-    btn.addEventListener('click', () => {
+    const handler = () => {
       document.querySelectorAll('.activity-filter').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       activityFilter = btn.dataset.filter;
       renderActivityLog();
-    });
+    };
+    btn.addEventListener('click', handler);
+    domCleanupFns.push(() => btn.removeEventListener('click', handler));
   });
 
   // Search box with debounce
   const searchInput = document.getElementById('activitySearch');
   if (searchInput) {
-    searchInput.addEventListener('input', () => {
+    const handler = () => {
       if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(() => {
         activitySearchText = searchInput.value;
         renderActivityLog();
       }, SEARCH_DEBOUNCE_MS);
-    });
+    };
+    searchInput.addEventListener('input', handler);
+    domCleanupFns.push(() => searchInput.removeEventListener('input', handler));
   }
 
   // Action buttons
   const clearBtn = document.getElementById('clearActivityBtn');
-  if (clearBtn) clearBtn.addEventListener('click', clearActivityLog);
+  if (clearBtn) {
+    clearBtn.addEventListener('click', clearActivityLog);
+    domCleanupFns.push(() => clearBtn.removeEventListener('click', clearActivityLog));
+  }
 
   const exportBtn = document.getElementById('exportActivityBtn');
-  if (exportBtn) exportBtn.addEventListener('click', exportActivityLog);
+  if (exportBtn) {
+    exportBtn.addEventListener('click', exportActivityLog);
+    domCleanupFns.push(() => exportBtn.removeEventListener('click', exportActivityLog));
+  }
 
   // Listen for activity events
   registerScopedIpcListener('tab-activity', 'activity-logged', (event, entry) => {
@@ -224,8 +240,27 @@ function setupActivityTab() {
   loadActivityLog();
 }
 
+function destroyActivityTab() {
+  // Remove all DOM listeners
+  for (const fn of domCleanupFns) {
+    try { fn(); } catch (_) {}
+  }
+  domCleanupFns = [];
+
+  // Clear scoped IPC listeners
+  const { clearScopedIpcListeners } = require('../renderer-ipc-registry');
+  clearScopedIpcListeners('tab-activity');
+
+  // Clear debounce timer
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
+  }
+}
+
 module.exports = {
   setupActivityTab,
+  destroyActivityTab,
   addActivityEntry,
   renderActivityLog
 };

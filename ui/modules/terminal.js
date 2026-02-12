@@ -768,6 +768,14 @@ function teardownTerminalPane(paneId) {
   resetTerminalWriteQueue(id);
   ignoreExitUntil.delete(id);
 
+  // Clean up codex identity tracking for this pane (prevents Set from growing forever)
+  codexIdentityInjected.delete(id);
+  const codeIdTimeout = codexIdentityTimeouts.get(id);
+  if (codeIdTimeout) {
+    clearTimeout(codeIdTimeout);
+    codexIdentityTimeouts.delete(id);
+  }
+
   if (typingIdleTimers[id]) {
     clearTimeout(typingIdleTimers[id]);
     typingIdleTimers[id] = null;

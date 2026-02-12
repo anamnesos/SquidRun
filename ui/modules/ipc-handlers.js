@@ -8,7 +8,7 @@ const path = require('path');
 const { WORKSPACE_PATH, INSTANCE_DIRS, PANE_IDS, PANE_ROLES } = require('../config');
 const { createIpcContext, createIpcRegistry } = require('./ipc');
 const ipcState = require('./ipc/ipc-state');
-const { registerAllHandlers } = require('./ipc/handler-registry');
+const { registerAllHandlers, setupAllHandlers } = require('./ipc/handler-registry');
 const { createBackgroundProcessController } = require('./ipc/background-processes');
 
 const SHARED_CONTEXT_PATH = path.join(WORKSPACE_PATH, 'shared_context.md');
@@ -73,7 +73,7 @@ function setupIPCHandlers(deps) {
     ctx._perfWrapped = true;
   }
 
-  registry.setup(ctx, deps);
+  setupAllHandlers(registry, ctx, deps);
 }
 
 /**
