@@ -46,6 +46,8 @@ function createInjectionController(options = {}) {
     CLAUDE_CHUNK_THRESHOLD_BYTES = 8 * 1024,
     CLAUDE_CHUNK_YIELD_MS = 0,
     CLAUDE_ENTER_DELAY_MS = 50,
+    CLAUDE_LONG_MESSAGE_BYTES = 1024,
+    CLAUDE_LONG_MESSAGE_BASE_ENTER_DELAY_MS = 200,
     CLAUDE_ENTER_DELAY_SCALE_START_BYTES = 256,
     CLAUDE_ENTER_DELAY_BYTES_PER_MS = 64,
     CLAUDE_ENTER_DELAY_MAX_EXTRA_MS = 250,
@@ -55,6 +57,7 @@ function createInjectionController(options = {}) {
     SUBMIT_ACCEPT_MAX_ATTEMPTS = 2,
     SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS = 350,
     SUBMIT_DEFER_MAX_WAIT_MS = 2000,
+    SUBMIT_DEFER_MAX_WAIT_LONG_MS = 5000,
     SUBMIT_DEFER_POLL_MS = 100,
     CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS = 9000,
     SAFE_DEFAULT_ENTER_DELAY_MS = 50,
@@ -225,11 +228,17 @@ function createInjectionController(options = {}) {
   }
 
   function computeScaledEnterDelayMs(baseDelayMs, payloadBytes, capabilities = {}) {
-    const base = Math.max(0, Number(baseDelayMs) || 0);
+    const defaultBase = Math.max(0, Number(baseDelayMs) || 0);
     const byteLength = Math.max(0, Number(payloadBytes) || 0);
     if (capabilities.enterMethod !== 'trusted') {
-      return base;
+      return defaultBase;
     }
+
+    const longMessageBytes = Math.max(1, Number(CLAUDE_LONG_MESSAGE_BYTES) || 1024);
+    const longMessageBaseDelayMs = Math.max(0, Number(CLAUDE_LONG_MESSAGE_BASE_ENTER_DELAY_MS) || 200);
+    const base = byteLength >= longMessageBytes
+      ? Math.max(defaultBase, longMessageBaseDelayMs)
+      : defaultBase;
 
     const scaleStartBytes = Math.max(0, Number(CLAUDE_ENTER_DELAY_SCALE_START_BYTES) || 256);
     const bytesPerMs = Math.max(1, Number(CLAUDE_ENTER_DELAY_BYTES_PER_MS) || 64);
@@ -240,9 +249,10 @@ function createInjectionController(options = {}) {
     return base + Math.min(maxExtraMs, extraDelayMs);
   }
 
-  async function deferSubmitWhilePaneActive(paneId) {
+  async function deferSubmitWhilePaneActive(paneId, maxWaitMs = SUBMIT_DEFER_MAX_WAIT_MS) {
+    const deferMaxWaitMs = Math.max(0, Number(maxWaitMs) || 0);
     const start = Date.now();
-    while (paneHasRecentOutput(paneId) && (Date.now() - start) < SUBMIT_DEFER_MAX_WAIT_MS) {
+    while (paneHasRecentOutput(paneId) && (Date.now() - start) < deferMaxWaitMs) {
       await sleep(SUBMIT_DEFER_POLL_MS);
     }
 
@@ -828,8 +838,13 @@ function createInjectionController(options = {}) {
     const enterDelayMs = computeScaledEnterDelayMs(capabilities.enterDelayMs, payloadBytes, capabilities);
 
     // Defer before writing to avoid counting our own echoed input as "active output".
+    const longMessageBytes = Math.max(1, Number(CLAUDE_LONG_MESSAGE_BYTES) || 1024);
+    const isLongClaudeMessage = capabilities.enterMethod === 'trusted' && payloadBytes >= longMessageBytes;
     if (capabilities.deferSubmitWhilePaneActive) {
-      await deferSubmitWhilePaneActive(id);
+      const deferMaxWaitMs = isLongClaudeMessage
+        ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, Number(SUBMIT_DEFER_MAX_WAIT_LONG_MS) || 5000)
+        : SUBMIT_DEFER_MAX_WAIT_MS;
+      await deferSubmitWhilePaneActive(id, deferMaxWaitMs);
     }
 
     if (capabilities.clearLineBeforeWrite) {

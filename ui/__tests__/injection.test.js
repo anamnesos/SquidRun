@@ -964,7 +964,7 @@ describe('Terminal Injection', () => {
       const timeoutSpy = jest.spyOn(global, 'setTimeout');
       const longText = `${'X'.repeat(9000)}\r`;
       const payloadBytes = Buffer.byteLength('X'.repeat(9000), 'utf8');
-      const expectedScaledDelay = 50 + Math.min(250, Math.ceil(Math.max(0, payloadBytes - 256) / 64));
+      const expectedScaledDelay = 200 + Math.min(250, Math.ceil(Math.max(0, payloadBytes - 256) / 64));
 
       await controller.doSendToPane('1', longText, jest.fn());
 
@@ -974,6 +974,36 @@ describe('Terminal Injection', () => {
 
       expect(delays).toContain(expectedScaledDelay);
       timeoutSpy.mockRestore();
+    });
+
+    test('uses longer defer timeout for long Claude messages', async () => {
+      const longActiveController = createInjectionController({
+        ...mockOptions,
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS: 10000,
+          SUBMIT_DEFER_MAX_WAIT_MS: 2000,
+          SUBMIT_DEFER_MAX_WAIT_LONG_MS: 5000,
+          SUBMIT_DEFER_POLL_MS: 100,
+          CLAUDE_LONG_MESSAGE_BYTES: 1024,
+          CLAUDE_LONG_MESSAGE_BASE_ENTER_DELAY_MS: 200,
+          CLAUDE_ENTER_DELAY_SCALE_START_BYTES: 256,
+          CLAUDE_ENTER_DELAY_BYTES_PER_MS: 64,
+          CLAUDE_ENTER_DELAY_MAX_EXTRA_MS: 250,
+        },
+      });
+
+      document.activeElement = mockTextarea; // Focus succeeds
+      lastOutputTime['1'] = Date.now();
+      const longText = `${'Y'.repeat(1500)}\r`;
+      const promise = longActiveController.doSendToPane('1', longText, jest.fn());
+
+      await jest.advanceTimersByTimeAsync(2500);
+      expect(mockPty.write).not.toHaveBeenCalled();
+
+      await jest.advanceTimersByTimeAsync(3500);
+      await promise;
+      expect(mockPty.write).toHaveBeenCalled();
     });
 
     test('Claude pane always sends Enter even without trailing \\r', async () => {
