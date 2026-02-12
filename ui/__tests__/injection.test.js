@@ -948,15 +948,32 @@ describe('Terminal Injection', () => {
       expect(mockTextarea.focus).toHaveBeenCalled();
     });
 
-    test('sends Enter after fixed delay', async () => {
+    test('sends Enter after base delay for short messages', async () => {
       document.activeElement = mockTextarea; // Focus succeeds
 
       await controller.doSendToPane('1', 'test\r', jest.fn());
 
-      // Advance past fixed 50ms delay
+      // Advance past base 50ms delay
       await jest.advanceTimersByTimeAsync(100);
 
       expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+    });
+
+    test('scales Enter delay by payload size for long Claude messages', async () => {
+      document.activeElement = mockTextarea; // Focus succeeds
+      const timeoutSpy = jest.spyOn(global, 'setTimeout');
+      const longText = `${'X'.repeat(9000)}\r`;
+      const payloadBytes = Buffer.byteLength('X'.repeat(9000), 'utf8');
+      const expectedScaledDelay = 50 + Math.min(250, Math.ceil(Math.max(0, payloadBytes - 256) / 64));
+
+      await controller.doSendToPane('1', longText, jest.fn());
+
+      const delays = timeoutSpy.mock.calls
+        .map(call => call[1])
+        .filter(value => typeof value === 'number');
+
+      expect(delays).toContain(expectedScaledDelay);
+      timeoutSpy.mockRestore();
     });
 
     test('Claude pane always sends Enter even without trailing \\r', async () => {
