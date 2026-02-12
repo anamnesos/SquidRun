@@ -208,6 +208,70 @@ maybeDescribe('evidence-ledger-memory', () => {
     expect(latest.content.session).toBe(115);
   });
 
+  test('session_start snapshot assembles startup context for context windows', () => {
+    expect(memory.recordSessionStart({
+      sessionNumber: 116,
+      sessionId: 'ses-116',
+      mode: 'PTY',
+      startedAtMs: 5000,
+      stats: { test_suites: 116, tests_passed: 3349 },
+      team: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+    }).ok).toBe(true);
+
+    expect(memory.recordDecision({
+      category: 'directive',
+      title: 'Keep startup context concise',
+      body: 'Use decision memory on startup',
+      author: 'user',
+      sessionId: 'ses-116',
+      nowMs: 5010,
+    }).ok).toBe(true);
+
+    expect(memory.recordDecision({
+      category: 'completion',
+      title: 'Phase B shipped',
+      body: 'IPC + CLI landed',
+      author: 'devops',
+      sessionId: 'ses-116',
+      nowMs: 5020,
+    }).ok).toBe(true);
+
+    expect(memory.recordSessionEnd('ses-116', {
+      endedAtMs: 5100,
+      summary: 'Session complete',
+      stats: { test_suites: 116, tests_passed: 3350 },
+    }).ok).toBe(true);
+
+    expect(memory.snapshotContext('ses-116', {
+      trigger: 'session_end',
+      nowMs: 5110,
+    }).ok).toBe(true);
+
+    expect(memory.recordSessionStart({
+      sessionNumber: 117,
+      sessionId: 'ses-117',
+      mode: 'PTY',
+      startedAtMs: 5200,
+      stats: { test_suites: 117, tests_passed: 3351 },
+      team: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+    }).ok).toBe(true);
+
+    const startupSnap = memory.snapshotContext('ses-117', {
+      trigger: 'session_start',
+      nowMs: 5210,
+    });
+    expect(startupSnap.ok).toBe(true);
+
+    const latest = memory.getLatestSnapshot({ sessionId: 'ses-117' });
+    expect(latest.snapshotId).toBe(startupSnap.snapshotId);
+    expect(latest.trigger).toBe('session_start');
+    expect(latest.content.source).toBe('ledger.session_start_snapshot');
+    expect(latest.content.session).toBe(117);
+    expect(latest.content.mode).toBe('PTY');
+    expect(latest.content.important_notes.some((item) => item.includes('Keep startup context concise'))).toBe(true);
+    expect(latest.content.completed.some((item) => item.includes('Phase B shipped'))).toBe(true);
+  });
+
   test('edge cases: invalid category and invalid session start payload', () => {
     const invalidDecision = memory.recordDecision({
       category: 'not_a_category',
