@@ -51,6 +51,9 @@ let sdkModeActive = false;
 const terminals = new Map();
 const fitAddons = new Map();
 const searchAddons = new Map();
+const webglAddons = new Map();
+const ptyDataListenerDisposers = new Map();
+const ptyExitListenerDisposers = new Map();
 let focusedPane = '1';
 
 // Cross-pane Enter debounce tracking
@@ -714,6 +717,85 @@ function syncTerminalInputBridge(paneId, options = {}) {
   return attachTerminalInputBridge(id);
 }
 
+function detachPtyDataListener(paneId) {
+  const id = String(paneId);
+  const dispose = ptyDataListenerDisposers.get(id);
+  if (typeof dispose === 'function') {
+    try {
+      dispose();
+    } catch (err) {
+      log.warn('Terminal', `Failed to dispose pty.onData listener for pane ${id}: ${err.message}`);
+    }
+  }
+  ptyDataListenerDisposers.delete(id);
+}
+
+function detachPtyExitListener(paneId) {
+  const id = String(paneId);
+  const dispose = ptyExitListenerDisposers.get(id);
+  if (typeof dispose === 'function') {
+    try {
+      dispose();
+    } catch (err) {
+      log.warn('Terminal', `Failed to dispose pty.onExit listener for pane ${id}: ${err.message}`);
+    }
+  }
+  ptyExitListenerDisposers.delete(id);
+}
+
+function detachPtyListeners(paneId) {
+  detachPtyDataListener(paneId);
+  detachPtyExitListener(paneId);
+}
+
+function disposeAddon(addon, paneId, name) {
+  if (!addon || typeof addon.dispose !== 'function') return;
+  try {
+    addon.dispose();
+  } catch (err) {
+    log.warn('Terminal', `Failed to dispose ${name} addon for pane ${paneId}: ${err.message}`);
+  }
+}
+
+function teardownTerminalPane(paneId) {
+  const id = String(paneId);
+
+  cleanupResizeObserver(id);
+  clearStartupInjection(id);
+  detachTerminalInputBridge(id);
+  detachPtyListeners(id);
+  resetTerminalWriteQueue(id);
+  ignoreExitUntil.delete(id);
+
+  if (typingIdleTimers[id]) {
+    clearTimeout(typingIdleTimers[id]);
+    typingIdleTimers[id] = null;
+  }
+
+  if (activeSearchPane === id) {
+    closeTerminalSearch();
+  }
+
+  disposeAddon(webglAddons.get(id), id, 'webgl');
+  webglAddons.delete(id);
+
+  disposeAddon(searchAddons.get(id), id, 'search');
+  searchAddons.delete(id);
+
+  disposeAddon(fitAddons.get(id), id, 'fit');
+  fitAddons.delete(id);
+
+  const terminal = terminals.get(id);
+  if (terminal && typeof terminal.dispose === 'function') {
+    try {
+      terminal.dispose();
+    } catch (err) {
+      log.warn('Terminal', `Failed to dispose terminal for pane ${id}: ${err.message}`);
+    }
+  }
+  terminals.delete(id);
+}
+
 
 function stripAnsiForStartup(input) {
   return String(input || '')
@@ -1206,6 +1288,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
     if (terminals.has(paneId)) return;
     const container = document.getElementById(`terminal-${paneId}`);
     if (!container) return;
+  teardownTerminalPane(paneId);
   const terminal = createTerminalInstance();
   const fitAddon = new FitAddon();
   const webLinksAddon = new WebLinksAddon();
@@ -1221,8 +1304,12 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
     webglAddon.onContextLoss(() => {
       log.warn(`Terminal ${paneId}`, 'WebGL context lost, falling back to canvas');
       webglAddon.dispose();
+      if (webglAddons.get(paneId) === webglAddon) {
+        webglAddons.delete(paneId);
+      }
     });
     terminal.loadAddon(webglAddon);
+    webglAddons.set(paneId, webglAddon);
     log.info(`Terminal ${paneId}`, 'WebGL renderer enabled');
   } catch (e) {
     log.warn(`Terminal ${paneId}`, `WebGL not available: ${e.message}`);
@@ -1323,7 +1410,8 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
 
     syncTerminalInputBridge(paneId);
 
-    window.hivemind.pty.onData(paneId, (data) => {
+    detachPtyListeners(paneId);
+    const disposeOnData = window.hivemind.pty.onData(paneId, (data) => {
       // Use flow control to prevent xterm buffer overflow
       queueTerminalWrite(paneId, terminal, data);
       // Track output time for idle detection - only for meaningful activity
@@ -1345,8 +1433,11 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
         }
       }
     });
+    if (typeof disposeOnData === 'function') {
+      ptyDataListenerDisposers.set(String(paneId), disposeOnData);
+    }
 
-    window.hivemind.pty.onExit(paneId, (code) => {
+    const disposeOnExit = window.hivemind.pty.onExit(paneId, (code) => {
       if (shouldIgnoreExit(paneId)) {
         log.info('Terminal', `Ignoring exit for pane ${paneId} (restart in progress)`);
         return;
@@ -1356,6 +1447,9 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
       clearStartupInjection(paneId);
       updateIntentFile(paneId, 'Offline');
     });
+    if (typeof disposeOnExit === 'function') {
+      ptyExitListenerDisposers.set(String(paneId), disposeOnExit);
+    }
 
   } catch (err) {
     log.error(`Terminal ${paneId}`, 'Failed to create PTY', err);
@@ -1379,6 +1473,7 @@ async function reattachTerminal(paneId, scrollback) {
     return;
   }
 
+  teardownTerminalPane(paneId);
   const terminal = createTerminalInstance();
   const fitAddon = new FitAddon();
   const webLinksAddon = new WebLinksAddon();
@@ -1394,8 +1489,12 @@ async function reattachTerminal(paneId, scrollback) {
     webglAddon.onContextLoss(() => {
       log.warn(`Terminal ${paneId}`, 'WebGL context lost, falling back to canvas');
       webglAddon.dispose();
+      if (webglAddons.get(paneId) === webglAddon) {
+        webglAddons.delete(paneId);
+      }
     });
     terminal.loadAddon(webglAddon);
+    webglAddons.set(paneId, webglAddon);
     log.info(`Terminal ${paneId}`, 'WebGL renderer enabled');
   } catch (e) {
     log.warn(`Terminal ${paneId}`, `WebGL not available: ${e.message}`);
@@ -1489,7 +1588,8 @@ async function reattachTerminal(paneId, scrollback) {
 
   syncTerminalInputBridge(paneId);
 
-  window.hivemind.pty.onData(paneId, (data) => {
+  detachPtyListeners(paneId);
+  const disposeOnData = window.hivemind.pty.onData(paneId, (data) => {
     // Use flow control to prevent xterm buffer overflow
     queueTerminalWrite(paneId, terminal, data);
     // Track output time for idle detection - only for meaningful activity
@@ -1511,8 +1611,11 @@ async function reattachTerminal(paneId, scrollback) {
       }
     }
   });
+  if (typeof disposeOnData === 'function') {
+    ptyDataListenerDisposers.set(String(paneId), disposeOnData);
+  }
 
-    window.hivemind.pty.onExit(paneId, (code) => {
+    const disposeOnExit = window.hivemind.pty.onExit(paneId, (code) => {
       if (shouldIgnoreExit(paneId)) {
         log.info('Terminal', `Ignoring exit for pane ${paneId} (restart in progress)`);
         return;
@@ -1522,6 +1625,9 @@ async function reattachTerminal(paneId, scrollback) {
       clearStartupInjection(paneId);
       updateIntentFile(paneId, 'Offline');
     });
+    if (typeof disposeOnExit === 'function') {
+      ptyExitListenerDisposers.set(String(paneId), disposeOnExit);
+    }
 
   updatePaneStatus(paneId, 'Reconnected');
 
@@ -1720,12 +1826,11 @@ async function killAllTerminals() {
   for (const paneId of PANE_IDS) {
     try {
       await window.hivemind.pty.kill(paneId);
-      // Reset write queue state to prevent frozen pane on next spawn
-      resetTerminalWriteQueue(paneId);
-      cleanupResizeObserver(paneId);
-      updatePaneStatus(paneId, 'Killed');
     } catch (err) {
       log.error(`Terminal ${paneId}`, 'Failed to kill pane', err);
+    } finally {
+      teardownTerminalPane(paneId);
+      updatePaneStatus(paneId, 'Killed');
     }
   }
   updateConnectionStatus('All terminals killed');
@@ -1759,31 +1864,24 @@ async function freshStartAll() {
   for (const paneId of PANE_IDS) {
     try {
       await window.hivemind.pty.kill(paneId);
-      // Reset codex identity tracking so new session gets identity header
-      resetCodexIdentity(paneId);
-      // Reset write queue state to prevent frozen pane on next spawn
-      resetTerminalWriteQueue(paneId);
-      cleanupResizeObserver(paneId);
     } catch (err) {
       log.error(`Terminal ${paneId}`, 'Failed to kill pane', err);
+    } finally {
+      // Reset codex identity tracking so new session gets identity header
+      resetCodexIdentity(paneId);
+      teardownTerminalPane(paneId);
     }
-  }
-
-  // Clear terminal displays
-  for (const [paneId, terminal] of terminals) {
-    terminal.clear();
   }
 
   // Wait for terminals to close
   await new Promise(resolve => setTimeout(resolve, 500));
 
-  updateConnectionStatus('Fresh start: spawning new sessions...');
+  updateConnectionStatus('Fresh start: recreating terminals...');
 
-  // Spawn fresh Claude instances
+  // Recreate terminal instances and PTYs
   for (const paneId of PANE_IDS) {
     try {
-      await window.hivemind.pty.create(paneId, process.cwd());
-      updatePaneStatus(paneId, 'Connected');
+      await initTerminal(paneId);
     } catch (err) {
       log.error(`Terminal ${paneId}`, 'Failed to create terminal', err);
     }

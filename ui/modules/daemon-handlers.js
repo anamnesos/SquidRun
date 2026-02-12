@@ -94,6 +94,7 @@ function normalizeTraceContext(traceContext = null, fallback = {}) {
 // Sync indicator state
 const syncState = new Map();
 let syncIndicatorSetup = false;
+const ipcListenerRegistry = new Map();
 
 // Session timers
 const sessionStartTimes = new Map();
@@ -106,6 +107,35 @@ let onPaneStatusUpdate = null;
 function setStatusCallbacks(connectionCb, paneCb) {
   onConnectionStatusUpdate = connectionCb;
   onPaneStatusUpdate = paneCb;
+}
+
+function removeIpcListener(channel, handler) {
+  if (!channel || typeof handler !== 'function') return;
+  if (typeof ipcRenderer.off === 'function') {
+    ipcRenderer.off(channel, handler);
+    return;
+  }
+  if (typeof ipcRenderer.removeListener === 'function') {
+    ipcRenderer.removeListener(channel, handler);
+  }
+}
+
+function registerScopedIpcListener(scope, channel, handler) {
+  const key = `${scope}:${channel}`;
+  const existing = ipcListenerRegistry.get(key);
+  if (existing) {
+    removeIpcListener(existing.channel, existing.handler);
+  }
+  ipcRenderer.on(channel, handler);
+  ipcListenerRegistry.set(key, { channel, handler });
+}
+
+function clearScopedIpcListeners(scope = null) {
+  for (const [key, entry] of ipcListenerRegistry.entries()) {
+    if (scope && !key.startsWith(`${scope}:`)) continue;
+    removeIpcListener(entry.channel, entry.handler);
+    ipcListenerRegistry.delete(key);
+  }
 }
 
 /**
@@ -218,7 +248,7 @@ function handleSyncTriggered(payload = {}) {
   });
 }
 
-function _reg(evt, cb) { ipcRenderer.on(evt, cb); }
+function _reg(evt, cb) { registerScopedIpcListener('sync', evt, cb); }
 
 function setupSyncIndicator() {
   if (syncIndicatorSetup) return;
@@ -240,18 +270,20 @@ function setupSyncIndicator() {
 // ============================================================
 
 function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnectedFn, onTerminalsReadyFn) {       
-  ipcRenderer.on('kernel:bridge-event', (event, envelope) => {
+  clearScopedIpcListeners('daemon-core');
+
+  registerScopedIpcListener('daemon-core', 'kernel:bridge-event', (event, envelope) => {
     if (!envelope || typeof envelope !== 'object' || !envelope.event) return;
     bus.ingest(envelope.event);
   });
 
-  ipcRenderer.on('kernel:bridge-stats', (event, stats) => {
+  registerScopedIpcListener('daemon-core', 'kernel:bridge-stats', (event, stats) => {
     if (!stats || typeof stats !== 'object') return;
     log.debug('KernelBridge', `Stats update: forwarded=${stats.forwardedCount || 0} dropped=${stats.droppedCount || 0}`);
   });
 
   // Handle initial daemon connection with existing terminals
-  ipcRenderer.on('daemon-connected', async (event, data) => {
+  registerScopedIpcListener('daemon-core', 'daemon-connected', async (event, data) => {
     const { terminals: existingTerminals, sdkMode } = data;
     const terminalList = Array.isArray(existingTerminals) ? existingTerminals : [];
     const aliveCount = terminalList.filter((term) => term?.alive).length;
@@ -371,17 +403,17 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
     }
   });
 
-  ipcRenderer.on('daemon-reconnected', (event) => {
+  registerScopedIpcListener('daemon-core', 'daemon-reconnected', (event) => {
     log.info('Daemon', 'Reconnected after disconnect');
     updateConnectionStatus('Daemon reconnected');
   });
 
-  ipcRenderer.on('daemon-disconnected', (event) => {
+  registerScopedIpcListener('daemon-core', 'daemon-disconnected', (event) => {
     log.info('Daemon', 'Disconnected');
     updateConnectionStatus('Daemon disconnected - terminals may be stale');
   });
 
-  ipcRenderer.on('inject-message', (event, data) => {
+  registerScopedIpcListener('daemon-core', 'inject-message', (event, data) => {
     const { panes, message, deliveryId, traceContext, traceCtx } = data || {};
     const normalizedTraceContext = normalizeTraceContext(traceContext || traceCtx, {
       traceId: deliveryId || null,
@@ -402,7 +434,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
     }
   });
 
-  ipcRenderer.on('nudge-pane', (event, data) => {
+  registerScopedIpcListener('daemon-core', 'nudge-pane', (event, data) => {
     const { paneId } = data || {};
     const term = getTerminal();
     if (paneId && typeof term?.nudgePane === 'function') {
@@ -411,7 +443,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
     }
   });
 
-  ipcRenderer.on('restart-pane', (event, data) => {
+  registerScopedIpcListener('daemon-core', 'restart-pane', (event, data) => {
     const { paneId } = data || {};
     const term = getTerminal();
     if (paneId && typeof term?.restartPane === 'function') {
@@ -420,7 +452,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
     }
   });
 
-  ipcRenderer.on('restart-all-panes', () => {
+  registerScopedIpcListener('daemon-core', 'restart-all-panes', () => {
     log.info('Health', 'Restarting all panes');
     const term = getTerminal();
     if (typeof term?.freshStartAll === 'function') {
@@ -430,7 +462,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 }
 
 function setupRollbackListener() {
-  ipcRenderer.on('rollback-available', (event, data) => {
+  registerScopedIpcListener('rollback', 'rollback-available', (event, data) => {
     uiView.showRollbackUI(data, async (checkpointId, files) => {
       try {
         const result = await (typeof ipcRenderer.invoke === 'function' ? ipcRenderer.invoke('apply-rollback', checkpointId) : Promise.resolve({success:true, filesRestored:1}));
@@ -446,37 +478,37 @@ function setupRollbackListener() {
     });
   });
 
-  ipcRenderer.on('rollback-cleared', () => {
+  registerScopedIpcListener('rollback', 'rollback-cleared', () => {
     uiView.hideRollbackUI();
   });
 }
 
 function setupHandoffListener() {
-  ipcRenderer.on('task-handoff', (event, data) => {
+  registerScopedIpcListener('handoff', 'task-handoff', (event, data) => {
     uiView.showHandoffNotification(data);
   });
 
-  ipcRenderer.on('auto-handoff', (event, data) => {
+  registerScopedIpcListener('handoff', 'auto-handoff', (event, data) => {
     uiView.showHandoffNotification({ ...data, reason: data.reason || 'Auto-handoff triggered' });
   });
 }
 
 function setupConflictResolutionListener() {
-  ipcRenderer.on('file-conflict', (event, data) => {
+  registerScopedIpcListener('conflict', 'file-conflict', (event, data) => {
     uiView.showConflictNotification(data);
   });
 
-  ipcRenderer.on('conflict-resolved', (event, data) => {
+  registerScopedIpcListener('conflict', 'conflict-resolved', (event, data) => {
     uiView.showConflictNotification({ ...data, status: 'resolved' });
   });
 }
 
 function setupAutoTriggerListener() {
-  ipcRenderer.on('auto-trigger', (event, data) => {
+  registerScopedIpcListener('auto-trigger', 'auto-trigger', (event, data) => {
     uiView.showAutoTriggerFeedback(data);
   });
 
-  ipcRenderer.on('completion-detected', (event, data) => {
+  registerScopedIpcListener('auto-trigger', 'completion-detected', (event, data) => {
     const { paneId, pattern } = data;
     log.info('Completion', `Pane ${paneId} completed: ${pattern}`);
     showToast(`${uiView.PANE_ROLES[paneId] || `Pane ${paneId}`} completed task`, 'info');
@@ -484,21 +516,21 @@ function setupAutoTriggerListener() {
 }
 
 function setupProjectListener() {
-  ipcRenderer.on('project-changed', (event, projectPath) => {
+  registerScopedIpcListener('project', 'project-changed', (event, projectPath) => {
     log.info('Project', 'Changed to:', projectPath);
     uiView.updateProjectDisplay(projectPath);
   });
 }
 
 function setupCostAlertListener() {
-  ipcRenderer.on('cost-alert', (event, data) => {
+  registerScopedIpcListener('cost-alert', 'cost-alert', (event, data) => {
     uiView.showCostAlert(data);
     showToast(data.message, 'warning');
   });
 }
 
 function setupClaudeStateListener(handleTimerStateFn) {
-  ipcRenderer.on('claude-state-changed', (event, states) => {
+  registerScopedIpcListener('claude-state', 'claude-state-changed', (event, states) => {
     log.info('Agent State', 'Received:', states);
     for (const [paneId, state] of Object.entries(states)) {
       uiView.updateAgentStatus(paneId, state);
@@ -509,6 +541,11 @@ function setupClaudeStateListener(handleTimerStateFn) {
       }
     }
   });
+}
+
+function teardownDaemonListeners() {
+  clearScopedIpcListeners();
+  syncIndicatorSetup = false;
 }
 
 function setupRefreshButtons(sendToPaneFn) {
@@ -788,6 +825,7 @@ async function loadInitialProject() {
 
 module.exports = {
   setStatusCallbacks,
+  teardownDaemonListeners,
   setupDaemonListeners,
   setupSyncIndicator,
   handleSessionTimerState,
