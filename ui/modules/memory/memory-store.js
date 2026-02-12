@@ -108,6 +108,19 @@ function getKeywordIndexPath() {
   return path.join(INDEX_DIR, 'keywords.json');
 }
 
+function parseTranscriptLines(lines) {
+  return lines
+    .filter(line => line.trim())
+    .map(line => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
 // ============================================================
 // TRANSCRIPT OPERATIONS
 // ============================================================
@@ -153,17 +166,7 @@ function readTranscript(role, options = {}) {
 
   try {
     const content = fs.readFileSync(filePath, 'utf8');
-    let entries = content
-      .split('\n')
-      .filter(line => line.trim())
-      .map(line => {
-        try {
-          return JSON.parse(line);
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean);
+    let entries = parseTranscriptLines(content.split('\n'));
 
     // Filter by timestamp if specified
     if (since) {
@@ -180,6 +183,94 @@ function readTranscript(role, options = {}) {
   } catch (err) {
     console.error(`[MemoryStore] Error reading transcript for ${role}:`, err.message);
     return [];
+  }
+}
+
+/**
+ * Read only the trailing portion of a transcript to avoid loading large files.
+ * @param {string} role
+ * @param {Object} [options]
+ * @param {string} [options.date] - Specific date, defaults to today
+ * @param {number} [options.maxLines=2000] - Max trailing lines to parse
+ * @param {number} [options.maxBytes=524288] - Max bytes to read from end
+ * @param {number} [options.limit] - Max parsed entries to return (from end)
+ * @param {string} [options.since] - ISO timestamp to filter entries after
+ * @returns {Array<Object>}
+ */
+function readTranscriptTail(role, options = {}) {
+  const {
+    date,
+    maxLines = 2000,
+    maxBytes = 512 * 1024,
+    limit,
+    since,
+  } = options;
+  const filePath = getTranscriptPath(role, date);
+
+  if (!fs.existsSync(filePath)) {
+    return [];
+  }
+
+  let fd = null;
+  try {
+    const stats = fs.statSync(filePath);
+    const fileSize = Number(stats?.size || 0);
+    if (fileSize <= 0) return [];
+
+    const safeMaxLines = Math.max(1, Number(maxLines) || 2000);
+    const safeMaxBytes = Math.max(1, Number(maxBytes) || (512 * 1024));
+    const chunkSize = 64 * 1024;
+
+    let position = fileSize;
+    let accumulated = '';
+    let newlineCount = 0;
+    let bytesReadTotal = 0;
+    fd = fs.openSync(filePath, 'r');
+
+    while (position > 0 && newlineCount <= safeMaxLines && bytesReadTotal < safeMaxBytes) {
+      const remainingBytesBudget = safeMaxBytes - bytesReadTotal;
+      const readSize = Math.min(chunkSize, position, remainingBytesBudget);
+      if (readSize <= 0) break;
+
+      position -= readSize;
+      const buffer = Buffer.allocUnsafe(readSize);
+      const bytesRead = fs.readSync(fd, buffer, 0, readSize, position);
+      if (bytesRead <= 0) break;
+
+      const chunk = buffer.toString('utf8', 0, bytesRead);
+      accumulated = chunk + accumulated;
+      bytesReadTotal += bytesRead;
+      newlineCount += (chunk.match(/\n/g) || []).length;
+    }
+
+    let lines = accumulated.split('\n').filter(line => line.trim());
+    if (lines.length > safeMaxLines) {
+      lines = lines.slice(-safeMaxLines);
+    }
+
+    let entries = parseTranscriptLines(lines);
+
+    if (since) {
+      const sinceTime = new Date(since).getTime();
+      entries = entries.filter(e => new Date(e.timestamp).getTime() > sinceTime);
+    }
+
+    if (limit && entries.length > limit) {
+      entries = entries.slice(-limit);
+    }
+
+    return entries;
+  } catch (err) {
+    console.error(`[MemoryStore] Error tail-reading transcript for ${role}:`, err.message);
+    return [];
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // best-effort close
+      }
+    }
   }
 }
 
@@ -548,6 +639,7 @@ module.exports = {
   // Transcript operations
   appendTranscript,
   readTranscript,
+  readTranscriptTail,
   listTranscriptDates,
   getTranscriptStats,
 

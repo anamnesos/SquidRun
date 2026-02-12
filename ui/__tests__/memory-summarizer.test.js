@@ -246,6 +246,23 @@ describe('Memory Summarizer', () => {
 
       expect(mockMemoryStore.readTranscript).toHaveBeenCalledWith('architect', { date: '2026-01-29' });
     });
+
+    test('uses tail transcript reader when available', () => {
+      const originalTailReader = mockMemoryStore.readTranscriptTail;
+      mockMemoryStore.readTranscriptTail = jest.fn(() => []);
+
+      memorySummarizer.summarizeTranscript('architect', {
+        date: '2026-01-29',
+        tailLines: 1234,
+      });
+
+      expect(mockMemoryStore.readTranscriptTail).toHaveBeenCalledWith('architect', {
+        date: '2026-01-29',
+        maxLines: 1234,
+      });
+
+      mockMemoryStore.readTranscriptTail = originalTailReader;
+    });
   });
 
   describe('generateTranscriptStats', () => {

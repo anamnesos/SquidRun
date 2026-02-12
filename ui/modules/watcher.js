@@ -39,6 +39,7 @@ const TRIGGER_PATH = path.join(WORKSPACE_PATH, 'triggers');
 // TRIGGER_READ_RETRY_MS imported from constants.js
 const TRIGGER_READ_MAX_ATTEMPTS = 3;
 const triggerRetryTimers = new Map();
+const WORKSPACE_WATCH_POLL_INTERVAL_MS = 5000;
 
 // ============================================================
 // STATE MACHINE
@@ -512,12 +513,13 @@ function startWatcher() {
     ignoreInitial: true,
     persistent: true,
     usePolling: true,  // Windows fix - bash echo doesn't trigger native fs events
-    interval: 1000,    // Poll every 1 second
+    interval: WORKSPACE_WATCH_POLL_INTERVAL_MS,
     ignored: [
       /node_modules/,
       /\.git/,
       /instances\//,
       /backups\//,
+      /context-snapshots[\\/]/,
       /logs[\\/]/,
       /state\.json$/,
       /triggers\//,    // UX-9: Triggers handled by fast watcher
@@ -530,7 +532,7 @@ function startWatcher() {
     log.error('Watcher', 'Workspace watcher error', err);
   });
 
-  log.info('Watcher', `Watching ${WORKSPACE_PATH}`);
+  log.info('Watcher', `Watching ${WORKSPACE_PATH} with ${WORKSPACE_WATCH_POLL_INTERVAL_MS}ms polling`);
 }
 
 function stopWatcher() {

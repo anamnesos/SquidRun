@@ -32,7 +32,9 @@ const contextCompressor = require('../context-compressor');
 const {
   executeEvidenceLedgerOperation,
   initializeEvidenceLedgerRuntime,
+  closeSharedRuntime,
 } = require('../ipc/evidence-ledger-handlers');
+const APP_IDLE_THRESHOLD_MS = 30000;
 
 class HivemindApp {
   constructor(appContext, managers) {
@@ -43,6 +45,7 @@ class HivemindApp {
     this.cliIdentity = managers.cliIdentity;
     this.contextInjection = managers.contextInjection;
     this.kernelBridge = createKernelBridge(() => this.ctx.mainWindow);
+    this.lastDaemonOutputAtMs = Date.now();
 
     this.cliIdentityForwarderRegistered = false;
     this.triggerAckForwarderRegistered = false;
@@ -475,6 +478,7 @@ class HivemindApp {
       memory,
       mainWindow: window,
       watcher,
+      isIdle: () => (Date.now() - this.lastDaemonOutputAtMs) > APP_IDLE_THRESHOLD_MS,
     });
 
     ipcMain.handle('context-snapshot-refresh', (event, paneId) => {
@@ -665,6 +669,7 @@ class HivemindApp {
     };
 
     this.ctx.daemonClient.on('data', (paneId, data) => {
+      this.lastDaemonOutputAtMs = Date.now();
       this.ctx.recoveryManager?.recordActivity(paneId);
       this.ctx.recoveryManager?.recordPtyOutput?.(paneId, data);
 
@@ -919,6 +924,11 @@ class HivemindApp {
     log.info('App', 'Shutting down Hivemind Application');
     memory.shutdown();
     contextCompressor.shutdown();
+    try {
+      closeSharedRuntime();
+    } catch (err) {
+      log.warn('EvidenceLedger', `Failed to close shared runtime during shutdown: ${err.message}`);
+    }
     websocketServer.stop();
     watcher.stopWatcher();
     watcher.stopTriggerWatcher();

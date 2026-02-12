@@ -11,6 +11,10 @@ jest.mock('fs', () => ({
   readFileSync: jest.fn(),
   writeFileSync: jest.fn(),
   readdirSync: jest.fn(),
+  statSync: jest.fn(),
+  openSync: jest.fn(),
+  readSync: jest.fn(),
+  closeSync: jest.fn(),
 }));
 
 const fs = require('fs');
@@ -22,6 +26,9 @@ describe('Memory Store', () => {
     // Default: directories exist
     fs.existsSync.mockReturnValue(true);
     fs.readdirSync.mockReturnValue([]);
+    fs.statSync.mockReturnValue({ size: 0 });
+    fs.openSync.mockReturnValue(1);
+    fs.closeSync.mockImplementation(() => {});
   });
 
   describe('Constants', () => {
@@ -215,6 +222,68 @@ describe('Memory Store', () => {
         const result = memoryStore.readTranscript('architect');
 
         expect(result).toEqual([]);
+      });
+    });
+
+    describe('readTranscriptTail', () => {
+      test('returns empty array when file missing', () => {
+        fs.existsSync.mockReturnValue(false);
+
+        const result = memoryStore.readTranscriptTail('architect');
+        expect(result).toEqual([]);
+      });
+
+      test('reads only trailing lines from transcript', () => {
+        const content = [
+          '{"type":"a","timestamp":"2026-01-30T10:00:00Z"}',
+          '{"type":"b","timestamp":"2026-01-30T10:01:00Z"}',
+          '{"type":"c","timestamp":"2026-01-30T10:02:00Z"}',
+          '',
+        ].join('\n');
+        const source = Buffer.from(content, 'utf8');
+
+        fs.existsSync.mockReturnValue(true);
+        fs.statSync.mockReturnValue({ size: source.length });
+        fs.openSync.mockReturnValue(42);
+        fs.readSync.mockImplementation((fd, buffer, offset, length, position) => {
+          source.copy(buffer, offset, position, position + length);
+          return length;
+        });
+
+        const result = memoryStore.readTranscriptTail('architect', { maxLines: 2 });
+
+        expect(result).toHaveLength(2);
+        expect(result[0].type).toBe('b');
+        expect(result[1].type).toBe('c');
+        expect(fs.readFileSync).not.toHaveBeenCalled();
+        expect(fs.closeSync).toHaveBeenCalledWith(42);
+      });
+
+      test('applies since and limit filters to tail entries', () => {
+        const content = [
+          '{"type":"a","timestamp":"2026-01-30T10:00:00Z"}',
+          '{"type":"b","timestamp":"2026-01-30T10:01:00Z"}',
+          '{"type":"c","timestamp":"2026-01-30T10:02:00Z"}',
+          '',
+        ].join('\n');
+        const source = Buffer.from(content, 'utf8');
+
+        fs.existsSync.mockReturnValue(true);
+        fs.statSync.mockReturnValue({ size: source.length });
+        fs.openSync.mockReturnValue(7);
+        fs.readSync.mockImplementation((fd, buffer, offset, length, position) => {
+          source.copy(buffer, offset, position, position + length);
+          return length;
+        });
+
+        const result = memoryStore.readTranscriptTail('architect', {
+          maxLines: 3,
+          since: '2026-01-30T10:00:30Z',
+          limit: 1,
+        });
+
+        expect(result).toHaveLength(1);
+        expect(result[0].type).toBe('c');
       });
     });
 

@@ -63,6 +63,7 @@ describe('Context Compressor Module', () => {
     _internals.lastSnapshots = {};
     _internals.initialized = false;
     _internals.watcherRef = null;
+    _internals.isIdleRef = null;
     if (_internals.refreshTimer) {
       clearInterval(_internals.refreshTimer);
       _internals.refreshTimer = null;
@@ -689,6 +690,27 @@ describe('Context Compressor Module', () => {
       expect(snapshotWrites.length).toBe(3);
     });
 
+    it('should skip auto-refresh from watcher callback when app is idle', () => {
+      fs.existsSync.mockReturnValue(false);
+      const watchCallbacks = [];
+      const mockWatcher = {
+        addWatch: jest.fn((filePath, cb) => { watchCallbacks.push(cb); }),
+      };
+
+      contextCompressor.init({
+        watcher: mockWatcher,
+        isIdle: () => true,
+      });
+
+      fs.writeFileSync.mockClear();
+      watchCallbacks[0]();
+
+      const snapshotWrites = fs.writeFileSync.mock.calls.filter(c =>
+        typeof c[0] === 'string' && c[0].includes('context-snapshots')
+      );
+      expect(snapshotWrites.length).toBe(0);
+    });
+
     it('should handle watch callback errors gracefully', () => {
       fs.existsSync.mockReturnValue(false);
       const watchCallbacks = [];
@@ -742,6 +764,23 @@ describe('Context Compressor Module', () => {
         typeof c[0] === 'string' && c[0].includes('context-snapshots')
       );
       expect(snapshotWrites.length).toBe(3);
+    });
+
+    it('should skip timer refresh when app is idle', () => {
+      fs.existsSync.mockReturnValue(false);
+
+      contextCompressor.init({
+        mainWindow: mockMainWindow,
+        isIdle: () => true,
+      });
+
+      fs.writeFileSync.mockClear();
+      jest.advanceTimersByTime(_internals.REFRESH_INTERVAL_MS);
+
+      const snapshotWrites = fs.writeFileSync.mock.calls.filter(c =>
+        typeof c[0] === 'string' && c[0].includes('context-snapshots')
+      );
+      expect(snapshotWrites.length).toBe(0);
     });
 
     it('should clear timer on shutdown', () => {

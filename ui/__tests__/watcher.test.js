@@ -343,6 +343,8 @@ describe('watcher module', () => {
 
     watcher.startWatcher();
     expect(chokidarMock.watch).toHaveBeenCalled();
+    const options = chokidarMock.watch.mock.calls[0][1];
+    expect(options.interval).toBe(5000);
 
     watcher.stopWatcher();
     expect(watcherInstance.close).toHaveBeenCalled();
@@ -356,10 +358,14 @@ describe('watcher module', () => {
     watcher.startWatcher();
     const options = chokidarMock.watch.mock.calls[0][1];
     const logsPattern = options.ignored.find((entry) => entry instanceof RegExp && entry.source.includes('logs'));
+    const snapshotsPattern = options.ignored.find((entry) => entry instanceof RegExp && entry.source.includes('context-snapshots'));
 
     expect(logsPattern).toBeDefined();
     expect(logsPattern.test('C:\\workspace\\logs\\app.log')).toBe(true);
     expect(logsPattern.test('/workspace/logs/app.log')).toBe(true);
+    expect(snapshotsPattern).toBeDefined();
+    expect(snapshotsPattern.test('C:\\workspace\\context-snapshots\\1.md')).toBe(true);
+    expect(snapshotsPattern.test('/workspace/context-snapshots/1.md')).toBe(true);
 
     cleanupDir(tempDir);
   });

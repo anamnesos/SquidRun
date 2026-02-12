@@ -6,7 +6,7 @@
  * Snapshots are written to workspace/context-snapshots/{paneId}.md for lifecycle
  * hooks to read after compaction events.
  *
- * Auto-refreshes on watched file changes (via watcher.addWatch) and a 120s timer.
+ * Auto-refreshes on watched file changes (via watcher.addWatch) and a 300s timer.
  */
 
 const fs = require('fs');
@@ -17,7 +17,8 @@ const { estimateTokens, truncateToTokenBudget } = require('./memory/memory-summa
 
 const SNAPSHOTS_DIR = path.join(WORKSPACE_PATH, 'context-snapshots');
 const DEFAULT_MAX_TOKENS = 1500;
-const REFRESH_INTERVAL_MS = 120000; // 120 seconds
+const REFRESH_INTERVAL_MS = 300000; // 300 seconds
+const IDLE_REFRESH_THRESHOLD_MS = 30000;
 
 // Priority sections for token budget allocation
 const SECTION_PRIORITIES = {
@@ -43,6 +44,7 @@ let sharedStateRef = null;
 let memoryRef = null;
 let mainWindowRef = null;
 let watcherRef = null;
+let isIdleRef = null;
 let refreshTimer = null;
 let lastSnapshots = {};
 let initialized = false;
@@ -376,6 +378,16 @@ function refresh(paneId) {
   }
 }
 
+function shouldSkipAutoRefresh() {
+  if (typeof isIdleRef !== 'function') return false;
+  try {
+    return isIdleRef() === true;
+  } catch (err) {
+    log.warn('ContextCompressor', `Idle check failed; proceeding with refresh: ${err.message}`);
+    return false;
+  }
+}
+
 /**
  * Get the last generated snapshot without regenerating
  * @param {string} paneId
@@ -392,12 +404,14 @@ function getLastSnapshot(paneId) {
  * @param {Object} options.memory - Reference to memory module
  * @param {Object} options.mainWindow - Electron BrowserWindow
  * @param {Object} options.watcher - File watcher with addWatch(path, callback)
+ * @param {Function} options.isIdle - Returns true when app should skip auto-refresh
  */
 function init(options = {}) {
   if (options.sharedState) sharedStateRef = options.sharedState;
   if (options.memory) memoryRef = options.memory;
   if (options.mainWindow) mainWindowRef = options.mainWindow;
   if (options.watcher) watcherRef = options.watcher;
+  isIdleRef = typeof options.isIdle === 'function' ? options.isIdle : null;
 
   ensureSnapshotsDir();
 
@@ -406,6 +420,7 @@ function init(options = {}) {
     for (const relPath of WATCHED_FILES) {
       const absPath = path.join(WORKSPACE_PATH, relPath);
       watcherRef.addWatch(absPath, () => {
+        if (shouldSkipAutoRefresh()) return;
         try {
           refreshAll();
         } catch (err) {
@@ -418,6 +433,7 @@ function init(options = {}) {
   // Start periodic refresh timer
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(() => {
+    if (shouldSkipAutoRefresh()) return;
     try {
       refreshAll();
     } catch (err) {
@@ -440,6 +456,7 @@ function shutdown() {
     clearInterval(refreshTimer);
     refreshTimer = null;
   }
+  isIdleRef = null;
   initialized = false;
   log.info('ContextCompressor', 'Shutdown complete');
 }
@@ -472,6 +489,8 @@ module.exports = {
     set mainWindowRef(v) { mainWindowRef = v; },
     get watcherRef() { return watcherRef; },
     set watcherRef(v) { watcherRef = v; },
+    get isIdleRef() { return isIdleRef; },
+    set isIdleRef(v) { isIdleRef = v; },
     get refreshTimer() { return refreshTimer; },
     set refreshTimer(v) { refreshTimer = v; },
     get lastSnapshots() { return lastSnapshots; },
@@ -482,6 +501,7 @@ module.exports = {
     SNAPSHOTS_DIR,
     DEFAULT_MAX_TOKENS,
     REFRESH_INTERVAL_MS,
+    IDLE_REFRESH_THRESHOLD_MS,
     SECTION_PRIORITIES,
   },
 };
