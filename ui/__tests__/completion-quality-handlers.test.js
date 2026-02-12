@@ -9,9 +9,18 @@ const {
 } = require('./helpers/ipc-harness');
 
 // Mock child_process
-jest.mock('child_process', () => ({
-  execSync: jest.fn(),
-}));
+jest.mock('child_process', () => {
+  const execSync = jest.fn();
+  const exec = jest.fn((cmd, opts, callback) => {
+    try {
+      const output = execSync(cmd, opts);
+      callback(null, output, '');
+    } catch (err) {
+      callback(err, err.stdout?.toString() || '', err.stderr?.toString() || '');
+    }
+  });
+  return { execSync, exec };
+});
 
 const { execSync } = require('child_process');
 const { registerCompletionQualityHandlers } = require('../modules/ipc/completion-quality-handlers');

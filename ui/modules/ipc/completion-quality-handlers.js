@@ -3,6 +3,27 @@
  * Channels: check-completion-quality, validate-state-transition, get-quality-rules
  */
 
+const { exec } = require('child_process');
+
+async function runCommand(cmd, cwd) {
+  return new Promise((resolve, reject) => {
+    exec(cmd, {
+      cwd,
+      encoding: 'utf-8',
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 30000,
+    }, (err, stdout, stderr) => {
+      if (err) {
+        if (err.stdout == null) err.stdout = stdout;
+        if (err.stderr == null) err.stderr = stderr;
+        reject(err);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
 function registerCompletionQualityHandlers(ctx, deps = {}) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerCompletionQualityHandlers requires ctx.ipcMain');
@@ -55,11 +76,7 @@ function registerCompletionQualityHandlers(ctx, deps = {}) {
       : {};
     if (state.project) {
       try {
-        const { execSync } = require('child_process');
-        const gitStatus = execSync('git status --porcelain', {
-          cwd: state.project,
-          encoding: 'utf-8',
-        });
+        const gitStatus = await runCommand('git status --porcelain', state.project);
         const uncommittedFiles = gitStatus.trim().split('\n').filter(l => l.trim());
         if (uncommittedFiles.length > 0) {
           issues.push({

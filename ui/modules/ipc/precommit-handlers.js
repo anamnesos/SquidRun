@@ -1,6 +1,26 @@
 ﻿const fs = require('fs');
 const path = require('path');
+const { exec } = require('child_process');
 const log = require('../logger');
+
+async function runCommand(cmd, cwd) {
+  return new Promise((resolve, reject) => {
+    exec(cmd, {
+      cwd,
+      encoding: 'utf-8',
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 30000,
+    }, (err, stdout, stderr) => {
+      if (err) {
+        if (err.stdout == null) err.stdout = stdout;
+        if (err.stderr == null) err.stderr = stderr;
+        reject(err);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
 
 function registerPrecommitHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -41,11 +61,10 @@ function registerPrecommitHandlers(ctx) {
     }
 
     try {
-      const { execSync } = require('child_process');
-      const stagedFiles = execSync('git diff --cached --name-only', {
-        cwd: projectPath,
-        encoding: 'utf-8',
-      }).trim().split('\n').filter(f => f);
+      const stagedFiles = (await runCommand('git diff --cached --name-only', projectPath))
+        .trim()
+        .split('\n')
+        .filter(f => f);
 
       let validationIssues = 0;
       for (const file of stagedFiles) {
@@ -78,11 +97,7 @@ function registerPrecommitHandlers(ctx) {
     }
 
     try {
-      const { execSync } = require('child_process');
-      const stagedContent = execSync('git diff --cached', {
-        cwd: projectPath,
-        encoding: 'utf-8',
-      });
+      const stagedContent = await runCommand('git diff --cached', projectPath);
 
       const incompletePatterns = ctx.INCOMPLETE_PATTERNS || [];
       const hasIncomplete = incompletePatterns.some(p => p.test(stagedContent));
