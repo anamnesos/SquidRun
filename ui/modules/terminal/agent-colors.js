@@ -50,8 +50,9 @@ function attachAgentColors(paneId, terminal) {
     const currentLine = buf.baseY + buf.cursorY;
     const defaultForeground = terminal?.options?.theme?.foreground || DEFAULT_FOREGROUND;
 
-    // Nothing new to scan
-    if (currentLine < lastScannedLine) {
+    // Nothing new to scan — only reset on true backward jump (clear/reset),
+    // not when cursor stays on the same line between callbacks
+    if ((currentLine + 1) < lastScannedLine) {
       // Buffer was cleared or reset — resync
       lastScannedLine = 0;
     }
