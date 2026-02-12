@@ -5,7 +5,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const chokidar = require('chokidar');
+const { fork } = require('child_process');
 const { WORKSPACE_PATH, TRIGGER_TARGETS, PANE_IDS, PANE_ROLES } = require('../config');
 const log = require('./logger');
 const { TRIGGER_READ_RETRY_MS, WATCHER_DEBOUNCE_MS } = require('./constants');
@@ -40,6 +40,9 @@ const TRIGGER_PATH = path.join(WORKSPACE_PATH, 'triggers');
 const TRIGGER_READ_MAX_ATTEMPTS = 3;
 const triggerRetryTimers = new Map();
 const WORKSPACE_WATCH_POLL_INTERVAL_MS = 5000;
+const WATCHER_WORKER_PATH = path.join(__dirname, 'watcher-worker.js');
+const WATCHER_WORKER_RESTART_DELAY_MS = 1000;
+const watcherRestartTimers = new Map();
 
 // ============================================================
 // STATE MACHINE
@@ -504,42 +507,113 @@ function handleFileChangeCore(filePath) {
 // WATCHER CONTROL
 // ============================================================
 
-function startWatcher() {
-  if (workspaceWatcher) {
-    workspaceWatcher.close();
+function clearWatcherRestartTimer(watcherName) {
+  const timer = watcherRestartTimers.get(watcherName);
+  if (timer) {
+    clearTimeout(timer);
+    watcherRestartTimers.delete(watcherName);
+  }
+}
+
+function scheduleWatcherWorkerRestart(watcherName, startFn) {
+  clearWatcherRestartTimer(watcherName);
+  const timer = setTimeout(() => {
+    watcherRestartTimers.delete(watcherName);
+    try {
+      startFn();
+    } catch (err) {
+      log.error('Watcher', `Failed restarting ${watcherName} worker`, err);
+    }
+  }, WATCHER_WORKER_RESTART_DELAY_MS);
+  watcherRestartTimers.set(watcherName, timer);
+}
+
+function stopWatcherWorker(watcherName, workerRefName, { reason = 'stop', clearRestart = true } = {}) {
+  if (clearRestart) {
+    clearWatcherRestartTimer(watcherName);
+  }
+  const worker = workerRefName === 'workspace' ? workspaceWatcher
+    : workerRefName === 'trigger' ? triggerWatcher
+      : messageWatcher;
+  if (!worker) return false;
+
+  worker.__hivemindIntentionalStop = true;
+  try {
+    worker.kill();
+  } catch (err) {
+    log.warn('Watcher', `Failed killing ${watcherName} worker (${reason}): ${err.message}`);
   }
 
-  workspaceWatcher = chokidar.watch(WORKSPACE_PATH, {
-    ignoreInitial: true,
-    persistent: true,
-    usePolling: true,  // Windows fix - bash echo doesn't trigger native fs events
-    interval: WORKSPACE_WATCH_POLL_INTERVAL_MS,
-    ignored: [
-      /node_modules/,
-      /\.git/,
-      /instances\//,
-      /backups\//,
-      /context-snapshots[\\/]/,
-      /logs[\\/]/,
-      /state\.json$/,
-      /triggers\//,    // UX-9: Triggers handled by fast watcher
-    ],
+  if (workerRefName === 'workspace') workspaceWatcher = null;
+  if (workerRefName === 'trigger') triggerWatcher = null;
+  if (workerRefName === 'message') messageWatcher = null;
+  return true;
+}
+
+function startWatcherWorker(watcherName, onEvent, restartFn) {
+  const worker = fork(WATCHER_WORKER_PATH, [], {
+    env: {
+      ...process.env,
+      HIVEMIND_WATCHER_NAME: watcherName,
+    },
   });
 
-  workspaceWatcher.on('add', handleFileChangeDebounced);
-  workspaceWatcher.on('change', handleFileChangeDebounced);
-  workspaceWatcher.on('error', (err) => {
-    log.error('Watcher', 'Workspace watcher error', err);
+  worker.on('message', (msg) => {
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.watcherName !== watcherName) return;
+
+    if (msg.type === 'error') {
+      log.error('Watcher', `${watcherName} worker reported error: ${msg.error || 'unknown error'}`);
+      return;
+    }
+
+    if ((msg.type === 'add' || msg.type === 'change' || msg.type === 'unlink') && msg.path) {
+      onEvent(msg.path, msg.type);
+    }
   });
+
+  worker.on('error', (err) => {
+    log.error('Watcher', `${watcherName} worker process error`, err);
+  });
+
+  worker.on('exit', (code, signal) => {
+    const intentional = worker.__hivemindIntentionalStop === true;
+    if (watcherName === 'workspace' && workspaceWatcher === worker) workspaceWatcher = null;
+    if (watcherName === 'trigger' && triggerWatcher === worker) triggerWatcher = null;
+    if (watcherName === 'message' && messageWatcher === worker) messageWatcher = null;
+
+    if (intentional) {
+      log.info('Watcher', `${watcherName} worker stopped (${signal || code || 'exit'})`);
+      return;
+    }
+
+    log.error('Watcher', `${watcherName} worker exited unexpectedly (code=${code}, signal=${signal || 'none'})`);
+    scheduleWatcherWorkerRestart(watcherName, restartFn);
+  });
+
+  return worker;
+}
+
+function startWatcher() {
+  if (workspaceWatcher) {
+    stopWatcherWorker('workspace', 'workspace', { reason: 'restart', clearRestart: false });
+  }
+
+  workspaceWatcher = startWatcherWorker(
+    'workspace',
+    (filePath, eventType) => {
+      if (eventType === 'add' || eventType === 'change') {
+        handleFileChangeDebounced(filePath);
+      }
+    },
+    () => startWatcher()
+  );
 
   log.info('Watcher', `Watching ${WORKSPACE_PATH} with ${WORKSPACE_WATCH_POLL_INTERVAL_MS}ms polling`);
 }
 
 function stopWatcher() {
-  if (workspaceWatcher) {
-    workspaceWatcher.close();
-    workspaceWatcher = null;
-  }
+  stopWatcherWorker('workspace', 'workspace');
   if (debounceTimer) {
     clearTimeout(debounceTimer);
     debounceTimer = null;
@@ -640,28 +714,18 @@ function startTriggerWatcher() {
   }
 
   if (triggerWatcher) {
-    triggerWatcher.close();
+    stopWatcherWorker('trigger', 'trigger', { reason: 'restart', clearRestart: false });
   }
 
-  triggerWatcher = chokidar.watch(TRIGGER_PATH, {
-    ignoreInitial: true,
-    persistent: true,
-    usePolling: true,
-    interval: 300,           // S94: 300ms polling (was 50ms). WebSocket is primary channel now.
-    binaryInterval: 300,
-    awaitWriteFinish: false, // Don't wait - immediate processing
-    atomic: false,           // Skip atomic write detection for speed
-    ignored: [
-      /\.tmp$/,              // Ignore temp files
-      /~$/,                  // Ignore backup files
-    ],
-  });
-
-  triggerWatcher.on('add', handleTriggerChange);
-  triggerWatcher.on('change', handleTriggerChange);
-  triggerWatcher.on('error', (err) => {
-    log.error('FastTrigger', 'Trigger watcher error', err);
-  });
+  triggerWatcher = startWatcherWorker(
+    'trigger',
+    (filePath, eventType) => {
+      if (eventType === 'add' || eventType === 'change') {
+        handleTriggerChange(filePath);
+      }
+    },
+    () => startTriggerWatcher()
+  );
 
   log.info('FastTrigger', `Watching ${TRIGGER_PATH} with 300ms polling`);
 }
@@ -670,9 +734,7 @@ function startTriggerWatcher() {
  * Stop the fast trigger watcher
  */
 function stopTriggerWatcher() {
-  if (triggerWatcher) {
-    triggerWatcher.close();
-    triggerWatcher = null;
+  if (stopWatcherWorker('trigger', 'trigger')) {
     log.info('FastTrigger', 'Stopped');
   }
   // Clear any pending retry timers
@@ -1006,21 +1068,18 @@ function startMessageWatcher() {
   }
 
   if (messageWatcher) {
-    messageWatcher.close();
+    stopWatcherWorker('message', 'message', { reason: 'restart', clearRestart: false });
   }
 
-  messageWatcher = chokidar.watch(MESSAGE_QUEUE_DIR, {
-    ignoreInitial: true,
-    persistent: true,
-    usePolling: true,  // Windows fix - bash echo doesn't trigger native fs events
-    interval: 1000,    // Poll every 1 second
-  });
-
-  messageWatcher.on('change', handleMessageQueueChange);
-  messageWatcher.on('add', handleMessageQueueChange);
-  messageWatcher.on('error', (err) => {
-    log.error('MessageQueue', 'Message watcher error', err);
-  });
+  messageWatcher = startWatcherWorker(
+    'message',
+    (filePath, eventType) => {
+      if (eventType === 'add' || eventType === 'change') {
+        handleMessageQueueChange(filePath);
+      }
+    },
+    () => startMessageWatcher()
+  );
 
   log.info('MessageQueue', `Watching ${MESSAGE_QUEUE_DIR}`);
 }
@@ -1029,10 +1088,7 @@ function startMessageWatcher() {
  * Stop message queue watcher
  */
 function stopMessageWatcher() {
-  if (messageWatcher) {
-    messageWatcher.close();
-    messageWatcher = null;
-  }
+  stopWatcherWorker('message', 'message');
 }
 
 module.exports = {
