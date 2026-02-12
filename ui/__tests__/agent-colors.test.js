@@ -164,4 +164,25 @@ describe('agent-colors', () => {
     expect(resetDeco.x).toBe(matchEnd);
     expect(resetDeco.width).toBe(text.length - matchEnd);
   });
+
+  test('does NOT create duplicate decorations when cursor stays on same line', () => {
+    const text = '(ANA #1): same line, no new output';
+    const terminal = createTerminal({
+      lines: { 0: createLine(text) },
+      cursorY: 0,
+      baseY: 0,
+    });
+
+    attachAgentColors('5', terminal);
+
+    // First callback — should create decorations
+    terminal.triggerWriteParsed();
+    const countAfterFirst = terminal.registerDecoration.mock.calls.length;
+    expect(countAfterFirst).toBeGreaterThan(0);
+
+    // Second callback with same cursor position — should NOT create more
+    terminal.triggerWriteParsed();
+    const countAfterSecond = terminal.registerDecoration.mock.calls.length;
+    expect(countAfterSecond).toBe(countAfterFirst);
+  });
 });
