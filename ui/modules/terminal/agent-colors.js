@@ -43,6 +43,8 @@ function attachAgentColors(paneId, terminal) {
   }
 
   let lastScannedLine = 0;
+  // Track decorations per absolute line so we can dispose stale ones on rescan
+  const lineDecorations = new Map(); // lineNumber → { color, disposables[] }
 
   const disposable = terminal.onWriteParsed(() => {
     const buf = terminal.buffer?.active;
@@ -53,10 +55,22 @@ function attachAgentColors(paneId, terminal) {
     // Nothing new to scan — only reset on true backward jump (clear/reset),
     // not when cursor stays on the same line between callbacks
     if ((currentLine + 1) < lastScannedLine) {
-      // Buffer was cleared or reset — resync
+      // Buffer was cleared or reset — dispose all tracked decorations and resync
+      for (const entry of lineDecorations.values()) {
+        for (const d of entry.disposables) {
+          try { d.dispose(); } catch { /* already disposed */ }
+        }
+      }
       lastScannedLine = 0;
+      lineDecorations.clear();
     }
     if (currentLine < lastScannedLine) return;
+
+    // Evict tracked lines that have scrolled out of the scrollback buffer
+    const minLine = buf.baseY - (terminal.options?.scrollback || 1000);
+    for (const ln of lineDecorations.keys()) {
+      if (ln < minLine) lineDecorations.delete(ln);
+    }
 
     // Scan from lastScannedLine to currentLine (inclusive)
     for (let y = lastScannedLine; y <= currentLine; y++) {
@@ -69,6 +83,19 @@ function attachAgentColors(paneId, terminal) {
       for (const { pattern, color } of AGENT_PATTERNS) {
         const match = text.match(pattern);
         if (match) {
+          // If this line already has decorations with the same color, skip
+          const existing = lineDecorations.get(y);
+          if (existing && existing.color === color) break;
+
+          // Dispose stale decorations from a previous agent on this line
+          if (existing) {
+            for (const d of existing.disposables) {
+              try { d.dispose(); } catch { /* already disposed */ }
+            }
+            lineDecorations.delete(y);
+          }
+
+          const disposables = [];
           try {
             const offset = y - (buf.baseY + buf.cursorY);
             const marker = terminal.registerMarker(offset);
@@ -86,7 +113,10 @@ function attachAgentColors(paneId, terminal) {
               });
               // Tie decoration lifetime to marker — when line scrolls off
               // scrollback buffer, xterm disposes the marker which cleans up the decoration.
-              if (deco) { marker.onDispose(() => deco.dispose()); }
+              if (deco) {
+                marker.onDispose(() => deco.dispose());
+                disposables.push(deco);
+              }
               // Reset decoration after the colored tag to prevent bleed
               if (matchEnd < contentLen) {
                 const resetMarker = terminal.registerMarker(offset);
@@ -99,7 +129,10 @@ function attachAgentColors(paneId, terminal) {
                     height: 1,
                     layer: 'top',
                   });
-                  if (resetDeco) { resetMarker.onDispose(() => resetDeco.dispose()); }
+                  if (resetDeco) {
+                    resetMarker.onDispose(() => resetDeco.dispose());
+                    disposables.push(resetDeco);
+                  }
                 }
               }
 
@@ -123,10 +156,17 @@ function attachAgentColors(paneId, terminal) {
                       height: 1,
                       layer: 'top',
                     });
-                    if (wrappedDeco) { wrappedMarker.onDispose(() => wrappedDeco.dispose()); }
+                    if (wrappedDeco) {
+                      wrappedMarker.onDispose(() => wrappedDeco.dispose());
+                      disposables.push(wrappedDeco);
+                    }
                   }
                 }
                 continuationLine += 1;
+              }
+
+              if (disposables.length > 0) {
+                lineDecorations.set(y, { color, disposables });
               }
             }
           } catch (e) {

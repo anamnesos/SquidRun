@@ -15,10 +15,14 @@ function createLine(text, isWrapped = false, { trimmedLength } = {}) {
   };
 }
 
-function createTerminal({ lines, cursorY = 0, baseY = 0, themeForeground } = {}) {
+function createTerminal({ lines, cursorY = 0, baseY = 0, themeForeground, scrollback } = {}) {
   let onWriteParsedCb = null;
   return {
-    options: themeForeground ? { theme: { foreground: themeForeground } } : {},
+    options: Object.assign(
+      {},
+      themeForeground ? { theme: { foreground: themeForeground } } : {},
+      scrollback != null ? { scrollback } : {},
+    ),
     onWriteParsed: jest.fn((cb) => {
       onWriteParsedCb = cb;
       return { dispose: jest.fn() };
@@ -30,8 +34,15 @@ function createTerminal({ lines, cursorY = 0, baseY = 0, themeForeground } = {})
         getLine: jest.fn((y) => lines[y] || null),
       },
     },
-    registerMarker: jest.fn(() => ({ id: 'marker' })),
-    registerDecoration: jest.fn(),
+    registerMarker: jest.fn(() => {
+      const disposeCallbacks = [];
+      return {
+        id: 'marker',
+        onDispose: jest.fn((cb) => disposeCallbacks.push(cb)),
+        _disposeCallbacks: disposeCallbacks,
+      };
+    }),
+    registerDecoration: jest.fn(() => ({ dispose: jest.fn() })),
     triggerWriteParsed: () => onWriteParsedCb && onWriteParsedCb(),
   };
 }
@@ -163,6 +174,75 @@ describe('agent-colors', () => {
     expect(resetDeco.foregroundColor).toBe('#f0f0f0');
     expect(resetDeco.x).toBe(matchEnd);
     expect(resetDeco.width).toBe(text.length - matchEnd);
+  });
+
+  test('disposes stale decorations when line agent color changes', () => {
+    // Scenario: line 0 first has an analyst message, then is overwritten with an architect message
+    const analystText = '(ANA #1): investigating issue';
+    const archText = '(ARCH #2): delegating fix';
+    const analystLine = createLine(analystText);
+    const archLine = createLine(archText);
+
+    const terminal = createTerminal({
+      lines: { 0: analystLine },
+      cursorY: 0,
+      baseY: 0,
+      themeForeground: '#f0f0f0',
+    });
+
+    attachAgentColors('1', terminal);
+
+    // First write: analyst message decorated
+    terminal.triggerWriteParsed();
+    const firstCallCount = terminal.registerDecoration.mock.calls.length;
+    expect(firstCallCount).toBeGreaterThan(0);
+
+    // Collect decorations created in the first pass
+    const firstDecos = terminal.registerDecoration.mock.results
+      .slice(0, firstCallCount)
+      .map(r => r.value);
+
+    // Overwrite line 0 with architect message — cursor stays at line 0
+    terminal.buffer.active.getLine.mockImplementation((y) => y === 0 ? archLine : null);
+    // Cursor hasn't advanced — but the content changed.
+    // Simulate a new write (e.g. terminal clear + rewrite on same line)
+    // Force rescan by resetting baseY+cursorY to trigger the backward-jump path
+    terminal.buffer.active.cursorY = 0;
+    terminal.buffer.active.baseY = 0;
+
+    // We need lastScannedLine to allow rescanning line 0.
+    // The backward-jump detection triggers when (currentLine+1) < lastScannedLine.
+    // After first scan, lastScannedLine = 1, currentLine = 0: (0+1) < 1 is false.
+    // So the guard returns early. But in real terminal behavior, a clear/reset
+    // would set currentLine below lastScannedLine significantly.
+    // Simulate a buffer clear: move cursor way back.
+    // Not needed for this test — the fix works at the lineDecorations tracking level.
+    // The real scenario is the same line being scanned again after a reset.
+
+    // Instead, test the tracking directly: simulate a full rescan by lowering baseY
+    // to trigger backward jump
+    terminal.buffer.active.baseY = 0;
+    terminal.buffer.active.cursorY = 0;
+    // Actually we need (currentLine+1) < lastScannedLine. currentLine=0, lastScannedLine=1.
+    // 1 < 1 is false. We need lastScannedLine > 1.
+    // Advance cursor to line 1 first, then back to 0.
+    terminal.buffer.active.cursorY = 1;
+    terminal.triggerWriteParsed(); // scan line 1 (empty), lastScannedLine = 2
+    terminal.buffer.active.cursorY = 0;
+    // Now currentLine=0, lastScannedLine=2. (0+1) < 2 is true → resync to 0.
+    terminal.triggerWriteParsed();
+
+    // Old analyst decorations should have been disposed
+    for (const d of firstDecos) {
+      if (d && d.dispose) {
+        expect(d.dispose).toHaveBeenCalled();
+      }
+    }
+
+    // New architect decorations should have been created
+    const allDecos = terminal.registerDecoration.mock.calls.map((call) => call[0]);
+    const archDeco = allDecos.find(d => d.foregroundColor === AGENT_COLORS.architect);
+    expect(archDeco).toBeDefined();
   });
 
   test('does NOT create duplicate decorations when cursor stays on same line', () => {
