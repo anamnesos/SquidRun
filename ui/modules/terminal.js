@@ -15,6 +15,7 @@ const bus = require('./event-bus');
 const settings = require('./settings');
 const compactionDetector = require('./compaction-detector');
 const contracts = require('./contracts');
+const contractPromotion = require('./contract-promotion');
 const transitionLedger = require('./transition-ledger');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
@@ -99,6 +100,8 @@ const terminalPaused = new Map(); // paneId -> boolean (is PTY paused)
 const HIGH_WATERMARK = 500000; // 500KB - pause producer
 const LOW_WATERMARK = 50000;   // 50KB - resume producer
 const TERMINAL_QUEUE_MAX_BYTES = 2 * 1024 * 1024; // 2MB absolute per-pane queue cap
+const PROMOTION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+let promotionCheckTimer = null;
 
 function maybeResumePtyProducer(paneId, watermark) {
   if (watermark < LOW_WATERMARK && terminalPaused.get(paneId)) {
@@ -1003,8 +1006,53 @@ const {
   aggressiveNudgeAll,
 } = recoveryController;
 
-// Initialize contracts (registers 4 day-1 enforced contracts on the bus)
+// Initialize contracts (registers enforced + shadow contracts on the bus)
 contracts.init(bus);
+
+function runPromotionCheck() {
+  const promoted = contractPromotion.checkPromotions();
+  contractPromotion.saveStats();
+  if (promoted.length > 0) {
+    log.info('ContractPromotion', `Promoted ${promoted.length} contract(s): ${promoted.join(', ')}`);
+  }
+  return promoted;
+}
+
+function stopPromotionCheckTimer() {
+  if (promotionCheckTimer) {
+    clearInterval(promotionCheckTimer);
+    promotionCheckTimer = null;
+  }
+}
+
+function startPromotionCheckTimer() {
+  stopPromotionCheckTimer();
+  promotionCheckTimer = setInterval(() => {
+    try {
+      runPromotionCheck();
+    } catch (err) {
+      log.error('ContractPromotion', 'Periodic promotion check failed', err);
+    }
+  }, PROMOTION_CHECK_INTERVAL_MS);
+
+  // In Node/Jest contexts, avoid keeping the process alive just for this timer.
+  if (promotionCheckTimer && typeof promotionCheckTimer.unref === 'function') {
+    promotionCheckTimer.unref();
+  }
+}
+
+function initPromotionEngine() {
+  contractPromotion.init(bus);
+
+  for (const contract of contracts.SHADOW_CONTRACTS || []) {
+    contractPromotion.incrementSession(contract.id);
+  }
+
+  runPromotionCheck();
+  startPromotionCheckTimer();
+}
+
+initPromotionEngine();
 
 // Initialize transition ledger scaffold (phase 2 transition objects)
 transitionLedger.init(bus);
@@ -2041,6 +2089,16 @@ module.exports = {
   searchAddons,        // Search addon instances
   openTerminalSearch,  // Open search bar for pane
   closeTerminalSearch, // Close search bar
+  // Contract promotion runtime wiring
+  runPromotionCheck,
+  stopPromotionCheckTimer,
+  _internals: {
+    get promotionCheckTimer() { return promotionCheckTimer; },
+    set promotionCheckTimer(v) { promotionCheckTimer = v; },
+    PROMOTION_CHECK_INTERVAL_MS,
+    startPromotionCheckTimer,
+    initPromotionEngine,
+  },
 };
 
 

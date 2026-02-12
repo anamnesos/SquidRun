@@ -24,15 +24,16 @@ describe('contracts', () => {
       expect(typeof contracts.init).toBe('function');
     });
 
-    test('exports CONTRACTS array with 4 contracts', () => {
+    test('exports CONTRACTS array with enforced and shadow contracts', () => {
       expect(Array.isArray(contracts.CONTRACTS)).toBe(true);
-      expect(contracts.CONTRACTS.length).toBe(4);
+      expect(contracts.CONTRACTS.length).toBe(5);
     });
 
     test('exports individual contract definitions', () => {
       expect(contracts.FOCUS_LOCK_GUARD).toBeDefined();
       expect(contracts.COMPACTION_GATE).toBeDefined();
       expect(contracts.OWNERSHIP_EXCLUSIVE).toBeDefined();
+      expect(contracts.OVERLAY_FIT_EXCLUSION_SHADOW).toBeDefined();
       expect(contracts.OVERLAY_FIT_EXCLUSION).toBeDefined();
     });
 
@@ -46,8 +47,16 @@ describe('contracts', () => {
         expect(c.preconditions.length).toBeGreaterThan(0);
         expect(c.severity).toBeDefined();
         expect(c.action).toBeDefined();
-        expect(c.mode).toBe('enforced');
+        expect(['enforced', 'shadow']).toContain(c.mode);
       }
+    });
+
+    test('exports shadow contract helpers', () => {
+      expect(Array.isArray(contracts.SHADOW_CONTRACTS)).toBe(true);
+      expect(contracts.SHADOW_CONTRACTS.map((c) => c.id)).toEqual(['overlay-fit-exclusion-shadow']);
+      expect(typeof contracts.getContractById).toBe('function');
+      expect(contracts.getContractById('overlay-fit-exclusion-shadow')).toBe(contracts.OVERLAY_FIT_EXCLUSION_SHADOW);
+      expect(contracts.getContractById('missing-id')).toBeNull();
     });
   });
 
@@ -285,6 +294,26 @@ describe('contracts', () => {
       const event = {};
       expect(precond(event, { overlay: { open: false } })).toBe(true);
       expect(precond(event, { overlay: { open: true } })).toBe(false);
+    });
+  });
+
+  describe('overlay-fit-exclusion-shadow', () => {
+    beforeEach(() => {
+      contracts.init(bus);
+    });
+
+    test('emits contract.shadow.violation and allows event through when overlay is open', () => {
+      bus.updateState('system', { overlay: { open: true } });
+      const shadowHandler = jest.fn();
+      const resizeHandler = jest.fn();
+      bus.on('contract.shadow.violation', shadowHandler);
+      bus.on('resize.started', resizeHandler);
+
+      bus.emit('resize.started', { paneId: 'system', payload: {} });
+
+      expect(shadowHandler).toHaveBeenCalledTimes(1);
+      expect(shadowHandler.mock.calls[0][0].payload.contractId).toBe('overlay-fit-exclusion-shadow');
+      expect(resizeHandler).toHaveBeenCalledTimes(1);
     });
   });
 

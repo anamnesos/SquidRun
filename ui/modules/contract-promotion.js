@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const contracts = require('./contracts');
 
 const STATS_PATH = path.join(__dirname, '..', '..', 'workspace', 'contract-stats.json');
 const MIN_SESSIONS = 5;
@@ -18,6 +19,16 @@ const REQUIRED_SIGNOFFS = 2;
 
 let bus = null;
 let stats = { contracts: {} };
+
+function getPromotedContractDefinition(contractId) {
+  const base = contracts.getContractById(contractId);
+  if (!base) return null;
+  return {
+    ...base,
+    mode: 'enforced',
+    emitOnViolation: 'contract.violation',
+  };
+}
 
 /**
  * Load stats from disk
@@ -133,18 +144,10 @@ function checkPromotions() {
 
       // Re-register the contract as enforced on the bus
       if (bus) {
-        bus.registerContract({
-          id: contractId,
-          version: 1,
-          owner: 'contract-promotion.js',
-          appliesTo: [], // caller must provide full contract definition
-          preconditions: [],
-          severity: 'block',
-          action: 'block',
-          fallbackAction: 'block',
-          mode: 'enforced',
-          emitOnViolation: 'contract.violation',
-        });
+        const promotedDefinition = getPromotedContractDefinition(contractId);
+        if (promotedDefinition) {
+          bus.registerContract(promotedDefinition);
+        }
 
         bus.emit('contract.promoted', {
           paneId: 'system',
@@ -152,6 +155,7 @@ function checkPromotions() {
             contractId,
             sessionsTracked: entry.sessionsTracked,
             shadowViolations: entry.shadowViolations,
+            contractDefinitionFound: Boolean(promotedDefinition),
           },
           source: 'contract-promotion.js',
         });
@@ -210,6 +214,7 @@ module.exports = {
   isReadyForPromotion,
   // Testing
   reset,
+  getPromotedContractDefinition,
   // Constants
   MIN_SESSIONS,
   REQUIRED_SIGNOFFS,
