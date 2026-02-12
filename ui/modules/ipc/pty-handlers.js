@@ -6,9 +6,9 @@
  */
 
 const log = require('../logger');
-const DEFAULT_CHUNK_SIZE = 192;
-const MIN_CHUNK_SIZE = 128;
-const MAX_CHUNK_SIZE = 256;
+const DEFAULT_CHUNK_SIZE = 2048;
+const MIN_CHUNK_SIZE = 1024;
+const MAX_CHUNK_SIZE = 8192;
 const WRITE_ACK_TIMEOUT_MS = 2500;
 
 function clampChunkSize(value) {

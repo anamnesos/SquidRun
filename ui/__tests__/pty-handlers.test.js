@@ -144,10 +144,10 @@ describe('PTY Handlers', () => {
   describe('pty-write-chunked', () => {
     test('writes chunked data when daemon connected', async () => {
       ctx.daemonClient.connected = true;
-      const payload = 'A'.repeat(420);
-      const result = await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 192 });
+      const payload = 'A'.repeat(4200);
+      const result = await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 2048 });
 
-      expect(result).toEqual({ success: true, chunks: 3, chunkSize: 192 });
+      expect(result).toEqual({ success: true, chunks: 3, chunkSize: 2048 });
       expect(ctx.daemonClient.write).toHaveBeenCalledTimes(3);
       const sent = ctx.daemonClient.write.mock.calls.map(call => call[1]).join('');
       expect(sent).toBe(payload);
@@ -155,7 +155,7 @@ describe('PTY Handlers', () => {
 
     test('does nothing when daemon not connected', async () => {
       ctx.daemonClient.connected = false;
-      const result = await harness.invoke('pty-write-chunked', '1', 'test data', { chunkSize: 192 });
+      const result = await harness.invoke('pty-write-chunked', '1', 'test data', { chunkSize: 2048 });
 
       expect(result).toBeUndefined();
       expect(ctx.daemonClient.write).not.toHaveBeenCalled();
@@ -163,18 +163,18 @@ describe('PTY Handlers', () => {
 
     test('clamps chunk size to allowed bounds', async () => {
       ctx.daemonClient.connected = true;
-      const payload = 'B'.repeat(600);
+      const payload = 'B'.repeat(20000);
 
       const result = await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 9999 });
 
-      expect(result).toEqual({ success: true, chunks: 3, chunkSize: 256 });
+      expect(result).toEqual({ success: true, chunks: 3, chunkSize: 8192 });
       expect(ctx.daemonClient.write).toHaveBeenCalledTimes(3);
-      expect(ctx.daemonClient.write.mock.calls[0][1]).toHaveLength(256);
+      expect(ctx.daemonClient.write.mock.calls[0][1]).toHaveLength(8192);
     });
 
     test('forwards chunk kernel metadata with unique event ids', async () => {
       ctx.daemonClient.connected = true;
-      const payload = 'C'.repeat(300);
+      const payload = 'C'.repeat(3000);
       const kernelMeta = {
         eventId: 'evt-1',
         correlationId: 'corr-1',
@@ -182,7 +182,7 @@ describe('PTY Handlers', () => {
         source: 'injection.js',
       };
 
-      await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 192 }, kernelMeta);
+      await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 2048 }, kernelMeta);
 
       expect(ctx.daemonClient.write).toHaveBeenCalledTimes(2);
       expect(ctx.daemonClient.write.mock.calls[0][2]).toEqual(expect.objectContaining({
@@ -204,11 +204,11 @@ describe('PTY Handlers', () => {
     test('uses writeAndWaitAck when daemon supports ack handshake', async () => {
       ctx.daemonClient.connected = true;
       ctx.daemonClient.writeAndWaitAck = jest.fn().mockResolvedValue({ success: true, status: 'accepted' });
-      const payload = 'D'.repeat(420);
+      const payload = 'D'.repeat(4200);
 
-      const result = await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 192 });
+      const result = await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 2048 });
 
-      expect(result).toEqual({ success: true, chunks: 3, chunkSize: 192 });
+      expect(result).toEqual({ success: true, chunks: 3, chunkSize: 2048 });
       expect(ctx.daemonClient.writeAndWaitAck).toHaveBeenCalledTimes(3);
     });
 
@@ -220,7 +220,7 @@ describe('PTY Handlers', () => {
         error: 'write ack timeout after 2500ms',
       });
 
-      const result = await harness.invoke('pty-write-chunked', '1', 'hello world', { chunkSize: 192 });
+      const result = await harness.invoke('pty-write-chunked', '1', 'hello world', { chunkSize: 2048 });
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('write ack timeout');
