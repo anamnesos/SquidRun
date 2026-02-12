@@ -40,7 +40,8 @@ let safeModeTimer = null;
 let telemetryEnabled = true;
 const BUFFER_MAX_SIZE = 1000;
 const BUFFER_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes
-const BUFFER_HARD_CAP = 7500; // Absolute safety valve for sustained bursts
+const BUFFER_HARD_CAP = 2000; // Absolute safety valve for sustained bursts
+const BUFFER_EVICT_HIGH_WATERMARK = 1200; // Burst pressure threshold for aggressive trim
 let ringBuffer = [];
 let noisyTypeCounters = new Map();
 const NOISY_TELEMETRY_RULES = Object.freeze([
@@ -311,14 +312,14 @@ function shouldDropNoisyTelemetry(event) {
 
 function evictBuffer() {
   const now = typeof Date.now === 'function' ? Date.now() : Date.now();
-  // Spec: max(1000 events, 5 minutes) — buffer EXPANDS beyond 1000 during bursts
-  // to preserve the 5-minute window. Only evict when BOTH conditions met:
-  // length > BUFFER_MAX_SIZE AND oldest event is older than BUFFER_MAX_AGE_MS
+  // Keep recent history, but trim faster under sustained burst pressure.
   while (ringBuffer.length > BUFFER_MAX_SIZE && ringBuffer.length > 0) {
-    if (now - ringBuffer[0].ts > BUFFER_MAX_AGE_MS) {
+    const oldest = ringBuffer[0];
+    const oldestAge = oldest ? (now - oldest.ts) : 0;
+    if (oldestAge > BUFFER_MAX_AGE_MS || ringBuffer.length > BUFFER_EVICT_HIGH_WATERMARK) {
       ringBuffer.shift();
     } else {
-      break; // Oldest event is within time window — keep it (burst expansion)
+      break;
     }
   }
 }

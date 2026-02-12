@@ -576,7 +576,7 @@ describe('event-bus', () => {
       }
 
       const buf = bus.getBuffer();
-      expect(buf.length).toBeLessThanOrEqual(7500);
+      expect(buf.length).toBeLessThanOrEqual(2000);
       expect(buf[0].type).toBe('hardcap.fill');
     });
 
@@ -1397,7 +1397,7 @@ describe('event-bus', () => {
 
     test('returns hardCap', () => {
       const stats = bus.getBufferStats();
-      expect(stats.hardCap).toBe(7500);
+      expect(stats.hardCap).toBe(2000);
     });
 
     test('returns oldest and newest timestamps', () => {
@@ -1449,7 +1449,7 @@ describe('event-bus', () => {
       bus.setTelemetryEnabled(false);
       const stats = bus.getBufferStats();
       expect(stats.size).toBe(0);
-      expect(stats.hardCap).toBe(7500);
+      expect(stats.hardCap).toBe(2000);
       expect(stats.eventTypeCounts).toEqual({});
     });
   });

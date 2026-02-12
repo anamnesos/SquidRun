@@ -38,6 +38,41 @@ let organicUIInstance = null;
 let pendingWarRoomMessages = [];
 const MAX_PENDING_WAR_ROOM_MESSAGES = 500;
 let pendingWarRoomDroppedCount = 0;
+const RENDERER_IPC_CHANNELS = Object.freeze([
+  'feature-capabilities-updated',
+  'global-escape-pressed',
+  'watchdog-alert',
+  'heartbeat-state-changed',
+  'nudge-pane',
+  'unstick-pane',
+  'restart-pane',
+  'restart-all-panes',
+  'task-list-updated',
+  'codex-activity',
+  'agent-stuck-detected',
+  'sdk-message',
+  'sdk-streaming',
+  'sdk-text-delta',
+  'sdk-thinking-delta',
+  'sdk-session-start',
+  'sdk-session-end',
+  'sdk-error',
+  'sdk-message-delivered',
+  'pane-cli-identity',
+  'direct-message-sent',
+  'auto-handoff',
+  'war-room-message',
+  'agent-online',
+  'agent-offline',
+  'agent-state-changed',
+]);
+
+function clearRendererIpcListeners() {
+  if (typeof ipcRenderer.removeAllListeners !== 'function') return;
+  for (const channel of RENDERER_IPC_CHANNELS) {
+    ipcRenderer.removeAllListeners(channel);
+  }
+}
 
 function enqueuePendingWarRoomMessage(message) {
   if (!message) return;
@@ -373,16 +408,52 @@ Object.assign(window.hivemind, {
     pause: (paneId) => ipcRenderer.invoke('pty-pause', paneId),
     resume: (paneId) => ipcRenderer.invoke('pty-resume', paneId),
     onData: (paneId, callback) => {
-      ipcRenderer.on(`pty-data-${paneId}`, (event, data) => callback(data));
+      const channel = `pty-data-${paneId}`;
+      const listener = (event, data) => callback(data);
+      ipcRenderer.on(channel, listener);
+      return () => {
+        if (typeof ipcRenderer.off === 'function') {
+          ipcRenderer.off(channel, listener);
+        } else if (typeof ipcRenderer.removeListener === 'function') {
+          ipcRenderer.removeListener(channel, listener);
+        }
+      };
     },
     onExit: (paneId, callback) => {
-      ipcRenderer.on(`pty-exit-${paneId}`, (event, code) => callback(code));
+      const channel = `pty-exit-${paneId}`;
+      const listener = (event, code) => callback(code);
+      ipcRenderer.on(channel, listener);
+      return () => {
+        if (typeof ipcRenderer.off === 'function') {
+          ipcRenderer.off(channel, listener);
+        } else if (typeof ipcRenderer.removeListener === 'function') {
+          ipcRenderer.removeListener(channel, listener);
+        }
+      };
     },
     onKernelBridgeEvent: (callback) => {
-      ipcRenderer.on('kernel:bridge-event', (event, data) => callback(data));
+      const channel = 'kernel:bridge-event';
+      const listener = (event, data) => callback(data);
+      ipcRenderer.on(channel, listener);
+      return () => {
+        if (typeof ipcRenderer.off === 'function') {
+          ipcRenderer.off(channel, listener);
+        } else if (typeof ipcRenderer.removeListener === 'function') {
+          ipcRenderer.removeListener(channel, listener);
+        }
+      };
     },
     onKernelBridgeStats: (callback) => {
-      ipcRenderer.on('kernel:bridge-stats', (event, data) => callback(data));
+      const channel = 'kernel:bridge-stats';
+      const listener = (event, data) => callback(data);
+      ipcRenderer.on(channel, listener);
+      return () => {
+        if (typeof ipcRenderer.off === 'function') {
+          ipcRenderer.off(channel, listener);
+        } else if (typeof ipcRenderer.removeListener === 'function') {
+          ipcRenderer.removeListener(channel, listener);
+        }
+      };
     },
   },
   claude: {
@@ -1414,6 +1485,11 @@ function setupEventListeners() {
 
 // Initialize on DOM load
 document.addEventListener('DOMContentLoaded', async () => {
+  clearRendererIpcListeners();
+  if (typeof daemonHandlers.teardownDaemonListeners === 'function') {
+    daemonHandlers.teardownDaemonListeners();
+  }
+
   // Setup all event handlers
   setupEventListeners();
   initMainPaneState();
