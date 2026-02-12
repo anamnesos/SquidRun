@@ -27,6 +27,7 @@ const { initStatusStrip } = require('./modules/status-strip');
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener } = require('./modules/model-selector');
 const bus = require('./modules/event-bus');
 const healthStrip = require('./modules/health-strip');
+const { clearScopedIpcListeners } = require('./modules/renderer-ipc-registry');
 
 // SDK mode flag - when true, use SDK renderer instead of xterm terminals
 let sdkMode = false;
@@ -38,6 +39,7 @@ let organicUIInstance = null;
 let pendingWarRoomMessages = [];
 const MAX_PENDING_WAR_ROOM_MESSAGES = 500;
 let pendingWarRoomDroppedCount = 0;
+const dynamicPtyIpcChannels = new Set();
 const RENDERER_IPC_CHANNELS = Object.freeze([
   'feature-capabilities-updated',
   'global-escape-pressed',
@@ -71,11 +73,43 @@ const RENDERER_IPC_CHANNELS = Object.freeze([
   'pane-model-changed',      // model-selector.js
 ]);
 
+function trackDynamicPtyIpcChannel(channel) {
+  if (typeof channel !== 'string') return;
+  if (channel.startsWith('pty-data-') || channel.startsWith('pty-exit-')) {
+    dynamicPtyIpcChannels.add(channel);
+  }
+}
+
+function untrackDynamicPtyIpcChannel(channel) {
+  if (!dynamicPtyIpcChannels.has(channel)) return;
+  if (typeof ipcRenderer.listenerCount === 'function' && ipcRenderer.listenerCount(channel) === 0) {
+    dynamicPtyIpcChannels.delete(channel);
+  }
+}
+
+function collectDynamicPtyIpcChannels() {
+  const channels = new Set(dynamicPtyIpcChannels);
+  if (typeof ipcRenderer.eventNames === 'function') {
+    for (const channel of ipcRenderer.eventNames()) {
+      if (typeof channel !== 'string') continue;
+      if (channel.startsWith('pty-data-') || channel.startsWith('pty-exit-')) {
+        channels.add(channel);
+      }
+    }
+  }
+  return channels;
+}
+
 function clearRendererIpcListeners() {
   if (typeof ipcRenderer.removeAllListeners !== 'function') return;
   for (const channel of RENDERER_IPC_CHANNELS) {
     ipcRenderer.removeAllListeners(channel);
   }
+  for (const channel of collectDynamicPtyIpcChannels()) {
+    ipcRenderer.removeAllListeners(channel);
+  }
+  dynamicPtyIpcChannels.clear();
+  clearScopedIpcListeners();
 }
 
 function enqueuePendingWarRoomMessage(message) {
@@ -414,6 +448,7 @@ Object.assign(window.hivemind, {
     onData: (paneId, callback) => {
       const channel = `pty-data-${paneId}`;
       const listener = (event, data) => callback(data);
+      trackDynamicPtyIpcChannel(channel);
       ipcRenderer.on(channel, listener);
       return () => {
         if (typeof ipcRenderer.off === 'function') {
@@ -421,11 +456,13 @@ Object.assign(window.hivemind, {
         } else if (typeof ipcRenderer.removeListener === 'function') {
           ipcRenderer.removeListener(channel, listener);
         }
+        untrackDynamicPtyIpcChannel(channel);
       };
     },
     onExit: (paneId, callback) => {
       const channel = `pty-exit-${paneId}`;
       const listener = (event, code) => callback(code);
+      trackDynamicPtyIpcChannel(channel);
       ipcRenderer.on(channel, listener);
       return () => {
         if (typeof ipcRenderer.off === 'function') {
@@ -433,6 +470,7 @@ Object.assign(window.hivemind, {
         } else if (typeof ipcRenderer.removeListener === 'function') {
           ipcRenderer.removeListener(channel, listener);
         }
+        untrackDynamicPtyIpcChannel(channel);
       };
     },
     onKernelBridgeEvent: (callback) => {

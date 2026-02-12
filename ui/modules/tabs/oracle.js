@@ -7,6 +7,7 @@
 const { ipcRenderer } = require('electron');
 const log = require('../logger');
 const { escapeHtml } = require('./utils');
+const { registerScopedIpcListener } = require('../renderer-ipc-registry');
 
 let imageGenAvailable = true; // optimistic default until capabilities load
 
@@ -137,7 +138,7 @@ function setupOracleTab(updateStatusFn) {
   }).catch(() => {});
 
   // Listen for dynamic capability updates (e.g. keys added/removed)
-  ipcRenderer.on('feature-capabilities-updated', (event, caps) => {
+  registerScopedIpcListener('tab-oracle', 'feature-capabilities-updated', (event, caps) => {
     if (caps) applyImageGenCapability(generateBtn, caps);
   });
 
@@ -180,7 +181,7 @@ function setupOracleTab(updateStatusFn) {
   }
 
   // Listen for agent-triggered image generation results pushed from main process
-  ipcRenderer.on('oracle:image-generated', (event, data) => {
+  registerScopedIpcListener('tab-oracle', 'oracle:image-generated', (event, data) => {
     if (!data || !data.imagePath) return;
 
     if (resultsEl) resultsEl.innerHTML = '';

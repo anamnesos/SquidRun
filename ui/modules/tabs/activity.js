@@ -6,6 +6,7 @@
 const { ipcRenderer } = require('electron');
 const log = require('../logger');
 const { PANE_ROLES } = require('../../config');
+const { registerScopedIpcListener } = require('../renderer-ipc-registry');
 
 let activityLog = [];
 let activityFilter = 'all';
@@ -216,7 +217,7 @@ function setupActivityTab() {
   if (exportBtn) exportBtn.addEventListener('click', exportActivityLog);
 
   // Listen for activity events
-  ipcRenderer.on('activity-logged', (event, entry) => {
+  registerScopedIpcListener('tab-activity', 'activity-logged', (event, entry) => {
     addActivityEntry(entry);
   });
 
