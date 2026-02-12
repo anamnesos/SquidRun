@@ -23,11 +23,11 @@ const {
 const { debounceButton, applyShortcutTooltips } = require('./modules/utils');
 const { initCommandPalette } = require('./modules/command-palette');
 const { initCustomTargetDropdown } = require('./modules/target-dropdown');
-const { initStatusStrip } = require('./modules/status-strip');
+const { initStatusStrip, hasClaimableTasks, getClaimableTasksForPane } = require('./modules/status-strip');
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener } = require('./modules/model-selector');
 const bus = require('./modules/event-bus');
 const healthStrip = require('./modules/health-strip');
-const { clearScopedIpcListeners } = require('./modules/renderer-ipc-registry');
+const { clearScopedIpcListeners, registerScopedIpcListener } = require('./modules/renderer-ipc-registry');
 
 // SDK mode flag - when true, use SDK renderer instead of xterm terminals
 let sdkMode = false;
@@ -41,7 +41,8 @@ const MAX_PENDING_WAR_ROOM_MESSAGES = 500;
 let pendingWarRoomDroppedCount = 0;
 const dynamicPtyIpcChannels = new Set();
 const RENDERER_IPC_CHANNELS = Object.freeze([
-  'feature-capabilities-updated',
+  // 'feature-capabilities-updated' — scoped listeners only (renderer + oracle.js), cleaned by clearScopedIpcListeners
+  // 'task-list-updated' — scoped listener in status-strip.js (SSOT), cleaned by clearScopedIpcListeners
   'global-escape-pressed',
   'watchdog-alert',
   'heartbeat-state-changed',
@@ -49,7 +50,6 @@ const RENDERER_IPC_CHANNELS = Object.freeze([
   'unstick-pane',
   'restart-pane',
   'restart-all-panes',
-  'task-list-updated',
   'codex-activity',
   'agent-stuck-detected',
   'sdk-message',
@@ -645,44 +645,7 @@ function updateConnectionStatus(status) {
 // Agent Health Dashboard (#1) - update health indicators per pane
 // Constants imported from modules/constants.js: UI_STUCK_THRESHOLD_MS, UI_IDLE_CLAIM_THRESHOLD_MS
 
-// Smart Parallelism Phase 3 - Domain ownership mapping
-const PANE_DOMAIN_MAP = {
-  '1': 'architecture',  // Architect
-  '2': 'devops',        // DevOps (Infra + Backend)
-  '5': 'analysis',      // Analyst
-};
-
-// Track available claimable tasks per domain (updated via IPC)
-let claimableTasksCache = {
-  tasks: [],
-  lastUpdated: 0
-};
-
-// Check if there are claimable tasks for a given pane's domain
-function hasClaimableTasks(paneId) {
-  const domain = PANE_DOMAIN_MAP[paneId];
-  if (!domain) return false; // Reviewer can't self-claim
-
-  return claimableTasksCache.tasks.some(task =>
-    task.status === 'open' &&
-    !task.owner &&
-    task.metadata?.domain === domain &&
-    (!task.blockedBy || task.blockedBy.length === 0)
-  );
-}
-
-// Get claimable tasks for a pane's domain
-function getClaimableTasksForPane(paneId) {
-  const domain = PANE_DOMAIN_MAP[paneId];
-  if (!domain) return [];
-
-  return claimableTasksCache.tasks.filter(task =>
-    task.status === 'open' &&
-    !task.owner &&
-    task.metadata?.domain === domain &&
-    (!task.blockedBy || task.blockedBy.length === 0)
-  );
-}
+// Smart Parallelism - hasClaimableTasks / getClaimableTasksForPane imported from status-strip.js (SSOT)
 
 // formatTimeSince now imported from ./modules/formatters
 
@@ -1340,8 +1303,8 @@ function setupEventListeners() {
     }
   }).catch(() => {});
 
-  // Listen for dynamic capability updates
-  ipcRenderer.on('feature-capabilities-updated', (event, caps) => {
+  // Listen for dynamic capability updates (scoped for consistent cleanup)
+  registerScopedIpcListener('renderer-voice', 'feature-capabilities-updated', (event, caps) => {
     if (caps) {
       voiceCapabilityAvailable = !!caps.voiceTranscriptionAvailable;
       updateVoiceUI(voiceCapabilityAvailable ? 'Voice ready' : 'No API key');
@@ -1675,25 +1638,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // Smart Parallelism - Task list updates for claim button visibility
-  ipcRenderer.on('task-list-updated', (event, data) => {
-    if (data && Array.isArray(data.tasks)) {
-      claimableTasksCache.tasks = data.tasks;
-      claimableTasksCache.lastUpdated = Date.now();
-      log.info('Tasks', `Task list updated: ${data.tasks.length} tasks`);
-    }
-  });
-
-  // Request initial task list on startup
-  ipcRenderer.invoke('get-task-list').then(tasks => {
-    if (Array.isArray(tasks)) {
-      claimableTasksCache.tasks = tasks;
-      claimableTasksCache.lastUpdated = Date.now();
-      log.info('Tasks', `Initial task list: ${tasks.length} tasks`);
-    }
-  }).catch(err => {
-    log.warn('Tasks', 'Failed to get initial task list:', err);
-  });
+  // Task list updates handled by status-strip.js (SSOT for task-list-updated IPC)
 
   // Codex activity indicator - update pane status based on Codex exec activity
   // State labels for UI display

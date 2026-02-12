@@ -13,6 +13,39 @@ let sessionStartTime = Date.now();
 // Cached task pool data
 let cachedTaskPool = { tasks: [] };
 
+// Smart Parallelism Phase 3 - Domain ownership mapping
+const PANE_DOMAIN_MAP = {
+  '1': 'architecture',  // Architect
+  '2': 'devops',        // DevOps (Infra + Backend)
+  '5': 'analysis',      // Analyst
+};
+
+// Check if there are claimable tasks for a given pane's domain
+function hasClaimableTasks(paneId) {
+  const domain = PANE_DOMAIN_MAP[paneId];
+  if (!domain) return false;
+
+  return cachedTaskPool.tasks.some(task =>
+    task.status === 'open' &&
+    !task.owner &&
+    task.metadata?.domain === domain &&
+    (!task.blockedBy || task.blockedBy.length === 0)
+  );
+}
+
+// Get claimable tasks for a pane's domain
+function getClaimableTasksForPane(paneId) {
+  const domain = PANE_DOMAIN_MAP[paneId];
+  if (!domain) return [];
+
+  return cachedTaskPool.tasks.filter(task =>
+    task.status === 'open' &&
+    !task.owner &&
+    task.metadata?.domain === domain &&
+    (!task.blockedBy || task.blockedBy.length === 0)
+  );
+}
+
 let sessionTimerInterval = null;
 let pollInterval = null;
 let initialized = false;
@@ -255,4 +288,6 @@ module.exports = {
   shutdownStatusStrip,
   fetchTaskPool,
   updateStatusStrip,
+  hasClaimableTasks,
+  getClaimableTasksForPane,
 };
