@@ -107,6 +107,12 @@ const TERMINAL_QUEUE_MAX_BYTES = 2 * 1024 * 1024; // 2MB absolute per-pane queue
 const PROMOTION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 let promotionCheckTimer = null;
 
+// AbortControllers for DOM listener cleanup (memory leak prevention)
+// Module-level controller for document listeners in initUIFocusTracker
+let uiFocusTrackerAbortController = null;
+// Per-pane controllers for container listeners (setupCopyPaste + click)
+const paneListenerAbortControllers = new Map();
+
 function maybeResumePtyProducer(paneId, watermark) {
   if (watermark < LOW_WATERMARK && terminalPaused.get(paneId)) {
     if (window.hivemind?.pty?.resume) {
@@ -385,21 +391,28 @@ function markUserUiActivity(el) {
 }
 
 function initUIFocusTracker() {
+  // Abort previous controller if re-initialized (destroy-before-setup)
+  if (uiFocusTrackerAbortController) {
+    uiFocusTrackerAbortController.abort();
+  }
+  uiFocusTrackerAbortController = new AbortController();
+  const { signal } = uiFocusTrackerAbortController;
+
   document.addEventListener('focusin', (e) => {
     const el = e.target;
     if (isNonTerminalUiInput(el)) {
       lastUserUIFocus = el;
     }
-  });
+  }, { signal });
 
   // Track user activity in UI inputs for typing guard.
   // keydown captures direct typing; input captures IME/paste/programmatic edits.
   document.addEventListener('keydown', (e) => {
     markUserUiActivity(e.target);
-  });
+  }, { signal });
   document.addEventListener('input', (e) => {
     markUserUiActivity(e.target);
-  });
+  }, { signal });
 }
 
 // Returns true if user is actively typing in a UI input
@@ -760,6 +773,13 @@ function disposeAddon(addon, paneId, name) {
 
 function teardownTerminalPane(paneId) {
   const id = String(paneId);
+
+  // Abort all DOM listeners for this pane (contextmenu, keydown, click)
+  const paneAbort = paneListenerAbortControllers.get(id);
+  if (paneAbort) {
+    paneAbort.abort();
+    paneListenerAbortControllers.delete(id);
+  }
 
   cleanupResizeObserver(id);
   clearStartupInjection(id);
@@ -1196,7 +1216,7 @@ function sendToPane(...args) {
 }
 
 // Setup copy/paste handlers
-function setupCopyPaste(container, terminal, paneId, statusMsg) {
+function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {}) {
   // Track selection - clear when empty to fix stale selection bug
   let lastSelection = '';
   terminal.onSelectionChange(() => {
@@ -1251,7 +1271,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
         setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
       }
     }
-  });
+  }, { signal });
 
   // Ctrl+C: Copy selection (if any)
   container.addEventListener('keydown', async (e) => {
@@ -1290,7 +1310,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
         setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
       }
     }
-  });
+  }, { signal });
 }
 
   // Initialize a single terminal
@@ -1299,6 +1319,12 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
     const container = document.getElementById(`terminal-${paneId}`);
     if (!container) return;
   teardownTerminalPane(paneId);
+
+  // Create AbortController for this pane's container DOM listeners (destroy-before-setup)
+  const paneAbortController = new AbortController();
+  paneListenerAbortControllers.set(paneId, paneAbortController);
+  const { signal: paneSignal } = paneAbortController;
+
   const terminal = createTerminalInstance();
   const fitAddon = new FitAddon();
   const webLinksAddon = new WebLinksAddon();
@@ -1397,7 +1423,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
     return true; // Allow xterm to handle normally
   });
 
-  setupCopyPaste(container, terminal, paneId, 'Connected');
+  setupCopyPaste(container, terminal, paneId, 'Connected', { signal: paneSignal });
 
   terminals.set(paneId, terminal);
   fitAddons.set(paneId, fitAddon);
@@ -1469,7 +1495,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg) {
 
   container.addEventListener('click', () => {
     focusPane(paneId);
-  });
+  }, { signal: paneSignal });
 }
 
 // Reattach to existing terminal (daemon reconnection)
@@ -1484,6 +1510,12 @@ async function reattachTerminal(paneId, scrollback) {
   }
 
   teardownTerminalPane(paneId);
+
+  // Create AbortController for this pane's container DOM listeners (destroy-before-setup)
+  const paneAbortController = new AbortController();
+  paneListenerAbortControllers.set(paneId, paneAbortController);
+  const { signal: paneSignal } = paneAbortController;
+
   const terminal = createTerminalInstance();
   const fitAddon = new FitAddon();
   const webLinksAddon = new WebLinksAddon();
@@ -1582,7 +1614,7 @@ async function reattachTerminal(paneId, scrollback) {
     return true;
   });
 
-  setupCopyPaste(container, terminal, paneId, 'Reconnected');
+  setupCopyPaste(container, terminal, paneId, 'Reconnected', { signal: paneSignal });
 
   terminals.set(paneId, terminal);
   fitAddons.set(paneId, fitAddon);
@@ -1643,7 +1675,7 @@ async function reattachTerminal(paneId, scrollback) {
 
   container.addEventListener('click', () => {
     focusPane(paneId);
-  });
+  }, { signal: paneSignal });
 }
 
 // Focus a specific pane
