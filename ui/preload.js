@@ -137,6 +137,13 @@ const hivemindApi = {
     applyTemplate: (templateId) => ipcRenderer.invoke('workflow-apply-template', { templateId }),
   },
 
+  // Contract promotion operations
+  contractPromotion: {
+    list: (payload = {}) => ipcRenderer.invoke('contract-promotion:list', payload),
+    approve: (payload = {}) => ipcRenderer.invoke('contract-promotion:approve', payload),
+    reject: (payload = {}) => ipcRenderer.invoke('contract-promotion:reject', payload),
+  },
+
   // Knowledge Graph operations
   graph: {
     query: (query, options) => ipcRenderer.invoke('graph-query', { query, ...options }),
