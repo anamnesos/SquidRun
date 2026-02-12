@@ -65,6 +65,10 @@ const RENDERER_IPC_CHANNELS = Object.freeze([
   'agent-online',
   'agent-offline',
   'agent-state-changed',
+  // Channels registered in submodules — must be cleaned up here too
+  'activity-logged',         // tabs/activity.js
+  'oracle:image-generated',  // tabs/oracle.js
+  'pane-model-changed',      // model-selector.js
 ]);
 
 function clearRendererIpcListeners() {
