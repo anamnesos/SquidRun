@@ -14,10 +14,16 @@ const hivemindApi = {
     resize: (paneId, cols, rows, kernelMeta = null) => ipcRenderer.invoke('pty-resize', paneId, cols, rows, kernelMeta),
     kill: (paneId) => ipcRenderer.invoke('pty-kill', paneId),
     onData: (paneId, callback) => {
-      ipcRenderer.on(`pty-data-${paneId}`, (event, data) => callback(data));
+      const channel = `pty-data-${paneId}`;
+      const handler = (event, data) => callback(data);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
     },
     onExit: (paneId, callback) => {
-      ipcRenderer.on(`pty-exit-${paneId}`, (event, code) => callback(code));
+      const channel = `pty-exit-${paneId}`;
+      const handler = (event, code) => callback(code);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
     },
     onKernelBridgeEvent: (callback) => {
       ipcRenderer.on('kernel:bridge-event', (event, data) => callback(data));

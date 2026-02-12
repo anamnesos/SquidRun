@@ -53,6 +53,7 @@ const terminals = new Map();
 const fitAddons = new Map();
 const searchAddons = new Map();
 const webglAddons = new Map();
+const agentColorDisposers = new Map();
 const ptyDataListenerDisposers = new Map();
 const ptyExitListenerDisposers = new Map();
 let focusedPane = '1';
@@ -803,6 +804,12 @@ function teardownTerminalPane(paneId) {
   detachTerminalInputBridge(id);
   detachPtyListeners(id);
   resetTerminalWriteQueue(id);
+  // Dispose agent color decorations listener
+  const agentColorDispose = agentColorDisposers.get(id);
+  if (agentColorDispose && typeof agentColorDispose.dispose === 'function') {
+    agentColorDispose.dispose();
+  }
+  agentColorDisposers.delete(id);
   ignoreExitUntil.delete(id);
 
   // Clean up codex identity tracking for this pane (prevents Set from growing forever)
@@ -1372,7 +1379,8 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 
   terminal.open(container);
   fitAddon.fit();
-  attachAgentColors(paneId, terminal);
+  const agentColorDisposable = attachAgentColors(paneId, terminal);
+  if (agentColorDisposable) { agentColorDisposers.set(paneId, agentColorDisposable); }
 
   // Sync PTY size to fitted terminal dimensions (PTY spawns at 80x24 by default)
   try {
@@ -1565,7 +1573,8 @@ async function reattachTerminal(paneId, scrollback) {
 
   terminal.open(container);
   fitAddon.fit();
-  attachAgentColors(paneId, terminal);
+  const agentColorDisposable = attachAgentColors(paneId, terminal);
+  if (agentColorDisposable) { agentColorDisposers.set(paneId, agentColorDisposable); }
 
   // Sync PTY size to fitted terminal dimensions (PTY already exists during reattach)
   try {
