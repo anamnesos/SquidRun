@@ -25,7 +25,7 @@ describe('logger', () => {
     // Create fs mock
     fsMock = {
       mkdirSync: jest.fn(),
-      appendFileSync: jest.fn(),
+      appendFile: jest.fn((filePath, data, encoding, cb) => cb(null)),
     };
 
     // Mock console
@@ -141,17 +141,21 @@ describe('logger', () => {
       );
     });
 
-    test('appends to app.log file', () => {
+    test('appends to app.log file', async () => {
       logger.info('Test', 'message');
-      expect(fsMock.appendFileSync).toHaveBeenCalledWith(
+      await logger._flushForTesting();
+      expect(fsMock.appendFile).toHaveBeenCalledWith(
         expect.stringContaining('app.log'),
-        expect.stringContaining('message')
+        expect.stringContaining('message'),
+        'utf8',
+        expect.any(Function)
       );
     });
 
-    test('serializes objects in file output', () => {
+    test('serializes objects in file output', async () => {
       logger.info('Test', 'payload', { value: 42 });
-      const line = fsMock.appendFileSync.mock.calls[0][1];
+      await logger._flushForTesting();
+      const line = fsMock.appendFile.mock.calls[0][1];
       expect(line).toContain('"value":42');
     });
 
@@ -161,12 +165,13 @@ describe('logger', () => {
       expect(fsMock.mkdirSync).toHaveBeenCalledTimes(1);
     });
 
-    test('continues logging if file write fails', () => {
-      fsMock.appendFileSync.mockImplementation(() => {
-        throw new Error('Write failed');
+    test('continues logging if file write fails', async () => {
+      fsMock.appendFile.mockImplementation((filePath, data, encoding, cb) => {
+        cb(new Error('Write failed'));
       });
 
       expect(() => logger.info('Test', 'message')).not.toThrow();
+      await logger._flushForTesting();
       expect(console.log).toHaveBeenCalled();
     });
 
@@ -230,7 +235,7 @@ describe('logger', () => {
   });
 
   describe('edge cases', () => {
-    test('handles circular reference in extra', () => {
+    test('handles circular reference in extra', async () => {
       const circular = {};
       circular.self = circular;
 
@@ -238,8 +243,9 @@ describe('logger', () => {
       expect(() => logger.info('Test', 'message', circular)).not.toThrow();
 
       // File output should use String() fallback for circular object
-      expect(fsMock.appendFileSync).toHaveBeenCalled();
-      const line = fsMock.appendFileSync.mock.calls[0][1];
+      await logger._flushForTesting();
+      expect(fsMock.appendFile).toHaveBeenCalled();
+      const line = fsMock.appendFile.mock.calls[0][1];
       expect(line).toContain('[object Object]');
     });
   });

@@ -15,61 +15,76 @@ describe('diagnostic-log', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     fs.mkdirSync.mockImplementation(() => {});
-    fs.appendFileSync.mockImplementation(() => {});
+    fs.appendFile.mockImplementation((filePath, data, encoding, cb) => cb(null));
   });
 
   describe('write', () => {
-    test('writes simple message', () => {
+    test('writes simple message', async () => {
       diagnosticLog.write('TEST', 'simple message');
+      await diagnosticLog._flushForTesting();
 
-      expect(fs.appendFileSync).toHaveBeenCalledWith(
+      expect(fs.appendFile).toHaveBeenCalledWith(
         expect.any(String),
-        expect.stringContaining('[TEST]')
+        expect.stringContaining('[TEST]'),
+        'utf8',
+        expect.any(Function)
       );
-      expect(fs.appendFileSync).toHaveBeenCalledWith(
+      expect(fs.appendFile).toHaveBeenCalledWith(
         expect.any(String),
-        expect.stringContaining('simple message')
+        expect.stringContaining('simple message'),
+        'utf8',
+        expect.any(Function)
       );
     });
 
-    test('writes message with string extra', () => {
+    test('writes message with string extra', async () => {
       diagnosticLog.write('TEST', 'message', 'extra string');
+      await diagnosticLog._flushForTesting();
 
-      expect(fs.appendFileSync).toHaveBeenCalledWith(
+      expect(fs.appendFile).toHaveBeenCalledWith(
         expect.any(String),
-        expect.stringContaining('extra string')
+        expect.stringContaining('extra string'),
+        'utf8',
+        expect.any(Function)
       );
     });
 
-    test('writes message with object extra', () => {
+    test('writes message with object extra', async () => {
       diagnosticLog.write('TEST', 'message', { key: 'value' });
+      await diagnosticLog._flushForTesting();
 
-      expect(fs.appendFileSync).toHaveBeenCalledWith(
+      expect(fs.appendFile).toHaveBeenCalledWith(
         expect.any(String),
-        expect.stringContaining('"key":"value"')
+        expect.stringContaining('"key":"value"'),
+        'utf8',
+        expect.any(Function)
       );
     });
 
-    test('handles circular reference in extra', () => {
+    test('handles circular reference in extra', async () => {
       const circular = {};
       circular.self = circular;
 
       // Should not throw
       expect(() => diagnosticLog.write('TEST', 'message', circular)).not.toThrow();
+      await diagnosticLog._flushForTesting();
 
-      expect(fs.appendFileSync).toHaveBeenCalledWith(
+      expect(fs.appendFile).toHaveBeenCalledWith(
         expect.any(String),
-        expect.stringContaining('[object Object]')
+        expect.stringContaining('[object Object]'),
+        'utf8',
+        expect.any(Function)
       );
     });
 
-    test('handles appendFileSync error gracefully', () => {
-      fs.appendFileSync.mockImplementation(() => {
-        throw new Error('Write failed');
+    test('handles appendFile error gracefully', async () => {
+      fs.appendFile.mockImplementation((filePath, data, encoding, cb) => {
+        cb(new Error('Write failed'));
       });
 
       // Should not throw
       expect(() => diagnosticLog.write('TEST', 'message')).not.toThrow();
+      await diagnosticLog._flushForTesting();
     });
 
     test('handles mkdirSync error gracefully', () => {
