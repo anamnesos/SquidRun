@@ -48,6 +48,14 @@ const mockSettings = {
 };
 jest.mock('../modules/settings', () => mockSettings);
 
+const mockContractPromotion = {
+  init: jest.fn(),
+  incrementSession: jest.fn(),
+  checkPromotions: jest.fn(() => []),
+  saveStats: jest.fn(),
+};
+jest.mock('../modules/contract-promotion', () => mockContractPromotion);
+
 // Mock window.hivemind
 const mockHivemind = {
   pty: {
@@ -143,9 +151,12 @@ describe('terminal.js module', () => {
     mockDocument.querySelector.mockReturnValue(null);
     mockDocument.querySelectorAll.mockReturnValue([]);
     mockDocument.activeElement = null;
+    mockContractPromotion.checkPromotions.mockReturnValue([]);
+    terminal.stopPromotionCheckTimer();
   });
 
   afterEach(() => {
+    terminal.stopPromotionCheckTimer();
     jest.useRealTimers();
   });
 
@@ -822,6 +833,35 @@ describe('terminal.js module', () => {
       await terminal.initTerminal('1');
 
       expect(Terminal).toHaveBeenCalledWith(expect.objectContaining({ scrollback: 5000 }));
+    });
+  });
+
+  describe('contract promotion runtime wiring', () => {
+    test('runPromotionCheck invokes checkPromotions and saveStats', () => {
+      mockContractPromotion.checkPromotions.mockReturnValue(['overlay-fit-exclusion-shadow']);
+
+      const result = terminal.runPromotionCheck();
+
+      expect(result).toEqual(['overlay-fit-exclusion-shadow']);
+      expect(mockContractPromotion.checkPromotions).toHaveBeenCalledTimes(1);
+      expect(mockContractPromotion.saveStats).toHaveBeenCalledTimes(1);
+    });
+
+    test('initPromotionEngine initializes promotion and increments shadow contract sessions', () => {
+      terminal._internals.initPromotionEngine();
+
+      expect(mockContractPromotion.init).toHaveBeenCalledTimes(1);
+      expect(mockContractPromotion.incrementSession).toHaveBeenCalledWith('overlay-fit-exclusion-shadow');
+      expect(mockContractPromotion.checkPromotions).toHaveBeenCalledTimes(1);
+      expect(mockContractPromotion.saveStats).toHaveBeenCalledTimes(1);
+    });
+
+    test('promotion timer triggers periodic checks', () => {
+      terminal._internals.startPromotionCheckTimer();
+      jest.advanceTimersByTime(terminal._internals.PROMOTION_CHECK_INTERVAL_MS);
+
+      expect(mockContractPromotion.checkPromotions).toHaveBeenCalledTimes(1);
+      expect(mockContractPromotion.saveStats).toHaveBeenCalledTimes(1);
     });
   });
 

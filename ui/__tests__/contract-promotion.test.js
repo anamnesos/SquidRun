@@ -13,6 +13,7 @@ jest.mock('fs', () => ({
 describe('contract-promotion', () => {
   let bus;
   let promotion;
+  let contracts;
   let fs;
 
   beforeEach(() => {
@@ -27,6 +28,7 @@ describe('contract-promotion', () => {
 
     bus = require('../modules/event-bus');
     bus.reset();
+    contracts = require('../modules/contracts');
     promotion = require('../modules/contract-promotion');
     promotion.reset();
   });
@@ -45,6 +47,7 @@ describe('contract-promotion', () => {
       expect(typeof promotion.recordFalsePositive).toBe('function');
       expect(typeof promotion.getStats).toBe('function');
       expect(typeof promotion.reset).toBe('function');
+      expect(typeof promotion.getPromotedContractDefinition).toBe('function');
     });
 
     test('exports constants', () => {
@@ -306,6 +309,46 @@ describe('contract-promotion', () => {
 
       const result = promotion.checkPromotions();
       expect(result).toEqual(['contract-a']);
+    });
+
+    test('registers a full enforced contract definition when promoting known shadow contract', () => {
+      const contractId = 'overlay-fit-exclusion-shadow';
+      for (let i = 0; i < 5; i++) {
+        promotion.incrementSession(contractId);
+      }
+      promotion.addSignoff(contractId, 'architect');
+      promotion.addSignoff(contractId, 'analyst');
+
+      const promoted = promotion.checkPromotions();
+      expect(promoted).toEqual([contractId]);
+
+      // Promoted definition should now enforce violation behavior on resize.started
+      bus.updateState('system', { overlay: { open: true } });
+      const enforcedHandler = jest.fn();
+      const shadowHandler = jest.fn();
+      bus.on('contract.violation', enforcedHandler);
+      bus.on('contract.shadow.violation', shadowHandler);
+      bus.emit('resize.started', { paneId: 'system', payload: {} });
+
+      expect(enforcedHandler).toHaveBeenCalledTimes(1);
+      expect(enforcedHandler.mock.calls[0][0].payload.contractId).toBe(contractId);
+      expect(shadowHandler).not.toHaveBeenCalled();
+    });
+
+    test('promotion payload marks missing contract definition for unknown IDs', () => {
+      const handler = jest.fn();
+      bus.on('contract.promoted', handler);
+
+      for (let i = 0; i < 5; i++) {
+        promotion.incrementSession('contract-a');
+      }
+      promotion.addSignoff('contract-a', 'architect');
+      promotion.addSignoff('contract-a', 'analyst');
+
+      promotion.checkPromotions();
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0][0].payload.contractDefinitionFound).toBe(false);
+      expect(contracts.getContractById('contract-a')).toBeNull();
     });
   });
 
