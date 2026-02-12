@@ -67,7 +67,7 @@ class HivemindApp {
     this.settings.ensureCodexConfig();
 
     // 4. Initialize Evidence Ledger runtime early (DB + optional seed)
-    const ledgerInit = initializeEvidenceLedgerRuntime({
+    const ledgerInit = await initializeEvidenceLedgerRuntime({
       runtimeOptions: {
         seedOptions: {
           enabled: true,
