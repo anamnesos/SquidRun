@@ -571,6 +571,47 @@ class EvidenceLedgerMemory {
     return this._mapSnapshot(row);
   }
 
+  _assembleSnapshotContent(sessionId, trigger, opts = {}) {
+    const session = this.getSession(sessionId);
+    if (session && session.ok === false) return session;
+
+    const baseContext = this.getLatestContext({
+      preferSnapshot: trigger === 'session_start',
+      directiveLimit: opts.directiveLimit,
+      issueLimit: opts.issueLimit,
+      roadmapLimit: opts.roadmapLimit,
+      completionLimit: opts.completionLimit,
+      architectureLimit: opts.architectureLimit,
+    });
+    if (baseContext && baseContext.ok === false) return baseContext;
+    if (!baseContext || typeof baseContext !== 'object') {
+      return { ok: false, reason: 'context_unavailable' };
+    }
+
+    const assembled = {
+      ...baseContext,
+      source: trigger === 'session_start'
+        ? 'ledger.session_start_snapshot'
+        : asNonEmptyString(baseContext.source, 'ledger'),
+    };
+
+    if (session && typeof session === 'object') {
+      assembled.session = session.sessionNumber;
+      assembled.date = toIsoDate(session.startedAtMs);
+      assembled.mode = asNonEmptyString(session.mode, asNonEmptyString(assembled.mode, 'PTY'));
+      assembled.status = session.endedAtMs ? 'READY' : 'ACTIVE';
+
+      if (Object.keys(session.stats || {}).length > 0 || !assembled.stats) {
+        assembled.stats = asObject(session.stats);
+      }
+      if (Object.keys(session.team || {}).length > 0 || !assembled.team) {
+        assembled.team = asObject(session.team);
+      }
+    }
+
+    return assembled;
+  }
+
   snapshotContext(sessionId, opts = {}) {
     const db = this._db();
     if (!db) return this._unavailable();
@@ -582,7 +623,7 @@ class EvidenceLedgerMemory {
 
     const content = opts.content && typeof opts.content === 'object'
       ? opts.content
-      : this.getLatestContext({ preferSnapshot: false });
+      : this._assembleSnapshotContent(id, trigger, opts);
     if (!content || content.ok === false) {
       return content && content.ok === false ? content : { ok: false, reason: 'context_unavailable' };
     }
@@ -700,8 +741,9 @@ class EvidenceLedgerMemory {
     const db = this._db();
     if (!db) return this._unavailable();
 
+    const requestedSessionId = asNonEmptyString(opts.sessionId, '');
     const preferSnapshot = opts.preferSnapshot === true;
-    const snapshot = this.getLatestSnapshot({ sessionId: opts.sessionId });
+    const snapshot = this.getLatestSnapshot({ sessionId: requestedSessionId });
     if (snapshot && snapshot.ok === false) return snapshot;
     if (preferSnapshot && snapshot?.content && typeof snapshot.content === 'object') {
       return {
@@ -710,10 +752,16 @@ class EvidenceLedgerMemory {
       };
     }
 
-    const latestSession = this.listSessions({ limit: 1, order: 'desc' });
-    if (latestSession && latestSession.ok === false) return latestSession;
-
-    const session = latestSession[0] || null;
+    let session = null;
+    if (requestedSessionId) {
+      const requestedSession = this.getSession(requestedSessionId);
+      if (requestedSession && requestedSession.ok === false) return requestedSession;
+      session = requestedSession || null;
+    } else {
+      const latestSession = this.listSessions({ limit: 1, order: 'desc' });
+      if (latestSession && latestSession.ok === false) return latestSession;
+      session = latestSession[0] || null;
+    }
     const directives = this.getActiveDirectives(clampLimit(opts.directiveLimit, 200, 1, 2000));
     const issues = this.getKnownIssues(undefined, clampLimit(opts.issueLimit, 500, 1, 5000));
     const roadmap = this.getRoadmap(clampLimit(opts.roadmapLimit, 500, 1, 5000));
