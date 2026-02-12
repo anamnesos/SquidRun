@@ -46,6 +46,9 @@ function createInjectionController(options = {}) {
     CLAUDE_CHUNK_THRESHOLD_BYTES = 8 * 1024,
     CLAUDE_CHUNK_YIELD_MS = 0,
     CLAUDE_ENTER_DELAY_MS = 50,
+    CLAUDE_ENTER_DELAY_SCALE_START_BYTES = 256,
+    CLAUDE_ENTER_DELAY_BYTES_PER_MS = 64,
+    CLAUDE_ENTER_DELAY_MAX_EXTRA_MS = 250,
     SUBMIT_ACCEPT_VERIFY_WINDOW_MS = 1200,
     SUBMIT_ACCEPT_POLL_MS = 50,
     SUBMIT_ACCEPT_RETRY_BACKOFF_MS = 250,
@@ -219,6 +222,22 @@ function createInjectionController(options = {}) {
     const terminal = terminals.get(paneId);
     const buffer = terminal?.buffer?.active;
     return !!(buffer && typeof buffer.getLine === 'function');
+  }
+
+  function computeScaledEnterDelayMs(baseDelayMs, payloadBytes, capabilities = {}) {
+    const base = Math.max(0, Number(baseDelayMs) || 0);
+    const byteLength = Math.max(0, Number(payloadBytes) || 0);
+    if (capabilities.enterMethod !== 'trusted') {
+      return base;
+    }
+
+    const scaleStartBytes = Math.max(0, Number(CLAUDE_ENTER_DELAY_SCALE_START_BYTES) || 256);
+    const bytesPerMs = Math.max(1, Number(CLAUDE_ENTER_DELAY_BYTES_PER_MS) || 64);
+    const maxExtraMs = Math.max(0, Number(CLAUDE_ENTER_DELAY_MAX_EXTRA_MS) || 250);
+    const bytesOverThreshold = Math.max(0, byteLength - scaleStartBytes);
+    const extraDelayMs = Math.ceil(bytesOverThreshold / bytesPerMs);
+
+    return base + Math.min(maxExtraMs, extraDelayMs);
   }
 
   async function deferSubmitWhilePaneActive(paneId) {
@@ -805,6 +824,8 @@ function createInjectionController(options = {}) {
     const payloadText = capabilities.sanitizeMultiline
       ? normalizedText.replace(/[\r\n]/g, ' ').trimEnd()
       : normalizedText;
+    const payloadBytes = Buffer.byteLength(payloadText, 'utf8');
+    const enterDelayMs = computeScaledEnterDelayMs(capabilities.enterDelayMs, payloadBytes, capabilities);
 
     // Defer before writing to avoid counting our own echoed input as "active output".
     if (capabilities.deferSubmitWhilePaneActive) {
@@ -835,7 +856,6 @@ function createInjectionController(options = {}) {
 
     try {
       if (capabilities.useChunkedWrite) {
-        const payloadBytes = Buffer.byteLength(payloadText, 'utf8');
         const chunkThresholdBytes = Math.max(1024, Number(CLAUDE_CHUNK_THRESHOLD_BYTES) || (8 * 1024));
         const shouldChunkWrite = payloadBytes > chunkThresholdBytes;
 
@@ -1040,7 +1060,7 @@ function createInjectionController(options = {}) {
       finishWithClear({
         ...successResult,
       });
-    }, capabilities.enterDelayMs);
+    }, enterDelayMs);
   }
   // Send message to a specific pane (queues if pane is busy)
   // options.priority = true puts message at FRONT of queue (for user messages)
