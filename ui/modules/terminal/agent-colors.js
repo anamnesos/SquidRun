@@ -72,13 +72,14 @@ function attachAgentColors(paneId, terminal) {
             const offset = y - (buf.baseY + buf.cursorY);
             const marker = terminal.registerMarker(offset);
             if (marker) {
-              const lineLen = line.length;
+              const contentLen = typeof line.getTrimmedLength === 'function'
+                ? line.getTrimmedLength() : line.translateToString(false).length;
               const matchEnd = match.index + match[0].length;
               const deco = terminal.registerDecoration({
                 marker,
                 foregroundColor: color,
                 x: match.index,
-                width: Math.min(match[0].length, lineLen - match.index),
+                width: Math.min(match[0].length, contentLen - match.index),
                 height: 1,
                 layer: 'top',
               });
@@ -86,14 +87,14 @@ function attachAgentColors(paneId, terminal) {
               // scrollback buffer, xterm disposes the marker which cleans up the decoration.
               if (deco) { marker.onDispose(() => deco.dispose()); }
               // Reset decoration after the colored tag to prevent bleed
-              if (matchEnd < lineLen) {
+              if (matchEnd < contentLen) {
                 const resetMarker = terminal.registerMarker(offset);
                 if (resetMarker) {
                   const resetDeco = terminal.registerDecoration({
                     marker: resetMarker,
                     foregroundColor: defaultForeground,
                     x: matchEnd,
-                    width: lineLen - matchEnd,
+                    width: contentLen - matchEnd,
                     height: 1,
                     layer: 'top',
                   });
@@ -102,12 +103,14 @@ function attachAgentColors(paneId, terminal) {
               }
 
               // Wrapped continuation lines can inherit style runs; explicitly reset them.
+              // Constrain to currentLine to avoid placing decorations beyond the cursor.
               let continuationLine = y + 1;
-              for (;;) {
+              while (continuationLine <= currentLine) {
                 const wrappedLine = buf.getLine(continuationLine);
                 if (!wrappedLine || wrappedLine.isWrapped !== true) break;
-                const wrappedLen = wrappedLine.length;
-                if (wrappedLen > 0) {
+                const wrappedContentLen = typeof wrappedLine.getTrimmedLength === 'function'
+                  ? wrappedLine.getTrimmedLength() : wrappedLine.translateToString(false).length;
+                if (wrappedContentLen > 0) {
                   const wrappedOffset = continuationLine - currentLine;
                   const wrappedMarker = terminal.registerMarker(wrappedOffset);
                   if (wrappedMarker) {
@@ -115,7 +118,7 @@ function attachAgentColors(paneId, terminal) {
                       marker: wrappedMarker,
                       foregroundColor: defaultForeground,
                       x: 0,
-                      width: wrappedLen,
+                      width: wrappedContentLen,
                       height: 1,
                       layer: 'top',
                     });

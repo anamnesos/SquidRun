@@ -6,9 +6,10 @@ jest.mock('../modules/logger', () => ({
   error: jest.fn(),
 }));
 
-function createLine(text, isWrapped = false) {
+function createLine(text, isWrapped = false, { trimmedLength } = {}) {
   return {
     translateToString: jest.fn().mockReturnValue(text),
+    getTrimmedLength: jest.fn().mockReturnValue(trimmedLength != null ? trimmedLength : text.length),
     length: text.length,
     isWrapped,
   };
@@ -103,5 +104,64 @@ describe('agent-colors', () => {
     const decorations = terminal.registerDecoration.mock.calls.map((call) => call[0]);
     const resetDecoration = decorations.find((item) => item.x === text.indexOf('(ANA #3):') + '(ANA #3):'.length);
     expect(resetDecoration.foregroundColor).toBe('#e8eaf0');
+  });
+
+  test('does not place reset decorations beyond currentLine', () => {
+    // Scenario: agent tag on line 0, wrapped line at 1, but cursor is at line 0
+    // (simulates cursor moved up while wrapped lines exist below)
+    const line0 = '(ANA #5): message that wraps to next row';
+    const line1 = 'wrapped beyond cursor';
+    const terminal = createTerminal({
+      lines: {
+        0: createLine(line0, false),
+        1: createLine(line1, true),
+      },
+      cursorY: 0,  // cursor on line 0 — line 1 is beyond currentLine
+      baseY: 0,
+      themeForeground: '#d0d0d0',
+    });
+
+    attachAgentColors('5', terminal);
+    terminal.triggerWriteParsed();
+
+    const markerOffsets = terminal.registerMarker.mock.calls.map((call) => call[0]);
+    // All markers should be at offset 0 (on line 0). No positive offsets (beyond cursor).
+    for (const offset of markerOffsets) {
+      expect(offset).toBeLessThanOrEqual(0);
+    }
+  });
+
+  test('uses trimmed content width instead of full line.length', () => {
+    // Line has trailing whitespace — trimmedLength is shorter than line.length
+    const text = '(DEVOPS #1): short msg';
+    const paddedLength = 80;  // terminal column width with trailing blanks
+    const line = createLine(text, false, { trimmedLength: text.length });
+    // Override line.length to simulate terminal padding
+    line.length = paddedLength;
+
+    const terminal = createTerminal({
+      lines: { 0: line },
+      cursorY: 0,
+      baseY: 0,
+      themeForeground: '#f0f0f0',
+    });
+
+    attachAgentColors('2', terminal);
+    terminal.triggerWriteParsed();
+
+    const decorations = terminal.registerDecoration.mock.calls.map((call) => call[0]);
+    const tagMatch = '(DEVOPS #1):';
+    const matchEnd = text.indexOf(tagMatch) + tagMatch.length;
+
+    // The color decoration width should be based on trimmed length, not paddedLength
+    const colorDeco = decorations[0];
+    expect(colorDeco.foregroundColor).toBe(AGENT_COLORS.devops);
+    expect(colorDeco.width).toBe(Math.min(tagMatch.length, text.length - text.indexOf(tagMatch)));
+
+    // The reset decoration should cover from matchEnd to trimmed length, not paddedLength
+    const resetDeco = decorations[1];
+    expect(resetDeco.foregroundColor).toBe('#f0f0f0');
+    expect(resetDeco.x).toBe(matchEnd);
+    expect(resetDeco.width).toBe(text.length - matchEnd);
   });
 });
