@@ -74,7 +74,7 @@ function attachAgentColors(paneId, terminal) {
             if (marker) {
               const lineLen = line.length;
               const matchEnd = match.index + match[0].length;
-              terminal.registerDecoration({
+              const deco = terminal.registerDecoration({
                 marker,
                 foregroundColor: color,
                 x: match.index,
@@ -82,11 +82,14 @@ function attachAgentColors(paneId, terminal) {
                 height: 1,
                 layer: 'top',
               });
+              // Tie decoration lifetime to marker — when line scrolls off
+              // scrollback buffer, xterm disposes the marker which cleans up the decoration.
+              if (deco) { marker.onDispose(() => deco.dispose()); }
               // Reset decoration after the colored tag to prevent bleed
               if (matchEnd < lineLen) {
                 const resetMarker = terminal.registerMarker(offset);
                 if (resetMarker) {
-                  terminal.registerDecoration({
+                  const resetDeco = terminal.registerDecoration({
                     marker: resetMarker,
                     foregroundColor: defaultForeground,
                     x: matchEnd,
@@ -94,6 +97,7 @@ function attachAgentColors(paneId, terminal) {
                     height: 1,
                     layer: 'top',
                   });
+                  if (resetDeco) { resetMarker.onDispose(() => resetDeco.dispose()); }
                 }
               }
 
@@ -107,7 +111,7 @@ function attachAgentColors(paneId, terminal) {
                   const wrappedOffset = continuationLine - currentLine;
                   const wrappedMarker = terminal.registerMarker(wrappedOffset);
                   if (wrappedMarker) {
-                    terminal.registerDecoration({
+                    const wrappedDeco = terminal.registerDecoration({
                       marker: wrappedMarker,
                       foregroundColor: defaultForeground,
                       x: 0,
@@ -115,6 +119,7 @@ function attachAgentColors(paneId, terminal) {
                       height: 1,
                       layer: 'top',
                     });
+                    if (wrappedDeco) { wrappedMarker.onDispose(() => wrappedDeco.dispose()); }
                   }
                 }
                 continuationLine += 1;
