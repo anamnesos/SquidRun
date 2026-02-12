@@ -125,7 +125,11 @@ function applyImageGenCapability(generateBtn, capabilities) {
   }
 }
 
+let domCleanupFns = [];
+
 function setupOracleTab(updateStatusFn) {
+  destroyOracleTab();
+
   const generateBtn = document.getElementById('oracleGenerateBtn');
   const promptInput = document.getElementById('oraclePromptInput');
   const styleSelect = document.getElementById('oracleStyleSelect');
@@ -143,7 +147,7 @@ function setupOracleTab(updateStatusFn) {
   });
 
   if (generateBtn) {
-    generateBtn.addEventListener('click', async () => {
+    const clickHandler = async () => {
       const prompt = promptInput?.value.trim();
       if (!prompt) {
         if (resultsEl) resultsEl.innerHTML = '<div class="oracle-error">Please enter a prompt</div>';
@@ -177,7 +181,9 @@ function setupOracleTab(updateStatusFn) {
 
       generateBtn.disabled = !imageGenAvailable;
       generateBtn.innerHTML = originalText;
-    });
+    };
+    generateBtn.addEventListener('click', clickHandler);
+    domCleanupFns.push(() => generateBtn.removeEventListener('click', clickHandler));
   }
 
   // Listen for agent-triggered image generation results pushed from main process
@@ -194,7 +200,19 @@ function setupOracleTab(updateStatusFn) {
   loadGallery();
 }
 
+function destroyOracleTab() {
+  for (const fn of domCleanupFns) {
+    try { fn(); } catch (_) {}
+  }
+  domCleanupFns = [];
+
+  // Clear scoped IPC listeners
+  const { clearScopedIpcListeners } = require('../renderer-ipc-registry');
+  clearScopedIpcListeners('tab-oracle');
+}
+
 module.exports = {
   setupOracleTab,
+  destroyOracleTab,
   applyImageGenCapability,
 };

@@ -111,11 +111,26 @@ function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {
   }
 }
 
-function unregisterAllHandlers(registry) {
+function unregisterAllHandlers(registry, ctx, deps) {
   if (!registry || typeof registry.unsetup !== 'function') {
     return;
   }
-  registry.unsetup();
+  registry.unsetup(ctx, deps);
 }
 
-module.exports = { registerAllHandlers, unregisterAllHandlers, DEFAULT_HANDLERS };
+function setupAllHandlers(registry, ctx, deps) {
+  if (!registry || typeof registry.setup !== 'function') {
+    throw new Error('setupAllHandlers requires a registry with setup()');
+  }
+
+  // Ensure we remove old ipcMain handlers/listeners before re-registering.
+  unregisterAllHandlers(registry, ctx, deps);
+  registry.setup(ctx, deps);
+}
+
+module.exports = {
+  registerAllHandlers,
+  unregisterAllHandlers,
+  setupAllHandlers,
+  DEFAULT_HANDLERS,
+};

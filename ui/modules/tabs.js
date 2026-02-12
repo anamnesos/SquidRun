@@ -17,6 +17,9 @@ let panelOpen = false;
 let onConnectionStatusUpdate = null;
 let storedResizeFn = null;
 
+// Track panel-level DOM listener cleanup
+let panelCleanupFns = [];
+
 function setConnectionStatusCallback(cb) {
   onConnectionStatusUpdate = cb;
 }
@@ -63,18 +66,42 @@ function switchTab(tabId) {
   }
 }
 
+/**
+ * Destroy all tab modules — call before re-initialization to prevent listener leaks.
+ */
+function destroyAllTabs() {
+  // Destroy panel-level DOM listeners
+  for (const fn of panelCleanupFns) {
+    try { fn(); } catch (_) {}
+  }
+  panelCleanupFns = [];
+
+  // Destroy each tab module
+  if (typeof activity.destroyActivityTab === 'function') activity.destroyActivityTab();
+  if (typeof screenshots.destroyScreenshots === 'function') screenshots.destroyScreenshots();
+  if (typeof oracle.destroyOracleTab === 'function') oracle.destroyOracleTab();
+  if (typeof git.destroyGitTab === 'function') git.destroyGitTab();
+  if (typeof apiKeys.destroyApiKeysTab === 'function') apiKeys.destroyApiKeysTab();
+  if (typeof bridge.destroy === 'function') bridge.destroy();
+}
+
 function setupRightPanel(handleResizeFn, busInstance) {
+  // Destroy previous tab state before re-init (prevents listener accumulation)
+  destroyAllTabs();
+
   storedResizeFn = handleResizeFn;
 
   const panelBtn = document.getElementById('panelBtn');
   if (panelBtn) {
-    panelBtn.addEventListener('click', () => togglePanel(handleResizeFn));
+    const handler = () => togglePanel(handleResizeFn);
+    panelBtn.addEventListener('click', handler);
+    panelCleanupFns.push(() => panelBtn.removeEventListener('click', handler));
   }
 
   document.querySelectorAll('.panel-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      switchTab(tab.dataset.tab);
-    });
+    const handler = () => { switchTab(tab.dataset.tab); };
+    tab.addEventListener('click', handler);
+    panelCleanupFns.push(() => tab.removeEventListener('click', handler));
   });
 
   // Initialize tabs
@@ -91,5 +118,6 @@ module.exports = {
   togglePanel,
   isPanelOpen,
   switchTab,
-  setupRightPanel
+  setupRightPanel,
+  destroyAllTabs
 };

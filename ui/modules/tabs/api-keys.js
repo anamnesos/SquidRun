@@ -76,16 +76,29 @@ async function saveApiKeys() {
   }
 }
 
+let domCleanupFns = [];
+
 function setupApiKeysTab() {
+  destroyApiKeysTab();
+
   const saveBtn = document.getElementById('saveApiKeysBtn');
   if (saveBtn) {
     saveBtn.addEventListener('click', saveApiKeys);
+    domCleanupFns.push(() => saveBtn.removeEventListener('click', saveApiKeys));
   }
 
   loadApiKeys();
 }
 
+function destroyApiKeysTab() {
+  for (const fn of domCleanupFns) {
+    try { fn(); } catch (_) {}
+  }
+  domCleanupFns = [];
+}
+
 module.exports = {
   setupApiKeysTab,
+  destroyApiKeysTab,
   loadApiKeys,
 };
