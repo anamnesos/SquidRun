@@ -34,6 +34,7 @@ const {
   initializeEvidenceLedgerRuntime,
   closeSharedRuntime,
 } = require('../ipc/evidence-ledger-handlers');
+const { executeContractPromotionAction } = require('../contract-promotion-service');
 const APP_IDLE_THRESHOLD_MS = 30000;
 
 class HivemindApp {
@@ -162,6 +163,21 @@ class HivemindApp {
                   via: 'websocket',
                   role: data.role || 'system',
                   paneId: data.paneId || null,
+                },
+              }
+            );
+          }
+
+          if (data.message.type === 'contract-promotion') {
+            return executeContractPromotionAction(
+              data.message.action,
+              data.message.payload || {},
+              {
+                source: {
+                  via: 'websocket',
+                  role: data.role || null,
+                  paneId: data.paneId || null,
+                  clientId: data.clientId || null,
                 },
               }
             );

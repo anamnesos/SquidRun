@@ -48,6 +48,7 @@ const { registerOrganicUIHandlers } = require('./organic-ui-handlers');
 const { registerDocGeneratorHandlers } = require('./doc-generator-handlers');
 const { registerWhisperHandlers } = require('./whisper-handlers');
 const { registerEvidenceLedgerHandlers } = require('./evidence-ledger-handlers');
+const { registerContractPromotionHandlers } = require('./contract-promotion-handlers');
 
 const DEFAULT_HANDLERS = [
   registerSdkHandlers,
@@ -100,6 +101,7 @@ const DEFAULT_HANDLERS = [
   registerDocGeneratorHandlers,
   registerWhisperHandlers,
   registerEvidenceLedgerHandlers,
+  registerContractPromotionHandlers,
 ];
 
 function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {
