@@ -192,6 +192,18 @@ function stripAnsi(value) {
     .replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
 }
 
+function stripInternalRoutingWrappers(value) {
+  if (typeof value !== 'string') return value;
+  let clean = value;
+  clean = clean.replace(/^\s*\[AGENT MSG - reply via hm-send\.js\]\s*/i, '');
+  for (let i = 0; i < 3; i += 1) {
+    const next = clean.replace(/^\s*\[MSG from [^\]]+\]:\s*/i, '');
+    if (next === clean) break;
+    clean = next;
+  }
+  return clean;
+}
+
 function tailMatches(regexes, text) {
   return regexes.some((regex) => regex.test(text));
 }
@@ -638,6 +650,7 @@ function processThrottleQueue(paneId) {
 
   const item = queue.shift();
   const message = typeof item === 'string' ? item : item.message;
+  const routedMessage = stripInternalRoutingWrappers(message);
   const deliveryId = item && typeof item === 'object' ? item.deliveryId : null;
   const traceContext = item && typeof item === 'object' ? (item.traceContext || null) : null;
   const corrId = traceContext?.traceId || traceContext?.correlationId || undefined;
@@ -689,7 +702,7 @@ function processThrottleQueue(paneId) {
       causationId,
       source: 'daemon-handlers.js',
     });
-    const cleanMessage = message.endsWith('\r') ? message.slice(0, -1) : message;
+    const cleanMessage = routedMessage.endsWith('\r') ? routedMessage.slice(0, -1) : routedMessage;
     log.info('Daemon SDK', `Sending to pane ${paneId} via SDK: ${cleanMessage.substring(0, 50)}...`);
 
     let messageId = null;
@@ -731,7 +744,7 @@ function processThrottleQueue(paneId) {
     source: 'daemon-handlers.js',
   });
 
-  terminal.sendToPane(paneId, message, {
+  terminal.sendToPane(paneId, routedMessage, {
     traceContext: traceContext || undefined,
     onComplete: (result) => {
       if (result && result.success === false) {
