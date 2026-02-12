@@ -957,7 +957,7 @@ function setupEventListeners() {
                   if (broadcastInput) {
                     broadcastInput.value = '';
                     broadcastInput.style.height = '';
-                    broadcastInput.blur();
+                    broadcastInput.focus();
                   }
                 }
               }
@@ -1230,8 +1230,7 @@ function setupEventListeners() {
           if (sendBroadcast(input.value.trim())) {
             input.value = '';
             input.style.height = '';
-            // Blur so injection.js userInputFocused gate releases
-            input.blur();
+            input.focus();
           }
         }
       }
@@ -1252,7 +1251,7 @@ function setupEventListeners() {
         if (sendBroadcast(input.value.trim())) {
           input.value = '';
           input.style.height = '';
-          input.blur();
+          input.focus();
         }
       }
     });
