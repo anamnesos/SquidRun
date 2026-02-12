@@ -14,6 +14,7 @@ const MAX_SUMMARY_ENTRIES = 100;
 const MIN_ENTRIES_FOR_SUMMARY = 20;
 const IMPORTANCE_THRESHOLD = 3;
 const MAX_CONTENT_LENGTH = 500;
+const DEFAULT_SUMMARY_TAIL_LINES = 2000;
 
 // Entry type importance weights
 const TYPE_WEIGHTS = {
@@ -201,10 +202,13 @@ function summarizeTranscript(role, options = {}) {
   const {
     date = null,
     maxEntries = MAX_SUMMARY_ENTRIES,
-    threshold = IMPORTANCE_THRESHOLD
+    threshold = IMPORTANCE_THRESHOLD,
+    tailLines = DEFAULT_SUMMARY_TAIL_LINES,
   } = options;
 
-  const entries = memoryStore.readTranscript(role, { date });
+  const entries = (typeof memoryStore.readTranscriptTail === 'function')
+    ? memoryStore.readTranscriptTail(role, { date, maxLines: tailLines })
+    : memoryStore.readTranscript(role, { date });
 
   if (entries.length < MIN_ENTRIES_FOR_SUMMARY) {
     return {

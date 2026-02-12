@@ -148,6 +148,13 @@ jest.mock('../modules/ipc/organic-ui-handlers', () => ({
   registerHandlers: jest.fn(),
 }));
 
+// Mock evidence-ledger handlers
+jest.mock('../modules/ipc/evidence-ledger-handlers', () => ({
+  executeEvidenceLedgerOperation: jest.fn(),
+  initializeEvidenceLedgerRuntime: jest.fn(() => ({ ok: true, status: { driver: 'better-sqlite3' } })),
+  closeSharedRuntime: jest.fn(),
+}));
+
 // Now require the module under test
 const HivemindApp = require('../modules/main/hivemind-app');
 
@@ -281,10 +288,12 @@ describe('HivemindApp', () => {
       const memory = require('../modules/memory');
       const websocketServer = require('../modules/websocket-server');
       const watcher = require('../modules/watcher');
+      const { closeSharedRuntime } = require('../modules/ipc/evidence-ledger-handlers');
 
       app.shutdown();
 
       expect(memory.shutdown).toHaveBeenCalled();
+      expect(closeSharedRuntime).toHaveBeenCalled();
       expect(websocketServer.stop).toHaveBeenCalled();
       expect(watcher.stopWatcher).toHaveBeenCalled();
       expect(watcher.stopTriggerWatcher).toHaveBeenCalled();
