@@ -314,10 +314,10 @@ async function queryTargetHealthBestEffort(ws) {
   }
 }
 
-function isTargetHeartbeatUnhealthy(health) {
+function isTargetHealthBlocking(health) {
   if (!health || typeof health !== 'object') return false;
   const status = String(health.status || '').toLowerCase();
-  if (status === 'stale' || status === 'no_heartbeat') {
+  if (status === 'invalid_target') {
     return true;
   }
   return false;
@@ -366,7 +366,7 @@ async function sendViaWebSocketWithAck() {
   await emitHeartbeatBestEffort(ws, role);
 
   const health = await queryTargetHealthBestEffort(ws);
-  if (isTargetHeartbeatUnhealthy(health)) {
+  if (isTargetHealthBlocking(health)) {
     await closeSocket(ws);
     return {
       ok: false,
