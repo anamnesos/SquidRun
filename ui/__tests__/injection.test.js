@@ -1140,6 +1140,101 @@ describe('Terminal Injection', () => {
       });
     });
 
+    test('does not treat output transition alone as accepted submit signal', async () => {
+      let enterCalls = 0;
+      terminals.set('1', {
+        _hivemindBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => 'ready> ',
+            })),
+          },
+        },
+      });
+      document.activeElement = mockTextarea;
+      mockPty.sendTrustedEnter.mockImplementation(async () => {
+        enterCalls += 1;
+        lastOutputTime['1'] = Date.now();
+      });
+      const onComplete = jest.fn();
+
+      await controller.doSendToPane('1', 'test\r', onComplete);
+      await jest.advanceTimersByTimeAsync(4000);
+
+      expect(enterCalls).toBe(2);
+      expect(onComplete).toHaveBeenCalledWith({
+        success: false,
+        reason: 'submit_not_accepted',
+      });
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.stringContaining('doSendToPane 1'),
+        expect.stringContaining('signal=output_transition_only')
+      );
+    });
+
+    test('force-expired defer path auto-retries Enter with refocus', async () => {
+      let promptText = 'ready> ';
+      let enterCalls = 0;
+      terminals.set('1', {
+        _hivemindBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
+      document.activeElement = mockTextarea;
+      lastOutputTime['1'] = Date.now();
+
+      const forceExpireController = createInjectionController({
+        ...mockOptions,
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS: 10000,
+          SUBMIT_DEFER_MAX_WAIT_MS: 200,
+          SUBMIT_DEFER_POLL_MS: 50,
+          SUBMIT_ACCEPT_VERIFY_WINDOW_MS: 300,
+          SUBMIT_ACCEPT_POLL_MS: 50,
+          SUBMIT_ACCEPT_RETRY_BACKOFF_MS: 100,
+          SUBMIT_ACCEPT_MAX_ATTEMPTS: 2,
+        },
+      });
+
+      mockPty.sendTrustedEnter.mockImplementation(async () => {
+        enterCalls += 1;
+        if (enterCalls === 2) {
+          promptText = 'running...';
+        }
+      });
+
+      const onComplete = jest.fn();
+      const resultPromise = forceExpireController.doSendToPane('1', 'test\r', onComplete);
+      await jest.advanceTimersByTimeAsync(3000);
+      await resultPromise;
+
+      expect(enterCalls).toBe(2);
+      expect(onComplete).toHaveBeenCalledWith({
+        success: true,
+        verified: true,
+        signal: 'prompt_transition',
+      });
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.stringContaining('doSendToPane 1'),
+        expect.stringContaining('Force-expired defer path active - auto-retrying Enter with refocus')
+      );
+      expect(mockLog.info).toHaveBeenCalledWith(
+        expect.stringContaining('doSendToPane 1'),
+        expect.stringContaining('Force-expired defer: refocus succeeded before retry Enter')
+      );
+    });
+
     test('fails submit when acceptance signal is never observed after retry', async () => {
       terminals.set('1', {
         _hivemindBypass: false,

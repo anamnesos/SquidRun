@@ -258,7 +258,7 @@ function createInjectionController(options = {}) {
 
     const waitedMs = Date.now() - start;
     if (waitedMs <= 0) {
-      return;
+      return { waitedMs: 0, forcedExpire: false };
     }
 
     if (paneHasRecentOutput(paneId)) {
@@ -266,13 +266,14 @@ function createInjectionController(options = {}) {
         `doSendToPane ${paneId}`,
         `Claude pane still active after ${waitedMs}ms defer window; proceeding with submit`
       );
-      return;
+      return { waitedMs, forcedExpire: true };
     }
 
     log.info(
       `doSendToPane ${paneId}`,
       `Deferred submit ${waitedMs}ms while pane reported active output`
     );
+    return { waitedMs, forcedExpire: false };
   }
 
   async function verifySubmitAccepted(paneId, baseline = {}) {
@@ -284,24 +285,42 @@ function createInjectionController(options = {}) {
 
     // Fallback when prompt probing is unavailable (mock/test edge cases).
     if (!promptProbeAvailable) {
-      return { accepted: true, signal: 'prompt_probe_unavailable' };
+      return {
+        accepted: true,
+        signal: 'prompt_probe_unavailable',
+        outputTransitionObserved: false,
+        promptTransitionObserved: false,
+      };
     }
 
     const start = Date.now();
+    let outputTransitionObserved = false;
+    let promptTransitionObserved = false;
     while ((Date.now() - start) < SUBMIT_ACCEPT_VERIFY_WINDOW_MS) {
       const outputTsAfter = getLastOutputTimestamp(paneId);
       if (outputTsAfter > outputTsBefore) {
-        return { accepted: true, signal: 'output_transition' };
+        outputTransitionObserved = true;
       }
 
       if (promptWasReady && !isPromptReady(paneId)) {
-        return { accepted: true, signal: 'prompt_transition' };
+        promptTransitionObserved = true;
+        return {
+          accepted: true,
+          signal: outputTransitionObserved ? 'prompt_and_output_transition' : 'prompt_transition',
+          outputTransitionObserved,
+          promptTransitionObserved,
+        };
       }
 
       await sleep(SUBMIT_ACCEPT_POLL_MS);
     }
 
-    return { accepted: false, signal: 'no_acceptance_signal' };
+    return {
+      accepted: false,
+      signal: outputTransitionObserved ? 'output_transition_only' : 'no_acceptance_signal',
+      outputTransitionObserved,
+      promptTransitionObserved,
+    };
   }
 
   function getBackoffStartMs() {
@@ -840,12 +859,14 @@ function createInjectionController(options = {}) {
     // Defer before writing to avoid counting our own echoed input as "active output".
     const longMessageBytes = Math.max(1, Number(CLAUDE_LONG_MESSAGE_BYTES) || 1024);
     const isLongClaudeMessage = capabilities.enterMethod === 'trusted' && payloadBytes >= longMessageBytes;
+    let deferResult = { waitedMs: 0, forcedExpire: false };
     if (capabilities.deferSubmitWhilePaneActive) {
       const deferMaxWaitMs = isLongClaudeMessage
         ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, Number(SUBMIT_DEFER_MAX_WAIT_LONG_MS) || 5000)
         : SUBMIT_DEFER_MAX_WAIT_MS;
-      await deferSubmitWhilePaneActive(id, deferMaxWaitMs);
+      deferResult = await deferSubmitWhilePaneActive(id, deferMaxWaitMs);
     }
+    const deferForcedExpire = !!deferResult?.forcedExpire;
 
     if (capabilities.clearLineBeforeWrite) {
       try {
@@ -986,7 +1007,13 @@ function createInjectionController(options = {}) {
       }
 
       let submitAccepted = null;
-      const maxSubmitAttempts = capabilities.verifySubmitAccepted ? SUBMIT_ACCEPT_MAX_ATTEMPTS : 1;
+      const maxSubmitAttempts = capabilities.verifySubmitAccepted
+        ? Math.max(
+          1,
+          Number(SUBMIT_ACCEPT_MAX_ATTEMPTS) || 1,
+          deferForcedExpire ? 2 : 1
+        )
+        : 1;
 
       for (let attempt = 1; attempt <= maxSubmitAttempts; attempt += 1) {
         const promptProbeAvailable = canProbePromptState(id);
@@ -1000,6 +1027,8 @@ function createInjectionController(options = {}) {
           const focusOk = await focusWithRetry(textarea);
           if (!focusOk) {
             log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: focus failed, proceeding with Enter anyway`);
+          } else if (deferForcedExpire && attempt > 1) {
+            log.info(`doSendToPane ${id}`, 'Force-expired defer: refocus succeeded before retry Enter');
           }
         }
 
@@ -1039,11 +1068,27 @@ function createInjectionController(options = {}) {
 
         const verifyResult = await verifySubmitAccepted(id, attemptBaseline);
         if (verifyResult.accepted) {
+          log.info(
+            `doSendToPane ${id}`,
+            `Submit acceptance verified via ${verifyResult.signal} (attempt ${attempt}/${maxSubmitAttempts})`
+          );
           submitAccepted = verifyResult;
           break;
         }
 
+        const signalDetails = `signal=${verifyResult.signal} outputTransition=${verifyResult.outputTransitionObserved ? 'yes' : 'no'} promptTransition=${verifyResult.promptTransitionObserved ? 'yes' : 'no'}`;
+        log.warn(
+          `doSendToPane ${id}`,
+          `Submit acceptance check failed on attempt ${attempt}/${maxSubmitAttempts}; ${signalDetails}`
+        );
+
         if (attempt < maxSubmitAttempts) {
+          if (deferForcedExpire && attempt === 1) {
+            log.warn(
+              `doSendToPane ${id}`,
+              'Force-expired defer path active - auto-retrying Enter with refocus'
+            );
+          }
           log.warn(
             `doSendToPane ${id}`,
             `Submit acceptance not observed after attempt ${attempt}; retrying in ${SUBMIT_ACCEPT_RETRY_BACKOFF_MS}ms`
