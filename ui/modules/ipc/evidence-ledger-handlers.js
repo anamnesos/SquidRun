@@ -20,11 +20,17 @@
  * - evidence-ledger:get-completions
  */
 
+const fs = require('fs');
+const path = require('path');
 const { EvidenceLedgerStore } = require('../main/evidence-ledger-store');
 const { EvidenceLedgerInvestigator } = require('../main/evidence-ledger-investigator');
 const { EvidenceLedgerMemory } = require('../main/evidence-ledger-memory');
+const { seedDecisionMemory } = require('../main/evidence-ledger-memory-seed');
+const log = require('../logger');
+const { WORKSPACE_PATH } = require('../../config');
 
 let sharedRuntime = null;
+const DEFAULT_HANDOFF_PATH = path.join(WORKSPACE_PATH, 'session-handoff.json');
 
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -43,26 +49,107 @@ function toNumberOrFallback(value, fallback = null) {
   return numeric;
 }
 
+function isRuntimeAvailable(runtime) {
+  return Boolean(runtime?.store && typeof runtime.store.isAvailable === 'function' && runtime.store.isAvailable());
+}
+
+function shouldSeedRuntime(runtime) {
+  if (!isRuntimeAvailable(runtime)) return false;
+  const db = runtime?.store?.db;
+  if (!db || typeof db.prepare !== 'function') return false;
+  try {
+    const decisionCount = Number(db.prepare('SELECT COUNT(*) AS count FROM ledger_decisions').get()?.count || 0);
+    const sessionCount = Number(db.prepare('SELECT COUNT(*) AS count FROM ledger_sessions').get()?.count || 0);
+    return decisionCount === 0 && sessionCount === 0;
+  } catch {
+    return false;
+  }
+}
+
+function maybeSeedDecisionMemory(runtime, options = {}) {
+  const seedOptions = asObject(options);
+  if (seedOptions.enabled === false) {
+    return { ok: true, skipped: true, reason: 'seed_disabled' };
+  }
+  if (!shouldSeedRuntime(runtime)) {
+    return { ok: true, skipped: true, reason: 'already_populated' };
+  }
+
+  const handoffPath = asString(seedOptions.handoffPath, DEFAULT_HANDOFF_PATH);
+  if (!fs.existsSync(handoffPath)) {
+    return { ok: true, skipped: true, reason: 'handoff_missing', handoffPath };
+  }
+
+  let handoff = null;
+  try {
+    handoff = JSON.parse(fs.readFileSync(handoffPath, 'utf8'));
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'handoff_read_failed',
+      handoffPath,
+      error: err.message,
+    };
+  }
+
+  const seedResult = seedDecisionMemory(runtime.memory, handoff, {
+    sessionId: asString(seedOptions.sessionId, ''),
+    markSessionEnded: seedOptions.markSessionEnded === true,
+    summary: asString(seedOptions.summary, ''),
+  });
+  if (!seedResult || seedResult.ok === false) {
+    return {
+      ok: false,
+      reason: 'seed_failed',
+      handoffPath,
+      ...(seedResult || {}),
+    };
+  }
+
+  return {
+    ok: true,
+    handoffPath,
+    ...seedResult,
+  };
+}
+
 function createEvidenceLedgerRuntime(options = {}) {
   const storeOptions = asObject(options.storeOptions);
   const store = new EvidenceLedgerStore(storeOptions);
   const initResult = store.init();
   const investigator = new EvidenceLedgerInvestigator(store);
   const memory = new EvidenceLedgerMemory(store);
+  const seedResult = maybeSeedDecisionMemory({ store, investigator, memory }, asObject(options.seedOptions));
+  if (seedResult && seedResult.ok === false) {
+    log.warn('EvidenceLedger', `Startup seed skipped due to error: ${seedResult.reason || seedResult.error || 'unknown'}`);
+  }
   return {
     store,
     investigator,
     memory,
     initResult,
+    seedResult,
   };
 }
 
 function getSharedRuntime(deps = {}) {
-  if (sharedRuntime) return sharedRuntime;
   const factory = typeof deps.createEvidenceLedgerRuntime === 'function'
     ? deps.createEvidenceLedgerRuntime
     : createEvidenceLedgerRuntime;
-  sharedRuntime = factory(deps.runtimeOptions || {});
+  const runtimeOptions = asObject(deps.runtimeOptions);
+  const forceRuntimeRecreate = deps.forceRuntimeRecreate === true;
+  const recreateUnavailable = deps.recreateUnavailable !== false;
+
+  if (forceRuntimeRecreate) {
+    closeSharedRuntime();
+  }
+
+  if (sharedRuntime && recreateUnavailable && !isRuntimeAvailable(sharedRuntime)) {
+    closeSharedRuntime();
+  }
+
+  if (sharedRuntime) return sharedRuntime;
+  sharedRuntime = factory(runtimeOptions);
   return sharedRuntime;
 }
 
@@ -74,6 +161,27 @@ function closeSharedRuntime() {
     // best effort
   }
   sharedRuntime = null;
+}
+
+function initializeEvidenceLedgerRuntime(options = {}) {
+  const opts = asObject(options);
+  const deps = asObject(opts.deps);
+  const runtime = getSharedRuntime({
+    ...deps,
+    runtimeOptions: opts.runtimeOptions || deps.runtimeOptions,
+    forceRuntimeRecreate: opts.forceRuntimeRecreate === true || deps.forceRuntimeRecreate === true,
+    recreateUnavailable: opts.recreateUnavailable !== false && deps.recreateUnavailable !== false,
+  });
+
+  const status = runtime?.store && typeof runtime.store.getStatus === 'function'
+    ? runtime.store.getStatus()
+    : null;
+  return {
+    ok: isRuntimeAvailable(runtime),
+    initResult: runtime?.initResult || null,
+    seedResult: runtime?.seedResult || null,
+    status,
+  };
 }
 
 function normalizeAddAssertionPayload(input) {
@@ -409,6 +517,7 @@ module.exports = {
   registerEvidenceLedgerHandlers,
   unregisterEvidenceLedgerHandlers,
   createEvidenceLedgerRuntime,
+  initializeEvidenceLedgerRuntime,
   executeEvidenceLedgerOperation,
   closeSharedRuntime,
 };

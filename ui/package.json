@@ -12,7 +12,7 @@
     "lint": "eslint modules/*.js renderer.js main.js",
     "lint:docs": "node scripts/doc-lint.js",
     "lint:fix": "eslint modules/*.js renderer.js main.js --fix",
-    "rebuild": "npx @electron/rebuild -f -w node-pty",
+    "rebuild": "npx @electron/rebuild -f -w node-pty,better-sqlite3",
     "build": "echo 'Building Hivemind...' && npm run lint && npm run test",
     "build:dev": "echo 'Development build...'",
     "build:staging": "npm run lint && npm run test && echo 'Staging build complete'",
@@ -59,6 +59,7 @@
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "chokidar": "^3.6.0",
+    "better-sqlite3": "^12.4.1",
     "dotenv": "^17.2.3",
     "node-pty": "^1.0.0",
     "ws": "^8.19.0"
