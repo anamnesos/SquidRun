@@ -29,7 +29,10 @@ const pipeline = require('../pipeline');
 const warRoom = require('../triggers/war-room');
 const sharedState = require('../shared-state');
 const contextCompressor = require('../context-compressor');
-const { executeEvidenceLedgerOperation } = require('../ipc/evidence-ledger-handlers');
+const {
+  executeEvidenceLedgerOperation,
+  initializeEvidenceLedgerRuntime,
+} = require('../ipc/evidence-ledger-handlers');
 
 class HivemindApp {
   constructor(appContext, managers) {
@@ -59,7 +62,22 @@ class HivemindApp {
     // 3. Pre-configure Codex
     this.settings.ensureCodexConfig();
 
-    // 4. Setup external notifications
+    // 4. Initialize Evidence Ledger runtime early (DB + optional seed)
+    const ledgerInit = initializeEvidenceLedgerRuntime({
+      runtimeOptions: {
+        seedOptions: {
+          enabled: true,
+        },
+      },
+      recreateUnavailable: true,
+    });
+    if (ledgerInit.ok) {
+      log.info('EvidenceLedger', `Startup initialization ready (driver=${ledgerInit.status?.driver || 'unknown'})`);
+    } else {
+      log.warn('EvidenceLedger', `Startup initialization degraded: ${ledgerInit.status?.degradedReason || ledgerInit.initResult?.reason || 'unavailable'}`);
+    }
+
+    // 5. Setup external notifications
     this.ctx.setExternalNotifier(createExternalNotifier({
       getSettings: () => this.ctx.currentSettings,
       log,
@@ -71,26 +89,26 @@ class HivemindApp {
       watcher.setExternalNotifier((payload) => this.ctx.externalNotifier?.notify(payload));
     }
 
-    // 5. Initial app status
+    // 6. Initial app status
     this.settings.writeAppStatus();
 
-    // 6. Load activity log
+    // 7. Load activity log
     this.activity.loadActivityLog();
 
-    // 7. Load usage stats
+    // 8. Load usage stats
     this.usage.loadUsageStats();
 
-    // 8. Initialize PTY daemon connection
+    // 9. Initialize PTY daemon connection
     await this.initDaemonClient();
 
-    // 9. Create main window
+    // 10. Create main window
     await this.createWindow();
 
-    // 10. Setup global IPC forwarders
+    // 11. Setup global IPC forwarders
     this.ensureCliIdentityForwarder();
     this.ensureTriggerDeliveryAckForwarder();
 
-    // 11. Start WebSocket server for instant agent messaging
+    // 12. Start WebSocket server for instant agent messaging
     try {
       await websocketServer.start({
         port: websocketServer.DEFAULT_PORT,
