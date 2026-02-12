@@ -14,7 +14,15 @@ const {
 function listIpcModules() {
   const ipcDir = path.join(__dirname, '..', 'modules', 'ipc');
   // Exclude index, state, and helper modules (non-handler modules)
-  const ignore = new Set(['index.js', 'ipc-state.js', 'handler-registry.js', 'background-processes.js']);
+  const ignore = new Set([
+    'index.js',
+    'ipc-state.js',
+    'handler-registry.js',
+    'background-processes.js',
+    'evidence-ledger-runtime.js',
+    'evidence-ledger-worker-client.js',
+    'evidence-ledger-worker.js',
+  ]);
   return fs
     .readdirSync(ipcDir)
     .filter(file => file.endsWith('.js') && !ignore.has(file))
