@@ -35,7 +35,9 @@ const {
   closeSharedRuntime,
 } = require('../ipc/evidence-ledger-handlers');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
+const { createBufferedFileWriter } = require('../buffered-file-writer');
 const APP_IDLE_THRESHOLD_MS = 30000;
+const CONSOLE_LOG_FLUSH_INTERVAL_MS = 500;
 
 class HivemindApp {
   constructor(appContext, managers) {
@@ -48,6 +50,17 @@ class HivemindApp {
     this.kernelBridge = createKernelBridge(() => this.ctx.mainWindow);
     this.lastDaemonOutputAtMs = Date.now();
     this.daemonClientListeners = [];
+    this.consoleLogPath = path.join(WORKSPACE_PATH, 'console.log');
+    this.consoleLogWriter = createBufferedFileWriter({
+      filePath: this.consoleLogPath,
+      flushIntervalMs: CONSOLE_LOG_FLUSH_INTERVAL_MS,
+      ensureDir: () => {
+        fs.mkdirSync(path.dirname(this.consoleLogPath), { recursive: true });
+      },
+      onError: (err) => {
+        log.warn('App', `Failed to append to console.log: ${err.message}`);
+      },
+    });
 
     this.cliIdentityForwarderRegistered = false;
     this.triggerAckForwarderRegistered = false;
@@ -518,14 +531,9 @@ class HivemindApp {
     });
 
     window.webContents.on('console-message', (event, level, message) => {
-      const logPath = path.join(WORKSPACE_PATH, 'console.log');
       const levelNames = ['verbose', 'info', 'warning', 'error'];
       const entry = `[${new Date().toISOString()}] [${levelNames[level] || level}] ${message}\n`;
-      try {
-        fs.appendFileSync(logPath, entry);
-      } catch (err) {
-        log.warn('App', `Failed to append to console.log: ${err.message}`);
-      }
+      this.consoleLogWriter.write(entry);
     });
   }
 
@@ -982,6 +990,9 @@ class HivemindApp {
       log.warn('EvidenceLedger', `Failed to close shared runtime during shutdown: ${err.message}`);
     }
     websocketServer.stop();
+    this.consoleLogWriter.flush().catch((err) => {
+      log.warn('App', `Failed flushing console.log buffer during shutdown: ${err.message}`);
+    });
     watcher.stopWatcher();
     watcher.stopTriggerWatcher();
     watcher.stopMessageWatcher();

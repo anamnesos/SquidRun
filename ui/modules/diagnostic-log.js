@@ -6,11 +6,13 @@
 const fs = require('fs');
 const path = require('path');
 const { WORKSPACE_PATH } = require('../config');
+const { createBufferedFileWriter } = require('./buffered-file-writer');
 
 // Guard against undefined WORKSPACE_PATH in test environment
 const LOG_DIR = WORKSPACE_PATH ? path.join(WORKSPACE_PATH, 'logs') : null;
 const LOG_PATH = LOG_DIR ? path.join(LOG_DIR, 'diagnostic.log') : null;
 let dirReady = false;
+const DIAGNOSTIC_FLUSH_INTERVAL_MS = 500;
 
 function ensureDir() {
   if (dirReady || !LOG_DIR) return;
@@ -21,6 +23,12 @@ function ensureDir() {
     // Ignore file logging errors to avoid breaking runtime
   }
 }
+
+const bufferedWriter = createBufferedFileWriter({
+  filePath: LOG_PATH,
+  flushIntervalMs: DIAGNOSTIC_FLUSH_INTERVAL_MS,
+  ensureDir,
+});
 
 function timestamp() {
   return new Date().toISOString();
@@ -44,9 +52,8 @@ function formatLine(subsystem, message, extra) {
 
 function write(subsystem, message, extra) {
   if (!LOG_PATH) return; // Skip in test environment
-  ensureDir();
   try {
-    fs.appendFileSync(LOG_PATH, `${formatLine(subsystem, message, extra)}\n`);
+    bufferedWriter.write(`${formatLine(subsystem, message, extra)}\n`);
   } catch (err) {
     // Ignore to keep runtime stable
   }
@@ -54,6 +61,6 @@ function write(subsystem, message, extra) {
 
 module.exports = {
   write,
+  _flushForTesting: () => bufferedWriter.flush(),
   LOG_PATH,
 };
-

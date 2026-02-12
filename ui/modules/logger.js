@@ -17,6 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const { WORKSPACE_PATH } = require('../config');
+const { createBufferedFileWriter } = require('./buffered-file-writer');
 
 const LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
 let minLevel = LEVELS.info;
@@ -24,6 +25,7 @@ let minLevel = LEVELS.info;
 const LOG_DIR = path.join(WORKSPACE_PATH, 'logs');
 const LOG_FILE_PATH = path.join(LOG_DIR, 'app.log');
 let logDirReady = false;
+const LOG_FLUSH_INTERVAL_MS = 500;
 
 function ensureLogDir() {
   if (logDirReady) return;
@@ -34,6 +36,12 @@ function ensureLogDir() {
     // If file logging fails, keep console logging working
   }
 }
+
+const bufferedWriter = createBufferedFileWriter({
+  filePath: LOG_FILE_PATH,
+  flushIntervalMs: LOG_FLUSH_INTERVAL_MS,
+  ensureDir: ensureLogDir,
+});
 
 function timestamp() {
   const d = new Date();
@@ -76,7 +84,7 @@ function write(level, subsystem, message, extra) {
         }
       })
       .join(' ');
-    fs.appendFileSync(LOG_FILE_PATH, `${line}\n`);
+    bufferedWriter.write(`${line}\n`);
   } catch (err) {
     // Ignore file logging errors to avoid breaking runtime
   }
@@ -101,6 +109,11 @@ const logger = {
       warn(msg, extra) { write('warn', subsystem, msg, extra); },
       error(msg, extra) { write('error', subsystem, msg, extra); },
     };
+  },
+
+  // Test-only helper to force buffered writes.
+  _flushForTesting() {
+    return bufferedWriter.flush();
   },
 };
 
