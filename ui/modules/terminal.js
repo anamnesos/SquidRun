@@ -33,6 +33,7 @@ const {
   STARTUP_IDENTITY_DELAY_CODEX_MS,
   STARTUP_READY_BUFFER_MAX,
   GEMINI_ENTER_DELAY_MS,
+  SUBMIT_ACCEPT_MAX_ATTEMPTS,
 } = require('./constants');
 
 // CLI identity tracking (dynamic)
@@ -1069,6 +1070,7 @@ injectionController = createInjectionController({
     INJECTION_LOCK_TIMEOUT_MS,
     TYPING_GUARD_MS,
     GEMINI_ENTER_DELAY_MS,
+    SUBMIT_ACCEPT_MAX_ATTEMPTS,
   },
 });
 
