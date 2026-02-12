@@ -5,6 +5,7 @@
 
 const { ipcRenderer } = require('electron');
 const log = require('./logger');
+const { registerScopedIpcListener } = require('./renderer-ipc-registry');
 
 // Session start time for duration tracking
 let sessionStartTime = Date.now();
@@ -220,7 +221,7 @@ function initStatusStrip() {
   }, 30000);
 
   // Listen for immediate task updates from main process
-  ipcRenderer.on('task-list-updated', (event, data) => {
+  registerScopedIpcListener('status-strip', 'task-list-updated', (event, data) => {
     if (data && Array.isArray(data.tasks)) {
       cachedTaskPool = { tasks: data.tasks };
       updateStatusStrip();

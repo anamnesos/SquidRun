@@ -8,6 +8,7 @@ const log = require('./logger');
 const terminal = require('./terminal');
 const settings = require('./settings');
 const { showStatusNotice } = require('./notifications');
+const { registerScopedIpcListener } = require('./renderer-ipc-registry');
 
 /**
  * Initialize model selectors to match current pane commands
@@ -82,7 +83,7 @@ function setupModelSelectorListeners() {
  * Setup IPC listener for model change completion
  */
 function setupModelChangeListener() {
-  ipcRenderer.on('pane-model-changed', async (event, { paneId, model }) => {
+  registerScopedIpcListener('model-selector', 'pane-model-changed', async (event, { paneId, model }) => {
     const select = document.querySelector(`.model-selector[data-pane-id="${paneId}"]`);
 
     try {
