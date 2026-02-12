@@ -105,6 +105,23 @@ const HIGH_WATERMARK = 500000; // 500KB - pause producer
 const LOW_WATERMARK = 50000;   // 50KB - resume producer
 const TERMINAL_QUEUE_MAX_BYTES = 2 * 1024 * 1024; // 2MB absolute per-pane queue cap
 const PROMOTION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+
+// WebGL rendering: disabled by default to reduce memory usage.
+// 3 terminals with WebGL contexts + texture atlases can consume 500MB+ with heavy output.
+// Enable via settings.json: { "terminalWebGL": true }
+// Lazy-evaluated at first terminal creation (settings may not be loaded at module init)
+let _webglEnabled = null;
+function isWebGLEnabled() {
+  if (_webglEnabled === null) {
+    try {
+      const s = settings.getSettings();
+      _webglEnabled = s && s.terminalWebGL === true;
+    } catch {
+      _webglEnabled = false;
+    }
+  }
+  return _webglEnabled;
+}
 let promotionCheckTimer = null;
 
 // AbortControllers for DOM listener cleanup (memory leak prevention)
@@ -340,7 +357,7 @@ const TERMINAL_OPTIONS = {
   fontSize: 13,
   cursorBlink: true,
   cursorStyle: 'block',
-  scrollback: 5000,
+  scrollback: 2000,
   rightClickSelectsWord: true,
   allowProposedApi: true,
 };
@@ -1334,21 +1351,23 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
   terminal.loadAddon(searchAddon);
   searchAddons.set(paneId, searchAddon);
 
-  // Load WebGL addon for GPU-accelerated rendering (with fallback)
-  try {
-    const webglAddon = new WebglAddon();
-    webglAddon.onContextLoss(() => {
-      log.warn(`Terminal ${paneId}`, 'WebGL context lost, falling back to canvas');
-      webglAddon.dispose();
-      if (webglAddons.get(paneId) === webglAddon) {
-        webglAddons.delete(paneId);
-      }
-    });
-    terminal.loadAddon(webglAddon);
-    webglAddons.set(paneId, webglAddon);
-    log.info(`Terminal ${paneId}`, 'WebGL renderer enabled');
-  } catch (e) {
-    log.warn(`Terminal ${paneId}`, `WebGL not available: ${e.message}`);
+  // Load WebGL addon for GPU-accelerated rendering (opt-in via settings.json terminalWebGL: true)
+  if (isWebGLEnabled()) {
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        log.warn(`Terminal ${paneId}`, 'WebGL context lost, falling back to canvas');
+        webglAddon.dispose();
+        if (webglAddons.get(paneId) === webglAddon) {
+          webglAddons.delete(paneId);
+        }
+      });
+      terminal.loadAddon(webglAddon);
+      webglAddons.set(paneId, webglAddon);
+      log.info(`Terminal ${paneId}`, 'WebGL renderer enabled');
+    } catch (e) {
+      log.warn(`Terminal ${paneId}`, `WebGL not available: ${e.message}`);
+    }
   }
 
   terminal.open(container);
@@ -1525,21 +1544,23 @@ async function reattachTerminal(paneId, scrollback) {
   terminal.loadAddon(searchAddon);
   searchAddons.set(paneId, searchAddon);
 
-  // Load WebGL addon for GPU-accelerated rendering (with fallback)
-  try {
-    const webglAddon = new WebglAddon();
-    webglAddon.onContextLoss(() => {
-      log.warn(`Terminal ${paneId}`, 'WebGL context lost, falling back to canvas');
-      webglAddon.dispose();
-      if (webglAddons.get(paneId) === webglAddon) {
-        webglAddons.delete(paneId);
-      }
-    });
-    terminal.loadAddon(webglAddon);
-    webglAddons.set(paneId, webglAddon);
-    log.info(`Terminal ${paneId}`, 'WebGL renderer enabled');
-  } catch (e) {
-    log.warn(`Terminal ${paneId}`, `WebGL not available: ${e.message}`);
+  // Load WebGL addon for GPU-accelerated rendering (opt-in via settings.json terminalWebGL: true)
+  if (isWebGLEnabled()) {
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        log.warn(`Terminal ${paneId}`, 'WebGL context lost, falling back to canvas');
+        webglAddon.dispose();
+        if (webglAddons.get(paneId) === webglAddon) {
+          webglAddons.delete(paneId);
+        }
+      });
+      terminal.loadAddon(webglAddon);
+      webglAddons.set(paneId, webglAddon);
+      log.info(`Terminal ${paneId}`, 'WebGL renderer enabled');
+    } catch (e) {
+      log.warn(`Terminal ${paneId}`, `WebGL not available: ${e.message}`);
+    }
   }
 
   terminal.open(container);

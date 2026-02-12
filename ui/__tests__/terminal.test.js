@@ -832,7 +832,7 @@ describe('terminal.js module', () => {
 
       await terminal.initTerminal('1');
 
-      expect(Terminal).toHaveBeenCalledWith(expect.objectContaining({ scrollback: 5000 }));
+      expect(Terminal).toHaveBeenCalledWith(expect.objectContaining({ scrollback: 2000 }));
     });
   });
 
@@ -914,9 +914,9 @@ describe('terminal.js module', () => {
       expect(writeCall).toBeDefined();
       const restored = writeCall[0];
       expect(restored).toContain('line-6000');
-      expect(restored.startsWith('line-1001')).toBe(true);
-      expect(restored).not.toContain('line-1000\n');
-      expect(restored.split('\n')).toHaveLength(5000);
+      expect(restored.startsWith('line-4001')).toBe(true);
+      expect(restored).not.toContain('line-4000\n');
+      expect(restored.split('\n')).toHaveLength(2000);
     });
   });
 
