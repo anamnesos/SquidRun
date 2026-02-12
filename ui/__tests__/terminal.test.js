@@ -1332,21 +1332,21 @@ describe('terminal.js module', () => {
       mockDocument.addEventListener.mockClear();
       terminal.initUIFocusTracker();
 
-      expect(mockDocument.addEventListener).toHaveBeenCalledWith('focusin', expect.any(Function));
+      expect(mockDocument.addEventListener).toHaveBeenCalledWith('focusin', expect.any(Function), expect.objectContaining({ signal: expect.anything() }));
     });
 
     test('should attach keydown event listener', () => {
       mockDocument.addEventListener.mockClear();
       terminal.initUIFocusTracker();
 
-      expect(mockDocument.addEventListener).toHaveBeenCalledWith('keydown', expect.any(Function));
+      expect(mockDocument.addEventListener).toHaveBeenCalledWith('keydown', expect.any(Function), expect.objectContaining({ signal: expect.anything() }));
     });
 
     test('should attach input event listener', () => {
       mockDocument.addEventListener.mockClear();
       terminal.initUIFocusTracker();
 
-      expect(mockDocument.addEventListener).toHaveBeenCalledWith('input', expect.any(Function));
+      expect(mockDocument.addEventListener).toHaveBeenCalledWith('input', expect.any(Function), expect.objectContaining({ signal: expect.anything() }));
     });
 
     test('focusin handler should track UI input focus', () => {
