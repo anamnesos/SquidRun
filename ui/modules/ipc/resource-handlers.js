@@ -9,6 +9,7 @@ const { exec } = require('child_process');
 const log = require('../logger');
 
 const MAX_BUFFER = 1024 * 1024;
+const DEFAULT_USAGE_CACHE_TTL_MS = 7000;
 
 let lastSystemSample = null; // { idle, total }
 const lastProcessSample = new Map(); // pid -> { cpuSec, timestamp }
@@ -163,47 +164,72 @@ async function getProcessStats(pids) {
 function registerResourceHandlers(ctx) {
   const { ipcMain, WORKSPACE_PATH } = ctx;
   if (!ipcMain || !WORKSPACE_PATH) return;
+  const usageCacheTtlMs = Number.isFinite(ctx.resourceUsageCacheTtlMs)
+    ? Math.max(0, ctx.resourceUsageCacheTtlMs)
+    : DEFAULT_USAGE_CACHE_TTL_MS;
+  let cachedUsage = null; // { value, timestamp }
+  let inFlightUsage = null;
 
   ipcMain.handle('resource:get-usage', async () => {
-    try {
-      const terminals = ctx.daemonClient ? ctx.daemonClient.getTerminals() : [];
-      const pids = terminals.map(t => t.pid).filter(pid => pid && pid > 0);
-      const procStats = await getProcessStats(pids);
-
-      const agents = {};
-      for (const terminal of terminals) {
-        const pid = terminal.pid;
-        agents[String(terminal.paneId)] = {
-          pid,
-          alive: terminal.alive,
-          mode: terminal.mode || 'pty',
-          cpuPercent: procStats[pid]?.cpuPercent ?? null,
-          memMB: procStats[pid]?.memMB ?? null
-        };
-      }
-
-      const systemCpu = getSystemCpuUsage();
-      const totalMem = os.totalmem();
-      const freeMem = os.freemem();
-      const usedMem = totalMem - freeMem;
-      const memPercent = totalMem ? Math.round((usedMem / totalMem) * 100) : null;
-      const disk = await getDiskUsage(WORKSPACE_PATH);
-
-      return {
-        success: true,
-        system: {
-          cpuPercent: systemCpu,
-          memUsedMB: bytesToMB(usedMem),
-          memTotalMB: bytesToMB(totalMem),
-          memPercent,
-          disk
-        },
-        agents
-      };
-    } catch (err) {
-      log.error('Resources', 'Failed to get usage', err.message);
-      return { success: false, error: err.message };
+    const now = Date.now();
+    if (cachedUsage && (now - cachedUsage.timestamp) < usageCacheTtlMs) {
+      return cachedUsage.value;
     }
+
+    if (inFlightUsage) {
+      return inFlightUsage;
+    }
+
+    inFlightUsage = (async () => {
+      try {
+        const terminals = ctx.daemonClient ? ctx.daemonClient.getTerminals() : [];
+        const pids = terminals.map(t => t.pid).filter(pid => pid && pid > 0);
+        const procStats = await getProcessStats(pids);
+
+        const agents = {};
+        for (const terminal of terminals) {
+          const pid = terminal.pid;
+          agents[String(terminal.paneId)] = {
+            pid,
+            alive: terminal.alive,
+            mode: terminal.mode || 'pty',
+            cpuPercent: procStats[pid]?.cpuPercent ?? null,
+            memMB: procStats[pid]?.memMB ?? null
+          };
+        }
+
+        const systemCpu = getSystemCpuUsage();
+        const totalMem = os.totalmem();
+        const freeMem = os.freemem();
+        const usedMem = totalMem - freeMem;
+        const memPercent = totalMem ? Math.round((usedMem / totalMem) * 100) : null;
+        const disk = await getDiskUsage(WORKSPACE_PATH);
+
+        const result = {
+          success: true,
+          system: {
+            cpuPercent: systemCpu,
+            memUsedMB: bytesToMB(usedMem),
+            memTotalMB: bytesToMB(totalMem),
+            memPercent,
+            disk
+          },
+          agents
+        };
+        cachedUsage = {
+          value: result,
+          timestamp: Date.now(),
+        };
+        return result;
+      } catch (err) {
+        log.error('Resources', 'Failed to get usage', err.message);
+        return { success: false, error: err.message };
+      } finally {
+        inFlightUsage = null;
+      }
+    })();
+
+    return inFlightUsage;
   });
 }
 

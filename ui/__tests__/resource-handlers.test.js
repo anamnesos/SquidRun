@@ -72,6 +72,7 @@ describe('resource-handlers', () => {
       const ctx = {
         ipcMain: mockIpcMain,
         WORKSPACE_PATH: overrides.workspacePath || 'D:\\workspace',
+        resourceUsageCacheTtlMs: overrides.cacheTtlMs ?? 0,
         daemonClient: overrides.daemonClient || {
           getTerminals: () => [],
         },
@@ -214,6 +215,26 @@ describe('resource-handlers', () => {
       // All panes listed but only valid PIDs used for process stats
       expect(Object.keys(result.agents)).toEqual(['1', '2', '5']);
     });
+
+    test('caches usage within TTL to avoid repeated shell calls', async () => {
+      const handler = setupHandler({ cacheTtlMs: 7000 });
+      await handler();
+      const callCountAfterFirst = childProcess.exec.mock.calls.length;
+
+      await handler();
+      expect(childProcess.exec.mock.calls.length).toBe(callCountAfterFirst);
+    });
+
+    test('deduplicates concurrent requests while usage collection is in-flight', async () => {
+      childProcess.exec.mockImplementation((cmd, opts, callback) => {
+        setTimeout(() => callback(null, '', ''), 25);
+      });
+
+      const handler = setupHandler({ cacheTtlMs: 7000 });
+      await Promise.all([handler(), handler()]);
+
+      expect(childProcess.exec).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('disk usage (Windows)', () => {
@@ -232,6 +253,7 @@ describe('resource-handlers', () => {
       registerResourceHandlers({
         ipcMain: mockIpcMain,
         WORKSPACE_PATH: workspacePath,
+        resourceUsageCacheTtlMs: 0,
         daemonClient: { getTerminals: () => [] },
       });
       return handlers['resource:get-usage'];
@@ -351,6 +373,7 @@ describe('resource-handlers', () => {
       registerResourceHandlers({
         ipcMain: mockIpcMain,
         WORKSPACE_PATH: '/home/user/workspace',
+        resourceUsageCacheTtlMs: 0,
         daemonClient: { getTerminals: () => [] },
       });
       return handlers['resource:get-usage'];
@@ -404,6 +427,7 @@ describe('resource-handlers', () => {
       registerResourceHandlers({
         ipcMain: mockIpcMain,
         WORKSPACE_PATH: 'D:\\workspace',
+        resourceUsageCacheTtlMs: 0,
         daemonClient: { getTerminals: () => terminals },
       });
       return handlers['resource:get-usage'];
@@ -531,6 +555,7 @@ describe('resource-handlers', () => {
       registerResourceHandlers({
         ipcMain: mockIpcMain,
         WORKSPACE_PATH: '/workspace',
+        resourceUsageCacheTtlMs: 0,
         daemonClient: { getTerminals: () => terminals },
       });
       return handlers['resource:get-usage'];
@@ -602,6 +627,7 @@ describe('resource-handlers', () => {
         registerResourceHandlers({
           ipcMain: mockIpcMain,
           WORKSPACE_PATH: '/workspace',
+          resourceUsageCacheTtlMs: 0,
           daemonClient: { getTerminals: () => [] },
         });
         return handlers['resource:get-usage'];
@@ -622,6 +648,7 @@ describe('resource-handlers', () => {
         registerResourceHandlers({
           ipcMain: mockIpcMain,
           WORKSPACE_PATH: '/workspace',
+          resourceUsageCacheTtlMs: 0,
           daemonClient: { getTerminals: () => [] },
         });
         return handlers['resource:get-usage'];

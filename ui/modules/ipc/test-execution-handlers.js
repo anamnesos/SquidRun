@@ -1,6 +1,19 @@
 ﻿const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFile } = require('child_process');
+function execFileAsync(file, args, options) {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, options, (err, stdout, stderr) => {
+      if (err) {
+        if (err.stdout == null) err.stdout = stdout;
+        if (err.stderr == null) err.stderr = stderr;
+        reject(err);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
 
 function registerTestExecutionHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -112,11 +125,11 @@ function registerTestExecutionHandlers(ctx) {
     }
 
     try {
-      const output = execSync(`${framework.command} ${framework.args.join(' ')}`, {
+      const output = await execFileAsync(framework.command, framework.args, {
         cwd: projectPath,
         encoding: 'utf-8',
         timeout: 120000,
-        stdio: ['pipe', 'pipe', 'pipe'],
+        maxBuffer: 10 * 1024 * 1024,
       });
 
       const results = framework.parseOutput(output) || {

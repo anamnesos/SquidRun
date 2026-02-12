@@ -12,9 +12,23 @@
  * - git-files-changed: Get list of changed files with stats
  */
 
-const { execSync, exec } = require('child_process');
+const { exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+
+function execAsync(cmd, options) {
+  return new Promise((resolve, reject) => {
+    exec(cmd, options, (err, stdout, stderr) => {
+      if (err) {
+        if (err.stdout == null) err.stdout = stdout;
+        if (err.stderr == null) err.stderr = stderr;
+        reject(err);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
 
 function registerGitHandlers(ctx) {
   const { ipcMain, WORKSPACE_PATH } = ctx;
@@ -23,15 +37,15 @@ function registerGitHandlers(ctx) {
   /**
    * Execute git command and return result
    */
-  function execGit(cmd, cwd) {
+  async function execGit(cmd, cwd) {
     try {
-      const result = execSync(cmd, {
+      const stdout = await execAsync(cmd, {
         cwd: cwd || WORKSPACE_PATH,
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large diffs
         timeout: 30000,
       });
-      return { success: true, output: result };
+      return { success: true, output: stdout };
     } catch (err) {
       return {
         success: false,
@@ -51,7 +65,7 @@ function registerGitHandlers(ctx) {
 
     try {
       // Get porcelain status for parsing
-      const statusResult = execGit('git status --porcelain -uall', cwd);
+      const statusResult = await execGit('git status --porcelain -uall', cwd);
       if (!statusResult.success) {
         return { success: false, error: statusResult.error };
       }
@@ -79,12 +93,12 @@ function registerGitHandlers(ctx) {
       }
 
       // Get branch info
-      const branchResult = execGit('git branch --show-current', cwd);
+      const branchResult = await execGit('git branch --show-current', cwd);
       const branch = branchResult.success ? branchResult.output.trim() : 'unknown';
 
       // Get ahead/behind counts
       let ahead = 0, behind = 0;
-      const trackResult = execGit('git rev-list --left-right --count HEAD...@{upstream} 2>/dev/null', cwd);
+      const trackResult = await execGit('git rev-list --left-right --count HEAD...@{upstream} 2>/dev/null', cwd);
       if (trackResult.success) {
         const parts = trackResult.output.trim().split(/\s+/);
         ahead = parseInt(parts[0]) || 0;
@@ -128,7 +142,7 @@ function registerGitHandlers(ctx) {
         cmd += ` -- "${file}"`;
       }
 
-      const result = execGit(cmd, cwd);
+      const result = await execGit(cmd, cwd);
       if (!result.success) {
         return { success: false, error: result.error };
       }
@@ -160,7 +174,7 @@ function registerGitHandlers(ctx) {
         ? '--oneline'
         : '--format=format:%H|%h|%an|%ae|%at|%s';
 
-      const result = execGit(`git log ${logFormat} -n ${limit}`, cwd);
+      const result = await execGit(`git log ${logFormat} -n ${limit}`, cwd);
       if (!result.success) {
         return { success: false, error: result.error };
       }
@@ -202,7 +216,7 @@ function registerGitHandlers(ctx) {
         cmd = `git add ${fileList}`;
       }
 
-      const result = execGit(cmd, cwd);
+      const result = await execGit(cmd, cwd);
       return result;
     } catch (err) {
       console.error('[Git] Stage error:', err);
@@ -224,7 +238,7 @@ function registerGitHandlers(ctx) {
         cmd = `git reset HEAD ${fileList}`;
       }
 
-      const result = execGit(cmd, cwd);
+      const result = await execGit(cmd, cwd);
       return result;
     } catch (err) {
       console.error('[Git] Unstage error:', err);
@@ -246,7 +260,7 @@ function registerGitHandlers(ctx) {
     try {
       // Escape message for shell
       const escapedMessage = message.replace(/"/g, '\\"');
-      const result = execGit(`git commit -m "${escapedMessage}"`, cwd);
+      const result = await execGit(`git commit -m "${escapedMessage}"`, cwd);
       return result;
     } catch (err) {
       console.error('[Git] Commit error:', err);
@@ -262,7 +276,7 @@ function registerGitHandlers(ctx) {
     const cwd = projectPath || WORKSPACE_PATH;
 
     try {
-      const result = execGit('git branch --show-current', cwd);
+      const result = await execGit('git branch --show-current', cwd);
       if (!result.success) {
         return { success: false, error: result.error };
       }
@@ -289,7 +303,7 @@ function registerGitHandlers(ctx) {
         cmd = 'git diff HEAD --stat';
       }
 
-      const result = execGit(cmd, cwd);
+      const result = await execGit(cmd, cwd);
       if (!result.success) {
         return { success: false, error: result.error };
       }
@@ -302,7 +316,7 @@ function registerGitHandlers(ctx) {
         numCmd = 'git diff HEAD --numstat';
       }
 
-      const numResult = execGit(numCmd, cwd);
+      const numResult = await execGit(numCmd, cwd);
       const files = [];
 
       if (numResult.success) {
@@ -343,7 +357,7 @@ function registerGitHandlers(ctx) {
     }
 
     try {
-      const result = execGit(`git show ${revision}:"${file}"`, cwd);
+      const result = await execGit(`git show ${revision}:"${file}"`, cwd);
       return result;
     } catch (err) {
       console.error('[Git] Show error:', err);
@@ -359,7 +373,7 @@ function registerGitHandlers(ctx) {
     const cwd = projectPath || WORKSPACE_PATH;
 
     try {
-      const result = execGit('git rev-parse --is-inside-work-tree', cwd);
+      const result = await execGit('git rev-parse --is-inside-work-tree', cwd);
       return { success: true, isRepo: result.success && result.output.trim() === 'true' };
     } catch (err) {
       return { success: true, isRepo: false };

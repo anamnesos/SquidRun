@@ -16,9 +16,24 @@ jest.mock('fs', () => ({
 }));
 
 // Mock child_process
-jest.mock('child_process', () => ({
-  execSync: jest.fn(),
-}));
+jest.mock('child_process', () => {
+  const execSync = jest.fn();
+  const execFile = jest.fn((file, args, opts, callback) => {
+    let options = opts;
+    let cb = callback;
+    if (typeof opts === 'function') {
+      cb = opts;
+      options = {};
+    }
+    try {
+      const output = execSync(`${file} ${(args || []).join(' ')}`.trim(), options);
+      cb(null, output, '');
+    } catch (err) {
+      cb(err, err.stdout?.toString() || '', err.stderr?.toString() || '');
+    }
+  });
+  return { execSync, execFile };
+});
 
 const fs = require('fs');
 const { execSync } = require('child_process');
