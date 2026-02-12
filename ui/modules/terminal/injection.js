@@ -40,10 +40,13 @@ function createInjectionController(options = {}) {
     TYPING_GUARD_MS = 300,
     GEMINI_ENTER_DELAY_MS = 75,
     MAX_COMPACTION_DEFER_MS = 8000,
-    CLAUDE_CHUNK_SIZE = 192,
-    CLAUDE_CHUNK_YIELD_MS = 2,
+    CLAUDE_CHUNK_SIZE = 2048,
+    CLAUDE_CHUNK_MIN_SIZE = 1024,
+    CLAUDE_CHUNK_MAX_SIZE = 8192,
+    CLAUDE_CHUNK_THRESHOLD_BYTES = 8 * 1024,
+    CLAUDE_CHUNK_YIELD_MS = 0,
     CLAUDE_ENTER_DELAY_MS = 50,
-    SUBMIT_ACCEPT_VERIFY_WINDOW_MS = 400,
+    SUBMIT_ACCEPT_VERIFY_WINDOW_MS = 1200,
     SUBMIT_ACCEPT_POLL_MS = 50,
     SUBMIT_ACCEPT_RETRY_BACKOFF_MS = 250,
     SUBMIT_ACCEPT_MAX_ATTEMPTS = 2,
@@ -798,6 +801,16 @@ function createInjectionController(options = {}) {
       textarea.focus();
     }
 
+    const normalizedText = String(text || '');
+    const payloadText = capabilities.sanitizeMultiline
+      ? normalizedText.replace(/[\r\n]/g, ' ').trimEnd()
+      : normalizedText;
+
+    // Defer before writing to avoid counting our own echoed input as "active output".
+    if (capabilities.deferSubmitWhilePaneActive) {
+      await deferSubmitWhilePaneActive(id);
+    }
+
     if (capabilities.clearLineBeforeWrite) {
       try {
         await window.hivemind.pty.write(id, '\x15', createKernelMeta());
@@ -806,11 +819,6 @@ function createInjectionController(options = {}) {
         log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
       }
     }
-
-    const normalizedText = String(text || '');
-    const payloadText = capabilities.sanitizeMultiline
-      ? normalizedText.replace(/[\r\n]/g, ' ').trimEnd()
-      : normalizedText;
 
     if (capabilities.sanitizeMultiline && payloadText !== normalizedText.trimEnd()) {
       bus.emit('inject.transform.applied', {
@@ -827,6 +835,13 @@ function createInjectionController(options = {}) {
 
     try {
       if (capabilities.useChunkedWrite) {
+        const payloadBytes = Buffer.byteLength(payloadText, 'utf8');
+        const chunkThresholdBytes = Math.max(1024, Number(CLAUDE_CHUNK_THRESHOLD_BYTES) || (8 * 1024));
+        const shouldChunkWrite = payloadBytes > chunkThresholdBytes;
+
+        if (!shouldChunkWrite) {
+          await window.hivemind.pty.write(id, payloadText, createKernelMeta());
+        } else {
         const first32 = payloadText.slice(0, 32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
         const last32 = payloadText.slice(-32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
         log.info(
@@ -842,20 +857,24 @@ function createInjectionController(options = {}) {
           }
         }
 
-        if (typeof window.hivemind?.pty?.writeChunked !== 'function') {
-          throw new Error('writeChunked API not available');
-        }
-
-        const chunkSize = Math.max(128, Math.min(256, Number(CLAUDE_CHUNK_SIZE) || 192));
-        const yieldEveryChunks = (Math.max(0, Number(CLAUDE_CHUNK_YIELD_MS) || 0) > 0) ? 1 : 0;
-        const chunkResult = await window.hivemind.pty.writeChunked(
-          id,
-          payloadText,
-          { chunkSize, yieldEveryChunks },
-          createKernelMeta()
-        );
-        if (chunkResult && chunkResult.success === false) {
-          throw new Error(chunkResult.error || 'writeChunked returned failure');
+          if (typeof window.hivemind?.pty?.writeChunked !== 'function') {
+            log.warn(`doSendToPane ${id}`, 'writeChunked API unavailable, falling back to single PTY write');
+            await window.hivemind.pty.write(id, payloadText, createKernelMeta());
+          } else {
+            const chunkMin = Math.max(1, Number(CLAUDE_CHUNK_MIN_SIZE) || 1024);
+            const chunkMax = Math.max(chunkMin, Number(CLAUDE_CHUNK_MAX_SIZE) || 8192);
+            const chunkSize = Math.max(chunkMin, Math.min(chunkMax, Number(CLAUDE_CHUNK_SIZE) || 2048));
+            const yieldEveryChunks = (Math.max(0, Number(CLAUDE_CHUNK_YIELD_MS) || 0) > 0) ? 1 : 0;
+            const chunkResult = await window.hivemind.pty.writeChunked(
+              id,
+              payloadText,
+              { chunkSize, yieldEveryChunks },
+              createKernelMeta()
+            );
+            if (chunkResult && chunkResult.success === false) {
+              throw new Error(chunkResult.error || 'writeChunked returned failure');
+            }
+          }
         }
       } else {
         await window.hivemind.pty.write(id, payloadText, createKernelMeta());
@@ -935,10 +954,6 @@ function createInjectionController(options = {}) {
       const maxSubmitAttempts = capabilities.verifySubmitAccepted ? SUBMIT_ACCEPT_MAX_ATTEMPTS : 1;
 
       for (let attempt = 1; attempt <= maxSubmitAttempts; attempt += 1) {
-        if (capabilities.deferSubmitWhilePaneActive) {
-          await deferSubmitWhilePaneActive(id);
-        }
-
         const promptProbeAvailable = canProbePromptState(id);
         const attemptBaseline = {
           outputTsBefore: getLastOutputTimestamp(id),
