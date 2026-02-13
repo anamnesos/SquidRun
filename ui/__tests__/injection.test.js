@@ -1175,6 +1175,38 @@ describe('Terminal Injection', () => {
       );
     });
 
+    test('allows per-message verification override for safe startup injections', async () => {
+      let enterCalls = 0;
+      terminals.set('1', {
+        _hivemindBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => 'ready> ',
+            })),
+          },
+        },
+      });
+      document.activeElement = mockTextarea;
+      mockPty.sendTrustedEnter.mockImplementation(async () => {
+        enterCalls += 1;
+        lastOutputTime['1'] = Date.now();
+      });
+      const onComplete = jest.fn();
+
+      controller.sendToPane('1', '# HIVEMIND SESSION: Architect - Started 2026-02-13', {
+        verifySubmitAccepted: false,
+        onComplete,
+      });
+      await jest.advanceTimersByTimeAsync(4000);
+
+      expect(enterCalls).toBe(1);
+      expect(mockOptions.markPotentiallyStuck).not.toHaveBeenCalled();
+      expect(onComplete).toHaveBeenCalledWith({ success: true });
+    });
+
     test('force-expired defer path auto-retries Enter with refocus', async () => {
       let promptText = 'ready> ';
       let enterCalls = 0;

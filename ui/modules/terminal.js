@@ -908,7 +908,7 @@ function triggerStartupInjection(paneId, state, reason) {
         log.error('spawnAgent', `Gemini identity injection failed for pane ${paneId}:`, err);
       }
     } else {
-      sendToPane(paneId, identityMsg + '\r');
+      sendToPane(paneId, identityMsg, { verifySubmitAccepted: false });
       log.info('spawnAgent', `Identity injected for ${role} (pane ${paneId}) [ready:${reason}]`);
     }
   }, identityDelayMs);
