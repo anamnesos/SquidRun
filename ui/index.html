@@ -391,7 +391,7 @@
       <div class="panel-tabs">
         <!-- Primary tabs (always visible) -->
         <button class="panel-tab" data-tab="bridge" data-tab-group="primary" title="System dashboard — agents, metrics, events">Bridge</button>
-        <button class="panel-tab" data-tab="activity" data-tab-group="primary" title="Real-time log of all agent activity">Feed</button>
+
         <button class="panel-tab active" data-tab="screenshots" data-tab-group="primary" title="Drag & drop images for agents to reference">Screenshots</button>
         <button class="panel-tab" data-tab="oracle" data-tab-group="primary" title="AI image generation">Image Gen</button>
 
@@ -416,28 +416,6 @@
           </div>
           <div class="screenshot-list" id="screenshotList">
             <div class="screenshot-empty">No screenshots yet</div>
-          </div>
-        </div>
-        <div class="tab-pane" id="tab-activity">
-          <div class="tab-title">Feed</div>
-          <div class="tab-description">Live agent activity, messages, and events</div>
-          <div class="activity-controls">
-            <div class="activity-filters">
-              <button class="activity-filter active" data-filter="all">All</button>
-              <button class="activity-filter" data-filter="message">Messages</button>
-              <button class="activity-filter" data-filter="error">Errors</button>
-              <button class="activity-filter" data-filter="file" title="Show file change events">Files</button>
-              <button class="activity-filter" data-filter="state" title="Show state transition events">State</button>
-            </div>
-            <input type="text" class="activity-search" id="activitySearch" placeholder="Search..." title="Filter activity by text" autocomplete="off">
-          </div>
-          <div id="awaitingHumanBanner" class="awaiting-human-banner hidden">AWAITING HUMAN INPUT</div>
-          <div class="activity-log" id="activityLog">
-            <div class="activity-empty">No activity yet</div>
-          </div>
-          <div class="activity-actions">
-            <button class="btn" id="clearActivityBtn" title="Clear all activity entries">Clear</button>
-            <button class="btn" id="exportActivityBtn" title="Download activity log as text file">Export</button>
           </div>
         </div>
         <div class="tab-pane" id="tab-oracle">
