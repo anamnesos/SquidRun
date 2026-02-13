@@ -43,6 +43,14 @@ const WORKSPACE_WATCH_POLL_INTERVAL_MS = 5000;
 const WATCHER_WORKER_PATH = path.join(__dirname, 'watcher-worker.js');
 const WATCHER_WORKER_RESTART_DELAY_MS = 1000;
 const watcherRestartTimers = new Map();
+const MESSAGE_DELIVERY_ACK_TIMEOUT_MS = 4000;
+const MESSAGE_DELIVERY_RETRY_BASE_MS = 500;
+const MESSAGE_DELIVERY_RETRY_MAX_MS = 10000;
+const MESSAGE_MARK_DELIVERED_RETRY_BASE_MS = 250;
+const MESSAGE_MARK_DELIVERED_RETRY_MAX_MS = 5000;
+const pendingMessageDeliveries = new Map(); // key -> delivery state
+const pendingMessageDeliveryById = new Map(); // deliveryId -> key
+let unsubscribeTriggerDeliveryAck = null;
 
 // ============================================================
 // STATE MACHINE
@@ -754,6 +762,7 @@ function init(window, triggersModule, settingsGetter = null) {
   mainWindow = window;
   triggers = triggersModule;
   getSettings = settingsGetter;
+  registerTriggerDeliveryAckListener();
 }
 
 function setExternalNotifier(fn) {
@@ -1012,6 +1021,232 @@ function getMessageQueueStatus() {
   return status;
 }
 
+function buildPendingMessageKey(paneId, messageId) {
+  return `${String(paneId)}:${String(messageId)}`;
+}
+
+function createMessageDeliveryId(paneId, messageId, attempt) {
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return `queue-${paneId}-${messageId}-${Date.now()}-a${attempt}-${suffix}`;
+}
+
+function clearPendingMessageDeliveryTimers(entry) {
+  if (!entry) return;
+  if (entry.ackTimer) {
+    clearTimeout(entry.ackTimer);
+    entry.ackTimer = null;
+  }
+  if (entry.retryTimer) {
+    clearTimeout(entry.retryTimer);
+    entry.retryTimer = null;
+  }
+  if (entry.markRetryTimer) {
+    clearTimeout(entry.markRetryTimer);
+    entry.markRetryTimer = null;
+  }
+}
+
+function clearPendingMessageDelivery(entry) {
+  if (!entry) return;
+  clearPendingMessageDeliveryTimers(entry);
+  if (entry.deliveryId) {
+    pendingMessageDeliveryById.delete(entry.deliveryId);
+    entry.deliveryId = null;
+  }
+  pendingMessageDeliveries.delete(entry.key);
+}
+
+function scheduleMessageDeliveryRetry(entry, reason) {
+  if (!entry || !pendingMessageDeliveries.has(entry.key)) return;
+
+  if (entry.ackTimer) {
+    clearTimeout(entry.ackTimer);
+    entry.ackTimer = null;
+  }
+  if (entry.deliveryId) {
+    pendingMessageDeliveryById.delete(entry.deliveryId);
+    entry.deliveryId = null;
+  }
+
+  const previousDelay = Number(entry.retryDelayMs) || 0;
+  const nextDelay = previousDelay > 0
+    ? Math.min(MESSAGE_DELIVERY_RETRY_MAX_MS, previousDelay * 2)
+    : MESSAGE_DELIVERY_RETRY_BASE_MS;
+  entry.retryDelayMs = nextDelay;
+  entry.lastError = reason || 'retry';
+
+  if (entry.retryTimer) {
+    clearTimeout(entry.retryTimer);
+  }
+  entry.retryTimer = setTimeout(() => {
+    entry.retryTimer = null;
+    attemptQueueMessageDelivery(entry);
+  }, nextDelay);
+
+  log.warn(
+    'MessageQueue',
+    `Delivery retry scheduled for ${entry.messageId} (pane ${entry.paneId}) in ${nextDelay}ms: ${entry.lastError}`
+  );
+}
+
+function attemptMarkQueueMessageDelivered(entry) {
+  if (!entry || !pendingMessageDeliveries.has(entry.key)) return;
+
+  const result = markMessageDelivered(entry.paneId, entry.messageId);
+  if (result.success) {
+    clearPendingMessageDelivery(entry);
+    return;
+  }
+
+  // Queue was modified externally; treat "not found" as already handled.
+  const queueMessages = getMessages(entry.paneId, false);
+  const stillExists = queueMessages.some((msg) => msg.id === entry.messageId);
+  if (!stillExists) {
+    clearPendingMessageDelivery(entry);
+    return;
+  }
+
+  const previousDelay = Number(entry.markRetryDelayMs) || 0;
+  const nextDelay = previousDelay > 0
+    ? Math.min(MESSAGE_MARK_DELIVERED_RETRY_MAX_MS, previousDelay * 2)
+    : MESSAGE_MARK_DELIVERED_RETRY_BASE_MS;
+  entry.markRetryDelayMs = nextDelay;
+
+  if (entry.markRetryTimer) {
+    clearTimeout(entry.markRetryTimer);
+  }
+  entry.markRetryTimer = setTimeout(() => {
+    entry.markRetryTimer = null;
+    attemptMarkQueueMessageDelivered(entry);
+  }, nextDelay);
+
+  log.warn(
+    'MessageQueue',
+    `Failed to mark delivered for ${entry.messageId} (pane ${entry.paneId}); retrying in ${nextDelay}ms: ${result.error || 'unknown'}`
+  );
+}
+
+function handleTriggerDeliveryAck(deliveryId, paneId) {
+  if (typeof deliveryId !== 'string' || !deliveryId) return;
+  const key = pendingMessageDeliveryById.get(deliveryId);
+  if (!key) return;
+
+  const entry = pendingMessageDeliveries.get(key);
+  pendingMessageDeliveryById.delete(deliveryId);
+  if (!entry) return;
+
+  if (entry.deliveryId !== deliveryId) return;
+
+  if (paneId && String(paneId) !== String(entry.paneId)) {
+    log.warn(
+      'MessageQueue',
+      `Delivery ACK pane mismatch for ${entry.messageId}: expected ${entry.paneId}, got ${paneId}`
+    );
+  }
+
+  if (entry.ackTimer) {
+    clearTimeout(entry.ackTimer);
+    entry.ackTimer = null;
+  }
+  entry.deliveryId = null;
+  entry.retryDelayMs = 0;
+  attemptMarkQueueMessageDelivered(entry);
+}
+
+function attemptQueueMessageDelivery(entry) {
+  if (!entry || !pendingMessageDeliveries.has(entry.key)) return;
+  if (!triggers || typeof triggers.notifyAgents !== 'function') {
+    scheduleMessageDeliveryRetry(entry, 'triggers_unavailable');
+    return;
+  }
+
+  entry.attempt += 1;
+  const deliveryId = createMessageDeliveryId(entry.paneId, entry.messageId, entry.attempt);
+  entry.deliveryId = deliveryId;
+  pendingMessageDeliveryById.set(deliveryId, entry.key);
+
+  let notified = [];
+  try {
+    notified = triggers.notifyAgents([entry.paneId], entry.formattedMessage, { deliveryId });
+  } catch (err) {
+    pendingMessageDeliveryById.delete(deliveryId);
+    entry.deliveryId = null;
+    scheduleMessageDeliveryRetry(entry, err.message || 'notify_failed');
+    return;
+  }
+
+  const deliveredToTarget = Array.isArray(notified)
+    && notified.some((pane) => String(pane) === String(entry.paneId));
+  if (!deliveredToTarget) {
+    pendingMessageDeliveryById.delete(deliveryId);
+    entry.deliveryId = null;
+    scheduleMessageDeliveryRetry(entry, 'target_not_available');
+    return;
+  }
+
+  if (entry.ackTimer) {
+    clearTimeout(entry.ackTimer);
+  }
+  entry.ackTimer = setTimeout(() => {
+    entry.ackTimer = null;
+    if (!pendingMessageDeliveries.has(entry.key)) return;
+    if (entry.deliveryId !== deliveryId) return;
+    pendingMessageDeliveryById.delete(deliveryId);
+    entry.deliveryId = null;
+    scheduleMessageDeliveryRetry(entry, 'ack_timeout');
+  }, MESSAGE_DELIVERY_ACK_TIMEOUT_MS);
+
+  log.info(
+    'MessageQueue',
+    `Queued delivery ${entry.messageId} to pane ${entry.paneId} (attempt ${entry.attempt})`
+  );
+}
+
+function queueMessageForTrackedDelivery(paneId, message) {
+  const key = buildPendingMessageKey(paneId, message.id);
+  if (pendingMessageDeliveries.has(key)) {
+    return;
+  }
+
+  const fromRole = message.fromRole || (PANE_ROLES[message.from] || `Pane ${message.from}`);
+  const entry = {
+    key,
+    paneId: String(paneId),
+    messageId: String(message.id),
+    formattedMessage: `[MSG from ${fromRole}]: ${message.content}`,
+    deliveryId: null,
+    attempt: 0,
+    retryDelayMs: 0,
+    markRetryDelayMs: 0,
+    lastError: null,
+    ackTimer: null,
+    retryTimer: null,
+    markRetryTimer: null,
+  };
+
+  pendingMessageDeliveries.set(key, entry);
+  attemptQueueMessageDelivery(entry);
+}
+
+function clearPendingMessageDeliveries() {
+  for (const entry of pendingMessageDeliveries.values()) {
+    clearPendingMessageDeliveryTimers(entry);
+  }
+  pendingMessageDeliveries.clear();
+  pendingMessageDeliveryById.clear();
+}
+
+function registerTriggerDeliveryAckListener() {
+  if (unsubscribeTriggerDeliveryAck) {
+    unsubscribeTriggerDeliveryAck();
+    unsubscribeTriggerDeliveryAck = null;
+  }
+
+  if (triggers && typeof triggers.onDeliveryAck === 'function') {
+    unsubscribeTriggerDeliveryAck = triggers.onDeliveryAck(handleTriggerDeliveryAck);
+  }
+}
+
 /**
  * Handle message queue file changes
  * @param {string} filePath - Path to changed queue file
@@ -1042,14 +1277,7 @@ function handleMessageQueueChange(filePath) {
     if (triggers) {
       for (const msg of undelivered) {
         if (msg.type === 'direct' || msg.type === 'broadcast') {
-          // Format message for terminal injection
-          const formattedMsg = `[MSG from ${msg.fromRole}]: ${msg.content}`;
-
-          // Use triggers to inject (bypass gate for direct messages)
-          triggers.notifyAgents([paneId], formattedMsg);
-
-          // Mark as delivered
-          markMessageDelivered(paneId, msg.id);
+          queueMessageForTrackedDelivery(paneId, msg);
         }
       }
     }
@@ -1070,6 +1298,7 @@ function startMessageWatcher() {
   if (messageWatcher) {
     stopWatcherWorker('message', 'message', { reason: 'restart', clearRestart: false });
   }
+  registerTriggerDeliveryAckListener();
 
   messageWatcher = startWatcherWorker(
     'message',
@@ -1089,6 +1318,11 @@ function startMessageWatcher() {
  */
 function stopMessageWatcher() {
   stopWatcherWorker('message', 'message');
+  if (unsubscribeTriggerDeliveryAck) {
+    unsubscribeTriggerDeliveryAck();
+    unsubscribeTriggerDeliveryAck = null;
+  }
+  clearPendingMessageDeliveries();
 }
 
 module.exports = {

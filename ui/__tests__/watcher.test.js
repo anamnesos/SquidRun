@@ -41,13 +41,36 @@ function setupWatcher(options = {}) {
     error: jest.fn(),
   };
 
-  const watcherInstance = { on: jest.fn().mockReturnThis(), close: jest.fn() };
-  const chokidarMock = { watch: jest.fn(() => watcherInstance) };
+  const workerInstances = [];
+  const createWorkerInstance = () => {
+    const handlers = new Map();
+    const instance = {
+      on: jest.fn((eventName, handler) => {
+        handlers.set(eventName, handler);
+        return instance;
+      }),
+      kill: jest.fn(),
+      emit: (eventName, ...args) => {
+        const handler = handlers.get(eventName);
+        if (typeof handler === 'function') {
+          handler(...args);
+        }
+      },
+    };
+    return instance;
+  };
+  const childProcessMock = {
+    fork: jest.fn(() => {
+      const instance = createWorkerInstance();
+      workerInstances.push(instance);
+      return instance;
+    }),
+  };
 
   jest.resetModules();
   jest.doMock('../config', () => configMock);
   jest.doMock('../modules/logger', () => logMock);
-  jest.doMock('chokidar', () => chokidarMock);
+  jest.doMock('child_process', () => childProcessMock);
 
   const watcher = require('../modules/watcher');
 
@@ -60,7 +83,17 @@ function setupWatcher(options = {}) {
     notifyAgents: jest.fn(),
     notifyAllAgentsSync: jest.fn(),
     handleTriggerFile: jest.fn(),
+    onDeliveryAck: jest.fn(),
   };
+  let deliveryAckListener = null;
+  triggers.onDeliveryAck.mockImplementation((listener) => {
+    deliveryAckListener = listener;
+    return () => {
+      if (deliveryAckListener === listener) {
+        deliveryAckListener = null;
+      }
+    };
+  });
 
   const settingsGetter = options.settingsGetter || (() => ({ autoSync: true }));
   watcher.init(mainWindow, triggers, settingsGetter);
@@ -69,8 +102,14 @@ function setupWatcher(options = {}) {
     tempDir,
     watcher,
     logMock,
-    chokidarMock,
-    watcherInstance,
+    childProcessMock,
+    workerInstances,
+    getWorker: (index = 0) => workerInstances[index],
+    emitDeliveryAck: (deliveryId, paneId) => {
+      if (typeof deliveryAckListener === 'function') {
+        deliveryAckListener(deliveryId, paneId);
+      }
+    },
     mainWindow,
     triggers,
     configMock,
@@ -338,34 +377,35 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
-  test('startWatcher registers chokidar watcher and stopWatcher closes it', () => {
-    const { watcher, chokidarMock, watcherInstance, tempDir } = setupWatcher();
+  test('startWatcher forks worker process and stopWatcher kills it', () => {
+    const { watcher, childProcessMock, getWorker, tempDir } = setupWatcher();
 
     watcher.startWatcher();
-    expect(chokidarMock.watch).toHaveBeenCalled();
-    const options = chokidarMock.watch.mock.calls[0][1];
-    expect(options.interval).toBe(5000);
+    const workerInstance = getWorker(0);
+    expect(childProcessMock.fork).toHaveBeenCalledWith(
+      expect.stringContaining('watcher-worker.js'),
+      [],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          HIVEMIND_WATCHER_NAME: 'workspace',
+        }),
+      })
+    );
 
     watcher.stopWatcher();
-    expect(watcherInstance.close).toHaveBeenCalled();
+    expect(workerInstance.kill).toHaveBeenCalled();
 
     cleanupDir(tempDir);
   });
 
-  test('workspace watcher ignores logs paths for both slash styles', () => {
-    const { watcher, chokidarMock, tempDir } = setupWatcher();
+  test('startWatcher restarts existing workspace worker on repeated start', () => {
+    const { watcher, childProcessMock, getWorker, tempDir } = setupWatcher();
 
     watcher.startWatcher();
-    const options = chokidarMock.watch.mock.calls[0][1];
-    const logsPattern = options.ignored.find((entry) => entry instanceof RegExp && entry.source.includes('logs'));
-    const snapshotsPattern = options.ignored.find((entry) => entry instanceof RegExp && entry.source.includes('context-snapshots'));
-
-    expect(logsPattern).toBeDefined();
-    expect(logsPattern.test('C:\\workspace\\logs\\app.log')).toBe(true);
-    expect(logsPattern.test('/workspace/logs/app.log')).toBe(true);
-    expect(snapshotsPattern).toBeDefined();
-    expect(snapshotsPattern.test('C:\\workspace\\context-snapshots\\1.md')).toBe(true);
-    expect(snapshotsPattern.test('/workspace/context-snapshots/1.md')).toBe(true);
+    const firstWorker = getWorker(0);
+    watcher.startWatcher();
+    expect(firstWorker.kill).toHaveBeenCalledTimes(1);
+    expect(childProcessMock.fork).toHaveBeenCalledTimes(2);
 
     cleanupDir(tempDir);
   });
@@ -418,29 +458,93 @@ describe('watcher module', () => {
   });
 
   test('startTriggerWatcher and stopTriggerWatcher work', () => {
-    const { watcher, tempDir, chokidarMock, watcherInstance } = setupWatcher();
+    const { watcher, tempDir, childProcessMock, getWorker } = setupWatcher();
 
     watcher.startTriggerWatcher();
-    expect(chokidarMock.watch).toHaveBeenCalledWith(
-      watcher.TRIGGER_PATH,
-      expect.objectContaining({ interval: 300 })
+    const workerInstance = getWorker(0);
+    expect(childProcessMock.fork).toHaveBeenCalledWith(
+      expect.stringContaining('watcher-worker.js'),
+      [],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          HIVEMIND_WATCHER_NAME: 'trigger',
+        }),
+      })
     );
 
     watcher.stopTriggerWatcher();
-    expect(watcherInstance.close).toHaveBeenCalled();
+    expect(workerInstance.kill).toHaveBeenCalled();
 
     cleanupDir(tempDir);
   });
 
   test('startMessageWatcher and stopMessageWatcher work', () => {
-    const { watcher, tempDir, chokidarMock, watcherInstance } = setupWatcher();
+    const { watcher, tempDir, childProcessMock, getWorker } = setupWatcher();
 
     watcher.startMessageWatcher();
-    expect(chokidarMock.watch).toHaveBeenCalled();
+    const workerInstance = getWorker(0);
+    expect(childProcessMock.fork).toHaveBeenCalledWith(
+      expect.stringContaining('watcher-worker.js'),
+      [],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          HIVEMIND_WATCHER_NAME: 'message',
+        }),
+      })
+    );
 
     watcher.stopMessageWatcher();
-    expect(watcherInstance.close).toHaveBeenCalled();
+    expect(workerInstance.kill).toHaveBeenCalled();
 
+    cleanupDir(tempDir);
+  });
+
+  test('message queue waits for delivery ack before marking delivered', () => {
+    jest.useFakeTimers();
+    const { watcher, tempDir, triggers, getWorker, emitDeliveryAck } = setupWatcher();
+    watcher.initMessageQueue();
+    watcher.sendMessage('1', '2', 'Deliver after ack');
+    triggers.notifyAgents.mockReturnValue(['2']);
+
+    watcher.startMessageWatcher();
+    const worker = getWorker(0);
+    const queuePath = path.join(watcher.MESSAGE_QUEUE_DIR, 'queue-2.json');
+
+    worker.emit('message', { watcherName: 'message', type: 'change', path: queuePath });
+
+    expect(triggers.notifyAgents).toHaveBeenCalledWith(
+      ['2'],
+      '[MSG from Architect]: Deliver after ack',
+      expect.objectContaining({ deliveryId: expect.any(String) })
+    );
+    expect(watcher.getMessages('2', true)).toHaveLength(1);
+
+    const deliveryId = triggers.notifyAgents.mock.calls[0][2].deliveryId;
+    emitDeliveryAck(deliveryId, '2');
+
+    expect(watcher.getMessages('2', true)).toHaveLength(0);
+    watcher.stopMessageWatcher();
+    cleanupDir(tempDir);
+  });
+
+  test('message queue retries when delivery cannot be routed', () => {
+    jest.useFakeTimers();
+    const { watcher, tempDir, triggers, getWorker } = setupWatcher();
+    watcher.initMessageQueue();
+    watcher.sendMessage('1', '2', 'Retry route');
+    triggers.notifyAgents.mockReturnValue([]);
+
+    watcher.startMessageWatcher();
+    const worker = getWorker(0);
+    const queuePath = path.join(watcher.MESSAGE_QUEUE_DIR, 'queue-2.json');
+    worker.emit('message', { watcherName: 'message', type: 'change', path: queuePath });
+
+    expect(triggers.notifyAgents).toHaveBeenCalledTimes(1);
+    jest.advanceTimersByTime(550);
+    expect(triggers.notifyAgents).toHaveBeenCalledTimes(2);
+    expect(watcher.getMessages('2', true)).toHaveLength(1);
+
+    watcher.stopMessageWatcher();
     cleanupDir(tempDir);
   });
 
