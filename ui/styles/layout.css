@@ -348,20 +348,18 @@
    PER-AGENT PANE HEADER COLOR IDENTITY
    ============================================================ */
 
-/* Pane 1: Architect / Claude — Amber neon */
-.pane[data-pane-id="1"] .pane-header {
+/* CLI model colors — follow the model, not the pane */
+.pane[data-cli="claude"] .pane-header {
   border-bottom: 1px solid rgba(240, 160, 0, 0.4);
   box-shadow: inset 0 -2px 12px rgba(240, 160, 0, 0.12);
 }
 
-/* Pane 2: DevOps / Codex — Cyan neon */
-.pane[data-pane-id="2"] .pane-header {
+.pane[data-cli="codex"] .pane-header {
   border-bottom: 1px solid rgba(0, 240, 255, 0.4);
   box-shadow: inset 0 -2px 12px rgba(0, 240, 255, 0.12);
 }
 
-/* Pane 5: Analyst / Gemini — Purple neon */
-.pane[data-pane-id="5"] .pane-header {
+.pane[data-cli="gemini"] .pane-header {
   border-bottom: 1px solid rgba(187, 134, 252, 0.4);
   box-shadow: inset 0 -2px 12px rgba(187, 134, 252, 0.12);
 }
