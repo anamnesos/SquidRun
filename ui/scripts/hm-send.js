@@ -16,8 +16,10 @@ const DEFAULT_ACK_TIMEOUT_MS = 1200;
 const DEFAULT_HEALTH_TIMEOUT_MS = 500;
 const TARGET_HEARTBEAT_STALE_MS = 60000;
 const TARGET_HEARTBEAT_INTERVAL_MS = 30000;
+const DELIVERY_CHECK_RETRY_DELAY_MS = 200;
 const DEFAULT_RETRIES = 3;
 const MAX_RETRIES = 5;
+const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 const args = process.argv.slice(2);
 
 if (args.length < 2) {
@@ -199,7 +201,14 @@ function normalizeRole(targetInput) {
   return null;
 }
 
-function writeTriggerFallback(targetInput, content) {
+function buildTriggerFallbackContent(content, messageId) {
+  if (typeof messageId !== 'string' || !messageId.trim()) {
+    return content;
+  }
+  return `${FALLBACK_MESSAGE_ID_PREFIX}${messageId.trim()}]\n${content}`;
+}
+
+function writeTriggerFallback(targetInput, content, options = {}) {
   const roleName = normalizeRole(targetInput);
   if (!roleName) {
     return {
@@ -214,9 +223,10 @@ function writeTriggerFallback(targetInput, content) {
     triggersDir,
     `.${roleName}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
   );
+  const payload = buildTriggerFallbackContent(content, options.messageId);
   try {
     fs.mkdirSync(triggersDir, { recursive: true });
-    fs.writeFileSync(tempPath, content, 'utf8');
+    fs.writeFileSync(tempPath, payload, 'utf8');
     try {
       fs.renameSync(tempPath, triggerPath);
     } catch (renameErr) {
@@ -312,6 +322,39 @@ async function queryTargetHealthBestEffort(ws) {
   } catch (err) {
     return null;
   }
+}
+
+async function queryDeliveryCheckBestEffort(ws, messageId, maxChecks = 2) {
+  if (!messageId) return null;
+
+  for (let check = 1; check <= maxChecks; check++) {
+    const requestId = `delivery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      ws.send(JSON.stringify({
+        type: 'delivery-check',
+        requestId,
+        messageId,
+      }));
+
+      const result = await waitForMatch(
+        ws,
+        (msg) => msg.type === 'delivery-check-result' && msg.requestId === requestId,
+        DEFAULT_HEALTH_TIMEOUT_MS,
+        'Delivery check timeout'
+      );
+
+      if (result?.status === 'pending' && check < maxChecks) {
+        await sleep(DELIVERY_CHECK_RETRY_DELAY_MS);
+        continue;
+      }
+
+      return result;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 function isTargetHealthBlocking(health) {
@@ -430,11 +473,24 @@ async function sendViaWebSocketWithAck() {
     }
   }
 
+  const deliveryCheck = await queryDeliveryCheckBestEffort(ws, messageId);
+  if (deliveryCheck?.known && deliveryCheck?.ack?.ok) {
+    await closeSocket(ws);
+    return {
+      ok: true,
+      messageId,
+      ack: deliveryCheck.ack,
+      attemptsUsed: attempts,
+      deliveryCheck,
+    };
+  }
+
   await closeSocket(ws);
   return {
     ok: false,
     messageId,
     ack: lastAck,
+    deliveryCheck,
     error: lastError ? lastError.message : null,
     attemptsUsed: attempts,
   };
@@ -456,10 +512,14 @@ async function main() {
   }
 
   if (enableFallback) {
-    const fallbackResult = writeTriggerFallback(target, message);
+    const fallbackResult = writeTriggerFallback(target, message, {
+      messageId: sendResult?.messageId || null,
+    });
     if (fallbackResult.ok) {
       const reason = sendResult?.ack
         ? `ack=${sendResult.ack.status}`
+        : sendResult?.deliveryCheck
+          ? `delivery-check=${sendResult.deliveryCheck.status || 'unknown'}`
         : sendResult?.skippedByHealth
           ? `health=${sendResult?.health?.status || 'unknown'}`
         : (sendResult?.error || wsError?.message || 'no_ack');
@@ -483,6 +543,8 @@ async function main() {
 
   const reason = sendResult?.ack
     ? `ACK failed (${sendResult.ack.status})`
+    : sendResult?.deliveryCheck
+      ? `delivery-check ${sendResult.deliveryCheck.status || 'unknown'}`
     : sendResult?.skippedByHealth
       ? `target health ${sendResult?.health?.status || 'unhealthy'}`
     : (sendResult?.error || wsError?.message || 'unknown error');

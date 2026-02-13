@@ -282,6 +282,46 @@ describe('WebSocket Delivery Audit', () => {
     expect(secondAck.status).toBe('delivered.websocket');
   });
 
+  test('returns cached delivery-check result for previously ACKed messageId', async () => {
+    const receiver = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    activeClients.add(receiver);
+    const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(sender);
+
+    const messageId = 'delivery-check-cached-1';
+    const ackPromise = waitForMessage(sender, (msg) => msg.type === 'send-ack' && msg.messageId === messageId);
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'devops',
+      content: 'delivery-check-payload',
+      messageId,
+      ackRequired: true,
+    }));
+    const ack = await ackPromise;
+    expect(ack.ok).toBe(true);
+
+    const requestId = 'delivery-check-request-1';
+    const checkPromise = waitForMessage(
+      sender,
+      (msg) => msg.type === 'delivery-check-result' && msg.requestId === requestId
+    );
+    sender.send(JSON.stringify({
+      type: 'delivery-check',
+      requestId,
+      messageId,
+    }));
+
+    const check = await checkPromise;
+    expect(check.known).toBe(true);
+    expect(check.status).toBe('cached');
+    expect(check.pending).toBe(false);
+    expect(check.ack).toEqual(expect.objectContaining({
+      type: 'send-ack',
+      messageId,
+      ok: true,
+    }));
+  });
+
   test('tracks heartbeat health and reports stale targets by threshold', async () => {
     const targetClient = await connectAndRegister({ port, role: 'devops', paneId: '2' });
     activeClients.add(targetClient);

@@ -49,11 +49,16 @@ const SYNC_COALESCE_WINDOW_MS = 5000;
 const STAGGER_BASE_DELAY_MS = 150;
 const STAGGER_RANDOM_MS = 100;
 const PRIORITY_KEYWORDS = ['STOP', 'URGENT', 'BLOCKING', 'ERROR'];
+const TRIGGER_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
+const TRIGGER_MESSAGE_ID_REGEX = /^\[HM-MESSAGE-ID:([^\]\r\n]+)\]\r?\n?/;
+const RECENT_TRIGGER_ID_TTL_MS = Number.parseInt(process.env.HIVEMIND_TRIGGER_DEDUPE_TTL_MS || String(5 * 60 * 1000), 10);
+const RECENT_TRIGGER_ID_LIMIT = Number.parseInt(process.env.HIVEMIND_TRIGGER_DEDUPE_MAX || '2000', 10);
 
 // Local state
 const lastSyncTime = new Map();
 let lastGlobalSyncTime = 0;
 const deliveryAckListeners = new Set();
+const recentTriggerIds = new Map();
 
 function generateTraceToken(prefix = 'trc') {
   try {
@@ -191,6 +196,70 @@ function isPriorityMessage(message) {
   if (!message) return false;
   const upperMessage = message.toUpperCase();
   return PRIORITY_KEYWORDS.some(keyword => upperMessage.includes(keyword));
+}
+
+function getTriggerDedupeTtlMs() {
+  return Number.isFinite(RECENT_TRIGGER_ID_TTL_MS) && RECENT_TRIGGER_ID_TTL_MS > 0
+    ? RECENT_TRIGGER_ID_TTL_MS
+    : (5 * 60 * 1000);
+}
+
+function getTriggerDedupeLimit() {
+  return Number.isFinite(RECENT_TRIGGER_ID_LIMIT) && RECENT_TRIGGER_ID_LIMIT > 0
+    ? RECENT_TRIGGER_ID_LIMIT
+    : 2000;
+}
+
+function pruneRecentTriggerIds(now = Date.now()) {
+  const ttlMs = getTriggerDedupeTtlMs();
+  for (const [messageId, seenAt] of recentTriggerIds.entries()) {
+    if (!Number.isFinite(seenAt) || seenAt + ttlMs <= now) {
+      recentTriggerIds.delete(messageId);
+    }
+  }
+  const maxEntries = getTriggerDedupeLimit();
+  while (recentTriggerIds.size > maxEntries) {
+    const oldest = recentTriggerIds.keys().next().value;
+    if (!oldest) break;
+    recentTriggerIds.delete(oldest);
+  }
+}
+
+function markRecentTriggerId(messageId, now = Date.now()) {
+  if (!messageId) return;
+  pruneRecentTriggerIds(now);
+  const maxEntries = getTriggerDedupeLimit();
+  if (recentTriggerIds.size >= maxEntries) {
+    const oldest = recentTriggerIds.keys().next().value;
+    if (oldest) {
+      recentTriggerIds.delete(oldest);
+    }
+  }
+  recentTriggerIds.set(messageId, now);
+}
+
+function isRecentTriggerId(messageId, now = Date.now()) {
+  if (!messageId) return false;
+  pruneRecentTriggerIds(now);
+  return recentTriggerIds.has(messageId);
+}
+
+function extractTriggerMessageId(message) {
+  if (typeof message !== 'string' || !message.startsWith(TRIGGER_MESSAGE_ID_PREFIX)) {
+    return { messageId: null, content: message };
+  }
+
+  const match = message.match(TRIGGER_MESSAGE_ID_REGEX);
+  if (!match) {
+    return { messageId: null, content: message };
+  }
+
+  const messageId = match[1] ? String(match[1]).trim() : null;
+  const content = message.slice(match[0].length);
+  return {
+    messageId: messageId || null,
+    content,
+  };
 }
 
 // Role to Pane mapping (duplicate for local use)
@@ -426,6 +495,19 @@ function handleTriggerFile(filePath, filename) {
     message = message.replace(/\0/g, '').replace(/[\x01-\x08\x0B\x0C\x0E-\x1F]/g, '');
   } catch (e) { try { fs.unlinkSync(processingPath); } catch (ex) {} return { success: false, reason: 'read_error' }; }
 
+  const extracted = extractTriggerMessageId(message);
+  const fallbackMessageId = extracted.messageId;
+  message = extracted.content;
+
+  if (fallbackMessageId) {
+    if (isRecentTriggerId(fallbackMessageId)) {
+      log.warn('Trigger', `Skipping duplicate fallback messageId ${fallbackMessageId}`);
+      try { fs.unlinkSync(processingPath); } catch (e) {}
+      return { success: false, reason: 'duplicate_message_id' };
+    }
+    markRecentTriggerId(fallbackMessageId);
+  }
+
   if (!message) { try { fs.unlinkSync(processingPath); } catch (e) {} return { success: false, reason: 'empty' }; }
 
   let parsed = sequencing.parseMessageSequence(message);
@@ -474,10 +556,15 @@ function handleTriggerFile(filePath, filename) {
     deliveryId = sequencing.createDeliveryId(parsed.sender, parsed.seq, recipientRole);
     sequencing.startDeliveryTracking(deliveryId, parsed.sender, parsed.seq, recipientRole, targets, 'trigger', 'pty');
   }
-  const traceContext = normalizeTraceContext(null, { traceId: deliveryId || null });
+  const traceContext = normalizeTraceContext(null, { traceId: deliveryId || fallbackMessageId || null });
   sendStaggered(targets, formatTriggerMessage(message), { deliveryId, traceContext });
   try { fs.unlinkSync(processingPath); } catch (e) {}
-  logTriggerActivity('Trigger file (PTY)', targets, message, { file: filename, sender: parsed.sender, mode: 'pty' });
+  logTriggerActivity('Trigger file (PTY)', targets, message, {
+    file: filename,
+    sender: parsed.sender,
+    mode: 'pty',
+    messageId: fallbackMessageId || null,
+  });
   return { success: true, notified: targets, mode: 'pty', deliveryId };
 }
 
