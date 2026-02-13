@@ -53,6 +53,7 @@ const PRIORITY_KEYWORDS = ['STOP', 'URGENT', 'BLOCKING', 'ERROR'];
 // Local state
 const lastSyncTime = new Map();
 let lastGlobalSyncTime = 0;
+const deliveryAckListeners = new Set();
 
 function generateTraceToken(prefix = 'trc') {
   try {
@@ -253,13 +254,22 @@ function checkWorkflowGate(targets) {
   return { allowed: false, reason: `Workers blocked during '${state.state}'` };
 }
 
-function notifyAgents(agents, message) {
+function notifyAgents(agents, message, options = {}) {
   if (!message) return;
   let targets = Array.isArray(agents) ? [...agents] : [];
-  const beforePayload = applyPluginHookSync('message:beforeSend', { type: 'notify', targets, message, mode: isSDKModeEnabled() ? 'sdk' : 'pty' });
+  const beforePayload = applyPluginHookSync('message:beforeSend', {
+    type: 'notify',
+    targets,
+    message,
+    mode: isSDKModeEnabled() ? 'sdk' : 'pty',
+  });
   if (beforePayload && beforePayload.cancel) return [];
   if (beforePayload && typeof beforePayload.message === 'string') message = beforePayload.message;
   if (beforePayload && Array.isArray(beforePayload.targets)) targets = beforePayload.targets;
+  const deliveryId = typeof options.deliveryId === 'string' ? options.deliveryId : null;
+  const traceContext = deliveryId || options.traceContext
+    ? normalizeTraceContext(options.traceContext, { traceId: deliveryId || null })
+    : null;
 
   if (isSDKModeEnabled()) {
     if (targets.length === 0) return [];
@@ -278,10 +288,37 @@ function notifyAgents(agents, message) {
   const notified = [];
   for (const paneId of targets) { if (agentRunning && agentRunning.get(paneId) === 'running') notified.push(paneId); }
   if (notified.length > 0) {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('inject-message', { panes: notified, message: formatTriggerMessage(message) });
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const payload = { panes: notified, message: formatTriggerMessage(message) };
+      if (deliveryId) payload.deliveryId = deliveryId;
+      if (traceContext) payload.traceContext = traceContext;
+      mainWindow.webContents.send('inject-message', payload);
+    }
     logTriggerActivity('Sent (PTY)', notified, message, { mode: 'pty' });
   }
   return notified;
+}
+
+function onDeliveryAck(listener) {
+  if (typeof listener !== 'function') {
+    return () => {};
+  }
+  deliveryAckListeners.add(listener);
+  return () => {
+    deliveryAckListeners.delete(listener);
+  };
+}
+
+function handleDeliveryAck(deliveryId, paneId) {
+  sequencing.handleDeliveryAck(deliveryId, paneId);
+  if (deliveryAckListeners.size === 0) return;
+  for (const listener of deliveryAckListeners) {
+    try {
+      listener(deliveryId, paneId);
+    } catch (err) {
+      log.warn('Trigger', `Delivery ack listener failed: ${err.message}`);
+    }
+  }
 }
 
 function notifyAllAgentsSync(triggerFile) {
@@ -508,7 +545,8 @@ module.exports = {
   checkWorkflowGate,
   getReliabilityStats: metrics.getReliabilityStats,
   getSequenceState: sequencing.getSequenceState,
-  handleDeliveryAck: sequencing.handleDeliveryAck,
+  handleDeliveryAck,
+  onDeliveryAck,
   getNextSequence: sequencing.getNextSequence,
   parseMessageSequence: sequencing.parseMessageSequence,
   recordMessageSeen: sequencing.recordMessageSeen,
