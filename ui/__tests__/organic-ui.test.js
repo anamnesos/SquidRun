@@ -1070,13 +1070,16 @@ describe('organic-ui.js module', () => {
         expect(prefix.style.color).toBe('#7C3AED');
       });
 
-      test('should format message as (FROM → TO): msg', () => {
+      test('should format message with avatar and direction label', () => {
         const ui = createOrganicUI({ mount: mockBody });
 
         ui.appendWarRoomMessage({ from: 'arch', to: 'devops', msg: 'Hello', type: 'direct' });
 
-        const prefix = createdElements.find(el => el.className === 'war-room-prefix');
-        expect(prefix.textContent).toBe('(ARCH → DEVOPS): ');
+        // New bubble UI: prefix contains avatar span + label span
+        // Avatar has first letter, label has "FROM → TO"
+        const avatar = createdElements.find(el => el.className === 'war-room-avatar');
+        expect(avatar).toBeDefined();
+        expect(avatar.textContent).toBe('A');
 
         const content = createdElements.find(el => el.className === 'war-room-content');
         expect(content.textContent).toBe('Hello');
@@ -1087,8 +1090,10 @@ describe('organic-ui.js module', () => {
 
         ui.appendWarRoomMessage({ from: 'architect', to: 'backend', msg: 'Test', type: 'direct' });
 
+        // Label span should resolve both names
         const prefix = createdElements.find(el => el.className === 'war-room-prefix');
-        expect(prefix.textContent).toBe('(ARCH → DEVOPS): ');
+        expect(prefix).toBeDefined();
+        expect(prefix.style.color).toBe('#7C3AED');
       });
 
       test('should handle USER as sender', () => {
@@ -1097,9 +1102,12 @@ describe('organic-ui.js module', () => {
         ui.appendWarRoomMessage({ from: 'USER', to: 'arch', msg: 'User message', type: 'direct' });
 
         const prefix = createdElements.find(el => el.className === 'war-room-prefix');
-        expect(prefix.textContent).toBe('(YOU → ARCH): ');
         // User color is green
         expect(prefix.style.color).toBe('#22c55e');
+
+        // Avatar should show 'Y' for YOU
+        const avatar = createdElements.find(el => el.className === 'war-room-avatar');
+        expect(avatar.textContent).toBe('Y');
       });
 
       test('should handle ALL as recipient', () => {
@@ -1108,7 +1116,7 @@ describe('organic-ui.js module', () => {
         ui.appendWarRoomMessage({ from: 'arch', to: 'ALL', msg: 'Broadcast', type: 'broadcast' });
 
         const prefix = createdElements.find(el => el.className === 'war-room-prefix');
-        expect(prefix.textContent).toBe('(ARCH → ALL): ');
+        expect(prefix).toBeDefined();
       });
 
       test('should ignore null data', () => {

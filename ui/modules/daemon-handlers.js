@@ -745,7 +745,15 @@ function processThrottleQueue(paneId) {
 
     uiView.flashPaneHeader(paneId);
 
-    ipcRenderer.invoke('sdk-send-message', paneId, cleanMessage).then(() => {
+    ipcRenderer.invoke('sdk-send-message', paneId, cleanMessage).then((result) => {
+      const delivered = result === true || result?.success === true;
+      if (!delivered) {
+        const reason = result?.error || 'SDK send not accepted';
+        log.warn('Daemon SDK', `Send rejected for pane ${paneId}: ${reason}`);
+        uiView.showDeliveryFailed(paneId, reason);
+        return;
+      }
+
       if (messageId && sdkRenderer) {
         sdkRenderer.updateDeliveryState(messageId, 'delivered');
       }
