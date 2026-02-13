@@ -28,7 +28,7 @@ Adapt your communication style based on the profile. Do NOT hardcode user assump
 - Explicit errors over silent failures
 - Works with what you have — adapts to available models and API keys
 
-**Architecture (Session 65):** SDK mode is primary path. PTY mode is fallback only.
+**Architecture (Session 123):** PTY mode is the only mode. SDK was purged in S123 (ad447de) — clean slate rebuild later.
 
 If choosing between "elegant but complex" and "simple but works" - choose simple.
 
@@ -88,11 +88,6 @@ Your role comes from `workspace/instances/{role}/CLAUDE.md` — read it on start
 Use trigger files for inter-agent communication.
 Read `workspace/shared_context.md` for current state and session context.
 
-### SDK Mode Note
-If running in SDK mode (not PTY terminals):
-- Messages arrive via SDK API, not keyboard injection
-- Check `workspace/app-status.json` for mode
-
 ---
 
 ## The One Rule
@@ -105,28 +100,23 @@ If running in SDK mode (not PTY terminals):
 
 **Do this immediately, no user input needed:**
 
-1. **Read `workspace/app-status.json`** - Check runtime state (SDK mode, last restart time)
-2. **Note the current mode** - `sdkMode: true` = SDK mode, `sdkMode: false` = PTY mode
-3. Read `docs/claude/REGISTRY.md`
-4. Find the first role with status = OPEN
-5. Claim it: change status to FILLED, add your name (Claude-[Role]), add today's date
-6. Save the registry file
-7. Say: "I've registered as [Role]. Mode: [PTY/SDK]. Starting on [first task] now."
-8. Read `SPRINT.md` for your task details
-9. **Verify task matches current mode** - Check task tag `[PTY]`, `[SDK]`, or `[BOTH]`
-10. If mode mismatch → alert Lead before starting work
-11. Start working
+1. **Read `workspace/app-status.json`** - Check runtime state (last restart time)
+2. Read `docs/claude/REGISTRY.md`
+3. Find the first role with status = OPEN
+4. Claim it: change status to FILLED, add your name (Claude-[Role]), add today's date
+5. Save the registry file
+6. Say: "I've registered as [Role]. Starting on [first task] now."
+7. Read `SPRINT.md` for your task details
+8. Start working
 
 **App Status File (`workspace/app-status.json`):**
 ```json
 {
   "started": "2026-01-25T12:00:00.000Z",  // When app last started
-  "sdkMode": true,                         // SDK or PTY mode
   "dryRun": false,                         // Dry run mode
   "lastUpdated": "2026-01-25T12:00:00.000Z"
 }
 ```
-**DO NOT ask user "did you restart?" or "are you in SDK mode?" - just read this file.**
 
 **If all roles are FILLED:** Ask the user what role they need.
 
@@ -221,10 +211,6 @@ Sequence numbers prevent duplicates: `(ROLE #N): message`. Start from `#1` each 
 
 No content-free acks. Either add information or stay silent.
 
-### Mode Gate
-
-Tasks tagged `[PTY]`, `[SDK]`, or `[BOTH]`. Check `workspace/app-status.json` before starting. Mode mismatch = flag to Lead.
-
 ### Work Cycle
 
 **Before:** Read `session-handoff.json` + `blockers.md` + `errors.md`. Re-read before each major response (stale context causes duplicate work).
@@ -307,14 +293,14 @@ Before ANY feature is marked "APPROVED FOR TESTING":
 6. **For CSS: trace the @import chain** - index.html → link tags → @import statements → target file. @import after regular rules is silently ignored per CSS spec.
 7. **Document findings in blockers.md** - even if they seem minor
 
-**Anti-pattern (what went wrong with SDK V2):**
-- ❌ Reviewer checked hivemind-sdk-v2.py in isolation
+**Anti-pattern (what went wrong with SDK V2 — before it was purged):**
+- ❌ Reviewer checked a single file in isolation
 - ❌ Lead accepted "APPROVED" without cross-file verification
 - ❌ Critical protocol mismatches (snake_case vs camelCase) were missed
 - ❌ User had to demand a thorough audit to find obvious bugs
 
 **Correct pattern:**
-- ✅ Reviewer reads ALL files that interact (Python ↔ sdk-bridge.js ↔ renderer.js)
+- ✅ Reviewer reads ALL files that interact
 - ✅ Reviewer traces data flow end-to-end
 - ✅ Lead verifies Reviewer did integration review, not just spot check
 - ✅ No "APPROVED" until integration test passes

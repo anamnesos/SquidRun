@@ -41,6 +41,14 @@ Hivemind is a desktop app that runs multiple AI coding CLI instances in parallel
 - **Transition Ledger** - State transition tracking with evidence spec signals
 - **Compaction Gate** - Lexical evidence required for confirmed state, chunk-inactivity decay, safety valve (injection latency: 122-727ms)
 
+### Team Memory Runtime (Phases 0-3 Complete, Phase 4 In Progress)
+- **Claim Graph Runtime** - Team-shared claim lifecycle with create/query/update/deprecate flows
+- **SQLite WAL Store** - Persistent memory in `workspace/runtime/team-memory.sqlite`
+- **Worker + Client Split** - Forked worker execution via `ui/modules/team-memory/worker.js` and `ui/modules/team-memory/worker-client.js`
+- **Claims API Module** - Claim CRUD, evidence links, decisions, consensus, belief snapshots, contradiction tracking
+- **Search Layer** - Phase 2 retrieval via dedicated search migrations and indexes
+- **CLI Tooling** - `ui/scripts/hm-claim.js` for manual claim operations and diagnostics
+
 ### Observability
 - **Message Inspector** - Real-time view of trigger events, sequences, delivery status
 - **Reliability Analytics** - Success rates, latency tracking, per-pane breakdowns
@@ -153,6 +161,12 @@ hivemind/
 │       ├── triggers.js          # Agent-to-agent messaging, sequence tracking
 │       ├── watcher.js           # File system watcher with debounce
 │       ├── event-bus.js         # Event kernel, ring buffer telemetry
+│       ├── team-memory/         # Team Memory Runtime
+│       │   ├── store.js         # SQLite store and schema bootstrap
+│       │   ├── claims.js        # Claim graph CRUD/query operations
+│       │   ├── worker.js        # Forked worker runtime
+│       │   ├── worker-client.js # Main-process worker client
+│       │   └── migrations/      # Team Memory schema/search migrations
 │       ├── websocket-server.js  # WebSocket server for agent messaging
 │       ├── daemon-handlers.js   # Daemon event handlers, message throttling
 │       ├── main/
@@ -179,8 +193,11 @@ hivemind/
 │   │   └── ana/                 # Analyst (pane 5)
 │   ├── build/                   # Build status, reviews, blockers, specs
 │   ├── intent/                  # Shared intent board (per-agent JSON status)
+│   ├── runtime/                 # Runtime databases/artifacts (`team-memory.sqlite`)
 │   └── scripts/                 # Agent lifecycle hooks
 ├── docs/                        # Documentation and specs
+│   ├── team-memory-spec.md      # Team Memory Runtime spec
+│   └── ...
 └── CLAUDE.md                    # Master agent instructions
 ```
 
@@ -196,7 +213,10 @@ If you want to understand how Hivemind works, read these files:
 6. **`ui/modules/terminal/injection.js`** - Input injection queue, focus deferral, submit verification
 7. **`ui/modules/triggers.js`** - Agent-to-agent communication, sequence tracking
 8. **`ui/terminal-daemon.js`** - PTY daemon architecture, process management
-9. **`CLAUDE.md`** - How agents are instructed (master config)
+9. **`ui/modules/team-memory/runtime.js`** - Team Memory Runtime lifecycle, worker wiring, DB bootstrap
+10. **`ui/scripts/hm-claim.js`** - Team Memory CLI for claim create/query/update/deprecate operations
+11. **`docs/team-memory-spec.md`** - Team Memory architecture/spec (phases, schema, contracts)
+12. **`CLAUDE.md`** - How agents are instructed (master config)
 
 ## Platform
 
