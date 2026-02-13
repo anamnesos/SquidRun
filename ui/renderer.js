@@ -11,34 +11,16 @@ const terminal = require('./modules/terminal');
 const tabs = require('./modules/tabs');
 const settings = require('./modules/settings');
 const daemonHandlers = require('./modules/daemon-handlers');
-const sdkRenderer = require('./modules/sdk-renderer');
-const { createOrganicUI } = require('./sdk-ui/organic-ui');
-const { showStatusNotice, showToast } = require('./modules/notifications');
-const { formatTimeSince } = require('./modules/formatters');
-const {
-  UI_IDLE_THRESHOLD_MS,
-  UI_STUCK_THRESHOLD_MS,
-  UI_IDLE_CLAIM_THRESHOLD_MS,
-} = require('./modules/constants');
+const { showStatusNotice } = require('./modules/notifications');
 const { debounceButton, applyShortcutTooltips } = require('./modules/utils');
 const { initCommandPalette } = require('./modules/command-palette');
 const { initCustomTargetDropdown } = require('./modules/target-dropdown');
-const { initStatusStrip, hasClaimableTasks, getClaimableTasksForPane } = require('./modules/status-strip');
+const { initStatusStrip } = require('./modules/status-strip');
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = require('./modules/model-selector');
 const bus = require('./modules/event-bus');
 const healthStrip = require('./modules/health-strip');
 const { clearScopedIpcListeners, registerScopedIpcListener } = require('./modules/renderer-ipc-registry');
 
-// SDK mode flag - when true, use SDK renderer instead of xterm terminals
-let sdkMode = false;
-
-// Organic UI instance for SDK mode
-let organicUIInstance = null;
-
-// Pending messages for War Room (queued before organicUIInstance is ready)
-let pendingWarRoomMessages = [];
-const MAX_PENDING_WAR_ROOM_MESSAGES = 500;
-let pendingWarRoomDroppedCount = 0;
 const dynamicPtyIpcChannels = new Set();
 const RENDERER_IPC_CHANNELS = Object.freeze([
   // 'feature-capabilities-updated' — scoped listeners only (renderer + oracle.js), cleaned by clearScopedIpcListeners
@@ -52,21 +34,7 @@ const RENDERER_IPC_CHANNELS = Object.freeze([
   'restart-all-panes',
   'codex-activity',
   'agent-stuck-detected',
-  'sdk-message',
-  'sdk-streaming',
-  'sdk-text-delta',
-  'sdk-thinking-delta',
-  'sdk-session-start',
-  'sdk-session-end',
-  'sdk-error',
-  'sdk-message-delivered',
   'pane-cli-identity',
-  'direct-message-sent',
-  'auto-handoff',
-  'war-room-message',
-  'agent-online',
-  'agent-offline',
-  'agent-state-changed',
   // Channels registered in submodules — must be cleaned up here too
   'activity-logged',         // tabs/activity.js
   'oracle:image-generated',  // tabs/oracle.js
@@ -112,162 +80,7 @@ function clearRendererIpcListeners() {
   clearScopedIpcListeners();
 }
 
-function enqueuePendingWarRoomMessage(message) {
-  if (!message) return;
-  pendingWarRoomMessages.push(message);
 
-  if (pendingWarRoomMessages.length <= MAX_PENDING_WAR_ROOM_MESSAGES) {
-    return;
-  }
-
-  const overflowCount = pendingWarRoomMessages.length - MAX_PENDING_WAR_ROOM_MESSAGES;
-  pendingWarRoomMessages.splice(0, overflowCount);
-  pendingWarRoomDroppedCount += overflowCount;
-
-  if (pendingWarRoomDroppedCount === overflowCount || (pendingWarRoomDroppedCount % 100) === 0) {
-    log.warn(
-      'WarRoom',
-      `Dropped ${pendingWarRoomDroppedCount} queued message(s) while UI not ready (cap=${MAX_PENDING_WAR_ROOM_MESSAGES})`,
-    );
-  }
-}
-
-function replayPendingWarRoomMessages() {
-  if (!organicUIInstance || pendingWarRoomMessages.length === 0) {
-    return;
-  }
-
-  if (pendingWarRoomDroppedCount > 0) {
-    log.info(
-      'WarRoom',
-      `Replaying ${pendingWarRoomMessages.length} queued messages (dropped oldest ${pendingWarRoomDroppedCount} at cap=${MAX_PENDING_WAR_ROOM_MESSAGES})`,
-    );
-  } else {
-    log.info('WarRoom', `Replaying ${pendingWarRoomMessages.length} queued messages`);
-  }
-
-  pendingWarRoomMessages.forEach(msg => organicUIInstance.appendWarRoomMessage(msg));
-  pendingWarRoomMessages = [];
-  pendingWarRoomDroppedCount = 0;
-}
-
-// Reference to sendBroadcast (set after DOMContentLoaded)
-let sendBroadcastFn = null;
-
-/**
- * Wire up organic UI input to send messages
- * Called after organic UI is mounted and sendBroadcast is available
- */
-function wireOrganicInput() {
-  log.info('SDK', `wireOrganicInput called: instance=${!!organicUIInstance}, input=${!!organicUIInstance?.input}, sendFn=${!!sendBroadcastFn}`);
-  if (!organicUIInstance || !organicUIInstance.input || !sendBroadcastFn) {
-    log.info('SDK', 'wireOrganicInput: missing dependency, skipping');
-    return;
-  }
-  // Prevent double-wiring
-  if (organicUIInstance._inputWired) {
-    log.info('SDK', 'wireOrganicInput: already wired, skipping');
-    return;
-  }
-  organicUIInstance._inputWired = true;
-
-  const handleSubmit = () => {
-    const value = organicUIInstance.input.value?.trim();
-    if (value) {
-      if (sendBroadcastFn(value)) {
-        organicUIInstance.input.value = '';
-        // No need to append manually - sendBroadcastFn triggers triggers.broadcastToAllAgents
-        // which emits 'war-room-message' IPC, handled below by the standard stream handler.
-      }
-    }
-  };
-
-  organicUIInstance.input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && e.isTrusted) {
-      e.preventDefault();
-      handleSubmit();
-    }
-  });
-
-  organicUIInstance.sendBtn.addEventListener('click', (e) => {
-    if (e.isTrusted) {
-      handleSubmit();
-    }
-  });
-
-  log.info('SDK', 'Organic UI input wired');
-}
-
-/**
- * Update agent state in organic UI
- * @param {string} paneId - Pane ID or agent ID
- * @param {string} activityState - Activity state (ready, thinking, tool, etc.)
- */
-function updateOrganicState(paneId, activityState) {
-  if (!organicUIInstance) return;
-  // Map activity states to organic UI states
-  const stateMap = {
-    ready: 'idle',
-    idle: 'idle',
-    done: 'idle',
-    thinking: 'thinking',
-    responding: 'thinking',  // SDK sends 'responding' when generating output
-    tool: 'thinking',
-    command: 'thinking',
-    file: 'thinking',
-    streaming: 'thinking',
-  };
-  const state = stateMap[activityState] || activityState;
-  organicUIInstance.updateState(paneId, state);
-}
-
-// Centralized SDK mode setter - ensures renderer-process flags stay in sync
-// Renderer flags: renderer.sdkMode, daemonHandlers.sdkModeEnabled, terminal.sdkModeActive, settings.sdkMode
-// Note: triggers.js runs in main process and is synced via IPC in main.js when settings change
-function setSDKMode(enabled, options = {}) {
-  const { persist = true, source = 'renderer' } = options;
-  const nextValue = !!enabled;
-
-  sdkMode = nextValue;
-  daemonHandlers.setSDKMode(nextValue);
-  terminal.setSDKMode(nextValue);
-
-  const currentSettings = typeof settings.getSettings === 'function' ? settings.getSettings() : null;
-  const hasSettings = currentSettings && typeof currentSettings === 'object';
-  const settingsValue = hasSettings ? !!currentSettings.sdkMode : undefined;
-  const needsSettingsUpdate = settingsValue !== nextValue;
-
-  if (hasSettings && needsSettingsUpdate) {
-    currentSettings.sdkMode = nextValue;
-    if (typeof settings.applySettingsToUI === 'function') {
-      settings.applySettingsToUI();
-    }
-  }
-
-  if (persist && (!hasSettings || needsSettingsUpdate)) {
-    ipcRenderer.invoke('set-setting', 'sdkMode', nextValue)
-      .then((updated) => {
-        if (hasSettings && updated && typeof updated === 'object' && updated !== currentSettings) {
-          Object.assign(currentSettings, updated);
-        }
-        if (typeof settings.applySettingsToUI === 'function') {
-          settings.applySettingsToUI();
-        }
-        log.info('SDK', `SDK mode persisted to ${nextValue} (${source})`);
-      })
-      .catch((err) => {
-        log.error('SDK', `Failed to persist SDK mode (${source})`, err);
-      });
-  } else {
-    log.info('SDK', `SDK mode set to ${nextValue} (${source})`);
-  }
-}
-
-const SDK_PANE_LABELS = {
-  '1': { name: 'Architect', avatar: '[A]' },
-  '2': { name: 'DevOps', avatar: '[D]' },
-  '5': { name: 'Analyst', avatar: '[?]' },
-};
 
 const MAIN_PANE_CONTAINER_SELECTOR = '.main-pane-container';
 const SIDE_PANES_CONTAINER_SELECTOR = '.side-panes-container';
@@ -356,9 +169,6 @@ let initState = {
   autoSpawnChecked: false
 };
 
-let sdkSessionStartPromise = null;
-let sdkSessionStopPromise = null;
-
 function checkInitComplete() {
   if (initState.settingsLoaded && initState.terminalsReady && !initState.autoSpawnChecked) {
     initState.autoSpawnChecked = true;
@@ -370,120 +180,16 @@ function checkInitComplete() {
   }
 }
 
-function ensureSdkSessionsStarted(source = 'sdk-enable') {
-  if (sdkSessionStartPromise) {
-    return sdkSessionStartPromise;
-  }
-
-  sdkSessionStartPromise = (async () => {
-    if (sdkSessionStopPromise) {
-      try {
-        await sdkSessionStopPromise;
-      } catch {
-        // Best-effort wait; start attempt continues.
-      }
-    }
-
-    const projectPath = await ipcRenderer.invoke('get-project');
-    const result = await ipcRenderer.invoke('sdk-start-sessions', {
-      workspace: projectPath || undefined,
-    });
-
-    if (!result?.success) {
-      throw new Error(result?.error || 'Failed to start SDK sessions');
-    }
-
-    updateConnectionStatus('SDK Mode - agents starting...');
-    log.info('SDK', `SDK sessions start requested (${source})`);
-    return result;
-  })()
-    .finally(() => {
-      sdkSessionStartPromise = null;
-    });
-
-  return sdkSessionStartPromise;
-}
-
-function ensureSdkSessionsStopped(source = 'sdk-disable') {
-  if (sdkSessionStopPromise) {
-    return sdkSessionStopPromise;
-  }
-
-  sdkSessionStopPromise = (async () => {
-    if (sdkSessionStartPromise) {
-      try {
-        await sdkSessionStartPromise;
-      } catch {
-        // Best-effort wait; stop attempt continues.
-      }
-    }
-
-    const result = await ipcRenderer.invoke('sdk-stop-sessions');
-    if (!result?.success) {
-      throw new Error(result?.error || 'Failed to stop SDK sessions');
-    }
-
-    log.info('SDK', `SDK sessions stopped (${source})`);
-    return result;
-  })()
-    .finally(() => {
-      sdkSessionStopPromise = null;
-    });
-
-  return sdkSessionStopPromise;
-}
-
 function markSettingsLoaded() {
   initState.settingsLoaded = true;
   log.info('Init', 'Settings loaded');
 
-  // SDK Mode: Set SDK mode flags in all relevant modules (centralized)
-  const currentSettings = settings.getSettings();
-  const sdkEnabled = !!currentSettings?.sdkMode;
-  log.info('Init', `SDK mode in settings: ${sdkEnabled}`);
-  setSDKMode(sdkEnabled, { persist: false, source: 'settings-loaded' });
-
   checkInitComplete();
 }
 
-function markTerminalsReady(isSDKMode = false) {
+function markTerminalsReady() {
   initState.terminalsReady = true;
-  log.info('Init', `Terminals ready, SDK mode: ${isSDKMode}`);
-
-  // SDK Mode: Initialize organic bubble UI and start sessions
-  if (isSDKMode) {
-    log.info('Init', 'Initializing SDK mode (organic UI)...');
-    setSDKMode(true, { persist: false, source: 'daemon-ready' });  // Centralized - sets all 4 SDK mode flags
-
-    // Mount organic bubble canvas
-    const terminalsSection = document.getElementById('terminalsSection');
-    const paneLayout = terminalsSection?.querySelector('.pane-layout');
-    if (paneLayout) {
-      paneLayout.style.display = 'none';
-    }
-
-    // Hide PTY command bar (organic UI has its own input)
-    const commandBar = document.querySelector('.command-bar');
-    if (commandBar) {
-      commandBar.style.display = 'none';
-    }
-
-    if (terminalsSection && !organicUIInstance) {
-      organicUIInstance = createOrganicUI({ mount: terminalsSection });
-      log.info('Init', 'Organic UI mounted');
-      wireOrganicInput();  // Wire up input handlers
-
-      // Replay pending messages
-      replayPendingWarRoomMessages();
-    }
-
-    log.info('Init', 'Auto-starting SDK sessions...');
-    ensureSdkSessionsStarted('daemon-ready')
-      .catch(err => {
-        log.error('Init', 'Failed to start SDK sessions:', err);
-        updateConnectionStatus('SDK Mode - start failed');
-      });
-  }
+  log.info('Init', 'Terminals ready');
 
   checkInitComplete();
 }
@@ -587,105 +293,6 @@ Object.assign(window.hivemind, {
     kill: (processId) => ipcRenderer.invoke('kill-process', processId),
     getOutput: (processId) => ipcRenderer.invoke('get-process-output', processId),
   },
-  // SDK mode API (Task #2)
-  sdk: {
-    start: (prompt) => ipcRenderer.invoke('sdk-start', prompt),
-    stop: () => ipcRenderer.invoke('sdk-stop'),
-    restartSession: (paneId) => ipcRenderer.invoke('sdk-restart-session', paneId),
-    isActive: () => sdkMode,
-    enableMode: async (options = {}) => {
-      const source = options?.source || 'sdk-enable';
-      const skipSessionStart = Boolean(options?.skipSessionStart);
-
-      setSDKMode(true, { source });
-
-      // Mount organic UI
-      const terminalsSection = document.getElementById('terminalsSection');
-      const paneLayout = terminalsSection?.querySelector('.pane-layout');
-      if (paneLayout) {
-        paneLayout.style.display = 'none';
-      }
-
-      // Hide PTY command bar (organic UI has its own input)
-      const commandBar = document.querySelector('.command-bar');
-      if (commandBar) {
-        commandBar.style.display = 'none';
-      }
-
-      if (terminalsSection && !organicUIInstance) {
-        organicUIInstance = createOrganicUI({ mount: terminalsSection });
-        log.info('SDK', 'Organic UI mounted');
-        wireOrganicInput(); // Wire up input handlers
-      }
-
-      initModelSelectors(true);
-      replayPendingWarRoomMessages();
-      log.info('SDK', 'Mode enabled (organic UI v2)');
-
-      if (skipSessionStart) {
-        return;
-      }
-
-      try {
-        await ensureSdkSessionsStarted(source);
-      } catch (err) {
-        log.error('SDK', `Failed to start SDK sessions (${source})`, err);
-        updateConnectionStatus('SDK Mode - start failed');
-        showToast(`SDK start failed: ${err.message}`, 'error');
-      }
-    },
-    disableMode: async (options = {}) => {
-      const source = options?.source || 'sdk-disable';
-      const skipSessionStop = Boolean(options?.skipSessionStop);
-      const shouldRestorePtyLayout = sdkMode || !!organicUIInstance;
-
-      if (!skipSessionStop) {
-        try {
-          await ensureSdkSessionsStopped(source);
-        } catch (err) {
-          log.error('SDK', `Failed to stop SDK sessions (${source})`, err);
-          showToast(`SDK stop failed: ${err.message}`, 'warning');
-        }
-      }
-
-      setSDKMode(false, { source });
-
-      // Unmount organic UI and restore pane layout
-      if (organicUIInstance) {
-        organicUIInstance.destroy();
-        organicUIInstance = null;
-        log.info('SDK', 'Organic UI destroyed');
-      }
-
-      const terminalsSection = document.getElementById('terminalsSection');
-      const paneLayout = terminalsSection?.querySelector('.pane-layout');
-      if (paneLayout) {
-        paneLayout.style.display = '';
-      }
-
-      // Restore PTY command bar
-      const commandBar = document.querySelector('.command-bar');
-      if (commandBar) {
-        commandBar.style.display = '';
-      }
-
-      initModelSelectors(false);
-
-      if (shouldRestorePtyLayout) {
-        log.info('SDK', 'Mode disabled (restoring agents)...');
-        try {
-          await terminal.initTerminals();
-          await terminal.spawnAllAgents();
-        } catch (err) {
-          log.error('SDK', 'Failed restoring PTY agents after SDK disable', err);
-          showToast(`Failed restoring PTY agents: ${err.message}`, 'error');
-        }
-      }
-    },
-    // SDK status functions (exposed for external use)
-    updateStatus: (paneId, state) => updateSDKStatus(paneId, state),
-    showDelivered: (paneId) => showSDKMessageDelivered(paneId),
-  },
   // Settings API - expose settings module for debugMode check etc.
   settings: {
     get: () => settings.getSettings(),
@@ -729,13 +336,6 @@ function updateConnectionStatus(status) {
   }
 }
 
-// Agent Health Dashboard (#1) - update health indicators per pane
-// Constants imported from modules/constants.js: UI_STUCK_THRESHOLD_MS, UI_IDLE_CLAIM_THRESHOLD_MS
-
-// Smart Parallelism - hasClaimableTasks / getClaimableTasksForPane imported from status-strip.js (SSOT)
-
-// formatTimeSince now imported from ./modules/formatters
-
 // Pane expansion state
 let expandedPaneId = null;
 
@@ -764,145 +364,6 @@ function toggleExpandPane(paneId) {
 }
 
 // Status Strip - imported from modules/status-strip.js
-
-function applySDKPaneLayout() {
-  const sdkPaneIds = Object.keys(SDK_PANE_LABELS);
-
-  sdkPaneIds.forEach((paneId) => {
-    const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-    if (!pane) return;
-    pane.style.display = '';
-
-    const titleEl = pane.querySelector('.pane-title');
-    if (!titleEl) return;
-
-    const avatarEl = titleEl.querySelector('.agent-avatar');
-    if (avatarEl) {
-      avatarEl.textContent = SDK_PANE_LABELS[paneId].avatar;
-    }
-
-    let roleTextNode = null;
-    for (const node of titleEl.childNodes) {
-      if (node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 0) {
-        roleTextNode = node;
-        break;
-      }
-    }
-
-    if (!roleTextNode) {
-      const projectEl = titleEl.querySelector('.pane-project');
-      const nameNode = document.createTextNode(SDK_PANE_LABELS[paneId].name);
-      if (projectEl) {
-        titleEl.insertBefore(nameNode, projectEl);
-      } else {
-        titleEl.appendChild(nameNode);
-      }
-    } else {
-      roleTextNode.textContent = SDK_PANE_LABELS[paneId].name;
-    }
-  });
-
-  // Placeholder is now set dynamically by updateCommandPlaceholder() based on target selector
-  // Initial call happens in DOMContentLoaded event handler
-}
-
-// SDK activity tracking (header indicators removed)
-const paneIdleState = new Map();
-
-// SDK status debouncing - track last status per pane to avoid flicker
-const lastSDKStatus = new Map();
-// UI_UI_IDLE_THRESHOLD_MS imported from modules/constants.js
-
-/**
- * Track pane activity and manage idle state
- * @param {string} paneId - Pane ID
- * @param {boolean} isActive - Whether pane just became active
- */
-function trackPaneActivity(paneId, isActive) {
-  const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-  if (!pane) return;
-
-  if (isActive) {
-    // Activity detected - clear idle state
-    pane.classList.remove('idle');
-    const existingIdleIndicator = pane.querySelector('.sdk-idle-indicator');
-    if (existingIdleIndicator) existingIdleIndicator.remove();
-
-    // Reset idle timer
-    const existing = paneIdleState.get(paneId);
-    if (existing?.timerId) clearTimeout(existing.timerId);
-
-    paneIdleState.set(paneId, {
-      lastActive: Date.now(),
-      timerId: setTimeout(() => enterIdleState(paneId), UI_IDLE_THRESHOLD_MS)
-    });
-  }
-}
-
-/**
- * Enter idle state for a pane (called after UI_IDLE_THRESHOLD_MS of inactivity)
- * @param {string} paneId - Pane ID
- */
-function enterIdleState(paneId) {
-  const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-  if (!pane) return;
-
-  // Add idle class for breathing animation
-  pane.classList.add('idle');
-
-  // Add idle indicator with timestamp
-  const sdkPane = pane.querySelector('.sdk-pane');
-  if (sdkPane && !pane.querySelector('.sdk-idle-indicator')) {
-    const indicator = document.createElement('div');
-    indicator.className = 'sdk-idle-indicator';
-    const idleState = paneIdleState.get(paneId);
-    const idleSecs = idleState ? Math.round((Date.now() - idleState.lastActive) / 1000) : 30;
-    const idleText = idleSecs >= 60 ? `${Math.floor(idleSecs / 60)}m` : `${idleSecs}s`;
-
-    indicator.innerHTML = `
-      <span class="sdk-idle-dot"></span>
-      <span class="sdk-idle-text">Idle ${idleText}</span>
-    `;
-    sdkPane.insertBefore(indicator, sdkPane.firstChild);
-
-    // Update idle time every 10 seconds
-    const updateInterval = setInterval(() => {
-      const state = paneIdleState.get(paneId);
-      if (!state || !pane.classList.contains('idle')) {
-        clearInterval(updateInterval);
-        return;
-      }
-      const secs = Math.round((Date.now() - state.lastActive) / 1000);
-      const text = secs >= 60 ? `${Math.floor(secs / 60)}m` : `${secs}s`;
-      const textEl = indicator.querySelector('.sdk-idle-text');
-      if (textEl) textEl.textContent = `Idle ${text}`;
-    }, 10000);
-  }
-}
-
-function updateSDKStatus(paneId, state) {
-  // Debounce: skip if same status as last time (prevents flicker from rapid updates)
-  if (lastSDKStatus.get(paneId) === state) {
-    return;
-  }
-  lastSDKStatus.set(paneId, state);
-
-  // Track activity - anything but 'idle' is activity
-  if (state !== 'idle' && state !== 'disconnected') {
-    trackPaneActivity(paneId, true);
-  }
-
-  // Update organic UI visual state
-  updateOrganicState(paneId, state);
-
-  log.info('SDK', `Pane ${paneId} status: ${state}`);
-}
-
-function showSDKMessageDelivered(paneId) {
-  daemonHandlers.showDeliveryIndicator(paneId, 'delivered');
-
-  log.info('SDK', `Pane ${paneId} message delivered`);
-}
 
 // Wire up module callbacks
 terminal.setStatusCallbacks(updatePaneStatus, updateConnectionStatus);
@@ -1166,7 +627,7 @@ function setupEventListeners() {
     updateCommandPlaceholder(); // Set initial placeholder
   }
 
-  // Helper function to send broadcast - routes through SDK or PTY based on mode
+  // Helper function to send broadcast - routes through PTY terminals
   // Supports pane targeting via dropdown or /1, /2, /5 prefix
   function sendBroadcast(message) {
     const now = Date.now();
@@ -1188,134 +649,18 @@ function setupEventListeners() {
       return routeNaturalTask(trimmed);
     }
 
-    // Check SDK mode from settings
-    const currentSettings = settings.getSettings();
-    if (currentSettings.sdkMode || sdkMode) {
-      // Check for pane targeting prefix: /1, /2, /5 or /architect, /devops, etc.
-      // /all broadcasts to all agents
-      const paneMatch = message.match(/^\/([125]|all|lead|architect|devops|infra|orchestrator|backend|worker-?b|implementer-?b|analyst|investigator)\s+/i);
-
-      // Determine target: explicit prefix > dropdown selector > default (1)
-      let targetPaneId = '1';
-      let actualMessage = message;
-
-      if (paneMatch) {
-        // Explicit prefix takes precedence
-        const target = paneMatch[1].toLowerCase();
-        actualMessage = message.slice(paneMatch[0].length);
-        if (target === 'all') {
-          targetPaneId = 'all';
-        } else {
-          const paneMap = {
-            '1': '1', '2': '2', '5': '5',
-            'lead': '1', 'architect': '1',
-            'devops': '2', 'infra': '2', 'orchestrator': '2', 'backend': '2', 'worker-b': '2', 'workerb': '2',
-            'analyst': '5', 'investigator': '5'
-          };
-          targetPaneId = paneMap[target] || '1';
-        }
-      } else if (commandTarget) {
-        // Use dropdown selector value
-        targetPaneId = commandTarget.value;
-      }
-
-      // Send to target(s)
-      if (targetPaneId === 'all') {
-        log.info('SDK', 'Broadcast to ALL agents');
-
-        // Show user message in War Room if active
-        if (organicUIInstance) {
-          organicUIInstance.appendWarRoomMessage({
-            ts: Math.floor(Date.now() / 1000),
-            from: 'YOU',
-            to: 'ALL',
-            msg: actualMessage,
-            type: 'broadcast'
-          });
-        }
-
-        terminal.PANE_IDS.forEach(paneId => {
-          // Show user message in organic UI agent panes if active
-          if (organicUIInstance) {
-            organicUIInstance.appendText(paneId, `> ${actualMessage}`);
-          }
-          sdkRenderer.appendMessage(paneId, { type: 'user', content: actualMessage });
-        });
-        ipcRenderer.invoke('sdk-broadcast', actualMessage)
-          .then((result) => {
-            const delivered = result === true || result?.success === true;
-            if (delivered) {
-              showDeliveryStatus('delivered');
-              return;
-            }
-
-            const reason = result?.error || 'Broadcast was not accepted by SDK runtime';
-            log.warn('SDK', `Broadcast not delivered: ${reason}`);
-            showDeliveryStatus('failed');
-            showToast(`Broadcast failed: ${reason}`, 'error');
-          })
-          .catch(err => {
-            log.error('SDK', 'Broadcast failed:', err);
-            showDeliveryStatus('failed');
-            showToast(`Broadcast failed: ${err.message}`, 'error');
-          });
-      } else {
-        log.info('SDK', `Targeted send to pane ${targetPaneId}: ${actualMessage.substring(0, 30)}...`);
-
-        // Show user message in War Room if active
-        if (organicUIInstance) {
-          const toLabel = SDK_PANE_LABELS[targetPaneId]?.name || `Pane ${targetPaneId}`;
-          organicUIInstance.appendWarRoomMessage({
-            ts: Math.floor(Date.now() / 1000),
-            from: 'YOU',
-            to: toLabel.toUpperCase(),
-            msg: actualMessage,
-            type: 'direct'
-          });
-        }
-
-        // Show user message in organic UI if active
-        if (organicUIInstance) {
-          organicUIInstance.appendText(targetPaneId, `> ${actualMessage}`);
-        }
-        sdkRenderer.appendMessage(targetPaneId, { type: 'user', content: actualMessage });
-        ipcRenderer.invoke('sdk-send-message', targetPaneId, actualMessage)
-          .then((result) => {
-            const delivered = result === true || result?.success === true;
-            if (delivered) {
-              showDeliveryStatus('delivered');
-              return;
-            }
-
-            const reason = result?.error || `Message was not accepted by pane ${targetPaneId}`;
-            log.warn('SDK', `Send to pane ${targetPaneId} not delivered: ${reason}`);
-            showDeliveryStatus('failed');
-            showToast(`Send failed: ${reason}`, 'error');
-          })
-          .catch(err => {
-            log.error('SDK', `Send to pane ${targetPaneId} failed:`, err);
-            showDeliveryStatus('failed');
-            showToast(`Send failed: ${err.message}`, 'error');
-          });
-      }
+    // PTY mode - use terminal broadcast with target from dropdown
+    const targetPaneId = commandTarget ? commandTarget.value : 'all';
+    log.info('Broadcast', `Target: ${targetPaneId}`);
+    if (targetPaneId === 'all') {
+      terminal.broadcast(message + '\r');
     } else {
-      // PTY mode - use terminal broadcast with target from dropdown
-      const targetPaneId = commandTarget ? commandTarget.value : 'all';
-      log.info('Broadcast', `Using PTY mode, target: ${targetPaneId}`);
-      if (targetPaneId === 'all') {
-        terminal.broadcast(message + '\r');
-      } else {
-        // Send to specific pane in PTY mode - user messages get priority + immediate
-        terminal.sendToPane(targetPaneId, message + '\r', { priority: true, immediate: true });
-      }
-      showDeliveryStatus('delivered');
+      // Send to specific pane - user messages get priority + immediate
+      terminal.sendToPane(targetPaneId, message + '\r', { priority: true, immediate: true });
     }
+    showDeliveryStatus('delivered');
     return true;
   }
-
-  // Store reference for organic UI input wiring
-  sendBroadcastFn = sendBroadcast;
-  wireOrganicInput();  // Wire up if organic UI already mounted
 
   if (broadcastInput) {
     // Auto-grow textarea as user types
@@ -1386,20 +731,6 @@ function setupEventListeners() {
 
   window.addEventListener('hivemind-settings-updated', (event) => {
     refreshVoiceSettings(event.detail);
-
-    // Handle SDK mode toggle at runtime
-    const newSettings = event.detail;
-    if (newSettings && typeof newSettings.sdkMode !== 'undefined') {
-      const newSdkMode = !!newSettings.sdkMode;
-      if (newSdkMode !== sdkMode) {
-        log.info('Settings', `SDK mode changed: ${sdkMode} -> ${newSdkMode}`);
-        if (newSdkMode) {
-          window.hivemind.sdk.enableMode();
-        } else {
-          window.hivemind.sdk.disableMode();
-        }
-      }
-    }
   });
   refreshVoiceSettings(settings.getSettings());
 
@@ -1617,7 +948,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Model Selector - per-pane model switching
   setupModelSelectorListeners();
   setupModelChangeListener();
-  initModelSelectors(sdkMode);
+  initModelSelectors();
 
   // Global ESC key handler - interrupt agent AND release keyboard
   ipcRenderer.on('global-escape-pressed', () => {
@@ -1831,9 +1162,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       statusEl.classList.add('working', `activity-${state}`);
       startSpinnerCycle(paneId, spinnerEl);
     }
-
-    // Update organic UI state
-    updateOrganicState(paneId, state);
   });
 
   // Single agent stuck detection - notify user (we can't auto-ESC via PTY)
@@ -1874,252 +1202,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // ============================================================
-  // SDK MESSAGE ORDERING - Buffer and sort by timestamp
-  // ============================================================
-  // Messages from Python SDK now have 'timestamp' field (ISO string).
-  // Buffer briefly then process in timestamp order to prevent stale message bugs.
-
-  const SDK_MESSAGE_BUFFER_MS = 100; // Buffer window for sorting
-  const sdkMessageBuffer = new Map(); // paneId -> { messages: [], timer: null, lastTimestamp: null }
-
-  // Initialize buffer for each pane
-  terminal.PANE_IDS.forEach(paneId => {
-    sdkMessageBuffer.set(paneId, { messages: [], timer: null, lastTimestamp: null });
-  });
-
-  // Process buffered messages for a pane (sorted by timestamp)
-  function processSDKMessageBuffer(paneId) {
-    const buffer = sdkMessageBuffer.get(paneId);
-    if (!buffer || buffer.messages.length === 0) return;
-
-    // Sort by timestamp (oldest first)
-    buffer.messages.sort((a, b) => {
-      const tsA = a.message?.timestamp ? new Date(a.message.timestamp).getTime() : 0;
-      const tsB = b.message?.timestamp ? new Date(b.message.timestamp).getTime() : 0;
-      return tsA - tsB;
-    });
-
-    // Process each message
-    for (const data of buffer.messages) {
-      const { message } = data;
-      const msgTimestamp = message?.timestamp ? new Date(message.timestamp).getTime() : null;
-
-      // Detect out-of-order arrival (message older than last processed)
-      if (msgTimestamp && buffer.lastTimestamp && msgTimestamp < buffer.lastTimestamp) {
-        log.warn('SDK', `Out-of-order message detected in pane ${paneId}: msg=${msgTimestamp}, last=${buffer.lastTimestamp}`);
-      }
-
-      // Update last timestamp
-      if (msgTimestamp) {
-        buffer.lastTimestamp = Math.max(buffer.lastTimestamp || 0, msgTimestamp);
-      }
-
-      // Process the message
-      processSDKMessage(paneId, message);
-    }
-
-    // Clear buffer
-    buffer.messages = [];
-    buffer.timer = null;
-  }
-
-  // Core message processing (extracted from original handler)
-  function processSDKMessage(paneId, message) {
-    log.info('SDK', `Processing message for pane ${paneId}: ${message?.type || 'unknown'}`);
-
-    // Update contextual thinking indicator for tool_use AND activity feed
-    if (message.type === 'tool_use' || (message.type === 'assistant' && Array.isArray(message.content))) {
-      // Check for tool_use blocks in assistant content
-      const toolBlocks = Array.isArray(message.content)
-        ? message.content.filter(b => b.type === 'tool_use')
-        : [];
-
-      if (message.type === 'tool_use') {
-        sdkRenderer.updateToolContext(paneId, message);
-        // Add to activity feed in organic UI
-        if (organicUIInstance && organicUIInstance.appendActivity) {
-          organicUIInstance.appendActivity(paneId, message);
-        }
-      } else if (toolBlocks.length > 0) {
-        // Use the first tool_use block for context
-        sdkRenderer.updateToolContext(paneId, toolBlocks[0]);
-        // Add all tool_use blocks to activity feed
-        if (organicUIInstance && organicUIInstance.appendActivity) {
-          toolBlocks.forEach(block => organicUIInstance.appendActivity(paneId, block));
-        }
-      }
-    }
-
-    // Route to organic UI if active, otherwise to sdk-renderer
-    if (organicUIInstance) {
-      // Extract text content for organic UI display
-      let textContent = '';
-      if (message.type === 'assistant') {
-        if (Array.isArray(message.content)) {
-          // Extract text blocks from content array
-          textContent = message.content
-            .filter(b => b.type === 'text')
-            .map(b => b.text || '')
-            .join('\n');
-        } else if (typeof message.content === 'string') {
-          textContent = message.content;
-        }
-      } else if (message.type === 'user') {
-        textContent = `> ${message.content || message.message || ''}`;
-      } else if (message.type === 'tool_use') {
-        textContent = `[Tool: ${message.name || 'unknown'}]`;
-      } else if (message.type === 'tool_result') {
-        const resultContent = typeof message.content === 'string'
-          ? message.content
-          : (message.content != null ? JSON.stringify(message.content) : '(empty)');
-        // Truncate long results
-        textContent = resultContent.length > 100
-          ? `[Result: ${resultContent.substring(0, 100)}...]`
-          : `[Result: ${resultContent}]`;
-      } else if (message.error) {
-        textContent = `[Error: ${message.error}]`;
-      }
-
-      if (textContent) {
-        organicUIInstance.appendText(paneId, textContent);
-
-        // Also route assistant responses to War Room stream
-        if (message.type === 'assistant') {
-          const fromLabel = SDK_PANE_LABELS[paneId]?.name || `Pane ${paneId}`;
-          organicUIInstance.appendWarRoomMessage({
-            ts: Math.floor(Date.now() / 1000),
-            from: fromLabel.toUpperCase(),
-            to: 'YOU',
-            msg: textContent,
-            type: 'direct'
-          });
-        }
-      }
-    }
-
-    // Only render to sdk-renderer when organic UI is NOT active
-    // (prevents double-rendering — organic UI already displayed the content above)
-    if (!organicUIInstance) {
-      sdkRenderer.appendMessage(paneId, message);
-    }
-  }
-
-  // SDK Message Handler - buffers messages for timestamp sorting
-  // Receives messages from Python SDK via IPC and routes to correct pane
-  // sdk-bridge sends single object { paneId, message }, not separate args
-  ipcRenderer.on('sdk-message', (event, data) => {
-    if (!data || !data.message) {
-      log.warn('SDK', 'Received malformed sdk-message:', data);
-      return;
-    }
-    const { paneId, message } = data;
-
-    // For streaming deltas (text_delta, thinking_delta), process immediately (no buffering)
-    // These need real-time display for typewriter effect
-    if (message.type === 'text_delta' || message.type === 'thinking_delta') {
-      processSDKMessage(paneId, message);
-      return;
-    }
-
-    // Buffer the message
-    const buffer = sdkMessageBuffer.get(paneId);
-    if (!buffer) {
-      // Fallback: process immediately if no buffer
-      processSDKMessage(paneId, message);
-      return;
-    }
-
-    buffer.messages.push(data);
-
-    // Start/reset the buffer timer
-    if (buffer.timer) {
-      clearTimeout(buffer.timer);
-    }
-    buffer.timer = setTimeout(() => processSDKMessageBuffer(paneId), SDK_MESSAGE_BUFFER_MS);
-  });
-
-  // SDK streaming indicator - show when agent is thinking
-  // sdk-bridge sends { paneId, active } as single object
-  ipcRenderer.on('sdk-streaming', (event, data) => {
-    if (!data) return;
-    const { paneId, active } = data;
-    sdkRenderer.streamingIndicator(paneId, active);
-    // Update SDK status based on streaming state
-    updateSDKStatus(paneId, active ? 'thinking' : 'idle');
-
-    if (active) {
-      // Clear old streaming state when new turn starts
-      sdkRenderer.clearStreamingState(paneId);
-    } else {
-      // Finalize streaming message when streaming stops
-      sdkRenderer.finalizeStreamingMessage(paneId);
-    }
-  });
-
-  // SDK text delta - real-time typewriter streaming from Python
-  // Receives partial text chunks for character-by-character display
-  // FIXED: Routes to organic UI when active
-  ipcRenderer.on('sdk-text-delta', (event, data) => {
-    if (!data) return;
-    const { paneId, text } = data;
-    if (text) {
-      // Route to organic UI for live streaming display
-      if (organicUIInstance) {
-        organicUIInstance.appendText(paneId, text);
-      }
-      // Also update sdk-renderer for detailed view
-      sdkRenderer.appendTextDelta(paneId, text);
-      // Update status to 'responding' while receiving text
-      updateSDKStatus(paneId, 'responding');
-    }
-  });
-
-  // SDK thinking delta - real-time thinking/reasoning indicator from Codex
-  // Shows agent's thought process (reasoning, planning) before text output
-  ipcRenderer.on('sdk-thinking-delta', (event, data) => {
-    if (!data) return;
-    const { paneId, thinking } = data;
-    if (thinking) {
-      // Show thinking indicator with the reasoning content
-      sdkRenderer.streamingIndicator(paneId, true, thinking, 'thinking');
-      // Update status to 'thinking' while reasoning
-      updateSDKStatus(paneId, 'thinking');
-    }
-  });
-
-  // SDK session started - initialize panes for SDK mode
-  ipcRenderer.on('sdk-session-start', (event, data) => {
-    log.info('SDK', 'Session starting - enabling SDK mode');
-    window.hivemind.sdk.enableMode({ source: 'sdk-session-start', skipSessionStart: true });
-  });
-
-  // SDK session ended
-  ipcRenderer.on('sdk-session-end', (event, data) => {
-    log.info('SDK', 'Session ended');
-  });
-
-  // SDK error handler
-  // sdk-bridge sends { paneId, error } as single object
-  // FIXED: Routes to organic UI when active
-  ipcRenderer.on('sdk-error', (event, data) => {
-    if (!data) return;
-    const { paneId, error } = data;
-    log.error('SDK', `Error in pane ${paneId}:`, error);
-    // Route to organic UI if active
-    if (organicUIInstance) {
-      organicUIInstance.appendText(paneId, `[Error: ${error}]`);
-    }
-    sdkRenderer.addErrorMessage(paneId, error);
-  });
-
-  // SDK message delivered confirmation
-  ipcRenderer.on('sdk-message-delivered', (event, data) => {
-    if (!data) return;
-    const { paneId } = data;
-    showSDKMessageDelivered(paneId);
-  });
-
   // CLI Identity Badge listener
   ipcRenderer.on('pane-cli-identity', (event, data) => {
     if (!data) return;
@@ -2149,86 +1231,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       setPaneCliAttribute(paneId, 'gemini');
       terminal.unregisterCodexPane(paneId);
     }
-  });
-
-  // Organic UI: Message stream visualizations
-  // Trigger visual streams when agents communicate
-  ipcRenderer.on('direct-message-sent', (event, data) => {
-    if (!organicUIInstance || !data) return;
-    const { from, to } = data;
-    // 'to' can be an array of target panes
-    const targets = Array.isArray(to) ? to : [to];
-    for (const targetPaneId of targets) {
-      organicUIInstance.triggerMessageStream({
-        fromRole: from,
-        toRole: targetPaneId,
-        phase: 'sending'
-      });
-    }
-  });
-
-  ipcRenderer.on('auto-handoff', (event, data) => {
-    if (!organicUIInstance || !data) return;
-    const { from, to } = data;
-    organicUIInstance.triggerMessageStream({
-      fromRole: from,
-      toRole: to,
-      phase: 'sending'
-    });
-  });
-
-  // War Room message stream - receives routed messages for display
-  // Data format: {ts, from, to, msg, type}
-  ipcRenderer.on('war-room-message', (event, data) => {
-    if (!data) return;
-
-    if (!organicUIInstance) {
-      if (pendingWarRoomMessages.length === 0) {
-        log.info('WarRoom', 'Queueing messages (UI not ready)');
-      }
-      enqueuePendingWarRoomMessage(data);
-      return;
-    }
-
-    log.info('WarRoom', `Message: (${data.from} → ${data.to}): ${(data.msg || '').substring(0, 50)}...`);
-    organicUIInstance.appendWarRoomMessage(data);
-
-    // Also trigger visual stream animation for agent-to-agent messages
-    if (data.from && data.to && data.from !== 'USER' && data.to !== 'USER') {
-      organicUIInstance.triggerMessageStream({
-        fromRole: data.from,
-        toRole: data.to,
-        phase: 'sending'
-      });
-    }
-  });
-
-  // Organic UI: State updates
-  ipcRenderer.on('agent-online', (event, data) => {
-    if (!organicUIInstance) {
-      log.debug('OrganicUI', 'agent-online received but UI not mounted');
-      return;
-    }
-    if (!data) return;
-    updateOrganicState(data.agentId, 'idle');
-  });
-
-  ipcRenderer.on('agent-offline', (event, data) => {
-    if (!organicUIInstance) {
-      log.debug('OrganicUI', 'agent-offline received but UI not mounted');
-      return;
-    }
-    if (!data) return;
-    updateOrganicState(data.agentId, 'offline');
-  });
-
-  ipcRenderer.on('agent-state-changed', (event, data) => {
-    if (!organicUIInstance) {
-      log.debug('OrganicUI', 'agent-state-changed received but UI not mounted');
-      return;
-    }
-    if (!data) return;
-    updateOrganicState(data.agentId, data.state);
   });
 
   // Setup daemon handlers

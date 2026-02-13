@@ -46,11 +46,6 @@ jest.mock('../modules/ui-view', () => ({
   _resetForTesting: jest.fn(),
 }));
 
-jest.mock('../modules/sdk-renderer', () => ({
-  appendMessage: jest.fn().mockReturnValue('msg-1'),
-  updateDeliveryState: jest.fn(),
-}));
-
 var mockInjectionController = null;
 
 jest.mock('../modules/terminal', () => ({
@@ -296,8 +291,6 @@ describe('evidence-ledger integration: trace continuity', () => {
       ]),
       jest.fn()
     );
-    triggers.setSDKMode(false);
-    triggers.setSDKBridge(null);
   });
 
   afterEach(async () => {
@@ -306,8 +299,6 @@ describe('evidence-ledger integration: trace continuity', () => {
     await Promise.all(clients.map(closeClient));
 
     mockInjectionController = null;
-    if (typeof triggers.setSDKMode === 'function') triggers.setSDKMode(false);
-    if (typeof triggers.setSDKBridge === 'function') triggers.setSDKBridge(null);
     if (typeof bus.reset === 'function') bus.reset();
 
     jest.clearAllMocks();

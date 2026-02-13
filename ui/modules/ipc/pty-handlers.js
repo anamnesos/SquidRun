@@ -285,12 +285,6 @@ function registerPtyHandlers(ctx, deps = {}) {
   });
 
   ipcMain.handle('spawn-claude', (event, paneId, workingDir) => {
-    // SDK Mode Guard: Block CLI spawn when SDK mode is active
-    if (ctx.currentSettings.sdkMode) {
-      log.info('PTY', 'spawn-claude: SDK mode - blocking CLI spawn');
-      return { success: false, error: 'SDK mode active' };
-    }
-
     // Dry-run mode - simulate without spawning real agents
     if (ctx.currentSettings.dryRun) {
       ctx.agentRunning.set(paneId, 'running');

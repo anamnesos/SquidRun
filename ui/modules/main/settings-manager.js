@@ -89,7 +89,6 @@ const DEFAULT_SETTINGS = {
   voiceInputEnabled: false,
   voiceAutoSend: false,
   voiceLanguage: 'en-US',
-  sdkMode: false,
 };
 
 class SettingsManager {
@@ -123,20 +122,13 @@ class SettingsManager {
 
   saveSettings(settings) {
     try {
-      const sdkModeChanged = settings.sdkMode !== undefined && settings.sdkMode !== this.ctx.currentSettings.sdkMode;
       Object.assign(this.ctx.currentSettings, settings);
       
       const tempPath = this.settingsPath + '.tmp';
       fs.writeFileSync(tempPath, JSON.stringify(this.ctx.currentSettings, null, 2), 'utf-8');
       fs.renameSync(tempPath, this.settingsPath);
 
-      if (sdkModeChanged) {
-        if (this.ctx.triggers) {
-          this.ctx.triggers.setSDKMode(this.ctx.currentSettings.sdkMode);
-        }
-        log.info('Settings', `SDK mode ${this.ctx.currentSettings.sdkMode ? 'ENABLED' : 'DISABLED'}`);
-        this.writeAppStatus();
-      }
+      this.writeAppStatus();
     } catch (err) {
       log.error('Settings', 'Error saving settings', err);
     }
@@ -147,7 +139,6 @@ class SettingsManager {
     try {
       const status = {
         started: new Date().toISOString(),
-        sdkMode: this.ctx.currentSettings.sdkMode || false,
         dryRun: this.ctx.currentSettings.dryRun || false,
         autoSpawn: this.ctx.currentSettings.autoSpawn || false,
         version: require('../../package.json').version || 'unknown',
@@ -158,7 +149,7 @@ class SettingsManager {
       const tempPath = this.appStatusPath + '.tmp';
       fs.writeFileSync(tempPath, JSON.stringify(status, null, 2), 'utf-8');
       fs.renameSync(tempPath, this.appStatusPath);
-      log.info('App Status', `Written: ${status.sdkMode ? 'SDK mode' : 'PTY mode'}`);
+      log.info('App Status', 'Written');
     } catch (err) {
       log.error('App Status', 'Error writing', err.message);
     }

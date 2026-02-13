@@ -13,7 +13,6 @@ const { createPluginManager } = require('../plugins');
 const { createBackupManager } = require('../backup-manager');
 const { createRecoveryManager } = require('../recovery-manager');
 const { createExternalNotifier } = require('../external-notifications');
-const { getSDKBridge } = require('../sdk-bridge');
 const { createKernelBridge } = require('./kernel-bridge');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 
@@ -426,15 +425,6 @@ class HivemindApp {
     // Backup
     this.ctx.setBackupManager(this.initBackupManager());
 
-    // SDK Bridge
-    const sdkBridge = getSDKBridge();
-    sdkBridge.setMainWindow(window);
-    sdkBridge.setSettings(this.ctx.currentSettings); // Share settings for model config
-    triggers.setSDKBridge(sdkBridge);
-    if (this.ctx.currentSettings.sdkMode) {
-      triggers.setSDKMode(true);
-    }
-
     // Watcher
     watcher.init(window, triggers, () => this.ctx.currentSettings);
 
@@ -564,8 +554,7 @@ class HivemindApp {
             log.info('App', 'Resending daemon-connected to renderer (was connected before load)');
             const terminals = this.ctx.daemonClient.getTerminals?.() || [];
             window.webContents.send('daemon-connected', {
-              terminals,
-              sdkMode: this.ctx.currentSettings.sdkMode || false
+              terminals
             });
             this.kernelBridge.emitBridgeEvent('bridge.connected', {
               transport: 'daemon-client',
@@ -823,8 +812,7 @@ class HivemindApp {
       }
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send('daemon-connected', {
-          terminals,
-          sdkMode: this.ctx.currentSettings.sdkMode || false
+          terminals
         });
       }
 
@@ -1024,11 +1012,6 @@ class HivemindApp {
     if (this.ctx.daemonClient) {
       this.clearDaemonClientListeners(this.ctx.daemonClient);
       this.ctx.daemonClient.disconnect();
-    }
-
-    const sdkBridge = getSDKBridge();
-    if (sdkBridge.isActive()) {
-      sdkBridge.stopSessions().catch(err => log.error('SDK', `Failed to stop SDK sessions: ${err.message}`));
     }
 
     ipcHandlers.cleanup();

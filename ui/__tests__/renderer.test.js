@@ -111,7 +111,6 @@ jest.mock('../modules/terminal', () => ({
   aggressiveNudge: jest.fn(),
   nudgePane: jest.fn(),
   freshStartAll: jest.fn(),
-  setSDKMode: jest.fn(),
 }));
 
 // Mock tabs module
@@ -126,7 +125,6 @@ jest.mock('../modules/tabs', () => ({
 jest.mock('../modules/settings', () => ({
   loadSettings: jest.fn().mockResolvedValue({}),
   getSettings: jest.fn().mockReturnValue({
-    sdkMode: false,
     paneCommands: {},
   }),
   saveSettings: jest.fn(),
@@ -142,31 +140,6 @@ jest.mock('../modules/daemon-handlers', () => ({
   setStatusCallbacks: jest.fn(),
   setDeliveryAckCallback: jest.fn(),
   setDeliveryStatusCallback: jest.fn(),
-  setSDKMode: jest.fn(),
-}));
-
-// Mock sdk-renderer module
-jest.mock('../modules/sdk-renderer', () => ({
-  init: jest.fn(),
-  appendMessage: jest.fn().mockReturnValue('msg-123'),
-  clearPane: jest.fn(),
-  streamingIndicator: jest.fn(),
-  appendTextDelta: jest.fn(),
-  clearStreamingState: jest.fn(),
-  finalizeStreamingMessage: jest.fn(),
-}));
-
-// Mock organic-ui
-jest.mock('../sdk-ui/organic-ui', () => ({
-  createOrganicUI: jest.fn().mockReturnValue({
-    mount: jest.fn(),
-    destroy: jest.fn(),
-    input: { value: '', addEventListener: jest.fn() },
-    sendBtn: { addEventListener: jest.fn() },
-    appendWarRoomMessage: jest.fn(),
-    appendText: jest.fn(),
-    _inputWired: false,
-  }),
 }));
 
 // Mock notifications
@@ -244,10 +217,6 @@ describe('renderer.js smoke tests', () => {
       expect(window.hivemind.claude).toBeDefined();
     });
 
-    it('should expose sdk API on window.hivemind', () => {
-      expect(window.hivemind.sdk).toBeDefined();
-    });
-
     it('pty API should have expected methods', () => {
       expect(typeof window.hivemind.pty.create).toBe('function');
       expect(typeof window.hivemind.pty.write).toBe('function');
@@ -259,24 +228,6 @@ describe('renderer.js smoke tests', () => {
       expect(typeof window.hivemind.claude.spawn).toBe('function');
     });
 
-    it('sdk API should have mode control methods', () => {
-      expect(typeof window.hivemind.sdk.enableMode).toBe('function');
-      expect(typeof window.hivemind.sdk.disableMode).toBe('function');
-    });
-  });
-
-  describe('SDK mode functions', () => {
-    it('enableMode should be callable without throwing', () => {
-      expect(() => {
-        window.hivemind.sdk.enableMode();
-      }).not.toThrow();
-    });
-
-    it('disableMode should be callable without throwing', () => {
-      expect(() => {
-        window.hivemind.sdk.disableMode();
-      }).not.toThrow();
-    });
   });
 
   // Note: Callback wiring tests removed - Jest module caching makes them unreliable.

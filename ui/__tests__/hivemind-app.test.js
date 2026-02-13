@@ -89,23 +89,12 @@ jest.mock('../modules/external-notifications', () => ({
   }),
 }));
 
-// Mock sdk-bridge
-jest.mock('../modules/sdk-bridge', () => ({
-  getSDKBridge: jest.fn().mockReturnValue({
-    isActive: jest.fn().mockReturnValue(false),
-    startSessions: jest.fn().mockResolvedValue(),
-    stopSessions: jest.fn().mockResolvedValue(),
-  }),
-}));
-
 // Mock triggers
 jest.mock('../modules/triggers', () => ({
   init: jest.fn(),
   setWatcher: jest.fn(),
   setSelfHealing: jest.fn(),
   setPluginManager: jest.fn(),
-  setSDKBridge: jest.fn(),
-  setSDKMode: jest.fn(),
   startTriggerWatcher: jest.fn(),
   stopTriggerWatcher: jest.fn(),
   broadcastToAllAgents: jest.fn(),
@@ -185,7 +174,7 @@ describe('HivemindApp', () => {
     mockAppContext = {
       mainWindow: null,
       daemonClient: null,
-      currentSettings: { sdkMode: false },
+      currentSettings: {},
       externalNotifier: null,
       setMainWindow: jest.fn(),
       setDaemonClient: jest.fn(),
@@ -198,7 +187,7 @@ describe('HivemindApp', () => {
         loadSettings: jest.fn(),
         ensureCodexConfig: jest.fn(),
         writeAppStatus: jest.fn(),
-        getSettings: jest.fn().mockReturnValue({ sdkMode: false }),
+        getSettings: jest.fn().mockReturnValue({}),
       },
       activity: {
         loadActivityLog: jest.fn(),
@@ -328,18 +317,8 @@ describe('HivemindApp', () => {
       expect(mockDaemonClient.disconnect).toHaveBeenCalled();
     });
 
-    it('should stop SDK sessions if active', () => {
-      const { getSDKBridge } = require('../modules/sdk-bridge');
-      const mockBridge = {
-        isActive: jest.fn().mockReturnValue(true),
-        stopSessions: jest.fn().mockResolvedValue(),
-      };
-      getSDKBridge.mockReturnValue(mockBridge);
-
-      app.shutdown();
-
-      expect(mockBridge.isActive).toHaveBeenCalled();
-      expect(mockBridge.stopSessions).toHaveBeenCalled();
+    it('shuts down cleanly in PTY mode', () => {
+      expect(() => app.shutdown()).not.toThrow();
     });
   });
 

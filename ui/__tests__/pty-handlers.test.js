@@ -407,13 +407,6 @@ describe('PTY Handlers', () => {
   });
 
   describe('spawn-claude', () => {
-    test('blocks spawn when SDK mode active', async () => {
-      ctx.currentSettings.sdkMode = true;
-      const result = await harness.invoke('spawn-claude', '1', '/dir');
-
-      expect(result).toEqual({ success: false, error: 'SDK mode active' });
-    });
-
     test('simulates spawn in dry-run mode', async () => {
       ctx.currentSettings.dryRun = true;
       const result = await harness.invoke('spawn-claude', '1', '/dir');

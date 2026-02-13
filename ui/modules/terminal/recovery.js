@@ -16,7 +16,6 @@ function createRecoveryController(options = {}) {
     isCodexPane,
     updatePaneStatus,
     updateConnectionStatus,
-    getSdkModeActive,
     getInjectionInFlight,
     userIsTyping,
     getInjectionHelpers,
@@ -185,17 +184,6 @@ function createRecoveryController(options = {}) {
 
   async function interruptPane(paneId) {
     const id = String(paneId);
-    if (typeof getSdkModeActive === 'function' && getSdkModeActive()) {
-      try {
-        await ipcRenderer.invoke('sdk-interrupt', id);
-        log.info('Terminal', `SDK interrupt sent to pane ${id}`);
-        return true;
-      } catch (err) {
-        log.error('Terminal', `SDK interrupt failed for pane ${id}:`, err);
-        return false;
-      }
-    }
-
     try {
       if (ipcRenderer?.invoke) {
         await ipcRenderer.invoke('interrupt-pane', id);
@@ -212,20 +200,6 @@ function createRecoveryController(options = {}) {
 
   async function restartPane(paneId, model = null) {
     const id = String(paneId);
-    if (typeof getSdkModeActive === 'function' && getSdkModeActive()) {
-      log.info('Terminal', `Requesting SDK restart for pane ${id}`);
-      setPaneStatus(id, 'Restarting (SDK)...');
-      try {
-        await window.hivemind.sdk.restartSession(id);
-        setPaneStatus(id, 'Idle');
-        return true;
-      } catch (err) {
-        log.error('Terminal', `SDK restart failed for pane ${id}:`, err);
-        setPaneStatus(id, 'Restart failed');
-        return false;
-      }
-    }
-
     setPaneStatus(id, 'Restarting...');
     if (typeof markIgnoreNextExit === 'function') {
       markIgnoreNextExit(id);

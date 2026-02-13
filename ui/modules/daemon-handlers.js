@@ -6,15 +6,12 @@
  * 1. THROTTLE QUEUE (this file): Rate-limits messages (150ms between sends per pane)
  *    - Entry: enqueueForThrottle() called by IPC inject-message handler
  *    - Exit: processThrottleQueue() calls terminal.sendToPane()
- *    - Handles: SDK vs PTY routing, special commands (UNSTICK, AGGRESSIVE_NUDGE)
+ *    - Handles: PTY routing, special commands (UNSTICK, AGGRESSIVE_NUDGE)
  *
  * 2. IDLE QUEUE (injection.js): Waits for pane to be idle before injection
  *    - Entry: terminal.sendToPane() calls injection.processIdleQueue()
  *    - Exit: doSendToPane() performs actual PTY write + keyboard Enter
  *    - Handles: Focus management, idle detection, Enter verification
- *
- * SDK integration: When SDK mode is enabled, processThrottleQueue
- * routes messages through SDK instead of terminal PTY.
  */
 
 const { ipcRenderer } = require('electron');
@@ -25,14 +22,6 @@ const bus = require('./event-bus');
 const diagnosticLog = require('./diagnostic-log');
 const { showToast } = require('./notifications');
 const uiView = require('./ui-view');
-
-// SDK renderer for immediate message display
-let sdkRenderer = null;
-try {
-  sdkRenderer = require('./sdk-renderer');
-} catch (e) {
-  // SDK renderer not available - will be loaded later
-}
 
 // Terminal module for health handlers (lazy loaded)
 let terminal = null;
@@ -51,9 +40,6 @@ function getTerminal() {
 const throttleQueues = new Map(); // paneId -> array of messages
 const throttlingPanes = new Set(); // panes currently being processed
 const MESSAGE_DELAY = 100; // ms between messages per pane (reduced from 150ms — 3 panes = less contention)
-
-// SDK integration
-let sdkModeEnabled = false;
 
 function toNonEmptyString(value) {
   if (typeof value !== 'string') return null;
@@ -136,23 +122,6 @@ function clearScopedIpcListeners(scope = null) {
     removeIpcListener(entry.channel, entry.handler);
     ipcListenerRegistry.delete(key);
   }
-}
-
-/**
- * Enable/disable SDK mode for message routing
- * @param {boolean} enabled - Whether SDK mode is active
- */
-function setSDKMode(enabled) {
-  sdkModeEnabled = enabled;
-  log.info('Daemon Handlers', `SDK mode ${enabled ? 'ENABLED' : 'DISABLED'}`);
-}
-
-/**
- * Check if SDK mode is active
- * @returns {boolean}
- */
-function isSDKModeEnabled() {
-  return sdkModeEnabled;
 }
 
 function updateConnectionStatus(status) {
@@ -326,7 +295,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 
   // Handle initial daemon connection with existing terminals
   registerScopedIpcListener('daemon-core', 'daemon-connected', async (event, data) => {
-    const { terminals: existingTerminals, sdkMode } = data;
+    const { terminals: existingTerminals } = data || {};
     const terminalList = Array.isArray(existingTerminals) ? existingTerminals : [];
     const aliveCount = terminalList.filter((term) => term?.alive).length;
     const paneSummary = terminalList
@@ -334,24 +303,11 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
       .join(', ');
     log.info(
       'Daemon',
-      `Connected: terminals=${terminalList.length}, alive=${aliveCount}, panes=[${paneSummary || 'none'}], sdkMode=${Boolean(sdkMode)}`
+      `Connected: terminals=${terminalList.length}, alive=${aliveCount}, panes=[${paneSummary || 'none'}]`
     );
-
-    if (sdkMode) {
-      setSDKMode(true);
-      log.info('Daemon', 'SDK mode enabled - skipping PTY terminal creation');
-      updateConnectionStatus('SDK Mode - initializing agents...');
-      if (onTerminalsReadyFn) {
-        onTerminalsReadyFn(true);
-      }
-      return;
-    }
 
     if (existingTerminals && existingTerminals.length > 0) {
       updateConnectionStatus('Reconnecting to existing sessions...');
-
-      // SDK-FIX: Check terminals individually for CLI content
-      // SDK mode can leave PTY shells alive with empty scrollback
       const panesWithCli = new Set();
       const panesNeedingSpawn = new Set();
 
@@ -689,15 +645,8 @@ function processThrottleQueue(paneId) {
   const terminal = require('./terminal');
 
   if (message.trim() === '(UNSTICK)') {
-    if (sdkModeEnabled) {
-      log.info('Daemon SDK', `Interrupting pane ${paneId} via SDK`);
-      ipcRenderer.invoke('sdk-interrupt', paneId).catch(err => {
-        log.error('Daemon SDK', `Interrupt failed for pane ${paneId}:`, err);
-      });
-    } else {
-      log.info('Daemon', `Sending UNSTICK (ESC) to pane ${paneId}`);
-      terminal.sendUnstick(paneId);
-    }
+    log.info('Daemon', `Sending UNSTICK (ESC) to pane ${paneId}`);
+    terminal.sendUnstick(paneId);
     uiView.flashPaneHeader(paneId);
     throttlingPanes.delete(paneId);
     if (queue.length > 0) {
@@ -707,69 +656,13 @@ function processThrottleQueue(paneId) {
   }
 
   if (message.trim() === '(AGGRESSIVE_NUDGE)') {
-    if (sdkModeEnabled) {
-      log.info('Daemon SDK', `Interrupting pane ${paneId} via SDK (aggressive)`);
-      ipcRenderer.invoke('sdk-interrupt', paneId).catch(err => {
-        log.error('Daemon SDK', `Interrupt (aggressive) failed for pane ${paneId}:`, err);
-      });
-    } else {
-      log.info('Daemon', `Sending AGGRESSIVE_NUDGE (ESC + Enter) to pane ${paneId}`);
-      terminal.aggressiveNudge(paneId);
-    }
+    log.info('Daemon', `Sending AGGRESSIVE_NUDGE (ESC + Enter) to pane ${paneId}`);
+    terminal.aggressiveNudge(paneId);
     uiView.flashPaneHeader(paneId);
     throttlingPanes.delete(paneId);
     if (queue.length > 0) {
       setTimeout(() => processThrottleQueue(paneId), MESSAGE_DELAY);
     }
-    return;
-  }
-
-  if (sdkModeEnabled) {
-    bus.emit('inject.route.dispatched', {
-      paneId: String(paneId),
-      payload: { deliveryId: deliveryId || null, mode: 'sdk' },
-      correlationId: corrId,
-      causationId,
-      source: 'daemon-handlers.js',
-    });
-    const cleanMessage = routedMessage.endsWith('\r') ? routedMessage.slice(0, -1) : routedMessage;
-    log.info('Daemon SDK', `Sending to pane ${paneId} via SDK: ${cleanMessage.substring(0, 50)}...`);
-
-    let messageId = null;
-    if (sdkRenderer) {
-      messageId = sdkRenderer.appendMessage(paneId, { type: 'user', content: cleanMessage }, {
-        trackDelivery: true,
-        isOutgoing: true
-      });
-    }
-
-    uiView.flashPaneHeader(paneId);
-
-    ipcRenderer.invoke('sdk-send-message', paneId, cleanMessage).then((result) => {
-      const delivered = result === true || result?.success === true;
-      if (!delivered) {
-        const reason = result?.error || 'SDK send not accepted';
-        log.warn('Daemon SDK', `Send rejected for pane ${paneId}: ${reason}`);
-        uiView.showDeliveryFailed(paneId, reason);
-        return;
-      }
-
-      if (messageId && sdkRenderer) {
-        sdkRenderer.updateDeliveryState(messageId, 'delivered');
-      }
-      if (deliveryId) {
-        ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
-      }
-      uiView.showDeliveryIndicator(paneId, 'delivered');
-    }).catch(err => {
-      log.error('Daemon SDK', `Send failed for pane ${paneId}:`, err);
-      uiView.showDeliveryFailed(paneId, err.message || 'Send failed');
-    }).finally(() => {
-      throttlingPanes.delete(paneId);
-      if (queue.length > 0) {
-        setTimeout(() => processThrottleQueue(paneId), MESSAGE_DELAY);
-      }
-    });
     return;
   }
 
@@ -883,8 +776,6 @@ module.exports = {
   getTotalSessionTime,
   selectProject,
   loadInitialProject,
-  setSDKMode,
-  isSDKModeEnabled,
   // Individual listeners for renderer.js
   setupRollbackListener,
   setupHandoffListener,

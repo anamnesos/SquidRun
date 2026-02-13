@@ -314,7 +314,6 @@ function createRecoveryManager(options = {}) {
   function recordPtyOutput(paneId, data) {
     if (!data) return;
     const settings = typeof getSettings === 'function' ? getSettings() : {};
-    if (settings?.sdkMode) return;
     if (settings?.ptyStuckDetection === false) return;
     if (typeof isCodexPane === 'function' && isCodexPane(paneId)) return;
 

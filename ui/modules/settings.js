@@ -68,18 +68,6 @@ function applySettingsToUI() {
     dryRunIndicator.style.display = currentSettings.dryRun ? 'inline-block' : 'none';
   }
 
-  // Show/hide SDK mode notice
-  const sdkModeNotice = document.getElementById('sdkModeNotice');
-  if (sdkModeNotice) {
-    sdkModeNotice.style.display = currentSettings.sdkMode ? 'block' : 'none';
-  }
-
-  // Hide Spawn All button in SDK mode (SDK manages agents, not CLIs)
-  const spawnAllBtn = document.getElementById('spawnAllBtn');
-  if (spawnAllBtn) {
-    spawnAllBtn.style.display = currentSettings.sdkMode ? 'none' : 'inline-block';
-  }
-
   // Populate cost alert threshold
   const thresholdInput = document.getElementById('costAlertThreshold');
   if (thresholdInput && currentSettings.costAlertThreshold !== undefined) {
@@ -218,13 +206,6 @@ async function checkAutoSpawn(spawnAllAgentsFn, reconnectedToExisting) {
   // Skip auto-spawn if reconnecting to existing terminals (they already have agents)
   if (reconnectedToExisting) {
     log.info('AutoSpawn', 'Reconnected to existing terminals, skipping auto-spawn');
-    return;
-  }
-
-  // SDK Mode: Don't auto-spawn CLI agents when SDK mode is enabled
-  // SDK manages its own Claude instances via the Python SDK
-  if (currentSettings.sdkMode) {
-    log.info('AutoSpawn', 'SDK mode enabled, skipping CLI auto-spawn');
     return;
   }
 

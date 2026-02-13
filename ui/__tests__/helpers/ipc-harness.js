@@ -75,7 +75,6 @@ function createDefaultContext(overrides = {}) {
     },
     currentSettings: {
       paneCommands: {},
-      sdkMode: false,
       dryRun: false,
     },
     agentRunning: new Map(),  // Renamed from claudeRunning - agents can be Claude, Codex, or Gemini

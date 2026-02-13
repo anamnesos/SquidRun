@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="styles/state-bar.css">
   <link rel="stylesheet" href="styles/settings-panel.css">
   <link rel="stylesheet" href="styles/tabs.css">
-  <link rel="stylesheet" href="styles/sdk-renderer.css">
+
   <link rel="stylesheet" href="styles/status-strip.css">
 </head>
 <body>
@@ -89,13 +89,6 @@
           <div class="toggle active" id="toggleMCPAutoConfig" data-setting="mcpAutoConfig"></div>
           <span class="setting-label">Auto-configure MCP on spawn</span>
         </div>
-        <div class="setting-item" title="Use Claude Agent SDK instead of PTY terminals (3 agent sessions)">
-          <div class="toggle" id="toggleSdkMode" data-setting="sdkMode"></div>
-          <span class="setting-label">SDK Mode (experimental)</span>
-        </div>
-      </div>
-      <div class="sdk-mode-notice" id="sdkModeNotice" style="display: none; color: #00f0ff; padding: 8px 12px; background: rgba(0, 240, 255, 0.1); border-radius: 4px; margin-top: 8px;">
-        SDK Mode: Uses Claude Agent SDK (3 agent sessions) for native orchestration.
       </div>
     </div>
 
