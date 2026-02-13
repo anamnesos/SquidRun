@@ -265,4 +265,52 @@ describe('agent-colors', () => {
     const countAfterSecond = terminal.registerDecoration.mock.calls.length;
     expect(countAfterSecond).toBe(countAfterFirst);
   });
+
+  test('disposes stale continuation decorations when layout shifts', () => {
+    // Scenario: line 0 has agent tag, line 1 is wrapped continuation.
+    // New output arrives on line 2, causing a rescan of lines 1-2.
+    // Line 1 is no longer wrapped (content changed) — its old continuation
+    // decoration should be disposed, not left to flash briefly.
+    const line0 = '(ARCH #1): a message that wraps to the next line';
+    const line1 = 'wrapped continuation text';
+    const terminal = createTerminal({
+      lines: {
+        0: createLine(line0, false),
+        1: createLine(line1, true),
+      },
+      cursorY: 1,
+      baseY: 0,
+      themeForeground: '#d0d0d0',
+    });
+
+    attachAgentColors('1', terminal);
+    terminal.triggerWriteParsed();
+
+    // Find the continuation decoration (foreground reset on line 1)
+    const contDeco = terminal.registerDecoration.mock.results.find((r, i) => {
+      const call = terminal.registerDecoration.mock.calls[i][0];
+      return call.foregroundColor === '#d0d0d0' && call.x === 0 && call.width === line1.length;
+    });
+    expect(contDeco).toBeDefined();
+    const contDecoObj = contDeco.value;
+
+    // Now simulate new output: line 1 is no longer wrapped, line 2 is new content.
+    // Buffer clear triggers full rescan.
+    const newLine1 = createLine('new independent line', false); // no longer isWrapped
+    const newLine2 = createLine('(DEVOPS #1): new output', false);
+    terminal.buffer.active.getLine.mockImplementation((y) => {
+      if (y === 0) return createLine(line0, false);
+      if (y === 1) return newLine1;
+      if (y === 2) return newLine2;
+      return null;
+    });
+    // Move cursor forward then back to trigger backward-jump rescan
+    terminal.buffer.active.cursorY = 3;
+    terminal.triggerWriteParsed(); // lastScannedLine advances
+    terminal.buffer.active.cursorY = 0;
+    terminal.triggerWriteParsed(); // backward jump → full rescan
+
+    // The old continuation decoration should have been disposed
+    expect(contDecoObj.dispose).toHaveBeenCalled();
+  });
 });

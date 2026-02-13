@@ -44,7 +44,31 @@ function attachAgentColors(paneId, terminal) {
 
   let lastScannedLine = 0;
   // Track decorations per absolute line so we can dispose stale ones on rescan
-  const lineDecorations = new Map(); // lineNumber → { color, disposables[] }
+  const lineDecorations = new Map(); // lineNumber → { color, disposables[], continuationLines[] }
+
+  /**
+   * Dispose all tracked decorations for a given line and remove from the map.
+   */
+  function disposeLineDecorations(lineNum) {
+    const entry = lineDecorations.get(lineNum);
+    if (!entry) return;
+    for (const d of entry.disposables) {
+      try { d.dispose(); } catch { /* already disposed */ }
+    }
+    // Also dispose any continuation-line entries that were tracked under this origin
+    if (entry.continuationLines) {
+      for (const contLine of entry.continuationLines) {
+        const contEntry = lineDecorations.get(contLine);
+        if (contEntry && contEntry.originLine === lineNum) {
+          for (const d of contEntry.disposables) {
+            try { d.dispose(); } catch { /* already disposed */ }
+          }
+          lineDecorations.delete(contLine);
+        }
+      }
+    }
+    lineDecorations.delete(lineNum);
+  }
 
   const disposable = terminal.onWriteParsed(() => {
     const buf = terminal.buffer?.active;
@@ -77,6 +101,16 @@ function attachAgentColors(paneId, terminal) {
       const line = buf.getLine(y);
       if (!line) continue;
 
+      // If this line is a continuation line that already has decorations
+      // from a previous origin, dispose them — the origin will re-apply if needed
+      const existingCont = lineDecorations.get(y);
+      if (existingCont && existingCont.originLine != null) {
+        for (const d of existingCont.disposables) {
+          try { d.dispose(); } catch { /* already disposed */ }
+        }
+        lineDecorations.delete(y);
+      }
+
       const text = line.translateToString(true);
       if (!text) continue;
 
@@ -89,13 +123,11 @@ function attachAgentColors(paneId, terminal) {
 
           // Dispose stale decorations from a previous agent on this line
           if (existing) {
-            for (const d of existing.disposables) {
-              try { d.dispose(); } catch { /* already disposed */ }
-            }
-            lineDecorations.delete(y);
+            disposeLineDecorations(y);
           }
 
           const disposables = [];
+          const continuationLines = [];
           try {
             const offset = y - (buf.baseY + buf.cursorY);
             const marker = terminal.registerMarker(offset);
@@ -142,6 +174,16 @@ function attachAgentColors(paneId, terminal) {
               while (continuationLine <= currentLine) {
                 const wrappedLine = buf.getLine(continuationLine);
                 if (!wrappedLine || wrappedLine.isWrapped !== true) break;
+
+                // Dispose any stale continuation decorations on this line first
+                const staleCont = lineDecorations.get(continuationLine);
+                if (staleCont) {
+                  for (const d of staleCont.disposables) {
+                    try { d.dispose(); } catch { /* already disposed */ }
+                  }
+                  lineDecorations.delete(continuationLine);
+                }
+
                 const wrappedContentLen = typeof wrappedLine.getTrimmedLength === 'function'
                   ? wrappedLine.getTrimmedLength() : wrappedLine.translateToString(false).length;
                 if (wrappedContentLen > 0) {
@@ -158,7 +200,13 @@ function attachAgentColors(paneId, terminal) {
                     });
                     if (wrappedDeco) {
                       wrappedMarker.onDispose(() => wrappedDeco.dispose());
-                      disposables.push(wrappedDeco);
+                      // Track this continuation decoration under its own line
+                      lineDecorations.set(continuationLine, {
+                        color: '_continuation',
+                        originLine: y,
+                        disposables: [wrappedDeco],
+                      });
+                      continuationLines.push(continuationLine);
                     }
                   }
                 }
@@ -166,7 +214,7 @@ function attachAgentColors(paneId, terminal) {
               }
 
               if (disposables.length > 0) {
-                lineDecorations.set(y, { color, disposables });
+                lineDecorations.set(y, { color, disposables, continuationLines });
               }
             }
           } catch (e) {
