@@ -290,6 +290,56 @@ maybeDescribe('evidence-ledger-memory', () => {
   });
 });
 
+describe('evidence-ledger-memory context restore transactions', () => {
+  function createStubbedMemory() {
+    const db = { exec: jest.fn() };
+    const store = {
+      isAvailable: () => true,
+      db,
+    };
+    const memory = new EvidenceLedgerMemory(store);
+    return { memory, db };
+  }
+
+  test('getLatestContext runs inside a single read transaction', () => {
+    const { memory, db } = createStubbedMemory();
+    memory.getLatestSnapshot = jest.fn(() => null);
+    memory.listSessions = jest.fn(() => [{
+      sessionNumber: 122,
+      startedAtMs: 1700000000000,
+      mode: 'PTY',
+      endedAtMs: null,
+      stats: { test_suites: 1, tests_passed: 1 },
+      team: { '1': 'Architect' },
+    }]);
+    memory.getActiveDirectives = jest.fn(() => [{ title: 'Directive', body: 'Body', decisionId: 'dec-1' }]);
+    memory.getKnownIssues = jest.fn(() => [{ title: 'ERR-TEST', body: 'Investigating', status: 'open', decisionId: 'iss-1' }]);
+    memory.getRoadmap = jest.fn(() => [{ title: 'Roadmap item', body: 'Pending' }]);
+    memory.getRecentCompletions = jest.fn(() => [{ title: 'Completed item', body: 'Done' }]);
+    memory.getArchitectureDecisions = jest.fn(() => [{ decisionId: 'arc-1', title: 'Architecture', body: 'Decision', updatedAtMs: 1 }]);
+
+    const context = memory.getLatestContext();
+
+    expect(context.ok).not.toBe(false);
+    expect(context.source).toBe('ledger');
+    expect(db.exec.mock.calls.map((call) => call[0])).toEqual(['BEGIN;', 'COMMIT;']);
+  });
+
+  test('getLatestContext rolls back transaction when restore assembly throws', () => {
+    const { memory, db } = createStubbedMemory();
+    memory.getLatestSnapshot = jest.fn(() => {
+      throw new Error('restore exploded');
+    });
+
+    const result = memory.getLatestContext();
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('db_error');
+    expect(result.error).toContain('restore exploded');
+    expect(db.exec.mock.calls.map((call) => call[0])).toEqual(['BEGIN;', 'ROLLBACK;']);
+  });
+});
+
 describe('evidence-ledger-memory degraded mode', () => {
   test('all operations degrade when store unavailable', () => {
     const disabledStore = new EvidenceLedgerStore({ enabled: false });
