@@ -172,6 +172,21 @@ function normalizePath(value) {
   return path.normalize(String(value)).replace(/\\/g, '/').toLowerCase();
 }
 
+function isProcessRunning(pid) {
+  const numericPid = Number(pid);
+  if (!Number.isInteger(numericPid) || numericPid <= 0) return false;
+  try {
+    process.kill(numericPid, 0);
+    return true;
+  } catch (err) {
+    // EPERM/EACCES means the process exists but we can't signal it.
+    if (err && (err.code === 'EPERM' || err.code === 'EACCES')) {
+      return true;
+    }
+    return false;
+  }
+}
+
 const CLI_TAIL_CHARS = 2000;
 const CLI_RECENT_ACTIVITY_MS = 60000;
 const CLI_PROMPT_REGEXES = [
@@ -209,6 +224,21 @@ function tailMatches(regexes, text) {
 }
 
 function hasCliContent(scrollback = '', meta = {}) {
+  const alive = Boolean(meta?.alive);
+  const mode = String(meta?.mode || '').toLowerCase();
+
+  // Primary signal: if an alive PTY process still exists, treat as an active
+  // session regardless of prompt/content heuristics.
+  if (alive && mode === 'pty') {
+    return isProcessRunning(meta?.pid);
+  }
+
+  // Non-PTY modes have no reliable OS pid checks but can still represent
+  // legitimate running sessions.
+  if (alive && (mode === 'codex-exec' || mode === 'dry-run')) {
+    return true;
+  }
+
   const text = String(scrollback || '');
   if (!text) return false;
 

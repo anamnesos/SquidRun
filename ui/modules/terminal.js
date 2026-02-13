@@ -859,6 +859,10 @@ function stripAnsiForStartup(input) {
     .replace(/\r/g, '\n');
 }
 
+function hasStartupSessionHeader(scrollback) {
+  return /#\s*HIVEMIND SESSION:/i.test(String(scrollback || ''));
+}
+
 function clearStartupInjection(paneId) {
   const state = startupInjectionState.get(String(paneId));
   if (!state) return;
@@ -1500,16 +1504,16 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       ptyDataListenerDisposers.set(String(paneId), disposeOnData);
     }
 
-    const disposeOnExit = window.hivemind.pty.onExit(paneId, (code) => {
-      if (shouldIgnoreExit(paneId)) {
-        log.info('Terminal', `Ignoring exit for pane ${paneId} (restart in progress)`);
-        return;
-      }
-      updatePaneStatus(paneId, `Exited (${code})`);
-      queueTerminalWrite(paneId, terminal, `\r\n[Process exited with code ${code}]\r\n`);
-      clearStartupInjection(paneId);
-      updateIntentFile(paneId, 'Offline');
-    });
+  const disposeOnExit = window.hivemind.pty.onExit(paneId, (code) => {
+    if (shouldIgnoreExit(paneId)) {
+      log.info('Terminal', `Ignoring exit for pane ${paneId} (restart in progress)`);
+      return;
+    }
+    updatePaneStatus(paneId, `Exited (${code})`);
+    queueTerminalWrite(paneId, terminal, `\r\n[Process exited with code ${code}]\r\n`);
+    clearStartupInjection(paneId);
+    updateIntentFile(paneId, 'Offline');
+  });
     if (typeof disposeOnExit === 'function') {
       ptyExitListenerDisposers.set(String(paneId), disposeOnExit);
     }
@@ -1697,9 +1701,31 @@ async function reattachTerminal(paneId, scrollback) {
       clearStartupInjection(paneId);
       updateIntentFile(paneId, 'Offline');
     });
-    if (typeof disposeOnExit === 'function') {
-      ptyExitListenerDisposers.set(String(paneId), disposeOnExit);
+  if (typeof disposeOnExit === 'function') {
+    ptyExitListenerDisposers.set(String(paneId), disposeOnExit);
+  }
+
+  // Ensure Architect startup identity can still be injected on reattach
+  // when no prior startup marker exists (e.g. reconnect edge cases).
+  // Guardrails:
+  // - Pane 1 only (do not re-trigger DevOps/Analyst startup on light reloads)
+  // - Skip if identity marker is already present in scrollback
+  // - Skip Codex exec panes (identity for Codex is handled via codex-exec path)
+  const shouldArmStartupOnReattach =
+    String(paneId) === '1' &&
+    !isCodexPane(String(paneId)) &&
+    !hasStartupSessionHeader(scrollback);
+  if (shouldArmStartupOnReattach) {
+    const isGemini = isGeminiPane(paneId);
+    const modelType = isGemini ? 'gemini' : 'claude';
+    armStartupInjection(paneId, { modelType, isGemini });
+    // Seed detector with restored scrollback so ready-pattern detection can fire
+    // immediately instead of waiting for new daemon output.
+    if (scrollback && scrollback.length > 0) {
+      handleStartupOutput(paneId, scrollback);
     }
+    log.info('spawnAgent', `Reattach armed startup injection for pane ${paneId}`);
+  }
 
   updatePaneStatus(paneId, 'Reconnected');
 
