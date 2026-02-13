@@ -24,7 +24,7 @@ const { debounceButton, applyShortcutTooltips } = require('./modules/utils');
 const { initCommandPalette } = require('./modules/command-palette');
 const { initCustomTargetDropdown } = require('./modules/target-dropdown');
 const { initStatusStrip, hasClaimableTasks, getClaimableTasksForPane } = require('./modules/status-strip');
-const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener } = require('./modules/model-selector');
+const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = require('./modules/model-selector');
 const bus = require('./modules/event-bus');
 const healthStrip = require('./modules/health-strip');
 const { clearScopedIpcListeners, registerScopedIpcListener } = require('./modules/renderer-ipc-registry');
@@ -2024,14 +2024,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (key.includes('claude')) {
       el.classList.add('claude');
       if (pane) pane.classList.add('cli-claude');
+      setPaneCliAttribute(paneId, 'claude');
       terminal.unregisterCodexPane(paneId);
     } else if (key.includes('codex')) {
       el.classList.add('codex');
       if (pane) pane.classList.add('cli-codex');
+      setPaneCliAttribute(paneId, 'codex');
       terminal.registerCodexPane(paneId);
     } else if (key.includes('gemini')) {
       el.classList.add('gemini');
       if (pane) pane.classList.add('cli-gemini');
+      setPaneCliAttribute(paneId, 'gemini');
       terminal.unregisterCodexPane(paneId);
     }
   });

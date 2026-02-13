@@ -84,6 +84,28 @@
 }
 
 /* ============================================================
+   MODEL-SCOPED AGENT COLORS (colors-follow-model)
+   Pane elements inherit --agent-color from the data-cli attribute
+   set by model-selector.js / renderer.js at runtime.
+   ============================================================ */
+
+.pane[data-cli="claude"], .health-strip-pane[data-cli="claude"] {
+  --agent-color: #f0a000;
+  --agent-color-rgb: 240, 160, 0;
+  --agent-color-hover: #ffb830;
+}
+.pane[data-cli="codex"], .health-strip-pane[data-cli="codex"] {
+  --agent-color: #00f0ff;
+  --agent-color-rgb: 0, 240, 255;
+  --agent-color-hover: #66f5ff;
+}
+.pane[data-cli="gemini"], .health-strip-pane[data-cli="gemini"] {
+  --agent-color: #bb86fc;
+  --agent-color-rgb: 187, 134, 252;
+  --agent-color-hover: #d4b0ff;
+}
+
+/* ============================================================
    RESET
    ============================================================ */
 
