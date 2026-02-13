@@ -1,0 +1,86 @@
+const { EventEmitter } = require('events');
+
+jest.mock('https', () => ({
+  request: jest.fn(),
+}));
+
+const https = require('https');
+const hmSms = require('../scripts/hm-sms');
+
+function mockTwilioResponse(statusCode, payload) {
+  https.request.mockImplementation((options, onResponse) => {
+    const response = new EventEmitter();
+    response.statusCode = statusCode;
+
+    const request = new EventEmitter();
+    request.write = jest.fn();
+    request.end = jest.fn(() => {
+      onResponse(response);
+      if (payload !== undefined) {
+        response.emit('data', typeof payload === 'string' ? payload : JSON.stringify(payload));
+      }
+      response.emit('end');
+    });
+    return request;
+  });
+}
+
+describe('hm-sms', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('parseMessage joins argument tokens', () => {
+    expect(hmSms.parseMessage(['Hey', 'the user,', 'build', 'passed!'])).toBe('Hey the user, build passed!');
+  });
+
+  test('getMissingConfigKeys reports required env vars', () => {
+    const config = hmSms.getTwilioConfig({});
+    expect(hmSms.getMissingConfigKeys(config)).toEqual([
+      'TWILIO_ACCOUNT_SID',
+      'TWILIO_AUTH_TOKEN',
+      'TWILIO_PHONE_NUMBER',
+      'SMS_RECIPIENT',
+    ]);
+  });
+
+  test('sendSms returns success on Twilio 2xx', async () => {
+    mockTwilioResponse(201, {
+      sid: 'SM123',
+      to: '+15551234567',
+    });
+
+    const result = await hmSms.sendSms('test message', {
+      TWILIO_ACCOUNT_SID: 'AC123',
+      TWILIO_AUTH_TOKEN: 'token123',
+      TWILIO_PHONE_NUMBER: '+15550001111',
+      SMS_RECIPIENT: '+15551234567',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.sid).toBe('SM123');
+    expect(https.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'POST',
+        path: '/2010-04-01/Accounts/AC123/Messages.json',
+      }),
+      expect.any(Function)
+    );
+  });
+
+  test('sendSms returns Twilio error message on non-2xx', async () => {
+    mockTwilioResponse(400, {
+      message: 'The From phone number is invalid.',
+    });
+
+    const result = await hmSms.sendSms('test message', {
+      TWILIO_ACCOUNT_SID: 'AC123',
+      TWILIO_AUTH_TOKEN: 'token123',
+      TWILIO_PHONE_NUMBER: '+15550001111',
+      SMS_RECIPIENT: '+15551234567',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('invalid');
+  });
+});

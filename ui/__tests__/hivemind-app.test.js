@@ -100,9 +100,16 @@ jest.mock('../modules/sdk-bridge', () => ({
 
 // Mock triggers
 jest.mock('../modules/triggers', () => ({
+  init: jest.fn(),
+  setWatcher: jest.fn(),
+  setSelfHealing: jest.fn(),
+  setPluginManager: jest.fn(),
+  setSDKBridge: jest.fn(),
+  setSDKMode: jest.fn(),
   startTriggerWatcher: jest.fn(),
   stopTriggerWatcher: jest.fn(),
   broadcastToAllAgents: jest.fn(),
+  sendDirectMessage: jest.fn(() => ({ success: true })),
 }));
 
 // Mock watcher
@@ -143,6 +150,13 @@ jest.mock('../modules/websocket-server', () => ({
   stop: jest.fn(),
   sendToTarget: jest.fn(),
   DEFAULT_PORT: 9900,
+}));
+
+// Mock sms-poller
+jest.mock('../modules/sms-poller', () => ({
+  start: jest.fn(() => false),
+  stop: jest.fn(),
+  isRunning: jest.fn(() => false),
 }));
 
 // Mock organic-ui-handlers
@@ -290,6 +304,7 @@ describe('HivemindApp', () => {
       const memory = require('../modules/memory');
       const websocketServer = require('../modules/websocket-server');
       const watcher = require('../modules/watcher');
+      const smsPoller = require('../modules/sms-poller');
       const { closeSharedRuntime } = require('../modules/ipc/evidence-ledger-handlers');
 
       app.shutdown();
@@ -297,6 +312,7 @@ describe('HivemindApp', () => {
       expect(memory.shutdown).toHaveBeenCalled();
       expect(closeSharedRuntime).toHaveBeenCalled();
       expect(websocketServer.stop).toHaveBeenCalled();
+      expect(smsPoller.stop).toHaveBeenCalled();
       expect(watcher.stopWatcher).toHaveBeenCalled();
       expect(watcher.stopTriggerWatcher).toHaveBeenCalled();
       expect(watcher.stopMessageWatcher).toHaveBeenCalled();
@@ -370,6 +386,33 @@ describe('HivemindApp', () => {
       expect(typeof app.init).toBe('function');
       expect(typeof app.shutdown).toBe('function');
       expect(typeof app.resolveTargetToPane).toBe('function');
+    });
+  });
+
+  describe('SMS poller wiring', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new HivemindApp(mockAppContext, mockManagers);
+    });
+
+    it('wires inbound SMS callback to pane 1 trigger injection', () => {
+      const smsPoller = require('../modules/sms-poller');
+      const triggers = require('../modules/triggers');
+      smsPoller.start.mockReturnValue(true);
+
+      app.startSmsPoller();
+
+      expect(smsPoller.start).toHaveBeenCalledTimes(1);
+      const options = smsPoller.start.mock.calls[0][0];
+      expect(typeof options.onMessage).toBe('function');
+
+      options.onMessage('build passed', '+15557654321');
+      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
+        ['1'],
+        '[SMS from +15557654321]: build passed',
+        null
+      );
     });
   });
 });

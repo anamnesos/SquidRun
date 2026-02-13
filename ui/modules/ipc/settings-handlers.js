@@ -49,7 +49,11 @@ function registerSettingsHandlers(ctx, deps) {
       ANTHROPIC_API_KEY: null,
       OPENAI_API_KEY: null,
       GOOGLE_API_KEY: null,
-      RECRAFT_API_KEY: null
+      RECRAFT_API_KEY: null,
+      TWILIO_ACCOUNT_SID: null,
+      TWILIO_AUTH_TOKEN: null,
+      TWILIO_PHONE_NUMBER: null,
+      SMS_RECIPIENT: null
     };
 
     if (fs.existsSync(ENV_PATH)) {
@@ -58,7 +62,7 @@ function registerSettingsHandlers(ctx, deps) {
         const lines = content.split('\n');
 
         for (const line of lines) {
-          const match = line.match(/^(ANTHROPIC_API_KEY|OPENAI_API_KEY|GOOGLE_API_KEY|RECRAFT_API_KEY)=(.+)$/);
+          const match = line.match(/^(ANTHROPIC_API_KEY|OPENAI_API_KEY|GOOGLE_API_KEY|RECRAFT_API_KEY|TWILIO_ACCOUNT_SID|TWILIO_AUTH_TOKEN|TWILIO_PHONE_NUMBER|SMS_RECIPIENT)=(.+)$/);
           if (match) {
             const [, keyName, value] = match;
             // Return masked version: show only last 4 chars
@@ -82,7 +86,11 @@ function registerSettingsHandlers(ctx, deps) {
       ANTHROPIC_API_KEY: v => !v || v.startsWith('sk-ant-'),
       OPENAI_API_KEY: v => !v || v.startsWith('sk-'),
       GOOGLE_API_KEY: v => !v || v.startsWith('AIza'),
-      RECRAFT_API_KEY: v => !v || v.length > 0
+      RECRAFT_API_KEY: v => !v || v.length > 0,
+      TWILIO_ACCOUNT_SID: v => !v || v.startsWith('AC'),
+      TWILIO_AUTH_TOKEN: v => !v || v.length > 0,
+      TWILIO_PHONE_NUMBER: v => !v || v.startsWith('+'),
+      SMS_RECIPIENT: v => !v || v.startsWith('+')
     };
 
     for (const [key, value] of Object.entries(updates)) {
