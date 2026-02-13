@@ -1,14 +1,14 @@
 /**
  * Tabs and panels module
  * Refactored to modular architecture (Session 72)
- * Devtools tabs removed (Session 101) — kept: activity, screenshots, oracle, git
+ * Devtools tabs removed (Session 101). Git tab removed (Session 121) — kept: activity, screenshots, oracle
  */
 
 // Sub-modules
 const activity = require('./tabs/activity');
 const screenshots = require('./tabs/screenshots');
 const oracle = require('./tabs/oracle');
-const git = require('./tabs/git');
+
 const apiKeys = require('./tabs/api-keys');
 const bridge = require('./tabs/bridge');
 
@@ -80,7 +80,7 @@ function destroyAllTabs() {
   if (typeof activity.destroyActivityTab === 'function') activity.destroyActivityTab();
   if (typeof screenshots.destroyScreenshots === 'function') screenshots.destroyScreenshots();
   if (typeof oracle.destroyOracleTab === 'function') oracle.destroyOracleTab();
-  if (typeof git.destroyGitTab === 'function') git.destroyGitTab();
+
   if (typeof apiKeys.destroyApiKeysTab === 'function') apiKeys.destroyApiKeysTab();
   if (typeof bridge.destroy === 'function') bridge.destroy();
 }
@@ -108,7 +108,7 @@ function setupRightPanel(handleResizeFn, busInstance) {
   activity.setupActivityTab();
   screenshots.setupScreenshots(updateConnectionStatus);
   oracle.setupOracleTab(updateConnectionStatus);
-  git.setupGitTab();
+
   apiKeys.setupApiKeysTab();
   if (busInstance) bridge.setupBridgeTab(busInstance);
 }
