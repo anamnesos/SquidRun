@@ -117,12 +117,17 @@ function attachAgentColors(paneId, terminal) {
       for (const { pattern, color } of AGENT_PATTERNS) {
         const match = text.match(pattern);
         if (match) {
-          // If this line already has decorations with the same color, skip
+          // If this line already has decorations with the same color and
+          // content hasn't grown, skip (prevents duplicate decorations)
           const existing = lineDecorations.get(y);
-          if (existing && existing.color === color) break;
-
-          // Dispose stale decorations from a previous agent on this line
-          if (existing) {
+          if (existing && existing.color === color) {
+            const curLen = typeof line.getTrimmedLength === 'function'
+              ? line.getTrimmedLength() : line.translateToString(false).length;
+            if (curLen <= existing.contentLen) break;
+            // Content grew — dispose old decorations and re-apply with new width
+            disposeLineDecorations(y);
+          } else if (existing) {
+            // Dispose stale decorations from a different agent on this line
             disposeLineDecorations(y);
           }
 
@@ -214,7 +219,7 @@ function attachAgentColors(paneId, terminal) {
               }
 
               if (disposables.length > 0) {
-                lineDecorations.set(y, { color, disposables, continuationLines });
+                lineDecorations.set(y, { color, disposables, continuationLines, contentLen });
               }
             }
           } catch (e) {
@@ -225,7 +230,7 @@ function attachAgentColors(paneId, terminal) {
       }
     }
 
-    lastScannedLine = currentLine + 1;
+    lastScannedLine = currentLine;
   });
 
   log.info(`AgentColors ${paneId}`, 'Agent message color decorations attached');
