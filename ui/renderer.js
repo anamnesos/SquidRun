@@ -356,6 +356,9 @@ let initState = {
   autoSpawnChecked: false
 };
 
+let sdkSessionStartPromise = null;
+let sdkSessionStopPromise = null;
+
 function checkInitComplete() {
   if (initState.settingsLoaded && initState.terminalsReady && !initState.autoSpawnChecked) {
     initState.autoSpawnChecked = true;
@@ -365,6 +368,69 @@ function checkInitComplete() {
       terminal.getReconnectedToExisting()
     );
   }
+}
+
+function ensureSdkSessionsStarted(source = 'sdk-enable') {
+  if (sdkSessionStartPromise) {
+    return sdkSessionStartPromise;
+  }
+
+  sdkSessionStartPromise = (async () => {
+    if (sdkSessionStopPromise) {
+      try {
+        await sdkSessionStopPromise;
+      } catch {
+        // Best-effort wait; start attempt continues.
+      }
+    }
+
+    const projectPath = await ipcRenderer.invoke('get-project');
+    const result = await ipcRenderer.invoke('sdk-start-sessions', {
+      workspace: projectPath || undefined,
+    });
+
+    if (!result?.success) {
+      throw new Error(result?.error || 'Failed to start SDK sessions');
+    }
+
+    updateConnectionStatus('SDK Mode - agents starting...');
+    log.info('SDK', `SDK sessions start requested (${source})`);
+    return result;
+  })()
+    .finally(() => {
+      sdkSessionStartPromise = null;
+    });
+
+  return sdkSessionStartPromise;
+}
+
+function ensureSdkSessionsStopped(source = 'sdk-disable') {
+  if (sdkSessionStopPromise) {
+    return sdkSessionStopPromise;
+  }
+
+  sdkSessionStopPromise = (async () => {
+    if (sdkSessionStartPromise) {
+      try {
+        await sdkSessionStartPromise;
+      } catch {
+        // Best-effort wait; stop attempt continues.
+      }
+    }
+
+    const result = await ipcRenderer.invoke('sdk-stop-sessions');
+    if (!result?.success) {
+      throw new Error(result?.error || 'Failed to stop SDK sessions');
+    }
+
+    log.info('SDK', `SDK sessions stopped (${source})`);
+    return result;
+  })()
+    .finally(() => {
+      sdkSessionStopPromise = null;
+    });
+
+  return sdkSessionStopPromise;
 }
 
 function markSettingsLoaded() {
@@ -411,16 +477,8 @@ function markTerminalsReady(isSDKMode = false) {
       replayPendingWarRoomMessages();
     }
 
-    // Auto-start SDK sessions (get workspace path via IPC)
     log.info('Init', 'Auto-starting SDK sessions...');
-    ipcRenderer.invoke('get-project')
-      .then(projectPath => {
-        return ipcRenderer.invoke('sdk-start-sessions', { workspace: projectPath || undefined });
-      })
-      .then(() => {
-        log.info('Init', 'SDK sessions started');
-        updateConnectionStatus('SDK Mode - agents starting...');
-      })
+    ensureSdkSessionsStarted('daemon-ready')
       .catch(err => {
         log.error('Init', 'Failed to start SDK sessions:', err);
         updateConnectionStatus('SDK Mode - start failed');
@@ -529,18 +587,17 @@ Object.assign(window.hivemind, {
     kill: (processId) => ipcRenderer.invoke('kill-process', processId),
     getOutput: (processId) => ipcRenderer.invoke('get-process-output', processId),
   },
-      // SDK mode API (Task #2)
-      sdk: {
-        start: (prompt) => ipcRenderer.invoke('sdk-start', prompt),
-        stop: () => ipcRenderer.invoke('sdk-stop'),
-        restartSession: (paneId) => ipcRenderer.invoke('sdk-restart-session', paneId),
-        isActive: () => sdkMode,    enableMode: () => {
-      // Idempotent - don't reinitialize if already enabled
-      if (sdkMode) {
-        log.info('SDK', 'Mode already enabled, skipping reinit');
-        return;
-      }
-      setSDKMode(true, { source: 'sdk-enable' });  // Centralized - sets all 4 SDK mode flags
+  // SDK mode API (Task #2)
+  sdk: {
+    start: (prompt) => ipcRenderer.invoke('sdk-start', prompt),
+    stop: () => ipcRenderer.invoke('sdk-stop'),
+    restartSession: (paneId) => ipcRenderer.invoke('sdk-restart-session', paneId),
+    isActive: () => sdkMode,
+    enableMode: async (options = {}) => {
+      const source = options?.source || 'sdk-enable';
+      const skipSessionStart = Boolean(options?.skipSessionStart);
+
+      setSDKMode(true, { source });
 
       // Mount organic UI
       const terminalsSection = document.getElementById('terminalsSection');
@@ -558,17 +615,40 @@ Object.assign(window.hivemind, {
       if (terminalsSection && !organicUIInstance) {
         organicUIInstance = createOrganicUI({ mount: terminalsSection });
         log.info('SDK', 'Organic UI mounted');
-        wireOrganicInput();  // Wire up input handlers
-        initModelSelectors(true);
-
-        // Replay pending messages
-        replayPendingWarRoomMessages();
+        wireOrganicInput(); // Wire up input handlers
       }
 
+      initModelSelectors(true);
+      replayPendingWarRoomMessages();
       log.info('SDK', 'Mode enabled (organic UI v2)');
+
+      if (skipSessionStart) {
+        return;
+      }
+
+      try {
+        await ensureSdkSessionsStarted(source);
+      } catch (err) {
+        log.error('SDK', `Failed to start SDK sessions (${source})`, err);
+        updateConnectionStatus('SDK Mode - start failed');
+        showToast(`SDK start failed: ${err.message}`, 'error');
+      }
     },
-    disableMode: () => {
-      setSDKMode(false, { source: 'sdk-disable' });  // Centralized - clears all 4 SDK mode flags
+    disableMode: async (options = {}) => {
+      const source = options?.source || 'sdk-disable';
+      const skipSessionStop = Boolean(options?.skipSessionStop);
+      const shouldRestorePtyLayout = sdkMode || !!organicUIInstance;
+
+      if (!skipSessionStop) {
+        try {
+          await ensureSdkSessionsStopped(source);
+        } catch (err) {
+          log.error('SDK', `Failed to stop SDK sessions (${source})`, err);
+          showToast(`SDK stop failed: ${err.message}`, 'warning');
+        }
+      }
+
+      setSDKMode(false, { source });
 
       // Unmount organic UI and restore pane layout
       if (organicUIInstance) {
@@ -583,19 +663,26 @@ Object.assign(window.hivemind, {
         paneLayout.style.display = '';
       }
 
-              // Restore PTY command bar
-              const commandBar = document.querySelector('.command-bar');
-              if (commandBar) {
-                commandBar.style.display = '';
-              }
-      
-              log.info('SDK', 'Mode disabled (restoring agents)...');
-              initModelSelectors(false);
-              // Ensure PTY terminals are initialized and agents started
-              terminal.initTerminals().then(() => {
-                terminal.spawnAllAgents();
-              });
-            },    // SDK status functions (exposed for external use)
+      // Restore PTY command bar
+      const commandBar = document.querySelector('.command-bar');
+      if (commandBar) {
+        commandBar.style.display = '';
+      }
+
+      initModelSelectors(false);
+
+      if (shouldRestorePtyLayout) {
+        log.info('SDK', 'Mode disabled (restoring agents)...');
+        try {
+          await terminal.initTerminals();
+          await terminal.spawnAllAgents();
+        } catch (err) {
+          log.error('SDK', 'Failed restoring PTY agents after SDK disable', err);
+          showToast(`Failed restoring PTY agents: ${err.message}`, 'error');
+        }
+      }
+    },
+    // SDK status functions (exposed for external use)
     updateStatus: (paneId, state) => updateSDKStatus(paneId, state),
     showDelivered: (paneId) => showSDKMessageDelivered(paneId),
   },
@@ -1155,7 +1242,18 @@ function setupEventListeners() {
           sdkRenderer.appendMessage(paneId, { type: 'user', content: actualMessage });
         });
         ipcRenderer.invoke('sdk-broadcast', actualMessage)
-          .then(() => showDeliveryStatus('delivered'))
+          .then((result) => {
+            const delivered = result === true || result?.success === true;
+            if (delivered) {
+              showDeliveryStatus('delivered');
+              return;
+            }
+
+            const reason = result?.error || 'Broadcast was not accepted by SDK runtime';
+            log.warn('SDK', `Broadcast not delivered: ${reason}`);
+            showDeliveryStatus('failed');
+            showToast(`Broadcast failed: ${reason}`, 'error');
+          })
           .catch(err => {
             log.error('SDK', 'Broadcast failed:', err);
             showDeliveryStatus('failed');
@@ -1182,7 +1280,18 @@ function setupEventListeners() {
         }
         sdkRenderer.appendMessage(targetPaneId, { type: 'user', content: actualMessage });
         ipcRenderer.invoke('sdk-send-message', targetPaneId, actualMessage)
-          .then(() => showDeliveryStatus('delivered'))
+          .then((result) => {
+            const delivered = result === true || result?.success === true;
+            if (delivered) {
+              showDeliveryStatus('delivered');
+              return;
+            }
+
+            const reason = result?.error || `Message was not accepted by pane ${targetPaneId}`;
+            log.warn('SDK', `Send to pane ${targetPaneId} not delivered: ${reason}`);
+            showDeliveryStatus('failed');
+            showToast(`Send failed: ${reason}`, 'error');
+          })
           .catch(err => {
             log.error('SDK', `Send to pane ${targetPaneId} failed:`, err);
             showDeliveryStatus('failed');
@@ -1889,8 +1998,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
 
-    // Also render to sdk-renderer (for detailed view when panes are shown)
-    sdkRenderer.appendMessage(paneId, message);
+    // Only render to sdk-renderer when organic UI is NOT active
+    // (prevents double-rendering — organic UI already displayed the content above)
+    if (!organicUIInstance) {
+      sdkRenderer.appendMessage(paneId, message);
+    }
   }
 
   // SDK Message Handler - buffers messages for timestamp sorting
@@ -1979,7 +2091,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // SDK session started - initialize panes for SDK mode
   ipcRenderer.on('sdk-session-start', (event, data) => {
     log.info('SDK', 'Session starting - enabling SDK mode');
-    window.hivemind.sdk.enableMode();
+    window.hivemind.sdk.enableMode({ source: 'sdk-session-start', skipSessionStart: true });
   });
 
   // SDK session ended

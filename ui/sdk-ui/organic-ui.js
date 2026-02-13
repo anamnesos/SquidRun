@@ -18,9 +18,18 @@ const STATUS_COLORS = {
 };
 
 const AGENT_CONFIG = [
-  { id: 'arch', label: 'Arch', fullName: 'Architect', color: '#7C3AED' },
-  { id: 'devops', label: 'DevOps', fullName: 'DevOps', color: '#F59E0B' },
-  { id: 'ana', label: 'Ana', fullName: 'Analyst', color: '#EC4899' },
+  {
+    id: 'arch', label: 'Arch', fullName: 'Architect', color: '#7C3AED',
+    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h20"/><path d="M12 2L2 20h20L12 2z"/><path d="M12 10v4"/><circle cx="12" cy="17" r="1"/></svg>'
+  },
+  {
+    id: 'devops', label: 'DevOps', fullName: 'DevOps', color: '#F59E0B',
+    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/></svg>'
+  },
+  {
+    id: 'ana', label: 'Ana', fullName: 'Analyst', color: '#EC4899',
+    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/></svg>'
+  },
 ];
 
 const ROLE_ALIASES = {
@@ -100,40 +109,94 @@ function ensureStyles() {
       word-break: break-word;
     }
 
-    /* War Room message formatting */
+    /* War Room message formatting — chat bubble style */
     .war-room-message {
-      padding: 4px 0;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 10px 14px;
+      margin-bottom: 8px;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 12px 12px 12px 4px;
+      border-left: 3px solid var(--msg-agent-color, #888);
+      animation: warRoomSlideIn 0.2s ease-out;
+      position: relative;
     }
 
     .war-room-message:last-child {
-      border-bottom: none;
+      margin-bottom: 0;
     }
 
     .war-room-message.is-broadcast {
-      background: rgba(124, 58, 237, 0.1);
-      padding: 4px 8px;
-      margin: 2px -8px;
-      border-radius: 4px;
+      background: rgba(124, 58, 237, 0.08);
+      border-left-color: #7C3AED;
+      border-radius: 12px;
+    }
+
+    .war-room-message.is-user {
+      background: rgba(34, 197, 94, 0.08);
+      border-left-color: #22c55e;
+      border-radius: 12px 12px 4px 12px;
+      margin-left: 20%;
+      align-self: flex-end;
+    }
+
+    @keyframes warRoomSlideIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
     .war-room-prefix {
       font-weight: 600;
+      font-size: 11px;
+      letter-spacing: 0.3px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .war-room-avatar {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      font-weight: 700;
+      color: #fff;
+      background: var(--msg-agent-color, #888);
+      flex-shrink: 0;
     }
 
     .war-room-content {
       color: var(--organic-text);
+      font-size: 12.5px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
 
-    /* Right side: Agent grid (~40% width, 2x3) */
+    .war-room-time {
+      font-size: 9px;
+      color: var(--organic-text-dim);
+      align-self: flex-end;
+    }
+
+    /* Right side: Agent grid (~40% width) */
+    /* 3-agent layout: Architect spans full width top, DevOps + Analyst share bottom row */
     .organic-agent-grid {
       flex: 0 0 40%;
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      grid-template-rows: repeat(3, 1fr);
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
       gap: 12px;
       min-width: 0;
       min-height: 0;
+    }
+
+    .organic-agent:first-child {
+      grid-column: 1 / -1;
     }
 
     /* Agent container */
@@ -206,7 +269,26 @@ function ensureStyles() {
     .organic-agent-header-left {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
+    }
+
+    .organic-agent-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(var(--agent-color-rgb), 0.15);
+      border: 1px solid rgba(var(--agent-color-rgb), 0.3);
+      color: var(--agent-color);
+      flex-shrink: 0;
+      transition: box-shadow 0.2s ease, background 0.2s ease;
+    }
+
+    .organic-agent.is-thinking .organic-agent-icon {
+      box-shadow: 0 0 10px rgba(var(--agent-color-rgb), 0.4);
+      background: rgba(var(--agent-color-rgb), 0.25);
     }
 
     .organic-status-dot {
@@ -490,6 +572,64 @@ function ensureStyles() {
       50% { opacity: 1; }
       100% { opacity: 0; transform: scaleX(1); }
     }
+
+    /* ===== RESPONSIVE BREAKPOINTS ===== */
+
+    /* Medium screens: adjust proportions */
+    @media (max-width: 1200px) {
+      .organic-ui {
+        gap: 10px;
+        padding: 10px;
+      }
+
+      .organic-war-room {
+        flex: 0 0 55%;
+      }
+
+      .organic-agent-grid {
+        flex: 0 0 45%;
+        gap: 8px;
+      }
+
+      .organic-agent-content {
+        font-size: 9px;
+      }
+    }
+
+    /* Small screens: stack vertically */
+    @media (max-width: 800px) {
+      .organic-ui {
+        flex-direction: column;
+        gap: 8px;
+        padding: 8px;
+      }
+
+      .organic-war-room {
+        flex: 0 0 auto;
+        max-height: 50%;
+      }
+
+      .organic-agent-grid {
+        flex: 1 1 auto;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: auto auto;
+      }
+
+      .organic-agent:first-child {
+        grid-column: 1 / -1;
+      }
+    }
+
+    /* Very small: single column agents */
+    @media (max-width: 500px) {
+      .organic-agent-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .organic-agent:first-child {
+        grid-column: 1;
+      }
+    }
   `;
 
   document.head.appendChild(style);
@@ -552,6 +692,11 @@ function createOrganicUI(options = {}) {
     const headerLeft = document.createElement('div');
     headerLeft.className = 'organic-agent-header-left';
 
+    // SVG icon badge
+    const iconBadge = document.createElement('div');
+    iconBadge.className = 'organic-agent-icon';
+    iconBadge.innerHTML = agent.icon;
+
     const label = document.createElement('span');
     label.textContent = agent.label;
 
@@ -587,6 +732,7 @@ function createOrganicUI(options = {}) {
       setTimeout(() => refreshBtn.classList.remove('is-spinning'), 1000);
     });
 
+    headerLeft.appendChild(iconBadge);
     headerLeft.appendChild(label);
     header.appendChild(headerLeft);
     header.appendChild(refreshBtn);
@@ -998,27 +1144,47 @@ function createOrganicUI(options = {}) {
     const { from, to, msg, type } = data;
     const fromLabel = getAgentLabel(from);
     const toLabel = getAgentLabel(to);
-    const fromColor = from?.toUpperCase() === 'USER' || from?.toUpperCase() === 'YOU'
-      ? '#22c55e' // Green for user
-      : getAgentColor(from);
+    const isUser = from?.toUpperCase() === 'USER' || from?.toUpperCase() === 'YOU';
+    const fromColor = isUser ? '#22c55e' : getAgentColor(from);
 
-    // Create message line element
+    // Avatar initial (first letter of label)
+    const avatarLetter = fromLabel.charAt(0);
+
+    // Create bubble message element
     const line = document.createElement('div');
     line.className = 'war-room-message';
+    line.style.setProperty('--msg-agent-color', fromColor);
     if (type === 'broadcast') line.classList.add('is-broadcast');
+    if (isUser) line.classList.add('is-user');
 
-    // Build formatted message: (FROM → TO): msg
-    const prefix = document.createElement('span');
+    // Header with avatar + label + direction
+    const prefix = document.createElement('div');
     prefix.className = 'war-room-prefix';
     prefix.style.color = fromColor;
-    prefix.textContent = `(${fromLabel} → ${toLabel}): `;
 
-    const content = document.createElement('span');
+    const avatar = document.createElement('span');
+    avatar.className = 'war-room-avatar';
+    avatar.textContent = avatarLetter;
+
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = toLabel === 'ALL' ? `${fromLabel} (broadcast)` : `${fromLabel} → ${toLabel}`;
+
+    prefix.appendChild(avatar);
+    prefix.appendChild(labelSpan);
+
+    // Content
+    const content = document.createElement('div');
     content.className = 'war-room-content';
     content.textContent = stripAnsi(msg || '');
 
+    // Timestamp
+    const timeEl = document.createElement('span');
+    timeEl.className = 'war-room-time';
+    timeEl.textContent = formatTime();
+
     line.appendChild(prefix);
     line.appendChild(content);
+    line.appendChild(timeEl);
     commandContent.appendChild(line);
 
     // Track messages and limit to MAX

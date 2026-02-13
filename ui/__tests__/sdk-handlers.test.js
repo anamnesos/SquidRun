@@ -17,7 +17,7 @@ const mockBridgeObj = {
   isActive: jest.fn(() => false),
   getSessions: jest.fn(() => []),
   startSessions: jest.fn().mockResolvedValue({}),
-  broadcast: jest.fn(),
+  broadcast: jest.fn(() => true),
 };
 
 // Mock sdk-bridge to return the same object every time
@@ -191,6 +191,16 @@ describe('SDK Handlers', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Start failed');
+    });
+
+    test('returns failure when SDK bridge does not accept broadcast', async () => {
+      mockBridgeObj.isActive.mockReturnValue(true);
+      mockBridgeObj.broadcast.mockReturnValue(false);
+
+      const result = await harness.invoke('sdk-broadcast', 'Test');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('SDK bridge did not accept broadcast');
     });
   });
 });

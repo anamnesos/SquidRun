@@ -247,10 +247,11 @@ describe('sdk-renderer.js module', () => {
       const sdkMessagesContainer = createdElements.find(el => el.id === 'sdk-messages-1');
 
       // Now append message with delivery tracking
-      sdkRenderer.appendMessage('1', { type: 'user', content: 'test' }, { trackDelivery: true });
+      const result = sdkRenderer.appendMessage('1', { type: 'user', content: 'test' }, { trackDelivery: true });
 
       // Should have appended the message element to the container
       expect(sdkMessagesContainer.appendChild).toHaveBeenCalled();
+      expect(result).toEqual(expect.stringMatching(/^msg-/));
     });
   });
 

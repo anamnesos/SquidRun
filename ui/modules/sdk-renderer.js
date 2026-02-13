@@ -64,6 +64,9 @@ function generateHoneycombHTML() {
 // Pending messages awaiting delivery confirmation
 const pendingMessages = new Map();
 
+// DOM retention cap — remove oldest messages when exceeded
+const MAX_MESSAGES_PER_PANE = 200;
+
 // ===== STREAMING TEXT DELTA STATE =====
 // Track active streaming messages per pane for typewriter effect
 const streamingMessages = new Map();  // paneId -> { element, buffer, complete }
@@ -574,7 +577,16 @@ function appendMessage(paneId, message, options = {}) {
   }
 
   container.appendChild(msgEl);
+
+  // Enforce DOM retention cap — remove oldest messages when exceeded
+  if (container.children) {
+    while (container.children.length > MAX_MESSAGES_PER_PANE) {
+      container.removeChild(container.firstChild);
+    }
+  }
+
   scrollToBottom(paneId);
+  return messageId;
 }
 
 /**

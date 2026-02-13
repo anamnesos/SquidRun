@@ -49,7 +49,13 @@ function registerSdkHandlers(ctx) {
       if (!sdkBridge.isActive()) {
         await sdkBridge.startSessions({ workspace: process.cwd() });
       }
-      sdkBridge.broadcast(prompt);
+      const sent = sdkBridge.broadcast(prompt);
+      if (!sent) {
+        return {
+          success: false,
+          error: 'SDK bridge did not accept broadcast',
+        };
+      }
       return { success: true };
     } catch (err) {
       log.error('SDK', 'Broadcast error:', err);
