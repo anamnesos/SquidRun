@@ -5,15 +5,22 @@ const log = require('./logger');
 const WORKER_PATH = path.join(__dirname, 'comms-worker.js');
 const REQUEST_TIMEOUT_MS = 15000;
 const STOP_TIMEOUT_MS = 2000;
+const RESTART_BASE_DELAY_MS = Number.parseInt(process.env.HIVEMIND_COMMS_WORKER_RESTART_BASE_MS || '500', 10);
+const RESTART_MAX_DELAY_MS = Number.parseInt(process.env.HIVEMIND_COMMS_WORKER_RESTART_MAX_MS || '10000', 10);
 
 let workerProcess = null;
 let requestCounter = 0;
 let running = false;
+let desiredRunning = false;
 let cachedPort = null;
 let cachedClients = [];
 const cachedHealthByTarget = new Map();
 const pendingRequests = new Map();
 let onMessageHandler = null;
+let lastStartOptions = null;
+let restartTimer = null;
+let restartAttempt = 0;
+let restartInFlightPromise = null;
 
 function nextRequestId() {
   requestCounter += 1;
@@ -33,6 +40,96 @@ function rejectAllPending(err) {
     const entry = clearPendingRequest(reqId);
     if (entry) entry.reject(err);
   }
+}
+
+function parsePositiveInt(value, fallback) {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function getRestartDelayMs(attempt) {
+  const base = parsePositiveInt(RESTART_BASE_DELAY_MS, 500);
+  const max = parsePositiveInt(RESTART_MAX_DELAY_MS, 10000);
+  const exponent = Math.max(0, Number(attempt || 1) - 1);
+  return Math.min(max, base * Math.pow(2, exponent));
+}
+
+function clearRestartTimer() {
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
+}
+
+async function performRestart(attempt, reason = 'unexpected_exit') {
+  if (!desiredRunning) return false;
+  if (running && workerProcess) return true;
+
+  const options = lastStartOptions || {};
+  try {
+    const result = await sendRequest('start', {
+      options: {
+        port: options.port,
+        callbackTimeoutMs: options.callbackTimeoutMs,
+      },
+    });
+    running = true;
+    cachedPort = result?.port || cachedPort || null;
+    restartAttempt = 0;
+    log.info('CommsWorker', `Recovery restart succeeded (attempt ${attempt}, reason=${reason})`);
+    return true;
+  } catch (err) {
+    running = false;
+    cachedPort = null;
+    cachedClients = [];
+    cachedHealthByTarget.clear();
+    log.warn('CommsWorker', `Recovery restart failed (attempt ${attempt}, reason=${reason}): ${err.message}`);
+    return false;
+  }
+}
+
+function scheduleRestart(reason = 'unexpected_exit') {
+  if (!desiredRunning) return;
+  if (restartTimer || restartInFlightPromise) return;
+
+  restartAttempt += 1;
+  const attempt = restartAttempt;
+  const delayMs = getRestartDelayMs(attempt);
+  log.warn('CommsWorker', `Scheduling restart attempt ${attempt} in ${delayMs}ms (${reason})`);
+
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    restartInFlightPromise = performRestart(attempt, reason)
+      .then((ok) => {
+        if (!ok && desiredRunning) {
+          scheduleRestart('retry_after_failure');
+        }
+      })
+      .finally(() => {
+        restartInFlightPromise = null;
+      });
+  }, delayMs);
+}
+
+async function ensureRunning(reason = 'request') {
+  if (!desiredRunning) return false;
+  if (running && workerProcess) return true;
+  if (restartInFlightPromise) {
+    return Boolean(await restartInFlightPromise);
+  }
+
+  clearRestartTimer();
+  const attempt = Math.max(1, restartAttempt + 1);
+  restartInFlightPromise = performRestart(attempt, reason)
+    .then((ok) => {
+      if (!ok && desiredRunning) {
+        scheduleRestart('ensure_running_failed');
+      }
+      return ok;
+    })
+    .finally(() => {
+      restartInFlightPromise = null;
+    });
+  return Boolean(await restartInFlightPromise);
 }
 
 function ensureWorker() {
@@ -69,8 +166,10 @@ function ensureWorker() {
     rejectAllPending(new Error(`comms worker exited (code=${code}, signal=${signal || 'none'})`));
     if (intentional) {
       log.info('CommsWorker', `Worker stopped (${signal || code || 'exit'})`);
+      clearRestartTimer();
     } else {
       log.error('CommsWorker', `Worker exited unexpectedly (code=${code}, signal=${signal || 'none'})`);
+      scheduleRestart('worker_exit');
     }
   });
 
@@ -148,18 +247,36 @@ async function handleWorkerMessage(worker, msg) {
 
 async function start(options = {}) {
   onMessageHandler = typeof options.onMessage === 'function' ? options.onMessage : null;
-  const result = await sendRequest('start', {
-    options: {
-      port: options.port,
-      callbackTimeoutMs: options.callbackTimeoutMs,
-    },
-  });
-  running = true;
-  cachedPort = result?.port || null;
-  return result;
+  lastStartOptions = {
+    port: options.port,
+    callbackTimeoutMs: options.callbackTimeoutMs,
+  };
+  desiredRunning = true;
+  clearRestartTimer();
+  restartAttempt = 0;
+
+  try {
+    const result = await sendRequest('start', {
+      options: {
+        port: options.port,
+        callbackTimeoutMs: options.callbackTimeoutMs,
+      },
+    });
+    running = true;
+    cachedPort = result?.port || null;
+    return result;
+  } catch (err) {
+    desiredRunning = false;
+    throw err;
+  }
 }
 
 async function stop() {
+  desiredRunning = false;
+  clearRestartTimer();
+  restartAttempt = 0;
+  restartInFlightPromise = null;
+
   const worker = workerProcess;
   if (!worker) {
     running = false;
@@ -170,10 +287,8 @@ async function stop() {
   }
 
   worker.__hivemindIntentionalStop = true;
-  let exitHandler = null;
   const exitPromise = new Promise((resolve) => {
-    exitHandler = () => resolve();
-    worker.once('exit', exitHandler);
+    worker.once('exit', () => resolve());
   });
 
   try {
@@ -253,6 +368,9 @@ function getRoutingHealth(target, staleAfterMs, now) {
 }
 
 async function sendToTarget(target, content, meta = {}) {
+  if ((!running || !workerProcess) && desiredRunning) {
+    await ensureRunning('sendToTarget');
+  }
   if (!running || !workerProcess) return false;
   try {
     const result = await sendRequest('sendToTarget', { target, content, meta });
@@ -264,6 +382,9 @@ async function sendToTarget(target, content, meta = {}) {
 }
 
 async function sendToPane(paneId, content, meta = {}) {
+  if ((!running || !workerProcess) && desiredRunning) {
+    await ensureRunning('sendToPane');
+  }
   if (!running || !workerProcess) return false;
   try {
     const result = await sendRequest('sendToPane', { paneId, content, meta });
@@ -275,6 +396,9 @@ async function sendToPane(paneId, content, meta = {}) {
 }
 
 async function broadcast(content, options = {}) {
+  if ((!running || !workerProcess) && desiredRunning) {
+    await ensureRunning('broadcast');
+  }
   if (!running || !workerProcess) return 0;
   try {
     const result = await sendRequest('broadcast', { content, options });
@@ -292,9 +416,14 @@ async function resetForTests() {
   requestCounter = 0;
   onMessageHandler = null;
   running = false;
+  desiredRunning = false;
+  lastStartOptions = null;
   cachedPort = null;
   cachedClients = [];
   cachedHealthByTarget.clear();
+  clearRestartTimer();
+  restartAttempt = 0;
+  restartInFlightPromise = null;
   rejectAllPending(new Error('reset'));
 }
 

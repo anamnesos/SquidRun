@@ -67,6 +67,10 @@ function createWorkerStub() {
   return worker;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 describe('comms-worker-client', () => {
   let client;
   let forkMock;
@@ -74,6 +78,8 @@ describe('comms-worker-client', () => {
 
   beforeEach(() => {
     jest.resetModules();
+    process.env.HIVEMIND_COMMS_WORKER_RESTART_BASE_MS = '20';
+    process.env.HIVEMIND_COMMS_WORKER_RESTART_MAX_MS = '80';
 
     workers = [];
     forkMock = jest.fn(() => {
@@ -95,6 +101,8 @@ describe('comms-worker-client', () => {
 
   afterEach(async () => {
     await client.resetForTests();
+    delete process.env.HIVEMIND_COMMS_WORKER_RESTART_BASE_MS;
+    delete process.env.HIVEMIND_COMMS_WORKER_RESTART_MAX_MS;
   });
 
   test('start initializes worker and caches running state/port', async () => {
@@ -156,5 +164,47 @@ describe('comms-worker-client', () => {
   test('broadcast is no-op when worker is not running', async () => {
     const result = await client.broadcast('hello');
     expect(result).toBe(0);
+  });
+
+  test('auto-restarts after unexpected worker exit', async () => {
+    await client.start({ port: 0, onMessage: jest.fn(async () => ({ ok: true })) });
+    expect(client.isRunning()).toBe(true);
+    expect(forkMock).toHaveBeenCalledTimes(1);
+
+    const firstWorker = workers[0];
+    firstWorker.connected = false;
+    firstWorker.emit('exit', 1, null);
+
+    await sleep(80);
+
+    expect(forkMock).toHaveBeenCalledTimes(2);
+    expect(client.isRunning()).toBe(true);
+    expect(client.getPort()).toBe(9911);
+  });
+
+  test('does not auto-restart after intentional stop', async () => {
+    await client.start({ port: 0, onMessage: jest.fn(async () => ({ ok: true })) });
+    expect(forkMock).toHaveBeenCalledTimes(1);
+
+    await client.stop();
+    await sleep(80);
+
+    expect(client.isRunning()).toBe(false);
+    expect(forkMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('sendToPane during recovery waits for restart and succeeds', async () => {
+    await client.start({ port: 0, onMessage: jest.fn(async () => ({ ok: true })) });
+    expect(forkMock).toHaveBeenCalledTimes(1);
+
+    const firstWorker = workers[0];
+    firstWorker.connected = false;
+    firstWorker.emit('exit', 1, null);
+
+    const result = await client.sendToPane('2', 'hello-after-exit');
+
+    expect(result).toBe(true);
+    expect(forkMock).toHaveBeenCalledTimes(2);
+    expect(client.isRunning()).toBe(true);
   });
 });
