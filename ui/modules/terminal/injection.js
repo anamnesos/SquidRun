@@ -648,6 +648,9 @@ function createInjectionController(options = {}) {
     const item = queue.shift();
     const queuedMessage = typeof item === 'string' ? item : item.message;
     const onComplete = item && typeof item === 'object' ? item.onComplete : null;
+    const verifySubmitAcceptedOverride = item && typeof item === 'object'
+      ? item.verifySubmitAccepted
+      : undefined;
     const itemTraceContext = normalizeTraceContext(item && typeof item === 'object' ? item.traceContext : null);
     const itemCorrId = itemTraceContext?.traceId
       || itemTraceContext?.correlationId
@@ -660,7 +663,9 @@ function createInjectionController(options = {}) {
       payload: {
         mode: capabilities.modeLabel,
         enterMethod: capabilities.enterMethod,
-        verifySubmitAccepted: capabilities.verifySubmitAccepted,
+        verifySubmitAccepted: typeof verifySubmitAcceptedOverride === 'boolean'
+          ? verifySubmitAcceptedOverride
+          : capabilities.verifySubmitAccepted,
         useChunkedWrite: capabilities.useChunkedWrite,
       },
       correlationId: itemCorrId,
@@ -706,13 +711,15 @@ function createInjectionController(options = {}) {
       correlationId: itemCorrId || null,
       causationId: itemCausationId || null,
       eventId: itemTraceContext?.eventId || null,
+    }, {
+      verifySubmitAccepted: verifySubmitAcceptedOverride,
     });
   }
 
   // Actually send message to pane (internal - use sendToPane for idle detection)
   // Triggers actual DOM keyboard events on xterm textarea with bypass marker
   // Includes diagnostic logging and focus steal prevention (save/restore user focus)
-  async function doSendToPane(paneId, message, onComplete, traceContext = null) {
+  async function doSendToPane(paneId, message, onComplete, traceContext = null, behaviorOverrides = {}) {
     let completed = false;
     const finish = (result) => {
       if (completed) return;
@@ -745,6 +752,9 @@ function createInjectionController(options = {}) {
     const text = message.replace(/\r$/, '');
     const id = String(paneId);
     const capabilities = getPaneInjectionCapabilities(id);
+    const shouldVerifySubmitAccepted = (typeof behaviorOverrides.verifySubmitAccepted === 'boolean')
+      ? behaviorOverrides.verifySubmitAccepted
+      : capabilities.verifySubmitAccepted;
     const isCodex = capabilities.mode === 'codex-exec';
     const normalizedTraceContext = normalizeTraceContext(traceContext);
     const corrId = normalizedTraceContext?.traceId
@@ -1026,7 +1036,7 @@ function createInjectionController(options = {}) {
       }
 
       let submitAccepted = null;
-      const maxSubmitAttempts = capabilities.verifySubmitAccepted
+      const maxSubmitAttempts = shouldVerifySubmitAccepted
         ? Math.max(
           1,
           Number(SUBMIT_ACCEPT_MAX_ATTEMPTS) || 1,
@@ -1080,7 +1090,7 @@ function createInjectionController(options = {}) {
           source: EVENT_SOURCE,
         });
 
-        if (!capabilities.verifySubmitAccepted) {
+        if (!shouldVerifySubmitAccepted) {
           submitAccepted = { accepted: true, signal: 'verification_disabled' };
           break;
         }
@@ -1133,7 +1143,7 @@ function createInjectionController(options = {}) {
       if (capabilities.mode !== 'codex-exec') {
         lastOutputTime[id] = Date.now();
       }
-      const successResult = capabilities.verifySubmitAccepted
+      const successResult = shouldVerifySubmitAccepted
         ? { success: true, verified: true, signal: submitAccepted.signal }
         : { success: true };
       finishWithClear({
@@ -1182,6 +1192,9 @@ function createInjectionController(options = {}) {
       immediate: options.immediate || false,
       correlationId: corrId,
       traceContext: queueTraceContext,
+      verifySubmitAccepted: typeof options.verifySubmitAccepted === 'boolean'
+        ? options.verifySubmitAccepted
+        : undefined,
     };
 
     // User messages (priority) go to front of queue, agent messages go to back
