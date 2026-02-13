@@ -32,6 +32,8 @@ class DaemonClient extends EventEmitter {
     this.lastActivity = new Map(); // Track last activity time per pane
     this.pendingWriteAcks = new Map(); // requestEventId -> { resolve, timer }
     this.writeAckSeq = 0;
+    this.pendingCodexExecAcks = new Map(); // requestId -> { resolve, timer }
+    this.codexExecSeq = 0;
   }
 
   /**
@@ -117,6 +119,7 @@ class DaemonClient extends EventEmitter {
       this.connected = false;
       this.client = null;
       this._rejectPendingWriteAcks('daemon_disconnected');
+      this._rejectPendingCodexExecAcks('daemon_disconnected');
       this.emit('disconnected');
 
       // Attempt reconnect
@@ -129,6 +132,7 @@ class DaemonClient extends EventEmitter {
       log.error('DaemonClient', 'Connection error', err.message);
       this.connected = false;
       this._rejectPendingWriteAcks('daemon_connection_error');
+      this._rejectPendingCodexExecAcks('daemon_connection_error');
     });
   }
 
@@ -270,6 +274,26 @@ class DaemonClient extends EventEmitter {
           this.emit('kernel-stats', msg.stats || {});
           break;
 
+        case 'codex-exec-result': {
+          const requestId = msg.requestId;
+          if (requestId) {
+            const pending = this.pendingCodexExecAcks.get(requestId);
+            if (pending) {
+              clearTimeout(pending.timer);
+              this.pendingCodexExecAcks.delete(requestId);
+              pending.resolve({
+                success: msg.success !== false,
+                status: msg.status || (msg.success === false ? 'rejected' : 'accepted'),
+                error: msg.error || null,
+                paneId: msg.paneId,
+                requestId,
+              });
+            }
+          }
+          this.emit('codex-exec-result', msg);
+          break;
+        }
+
         default:
           log.warn('DaemonClient', 'Unknown event', msg.event);
       }
@@ -392,6 +416,24 @@ class DaemonClient extends EventEmitter {
     this.pendingWriteAcks.clear();
   }
 
+  _nextCodexExecRequestId() {
+    this.codexExecSeq += 1;
+    return `codex-exec-${Date.now()}-${this.codexExecSeq}`;
+  }
+
+  _rejectPendingCodexExecAcks(reason = 'daemon_disconnected') {
+    for (const [requestId, pending] of this.pendingCodexExecAcks.entries()) {
+      clearTimeout(pending.timer);
+      pending.resolve({
+        success: false,
+        requestId,
+        status: 'ack_timeout',
+        error: reason,
+      });
+    }
+    this.pendingCodexExecAcks.clear();
+  }
+
   /**
    * Write data and wait for daemon.write.ack for this specific write.
    * requestEventId is carried in kernelMeta.eventId and echoed by daemon ack.
@@ -480,6 +522,60 @@ class DaemonClient extends EventEmitter {
       action: 'codex-exec',
       paneId,
       prompt,
+    });
+  }
+
+  /**
+   * Run Codex exec and wait for daemon acceptance/rejection response.
+   * @param {string} paneId - The pane identifier
+   * @param {string} prompt - Prompt text to send
+   * @param {Object} [options]
+   * @param {number} [options.timeoutMs=4000]
+   * @returns {Promise<{success:boolean,status?:string,error?:string,requestId?:string,paneId?:string}>}
+   */
+  async codexExecAndWait(paneId, prompt, options = {}) {
+    const timeoutMs = Math.max(100, Number(options?.timeoutMs) || 4000);
+    const requestId = this._nextCodexExecRequestId();
+
+    if (!this.connected || !this.client) {
+      return {
+        success: false,
+        requestId,
+        status: 'not_connected',
+        error: 'Daemon not connected',
+      };
+    }
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingCodexExecAcks.delete(requestId);
+        resolve({
+          success: false,
+          requestId,
+          status: 'ack_timeout',
+          error: `codex-exec ack timeout after ${timeoutMs}ms`,
+        });
+      }, timeoutMs);
+
+      this.pendingCodexExecAcks.set(requestId, { resolve, timer });
+
+      const sent = this._send({
+        action: 'codex-exec',
+        paneId,
+        prompt,
+        requestId,
+      });
+
+      if (!sent) {
+        clearTimeout(timer);
+        this.pendingCodexExecAcks.delete(requestId);
+        resolve({
+          success: false,
+          requestId,
+          status: 'send_failed',
+          error: 'Failed to send codex-exec request to daemon',
+        });
+      }
     });
   }
 
@@ -613,6 +709,7 @@ class DaemonClient extends EventEmitter {
    */
   disconnect() {
     this._rejectPendingWriteAcks('daemon_disconnected');
+    this._rejectPendingCodexExecAcks('daemon_disconnected');
     if (this.client) {
       this.client.destroy();
       this.client = null;

@@ -196,12 +196,33 @@ function registerPtyHandlers(ctx, deps = {}) {
   });
 
   // Codex exec (non-interactive) - run a single prompt through codex exec --json
-  ipcMain.handle('codex-exec', (event, paneId, prompt) => {
+  ipcMain.handle('codex-exec', async (event, paneId, prompt) => {
     if (!ctx.daemonClient || !ctx.daemonClient.connected) {
       return { success: false, error: 'Daemon not connected' };
     }
-    ctx.daemonClient.codexExec(paneId, prompt || '');
-    return { success: true };
+    let result;
+    if (typeof ctx.daemonClient.codexExecAndWait === 'function') {
+      result = await ctx.daemonClient.codexExecAndWait(paneId, prompt || '');
+    } else {
+      const sent = ctx.daemonClient.codexExec(paneId, prompt || '');
+      result = sent === false
+        ? { success: false, status: 'send_failed', error: 'Failed to send codex-exec request to daemon' }
+        : { success: true, status: 'sent_without_ack' };
+    }
+
+    if (!result || result.success === false) {
+      return {
+        success: false,
+        error: result?.error || result?.status || 'Codex exec request failed',
+        status: result?.status || 'rejected',
+      };
+    }
+
+    return {
+      success: true,
+      status: result.status || 'accepted',
+      requestId: result.requestId || null,
+    };
   });
 
   // Send trusted keyboard Enter via Electron's native input API
