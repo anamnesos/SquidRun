@@ -5,13 +5,20 @@
 
 const { WebSocketServer } = require('ws');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const log = require('./logger');
-const { LEGACY_ROLE_ALIASES, ROLE_ID_MAP } = require('../config');
+const { LEGACY_ROLE_ALIASES, ROLE_ID_MAP, WORKSPACE_PATH } = require('../config');
 
 const DEFAULT_PORT = 9900;
 const MESSAGE_ACK_TTL_MS = 60000;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const HEARTBEAT_STALE_MS = 60000;
+const OUTBOUND_QUEUE_MAX_ENTRIES = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_ENTRIES || '500', 10);
+const OUTBOUND_QUEUE_MAX_AGE_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_AGE_MS || String(30 * 60 * 1000), 10);
+const OUTBOUND_QUEUE_FLUSH_INTERVAL_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_FLUSH_INTERVAL_MS || '30000', 10);
+const OUTBOUND_QUEUE_PATH = process.env.HIVEMIND_COMMS_QUEUE_FILE
+  || path.join(WORKSPACE_PATH, 'state', 'comms-outbound-queue.json');
 const CANONICAL_ROLE_IDS = ['architect', 'devops', 'analyst'];
 const CANONICAL_ROLE_TO_PANE = new Map(
   CANONICAL_ROLE_IDS
@@ -29,6 +36,9 @@ let recentMessageAcks = new Map(); // messageId -> { ackPayload, expiresAt }
 let pendingMessageAcks = new Map(); // messageId -> Promise<ackPayload>
 let roleHeartbeats = new Map(); // role -> { role, paneId, lastSeen, clientId, source }
 let paneHeartbeats = new Map(); // paneId -> { role, paneId, lastSeen, clientId, source }
+let outboundQueue = []; // [{ id, target, content, meta, createdAt, attempts, lastAttemptAt, queuedBy }]
+let outboundQueueFlushTimer = null;
+let outboundQueueFlushInProgress = false;
 
 function generateTraceToken(prefix = 'evt') {
   try {
@@ -238,6 +248,279 @@ function sendJson(ws, payload) {
   }
 }
 
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getQueueMaxEntries() {
+  return parsePositiveInt(OUTBOUND_QUEUE_MAX_ENTRIES, 500);
+}
+
+function getQueueMaxAgeMs() {
+  return parsePositiveInt(OUTBOUND_QUEUE_MAX_AGE_MS, 30 * 60 * 1000);
+}
+
+function getQueueFlushIntervalMs() {
+  return parsePositiveInt(OUTBOUND_QUEUE_FLUSH_INTERVAL_MS, 30000);
+}
+
+function getQueueDirPath() {
+  return path.dirname(OUTBOUND_QUEUE_PATH);
+}
+
+function ensureQueueDir() {
+  fs.mkdirSync(getQueueDirPath(), { recursive: true });
+}
+
+function makeQueueEntry(target, content, meta = {}, queuedBy = 'runtime', now = Date.now()) {
+  return {
+    id: `oq-${now}-${Math.random().toString(36).slice(2, 8)}`,
+    target: String(target),
+    content: String(content ?? ''),
+    meta: (meta && typeof meta === 'object') ? meta : {},
+    createdAt: now,
+    attempts: 0,
+    lastAttemptAt: null,
+    queuedBy,
+  };
+}
+
+function isQueueEntry(entry) {
+  return Boolean(
+    entry
+    && typeof entry === 'object'
+    && typeof entry.target === 'string'
+    && typeof entry.content === 'string'
+  );
+}
+
+function normalizeQueueEntries(rawEntries, now = Date.now()) {
+  if (!Array.isArray(rawEntries)) return [];
+  const maxAgeMs = getQueueMaxAgeMs();
+  const normalized = [];
+  for (const item of rawEntries) {
+    if (!isQueueEntry(item)) continue;
+    const createdAt = Number.isFinite(item.createdAt) ? item.createdAt : now;
+    if (createdAt + maxAgeMs <= now) continue;
+    normalized.push({
+      id: typeof item.id === 'string' ? item.id : `oq-${createdAt}-${Math.random().toString(36).slice(2, 8)}`,
+      target: item.target,
+      content: item.content,
+      meta: (item.meta && typeof item.meta === 'object') ? item.meta : {},
+      createdAt,
+      attempts: Number.isFinite(item.attempts) ? item.attempts : 0,
+      lastAttemptAt: Number.isFinite(item.lastAttemptAt) ? item.lastAttemptAt : null,
+      queuedBy: typeof item.queuedBy === 'string' ? item.queuedBy : 'runtime',
+    });
+  }
+  const maxEntries = getQueueMaxEntries();
+  return normalized.slice(Math.max(0, normalized.length - maxEntries));
+}
+
+function persistOutboundQueue() {
+  try {
+    ensureQueueDir();
+    const payload = JSON.stringify(outboundQueue, null, 2);
+    const tmpPath = `${OUTBOUND_QUEUE_PATH}.tmp`;
+    fs.writeFileSync(tmpPath, payload, 'utf-8');
+    fs.renameSync(tmpPath, OUTBOUND_QUEUE_PATH);
+  } catch (err) {
+    log.error('WebSocket', `Failed to persist outbound queue: ${err.message}`);
+  }
+}
+
+function loadOutboundQueue() {
+  try {
+    if (!fs.existsSync(OUTBOUND_QUEUE_PATH)) {
+      outboundQueue = [];
+      return;
+    }
+    const raw = fs.readFileSync(OUTBOUND_QUEUE_PATH, 'utf-8');
+    const parsed = JSON.parse(raw);
+    outboundQueue = normalizeQueueEntries(parsed);
+    if (!Array.isArray(parsed) || parsed.length !== outboundQueue.length) {
+      persistOutboundQueue();
+    }
+  } catch (err) {
+    outboundQueue = [];
+    log.warn('WebSocket', `Failed to load outbound queue. Resetting queue: ${err.message}`);
+    persistOutboundQueue();
+  }
+}
+
+function pruneOutboundQueue(now = Date.now()) {
+  if (outboundQueue.length === 0) return;
+  const maxAgeMs = getQueueMaxAgeMs();
+  const maxEntries = getQueueMaxEntries();
+  const previousLength = outboundQueue.length;
+  outboundQueue = outboundQueue.filter((entry) => Number.isFinite(entry.createdAt) && (entry.createdAt + maxAgeMs > now));
+  if (outboundQueue.length > maxEntries) {
+    const dropCount = outboundQueue.length - maxEntries;
+    outboundQueue = outboundQueue.slice(dropCount);
+  }
+  if (outboundQueue.length !== previousLength) {
+    persistOutboundQueue();
+  }
+}
+
+function queueOutboundMessage(target, content, meta = {}, queuedBy = 'runtime', now = Date.now()) {
+  pruneOutboundQueue(now);
+  const maxEntries = getQueueMaxEntries();
+  if (outboundQueue.length >= maxEntries) {
+    outboundQueue.shift();
+  }
+  outboundQueue.push(makeQueueEntry(target, content, meta, queuedBy, now));
+  persistOutboundQueue();
+}
+
+function buildOutboundPayload(content, meta = {}) {
+  const traceContext = meta?.traceContext || null;
+  return JSON.stringify({
+    type: 'message',
+    from: meta.from || 'system',
+    priority: meta.priority || 'normal',
+    content,
+    traceId: traceContext?.traceId || null,
+    parentEventId: traceContext?.parentEventId || null,
+    eventId: traceContext?.eventId || null,
+    timestamp: Date.now(),
+  });
+}
+
+function matchClientsForTarget(target) {
+  const targetStr = String(target);
+  const targetRole = targetStr.toLowerCase();
+  const matched = [];
+  for (const [clientId, info] of clients) {
+    const paneMatch = info.paneId !== null && String(info.paneId) === targetStr;
+    const roleMatch = typeof info.role === 'string' && info.role.toLowerCase() === targetRole;
+    if (paneMatch || roleMatch) {
+      matched.push([clientId, info]);
+    }
+  }
+  return matched;
+}
+
+function deliverToTargetNow(target, content, meta = {}) {
+  const payload = buildOutboundPayload(content, meta);
+  let sent = false;
+  const matched = matchClientsForTarget(target);
+  for (const [clientId, info] of matched) {
+    if (info.ws.readyState !== 1) continue;
+    try {
+      info.ws.send(payload);
+      sent = true;
+      log.info('WebSocket', `Sent to ${target} (client ${clientId}): ${String(content).substring(0, 50)}...`);
+    } catch (err) {
+      log.warn('WebSocket', `Failed sending to ${target} (client ${clientId}): ${err.message}`);
+    }
+  }
+  return sent;
+}
+
+function targetMatchesClient(target, info) {
+  const targetStr = String(target);
+  const targetRole = targetStr.toLowerCase();
+  const paneMatch = info.paneId !== null && String(info.paneId) === targetStr;
+  const roleMatch = typeof info.role === 'string' && info.role.toLowerCase() === targetRole;
+  return paneMatch || roleMatch;
+}
+
+function flushOutboundQueueForClient(clientId, source = 'register') {
+  const info = clients.get(clientId);
+  if (!info || outboundQueue.length === 0) return 0;
+  if (outboundQueueFlushInProgress) return 0;
+  pruneOutboundQueue();
+  if (outboundQueue.length === 0) return 0;
+
+  outboundQueueFlushInProgress = true;
+  let deliveredCount = 0;
+  let queueChanged = false;
+  try {
+    const retained = [];
+    for (const entry of outboundQueue) {
+      if (!targetMatchesClient(entry.target, info)) {
+        retained.push(entry);
+        continue;
+      }
+      const sent = deliverToTargetNow(entry.target, entry.content, entry.meta);
+      if (sent) {
+        deliveredCount += 1;
+        queueChanged = true;
+      } else {
+        entry.attempts = (entry.attempts || 0) + 1;
+        entry.lastAttemptAt = Date.now();
+        retained.push(entry);
+      }
+    }
+    if (retained.length !== outboundQueue.length || queueChanged) {
+      outboundQueue = retained;
+      persistOutboundQueue();
+    }
+  } finally {
+    outboundQueueFlushInProgress = false;
+  }
+
+  if (deliveredCount > 0) {
+    log.info('WebSocket', `Flushed ${deliveredCount} queued message(s) for client ${clientId} via ${source}`);
+  }
+  return deliveredCount;
+}
+
+function flushOutboundQueue(source = 'timer') {
+  if (outboundQueue.length === 0) return 0;
+  if (outboundQueueFlushInProgress) return 0;
+  pruneOutboundQueue();
+  if (outboundQueue.length === 0) return 0;
+
+  outboundQueueFlushInProgress = true;
+  let deliveredCount = 0;
+  let queueChanged = false;
+  try {
+    const retained = [];
+    for (const entry of outboundQueue) {
+      const sent = deliverToTargetNow(entry.target, entry.content, entry.meta);
+      if (sent) {
+        deliveredCount += 1;
+        queueChanged = true;
+      } else {
+        entry.attempts = (entry.attempts || 0) + 1;
+        entry.lastAttemptAt = Date.now();
+        retained.push(entry);
+      }
+    }
+    if (retained.length !== outboundQueue.length || queueChanged) {
+      outboundQueue = retained;
+      persistOutboundQueue();
+    }
+  } finally {
+    outboundQueueFlushInProgress = false;
+  }
+
+  if (deliveredCount > 0) {
+    log.info('WebSocket', `Flushed ${deliveredCount} queued message(s) via ${source}`);
+  }
+  return deliveredCount;
+}
+
+function stopOutboundQueueTimer() {
+  if (outboundQueueFlushTimer) {
+    clearInterval(outboundQueueFlushTimer);
+    outboundQueueFlushTimer = null;
+  }
+}
+
+function startOutboundQueueTimer() {
+  stopOutboundQueueTimer();
+  outboundQueueFlushTimer = setInterval(() => {
+    flushOutboundQueue('interval');
+  }, getQueueFlushIntervalMs());
+  if (typeof outboundQueueFlushTimer.unref === 'function') {
+    outboundQueueFlushTimer.unref();
+  }
+}
+
 function coerceAckResult(result) {
   if (!result || typeof result !== 'object') return null;
   if (Object.prototype.hasOwnProperty.call(result, 'ok')) {
@@ -313,6 +596,49 @@ function cacheMessageAck(messageId, ackPayload, now = Date.now()) {
   });
 }
 
+function getDeliveryCheckResult(messageId) {
+  const normalizedMessageId = toNonEmptyString(messageId);
+  if (!normalizedMessageId) {
+    return {
+      known: false,
+      status: 'invalid_message_id',
+      messageId: null,
+      ack: null,
+      pending: false,
+    };
+  }
+
+  pruneExpiredMessageAcks();
+  const cached = recentMessageAcks.get(normalizedMessageId);
+  if (cached?.ackPayload) {
+    return {
+      known: true,
+      status: 'cached',
+      messageId: normalizedMessageId,
+      ack: cached.ackPayload,
+      pending: false,
+    };
+  }
+
+  if (pendingMessageAcks.has(normalizedMessageId)) {
+    return {
+      known: true,
+      status: 'pending',
+      messageId: normalizedMessageId,
+      ack: null,
+      pending: true,
+    };
+  }
+
+  return {
+    known: false,
+    status: 'unknown',
+    messageId: normalizedMessageId,
+    ack: null,
+    pending: false,
+  };
+}
+
 /**
  * Start the WebSocket server
  * @param {object} options - Configuration options
@@ -327,6 +653,8 @@ function start(options = {}) {
   pendingMessageAcks.clear();
   roleHeartbeats.clear();
   paneHeartbeats.clear();
+  loadOutboundQueue();
+  stopOutboundQueueTimer();
 
   return new Promise((resolve, reject) => {
     try {
@@ -334,6 +662,7 @@ function start(options = {}) {
 
       wss.on('listening', () => {
         log.info('WebSocket', `Server listening on ws://127.0.0.1:${port}`);
+        startOutboundQueueTimer();
         resolve(wss);
       });
 
@@ -369,11 +698,13 @@ function start(options = {}) {
       wss.on('error', (err) => {
         log.error('WebSocket', `Server error: ${err.message}`);
         if (err.code === 'EADDRINUSE') {
+          stopOutboundQueueTimer();
           reject(new Error(`Port ${port} already in use`));
         }
       });
 
     } catch (err) {
+      stopOutboundQueueTimer();
       reject(err);
     }
   });
@@ -410,6 +741,7 @@ async function handleMessage(clientId, rawData) {
     markClientSeen(clientId, 'register');
     log.info('WebSocket', `Client ${clientId} registered as pane=${clientInfo.paneId} role=${clientInfo.role}`);
     sendJson(clientInfo.ws, { type: 'registered', paneId: clientInfo.paneId, role: clientInfo.role });
+    flushOutboundQueueForClient(clientId, 'register');
     return;
   }
 
@@ -434,6 +766,7 @@ async function handleMessage(clientId, rawData) {
       heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
       status: 'ok',
     });
+    flushOutboundQueueForClient(clientId, 'heartbeat');
     return;
   }
 
@@ -445,6 +778,18 @@ async function handleMessage(clientId, rawData) {
       target: message.target || null,
       timestamp: Date.now(),
       ...health,
+    });
+    return;
+  }
+
+  if (message.type === 'delivery-check') {
+    const requestId = toNonEmptyString(message.requestId);
+    const result = getDeliveryCheckResult(message.messageId);
+    sendJson(clientInfo.ws, {
+      type: 'delivery-check-result',
+      requestId,
+      timestamp: Date.now(),
+      ...result,
     });
     return;
   }
@@ -539,6 +884,7 @@ async function handleMessage(clientId, rawData) {
       from: clientInfo.role || clientId,
       priority,
       traceContext: dispatchTraceContext,
+      persistIfOffline: false,
     })) {
       wsDeliveryCount = 1;
     }
@@ -651,38 +997,18 @@ async function handleMessage(clientId, rawData) {
  * @param {object} meta - Metadata (from, priority)
  */
 function sendToTarget(target, content, meta = {}) {
-  const targetStr = String(target);
-  const targetRole = targetStr.toLowerCase();
-  const traceContext = meta?.traceContext || null;
-  const payload = JSON.stringify({
-    type: 'message',
-    from: meta.from || 'system',
-    priority: meta.priority || 'normal',
-    content,
-    traceId: traceContext?.traceId || null,
-    parentEventId: traceContext?.parentEventId || null,
-    eventId: traceContext?.eventId || null,
-    timestamp: Date.now(),
-  });
+  const sent = deliverToTargetNow(target, content, meta);
+  if (sent) return true;
 
-  let sent = false;
-  for (const [clientId, info] of clients) {
-    const paneMatch = info.paneId !== null && String(info.paneId) === targetStr;
-    const roleMatch = typeof info.role === 'string' && info.role.toLowerCase() === targetRole;
-    if (paneMatch || roleMatch) {
-      if (info.ws.readyState === 1) { // WebSocket.OPEN
-        info.ws.send(payload);
-        sent = true;
-        log.info('WebSocket', `Sent to ${target} (client ${clientId}): ${content.substring(0, 50)}...`);
-      }
-    }
-  }
-
-  if (!sent) {
+  const shouldPersistOffline = meta?.persistIfOffline !== false;
+  if (shouldPersistOffline) {
+    queueOutboundMessage(target, content, meta, 'sendToTarget');
+    log.warn('WebSocket', `No connected client for target: ${target}. Queued for reconnect delivery.`);
+  } else {
     log.warn('WebSocket', `No connected client for target: ${target}`);
   }
 
-  return sent;
+  return false;
 }
 
 /**
@@ -745,7 +1071,10 @@ function getClients() {
  */
 function stop() {
   return new Promise((resolve) => {
+    stopOutboundQueueTimer();
     if (!wss) {
+      outboundQueueFlushInProgress = false;
+      outboundQueue = [];
       resolve();
       return;
     }
@@ -759,6 +1088,8 @@ function stop() {
     pendingMessageAcks.clear();
     roleHeartbeats.clear();
     paneHeartbeats.clear();
+    outboundQueueFlushInProgress = false;
+    outboundQueue = [];
 
     wss.close(() => {
       log.info('WebSocket', 'Server stopped');
