@@ -1332,15 +1332,13 @@ function setupEventListeners() {
     nudgeAllBtn.addEventListener('click', debounceButton('nudgeAll', terminal.aggressiveNudgeAll));
   }
 
-  // Agent Health Dashboard (#1) - interrupt and unstick buttons per pane
+  // Pane action buttons: Interrupt (ESC), Enter, Restart
   document.querySelectorAll('.interrupt-btn').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
+    btn.addEventListener('click', (e) => {
       const paneId = btn.dataset.paneId;
       if (paneId) {
-        log.info('Health', `Sending Ctrl+C to pane ${paneId}`);
-        const ok = await terminal.interruptPane(paneId);
-        terminal.updatePaneStatus(paneId, ok ? 'Interrupted' : 'Interrupt failed');
-        setTimeout(() => terminal.updatePaneStatus(paneId, 'Running'), 1500);
+        log.info('Health', `Sending ESC to pane ${paneId}`);
+        terminal.sendUnstick(paneId);
       }
     });
   });
@@ -1349,8 +1347,8 @@ function setupEventListeners() {
     btn.addEventListener('click', (e) => {
       const paneId = btn.dataset.paneId;
       if (paneId) {
-        log.info('Health', `Unstick escalation for pane ${paneId}`);
-        terminal.unstickEscalation(paneId);
+        log.info('Health', `Sending Enter to pane ${paneId}`);
+        terminal.nudgePane(paneId);
       }
     });
   });
