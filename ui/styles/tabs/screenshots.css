@@ -20,9 +20,9 @@
 }
 
 .screenshot-dropzone-icon {
-  font-size: 32px;
   margin-bottom: var(--space-2);
   transition: transform var(--transition-normal);
+  opacity: 0.6;
 }
 
 .screenshot-dropzone:hover .screenshot-dropzone-icon {

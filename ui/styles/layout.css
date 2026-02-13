@@ -1204,6 +1204,7 @@
 }
 
 .panel-tab {
+  flex: 1;
   padding: var(--space-2) var(--space-4);
   background: transparent;
   border: none;
@@ -1213,6 +1214,7 @@
   border-bottom: 2px solid transparent;
   transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
   position: relative;
+  text-align: center;
 }
 
 .panel-tab:hover {
