@@ -396,13 +396,9 @@
   color: var(--color-primary-hover);
 }
 
-/* Per-agent pane title color */
-.pane[data-pane-id="1"] .pane-title { color: #f0a000; }
-.pane[data-pane-id="1"] .pane-title:hover { color: #ffb830; }
-.pane[data-pane-id="2"] .pane-title { color: #00f0ff; }
-.pane[data-pane-id="2"] .pane-title:hover { color: #66f5ff; }
-.pane[data-pane-id="5"] .pane-title { color: #bb86fc; }
-.pane[data-pane-id="5"] .pane-title:hover { color: #d4b0ff; }
+/* Per-agent pane title color (driven by data-cli) */
+.pane[data-cli] .pane-title { color: var(--agent-color); }
+.pane[data-cli] .pane-title:hover { color: var(--agent-color-hover); }
 
 /* Role description in pane header */
 .role-desc {

@@ -63,6 +63,9 @@ function injectStyles() {
       color: #888;
       margin-right: 2px;
     }
+    .health-strip-pane[data-cli] .health-strip-label {
+      color: var(--agent-color, #888);
+    }
     .health-strip-dot {
       display: inline-block;
       width: 8px;
@@ -119,6 +122,14 @@ function createPaneIndicator(paneId) {
   const wrapper = document.createElement('div');
   wrapper.className = 'health-strip-pane';
   wrapper.dataset.paneId = paneId;
+
+  // Inherit data-cli from the corresponding pane element for color binding
+  try {
+    const paneEl = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+    if (paneEl && paneEl.dataset && paneEl.dataset.cli) {
+      wrapper.dataset.cli = paneEl.dataset.cli;
+    }
+  } catch (_) { /* safe in test environments without full DOM */ }
 
   const label = document.createElement('span');
   label.className = 'health-strip-label';

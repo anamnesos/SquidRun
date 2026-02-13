@@ -11,6 +11,33 @@ const { showStatusNotice } = require('./notifications');
 const { registerScopedIpcListener } = require('./renderer-ipc-registry');
 
 /**
+ * Detect model family from a command string
+ * @param {string} cmd - The pane command string
+ * @returns {string} 'claude' | 'codex' | 'gemini'
+ */
+function detectModelFamily(cmd) {
+  const lower = (cmd || 'claude').toLowerCase();
+  if (lower.includes('codex')) return 'codex';
+  if (lower.includes('gemini')) return 'gemini';
+  return 'claude';
+}
+
+/**
+ * Set the data-cli attribute on a pane element and its health-strip counterpart
+ * for CSS variable binding
+ * @param {string} paneId - Pane ID
+ * @param {string} model - Model family ('claude', 'codex', 'gemini')
+ */
+function setPaneCliAttribute(paneId, model) {
+  const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+  if (pane) pane.dataset.cli = model;
+
+  // Also update health strip pane indicator
+  const healthStripPane = document.querySelector(`.health-strip-pane[data-pane-id="${paneId}"]`);
+  if (healthStripPane) healthStripPane.dataset.cli = model;
+}
+
+/**
  * Initialize model selectors to match current pane commands
  * @param {boolean} sdkModeEnabled - Whether SDK mode is active (disables selectors)
  */
@@ -23,16 +50,14 @@ async function initModelSelectors(sdkModeEnabled = false) {
       const cmd = (paneCommands[paneId] || 'claude').toLowerCase();
 
       // Detect model from command
-      if (cmd.includes('codex')) {
-        select.value = 'codex';
-      } else if (cmd.includes('gemini')) {
-        select.value = 'gemini';
-      } else {
-        select.value = 'claude';
-      }
+      const model = detectModelFamily(cmd);
+      select.value = model;
 
       // Store previous value for rollback
       select.dataset.previousValue = select.value;
+
+      // Set data-cli attribute on pane element for CSS color binding
+      setPaneCliAttribute(paneId, model);
 
       // Disable in SDK mode
       if (sdkModeEnabled) {
@@ -41,7 +66,7 @@ async function initModelSelectors(sdkModeEnabled = false) {
       }
     });
 
-    log.info('ModelSelector', 'Initialized from pane commands');
+    log.info('ModelSelector', 'Initialized from pane commands (data-cli set)');
   } catch (err) {
     log.error('ModelSelector', 'Failed to initialize:', err);
   }
@@ -86,6 +111,9 @@ function setupModelChangeListener() {
   registerScopedIpcListener('model-selector', 'pane-model-changed', async (event, { paneId, model }) => {
     const select = document.querySelector(`.model-selector[data-pane-id="${paneId}"]`);
 
+    // Update data-cli attribute immediately on model switch
+    setPaneCliAttribute(paneId, model);
+
     try {
       await settings.refreshSettingsFromMain();
       // Respawn with new model - restartPane handles kill/create/spawn sequence
@@ -107,4 +135,5 @@ module.exports = {
   initModelSelectors,
   setupModelSelectorListeners,
   setupModelChangeListener,
+  setPaneCliAttribute,
 };
