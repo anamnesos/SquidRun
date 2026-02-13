@@ -151,7 +151,7 @@ function registerErrorHandlers(ctx, deps = {}) {
 
     if (os.platform() === 'win32') {
       try {
-        const daemonPidPath = path.join(__dirname, '..', 'daemon.pid');
+        const daemonPidPath = path.join(__dirname, '..', '..', 'daemon.pid');
         if (fs.existsSync(daemonPidPath)) {
           const pid = fs.readFileSync(daemonPidPath, 'utf-8').trim();
           spawn('taskkill', ['/pid', pid, '/f', '/t'], { shell: true, detached: true });
