@@ -23,20 +23,16 @@ async function initModelSelectors(sdkModeEnabled = false) {
       const cmd = (paneCommands[paneId] || 'claude').toLowerCase();
 
       // Detect model from command
-      let detected = 'claude';
       if (cmd.includes('codex')) {
-        detected = 'codex';
+        select.value = 'codex';
       } else if (cmd.includes('gemini')) {
-        detected = 'gemini';
+        select.value = 'gemini';
+      } else {
+        select.value = 'claude';
       }
-      select.value = detected;
 
       // Store previous value for rollback
       select.dataset.previousValue = select.value;
-
-      // Set data-cli on pane element so CSS colors follow the model
-      const paneEl = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-      if (paneEl) paneEl.dataset.cli = detected;
 
       // Disable in SDK mode
       if (sdkModeEnabled) {
@@ -92,9 +88,6 @@ function setupModelChangeListener() {
 
     try {
       await settings.refreshSettingsFromMain();
-      // Update data-cli so header color follows the model
-      const paneEl = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-      if (paneEl) paneEl.dataset.cli = model;
       // Respawn with new model - restartPane handles kill/create/spawn sequence
       await terminal.restartPane(paneId, model);
       showStatusNotice(`Pane ${paneId} now running ${model}`);
