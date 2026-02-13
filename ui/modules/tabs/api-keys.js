@@ -14,11 +14,19 @@ async function loadApiKeys() {
     const maskOai = document.getElementById('apiKeyOpenaiMask');
     const maskGoogle = document.getElementById('apiKeyGoogleMask');
     const maskRecraft = document.getElementById('apiKeyRecraftMask');
+    const maskTwilioSid = document.getElementById('apiKeyTwilioSidMask');
+    const maskTwilioAuth = document.getElementById('apiKeyTwilioAuthMask');
+    const maskTwilioPhone = document.getElementById('apiKeyTwilioPhoneMask');
+    const maskSmsRecipient = document.getElementById('apiKeySmsRecipientMask');
 
     if (maskAnth) maskAnth.textContent = keys.ANTHROPIC_API_KEY || 'Not set';
     if (maskOai) maskOai.textContent = keys.OPENAI_API_KEY || 'Not set';
     if (maskGoogle) maskGoogle.textContent = keys.GOOGLE_API_KEY || 'Not set';
     if (maskRecraft) maskRecraft.textContent = keys.RECRAFT_API_KEY || 'Not set';
+    if (maskTwilioSid) maskTwilioSid.textContent = keys.TWILIO_ACCOUNT_SID || 'Not set';
+    if (maskTwilioAuth) maskTwilioAuth.textContent = keys.TWILIO_AUTH_TOKEN || 'Not set';
+    if (maskTwilioPhone) maskTwilioPhone.textContent = keys.TWILIO_PHONE_NUMBER || 'Not set';
+    if (maskSmsRecipient) maskSmsRecipient.textContent = keys.SMS_RECIPIENT || 'Not set';
   } catch (err) {
     log.error('ApiKeys', 'Error loading API keys', err);
   }
@@ -32,11 +40,19 @@ async function saveApiKeys() {
   const oaiInput = document.getElementById('apiKeyOpenai');
   const googleInput = document.getElementById('apiKeyGoogle');
   const recraftInput = document.getElementById('apiKeyRecraft');
+  const twilioSidInput = document.getElementById('apiKeyTwilioSid');
+  const twilioAuthInput = document.getElementById('apiKeyTwilioAuth');
+  const twilioPhoneInput = document.getElementById('apiKeyTwilioPhone');
+  const smsRecipientInput = document.getElementById('apiKeySmsRecipient');
 
   if (anthInput?.value) updates.ANTHROPIC_API_KEY = anthInput.value;
   if (oaiInput?.value) updates.OPENAI_API_KEY = oaiInput.value;
   if (googleInput?.value) updates.GOOGLE_API_KEY = googleInput.value;
   if (recraftInput?.value) updates.RECRAFT_API_KEY = recraftInput.value;
+  if (twilioSidInput?.value) updates.TWILIO_ACCOUNT_SID = twilioSidInput.value;
+  if (twilioAuthInput?.value) updates.TWILIO_AUTH_TOKEN = twilioAuthInput.value;
+  if (twilioPhoneInput?.value) updates.TWILIO_PHONE_NUMBER = twilioPhoneInput.value;
+  if (smsRecipientInput?.value) updates.SMS_RECIPIENT = smsRecipientInput.value;
 
   if (Object.keys(updates).length === 0) {
     if (statusEl) {
@@ -58,6 +74,10 @@ async function saveApiKeys() {
       if (oaiInput) oaiInput.value = '';
       if (googleInput) googleInput.value = '';
       if (recraftInput) recraftInput.value = '';
+      if (twilioSidInput) twilioSidInput.value = '';
+      if (twilioAuthInput) twilioAuthInput.value = '';
+      if (twilioPhoneInput) twilioPhoneInput.value = '';
+      if (smsRecipientInput) smsRecipientInput.value = '';
       loadApiKeys();
       log.info('ApiKeys', 'API keys saved to .env');
     } else {
@@ -85,6 +105,21 @@ function setupApiKeysTab() {
   if (saveBtn) {
     saveBtn.addEventListener('click', saveApiKeys);
     domCleanupFns.push(() => saveBtn.removeEventListener('click', saveApiKeys));
+  }
+
+  const twilioToggle = document.getElementById('twilioSectionToggle');
+  if (twilioToggle) {
+    const toggleHandler = () => {
+      const content = document.getElementById('twilioSectionContent');
+      const arrow = twilioToggle.querySelector('.api-keys-section-arrow');
+      if (content) {
+        const isHidden = content.style.display === 'none';
+        content.style.display = isHidden ? 'block' : 'none';
+        if (arrow) arrow.innerHTML = isHidden ? '&#9660;' : '&#9654;';
+      }
+    };
+    twilioToggle.addEventListener('click', toggleHandler);
+    domCleanupFns.push(() => twilioToggle.removeEventListener('click', toggleHandler));
   }
 
   loadApiKeys();

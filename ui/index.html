@@ -500,6 +500,43 @@
               </div>
             </div>
           </div>
+          <div class="api-keys-section-header" id="twilioSectionToggle" style="cursor: pointer; padding: 8px 0; font-weight: 600; color: var(--text-secondary); user-select: none;">
+            <span class="api-keys-section-arrow" style="margin-right: 6px; display: inline-block; transition: transform 0.2s;">&#9654;</span> Twilio SMS
+          </div>
+          <div class="api-keys-section-content" id="twilioSectionContent" style="display: none;">
+            <div class="api-keys-field">
+              <label class="api-keys-label">Twilio Account SID</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyTwilioSid"
+                       placeholder="Twilio Account SID (starts with AC)" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyTwilioSidMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">Twilio Auth Token</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyTwilioAuth"
+                       placeholder="Twilio Auth Token" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyTwilioAuthMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">Twilio Phone Number</label>
+              <div class="api-keys-input-row">
+                <input type="text" class="api-keys-input" id="apiKeyTwilioPhone"
+                       placeholder="+1xxxxxxxxxx (your Twilio number)" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyTwilioPhoneMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">SMS Recipient</label>
+              <div class="api-keys-input-row">
+                <input type="text" class="api-keys-input" id="apiKeySmsRecipient"
+                       placeholder="+1xxxxxxxxxx (your phone number)" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeySmsRecipientMask">Not set</span>
+              </div>
+            </div>
+          </div>
           <div class="api-keys-actions">
             <button class="btn btn-primary btn-sm" id="saveApiKeysBtn" title="Save API keys to .env file">Save Keys</button>
             <span class="api-keys-status" id="apiKeyStatus"></span>

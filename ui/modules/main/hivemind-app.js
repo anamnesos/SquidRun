@@ -29,6 +29,7 @@ const pipeline = require('../pipeline');
 const warRoom = require('../triggers/war-room');
 const sharedState = require('../shared-state');
 const contextCompressor = require('../context-compressor');
+const smsPoller = require('../sms-poller');
 const {
   executeEvidenceLedgerOperation,
   initializeEvidenceLedgerRuntime,
@@ -354,6 +355,8 @@ class HivemindApp {
     } catch (err) {
       log.error('WebSocket', `Failed to start server: ${err.message}`);
     }
+
+    this.startSmsPoller();
 
     log.info('App', 'Initialization complete');
   }
@@ -980,6 +983,26 @@ class HivemindApp {
     return null;
   }
 
+  startSmsPoller() {
+    const started = smsPoller.start({
+      onMessage: (text, from) => {
+        const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
+        const body = typeof text === 'string' ? text.trim() : '';
+        if (!body) return;
+
+        const formatted = `[SMS from ${sender}]: ${body}`;
+        const result = triggers.sendDirectMessage(['1'], formatted, null);
+        if (!result?.success) {
+          log.warn('SMS', `Failed to inject inbound SMS into pane 1 (${result?.error || 'unknown'})`);
+        }
+      },
+    });
+
+    if (started) {
+      log.info('SMS', 'Inbound SMS bridge enabled');
+    }
+  }
+
   shutdown() {
     log.info('App', 'Shutting down Hivemind Application');
     memory.shutdown();
@@ -990,6 +1013,7 @@ class HivemindApp {
       log.warn('EvidenceLedger', `Failed to close shared runtime during shutdown: ${err.message}`);
     }
     websocketServer.stop();
+    smsPoller.stop();
     this.consoleLogWriter.flush().catch((err) => {
       log.warn('App', `Failed flushing console.log buffer during shutdown: ${err.message}`);
     });
