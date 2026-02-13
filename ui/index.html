@@ -394,7 +394,7 @@
         <button class="panel-tab" data-tab="activity" data-tab-group="primary" title="Real-time log of all agent activity">Feed</button>
         <button class="panel-tab active" data-tab="screenshots" data-tab-group="primary" title="Drag & drop images for agents to reference">Screenshots</button>
         <button class="panel-tab" data-tab="oracle" data-tab-group="primary" title="AI image generation">Image Gen</button>
-        <button class="panel-tab" data-tab="git" data-tab-group="primary" title="Repository status, diffs, and commits">Git</button>
+
         <button class="panel-tab" data-tab="api-keys" data-tab-group="primary" title="API key management">API Keys</button>
       </div>
       <div class="panel-content">
@@ -438,82 +438,6 @@
           <div class="activity-actions">
             <button class="btn" id="clearActivityBtn" title="Clear all activity entries">Clear</button>
             <button class="btn" id="exportActivityBtn" title="Download activity log as text file">Export</button>
-          </div>
-        </div>
-        <div class="tab-pane" id="tab-git">
-          <div class="tab-title">Git Integration</div>
-          <div class="tab-description">Repository status, diffs, and quick actions</div>
-          <div class="git-status-message" id="gitStatusMessage">Loading git status...</div>
-          <div class="git-summary" id="gitSummary">
-            <div class="git-summary-card">
-              <div class="git-summary-label">Branch</div>
-              <div class="git-summary-value" id="gitBranchValue">--</div>
-              <div class="git-summary-sub" id="gitUpstreamValue">--</div>
-            </div>
-            <div class="git-summary-card">
-              <div class="git-summary-label">Ahead / Behind</div>
-              <div class="git-summary-value" id="gitAheadBehindValue">0 / 0</div>
-              <div class="git-summary-sub" id="gitRepoRootValue">--</div>
-            </div>
-            <div class="git-summary-card">
-              <div class="git-summary-label">Last Commit</div>
-              <div class="git-summary-value" id="gitLastCommitValue">--</div>
-              <div class="git-summary-sub" id="gitLastCommitMeta">--</div>
-            </div>
-            <div class="git-summary-card status">
-              <div class="git-summary-label">Working Tree</div>
-              <div class="git-summary-value" id="gitCleanValue">Clean</div>
-              <div class="git-summary-sub" id="gitChangeCount">0 changes</div>
-            </div>
-          </div>
-          <div class="git-sections">
-            <div class="git-section">
-              <div class="git-section-title">Staged</div>
-              <div class="git-file-list" id="gitStagedList">
-                <div class="git-empty">No staged files</div>
-              </div>
-            </div>
-            <div class="git-section">
-              <div class="git-section-title">Unstaged</div>
-              <div class="git-file-list" id="gitUnstagedList">
-                <div class="git-empty">No unstaged files</div>
-              </div>
-            </div>
-            <div class="git-section">
-              <div class="git-section-title">Untracked</div>
-              <div class="git-file-list" id="gitUntrackedList">
-                <div class="git-empty">No untracked files</div>
-              </div>
-            </div>
-            <div class="git-section">
-              <div class="git-section-title">Conflicts</div>
-              <div class="git-file-list" id="gitConflictedList">
-                <div class="git-empty">No conflicts</div>
-              </div>
-            </div>
-          </div>
-          <div class="git-diff">
-            <div class="git-diff-header">
-              <div class="git-section-title">Diff Preview</div>
-              <div class="git-diff-controls">
-                <select id="gitDiffMode" class="git-diff-select" title="Select diff view">
-                  <option value="unstaged" selected>Unstaged</option>
-                  <option value="staged">Staged</option>
-                </select>
-                <button class="btn btn-secondary" id="gitDiffRefreshBtn" title="Refresh diff output">Show Diff</button>
-              </div>
-            </div>
-            <pre class="git-diff-output" id="gitDiffOutput"></pre>
-          </div>
-          <div class="git-commit">
-            <input type="text" class="git-commit-input" id="gitCommitMessage" placeholder="Commit message..." autocomplete="off">
-            <button class="btn" id="gitCommitBtn" title="Create commit with staged changes">Commit</button>
-          </div>
-          <div class="git-actions">
-            <button class="btn" id="gitRefreshBtn" title="Reload git status">Refresh</button>
-            <button class="btn btn-secondary" id="gitStageAllBtn" title="Stage all changes">Stage All</button>
-            <button class="btn btn-secondary" id="gitUnstageAllBtn" title="Unstage all changes">Unstage All</button>
-            <button class="btn btn-secondary" id="gitCopySummaryBtn" title="Copy git summary to clipboard">Copy Summary</button>
           </div>
         </div>
         <div class="tab-pane" id="tab-oracle">
