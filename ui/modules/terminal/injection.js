@@ -795,7 +795,24 @@ function createInjectionController(options = {}) {
         correlationId: corrId,
         source: EVENT_SOURCE,
       });
-      window.hivemind.pty.codexExec(id, prompt).catch(err => {
+      try {
+        const execResult = await window.hivemind.pty.codexExec(id, prompt);
+        if (execResult && execResult.success === false) {
+          const rejectionReason = execResult.status || 'codex_exec_rejected';
+          bus.emit('inject.failed', {
+            paneId: id,
+            payload: {
+              reason: 'codex_exec_rejected',
+              status: execResult.status || null,
+              error: execResult.error || rejectionReason,
+            },
+            correlationId: corrId,
+            source: EVENT_SOURCE,
+          });
+          finishWithClear({ success: false, reason: 'codex_exec_rejected' });
+          return;
+        }
+      } catch (err) {
         log.error(`doSendToPane ${id}`, 'Codex exec failed:', err);
         bus.emit('inject.failed', {
           paneId: id,
@@ -803,7 +820,9 @@ function createInjectionController(options = {}) {
           correlationId: corrId,
           source: EVENT_SOURCE,
         });
-      });
+        finishWithClear({ success: false, reason: 'codex_exec_error' });
+        return;
+      }
       updatePaneStatus(id, 'Working');
       lastTypedTime[id] = Date.now();
       lastOutputTime[id] = Date.now();

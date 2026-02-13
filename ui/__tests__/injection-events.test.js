@@ -294,6 +294,29 @@ describe('Injection Events', () => {
       expect(failed).toBeDefined();
       expect(failed[1].payload.reason).toBe('codex_exec_error');
     });
+
+    test('emits inject.failed when Codex exec is rejected by daemon', async () => {
+      const mockTerminal = { write: jest.fn() };
+      terminals.set('codex', mockTerminal);
+      mockPty.codexExec.mockResolvedValue({
+        success: false,
+        status: 'rejected',
+        error: 'busy',
+      });
+
+      const result = await new Promise((resolve) => {
+        controller.doSendToPane('codex', 'test', resolve);
+        jest.advanceTimersByTime(100);
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('codex_exec_rejected');
+
+      const failed = mockBus.emit.mock.calls.find(c => c[0] === 'inject.failed');
+      expect(failed).toBeDefined();
+      expect(failed[1].payload.reason).toBe('codex_exec_rejected');
+      expect(failed[1].payload.status).toBe('rejected');
+    });
   });
 
   // ──────────────────────────────────────────

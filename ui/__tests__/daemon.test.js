@@ -226,6 +226,44 @@ describe('DaemonClient', () => {
     });
   });
 
+  describe('codexExecAndWait', () => {
+    test('resolves on matching codex-exec-result', async () => {
+      await client.connect();
+
+      const execPromise = client.codexExecAndWait('2', 'run test', { timeoutMs: 200 });
+      expect(mockSocket.write).toHaveBeenCalled();
+      const sentData = mockSocket.write.mock.calls[mockSocket.write.mock.calls.length - 1][0];
+      const parsed = JSON.parse(sentData.replace('\n', ''));
+      expect(parsed.action).toBe('codex-exec');
+      expect(parsed.paneId).toBe('2');
+      expect(typeof parsed.requestId).toBe('string');
+
+      const ackMsg = JSON.stringify({
+        event: 'codex-exec-result',
+        paneId: '2',
+        requestId: parsed.requestId,
+        success: true,
+        status: 'accepted',
+      }) + '\n';
+      mockSocket.emit('data', ackMsg);
+
+      const result = await execPromise;
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('accepted');
+      expect(result.requestId).toBe(parsed.requestId);
+      expect(result.paneId).toBe('2');
+    });
+
+    test('times out when codex-exec-result does not arrive', async () => {
+      await client.connect();
+
+      const result = await client.codexExecAndWait('2', 'run test', { timeoutMs: 10 });
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe('ack_timeout');
+    });
+  });
+
   describe('resize', () => {
     test('should send resize action with cols and rows', async () => {
       await client.connect();
@@ -397,6 +435,30 @@ describe('DaemonClient', () => {
       mockSocket.emit('data', msg);
 
       expect(statsHandler).toHaveBeenCalledWith(stats);
+    });
+
+    test('should emit codex-exec-result event', async () => {
+      const codexExecResultHandler = jest.fn();
+      client.on('codex-exec-result', codexExecResultHandler);
+
+      await client.connect();
+
+      const msg = JSON.stringify({
+        event: 'codex-exec-result',
+        paneId: '2',
+        requestId: 'codex-exec-1',
+        success: false,
+        status: 'rejected',
+        error: 'busy',
+      }) + '\n';
+      mockSocket.emit('data', msg);
+
+      expect(codexExecResultHandler).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '2',
+        requestId: 'codex-exec-1',
+        success: false,
+        status: 'rejected',
+      }));
     });
   });
 

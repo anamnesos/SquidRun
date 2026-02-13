@@ -87,7 +87,7 @@ const mockDefaultConfig = {
     'others-investigator.txt': ['1', '2'],
   },
   PROTOCOL_ACTIONS: ['spawn', 'write', 'resize', 'kill', 'list', 'attach', 'ping', 'shutdown', 'health', 'codex-exec'],
-  PROTOCOL_EVENTS: ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected', 'shutdown', 'health'],
+  PROTOCOL_EVENTS: ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected', 'shutdown', 'health', 'codex-exec-result'],
 };
 
 /** Minimal mock — only WORKSPACE_PATH (for modules that just need the path) */

@@ -1648,8 +1648,17 @@ function handleMessage(client, message) {
       }
 
       case 'codex-exec': {
+        const requestId = typeof msg.requestId === 'string' ? msg.requestId : null;
         const terminal = terminals.get(msg.paneId);
         const result = codexExecRunner.runCodexExec(msg.paneId, terminal, msg.prompt || '');
+        sendToClient(client, {
+          event: 'codex-exec-result',
+          paneId: msg.paneId,
+          requestId,
+          success: result.success === true,
+          status: result.success ? 'accepted' : 'rejected',
+          error: result.success ? null : (result.error || 'Codex exec failed'),
+        });
         if (!result.success) {
           sendToClient(client, {
             event: 'error',
