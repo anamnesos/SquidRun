@@ -154,15 +154,18 @@ function attachAgentColors(paneId, terminal) {
                 marker.onDispose(() => deco.dispose());
                 disposables.push(deco);
               }
-              // Reset decoration after the colored tag to prevent bleed
-              if (matchEnd < contentLen) {
-                const resetMarker = terminal.registerMarker(offset);
-                if (resetMarker) {
+              // Reset decoration after the colored tag to prevent bleed.
+              // Use terminal.cols for width so future appends are covered
+              // without needing a rescan (prevents brief color flash).
+              const resetMarker = terminal.registerMarker(offset);
+              if (resetMarker) {
+                const resetWidth = (terminal.cols || contentLen) - matchEnd;
+                if (resetWidth > 0) {
                   const resetDeco = terminal.registerDecoration({
                     marker: resetMarker,
                     foregroundColor: defaultForeground,
                     x: matchEnd,
-                    width: contentLen - matchEnd,
+                    width: resetWidth,
                     height: 1,
                     layer: 'top',
                   });

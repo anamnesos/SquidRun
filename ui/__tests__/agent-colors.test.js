@@ -15,9 +15,10 @@ function createLine(text, isWrapped = false, { trimmedLength } = {}) {
   };
 }
 
-function createTerminal({ lines, cursorY = 0, baseY = 0, themeForeground, scrollback } = {}) {
+function createTerminal({ lines, cursorY = 0, baseY = 0, themeForeground, scrollback, cols = 80 } = {}) {
   let onWriteParsedCb = null;
   return {
+    cols,
     options: Object.assign(
       {},
       themeForeground ? { theme: { foreground: themeForeground } } : {},
@@ -169,11 +170,11 @@ describe('agent-colors', () => {
     expect(colorDeco.foregroundColor).toBe(AGENT_COLORS.devops);
     expect(colorDeco.width).toBe(Math.min(tagMatch.length, text.length - text.indexOf(tagMatch)));
 
-    // The reset decoration should cover from matchEnd to trimmed length, not paddedLength
+    // The reset decoration should cover from matchEnd to terminal.cols, not paddedLength or trimmedLength
     const resetDeco = decorations[1];
     expect(resetDeco.foregroundColor).toBe('#f0f0f0');
     expect(resetDeco.x).toBe(matchEnd);
-    expect(resetDeco.width).toBe(text.length - matchEnd);
+    expect(resetDeco.width).toBe(80 - matchEnd);
   });
 
   test('disposes stale decorations when line agent color changes', () => {
@@ -264,6 +265,32 @@ describe('agent-colors', () => {
     terminal.triggerWriteParsed();
     const countAfterSecond = terminal.registerDecoration.mock.calls.length;
     expect(countAfterSecond).toBe(countAfterFirst);
+  });
+
+  test('reset decoration covers full terminal width to prevent bleed on appended text', () => {
+    // Scenario: tag is written first, then more text appends to the same line.
+    // The reset decoration should cover from matchEnd to terminal.cols from the start,
+    // so no brief color flash occurs before the rescan.
+    const tagOnly = '(ARCH #1): ';
+    const terminal = createTerminal({
+      lines: { 0: createLine(tagOnly) },
+      cursorY: 0,
+      baseY: 0,
+      cols: 120,
+      themeForeground: '#e0e0e0',
+    });
+
+    attachAgentColors('1', terminal);
+    terminal.triggerWriteParsed();
+
+    const decorations = terminal.registerDecoration.mock.calls.map((call) => call[0]);
+    const matchEnd = tagOnly.indexOf('(ARCH #1):') + '(ARCH #1):'.length;
+
+    // Reset decoration should use terminal.cols, not contentLen
+    const resetDeco = decorations.find(d => d.foregroundColor === '#e0e0e0');
+    expect(resetDeco).toBeDefined();
+    expect(resetDeco.x).toBe(matchEnd);
+    expect(resetDeco.width).toBe(120 - matchEnd);  // cols - matchEnd, NOT contentLen - matchEnd
   });
 
   test('disposes stale continuation decorations when layout shifts', () => {
