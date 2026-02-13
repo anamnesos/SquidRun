@@ -160,6 +160,20 @@ jest.mock('../modules/ipc/evidence-ledger-handlers', () => ({
   closeSharedRuntime: jest.fn(),
 }));
 
+// Mock team-memory service
+jest.mock('../modules/team-memory', () => ({
+  initializeTeamMemoryRuntime: jest.fn(async () => ({ ok: true, status: { driver: 'better-sqlite3' } })),
+  runBackfill: jest.fn(async () => ({ ok: true, scannedEvents: 0, insertedClaims: 0, duplicateClaims: 0 })),
+  runIntegrityCheck: jest.fn(async () => ({ ok: true, orphanCount: 0 })),
+  startIntegritySweep: jest.fn(),
+  stopIntegritySweep: jest.fn(),
+  startBeliefSnapshotSweep: jest.fn(),
+  stopBeliefSnapshotSweep: jest.fn(),
+  startPatternMiningSweep: jest.fn(),
+  stopPatternMiningSweep: jest.fn(),
+  closeTeamMemoryRuntime: jest.fn(async () => undefined),
+}));
+
 // Now require the module under test
 const HivemindApp = require('../modules/main/hivemind-app');
 
@@ -295,11 +309,16 @@ describe('HivemindApp', () => {
       const watcher = require('../modules/watcher');
       const smsPoller = require('../modules/sms-poller');
       const { closeSharedRuntime } = require('../modules/ipc/evidence-ledger-handlers');
+      const teamMemory = require('../modules/team-memory');
 
       app.shutdown();
 
       expect(memory.shutdown).toHaveBeenCalled();
       expect(closeSharedRuntime).toHaveBeenCalled();
+      expect(teamMemory.stopIntegritySweep).toHaveBeenCalled();
+      expect(teamMemory.stopBeliefSnapshotSweep).toHaveBeenCalled();
+      expect(teamMemory.stopPatternMiningSweep).toHaveBeenCalled();
+      expect(teamMemory.closeTeamMemoryRuntime).toHaveBeenCalled();
       expect(websocketServer.stop).toHaveBeenCalled();
       expect(smsPoller.stop).toHaveBeenCalled();
       expect(watcher.stopWatcher).toHaveBeenCalled();

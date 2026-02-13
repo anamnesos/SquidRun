@@ -471,16 +471,23 @@ function handleTriggerFile(filePath, filename) {
     if (senderPaneId) targets = targets.filter(t => t !== senderPaneId);
   }
 
-  emitOrganicMessageRoute(parsed.sender, targets);
-  warRoom.recordWarRoomMessage({ fromRole: parsed.sender, targets, message: stripRolePrefix(parsed.content || message), type: getTriggerMessageType(filename, targets), source: 'trigger' });
-
-  metrics.recordSent('pty', 'trigger', targets);
   let deliveryId = null;
   if (parsed.seq !== null && parsed.sender) {
     deliveryId = sequencing.createDeliveryId(parsed.sender, parsed.seq, recipientRole);
     sequencing.startDeliveryTracking(deliveryId, parsed.sender, parsed.seq, recipientRole, targets, 'trigger', 'pty');
   }
   const traceContext = normalizeTraceContext(null, { traceId: deliveryId || fallbackMessageId || null });
+  emitOrganicMessageRoute(parsed.sender, targets);
+  warRoom.recordWarRoomMessage({
+    fromRole: parsed.sender,
+    targets,
+    message: stripRolePrefix(parsed.content || message),
+    type: getTriggerMessageType(filename, targets),
+    source: 'trigger',
+    traceContext,
+  });
+
+  metrics.recordSent('pty', 'trigger', targets);
   sendStaggered(targets, formatTriggerMessage(message), { deliveryId, traceContext });
   try { fs.unlinkSync(processingPath); } catch (e) {}
   logTriggerActivity('Trigger file (PTY)', targets, message, {
@@ -498,7 +505,14 @@ function broadcastToAllAgents(message, fromRole = 'user', options = {}) {
   if ((!fromRole || fromRole === 'cli' || fromRole === 'user' || fromRole === 'unknown') && parsed.sender) fromRole = parsed.sender;
   const traceContext = normalizeTraceContext(options?.traceContext);
 
-  warRoom.recordWarRoomMessage({ fromRole, targets, message, type: 'broadcast', source: 'broadcast' });
+  warRoom.recordWarRoomMessage({
+    fromRole,
+    targets,
+    message,
+    type: 'broadcast',
+    source: 'broadcast',
+    traceContext,
+  });
 
   const notified = [];
   if (agentRunning) { for (const [p, s] of agentRunning) { if (s === 'running' && targets.includes(p)) notified.push(p); } }
@@ -517,7 +531,14 @@ function sendDirectMessage(targetPanes, message, fromRole = null, options = {}) 
   let targets = Array.isArray(targetPanes) ? [...targetPanes] : [];
   const traceContext = normalizeTraceContext(options?.traceContext);
 
-  warRoom.recordWarRoomMessage({ fromRole, targets, message, type: 'direct', source: 'direct' });
+  warRoom.recordWarRoomMessage({
+    fromRole,
+    targets,
+    message,
+    type: 'direct',
+    source: 'direct',
+    traceContext,
+  });
   const fullMessage = (fromRole ? `[MSG from ${fromRole}]: ` : '') + message;
 
   // Direct agent-to-agent messages must not be dropped based on runtime state.

@@ -1,6 +1,6 @@
 # Hivemind Codebase Map
 
-**Last Updated:** 2026-02-11
+**Last Updated:** 2026-02-13
 **Purpose:** Navigation guide for developers (human and AI agents)
 
 ---
@@ -13,6 +13,7 @@ Hivemind is an Electron desktop app that orchestrates 3 persistent AI agent inst
 **How does it work?**
 - **Primary Mode (PTY):** 3 terminal processes managed by a persistent daemon. Native Claude/Codex CLIs and npm Gemini CLI run in pseudo-terminals. Messages sent via keyboard injection. Terminals survive app restarts.
 - **Alternative Mode (SDK):** 3 Python SDK sessions orchestrated by `hivemind-sdk-v2.py`. Direct API calls instead of keyboard injection. Supports true parallelism.
+- **Team Memory Runtime:** Shared claim-graph memory layer in `ui/modules/team-memory/` backed by SQLite WAL (`workspace/runtime/team-memory.sqlite`) with IPC + WebSocket integration.
 
 **Architecture Decision (Session 73+79):** Hybrid Consensus. Hivemind remains outer-loop coordinator. Native Agent Teams as opt-in per-pane enhancement. 3-pane layout (1=Architect, 2=DevOps, 5=Analyst). **Models are runtime config** — any pane can run any supported CLI (Claude, Codex, Gemini). Check `ui/settings.json` → `paneCommands` for current assignments.
 
@@ -41,6 +42,14 @@ hivemind/
 │   │   ├── watcher.js           # File system watching (chokidar)
 │   │   ├── sdk-bridge.js        # Python SDK orchestration
 │   │   ├── codex-exec.js        # Codex non-interactive pipeline
+│   │   ├── team-memory/         # Team Memory Runtime (Phases 0-3 complete, Phase 4 in progress)
+│   │   │   ├── store.js         # SQLite store + schema management
+│   │   │   ├── claims.js        # Claim graph CRUD/query/consensus operations
+│   │   │   ├── runtime.js       # Runtime lifecycle and orchestration
+│   │   │   ├── worker.js        # Forked worker process
+│   │   │   ├── worker-client.js # Main-process worker client
+│   │   │   ├── migrations.js    # Migration runner
+│   │   │   └── migrations/      # 001-004 schema/search/pattern migrations
 │   │   │
 │   │   ├── main/                # App managers
 │   │   │   ├── hivemind-app.js  # Main controller
@@ -55,6 +64,7 @@ hivemind/
 │   │   │   ├── handler-registry.js  # Route table
 │   │   │   ├── pty-handlers.js      # Terminal control
 │   │   │   ├── sdk-handlers.js      # SDK mode
+│   │   │   ├── team-memory-handlers.js # Team Memory IPC endpoints
 │   │   │   └── ...
 │   │   │
 │   │   ├── terminal/            # Terminal submodules
@@ -94,6 +104,7 @@ hivemind/
 │   │
 │   ├── scripts/                 # Utility scripts
 │   │   ├── hm-send.js           # WebSocket messaging CLI
+│   │   ├── hm-claim.js          # Team Memory claim CLI
 │   │   └── hm-screenshot.js     # Screenshot utility
 │   │
 │   ├── styles/                  # CSS modules
@@ -130,9 +141,15 @@ hivemind/
 │   ├── references/             # Agent capability references
 │   │   └── agent-capabilities.md
 │   │
+│   ├── runtime/                # Runtime DB/log artifacts
+│   │   └── team-memory.sqlite  # Team Memory SQLite database (WAL)
+│   │
 │   └── scripts/                # Hook scripts for agent automation
 │       ├── arch-hooks.js       # Architect lifecycle hooks (Claude Code)
 │       └── ana-hooks.js        # Analyst lifecycle hooks (Gemini CLI)
+│
+├── docs/
+│   └── team-memory-spec.md     # Team Memory Runtime spec
 ```
 
 ### Obsolete Code (Ignore/Cleanup)
@@ -169,6 +186,15 @@ hivemind/
 7. **`hivemind-sdk-v2.py`**
    Python SDK orchestration, agent session management.
 
+8. **`ui/modules/team-memory/runtime.js`**
+   Team Memory runtime bootstrap, worker/client wiring, startup/shutdown lifecycle.
+
+9. **`ui/modules/team-memory/claims.js`**
+   Claim graph operations: create/query/update/deprecate, evidence links, consensus, contradictions.
+
+10. **`ui/scripts/hm-claim.js`**
+    CLI entry point for Team Memory claim operations.
+
 ---
 
 ## Architecture Notes
@@ -185,7 +211,7 @@ hivemind/
 - **Lane A (Interaction Kernel):** Contracts, state vector, injection/terminal/renderer events.
 - **Lane B (Telemetry):** Ring buffer with query API, health strip.
 - **Daemon Bridge:** `ui/modules/main/kernel-bridge.js` — event propagation between main process and daemon.
-- **Transition Ledger:** `ui/modules/transition-ledger.js` — state transition tracking with evidence spec signals (21 tests).
+- **Transition Ledger:** `ui/modules/transition-ledger.js` — state transition tracking with evidence spec signals (21 tests). Spec: `docs/transition-ledger-spec.md`.
 - **Compaction Gate:** Lexical evidence required for confirmed state, chunk-inactivity decay (5s quiet), MAX_COMPACTION_DEFER_MS=8s safety valve. Runtime validated S108: 122-727ms injection latency.
 - **Bridge Tab:** `ui/modules/tabs/bridge.js` — user-facing dashboard with agent status, system metrics, live event stream.
 
@@ -196,6 +222,15 @@ hivemind/
 - **Storage:** SQLite WAL mode, single writer in daemon/main. Tables: events, edges, spans + Slice 2: incidents, assertions, verdicts, evidence bindings.
 - **Spec:** `workspace/build/evidence-ledger-slice1-spec.md` (infra), `evidence-ledger-query-spec.md` (query), `evidence-ledger-slice2-spec.md` (investigator workspace).
 - **Phasing:** Slice 1 (pipeline ledger) DONE → Slice 2 (investigator workspace) IN PROGRESS → Slice 3 (cross-session decision memory).
+
+### Team Memory Runtime (Phases 0-3 complete, Phase 4 in progress)
+
+- **Layer:** Claim-graph memory runtime used by agents for shared team knowledge and retrieval.
+- **Code:** `ui/modules/team-memory/` (`store.js`, `worker.js`, `worker-client.js`, `claims.js`, `migrations.js`, `runtime.js`).
+- **Entrypoints:** IPC handlers in `ui/modules/ipc/team-memory-handlers.js`; runtime integration in `ui/modules/main/hivemind-app.js`; CLI in `ui/scripts/hm-claim.js`.
+- **Spec:** `docs/team-memory-spec.md`.
+- **Storage:** `workspace/runtime/team-memory.sqlite` (SQLite WAL).
+- **Current tables:** `claims`, `claim_scopes`, `claim_evidence`, `claim_status_history`, `decisions`, `decision_alternatives`, `consensus`, `belief_snapshots`, `belief_contradictions`, `patterns`, `guards`.
 
 ### Comms Reliability (v3, S111)
 

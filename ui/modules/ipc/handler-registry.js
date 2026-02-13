@@ -47,6 +47,7 @@ const { registerDocGeneratorHandlers } = require('./doc-generator-handlers');
 const { registerWhisperHandlers } = require('./whisper-handlers');
 const { registerEvidenceLedgerHandlers } = require('./evidence-ledger-handlers');
 const { registerContractPromotionHandlers } = require('./contract-promotion-handlers');
+const { registerTeamMemoryHandlers } = require('./team-memory-handlers');
 
 const DEFAULT_HANDLERS = [
   registerMcpHandlers,
@@ -98,6 +99,7 @@ const DEFAULT_HANDLERS = [
   registerWhisperHandlers,
   registerEvidenceLedgerHandlers,
   registerContractPromotionHandlers,
+  registerTeamMemoryHandlers,
 ];
 
 function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {

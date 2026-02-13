@@ -109,6 +109,17 @@ function sanitizeWarRoomMessage(message) {
     .trim();
 }
 
+function resolveTraceId(traceContext, explicitTraceId = null) {
+  if (typeof explicitTraceId === 'string' && explicitTraceId.trim()) {
+    return explicitTraceId.trim();
+  }
+  const ctx = traceContext && typeof traceContext === 'object' ? traceContext : null;
+  if (!ctx) return null;
+  const traceId = [ctx.traceId, ctx.correlationId]
+    .find((value) => typeof value === 'string' && value.trim().length > 0);
+  return traceId ? traceId.trim() : null;
+}
+
 function ensureWarRoomLog() {
   if (warRoomInitialized) return;
   warRoomInitialized = true;
@@ -248,7 +259,15 @@ function maybeSendAmbientUpdates(entry, targets) {
   }
 }
 
-function recordWarRoomMessage({ fromRole, targets, message, type = 'direct', source = 'unknown' }) {
+function recordWarRoomMessage({
+  fromRole,
+  targets,
+  message,
+  type = 'direct',
+  source = 'unknown',
+  traceContext = null,
+  traceId = null,
+}) {
   const clean = sanitizeWarRoomMessage(message);
   if (!clean) return;
   const fromKey = normalizeWarRoomRole(fromRole);
@@ -263,13 +282,17 @@ function recordWarRoomMessage({ fromRole, targets, message, type = 'direct', sou
     toLabel = targetLabels.join(',');
   }
 
+  const nowMs = Date.now();
   const entry = {
-    ts: Math.floor(Date.now() / 1000),
+    ts: Math.floor(nowMs / 1000),
+    timestamp: new Date(nowMs).toISOString(),
+    timestampMs: nowMs,
     from: fromLabel,
     to: toLabel,
     msg: clean,
     type,
     source,
+    traceId: resolveTraceId(traceContext, traceId),
   };
 
   appendWarRoomEntry(entry);
