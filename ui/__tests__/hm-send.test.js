@@ -8,6 +8,8 @@ const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { WORKSPACE_PATH } = require('../config');
 
+const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
+
 function runHmSend(args, env = {}) {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-send.js');
@@ -337,7 +339,105 @@ describe('hm-send retry behavior', () => {
       expect(sendAttempts).toHaveLength(2);
       expect(result.stderr).toContain('Wrote trigger fallback');
       expect(fs.existsSync(triggerPath)).toBe(true);
-      expect(fs.readFileSync(triggerPath, 'utf8')).toBe(message);
+      const fallbackContent = fs.readFileSync(triggerPath, 'utf8');
+      expect(fallbackContent).toContain(`\n${message}`);
+      expect(fallbackContent.startsWith(`${FALLBACK_MESSAGE_ID_PREFIX}${sendAttempts[0].messageId}]`)).toBe(true);
+    } finally {
+      if (hadOriginal) {
+        fs.writeFileSync(triggerPath, originalContent, 'utf8');
+      } else if (fs.existsSync(triggerPath)) {
+        fs.unlinkSync(triggerPath);
+      }
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  test('skips trigger fallback when delivery-check confirms prior delivery despite missing ACK', async () => {
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+    const triggerPath = path.join(WORKSPACE_PATH, 'triggers', 'devops.txt');
+    const hadOriginal = fs.existsSync(triggerPath);
+    const originalContent = hadOriginal ? fs.readFileSync(triggerPath, 'utf8') : null;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'heartbeat') {
+          ws.send(JSON.stringify({
+            type: 'heartbeat-ack',
+            role: msg.role || null,
+            paneId: msg.paneId || null,
+            status: 'ok',
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          // Intentionally skip send-ack to emulate lost ACK.
+          return;
+        }
+        if (msg.type === 'delivery-check') {
+          ws.send(JSON.stringify({
+            type: 'delivery-check-result',
+            requestId: msg.requestId,
+            messageId: msg.messageId,
+            known: true,
+            status: 'cached',
+            pending: false,
+            ack: {
+              type: 'send-ack',
+              messageId: msg.messageId,
+              ok: true,
+              status: 'delivered.websocket',
+              timestamp: Date.now(),
+            },
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['devops', '(TEST #5): delivery-check-guard', '--timeout', '80', '--retries', '1'],
+        { HM_SEND_PORT: String(port) }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(2);
+      expect(result.stderr).not.toContain('Wrote trigger fallback');
+      if (hadOriginal) {
+        expect(fs.readFileSync(triggerPath, 'utf8')).toBe(originalContent);
+      } else {
+        expect(fs.existsSync(triggerPath)).toBe(false);
+      }
     } finally {
       if (hadOriginal) {
         fs.writeFileSync(triggerPath, originalContent, 'utf8');

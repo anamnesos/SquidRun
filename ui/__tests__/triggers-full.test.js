@@ -167,6 +167,44 @@ describe('triggers.js module', () => {
         msg: expect.stringContaining('hi')
       }));
     });
+
+    test('strips HM messageId marker before injection payload', () => {
+      fs.readFileSync.mockReturnValue('[HM-MESSAGE-ID:hm-test-1]\n(ANALYST): marker strip');
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+
+      const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+      expect(result.success).toBe(true);
+      jest.runAllTimers();
+
+      const injectCalls = global.window.webContents.send.mock.calls
+        .filter(([channel]) => channel === 'inject-message');
+      expect(injectCalls.length).toBeGreaterThan(0);
+      const injectPayload = injectCalls[injectCalls.length - 1][1];
+      expect(injectPayload.message).toContain('marker strip');
+      expect(injectPayload.message).not.toContain('[HM-MESSAGE-ID:');
+    });
+
+    test('deduplicates trigger fallback payloads by HM messageId marker', () => {
+      fs.readFileSync.mockReturnValue('[HM-MESSAGE-ID:hm-dup-1]\n(ANALYST): duplicate guard');
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+
+      const first = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+      expect(first.success).toBe(true);
+      jest.runAllTimers();
+
+      const injectCountAfterFirst = global.window.webContents.send.mock.calls
+        .filter(([channel]) => channel === 'inject-message').length;
+
+      const second = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+      expect(second.success).toBe(false);
+      expect(second.reason).toBe('duplicate_message_id');
+      jest.runAllTimers();
+
+      const injectCountAfterSecond = global.window.webContents.send.mock.calls
+        .filter(([channel]) => channel === 'inject-message').length;
+
+      expect(injectCountAfterSecond).toBe(injectCountAfterFirst);
+    });
   });
 
   describe('2. SDK/PTY Routing (notifyAgents)', () => {
