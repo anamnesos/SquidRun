@@ -132,6 +132,20 @@ class EvidenceLedgerMemory {
     }
   }
 
+  _withReadTransaction(action) {
+    const db = this._db();
+    if (!db) return this._unavailable();
+    try {
+      db.exec('BEGIN;');
+      const result = action(db);
+      db.exec('COMMIT;');
+      return result;
+    } catch (err) {
+      try { db.exec('ROLLBACK;'); } catch {}
+      return { ok: false, reason: 'db_error', error: err.message };
+    }
+  }
+
   _mapDecision(row) {
     if (!row) return null;
     return {
@@ -738,82 +752,81 @@ class EvidenceLedgerMemory {
   }
 
   getLatestContext(opts = {}) {
-    const db = this._db();
-    if (!db) return this._unavailable();
+    return this._withReadTransaction(() => {
+      const requestedSessionId = asNonEmptyString(opts.sessionId, '');
+      const preferSnapshot = opts.preferSnapshot === true;
+      const snapshot = this.getLatestSnapshot({ sessionId: requestedSessionId });
+      if (snapshot && snapshot.ok === false) return snapshot;
+      if (preferSnapshot && snapshot?.content && typeof snapshot.content === 'object') {
+        return {
+          ...snapshot.content,
+          source: 'ledger.snapshot',
+        };
+      }
 
-    const requestedSessionId = asNonEmptyString(opts.sessionId, '');
-    const preferSnapshot = opts.preferSnapshot === true;
-    const snapshot = this.getLatestSnapshot({ sessionId: requestedSessionId });
-    if (snapshot && snapshot.ok === false) return snapshot;
-    if (preferSnapshot && snapshot?.content && typeof snapshot.content === 'object') {
-      return {
-        ...snapshot.content,
-        source: 'ledger.snapshot',
+      let session = null;
+      if (requestedSessionId) {
+        const requestedSession = this.getSession(requestedSessionId);
+        if (requestedSession && requestedSession.ok === false) return requestedSession;
+        session = requestedSession || null;
+      } else {
+        const latestSession = this.listSessions({ limit: 1, order: 'desc' });
+        if (latestSession && latestSession.ok === false) return latestSession;
+        session = latestSession[0] || null;
+      }
+      const directives = this.getActiveDirectives(clampLimit(opts.directiveLimit, 200, 1, 2000));
+      const issues = this.getKnownIssues(undefined, clampLimit(opts.issueLimit, 500, 1, 5000));
+      const roadmap = this.getRoadmap(clampLimit(opts.roadmapLimit, 500, 1, 5000));
+      const completions = this.getRecentCompletions(clampLimit(opts.completionLimit, 100, 1, 5000));
+      const architectureDecisions = this.getArchitectureDecisions(clampLimit(opts.architectureLimit, 300, 1, 5000));
+
+      if (directives?.ok === false) return directives;
+      if (issues?.ok === false) return issues;
+      if (roadmap?.ok === false) return roadmap;
+      if (completions?.ok === false) return completions;
+      if (architectureDecisions?.ok === false) return architectureDecisions;
+
+      const knownIssues = {};
+      for (const issue of issues) {
+        const key = asNonEmptyString(issue.title, issue.decisionId || 'issue');
+        const value = asNonEmptyString(issue.body, issue.status);
+        knownIssues[key] = value;
+      }
+
+      const architecture = {
+        decisions: architectureDecisions.map((item) => ({
+          decisionId: item.decisionId,
+          title: item.title,
+          body: item.body,
+          updatedAtMs: item.updatedAtMs,
+        })),
       };
-    }
 
-    let session = null;
-    if (requestedSessionId) {
-      const requestedSession = this.getSession(requestedSessionId);
-      if (requestedSession && requestedSession.ok === false) return requestedSession;
-      session = requestedSession || null;
-    } else {
-      const latestSession = this.listSessions({ limit: 1, order: 'desc' });
-      if (latestSession && latestSession.ok === false) return latestSession;
-      session = latestSession[0] || null;
-    }
-    const directives = this.getActiveDirectives(clampLimit(opts.directiveLimit, 200, 1, 2000));
-    const issues = this.getKnownIssues(undefined, clampLimit(opts.issueLimit, 500, 1, 5000));
-    const roadmap = this.getRoadmap(clampLimit(opts.roadmapLimit, 500, 1, 5000));
-    const completions = this.getRecentCompletions(clampLimit(opts.completionLimit, 100, 1, 5000));
-    const architectureDecisions = this.getArchitectureDecisions(clampLimit(opts.architectureLimit, 300, 1, 5000));
-
-    if (directives?.ok === false) return directives;
-    if (issues?.ok === false) return issues;
-    if (roadmap?.ok === false) return roadmap;
-    if (completions?.ok === false) return completions;
-    if (architectureDecisions?.ok === false) return architectureDecisions;
-
-    const knownIssues = {};
-    for (const issue of issues) {
-      const key = asNonEmptyString(issue.title, issue.decisionId || 'issue');
-      const value = asNonEmptyString(issue.body, issue.status);
-      knownIssues[key] = value;
-    }
-
-    const architecture = {
-      decisions: architectureDecisions.map((item) => ({
-        decisionId: item.decisionId,
-        title: item.title,
-        body: item.body,
-        updatedAtMs: item.updatedAtMs,
-      })),
-    };
-
-    const context = {
-      session: session ? session.sessionNumber : null,
-      date: session ? toIsoDate(session.startedAtMs) : null,
-      mode: session?.mode || 'PTY',
-      status: session?.endedAtMs ? 'READY' : 'ACTIVE',
-      source: 'ledger',
-      completed: completions.map((item) => decisionSummary(item)),
-      architecture,
-      not_yet_done: roadmap.map((item) => decisionSummary(item)),
-      roadmap: roadmap.map((item) => decisionSummary(item)),
-      known_issues: knownIssues,
-      stats: session?.stats || {},
-      important_notes: directives.map((item) => decisionSummary(item)),
-      team: session?.team || {},
-    };
-
-    if (!session && snapshot?.content && typeof snapshot.content === 'object') {
-      return {
-        ...snapshot.content,
-        source: 'ledger.snapshot',
+      const context = {
+        session: session ? session.sessionNumber : null,
+        date: session ? toIsoDate(session.startedAtMs) : null,
+        mode: session?.mode || 'PTY',
+        status: session?.endedAtMs ? 'READY' : 'ACTIVE',
+        source: 'ledger',
+        completed: completions.map((item) => decisionSummary(item)),
+        architecture,
+        not_yet_done: roadmap.map((item) => decisionSummary(item)),
+        roadmap: roadmap.map((item) => decisionSummary(item)),
+        known_issues: knownIssues,
+        stats: session?.stats || {},
+        important_notes: directives.map((item) => decisionSummary(item)),
+        team: session?.team || {},
       };
-    }
 
-    return context;
+      if (!session && snapshot?.content && typeof snapshot.content === 'object') {
+        return {
+          ...snapshot.content,
+          source: 'ledger.snapshot',
+        };
+      }
+
+      return context;
+    });
   }
 }
 
