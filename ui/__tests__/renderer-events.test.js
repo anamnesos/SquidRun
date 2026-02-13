@@ -29,7 +29,6 @@ jest.mock('../modules/terminal', () => ({
   getReconnectedToExisting: jest.fn(() => false),
   setStatusCallbacks: jest.fn(),
   initUIFocusTracker: jest.fn(),
-  setSDKMode: jest.fn(),
   sendToPane: jest.fn(),
   getFocusedPane: jest.fn(),
   broadcast: jest.fn(),
@@ -62,7 +61,6 @@ jest.mock('../modules/settings', () => ({
 }));
 
 jest.mock('../modules/daemon-handlers', () => ({
-  setSDKMode: jest.fn(),
   setStatusCallbacks: jest.fn(),
   setupClaudeStateListener: jest.fn(),
   setupCostAlertListener: jest.fn(),
@@ -81,20 +79,6 @@ jest.mock('../modules/daemon-handlers', () => ({
   handleSessionTimerState: jest.fn(),
   selectProject: jest.fn(),
   showDeliveryIndicator: jest.fn(),
-}));
-
-jest.mock('../modules/sdk-renderer', () => ({
-  appendMessage: jest.fn(),
-  updateToolContext: jest.fn(),
-  streamingIndicator: jest.fn(),
-  clearStreamingState: jest.fn(),
-  finalizeStreamingMessage: jest.fn(),
-  appendTextDelta: jest.fn(),
-  addErrorMessage: jest.fn(),
-}));
-
-jest.mock('../sdk-ui/organic-ui', () => ({
-  createOrganicUI: jest.fn(),
 }));
 
 jest.mock('../modules/notifications', () => ({

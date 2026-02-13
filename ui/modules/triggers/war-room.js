@@ -47,7 +47,6 @@ let triggersState = {
   mainWindow: null,
   agentRunning: null,
   sendAmbientUpdate: null,
-  isSDKModeEnabled: null,
 };
 
 function setTriggersState(state) {

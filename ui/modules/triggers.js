@@ -38,8 +38,6 @@ let watcher = null;
 let logActivityFn = null;
 let selfHealing = null;
 let pluginManager = null;
-let sdkBridge = null;
-let sdkModeEnabled = false;
 
 // Shared constants
 const TRIGGER_PREFIX = '\x1b[1;33m[TRIGGER]\x1b[0m ';
@@ -115,8 +113,7 @@ function init(window, agentState, logActivity) {
   warRoom.setTriggersState({
     mainWindow,
     agentRunning,
-    sendAmbientUpdate,
-    isSDKModeEnabled
+    sendAmbientUpdate
   });
   warRoom.loadWarRoomHistory();
 
@@ -141,20 +138,6 @@ function setPluginManager(manager) {
 function setWatcher(watcherModule) {
   watcher = watcherModule;
   routing.setSharedState({ watcher });
-}
-
-function setSDKBridge(bridge) {
-  sdkBridge = bridge;
-  log.info('Triggers', 'SDK bridge set');
-}
-
-function setSDKMode(enabled) {
-  sdkModeEnabled = enabled;
-  log.info('Triggers', `SDK mode ${enabled ? 'ENABLED' : 'DISABLED'}`);
-}
-
-function isSDKModeEnabled() {
-  return sdkModeEnabled && sdkBridge !== null;
 }
 
 function formatTriggerMessage(message) {
@@ -302,15 +285,7 @@ function getTriggerMessageType(filename, targets) {
 
 function sendAmbientUpdate(paneIds, message) {
   if (!message || !Array.isArray(paneIds) || paneIds.length === 0) return;
-  // War Room ambient updates only in SDK mode (renders in War Room UI).
-  // In PTY mode this injects noisy text blocks into terminals — skip it.
-  if (!isSDKModeEnabled()) return;
-  paneIds.forEach(paneId => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('sdk-message', { paneId, message: { type: 'system', content: message } });
-    }
-    try { sdkBridge.sendMessage(paneId, message); } catch (err) { log.error('WarRoom', `SDK ambient update failed: ${err.message}`); }
-  });
+  // PTY mode: skip ambient updates to avoid noisy terminal injections.
 }
 
 function checkWorkflowGate(targets) {
@@ -330,7 +305,7 @@ function notifyAgents(agents, message, options = {}) {
     type: 'notify',
     targets,
     message,
-    mode: isSDKModeEnabled() ? 'sdk' : 'pty',
+    mode: 'pty',
   });
   if (beforePayload && beforePayload.cancel) return [];
   if (beforePayload && typeof beforePayload.message === 'string') message = beforePayload.message;
@@ -339,20 +314,6 @@ function notifyAgents(agents, message, options = {}) {
   const traceContext = deliveryId || options.traceContext
     ? normalizeTraceContext(options.traceContext, { traceId: deliveryId || null })
     : null;
-
-  if (isSDKModeEnabled()) {
-    if (targets.length === 0) return [];
-    let successCount = 0;
-    for (const paneId of targets) {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sdk-message', { paneId, message: { type: 'user', content: message } });
-      try {
-        if (sdkBridge.sendMessage(paneId, message)) { successCount++; metrics.recordDelivered('sdk', 'trigger', paneId); }
-        else metrics.recordFailed('sdk', 'trigger', paneId, 'SDK send false');
-      } catch (err) { metrics.recordFailed('sdk', 'trigger', paneId, err.message); }
-    }
-    logTriggerActivity('Sent (SDK)', targets, message, { mode: 'sdk', delivered: successCount });
-    return targets;
-  }
 
   const notified = [];
   for (const paneId of targets) { if (agentRunning && agentRunning.get(paneId) === 'running') notified.push(paneId); }
@@ -396,20 +357,6 @@ function notifyAllAgentsSync(triggerFile) {
   lastGlobalSyncTime = now;
   const message = `[HIVEMIND SYNC] ${triggerFile} was updated. [FYI] Context updated. Do not respond.`;
 
-  if (isSDKModeEnabled()) {
-    const eligiblePanes = [];
-    for (const paneId of PANE_IDS) {
-      if (now - (lastSyncTime.get(paneId) || 0) > SYNC_DEBOUNCE_MS) { eligiblePanes.push(paneId); lastSyncTime.set(paneId, now); }
-    }
-    eligiblePanes.forEach(paneId => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sdk-message', { paneId, message: { type: 'user', content: message } });
-      try { if (!sdkBridge.sendMessage(paneId, message)) metrics.recordFailed('sdk', 'trigger', paneId, 'SDK send false'); }
-      catch (err) { metrics.recordFailed('sdk', 'trigger', paneId, err.message); }
-    });
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sync-triggered', { file: triggerFile, notified: eligiblePanes, mode: 'sdk' });
-    return eligiblePanes;
-  }
-
   const runningPanes = [];
   if (agentRunning) {
     for (const [paneId, status] of agentRunning) {
@@ -429,17 +376,6 @@ function sendStaggered(panes, message, meta = {}) {
     traceId: meta?.deliveryId || null,
     parentEventId: meta?.parentEventId || null,
   });
-  if (isSDKModeEnabled()) {
-    panes.forEach((paneId, index) => {
-      const delay = isPriority ? 0 : (index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS);
-      setTimeout(() => {
-        const cleanMsg = message.endsWith('\r') ? message.slice(0, -1) : message;
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sdk-message', { paneId, message: { type: 'user', content: cleanMsg } });
-        sdkBridge.sendMessage(paneId, cleanMsg);
-      }, delay);
-    });
-    return;
-  }
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const deliveryId = meta?.deliveryId;
   panes.forEach((paneId, index) => {
@@ -538,18 +474,6 @@ function handleTriggerFile(filePath, filename) {
   emitOrganicMessageRoute(parsed.sender, targets);
   warRoom.recordWarRoomMessage({ fromRole: parsed.sender, targets, message: stripRolePrefix(parsed.content || message), type: getTriggerMessageType(filename, targets), source: 'trigger' });
 
-  if (isSDKModeEnabled()) {
-    metrics.recordSent('sdk', 'trigger', targets);
-    let allSuccess = true;
-    for (const paneId of targets) {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sdk-message', { paneId, message: { type: 'user', content: message } });
-      try { if (sdkBridge.sendMessage(paneId, message)) metrics.recordDelivered('sdk', 'trigger', paneId); else { allSuccess = false; metrics.recordFailed('sdk', 'trigger', paneId, 'sdk_fail'); } }
-      catch (e) { allSuccess = false; metrics.recordFailed('sdk', 'trigger', paneId, e.message); }
-    }
-    try { fs.unlinkSync(processingPath); } catch (e) {}
-    return { success: allSuccess, notified: targets, mode: 'sdk' };
-  }
-
   metrics.recordSent('pty', 'trigger', targets);
   let deliveryId = null;
   if (parsed.seq !== null && parsed.sender) {
@@ -576,13 +500,6 @@ function broadcastToAllAgents(message, fromRole = 'user', options = {}) {
 
   warRoom.recordWarRoomMessage({ fromRole, targets, message, type: 'broadcast', source: 'broadcast' });
 
-  if (isSDKModeEnabled()) {
-    metrics.recordSent('sdk', 'broadcast', targets);
-    try { sdkBridge.broadcast(`[BROADCAST] ${message}`); targets.forEach(p => metrics.recordDelivered('sdk', 'broadcast', p)); }
-    catch (e) { targets.forEach(p => metrics.recordFailed('sdk', 'broadcast', p, e.message)); }
-    return { success: true, notified: targets, mode: 'sdk' };
-  }
-
   const notified = [];
   if (agentRunning) { for (const [p, s] of agentRunning) { if (s === 'running' && targets.includes(p)) notified.push(p); } }
   if (notified.length > 0) {
@@ -603,18 +520,6 @@ function sendDirectMessage(targetPanes, message, fromRole = null, options = {}) 
   warRoom.recordWarRoomMessage({ fromRole, targets, message, type: 'direct', source: 'direct' });
   const fullMessage = (fromRole ? `[MSG from ${fromRole}]: ` : '') + message;
 
-  if (isSDKModeEnabled()) {
-    metrics.recordSent('sdk', 'direct', targets);
-    emitOrganicMessageRoute(fromRole, targets);
-    let allSuccess = true;
-    for (const paneId of targets) {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sdk-message', { paneId, message: { type: 'user', content: fullMessage } });
-      try { if (sdkBridge.sendMessage(paneId, fullMessage)) metrics.recordDelivered('sdk', 'direct', paneId); else { allSuccess = false; metrics.recordFailed('sdk', 'direct', paneId, 'sdk_fail'); } }
-      catch (e) { allSuccess = false; metrics.recordFailed('sdk', 'direct', paneId, e.message); }
-    }
-    return { success: allSuccess, notified: targets, mode: 'sdk' };
-  }
-
   // Direct agent-to-agent messages must not be dropped based on runtime state.
   // agentRunning can be stale during startup/reconnect and caused silent delivery loss.
   const notified = [...targets];
@@ -627,7 +532,7 @@ function sendDirectMessage(targetPanes, message, fromRole = null, options = {}) 
 }
 
 module.exports = {
-  init, setSelfHealing, setPluginManager, setSDKBridge, setSDKMode, isSDKModeEnabled, setWatcher,
+  init, setSelfHealing, setPluginManager, setWatcher,
   notifyAgents, notifyAllAgentsSync, handleTriggerFile, broadcastToAllAgents, sendDirectMessage,
   checkWorkflowGate,
   getReliabilityStats: metrics.getReliabilityStats,

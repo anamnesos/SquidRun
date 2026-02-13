@@ -1,6 +1,6 @@
 /**
  * Tests for daemon-handlers.js module
- * IPC event handling, message queuing, UI notifications, SDK integration
+ * IPC event handling, message queuing, UI notifications
  */
 
 // Mock dependencies before requiring the module
@@ -31,12 +31,6 @@ jest.mock('../modules/terminal', () => ({
   restartPane: jest.fn(),
   freshStartAll: jest.fn(),
   nudgePane: jest.fn(),
-}));
-
-// Mock sdk-renderer module
-jest.mock('../modules/sdk-renderer', () => ({
-  appendMessage: jest.fn().mockReturnValue('msg-123'),
-  updateDeliveryState: jest.fn(),
 }));
 
 // Mock notifications module
@@ -161,18 +155,6 @@ describe('daemon-handlers.js module', () => {
       const paneCb = jest.fn();
       daemonHandlers.setStatusCallbacks(connectionCb, paneCb);
       // Callbacks should be set (internal)
-    });
-  });
-
-  describe('setSDKMode / isSDKModeEnabled', () => {
-    test('should enable SDK mode', () => {
-      daemonHandlers.setSDKMode(true);
-      expect(daemonHandlers.isSDKModeEnabled()).toBe(true);
-    });
-
-    test('should disable SDK mode', () => {
-      daemonHandlers.setSDKMode(false);
-      expect(daemonHandlers.isSDKModeEnabled()).toBe(false);
     });
   });
 
@@ -490,7 +472,7 @@ describe('daemon-handlers.js module', () => {
         const now = Date.now();
 
         const data = {
-          sdkMode: false,
+
           terminals: [
             { paneId: '1', alive: true, scrollback: 'Claude Code\n> ', lastActivity: now, cwd: '/project/instances/arch' },
             { paneId: '2', alive: true, scrollback: '', cwd: '/project/instances/devops' },
@@ -522,7 +504,7 @@ describe('daemon-handlers.js module', () => {
         const now = Date.now();
 
         const data = {
-          sdkMode: false,
+
           terminals: [
             {
               paneId: '1',
@@ -583,7 +565,6 @@ describe('daemon-handlers.js module', () => {
 
     describe('Throttle Queue UI Side Effects', () => {
       test('should flash pane header via uiView', () => {
-        daemonHandlers.setSDKMode(false);
         let injectHandler;
         ipcRenderer.on.mockImplementation((channel, handler) => {
           if (channel === 'inject-message') injectHandler = handler;
@@ -595,7 +576,6 @@ describe('daemon-handlers.js module', () => {
       });
 
       test('should forward traceContext from inject-message to terminal.sendToPane', () => {
-        daemonHandlers.setSDKMode(false);
         let injectHandler;
         ipcRenderer.on.mockImplementation((channel, handler) => {
           if (channel === 'inject-message') injectHandler = handler;

@@ -1,5 +1,3 @@
-const { registerSdkHandlers } = require('./sdk-handlers');
-const { registerSdkV2Handlers } = require('./sdk-v2-handlers');
 const { registerMcpHandlers } = require('./mcp-handlers');
 const { registerMcpAutoconfigHandlers } = require('./mcp-autoconfig-handlers');
 const { registerTestExecutionHandlers } = require('./test-execution-handlers');
@@ -51,8 +49,6 @@ const { registerEvidenceLedgerHandlers } = require('./evidence-ledger-handlers')
 const { registerContractPromotionHandlers } = require('./contract-promotion-handlers');
 
 const DEFAULT_HANDLERS = [
-  registerSdkHandlers,
-  registerSdkV2Handlers,
   registerMcpHandlers,
   registerMcpAutoconfigHandlers,
   registerTestExecutionHandlers,

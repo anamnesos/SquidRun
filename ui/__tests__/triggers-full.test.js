@@ -1,6 +1,6 @@
 /**
  * Comprehensive Tests for triggers.js module
- * Covers: File Handling, SDK/PTY Routing, Workflow Gate, Sequencing, SDK Bridge
+ * Covers: File Handling, PTY Routing, Workflow Gate, Sequencing
  */
 
 const fs = require('fs');
@@ -78,8 +78,6 @@ describe('triggers.js module', () => {
     jest.useFakeTimers();
     
     // Reset module state (as much as possible via exported functions)
-    triggers.setSDKMode(false);
-    triggers.setSDKBridge(null);
     triggers.setWatcher(null);
     // Reset window mock
     global.window.webContents.send.mockClear();
@@ -207,9 +205,8 @@ describe('triggers.js module', () => {
     });
   });
 
-  describe('2. SDK/PTY Routing (notifyAgents)', () => {
-    test('should route via PTY when SDK mode disabled', () => {
-      triggers.setSDKMode(false);
+  describe('2. PTY Routing (notifyAgents)', () => {
+    test('should route via PTY injection', () => {
       // init with running state
       const claudeState = new Map([['1', 'running'], ['2', 'stopped']]);
       triggers.init(global.window, claudeState, null);
@@ -224,38 +221,7 @@ describe('triggers.js module', () => {
       // Pane 2 skipped because stopped
     });
 
-    test('should route via SDK Bridge when SDK mode enabled', () => {
-      triggers.setSDKMode(true);
-      const mockBridge = {
-        sendMessage: jest.fn().mockReturnValue(true),
-      };
-      triggers.setSDKBridge(mockBridge);
-      
-      triggers.notifyAgents(['1', '2'], 'hello sdk');
-      
-      // Should call bridge
-      expect(mockBridge.sendMessage).toHaveBeenCalledWith('1', 'hello sdk');
-      expect(mockBridge.sendMessage).toHaveBeenCalledWith('2', 'hello sdk');
-      
-      // Should also notify UI for display
-      expect(global.window.webContents.send).toHaveBeenCalledWith('sdk-message', expect.anything());
-    });
-
-    test('should handle SDK send failure (exception)', () => {
-      triggers.setSDKMode(true);
-      const mockBridge = {
-        sendMessage: jest.fn().mockImplementation(() => { throw new Error('SDK Error'); }),
-      };
-      triggers.setSDKBridge(mockBridge);
-      
-      triggers.notifyAgents(['1'], 'fail');
-      
-      // Fixed: Check reliability metrics record failed
-      // Or check log output if that's what we want
-    });
-
-    test('sendDirectMessage in PTY mode delivers even when target is not running', () => {
-      triggers.setSDKMode(false);
+    test('sendDirectMessage delivers even when target is not running', () => {
       triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['5', 'idle']]), null);
 
       const result = triggers.sendDirectMessage(['2'], 'Direct msg', 'architect');
@@ -364,53 +330,7 @@ describe('triggers.js module', () => {
     });
   });
 
-  describe('5. SDK Bridge & Mode', () => {
-    test('isSDKModeEnabled returns correct status', () => {
-      triggers.setSDKMode(false);
-      triggers.setSDKBridge(null);
-      expect(triggers.isSDKModeEnabled()).toBe(false);
-      
-      triggers.setSDKMode(true);
-      expect(triggers.isSDKModeEnabled()).toBe(false); // Bridge null
-      
-      triggers.setSDKBridge({});
-      expect(triggers.isSDKModeEnabled()).toBe(true);
-    });
-
-    test('broadcastToAllAgents uses SDK bridge when enabled', () => {
-      triggers.setSDKMode(true);
-      const mockBridge = {
-        broadcast: jest.fn(),
-        sendMessage: jest.fn().mockReturnValue(true),
-      };
-      triggers.setSDKBridge(mockBridge);
-      
-      triggers.broadcastToAllAgents('Announcement');
-      
-      // Should prefer broadcast if available
-      expect(mockBridge.broadcast).toHaveBeenCalledWith(expect.stringContaining('Announcement'));
-    });
-
-    test('sendDirectMessage bypasses gate and uses SDK', () => {
-      triggers.setSDKMode(true);
-      const mockBridge = {
-        sendMessage: jest.fn().mockReturnValue(true),
-      };
-      triggers.setSDKBridge(mockBridge);
-      
-      // Even if watcher says blocked
-      const mockWatcher = {
-        readState: jest.fn().mockReturnValue({ state: 'reviewing' }),
-      };
-      triggers.setWatcher(mockWatcher);
-      
-      triggers.sendDirectMessage(['3'], 'Direct msg');
-      
-      expect(mockBridge.sendMessage).toHaveBeenCalledWith('3', expect.stringContaining('Direct msg'));
-    });
-  });
-
-  describe('6. War Room logging + ambient updates', () => {
+  describe('5. War Room logging + ambient updates', () => {
     test('records war room entry for trigger messages', () => {
       fs.readFileSync.mockImplementation((filePath) => {
         if (String(filePath).includes('war-room.log')) return '';
@@ -439,20 +359,13 @@ describe('triggers.js module', () => {
       const running = new Map([['1', 'running'], ['2', 'running'], ['5', 'running']]);
       triggers.init(global.window, running, null);
 
-      // Fixed: Must be in SDK mode for ambient updates
-      triggers.setSDKMode(true);
-      const mockBridge = { sendMessage: jest.fn().mockReturnValue(true) };
-      triggers.setSDKBridge(mockBridge);
-
       triggers.handleTriggerFile('/test/workspace/triggers/architect.txt', 'architect.txt');
 
-      const sdkCalls = global.window.webContents.send.mock.calls
-        .filter(([event]) => event === 'sdk-message');
-      const hasBackendAmbient = sdkCalls.some(([, payload]) =>
-        payload.paneId === '2' &&
-        String(payload.message.content || '').includes('[WAR ROOM -')
-      );
-      expect(hasBackendAmbient).toBe(true);
+      // War room message should be emitted for mentioned role
+      expect(global.window.webContents.send).toHaveBeenCalledWith('war-room-message', expect.objectContaining({
+        from: 'DEVOPS',
+        to: 'ARCH',
+      }));
     });
 
     test('sanitizes carriage returns before war room emit/log', () => {

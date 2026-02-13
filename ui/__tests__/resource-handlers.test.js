@@ -132,7 +132,7 @@ describe('resource-handlers', () => {
         daemonClient: {
           getTerminals: () => [
             { paneId: '1', pid: 1234, alive: true, mode: 'pty' },
-            { paneId: '2', pid: 5678, alive: true, mode: 'sdk' },
+            { paneId: '2', pid: 5678, alive: true, mode: 'pty' },
           ],
         },
       });
@@ -149,7 +149,7 @@ describe('resource-handlers', () => {
       expect(result.agents['2']).toEqual({
         pid: 5678,
         alive: true,
-        mode: 'sdk',
+        mode: 'pty',
         cpuPercent: null,
         memMB: null,
       });

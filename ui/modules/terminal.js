@@ -45,9 +45,6 @@ const paneCliIdentity = new Map();
 // Track if we reconnected to existing terminals
 let reconnectedToExisting = false;
 
-// SDK Mode flag - when true, PTY spawn operations are blocked
-let sdkModeActive = false;
-
 // Terminal instances
 const terminals = new Map();
 const fitAddons = new Map();
@@ -1093,7 +1090,6 @@ const recoveryController = createRecoveryController({
   isCodexPane,
   updatePaneStatus,
   updateConnectionStatus,
-  getSdkModeActive: () => sdkModeActive,
   getInjectionInFlight,
   userIsTyping,
   getInjectionHelpers: () => injectionController,
@@ -1227,12 +1223,6 @@ function sendToPane(...args) {
 
   // Initialize all terminals
   async function initTerminals() {
-    // SDK Mode Guard: Don't initialize PTY terminals in SDK mode
-    if (sdkModeActive) {
-      log.info('initTerminals', 'SDK mode active - skipping PTY terminal initialization');     
-      return;
-    }
-
     for (const paneId of PANE_IDS) {
       if (terminals.has(paneId)) continue;
       await initTerminal(paneId);
@@ -1782,26 +1772,14 @@ function broadcast(message) {
   updateConnectionStatus('Message sent to Architect');
 }
 
-// Set SDK mode - blocks PTY spawn operations when enabled
-function setSDKMode(enabled) {
-  sdkModeActive = enabled;
-  log.info('Terminal', `SDK mode ${enabled ? 'enabled' : 'disabled'} - PTY spawn operations ${enabled ? 'blocked' : 'allowed'}`);
-}
-
 // Spawn agent CLI in a pane
 // model param: optional override for model type (used by model switch to bypass stale cache)
 async function spawnAgent(paneId, model = null) {
   // Defense in depth: Early exit if no terminal exists for this pane
-  // This catches race conditions where SDK mode blocks terminal creation but
+  // This catches race conditions where terminal creation is still in progress but
   // user somehow triggers spawn before UI fully updates
   if (!terminals.has(paneId)) {
     log.info('spawnAgent', `No terminal for pane ${paneId}, skipping`);
-    return;
-  }
-
-  // SDK Mode Guard: Don't spawn CLI Claude when SDK mode is active
-  if (sdkModeActive) {
-    log.info('spawnAgent', `SDK mode active - blocking CLI spawn for pane ${paneId}`);
     return;
   }
 
@@ -1936,13 +1914,6 @@ async function killAllTerminals() {
 
 // Fresh start - kill all and spawn new sessions without context
 async function freshStartAll() {
-  // SDK Mode Guard: Don't allow fresh start in SDK mode
-  if (sdkModeActive) {
-    log.info('freshStartAll', 'SDK mode active - blocking PTY fresh start');
-    alert('Fresh Start is not available in SDK mode.\nSDK manages agent sessions differently.');
-    return;
-  }
-
   const confirmed = confirm(
     'Fresh Start will:\n\n' +
     '� Kill all 6 terminals\n' +
@@ -2231,7 +2202,6 @@ module.exports = {
   terminals,
   fitAddons,
   setStatusCallbacks,
-  setSDKMode,           // SDK mode guard for PTY operations
   initUIFocusTracker,   // Global UI focus tracking for multi-pane restore
   userInputFocused,     // Active UI composition guard (focus + recent typing)
   initTerminals,

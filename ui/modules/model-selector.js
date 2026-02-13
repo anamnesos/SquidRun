@@ -39,9 +39,8 @@ function setPaneCliAttribute(paneId, model) {
 
 /**
  * Initialize model selectors to match current pane commands
- * @param {boolean} sdkModeEnabled - Whether SDK mode is active (disables selectors)
  */
-async function initModelSelectors(sdkModeEnabled = false) {
+async function initModelSelectors() {
   try {
     const paneCommands = await ipcRenderer.invoke('get-pane-commands');
 
@@ -58,12 +57,6 @@ async function initModelSelectors(sdkModeEnabled = false) {
 
       // Set data-cli attribute on pane element for CSS color binding
       setPaneCliAttribute(paneId, model);
-
-      // Disable in SDK mode
-      if (sdkModeEnabled) {
-        select.disabled = true;
-        select.title = 'Model switching not available in SDK mode';
-      }
     });
 
     log.info('ModelSelector', 'Initialized from pane commands (data-cli set)');

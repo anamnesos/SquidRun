@@ -82,7 +82,6 @@ describe('Terminal Recovery Controller', () => {
       isCodexPane: jest.fn().mockReturnValue(false),
       updatePaneStatus: jest.fn(),
       updateConnectionStatus: jest.fn(),
-      getSdkModeActive: jest.fn().mockReturnValue(false),
       getInjectionInFlight: jest.fn().mockReturnValue(false),
       userIsTyping: jest.fn().mockReturnValue(false),
       getInjectionHelpers: jest.fn().mockReturnValue({
@@ -313,28 +312,6 @@ describe('Terminal Recovery Controller', () => {
   });
 
   describe('interruptPane', () => {
-    test('sends SDK interrupt in SDK mode', async () => {
-      mockOptions.getSdkModeActive.mockReturnValue(true);
-      controller = createRecoveryController(mockOptions);
-
-      const result = await controller.interruptPane('1');
-
-      expect(result).toBe(true);
-      expect(ipcRenderer.invoke).toHaveBeenCalledWith('sdk-interrupt', '1');
-      expect(log.info).toHaveBeenCalledWith('Terminal', 'SDK interrupt sent to pane 1');
-    });
-
-    test('handles SDK interrupt failure', async () => {
-      mockOptions.getSdkModeActive.mockReturnValue(true);
-      ipcRenderer.invoke.mockRejectedValueOnce(new Error('SDK error'));
-      controller = createRecoveryController(mockOptions);
-
-      const result = await controller.interruptPane('1');
-
-      expect(result).toBe(false);
-      expect(log.error).toHaveBeenCalledWith('Terminal', expect.stringContaining('SDK interrupt failed'), expect.any(Error));
-    });
-
     test('uses IPC invoke for PTY interrupt', async () => {
       const result = await controller.interruptPane('1');
 
@@ -366,34 +343,6 @@ describe('Terminal Recovery Controller', () => {
   });
 
   describe('restartPane', () => {
-    test('uses SDK restart in SDK mode', async () => {
-      mockOptions.getSdkModeActive.mockReturnValue(true);
-      const mockRestartSession = jest.fn().mockResolvedValue(true);
-      window.hivemind = { sdk: { restartSession: mockRestartSession } };
-      controller = createRecoveryController(mockOptions);
-
-      const result = await controller.restartPane('1');
-
-      expect(result).toBe(true);
-      expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Restarting (SDK)...');
-      expect(mockRestartSession).toHaveBeenCalledWith('1');
-      expect(log.info).toHaveBeenCalledWith('Terminal', 'Requesting SDK restart for pane 1');
-      delete window.hivemind;
-    });
-
-    test('handles SDK restart failure', async () => {
-      mockOptions.getSdkModeActive.mockReturnValue(true);
-      const mockRestartSession = jest.fn().mockRejectedValue(new Error('SDK error'));
-      window.hivemind = { sdk: { restartSession: mockRestartSession } };
-      controller = createRecoveryController(mockOptions);
-
-      const result = await controller.restartPane('1');
-
-      expect(result).toBe(false);
-      expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Restart failed');
-      delete window.hivemind;
-    });
-
     test('kills pane and respawns', async () => {
       const promise = controller.restartPane('1');
       await jest.advanceTimersByTimeAsync(300); // Past the 250ms delay

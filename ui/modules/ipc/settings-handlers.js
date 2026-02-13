@@ -117,7 +117,7 @@ function registerSettingsHandlers(ctx, deps) {
           content = content.trim() + `\n${key}=${value}`;
         }
 
-        // Update process.env for immediate use (SDK mode)
+        // Update process.env for immediate use
         process.env[key] = value;
       }
 

@@ -194,18 +194,6 @@ describe('terminal.js module', () => {
     });
   });
 
-  describe('setSDKMode', () => {
-    test('should enable SDK mode', () => {
-      terminal.setSDKMode(true);
-      // SDK mode blocks initTerminals - tested via integration
-    });
-
-    test('should disable SDK mode', () => {
-      terminal.setSDKMode(false);
-      // PTY operations allowed
-    });
-  });
-
   describe('focusPane', () => {
     test('should focus pane and update focusedPane', () => {
       const mockPane = {
@@ -601,16 +589,6 @@ describe('terminal.js module', () => {
       expect(mockHivemind.pty.kill).not.toHaveBeenCalled();
     });
 
-    test('should block in SDK mode', async () => {
-      terminal.setSDKMode(true);
-
-      await terminal.freshStartAll();
-
-      expect(alert).toHaveBeenCalledWith(expect.stringContaining('not available in SDK mode'));
-      expect(confirm).not.toHaveBeenCalled();
-
-      terminal.setSDKMode(false); // Reset
-    });
   });
 
   describe('spawnAgent', () => {
@@ -620,17 +598,6 @@ describe('terminal.js module', () => {
       await terminal.spawnAgent('1');
 
       expect(mockHivemind.claude.spawn).not.toHaveBeenCalled();
-    });
-
-    test('should block in SDK mode', async () => {
-      terminal.terminals.set('1', { test: true });
-      terminal.setSDKMode(true);
-
-      await terminal.spawnAgent('1');
-
-      expect(mockHivemind.claude.spawn).not.toHaveBeenCalled();
-
-      terminal.setSDKMode(false); // Reset
     });
 
     test('should spawn and write command', async () => {
@@ -785,19 +752,6 @@ describe('terminal.js module', () => {
 
     test('fitAddons should be a Map', () => {
       expect(terminal.fitAddons).toBeInstanceOf(Map);
-    });
-  });
-
-  describe('initTerminals', () => {
-    test('should skip in SDK mode', async () => {
-      terminal.setSDKMode(true);
-
-      await terminal.initTerminals();
-
-      // Should not create any PTY
-      expect(mockHivemind.pty.create).not.toHaveBeenCalled();
-
-      terminal.setSDKMode(false); // Reset
     });
   });
 
@@ -969,7 +923,6 @@ describe('terminal.js module', () => {
   describe('freshStartAll edge cases', () => {
     test('should proceed when confirmed', async () => {
       jest.useRealTimers();
-      terminal.setSDKMode(false);
       confirm.mockReturnValue(true);
 
       // Setup terminals to be cleared
@@ -1020,16 +973,6 @@ describe('terminal.js module', () => {
     });
   });
 
-  describe('SDK mode edge cases', () => {
-    test('setSDKMode should accept true', () => {
-      expect(() => terminal.setSDKMode(true)).not.toThrow();
-    });
-
-    test('setSDKMode should accept false', () => {
-      expect(() => terminal.setSDKMode(false)).not.toThrow();
-    });
-  });
-
   describe('sendToPane edge cases', () => {
     test('should queue message when injection in flight', () => {
       // Block immediate processing with injection lock
@@ -1048,11 +991,6 @@ describe('terminal.js module', () => {
       expect(() => terminal.sendToPane('1', '')).not.toThrow();
     });
 
-    test('should handle SDK mode', () => {
-      terminal.setSDKMode(true);
-      expect(() => terminal.sendToPane('1', 'test')).not.toThrow();
-      terminal.setSDKMode(false);
-    });
   });
 
   describe('aggressiveNudge edge cases', () => {

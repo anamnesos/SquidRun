@@ -29,7 +29,6 @@ const reliabilityStats = {
     retries: 0,
   },
   byMode: {
-    sdk: { sent: 0, delivered: 0, failed: 0 },
     pty: { sent: 0, delivered: 0, failed: 0, timedOut: 0 },
   },
   byPane: {},  // paneId -> { sent, delivered, failed }
