@@ -3,9 +3,16 @@
  */
 
 const path = require('path');
-const { WORKSPACE_PATH } = require('../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
 
 let serverInstance;
+
+function getTriggerPath(filename) {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('triggers', filename), { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'triggers', filename);
+}
 
 const mockFileStore = new Map();
 const mockDirStore = new Set();
@@ -145,7 +152,7 @@ describe('mcp-server tool handlers', () => {
       },
     });
 
-    const triggerPath = path.join(WORKSPACE_PATH, 'triggers', 'analyst.txt');
+    const triggerPath = getTriggerPath('analyst.txt');
     expect(mockFileStore.has(triggerPath)).toBe(true);
     expect(mockFileStore.get(triggerPath)).toMatch(/DEVOPS/);
   });

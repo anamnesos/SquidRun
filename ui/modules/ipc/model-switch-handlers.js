@@ -8,8 +8,10 @@
 const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
-const { PANE_IDS, PANE_ROLES, resolvePaneCwd } = require('../../config');
-const TRIGGERS_PATH = path.join(__dirname, '..', '..', '..', 'workspace', 'triggers');
+const { PANE_IDS, PANE_ROLES, resolvePaneCwd, resolveCoordPath } = require('../../config');
+const TRIGGERS_PATH = typeof resolveCoordPath === 'function'
+  ? resolveCoordPath('triggers', { forWrite: true })
+  : path.join(__dirname, '..', '..', '..', 'workspace', 'triggers');
 
 function registerModelSwitchHandlers(ctx, deps = {}) {
   if (!ctx || !ctx.ipcMain) {

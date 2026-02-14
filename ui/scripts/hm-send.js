@@ -7,7 +7,12 @@
 const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
-const { WORKSPACE_PATH, LEGACY_ROLE_ALIASES, ROLE_ID_MAP } = require('../config');
+const {
+  WORKSPACE_PATH,
+  LEGACY_ROLE_ALIASES,
+  ROLE_ID_MAP,
+  resolveCoordPath,
+} = require('../config');
 
 const parsedPort = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
 const PORT = Number.isFinite(parsedPort) ? parsedPort : 9900;
@@ -216,7 +221,9 @@ function writeTriggerFallback(targetInput, content, options = {}) {
     };
   }
 
-  const triggersDir = path.join(WORKSPACE_PATH, 'triggers');
+  const triggersDir = typeof resolveCoordPath === 'function'
+    ? resolveCoordPath('triggers', { forWrite: true })
+    : path.join(WORKSPACE_PATH, 'triggers');
   const triggerPath = path.join(triggersDir, `${roleName}.txt`);
   const tempPath = path.join(
     triggersDir,

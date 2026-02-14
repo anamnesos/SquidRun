@@ -12,7 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { TRIGGER_TARGETS, WORKSPACE_PATH, PANE_IDS, ROLE_ID_MAP, LEGACY_ROLE_ALIASES } = require('../config');
+const { TRIGGER_TARGETS, PANE_IDS, ROLE_ID_MAP, LEGACY_ROLE_ALIASES } = require('../config');
 const log = require('./logger');
 const diagnosticLog = require('./diagnostic-log');
 const organicUI = require('./ipc/organic-ui-handlers');

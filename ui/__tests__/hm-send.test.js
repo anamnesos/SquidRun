@@ -6,9 +6,16 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
-const { WORKSPACE_PATH } = require('../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
 
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
+
+function getTriggerPath(filename) {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('triggers', filename), { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'triggers', filename);
+}
 
 function runHmSend(args, env = {}) {
   return new Promise((resolve, reject) => {
@@ -357,7 +364,7 @@ describe('hm-send retry behavior', () => {
     });
 
     const port = server.address().port;
-    const triggerPath = path.join(WORKSPACE_PATH, 'triggers', 'devops.txt');
+    const triggerPath = getTriggerPath('devops.txt');
     const hadOriginal = fs.existsSync(triggerPath);
     const originalContent = hadOriginal ? fs.readFileSync(triggerPath, 'utf8') : null;
     const uniqueSuffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -435,7 +442,7 @@ describe('hm-send retry behavior', () => {
     });
 
     const port = server.address().port;
-    const triggerPath = path.join(WORKSPACE_PATH, 'triggers', 'devops.txt');
+    const triggerPath = getTriggerPath('devops.txt');
     const hadOriginal = fs.existsSync(triggerPath);
     const originalContent = hadOriginal ? fs.readFileSync(triggerPath, 'utf8') : null;
 

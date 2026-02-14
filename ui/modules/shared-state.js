@@ -12,11 +12,32 @@
 
 const fs = require('fs');
 const path = require('path');
-const { WORKSPACE_PATH, PANE_IDS, PANE_ROLES } = require('../config');
+const {
+  WORKSPACE_PATH,
+  PANE_IDS,
+  PANE_ROLES,
+  resolveCoordPath,
+  getCoordRoots,
+} = require('../config');
 const log = require('./logger');
 const websocketServer = require('./websocket-server');
 
-const CHANGELOG_PATH = path.join(WORKSPACE_PATH, 'state-changelog.json');
+function resolveCoordFile(relPath, options = {}) {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(relPath, options);
+  }
+  return path.join(WORKSPACE_PATH, relPath);
+}
+
+function getCoordWatchPaths(relPath) {
+  if (typeof getCoordRoots === 'function') {
+    return getCoordRoots({ includeLegacy: true, includeMissing: false })
+      .map((root) => path.join(root, relPath));
+  }
+  return [path.join(WORKSPACE_PATH, relPath)];
+}
+
+const CHANGELOG_PATH = resolveCoordFile('state-changelog.json', { forWrite: true });
 const MAX_CHANGELOG_ENTRIES = 100;
 
 // Files to watch, keyed by state key
@@ -122,7 +143,7 @@ function buildSummary(source, changes, fileType) {
  * Handle a watched file change
  */
 function onFileChange(relPath, config) {
-  const absPath = path.join(WORKSPACE_PATH, relPath);
+  const absPath = resolveCoordFile(relPath);
   const newData = readJsonFile(absPath);
   if (newData === null) return; // Skip corrupted/missing files
 
@@ -231,7 +252,7 @@ function loadChangelog() {
  */
 function loadInitialState() {
   for (const [relPath, config] of Object.entries(WATCHED_FILES)) {
-    const absPath = path.join(WORKSPACE_PATH, relPath);
+    const absPath = resolveCoordFile(relPath);
     const data = readJsonFile(absPath);
     if (data === null) continue;
 
@@ -266,8 +287,9 @@ function init(options = {}) {
   // Register file watches
   if (options.watcher) {
     for (const [relPath, config] of Object.entries(WATCHED_FILES)) {
-      const absPath = path.join(WORKSPACE_PATH, relPath);
-      options.watcher.addWatch(absPath, () => onFileChange(relPath, config));
+      for (const absPath of getCoordWatchPaths(relPath)) {
+        options.watcher.addWatch(absPath, () => onFileChange(relPath, config));
+      }
     }
   }
 

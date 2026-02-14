@@ -31,6 +31,7 @@ ui/daemon.log
 workspace/state.json
 workspace/console.log
 workspace/triggers/*.txt
+.hivemind/
 ui/usage-stats.json
 ui/settings.json
 session-state.json

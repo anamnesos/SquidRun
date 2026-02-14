@@ -5,9 +5,21 @@
 
 const path = require('path');
 const chokidar = require('chokidar');
-const { WORKSPACE_PATH } = require('../config');
+const { WORKSPACE_PATH, getCoordRoots } = require('../config');
 
-const TRIGGER_PATH = path.join(WORKSPACE_PATH, 'triggers');
+function getCoordWatchRoots() {
+  if (typeof getCoordRoots === 'function') {
+    const roots = getCoordRoots({ includeLegacy: true, includeMissing: false });
+    if (Array.isArray(roots) && roots.length > 0) {
+      return roots;
+    }
+  }
+  return [WORKSPACE_PATH];
+}
+
+const TRIGGER_PATHS = Array.from(new Set(
+  getCoordWatchRoots().map((root) => path.join(root, 'triggers'))
+));
 const MESSAGE_QUEUE_DIR = path.join(WORKSPACE_PATH, 'messages');
 const WORKSPACE_WATCH_POLL_INTERVAL_MS = 5000;
 
@@ -39,7 +51,7 @@ function buildWatcherConfigs() {
       },
     },
     trigger: {
-      targetPath: TRIGGER_PATH,
+      targetPath: TRIGGER_PATHS,
       options: {
         ignoreInitial: true,
         persistent: true,

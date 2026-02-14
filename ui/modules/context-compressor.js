@@ -11,7 +11,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PANE_IDS, PANE_ROLES, WORKSPACE_PATH } = require('../config');
+const {
+  PANE_IDS,
+  PANE_ROLES,
+  WORKSPACE_PATH,
+  resolveCoordPath,
+  getCoordRoots,
+} = require('../config');
 const log = require('./logger');
 const { estimateTokens, truncateToTokenBudget } = require('./memory/memory-summarizer');
 
@@ -48,6 +54,21 @@ let isIdleRef = null;
 let refreshTimer = null;
 let lastSnapshots = {};
 let initialized = false;
+
+function resolveCoordFile(relPath, options = {}) {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(relPath, options);
+  }
+  return path.join(WORKSPACE_PATH, relPath);
+}
+
+function getCoordWatchPaths(relPath) {
+  if (typeof getCoordRoots === 'function') {
+    return getCoordRoots({ includeLegacy: true, includeMissing: false })
+      .map((root) => path.join(root, relPath));
+  }
+  return [path.join(WORKSPACE_PATH, relPath)];
+}
 
 /**
  * Ensure the snapshots directory exists
@@ -93,7 +114,7 @@ function readTextFile(filePath) {
 function buildTeamStatusSection() {
   const lines = ['### Team Status'];
   for (const paneId of PANE_IDS) {
-    const intentPath = path.join(WORKSPACE_PATH, 'intent', `${paneId}.json`);
+    const intentPath = resolveCoordFile(path.join('intent', `${paneId}.json`));
     const intent = readJsonFile(intentPath);
     const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
 
@@ -170,8 +191,8 @@ function buildActiveLearningsSection(paneId) {
  * Build the Active Issues section from blockers.md and errors.md
  */
 function buildActiveIssuesSection() {
-  const blockersPath = path.join(WORKSPACE_PATH, 'build', 'blockers.md');
-  const errorsPath = path.join(WORKSPACE_PATH, 'build', 'errors.md');
+  const blockersPath = resolveCoordFile(path.join('build', 'blockers.md'));
+  const errorsPath = resolveCoordFile(path.join('build', 'errors.md'));
 
   const blockers = readTextFile(blockersPath);
   const errors = readTextFile(errorsPath);
@@ -202,7 +223,7 @@ function buildActiveIssuesSection() {
  * Build the Session Progress section from session-handoff.json
  */
 function buildSessionProgressSection() {
-  const handoffPath = path.join(WORKSPACE_PATH, 'session-handoff.json');
+  const handoffPath = resolveCoordFile('session-handoff.json');
   const handoff = readJsonFile(handoffPath);
   if (!handoff) return null;
 
@@ -273,7 +294,7 @@ function buildKeyDecisionsSection(paneId) {
  * Get current session number from handoff file
  */
 function getSessionNumber() {
-  const handoff = readJsonFile(path.join(WORKSPACE_PATH, 'session-handoff.json'));
+  const handoff = readJsonFile(resolveCoordFile('session-handoff.json'));
   return handoff?.session || 0;
 }
 
@@ -418,15 +439,16 @@ function init(options = {}) {
   // Register file watches for auto-refresh (same pattern as shared-state.js)
   if (watcherRef) {
     for (const relPath of WATCHED_FILES) {
-      const absPath = path.join(WORKSPACE_PATH, relPath);
-      watcherRef.addWatch(absPath, () => {
-        if (shouldSkipAutoRefresh()) return;
-        try {
-          refreshAll();
-        } catch (err) {
-          log.warn('ContextCompressor', `Watch-triggered refresh failed: ${err.message}`);
-        }
-      });
+      for (const absPath of getCoordWatchPaths(relPath)) {
+        watcherRef.addWatch(absPath, () => {
+          if (shouldSkipAutoRefresh()) return;
+          try {
+            refreshAll();
+          } catch (err) {
+            log.warn('ContextCompressor', `Watch-triggered refresh failed: ${err.message}`);
+          }
+        });
+      }
     }
   }
 

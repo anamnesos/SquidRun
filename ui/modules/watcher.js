@@ -6,13 +6,32 @@
 const path = require('path');
 const fs = require('fs');
 const { fork } = require('child_process');
-const { WORKSPACE_PATH, TRIGGER_TARGETS, PANE_IDS, PANE_ROLES } = require('../config');
+const {
+  WORKSPACE_PATH,
+  TRIGGER_TARGETS,
+  PANE_IDS,
+  PANE_ROLES,
+  resolveCoordPath,
+  getCoordRoots,
+} = require('../config');
 const log = require('./logger');
 const { TRIGGER_READ_RETRY_MS, WATCHER_DEBOUNCE_MS } = require('./constants');
 const organicUI = require('./ipc/organic-ui-handlers');
 
-const STATE_FILE_PATH = path.join(WORKSPACE_PATH, 'state.json');
-const SHARED_CONTEXT_PATH = path.join(WORKSPACE_PATH, 'shared_context.md');
+function resolveCoordFile(relPath, options = {}) {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(relPath, options);
+  }
+  return path.join(WORKSPACE_PATH, relPath);
+}
+
+function getCoordWatchPaths(relPath) {
+  if (typeof getCoordRoots === 'function') {
+    return getCoordRoots({ includeLegacy: true, includeMissing: false })
+      .map((root) => path.join(root, relPath));
+  }
+  return [path.join(WORKSPACE_PATH, relPath)];
+}
 
 // Message queue directory
 const MESSAGE_QUEUE_DIR = path.join(WORKSPACE_PATH, 'messages');
@@ -35,7 +54,8 @@ const SYNC_FILES = new Set([
 ]);
 
 // UX-9: Trigger file path for fast watching
-const TRIGGER_PATH = path.join(WORKSPACE_PATH, 'triggers');
+const TRIGGER_PATH = resolveCoordFile('triggers', { forWrite: true });
+const TRIGGER_PATHS = Array.from(new Set(getCoordWatchPaths('triggers')));
 // TRIGGER_READ_RETRY_MS imported from constants.js
 const TRIGGER_READ_MAX_ATTEMPTS = 3;
 const triggerRetryTimers = new Map();
@@ -120,8 +140,9 @@ function extractFilePaths(text) {
 
 function parseWorkerAssignments() {
   try {
-    if (!fs.existsSync(SHARED_CONTEXT_PATH)) return {};
-    const c = fs.readFileSync(SHARED_CONTEXT_PATH, 'utf-8');
+    const sharedContextPath = resolveCoordFile('shared_context.md');
+    if (!fs.existsSync(sharedContextPath)) return {};
+    const c = fs.readFileSync(sharedContextPath, 'utf-8');
     const a = {};
     const frontend = c.match(/### (Frontend)[\s\S]*?(?=###|$)/i);
     const backend = c.match(/### (Backend)[\s\S]*?(?=###|$)/i);
@@ -168,8 +189,9 @@ function getLastConflicts() {
 
 function readState() {
   try {
-    if (fs.existsSync(STATE_FILE_PATH)) {
-      const content = fs.readFileSync(STATE_FILE_PATH, 'utf-8');
+    const statePath = resolveCoordFile('state.json');
+    if (fs.existsSync(statePath)) {
+      const content = fs.readFileSync(statePath, 'utf-8');
       return JSON.parse(content);
     }
   } catch (err) {
@@ -288,19 +310,20 @@ function clearClaims() {
 
 function writeState(state) {
   try {
-    const dir = path.dirname(STATE_FILE_PATH);
+    const statePath = resolveCoordFile('state.json', { forWrite: true });
+    const dir = path.dirname(statePath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
 
     // Atomic write: write to temp file, then rename
-    const tempPath = STATE_FILE_PATH + '.tmp';
+    const tempPath = statePath + '.tmp';
     const content = JSON.stringify(state, null, 2);
     fs.writeFileSync(tempPath, content, 'utf-8');
-    fs.renameSync(tempPath, STATE_FILE_PATH);
+    fs.renameSync(tempPath, statePath);
   } catch (err) {
     log.error('State', 'Error writing state', err);
-    const tempPath = STATE_FILE_PATH + '.tmp';
+    const tempPath = resolveCoordFile('state.json', { forWrite: true }) + '.tmp';
     if (fs.existsSync(tempPath)) {
       try { fs.unlinkSync(tempPath); } catch (e) { /* ignore */ }
     }
@@ -710,15 +733,17 @@ function handleTriggerFileWithRetry(filePath, filename, attempt = 0, lastKnownSi
  * Uses aggressive polling for sub-50ms message delivery
  */
 function startTriggerWatcher() {
-  // Ensure trigger directory exists
-  try {
-    if (!fs.existsSync(TRIGGER_PATH)) {
-      fs.mkdirSync(TRIGGER_PATH, { recursive: true });
-      log.info('FastTrigger', 'Created trigger directory');
+  // Ensure trigger directories exist (primary + legacy fallback during transition)
+  for (const triggerPath of TRIGGER_PATHS) {
+    try {
+      if (!fs.existsSync(triggerPath)) {
+        fs.mkdirSync(triggerPath, { recursive: true });
+        log.info('FastTrigger', `Created trigger directory: ${triggerPath}`);
+      }
+    } catch (err) {
+      log.error('FastTrigger', `Failed to initialize trigger directory: ${triggerPath}`, err);
+      return;
     }
-  } catch (err) {
-    log.error('FastTrigger', 'Failed to initialize trigger directory', err);
-    return;
   }
 
   if (triggerWatcher) {
@@ -735,7 +760,7 @@ function startTriggerWatcher() {
     () => startTriggerWatcher()
   );
 
-  log.info('FastTrigger', `Watching ${TRIGGER_PATH} with 300ms polling`);
+  log.info('FastTrigger', `Watching ${TRIGGER_PATHS.join(', ')} with 300ms polling`);
 }
 
 /**

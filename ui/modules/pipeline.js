@@ -12,10 +12,15 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { WORKSPACE_PATH } = require('../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
 const log = require('./logger');
 
-const PIPELINE_PATH = path.join(WORKSPACE_PATH, 'pipeline.json');
+function getPipelinePath(options = {}) {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath('pipeline.json', options);
+  }
+  return path.join(WORKSPACE_PATH, 'pipeline.json');
+}
 const PIPELINE_MAX_ITEMS = 50;
 const MIN_MESSAGE_LENGTH = 10;
 
@@ -347,11 +352,12 @@ function getActiveItems() {
  */
 function loadPipeline() {
   try {
-    if (!fs.existsSync(PIPELINE_PATH)) {
+    const pipelinePath = getPipelinePath();
+    if (!fs.existsSync(pipelinePath)) {
       pipelineItems = [];
       return;
     }
-    const raw = fs.readFileSync(PIPELINE_PATH, 'utf-8');
+    const raw = fs.readFileSync(pipelinePath, 'utf-8');
     const data = JSON.parse(raw);
     pipelineItems = Array.isArray(data.items) ? data.items : [];
     log.info('Pipeline', `Loaded ${pipelineItems.length} pipeline items`);
@@ -366,14 +372,15 @@ function loadPipeline() {
  */
 function savePipeline() {
   try {
+    const pipelinePath = getPipelinePath({ forWrite: true });
     const data = {
       version: 1,
       items: pipelineItems,
       lastUpdated: new Date().toISOString(),
     };
-    const tempPath = PIPELINE_PATH + '.tmp';
+    const tempPath = pipelinePath + '.tmp';
     fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
-    fs.renameSync(tempPath, PIPELINE_PATH);
+    fs.renameSync(tempPath, pipelinePath);
   } catch (err) {
     log.warn('Pipeline', `Failed to save pipeline state: ${err.message}`);
   }

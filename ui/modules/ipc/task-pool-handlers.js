@@ -9,7 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { PANE_ROLES } = require('../../config');
+const { PANE_ROLES, WORKSPACE_PATH, resolveCoordPath, getCoordRoots } = require('../../config');
 const teamMemory = require('../team-memory');
 const {
   buildReadBeforeWorkQueryPayloads,
@@ -36,9 +36,33 @@ function registerTaskPoolHandlers(ctx) {
 
   const { ipcMain, mainWindow } = ctx;
   const workspacePath = ctx.WORKSPACE_PATH;
-  const TASK_POOL_FILE = workspacePath
-    ? path.join(workspacePath, 'task-pool.json')
-    : null;
+  const hasCustomWorkspacePath = typeof workspacePath === 'string'
+    && workspacePath.length > 0
+    && path.resolve(workspacePath) !== path.resolve(WORKSPACE_PATH);
+  const resolveCoordFile = (relPath, options = {}) => {
+    if (hasCustomWorkspacePath) {
+      return path.join(workspacePath, relPath);
+    }
+    if (typeof resolveCoordPath === 'function') {
+      return resolveCoordPath(relPath, options);
+    }
+    const base = workspacePath || WORKSPACE_PATH;
+    return base ? path.join(base, relPath) : null;
+  };
+  const getCoordWatchFiles = (relPath) => {
+    if (hasCustomWorkspacePath) {
+      return [path.join(workspacePath, relPath)];
+    }
+    if (typeof getCoordRoots === 'function') {
+      return getCoordRoots({ includeLegacy: true, includeMissing: false })
+        .map((root) => path.join(root, relPath));
+    }
+    const base = workspacePath || WORKSPACE_PATH;
+    return base ? [path.join(base, relPath)] : [];
+  };
+  const TASK_POOL_FILE = resolveCoordFile('task-pool.json');
+  const TASK_POOL_WRITE_FILE = resolveCoordFile('task-pool.json', { forWrite: true });
+  const TASK_POOL_WATCH_FILES = Array.from(new Set(getCoordWatchFiles('task-pool.json')));
   const READ_BEFORE_WORK_LIMIT = Number.parseInt(process.env.HIVEMIND_TEAM_MEMORY_READ_BEFORE_WORK_LIMIT || '3', 10);
 
   async function executeTeamMemory(action, payload) {
@@ -119,13 +143,14 @@ function registerTaskPoolHandlers(ctx) {
 
   // Save task pool to file
   function saveTaskPool(tasks) {
-    if (!TASK_POOL_FILE) return false;
+    if (!TASK_POOL_WRITE_FILE) return false;
     try {
       const data = {
         tasks,
         lastUpdated: new Date().toISOString()
       };
-      fs.writeFileSync(TASK_POOL_FILE, JSON.stringify(data, null, 2));
+      fs.mkdirSync(path.dirname(TASK_POOL_WRITE_FILE), { recursive: true });
+      fs.writeFileSync(TASK_POOL_WRITE_FILE, JSON.stringify(data, null, 2));
       return true;
     } catch (err) {
       log.error('TaskPool', 'Error saving task pool:', err.message);
@@ -188,9 +213,9 @@ function registerTaskPoolHandlers(ctx) {
     log.info('TaskPool', `Task ${taskId} claimed by pane ${paneId}`);
 
     // BUG FIX 3: Notify Architect on successful claim (per design protocol)
-    const triggerPath = workspacePath
-      ? path.join(workspacePath, 'triggers', 'architect.txt')
-      : null;
+    const triggerPath = typeof resolveCoordPath === 'function'
+      ? resolveCoordPath(path.join('triggers', 'architect.txt'), { forWrite: true })
+      : (workspacePath ? path.join(workspacePath, 'triggers', 'architect.txt') : null);
     if (triggerPath) {
       try {
         const role = (PANE_ROLES[paneId] || `Pane-${paneId}`).toUpperCase();
@@ -352,17 +377,19 @@ function registerTaskPoolHandlers(ctx) {
   };
 
   // Watch for external changes to task-pool.json
-  if (TASK_POOL_FILE && ctx.watcher) {
+  if (TASK_POOL_WATCH_FILES.length > 0 && ctx.watcher) {
     // Add file to watch list if watcher supports it
     if (typeof ctx.watcher.addWatch === 'function') {
-      ctx.watcher.addWatch(TASK_POOL_FILE, () => {
-        const newTasks = loadTaskPool();
-        if (JSON.stringify(newTasks) !== JSON.stringify(taskPool)) {
-          taskPool = newTasks;
-          broadcastTaskUpdate();
-          log.info('TaskPool', 'Task pool updated from file');
-        }
-      });
+      for (const taskPoolWatchFile of TASK_POOL_WATCH_FILES) {
+        ctx.watcher.addWatch(taskPoolWatchFile, () => {
+          const newTasks = loadTaskPool();
+          if (JSON.stringify(newTasks) !== JSON.stringify(taskPool)) {
+            taskPool = newTasks;
+            broadcastTaskUpdate();
+            log.info('TaskPool', 'Task pool updated from file');
+          }
+        });
+      }
     }
   }
 }

@@ -17,7 +17,7 @@ const fs = require('fs');
 const watcher = require('./watcher');
 const triggers = require('./triggers');
 const { getTaskPoolBridge } = require('./ipc/task-pool-handlers');
-const { WORKSPACE_PATH, PANE_IDS, PANE_ROLES } = require('../config');
+const { WORKSPACE_PATH, PANE_IDS, PANE_ROLES, resolveCoordPath } = require('../config');
 const log = require('./logger');
 
 // Track connected MCP agents
@@ -28,7 +28,13 @@ let mcpFailureCount = 0;
 let lastFallbackWarning = null;
 
 // Trigger file paths for fallback
-const TRIGGER_DIR = path.join(WORKSPACE_PATH, 'triggers');
+function getTriggerDir() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath('triggers', { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'triggers');
+}
+
 const TRIGGER_FILES = {
   '1': 'architect.txt',
   '2': 'devops.txt',
@@ -118,8 +124,11 @@ function logFallback(operation, error) {
  */
 function writeFallbackTrigger(paneId, message) {
   try {
-    const triggerFile = path.join(TRIGGER_DIR, TRIGGER_FILES[paneId]);
+    const triggerFile = path.join(getTriggerDir(), TRIGGER_FILES[paneId]);
     if (triggerFile) {
+      if (typeof fs.mkdirSync === 'function') {
+        fs.mkdirSync(path.dirname(triggerFile), { recursive: true });
+      }
       fs.writeFileSync(triggerFile, message, 'utf-8');
       log.info('MCP Bridge', `Fallback trigger written to ${TRIGGER_FILES[paneId]}`);
       return true;
