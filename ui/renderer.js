@@ -716,11 +716,11 @@ function setupEventListeners() {
         e.preventDefault();
         const input = broadcastInput;
         if (input.value && input.value.trim()) {
-          if (await sendBroadcast(input.value.trim())) {
-            input.value = '';
-            input.style.height = '';
-            input.focus();
-          }
+          const message = input.value.trim();
+          input.value = '';
+          input.style.height = '';
+          input.focus();
+          await sendBroadcast(message);
         }
       }
     });
@@ -737,11 +737,11 @@ function setupEventListeners() {
       }
       const input = document.getElementById('broadcastInput');
       if (input && input.value && input.value.trim()) {
-        if (await sendBroadcast(input.value.trim())) {
-          input.value = '';
-          input.style.height = '';
-          input.focus();
-        }
+        const message = input.value.trim();
+        input.value = '';
+        input.style.height = '';
+        input.focus();
+        await sendBroadcast(message);
       }
     });
   }
