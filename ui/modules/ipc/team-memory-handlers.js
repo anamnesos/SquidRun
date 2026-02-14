@@ -1,4 +1,4 @@
-const { executeTeamMemoryOperation, closeTeamMemoryRuntime } = require('../team-memory');
+const { executeTeamMemoryOperation } = require('../team-memory');
 
 const TEAM_MEMORY_CHANNELS = Object.freeze([
   'team-memory:create',
@@ -108,7 +108,6 @@ function unregisterTeamMemoryHandlers(ctx) {
   for (const channel of TEAM_MEMORY_CHANNELS) {
     ipcMain.removeHandler(channel);
   }
-  closeTeamMemoryRuntime({ killTimeoutMs: 500 }).catch(() => {});
 }
 
 registerTeamMemoryHandlers.unregister = unregisterTeamMemoryHandlers;

@@ -1,9 +1,7 @@
 const mockExecuteTeamMemoryOperation = jest.fn();
-const mockCloseTeamMemoryRuntime = jest.fn(() => Promise.resolve());
 
 jest.mock('../modules/team-memory', () => ({
   executeTeamMemoryOperation: (...args) => mockExecuteTeamMemoryOperation(...args),
-  closeTeamMemoryRuntime: (...args) => mockCloseTeamMemoryRuntime(...args),
 }));
 
 const {
@@ -19,7 +17,6 @@ describe('team-memory IPC handlers', () => {
   beforeEach(() => {
     mockExecuteTeamMemoryOperation.mockReset();
     mockExecuteTeamMemoryOperation.mockReturnValue({ ok: true });
-    mockCloseTeamMemoryRuntime.mockClear();
 
     ipcMain = {
       handle: jest.fn(),
@@ -249,11 +246,10 @@ describe('team-memory IPC handlers', () => {
     );
   });
 
-  test('unregister removes channels and closes runtime', () => {
+  test('unregister removes channels without closing runtime', () => {
     unregisterTeamMemoryHandlers(ctx);
     for (const channel of TEAM_MEMORY_CHANNELS) {
       expect(ipcMain.removeHandler).toHaveBeenCalledWith(channel);
     }
-    expect(mockCloseTeamMemoryRuntime).toHaveBeenCalledWith({ killTimeoutMs: 500 });
   });
 });

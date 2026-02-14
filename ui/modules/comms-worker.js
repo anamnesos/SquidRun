@@ -1,6 +1,6 @@
 /**
  * Comms worker process.
- * Owns WebSocket I/O, protocol handling, heartbeat/ACK bookkeeping off main thread.
+ * Owns WebSocket I/O and protocol handling/ACK bookkeeping off main thread.
  */
 
 const log = require('./logger');
@@ -84,8 +84,6 @@ async function handleAction(action, payload = {}) {
       return websocketRuntime.getPort();
     case 'getClients':
       return websocketRuntime.getClients();
-    case 'getRoutingHealth':
-      return websocketRuntime.getRoutingHealth(payload.target, payload.staleAfterMs, payload.now);
     case 'sendToTarget':
       return websocketRuntime.sendToTarget(payload.target, payload.content, payload.meta || {});
     case 'sendToPane':
