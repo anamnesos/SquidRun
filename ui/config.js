@@ -5,6 +5,7 @@
 
 const path = require('path');
 const os = require('os');
+const { execFileSync } = require('child_process');
 
 function envFlagEnabled(name, defaultValue = true) {
   const raw = process.env[name];
@@ -23,10 +24,28 @@ const PIPE_PATH = os.platform() === 'win32'
 
 // Workspace paths
 const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
+const PROJECT_ROOT_FALLBACK = path.resolve(path.join(WORKSPACE_PATH, '..'));
+const PROJECT_ROOT_DISCOVERY_CWD = path.resolve(path.join(__dirname, '..'));
 
-// Instance working directories (role injection)
-// cwd = instance dir so each agent loads their role-specific CLAUDE.md/AGENTS.md/GEMINI.md
-// Agents must use absolute paths (D:/projects/hivemind/ui/...) to access the full codebase
+function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
+  try {
+    const output = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: startDir,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const resolved = String(output || '').trim();
+    if (resolved) return path.resolve(resolved);
+  } catch (_) {
+    // Fall back when git is unavailable or cwd is not in a git worktree.
+  }
+  return PROJECT_ROOT_FALLBACK;
+}
+
+const PROJECT_ROOT = discoverProjectRoot();
+
+// Legacy instance working directories (kept for compatibility during migration)
+// Active pane cwd resolution now uses project root via resolvePaneCwd().
 const INSTANCE_DIRS = {
   '1': path.join(WORKSPACE_PATH, 'instances', 'arch'),   // Architect (+ Frontend/Reviewer as internal teammates)
   '2': path.join(WORKSPACE_PATH, 'instances', 'devops'), // DevOps (Infra + Backend combined)
@@ -82,10 +101,15 @@ const ROLE_ID_MAP = {
 const PANE_IDS = Object.keys(PANE_ROLES);
 
 function resolvePaneCwd(paneId, options = {}) {
+  const id = String(paneId);
+  if (Object.prototype.hasOwnProperty.call(PANE_ROLES, id)) {
+    return PROJECT_ROOT;
+  }
+
   const instanceDirs = options.instanceDirs && typeof options.instanceDirs === 'object'
     ? options.instanceDirs
     : INSTANCE_DIRS;
-  return instanceDirs[String(paneId)] || null;
+  return instanceDirs[id] || null;
 }
 
 function resolveCoordRoot() {
@@ -140,6 +164,7 @@ const evidenceLedgerEnabled = envFlagEnabled('HIVEMIND_EVIDENCE_LEDGER_ENABLED',
 module.exports = {
   PIPE_PATH,
   WORKSPACE_PATH,
+  PROJECT_ROOT,
   INSTANCE_DIRS,
   PANE_IDS,
   PANE_ROLES,

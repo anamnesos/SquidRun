@@ -24,6 +24,7 @@ jest.mock('../modules/logger', () => ({
 
 jest.mock('../config', () => ({
   WORKSPACE_PATH: 'D:\\projects\\hivemind\\workspace',
+  resolvePaneCwd: () => 'D:\\projects\\hivemind',
 }));
 
 const { spawnSync } = require('child_process');
@@ -92,7 +93,7 @@ describe('SettingsManager CLI auto-detection', () => {
     ctx.currentSettings.paneCommands = {
       '1': '   ',
       '2': 'codex --yolo',
-      '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind\\workspace"',
+      '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind"',
     };
 
     const result = manager.autoDetectPaneCommandsOnStartup();
@@ -103,13 +104,13 @@ describe('SettingsManager CLI auto-detection', () => {
     expect(ctx.currentSettings.paneCommands).toEqual({
       '1': 'claude',
       '2': 'codex --yolo',
-      '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind\\workspace"',
+      '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind"',
     });
     expect(manager.saveSettings).toHaveBeenCalledWith({
       paneCommands: {
         '1': 'claude',
         '2': 'codex --yolo',
-        '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind\\workspace"',
+        '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind"',
       },
     });
   });

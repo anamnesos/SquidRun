@@ -45,7 +45,7 @@ describe('PTY Handlers', () => {
       expect(result).toEqual({ error: 'Daemon not connected' });
     });
 
-    test('spawns terminal with instance dir when available', async () => {
+    test('spawns terminal with resolver cwd when available', async () => {
       ctx.daemonClient.connected = true;
       const result = await harness.invoke('pty-create', '1', '/fallback/dir');
 
@@ -54,9 +54,8 @@ describe('PTY Handlers', () => {
       expect(result.dryRun).toBe(false);
     });
 
-    test('uses workingDir when instance dir not available', async () => {
+    test('uses workingDir when pane cwd resolver has no mapping', async () => {
       ctx.daemonClient.connected = true;
-      ctx.INSTANCE_DIRS = {}; // Clear instance dirs
       const result = await harness.invoke('pty-create', '99', '/custom/dir');
 
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith('99', '/custom/dir', false, null);

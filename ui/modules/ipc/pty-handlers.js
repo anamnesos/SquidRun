@@ -89,7 +89,7 @@ function registerPtyHandlers(ctx, deps = {}) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerPtyHandlers requires ctx.ipcMain');
   }
-  const { ipcMain, INSTANCE_DIRS } = ctx;
+  const { ipcMain } = ctx;
   const { broadcastClaudeState, recordSessionStart } = deps;
   const getRecoveryManager = () => deps?.recoveryManager || ctx.recoveryManager;
 
@@ -99,8 +99,8 @@ function registerPtyHandlers(ctx, deps = {}) {
       return { error: 'Daemon not connected' };
     }
 
-    const instanceDir = resolvePaneCwd(paneId, { instanceDirs: INSTANCE_DIRS });
-    const cwd = instanceDir || workingDir || process.cwd();
+    const paneRoot = resolvePaneCwd(paneId);
+    const cwd = paneRoot || workingDir || process.cwd();
 
     const paneCommands = ctx.currentSettings.paneCommands || {};
     const cmd = (paneCommands[paneId] || '').trim().toLowerCase();

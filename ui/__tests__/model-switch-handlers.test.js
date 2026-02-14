@@ -44,7 +44,7 @@ describe('registerModelSwitchHandlers', () => {
       currentSettings: {
         paneCommands: {
           '1': 'claude',
-          '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind\\workspace"',
+          '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind"',
         },
         paneRoles: {
           '1': 'Architect',
@@ -190,7 +190,8 @@ describe('registerModelSwitchHandlers', () => {
       const result = await switchPromise;
 
       // Verify settings were updated and saved (using string check to bypass path resolution issues in mock)
-      expect(mockCtx.currentSettings.paneCommands['1']).toMatch(/gemini --yolo --include-directories ".*workspace"/);
+      expect(mockCtx.currentSettings.paneCommands['1']).toMatch(/gemini --yolo --include-directories ".+"/);
+      expect(mockCtx.currentSettings.paneCommands['1']).not.toMatch(/workspace/i);
       expect(mockDeps.saveSettings).toHaveBeenCalledWith({ paneCommands: mockCtx.currentSettings.paneCommands });
 
       // Verify renderer was signaled
@@ -229,12 +230,13 @@ describe('registerModelSwitchHandlers', () => {
       expect(result).toEqual({ success: true, paneId: '5', model: 'claude' });
     });
 
-    it('should construct the gemini command with the correct workspace path', async () => {
+    it('should construct the gemini command with the project-root include path', async () => {
       const switchPromise = switchHandler({}, { paneId: '1', model: 'gemini' });
       mockCtx.daemonClient._killedHandler('1');
       await switchPromise;
 
-      expect(mockCtx.currentSettings.paneCommands['1']).toMatch(/gemini --yolo --include-directories ".*workspace"/);
+      expect(mockCtx.currentSettings.paneCommands['1']).toMatch(/gemini --yolo --include-directories ".+"/);
+      expect(mockCtx.currentSettings.paneCommands['1']).not.toMatch(/workspace/i);
     });
 
     it('should auto-inject context files after model switch', async () => {

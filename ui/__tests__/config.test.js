@@ -7,6 +7,7 @@ const path = require('path');
 const {
   PIPE_PATH,
   WORKSPACE_PATH,
+  PROJECT_ROOT,
   INSTANCE_DIRS,
   PANE_ROLES,
   TRIGGER_TARGETS,
@@ -54,16 +55,17 @@ describe('config.js', () => {
   });
 
   describe('Resolvers', () => {
-    test('resolvePaneCwd should return pane instance directory', () => {
-      expect(resolvePaneCwd('1')).toBe(INSTANCE_DIRS['1']);
-      expect(resolvePaneCwd('2')).toBe(INSTANCE_DIRS['2']);
-      expect(resolvePaneCwd('5')).toBe(INSTANCE_DIRS['5']);
+    test('resolvePaneCwd should return project root for known panes', () => {
+      expect(resolvePaneCwd('1')).toBe(PROJECT_ROOT);
+      expect(resolvePaneCwd('2')).toBe(PROJECT_ROOT);
+      expect(resolvePaneCwd('5')).toBe(PROJECT_ROOT);
     });
 
-    test('resolvePaneCwd should support injected instanceDirs override', () => {
+    test('resolvePaneCwd should support injected instanceDirs for unknown panes', () => {
       const override = { '1': '/override/arch' };
-      expect(resolvePaneCwd('1', { instanceDirs: override })).toBe('/override/arch');
-      expect(resolvePaneCwd('2', { instanceDirs: override })).toBeNull();
+      expect(resolvePaneCwd('99', { instanceDirs: override })).toBeNull();
+      expect(resolvePaneCwd('1', { instanceDirs: override })).toBe(PROJECT_ROOT);
+      expect(resolvePaneCwd('2', { instanceDirs: override })).toBe(PROJECT_ROOT);
     });
 
     test('resolveCoordRoot should return WORKSPACE_PATH', () => {
