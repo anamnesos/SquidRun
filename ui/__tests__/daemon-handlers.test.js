@@ -118,6 +118,9 @@ describe('daemon-handlers.js module', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();
+    if (typeof daemonHandlers._resetThrottleQueueForTesting === 'function') {
+      daemonHandlers._resetThrottleQueueForTesting();
+    }
 
     // Reset mocks
     mockDocument.getElementById.mockReturnValue(null);
@@ -604,6 +607,61 @@ describe('daemon-handlers.js module', () => {
             }),
           })
         );
+      });
+
+      test('should only emit trigger-delivery-ack when terminal delivery is verified', () => {
+        let injectHandler;
+        ipcRenderer.on.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
+          setTimeout(() => options.onComplete({ success: true, verified: false, reason: 'timeout' }), 0);
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+        injectHandler({}, { panes: ['5'], message: 'msg', deliveryId: 'delivery-unverified-1' });
+        jest.runAllTimers();
+
+        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('5', 'unverified');
+        expect(ipcRenderer.send).not.toHaveBeenCalledWith('trigger-delivery-ack', expect.anything());
+      });
+
+      test('should emit trigger-delivery-ack when terminal delivery is verified', () => {
+        let injectHandler;
+        ipcRenderer.on.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
+          setTimeout(() => options.onComplete({ success: true, verified: true }), 0);
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+        injectHandler({}, { panes: ['5'], message: 'msg', deliveryId: 'delivery-verified-1' });
+        jest.runAllTimers();
+
+        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('5', 'delivered');
+        expect(ipcRenderer.send).toHaveBeenCalledWith('trigger-delivery-ack', {
+          deliveryId: 'delivery-verified-1',
+          paneId: '5',
+        });
+      });
+
+      test('caps throttle queue depth to prevent unbounded growth', () => {
+        let injectHandler;
+        ipcRenderer.on.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementation(() => {
+          // Intentionally no onComplete callback to keep pane throttled/in-flight.
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        for (let i = 0; i < 600; i += 1) {
+          injectHandler({}, { panes: ['1'], message: `burst-${i}` });
+        }
+
+        expect(daemonHandlers._getThrottleQueueDepthForTesting('1')).toBeLessThanOrEqual(200);
       });
     });
   });

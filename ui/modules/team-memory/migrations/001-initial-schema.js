@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS claims (
   claim_type TEXT NOT NULL CHECK (claim_type IN ('fact', 'decision', 'hypothesis', 'negative')),
   owner TEXT NOT NULL,
   confidence REAL DEFAULT 1.0 CHECK (confidence BETWEEN 0.0 AND 1.0),
-  status TEXT DEFAULT 'proposed' CHECK (status IN ('proposed', 'confirmed', 'contested', 'deprecated')),
+  status TEXT DEFAULT 'proposed' CHECK (status IN ('proposed', 'confirmed', 'contested', 'pending_proof', 'deprecated')),
   supersedes TEXT REFERENCES claims(id),
   session TEXT,
   ttl_hours INTEGER,

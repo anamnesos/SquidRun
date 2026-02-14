@@ -125,6 +125,7 @@ describe('Terminal Injection', () => {
       expect(controller.processIdleQueue).toBeDefined();
       expect(controller.doSendToPane).toBeDefined();
       expect(controller.sendToPane).toBeDefined();
+      expect(controller.clearPaneQueue).toBeDefined();
     });
 
     test('works with default empty options', () => {
@@ -430,6 +431,51 @@ describe('Terminal Injection', () => {
     test('logs ready state when not typing and not in flight', () => {
       controller.sendToPane('1', 'test\r');
       expect(mockLog.info).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('ready'));
+    });
+
+    test('caps queued messages and drops oldest when max items is reached', () => {
+      const cappedController = createInjectionController({
+        ...mockOptions,
+        getInjectionInFlight: jest.fn().mockReturnValue(true),
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          INJECTION_QUEUE_MAX_ITEMS: 2,
+          INJECTION_QUEUE_MAX_BYTES: 4096,
+        },
+      });
+
+      cappedController.sendToPane('1', 'first');
+      cappedController.sendToPane('1', 'second');
+      cappedController.sendToPane('1', 'third');
+
+      expect(messageQueue['1']).toHaveLength(2);
+      expect(messageQueue['1'][0].message).toBe('second');
+      expect(messageQueue['1'][1].message).toBe('third');
+    });
+
+    test('clearPaneQueue flushes queued messages and notifies callbacks', () => {
+      const callbackA = jest.fn();
+      const callbackB = jest.fn();
+      const stalledController = createInjectionController({
+        ...mockOptions,
+        getInjectionInFlight: jest.fn().mockReturnValue(true),
+      });
+
+      stalledController.sendToPane('1', 'queued-a', { onComplete: callbackA });
+      stalledController.sendToPane('1', 'queued-b', { onComplete: callbackB });
+      expect(messageQueue['1']).toHaveLength(2);
+
+      const dropped = stalledController.clearPaneQueue('1', 'pane_teardown');
+      expect(dropped).toBe(2);
+      expect(messageQueue['1']).toBeUndefined();
+      expect(callbackA).toHaveBeenCalledWith(expect.objectContaining({
+        success: false,
+        reason: 'pane_teardown',
+      }));
+      expect(callbackB).toHaveBeenCalledWith(expect.objectContaining({
+        success: false,
+        reason: 'pane_teardown',
+      }));
     });
   });
 

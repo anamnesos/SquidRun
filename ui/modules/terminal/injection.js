@@ -61,6 +61,8 @@ function createInjectionController(options = {}) {
     SUBMIT_DEFER_POLL_MS = 100,
     CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS = 9000,
     SAFE_DEFAULT_ENTER_DELAY_MS = 50,
+    INJECTION_QUEUE_MAX_ITEMS = 200,
+    INJECTION_QUEUE_MAX_BYTES = 512 * 1024,
   } = constants;
 
   // Track when compaction deferral started per pane (false positive safety valve)
@@ -394,6 +396,59 @@ function createInjectionController(options = {}) {
     const delayMs = nextDeferredRetryDelayMs(paneId);
     noteDeferredState(paneId, reason, delayMs);
     setTimeout(() => processIdleQueue(paneId), delayMs);
+  }
+
+  function getInjectionQueueMaxItems() {
+    return Number.isFinite(INJECTION_QUEUE_MAX_ITEMS) && INJECTION_QUEUE_MAX_ITEMS > 0
+      ? INJECTION_QUEUE_MAX_ITEMS
+      : 200;
+  }
+
+  function getInjectionQueueMaxBytes() {
+    return Number.isFinite(INJECTION_QUEUE_MAX_BYTES) && INJECTION_QUEUE_MAX_BYTES > 0
+      ? INJECTION_QUEUE_MAX_BYTES
+      : (512 * 1024);
+  }
+
+  function getQueueItemBytes(item) {
+    const msg = item && typeof item === 'object' ? item.message : item;
+    if (typeof msg !== 'string') return 0;
+    return Buffer.byteLength(msg, 'utf8');
+  }
+
+  function getQueueBytes(queue = []) {
+    return queue.reduce((total, item) => total + getQueueItemBytes(item), 0);
+  }
+
+  function failQueueItem(item, reason = 'queue_cleared') {
+    if (!item || typeof item !== 'object' || typeof item.onComplete !== 'function') return;
+    try {
+      item.onComplete({ success: false, verified: false, reason });
+    } catch (err) {
+      log.warn('Terminal', `Failed to notify dropped queue item: ${err.message}`);
+    }
+  }
+
+  function clearPaneQueue(paneId, reason = 'queue_cleared') {
+    const id = String(paneId);
+    const queue = messageQueue[id];
+    if (!Array.isArray(queue) || queue.length === 0) {
+      clearDeferredState(id);
+      compactionDeferStart.delete(id);
+      return 0;
+    }
+
+    const droppedItems = queue.splice(0, queue.length);
+    droppedItems.forEach(item => failQueueItem(item, reason));
+    delete messageQueue[id];
+    clearDeferredState(id);
+    compactionDeferStart.delete(id);
+    bus.emit('queue.depth.changed', {
+      paneId: id,
+      payload: { depth: 0, cleared: droppedItems.length, reason },
+      source: EVENT_SOURCE,
+    });
+    return droppedItems.length;
   }
 
   function toNonEmptyString(value) {
@@ -742,7 +797,7 @@ function createInjectionController(options = {}) {
         payload: { timeoutMs: INJECTION_LOCK_TIMEOUT_MS },
         source: EVENT_SOURCE,
       });
-      finish({ success: true, verified: false, reason: 'timeout' });
+      finish({ success: true, verified: false, status: 'submit_unverified_timeout', reason: 'timeout' });
     }, INJECTION_LOCK_TIMEOUT_MS);
     const finishWithClear = (result) => {
       clearTimeout(safetyTimerId);
@@ -1021,7 +1076,7 @@ function createInjectionController(options = {}) {
 
       clearTimeout(safetyTimerId);
       safetyTimerId = setTimeout(() => {
-        finish({ success: true, verified: false, reason: 'timeout' });
+        finish({ success: true, verified: false, status: 'submit_unverified_timeout', reason: 'timeout' });
       }, CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS);
 
       if (capabilities.requiresFocusForEnter && typeof userInputFocused === 'function' && userInputFocused()) {
@@ -1175,6 +1230,7 @@ function createInjectionController(options = {}) {
     if (!messageQueue[id]) {
       messageQueue[id] = [];
     }
+    const queue = messageQueue[id];
 
     const queueTraceContext = {
       traceId: corrId,
@@ -1197,24 +1253,52 @@ function createInjectionController(options = {}) {
         : undefined,
     };
 
+    const maxItems = getInjectionQueueMaxItems();
+    const maxBytes = getInjectionQueueMaxBytes();
+    const incomingBytes = getQueueItemBytes(queueItem);
+    if (incomingBytes > maxBytes) {
+      log.warn(`Terminal ${id}`, `Dropping oversize queued message (${incomingBytes} bytes > ${maxBytes} byte cap)`);
+      failQueueItem(queueItem, 'queue_oversize');
+      return;
+    }
+
+    let queueBytes = getQueueBytes(queue);
+    let droppedCount = 0;
+    while (
+      queue.length >= maxItems
+      || ((queueBytes + incomingBytes) > maxBytes && queue.length > 0)
+    ) {
+      const dropped = queue.shift();
+      queueBytes -= getQueueItemBytes(dropped);
+      droppedCount += 1;
+      failQueueItem(dropped, 'queue_overflow');
+    }
+    if (droppedCount > 0) {
+      log.warn(
+        `Terminal ${id}`,
+        `Injection queue cap reached; dropped ${droppedCount} stale message(s) `
+        + `(maxItems=${maxItems}, maxBytes=${maxBytes})`
+      );
+    }
+
     // User messages (priority) go to front of queue, agent messages go to back
     if (options.priority) {
-      messageQueue[id].unshift(queueItem);
+      queue.unshift(queueItem);
       log.info(`Terminal ${id}`, 'USER message queued with PRIORITY (front of queue)');
     } else {
-      messageQueue[id].push(queueItem);
+      queue.push(queueItem);
     }
 
     bus.emit('inject.queued', {
       paneId: id,
-      payload: { depth: messageQueue[id].length, priority: queueItem.priority },
+      payload: { depth: queue.length, priority: queueItem.priority },
       correlationId: corrId,
       causationId: queueTraceContext.parentEventId || undefined,
       source: EVENT_SOURCE,
     });
     bus.emit('queue.depth.changed', {
       paneId: id,
-      payload: { depth: messageQueue[id].length },
+      payload: { depth: queue.length },
       correlationId: corrId,
       causationId: queueTraceContext.parentEventId || undefined,
       source: EVENT_SOURCE,
@@ -1236,6 +1320,7 @@ function createInjectionController(options = {}) {
     processIdleQueue,
     doSendToPane,
     sendToPane,
+    clearPaneQueue,
   };
 }
 

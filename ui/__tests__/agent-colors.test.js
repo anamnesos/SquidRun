@@ -97,7 +97,7 @@ describe('agent-colors', () => {
         expect.objectContaining({
           foregroundColor: '#d0d0d0',
           x: 0,
-          width: line1.length,
+          width: 80,
           height: 1,
         }),
       ])
@@ -316,7 +316,7 @@ describe('agent-colors', () => {
     // Find the continuation decoration (foreground reset on line 1)
     const contDeco = terminal.registerDecoration.mock.results.find((r, i) => {
       const call = terminal.registerDecoration.mock.calls[i][0];
-      return call.foregroundColor === '#d0d0d0' && call.x === 0 && call.width === line1.length;
+      return call.foregroundColor === '#d0d0d0' && call.x === 0 && call.width === 80;
     });
     expect(contDeco).toBeDefined();
     const contDecoObj = contDeco.value;
@@ -339,5 +339,54 @@ describe('agent-colors', () => {
 
     // The old continuation decoration should have been disposed
     expect(contDecoObj.dispose).toHaveBeenCalled();
+  });
+
+  test('scans back to origin line for continuation lines when written in chunks', () => {
+    // Scenario: Agent tag on line 10. Lines 11 and 12 are continuation lines.
+    // Write 1: lines 10 and 11 are written. lastScannedLine becomes 11.
+    // Write 2: line 12 is written. lastScannedLine starts at 11, currentLine is 12.
+    // Scanner must back up to line 10 to find the tag and correctly color line 12.
+    
+    const line10 = '(ANA #1): line 10';
+    const line11 = 'line 11';
+    const line12 = 'line 12';
+    
+    const terminal = createTerminal({
+      lines: {
+        10: createLine(line10, false),
+        11: createLine(line11, true),
+        12: createLine(line12, true),
+      },
+      cursorY: 11,
+      baseY: 0,
+      themeForeground: '#d0d0d0',
+    });
+
+    attachAgentColors('5', terminal);
+
+    // First write: lines 0-11 scanned (mostly empty, but line 10 has tag)
+    terminal.triggerWriteParsed();
+    const countAfterFirst = terminal.registerDecoration.mock.calls.length;
+    expect(countAfterFirst).toBeGreaterThan(0);
+    
+    // lastScannedLine is now 11 (currentLine)
+    
+    // Second write: cursor moves to 12
+    terminal.buffer.active.cursorY = 12;
+    terminal.triggerWriteParsed();
+    
+    // Should have added decorations for line 12
+    expect(terminal.registerDecoration.mock.calls.length).toBeGreaterThan(countAfterFirst);
+    
+    const allDecos = terminal.registerDecoration.mock.calls.map(c => c[0]);
+    // Find decoration for line 12. We know it's for line 12 because of its marker offset.
+    // In this scan, currentLine=12, so offset for line 12 is 0.
+    // Wait, the markers are created during the loop.
+    // For y=10, offset = 10-12 = -2.
+    // For y=11, offset = 11-12 = -1.
+    // For y=12, offset = 12-12 = 0.
+    
+    const line12Reset = terminal.registerMarker.mock.calls.find(call => call[0] === 0);
+    expect(line12Reset).toBeDefined();
   });
 });

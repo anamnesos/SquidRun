@@ -113,6 +113,26 @@ describe('transition-ledger', () => {
     expect(invalidPayload.reasonCode).toBe('ownership_conflict');
   });
 
+  test('owner lease invariant emits transition.invalid on lease expiry', () => {
+    const invalidHandler = jest.fn();
+    bus.on('transition.invalid', invalidHandler);
+
+    emitRequested('corr-expiry');
+    
+    // Default TTL is 15s. Advance by 16s.
+    jest.advanceTimersByTime(16000);
+
+    bus.emit('inject.applied', {
+      paneId: '1',
+      correlationId: 'corr-expiry',
+      source: 'injection.js',
+    });
+
+    expect(invalidHandler).toHaveBeenCalled();
+    const invalidPayload = invalidHandler.mock.calls[0][0].payload;
+    expect(invalidPayload.reasonCode).toBe('owner_lease_expired');
+  });
+
   test('external verification signals are not blocked by owner invariant', () => {
     const invalidHandler = jest.fn();
     bus.on('transition.invalid', invalidHandler);

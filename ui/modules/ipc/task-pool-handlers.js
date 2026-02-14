@@ -10,6 +10,14 @@ const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
 const { PANE_ROLES } = require('../../config');
+const teamMemory = require('../team-memory');
+const {
+  buildReadBeforeWorkQueryPayloads,
+  pickTopClaims,
+  formatReadBeforeWorkMessage,
+  buildTaskStatusPatternEvent,
+  buildTaskCloseClaimPayload,
+} = require('../team-memory/daily-integration');
 
 // In-memory task cache (loaded from file on startup)
 let taskPool = [];
@@ -25,6 +33,61 @@ function registerTaskPoolHandlers(ctx) {
   const TASK_POOL_FILE = workspacePath
     ? path.join(workspacePath, 'task-pool.json')
     : null;
+  const READ_BEFORE_WORK_LIMIT = Number.parseInt(process.env.HIVEMIND_TEAM_MEMORY_READ_BEFORE_WORK_LIMIT || '3', 10);
+
+  async function executeTeamMemory(action, payload) {
+    try {
+      return await teamMemory.executeTeamMemoryOperation(action, payload || {});
+    } catch (err) {
+      log.warn('TaskPool', `Team memory action '${action}' failed: ${err.message}`);
+      return { ok: false, reason: 'team_memory_error', error: err.message };
+    }
+  }
+
+  async function appendPatternEvent(event, label = 'pattern-event') {
+    if (!event) return { ok: false, reason: 'event_missing' };
+    try {
+      const result = await teamMemory.appendPatternHookEvent(event);
+      if (result?.ok === false) {
+        log.warn('TaskPool', `Failed to append ${label}: ${result.reason || 'unknown'}`);
+      }
+      return result;
+    } catch (err) {
+      log.warn('TaskPool', `Failed to append ${label}: ${err.message}`);
+      return { ok: false, reason: 'pattern_append_failed', error: err.message };
+    }
+  }
+
+  async function loadReadBeforeWorkContext({ paneId, task, domain }) {
+    const payloads = buildReadBeforeWorkQueryPayloads({
+      task,
+      paneId,
+      domain,
+      limit: 8,
+      sessionsBack: 3,
+    });
+    if (payloads.length === 0) {
+      return { ok: true, claims: [], message: null };
+    }
+
+    const claimGroups = [];
+    for (const payload of payloads) {
+      const result = await executeTeamMemory('query-claims', payload);
+      if (!result?.ok || !Array.isArray(result?.claims) || result.claims.length === 0) {
+        continue;
+      }
+      claimGroups.push(result.claims);
+    }
+
+    const claims = pickTopClaims(claimGroups, READ_BEFORE_WORK_LIMIT);
+    const message = formatReadBeforeWorkMessage({ task, claims });
+    return {
+      ok: true,
+      claims,
+      message,
+      total: claims.length,
+    };
+  }
 
   // Load task pool from file
   function loadTaskPool() {
@@ -81,7 +144,7 @@ function registerTaskPoolHandlers(ctx) {
   });
 
   // Claim a task for an agent
-  ipcMain.handle('claim-task', (event, { paneId, taskId, domain }) => {
+  ipcMain.handle('claim-task', async (event, { paneId, taskId, domain }) => {
     const task = taskPool.find(t => t.id === taskId);
 
     if (!task) {
@@ -138,11 +201,35 @@ function registerTaskPoolHandlers(ctx) {
       }
     }
 
-    return { success: true, task };
+    const context = await loadReadBeforeWorkContext({ paneId, task, domain });
+    if (context?.message && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('inject-message', {
+        panes: [String(paneId)],
+        message: context.message,
+      });
+    }
+
+    await appendPatternEvent(
+      buildTaskStatusPatternEvent({
+        task,
+        status: 'in_progress',
+        metadata: { domain },
+        paneId,
+      }),
+      'task-claim'
+    );
+
+    return {
+      success: true,
+      task,
+      memoryContext: {
+        claimsUsed: Number(context?.total || 0),
+      },
+    };
   });
 
   // Update task status for completion/failure/needs_input
-  ipcMain.handle('update-task-status', (event, taskId, status, metadata) => {
+  ipcMain.handle('update-task-status', async (event, taskId, status, metadata) => {
     let payload = { taskId, status, metadata };
     if (taskId && typeof taskId === 'object') {
       payload = taskId;
@@ -198,7 +285,43 @@ function registerTaskPoolHandlers(ctx) {
 
     log.info('TaskPool', `Task ${targetId} status -> ${nextStatus}`);
 
-    return { success: true, task };
+    const patternResult = await appendPatternEvent(
+      buildTaskStatusPatternEvent({
+        task,
+        status: nextStatus,
+        metadata: meta,
+        paneId: task.owner || meta?.paneId || null,
+      }),
+      'task-status-change'
+    );
+
+    let claimResult = null;
+    const claimPayload = buildTaskCloseClaimPayload({
+      task,
+      status: nextStatus,
+      metadata: meta,
+      paneId: task.owner || meta?.paneId || null,
+      nowMs: Date.now(),
+    });
+    if (claimPayload) {
+      claimResult = await executeTeamMemory('create-claim', claimPayload);
+      if (claimResult?.ok === false) {
+        log.warn(
+          'TaskPool',
+          `Failed task-close claim for ${targetId}: ${claimResult.reason || claimResult.error || 'unknown'}`
+        );
+      }
+    }
+
+    return {
+      success: true,
+      task,
+      teamMemory: {
+        patternQueued: Boolean(patternResult?.ok),
+        claimWritten: Boolean(claimResult?.ok),
+        claimStatus: claimResult?.status || null,
+      },
+    };
   });
 
   // Watch for external changes to task-pool.json

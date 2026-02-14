@@ -501,7 +501,7 @@ function setupEventListeners() {
                 broadcastInput.dispatchEvent(new Event('input'));
               }
               if (voiceAutoSend && combined) {
-                if (sendBroadcast(combined)) {
+                if (await sendBroadcast(combined)) {
                   if (broadcastInput) {
                     broadcastInput.value = '';
                     broadcastInput.style.height = '';
@@ -582,7 +582,7 @@ function setupEventListeners() {
       if (result?.success) {
         const routedCount = result.routed?.length || 0;
         showStatusNotice(`Auto-routed ${routedCount} task${routedCount === 1 ? '' : 's'}`);
-        showDeliveryStatus('delivered');
+        showDeliveryStatus('queued');
         return true;
       }
       if (result?.ambiguity?.isAmbiguous) {
@@ -608,6 +608,11 @@ function setupEventListeners() {
     commandDeliveryStatus.className = 'command-delivery-status visible ' + status;
     if (status === 'sending') {
       commandDeliveryStatus.textContent = '⏳';
+    } else if (status === 'queued' || status === 'unverified') {
+      commandDeliveryStatus.textContent = '…';
+      setTimeout(() => {
+        commandDeliveryStatus.classList.remove('visible');
+      }, 2500);
     } else if (status === 'delivered') {
       commandDeliveryStatus.textContent = '✓';
       setTimeout(() => {
@@ -629,7 +634,39 @@ function setupEventListeners() {
 
   // Helper function to send broadcast - routes through PTY terminals
   // Supports pane targeting via dropdown or /1, /2, /5 prefix
-  function sendBroadcast(message) {
+  function resolveDeliveryState(result) {
+    const accepted = !result || result.success !== false;
+    if (!accepted) {
+      showDeliveryStatus('failed');
+      return false;
+    }
+    if (result?.verified === false) {
+      showDeliveryStatus('queued');
+      return true;
+    }
+    showDeliveryStatus('delivered');
+    return true;
+  }
+
+  function sendUserMessageToPane(targetPaneId, content) {
+    return new Promise((resolve) => {
+      terminal.sendToPane(targetPaneId, content, {
+        priority: true,
+        immediate: true,
+        onComplete: (result) => resolve(resolveDeliveryState(result)),
+      });
+    });
+  }
+
+  function sendArchitectMessage(content) {
+    return new Promise((resolve) => {
+      terminal.broadcast(content, {
+        onComplete: (result) => resolve(resolveDeliveryState(result)),
+      });
+    });
+  }
+
+  async function sendBroadcast(message) {
     const now = Date.now();
     if (now - lastBroadcastTime < 500) {
       log.info('Broadcast', 'Rate limited');
@@ -642,24 +679,22 @@ function setupEventListeners() {
 
     const trimmed = message.trim();
     if (trimmed.toLowerCase().startsWith('/task ')) {
-      return routeNaturalTask(trimmed.slice(6));
+      return await routeNaturalTask(trimmed.slice(6));
     }
 
     if (commandTarget && commandTarget.value === 'auto') {
-      return routeNaturalTask(trimmed);
+      return await routeNaturalTask(trimmed);
     }
 
     // PTY mode - use terminal broadcast with target from dropdown
     const targetPaneId = commandTarget ? commandTarget.value : 'all';
     log.info('Broadcast', `Target: ${targetPaneId}`);
     if (targetPaneId === 'all') {
-      terminal.broadcast(message + '\r');
-    } else {
-      // Send to specific pane - user messages get priority + immediate
-      terminal.sendToPane(targetPaneId, message + '\r', { priority: true, immediate: true });
+      return await sendArchitectMessage(message + '\r');
     }
-    showDeliveryStatus('delivered');
-    return true;
+
+    // Send to specific pane - user messages get priority + immediate
+    return await sendUserMessageToPane(targetPaneId, message + '\r');
   }
 
   if (broadcastInput) {
@@ -670,7 +705,7 @@ function setupEventListeners() {
     };
     broadcastInput.addEventListener('input', autoGrow);
 
-    broadcastInput.addEventListener('keydown', (e) => {
+    broadcastInput.addEventListener('keydown', async (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         // Only allow trusted (real user) Enter presses
         if (!e.isTrusted) {
@@ -681,7 +716,7 @@ function setupEventListeners() {
         e.preventDefault();
         const input = broadcastInput;
         if (input.value && input.value.trim()) {
-          if (sendBroadcast(input.value.trim())) {
+          if (await sendBroadcast(input.value.trim())) {
             input.value = '';
             input.style.height = '';
             input.focus();
@@ -694,7 +729,7 @@ function setupEventListeners() {
   // Broadcast button - also works (for accessibility)
   const broadcastBtn = document.getElementById('broadcastBtn');
   if (broadcastBtn) {
-    broadcastBtn.addEventListener('click', (e) => {
+    broadcastBtn.addEventListener('click', async (e) => {
       // Must be trusted click event
       if (!e.isTrusted) {
         log.info('Broadcast', 'Blocked untrusted click');
@@ -702,7 +737,7 @@ function setupEventListeners() {
       }
       const input = document.getElementById('broadcastInput');
       if (input && input.value && input.value.trim()) {
-        if (sendBroadcast(input.value.trim())) {
+        if (await sendBroadcast(input.value.trim())) {
           input.value = '';
           input.style.height = '';
           input.focus();

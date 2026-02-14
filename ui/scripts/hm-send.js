@@ -259,6 +259,7 @@ function writeTriggerFallback(targetInput, content, options = {}) {
 
 function shouldRetryAck(ack) {
   if (!ack || ack.ok) return false;
+  if (ack.accepted === true) return false;
   const status = String(ack.status || '').toLowerCase();
   if (!status) return true;
   if (status === 'invalid_target') return false;
@@ -450,6 +451,20 @@ async function sendViaWebSocketWithAck() {
         await closeSocket(ws);
         return {
           ok: true,
+          delivered: true,
+          accepted: true,
+          messageId,
+          ack,
+          attemptsUsed: attempt,
+        };
+      }
+
+      if (ack.accepted === true) {
+        await closeSocket(ws);
+        return {
+          ok: true,
+          delivered: false,
+          accepted: true,
           messageId,
           ack,
           attemptsUsed: attempt,
@@ -474,10 +489,12 @@ async function sendViaWebSocketWithAck() {
   }
 
   const deliveryCheck = await queryDeliveryCheckBestEffort(ws, messageId);
-  if (deliveryCheck?.known && deliveryCheck?.ack?.ok) {
+  if (deliveryCheck?.known && (deliveryCheck?.ack?.ok || deliveryCheck?.ack?.accepted === true)) {
     await closeSocket(ws);
     return {
       ok: true,
+      delivered: Boolean(deliveryCheck?.ack?.ok),
+      accepted: true,
       messageId,
       ack: deliveryCheck.ack,
       attemptsUsed: attempts,
@@ -507,7 +524,14 @@ async function main() {
   }
 
   if (sendResult?.ok) {
-    console.log(`Sent to ${target}: ${previewMessage(message)} (ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed})`);
+    if (sendResult.delivered === false) {
+      console.log(
+        `Accepted by ${target} but unverified: ${previewMessage(message)} `
+        + `(ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed})`
+      );
+    } else {
+      console.log(`Delivered to ${target}: ${previewMessage(message)} (ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed})`);
+    }
     process.exit(0);
   }
 

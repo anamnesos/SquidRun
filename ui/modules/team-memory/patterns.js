@@ -392,6 +392,7 @@ class TeamMemoryPatterns {
       if (!scope) continue;
       if (!byScope.has(scope)) byScope.set(scope, []);
       byScope.get(scope).push({
+        claimId: row.id,
         agent: row.owner,
         claimType: row.claim_type,
         status: row.status,

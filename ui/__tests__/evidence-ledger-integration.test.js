@@ -355,7 +355,9 @@ describe('evidence-ledger integration: trace continuity', () => {
       .map((call) => call.kernelMeta?.traceId || call.kernelMeta?.correlationId)
       .filter(Boolean);
 
-    expect(ack.ok).toBe(true);
+    expect(ack.ok).toBe(false);
+    expect(ack.accepted).toBe(true);
+    expect(ack.verified).toBe(false);
     expect(ack.traceId).toBe(traceId);
 
     expect(messageHandlerCalls.length).toBeGreaterThan(0);
