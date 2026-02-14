@@ -327,9 +327,9 @@ const MAX_FOCUS_RETRIES = 3;          // Max focus retry attempts before giving 
 const STARTUP_OSC_REGEX = /\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g;
 const STARTUP_CSI_REGEX = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const STARTUP_READY_PATTERNS = [
-  /(^|\n)(?:codex|claude|gemini|cursor)>\s*(\n|$)/im,
-  /(^|\n)PS\s+[^\n>]*>\s*(\n|$)/m,
-  /how can i help/i,
+  { pattern: /(^|\n)(?:codex|claude|gemini|cursor)>\s*(\n|$)/im, models: null },        // All CLIs
+  { pattern: /(^|\n)PS\s+[^\n>]*>\s*(\n|$)/m, models: ['codex'] },                      // PS prompt — Codex only (fires before Claude Code starts)
+  { pattern: /how can i help/i, models: ['gemini'] },                                     // Gemini greeting
 ];
 
 // Terminal theme configuration — Cyberpunk
@@ -914,19 +914,14 @@ function triggerStartupInjection(paneId, state, reason) {
     }
     state.sendTimeoutId = null;
 
-    // Session 69: Gemini identity - match doSendToPane pattern exactly
-    // Previous attempt failed because it was missing Ctrl+U clear
+    // Startup identity injection: write text, then Enter (no pre-clear).
     if (state.isGemini) {
       try {
-        // Step 1: Clear any garbage in input line (matches doSendToPane Gemini path)
-        await window.hivemind.pty.write(String(paneId), '\x15');
-        log.info('spawnAgent', `Gemini identity: cleared input line for ${role} (pane ${paneId})`);
-
-        // Step 2: Write the identity text
+        // Step 1: Write the identity text
         await window.hivemind.pty.write(String(paneId), identityMsg);
         log.info('spawnAgent', `Gemini identity text written for ${role} (pane ${paneId})`);
 
-        // Step 3: Wait 200ms then send Enter (Gemini's bufferFastReturn threshold = 30ms, 200ms = ~7x margin)
+        // Step 2: Wait 200ms then send Enter (Gemini's bufferFastReturn threshold = 30ms, 200ms = ~7x margin)
         await new Promise(resolve => setTimeout(resolve, 200));
         await window.hivemind.pty.write(String(paneId), '\r');
         log.info('spawnAgent', `Gemini identity Enter sent for ${role} (pane ${paneId}) [ready:${reason}]`);
@@ -934,12 +929,13 @@ function triggerStartupInjection(paneId, state, reason) {
         log.error('spawnAgent', `Gemini identity injection failed for pane ${paneId}:`, err);
       }
     } else {
-      sendToPane(paneId, identityMsg, {
-        verifySubmitAccepted: true,
-        startupInjection: true,
-        acceptOutputTransitionOnly: true,
-      });
-      log.info('spawnAgent', `Identity injected for ${role} (pane ${paneId}) [ready:${reason}]`);
+      try {
+        await window.hivemind.pty.write(String(paneId), identityMsg);
+        await window.hivemind.pty.write(String(paneId), '\r');
+        log.info('spawnAgent', `Identity injected for ${role} (pane ${paneId}) [ready:${reason}] [raw-write]`);
+      } catch (err) {
+        log.error('spawnAgent', `Identity injection failed for pane ${paneId}:`, err);
+      }
     }
     startupInjectionState.delete(String(paneId));
   }, identityDelayMs);
@@ -996,7 +992,13 @@ function handleStartupOutput(paneId, data) {
   // Gemini CLI takes 8-12s to start and its prompt is easily confused with shell prompt.
   // We ONLY trust patternReady (e.g. "how can i help" or a clean "> ") or timeout for Gemini.
   const promptReady = state.isGemini ? false : isPromptReady(paneId);
-  const patternReady = STARTUP_READY_PATTERNS.some((pattern) => pattern.test(state.buffer));
+  // S125 fix: Filter patterns by model type. The PS prompt appears BEFORE Claude Code starts
+  // (~300ms after spawn), causing identity injection to fire into the shell where `#` is a
+  // comment and the message is silently ignored. Only check patterns valid for this model.
+  const patternReady = STARTUP_READY_PATTERNS.some(({ pattern, models }) => {
+    if (models && !models.includes(state.modelType)) return false;
+    return pattern.test(state.buffer);
+  });
   if (promptReady || patternReady) {
     triggerStartupInjection(paneId, state, promptReady ? 'prompt' : 'pattern');
   }
