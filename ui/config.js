@@ -25,7 +25,8 @@ const PIPE_PATH = os.platform() === 'win32'
 const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
 
 // Instance working directories (role injection)
-// Short folder names - prestart script ensures folders exist with these names
+// cwd = instance dir so each agent loads their role-specific CLAUDE.md/AGENTS.md/GEMINI.md
+// Agents must use absolute paths (D:/projects/hivemind/ui/...) to access the full codebase
 const INSTANCE_DIRS = {
   '1': path.join(WORKSPACE_PATH, 'instances', 'arch'),   // Architect (+ Frontend/Reviewer as internal teammates)
   '2': path.join(WORKSPACE_PATH, 'instances', 'devops'), // DevOps (Infra + Backend combined)

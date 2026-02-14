@@ -23,6 +23,8 @@ function asNonEmptyString(value, fallback = '') {
 }
 
 function asFiniteNumber(value, fallback = null) {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'string' && value.trim().length === 0) return fallback;
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return numeric;

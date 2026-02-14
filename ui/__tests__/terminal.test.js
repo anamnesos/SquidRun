@@ -147,6 +147,8 @@ describe('terminal.js module', () => {
     }
 
     // Reset mocks
+    mockHivemind.pty.write.mockResolvedValue();
+    mockHivemind.claude.spawn.mockResolvedValue({ success: true, command: 'claude' });
     mockDocument.getElementById.mockReturnValue(null);
     mockDocument.querySelector.mockReturnValue(null);
     mockDocument.querySelectorAll.mockReturnValue([]);
@@ -662,6 +664,7 @@ describe('terminal.js module', () => {
       expect(statusCb).toHaveBeenCalledWith('5', 'Spawn failed');
       jest.useFakeTimers();
     });
+
   });
 
   describe('spawnAllAgents', () => {

@@ -853,8 +853,7 @@ describe('Terminal Injection', () => {
       await jest.advanceTimersByTimeAsync(100);
       await promise;
 
-      // Gemini uses PTY: clear, sanitized text, then Enter via \r
-      expect(mockPty.write).toHaveBeenCalledWith('1', '\x15', expect.any(Object)); // Clear line
+      // Gemini uses PTY: sanitized text, then Enter via \r
       expect(mockPty.write).toHaveBeenCalledWith('1', 'test command', expect.any(Object)); // Sanitized text (trailing \r stripped)
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object)); // Enter sent via PTY
       expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled(); // No DOM events for Gemini
@@ -864,8 +863,7 @@ describe('Terminal Injection', () => {
 
     test('handles Gemini PTY write failure', async () => {
       mockOptions.isGeminiPane.mockReturnValue(true);
-      mockPty.write.mockResolvedValueOnce(undefined) // Clear-line succeeds
-        .mockRejectedValueOnce(new Error('Write failed')); // Text write fails
+      mockPty.write.mockRejectedValueOnce(new Error('Write failed')); // Text write fails
       const onComplete = jest.fn();
 
       await controller.doSendToPane('1', 'test\r', onComplete);
@@ -888,25 +886,21 @@ describe('Terminal Injection', () => {
       await promise;
 
       // Gemini always sends Enter unconditionally (same as Claude's shouldSendEnter)
-      expect(mockPty.write).toHaveBeenCalledWith('1', '\x15', expect.any(Object)); // Clear line
       expect(mockPty.write).toHaveBeenCalledWith('1', 'partial text', expect.any(Object)); // Text
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object)); // Enter always sent
-      expect(mockPty.write).toHaveBeenCalledTimes(3); // Clear + text + Enter
+      expect(mockPty.write).toHaveBeenCalledTimes(2); // Text + Enter
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
 
     test('writes text to PTY', async () => {
       await controller.doSendToPane('1', 'test message\r', jest.fn());
 
-      expect(mockPty.write).toHaveBeenCalledWith('1', '\x15', expect.any(Object)); // Clear line
       expect(mockPty.write).toHaveBeenCalledWith('1', 'test message', expect.any(Object));
       expect(mockPty.writeChunked).not.toHaveBeenCalled();
     });
 
     test('handles PTY write failure', async () => {
-      mockPty.write
-        .mockResolvedValueOnce(undefined) // Clear-line succeeds
-        .mockRejectedValueOnce(new Error('Write failed')); // Message write fails
+      mockPty.write.mockRejectedValueOnce(new Error('Write failed')); // Message write fails
       const onComplete = jest.fn();
 
       await controller.doSendToPane('1', 'test\r', onComplete);
@@ -916,9 +910,7 @@ describe('Terminal Injection', () => {
 
     test('treats writeChunked success=false as PTY write failure', async () => {
       const longText = `${'A'.repeat(9000)}\r`;
-      mockPty.write
-        .mockResolvedValueOnce(undefined) // Clear-line succeeds
-        .mockResolvedValueOnce(undefined); // Home reset succeeds
+      mockPty.write.mockResolvedValueOnce(undefined); // Home reset succeeds
       mockPty.writeChunked.mockResolvedValueOnce({ success: false, error: 'write ack timeout after 2500ms' });
       const onComplete = jest.fn();
 
@@ -928,20 +920,11 @@ describe('Terminal Injection', () => {
       expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
     });
 
-    test('handles PTY clear-line failure gracefully', async () => {
-      mockPty.write.mockRejectedValueOnce(new Error('Clear failed'))
-        .mockResolvedValueOnce(undefined);
-
+    test('does not send Ctrl+U clear-line before PTY writes', async () => {
       await controller.doSendToPane('1', 'test\r', jest.fn());
 
-      // Should continue with text write
-      expect(mockPty.write).toHaveBeenCalledTimes(2);
-      expect(mockPty.writeChunked).not.toHaveBeenCalled();
-      expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.stringContaining('PTY clear-line failed'),
-        expect.any(Error)
-      );
+      const ptyWrites = mockPty.write.mock.calls.map(call => call[1]);
+      expect(ptyWrites).not.toContain('\x15');
     });
 
     test('chunks long Claude writes and logs pre-write fingerprint', async () => {
@@ -950,7 +933,7 @@ describe('Terminal Injection', () => {
       await controller.doSendToPane('1', longText, jest.fn());
 
       const ptyWrites = mockPty.write.mock.calls.map(call => call[1]);
-      expect(ptyWrites).toEqual(['\x15', '\x1b[H']); // Ctrl+U + Home reset
+      expect(ptyWrites).toEqual(['\x1b[H']); // Home reset only (no Ctrl+U clear)
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
         'A'.repeat(9000),

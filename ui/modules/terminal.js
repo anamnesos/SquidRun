@@ -30,6 +30,9 @@ const {
   FOCUS_RETRY_DELAY_MS,
   STARTUP_READY_TIMEOUT_MS,
   STARTUP_IDENTITY_DELAY_MS,
+  STARTUP_IDENTITY_VERIFY_DELAY_MS,
+  STARTUP_IDENTITY_RETRY_DELAY_MS,
+  STARTUP_IDENTITY_MAX_ATTEMPTS,
   STARTUP_IDENTITY_DELAY_CODEX_MS,
   STARTUP_READY_BUFFER_MAX,
   GEMINI_ENTER_DELAY_MS,
@@ -871,6 +874,36 @@ function hasStartupSessionHeader(scrollback, paneId) {
   return /#\s*HIVEMIND SESSION:/i.test(String(scrollback || ''));
 }
 
+function getStartupScrollbackSnapshot(paneId, maxLines = 400) {
+  const terminal = terminals.get(String(paneId));
+  const buffer = terminal?.buffer?.active;
+  if (!buffer || typeof buffer.getLine !== 'function') {
+    return '';
+  }
+
+  const safeMaxLines = Math.max(1, Number(maxLines) || 400);
+  const length = Number(buffer.length);
+  const lines = [];
+
+  if (Number.isFinite(length) && length > 0) {
+    const start = Math.max(0, length - safeMaxLines);
+    for (let i = start; i < length; i += 1) {
+      const line = buffer.getLine(i);
+      if (line && typeof line.translateToString === 'function') {
+        lines.push(line.translateToString(true));
+      }
+    }
+  } else {
+    const cursorY = Math.max(0, Number(buffer.cursorY) || 0);
+    const line = buffer.getLine(cursorY);
+    if (line && typeof line.translateToString === 'function') {
+      lines.push(line.translateToString(true));
+    }
+  }
+
+  return lines.join('\n');
+}
+
 function clearStartupInjection(paneId) {
   const state = startupInjectionState.get(String(paneId));
   if (!state) return;
@@ -891,54 +924,159 @@ function hasPendingStartupInjection(paneId) {
   return Boolean(state && !state.completed && !state.cancelled);
 }
 
-function triggerStartupInjection(paneId, state, reason) {
-  if (!state || state.completed) return;
+function scheduleStartupIdentityAttempt(paneId, state, reason, delayMs) {
+  if (state.sendTimeoutId) {
+    clearTimeout(state.sendTimeoutId);
+    state.sendTimeoutId = null;
+  }
+
+  const safeDelayMs = Math.max(0, Number(delayMs) || 0);
+  state.sendTimeoutId = setTimeout(() => {
+    runStartupIdentityAttempt(paneId, state, reason).catch((err) => {
+      log.error('spawnAgent', `Startup identity attempt crashed for pane ${paneId}:`, err);
+      startupInjectionState.delete(String(paneId));
+    });
+  }, safeDelayMs);
+}
+
+async function sendStartupIdentityViaInjection(paneId, identityMsg) {
+  const id = String(paneId);
+  return new Promise((resolve, reject) => {
+    if (typeof sendToPane !== 'function') {
+      reject(new Error('sendToPane unavailable'));
+      return;
+    }
+
+    let settled = false;
+    const timeoutMs = Math.max(
+      2000,
+      Number(STARTUP_IDENTITY_VERIFY_DELAY_MS) || 1200
+    );
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve({ success: false, reason: 'startup_send_timeout' });
+    }, timeoutMs);
+
+    const settle = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve(result || { success: true });
+    };
+
+    try {
+      sendToPane(id, identityMsg, {
+        priority: true,
+        immediate: true,
+        startupInjection: true,
+        verifySubmitAccepted: false,
+        onComplete: settle,
+      });
+    } catch (err) {
+      clearTimeout(timeoutId);
+      reject(err);
+    }
+  });
+}
+
+async function runStartupIdentityAttempt(paneId, state, reason) {
+  const id = String(paneId);
+  const current = startupInjectionState.get(id);
+  if (!current || current !== state || current.cancelled || current.completed) {
+    return;
+  }
+  state.sendTimeoutId = null;
+
+  const role = PANE_ROLES[id] || `Pane ${id}`;
+  const identityMsg = state.identityMsg || `# HIVEMIND SESSION: ${role} - Started ${new Date().toISOString().split('T')[0]}`;
+  state.identityMsg = identityMsg;
+  state.attemptCount = (Number(state.attemptCount) || 0) + 1;
+  const attempt = state.attemptCount;
+
+  const maxAttempts = Math.max(1, Number(STARTUP_IDENTITY_MAX_ATTEMPTS) || 3);
+  const verifyDelayMs = Math.max(250, Number(STARTUP_IDENTITY_VERIFY_DELAY_MS) || 1200);
+  const retryDelayMs = Math.max(500, Number(STARTUP_IDENTITY_RETRY_DELAY_MS) || 2000);
+
+  try {
+    let deliveryMethod = 'raw-write';
+    if (!state.isGemini) {
+      const sendResult = await sendStartupIdentityViaInjection(id, identityMsg);
+      if (!sendResult?.success) {
+        throw new Error(sendResult?.reason || 'startup_identity_send_failed');
+      }
+      deliveryMethod = 'send-to-pane';
+    } else {
+      await window.hivemind.pty.write(id, identityMsg);
+      await new Promise(resolve => setTimeout(resolve, 200));
+      await window.hivemind.pty.write(id, '\r');
+    }
+
+    log.info(
+      'spawnAgent',
+      `Identity injected for ${role} (pane ${id}) [ready:${reason}] [attempt:${attempt}/${maxAttempts}] [${deliveryMethod}]`
+    );
+  } catch (err) {
+    log.error('spawnAgent', `Identity injection failed for pane ${id} (attempt ${attempt}/${maxAttempts}):`, err);
+    if (attempt < maxAttempts) {
+      scheduleStartupIdentityAttempt(id, state, reason, retryDelayMs);
+    } else {
+      state.completed = true;
+      startupInjectionState.delete(id);
+      log.error('spawnAgent', `Identity injection exhausted retries for pane ${id} after ${maxAttempts} attempts`);
+    }
+    return;
+  }
+
+  await new Promise(resolve => setTimeout(resolve, verifyDelayMs));
+  const latest = startupInjectionState.get(id);
+  if (!latest || latest !== state || latest.cancelled || latest.completed) {
+    return;
+  }
+
+  const scrollback = getStartupScrollbackSnapshot(id);
+  const verified = hasStartupSessionHeader(scrollback, id);
+  if (verified) {
+    state.completed = true;
+    startupInjectionState.delete(id);
+    log.info('spawnAgent', `Identity verified in scrollback for ${role} (pane ${id}) [attempt:${attempt}/${maxAttempts}]`);
+    return;
+  }
+
+  if (attempt < maxAttempts) {
+    log.warn(
+      'spawnAgent',
+      `Identity not visible in scrollback for ${role} (pane ${id}) after attempt ${attempt}/${maxAttempts}; retrying in ${retryDelayMs}ms`
+    );
+    scheduleStartupIdentityAttempt(id, state, reason, retryDelayMs);
+    return;
+  }
+
   state.completed = true;
+  startupInjectionState.delete(id);
+  log.error(
+    'spawnAgent',
+    `Identity injection failed verification for ${role} (pane ${id}) after ${maxAttempts} attempts`
+  );
+}
+
+function triggerStartupInjection(paneId, state, reason) {
+  if (!state || state.completed || state.triggered) return;
+  state.triggered = true;
   state.cancelled = false;
   if (state.timeoutId) {
     clearTimeout(state.timeoutId);
     state.timeoutId = null;
   }
 
-  const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
-  const timestamp = new Date().toISOString().split('T')[0];
-  const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
-
   // Session 69 fix: Gemini needs longer delay - CLI takes longer to initialize input handling
   const identityDelayMs = state.isGemini ? 1000 : STARTUP_IDENTITY_DELAY_MS;
+  const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
+  const timestamp = new Date().toISOString().split('T')[0];
+  state.identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
+  state.attemptCount = 0;
 
-  state.sendTimeoutId = setTimeout(async () => {
-    const current = startupInjectionState.get(String(paneId));
-    if (!current || current !== state || current.cancelled) {
-      return;
-    }
-    state.sendTimeoutId = null;
-
-    // Startup identity injection: write text, then Enter (no pre-clear).
-    if (state.isGemini) {
-      try {
-        // Step 1: Write the identity text
-        await window.hivemind.pty.write(String(paneId), identityMsg);
-        log.info('spawnAgent', `Gemini identity text written for ${role} (pane ${paneId})`);
-
-        // Step 2: Wait 200ms then send Enter (Gemini's bufferFastReturn threshold = 30ms, 200ms = ~7x margin)
-        await new Promise(resolve => setTimeout(resolve, 200));
-        await window.hivemind.pty.write(String(paneId), '\r');
-        log.info('spawnAgent', `Gemini identity Enter sent for ${role} (pane ${paneId}) [ready:${reason}]`);
-      } catch (err) {
-        log.error('spawnAgent', `Gemini identity injection failed for pane ${paneId}:`, err);
-      }
-    } else {
-      try {
-        await window.hivemind.pty.write(String(paneId), identityMsg);
-        await window.hivemind.pty.write(String(paneId), '\r');
-        log.info('spawnAgent', `Identity injected for ${role} (pane ${paneId}) [ready:${reason}] [raw-write]`);
-      } catch (err) {
-        log.error('spawnAgent', `Identity injection failed for pane ${paneId}:`, err);
-      }
-    }
-    startupInjectionState.delete(String(paneId));
-  }, identityDelayMs);
+  scheduleStartupIdentityAttempt(String(paneId), state, reason, identityDelayMs);
 
   // Startup context injection disabled: CLI tools load context natively.
 }
@@ -956,10 +1094,13 @@ function armStartupInjection(paneId, options = {}) {
   const state = {
     buffer: '',
     completed: false,
+    triggered: false,
     cancelled: false,
     modelType: options.modelType || 'claude',
     isGemini: Boolean(options.isGemini),
     source: options.source || 'unknown',
+    attemptCount: 0,
+    identityMsg: null,
     timeoutId: null,
     sendTimeoutId: null,
   };
@@ -982,7 +1123,7 @@ function armStartupInjection(paneId, options = {}) {
 
 function handleStartupOutput(paneId, data) {
   const state = startupInjectionState.get(String(paneId));
-  if (!state || state.completed) return;
+  if (!state || state.completed || state.triggered) return;
 
   const cleaned = stripAnsiForStartup(data);
   if (cleaned) {

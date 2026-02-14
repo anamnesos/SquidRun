@@ -766,21 +766,20 @@ function processThrottleQueue(paneId) {
     traceContext: traceContext || undefined,
     onComplete: (result) => {
       const accepted = !result || result.success !== false;
-      const verified = accepted && result?.verified !== false;
       if (!accepted) {
         log.warn('Daemon', `Trigger delivery failed for pane ${paneId}: ${result.reason || 'unknown'}`);
         uiView.showDeliveryFailed(paneId, result.reason || 'Delivery failed');
-      } else if (verified) {
+      } else {
+        // Message was typed + Enter pressed = delivered.
+        // Verification is best-effort; unverified does NOT mean undelivered.
+        const verified = result?.verified !== false;
+        if (!verified) {
+          log.info('Daemon', `Trigger delivery sent for pane ${paneId} (verification skipped: ${result?.reason || 'agent busy'})`);
+        }
         uiView.showDeliveryIndicator(paneId, 'delivered');
         if (deliveryId) {
           ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
         }
-      } else {
-        log.warn(
-          'Daemon',
-          `Trigger delivery unverified for pane ${paneId}: ${result?.reason || result?.status || 'unverified'}`
-        );
-        uiView.showDeliveryIndicator(paneId, 'unverified');
       }
 
       throttlingPanes.delete(paneId);

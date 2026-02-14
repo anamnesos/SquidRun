@@ -364,8 +364,8 @@ describe('Injection Events', () => {
 
     test('emits inject.failed on Gemini PTY write failure', async () => {
       terminals.set('gemini', {});
-      // First write (Ctrl+U) succeeds, second (text) fails
-      mockPty.write.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('write failed'));
+      // First write (text) fails
+      mockPty.write.mockRejectedValueOnce(new Error('write failed'));
 
       const resultPromise = new Promise((resolve) => {
         controller.doSendToPane('gemini', 'test', resolve);
@@ -382,9 +382,8 @@ describe('Injection Events', () => {
 
     test('emits inject.failed on Gemini Enter failure', async () => {
       terminals.set('gemini', {});
-      // First write (Ctrl+U) succeeds, second (text) succeeds, third (Enter) fails
+      // First write (text) succeeds, second (Enter) fails
       mockPty.write
-        .mockResolvedValueOnce(undefined)
         .mockResolvedValueOnce(undefined)
         .mockRejectedValueOnce(new Error('enter failed'));
 
@@ -431,7 +430,7 @@ describe('Injection Events', () => {
         controller.doSendToPane('1', 'claude test', resolve);
       });
 
-      // Advance past Ctrl+U write and text write (async), then Enter delay
+      // Advance past text write (async), then Enter delay
       await jest.advanceTimersByTimeAsync(200);
       await resultPromise;
 
@@ -466,10 +465,8 @@ describe('Injection Events', () => {
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('1', mockTerminal);
       global.document.activeElement = mockTextarea;
-      // First write (Ctrl+U) succeeds, second (Home reset) succeeds, payload write fails
-      mockPty.write
-        .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(new Error('write error'));
+      // First payload write fails
+      mockPty.write.mockRejectedValueOnce(new Error('write error'));
 
       const resultPromise = new Promise((resolve) => {
         controller.doSendToPane('1', 'test', resolve);

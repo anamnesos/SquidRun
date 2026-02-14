@@ -48,6 +48,7 @@ const { registerWhisperHandlers } = require('./whisper-handlers');
 const { registerEvidenceLedgerHandlers } = require('./evidence-ledger-handlers');
 const { registerContractPromotionHandlers } = require('./contract-promotion-handlers');
 const { registerTeamMemoryHandlers } = require('./team-memory-handlers');
+const HANDLER_REREGISTER_FLAG = '__hivemindHandlerReregister';
 
 const DEFAULT_HANDLERS = [
   registerMcpHandlers,
@@ -124,7 +125,10 @@ function setupAllHandlers(registry, ctx, deps) {
   }
 
   // Ensure we remove old ipcMain handlers/listeners before re-registering.
-  unregisterAllHandlers(registry, ctx, deps);
+  const unregisterDeps = (deps && typeof deps === 'object' && !Array.isArray(deps))
+    ? { ...deps, [HANDLER_REREGISTER_FLAG]: true }
+    : { [HANDLER_REREGISTER_FLAG]: true };
+  unregisterAllHandlers(registry, ctx, unregisterDeps);
   registry.setup(ctx, deps);
 }
 
@@ -133,4 +137,5 @@ module.exports = {
   unregisterAllHandlers,
   setupAllHandlers,
   DEFAULT_HANDLERS,
+  HANDLER_REREGISTER_FLAG,
 };

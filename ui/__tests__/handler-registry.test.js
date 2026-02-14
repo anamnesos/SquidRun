@@ -1,6 +1,7 @@
 const {
   setupAllHandlers,
   unregisterAllHandlers,
+  HANDLER_REREGISTER_FLAG,
 } = require('../modules/ipc/handler-registry');
 
 describe('IPC handler registry lifecycle', () => {
@@ -14,7 +15,13 @@ describe('IPC handler registry lifecycle', () => {
 
     setupAllHandlers(registry, ctx, deps);
 
-    expect(registry.unsetup).toHaveBeenCalledWith(ctx, deps);
+    expect(registry.unsetup).toHaveBeenCalledWith(
+      ctx,
+      expect.objectContaining({
+        ...deps,
+        [HANDLER_REREGISTER_FLAG]: true,
+      })
+    );
     expect(registry.setup).toHaveBeenCalledWith(ctx, deps);
     expect(registry.unsetup.mock.invocationCallOrder[0]).toBeLessThan(
       registry.setup.mock.invocationCallOrder[0]

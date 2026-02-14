@@ -93,6 +93,20 @@ maybeDescribe('evidence-ledger-investigator', () => {
     expect(list.some((item) => item.incidentId === created.incidentId)).toBe(true);
   });
 
+  test('null nowMs falls back to current time instead of zero', () => {
+    const before = Date.now();
+    const created = investigator.createIncident({
+      title: 'Null timestamp fallback',
+      createdBy: 'devops',
+      nowMs: null,
+    });
+    expect(created.ok).toBe(true);
+
+    const incident = investigator.getIncident(created.incidentId);
+    expect(incident.createdAtMs).toBeGreaterThanOrEqual(before);
+    expect(incident.createdAtMs).not.toBe(0);
+  });
+
   test('assertion CRUD: add -> update -> supersede chain', () => {
     const created = investigator.createIncident({
       title: 'ERR-ASSERT flow',

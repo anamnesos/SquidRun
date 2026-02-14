@@ -629,7 +629,7 @@ describe('daemon-handlers.js module', () => {
         );
       });
 
-      test('should only emit trigger-delivery-ack when terminal delivery is verified', () => {
+      test('should emit trigger-delivery-ack even when terminal delivery is unverified (success=true)', () => {
         let injectHandler;
         ipcRenderer.on.mockImplementation((channel, handler) => {
           if (channel === 'inject-message') injectHandler = handler;
@@ -642,8 +642,9 @@ describe('daemon-handlers.js module', () => {
         injectHandler({}, { panes: ['5'], message: 'msg', deliveryId: 'delivery-unverified-1' });
         jest.runAllTimers();
 
-        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('5', 'unverified');
-        expect(ipcRenderer.send).not.toHaveBeenCalledWith('trigger-delivery-ack', expect.anything());
+        // Unverified but success=true means message was typed + Enter pressed = delivered
+        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('5', 'delivered');
+        expect(ipcRenderer.send).toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-unverified-1', paneId: '5' });
       });
 
       test('should emit trigger-delivery-ack when terminal delivery is verified', () => {

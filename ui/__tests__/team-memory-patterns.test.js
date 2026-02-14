@@ -5,6 +5,7 @@ const path = require('path');
 const { TeamMemoryStore, loadSqliteDriver } = require('../modules/team-memory/store');
 const { TeamMemoryClaims } = require('../modules/team-memory/claims');
 const { TeamMemoryPatterns } = require('../modules/team-memory/patterns');
+const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
 const teamMemory = require('../modules/team-memory');
 
 const maybeDescribe = loadSqliteDriver() ? describe : describe.skip;
@@ -12,6 +13,7 @@ const maybeDescribe = loadSqliteDriver() ? describe : describe.skip;
 maybeDescribe('team-memory patterns module', () => {
   let tempDir;
   let dbPath;
+  let ledgerDbPath;
   let spoolPath;
   let store;
   let claims;
@@ -20,6 +22,7 @@ maybeDescribe('team-memory patterns module', () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-team-patterns-'));
     dbPath = path.join(tempDir, 'team-memory.sqlite');
+    ledgerDbPath = path.join(tempDir, 'evidence-ledger.db');
     spoolPath = path.join(tempDir, 'pattern-spool.jsonl');
     store = new TeamMemoryStore({ dbPath });
     expect(store.init().ok).toBe(true);
@@ -124,16 +127,24 @@ maybeDescribe('team-memory patterns module', () => {
       agent: 'devops',
       outcome: 'failure',
       session: 's_501',
-    }, { spoolPath });
+    }, { spoolPath, evidenceLedgerDbPath: ledgerDbPath });
     expect(append.ok).toBe(true);
+    expect(append.ledger).toEqual(expect.objectContaining({ ok: true }));
     const appendSecond = await teamMemory.appendPatternHookEvent({
       scope: 'ui/modules/triggers.js',
       agent: 'analyst',
       outcome: 'failure',
       session: 's_502',
-    }, { spoolPath });
+    }, { spoolPath, evidenceLedgerDbPath: ledgerDbPath });
     expect(appendSecond.ok).toBe(true);
+    expect(appendSecond.ledger).toEqual(expect.objectContaining({ ok: true }));
     expect(fs.existsSync(spoolPath)).toBe(true);
+
+    const evidenceStore = new EvidenceLedgerStore({ dbPath: ledgerDbPath });
+    expect(evidenceStore.init().ok).toBe(true);
+    const hookEvents = evidenceStore.queryEvents({ source: 'team-memory.pattern-hook', limit: 10 });
+    expect(hookEvents.length).toBeGreaterThanOrEqual(2);
+    evidenceStore.close();
 
     const before = await teamMemory.executeTeamMemoryOperation('query-patterns', {
       patternType: 'failure',
