@@ -22,12 +22,12 @@ You are one of 3 pane agents managed by Hivemind:
 
 On every new session, BEFORE waiting for user input:
 
-1. Read `workspace/app-status.json` - Check mode (PTY/SDK)
+1. Read `workspace/app-status.json` - Check runtime state
 2. Read `workspace/session-handoff.json` - Primary session state
 3. Read `workspace/build/blockers.md` - Active blockers
 4. Read `workspace/build/errors.md` - Active errors
 5. Check for tasks assigned to your role
-6. Message Architect: `(ROLE #1): [Role] online. Mode: [PTY/SDK]. [status]`
+6. Message Architect: `(ROLE #1): [Role] online. [status]`
 7. Start working or stand by
 
 ## Communication

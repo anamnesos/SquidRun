@@ -6,13 +6,15 @@
 
 ## Architecture (3-Pane Layout)
 
-| Pane | Role | Agent | CLI | Responsibilities |
-|------|------|-------|-----|------------------|
-| **1** | Architect | Claude (Opus) | `claude` | Coordination, architecture, git commits |
-| | + Frontend | Agent Teams teammate | (internal) | UI, renderer.js, CSS |
-| | + Reviewer | Agent Teams teammate | (internal) | Code review, quality gates |
-| **2** | DevOps | Codex | `codex` | CI/CD, deployment, daemon, processes, backend |
-| **5** | Analyst | Gemini | `gemini` | Debugging, profiling, root cause analysis |
+| Pane | Role | Responsibilities |
+|------|------|------------------|
+| **1** | Architect | Coordination, architecture, git commits |
+| | + Frontend | UI, renderer.js, CSS (Agent Teams teammate) |
+| | + Reviewer | Code review, quality gates (Agent Teams teammate) |
+| **2** | DevOps | CI/CD, deployment, daemon, processes, backend |
+| **5** | Analyst | Debugging, profiling, root cause analysis |
+
+**NOTE:** Models are runtime config. Check `ui/settings.json` → `paneCommands` for current CLI assignments. Any pane can run any CLI (Claude, Codex, Gemini).
 
 **Config source of truth:** `ui/config.js` (PANE_ROLES, PANE_IDS, ROLE_ID_MAP, TRIGGER_TARGETS)
 

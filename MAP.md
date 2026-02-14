@@ -8,11 +8,11 @@
 ## Quick Start (READ THIS FIRST)
 
 **What is this app?**
-Hivemind is an Electron desktop app that orchestrates 3 persistent AI agent instances (Claude, Gemini, Codex) working in parallel. Each agent has a specialized role (Architect, DevOps, Analyst) and coordinates with others through WebSocket messaging and file-based trigger fallback. Architect (Claude) has internal Frontend and Reviewer teammates via Agent Teams.
+Hivemind is an Electron desktop app that orchestrates 3 persistent AI agent instances working in parallel. Each agent has a specialized role (Architect, DevOps, Analyst) and can run any supported CLI (Claude, Codex, Gemini) — model assignment is runtime config in `ui/settings.json` → `paneCommands`. Agents coordinate through WebSocket messaging and file-based trigger fallback. Architect has internal Frontend and Reviewer teammates via Agent Teams.
 
 **How does it work?**
 - **Primary Mode (PTY):** 3 terminal processes managed by a persistent daemon. Native Claude/Codex CLIs and npm Gemini CLI run in pseudo-terminals. Messages sent via keyboard injection. Terminals survive app restarts.
-- **Alternative Mode (SDK):** 3 Python SDK sessions orchestrated by `hivemind-sdk-v2.py`. Direct API calls instead of keyboard injection. Supports true parallelism.
+- **Alternative Mode (SDK):** PURGED in Session 123. PTY is the only mode. Clean-slate SDK rebuild planned for separate project.
 - **Team Memory Runtime:** Shared claim-graph memory layer in `ui/modules/team-memory/` backed by SQLite WAL (`workspace/runtime/team-memory.sqlite`) with IPC + WebSocket integration.
 
 **Architecture Decision (Session 73+79):** Hybrid Consensus. Hivemind remains outer-loop coordinator. Native Agent Teams as opt-in per-pane enhancement. 3-pane layout (1=Architect, 2=DevOps, 5=Analyst). **Models are runtime config** — any pane can run any supported CLI (Claude, Codex, Gemini). Check `ui/settings.json` → `paneCommands` for current assignments.
@@ -63,7 +63,7 @@ hivemind/
 │   │   ├── ipc/                 # IPC handlers (57 files)
 │   │   │   ├── handler-registry.js  # Route table
 │   │   │   ├── pty-handlers.js      # Terminal control
-│   │   │   ├── sdk-handlers.js      # SDK mode
+│   │   │   ├── evidence-ledger-handlers.js # Evidence Ledger IPC
 │   │   │   ├── team-memory-handlers.js # Team Memory IPC endpoints
 │   │   │   └── ...
 │   │   │
@@ -92,15 +92,12 @@ hivemind/
 │   │   │   └── project-scaffolder.js
 │   │   │
 │   │   ├── websocket-server.js  # WebSocket server for agent messaging (port 0 for ephemeral binding in tests)
-│   │   ├── sdk-renderer.js      # SDK mode renderer
+│   │   ├── constants.js          # Shared constants
 │   │   ├── model-selector.js    # Model selection logic
 │   │   ├── smart-routing.js     # Smart message routing
 │   │   ├── gemini-oracle.js     # Gemini Oracle integration
 │   │   └── ...                  # Other utilities
 │   │
-│   ├── sdk-ui/                  # Organic UI v2
-│   │   ├── organic-ui.js        # Rounded containers, visual streams
-│   │   └── bubble-canvas.js     # Legacy bubble UI
 │   │
 │   ├── scripts/                 # Utility scripts
 │   │   ├── hm-send.js           # WebSocket messaging CLI
@@ -220,8 +217,8 @@ hivemind/
 - **Purpose:** Unified causal event log replacing prose handoffs with queryable evidence system.
 - **Three views:** Pipeline trace graph (DevOps), investigation timeline (Analyst), session memory (Architect).
 - **Storage:** SQLite WAL mode, single writer in daemon/main. Tables: events, edges, spans + Slice 2: incidents, assertions, verdicts, evidence bindings.
-- **Spec:** `workspace/build/evidence-ledger-slice1-spec.md` (infra), `evidence-ledger-query-spec.md` (query), `evidence-ledger-slice2-spec.md` (investigator workspace).
-- **Phasing:** Slice 1 (pipeline ledger) DONE → Slice 2 (investigator workspace) IN PROGRESS → Slice 3 (cross-session decision memory).
+- **Spec:** `workspace/build/evidence-ledger-slice1-spec.md` (infra), `evidence-ledger-query-spec.md` (query), `evidence-ledger-slice2-spec.md` (analyst workspace).
+- **Phasing:** Slice 1 (pipeline ledger) DONE → Slice 2 (analyst workspace) IN PROGRESS → Slice 3 (cross-session decision memory).
 
 ### Team Memory Runtime (Phases 0-3 complete, Phase 4 in progress)
 

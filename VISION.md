@@ -4,7 +4,7 @@
 
 **"Service as a Software"** — cross-model AI orchestration for everyone.
 
-One app. Multiple AI models — Claude, OpenAI, Gemini — working together in organized panes. Each pane can run its own agent team behind the scenes, so you get the power of many agents without your screen drowning in windows.
+One app. Multiple AI models working together in organized panes. Each pane runs a specialized agent role and can use any supported CLI — Claude Code, Codex, Gemini. Model assignments are runtime config, so you swap freely without restructuring.
 
 ## The Gap We Fill
 
@@ -59,11 +59,11 @@ Every business, every project, every user works differently. Hivemind doesn't fo
 
 The app auto-detects which AI CLIs you have installed and configures itself. Have all three? Full cross-model power. Just Claude? All panes run Claude — still useful, still parallel.
 
-## Architecture Decision: SDK over PTY
+## Architecture Decision: PTY Mode
 
-**SDK mode** is the primary path. PTY (terminal injection) is maintained as fallback for subscription-only users.
+**PTY mode** (terminal emulation) is the only mode. SDK mode was explored and purged in Session 123 (commit ad447de) — it will be rebuilt separately when mature.
 
-SDK = reliable API calls, explicit errors, predictable behavior. Aligns with "Service as a Software."
+PTY = real terminal sessions, works with any CLI (Claude, Codex, Gemini), subscription-only compatible. SDK rebuild planned as separate project.
 
 ## Who This Is For
 
