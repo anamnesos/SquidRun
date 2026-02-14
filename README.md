@@ -139,7 +139,6 @@ hivemind/
 │   └── __tests__/
 ├── workspace/
 │   ├── app-status.json
-│   ├── session-handoff.json
 │   ├── intent/
 │   ├── triggers/
 │   ├── runtime/

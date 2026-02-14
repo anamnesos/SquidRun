@@ -38,7 +38,7 @@ session-state.json
 ui/session-state.json
 *.tmp
 
-# Instance working directories (local context)
+# Instance working directories (removed S127, kept for safety)
 workspace/instances/
 
 # Agent runtime data
@@ -58,25 +58,31 @@ workspace/triggers/
 # Agent-generated reports (ephemeral)
 workspace/!!_*
 
-# Build plans and reviews (workspace artifacts, not source)
+# Build artifacts (old reviews, investigations, designs — nuked S128)
 workspace/build/reviews/
-workspace/build/*-plan.md
-workspace/build/*-spec.md
-workspace/build/*-analysis.md
-workspace/build/codex-activity-indicators.md
-workspace/build/oracle-ui-prep.md
-workspace/build/organic-ui-performance-guide.md
-workspace/build/overnight-plan.md
-workspace/build/renderer-analysis.md
+workspace/build/investigations/
+workspace/build/designs/
+workspace/build/integration/
 
 # Test coverage
 ui/coverage/
 ui/coverage-output.txt
 
 # Temp scripts
+workspace/scripts/*.ps1
+workspace/inspect_dbs*.js
 workspace/capture.ps1
 workspace/oracle-qa.js
 workspace/oracle-test.js
+
+# Runtime state (regenerated each session)
+workspace/context-snapshots/
+workspace/generated-images/
+workspace/image-gen-history.json
+workspace/runtime/
+workspace/pipeline.json
+workspace/contract-stats.json
+workspace/performance-audit.md
 
 # Screenshots (user-specific)
 workspace/screenshots/

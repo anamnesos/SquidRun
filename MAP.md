@@ -116,7 +116,6 @@ hivemind/
 │
 ├── workspace/                   # Shared context for agents
 │   ├── app-status.json          # Runtime state (mode, version)
-│   ├── session-handoff.json     # Primary session state (tasks, roadmap, issues, stats)
 │   ├── shared_context.md        # Full session context
 │   │
 │   ├── build/                   # Build artifacts, reviews, decisions

@@ -22,7 +22,6 @@ Every multi-agent memory system today is a library — store, search, retrieve. 
 | TraceId propagation (7 files) | SHIPPED | Across IPC/trigger/daemon pipeline |
 | Intent Board | ACTIVE | `workspace/intent/*.json` |
 | War Room log | ACTIVE | `workspace/war-room.log` |
-| Session Handoff | ACTIVE | `workspace/session-handoff.json` |
 | Arch hooks (SessionStart/End, PreCompact) | ACTIVE | `workspace/scripts/arch-hooks.js` |
 | Ana hooks (SessionStart/End, AfterTool) | ACTIVE | `workspace/scripts/ana-hooks.js` |
 | MEMORY.md (Claude auto-memory) | ACTIVE | Per-instance `.claude/` dirs |
