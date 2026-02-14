@@ -147,15 +147,15 @@ class HivemindApp {
       }
       teamMemory.startIntegritySweep({
         intervalMs: TEAM_MEMORY_INTEGRITY_SWEEP_INTERVAL_MS,
-        immediate: false,
+        immediate: true,
       });
       teamMemory.startBeliefSnapshotSweep({
         intervalMs: TEAM_MEMORY_BELIEF_SNAPSHOT_INTERVAL_MS,
-        immediate: false,
+        immediate: true,
       });
       teamMemory.startPatternMiningSweep({
         intervalMs: TEAM_MEMORY_PATTERN_MINING_INTERVAL_MS,
-        immediate: false,
+        immediate: true,
         onGuardAction: (entry) => {
           if (!entry || typeof entry !== 'object') return;
           const paneId = String(this.resolveTargetToPane(entry?.event?.target || '') || '1');

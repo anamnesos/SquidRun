@@ -43,13 +43,6 @@ function getClients() {
   return workerClient.getClients();
 }
 
-function getRoutingHealth(target, staleAfterMs, now) {
-  if (FORCE_IN_PROCESS) {
-    return runtime.getRoutingHealth(target, staleAfterMs, now);
-  }
-  return workerClient.getRoutingHealth(target, staleAfterMs, now);
-}
-
 function sendToTarget(target, content, meta = {}) {
   if (FORCE_IN_PROCESS) {
     return runtime.sendToTarget(target, content, meta);
@@ -77,11 +70,8 @@ module.exports = {
   isRunning,
   getPort,
   getClients,
-  getRoutingHealth,
   sendToTarget,
   sendToPane,
   broadcast,
   DEFAULT_PORT: runtime.DEFAULT_PORT,
-  HEARTBEAT_INTERVAL_MS: runtime.HEARTBEAT_INTERVAL_MS,
-  HEARTBEAT_STALE_MS: runtime.HEARTBEAT_STALE_MS,
 };

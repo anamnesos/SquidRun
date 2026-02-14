@@ -12,8 +12,7 @@ const { LEGACY_ROLE_ALIASES, ROLE_ID_MAP, WORKSPACE_PATH } = require('../config'
 
 const DEFAULT_PORT = 9900;
 const MESSAGE_ACK_TTL_MS = 60000;
-const HEARTBEAT_INTERVAL_MS = 30000;
-const HEARTBEAT_STALE_MS = 60000;
+const ROUTING_STALE_MS = 60000;
 const OUTBOUND_QUEUE_MAX_ENTRIES = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_ENTRIES || '500', 10);
 const OUTBOUND_QUEUE_MAX_AGE_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_AGE_MS || String(30 * 60 * 1000), 10);
 const OUTBOUND_QUEUE_FLUSH_INTERVAL_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_FLUSH_INTERVAL_MS || '30000', 10);
@@ -34,8 +33,6 @@ let clientIdCounter = 0;
 let messageHandler = null; // External handler for incoming messages
 let recentMessageAcks = new Map(); // messageId -> { ackPayload, expiresAt }
 let pendingMessageAcks = new Map(); // messageId -> Promise<ackPayload>
-let roleHeartbeats = new Map(); // role -> { role, paneId, lastSeen, clientId, source }
-let paneHeartbeats = new Map(); // paneId -> { role, paneId, lastSeen, clientId, source }
 let outboundQueue = []; // [{ id, target, content, meta, createdAt, attempts, lastAttemptAt, queuedBy }]
 let outboundQueueFlushTimer = null;
 let outboundQueueFlushInProgress = false;
@@ -85,75 +82,22 @@ function getRoleForPaneId(paneId) {
   return PANE_TO_CANONICAL_ROLE.get(String(paneId)) || null;
 }
 
-function touchHeartbeat(role, paneId, clientId, source = 'heartbeat', now = Date.now()) {
-  const normalizedRole = normalizeRoleId(role);
-  const normalizedPaneId = normalizePaneId(paneId);
-
-  if (normalizedRole) {
-    const resolvedPaneId = normalizedPaneId || getPaneIdForRole(normalizedRole);
-    const roleEntry = {
-      role: normalizedRole,
-      paneId: resolvedPaneId || null,
-      lastSeen: now,
-      clientId,
-      source,
-    };
-    roleHeartbeats.set(normalizedRole, roleEntry);
-    if (resolvedPaneId) {
-      paneHeartbeats.set(String(resolvedPaneId), roleEntry);
-    }
-    return roleEntry;
-  }
-
-  if (normalizedPaneId) {
-    const inferredRole = getRoleForPaneId(normalizedPaneId);
-    const paneEntry = {
-      role: inferredRole || null,
-      paneId: normalizedPaneId,
-      lastSeen: now,
-      clientId,
-      source,
-    };
-    paneHeartbeats.set(normalizedPaneId, paneEntry);
-    if (inferredRole) {
-      roleHeartbeats.set(inferredRole, paneEntry);
-    }
-    return paneEntry;
-  }
-
-  return null;
-}
-
 function markClientSeen(clientId, source = 'message', now = Date.now()) {
   const clientInfo = clients.get(clientId);
   if (!clientInfo) return null;
   clientInfo.lastSeen = now;
-  return touchHeartbeat(clientInfo.role, clientInfo.paneId, clientId, source, now);
-}
-
-function clearHeartbeatForClient(clientId, role, paneId) {
-  const normalizedRole = normalizeRoleId(role);
-  const normalizedPaneId = normalizePaneId(paneId);
-
-  if (normalizedRole) {
-    const roleEntry = roleHeartbeats.get(normalizedRole);
-    if (roleEntry && Number(roleEntry.clientId) === Number(clientId)) {
-      roleHeartbeats.delete(normalizedRole);
-    }
-  }
-
-  if (normalizedPaneId) {
-    const paneEntry = paneHeartbeats.get(String(normalizedPaneId));
-    if (paneEntry && Number(paneEntry.clientId) === Number(clientId)) {
-      paneHeartbeats.delete(String(normalizedPaneId));
-    }
-  }
+  return {
+    role: clientInfo.role || null,
+    paneId: clientInfo.paneId || null,
+    lastSeen: now,
+    source,
+  };
 }
 
 function coerceStaleAfterMs(value) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    return HEARTBEAT_STALE_MS;
+    return ROUTING_STALE_MS;
   }
   return parsed;
 }
@@ -187,7 +131,7 @@ function resolveTargetIdentity(target) {
   };
 }
 
-function getRoutingHealth(target, staleAfterMs = HEARTBEAT_STALE_MS, now = Date.now()) {
+function getRoutingHealth(target, staleAfterMs = ROUTING_STALE_MS, now = Date.now()) {
   const staleThresholdMs = coerceStaleAfterMs(staleAfterMs);
   const identity = resolveTargetIdentity(target);
   if (!identity.role && !identity.paneId) {
@@ -199,42 +143,48 @@ function getRoutingHealth(target, staleAfterMs = HEARTBEAT_STALE_MS, now = Date.
       lastSeen: null,
       ageMs: null,
       staleThresholdMs,
-      heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
       source: null,
     };
   }
 
-  const fromRole = identity.role ? roleHeartbeats.get(identity.role) : null;
-  const fromPane = identity.paneId ? paneHeartbeats.get(identity.paneId) : null;
-  const heartbeat = fromRole || fromPane;
+  let route = null;
+  for (const info of clients.values()) {
+    if (!info) continue;
+    if (identity.role && info.role === identity.role) {
+      route = info;
+      break;
+    }
+    if (identity.paneId && info.paneId && String(info.paneId) === String(identity.paneId)) {
+      route = info;
+      break;
+    }
+  }
 
-  if (!heartbeat || !Number.isFinite(heartbeat.lastSeen)) {
+  if (!route || !Number.isFinite(route.lastSeen)) {
     return {
       healthy: false,
-      status: 'no_heartbeat',
-      role: identity.role || heartbeat?.role || null,
-      paneId: identity.paneId || heartbeat?.paneId || null,
+      status: 'no_route',
+      role: identity.role || route?.role || null,
+      paneId: identity.paneId || route?.paneId || null,
       lastSeen: null,
       ageMs: null,
       staleThresholdMs,
-      heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
       source: null,
     };
   }
 
-  const ageMs = Math.max(0, now - heartbeat.lastSeen);
+  const ageMs = Math.max(0, now - route.lastSeen);
   const healthy = ageMs <= staleThresholdMs;
 
   return {
     healthy,
     status: healthy ? 'healthy' : 'stale',
-    role: identity.role || heartbeat.role || null,
-    paneId: identity.paneId || heartbeat.paneId || null,
-    lastSeen: heartbeat.lastSeen,
+    role: identity.role || route.role || null,
+    paneId: identity.paneId || route.paneId || null,
+    lastSeen: route.lastSeen,
     ageMs,
     staleThresholdMs,
-    heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
-    source: heartbeat.source || null,
+    source: 'client_activity',
   };
 }
 
@@ -686,8 +636,6 @@ function start(options = {}) {
   messageHandler = options.onMessage || null;
   recentMessageAcks.clear();
   pendingMessageAcks.clear();
-  roleHeartbeats.clear();
-  paneHeartbeats.clear();
   loadOutboundQueue();
   stopOutboundQueueTimer();
 
@@ -719,7 +667,6 @@ function start(options = {}) {
           const info = clients.get(clientId);
           const roleInfo = info?.role ? ` (${info.role})` : '';
           log.info('WebSocket', `Client ${clientId}${roleInfo} disconnected: ${code}`);
-          clearHeartbeatForClient(clientId, info?.role, info?.paneId);
           clients.delete(clientId);
         });
 
@@ -765,7 +712,7 @@ async function handleMessage(clientId, rawData) {
   }
 
   log.info('WebSocket', `Received from client ${clientId}: ${JSON.stringify(message).substring(0, 100)}`);
-  // Refresh route health on any inbound frame so active panes stay fresh without heartbeat-only traffic.
+  // Refresh route health on any inbound frame.
   markClientSeen(clientId, 'message');
 
   // Handle registration messages
@@ -778,31 +725,6 @@ async function handleMessage(clientId, rawData) {
     log.info('WebSocket', `Client ${clientId} registered as pane=${clientInfo.paneId} role=${clientInfo.role}`);
     sendJson(clientInfo.ws, { type: 'registered', paneId: clientInfo.paneId, role: clientInfo.role });
     flushOutboundQueueForClient(clientId, 'register');
-    return;
-  }
-
-  if (message.type === 'heartbeat') {
-    const normalizedRole = normalizeRoleId(message.role);
-    const normalizedPaneId = normalizePaneId(message.paneId);
-    if (normalizedRole) {
-      clientInfo.role = normalizedRole;
-    }
-    if (normalizedPaneId) {
-      clientInfo.paneId = normalizedPaneId;
-    } else if (!clientInfo.paneId && normalizedRole) {
-      clientInfo.paneId = getPaneIdForRole(normalizedRole);
-    }
-    const heartbeat = markClientSeen(clientId, 'heartbeat');
-    sendJson(clientInfo.ws, {
-      type: 'heartbeat-ack',
-      role: heartbeat?.role || null,
-      paneId: heartbeat?.paneId || null,
-      lastSeen: heartbeat?.lastSeen || Date.now(),
-      staleThresholdMs: HEARTBEAT_STALE_MS,
-      heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
-      status: 'ok',
-    });
-    flushOutboundQueueForClient(clientId, 'heartbeat');
     return;
   }
 
@@ -1136,8 +1058,6 @@ function stop() {
     clients.clear();
     recentMessageAcks.clear();
     pendingMessageAcks.clear();
-    roleHeartbeats.clear();
-    paneHeartbeats.clear();
     outboundQueueFlushInProgress = false;
     outboundQueue = [];
 
@@ -1178,11 +1098,8 @@ module.exports = {
   isRunning,
   getPort,
   getClients,
-  getRoutingHealth,
   sendToTarget,
   sendToPane,
   broadcast,
   DEFAULT_PORT,
-  HEARTBEAT_INTERVAL_MS,
-  HEARTBEAT_STALE_MS,
 };

@@ -15,7 +15,6 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
 const DEFAULT_ACK_TIMEOUT_MS = 1200;
 const DEFAULT_HEALTH_TIMEOUT_MS = 500;
 const TARGET_HEARTBEAT_STALE_MS = 60000;
-const TARGET_HEARTBEAT_INTERVAL_MS = 30000;
 const DELIVERY_CHECK_RETRY_DELAY_MS = 200;
 const DEFAULT_RETRIES = 3;
 const MAX_RETRIES = 5;
@@ -279,29 +278,6 @@ function getBackoffDelayMs(baseTimeoutMs, attempt) {
   return baseTimeoutMs * Math.pow(2, attempt - 1);
 }
 
-async function emitHeartbeatBestEffort(ws, senderRole) {
-  const normalizedRole = normalizeRole(senderRole);
-  const paneId = normalizedRole ? String(ROLE_ID_MAP[normalizedRole] || '') : '';
-  const heartbeatPayload = {
-    type: 'heartbeat',
-    role: normalizedRole || senderRole || null,
-    paneId: paneId || null,
-    intervalMs: TARGET_HEARTBEAT_INTERVAL_MS,
-  };
-
-  try {
-    ws.send(JSON.stringify(heartbeatPayload));
-    await waitForMatch(
-      ws,
-      (msg) => msg.type === 'heartbeat-ack',
-      DEFAULT_HEALTH_TIMEOUT_MS,
-      'Heartbeat ack timeout'
-    );
-  } catch (err) {
-    // Health support can lag server/client versions; proceed without heartbeat gating.
-  }
-}
-
 async function queryTargetHealthBestEffort(ws) {
   const requestId = `health-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -407,7 +383,6 @@ async function sendViaWebSocketWithAck() {
 
   ws.send(JSON.stringify({ type: 'register', role }));
   await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
-  await emitHeartbeatBestEffort(ws, role);
 
   const health = await queryTargetHealthBestEffort(ws);
   if (isTargetHealthBlocking(health)) {

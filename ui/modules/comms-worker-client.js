@@ -14,7 +14,6 @@ let running = false;
 let desiredRunning = false;
 let cachedPort = null;
 let cachedClients = [];
-const cachedHealthByTarget = new Map();
 const pendingRequests = new Map();
 let onMessageHandler = null;
 let lastStartOptions = null;
@@ -81,7 +80,6 @@ async function performRestart(attempt, reason = 'unexpected_exit') {
     running = false;
     cachedPort = null;
     cachedClients = [];
-    cachedHealthByTarget.clear();
     log.warn('CommsWorker', `Recovery restart failed (attempt ${attempt}, reason=${reason}): ${err.message}`);
     return false;
   }
@@ -162,7 +160,6 @@ function ensureWorker() {
     running = false;
     cachedPort = null;
     cachedClients = [];
-    cachedHealthByTarget.clear();
     rejectAllPending(new Error(`comms worker exited (code=${code}, signal=${signal || 'none'})`));
     if (intentional) {
       log.info('CommsWorker', `Worker stopped (${signal || code || 'exit'})`);
@@ -282,7 +279,6 @@ async function stop() {
     running = false;
     cachedPort = null;
     cachedClients = [];
-    cachedHealthByTarget.clear();
     return;
   }
 
@@ -310,7 +306,6 @@ async function stop() {
   running = false;
   cachedPort = null;
   cachedClients = [];
-  cachedHealthByTarget.clear();
 }
 
 function isRunning() {
@@ -337,34 +332,6 @@ function refreshClients() {
 function getClients() {
   refreshClients();
   return cachedClients;
-}
-
-function refreshRoutingHealth(target, staleAfterMs, now) {
-  if (!running || !workerProcess) return;
-  const cacheKey = `${String(target)}::${Number(staleAfterMs || 0)}::${Number(now || 0)}`;
-  sendRequest('getRoutingHealth', { target, staleAfterMs, now })
-    .then((result) => {
-      cachedHealthByTarget.set(cacheKey, result);
-    })
-    .catch(() => {
-      // Best effort only.
-    });
-}
-
-function getRoutingHealth(target, staleAfterMs, now) {
-  const cacheKey = `${String(target)}::${Number(staleAfterMs || 0)}::${Number(now || 0)}`;
-  refreshRoutingHealth(target, staleAfterMs, now);
-  return cachedHealthByTarget.get(cacheKey) || {
-    healthy: false,
-    status: 'unknown',
-    role: null,
-    paneId: null,
-    lastSeen: null,
-    ageMs: null,
-    staleThresholdMs: Number(staleAfterMs) || null,
-    heartbeatIntervalMs: null,
-    source: null,
-  };
 }
 
 async function sendToTarget(target, content, meta = {}) {
@@ -420,7 +387,6 @@ async function resetForTests() {
   lastStartOptions = null;
   cachedPort = null;
   cachedClients = [];
-  cachedHealthByTarget.clear();
   clearRestartTimer();
   restartAttempt = 0;
   restartInFlightPromise = null;
@@ -433,7 +399,6 @@ module.exports = {
   isRunning,
   getPort,
   getClients,
-  getRoutingHealth,
   sendToTarget,
   sendToPane,
   broadcast,
