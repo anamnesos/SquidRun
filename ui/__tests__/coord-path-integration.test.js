@@ -6,7 +6,6 @@ const UI_ROOT = path.resolve(__dirname, '..');
 const COORD_FILE_HINTS = [
   'app-status.json',
   'shared_context.md',
-  'session-handoff.json',
   'review.json',
   'pipeline.json',
   'activity.json',
@@ -16,7 +15,7 @@ const COORD_FILE_HINTS = [
   'schedules.json',
 ];
 
-const COORD_FILE_PATTERN = "app-status\\.json|shared_context\\.md|session-handoff\\.json|review\\.json|pipeline\\.json|activity\\.json|usage-stats\\.json|message-state\\.json|state\\.json|schedules\\.json";
+const COORD_FILE_PATTERN = "app-status\\.json|shared_context\\.md|review\\.json|pipeline\\.json|activity\\.json|usage-stats\\.json|message-state\\.json|state\\.json|schedules\\.json";
 
 const SKIP_FILE_SEGMENTS = [
   '__tests__',

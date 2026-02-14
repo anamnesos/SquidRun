@@ -10,12 +10,12 @@ const { EvidenceLedgerInvestigator } = require('../main/evidence-ledger-investig
 const { EvidenceLedgerMemory } = require('../main/evidence-ledger-memory');
 const { seedDecisionMemory } = require('../main/evidence-ledger-memory-seed');
 const log = require('../logger');
-const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
+const { resolveCoordPath } = require('../../config');
 
 let sharedRuntime = null;
-const DEFAULT_HANDOFF_PATH = typeof resolveCoordPath === 'function'
-  ? resolveCoordPath('session-handoff.json')
-  : path.join(WORKSPACE_PATH, 'session-handoff.json');
+const DEFAULT_CONTEXT_SNAPSHOT_PATH = typeof resolveCoordPath === 'function'
+  ? resolveCoordPath(path.join('context-snapshots', '1.md'))
+  : null;
 
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -51,6 +51,43 @@ function shouldSeedRuntime(runtime) {
   }
 }
 
+function parseList(value) {
+  if (!value) return [];
+  return String(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseContextSnapshotMarkdown(raw) {
+  const text = String(raw || '');
+  if (!text.trim()) return null;
+
+  const sessionMatch = text.match(/(?:Session:\s*|\|\s*Session\s+)(\d+)/i);
+  const testsMatch = text.match(/Tests:\s*(\d+)\s+suites,\s*(\d+)\s+tests/i);
+  const completedMatch = text.match(/^Completed:\s*(.+)$/im);
+  const nextMatch = text.match(/^Next:\s*(.+)$/im);
+
+  const session = sessionMatch ? Number.parseInt(sessionMatch[1], 10) : null;
+  if (!Number.isInteger(session) || session <= 0) return null;
+
+  const context = {
+    session,
+    mode: 'PTY',
+    completed: completedMatch ? parseList(completedMatch[1]) : [],
+    roadmap: nextMatch ? parseList(nextMatch[1]) : [],
+    not_yet_done: nextMatch ? parseList(nextMatch[1]) : [],
+    stats: testsMatch
+      ? {
+          test_suites: Number.parseInt(testsMatch[1], 10) || 0,
+          tests_passed: Number.parseInt(testsMatch[2], 10) || 0,
+        }
+      : {},
+  };
+
+  return context;
+}
+
 function maybeSeedDecisionMemory(runtime, options = {}) {
   const seedOptions = asObject(options);
   if (seedOptions.enabled === false) {
@@ -60,24 +97,33 @@ function maybeSeedDecisionMemory(runtime, options = {}) {
     return { ok: true, skipped: true, reason: 'already_populated' };
   }
 
-  const handoffPath = asString(seedOptions.handoffPath, DEFAULT_HANDOFF_PATH);
-  if (!fs.existsSync(handoffPath)) {
-    return { ok: true, skipped: true, reason: 'handoff_missing', handoffPath };
+  const snapshotPath = asString(seedOptions.contextSnapshotPath, DEFAULT_CONTEXT_SNAPSHOT_PATH || '');
+  if (!snapshotPath || !fs.existsSync(snapshotPath)) {
+    return { ok: true, skipped: true, reason: 'context_snapshot_missing', snapshotPath };
   }
 
-  let handoff = null;
+  let contextSnapshot = null;
   try {
-    handoff = JSON.parse(fs.readFileSync(handoffPath, 'utf8'));
+    const raw = fs.readFileSync(snapshotPath, 'utf8');
+    contextSnapshot = parseContextSnapshotMarkdown(raw);
   } catch (err) {
     return {
       ok: false,
-      reason: 'handoff_read_failed',
-      handoffPath,
+      reason: 'context_snapshot_read_failed',
+      snapshotPath,
       error: err.message,
     };
   }
+  if (!contextSnapshot) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'context_snapshot_unparseable',
+      snapshotPath,
+    };
+  }
 
-  const seedResult = seedDecisionMemory(runtime.memory, handoff, {
+  const seedResult = seedDecisionMemory(runtime.memory, contextSnapshot, {
     sessionId: asString(seedOptions.sessionId, ''),
     markSessionEnded: seedOptions.markSessionEnded === true,
     summary: asString(seedOptions.summary, ''),
@@ -86,14 +132,14 @@ function maybeSeedDecisionMemory(runtime, options = {}) {
     return {
       ok: false,
       reason: 'seed_failed',
-      handoffPath,
+      snapshotPath,
       ...(seedResult || {}),
     };
   }
 
   return {
     ok: true,
-    handoffPath,
+    snapshotPath,
     ...seedResult,
   };
 }

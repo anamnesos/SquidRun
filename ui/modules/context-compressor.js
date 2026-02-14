@@ -2,7 +2,7 @@
  * Context Compressor - Smart context restoration after Claude Code compaction
  *
  * Generates token-budget-constrained markdown snapshots from multiple data sources
- * (intent files, shared state changelog, memory system, session handoff, build status).
+ * (intent files, shared state changelog, memory system, prior context snapshots, build status).
  * Snapshots are written to workspace/context-snapshots/{paneId}.md for lifecycle
  * hooks to read after compaction events.
  *
@@ -106,6 +106,63 @@ function readTextFile(filePath) {
   } catch {
     return '';
   }
+}
+
+function parseSessionNumberFromText(content) {
+  const text = String(content || '');
+  const patterns = [
+    /Session:\s*(\d+)/i,
+    /\|\s*Session\s+(\d+)\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const parsed = Number.parseInt(match[1], 10);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function readSnapshotProgress(paneId = '1') {
+  const id = String(paneId || '1');
+  const relPath = path.join('context-snapshots', `${id}.md`);
+  const candidates = [
+    resolveCoordFile(relPath),
+    path.join(SNAPSHOTS_DIR, `${id}.md`),
+  ];
+
+  for (const filePath of candidates) {
+    const text = readTextFile(filePath);
+    if (!text) continue;
+
+    const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+    const completedLine = lines.find((line) => /^Completed:\s*/i.test(line));
+    const nextLine = lines.find((line) => /^Next:\s*/i.test(line));
+    const testsLine = lines.find((line) => /^Tests:\s*/i.test(line));
+    const session = parseSessionNumberFromText(text);
+
+    const completed = completedLine
+      ? completedLine.replace(/^Completed:\s*/i, '').split(',').map((item) => item.trim()).filter(Boolean)
+      : [];
+    const next = nextLine
+      ? nextLine.replace(/^Next:\s*/i, '').split(',').map((item) => item.trim()).filter(Boolean)
+      : [];
+
+    return {
+      session,
+      completed,
+      next,
+      testsLine: testsLine || '',
+    };
+  }
+
+  return {
+    session: 0,
+    completed: [],
+    next: [],
+    testsLine: '',
+  };
 }
 
 /**
@@ -220,38 +277,27 @@ function buildActiveIssuesSection() {
 }
 
 /**
- * Build the Session Progress section from session-handoff.json
+ * Build the Session Progress section from prior context snapshots and intent session state
  */
 function buildSessionProgressSection() {
-  const handoffPath = resolveCoordFile('session-handoff.json');
-  const handoff = readJsonFile(handoffPath);
-  if (!handoff) return null;
-
+  const snapshotProgress = readSnapshotProgress('1');
+  const sessionNumber = Math.max(getSessionNumber(), snapshotProgress.session || 0);
   const lines = ['### Session Progress'];
 
-  if (handoff.session) {
-    lines.push(`Session: ${handoff.session}`);
+  if (sessionNumber > 0) {
+    lines.push(`Session: ${sessionNumber}`);
   }
 
-  if (handoff.completedTasks && Array.isArray(handoff.completedTasks)) {
-    const recent = handoff.completedTasks.slice(-5);
-    if (recent.length > 0) {
-      lines.push(`Completed: ${recent.join(', ')}`);
-    }
+  if (snapshotProgress.completed.length > 0) {
+    lines.push(`Completed: ${snapshotProgress.completed.slice(0, 5).join(', ')}`);
   }
 
-  if (handoff.roadmap && Array.isArray(handoff.roadmap)) {
-    const next = handoff.roadmap.filter(r => r && !r.done).slice(0, 3);
-    if (next.length > 0) {
-      lines.push(`Next: ${next.map(r => typeof r === 'string' ? r : r.task || r.name || JSON.stringify(r)).join(', ')}`);
-    }
+  if (snapshotProgress.next.length > 0) {
+    lines.push(`Next: ${snapshotProgress.next.slice(0, 3).join(', ')}`);
   }
 
-  if (handoff.testStats) {
-    const stats = handoff.testStats;
-    if (stats.suites || stats.tests) {
-      lines.push(`Tests: ${stats.suites || '?'} suites, ${stats.tests || '?'} tests`);
-    }
+  if (snapshotProgress.testsLine) {
+    lines.push(snapshotProgress.testsLine);
   }
 
   if (lines.length <= 1) return null;
@@ -291,11 +337,21 @@ function buildKeyDecisionsSection(paneId) {
 }
 
 /**
- * Get current session number from handoff file
+ * Get current session number from intent files and context snapshots
  */
 function getSessionNumber() {
-  const handoff = readJsonFile(resolveCoordFile('session-handoff.json'));
-  return handoff?.session || 0;
+  let maxIntentSession = 0;
+  for (const paneId of PANE_IDS) {
+    const intentPath = resolveCoordFile(path.join('intent', `${paneId}.json`));
+    const intent = readJsonFile(intentPath);
+    const parsed = Number.parseInt(intent?.session, 10);
+    if (Number.isInteger(parsed) && parsed > maxIntentSession) {
+      maxIntentSession = parsed;
+    }
+  }
+
+  const snapshotSession = readSnapshotProgress('1').session || 0;
+  return Math.max(maxIntentSession, snapshotSession, 0);
 }
 
 /**
@@ -498,6 +554,8 @@ module.exports = {
     buildActiveIssuesSection,
     buildSessionProgressSection,
     buildKeyDecisionsSection,
+    readSnapshotProgress,
+    parseSessionNumberFromText,
     getSessionNumber,
     readJsonFile,
     readTextFile,
