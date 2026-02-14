@@ -863,7 +863,11 @@ function stripAnsiForStartup(input) {
     .replace(/\r/g, '\n');
 }
 
-function hasStartupSessionHeader(scrollback) {
+function hasStartupSessionHeader(scrollback, paneId) {
+  const role = paneId ? (PANE_ROLES[String(paneId)] || '') : '';
+  if (role) {
+    return new RegExp(`#\\s*HIVEMIND SESSION:\\s*${role}\\b`, 'i').test(String(scrollback || ''));
+  }
   return /#\s*HIVEMIND SESSION:/i.test(String(scrollback || ''));
 }
 
@@ -1745,7 +1749,7 @@ async function reattachTerminal(paneId, scrollback) {
   const shouldArmStartupOnReattach =
     String(paneId) === '1' &&
     !isCodexPane(String(paneId)) &&
-    !hasStartupSessionHeader(scrollback);
+    !hasStartupSessionHeader(scrollback, paneId);
   if (shouldArmStartupOnReattach) {
     const isGemini = isGeminiPane(paneId);
     const modelType = isGemini ? 'gemini' : 'claude';
