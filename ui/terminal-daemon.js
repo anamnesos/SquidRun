@@ -17,7 +17,7 @@ const path = require('path');
 const crypto = require('crypto');
 const pty = require('node-pty');
 const { createCodexExecRunner } = require('./modules/codex-exec');
-const { PIPE_PATH, INSTANCE_DIRS, PANE_ROLES } = require('./config');
+const { PIPE_PATH, PANE_ROLES, resolvePaneCwd } = require('./config');
 
 // ============================================================
 // D1: DAEMON LOGGING TO FILE
@@ -393,10 +393,10 @@ function loadSessionState() {
     const data = fs.readFileSync(SESSION_FILE_PATH, 'utf-8');
     const state = JSON.parse(data);
     logInfo(`Loaded session state from ${state.savedAt}`);
-    // Correct stale cwds against INSTANCE_DIRS (source of truth)
+    // Correct stale cwds against configured pane cwd source of truth.
     if (state.terminals) {
       for (const term of state.terminals) {
-        const expectedDir = INSTANCE_DIRS[String(term.paneId)];
+        const expectedDir = resolvePaneCwd(String(term.paneId));
         if (expectedDir && term.cwd && path.resolve(expectedDir) !== path.resolve(term.cwd)) {
           logWarn(`[Session] Correcting pane ${term.paneId} cwd: ${term.cwd} -> ${expectedDir}`);
           term.cwd = expectedDir;
@@ -1193,9 +1193,13 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     }
   }
 
-  // Use role-specific instance directory if available
-  const instanceDir = INSTANCE_DIRS[paneId];
+  // Use configured pane cwd if available
+  const instanceDir = resolvePaneCwd(paneId);
   const workDir = instanceDir || cwd || process.cwd();
+  const runtimeEnv = {
+    ...process.env,
+    ...(options.env && typeof options.env === 'object' ? options.env : {}),
+  };
 
   // DRY-RUN MODE: Create mock terminal instead of real PTY
   if (dryRun) {
@@ -1277,7 +1281,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     cols: 80,
     rows: 24,
     cwd: workDir,
-    env: process.env,
+    env: runtimeEnv,
     handleFlowControl: true,
   });
 
@@ -1537,7 +1541,10 @@ function handleMessage(client, message) {
 
     switch (msg.action) {
       case 'spawn': {
-        const result = spawnTerminal(msg.paneId, msg.cwd, msg.dryRun || false, { mode: msg.mode });
+        const result = spawnTerminal(msg.paneId, msg.cwd, msg.dryRun || false, {
+          mode: msg.mode,
+          env: msg.env,
+        });
         sendToClient(client, {
           event: 'spawned',
           paneId: msg.paneId,

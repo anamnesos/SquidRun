@@ -81,6 +81,17 @@ const ROLE_ID_MAP = {
 
 const PANE_IDS = Object.keys(PANE_ROLES);
 
+function resolvePaneCwd(paneId, options = {}) {
+  const instanceDirs = options.instanceDirs && typeof options.instanceDirs === 'object'
+    ? options.instanceDirs
+    : INSTANCE_DIRS;
+  return instanceDirs[String(paneId)] || null;
+}
+
+function resolveCoordRoot() {
+  return WORKSPACE_PATH;
+}
+
 // Trigger file targets - maps filename to target pane IDs
 // TRANSITION: Both old and new names work during migration period
 const TRIGGER_TARGETS = {
@@ -140,4 +151,6 @@ module.exports = {
   evidenceLedgerEnabled,
   PROTOCOL_ACTIONS,
   PROTOCOL_EVENTS,
+  resolvePaneCwd,
+  resolveCoordRoot,
 };

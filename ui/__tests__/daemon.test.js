@@ -140,6 +140,10 @@ describe('DaemonClient', () => {
       expect(parsed.action).toBe('spawn');
       expect(parsed.paneId).toBe('1');
       expect(parsed.cwd).toBe('/tmp');
+      expect(parsed.env).toEqual(expect.objectContaining({
+        HIVEMIND_ROLE: 'Architect',
+        HIVEMIND_PANE_ID: '1',
+      }));
     });
 
     test('should return false when not connected', () => {

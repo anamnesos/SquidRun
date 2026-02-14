@@ -12,6 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const { EventEmitter } = require('events');
 const log = require('./modules/logger');
+const { PANE_ROLES } = require('./config');
 
 // Named pipe path (Windows) or Unix socket
 const PIPE_PATH = os.platform() === 'win32'
@@ -373,13 +374,21 @@ class DaemonClient extends EventEmitter {
    * @param {string} [cwd] - Working directory
    * @param {boolean} [dryRun=false] - If true, spawn mock terminal instead of real PTY
    */
-  spawn(paneId, cwd, dryRun = false, mode = null) {
+  spawn(paneId, cwd, dryRun = false, mode = null, env = null) {
+    const id = String(paneId);
+    const role = String(PANE_ROLES?.[id] || '').trim();
+    const spawnEnv = {
+      HIVEMIND_ROLE: role,
+      HIVEMIND_PANE_ID: id,
+      ...(env && typeof env === 'object' ? env : {}),
+    };
     return this._send({
       action: 'spawn',
-      paneId,
+      paneId: id,
       cwd,
       dryRun,
       mode,
+      env: spawnEnv,
     });
   }
 

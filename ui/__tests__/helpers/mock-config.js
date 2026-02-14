@@ -88,11 +88,19 @@ const mockDefaultConfig = {
   },
   PROTOCOL_ACTIONS: ['spawn', 'write', 'resize', 'kill', 'list', 'attach', 'ping', 'shutdown', 'health', 'codex-exec'],
   PROTOCOL_EVENTS: ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected', 'shutdown', 'health', 'codex-exec-result'],
+  resolvePaneCwd: (paneId, options = {}) => {
+    const instanceDirs = options.instanceDirs && typeof options.instanceDirs === 'object'
+      ? options.instanceDirs
+      : mockDefaultConfig.INSTANCE_DIRS;
+    return instanceDirs[String(paneId)] || null;
+  },
+  resolveCoordRoot: () => mockDefaultConfig.WORKSPACE_PATH,
 };
 
 /** Minimal mock — only WORKSPACE_PATH (for modules that just need the path) */
 const mockWorkspaceOnly = {
   WORKSPACE_PATH: '/test/workspace',
+  resolveCoordRoot: () => '/test/workspace',
 };
 
 /**
