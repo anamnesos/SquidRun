@@ -12,6 +12,8 @@ const {
   TRIGGER_TARGETS,
   PROTOCOL_ACTIONS,
   PROTOCOL_EVENTS,
+  resolvePaneCwd,
+  resolveCoordRoot,
 } = require('../config');
 
 describe('config.js', () => {
@@ -48,6 +50,24 @@ describe('config.js', () => {
       Object.values(INSTANCE_DIRS).forEach(dir => {
         expect(path.isAbsolute(dir)).toBe(true);
       });
+    });
+  });
+
+  describe('Resolvers', () => {
+    test('resolvePaneCwd should return pane instance directory', () => {
+      expect(resolvePaneCwd('1')).toBe(INSTANCE_DIRS['1']);
+      expect(resolvePaneCwd('2')).toBe(INSTANCE_DIRS['2']);
+      expect(resolvePaneCwd('5')).toBe(INSTANCE_DIRS['5']);
+    });
+
+    test('resolvePaneCwd should support injected instanceDirs override', () => {
+      const override = { '1': '/override/arch' };
+      expect(resolvePaneCwd('1', { instanceDirs: override })).toBe('/override/arch');
+      expect(resolvePaneCwd('2', { instanceDirs: override })).toBeNull();
+    });
+
+    test('resolveCoordRoot should return WORKSPACE_PATH', () => {
+      expect(resolveCoordRoot()).toBe(WORKSPACE_PATH);
     });
   });
 

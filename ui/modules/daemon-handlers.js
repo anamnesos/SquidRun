@@ -16,7 +16,7 @@
 
 const { ipcRenderer } = require('electron');
 const path = require('path');
-const { INSTANCE_DIRS, PANE_IDS } = require('../config');
+const { PANE_IDS, resolvePaneCwd } = require('../config');
 const log = require('./logger');
 const bus = require('./event-bus');
 const diagnosticLog = require('./diagnostic-log');
@@ -356,7 +356,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
       for (const term of existingTerminals) {
         if (term.alive) {
           const paneId = String(term.paneId);
-          const expectedDir = INSTANCE_DIRS[paneId];
+          const expectedDir = resolvePaneCwd(paneId);
           const cwd = term.cwd;
           const hasMismatch = expectedDir && cwd &&
             normalizePath(expectedDir) !== normalizePath(cwd);

@@ -6,6 +6,7 @@
  */
 
 const log = require('../logger');
+const { resolvePaneCwd } = require('../../config');
 const DEFAULT_CHUNK_SIZE = 2048;
 const MIN_CHUNK_SIZE = 1024;
 const MAX_CHUNK_SIZE = 8192;
@@ -98,7 +99,7 @@ function registerPtyHandlers(ctx, deps = {}) {
       return { error: 'Daemon not connected' };
     }
 
-    const instanceDir = INSTANCE_DIRS[paneId];
+    const instanceDir = resolvePaneCwd(paneId, { instanceDirs: INSTANCE_DIRS });
     const cwd = instanceDir || workingDir || process.cwd();
 
     const paneCommands = ctx.currentSettings.paneCommands || {};
