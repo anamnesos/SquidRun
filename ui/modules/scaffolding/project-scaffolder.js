@@ -1072,10 +1072,6 @@ MIT
     category: 'hivemind',
     directories: [
       'workspace',
-      'workspace/instances',
-      'workspace/instances/arch',
-      'workspace/instances/devops',
-      'workspace/instances/ana',
       'workspace/build',
       'workspace/build/reviews',
       'workspace/triggers',
@@ -1112,6 +1108,46 @@ MIT
 - Triggers: workspace/triggers/
 - Status: workspace/build/status.md
 - Blockers: workspace/build/blockers.md
+`,
+      },
+      'AGENTS.md': {
+        type: 'text',
+        content: `# AGENTS.md
+
+## Project: {{projectName}}
+
+Use this file for Codex-focused role guidance.
+
+## Role Sections
+
+### Architect
+- Owns planning, architecture, and cross-agent coordination.
+
+### DevOps
+- Owns CI/CD, deployment, daemon/process lifecycle, and backend IPC.
+
+### Analyst
+- Owns debugging, profiling, and root cause analysis.
+`,
+      },
+      'GEMINI.md': {
+        type: 'text',
+        content: `# GEMINI.md
+
+## Project: {{projectName}}
+
+Use this file for Gemini-focused role guidance.
+
+## Role Sections
+
+### Architect
+- Coordination, review, and high-level decisions.
+
+### DevOps
+- Infrastructure and backend execution.
+
+### Analyst
+- Investigation and evidence gathering.
 `,
       },
       'SPRINT.md': {
@@ -1190,55 +1226,6 @@ _No errors logged_
 | Analyst | OPEN | | |
 `,
       },
-      'workspace/instances/arch/CLAUDE.md': {
-        type: 'text',
-        content: `# Architect Instance
-
-You are the Architect for this project.
-
-## Responsibilities
-- Architecture decisions
-- Task coordination
-- Code review approval
-
-## Communication
-- Receive messages: workspace/triggers/architect.txt
-- Broadcast: workspace/triggers/all.txt
-`,
-      },
-      'workspace/instances/devops/CLAUDE.md': {
-        type: 'text',
-        content: `# DevOps Instance
-
-You are DevOps for this project.
-
-## Responsibilities
-- CI/CD and deployment
-- Build scripts and infrastructure
-- Main process logic
-- IPC handlers and file watching
-
-## Communication
-- Receive messages: workspace/triggers/devops.txt
-- Report to Architect: workspace/triggers/architect.txt
-`,
-      },
-      'workspace/instances/ana/CLAUDE.md': {
-        type: 'text',
-        content: `# Analyst Instance
-
-You are Analyst for this project.
-
-## Responsibilities
-- Debugging
-- Performance profiling
-- Root cause analysis
-
-## Communication
-- Receive messages: workspace/triggers/analyst.txt
-- Report to Architect: workspace/triggers/architect.txt
-`,
-      },
       '.gitignore': {
         type: 'text',
         content: `node_modules/
@@ -1270,6 +1257,8 @@ This project is structured for multi-agent development with Hivemind.
 
 \`\`\`
 ├── CLAUDE.md           # Project instructions
+├── AGENTS.md           # Codex role instructions
+├── GEMINI.md           # Gemini role instructions
 ├── SPRINT.md           # Sprint plan
 ├── workspace/
 │   ├── shared_context.md
@@ -1277,7 +1266,6 @@ This project is structured for multi-agent development with Hivemind.
 │   │   ├── status.md
 │   │   ├── blockers.md
 │   │   └── errors.md
-│   ├── instances/      # Agent workspaces
 │   ├── triggers/       # Inter-agent messaging
 │   └── messages/       # Message queue
 └── docs/

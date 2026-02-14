@@ -22,7 +22,7 @@ const { createRecoveryController } = require('./terminal/recovery');
 
 const TERMINAL_EVENT_SOURCE = 'terminal.js';
 const { attachAgentColors } = require('./terminal/agent-colors');
-const { PANE_IDS, PANE_ROLES, WORKSPACE_PATH } = require('../config');
+const { PANE_IDS, PANE_ROLES, WORKSPACE_PATH, resolveCoordPath } = require('../config');
 const {
   TYPING_GUARD_MS,
   QUEUE_RETRY_MS,
@@ -1161,12 +1161,24 @@ function isInputLocked(paneId) {
 const LOCK_ICON_SVG = '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
 const UNLOCK_ICON_SVG = '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>';
 
-const INTENT_DIR = path.join(WORKSPACE_PATH, 'intent');
-const SESSION_HANDOFF_PATH = path.join(WORKSPACE_PATH, 'session-handoff.json');
+function resolveCoordFile(relPath, options = {}) {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(relPath, options);
+  }
+  return path.join(WORKSPACE_PATH, relPath);
+}
+
+function getIntentDir() {
+  return resolveCoordFile('intent', { forWrite: true });
+}
+
+function getSessionHandoffPath() {
+  return resolveCoordFile('session-handoff.json');
+}
 
 function getSessionNumber() {
   try {
-    const data = JSON.parse(fs.readFileSync(SESSION_HANDOFF_PATH, 'utf8'));
+    const data = JSON.parse(fs.readFileSync(getSessionHandoffPath(), 'utf8'));
     return data?.session ?? null;
   } catch {
     return null;
@@ -1175,7 +1187,8 @@ function getSessionNumber() {
 
 function updateIntentFile(paneId, intent) {
   const id = String(paneId);
-  const filePath = path.join(INTENT_DIR, `${id}.json`);
+  const intentDir = getIntentDir();
+  const filePath = path.join(intentDir, `${id}.json`);
   let data = {};
   try {
     data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -1191,7 +1204,7 @@ function updateIntentFile(paneId, intent) {
     last_update: new Date().toISOString(),
   };
   try {
-    fs.mkdirSync(INTENT_DIR, { recursive: true });
+    fs.mkdirSync(intentDir, { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(next, null, 2), 'utf8');
   } catch (err) {
     log.warn('Intent', `Failed to update intent file for pane ${id}`, err);

@@ -20,18 +20,36 @@ const {
 const fs = require('fs');
 const path = require('path');
 const log = require('./modules/logger');
-const { PANE_IDS, PANE_ROLES } = require('./config');
+const { PANE_IDS, PANE_ROLES, WORKSPACE_PATH, resolveCoordPath } = require('./config');
 
 // ============================================================
 // CONFIGURATION
 // ============================================================
 
-const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
-const STATE_FILE_PATH = path.join(WORKSPACE_PATH, 'state.json');
-const SHARED_CONTEXT_PATH = path.join(WORKSPACE_PATH, 'shared_context.md');
-const STATUS_FILE_PATH = path.join(WORKSPACE_PATH, 'build', 'status.md');
-const TRIGGERS_PATH = path.join(WORKSPACE_PATH, 'triggers');
 const MESSAGE_QUEUE_DIR = path.join(WORKSPACE_PATH, 'messages');
+
+function coordPath(relPath, options = {}) {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(relPath, options);
+  }
+  return path.join(WORKSPACE_PATH, relPath);
+}
+
+function getStateFilePath(options = {}) {
+  return coordPath('state.json', options);
+}
+
+function getSharedContextPath(options = {}) {
+  return coordPath('shared_context.md', options);
+}
+
+function getStatusFilePath(options = {}) {
+  return coordPath(path.join('build', 'status.md'), options);
+}
+
+function getTriggersPath(options = {}) {
+  return coordPath('triggers', options);
+}
 
 // Agent name to pane ID mapping
 const AGENT_TO_PANE = {
@@ -392,8 +410,9 @@ function resolvePaneIds(target) {
 
 function readState() {
   try {
-    if (fs.existsSync(STATE_FILE_PATH)) {
-      return JSON.parse(fs.readFileSync(STATE_FILE_PATH, 'utf-8'));
+    const statePath = getStateFilePath();
+    if (fs.existsSync(statePath)) {
+      return JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     }
   } catch (e) {
     // Ignore parse errors
@@ -404,9 +423,11 @@ function readState() {
 function writeState(state) {
   try {
     state.timestamp = new Date().toISOString();
-    const tempPath = STATE_FILE_PATH + '.tmp';
+    const statePath = getStateFilePath({ forWrite: true });
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    const tempPath = statePath + '.tmp';
     fs.writeFileSync(tempPath, JSON.stringify(state, null, 2), 'utf-8');
-    fs.renameSync(tempPath, STATE_FILE_PATH);
+    fs.renameSync(tempPath, statePath);
     return { success: true };
   } catch (err) {
     log.error('MCP', 'Failed to write state file', err);
@@ -415,9 +436,10 @@ function writeState(state) {
 }
 
 function triggerAgentFile(targetAgent, context) {
-  const triggerFile = path.join(TRIGGERS_PATH, `${targetAgent}.txt`);
+  const triggerFile = path.join(getTriggersPath({ forWrite: true }), `${targetAgent}.txt`);
   const content = `(${agentName.toUpperCase()}): ${context}`;
   try {
+    fs.mkdirSync(path.dirname(triggerFile), { recursive: true });
     fs.writeFileSync(triggerFile, content, 'utf-8');
     return { success: true, triggered: targetAgent };
   } catch (err) {
@@ -428,8 +450,9 @@ function triggerAgentFile(targetAgent, context) {
 
 function readSharedContext() {
   try {
-    if (fs.existsSync(SHARED_CONTEXT_PATH)) {
-      return fs.readFileSync(SHARED_CONTEXT_PATH, 'utf-8');
+    const sharedContextPath = getSharedContextPath();
+    if (fs.existsSync(sharedContextPath)) {
+      return fs.readFileSync(sharedContextPath, 'utf-8');
     }
   } catch (e) {
     // Ignore
@@ -439,9 +462,11 @@ function readSharedContext() {
 
 function updateStatusFile(taskId, status, note) {
   let content = '';
+  const statusReadPath = getStatusFilePath();
+  const statusWritePath = getStatusFilePath({ forWrite: true });
   try {
-    if (fs.existsSync(STATUS_FILE_PATH)) {
-      content = fs.readFileSync(STATUS_FILE_PATH, 'utf-8');
+    if (fs.existsSync(statusReadPath)) {
+      content = fs.readFileSync(statusReadPath, 'utf-8');
     }
   } catch (err) {
     log.error('MCP', 'Failed to read status file', err);
@@ -453,7 +478,8 @@ function updateStatusFile(taskId, status, note) {
 
   content += entry;
   try {
-    fs.writeFileSync(STATUS_FILE_PATH, content, 'utf-8');
+    fs.mkdirSync(path.dirname(statusWritePath), { recursive: true });
+    fs.writeFileSync(statusWritePath, content, 'utf-8');
     return { success: true, taskId, status };
   } catch (err) {
     log.error('MCP', 'Failed to write status file', err);
@@ -648,7 +674,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         type: 'text',
         text: JSON.stringify({
           error: error.message,
-          fallback: 'Use file-based triggers as fallback: write to workspace/triggers/<agent>.txt',
+          fallback: 'Use file-based triggers as fallback: write to .hivemind/triggers/<agent>.txt (or workspace/triggers/<agent>.txt during fallback).',
         }),
       }],
       isError: true,

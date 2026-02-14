@@ -4,10 +4,12 @@
 
 const os = require('os');
 const path = require('path');
+const fs = require('fs');
 const {
   PIPE_PATH,
   WORKSPACE_PATH,
   PROJECT_ROOT,
+  COORD_ROOT,
   INSTANCE_DIRS,
   PANE_ROLES,
   TRIGGER_TARGETS,
@@ -68,8 +70,9 @@ describe('config.js', () => {
       expect(resolvePaneCwd('2', { instanceDirs: override })).toBe(PROJECT_ROOT);
     });
 
-    test('resolveCoordRoot should return WORKSPACE_PATH', () => {
-      expect(resolveCoordRoot()).toBe(WORKSPACE_PATH);
+    test('resolveCoordRoot should return .hivemind when present, else workspace', () => {
+      const expected = fs.existsSync(COORD_ROOT) ? COORD_ROOT : WORKSPACE_PATH;
+      expect(resolveCoordRoot()).toBe(expected);
     });
   });
 

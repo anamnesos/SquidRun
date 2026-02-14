@@ -5,13 +5,20 @@
 
 const { ipcMain, dialog } = require('electron');
 const path = require('path');
-const { WORKSPACE_PATH, INSTANCE_DIRS, PANE_IDS, PANE_ROLES } = require('../config');
+const {
+  WORKSPACE_PATH,
+  PANE_IDS,
+  PANE_ROLES,
+  resolveCoordPath,
+} = require('../config');
 const { createIpcContext, createIpcRegistry } = require('./ipc');
 const ipcState = require('./ipc/ipc-state');
 const { registerAllHandlers, setupAllHandlers } = require('./ipc/handler-registry');
 const { createBackgroundProcessController } = require('./ipc/background-processes');
 
-const SHARED_CONTEXT_PATH = path.join(WORKSPACE_PATH, 'shared_context.md');
+const SHARED_CONTEXT_PATH = typeof resolveCoordPath === 'function'
+  ? resolveCoordPath('shared_context.md')
+  : path.join(WORKSPACE_PATH, 'shared_context.md');
 const FRICTION_DIR = path.join(WORKSPACE_PATH, 'friction');
 const SCREENSHOTS_DIR = path.join(WORKSPACE_PATH, 'screenshots');
 
@@ -19,7 +26,6 @@ const ctx = createIpcContext(ipcState.state, {
   ipcMain,
   dialog,
   WORKSPACE_PATH,
-  INSTANCE_DIRS,
   PANE_IDS,
   PANE_ROLES,
   SHARED_CONTEXT_PATH,

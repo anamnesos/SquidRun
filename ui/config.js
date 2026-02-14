@@ -5,6 +5,7 @@
 
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
 const { execFileSync } = require('child_process');
 
 function envFlagEnabled(name, defaultValue = true) {
@@ -43,6 +44,7 @@ function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
 }
 
 const PROJECT_ROOT = discoverProjectRoot();
+const COORD_ROOT = path.join(PROJECT_ROOT, '.hivemind');
 
 // Legacy instance working directories (kept for compatibility during migration)
 // Active pane cwd resolution now uses project root via resolvePaneCwd().
@@ -113,7 +115,46 @@ function resolvePaneCwd(paneId, options = {}) {
 }
 
 function resolveCoordRoot() {
+  if (fs.existsSync(COORD_ROOT)) {
+    return COORD_ROOT;
+  }
   return WORKSPACE_PATH;
+}
+
+function getCoordRoots(options = {}) {
+  const includeMissing = options.includeMissing === true;
+  const includeLegacy = options.includeLegacy !== false;
+  const roots = [];
+
+  if (includeMissing || fs.existsSync(COORD_ROOT)) {
+    roots.push(COORD_ROOT);
+  }
+  if (includeLegacy && (includeMissing || fs.existsSync(WORKSPACE_PATH))) {
+    roots.push(WORKSPACE_PATH);
+  }
+
+  return Array.from(new Set(roots.map((root) => path.resolve(root))));
+}
+
+function resolveCoordPath(relPath, options = {}) {
+  const normalizedRelPath = String(relPath || '')
+    .replace(/^[\\/]+/, '')
+    .replace(/[\\/]+/g, path.sep);
+
+  const forWrite = options.forWrite === true;
+  const roots = getCoordRoots({ includeMissing: true, includeLegacy: options.includeLegacy !== false });
+
+  if (!forWrite) {
+    for (const root of roots) {
+      const candidate = path.join(root, normalizedRelPath);
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  const root = resolveCoordRoot();
+  return path.join(root, normalizedRelPath);
 }
 
 // Trigger file targets - maps filename to target pane IDs
@@ -165,6 +206,7 @@ module.exports = {
   PIPE_PATH,
   WORKSPACE_PATH,
   PROJECT_ROOT,
+  COORD_ROOT,
   INSTANCE_DIRS,
   PANE_IDS,
   PANE_ROLES,
@@ -178,4 +220,6 @@ module.exports = {
   PROTOCOL_EVENTS,
   resolvePaneCwd,
   resolveCoordRoot,
+  getCoordRoots,
+  resolveCoordPath,
 };

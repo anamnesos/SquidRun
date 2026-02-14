@@ -10,10 +10,12 @@ const { EvidenceLedgerInvestigator } = require('../main/evidence-ledger-investig
 const { EvidenceLedgerMemory } = require('../main/evidence-ledger-memory');
 const { seedDecisionMemory } = require('../main/evidence-ledger-memory-seed');
 const log = require('../logger');
-const { WORKSPACE_PATH } = require('../../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 
 let sharedRuntime = null;
-const DEFAULT_HANDOFF_PATH = path.join(WORKSPACE_PATH, 'session-handoff.json');
+const DEFAULT_HANDOFF_PATH = typeof resolveCoordPath === 'function'
+  ? resolveCoordPath('session-handoff.json')
+  : path.join(WORKSPACE_PATH, 'session-handoff.json');
 
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
