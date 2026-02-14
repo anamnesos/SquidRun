@@ -19,8 +19,17 @@ const mockTriggers = {
   sendDirectMessage: jest.fn(() => ({ success: true, notified: ['1'] })),
 };
 
+const mockTaskPoolBridge = {
+  claimTask: jest.fn(async () => ({ success: true })),
+  updateTaskStatus: jest.fn(async () => ({ success: true })),
+};
+const mockGetTaskPoolBridge = jest.fn(() => null);
+
 jest.mock('../modules/watcher', () => mockWatcher);
 jest.mock('../modules/triggers', () => mockTriggers);
+jest.mock('../modules/ipc/task-pool-handlers', () => ({
+  getTaskPoolBridge: (...args) => mockGetTaskPoolBridge(...args),
+}));
 
 jest.mock('../modules/logger', () => ({
   info: jest.fn(),
@@ -42,6 +51,7 @@ const mcpBridge = require('../modules/mcp-bridge');
 describe('MCP Bridge', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetTaskPoolBridge.mockReturnValue(null);
   });
 
   describe('Agent Registration (MC5)', () => {
@@ -365,6 +375,19 @@ describe('MCP Bridge', () => {
         expect(mockWatcher.claimAgent).toHaveBeenCalledWith('1', 'task-123', 'Fix bug');
       });
 
+      test('runs task-pool claim side-effect when bridge is available', async () => {
+        mockWatcher.claimAgent.mockReturnValue({ success: true });
+        mockGetTaskPoolBridge.mockReturnValue(mockTaskPoolBridge);
+
+        mcpBridge.mcpClaimTask('state-session', 'task-123', 'Fix bug');
+        await Promise.resolve();
+
+        expect(mockTaskPoolBridge.claimTask).toHaveBeenCalledWith({
+          paneId: '1',
+          taskId: 'task-123',
+        });
+      });
+
       test('returns error for invalid session', () => {
         const result = mcpBridge.mcpClaimTask('invalid-session', 'task-123', '');
 
@@ -380,6 +403,22 @@ describe('MCP Bridge', () => {
 
         expect(result.success).toBe(true);
         expect(mockWatcher.releaseAgent).toHaveBeenCalledWith('1');
+      });
+
+      test('runs task-pool status side-effect using claimed task', async () => {
+        mockWatcher.getClaims.mockReturnValue({
+          '1': { taskId: 'task-123' },
+        });
+        mockWatcher.releaseAgent.mockReturnValue({ success: true });
+        mockGetTaskPoolBridge.mockReturnValue(mockTaskPoolBridge);
+
+        mcpBridge.mcpCompleteTask('state-session', { status: 'failed', errorMessage: 'boom' });
+        await Promise.resolve();
+
+        expect(mockTaskPoolBridge.updateTaskStatus).toHaveBeenCalledWith(expect.objectContaining({
+          taskId: 'task-123',
+          status: 'failed',
+        }));
       });
 
       test('returns error for invalid session', () => {
@@ -665,6 +704,24 @@ describe('MCP Bridge', () => {
       const result = mcpBridge.handleToolCall('tool-session', 'complete_task', {});
 
       expect(result.success).toBe(true);
+    });
+
+    test('handles complete_task with status payload', async () => {
+      mockWatcher.getClaims.mockReturnValue({ '1': { taskId: 'task-77' } });
+      mockWatcher.releaseAgent.mockReturnValue({ success: true });
+      mockGetTaskPoolBridge.mockReturnValue(mockTaskPoolBridge);
+
+      const result = mcpBridge.handleToolCall('tool-session', 'complete_task', {
+        status: 'failed',
+        errorMessage: 'submit timed out',
+      });
+      await Promise.resolve();
+
+      expect(result.success).toBe(true);
+      expect(mockTaskPoolBridge.updateTaskStatus).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: 'task-77',
+        status: 'failed',
+      }));
     });
 
     test('handles get_claims', () => {

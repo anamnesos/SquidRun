@@ -15,6 +15,7 @@ const {
   buildReadBeforeWorkQueryPayloads,
   pickTopClaims,
   formatReadBeforeWorkMessage,
+  normalizeDomain,
   buildTaskStatusPatternEvent,
   buildTaskCloseClaimPayload,
 } = require('../team-memory/daily-integration');
@@ -22,6 +23,11 @@ const {
 // In-memory task cache (loaded from file on startup)
 let taskPool = [];
 const VALID_STATUSES = new Set(['open', 'in_progress', 'completed', 'failed', 'needs_input']);
+let activeTaskPoolBridge = null;
+
+function getTaskPoolBridge() {
+  return activeTaskPoolBridge;
+}
 
 function registerTaskPoolHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -134,17 +140,10 @@ function registerTaskPoolHandlers(ctx) {
     }
   }
 
-  // Initialize task pool
-  taskPool = loadTaskPool();
-  log.info('TaskPool', `Loaded ${taskPool.length} tasks`);
-
-  // Get current task list
-  ipcMain.handle('get-task-list', () => {
-    return taskPool;
-  });
-
-  // Claim a task for an agent
-  ipcMain.handle('claim-task', async (event, { paneId, taskId, domain }) => {
+  async function claimTaskInternal(payload = {}) {
+    const paneId = payload?.paneId;
+    const taskId = payload?.taskId;
+    const requestedDomain = normalizeDomain(payload?.domain || '');
     const task = taskPool.find(t => t.id === taskId);
 
     if (!task) {
@@ -165,8 +164,10 @@ function registerTaskPoolHandlers(ctx) {
       return { success: false, error: 'Task has no domain - requires Architect routing' };
     }
 
-    // Verify domain match (per design: exact match required)
-    if (task.metadata.domain !== domain) {
+    const taskDomain = normalizeDomain(task.metadata.domain || '');
+    const effectiveDomain = requestedDomain || taskDomain;
+    // Verify domain match (supports backend/infra alias normalization)
+    if (!effectiveDomain || taskDomain !== effectiveDomain) {
       return { success: false, error: 'Domain mismatch' };
     }
 
@@ -195,13 +196,17 @@ function registerTaskPoolHandlers(ctx) {
         const role = (PANE_ROLES[paneId] || `Pane-${paneId}`).toUpperCase();
         const notification = `(${role} #AUTO): Claimed task #${taskId}: ${task.subject}\n`;
         fs.writeFileSync(triggerPath, notification);
-        log.info('TaskPool', `Notified Architect of claim`);
+        log.info('TaskPool', 'Notified Architect of claim');
       } catch (err) {
         log.warn('TaskPool', 'Failed to notify Architect:', err.message);
       }
     }
 
-    const context = await loadReadBeforeWorkContext({ paneId, task, domain });
+    const context = await loadReadBeforeWorkContext({
+      paneId,
+      task,
+      domain: effectiveDomain,
+    });
     if (context?.message && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('inject-message', {
         panes: [String(paneId)],
@@ -213,7 +218,7 @@ function registerTaskPoolHandlers(ctx) {
       buildTaskStatusPatternEvent({
         task,
         status: 'in_progress',
-        metadata: { domain },
+        metadata: { domain: effectiveDomain },
         paneId,
       }),
       'task-claim'
@@ -226,15 +231,9 @@ function registerTaskPoolHandlers(ctx) {
         claimsUsed: Number(context?.total || 0),
       },
     };
-  });
+  }
 
-  // Update task status for completion/failure/needs_input
-  ipcMain.handle('update-task-status', async (event, taskId, status, metadata) => {
-    let payload = { taskId, status, metadata };
-    if (taskId && typeof taskId === 'object') {
-      payload = taskId;
-    }
-
+  async function updateTaskStatusInternal(payload = {}) {
     const targetId = payload.taskId;
     const nextStatus = payload.status;
     const meta = payload.metadata;
@@ -322,7 +321,35 @@ function registerTaskPoolHandlers(ctx) {
         claimStatus: claimResult?.status || null,
       },
     };
+  }
+
+  // Initialize task pool
+  taskPool = loadTaskPool();
+  log.info('TaskPool', `Loaded ${taskPool.length} tasks`);
+
+  // Get current task list
+  ipcMain.handle('get-task-list', () => {
+    return taskPool;
   });
+
+  // Claim a task for an agent
+  ipcMain.handle('claim-task', async (event, { paneId, taskId, domain }) => {
+    return claimTaskInternal({ paneId, taskId, domain });
+  });
+
+  // Update task status for completion/failure/needs_input
+  ipcMain.handle('update-task-status', async (event, taskId, status, metadata) => {
+    let payload = { taskId, status, metadata };
+    if (taskId && typeof taskId === 'object') {
+      payload = taskId;
+    }
+    return updateTaskStatusInternal(payload);
+  });
+
+  activeTaskPoolBridge = {
+    claimTask: claimTaskInternal,
+    updateTaskStatus: updateTaskStatusInternal,
+  };
 
   // Watch for external changes to task-pool.json
   if (TASK_POOL_FILE && ctx.watcher) {
@@ -343,6 +370,7 @@ function registerTaskPoolHandlers(ctx) {
 
 function unregisterTaskPoolHandlers(ctx) {
   const { ipcMain } = ctx || {};
+  activeTaskPoolBridge = null;
   if (!ipcMain) return;
     ipcMain.removeHandler('get-task-list');
     ipcMain.removeHandler('claim-task');
@@ -350,4 +378,7 @@ function unregisterTaskPoolHandlers(ctx) {
 }
 
 registerTaskPoolHandlers.unregister = unregisterTaskPoolHandlers;
-module.exports = { registerTaskPoolHandlers };
+module.exports = {
+  registerTaskPoolHandlers,
+  getTaskPoolBridge,
+};

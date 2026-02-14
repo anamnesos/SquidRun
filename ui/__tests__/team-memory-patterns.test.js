@@ -85,6 +85,28 @@ maybeDescribe('team-memory patterns module', () => {
     expect(failure.patterns[0].confidence).toBeGreaterThan(0);
   });
 
+  test('classifies actor/status task events without outcome fields', () => {
+    fs.writeFileSync(spoolPath, [
+      JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'devops', status: 'failed', session: 's_601' }),
+      JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'analyst', status: 'failed', session: 's_602' }),
+      JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'architect', status: 'in_progress', session: 's_602' }),
+      JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'devops', status: 'completed', session: 's_603' }),
+      JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'analyst', status: 'completed', session: 's_603' }),
+      '',
+    ].join('\n'), 'utf-8');
+
+    const mined = patterns.processPatternSpool({ spoolPath, nowMs: 5000 });
+    expect(mined.ok).toBe(true);
+
+    const failure = patterns.queryPatterns({ patternType: 'failure', scope: 'ui/modules/ipc/task-pool-handlers.js' });
+    expect(failure.ok).toBe(true);
+    expect(failure.total).toBeGreaterThanOrEqual(1);
+
+    const success = patterns.queryPatterns({ patternType: 'success', scope: 'ui/modules/ipc/task-pool-handlers.js' });
+    expect(success.ok).toBe(true);
+    expect(success.total).toBeGreaterThanOrEqual(1);
+  });
+
   test('keeps hook path append-only and mines only in worker/runtime operation', async () => {
     process.env.HIVEMIND_TEAM_MEMORY_FORCE_IN_PROCESS = '1';
     await teamMemory.resetForTests();

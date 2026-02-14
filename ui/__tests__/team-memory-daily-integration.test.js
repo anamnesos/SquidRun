@@ -98,6 +98,7 @@ describe('team-memory daily integration helpers', () => {
 
     expect(event.eventType).toBe('task.status_changed');
     expect(event.status).toBe('failed');
+    expect(event.actor).toBe('devops');
     expect(event.owner).toBe('devops');
 
     expect(isDeliveryFailureResult({ verified: true, status: 'delivered.verified' })).toBe(false);
