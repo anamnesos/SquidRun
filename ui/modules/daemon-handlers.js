@@ -598,7 +598,11 @@ function setupRefreshButtons(sendToPaneFn) {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const paneId = btn.dataset.paneId;
-      sendToPaneFn(paneId, '/read workspace/shared_context.md\r');
+      const refreshPrompt =
+        `Refresh startup context: read ROLES.md, runtime memory snapshot (Evidence Ledger + Team Memory), .hivemind/build/blockers.md, ` +
+        `.hivemind/build/errors.md, and .hivemind/context-snapshots/${paneId}.md ` +
+        `(fallback workspace/context-snapshots/${paneId}.md). Then report status.`;
+      sendToPaneFn(paneId, `${refreshPrompt}\r`);
       updatePaneStatus(paneId, 'Refreshed');
       setTimeout(() => {
         // This is a small UI update, could be moved to uiView but okay for now

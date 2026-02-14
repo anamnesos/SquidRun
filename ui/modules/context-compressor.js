@@ -2,7 +2,7 @@
  * Context Compressor - Smart context restoration after Claude Code compaction
  *
  * Generates token-budget-constrained markdown snapshots from multiple data sources
- * (intent files, shared state changelog, memory system, prior context snapshots, build status).
+ * (shared state changelog, memory system, prior context snapshots, build status).
  * Snapshots are written to workspace/context-snapshots/{paneId}.md for lifecycle
  * hooks to read after compaction events.
  *
@@ -19,7 +19,7 @@ const {
   getCoordRoots,
 } = require('../config');
 const log = require('./logger');
-const { estimateTokens, truncateToTokenBudget } = require('./memory/memory-summarizer');
+const { estimateTokens, truncateToTokenBudget } = require('./token-utils');
 
 const SNAPSHOTS_DIR = path.join(WORKSPACE_PATH, 'context-snapshots');
 const DEFAULT_MAX_TOKENS = 1500;
@@ -30,24 +30,18 @@ const IDLE_REFRESH_THRESHOLD_MS = 30000;
 const SECTION_PRIORITIES = {
   teamStatus: 100,
   recentChanges: 90,
-  activeLearnings: 80,
   activeIssues: 75,
   sessionProgress: 70,
-  keyDecisions: 60,
 };
 
 // Files to watch for auto-refresh (same set as shared-state.js)
 const WATCHED_FILES = [
-  'intent/1.json',
-  'intent/2.json',
-  'intent/5.json',
   'pipeline.json',
   'review.json',
 ];
 
 // Module state
 let sharedStateRef = null;
-let memoryRef = null;
 let mainWindowRef = null;
 let watcherRef = null;
 let isIdleRef = null;
@@ -166,26 +160,28 @@ function readSnapshotProgress(paneId = '1') {
 }
 
 /**
- * Build the Team Status section from intent files
+ * Build the Team Status section from latest context snapshots.
  */
 function buildTeamStatusSection() {
   const lines = ['### Team Status'];
   for (const paneId of PANE_IDS) {
-    const intentPath = resolveCoordFile(path.join('intent', `${paneId}.json`));
-    const intent = readJsonFile(intentPath);
     const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
+    const progress = readSnapshotProgress(paneId);
 
-    if (intent) {
-      const stale = intent.session < getSessionNumber() ? ' [STALE]' : '';
-      lines.push(`- ${role}${stale}: ${intent.intent || 'unknown'}`);
-      if (intent.blockers && intent.blockers !== 'none') {
-        lines.push(`  Blockers: ${intent.blockers}`);
-      }
-      if (intent.teammates) {
-        lines.push(`  Teammates: ${intent.teammates}`);
-      }
+    if (progress.completed.length === 0 && progress.next.length === 0) {
+      lines.push(`- ${role}: No recent status`);
     } else {
-      lines.push(`- ${role}: No intent data`);
+      const parts = [];
+      if (progress.session > 0) {
+        parts.push(`Session ${progress.session}`);
+      }
+      if (progress.completed.length > 0) {
+        parts.push(`Completed: ${progress.completed.slice(0, 2).join(', ')}`);
+      }
+      if (progress.next.length > 0) {
+        parts.push(`Next: ${progress.next.slice(0, 2).join(', ')}`);
+      }
+      lines.push(`- ${role}: ${parts.join(' | ')}`);
     }
   }
   return {
@@ -213,32 +209,6 @@ function buildRecentChangesSection(paneId) {
       priority: SECTION_PRIORITIES.recentChanges,
       content,
     };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Build the Active Learnings section from the memory system
- */
-function buildActiveLearningsSection(paneId) {
-  if (!memoryRef) return null;
-
-  try {
-    const injection = memoryRef.getContextInjection(paneId, { maxTokens: 400, optimize: true });
-    if (!injection || injection.trim().length === 0) return null;
-
-    // Extract just the learnings portion if present
-    const learningsMatch = injection.match(/## Recent Learnings\n([\s\S]*?)(?=\n## |$)/);
-    if (learningsMatch) {
-      return {
-        id: 'activeLearnings',
-        priority: SECTION_PRIORITIES.activeLearnings,
-        content: `### Active Learnings\n${learningsMatch[1].trim()}`,
-      };
-    }
-
-    return null;
   } catch {
     return null;
   }
@@ -277,7 +247,7 @@ function buildActiveIssuesSection() {
 }
 
 /**
- * Build the Session Progress section from prior context snapshots and intent session state
+ * Build the Session Progress section from prior context snapshots.
  */
 function buildSessionProgressSection() {
   const snapshotProgress = readSnapshotProgress('1');
@@ -310,48 +280,17 @@ function buildSessionProgressSection() {
 }
 
 /**
- * Build the Key Decisions section from memory context manager
- */
-function buildKeyDecisionsSection(paneId) {
-  if (!memoryRef) return null;
-
-  try {
-    const summary = memoryRef.getContextSummary(paneId);
-    if (!summary || !summary.recentDecisions || summary.recentDecisions.length === 0) return null;
-
-    const lines = ['### Key Decisions'];
-    const decisions = summary.recentDecisions.slice(-5);
-    for (const d of decisions) {
-      const action = d.action || d.description || 'unknown';
-      lines.push(`- ${action}`);
-    }
-
-    return {
-      id: 'keyDecisions',
-      priority: SECTION_PRIORITIES.keyDecisions,
-      content: lines.join('\n'),
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Get current session number from intent files and context snapshots
+ * Get current session number from context snapshots.
  */
 function getSessionNumber() {
-  let maxIntentSession = 0;
+  let maxSnapshotSession = 0;
   for (const paneId of PANE_IDS) {
-    const intentPath = resolveCoordFile(path.join('intent', `${paneId}.json`));
-    const intent = readJsonFile(intentPath);
-    const parsed = Number.parseInt(intent?.session, 10);
-    if (Number.isInteger(parsed) && parsed > maxIntentSession) {
-      maxIntentSession = parsed;
+    const snapshotSession = readSnapshotProgress(paneId).session || 0;
+    if (snapshotSession > maxSnapshotSession) {
+      maxSnapshotSession = snapshotSession;
     }
   }
-
-  const snapshotSession = readSnapshotProgress('1').session || 0;
-  return Math.max(maxIntentSession, snapshotSession, 0);
+  return Math.max(maxSnapshotSession, 0);
 }
 
 /**
@@ -368,10 +307,8 @@ function generateSnapshot(paneId, options = {}) {
   const sections = [
     buildTeamStatusSection(),
     buildRecentChangesSection(paneId),
-    buildActiveLearningsSection(paneId),
     buildActiveIssuesSection(),
     buildSessionProgressSection(),
-    buildKeyDecisionsSection(paneId),
   ].filter(Boolean);
 
   // Sort by priority (highest first)
@@ -478,14 +415,12 @@ function getLastSnapshot(paneId) {
  * Initialize the context compressor
  * @param {Object} options
  * @param {Object} options.sharedState - Reference to shared-state module
- * @param {Object} options.memory - Reference to memory module
  * @param {Object} options.mainWindow - Electron BrowserWindow
  * @param {Object} options.watcher - File watcher with addWatch(path, callback)
  * @param {Function} options.isIdle - Returns true when app should skip auto-refresh
  */
 function init(options = {}) {
   if (options.sharedState) sharedStateRef = options.sharedState;
-  if (options.memory) memoryRef = options.memory;
   if (options.mainWindow) mainWindowRef = options.mainWindow;
   if (options.watcher) watcherRef = options.watcher;
   isIdleRef = typeof options.isIdle === 'function' ? options.isIdle : null;
@@ -550,10 +485,8 @@ module.exports = {
   _internals: {
     buildTeamStatusSection,
     buildRecentChangesSection,
-    buildActiveLearningsSection,
     buildActiveIssuesSection,
     buildSessionProgressSection,
-    buildKeyDecisionsSection,
     readSnapshotProgress,
     parseSessionNumberFromText,
     getSessionNumber,
@@ -563,8 +496,6 @@ module.exports = {
     ensureSnapshotsDir,
     get sharedStateRef() { return sharedStateRef; },
     set sharedStateRef(v) { sharedStateRef = v; },
-    get memoryRef() { return memoryRef; },
-    set memoryRef(v) { memoryRef = v; },
     get mainWindowRef() { return mainWindowRef; },
     set mainWindowRef(v) { mainWindowRef = v; },
     get watcherRef() { return watcherRef; },

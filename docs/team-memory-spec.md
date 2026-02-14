@@ -20,8 +20,8 @@ Every multi-agent memory system today is a library — store, search, retrieve. 
 |-----------|--------|----------|
 | Evidence Ledger (SQLite WAL) | RUNTIME ACTIVE | `ui/modules/evidence-ledger/` |
 | TraceId propagation (7 files) | SHIPPED | Across IPC/trigger/daemon pipeline |
-| Intent Board | ACTIVE | `workspace/intent/*.json` |
-| War Room log | ACTIVE | `workspace/war-room.log` |
+| Intent Board JSON files | REMOVED | Replaced by Team Memory + Evidence Ledger runtime signals |
+| War Room log | DEPRECATED — pending removal | `workspace/war-room.log` |
 | Arch hooks (SessionStart/End, PreCompact) | ACTIVE | `workspace/scripts/arch-hooks.js` |
 | Ana hooks (SessionStart/End, AfterTool) | ACTIVE | `workspace/scripts/ana-hooks.js` |
 | MEMORY.md (Claude auto-memory) | ACTIVE | Per-instance `.claude/` dirs |
@@ -400,14 +400,14 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 | Component | Fate | Notes |
 |-----------|------|-------|
 | Evidence Ledger | KEEP as Layer 0 | Immutable backing store, no changes |
-| Intent Board | KEEP — dual-write | Keep JSON files AND belief snapshots until parity validated |
+| Intent Board JSON files | REMOVED | Runtime writes now go directly to Team Memory/Evidence Ledger |
 | War Room log | KEEP + ENHANCE | Add structured metadata (Phase 0) |
 | Session Handoff | KEEP | May eventually derive from claim queries |
 | MEMORY.md | KEEP | Orthogonal — Claude auto-memory for model-specific notes |
 
 **Backup/restore:** `team-memory.sqlite` should be included in any backup/restore process. Add explicit `hm-claim export` and `hm-claim import` CLI commands for portability. SQLite `.backup` API can be used for hot copies.
 
-**Intent board deprecation is NOT in scope for this spec.** Dual-write (intents + belief snapshots) until we validate snapshots capture equivalent information. Only then consider deprecation in a future spec.
+**Intent-board deprecation note (historical):** This spec originally planned dual-write. Runtime has since cut over to Team Memory/Evidence Ledger-only writes and removed JSON intent files.
 
 ### What's New
 
@@ -444,7 +444,7 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 | Claims survive across sessions? | Yes — that's the whole point |
 | Pattern engine: worker or hook? | HYBRID — hooks for cheap ingestion/immediate checks, worker for heavy mining/scoring |
 | Vector search? | Deferred — FTS5 sufficient at our scale |
-| Intent board deprecation? | Keep dual-write — only deprecate after parity validation |
+| Intent board deprecation? | Completed — JSON intent files removed from runtime |
 | Guard enforcement level? | Warn/escalate only — no hard blocks until precision proven |
 | Trust/calibration enforcement? | Informational only — no weighted arbitration until Phase 3 validated |
 
@@ -466,7 +466,7 @@ Research survey (2026-02-13) of LangGraph, CrewAI, AutoGen, OpenClaw, Observatio
 - [ ] Guards can warn or escalate based on claims and patterns
 - [ ] All queries complete in < 50ms for typical operations (< 1000 claims), verified via benchmark harness with fixed synthetic dataset (100/500/1000 claims, mixed types and scopes)
 - [ ] Full test coverage for each phase
-- [ ] Existing Evidence Ledger, hooks, and intent board unchanged (additive only)
+- [ ] Existing Evidence Ledger and hooks remain stable while intent-board JSON paths stay removed
 - [ ] Single-writer worker process with graceful degradation on failure
 
 ---

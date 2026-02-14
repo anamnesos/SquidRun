@@ -1,7 +1,7 @@
 /**
  * PTY IPC Handlers (via Daemon)
  * Channels: pty-create, pty-write, pty-write-chunked, codex-exec, send-trusted-enter,
- *           clipboard-paste-text, pty-resize, pty-kill, spawn-claude,
+ *           clipboard-paste-text, pty-resize, pty-kill, intent-update, spawn-claude,
  *           get-claude-state, get-daemon-terminals
  */
 
@@ -90,7 +90,7 @@ function registerPtyHandlers(ctx, deps = {}) {
     throw new Error('registerPtyHandlers requires ctx.ipcMain');
   }
   const { ipcMain } = ctx;
-  const { broadcastClaudeState, recordSessionStart } = deps;
+  const { broadcastClaudeState, recordSessionStart, recordSessionLifecycle, updateIntentState } = deps;
   const getRecoveryManager = () => deps?.recoveryManager || ctx.recoveryManager;
 
   ipcMain.handle('pty-create', async (event, paneId, workingDir) => {
@@ -285,7 +285,14 @@ function registerPtyHandlers(ctx, deps = {}) {
     }
   });
 
-  ipcMain.handle('spawn-claude', (event, paneId, workingDir) => {
+  ipcMain.handle('intent-update', async (event, payload = {}) => {
+    if (typeof updateIntentState !== 'function') {
+      return { ok: false, reason: 'intent_update_unavailable' };
+    }
+    return updateIntentState(payload);
+  });
+
+  ipcMain.handle('spawn-claude', async (event, paneId, workingDir) => {
     // Dry-run mode - simulate without spawning real agents
     if (ctx.currentSettings.dryRun) {
       ctx.agentRunning.set(paneId, 'running');
@@ -300,6 +307,13 @@ function registerPtyHandlers(ctx, deps = {}) {
     ctx.agentRunning.set(paneId, 'starting');
     broadcastClaudeState();
     recordSessionStart(paneId);
+    if (typeof recordSessionLifecycle === 'function') {
+      await Promise.resolve(recordSessionLifecycle({
+        paneId,
+        status: 'started',
+        reason: 'spawn_requested',
+      }));
+    }
 
     const paneCommands = ctx.currentSettings.paneCommands || {};
     let agentCmd = (paneCommands[paneId] || 'claude').trim();
@@ -318,7 +332,7 @@ function registerPtyHandlers(ctx, deps = {}) {
     return { success: true, command: agentCmd };
   });
 
-  // Context injection for agent panes (AGENTS.md, CLAUDE.md, GEMINI.md)
+  // Context injection for agent panes (ROLES.md + model notes)
   ipcMain.handle('inject-context', async (event, paneId, model, delay = 5000) => {
     const contextInjection = ctx.contextInjection;
     if (!contextInjection) {
@@ -361,6 +375,7 @@ function unregisterPtyHandlers(ctx) {
     ipcMain.removeHandler('clipboard-paste-text');
     ipcMain.removeHandler('pty-resize');
     ipcMain.removeHandler('pty-kill');
+    ipcMain.removeHandler('intent-update');
     ipcMain.removeHandler('spawn-claude');
     ipcMain.removeHandler('inject-context');
     ipcMain.removeHandler('get-claude-state');

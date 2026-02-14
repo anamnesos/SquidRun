@@ -1,6 +1,6 @@
 /**
  * Shared State - Live state aggregator with rolling changelog
- * Watches intent files, pipeline.json, review.json and broadcasts changes.
+ * Watches coordination files and broadcasts changes.
  *
  * Provides:
  * - Real-time WebSocket broadcasts on state changes
@@ -15,7 +15,6 @@ const path = require('path');
 const {
   WORKSPACE_PATH,
   PANE_IDS,
-  PANE_ROLES,
   resolveCoordPath,
   getCoordRoots,
 } = require('../config');
@@ -42,16 +41,12 @@ const MAX_CHANGELOG_ENTRIES = 100;
 
 // Files to watch, keyed by state key
 const WATCHED_FILES = {
-  'intent/1.json': { stateKey: 'intent', subKey: '1', source: () => PANE_ROLES['1'] || 'Pane 1' },
-  'intent/2.json': { stateKey: 'intent', subKey: '2', source: () => PANE_ROLES['2'] || 'Pane 2' },
-  'intent/5.json': { stateKey: 'intent', subKey: '5', source: () => PANE_ROLES['5'] || 'Pane 5' },
   'pipeline.json':  { stateKey: 'pipeline', subKey: null, source: () => 'Pipeline' },
   'review.json':    { stateKey: 'review', subKey: null, source: () => 'Review' },
 };
 
 // Fields to diff per file type
 const DIFF_FIELDS = {
-  intent: ['intent', 'status', 'blockers', 'active_files', 'teammates', 'last_findings'],
   pipeline: ['items'],
   review: ['result', 'change_type', 'reviewer', 'author'],
 };

@@ -1,23 +1,14 @@
 /**
  * Context Injection Manager
  * Handles reading and injecting context files for agents
- *
- * Supports two modes:
- * 1. Modular (new): Combines base-instructions.md + role file + model notes
- * 2. Legacy: Reads CLAUDE.md, AGENTS.md, or GEMINI.md from pane project root
  */
 
 const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
-const { PANE_ROLES, resolvePaneCwd } = require('../../config');
-
-// Map pane IDs to role file names
-const ROLE_FILES = {
-  '1': 'ARCH.md',
-  '2': 'DEVOPS.md',
-  '5': 'ANA.md',
-};
+const { PANE_ROLES } = require('../../config');
+const { executeEvidenceLedgerOperation } = require('../ipc/evidence-ledger-handlers');
+const teamMemory = require('../team-memory');
 
 // Map model types to model notes files
 const MODEL_NOTES = {
@@ -26,11 +17,32 @@ const MODEL_NOTES = {
   'gemini': 'gemini-notes.md',
 };
 
+function canonicalRoleFromPane(paneId) {
+  const id = String(paneId || '');
+  if (id === '1') return 'architect';
+  if (id === '2') return 'devops';
+  if (id === '5') return 'analyst';
+  return 'system';
+}
+
+function asNonEmptyString(value) {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : '';
+}
+
+function summarizeClaimStatement(statement, maxLength = 120) {
+  const text = asNonEmptyString(statement).replace(/\s+/g, ' ');
+  if (!text) return '';
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
 class ContextInjectionManager {
   constructor(appContext) {
     this.ctx = appContext;
-    // Docs directory for modular files
-    this.docsDir = path.join(__dirname, '..', '..', '..', 'docs');
+    this.projectRoot = path.join(__dirname, '..', '..', '..');
+    this.docsDir = path.join(this.projectRoot, 'docs');
   }
 
   /**
@@ -47,30 +59,97 @@ class ContextInjectionManager {
     return '';
   }
 
-  /**
-   * Build modular context from base + role + model notes
-   */
-  buildModularContext(paneId, model) {
+  async buildRuntimeMemorySnapshot(paneId) {
+    const role = canonicalRoleFromPane(paneId);
     const parts = [];
 
-    // 1. Base instructions (shared by all)
+    try {
+      const ledgerContext = await executeEvidenceLedgerOperation(
+        'get-context',
+        { preferSnapshot: true },
+        {
+          source: {
+            via: 'context-injection',
+            role,
+            paneId: String(paneId || ''),
+          },
+        }
+      );
+
+      if (ledgerContext?.ok !== false && ledgerContext && typeof ledgerContext === 'object') {
+        const session = ledgerContext.session;
+        const completed = Array.isArray(ledgerContext.completed)
+          ? ledgerContext.completed.slice(0, 3)
+          : [];
+        const notYetDone = Array.isArray(ledgerContext.not_yet_done)
+          ? ledgerContext.not_yet_done.slice(0, 3)
+          : [];
+
+        const ledgerLines = [];
+        if (session !== null && session !== undefined) ledgerLines.push(`- Session: ${session}`);
+        for (const item of completed) ledgerLines.push(`- Completed: ${asNonEmptyString(item)}`);
+        for (const item of notYetDone) ledgerLines.push(`- Next: ${asNonEmptyString(item)}`);
+
+        if (ledgerLines.length > 0) {
+          parts.push('### Evidence Ledger\n' + ledgerLines.join('\n'));
+        }
+      }
+    } catch (err) {
+      log.warn('ContextInjection', `Evidence Ledger runtime query failed: ${err.message}`);
+    }
+
+    try {
+      const claimResult = await teamMemory.executeTeamMemoryOperation(
+        'query-claims',
+        {
+          owner: role,
+          sessionsBack: 6,
+          limit: 5,
+        },
+        {
+          source: {
+            via: 'context-injection',
+            role,
+            paneId: String(paneId || ''),
+          },
+        }
+      );
+
+      if (claimResult?.ok && Array.isArray(claimResult.claims) && claimResult.claims.length > 0) {
+        const claimLines = claimResult.claims.slice(0, 3).map((claim, index) => {
+          const statement = summarizeClaimStatement(claim.statement);
+          const status = asNonEmptyString(claim.status) || 'proposed';
+          const claimType = asNonEmptyString(claim.claimType || claim.claim_type) || 'fact';
+          return `${index + 1}. (${status}/${claimType}) ${statement}`;
+        });
+        parts.push('### Team Memory\n' + claimLines.join('\n'));
+      }
+    } catch (err) {
+      log.warn('ContextInjection', `Team Memory runtime query failed: ${err.message}`);
+    }
+
+    if (parts.length === 0) return '';
+    return ['## Runtime Memory Snapshot', ...parts].join('\n\n');
+  }
+
+  async buildContext(paneId, model) {
+    const parts = [];
+
+    // 1. Shared startup/communication baseline
     const basePath = path.join(this.docsDir, 'models', 'base-instructions.md');
     const baseContent = this.readFileIfExists(basePath);
     if (baseContent) {
       parts.push(baseContent);
     }
 
-    // 2. Role-specific file
-    const roleFile = ROLE_FILES[paneId];
-    if (roleFile) {
-      const rolePath = path.join(this.docsDir, 'roles', roleFile);
-      const roleContent = this.readFileIfExists(rolePath);
-      if (roleContent) {
-        parts.push(roleContent);
-      }
+    // 2. Canonical role contract
+    const rolesPath = path.join(this.projectRoot, 'ROLES.md');
+    const rolesContent = this.readFileIfExists(rolesPath);
+    if (rolesContent) {
+      parts.push(rolesContent);
     }
 
-    // 3. Model-specific notes
+    // 3. Model-specific runtime quirks
     const modelFile = MODEL_NOTES[model];
     if (modelFile) {
       const modelPath = path.join(this.docsDir, 'models', modelFile);
@@ -80,30 +159,12 @@ class ContextInjectionManager {
       }
     }
 
+    const runtimeSnapshot = await this.buildRuntimeMemorySnapshot(paneId);
+    if (runtimeSnapshot) {
+      parts.push(runtimeSnapshot);
+    }
+
     return parts.join('\n\n---\n\n');
-  }
-
-  /**
-   * Build legacy context from project root files
-   */
-  buildLegacyContext(paneId, model) {
-    const projectRoot = resolvePaneCwd(paneId);
-    if (!projectRoot || !fs.existsSync(projectRoot)) {
-      return '';
-    }
-
-    const claudePath = path.join(projectRoot, 'CLAUDE.md');
-    const agentsPath = path.join(projectRoot, 'AGENTS.md');
-    const geminiPath = path.join(projectRoot, 'GEMINI.md');
-
-    // Select file based on model type
-    if (model === 'gemini') {
-      return this.readFileIfExists(geminiPath) || this.readFileIfExists(claudePath);
-    } else if (model === 'codex') {
-      return this.readFileIfExists(agentsPath) || this.readFileIfExists(claudePath);
-    } else {
-      return this.readFileIfExists(claudePath);
-    }
   }
 
   /**
@@ -118,14 +179,7 @@ class ContextInjectionManager {
     // Schedule injection
     setTimeout(async () => {
       try {
-        // Try modular context first
-        let injectionText = this.buildModularContext(id, model);
-
-        // Fall back to legacy if modular files don't exist
-        if (!injectionText.trim()) {
-          log.info('ContextInjection', `No modular context for pane ${id}, using legacy`);
-          injectionText = this.buildLegacyContext(id, model);
-        }
+        const injectionText = await this.buildContext(id, model);
 
         if (injectionText && this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
           const role = PANE_ROLES[id] || `Pane ${id}`;

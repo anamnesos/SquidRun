@@ -122,17 +122,6 @@ jest.mock('../modules/ipc-handlers', () => ({
   cleanup: jest.fn(),
 }));
 
-// Mock memory
-jest.mock('../modules/memory', () => ({
-  init: jest.fn().mockResolvedValue(),
-  shutdown: jest.fn(),
-}));
-
-// Mock memory ipc-handlers
-jest.mock('../modules/memory/ipc-handlers', () => ({
-  registerHandlers: jest.fn(),
-}));
-
 // Mock websocket-server
 jest.mock('../modules/websocket-server', () => ({
   start: jest.fn().mockResolvedValue(),
@@ -313,7 +302,6 @@ describe('HivemindApp', () => {
     });
 
     it('should call cleanup functions', () => {
-      const memory = require('../modules/memory');
       const websocketServer = require('../modules/websocket-server');
       const watcher = require('../modules/watcher');
       const smsPoller = require('../modules/sms-poller');
@@ -323,7 +311,6 @@ describe('HivemindApp', () => {
 
       app.shutdown();
 
-      expect(memory.shutdown).toHaveBeenCalled();
       expect(closeSharedRuntime).toHaveBeenCalled();
       expect(experiment.closeExperimentRuntime).toHaveBeenCalled();
       expect(teamMemory.stopIntegritySweep).toHaveBeenCalled();
@@ -508,6 +495,55 @@ describe('HivemindApp', () => {
           eventType: 'delivery.failed',
           channel: 'send',
           target: '2',
+        })
+      );
+    });
+
+    it('records delivery outcome patterns for verified sends', async () => {
+      const teamMemory = require('../modules/team-memory');
+      await app.recordDeliveryOutcomePattern({
+        channel: 'send',
+        target: '1',
+        fromRole: 'devops',
+        result: {
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'delivered.verified',
+          notified: ['1'],
+        },
+      });
+
+      expect(teamMemory.appendPatternHookEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'delivery.outcome',
+          channel: 'send',
+          target: '1',
+          outcome: 'delivered',
+        })
+      );
+      expect(teamMemory.appendPatternHookEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'delivery.failed',
+          channel: 'send',
+          target: '1',
+        })
+      );
+    });
+
+    it('records session lifecycle events', async () => {
+      const teamMemory = require('../modules/team-memory');
+      await app.recordSessionLifecyclePattern({
+        paneId: '2',
+        status: 'started',
+        reason: 'spawn_requested',
+      });
+
+      expect(teamMemory.appendPatternHookEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'session.lifecycle',
+          paneId: '2',
+          status: 'started',
         })
       );
     });

@@ -407,6 +407,15 @@ class EvidenceLedgerMemory {
       clauses.push('session_id = ?');
       params.push(String(filters.sessionId));
     }
+    if (Array.isArray(filters.sessionIds) && filters.sessionIds.length > 0) {
+      const normalizedIds = filters.sessionIds
+        .map((value) => asNonEmptyString(value, ''))
+        .filter(Boolean);
+      if (normalizedIds.length > 0) {
+        clauses.push(`session_id IN (${normalizedIds.map(() => '?').join(', ')})`);
+        params.push(...normalizedIds);
+      }
+    }
     if (filters.incidentId !== undefined) {
       clauses.push('incident_id = ?');
       params.push(String(filters.incidentId));
@@ -668,55 +677,72 @@ class EvidenceLedgerMemory {
     }
   }
 
-  getActiveDirectives(limit = 200) {
+  getActiveDirectives(limit = 200, filters = {}) {
     return this.listDecisions({
       category: 'directive',
       status: 'active',
       order: 'desc',
       limit,
+      sessionIds: Array.isArray(filters.sessionIds) ? filters.sessionIds : undefined,
     });
   }
 
-  getKnownIssues(status = undefined, limit = 500) {
-    const filters = {
+  getKnownIssues(status = undefined, limit = 500, scope = {}) {
+    const decisionFilters = {
       category: 'issue',
       order: 'desc',
       limit,
     };
     if (status !== undefined && status !== null && status !== '') {
-      filters.status = status;
+      decisionFilters.status = status;
     }
-    return this.listDecisions(filters);
+    if (Array.isArray(scope.sessionIds) && scope.sessionIds.length > 0) {
+      decisionFilters.sessionIds = scope.sessionIds;
+    }
+    return this.listDecisions(decisionFilters);
   }
 
-  getRoadmap(limit = 500) {
+  getRoadmap(limit = 500, filters = {}) {
     return this.listDecisions({
       category: 'roadmap',
       status: 'active',
       order: 'desc',
       limit,
+      sessionIds: Array.isArray(filters.sessionIds) ? filters.sessionIds : undefined,
     });
   }
 
-  getRecentCompletions(limit = 50) {
+  getRecentCompletions(limit = 50, filters = {}) {
     const db = this._db();
     if (!db) return this._unavailable();
+    const clauses = [
+      `category = 'completion'`,
+      `status != 'superseded'`,
+    ];
+    const params = [];
+    const sessionIds = Array.isArray(filters.sessionIds)
+      ? filters.sessionIds.map((value) => asNonEmptyString(value, '')).filter(Boolean)
+      : [];
+    if (sessionIds.length > 0) {
+      clauses.push(`session_id IN (${sessionIds.map(() => '?').join(', ')})`);
+      params.push(...sessionIds);
+    }
     const rows = db.prepare(`
       SELECT * FROM ledger_decisions
-      WHERE category = 'completion'
-        AND status != 'superseded'
+      WHERE ${clauses.join(' AND ')}
       ORDER BY created_at_ms DESC
       LIMIT ?
-    `).all(clampLimit(limit, 50, 1, 1000));
+    `).all(...params, clampLimit(limit, 50, 1, 1000));
     return rows.map((row) => this._mapDecision(row));
   }
 
-  getArchitectureDecisions(limit = 300) {
+  getArchitectureDecisions(limit = 300, filters = {}) {
     return this.listDecisions({
       category: 'architecture',
       status: 'active',
       order: 'desc',
       limit,
+      sessionIds: Array.isArray(filters.sessionIds) ? filters.sessionIds : undefined,
     });
   }
 
@@ -756,6 +782,7 @@ class EvidenceLedgerMemory {
   getLatestContext(opts = {}) {
     return this._withReadTransaction(() => {
       let requestedSessionId = asNonEmptyString(opts.sessionId, '');
+      const explicitSessionId = requestedSessionId.length > 0;
       const preferSnapshot = opts.preferSnapshot === true;
 
       // When preferSnapshot is true and no session specified, anchor to the latest
@@ -779,20 +806,49 @@ class EvidenceLedgerMemory {
       }
 
       let session = null;
-      if (requestedSessionId) {
+      let recentSessionIds = [];
+      if (requestedSessionId && explicitSessionId) {
         const requestedSession = this.getSession(requestedSessionId);
         if (requestedSession && requestedSession.ok === false) return requestedSession;
         session = requestedSession || null;
+        if (session?.sessionId) recentSessionIds = [session.sessionId];
       } else {
-        const latestSession = this.listSessions({ limit: 1, order: 'desc' });
-        if (latestSession && latestSession.ok === false) return latestSession;
-        session = latestSession[0] || null;
+        const sessionWindow = clampLimit(opts.sessionWindow, 5, 1, 20);
+        const latestSessions = this.listSessions({ limit: sessionWindow, order: 'desc' });
+        if (latestSessions && latestSessions.ok === false) return latestSessions;
+        const newestSessionNumber = Number(latestSessions[0]?.sessionNumber || 0);
+        const sessionNumberFloor = Number.isInteger(newestSessionNumber)
+          ? Math.max(0, newestSessionNumber - (sessionWindow - 1))
+          : 0;
+        const filteredSessions = latestSessions.filter((item) => {
+          const number = Number(item?.sessionNumber || 0);
+          if (!Number.isInteger(number) || number <= 0) return false;
+          return number >= sessionNumberFloor;
+        });
+        const scopedSessions = filteredSessions.length > 0 ? filteredSessions : latestSessions;
+        recentSessionIds = scopedSessions
+          .map((item) => asNonEmptyString(item?.sessionId, ''))
+          .filter(Boolean);
+        if (requestedSessionId) {
+          session = scopedSessions.find((item) => item.sessionId === requestedSessionId) || null;
+          if (!session) {
+            const requestedSession = this.getSession(requestedSessionId);
+            if (requestedSession && requestedSession.ok === false) return requestedSession;
+            session = requestedSession || null;
+            if (session?.sessionId && !recentSessionIds.includes(session.sessionId)) {
+              recentSessionIds.unshift(session.sessionId);
+            }
+          }
+        } else {
+          session = scopedSessions[0] || null;
+        }
       }
-      const directives = this.getActiveDirectives(clampLimit(opts.directiveLimit, 200, 1, 2000));
-      const issues = this.getKnownIssues(undefined, clampLimit(opts.issueLimit, 500, 1, 5000));
-      const roadmap = this.getRoadmap(clampLimit(opts.roadmapLimit, 500, 1, 5000));
-      const completions = this.getRecentCompletions(clampLimit(opts.completionLimit, 100, 1, 5000));
-      const architectureDecisions = this.getArchitectureDecisions(clampLimit(opts.architectureLimit, 300, 1, 5000));
+      const scope = recentSessionIds.length > 0 ? { sessionIds: recentSessionIds } : {};
+      const directives = this.getActiveDirectives(clampLimit(opts.directiveLimit, 200, 1, 2000), scope);
+      const issues = this.getKnownIssues(undefined, clampLimit(opts.issueLimit, 500, 1, 5000), scope);
+      const roadmap = this.getRoadmap(clampLimit(opts.roadmapLimit, 500, 1, 5000), scope);
+      const completions = this.getRecentCompletions(clampLimit(opts.completionLimit, 100, 1, 5000), scope);
+      const architectureDecisions = this.getArchitectureDecisions(clampLimit(opts.architectureLimit, 300, 1, 5000), scope);
 
       if (directives?.ok === false) return directives;
       if (issues?.ok === false) return issues;

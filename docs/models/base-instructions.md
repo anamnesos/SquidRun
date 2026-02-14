@@ -22,13 +22,10 @@ You are one of 3 pane agents managed by Hivemind:
 
 On every new session, BEFORE waiting for user input:
 
-1. Read `workspace/app-status.json` - Check runtime state
-2. Read latest context snapshot (`.hivemind/context-snapshots/1.md`, fallback `workspace/context-snapshots/1.md`)
-3. Read `workspace/build/blockers.md` - Active blockers
-4. Read `workspace/build/errors.md` - Active errors
-5. Check for tasks assigned to your role
-6. Message Architect: `(ROLE #1): [Role] online. [status]`
-7. Start working or stand by
+1. Read `ROLES.md` and follow the startup baseline for your role
+   - Architect baseline starts with Evidence Ledger context (`hm-memory.js context`)
+2. Message Architect: `(ROLE #1): [Role] online. [status]`
+3. Start working or stand by
 
 ## Communication
 

@@ -5,8 +5,8 @@
 
 const { registerKnowledgeGraphHandlers } = require('../modules/ipc/knowledge-graph-handlers');
 
-// Mock the memory module
-jest.mock('../modules/memory', () => ({
+// Mock the graph service module
+jest.mock('../modules/knowledge/knowledge-graph-service', () => ({
   initialize: jest.fn(),
   queryGraph: jest.fn(),
   getGraphVisualization: jest.fn(),
@@ -14,15 +14,13 @@ jest.mock('../modules/memory', () => ({
   getRelatedNodes: jest.fn(),
   recordConcept: jest.fn(),
   saveGraph: jest.fn(),
-  graph: {
-    getNodesByType: jest.fn(),
-  },
+  getNodesByType: jest.fn(),
 }));
 
 describe('Knowledge Graph IPC Handlers', () => {
   let mockIpcMain;
   let handlers;
-  let mockMemory;
+  let mockGraphService;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -37,7 +35,7 @@ describe('Knowledge Graph IPC Handlers', () => {
     };
 
     // Re-require to get fresh mock
-    mockMemory = require('../modules/memory');
+    mockGraphService = require('../modules/knowledge/knowledge-graph-service');
   });
 
   describe('registerKnowledgeGraphHandlers', () => {
@@ -76,13 +74,13 @@ describe('Knowledge Graph IPC Handlers', () => {
     });
 
     test('queries graph with default options', async () => {
-      mockMemory.queryGraph.mockReturnValue([{ id: 'node1', name: 'test' }]);
+      mockGraphService.queryGraph.mockReturnValue([{ id: 'node1', name: 'test' }]);
 
       const result = await handlers['graph-query']({}, {});
 
       expect(result.success).toBe(true);
       expect(result.results).toEqual([{ id: 'node1', name: 'test' }]);
-      expect(mockMemory.queryGraph).toHaveBeenCalledWith('', {
+      expect(mockGraphService.queryGraph).toHaveBeenCalledWith('', {
         maxDepth: 2,
         maxResults: 50,
         includeTypes: null,
@@ -90,7 +88,7 @@ describe('Knowledge Graph IPC Handlers', () => {
     });
 
     test('queries graph with custom options', async () => {
-      mockMemory.queryGraph.mockReturnValue([{ id: 'node2' }]);
+      mockGraphService.queryGraph.mockReturnValue([{ id: 'node2' }]);
 
       const result = await handlers['graph-query']({}, {
         query: 'trigger delivery',
@@ -100,7 +98,7 @@ describe('Knowledge Graph IPC Handlers', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(mockMemory.queryGraph).toHaveBeenCalledWith('trigger delivery', {
+      expect(mockGraphService.queryGraph).toHaveBeenCalledWith('trigger delivery', {
         maxDepth: 3,
         maxResults: 100,
         includeTypes: ['concept', 'bug'],
@@ -108,7 +106,7 @@ describe('Knowledge Graph IPC Handlers', () => {
     });
 
     test('handles query errors', async () => {
-      mockMemory.queryGraph.mockImplementation(() => {
+      mockGraphService.queryGraph.mockImplementation(() => {
         throw new Error('Query failed');
       });
 
@@ -118,12 +116,12 @@ describe('Knowledge Graph IPC Handlers', () => {
       expect(result.error).toBe('Query failed');
     });
 
-    test('initializes memory module on first call', async () => {
-      mockMemory.queryGraph.mockReturnValue([]);
+    test('initializes graph service on first call', async () => {
+      mockGraphService.queryGraph.mockReturnValue([]);
 
       await handlers['graph-query']({}, {});
 
-      expect(mockMemory.initialize).toHaveBeenCalled();
+      expect(mockGraphService.initialize).toHaveBeenCalledWith('/test');
     });
   });
 
@@ -134,28 +132,28 @@ describe('Knowledge Graph IPC Handlers', () => {
 
     test('returns visualization data with default filter', async () => {
       const vizData = { nodes: [], edges: [] };
-      mockMemory.getGraphVisualization.mockReturnValue(vizData);
+      mockGraphService.getGraphVisualization.mockReturnValue(vizData);
 
       const result = await handlers['graph-visualize']({}, {});
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual(vizData);
-      expect(mockMemory.getGraphVisualization).toHaveBeenCalledWith({});
+      expect(mockGraphService.getGraphVisualization).toHaveBeenCalledWith({});
     });
 
     test('returns visualization data with custom filter', async () => {
       const vizData = { nodes: [{ id: '1' }], edges: [] };
-      mockMemory.getGraphVisualization.mockReturnValue(vizData);
+      mockGraphService.getGraphVisualization.mockReturnValue(vizData);
 
       const result = await handlers['graph-visualize']({}, { filter: { type: 'concept' } });
 
       expect(result.success).toBe(true);
       expect(result.data).toEqual(vizData);
-      expect(mockMemory.getGraphVisualization).toHaveBeenCalledWith({ type: 'concept' });
+      expect(mockGraphService.getGraphVisualization).toHaveBeenCalledWith({ type: 'concept' });
     });
 
     test('handles visualization errors', async () => {
-      mockMemory.getGraphVisualization.mockImplementation(() => {
+      mockGraphService.getGraphVisualization.mockImplementation(() => {
         throw new Error('Visualization failed');
       });
 
@@ -173,17 +171,17 @@ describe('Knowledge Graph IPC Handlers', () => {
 
     test('returns graph statistics', async () => {
       const stats = { nodeCount: 100, edgeCount: 250, conceptCount: 50 };
-      mockMemory.getGraphStats.mockReturnValue(stats);
+      mockGraphService.getGraphStats.mockReturnValue(stats);
 
       const result = await handlers['graph-stats']({});
 
       expect(result.success).toBe(true);
       expect(result.stats).toEqual(stats);
-      expect(mockMemory.getGraphStats).toHaveBeenCalled();
+      expect(mockGraphService.getGraphStats).toHaveBeenCalled();
     });
 
     test('handles stats errors', async () => {
-      mockMemory.getGraphStats.mockImplementation(() => {
+      mockGraphService.getGraphStats.mockImplementation(() => {
         throw new Error('Stats unavailable');
       });
 
@@ -215,26 +213,26 @@ describe('Knowledge Graph IPC Handlers', () => {
 
     test('returns related nodes with default depth', async () => {
       const relatedNodes = [{ id: 'related1' }, { id: 'related2' }];
-      mockMemory.getRelatedNodes.mockReturnValue(relatedNodes);
+      mockGraphService.getRelatedNodes.mockReturnValue(relatedNodes);
 
       const result = await handlers['graph-related']({}, { nodeId: 'node1' });
 
       expect(result.success).toBe(true);
       expect(result.results).toEqual(relatedNodes);
-      expect(mockMemory.getRelatedNodes).toHaveBeenCalledWith('node1', 2);
+      expect(mockGraphService.getRelatedNodes).toHaveBeenCalledWith('node1', 2);
     });
 
     test('returns related nodes with custom depth', async () => {
-      mockMemory.getRelatedNodes.mockReturnValue([]);
+      mockGraphService.getRelatedNodes.mockReturnValue([]);
 
       const result = await handlers['graph-related']({}, { nodeId: 'node1', depth: 5 });
 
       expect(result.success).toBe(true);
-      expect(mockMemory.getRelatedNodes).toHaveBeenCalledWith('node1', 5);
+      expect(mockGraphService.getRelatedNodes).toHaveBeenCalledWith('node1', 5);
     });
 
     test('handles related errors', async () => {
-      mockMemory.getRelatedNodes.mockImplementation(() => {
+      mockGraphService.getRelatedNodes.mockImplementation(() => {
         throw new Error('Node not found');
       });
 
@@ -272,17 +270,17 @@ describe('Knowledge Graph IPC Handlers', () => {
     });
 
     test('records concept with defaults', async () => {
-      mockMemory.recordConcept.mockReturnValue('concept-123');
+      mockGraphService.recordConcept.mockReturnValue('concept-123');
 
       const result = await handlers['graph-record-concept']({}, { name: 'Trigger System' });
 
       expect(result.success).toBe(true);
       expect(result.nodeId).toBe('concept-123');
-      expect(mockMemory.recordConcept).toHaveBeenCalledWith('Trigger System', '', []);
+      expect(mockGraphService.recordConcept).toHaveBeenCalledWith('Trigger System', '', []);
     });
 
     test('records concept with description and relations', async () => {
-      mockMemory.recordConcept.mockReturnValue('concept-456');
+      mockGraphService.recordConcept.mockReturnValue('concept-456');
 
       const result = await handlers['graph-record-concept']({}, {
         name: 'Message Delivery',
@@ -292,7 +290,7 @@ describe('Knowledge Graph IPC Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.nodeId).toBe('concept-456');
-      expect(mockMemory.recordConcept).toHaveBeenCalledWith(
+      expect(mockGraphService.recordConcept).toHaveBeenCalledWith(
         'Message Delivery',
         'Handles delivering messages between agents',
         ['trigger-system', 'ipc-handlers']
@@ -300,7 +298,7 @@ describe('Knowledge Graph IPC Handlers', () => {
     });
 
     test('handles record errors', async () => {
-      mockMemory.recordConcept.mockImplementation(() => {
+      mockGraphService.recordConcept.mockImplementation(() => {
         throw new Error('Duplicate concept');
       });
 
@@ -320,11 +318,11 @@ describe('Knowledge Graph IPC Handlers', () => {
       const result = await handlers['graph-save']({});
 
       expect(result.success).toBe(true);
-      expect(mockMemory.saveGraph).toHaveBeenCalled();
+      expect(mockGraphService.saveGraph).toHaveBeenCalled();
     });
 
     test('handles save errors', async () => {
-      mockMemory.saveGraph.mockImplementation(() => {
+      mockGraphService.saveGraph.mockImplementation(() => {
         throw new Error('Write permission denied');
       });
 
@@ -363,17 +361,17 @@ describe('Knowledge Graph IPC Handlers', () => {
 
     test('returns nodes of specified type', async () => {
       const nodes = [{ id: 'bug1', type: 'bug' }, { id: 'bug2', type: 'bug' }];
-      mockMemory.graph.getNodesByType.mockReturnValue(nodes);
+      mockGraphService.getNodesByType.mockReturnValue(nodes);
 
       const result = await handlers['graph-nodes-by-type']({}, { type: 'bug' });
 
       expect(result.success).toBe(true);
       expect(result.nodes).toEqual(nodes);
-      expect(mockMemory.graph.getNodesByType).toHaveBeenCalledWith('bug');
+      expect(mockGraphService.getNodesByType).toHaveBeenCalledWith('bug');
     });
 
     test('returns empty array when no nodes of type exist', async () => {
-      mockMemory.graph.getNodesByType.mockReturnValue([]);
+      mockGraphService.getNodesByType.mockReturnValue([]);
 
       const result = await handlers['graph-nodes-by-type']({}, { type: 'nonexistent' });
 
@@ -382,7 +380,7 @@ describe('Knowledge Graph IPC Handlers', () => {
     });
 
     test('handles nodes-by-type errors', async () => {
-      mockMemory.graph.getNodesByType.mockImplementation(() => {
+      mockGraphService.getNodesByType.mockImplementation(() => {
         throw new Error('Invalid type');
       });
 
@@ -394,12 +392,12 @@ describe('Knowledge Graph IPC Handlers', () => {
   });
 
   describe('lazy loading behavior', () => {
-    test('only initializes memory module once across multiple handlers', async () => {
+    test('only initializes graph service once across multiple handlers', async () => {
       registerKnowledgeGraphHandlers({ ipcMain: mockIpcMain, WORKSPACE_PATH: '/test' });
 
-      mockMemory.queryGraph.mockReturnValue([]);
-      mockMemory.getGraphStats.mockReturnValue({});
-      mockMemory.getGraphVisualization.mockReturnValue({});
+      mockGraphService.queryGraph.mockReturnValue([]);
+      mockGraphService.getGraphStats.mockReturnValue({});
+      mockGraphService.getGraphVisualization.mockReturnValue({});
 
       // Call multiple handlers
       await handlers['graph-query']({}, {});
@@ -407,7 +405,7 @@ describe('Knowledge Graph IPC Handlers', () => {
       await handlers['graph-visualize']({}, {});
 
       // Memory should only be initialized once
-      expect(mockMemory.initialize).toHaveBeenCalledTimes(1);
+      expect(mockGraphService.initialize).toHaveBeenCalledTimes(1);
     });
   });
 });

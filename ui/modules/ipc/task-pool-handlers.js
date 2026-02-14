@@ -9,7 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { PANE_ROLES, WORKSPACE_PATH, resolveCoordPath, getCoordRoots } = require('../../config');
+const { WORKSPACE_PATH, resolveCoordPath, getCoordRoots } = require('../../config');
 const teamMemory = require('../team-memory');
 const {
   buildReadBeforeWorkQueryPayloads,
@@ -211,21 +211,6 @@ function registerTaskPoolHandlers(ctx) {
     broadcastTaskUpdate();
 
     log.info('TaskPool', `Task ${taskId} claimed by pane ${paneId}`);
-
-    // BUG FIX 3: Notify Architect on successful claim (per design protocol)
-    const triggerPath = typeof resolveCoordPath === 'function'
-      ? resolveCoordPath(path.join('triggers', 'architect.txt'), { forWrite: true })
-      : (workspacePath ? path.join(workspacePath, 'triggers', 'architect.txt') : null);
-    if (triggerPath) {
-      try {
-        const role = (PANE_ROLES[paneId] || `Pane-${paneId}`).toUpperCase();
-        const notification = `(${role} #AUTO): Claimed task #${taskId}: ${task.subject}\n`;
-        fs.writeFileSync(triggerPath, notification);
-        log.info('TaskPool', 'Notified Architect of claim');
-      } catch (err) {
-        log.warn('TaskPool', 'Failed to notify Architect:', err.message);
-      }
-    }
 
     const context = await loadReadBeforeWorkContext({
       paneId,

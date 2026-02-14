@@ -276,6 +276,38 @@ function buildGuardPreflightEvent({ target = '', content = '', fromRole = 'syste
   };
 }
 
+function buildSessionLifecyclePatternEvent({
+  paneId = null,
+  status = '',
+  exitCode = null,
+  reason = '',
+  nowMs = Date.now(),
+} = {}) {
+  const pane = asString(String(paneId || ''), '');
+  const normalizedStatus = asString(status, '').toLowerCase();
+  if (!pane || !normalizedStatus) return null;
+
+  const role = roleFromPaneId(pane);
+  const code = asNumber(exitCode, null);
+  const normalizedReason = asString(reason, '');
+  const message = normalizedStatus === 'started'
+    ? `Session started for pane ${pane}`
+    : `Session ended for pane ${pane}${Number.isFinite(code) ? ` (exit ${code})` : ''}`;
+
+  return {
+    eventType: 'session.lifecycle',
+    scope: `pane:${pane}`,
+    paneId: pane,
+    actor: role,
+    owner: role,
+    status: normalizedStatus,
+    exitCode: Number.isFinite(code) ? Math.floor(code) : null,
+    reason: normalizedReason || null,
+    message,
+    timestamp: Math.floor(asNumber(nowMs, Date.now()) || Date.now()),
+  };
+}
+
 function isDeliveryFailureResult(result = {}) {
   if (!result || typeof result !== 'object') return true;
   if (result.verified === true) return false;
@@ -320,6 +352,75 @@ function buildDeliveryFailurePatternEvent({
   };
 }
 
+function buildDeliveryOutcomePatternEvent({
+  channel = 'send',
+  target = null,
+  fromRole = 'system',
+  result = {},
+  traceContext = null,
+  nowMs = Date.now(),
+} = {}) {
+  const role = normalizeRole(fromRole);
+  const status = asString(result?.status, 'delivery_unknown');
+  const traceId = asString(traceContext?.traceId || traceContext?.correlationId, '') || null;
+  const notified = Array.isArray(result?.notified) ? result.notified.map((entry) => String(entry)) : [];
+  const verified = result?.verified === true;
+  const accepted = result?.accepted !== false;
+  const queued = result?.queued !== false;
+  const outcome = verified
+    ? 'delivered'
+    : (accepted && queued ? 'accepted_unverified' : 'failed');
+
+  return {
+    eventType: 'delivery.outcome',
+    scope: 'ui/modules/triggers.js',
+    channel: asString(channel, 'send'),
+    status,
+    outcome,
+    target: asString(target, '') || null,
+    actor: role,
+    notified,
+    deliveryId: asString(result?.deliveryId, '') || null,
+    traceId,
+    verified,
+    accepted,
+    queued,
+    message: asString(result?.details?.reason || result?.details?.error || status, status),
+    timestamp: Math.floor(asNumber(nowMs, Date.now()) || Date.now()),
+  };
+}
+
+function buildIntentUpdatePatternEvent({
+  paneId = null,
+  role = null,
+  session = null,
+  intent = '',
+  previousIntent = '',
+  source = 'renderer',
+  nowMs = Date.now(),
+} = {}) {
+  const pane = asString(String(paneId || ''), '');
+  if (!pane) return null;
+  const normalizedRole = normalizeRole(role || roleFromPaneId(pane));
+  const normalizedIntent = asString(intent, '');
+  const priorIntent = asString(previousIntent, '');
+  const normalizedSession = asString(String(session ?? ''), '');
+  return {
+    eventType: 'intent.updated',
+    scope: `pane:${pane}`,
+    paneId: pane,
+    actor: normalizedRole,
+    owner: normalizedRole,
+    session: normalizedSession || null,
+    status: 'updated',
+    intent: normalizedIntent || null,
+    previousIntent: priorIntent || null,
+    source: asString(source, 'renderer'),
+    message: normalizedIntent || 'Intent updated',
+    timestamp: Math.floor(asNumber(nowMs, Date.now()) || Date.now()),
+  };
+}
+
 module.exports = {
   roleFromPaneId,
   normalizeDomain,
@@ -331,6 +432,9 @@ module.exports = {
   buildTaskCloseClaimPayload,
   buildGuardFiringPatternEvent,
   buildGuardPreflightEvent,
+  buildSessionLifecyclePatternEvent,
   isDeliveryFailureResult,
   buildDeliveryFailurePatternEvent,
+  buildDeliveryOutcomePatternEvent,
+  buildIntentUpdatePatternEvent,
 };

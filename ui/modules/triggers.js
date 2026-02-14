@@ -3,33 +3,21 @@
  * Extracted from main.js for modularization
  *
  * Main module that coordinates sub-modules:
- * - war-room.js (message log + ambient awareness)
  * - sequencing.js (duplicate prevention + sequencing)
  * - metrics.js (reliability stats)
  * - routing.js (smart routing + handoff)
  */
 
 const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
 const { TRIGGER_TARGETS, PANE_IDS, ROLE_ID_MAP, LEGACY_ROLE_ALIASES } = require('../config');
 const log = require('./logger');
-const diagnosticLog = require('./diagnostic-log');
 const organicUI = require('./ipc/organic-ui-handlers');
 
 // Sub-modules
 const metrics = require('./triggers/metrics');
 const sequencing = require('./triggers/sequencing');
-const warRoom = require('./triggers/war-room');
 const routing = require('./triggers/routing');
-
-// Memory system for trigger logging
-let memory = null;
-try {
-  memory = require('./memory');
-} catch (e) {
-  // Memory system not available
-}
 
 // Module state
 let mainWindow = null;
@@ -111,12 +99,6 @@ function init(window, agentState, logActivity) {
   logActivityFn = logActivity || null;
 
   sequencing.loadMessageState();
-  warRoom.setTriggersState({
-    mainWindow,
-    agentRunning,
-    sendAmbientUpdate
-  });
-  warRoom.loadWarRoomHistory();
 
   routing.setSharedState({
     mainWindow,
@@ -578,14 +560,6 @@ function handleTriggerFile(filePath, filename) {
   }
   const traceContext = normalizeTraceContext(null, { traceId: deliveryId || fallbackMessageId || null });
   emitOrganicMessageRoute(parsed.sender, targets);
-  warRoom.recordWarRoomMessage({
-    fromRole: parsed.sender,
-    targets,
-    message: stripRolePrefix(parsed.content || message),
-    type: getTriggerMessageType(filename, targets),
-    source: 'trigger',
-    traceContext,
-  });
 
   metrics.recordSent('pty', 'trigger', targets);
   sendStaggered(targets, formatTriggerMessage(message), { deliveryId, traceContext });
@@ -604,15 +578,6 @@ function broadcastToAllAgents(message, fromRole = 'user', options = {}) {
   const parsed = sequencing.parseMessageSequence(message);
   if ((!fromRole || fromRole === 'cli' || fromRole === 'user' || fromRole === 'unknown') && parsed.sender) fromRole = parsed.sender;
   const traceContext = normalizeTraceContext(options?.traceContext);
-
-  warRoom.recordWarRoomMessage({
-    fromRole,
-    targets,
-    message,
-    type: 'broadcast',
-    source: 'broadcast',
-    traceContext,
-  });
 
   const notified = [];
   if (agentRunning) { for (const [p, s] of agentRunning) { if (s === 'running' && targets.includes(p)) notified.push(p); } }
@@ -681,14 +646,6 @@ function sendDirectMessage(targetPanes, message, fromRole = null, options = {}) 
   let targets = Array.isArray(targetPanes) ? [...targetPanes] : [];
   const traceContext = normalizeTraceContext(options?.traceContext);
 
-  warRoom.recordWarRoomMessage({
-    fromRole,
-    targets,
-    message,
-    type: 'direct',
-    source: 'direct',
-    traceContext,
-  });
   const fullMessage = (fromRole ? `[MSG from ${fromRole}]: ` : '') + message;
 
   // Direct agent-to-agent messages must not be dropped based on runtime state.
