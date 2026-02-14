@@ -32,6 +32,12 @@ const smsPoller = require('../sms-poller');
 const teamMemory = require('../team-memory');
 const experiment = require('../experiment');
 const {
+  buildGuardFiringPatternEvent,
+  buildGuardPreflightEvent,
+  isDeliveryFailureResult,
+  buildDeliveryFailurePatternEvent,
+} = require('../team-memory/daily-integration');
+const {
   executeEvidenceLedgerOperation,
   initializeEvidenceLedgerRuntime,
   closeSharedRuntime,
@@ -171,6 +177,12 @@ class HivemindApp {
           }
           this.handleTeamMemoryGuardExperiment(entry).catch((err) => {
             log.warn('TeamMemoryGuard', `Failed block-guard experiment dispatch: ${err.message}`);
+          });
+          this.appendTeamMemoryPatternEvent(
+            buildGuardFiringPatternEvent(entry, Date.now()),
+            'guard-firing'
+          ).catch((err) => {
+            log.warn('TeamMemoryGuard', `Failed guard-firing pattern append: ${err.message}`);
           });
         },
       });
@@ -419,25 +431,72 @@ class HivemindApp {
 
             const paneId = this.resolveTargetToPane(target);
             if (paneId) {
+              const preflight = await this.evaluateTeamMemoryGuardPreflight({
+                target: target || String(paneId),
+                content,
+                fromRole: data.role || 'unknown',
+                traceContext,
+              });
+              if (preflight.blocked) {
+                return {
+                  ok: false,
+                  accepted: false,
+                  queued: false,
+                  verified: false,
+                  status: 'guard_blocked',
+                  paneId: String(paneId),
+                  guardActions: preflight.actions,
+                  traceId: traceContext?.traceId || traceContext?.correlationId || null,
+                };
+              }
+
               log.info('WebSocket', `Routing 'send' to pane ${paneId} (via triggers)`);
-              const result = triggers.sendDirectMessage(
+              const result = await triggers.sendDirectMessage(
                 [String(paneId)],
                 withAgentPrefix(content),
                 data.role || 'unknown',
-                { traceContext }
+                { traceContext, awaitDelivery: true }
               );
+              await this.recordDeliveryFailurePattern({
+                channel: 'send',
+                target: String(paneId),
+                fromRole: data.role || 'unknown',
+                result,
+                traceContext,
+              });
               return {
-                ok: Boolean(result?.success),
-                status: result?.success ? 'routed' : 'send_failed',
+                ok: Boolean(result?.verified),
+                accepted: Boolean(result?.accepted),
+                queued: Boolean(result?.queued),
+                verified: Boolean(result?.verified),
+                status: result?.status || (result?.verified ? 'delivered.verified' : 'routed_unverified'),
                 paneId: String(paneId),
                 mode: result?.mode || null,
                 notified: Array.isArray(result?.notified) ? result.notified : [],
+                deliveryId: result?.deliveryId || null,
+                details: result?.details || null,
+                guardActions: preflight.actions,
                 traceId: traceContext?.traceId || traceContext?.correlationId || null,
               };
             } else {
               log.warn('WebSocket', `Unknown target for 'send': ${target}`);
+              await this.recordDeliveryFailurePattern({
+                channel: 'send',
+                target,
+                fromRole: data.role || 'unknown',
+                result: {
+                  accepted: false,
+                  queued: false,
+                  verified: false,
+                  status: 'invalid_target',
+                },
+                traceContext,
+              });
               return {
                 ok: false,
+                accepted: false,
+                queued: false,
+                verified: false,
                 status: 'invalid_target',
                 target,
                 traceId: traceContext?.traceId || traceContext?.correlationId || null,
@@ -446,16 +505,47 @@ class HivemindApp {
           } else if (data.message.type === 'broadcast') {
             log.info('WebSocket', `Routing 'broadcast' (via triggers)`);
             const traceContext = data.traceContext || data.message.traceContext || null;
-            const result = triggers.broadcastToAllAgents(
+            const preflight = await this.evaluateTeamMemoryGuardPreflight({
+              target: 'all',
+              content: data.message.content,
+              fromRole: data.role || 'unknown',
+              traceContext,
+            });
+            if (preflight.blocked) {
+              return {
+                ok: false,
+                accepted: false,
+                queued: false,
+                verified: false,
+                status: 'guard_blocked',
+                mode: 'pty',
+                guardActions: preflight.actions,
+                traceId: traceContext?.traceId || traceContext?.correlationId || null,
+              };
+            }
+            const result = await triggers.broadcastToAllAgents(
               withAgentPrefix(data.message.content),
               data.role || 'unknown',
-              { traceContext }
+              { traceContext, awaitDelivery: true }
             );
+            await this.recordDeliveryFailurePattern({
+              channel: 'broadcast',
+              target: 'all',
+              fromRole: data.role || 'unknown',
+              result,
+              traceContext,
+            });
             return {
-              ok: Boolean(result?.success),
-              status: result?.success ? 'broadcasted' : 'broadcast_failed',
+              ok: Boolean(result?.verified),
+              accepted: Boolean(result?.accepted),
+              queued: Boolean(result?.queued),
+              verified: Boolean(result?.verified),
+              status: result?.status || (result?.verified ? 'delivered.verified' : 'broadcast_unverified'),
               mode: result?.mode || null,
               notified: Array.isArray(result?.notified) ? result.notified : [],
+              deliveryId: result?.deliveryId || null,
+              details: result?.details || null,
+              guardActions: preflight.actions,
               traceId: traceContext?.traceId || traceContext?.correlationId || null,
             };
           }
@@ -1045,6 +1135,90 @@ class HivemindApp {
     ipcMain.on('trigger-delivery-ack', (event, data) => {
       if (data?.deliveryId) triggers.handleDeliveryAck(data.deliveryId, data.paneId);
     });
+  }
+
+  async appendTeamMemoryPatternEvent(event, label = 'pattern-event') {
+    if (!this.teamMemoryInitialized || !event) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+    try {
+      const result = await teamMemory.appendPatternHookEvent(event);
+      if (result?.ok === false) {
+        log.warn('TeamMemory', `Failed to append ${label}: ${result.reason || 'unknown'}`);
+      }
+      return result;
+    } catch (err) {
+      log.warn('TeamMemory', `Failed to append ${label}: ${err.message}`);
+      return { ok: false, reason: 'pattern_append_failed', error: err.message };
+    }
+  }
+
+  async evaluateTeamMemoryGuardPreflight({ target, content, fromRole, traceContext } = {}) {
+    if (!this.teamMemoryInitialized) {
+      return { blocked: false, actions: [] };
+    }
+
+    const nowMs = Date.now();
+    const event = buildGuardPreflightEvent({
+      target,
+      content,
+      fromRole,
+      traceContext,
+      nowMs,
+    });
+
+    let evaluation = null;
+    try {
+      evaluation = await teamMemory.executeTeamMemoryOperation('evaluate-guards', {
+        events: [event],
+        nowMs,
+      });
+    } catch (err) {
+      log.warn('TeamMemoryGuard', `Preflight evaluation failed: ${err.message}`);
+      return { blocked: false, actions: [] };
+    }
+
+    if (!evaluation?.ok) {
+      return { blocked: false, actions: [] };
+    }
+
+    const actions = Array.isArray(evaluation.actions) ? evaluation.actions : [];
+    for (const action of actions) {
+      const actionEvent = {
+        ...action,
+        event: {
+          ...(action?.event && typeof action.event === 'object' ? action.event : {}),
+          target: target || null,
+          status: 'preflight',
+        },
+      };
+      await this.appendTeamMemoryPatternEvent(
+        buildGuardFiringPatternEvent(actionEvent, nowMs),
+        'guard-preflight'
+      );
+    }
+
+    return {
+      blocked: Boolean(evaluation.blocked),
+      actions,
+    };
+  }
+
+  async recordDeliveryFailurePattern({ channel, target, fromRole, result, traceContext } = {}) {
+    if (!this.teamMemoryInitialized) return;
+    if (!isDeliveryFailureResult(result)) return;
+
+    await this.appendTeamMemoryPatternEvent(
+      buildDeliveryFailurePatternEvent({
+        channel,
+        target,
+        fromRole,
+        result,
+        traceContext,
+        nowMs: Date.now(),
+      }),
+      'delivery-failure'
+    );
   }
 
   /**

@@ -164,6 +164,7 @@ jest.mock('../modules/ipc/evidence-ledger-handlers', () => ({
 jest.mock('../modules/team-memory', () => ({
   initializeTeamMemoryRuntime: jest.fn(async () => ({ ok: true, status: { driver: 'better-sqlite3' } })),
   executeTeamMemoryOperation: jest.fn(async () => ({ ok: true, status: 'updated' })),
+  appendPatternHookEvent: jest.fn(async () => ({ ok: true, queued: true })),
   runBackfill: jest.fn(async () => ({ ok: true, scannedEvents: 0, insertedClaims: 0, duplicateClaims: 0 })),
   runIntegrityCheck: jest.fn(async () => ({ ok: true, orphanCount: 0 })),
   startIntegritySweep: jest.fn(),
@@ -441,6 +442,72 @@ describe('HivemindApp', () => {
         expect.objectContaining({
           claimId: 'clm_2',
           status: 'pending_proof',
+        })
+      );
+    });
+  });
+
+  describe('team memory daily integration hooks', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new HivemindApp(mockAppContext, mockManagers);
+      app.teamMemoryInitialized = true;
+    });
+
+    it('preflight evaluation reports blocked guards', async () => {
+      const teamMemory = require('../modules/team-memory');
+      teamMemory.executeTeamMemoryOperation.mockResolvedValueOnce({
+        ok: true,
+        blocked: true,
+        actions: [
+          {
+            guardId: 'grd_block',
+            action: 'block',
+            scope: 'ui/modules/triggers.js',
+            message: 'Blocked by guard',
+            event: { status: 'preflight' },
+          },
+        ],
+      });
+
+      const result = await app.evaluateTeamMemoryGuardPreflight({
+        target: 'devops',
+        content: 'run risky operation',
+        fromRole: 'architect',
+      });
+
+      expect(result.blocked).toBe(true);
+      expect(result.actions).toHaveLength(1);
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'evaluate-guards',
+        expect.objectContaining({
+          events: expect.any(Array),
+        })
+      );
+      expect(teamMemory.appendPatternHookEvent).toHaveBeenCalled();
+    });
+
+    it('records delivery failure patterns for unverified sends', async () => {
+      const teamMemory = require('../modules/team-memory');
+      await app.recordDeliveryFailurePattern({
+        channel: 'send',
+        target: '2',
+        fromRole: 'architect',
+        result: {
+          accepted: true,
+          queued: true,
+          verified: false,
+          status: 'routed_unverified_timeout',
+          notified: ['2'],
+        },
+      });
+
+      expect(teamMemory.appendPatternHookEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'delivery.failed',
+          channel: 'send',
+          target: '2',
         })
       );
     });

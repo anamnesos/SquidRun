@@ -534,6 +534,17 @@ describe('terminal.js module', () => {
 
       await expect(terminal.killAllTerminals()).resolves.not.toThrow();
     });
+
+    test('clears queued injection messages during teardown to prevent restart bleed', async () => {
+      terminal.messageQueue['1'] = [
+        { message: 'stale-1', timestamp: Date.now() },
+        { message: 'stale-2', timestamp: Date.now() },
+      ];
+
+      await terminal.killAllTerminals();
+
+      expect(terminal.messageQueue['1']).toBeUndefined();
+    });
   });
 
   describe('handleResize', () => {

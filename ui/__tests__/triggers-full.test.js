@@ -226,7 +226,16 @@ describe('triggers.js module', () => {
 
       const result = triggers.sendDirectMessage(['2'], 'Direct msg', 'architect');
 
-      expect(result).toEqual({ success: true, notified: ['2'], mode: 'pty' });
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'routed_unverified',
+        notified: ['2'],
+        mode: 'pty',
+      }));
+      expect(typeof result.deliveryId).toBe('string');
 
       jest.runAllTimers();
       expect(global.window.webContents.send).toHaveBeenCalledWith('inject-message', expect.objectContaining({

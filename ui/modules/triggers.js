@@ -46,6 +46,7 @@ const SYNC_DEBOUNCE_MS = 3000;
 const SYNC_COALESCE_WINDOW_MS = 5000;
 const STAGGER_BASE_DELAY_MS = 150;
 const STAGGER_RANDOM_MS = 100;
+const DELIVERY_VERIFY_TIMEOUT_MS = Number.parseInt(process.env.HIVEMIND_DELIVERY_VERIFY_TIMEOUT_MS || '5000', 10);
 const PRIORITY_KEYWORDS = ['STOP', 'URGENT', 'BLOCKING', 'ERROR'];
 const TRIGGER_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 const TRIGGER_MESSAGE_ID_REGEX = /^\[HM-MESSAGE-ID:([^\]\r\n]+)\]\r?\n?/;
@@ -258,6 +259,105 @@ function resolvePaneIdFromRole(role) {
   const raw = String(role).trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
   if (/^\d+$/.test(raw)) return raw;
   return ROLE_TO_PANE[raw] || null;
+}
+
+function resolveRoleFromPaneId(paneId) {
+  const targetPane = String(paneId || '').trim();
+  if (!targetPane) return null;
+  for (const [role, mappedPaneId] of Object.entries(ROLE_ID_MAP || {})) {
+    if (String(mappedPaneId) === targetPane) {
+      return role;
+    }
+  }
+  for (const [alias, role] of Object.entries(LEGACY_ROLE_ALIASES || {})) {
+    if (String(ROLE_ID_MAP?.[role] || '') === targetPane) {
+      return role;
+    }
+    if (String(ROLE_TO_PANE?.[alias] || '') === targetPane) {
+      return role;
+    }
+  }
+  return null;
+}
+
+function getDeliveryVerifyTimeoutMs() {
+  return Number.isFinite(DELIVERY_VERIFY_TIMEOUT_MS) && DELIVERY_VERIFY_TIMEOUT_MS > 0
+    ? DELIVERY_VERIFY_TIMEOUT_MS
+    : 5000;
+}
+
+function buildDeliveryResult({
+  accepted,
+  queued,
+  verified,
+  status,
+  notified,
+  mode = 'pty',
+  deliveryId = null,
+  details = null,
+}) {
+  return {
+    success: Boolean(accepted),
+    accepted: Boolean(accepted),
+    queued: Boolean(queued),
+    verified: Boolean(verified),
+    status,
+    notified: Array.isArray(notified) ? notified : [],
+    mode,
+    deliveryId: deliveryId || null,
+    details: details || null,
+  };
+}
+
+function waitForDeliveryVerification(deliveryId, expectedPanes, timeoutMs = getDeliveryVerifyTimeoutMs()) {
+  const expected = new Set((expectedPanes || []).map((paneId) => String(paneId)));
+  if (!deliveryId || expected.size === 0) {
+    return Promise.resolve({
+      verified: false,
+      ackedPanes: [],
+      missingPanes: Array.from(expected),
+      timeoutMs,
+    });
+  }
+
+  return new Promise((resolve) => {
+    const acked = new Set();
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      disposeListener();
+      resolve(result);
+    };
+
+    const disposeListener = onDeliveryAck((ackDeliveryId, paneId) => {
+      if (ackDeliveryId !== deliveryId) return;
+      const paneKey = String(paneId);
+      if (!expected.has(paneKey)) return;
+      acked.add(paneKey);
+      if (acked.size >= expected.size) {
+        finish({
+          verified: true,
+          ackedPanes: Array.from(acked),
+          missingPanes: [],
+          timeoutMs,
+        });
+      }
+    });
+
+    const timeoutId = setTimeout(() => {
+      const missingPanes = Array.from(expected).filter((paneId) => !acked.has(paneId));
+      finish({
+        verified: false,
+        ackedPanes: Array.from(acked),
+        missingPanes,
+        timeoutMs,
+      });
+    }, timeoutMs);
+  });
 }
 
 function emitOrganicMessageRoute(fromRole, targets) {
@@ -516,16 +616,66 @@ function broadcastToAllAgents(message, fromRole = 'user', options = {}) {
 
   const notified = [];
   if (agentRunning) { for (const [p, s] of agentRunning) { if (s === 'running' && targets.includes(p)) notified.push(p); } }
-  if (notified.length > 0) {
-    metrics.recordSent('pty', 'broadcast', notified);
-    sendStaggered(notified, `[BROADCAST] ${message}`, { traceContext });
-    notified.forEach(p => metrics.recordDelivered('pty', 'broadcast', p));
+  if (notified.length === 0) {
+    return buildDeliveryResult({
+      accepted: false,
+      queued: false,
+      verified: false,
+      status: 'no_targets',
+      notified,
+      mode: 'pty',
+    });
   }
-  return { success: true, notified, mode: 'pty' };
+
+  const recipientRole = (notified.length === 1)
+    ? (resolveRoleFromPaneId(notified[0]) || String(notified[0]))
+    : 'broadcast';
+  const senderRole = parsed.sender || (typeof fromRole === 'string' ? fromRole.toLowerCase() : null);
+  const deliveryId = sequencing.createDeliveryId(senderRole || 'unknown', parsed.seq, recipientRole);
+  sequencing.startDeliveryTracking(deliveryId, senderRole, parsed.seq, recipientRole, notified, 'broadcast', 'pty');
+
+  metrics.recordSent('pty', 'broadcast', notified);
+  sendStaggered(notified, `[BROADCAST] ${message}`, { traceContext, deliveryId });
+
+  if (options?.awaitDelivery) {
+    return waitForDeliveryVerification(
+      deliveryId,
+      notified,
+      Number(options?.deliveryTimeoutMs) || getDeliveryVerifyTimeoutMs()
+    ).then((verification) => buildDeliveryResult({
+      accepted: true,
+      queued: true,
+      verified: verification.verified,
+      status: verification.verified ? 'delivered.verified' : 'broadcast_unverified_timeout',
+      notified,
+      mode: 'pty',
+      deliveryId,
+      details: verification,
+    }));
+  }
+  return buildDeliveryResult({
+    accepted: true,
+    queued: true,
+    verified: false,
+    status: 'broadcast_queued_unverified',
+    notified,
+    mode: 'pty',
+    deliveryId,
+  });
 }
 
 function sendDirectMessage(targetPanes, message, fromRole = null, options = {}) {
-  if (!message) return { success: false, error: 'No message' };
+  if (!message) {
+    return buildDeliveryResult({
+      accepted: false,
+      queued: false,
+      verified: false,
+      status: 'invalid_message',
+      notified: [],
+      mode: 'pty',
+      details: { error: 'No message' },
+    });
+  }
   const parsed = sequencing.parseMessageSequence(message);
   if ((!fromRole || fromRole === 'cli' || fromRole === 'user' || fromRole === 'unknown') && parsed.sender) fromRole = parsed.sender;
   let targets = Array.isArray(targetPanes) ? [...targetPanes] : [];
@@ -544,12 +694,52 @@ function sendDirectMessage(targetPanes, message, fromRole = null, options = {}) 
   // Direct agent-to-agent messages must not be dropped based on runtime state.
   // agentRunning can be stale during startup/reconnect and caused silent delivery loss.
   const notified = [...targets];
-  if (notified.length > 0) {
-    metrics.recordSent('pty', 'direct', notified);
-    sendStaggered(notified, fullMessage, { traceContext });
-    notified.forEach(p => metrics.recordDelivered('pty', 'direct', p));
+  if (notified.length === 0) {
+    return buildDeliveryResult({
+      accepted: false,
+      queued: false,
+      verified: false,
+      status: 'no_targets',
+      notified,
+      mode: 'pty',
+    });
   }
-  return { success: true, notified, mode: 'pty' };
+
+  const recipientRole = (notified.length === 1)
+    ? (resolveRoleFromPaneId(notified[0]) || String(notified[0]))
+    : 'direct_multi';
+  const senderRole = parsed.sender || (typeof fromRole === 'string' ? fromRole.toLowerCase() : null);
+  const deliveryId = sequencing.createDeliveryId(senderRole || 'unknown', parsed.seq, recipientRole);
+  sequencing.startDeliveryTracking(deliveryId, senderRole, parsed.seq, recipientRole, notified, 'direct', 'pty');
+
+  metrics.recordSent('pty', 'direct', notified);
+  sendStaggered(notified, fullMessage, { traceContext, deliveryId });
+
+  if (options?.awaitDelivery) {
+    return waitForDeliveryVerification(
+      deliveryId,
+      notified,
+      Number(options?.deliveryTimeoutMs) || getDeliveryVerifyTimeoutMs()
+    ).then((verification) => buildDeliveryResult({
+      accepted: true,
+      queued: true,
+      verified: verification.verified,
+      status: verification.verified ? 'delivered.verified' : 'routed_unverified_timeout',
+      notified,
+      mode: 'pty',
+      deliveryId,
+      details: verification,
+    }));
+  }
+  return buildDeliveryResult({
+    accepted: true,
+    queued: true,
+    verified: false,
+    status: 'routed_unverified',
+    notified,
+    mode: 'pty',
+    deliveryId,
+  });
 }
 
 module.exports = {

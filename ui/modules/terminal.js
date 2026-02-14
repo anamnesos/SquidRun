@@ -789,6 +789,12 @@ function disposeAddon(addon, paneId, name) {
 function teardownTerminalPane(paneId) {
   const id = String(paneId);
 
+  if (injectionController && typeof injectionController.clearPaneQueue === 'function') {
+    injectionController.clearPaneQueue(id, 'pane_teardown');
+  } else if (messageQueue[id]) {
+    delete messageQueue[id];
+  }
+
   // Abort all DOM listeners for this pane (contextmenu, keydown, click)
   const paneAbort = paneListenerAbortControllers.get(id);
   if (paneAbort) {
@@ -1764,11 +1770,11 @@ function blurAllTerminals() {
 
 // Send message to Architect only (user interacts with Architect, Architect coordinates execution)
 // User messages get PRIORITY + IMMEDIATE - bypass queue ordering AND idle gating
-function broadcast(message) {
+function broadcast(message, options = {}) {
   // Send directly to Architect (pane 1), no broadcast prefix needed
   // priority: true ensures user message jumps to front of queue
   // immediate: true bypasses idle threshold checks (user wants to send NOW)
-  sendToPane('1', message, { priority: true, immediate: true });
+  sendToPane('1', message, { priority: true, immediate: true, ...options });
   updateConnectionStatus('Message sent to Architect');
 }
 

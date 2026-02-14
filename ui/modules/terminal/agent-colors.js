@@ -70,6 +70,60 @@ function attachAgentColors(paneId, terminal) {
     lineDecorations.delete(lineNum);
   }
 
+  /**
+   * Ensure wrapped continuation lines have reset decorations to prevent color bleed.
+   */
+  function updateContinuationLines(originLineNum, currentLineNum, entry, defaultForeground) {
+    const buf = terminal.buffer?.active;
+    if (!buf) return;
+
+    let continuationLine = originLineNum + 1;
+    while (continuationLine <= currentLineNum) {
+      const wrappedLine = buf.getLine(continuationLine);
+      if (!wrappedLine || wrappedLine.isWrapped !== true) break;
+
+      // Skip if already decorated for this origin
+      const existingCont = lineDecorations.get(continuationLine);
+      if (existingCont && existingCont.originLine === originLineNum) {
+        continuationLine++;
+        continue;
+      }
+
+      // Dispose any stale decorations from a different origin or previous state
+      if (existingCont) {
+        for (const d of existingCont.disposables) {
+          try { d.dispose(); } catch { /* already disposed */ }
+        }
+        lineDecorations.delete(continuationLine);
+      }
+
+      const wrappedOffset = continuationLine - (buf.baseY + buf.cursorY);
+      const wrappedMarker = terminal.registerMarker(wrappedOffset);
+      if (wrappedMarker) {
+        const wrappedDeco = terminal.registerDecoration({
+          marker: wrappedMarker,
+          foregroundColor: defaultForeground,
+          x: 0,
+          width: terminal.cols || 80,
+          height: 1,
+          layer: 'top',
+        });
+        if (wrappedDeco) {
+          wrappedMarker.onDispose(() => wrappedDeco.dispose());
+          lineDecorations.set(continuationLine, {
+            color: '_continuation',
+            originLine: originLineNum,
+            disposables: [wrappedDeco],
+          });
+          if (entry.continuationLines && !entry.continuationLines.includes(continuationLine)) {
+            entry.continuationLines.push(continuationLine);
+          }
+        }
+      }
+      continuationLine += 1;
+    }
+  }
+
   const disposable = terminal.onWriteParsed(() => {
     const buf = terminal.buffer?.active;
     if (!buf) return;
@@ -96,8 +150,17 @@ function attachAgentColors(paneId, terminal) {
       if (ln < minLine) lineDecorations.delete(ln);
     }
 
-    // Scan from lastScannedLine to currentLine (inclusive)
-    for (let y = lastScannedLine; y <= currentLine; y++) {
+    // Determine scan start, backing up to the nearest non-wrapped line
+    // to ensure we always find the agent tag for wrapped messages.
+    let scanStart = lastScannedLine;
+    while (scanStart > 0) {
+      const line = buf.getLine(scanStart);
+      if (!line || !line.isWrapped) break;
+      scanStart--;
+    }
+
+    // Scan from scanStart to currentLine (inclusive)
+    for (let y = scanStart; y <= currentLine; y++) {
       const line = buf.getLine(y);
       if (!line) continue;
 
@@ -118,16 +181,16 @@ function attachAgentColors(paneId, terminal) {
         const match = text.match(pattern);
         if (match) {
           // If this line already has decorations with the same color and
-          // content hasn't grown, skip (prevents duplicate decorations)
+          // content hasn't grown, check for new continuation lines but skip re-decorating origin.
           const existing = lineDecorations.get(y);
-          if (existing && existing.color === color) {
-            const curLen = typeof line.getTrimmedLength === 'function'
-              ? line.getTrimmedLength() : line.translateToString(false).length;
-            if (curLen <= existing.contentLen) break;
-            // Content grew — dispose old decorations and re-apply with new width
-            disposeLineDecorations(y);
+          const contentLen = typeof line.getTrimmedLength === 'function'
+            ? line.getTrimmedLength() : line.translateToString(false).length;
+
+          if (existing && existing.color === color && contentLen <= existing.contentLen) {
+            updateContinuationLines(y, currentLine, existing, defaultForeground);
+            break;
           } else if (existing) {
-            // Dispose stale decorations from a different agent on this line
+            // Dispose stale decorations (different agent or content grew)
             disposeLineDecorations(y);
           }
 
@@ -137,8 +200,6 @@ function attachAgentColors(paneId, terminal) {
             const offset = y - (buf.baseY + buf.cursorY);
             const marker = terminal.registerMarker(offset);
             if (marker) {
-              const contentLen = typeof line.getTrimmedLength === 'function'
-                ? line.getTrimmedLength() : line.translateToString(false).length;
               const matchEnd = match.index + match[0].length;
               const deco = terminal.registerDecoration({
                 marker,
@@ -159,7 +220,8 @@ function attachAgentColors(paneId, terminal) {
               // without needing a rescan (prevents brief color flash).
               const resetMarker = terminal.registerMarker(offset);
               if (resetMarker) {
-                const resetWidth = (terminal.cols || contentLen) - matchEnd;
+                const cols = terminal.cols || 80;
+                const resetWidth = cols - matchEnd;
                 if (resetWidth > 0) {
                   const resetDeco = terminal.registerDecoration({
                     marker: resetMarker,
@@ -176,54 +238,9 @@ function attachAgentColors(paneId, terminal) {
                 }
               }
 
-              // Wrapped continuation lines can inherit style runs; explicitly reset them.
-              // Constrain to currentLine to avoid placing decorations beyond the cursor.
-              let continuationLine = y + 1;
-              while (continuationLine <= currentLine) {
-                const wrappedLine = buf.getLine(continuationLine);
-                if (!wrappedLine || wrappedLine.isWrapped !== true) break;
-
-                // Dispose any stale continuation decorations on this line first
-                const staleCont = lineDecorations.get(continuationLine);
-                if (staleCont) {
-                  for (const d of staleCont.disposables) {
-                    try { d.dispose(); } catch { /* already disposed */ }
-                  }
-                  lineDecorations.delete(continuationLine);
-                }
-
-                const wrappedContentLen = typeof wrappedLine.getTrimmedLength === 'function'
-                  ? wrappedLine.getTrimmedLength() : wrappedLine.translateToString(false).length;
-                if (wrappedContentLen > 0) {
-                  const wrappedOffset = continuationLine - currentLine;
-                  const wrappedMarker = terminal.registerMarker(wrappedOffset);
-                  if (wrappedMarker) {
-                    const wrappedDeco = terminal.registerDecoration({
-                      marker: wrappedMarker,
-                      foregroundColor: defaultForeground,
-                      x: 0,
-                      width: wrappedContentLen,
-                      height: 1,
-                      layer: 'top',
-                    });
-                    if (wrappedDeco) {
-                      wrappedMarker.onDispose(() => wrappedDeco.dispose());
-                      // Track this continuation decoration under its own line
-                      lineDecorations.set(continuationLine, {
-                        color: '_continuation',
-                        originLine: y,
-                        disposables: [wrappedDeco],
-                      });
-                      continuationLines.push(continuationLine);
-                    }
-                  }
-                }
-                continuationLine += 1;
-              }
-
-              if (disposables.length > 0) {
-                lineDecorations.set(y, { color, disposables, continuationLines, contentLen });
-              }
+              const entry = { color, disposables, continuationLines, contentLen };
+              lineDecorations.set(y, entry);
+              updateContinuationLines(y, currentLine, entry, defaultForeground);
             }
           } catch (e) {
             log.warn(`AgentColors ${paneId}`, `Decoration failed: ${e.message}`);

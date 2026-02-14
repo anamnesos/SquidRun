@@ -40,6 +40,8 @@ function getTerminal() {
 const throttleQueues = new Map(); // paneId -> array of messages
 const throttlingPanes = new Set(); // panes currently being processed
 const MESSAGE_DELAY = 100; // ms between messages per pane (reduced from 150ms — 3 panes = less contention)
+const THROTTLE_QUEUE_MAX_ITEMS = Number.parseInt(process.env.HIVEMIND_THROTTLE_QUEUE_MAX_ITEMS || '200', 10);
+const THROTTLE_QUEUE_MAX_BYTES = Number.parseInt(process.env.HIVEMIND_THROTTLE_QUEUE_MAX_BYTES || String(512 * 1024), 10);
 
 function toNonEmptyString(value) {
   if (typeof value !== 'string') return null;
@@ -75,6 +77,28 @@ function normalizeTraceContext(traceContext = null, fallback = {}) {
     correlationId: traceId,
     causationId: parentEventId,
   };
+}
+
+function getThrottleQueueMaxItems() {
+  return Number.isFinite(THROTTLE_QUEUE_MAX_ITEMS) && THROTTLE_QUEUE_MAX_ITEMS > 0
+    ? THROTTLE_QUEUE_MAX_ITEMS
+    : 200;
+}
+
+function getThrottleQueueMaxBytes() {
+  return Number.isFinite(THROTTLE_QUEUE_MAX_BYTES) && THROTTLE_QUEUE_MAX_BYTES > 0
+    ? THROTTLE_QUEUE_MAX_BYTES
+    : (512 * 1024);
+}
+
+function getQueueItemBytes(item) {
+  const msg = (item && typeof item === 'object') ? item.message : item;
+  if (typeof msg !== 'string') return 0;
+  return Buffer.byteLength(msg, 'utf8');
+}
+
+function getThrottleQueueBytes(queue = []) {
+  return queue.reduce((total, item) => total + getQueueItemBytes(item), 0);
 }
 
 // Sync indicator state
@@ -544,6 +568,8 @@ function setupClaudeStateListener(handleTimerStateFn) {
 function teardownDaemonListeners() {
   clearScopedIpcListeners();
   syncIndicatorSetup = false;
+  throttleQueues.clear();
+  throttlingPanes.clear();
 }
 
 function setupRefreshButtons(sendToPaneFn) {
@@ -616,13 +642,50 @@ function enqueueForThrottle(paneId, message, deliveryId, traceContext = null) {
   if (!throttleQueues.has(paneId)) {
     throttleQueues.set(paneId, []);
   }
-  throttleQueues.get(paneId).push({
+  const queue = throttleQueues.get(paneId);
+  const incomingItem = {
     message,
     deliveryId: deliveryId || null,
     traceContext: traceContext || null,
-  });
-  log.info('ThrottleQueue', `Queued for pane ${paneId}, queue length: ${throttleQueues.get(paneId).length}`);    
-  diagnosticLog.write('ThrottleQueue', `Queued for pane ${paneId}, queue length: ${throttleQueues.get(paneId).length}`);
+  };
+  const maxItems = getThrottleQueueMaxItems();
+  const maxBytes = getThrottleQueueMaxBytes();
+  const incomingBytes = getQueueItemBytes(incomingItem);
+
+  if (incomingBytes > maxBytes) {
+    log.warn(
+      'ThrottleQueue',
+      `Dropping oversize message for pane ${paneId} (${incomingBytes} bytes > ${maxBytes} byte cap)`
+    );
+    diagnosticLog.write(
+      'ThrottleQueue',
+      `Dropped oversize message for pane ${paneId} (${incomingBytes} bytes > ${maxBytes} cap)`
+    );
+    return;
+  }
+
+  let queueBytes = getThrottleQueueBytes(queue);
+  let droppedCount = 0;
+  while (
+    queue.length >= maxItems
+    || ((queueBytes + incomingBytes) > maxBytes && queue.length > 0)
+  ) {
+    const dropped = queue.shift();
+    queueBytes -= getQueueItemBytes(dropped);
+    droppedCount += 1;
+  }
+
+  if (droppedCount > 0) {
+    log.warn(
+      'ThrottleQueue',
+      `Queue cap reached for pane ${paneId}; dropped ${droppedCount} stale message(s) `
+      + `(maxItems=${maxItems}, maxBytes=${maxBytes})`
+    );
+  }
+
+  queue.push(incomingItem);
+  log.info('ThrottleQueue', `Queued for pane ${paneId}, queue length: ${queue.length}`);
+  diagnosticLog.write('ThrottleQueue', `Queued for pane ${paneId}, queue length: ${queue.length}`);
   processThrottleQueue(paneId);
 }
 
@@ -651,6 +714,8 @@ function processThrottleQueue(paneId) {
     throttlingPanes.delete(paneId);
     if (queue.length > 0) {
       setTimeout(() => processThrottleQueue(paneId), MESSAGE_DELAY);
+    } else {
+      throttleQueues.delete(paneId);
     }
     return;
   }
@@ -662,6 +727,8 @@ function processThrottleQueue(paneId) {
     throttlingPanes.delete(paneId);
     if (queue.length > 0) {
       setTimeout(() => processThrottleQueue(paneId), MESSAGE_DELAY);
+    } else {
+      throttleQueues.delete(paneId);
     }
     return;
   }
@@ -678,19 +745,29 @@ function processThrottleQueue(paneId) {
   terminal.sendToPane(paneId, routedMessage, {
     traceContext: traceContext || undefined,
     onComplete: (result) => {
-      if (result && result.success === false) {
+      const accepted = !result || result.success !== false;
+      const verified = accepted && result?.verified !== false;
+      if (!accepted) {
         log.warn('Daemon', `Trigger delivery failed for pane ${paneId}: ${result.reason || 'unknown'}`);
         uiView.showDeliveryFailed(paneId, result.reason || 'Delivery failed');
-      } else {
+      } else if (verified) {
         uiView.showDeliveryIndicator(paneId, 'delivered');
         if (deliveryId) {
           ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
         }
+      } else {
+        log.warn(
+          'Daemon',
+          `Trigger delivery unverified for pane ${paneId}: ${result?.reason || result?.status || 'unverified'}`
+        );
+        uiView.showDeliveryIndicator(paneId, 'unverified');
       }
 
       throttlingPanes.delete(paneId);
       if (queue.length > 0) {
         setTimeout(() => processThrottleQueue(paneId), MESSAGE_DELAY);
+      } else {
+        throttleQueues.delete(paneId);
       }
     }
   });
@@ -808,4 +885,13 @@ module.exports = {
   PANE_IDS,
   PANE_ROLES: uiView.PANE_ROLES,
   _resetForTesting: uiView._resetForTesting,
+  _getThrottleQueueDepthForTesting(paneId) {
+    const id = String(paneId || '');
+    const queue = throttleQueues.get(id);
+    return Array.isArray(queue) ? queue.length : 0;
+  },
+  _resetThrottleQueueForTesting() {
+    throttleQueues.clear();
+    throttlingPanes.clear();
+  },
 };

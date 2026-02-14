@@ -523,17 +523,33 @@ function startOutboundQueueTimer() {
 
 function coerceAckResult(result) {
   if (!result || typeof result !== 'object') return null;
-  if (Object.prototype.hasOwnProperty.call(result, 'ok')) {
+  const accepted = Object.prototype.hasOwnProperty.call(result, 'accepted')
+    ? Boolean(result.accepted)
+    : (Object.prototype.hasOwnProperty.call(result, 'success') ? Boolean(result.success) : Boolean(result.ok));
+  const queued = Object.prototype.hasOwnProperty.call(result, 'queued')
+    ? Boolean(result.queued)
+    : accepted;
+  const verified = Object.prototype.hasOwnProperty.call(result, 'verified')
+    ? Boolean(result.verified)
+    : Boolean(result.ok);
+  const ok = Object.prototype.hasOwnProperty.call(result, 'ok')
+    ? Boolean(result.ok)
+    : verified;
+  const status = result.status
+    || (verified ? 'delivered.verified' : (accepted ? 'accepted.unverified' : 'failed'));
+
+  if (
+    Object.prototype.hasOwnProperty.call(result, 'ok')
+    || Object.prototype.hasOwnProperty.call(result, 'success')
+    || Object.prototype.hasOwnProperty.call(result, 'accepted')
+    || Object.prototype.hasOwnProperty.call(result, 'verified')
+  ) {
     return {
-      ok: Boolean(result.ok),
-      status: result.status || (result.ok ? 'ok' : 'failed'),
-      details: result,
-    };
-  }
-  if (Object.prototype.hasOwnProperty.call(result, 'success')) {
-    return {
-      ok: Boolean(result.success),
-      status: result.success ? 'ok' : 'failed',
+      ok,
+      accepted,
+      queued,
+      verified,
+      status,
       details: result,
     };
   }
@@ -839,6 +855,9 @@ async function handleMessage(clientId, rawData) {
           type: 'send-ack',
           messageId,
           ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
           status: 'handler_error',
           error: err.message,
           traceId: ingressTraceContext?.traceId || null,
@@ -929,6 +948,9 @@ async function handleMessage(clientId, rawData) {
           type: 'send-ack',
           messageId: message.messageId || null,
           ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
           status: 'handler_error',
           error: err.message,
           wsDeliveryCount,
@@ -961,12 +983,17 @@ async function handleMessage(clientId, rawData) {
   if (message.ackRequired && (message.type === 'send' || message.type === 'broadcast')) {
     const handlerAck = coerceAckResult(handlerResult);
     const websocketDelivered = wsDeliveryCount > 0;
-    const ok = websocketDelivered || Boolean(handlerAck?.ok);
+    const accepted = websocketDelivered || Boolean(handlerAck?.accepted || handlerAck?.ok);
+    const queued = websocketDelivered || Boolean(handlerAck?.queued || handlerAck?.accepted || handlerAck?.ok);
+    const verified = websocketDelivered || Boolean(handlerAck?.verified);
+    const ok = verified;
 
-    let status = websocketDelivered ? 'delivered.websocket' : 'unrouted';
+    let status = verified
+      ? (websocketDelivered ? 'delivered.websocket' : 'delivered.verified')
+      : (accepted ? 'accepted.unverified' : 'unrouted');
     if (handlerAck?.status) {
       status = handlerAck.status;
-      if (websocketDelivered && handlerAck.ok === false) {
+      if (websocketDelivered && handlerAck.verified === false) {
         status = 'delivered.websocket';
       }
     }
@@ -975,6 +1002,9 @@ async function handleMessage(clientId, rawData) {
       type: 'send-ack',
       messageId: message.messageId || null,
       ok,
+      accepted,
+      queued,
+      verified,
       status,
       wsDeliveryCount,
       handlerResult: handlerAck?.details || null,

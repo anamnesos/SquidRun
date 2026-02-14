@@ -157,6 +157,78 @@ describe('hm-send retry behavior', () => {
     expect(result.stdout).toContain('ack: routed');
   });
 
+  test('treats accepted-but-unverified ack as success without fallback and reports truthful status', async () => {
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'heartbeat') {
+          ws.send(JSON.stringify({
+            type: 'heartbeat-ack',
+            role: msg.role || null,
+            paneId: msg.paneId || null,
+            status: 'ok',
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: false,
+            accepted: true,
+            queued: true,
+            verified: false,
+            status: 'routed_unverified',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    const result = await runHmSend(
+      ['devops', '(TEST #2c): accepted-unverified', '--timeout', '80', '--retries', '1', '--no-fallback'],
+      { HM_SEND_PORT: String(port) }
+    );
+
+    await new Promise((resolve) => server.close(resolve));
+
+    expect(result.code).toBe(0);
+    expect(sendAttempts).toHaveLength(1);
+    expect(result.stdout).toContain('Accepted by devops but unverified');
+    expect(result.stdout).toContain('ack: routed_unverified');
+  });
+
   test('blocks websocket send attempts when target health is invalid_target', async () => {
     const sendAttempts = [];
     let server;
