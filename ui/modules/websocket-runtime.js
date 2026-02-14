@@ -131,6 +131,25 @@ function markClientSeen(clientId, source = 'message', now = Date.now()) {
   return touchHeartbeat(clientInfo.role, clientInfo.paneId, clientId, source, now);
 }
 
+function clearHeartbeatForClient(clientId, role, paneId) {
+  const normalizedRole = normalizeRoleId(role);
+  const normalizedPaneId = normalizePaneId(paneId);
+
+  if (normalizedRole) {
+    const roleEntry = roleHeartbeats.get(normalizedRole);
+    if (roleEntry && Number(roleEntry.clientId) === Number(clientId)) {
+      roleHeartbeats.delete(normalizedRole);
+    }
+  }
+
+  if (normalizedPaneId) {
+    const paneEntry = paneHeartbeats.get(String(normalizedPaneId));
+    if (paneEntry && Number(paneEntry.clientId) === Number(clientId)) {
+      paneHeartbeats.delete(String(normalizedPaneId));
+    }
+  }
+}
+
 function coerceStaleAfterMs(value) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -700,6 +719,7 @@ function start(options = {}) {
           const info = clients.get(clientId);
           const roleInfo = info?.role ? ` (${info.role})` : '';
           log.info('WebSocket', `Client ${clientId}${roleInfo} disconnected: ${code}`);
+          clearHeartbeatForClient(clientId, info?.role, info?.paneId);
           clients.delete(clientId);
         });
 

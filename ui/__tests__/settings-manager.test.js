@@ -27,6 +27,7 @@ jest.mock('../config', () => ({
 }));
 
 const { spawnSync } = require('child_process');
+const fs = require('fs');
 const SettingsManager = require('../modules/main/settings-manager');
 
 function mockCliAvailability(availability) {
@@ -131,5 +132,33 @@ describe('SettingsManager CLI auto-detection', () => {
     expect(locatorCalls.every(([, , opts]) => opts && opts.timeout > 0 && opts.timeout <= 3000)).toBe(true);
     expect(versionCalls.every(([, , opts]) => opts && opts.timeout > 0 && opts.timeout <= 3000)).toBe(true);
   });
-});
 
+  test('writeAppStatus includes explicit mode field', () => {
+    ctx.currentSettings = { dryRun: false, sdkMode: false, autoSpawn: true };
+    manager.writeAppStatus();
+
+    const statusWriteCall = fs.writeFileSync.mock.calls.find((call) => String(call[0]).endsWith('app-status.json.tmp'));
+    expect(statusWriteCall).toBeDefined();
+    const serialized = statusWriteCall[1];
+    const status = JSON.parse(serialized);
+    expect(status.mode).toBe('pty');
+    expect(status.dryRun).toBe(false);
+    expect(status.autoSpawn).toBe(true);
+
+    ctx.currentSettings = { dryRun: true, sdkMode: false, autoSpawn: false };
+    manager.writeAppStatus();
+    const statusWriteCallDryRun = fs.writeFileSync.mock.calls
+      .filter((call) => String(call[0]).endsWith('app-status.json.tmp'))
+      .pop();
+    const statusDryRun = JSON.parse(statusWriteCallDryRun[1]);
+    expect(statusDryRun.mode).toBe('dry-run');
+
+    ctx.currentSettings = { dryRun: false, sdkMode: true, autoSpawn: false };
+    manager.writeAppStatus();
+    const statusWriteCallSdk = fs.writeFileSync.mock.calls
+      .filter((call) => String(call[0]).endsWith('app-status.json.tmp'))
+      .pop();
+    const statusSdk = JSON.parse(statusWriteCallSdk[1]);
+    expect(statusSdk.mode).toBe('sdk');
+  });
+});

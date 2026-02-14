@@ -369,6 +369,42 @@ describe('WebSocket Delivery Audit', () => {
     expect(staleHealth.status).toBe('stale');
   });
 
+  test('clears heartbeat state when registered client disconnects', async () => {
+    const targetClient = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    activeClients.add(targetClient);
+    const probeClient = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(probeClient);
+
+    const heartbeatAckPromise = waitForMessage(targetClient, (msg) => msg.type === 'heartbeat-ack');
+    targetClient.send(JSON.stringify({
+      type: 'heartbeat',
+      role: 'devops',
+      paneId: '2',
+    }));
+    await heartbeatAckPromise;
+
+    await closeClient(targetClient);
+    activeClients.delete(targetClient);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const requestId = 'health-after-disconnect-1';
+    const healthPromise = waitForMessage(
+      probeClient,
+      (msg) => msg.type === 'health-check-result' && msg.requestId === requestId
+    );
+    probeClient.send(JSON.stringify({
+      type: 'health-check',
+      target: 'devops',
+      requestId,
+    }));
+
+    const health = await healthPromise;
+    expect(health.healthy).toBe(false);
+    expect(health.status).toBe('no_heartbeat');
+    expect(health.paneId).toBe('2');
+    expect(health.role).toBe('devops');
+  });
+
   test('refreshes target health on non-heartbeat message activity', async () => {
     const targetClient = await connectAndRegister({ port, role: 'devops', paneId: '2' });
     activeClients.add(targetClient);

@@ -137,8 +137,12 @@ class SettingsManager {
 
   writeAppStatus() {
     try {
+      const explicitMode = this.ctx.currentSettings.sdkMode === true
+        ? 'sdk'
+        : (this.ctx.currentSettings.dryRun ? 'dry-run' : 'pty');
       const status = {
         started: new Date().toISOString(),
+        mode: explicitMode,
         dryRun: this.ctx.currentSettings.dryRun || false,
         autoSpawn: this.ctx.currentSettings.autoSpawn || false,
         version: require('../../package.json').version || 'unknown',
