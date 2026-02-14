@@ -283,12 +283,13 @@ function createInjectionController(options = {}) {
     return { waitedMs, forcedExpire: false };
   }
 
-  async function verifySubmitAccepted(paneId, baseline = {}) {
+  async function verifySubmitAccepted(paneId, baseline = {}, options = {}) {
     const {
       outputTsBefore = 0,
       promptProbeAvailable = false,
       promptWasReady = false,
     } = baseline;
+    const allowOutputTransitionOnly = Boolean(options.allowOutputTransitionOnly);
 
     // Fallback when prompt probing is unavailable (mock/test edge cases).
     if (!promptProbeAvailable) {
@@ -320,6 +321,15 @@ function createInjectionController(options = {}) {
       }
 
       await sleep(SUBMIT_ACCEPT_POLL_MS);
+    }
+
+    if (allowOutputTransitionOnly && outputTransitionObserved) {
+      return {
+        accepted: true,
+        signal: 'output_transition_allowed',
+        outputTransitionObserved,
+        promptTransitionObserved,
+      };
     }
 
     return {
@@ -711,6 +721,12 @@ function createInjectionController(options = {}) {
     const verifySubmitAcceptedOverride = item && typeof item === 'object'
       ? item.verifySubmitAccepted
       : undefined;
+    const startupInjectionOverride = item && typeof item === 'object'
+      ? item.startupInjection
+      : undefined;
+    const acceptOutputTransitionOnlyOverride = item && typeof item === 'object'
+      ? item.acceptOutputTransitionOnly
+      : undefined;
     const itemTraceContext = normalizeTraceContext(item && typeof item === 'object' ? item.traceContext : null);
     const itemCorrId = itemTraceContext?.traceId
       || itemTraceContext?.correlationId
@@ -726,6 +742,8 @@ function createInjectionController(options = {}) {
         verifySubmitAccepted: typeof verifySubmitAcceptedOverride === 'boolean'
           ? verifySubmitAcceptedOverride
           : capabilities.verifySubmitAccepted,
+        startupInjection: Boolean(startupInjectionOverride),
+        acceptOutputTransitionOnly: Boolean(acceptOutputTransitionOnlyOverride),
         useChunkedWrite: capabilities.useChunkedWrite,
       },
       correlationId: itemCorrId,
@@ -773,6 +791,8 @@ function createInjectionController(options = {}) {
       eventId: itemTraceContext?.eventId || null,
     }, {
       verifySubmitAccepted: verifySubmitAcceptedOverride,
+      startupInjection: startupInjectionOverride,
+      acceptOutputTransitionOnly: acceptOutputTransitionOnlyOverride,
     });
   }
 
@@ -815,6 +835,8 @@ function createInjectionController(options = {}) {
     const shouldVerifySubmitAccepted = (typeof behaviorOverrides.verifySubmitAccepted === 'boolean')
       ? behaviorOverrides.verifySubmitAccepted
       : capabilities.verifySubmitAccepted;
+    const isStartupInjection = Boolean(behaviorOverrides.startupInjection);
+    const allowOutputTransitionOnly = Boolean(behaviorOverrides.acceptOutputTransitionOnly);
     const isCodex = capabilities.mode === 'codex-exec';
     const normalizedTraceContext = normalizeTraceContext(traceContext);
     const corrId = normalizedTraceContext?.traceId
@@ -1098,7 +1120,7 @@ function createInjectionController(options = {}) {
       let submitAccepted = null;
       const maxSubmitAttempts = shouldVerifySubmitAccepted
         ? Math.max(
-          1,
+          isStartupInjection ? 2 : 1,
           Number(SUBMIT_ACCEPT_MAX_ATTEMPTS) || 1,
           deferForcedExpire ? 2 : 1
         )
@@ -1155,7 +1177,7 @@ function createInjectionController(options = {}) {
           break;
         }
 
-        const verifyResult = await verifySubmitAccepted(id, attemptBaseline);
+        const verifyResult = await verifySubmitAccepted(id, attemptBaseline, { allowOutputTransitionOnly });
         if (verifyResult.accepted) {
           log.info(
             `doSendToPane ${id}`,
@@ -1255,6 +1277,12 @@ function createInjectionController(options = {}) {
       traceContext: queueTraceContext,
       verifySubmitAccepted: typeof options.verifySubmitAccepted === 'boolean'
         ? options.verifySubmitAccepted
+        : undefined,
+      startupInjection: typeof options.startupInjection === 'boolean'
+        ? options.startupInjection
+        : undefined,
+      acceptOutputTransitionOnly: typeof options.acceptOutputTransitionOnly === 'boolean'
+        ? options.acceptOutputTransitionOnly
         : undefined,
     };
 
