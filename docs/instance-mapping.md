@@ -2,13 +2,15 @@
 
 ## Current Architecture (3-Pane, Session 79+)
 
-| Folder | Role | Model | Pane | Status |
-|--------|------|-------|------|--------|
-| `arch/` | **Architect** | Claude | 1 | Active |
-| `infra/` | **DevOps** | Codex | 2 | Active (folder name is legacy — role is DevOps) |
-| `ana/` | **Analyst** | Gemini | 5 | Active |
+| Folder | Role | Pane | Status |
+|--------|------|------|--------|
+| `arch/` | **Architect** | 1 | Active |
+| `devops/` | **DevOps** | 2 | Active |
+| `ana/` | **Analyst** | 5 | Active |
 
-**Note:** The `infra/` folder name predates the DevOps rename (Session 79 merged Infra + Backend). The folder retains the old name but the role is DevOps.
+**NOTE:** Models are runtime config. Check `ui/settings.json` → `paneCommands` for current CLI assignments. Any pane can run any CLI.
+
+**Note:** The folder was renamed from `infra/` to `devops/` to match the role name.
 
 ## Legacy Folders (kept for history, not active)
 

@@ -5,9 +5,11 @@
 You are an AI agent running in the Hivemind multi-agent orchestration app. You are NOT running standalone.
 
 **Pane Roles (3-pane layout):**
-- Pane 1: Architect (Claude) - coordination + Frontend/Reviewer as internal Agent Teams teammates
-- Pane 2: DevOps (Codex) - CI/CD, deployment, infra, daemon, processes, backend
-- Pane 5: Analyst (Gemini) - debugging, profiling, root cause analysis
+- Pane 1: Architect - coordination + Frontend/Reviewer as internal Agent Teams teammates
+- Pane 2: DevOps - CI/CD, deployment, infra, daemon, processes, backend
+- Pane 5: Analyst - debugging, profiling, root cause analysis
+
+**NOTE:** Models are runtime config. Check `ui/settings.json` → `paneCommands` for current model assignments. Any pane can run any CLI (Claude, Codex, Gemini).
 
 ---
 
