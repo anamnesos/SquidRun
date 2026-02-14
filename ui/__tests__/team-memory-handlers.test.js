@@ -36,7 +36,7 @@ describe('team-memory IPC handlers', () => {
     }
   });
 
-  test('routes create/query/update/deprecate channels to expected actions', async () => {
+  test('routes create/query/update/deprecate/experiment channels to expected actions', async () => {
     registerTeamMemoryHandlers(ctx);
 
     const getHandler = (channel) => {
@@ -224,6 +224,27 @@ describe('team-memory IPC handlers', () => {
     expect(mockExecuteTeamMemoryOperation).toHaveBeenLastCalledWith(
       'deprecate-claim',
       expect.objectContaining({ claimId: 'clm_3', reason: 'superseded' }),
+      expect.any(Object)
+    );
+
+    await getHandler('team-memory:run-experiment')({}, { profileId: 'jest-suite', claimId: 'clm_8' });
+    expect(mockExecuteTeamMemoryOperation).toHaveBeenLastCalledWith(
+      'run-experiment',
+      expect.objectContaining({ profileId: 'jest-suite', claimId: 'clm_8' }),
+      expect.any(Object)
+    );
+
+    await getHandler('team-memory:get-experiment')({}, { runId: 'exp_7' });
+    expect(mockExecuteTeamMemoryOperation).toHaveBeenLastCalledWith(
+      'get-experiment',
+      expect.objectContaining({ runId: 'exp_7' }),
+      expect.any(Object)
+    );
+
+    await getHandler('team-memory:list-experiments')({}, { status: 'attached' });
+    expect(mockExecuteTeamMemoryOperation).toHaveBeenLastCalledWith(
+      'list-experiments',
+      expect.objectContaining({ status: 'attached' }),
       expect.any(Object)
     );
   });

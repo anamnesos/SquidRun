@@ -469,3 +469,227 @@ Research survey (2026-02-13) of LangGraph, CrewAI, AutoGen, OpenClaw, Observatio
 - [ ] Full test coverage for each phase
 - [ ] Existing Evidence Ledger, hooks, and intent board unchanged (additive only)
 - [ ] Single-writer worker process with graceful degradation on failure
+
+---
+
+## 12. Experiment Engine (Phase 6)
+
+**Status:** SPEC — DevOps + Architect aligned on architecture + risk controls
+**Concept:** When a claim is contested, agents don't argue — they run an experiment. An isolated PTY executes a test, captures evidence, and attaches it to the claim as executable proof.
+
+### 12.1 Core Concept
+
+The unit of proof is not an opinion — it's an **EXPERIMENT** with a hypothesis, execution, result, and evidence chain.
+
+```
+Agent proposes claim → Another agent contests → Experiment runs → Evidence attached → Claim resolved with proof
+```
+
+"Don't argue — run the experiment."
+
+### 12.2 Architecture
+
+**Worker pair pattern** (same as team-memory, comms, evidence-ledger workers):
+
+| Component | Path | Role |
+|-----------|------|------|
+| Worker | `ui/modules/experiment/worker.js` | Owns ephemeral node-pty spawn, captures output, enforces timeout |
+| Worker Client | `ui/modules/experiment/worker-client.js` | Main-process API, request/response via reqId |
+| CLI | `ui/scripts/hm-experiment.js` | Agent-facing: create, get, list experiments |
+| IPC | `team-memory:run-experiment` | Renderer/main bridge |
+
+**Main process is orchestrator only** — enqueue run, map result to claim evidence. Worker owns the full PTY lifecycle.
+
+### 12.3 Evidence Flow (tamper-evident)
+
+Experiments do NOT attach raw file paths to claims. Evidence flows through the Ledger:
+
+```
+1. Agent calls run_experiment(profile, claimId)
+2. Fork worker spawns isolated PTY (no UI binding)
+3. Captures stdout, stderr, exit code, duration
+4. Artifacts saved to workspace/runtime/experiments/<runId>/
+   ├── stdout.log
+   ├── stderr.log
+   └── meta.json (git SHA, cwd, env fingerprint, timestamps, hashes)
+5. Worker reports result to main process
+6. Main creates Evidence Ledger event: experiment.completed
+   - payload: artifact paths + SHA-256 hashes + exit code + profile name
+7. claim_evidence row links claim → ledger event ID
+   - relation: 'supports' (exit 0) or 'contradicts' (exit non-0)
+8. Integrity checker validates evidence_ref → ledger event (existing scan)
+```
+
+Tamper-evident: hashes are in the immutable Ledger. Artifacts are for replay — the proof is the hash.
+
+### 12.4 Experiment Schema
+
+```sql
+CREATE TABLE experiments (
+  id              TEXT PRIMARY KEY,
+  claim_id        TEXT REFERENCES claims(id),
+  profile         TEXT NOT NULL,          -- named test profile (no raw shell)
+  command         TEXT NOT NULL,          -- resolved command from profile
+  requested_by    TEXT NOT NULL,          -- agent that requested the experiment
+  status          TEXT DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'timed_out', 'canceled', 'attach_pending', 'attached')),
+  exit_code       INTEGER,
+  duration_ms     INTEGER,
+  stdout_hash     TEXT,                   -- SHA-256 of stdout.log
+  stderr_hash     TEXT,                   -- SHA-256 of stderr.log
+  git_sha         TEXT,                   -- repo state at execution time
+  evidence_ref    TEXT,                   -- Evidence Ledger event ID (set after completion)
+  session         TEXT,                   -- session ID
+  created_at      INTEGER NOT NULL,       -- epoch_ms
+  completed_at    INTEGER                 -- epoch_ms
+);
+
+CREATE INDEX idx_experiments_claim ON experiments(claim_id);
+CREATE INDEX idx_experiments_status ON experiments(status);
+CREATE INDEX idx_experiments_session ON experiments(session);
+```
+
+### 12.5 Test Profiles (named only — no raw shell)
+
+Experiments run **named profiles**, not arbitrary commands. This prevents command injection from claim text.
+
+```json
+// workspace/runtime/experiment-profiles.json
+{
+  "jest-suite": {
+    "command": "cd /d/projects/hivemind/ui && npx jest --no-coverage",
+    "timeout_ms": 120000,
+    "description": "Full test suite"
+  },
+  "jest-file": {
+    "command": "cd /d/projects/hivemind/ui && npx jest --no-coverage -- {file}",
+    "timeout_ms": 30000,
+    "params": ["file"],
+    "description": "Single test file"
+  },
+  "lint": {
+    "command": "cd /d/projects/hivemind/ui && npx eslint {file}",
+    "timeout_ms": 15000,
+    "params": ["file"],
+    "description": "Lint a specific file"
+  }
+}
+```
+
+Parameters are validated and sanitized at the API boundary. Only registered profile names are accepted.
+
+### 12.6 Risk Controls
+
+| Risk | Control |
+|------|---------|
+| Command injection | Named profiles only — no raw shell from claim text or agent input |
+| Resource leaks / hangs | Hard timeout per profile + kill entire process tree + max 1 concurrent run |
+| Log growth / secrets | Output byte cap (default 1MB) + optional redaction patterns + retention TTL |
+| Reproducibility | Git SHA + cwd + env fingerprint captured in meta.json |
+| Orphaned processes | Worker monitors child PID, kills on timeout/crash/shutdown |
+
+### 12.7 Guard Integration
+
+Guards can auto-trigger experiments on contested claims:
+
+| Guard action | Experiment behavior |
+|-------------|-------------------|
+| `warn` / `suggest` | Experiment runs async, result logged but doesn't block |
+| `block` | Claim status set to `pending_proof`, block path gates on experiment result |
+| `escalate` | Experiment runs, result forwarded to Architect for decision |
+
+**New claim status:** `pending_proof` — claim is contested and awaiting experiment result before resolution.
+
+### 12.8 API Contract
+
+**create-experiment** (alias: `run-experiment`, `run_experiment`)
+```
+Request: {
+  profileId,              -- named profile (required)
+  claimId?,               -- claim to link (optional — can attach later)
+  relation?,              -- 'supports' | 'contradicts' | 'caused_by'
+  requestedBy,            -- agent requesting the experiment
+  scope?,                 -- file/module scope for context
+  input: {
+    repoPath?,            -- override cwd
+    args?,                -- profile parameter values
+    envAllowlist?         -- env vars to pass through (explicit, not implicit)
+  },
+  timeoutMs?,             -- override profile default
+  outputCapBytes?,        -- override default 1MB cap
+  redactionRules?,        -- patterns to scrub from output
+  idempotencyKey?,        -- dedup repeated runs
+  guardContext?: {
+    guardId,              -- which guard triggered this
+    action,               -- warn | block | suggest | escalate
+    blocking: bool        -- whether caller waits for result
+  }
+}
+Response: { ok, runId, status: 'queued'|'running'|'rejected', artifactDir, reason? }
+```
+
+**get-experiment**
+```
+Request: { runId }
+Response: {
+  ok, experiment: {
+    runId, profileId, status,  -- queued|running|succeeded|failed|timed_out|canceled|attach_pending|attached
+    requestedBy, claimId?, relation?, guardContext?,
+    startedAt?, finishedAt?, exitCode?, durationMs?, timeoutMs,
+    cwd, git: { sha, branch, dirty },
+    commandPreview,            -- sanitized command (no secrets)
+    artifactDir,
+    files: { stdout, stderr, meta, result },
+    output: { stdoutBytes, stderrBytes, truncated, redacted },
+    attach: { evidenceEventId?, claimEvidenceStatus? },
+    error?
+  }
+}
+```
+
+**list-experiments**
+```
+Request: { status?, profileId?, claimId?, guardId?, sinceMs?, untilMs?, limit?, cursor? }
+Response: { ok, experiments: [summary...], nextCursor? }
+```
+
+**attach-to-claim**
+```
+Request: { runId, claimId, relation, addedBy, summary? }
+Response: { ok, status: 'attached'|'duplicate'|'not_attachable', evidenceEventId, claimId, relation }
+```
+
+Integrity rule: attach always goes through Evidence Ledger event_id. Ledger event payload points to experiment artifacts. claim_evidence.evidence_ref = ledger event ID. Existing integrity checker validates the chain.
+
+### 12.9 Build Phases
+
+#### Phase 6a: Foundation
+- [ ] Experiment profiles schema + loader (`workspace/runtime/experiment-profiles.json`)
+- [ ] `experiments` table via migration v6
+- [ ] Worker pair: `ui/modules/experiment/worker.js` + `worker-client.js`
+- [ ] PTY spawn + capture + timeout + kill tree
+- [ ] Artifact storage: `workspace/runtime/experiments/<runId>/`
+
+#### Phase 6b: Evidence Chain
+- [ ] Evidence Ledger integration: `experiment.completed` event with hashes
+- [ ] Auto-attach to claim_evidence (supports/contradicts based on exit code)
+- [ ] `pending_proof` claim status (add to state machine)
+- [ ] Guard trigger: block-path guards auto-queue experiments
+
+#### Phase 6c: CLI + IPC
+- [ ] `hm-experiment.js` CLI (create, get, list)
+- [ ] IPC handlers: `team-memory:run-experiment`, `team-memory:get-experiment`, `team-memory:list-experiments`
+- [ ] App wiring: init/shutdown worker in hivemind-app.js
+
+#### Phase 6d: Tests
+- [ ] Worker isolation tests (spawn, capture, timeout, kill)
+- [ ] Evidence chain tests (artifact → ledger → claim_evidence)
+- [ ] Profile validation tests (injection prevention, param sanitization)
+- [ ] Guard integration tests (auto-trigger, pending_proof, block-path gating)
+- [ ] Full suite regression
+
+### 12.10 Deferred
+
+- **Video/terminal recording** — capture full PTY render as asciinema-compatible recording (adds visual replay)
+- **Parallel experiments** — raise max concurrent from 1 when resource usage is validated
+- **Remote execution** — run experiments on remote machines / CI runners
+- **Experiment history comparison** — "this test passed in Session 118 but fails now, what changed?"

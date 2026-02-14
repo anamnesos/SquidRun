@@ -85,6 +85,28 @@ maybeDescribe('team-memory claims module', () => {
     expect(valid.ok).toBe(true);
     expect(valid.claim.status).toBe('confirmed');
 
+    const contested = claims.updateClaimStatus(claimId, 'contested', 'analyst', 'regression detected');
+    expect(contested.ok).toBe(true);
+    expect(contested.claim.status).toBe('contested');
+
+    const pendingProof = claims.updateClaimStatus(
+      claimId,
+      'pending_proof',
+      'devops',
+      'guard queued experiment'
+    );
+    expect(pendingProof.ok).toBe(true);
+    expect(pendingProof.claim.status).toBe('pending_proof');
+
+    const resolved = claims.updateClaimStatus(
+      claimId,
+      'confirmed',
+      'devops',
+      'experiment succeeded'
+    );
+    expect(resolved.ok).toBe(true);
+    expect(resolved.claim.status).toBe('confirmed');
+
     const invalid = claims.updateClaimStatus(claimId, 'proposed', 'architect', 'cannot revert');
     expect(invalid.ok).toBe(false);
     expect(invalid.reason).toBe('invalid_transition');

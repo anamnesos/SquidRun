@@ -4,6 +4,7 @@ const { TeamMemoryPatterns } = require('./patterns');
 const { TeamMemoryGuards } = require('./guards');
 const { runBackfill } = require('./backfill');
 const { scanOrphanedEvidenceRefs } = require('./integrity-checker');
+const { executeExperimentOperation } = require('../experiment/runtime');
 
 let sharedRuntime = null;
 
@@ -100,6 +101,12 @@ function executeTeamMemoryOperation(action, payload = {}, options = {}) {
   }
 
   const opPayload = asObject(payload);
+  const experimentRuntimeOptions = {
+    dbPath: store.dbPath,
+    artifactRoot: opPayload.artifactRoot,
+    profilesPath: opPayload.profilesPath,
+    evidenceLedgerDbPath: opPayload.evidenceLedgerDbPath,
+  };
 
   switch (normalizedAction) {
     case 'health':
@@ -234,6 +241,28 @@ function executeTeamMemoryOperation(action, payload = {}, options = {}) {
         teamDb: store.db,
         evidenceLedgerDbPath: opPayload.evidenceLedgerDbPath,
         limit: opPayload.limit,
+      });
+
+    case 'create-experiment':
+    case 'run-experiment':
+    case 'run_experiment':
+      return executeExperimentOperation('run-experiment', opPayload, {
+        runtimeOptions: experimentRuntimeOptions,
+      });
+
+    case 'get-experiment':
+      return executeExperimentOperation('get-experiment', opPayload, {
+        runtimeOptions: experimentRuntimeOptions,
+      });
+
+    case 'list-experiments':
+      return executeExperimentOperation('list-experiments', opPayload, {
+        runtimeOptions: experimentRuntimeOptions,
+      });
+
+    case 'attach-to-claim':
+      return executeExperimentOperation('attach-to-claim', opPayload, {
+        runtimeOptions: experimentRuntimeOptions,
       });
 
     default:

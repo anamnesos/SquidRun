@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 
 const CLAIM_TYPES = new Set(['fact', 'decision', 'hypothesis', 'negative']);
-const CLAIM_STATUS = new Set(['proposed', 'confirmed', 'contested', 'deprecated']);
+const CLAIM_STATUS = new Set(['proposed', 'confirmed', 'contested', 'pending_proof', 'deprecated']);
 const EVIDENCE_RELATIONS = new Set(['supports', 'contradicts', 'caused_by']);
 const DECISION_OUTCOMES = new Set(['success', 'partial', 'failure', 'unknown']);
 const CONSENSUS_POSITIONS = new Set(['support', 'challenge', 'abstain']);
@@ -24,7 +24,8 @@ const ROLE_ALIASES = new Map([
 const ALLOWED_TRANSITIONS = new Map([
   ['proposed', new Set(['confirmed', 'contested', 'deprecated'])],
   ['confirmed', new Set(['contested', 'deprecated'])],
-  ['contested', new Set(['confirmed', 'deprecated'])],
+  ['contested', new Set(['pending_proof', 'confirmed', 'deprecated'])],
+  ['pending_proof', new Set(['confirmed', 'contested', 'deprecated'])],
   ['deprecated', new Set([])],
 ]);
 
