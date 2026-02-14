@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Seed decision memory from session-handoff.json.
+ * Seed decision memory from context snapshot markdown or JSON.
  * Idempotent via deterministic IDs + conflict-tolerant inserts.
  */
 
@@ -14,7 +14,8 @@ const { seedDecisionMemory } = require('../modules/main/evidence-ledger-memory-s
 function usage() {
   console.log('Usage: node evidence-ledger-seed-memory.js [options]');
   console.log('Options:');
-  console.log('  --handoff <path>            Input handoff JSON (default: .hivemind/session-handoff.json with workspace fallback)');
+  console.log('  --context <path>            Input context file (JSON or markdown; default: .hivemind/context-snapshots/1.md)');
+  console.log('  --handoff <path>            Deprecated alias for --context');
   console.log('  --db <path>                 Ledger DB path override');
   console.log('  --session-id <id>           Override deterministic seeded session id');
   console.log('  --mark-ended                Mark seeded session as ended');
@@ -41,9 +42,48 @@ function asString(value, fallback = '') {
   return trimmed.length > 0 ? trimmed : fallback;
 }
 
-function readJson(filePath) {
+function parseList(value) {
+  if (!value) return [];
+  return String(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseSnapshotMarkdown(raw) {
+  const text = String(raw || '');
+  const sessionMatch = text.match(/(?:Session:\s*|\|\s*Session\s+)(\d+)/i);
+  const testsMatch = text.match(/Tests:\s*(\d+)\s+suites,\s*(\d+)\s+tests/i);
+  const completedMatch = text.match(/^Completed:\s*(.+)$/im);
+  const nextMatch = text.match(/^Next:\s*(.+)$/im);
+  const session = sessionMatch ? Number.parseInt(sessionMatch[1], 10) : null;
+
+  if (!Number.isInteger(session) || session <= 0) {
+    throw new Error('snapshot markdown missing Session number');
+  }
+
+  return {
+    session,
+    mode: 'PTY',
+    completed: completedMatch ? parseList(completedMatch[1]) : [],
+    roadmap: nextMatch ? parseList(nextMatch[1]) : [],
+    not_yet_done: nextMatch ? parseList(nextMatch[1]) : [],
+    stats: testsMatch
+      ? {
+          test_suites: Number.parseInt(testsMatch[1], 10) || 0,
+          tests_passed: Number.parseInt(testsMatch[2], 10) || 0,
+        }
+      : {},
+  };
+}
+
+function readContextFile(filePath) {
   const content = fs.readFileSync(filePath, 'utf8');
-  return JSON.parse(content);
+  const trimmed = content.trim();
+  if (trimmed.startsWith('{')) {
+    return JSON.parse(trimmed);
+  }
+  return parseSnapshotMarkdown(trimmed);
 }
 
 function resolvePath(input, fallback) {
@@ -60,20 +100,20 @@ function main() {
   }
 
   const options = parseArgs(args);
-  const defaultHandoffPath = typeof resolveCoordPath === 'function'
-    ? resolveCoordPath('session-handoff.json')
-    : path.join(WORKSPACE_PATH, 'session-handoff.json');
-  const handoffPath = resolvePath(
-    options.get('handoff'),
-    defaultHandoffPath
+  const defaultContextPath = typeof resolveCoordPath === 'function'
+    ? resolveCoordPath(path.join('context-snapshots', '1.md'))
+    : path.join(WORKSPACE_PATH, 'context-snapshots', '1.md');
+  const contextPath = resolvePath(
+    options.get('context') || options.get('handoff'),
+    defaultContextPath
   );
   const dbPath = asString(options.get('db'), '');
 
-  let handoff;
+  let contextSnapshot;
   try {
-    handoff = readJson(handoffPath);
+    contextSnapshot = readContextFile(contextPath);
   } catch (err) {
-    console.error(`Failed to read handoff JSON at ${handoffPath}: ${err.message}`);
+    console.error(`Failed to read context file at ${contextPath}: ${err.message}`);
     process.exit(1);
   }
 
@@ -89,7 +129,7 @@ function main() {
 
   const memory = new EvidenceLedgerMemory(store);
 
-  const result = seedDecisionMemory(memory, handoff, {
+  const result = seedDecisionMemory(memory, contextSnapshot, {
     sessionId: asString(options.get('session-id'), ''),
     markSessionEnded: options.get('mark-ended') === true,
     summary: asString(options.get('summary'), ''),
@@ -97,7 +137,7 @@ function main() {
 
   store.close();
   console.log(JSON.stringify({
-    handoffPath,
+    contextPath,
     dbPath: init.dbPath,
     ...result,
   }, null, 2));

@@ -23,7 +23,7 @@ You are one of 3 pane agents managed by Hivemind:
 On every new session, BEFORE waiting for user input:
 
 1. Read `workspace/app-status.json` - Check runtime state
-2. Read `workspace/session-handoff.json` - Primary session state
+2. Read latest context snapshot (`.hivemind/context-snapshots/1.md`, fallback `workspace/context-snapshots/1.md`)
 3. Read `workspace/build/blockers.md` - Active blockers
 4. Read `workspace/build/errors.md` - Active errors
 5. Check for tasks assigned to your role

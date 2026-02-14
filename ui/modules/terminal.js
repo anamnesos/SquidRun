@@ -1172,17 +1172,47 @@ function getIntentDir() {
   return resolveCoordFile('intent', { forWrite: true });
 }
 
-function getSessionHandoffPath() {
-  return resolveCoordFile('session-handoff.json');
+function getSnapshotSessionPath() {
+  return resolveCoordFile(path.join('context-snapshots', '1.md'));
 }
 
-function getSessionNumber() {
+function getSessionNumberFromSnapshot() {
   try {
-    const data = JSON.parse(fs.readFileSync(getSessionHandoffPath(), 'utf8'));
-    return data?.session ?? null;
+    const content = fs.readFileSync(getSnapshotSessionPath(), 'utf8');
+    const direct = content.match(/Session:\s*(\d+)/i);
+    if (direct) {
+      const parsed = Number.parseInt(direct[1], 10);
+      if (Number.isInteger(parsed) && parsed > 0) return parsed;
+    }
+    const header = content.match(/\|\s*Session\s+(\d+)\b/i);
+    if (header) {
+      const parsed = Number.parseInt(header[1], 10);
+      if (Number.isInteger(parsed) && parsed > 0) return parsed;
+    }
+    return null;
   } catch {
     return null;
   }
+}
+
+function getSessionNumber() {
+  const intentDir = getIntentDir();
+  let maxSession = null;
+
+  for (const paneId of PANE_IDS) {
+    try {
+      const filePath = path.join(intentDir, `${paneId}.json`);
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      const parsed = Number.parseInt(data?.session, 10);
+      if (!Number.isInteger(parsed) || parsed <= 0) continue;
+      if (maxSession === null || parsed > maxSession) maxSession = parsed;
+    } catch {
+      // Ignore missing/corrupt intent file
+    }
+  }
+
+  if (maxSession !== null) return maxSession;
+  return getSessionNumberFromSnapshot();
 }
 
 function updateIntentFile(paneId, intent) {

@@ -182,8 +182,8 @@ describe('Context Compressor Module', () => {
         if (filePath.includes('intent') && filePath.includes('5')) {
           return JSON.stringify({ pane: '5', role: 'Analyst', session: 90, intent: 'Investigating', blockers: 'waiting on DevOps' });
         }
-        if (filePath.includes('session-handoff')) {
-          return JSON.stringify({ session: 90 });
+        if (filePath.includes('context-snapshots')) {
+          return 'Session: 90';
         }
         return '{}';
       });
@@ -213,8 +213,8 @@ describe('Context Compressor Module', () => {
         if (filePath.includes('intent') && filePath.includes('1')) {
           return JSON.stringify({ session: 80, intent: 'Old task', blockers: 'none' });
         }
-        if (filePath.includes('session-handoff')) {
-          return JSON.stringify({ session: 90 });
+        if (filePath.includes('context-snapshots')) {
+          return 'Session: 90';
         }
         return 'null';
       });
@@ -352,23 +352,23 @@ describe('Context Compressor Module', () => {
   });
 
   describe('buildSessionProgressSection', () => {
-    it('should return null when handoff file missing', () => {
+    it('should return null when snapshot file missing', () => {
       fs.existsSync.mockReturnValue(false);
       const section = _internals.buildSessionProgressSection();
       expect(section).toBeNull();
     });
 
-    it('should build section from handoff data', () => {
+    it('should build section from snapshot data', () => {
       fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockReturnValue(JSON.stringify({
-        session: 90,
-        completedTasks: ['P1 file watcher', 'P2 pipeline', 'P3 shared state'],
-        roadmap: [
-          { task: 'P4 context compressor', done: false },
-          { task: 'P5 auto-inject', done: false },
-        ],
-        testStats: { suites: 91, tests: 2857 },
-      }));
+      fs.readFileSync.mockReturnValue([
+        '## Context Restoration (auto-generated)',
+        'Generated: 2026-02-14T00:00:00.000Z | Session 90 | Budget: 1500 tokens',
+        '### Session Progress',
+        'Session: 90',
+        'Completed: P1 file watcher, P2 pipeline, P3 shared state',
+        'Next: P4 context compressor, P5 auto-inject',
+        'Tests: 91 suites, 2857 tests',
+      ].join('\n'));
 
       const section = _internals.buildSessionProgressSection();
       expect(section).not.toBeNull();
@@ -381,9 +381,9 @@ describe('Context Compressor Module', () => {
       expect(section.content).toContain('2857 tests');
     });
 
-    it('should return null when handoff has no useful data', () => {
+    it('should return null when snapshot has no useful data', () => {
       fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockReturnValue(JSON.stringify({}));
+      fs.readFileSync.mockReturnValue('No session metadata here');
 
       const section = _internals.buildSessionProgressSection();
       expect(section).toBeNull();
@@ -391,10 +391,10 @@ describe('Context Compressor Module', () => {
 
     it('should handle string roadmap items', () => {
       fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockReturnValue(JSON.stringify({
-        session: 90,
-        roadmap: ['task A', 'task B'],
-      }));
+      fs.readFileSync.mockReturnValue([
+        'Session: 90',
+        'Next: task A, task B',
+      ].join('\n'));
 
       const section = _internals.buildSessionProgressSection();
       expect(section).not.toBeNull();
@@ -464,8 +464,16 @@ describe('Context Compressor Module', () => {
         if (filePath.includes('intent') && filePath.includes('5')) {
           return JSON.stringify({ session: 90, intent: 'Idle', blockers: 'none' });
         }
-        if (filePath.includes('session-handoff')) {
-          return JSON.stringify({ session: 90, testStats: { suites: 91, tests: 2857 } });
+        if (filePath.includes('context-snapshots')) {
+          return [
+            '## Context Restoration (auto-generated)',
+            'Generated: 2026-02-14T00:00:00.000Z | Session 90 | Budget: 1500 tokens',
+            '### Session Progress',
+            'Session: 90',
+            'Completed: P1 file watcher, P2 pipeline, P3 shared state',
+            'Next: P4 context compressor',
+            'Tests: 91 suites, 2857 tests',
+          ].join('\n');
         }
         if (filePath.includes('blockers') || filePath.includes('errors')) {
           return '(none)';
@@ -574,7 +582,7 @@ describe('Context Compressor Module', () => {
       fs.readFileSync.mockImplementation((filePath) => {
         if (typeof filePath !== 'string') return '{}';
         if (filePath.includes('intent')) return JSON.stringify({ session: 90, intent: 'Test', blockers: 'none' });
-        if (filePath.includes('session-handoff')) return JSON.stringify({ session: 90 });
+        if (filePath.includes('context-snapshots')) return 'Session: 90';
         return '{}';
       });
 
@@ -602,7 +610,7 @@ describe('Context Compressor Module', () => {
       fs.readFileSync.mockImplementation((filePath) => {
         if (typeof filePath !== 'string') return '{}';
         if (filePath.includes('intent')) return JSON.stringify({ session: 90, intent: 'X'.repeat(200), blockers: 'none' });
-        if (filePath.includes('session-handoff')) return JSON.stringify({ session: 90, completedTasks: Array.from({length: 50}, (_, i) => `task-${i}`) });
+        if (filePath.includes('context-snapshots')) return `Session: 90\nCompleted: ${Array.from({length: 50}, (_, i) => `task-${i}`).join(', ')}`;
         return '{}';
       });
 
@@ -635,8 +643,12 @@ describe('Context Compressor Module', () => {
         if (filePath.includes('intent')) {
           return JSON.stringify({ session: 90, intent: 'Idle', blockers: 'none' });
         }
-        if (filePath.includes('session-handoff')) {
-          return JSON.stringify({ session: 90, completedTasks: ['P1'], testStats: { suites: 91, tests: 2857 } });
+        if (filePath.includes('context-snapshots')) {
+          return [
+            'Session: 90',
+            'Completed: P1',
+            'Tests: 91 suites, 2857 tests',
+          ].join('\n');
         }
         return '{}';
       });
@@ -1018,22 +1030,28 @@ describe('Context Compressor Module', () => {
   // ===========================================================
 
   describe('getSessionNumber', () => {
-    it('should return session number from handoff file', () => {
+    it('should return session number from intent files', () => {
       fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockReturnValue(JSON.stringify({ session: 90 }));
+      fs.readFileSync.mockImplementation((filePath) => {
+        if (String(filePath).includes(path.join('intent', '1.json'))) {
+          return JSON.stringify({ session: 90 });
+        }
+        return '{}';
+      });
 
       expect(_internals.getSessionNumber()).toBe(90);
     });
 
-    it('should return 0 when handoff file missing', () => {
+    it('should return 0 when snapshot file missing', () => {
       fs.existsSync.mockReturnValue(false);
       expect(_internals.getSessionNumber()).toBe(0);
     });
 
-    it('should return 0 for corrupted handoff', () => {
+    it('should return 0 for corrupted snapshot', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockReturnValue('CORRUPT');
       expect(_internals.getSessionNumber()).toBe(0);
     });
   });
 });
+

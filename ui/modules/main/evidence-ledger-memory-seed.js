@@ -1,6 +1,6 @@
 /**
  * Evidence Ledger Memory Seed Utility
- * Imports session-handoff style context into decision memory.
+ * Imports context snapshot style state into decision memory.
  */
 
 const crypto = require('crypto');
@@ -79,8 +79,8 @@ function buildArchitectureDecisions(architecture) {
   return rows;
 }
 
-function deriveSeedRecords(handoff, options = {}) {
-  const source = asObject(handoff);
+function deriveSeedRecords(contextSnapshot, options = {}) {
+  const source = asObject(contextSnapshot);
   const sessionNumber = Number(source.session);
   const hasSessionNumber = Number.isInteger(sessionNumber) && sessionNumber > 0;
   const sessionId = asString(
@@ -111,9 +111,9 @@ function deriveSeedRecords(handoff, options = {}) {
       title: normalizedTitle,
       body: normalizedBody || null,
       author,
-      tags: ['seed', 'handoff', ...tags],
+      tags: ['seed', 'snapshot', ...tags],
       meta: {
-        seededFrom: 'session-handoff.json',
+        seededFrom: 'context-snapshot',
       },
     });
   };
@@ -154,19 +154,19 @@ function deriveSeedRecords(handoff, options = {}) {
       stats: asObject(source.stats),
       team: asObject(source.team),
       meta: {
-        seededFrom: 'session-handoff.json',
+        seededFrom: 'context-snapshot',
       },
     },
     decisions,
   };
 }
 
-function seedDecisionMemory(memory, handoff, options = {}) {
+function seedDecisionMemory(memory, contextSnapshot, options = {}) {
   if (!memory || typeof memory.recordDecision !== 'function') {
     return { ok: false, reason: 'memory_required' };
   }
 
-  const records = deriveSeedRecords(handoff, options);
+  const records = deriveSeedRecords(contextSnapshot, options);
   const session = records.session;
   const result = {
     ok: true,
@@ -207,11 +207,11 @@ function seedDecisionMemory(memory, handoff, options = {}) {
   if (options.markSessionEnded === true) {
     const end = memory.recordSessionEnd(session.sessionId, {
       endedAtMs: Number.isFinite(Number(options.endedAtMs)) ? Number(options.endedAtMs) : Date.now(),
-      summary: asString(options.summary, '') || asString(handoff?.status, '') || null,
-      stats: asObject(handoff?.stats),
-      team: asObject(handoff?.team),
+      summary: asString(options.summary, '') || asString(contextSnapshot?.status, '') || null,
+      stats: asObject(contextSnapshot?.stats),
+      team: asObject(contextSnapshot?.team),
       meta: {
-        seededFrom: 'session-handoff.json',
+        seededFrom: 'context-snapshot',
       },
     });
     if (end?.ok) {

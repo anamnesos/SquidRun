@@ -48,7 +48,6 @@ const customWatches = new Map(); // File-specific callbacks
 
 const SYNC_FILES = new Set([
   'shared_context.md',
-  'session-handoff.json',
   'blockers.md',
   'errors.md'
 ]);
