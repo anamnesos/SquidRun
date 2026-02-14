@@ -5,6 +5,9 @@ const TEAM_MEMORY_CHANNELS = Object.freeze([
   'team-memory:query',
   'team-memory:update',
   'team-memory:deprecate',
+  'team-memory:run-experiment',
+  'team-memory:get-experiment',
+  'team-memory:list-experiments',
 ]);
 
 function asObject(value) {
@@ -59,6 +62,12 @@ function resolveAction(channel, payload) {
       return resolveUpdateAction(payload);
     case 'team-memory:deprecate':
       return 'deprecate-claim';
+    case 'team-memory:run-experiment':
+      return 'run-experiment';
+    case 'team-memory:get-experiment':
+      return 'get-experiment';
+    case 'team-memory:list-experiments':
+      return 'list-experiments';
     default:
       return null;
   }

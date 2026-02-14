@@ -3,8 +3,10 @@ const migrationV2 = require('./migrations/002-phase1-compat');
 const migrationV3 = require('./migrations/003-phase2-search');
 const migrationV4 = require('./migrations/004-phase4-patterns');
 const migrationV5 = require('./migrations/005-phase5-guards');
+const migrationV6 = require('./migrations/006-phase6-experiments');
+const migrationV7 = require('./migrations/007-phase6b-pending-proof');
 
-const MIGRATIONS = [migrationV1, migrationV2, migrationV3, migrationV4, migrationV5];
+const MIGRATIONS = [migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7];
 
 function toEpochMs(value = Date.now()) {
   const numeric = Number(value);

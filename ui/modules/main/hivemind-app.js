@@ -30,6 +30,7 @@ const sharedState = require('../shared-state');
 const contextCompressor = require('../context-compressor');
 const smsPoller = require('../sms-poller');
 const teamMemory = require('../team-memory');
+const experiment = require('../experiment');
 const {
   executeEvidenceLedgerOperation,
   initializeEvidenceLedgerRuntime,
@@ -52,6 +53,7 @@ const TEAM_MEMORY_PATTERN_MINING_INTERVAL_MS = Number.parseInt(
   process.env.HIVEMIND_TEAM_MEMORY_PATTERN_SWEEP_MS || String(60 * 1000),
   10
 );
+const TEAM_MEMORY_BLOCK_GUARD_PROFILE = String(process.env.HIVEMIND_TEAM_MEMORY_BLOCK_GUARD_PROFILE || 'jest-suite').trim() || 'jest-suite';
 
 class HivemindApp {
   constructor(appContext, managers) {
@@ -79,6 +81,7 @@ class HivemindApp {
     this.cliIdentityForwarderRegistered = false;
     this.triggerAckForwarderRegistered = false;
     this.teamMemoryInitialized = false;
+    this.experimentInitialized = false;
   }
 
   async init() {
@@ -166,10 +169,28 @@ class HivemindApp {
               log.warn('TeamMemoryGuard', `Guard notification failed: ${notifyErr.message}`);
             });
           }
+          this.handleTeamMemoryGuardExperiment(entry).catch((err) => {
+            log.warn('TeamMemoryGuard', `Failed block-guard experiment dispatch: ${err.message}`);
+          });
         },
       });
     } else {
       log.warn('TeamMemory', `Startup initialization degraded: ${teamMemoryInit?.status?.degradedReason || teamMemoryInit?.initResult?.reason || 'unavailable'}`);
+    }
+
+    // 4c. Initialize Experiment runtime foundation (Phase 6a).
+    const experimentInit = await experiment.initializeExperimentRuntime({
+      runtimeOptions: {},
+      recreateUnavailable: true,
+    });
+    this.experimentInitialized = experimentInit?.ok === true;
+    if (this.experimentInitialized) {
+      log.info('Experiment', `Startup initialization ready (driver=${experimentInit.status?.driver || 'worker'})`);
+    } else {
+      log.warn(
+        'Experiment',
+        `Startup initialization degraded: ${experimentInit?.status?.degradedReason || experimentInit?.initResult?.reason || 'unavailable'}`
+      );
     }
 
     // 5. Setup external notifications
@@ -1082,6 +1103,78 @@ class HivemindApp {
     }
   }
 
+  async handleTeamMemoryGuardExperiment(entry = {}) {
+    if (!entry || typeof entry !== 'object') return { ok: false, reason: 'invalid_guard_action' };
+    if (String(entry.action || '').toLowerCase() !== 'block') return { ok: false, reason: 'not_block_action' };
+    if (!this.experimentInitialized) return { ok: false, reason: 'experiment_unavailable' };
+
+    const event = (entry.event && typeof entry.event === 'object') ? entry.event : {};
+    const claimId = String(event.claimId || event.claim_id || '').trim();
+    const claimStatus = String(event.status || '').trim().toLowerCase();
+    if (!claimId) return { ok: false, reason: 'claim_id_missing' };
+    if (claimStatus !== 'contested' && claimStatus !== 'pending_proof') {
+      return { ok: false, reason: 'claim_not_contested' };
+    }
+
+    const scope = String(event.scope || event.file || '').trim();
+    const requestedBy = String(event.agent || event.owner || 'system').trim() || 'system';
+    const session = String(event.session || '').trim() || null;
+    const idempotencyKey = `guard-block:${entry.guardId || 'unknown'}:${claimId}:${session || 'none'}`;
+
+    const runResult = await experiment.executeExperimentOperation('run-experiment', {
+      profileId: TEAM_MEMORY_BLOCK_GUARD_PROFILE,
+      claimId,
+      requestedBy,
+      session,
+      idempotencyKey,
+      guardContext: {
+        guardId: entry.guardId || null,
+        action: 'block',
+        blocking: true,
+      },
+      scope: scope || null,
+      input: {
+        args: {},
+      },
+    });
+
+    if (!runResult?.ok) {
+      log.warn(
+        'TeamMemoryGuard',
+        `Block guard failed to queue experiment for claim ${claimId}: ${runResult?.reason || 'unknown'}`
+      );
+      return {
+        ok: false,
+        reason: runResult?.reason || 'experiment_queue_failed',
+        runResult,
+      };
+    }
+
+    const statusUpdate = await teamMemory.executeTeamMemoryOperation('update-claim-status', {
+      claimId,
+      status: 'pending_proof',
+      changedBy: requestedBy,
+      reason: 'guard_block_experiment_started',
+      nowMs: Date.now(),
+    });
+    if (statusUpdate?.ok === false && statusUpdate.reason !== 'invalid_transition') {
+      log.warn(
+        'TeamMemoryGuard',
+        `Experiment queued but claim ${claimId} pending_proof transition failed: ${statusUpdate.reason || 'unknown'}`
+      );
+    }
+
+    log.info(
+      'TeamMemoryGuard',
+      `Queued guard-block experiment for claim ${claimId} (runId=${runResult.runId || 'unknown'}, queued=${runResult.queued === true})`
+    );
+    return {
+      ok: true,
+      runResult,
+      statusUpdate,
+    };
+  }
+
   shutdown() {
     log.info('App', 'Shutting down Hivemind Application');
     memory.shutdown();
@@ -1094,6 +1187,7 @@ class HivemindApp {
     } catch (err) {
       log.warn('EvidenceLedger', `Failed to close shared runtime during shutdown: ${err.message}`);
     }
+    experiment.closeExperimentRuntime({ killTimeoutMs: 2000 });
     teamMemory.closeTeamMemoryRuntime({ killTimeoutMs: 2000 }).catch((err) => {
       log.warn('TeamMemory', `Failed to close team memory runtime during shutdown: ${err.message}`);
     });

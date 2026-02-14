@@ -163,6 +163,7 @@ jest.mock('../modules/ipc/evidence-ledger-handlers', () => ({
 // Mock team-memory service
 jest.mock('../modules/team-memory', () => ({
   initializeTeamMemoryRuntime: jest.fn(async () => ({ ok: true, status: { driver: 'better-sqlite3' } })),
+  executeTeamMemoryOperation: jest.fn(async () => ({ ok: true, status: 'updated' })),
   runBackfill: jest.fn(async () => ({ ok: true, scannedEvents: 0, insertedClaims: 0, duplicateClaims: 0 })),
   runIntegrityCheck: jest.fn(async () => ({ ok: true, orphanCount: 0 })),
   startIntegritySweep: jest.fn(),
@@ -172,6 +173,13 @@ jest.mock('../modules/team-memory', () => ({
   startPatternMiningSweep: jest.fn(),
   stopPatternMiningSweep: jest.fn(),
   closeTeamMemoryRuntime: jest.fn(async () => undefined),
+}));
+
+// Mock experiment service
+jest.mock('../modules/experiment', () => ({
+  initializeExperimentRuntime: jest.fn(async () => ({ ok: true, status: { driver: 'worker' } })),
+  executeExperimentOperation: jest.fn(async () => ({ ok: true, runId: 'exp_mock', queued: false })),
+  closeExperimentRuntime: jest.fn(),
 }));
 
 // Now require the module under test
@@ -310,11 +318,13 @@ describe('HivemindApp', () => {
       const smsPoller = require('../modules/sms-poller');
       const { closeSharedRuntime } = require('../modules/ipc/evidence-ledger-handlers');
       const teamMemory = require('../modules/team-memory');
+      const experiment = require('../modules/experiment');
 
       app.shutdown();
 
       expect(memory.shutdown).toHaveBeenCalled();
       expect(closeSharedRuntime).toHaveBeenCalled();
+      expect(experiment.closeExperimentRuntime).toHaveBeenCalled();
       expect(teamMemory.stopIntegritySweep).toHaveBeenCalled();
       expect(teamMemory.stopBeliefSnapshotSweep).toHaveBeenCalled();
       expect(teamMemory.stopPatternMiningSweep).toHaveBeenCalled();
@@ -338,6 +348,101 @@ describe('HivemindApp', () => {
 
     it('shuts down cleanly in PTY mode', () => {
       expect(() => app.shutdown()).not.toThrow();
+    });
+  });
+
+  describe('handleTeamMemoryGuardExperiment', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new HivemindApp(mockAppContext, mockManagers);
+      app.experimentInitialized = true;
+    });
+
+    it('queues experiment and marks contested claim as pending_proof for block guards', async () => {
+      const teamMemory = require('../modules/team-memory');
+      const experiment = require('../modules/experiment');
+
+      const result = await app.handleTeamMemoryGuardExperiment({
+        action: 'block',
+        guardId: 'grd_1',
+        event: {
+          claimId: 'clm_1',
+          status: 'contested',
+          session: 's_1',
+          scope: 'ui/modules/triggers.js',
+          agent: 'analyst',
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(experiment.executeExperimentOperation).toHaveBeenCalledWith(
+        'run-experiment',
+        expect.objectContaining({
+          claimId: 'clm_1',
+          profileId: expect.any(String),
+          guardContext: expect.objectContaining({
+            guardId: 'grd_1',
+            action: 'block',
+            blocking: true,
+          }),
+        })
+      );
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'update-claim-status',
+        expect.objectContaining({
+          claimId: 'clm_1',
+          status: 'pending_proof',
+        })
+      );
+    });
+
+    it('ignores non-block actions', async () => {
+      const experiment = require('../modules/experiment');
+      const result = await app.handleTeamMemoryGuardExperiment({
+        action: 'warn',
+        event: { claimId: 'clm_1', status: 'contested' },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('not_block_action');
+      expect(experiment.executeExperimentOperation).not.toHaveBeenCalled();
+    });
+
+    it('accepts pending_proof claims for block-guard experiment dispatch', async () => {
+      const experiment = require('../modules/experiment');
+      const teamMemory = require('../modules/team-memory');
+
+      const result = await app.handleTeamMemoryGuardExperiment({
+        action: 'block',
+        guardId: 'grd_2',
+        event: {
+          claimId: 'clm_2',
+          status: 'pending_proof',
+          session: 's_2',
+          scope: 'ui/modules/injection.js',
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(experiment.executeExperimentOperation).toHaveBeenCalledWith(
+        'run-experiment',
+        expect.objectContaining({
+          claimId: 'clm_2',
+          guardContext: expect.objectContaining({
+            guardId: 'grd_2',
+            action: 'block',
+            blocking: true,
+          }),
+        })
+      );
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'update-claim-status',
+        expect.objectContaining({
+          claimId: 'clm_2',
+          status: 'pending_proof',
+        })
+      );
     });
   });
 
