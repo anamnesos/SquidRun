@@ -1253,6 +1253,44 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
 
+    test('accepts output transition for lightweight startup verification mode', async () => {
+      let enterCalls = 0;
+      terminals.set('1', {
+        _hivemindBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => 'codex> ',
+            })),
+          },
+        },
+      });
+      document.activeElement = mockTextarea;
+      mockPty.sendTrustedEnter.mockImplementation(async () => {
+        enterCalls += 1;
+        lastOutputTime['1'] = Date.now();
+      });
+      const onComplete = jest.fn();
+
+      controller.sendToPane('1', '# HIVEMIND SESSION: Architect - Started 2026-02-14', {
+        verifySubmitAccepted: true,
+        startupInjection: true,
+        acceptOutputTransitionOnly: true,
+        onComplete,
+      });
+      await jest.advanceTimersByTimeAsync(4000);
+
+      expect(enterCalls).toBe(1);
+      expect(mockOptions.markPotentiallyStuck).not.toHaveBeenCalled();
+      expect(onComplete).toHaveBeenCalledWith({
+        success: true,
+        verified: true,
+        signal: 'output_transition_allowed',
+      });
+    });
+
     test('force-expired defer path auto-retries Enter with refocus', async () => {
       let promptText = 'codex> ';
       let enterCalls = 0;

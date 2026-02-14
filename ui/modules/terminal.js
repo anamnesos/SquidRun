@@ -882,6 +882,11 @@ function clearStartupInjection(paneId) {
   startupInjectionState.delete(String(paneId));
 }
 
+function hasPendingStartupInjection(paneId) {
+  const state = startupInjectionState.get(String(paneId));
+  return Boolean(state && !state.completed && !state.cancelled);
+}
+
 function triggerStartupInjection(paneId, state, reason) {
   if (!state || state.completed) return;
   state.completed = true;
@@ -925,7 +930,11 @@ function triggerStartupInjection(paneId, state, reason) {
         log.error('spawnAgent', `Gemini identity injection failed for pane ${paneId}:`, err);
       }
     } else {
-      sendToPane(paneId, identityMsg, { verifySubmitAccepted: false });
+      sendToPane(paneId, identityMsg, {
+        verifySubmitAccepted: true,
+        startupInjection: true,
+        acceptOutputTransitionOnly: true,
+      });
       log.info('spawnAgent', `Identity injected for ${role} (pane ${paneId}) [ready:${reason}]`);
     }
     startupInjectionState.delete(String(paneId));
@@ -936,6 +945,13 @@ function triggerStartupInjection(paneId, state, reason) {
 
 function armStartupInjection(paneId, options = {}) {
   const id = String(paneId);
+  if (!options.force && hasPendingStartupInjection(id)) {
+    log.info(
+      'spawnAgent',
+      `Startup injection already armed for pane ${id}, skipping duplicate arm (${options.source || 'unknown'})`
+    );
+    return false;
+  }
   clearStartupInjection(id);
   const state = {
     buffer: '',
@@ -943,6 +959,7 @@ function armStartupInjection(paneId, options = {}) {
     cancelled: false,
     modelType: options.modelType || 'claude',
     isGemini: Boolean(options.isGemini),
+    source: options.source || 'unknown',
     timeoutId: null,
     sendTimeoutId: null,
   };
@@ -960,6 +977,7 @@ function armStartupInjection(paneId, options = {}) {
 
   startupInjectionState.set(id, state);
   log.info('spawnAgent', `Startup injection armed for pane ${id} (model=${state.modelType})`);
+  return true;
 }
 
 function handleStartupOutput(paneId, data) {
@@ -1731,13 +1749,15 @@ async function reattachTerminal(paneId, scrollback) {
   if (shouldArmStartupOnReattach) {
     const isGemini = isGeminiPane(paneId);
     const modelType = isGemini ? 'gemini' : 'claude';
-    armStartupInjection(paneId, { modelType, isGemini });
+    const armed = armStartupInjection(paneId, { modelType, isGemini, source: 'reattach' });
     // Seed detector with restored scrollback so ready-pattern detection can fire
     // immediately instead of waiting for new daemon output.
-    if (scrollback && scrollback.length > 0) {
+    if (armed && scrollback && scrollback.length > 0) {
       handleStartupOutput(paneId, scrollback);
     }
-    log.info('spawnAgent', `Reattach armed startup injection for pane ${paneId}`);
+    if (armed) {
+      log.info('spawnAgent', `Reattach armed startup injection for pane ${paneId}`);
+    }
   }
 
   updatePaneStatus(paneId, 'Reconnected');
@@ -1896,7 +1916,7 @@ async function spawnAgent(paneId, model = null) {
       // This avoids injecting while subscription prompts are blocking input.
       const isGemini = model ? model === 'gemini' : isGeminiPane(paneId);
       const modelType = isGemini ? 'gemini' : 'claude';
-      armStartupInjection(paneId, { modelType, isGemini });
+      armStartupInjection(paneId, { modelType, isGemini, source: 'spawn' });
 
     }
     updatePaneStatus(paneId, 'Working');
