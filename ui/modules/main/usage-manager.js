@@ -6,11 +6,14 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 
 class UsageManager {
   constructor(appContext) {
     this.ctx = appContext;
-    this.usageFilePath = path.join(__dirname, '..', '..', 'usage-stats.json');
+    this.usageFilePath = typeof resolveCoordPath === 'function'
+      ? resolveCoordPath('usage-stats.json', { forWrite: true })
+      : path.join(WORKSPACE_PATH, 'usage-stats.json');
     this.ctx.usageStats = {
       totalSpawns: 0,
       spawnsPerPane: { '1': 0, '2': 0, '5': 0 },

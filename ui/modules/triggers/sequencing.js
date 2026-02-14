@@ -6,10 +6,12 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { WORKSPACE_PATH } = require('../../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 const log = require('../logger');
 
-const MESSAGE_STATE_PATH = path.join(WORKSPACE_PATH, 'message-state.json');
+const MESSAGE_STATE_PATH = typeof resolveCoordPath === 'function'
+  ? resolveCoordPath('message-state.json', { forWrite: true })
+  : path.join(WORKSPACE_PATH, 'message-state.json');
 // Matches the prefix added by hivemind-app.js for WebSocket agent messages
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const DELIVERY_ACK_TIMEOUT_MS = 65000;

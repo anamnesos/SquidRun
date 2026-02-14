@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Seed decision memory from workspace/session-handoff.json.
+ * Seed decision memory from session-handoff.json.
  * Idempotent via deterministic IDs + conflict-tolerant inserts.
  */
 
 const fs = require('fs');
 const path = require('path');
-const { WORKSPACE_PATH } = require('../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
 const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
 const { EvidenceLedgerMemory } = require('../modules/main/evidence-ledger-memory');
 const { seedDecisionMemory } = require('../modules/main/evidence-ledger-memory-seed');
@@ -14,7 +14,7 @@ const { seedDecisionMemory } = require('../modules/main/evidence-ledger-memory-s
 function usage() {
   console.log('Usage: node evidence-ledger-seed-memory.js [options]');
   console.log('Options:');
-  console.log('  --handoff <path>            Input handoff JSON (default: workspace/session-handoff.json)');
+  console.log('  --handoff <path>            Input handoff JSON (default: .hivemind/session-handoff.json with workspace fallback)');
   console.log('  --db <path>                 Ledger DB path override');
   console.log('  --session-id <id>           Override deterministic seeded session id');
   console.log('  --mark-ended                Mark seeded session as ended');
@@ -60,9 +60,12 @@ function main() {
   }
 
   const options = parseArgs(args);
+  const defaultHandoffPath = typeof resolveCoordPath === 'function'
+    ? resolveCoordPath('session-handoff.json')
+    : path.join(WORKSPACE_PATH, 'session-handoff.json');
   const handoffPath = resolvePath(
     options.get('handoff'),
-    path.join(WORKSPACE_PATH, 'session-handoff.json')
+    defaultHandoffPath
   );
   const dbPath = asString(options.get('db'), '');
 
