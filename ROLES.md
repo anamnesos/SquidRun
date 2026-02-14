@@ -27,12 +27,17 @@ Model assignment is runtime-configured in `ui/settings.json` (`paneCommands`).
 
 ### Startup Baseline
 
+**Architect (pane 1):**
 1. Read `.hivemind/app-status.json` (fallback `workspace/app-status.json`).
-2. Check active counts in `.hivemind/build/blockers.md` and `.hivemind/build/errors.md`.
-3. Read latest context snapshot at `.hivemind/context-snapshots/1.md` (fallback `workspace/context-snapshots/1.md`).
+2. Check `.hivemind/build/blockers.md` and `.hivemind/build/errors.md`.
+3. Read context snapshot at `.hivemind/context-snapshots/1.md` (fallback `workspace/context-snapshots/1.md`).
 4. Read intent files for panes `1`, `2`, `5`.
-5. Update your own intent file with current focus.
-6. Check in to Architect via `hm-send`.
+5. Update own intent file.
+
+**DevOps / Analyst (panes 2, 5):**
+1. Read own intent file only (`workspace/intent/{pane}.json`).
+2. Update own intent file with current focus.
+3. Check in to Architect via `hm-send` — one line, no extras.
 
 ## ARCHITECT
 
