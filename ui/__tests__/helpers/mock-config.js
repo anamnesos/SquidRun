@@ -18,15 +18,16 @@
  *   jest.mock('../config', () => require('./helpers/mock-config').mockWorkspaceOnly);
  */
 
+const LEGACY_PANE_CWD_FALLBACK = {
+  '1': '/test/legacy-pane-cwd/arch',
+  '2': '/test/legacy-pane-cwd/devops',
+  '5': '/test/legacy-pane-cwd/analyst',
+};
+
 const mockDefaultConfig = {
   PIPE_PATH: '\\\\.\\pipe\\hivemind-terminal-test',
   WORKSPACE_PATH: '/test/workspace',
   PROJECT_ROOT: '/test',
-  INSTANCE_DIRS: {
-    '1': '/test/workspace/instances/arch',
-    '2': '/test/workspace/instances/devops',
-    '5': '/test/workspace/instances/ana',
-  },
   PANE_IDS: ['1', '2', '5'],
   PANE_ROLES: {
     '1': 'Architect',
@@ -96,7 +97,7 @@ const mockDefaultConfig = {
     }
     const instanceDirs = options.instanceDirs && typeof options.instanceDirs === 'object'
       ? options.instanceDirs
-      : mockDefaultConfig.INSTANCE_DIRS;
+      : LEGACY_PANE_CWD_FALLBACK;
     return instanceDirs[id] || null;
   },
   resolveCoordRoot: () => mockDefaultConfig.WORKSPACE_PATH,

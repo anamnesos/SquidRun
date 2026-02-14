@@ -3,7 +3,6 @@ const {
   WORKSPACE_PATH,
   PANE_IDS,
   PANE_ROLES,
-  INSTANCE_DIRS,
   TRIGGER_TARGETS,
 } = require('../../config');
 
@@ -58,7 +57,6 @@ function createDefaultContext(overrides = {}) {
     SHARED_CONTEXT_PATH: path.join(WORKSPACE_PATH, 'shared_context.md'),
     PANE_IDS,
     PANE_ROLES,
-    INSTANCE_DIRS,
     TRIGGER_TARGETS,
     watcher: {
       startWatcher: jest.fn(),
