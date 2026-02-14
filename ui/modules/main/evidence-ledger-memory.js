@@ -42,6 +42,8 @@ function asNonEmptyString(value, fallback = '') {
 }
 
 function asFiniteNumber(value, fallback = null) {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'string' && value.trim().length === 0) return fallback;
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return numeric;
@@ -753,8 +755,20 @@ class EvidenceLedgerMemory {
 
   getLatestContext(opts = {}) {
     return this._withReadTransaction(() => {
-      const requestedSessionId = asNonEmptyString(opts.sessionId, '');
+      let requestedSessionId = asNonEmptyString(opts.sessionId, '');
       const preferSnapshot = opts.preferSnapshot === true;
+
+      // When preferSnapshot is true and no session specified, anchor to the latest
+      // session's snapshot rather than the globally latest snapshot by timestamp.
+      // This prevents stale snapshots from older sessions with anomalous timestamps
+      // from being returned over newer session data.
+      if (preferSnapshot && !requestedSessionId) {
+        const latestSessions = this.listSessions({ limit: 1, order: 'desc' });
+        if (Array.isArray(latestSessions) && latestSessions[0]) {
+          requestedSessionId = latestSessions[0].sessionId || '';
+        }
+      }
+
       const snapshot = this.getLatestSnapshot({ sessionId: requestedSessionId });
       if (snapshot && snapshot.ok === false) return snapshot;
       if (preferSnapshot && snapshot?.content && typeof snapshot.content === 'object') {

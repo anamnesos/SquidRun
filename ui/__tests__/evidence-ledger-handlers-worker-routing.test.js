@@ -17,6 +17,7 @@ const {
   initializeEvidenceLedgerRuntime,
   executeEvidenceLedgerOperation,
   closeSharedRuntime,
+  unregisterEvidenceLedgerHandlers,
 } = require('../modules/ipc/evidence-ledger-handlers');
 
 describe('evidence-ledger handlers worker routing', () => {
@@ -71,5 +72,19 @@ describe('evidence-ledger handlers worker routing', () => {
 
     expect(runtime.closeSharedRuntime).toHaveBeenCalled();
     expect(workerClient.closeRuntime).toHaveBeenCalled();
+  });
+
+  test('unregister skips runtime close during handler re-register', () => {
+    const ctx = {
+      ipcMain: {
+        removeHandler: jest.fn(),
+      },
+    };
+
+    unregisterEvidenceLedgerHandlers(ctx, { __hivemindHandlerReregister: true });
+
+    expect(ctx.ipcMain.removeHandler).toHaveBeenCalled();
+    expect(runtime.closeSharedRuntime).not.toHaveBeenCalled();
+    expect(workerClient.closeRuntime).not.toHaveBeenCalled();
   });
 });

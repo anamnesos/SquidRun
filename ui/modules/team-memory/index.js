@@ -4,6 +4,7 @@ const log = require('../logger');
 const { WORKSPACE_PATH } = require('../../config');
 const workerClient = require('./worker-client');
 const runtime = require('./runtime');
+const { EvidenceLedgerStore } = require('../main/evidence-ledger-store');
 const { upsertIntegrityReport } = require('./integrity-checker');
 const { DEFAULT_PATTERN_SPOOL_PATH } = require('./patterns');
 
@@ -12,14 +13,127 @@ const DEFAULT_INTEGRITY_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_BELIEF_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_PATTERN_MINING_INTERVAL_MS = 60 * 1000;
 const DEFAULT_BELIEF_AGENTS = Object.freeze(['architect', 'devops', 'analyst']);
+const DEFAULT_EVIDENCE_LEDGER_DB_PATH = path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
 
 let integritySweepTimer = null;
 let beliefSnapshotTimer = null;
 let patternMiningTimer = null;
+let patternHookLedgerStore = null;
+let patternHookLedgerStorePath = null;
 
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
+}
+
+function asString(value, fallback = '') {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : fallback;
+}
+
+function asFiniteNumber(value, fallback = null) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return numeric;
+}
+
+function normalizePatternHookRole(entry = {}) {
+  const role = asString(entry.actor || entry.owner || entry.by || entry.role || '', '').toLowerCase();
+  if (role === 'infra' || role === 'backend') return 'devops';
+  if (role === 'arch') return 'architect';
+  if (role === 'ana') return 'analyst';
+  return role || 'system';
+}
+
+function normalizePatternHookPane(entry = {}) {
+  const paneId = asString(String(entry.paneId || entry.pane_id || ''), '');
+  if (paneId) return paneId;
+
+  const role = normalizePatternHookRole(entry);
+  if (role === 'architect') return '1';
+  if (role === 'devops') return '2';
+  if (role === 'analyst') return '5';
+  return 'system';
+}
+
+function normalizePatternHookEventType(entry = {}) {
+  const eventType = asString(entry.eventType || entry.type || '', '').toLowerCase();
+  return eventType || 'team-memory.pattern-hook';
+}
+
+function toPatternHookEnvelope(entry = {}, nowMs = Date.now()) {
+  const eventType = normalizePatternHookEventType(entry);
+  const ts = asFiniteNumber(entry.timestamp, null);
+  const traceHint = asString(entry.traceId || entry.trace_id || entry.correlationId || entry.correlation_id || '', '');
+
+  return {
+    eventId: asString(entry.eventId || entry.event_id || '', ''),
+    traceId: traceHint || `tm-pattern-${eventType}-${Math.floor(nowMs)}`,
+    parentEventId: asString(entry.parentEventId || entry.parent_event_id || entry.causationId || entry.causation_id || '', '') || null,
+    correlationId: traceHint || null,
+    causationId: asString(entry.causationId || entry.causation_id || '', '') || null,
+    type: eventType,
+    stage: asString(entry.stage || '', 'team_memory'),
+    source: asString(entry.source || '', 'team-memory.pattern-hook'),
+    paneId: normalizePatternHookPane(entry),
+    role: normalizePatternHookRole(entry),
+    ts: Number.isFinite(ts) && ts > 0 ? Math.floor(ts) : Math.floor(nowMs),
+    direction: asString(entry.direction || '', 'internal'),
+    payload: entry,
+    evidenceRefs: Array.isArray(entry.evidenceRefs) ? entry.evidenceRefs : [],
+    meta: {
+      ingestSource: 'team-memory-pattern-hook',
+      spoolMirrored: true,
+      eventType,
+    },
+  };
+}
+
+function getPatternHookLedgerStore(options = {}) {
+  if (options.useLedger === false) return null;
+  const dbPath = asString(options.evidenceLedgerDbPath, DEFAULT_EVIDENCE_LEDGER_DB_PATH);
+  const shouldRecreate = !patternHookLedgerStore
+    || !patternHookLedgerStore.isAvailable()
+    || patternHookLedgerStorePath !== dbPath;
+
+  if (!shouldRecreate) return patternHookLedgerStore;
+
+  try {
+    if (patternHookLedgerStore) {
+      patternHookLedgerStore.close();
+    }
+  } catch {
+    // best effort
+  }
+
+  const store = new EvidenceLedgerStore({
+    dbPath,
+    enabled: true,
+  });
+  const init = store.init();
+  if (!init.ok) {
+    try { store.close(); } catch {}
+    patternHookLedgerStore = null;
+    patternHookLedgerStorePath = null;
+    log.warn('TeamMemory', `Pattern hook ledger unavailable: ${init.reason || 'unknown'}`);
+    return null;
+  }
+
+  patternHookLedgerStore = store;
+  patternHookLedgerStorePath = dbPath;
+  return patternHookLedgerStore;
+}
+
+function closePatternHookLedgerStore() {
+  if (!patternHookLedgerStore) return;
+  try {
+    patternHookLedgerStore.close();
+  } catch {
+    // best effort
+  }
+  patternHookLedgerStore = null;
+  patternHookLedgerStorePath = null;
 }
 
 function shouldUseWorker(options = {}) {
@@ -185,18 +299,40 @@ function isBeliefSnapshotSweepRunning() {
 async function appendPatternHookEvent(event = {}, options = {}) {
   const payload = asObject(event);
   const spoolPath = options.spoolPath || DEFAULT_PATTERN_SPOOL_PATH;
+  const nowMs = Date.now();
   const entry = {
     ...payload,
-    timestamp: Number(payload.timestamp || Date.now()),
+    timestamp: Number(payload.timestamp || nowMs),
   };
 
   try {
     fs.mkdirSync(path.dirname(spoolPath), { recursive: true });
     await fs.promises.appendFile(spoolPath, `${JSON.stringify(entry)}\n`, 'utf-8');
+
+    let ledger = { ok: false, status: 'skipped' };
+    const ledgerStore = getPatternHookLedgerStore(options);
+    if (ledgerStore) {
+      const appendResult = ledgerStore.appendEvent(toPatternHookEnvelope(entry, nowMs), {
+        nowMs,
+      });
+      ledger = {
+        ok: appendResult.ok === true,
+        status: appendResult.status || (appendResult.ok ? 'inserted' : 'failed'),
+        eventId: appendResult.eventId || null,
+        traceId: appendResult.traceId || null,
+        reason: appendResult.reason || null,
+        errors: appendResult.errors || null,
+      };
+      if (appendResult.ok !== true) {
+        log.warn('TeamMemory', `Pattern hook ledger append failed: ${appendResult.reason || appendResult.status || 'unknown'}`);
+      }
+    }
+
     return {
       ok: true,
       queued: true,
       spoolPath,
+      ledger,
     };
   } catch (err) {
     return {
@@ -281,6 +417,7 @@ function closeTeamMemoryRuntime(options = {}) {
   stopIntegritySweep();
   stopBeliefSnapshotSweep();
   stopPatternMiningSweep();
+  closePatternHookLedgerStore();
   runtime.closeSharedRuntime();
   return workerClient.closeRuntime({
     killTimeoutMs: asObject(options).killTimeoutMs,
@@ -291,6 +428,7 @@ async function resetForTests() {
   stopIntegritySweep();
   stopBeliefSnapshotSweep();
   stopPatternMiningSweep();
+  closePatternHookLedgerStore();
   runtime.closeSharedRuntime();
   await workerClient.resetForTests();
 }

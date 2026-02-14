@@ -149,13 +149,17 @@ function registerEvidenceLedgerHandlers(ctx, deps = {}) {
 }
 
 function unregisterEvidenceLedgerHandlers(ctx) {
+  const deps = arguments.length > 1 ? arguments[1] : {};
   const { ipcMain } = ctx || {};
   if (!ipcMain) return;
 
   for (const channel of EVIDENCE_LEDGER_CHANNEL_ACTIONS.keys()) {
     ipcMain.removeHandler(channel);
   }
-  closeSharedRuntime();
+  const isReregister = asObject(deps).__hivemindHandlerReregister === true;
+  if (!isReregister) {
+    closeSharedRuntime();
+  }
 }
 
 registerEvidenceLedgerHandlers.unregister = unregisterEvidenceLedgerHandlers;

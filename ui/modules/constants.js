@@ -50,7 +50,10 @@ const ENTER_VERIFY_DELAY_MS = 200;        // Delay before checking if Enter succ
 const ENTER_RETRY_INTERVAL_MS = 200;      // Interval between checking if pane is idle
 const PROMPT_READY_TIMEOUT_MS = 3000;     // Max time to wait for prompt-ready detection
 const STARTUP_READY_TIMEOUT_MS = 5000;    // Max wait for CLI ready prompt before fallback injection (lowered from 30s to ensure Architect goes before Codex)
-const STARTUP_IDENTITY_DELAY_MS = 250;    // Delay after ready prompt before identity injection
+const STARTUP_IDENTITY_DELAY_MS = 3000;   // Delay after ready prompt before identity injection (increased from 250ms — Claude Code needs time to initialize input handling)
+const STARTUP_IDENTITY_VERIFY_DELAY_MS = 1200; // Wait before checking scrollback for startup identity confirmation
+const STARTUP_IDENTITY_RETRY_DELAY_MS = 2000;  // Delay between startup identity retries when verification fails
+const STARTUP_IDENTITY_MAX_ATTEMPTS = 3;       // Max startup identity injection attempts before giving up
 const STARTUP_CONTEXT_DELAY_ARCHITECT_MS = 3000; // Delay after ready prompt for Architect context injection
 const STARTUP_CONTEXT_DELAY_MS = 6000;    // Delay after ready prompt before context injection
 const STARTUP_IDENTITY_DELAY_CODEX_MS = 6000;  // Delay before Codex identity (after Architect's ~5.25s)
@@ -92,6 +95,9 @@ module.exports = {
   PROMPT_READY_TIMEOUT_MS,
   STARTUP_READY_TIMEOUT_MS,
   STARTUP_IDENTITY_DELAY_MS,
+  STARTUP_IDENTITY_VERIFY_DELAY_MS,
+  STARTUP_IDENTITY_RETRY_DELAY_MS,
+  STARTUP_IDENTITY_MAX_ATTEMPTS,
   STARTUP_CONTEXT_DELAY_ARCHITECT_MS,
   STARTUP_CONTEXT_DELAY_MS,
   STARTUP_IDENTITY_DELAY_CODEX_MS,

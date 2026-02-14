@@ -56,15 +56,17 @@ jest.mock('../modules/terminal/recovery', () => ({
 }));
 
 // Mock injection controller
+const mockInjectionController = {
+  focusWithRetry: jest.fn(),
+  sendEnterToPane: jest.fn(),
+  isPromptReady: jest.fn(),
+  processIdleQueue: jest.fn(),
+  doSendToPane: jest.fn(),
+  sendToPane: jest.fn(),
+};
+
 jest.mock('../modules/terminal/injection', () => ({
-  createInjectionController: jest.fn().mockReturnValue({
-    focusWithRetry: jest.fn(),
-    sendEnterToPane: jest.fn(),
-    isPromptReady: jest.fn(),
-    processIdleQueue: jest.fn(),
-    doSendToPane: jest.fn(),
-    sendToPane: jest.fn(),
-  }),
+  createInjectionController: jest.fn().mockReturnValue(mockInjectionController),
 }));
 
 // Mock agent-colors
@@ -86,7 +88,10 @@ jest.mock('../modules/constants', () => ({
   INJECTION_LOCK_TIMEOUT_MS: 1000,
   FOCUS_RETRY_DELAY_MS: 20,
   STARTUP_READY_TIMEOUT_MS: 5000,
-  STARTUP_IDENTITY_DELAY_MS: 250,
+  STARTUP_IDENTITY_DELAY_MS: 3000,
+  STARTUP_IDENTITY_VERIFY_DELAY_MS: 1200,
+  STARTUP_IDENTITY_RETRY_DELAY_MS: 2000,
+  STARTUP_IDENTITY_MAX_ATTEMPTS: 3,
   STARTUP_IDENTITY_DELAY_CODEX_MS: 6000,
   STARTUP_READY_BUFFER_MAX: 2000,
   GEMINI_ENTER_DELAY_MS: 75,
@@ -205,6 +210,11 @@ describe('Terminal Events', () => {
 
     mockBus.emit.mockClear();
     mockBus.updateState.mockClear();
+    Object.values(mockInjectionController).forEach((fn) => {
+      if (typeof fn === 'function' && typeof fn.mockClear === 'function') {
+        fn.mockClear();
+      }
+    });
 
     terminal = require('../modules/terminal');
   });
@@ -279,6 +289,32 @@ describe('Terminal Events', () => {
       for (const call of focusEvents) {
         expect(call[1].source).toBe('terminal.js');
       }
+    });
+  });
+
+  describe('startup identity routing', () => {
+    test('spawn startup identity uses injection controller sendToPane for Claude panes', async () => {
+      terminal.terminals.set('1', { write: jest.fn() });
+      const spawnPromise = terminal.spawnAgent('1');
+      await jest.advanceTimersByTimeAsync(150);
+      await spawnPromise;
+
+      // spawn Enter delay (100ms) + startup timeout (5000ms) + identity delay (3000ms)
+      await jest.advanceTimersByTimeAsync(8200);
+
+      const startupCall = mockInjectionController.sendToPane.mock.calls.find((args) => (
+        args[0] === '1'
+        && typeof args[1] === 'string'
+        && args[1].includes('# HIVEMIND SESSION: Architect - Started')
+      ));
+      expect(startupCall).toBeDefined();
+      expect(startupCall[2]).toEqual(expect.objectContaining({
+        priority: true,
+        immediate: true,
+        startupInjection: true,
+        verifySubmitAccepted: false,
+        onComplete: expect.any(Function),
+      }));
     });
   });
 });

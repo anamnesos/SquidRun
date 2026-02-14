@@ -288,6 +288,34 @@ maybeDescribe('evidence-ledger-memory', () => {
     expect(invalidSession.ok).toBe(false);
     expect(invalidSession.reason).toBe('session_number_required');
   });
+
+  test('null timestamp inputs fall back to current time instead of zero', () => {
+    const before = Date.now();
+    const session = memory.recordSessionStart({
+      sessionNumber: 201,
+      sessionId: 'ses-201',
+      mode: 'PTY',
+      startedAtMs: null,
+    });
+    expect(session.ok).toBe(true);
+
+    const loadedSession = memory.getSession('ses-201');
+    expect(loadedSession.startedAtMs).toBeGreaterThanOrEqual(before);
+    expect(loadedSession.startedAtMs).not.toBe(0);
+
+    const decision = memory.recordDecision({
+      category: 'directive',
+      title: 'Timestamp fallback check',
+      author: 'system',
+      sessionId: 'ses-201',
+      nowMs: null,
+    });
+    expect(decision.ok).toBe(true);
+
+    const loadedDecision = memory.getDecision(decision.decisionId);
+    expect(loadedDecision.createdAtMs).toBeGreaterThanOrEqual(before);
+    expect(loadedDecision.createdAtMs).not.toBe(0);
+  });
 });
 
 describe('evidence-ledger-memory context restore transactions', () => {

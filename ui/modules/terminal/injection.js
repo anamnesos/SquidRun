@@ -979,15 +979,6 @@ function createInjectionController(options = {}) {
     }
     const deferForcedExpire = !!deferResult?.forcedExpire;
 
-    if (capabilities.clearLineBeforeWrite) {
-      try {
-        await window.hivemind.pty.write(id, '\x15', createKernelMeta());
-        log.info(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: cleared input line (Ctrl+U)`);
-      } catch (err) {
-        log.warn(`doSendToPane ${id}`, 'PTY clear-line failed:', err);
-      }
-    }
-
     if (capabilities.sanitizeMultiline && payloadText !== normalizedText.trimEnd()) {
       bus.emit('inject.transform.applied', {
         paneId: id,
