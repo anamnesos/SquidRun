@@ -4,13 +4,13 @@
  *
  * Supports two modes:
  * 1. Modular (new): Combines base-instructions.md + role file + model notes
- * 2. Legacy: Reads CLAUDE.md, AGENTS.md, or GEMINI.md from instance directory
+ * 2. Legacy: Reads CLAUDE.md, AGENTS.md, or GEMINI.md from pane project root
  */
 
 const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
-const { INSTANCE_DIRS, PANE_ROLES } = require('../../config');
+const { PANE_ROLES, resolvePaneCwd } = require('../../config');
 
 // Map pane IDs to role file names
 const ROLE_FILES = {
@@ -84,17 +84,17 @@ class ContextInjectionManager {
   }
 
   /**
-   * Build legacy context from instance directory files
+   * Build legacy context from project root files
    */
   buildLegacyContext(paneId, model) {
-    const instanceDir = INSTANCE_DIRS[paneId];
-    if (!instanceDir || !fs.existsSync(instanceDir)) {
+    const projectRoot = resolvePaneCwd(paneId);
+    if (!projectRoot || !fs.existsSync(projectRoot)) {
       return '';
     }
 
-    const claudePath = path.join(instanceDir, 'CLAUDE.md');
-    const agentsPath = path.join(instanceDir, 'AGENTS.md');
-    const geminiPath = path.join(instanceDir, 'GEMINI.md');
+    const claudePath = path.join(projectRoot, 'CLAUDE.md');
+    const agentsPath = path.join(projectRoot, 'AGENTS.md');
+    const geminiPath = path.join(projectRoot, 'GEMINI.md');
 
     // Select file based on model type
     if (model === 'gemini') {

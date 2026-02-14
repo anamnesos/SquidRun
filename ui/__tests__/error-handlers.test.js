@@ -285,6 +285,7 @@ describe('full-restart handler', () => {
     };
     mockPath = {
       join: jest.fn((...args) => args.join('/')),
+      resolve: jest.fn((...args) => args.join('/')),
     };
 
     // Mock electron
@@ -399,7 +400,7 @@ describe('full-restart handler (non-Windows)', () => {
     jest.doMock('electron', () => ({ app: mockApp }));
     jest.doMock('child_process', () => ({ spawn: mockSpawn }));
     jest.doMock('fs', () => mockFs);
-    jest.doMock('path', () => ({ join: jest.fn((...args) => args.join('/')) }));
+    jest.doMock('path', () => ({ join: jest.fn((...args) => args.join('/')), resolve: jest.fn((...args) => args.join('/')) }));
     jest.doMock('os', () => ({
       platform: jest.fn(() => 'darwin'),
     }));

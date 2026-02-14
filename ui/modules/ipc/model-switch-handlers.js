@@ -8,7 +8,7 @@
 const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
-const { PANE_IDS, PANE_ROLES } = require('../../config');
+const { PANE_IDS, PANE_ROLES, resolvePaneCwd } = require('../../config');
 const TRIGGERS_PATH = path.join(__dirname, '..', '..', '..', 'workspace', 'triggers');
 
 function registerModelSwitchHandlers(ctx, deps = {}) {
@@ -33,12 +33,12 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
       return { success: false, error: 'Invalid paneId' };
     }
 
-    // Build command based on model - use dynamic workspace path
-    const workspacePath = path.join(__dirname, '..', '..', '..', 'workspace');
+    // Build command based on model - use pane project root resolver
+    const includeDir = resolvePaneCwd(id) || path.resolve(path.join(__dirname, '..', '..', '..'));
     const commands = {
       'claude': 'claude',
       'codex': 'codex',
-      'gemini': `gemini --yolo --include-directories "${workspacePath}"`
+      'gemini': `gemini --yolo --include-directories "${includeDir}"`
     };
 
     if (!commands[model]) {

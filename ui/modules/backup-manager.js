@@ -37,7 +37,6 @@ const DEFAULT_CONFIG = {
     'workspace/screenshots',
     'workspace/messages',
     'workspace/triggers',
-    'workspace/instances',
     '*.tmp',
   ],
 };

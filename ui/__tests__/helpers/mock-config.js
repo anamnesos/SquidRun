@@ -21,6 +21,7 @@
 const mockDefaultConfig = {
   PIPE_PATH: '\\\\.\\pipe\\hivemind-terminal-test',
   WORKSPACE_PATH: '/test/workspace',
+  PROJECT_ROOT: '/test',
   INSTANCE_DIRS: {
     '1': '/test/workspace/instances/arch',
     '2': '/test/workspace/instances/devops',
@@ -89,10 +90,14 @@ const mockDefaultConfig = {
   PROTOCOL_ACTIONS: ['spawn', 'write', 'resize', 'kill', 'list', 'attach', 'ping', 'shutdown', 'health', 'codex-exec'],
   PROTOCOL_EVENTS: ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected', 'shutdown', 'health', 'codex-exec-result'],
   resolvePaneCwd: (paneId, options = {}) => {
+    const id = String(paneId);
+    if (Object.prototype.hasOwnProperty.call(mockDefaultConfig.PANE_ROLES, id)) {
+      return mockDefaultConfig.PROJECT_ROOT;
+    }
     const instanceDirs = options.instanceDirs && typeof options.instanceDirs === 'object'
       ? options.instanceDirs
       : mockDefaultConfig.INSTANCE_DIRS;
-    return instanceDirs[String(paneId)] || null;
+    return instanceDirs[id] || null;
   },
   resolveCoordRoot: () => mockDefaultConfig.WORKSPACE_PATH,
 };
