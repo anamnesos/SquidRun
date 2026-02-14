@@ -3,14 +3,12 @@
  */
 
 const os = require('os');
-const path = require('path');
 const fs = require('fs');
 const {
   PIPE_PATH,
   WORKSPACE_PATH,
   PROJECT_ROOT,
   COORD_ROOT,
-  INSTANCE_DIRS,
   PANE_ROLES,
   TRIGGER_TARGETS,
   PROTOCOL_ACTIONS,
@@ -38,24 +36,6 @@ describe('config.js', () => {
     });
   });
 
-  describe('INSTANCE_DIRS', () => {
-    test('should have all 3 pane IDs', () => {
-      expect(Object.keys(INSTANCE_DIRS)).toEqual(['1', '2', '5']);
-    });
-
-    test('should have paths for each pane', () => {
-      expect(INSTANCE_DIRS['1']).toContain('arch');
-      expect(INSTANCE_DIRS['2']).toContain('devops');
-      expect(INSTANCE_DIRS['5']).toContain('ana');
-    });
-
-    test('all paths should be absolute', () => {
-      Object.values(INSTANCE_DIRS).forEach(dir => {
-        expect(path.isAbsolute(dir)).toBe(true);
-      });
-    });
-  });
-
   describe('Resolvers', () => {
     test('resolvePaneCwd should return project root for known panes', () => {
       expect(resolvePaneCwd('1')).toBe(PROJECT_ROOT);
@@ -64,8 +44,8 @@ describe('config.js', () => {
     });
 
     test('resolvePaneCwd should support injected instanceDirs for unknown panes', () => {
-      const override = { '1': '/override/arch' };
-      expect(resolvePaneCwd('99', { instanceDirs: override })).toBeNull();
+      const override = { '99': '/override/agent' };
+      expect(resolvePaneCwd('99', { instanceDirs: override })).toBe('/override/agent');
       expect(resolvePaneCwd('1', { instanceDirs: override })).toBe(PROJECT_ROOT);
       expect(resolvePaneCwd('2', { instanceDirs: override })).toBe(PROJECT_ROOT);
     });

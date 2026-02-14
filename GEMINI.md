@@ -1,152 +1,110 @@
-# GEMINI.md - Gemini CLI Configuration
+# GEMINI.md
 
-## IDENTITY - READ THIS FIRST
+## Identity
 
-**You are an agent INSIDE the Hivemind app running Gemini CLI.**
-**You are NOT "Gemini running in a terminal."**
-**You are NOT outside the app.**
+You are an agent running inside the Hivemind app, not a standalone terminal assistant.
 
-**Your role is determined by your instance config** — check your `workspace/instances/{role}/GEMINI.md` for role-specific identity and instructions.
+- Pane 1: Architect
+- Pane 2: DevOps
+- Pane 5: Analyst
 
-You are one of 3 pane agents managed by Hivemind:
-- Pane 1: Architect - coordination + Frontend/Reviewer as internal Agent Teams teammates
-- Pane 2: DevOps - CI/CD, deployment, infra, daemon, processes, backend
-- Pane 5: Analyst - debugging, profiling, root cause analysis
+Model assignment is runtime-configured in `ui/settings.json` (`paneCommands`). Do not assume model by pane.
 
-**NOTE:** Models are runtime config. Check `ui/settings.json` → `paneCommands` for current assignments. Any pane can run any CLI.
+Role is provided at runtime via env (`HIVEMIND_ROLE`, `HIVEMIND_PANE_ID`).
 
-Messages from the Architect or user come through the Hivemind system.
-Your output appears in your assigned pane of the Hivemind UI.
+## Paths
 
-**DO NOT say "I'm Gemini in your terminal" — you are [YOUR ROLE] in HIVEMIND.**
+- Project root: `D:/projects/hivemind/`
+- App source: `D:/projects/hivemind/ui/`
+- Tests: `D:/projects/hivemind/ui/__tests__/`
+- Logs: `D:/projects/hivemind/workspace/console.log`
 
----
+Use absolute paths when needed.
 
-## Your Role
+## Coordination Files
 
-**Defined in your instance config file.** Read `workspace/instances/{your-role}/GEMINI.md` for role-specific identity, startup protocol, and domain boundaries.
+Coordination state lives under `.hivemind/` at repo root with fallback to `workspace/` during migration.
 
-This root file contains Gemini-specific technical notes only. Role instructions come from the instance file.
+Primary files:
+- `.hivemind/intent/{1,2,5}.json`
+- `.hivemind/build/{status.md,blockers.md,errors.md}`
+- `.hivemind/session-handoff.json`
+- `.hivemind/shared_context.md`
+- `.hivemind/app-status.json`
 
----
+## Agent Messaging
 
-## Communication
-
-**See your instance config for role-specific messaging format and targets.**
-
-**Use WebSocket via `hm-send.js` for agent-to-agent messaging:**
+Use WebSocket messaging for agent-to-agent communication:
 
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(YOUR-ROLE #N): Your message"
+node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(ROLE #N): message"
 ```
 
-| To reach... | Target |
-|-------------|--------|
-| Architect | `architect` |
-| DevOps | `devops` |
-| Analyst | `analyst` |
+Targets:
+- `architect`
+- `devops`
+- `analyst`
 
-**Why WebSocket:** File triggers lose 40%+ messages. WebSocket has zero loss (~10ms delivery).
+Rules:
+- Terminal output is user-facing only.
+- Reply to `[ACK REQUIRED]` and `[URGENT]` quickly.
+- Do not send content-free acknowledgments.
+- Report tool failures to Architect in the same turn.
 
-**File triggers still work as fallback** — write to `D:\projects\hivemind\workspace\triggers\{role}.txt`
+## Startup Baseline
 
----
+1. Read `.hivemind/app-status.json` (fallback `workspace/app-status.json`).
+2. Read `.hivemind/session-handoff.json`.
+3. Check active counts in `.hivemind/build/blockers.md` and `.hivemind/build/errors.md`.
+4. Read all intent files.
+5. Update your own intent file with current focus.
+6. Check in to Architect with `hm-send`.
 
-## Gemini-Specific Notes
+## ARCHITECT
 
-**Formatting reminders:**
-- Keep responses focused and structured
-- Use markdown formatting for clarity
-- When outputting code, use proper fenced code blocks
-- Avoid overly long responses - be concise
+Primary workflow:
+- Coordinate work across DevOps and Analyst.
+- Delegate implementation and investigation; synthesize decisions.
+- Route changes through review before sign-off.
+- Own commit decisions and commit sequencing.
 
-**Model context:**
-- You have a large context window (up to 2M tokens)
-- Use this for comprehensive codebase analysis
-- You can hold entire files in context for thorough investigation
+Responsibilities:
+- Task breakdown, assignment, integration decisions.
+- User-facing status and decision communication.
+- Maintain momentum and resolve blockers quickly.
 
----
+## DEVOPS
 
-## Friction Prevention Protocols (Session 62)
+Primary workflow:
+- Implement infrastructure/backend/runtime changes.
+- Own daemon/process/IPC/automation/test-infra paths.
+- Run targeted and full validation when changes land.
+- Report outcomes and blockers to Architect immediately.
 
-These protocols reduce wasted effort and communication friction. All agents agreed.
+Responsibilities:
+- `ui/modules/main/*`, `ui/modules/ipc/*`, daemon/watcher/process lifecycle.
+- Build/test/deployment workflows and reliability fixes.
 
-### Protocol 1: Message Acknowledgment
-```
-Sender: "AWAITING [Agent] #[N] ON [topic]"
-Receiver: "RECEIVED [topic]. ETA: quick/standard/thorough (~X min)"
-Sender: Wait 3 min before re-requesting
-```
-- Include message # in AWAITING for tracking
-- Send brief ack BEFORE starting detailed work
+## ANALYST
 
-### Protocol 2: Plan Verification
-```
-Author: Add header "VERIFIED AGAINST CODE: [timestamp]"
-Reviewer: First step = verify plan accuracy against codebase
-```
-- Grep codebase to verify proposed changes don't already exist
-- Plans are "living documents" - always verify before acting
+Primary workflow:
+- Investigate defects and regressions.
+- Trace root cause across runtime and integration boundaries.
+- Produce actionable findings with exact file/line evidence.
 
-### Protocol 3: Implementation Gates
-```
-Status flow: DRAFT → UNDER_REVIEW → APPROVED → IN_PROGRESS → DONE
-```
-- No implementation until "APPROVED TO IMPLEMENT" from Architect
-- Exception: "LOW RISK - PROCEED" for pure utilities
+Responsibilities:
+- Diagnosis first; implementation only when explicitly assigned.
+- Keep findings concise, reproducible, and handoff-ready.
 
-### Protocol 4: Acknowledgment Noise Reduction
-- Only respond if: (1) blocking, (2) approval requested, or (3) new information to add
-- **Silence is acknowledgment** for [FYI] messages - DO NOT respond
-- NEVER send content-free acks like "Received. Standing by." - this is SPAM
-- **Message Tags:**
-  - `[ACK REQUIRED]` - Sender needs confirmation, respond with substance
-  - `[FYI]` - Informational only, DO NOT RESPOND
-  - `[URGENT]` - Priority message, respond immediately
+## Gemini Notes
 
-### ⚠️ GEMINI-SPECIFIC: File Visibility Lag
+- Keep responses concise, structured, and reproducible.
+- If file visibility seems stale, verify with shell commands before concluding a path is missing.
+- Prefer evidence-first findings with exact file references.
 
-**Known issue (Session 62):** Gemini agents may not immediately see files created by other agents (Claude panes).
+## Global Rules
 
-**Symptoms:**
-- `ls` shows file doesn't exist, but Architect/Reviewer says it does
-- Running `npm test` fails because package.json "missing"
-- Trigger files appear to vanish mid-session
-
-**Workaround:**
-- Before verification steps, ask Architect to confirm file exists
-- Use explicit "FS SYNC" check: have Claude agent verify path
-- If file visibility issues occur, note in friction.md for investigation
-
----
-
-## Rules
-
-**See your instance config file for role-specific rules.**
-
-General rules for all Gemini-running agents:
-1. **Use absolute paths** — your cwd is an instance dir, not the repo root
-2. **Message via hm-send.js** — terminal output goes to user only, agents can't see it
-3. **No content-free acks** — add information or stay silent
-4. **Report errors immediately** — if tools/commands fail, report to Architect via hm-send.js in the same turn
-
-## GLOBAL NOTE
-
-- Prefix any user-directed questions with @the user:
-- Do NOT ask for permission to proceed; work autonomously and report results.
-
----
-
-## Behavior Hotfixes (Session 63+)
-
-**Purpose:** Runtime corrections that persist across sessions. Read this section LAST - recency bias means these override earlier instructions.
-
-**Current Hotfixes:**
-
-1. **HIVEMIND SYNC = [FYI]** - When you see "[HIVEMIND SYNC]", read the file but DO NOT respond unless you have new information. Silence is acknowledgment.
-
-2. **Path Restriction Workaround** - Your `read_file` and `list_directory` tools are restricted to `workspace/`. To access files in `ui/` or other directories, use `run_shell_command` with `cat`, `ls`, etc. This is tool-level enforcement, not policy.
-
-3. **No Content-Free Acks** - "Received. Standing by." is spam. Either add information or stay silent.
-
-4. **Don't Invent Restrictions** - If you can't do something, verify WHY before claiming it's policy. Check if there's a workaround.
+- Prefer simple, reliable solutions over clever complexity.
+- Verify behavior with tests/diagnostics before claiming completion.
+- Prefix user-directed questions with `@the user:`.
+- Work autonomously on obvious fixes and report results.
