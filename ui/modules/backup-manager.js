@@ -7,6 +7,17 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const log = require('./logger');
+const { resolveCoordPath } = require('../config');
+
+const COORD_BACKUP_FILES = [
+  'app-status.json',
+  'shared_context.md',
+  'state.json',
+  'message-state.json',
+  'schedules.json',
+  'activity.json',
+  'usage-stats.json',
+];
 
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -15,18 +26,12 @@ const DEFAULT_CONFIG = {
   maxAgeDays: 30,
   createRestorePoint: true,
   includePaths: [
-    'workspace/app-status.json',
-    'workspace/shared_context.md',
-    'workspace/state.json',
-    'workspace/message-state.json',
-    'workspace/schedules.json',
     'workspace/build',
     'workspace/memory',
     'workspace/knowledge',
     'workspace/history',
     'ui/settings.json',
     'ui/session-state.json',
-    'ui/usage-stats.json',
   ],
   excludePatterns: [
     'node_modules',
@@ -93,6 +98,34 @@ function matchesPattern(relPath, pattern) {
   return normalized.split('/').includes(normalizedPattern);
 }
 
+function resolveCoordBackupPath(relPath, repoRoot, workspacePath) {
+  let resolved = null;
+  if (typeof resolveCoordPath === 'function') {
+    try {
+      resolved = resolveCoordPath(relPath);
+    } catch (_) {
+      resolved = null;
+    }
+  }
+  if (!resolved) {
+    resolved = path.join(workspacePath, relPath);
+  }
+
+  let relativePath = normalizePath(path.relative(repoRoot, resolved));
+  if (!relativePath || relativePath.startsWith('..')) {
+    relativePath = normalizePath(path.relative(repoRoot, path.join(workspacePath, relPath)));
+  }
+  return relativePath;
+}
+
+function buildDefaultIncludePaths(repoRoot, workspacePath) {
+  const coordEntries = COORD_BACKUP_FILES
+    .map((relPath) => resolveCoordBackupPath(relPath, repoRoot, workspacePath))
+    .filter((relPath) => relPath && !relPath.startsWith('..'));
+
+  return [...coordEntries, ...DEFAULT_CONFIG.includePaths];
+}
+
 function createBackupManager(options = {}) {
   const workspacePath = options.workspacePath;
   const repoRoot = options.repoRoot || path.join(workspacePath, '..');
@@ -102,16 +135,23 @@ function createBackupManager(options = {}) {
   const configPath = path.join(workspacePath, 'backup-config.json');
   const indexPath = path.join(backupRoot, INDEX_FILE);
 
-  let config = { ...DEFAULT_CONFIG };
+  let config = {
+    ...DEFAULT_CONFIG,
+    includePaths: buildDefaultIncludePaths(repoRoot, workspacePath),
+  };
   let index = { backups: [] };
   let timer = null;
 
   function loadConfig() {
+    const baseConfig = {
+      ...DEFAULT_CONFIG,
+      includePaths: buildDefaultIncludePaths(repoRoot, workspacePath),
+    };
     const loaded = safeReadJson(configPath);
     if (loaded && typeof loaded === 'object') {
-      config = { ...DEFAULT_CONFIG, ...loaded };
+      config = { ...baseConfig, ...loaded };
     } else {
-      config = { ...DEFAULT_CONFIG };
+      config = baseConfig;
     }
   }
 

@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
 const log = require('./logger');
 const taskParser = require('./task-parser');
 
@@ -157,7 +158,9 @@ function computeNextRun(schedule, referenceDate = new Date()) {
 }
 
 function createScheduler({ triggers, workspacePath }) {
-  const filePath = path.join(workspacePath, 'schedules.json');
+  const filePath = typeof resolveCoordPath === 'function'
+    ? resolveCoordPath('schedules.json', { forWrite: true })
+    : path.join(workspacePath || WORKSPACE_PATH, 'schedules.json');
   let scheduleState = { ...DEFAULT_SCHEDULE_STATE };
   let timer = null;
 

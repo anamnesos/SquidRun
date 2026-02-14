@@ -6,10 +6,12 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { WORKSPACE_PATH } = require('../../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 
 const MAX_ACTIVITY_ENTRIES = 500;
-const ACTIVITY_FILE_PATH = path.join(WORKSPACE_PATH, 'activity.json');
+const ACTIVITY_FILE_PATH = typeof resolveCoordPath === 'function'
+  ? resolveCoordPath('activity.json', { forWrite: true })
+  : path.join(WORKSPACE_PATH, 'activity.json');
 
 class ActivityManager {
   constructor(appContext) {

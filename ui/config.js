@@ -45,6 +45,7 @@ function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
 
 const PROJECT_ROOT = discoverProjectRoot();
 const COORD_ROOT = path.join(PROJECT_ROOT, '.hivemind');
+const legacyCoordFallbackWarnings = new Set();
 
 // Legacy instance working directories (kept for compatibility during migration)
 // Active pane cwd resolution now uses project root via resolvePaneCwd().
@@ -148,6 +149,16 @@ function resolveCoordPath(relPath, options = {}) {
     for (const root of roots) {
       const candidate = path.join(root, normalizedRelPath);
       if (fs.existsSync(candidate)) {
+        if (
+          path.resolve(root) === path.resolve(WORKSPACE_PATH)
+          && fs.existsSync(COORD_ROOT)
+          && !legacyCoordFallbackWarnings.has(normalizedRelPath)
+        ) {
+          legacyCoordFallbackWarnings.add(normalizedRelPath);
+          console.warn(
+            `[Hivemind][CoordPath] Legacy workspace fallback hit for "${normalizedRelPath}" -> "${candidate}".`
+          );
+        }
         return candidate;
       }
     }

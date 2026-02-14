@@ -1,18 +1,18 @@
-# CLAUDE.md
+# CODEX.md
 
 ## Scope
 
-This is the Claude-specific shim.
+This is the Codex-specific shim.
 
 - Canonical role definitions live in `ROLES.md`.
 - Determine behavior from runtime env (`HIVEMIND_ROLE`, `HIVEMIND_PANE_ID`) + `ROLES.md`.
 - Do not duplicate role instructions in this file.
 
-## Claude Quirks
+## Codex Quirks
 
-- Prefer direct file operations and explicit shell commands with absolute paths.
+- Prefer concise, implementation-first responses with explicit file references.
+- Use non-interactive shell workflows and avoid destructive git operations by default.
 - Keep agent-to-agent communication on `hm-send.js`; terminal output is user-facing.
-- Reply quickly for `[ACK REQUIRED]` and `[URGENT]`; stay silent on `[FYI]` unless adding new information.
 
 ## Reference
 
