@@ -17,8 +17,6 @@
  * - debug-export: Export session
  */
 
-const path = require('path');
-
 function registerDebugReplayHandlers(ctx) {
   const { ipcMain, WORKSPACE_PATH } = ctx;
   if (!ipcMain || !WORKSPACE_PATH) return;
@@ -27,7 +25,7 @@ function registerDebugReplayHandlers(ctx) {
   let debugReplay = null;
   function getDebugReplay() {
     if (!debugReplay) {
-      debugReplay = require('../memory/debug-replay');
+      debugReplay = require('../replay/debug-replay');
     }
     return debugReplay;
   }

@@ -4,6 +4,9 @@ const {
   formatReadBeforeWorkMessage,
   buildTaskCloseClaimPayload,
   buildTaskStatusPatternEvent,
+  buildSessionLifecyclePatternEvent,
+  buildDeliveryOutcomePatternEvent,
+  buildIntentUpdatePatternEvent,
   isDeliveryFailureResult,
 } = require('../modules/team-memory/daily-integration');
 
@@ -104,5 +107,58 @@ describe('team-memory daily integration helpers', () => {
     expect(isDeliveryFailureResult({ verified: true, status: 'delivered.verified' })).toBe(false);
     expect(isDeliveryFailureResult({ verified: false, status: 'routed_unverified_timeout' })).toBe(true);
     expect(isDeliveryFailureResult({ accepted: false, status: 'invalid_target' })).toBe(true);
+  });
+
+  test('buildSessionLifecyclePatternEvent + buildDeliveryOutcomePatternEvent + buildIntentUpdatePatternEvent', () => {
+    const sessionEvent = buildSessionLifecyclePatternEvent({
+      paneId: '2',
+      status: 'ended',
+      exitCode: 1,
+      reason: 'pty_exit',
+      nowMs: 1234,
+    });
+    expect(sessionEvent).toEqual(expect.objectContaining({
+      eventType: 'session.lifecycle',
+      paneId: '2',
+      actor: 'devops',
+      status: 'ended',
+      exitCode: 1,
+      reason: 'pty_exit',
+    }));
+
+    const deliveryEvent = buildDeliveryOutcomePatternEvent({
+      channel: 'send',
+      target: '2',
+      fromRole: 'architect',
+      result: { verified: true, accepted: true, queued: true, status: 'delivered.verified' },
+      nowMs: 5678,
+    });
+    expect(deliveryEvent).toEqual(expect.objectContaining({
+      eventType: 'delivery.outcome',
+      channel: 'send',
+      target: '2',
+      actor: 'architect',
+      outcome: 'delivered',
+      status: 'delivered.verified',
+      verified: true,
+    }));
+
+    const intentEvent = buildIntentUpdatePatternEvent({
+      paneId: '5',
+      role: 'ana',
+      session: 129,
+      intent: 'Investigating runtime bridge',
+      previousIntent: 'Idle',
+      source: 'terminal.js',
+      nowMs: 91011,
+    });
+    expect(intentEvent).toEqual(expect.objectContaining({
+      eventType: 'intent.updated',
+      paneId: '5',
+      actor: 'analyst',
+      intent: 'Investigating runtime bridge',
+      previousIntent: 'Idle',
+      source: 'terminal.js',
+    }));
   });
 });

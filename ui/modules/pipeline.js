@@ -3,7 +3,7 @@
  * Watches agent messages and auto-drives work through stages:
  *   proposed -> accepted -> assigned -> implementing -> review_pending -> approved -> committed
  *
- * Hooks into war-room.js to observe every cross-pane message.
+ * Observes cross-pane messages and drives state transitions.
  * Uses hybrid detection: structured tags (preferred) + keyword fallback.
  * Persists state to workspace/pipeline.json (atomic writes).
  * Emits IPC events for UI observability.
@@ -110,7 +110,7 @@ function extractTitle(msg) {
 }
 
 /**
- * Detect stage from a war room entry using hybrid detection.
+ * Detect stage from a message entry using hybrid detection.
  * Returns { stage, method } or null if no stage detected.
  */
 function detectStage(entry) {
@@ -264,7 +264,7 @@ function emitUpdate(item, newStage, oldStage) {
 }
 
 /**
- * Main entry point: called by war-room.js after recording each message.
+ * Main entry point: called after recording each message.
  * Observes the message and drives pipeline state transitions.
  */
 function onMessage(entry) {

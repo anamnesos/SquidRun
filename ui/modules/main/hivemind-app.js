@@ -3,7 +3,7 @@
  * Main process application controller
  */
 
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { BrowserWindow, ipcMain, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
@@ -20,12 +20,9 @@ const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const triggers = require('../triggers');
 const watcher = require('../watcher');
 const ipcHandlers = require('../ipc-handlers');
-const memory = require('../memory');
-const memoryIPC = require('../memory/ipc-handlers');
 const websocketServer = require('../websocket-server');
 const organicUI = require('../ipc/organic-ui-handlers');
 const pipeline = require('../pipeline');
-const warRoom = require('../triggers/war-room');
 const sharedState = require('../shared-state');
 const contextCompressor = require('../context-compressor');
 const smsPoller = require('../sms-poller');
@@ -34,8 +31,11 @@ const experiment = require('../experiment');
 const {
   buildGuardFiringPatternEvent,
   buildGuardPreflightEvent,
+  buildSessionLifecyclePatternEvent,
   isDeliveryFailureResult,
+  buildDeliveryOutcomePatternEvent,
   buildDeliveryFailurePatternEvent,
+  buildIntentUpdatePatternEvent,
 } = require('../team-memory/daily-integration');
 const {
   executeEvidenceLedgerOperation,
@@ -88,6 +88,7 @@ class HivemindApp {
     this.triggerAckForwarderRegistered = false;
     this.teamMemoryInitialized = false;
     this.experimentInitialized = false;
+    this.intentStateByPane = new Map();
   }
 
   async init() {
@@ -405,7 +406,7 @@ class HivemindApp {
             return;
           }
 
-          // Route WebSocket messages via triggers module (handles War Room + delivery)
+          // Route WebSocket messages via triggers module (handles delivery)
           if (data.message.type === 'send') {
             const { target, content } = data.message;
             const attempt = Number(data.message.attempt || 1);
@@ -438,6 +439,18 @@ class HivemindApp {
                 traceContext,
               });
               if (preflight.blocked) {
+                await this.recordDeliveryOutcomePattern({
+                  channel: 'send',
+                  target: target || String(paneId),
+                  fromRole: data.role || 'unknown',
+                  result: {
+                    accepted: false,
+                    queued: false,
+                    verified: false,
+                    status: 'guard_blocked',
+                  },
+                  traceContext,
+                });
                 return {
                   ok: false,
                   accepted: false,
@@ -457,7 +470,7 @@ class HivemindApp {
                 data.role || 'unknown',
                 { traceContext, awaitDelivery: true }
               );
-              await this.recordDeliveryFailurePattern({
+              await this.recordDeliveryOutcomePattern({
                 channel: 'send',
                 target: String(paneId),
                 fromRole: data.role || 'unknown',
@@ -480,7 +493,7 @@ class HivemindApp {
               };
             } else {
               log.warn('WebSocket', `Unknown target for 'send': ${target}`);
-              await this.recordDeliveryFailurePattern({
+              await this.recordDeliveryOutcomePattern({
                 channel: 'send',
                 target,
                 fromRole: data.role || 'unknown',
@@ -512,6 +525,18 @@ class HivemindApp {
               traceContext,
             });
             if (preflight.blocked) {
+              await this.recordDeliveryOutcomePattern({
+                channel: 'broadcast',
+                target: 'all',
+                fromRole: data.role || 'unknown',
+                result: {
+                  accepted: false,
+                  queued: false,
+                  verified: false,
+                  status: 'guard_blocked',
+                },
+                traceContext,
+              });
               return {
                 ok: false,
                 accepted: false,
@@ -528,7 +553,7 @@ class HivemindApp {
               data.role || 'unknown',
               { traceContext, awaitDelivery: true }
             );
-            await this.recordDeliveryFailurePattern({
+            await this.recordDeliveryOutcomePattern({
               channel: 'broadcast',
               target: 'all',
               fromRole: data.role || 'unknown',
@@ -651,6 +676,8 @@ class HivemindApp {
       saveSettings: (s) => this.settings.saveSettings(s),
       recordSessionStart: (id) => this.usage.recordSessionStart(id),
       recordSessionEnd: (id) => this.usage.recordSessionEnd(id),
+      recordSessionLifecycle: (payload = {}) => this.recordSessionLifecyclePattern(payload),
+      updateIntentState: (payload = {}) => this.updateIntentStateAtomic(payload),
       saveUsageStats: () => this.usage.saveUsageStats(),
       broadcastClaudeState: () => this.broadcastClaudeState(),
       logActivity: (t, p, m, d) => this.activity.logActivity(t, p, m, d),
@@ -659,15 +686,11 @@ class HivemindApp {
       saveActivityLog: () => this.activity.saveActivityLog(),
     });
 
-    memoryIPC.registerHandlers({ mainWindow: window });
-
     // Pipeline
     pipeline.init({
       mainWindow: window,
       sendDirectMessage: (targets, message, fromRole) => triggers.sendDirectMessage(targets, message, fromRole),
     });
-    warRoom.setPipelineHook(pipeline.onMessage);
-
     // Pipeline IPC handlers
     ipcMain.handle('pipeline-get-items', (event, stageFilter) => {
       return pipeline.getItems(stageFilter || null);
@@ -700,7 +723,6 @@ class HivemindApp {
     // Context Compressor (P4)
     contextCompressor.init({
       sharedState,
-      memory,
       mainWindow: window,
       watcher,
       isIdle: () => (Date.now() - this.lastDaemonOutputAtMs) > APP_IDLE_THRESHOLD_MS,
@@ -737,7 +759,6 @@ class HivemindApp {
 
     const initAfterLoad = async (attempt = 1) => {
       try {
-        memory.initialize();
         watcher.startWatcher();
         watcher.startTriggerWatcher();
         watcher.startMessageWatcher();
@@ -911,6 +932,14 @@ class HivemindApp {
     const handlePaneExit = (paneId, code) => {
       this.ctx.recoveryManager?.handleExit(paneId, code);
       this.usage.recordSessionEnd(paneId);
+      this.recordSessionLifecyclePattern({
+        paneId,
+        status: 'ended',
+        exitCode: code,
+        reason: 'pty_exit',
+      }).catch((err) => {
+        log.warn('TeamMemory', `Failed session end event for pane ${paneId}: ${err.message}`);
+      });
       this.ctx.agentRunning.set(paneId, 'idle');
       organicUI.agentOffline(paneId);
       this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'idle', exitCode: code })
@@ -1204,10 +1233,36 @@ class HivemindApp {
     };
   }
 
-  async recordDeliveryFailurePattern({ channel, target, fromRole, result, traceContext } = {}) {
+  async recordSessionLifecyclePattern({ paneId, status, exitCode = null, reason = '' } = {}) {
     if (!this.teamMemoryInitialized) return;
-    if (!isDeliveryFailureResult(result)) return;
+    const event = buildSessionLifecyclePatternEvent({
+      paneId,
+      status,
+      exitCode,
+      reason,
+      nowMs: Date.now(),
+    });
+    if (!event) return;
+    await this.appendTeamMemoryPatternEvent(event, 'session-lifecycle');
+  }
 
+  async recordDeliveryOutcomePattern({ channel, target, fromRole, result, traceContext } = {}) {
+    if (!this.teamMemoryInitialized) return;
+    const nowMs = Date.now();
+
+    await this.appendTeamMemoryPatternEvent(
+      buildDeliveryOutcomePatternEvent({
+        channel,
+        target,
+        fromRole,
+        result,
+        traceContext,
+        nowMs,
+      }),
+      'delivery-outcome'
+    );
+
+    if (!isDeliveryFailureResult(result)) return;
     await this.appendTeamMemoryPatternEvent(
       buildDeliveryFailurePatternEvent({
         channel,
@@ -1215,10 +1270,77 @@ class HivemindApp {
         fromRole,
         result,
         traceContext,
-        nowMs: Date.now(),
+        nowMs,
       }),
       'delivery-failure'
     );
+  }
+
+  async recordDeliveryFailurePattern(args = {}) {
+    return this.recordDeliveryOutcomePattern(args);
+  }
+
+  async updateIntentStateAtomic(payload = {}) {
+    const paneId = String(payload?.paneId ?? payload?.pane ?? '').trim();
+    if (!paneId) {
+      return { ok: false, reason: 'invalid_pane_id' };
+    }
+
+    const nowMs = Date.now();
+    const nextIntent = typeof payload?.intent === 'string' ? payload.intent.trim() : '';
+    const source = typeof payload?.source === 'string' ? payload.source : 'renderer';
+    const current = this.intentStateByPane.get(paneId) || {};
+    const role = payload?.role || current?.role || null;
+    const session = payload?.session ?? current?.session ?? null;
+    const previousIntent = typeof payload?.previousIntent === 'string'
+      ? payload.previousIntent
+      : (typeof current?.intent === 'string' ? current.intent : null);
+
+    this.intentStateByPane.set(paneId, {
+      pane: paneId,
+      role,
+      session,
+      intent: nextIntent,
+      last_update: new Date(nowMs).toISOString(),
+    });
+
+    if (!this.teamMemoryInitialized) {
+      return {
+        ok: false,
+        reason: 'team_memory_unavailable',
+        paneId,
+        intent: nextIntent,
+        session,
+      };
+    }
+
+    try {
+      const patternEvent = buildIntentUpdatePatternEvent({
+        paneId,
+        role,
+        session,
+        intent: nextIntent,
+        previousIntent,
+        source,
+        nowMs,
+      });
+      await this.appendTeamMemoryPatternEvent(patternEvent, 'intent-update');
+      return {
+        ok: true,
+        paneId,
+        intent: nextIntent,
+        session,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: 'team_memory_write_failed',
+        error: err.message,
+        paneId,
+        intent: nextIntent,
+        session,
+      };
+    }
   }
 
   /**
@@ -1351,7 +1473,6 @@ class HivemindApp {
 
   shutdown() {
     log.info('App', 'Shutting down Hivemind Application');
-    memory.shutdown();
     contextCompressor.shutdown();
     teamMemory.stopIntegritySweep();
     teamMemory.stopBeliefSnapshotSweep();

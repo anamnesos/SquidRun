@@ -272,6 +272,59 @@ maybeDescribe('evidence-ledger-memory', () => {
     expect(latest.content.completed.some((item) => item.includes('Phase B shipped'))).toBe(true);
   });
 
+  test('getLatestContext scopes decisions to recent sessions and avoids stale seed completions', () => {
+    expect(memory.recordSessionStart({
+      sessionNumber: 115,
+      sessionId: 'ses-115',
+      mode: 'PTY',
+      startedAtMs: 1000,
+    }).ok).toBe(true);
+
+    expect(memory.recordDecision({
+      category: 'completion',
+      title: 'Seed-era completion',
+      body: 'Old seeded record',
+      author: 'system',
+      sessionId: 'ses-115',
+      nowMs: 2000,
+    }).ok).toBe(true);
+
+    expect(memory.recordSessionStart({
+      sessionNumber: 122,
+      sessionId: 'ses-122',
+      mode: 'PTY',
+      startedAtMs: 0,
+    }).ok).toBe(true);
+
+    // Simulate historical bad timestamp coercion from older runtimes.
+    expect(memory.recordDecision({
+      category: 'completion',
+      title: 'Recent completion with bad timestamp',
+      body: 'Should still be represented by latest snapshot context',
+      author: 'devops',
+      sessionId: 'ses-122',
+      nowMs: 0,
+    }).ok).toBe(true);
+
+    expect(memory.snapshotContext('ses-122', {
+      trigger: 'session_end',
+      content: {
+        session: 122,
+        source: 'ledger',
+        completed: ['S122: runtime bridge updated'],
+        not_yet_done: ['S123: follow-up'],
+        roadmap: ['S123: follow-up'],
+      },
+      nowMs: 0,
+    }).ok).toBe(true);
+
+    const context = memory.getLatestContext();
+    expect(context.source).toBe('ledger');
+    expect(context.session).toBe(122);
+    expect(context.completed.some((item) => String(item).includes('Recent completion with bad timestamp'))).toBe(true);
+    expect(context.completed.some((item) => String(item).includes('Seed-era completion'))).toBe(false);
+  });
+
   test('edge cases: invalid category and invalid session start payload', () => {
     const invalidDecision = memory.recordDecision({
       category: 'not_a_category',

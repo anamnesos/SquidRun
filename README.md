@@ -38,8 +38,8 @@ It is a working proof that one person can run a real AI engineering team with pr
 
 ### Developer Experience
 - **Quality gates** - ESLint, Jest, pre-commit gates, review gate
-- **Current test count** - **139 suites / 3204 tests**
-- **Session continuity** - intent board + session handoff + hooks
+- **Current test count** - see latest CI/Jest output (changes frequently)
+- **Session continuity** - intent board + context snapshots + Evidence Ledger hooks
 
 ## Agent Roles
 
@@ -64,11 +64,11 @@ node ui/scripts/hm-send.js <target> "(ROLE #N): message"
 
 | File | Target |
 |------|--------|
-| `workspace/triggers/architect.txt` | Architect (pane 1) |
-| `workspace/triggers/devops.txt` | DevOps (pane 2) |
-| `workspace/triggers/analyst.txt` | Analyst (pane 5) |
-| `workspace/triggers/workers.txt` | DevOps + Analyst |
-| `workspace/triggers/all.txt` | Everyone |
+| `.hivemind/triggers/architect.txt` | Architect (pane 1) |
+| `.hivemind/triggers/devops.txt` | DevOps (pane 2) |
+| `.hivemind/triggers/analyst.txt` | Analyst (pane 5) |
+| `.hivemind/triggers/workers.txt` | DevOps + Analyst |
+| `.hivemind/triggers/all.txt` | Everyone |
 
 ## Tech Stack
 
@@ -137,17 +137,16 @@ hivemind/
 │   │   ├── hm-claim.js
 │   │   └── hm-experiment.js
 │   └── __tests__/
-├── workspace/
+├── .hivemind/
 │   ├── app-status.json
 │   ├── intent/
 │   ├── triggers/
+│   ├── build/
+│   ├── context-snapshots/
 │   ├── runtime/
 │   │   ├── team-memory.sqlite
 │   │   └── experiments/
-│   └── instances/
-│       ├── arch/
-│       ├── devops/
-│       └── ana/
+├── workspace/                  # legacy fallback during migration
 ├── docs/
 │   └── team-memory-spec.md
 └── CLAUDE.md

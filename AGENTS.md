@@ -73,7 +73,7 @@ node D:/projects/hivemind/ui/scripts/hm-send.js architect "(YOUR-ROLE #1): Onlin
 ## On Startup
 
 1. Identify which pane/role you are based on context
-2. Read `workspace/shared_context.md` for current state
+2. Read `ROLES.md` and follow its startup baseline for your role
 3. Message Architect to check in:
    ```bash
    node D:/projects/hivemind/ui/scripts/hm-send.js architect "(YOUR-ROLE #1): [Role] online. Standing by."
@@ -87,4 +87,4 @@ node D:/projects/hivemind/ui/scripts/hm-send.js architect "(YOUR-ROLE #1): Onlin
 - WebSocket has zero message loss
 - ~10ms delivery vs 500ms+ for file triggers
 
-File triggers still work as fallback: write to `D:\projects\hivemind\workspace\triggers\{role}.txt`
+File triggers still work as fallback: write to `D:\projects\hivemind\.hivemind\triggers\{role}.txt` (legacy fallback: `workspace\triggers\{role}.txt`)

@@ -11,20 +11,18 @@
  * - graph-save: Force save to disk
  */
 
-const path = require('path');
-
 function registerKnowledgeGraphHandlers(ctx) {
   const { ipcMain, WORKSPACE_PATH } = ctx;
   if (!ipcMain || !WORKSPACE_PATH) return;
 
-  // Lazy load memory module to get graph
-  let memoryModule = null;
-  function getMemory() {
-    if (!memoryModule) {
-      memoryModule = require('../memory');
-      memoryModule.initialize();
+  // Lazy load graph service
+  let graphService = null;
+  function getGraphService() {
+    if (!graphService) {
+      graphService = require('../knowledge/knowledge-graph-service');
+      graphService.initialize(WORKSPACE_PATH);
     }
-    return memoryModule;
+    return graphService;
   }
 
   /**
@@ -34,8 +32,8 @@ function registerKnowledgeGraphHandlers(ctx) {
   ipcMain.handle('graph-query', async (event, payload = {}) => {
     const { query = '', maxDepth = 2, maxResults = 50, includeTypes = null } = payload;
     try {
-      const memory = getMemory();
-      const results = memory.queryGraph(query, { maxDepth, maxResults, includeTypes });
+      const service = getGraphService();
+      const results = service.queryGraph(query, { maxDepth, maxResults, includeTypes });
       return { success: true, results };
     } catch (err) {
       console.error('[KnowledgeGraph] Query error:', err);
@@ -49,8 +47,8 @@ function registerKnowledgeGraphHandlers(ctx) {
   ipcMain.handle('graph-visualize', async (event, payload = {}) => {
     const { filter = {} } = payload;
     try {
-      const memory = getMemory();
-      const data = memory.getGraphVisualization(filter);
+      const service = getGraphService();
+      const data = service.getGraphVisualization(filter);
       return { success: true, data };
     } catch (err) {
       console.error('[KnowledgeGraph] Visualize error:', err);
@@ -63,8 +61,8 @@ function registerKnowledgeGraphHandlers(ctx) {
    */
   ipcMain.handle('graph-stats', async () => {
     try {
-      const memory = getMemory();
-      const stats = memory.getGraphStats();
+      const service = getGraphService();
+      const stats = service.getGraphStats();
       return { success: true, stats };
     } catch (err) {
       console.error('[KnowledgeGraph] Stats error:', err);
@@ -81,8 +79,8 @@ function registerKnowledgeGraphHandlers(ctx) {
       return { success: false, error: 'nodeId required' };
     }
     try {
-      const memory = getMemory();
-      const results = memory.getRelatedNodes(nodeId, depth);
+      const service = getGraphService();
+      const results = service.getRelatedNodes(nodeId, depth);
       return { success: true, results };
     } catch (err) {
       console.error('[KnowledgeGraph] Related error:', err);
@@ -99,8 +97,8 @@ function registerKnowledgeGraphHandlers(ctx) {
       return { success: false, error: 'name required' };
     }
     try {
-      const memory = getMemory();
-      const nodeId = memory.recordConcept(name, description, relatedTo);
+      const service = getGraphService();
+      const nodeId = service.recordConcept(name, description, relatedTo);
       return { success: true, nodeId };
     } catch (err) {
       console.error('[KnowledgeGraph] Record concept error:', err);
@@ -113,8 +111,8 @@ function registerKnowledgeGraphHandlers(ctx) {
    */
   ipcMain.handle('graph-save', async () => {
     try {
-      const memory = getMemory();
-      memory.saveGraph();
+      const service = getGraphService();
+      service.saveGraph();
       return { success: true };
     } catch (err) {
       console.error('[KnowledgeGraph] Save error:', err);
@@ -131,8 +129,8 @@ function registerKnowledgeGraphHandlers(ctx) {
       return { success: false, error: 'type required' };
     }
     try {
-      const memory = getMemory();
-      const nodes = memory.graph.getNodesByType(type);
+      const service = getGraphService();
+      const nodes = service.getNodesByType(type);
       return { success: true, nodes };
     } catch (err) {
       console.error('[KnowledgeGraph] Nodes by type error:', err);

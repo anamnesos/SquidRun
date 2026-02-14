@@ -93,6 +93,7 @@ const setInjectionInFlight = (value) => { injectionInFlight = value; };
 
 // Startup injection readiness tracking (per pane)
 const startupInjectionState = new Map();
+const intentStateByPane = new Map();
 
 // Terminal write flow control - prevents xterm buffer overflow
 // When PTY sends data faster than xterm can render, writes get discarded
@@ -1168,10 +1169,6 @@ function resolveCoordFile(relPath, options = {}) {
   return path.join(WORKSPACE_PATH, relPath);
 }
 
-function getIntentDir() {
-  return resolveCoordFile('intent', { forWrite: true });
-}
-
 function getSnapshotSessionPath() {
   return resolveCoordFile(path.join('context-snapshots', '1.md'));
 }
@@ -1196,35 +1193,15 @@ function getSessionNumberFromSnapshot() {
 }
 
 function getSessionNumber() {
-  const intentDir = getIntentDir();
-  let maxSession = null;
-
-  for (const paneId of PANE_IDS) {
-    try {
-      const filePath = path.join(intentDir, `${paneId}.json`);
-      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      const parsed = Number.parseInt(data?.session, 10);
-      if (!Number.isInteger(parsed) || parsed <= 0) continue;
-      if (maxSession === null || parsed > maxSession) maxSession = parsed;
-    } catch {
-      // Ignore missing/corrupt intent file
-    }
-  }
-
-  if (maxSession !== null) return maxSession;
   return getSessionNumberFromSnapshot();
 }
 
-function updateIntentFile(paneId, intent) {
+function updateIntentState(paneId, intent) {
   const id = String(paneId);
-  const intentDir = getIntentDir();
-  const filePath = path.join(intentDir, `${id}.json`);
-  let data = {};
-  try {
-    data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch {}
+  const data = intentStateByPane.get(id) || {};
   const session = data.session ?? getSessionNumber();
   const role = data.role || PANE_ROLES[id] || `Pane ${id}`;
+  const previousIntent = typeof data.intent === 'string' ? data.intent : '';
   const next = {
     ...data,
     pane: id,
@@ -1233,12 +1210,27 @@ function updateIntentFile(paneId, intent) {
     intent,
     last_update: new Date().toISOString(),
   };
-  try {
-    fs.mkdirSync(intentDir, { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(next, null, 2), 'utf8');
-  } catch (err) {
-    log.warn('Intent', `Failed to update intent file for pane ${id}`, err);
+  intentStateByPane.set(id, next);
+  if (window?.hivemind?.intent?.update) {
+    Promise.resolve(window.hivemind.intent.update({
+      paneId: id,
+      role,
+      session,
+      intent,
+      previousIntent,
+      source: 'terminal.js',
+    }))
+      .then((result) => {
+        if (result?.ok === false) {
+          log.warn('Intent', `Main-process intent update rejected for pane ${id}: ${result.reason || 'unknown'}`);
+        }
+      })
+      .catch((err) => {
+        log.warn('Intent', `Failed to update intent via main process for pane ${id}: ${err.message}`);
+      });
+    return;
   }
+  log.warn('Intent', `Intent update IPC unavailable for pane ${id}`);
 }
 
 function toggleInputLock(paneId) {
@@ -1733,7 +1725,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
     updatePaneStatus(paneId, `Exited (${code})`);
     queueTerminalWrite(paneId, terminal, `\r\n[Process exited with code ${code}]\r\n`);
     clearStartupInjection(paneId);
-    updateIntentFile(paneId, 'Offline');
+    updateIntentState(paneId, 'Offline');
   });
     if (typeof disposeOnExit === 'function') {
       ptyExitListenerDisposers.set(String(paneId), disposeOnExit);
@@ -1920,7 +1912,7 @@ async function reattachTerminal(paneId, scrollback) {
       updatePaneStatus(paneId, `Exited (${code})`);
       queueTerminalWrite(paneId, terminal, `\r\n[Process exited with code ${code}]\r\n`);
       clearStartupInjection(paneId);
-      updateIntentFile(paneId, 'Offline');
+      updateIntentState(paneId, 'Offline');
     });
   if (typeof disposeOnExit === 'function') {
     ptyExitListenerDisposers.set(String(paneId), disposeOnExit);
@@ -2016,7 +2008,7 @@ async function spawnAgent(paneId, model = null) {
     return;
   }
 
-  updateIntentFile(paneId, 'Initializing session...');
+  updateIntentState(paneId, 'Initializing session...');
 
   // Clear cached CLI identity when model is explicitly specified (model switch)
   // This ensures we don't use stale identity data

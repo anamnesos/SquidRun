@@ -6,7 +6,7 @@
 const { registerDebugReplayHandlers } = require('../modules/ipc/debug-replay-handlers');
 
 // Mock the debug-replay module
-jest.mock('../modules/memory/debug-replay', () => ({
+jest.mock('../modules/replay/debug-replay', () => ({
   loadSession: jest.fn(),
   loadTimeRangeSession: jest.fn(),
   stepForward: jest.fn(),
@@ -32,7 +32,7 @@ jest.mock('../modules/memory/debug-replay', () => ({
   getSessionStats: jest.fn(),
 }));
 
-const mockDebugReplay = require('../modules/memory/debug-replay');
+const mockDebugReplay = require('../modules/replay/debug-replay');
 
 describe('Debug Replay IPC Handlers', () => {
   let mockIpcMain;
@@ -822,7 +822,7 @@ describe('Debug Replay IPC Handlers', () => {
       jest.clearAllMocks();
 
       // Re-mock the module
-      jest.doMock('../modules/memory/debug-replay', () => ({
+      jest.doMock('../modules/replay/debug-replay', () => ({
         getState: jest.fn().mockReturnValue({}),
         getCurrentAction: jest.fn().mockReturnValue(null),
       }));
@@ -843,7 +843,7 @@ describe('Debug Replay IPC Handlers', () => {
       await freshHandlers['debug-get-state']({});
 
       // Module should now be loaded (via lazy loading)
-      const loadedModule = require('../modules/memory/debug-replay');
+      const loadedModule = require('../modules/replay/debug-replay');
       expect(loadedModule.getState).toHaveBeenCalled();
     });
   });

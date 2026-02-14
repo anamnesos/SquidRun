@@ -433,6 +433,13 @@ describe('PTY Handlers', () => {
       expect(ctx.agentRunning.get('1')).toBe('starting');
       expect(deps.broadcastClaudeState).toHaveBeenCalled();
       expect(deps.recordSessionStart).toHaveBeenCalledWith('1');
+      expect(deps.recordSessionLifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paneId: '1',
+          status: 'started',
+          reason: 'spawn_requested',
+        })
+      );
     });
 
     test('spawns codex with yolo flag', async () => {
@@ -492,6 +499,23 @@ describe('PTY Handlers', () => {
       const result = await harness.invoke('spawn-claude', '1', '/dir');
 
       expect(result.command).toBe('claude --dangerously-skip-permissions');
+    });
+  });
+
+  describe('intent-update', () => {
+    test('delegates to updateIntentState dependency when available', async () => {
+      deps.updateIntentState.mockResolvedValueOnce({ ok: true, paneId: '2' });
+      const result = await harness.invoke('intent-update', {
+        paneId: '2',
+        intent: 'Deploying patch',
+      });
+      expect(deps.updateIntentState).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paneId: '2',
+          intent: 'Deploying patch',
+        })
+      );
+      expect(result).toEqual({ ok: true, paneId: '2' });
     });
   });
 

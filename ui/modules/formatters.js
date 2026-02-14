@@ -4,8 +4,7 @@
  * - renderer.js (formatTimeSince)
  * - triggers.js (formatDuration)
  * - tabs.js (formatDuration)
- * - memory/debug-replay.js (formatDuration)
- * - memory/memory-summarizer.js (formatDuration)
+ * - replay/debug-replay.js (formatDuration)
  *
  * Tech debt item #10 from Session 57 audit.
  */
@@ -66,7 +65,7 @@ function formatCompound(ms) {
 
 /**
  * Precise format - decimal notation for exact timing.
- * Used by debug-replay.js and memory-summarizer.js
+ * Used by replay/debug-replay.js and memory-summarizer.js
  */
 function formatPrecise(ms) {
   if (ms < 1000) return `${ms}ms`;

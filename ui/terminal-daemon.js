@@ -17,7 +17,12 @@ const path = require('path');
 const crypto = require('crypto');
 const pty = require('node-pty');
 const { createCodexExecRunner } = require('./modules/codex-exec');
-const { PIPE_PATH, PANE_ROLES, resolvePaneCwd } = require('./config');
+const {
+  PIPE_PATH,
+  PANE_ROLES,
+  resolvePaneCwd,
+  resolveCoordPath,
+} = require('./config');
 
 // ============================================================
 // D1: DAEMON LOGGING TO FILE
@@ -458,9 +463,92 @@ setInterval(() => {
 // HEARTBEAT WATCHDOG (adaptive intervals)
 // ============================================================
 
-const TRIGGERS_PATH = path.join(__dirname, '..', 'workspace', 'triggers');
-const SHARED_CONTEXT_PATH = path.join(__dirname, '..', 'workspace', 'shared_context.md');
-const STATUS_MD_PATH = path.join(__dirname, '..', 'workspace', 'build', 'status.md');
+function resolveCoordFile(relPath, options = {}) {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(relPath, options);
+  }
+  return path.join(__dirname, '..', 'workspace', relPath);
+}
+
+function getTriggerPath(filename) {
+  return path.join(resolveCoordFile('triggers', { forWrite: true }), filename);
+}
+
+function readJsonIfExists(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function countActiveTaskPoolTasks() {
+  const taskPoolPath = resolveCoordFile('task-pool.json');
+  const taskPool = readJsonIfExists(taskPoolPath);
+  if (!taskPool || !Array.isArray(taskPool.tasks)) return 0;
+
+  const terminalStatuses = new Set([
+    'completed',
+    'failed',
+    'cancelled',
+    'canceled',
+    'done',
+    'resolved',
+    'closed',
+    'deprecated',
+  ]);
+
+  return taskPool.tasks.reduce((count, task) => {
+    const status = String(task?.status || '').trim().toLowerCase();
+    if (!status || terminalStatuses.has(status)) return count;
+    return count + 1;
+  }, 0);
+}
+
+function hasActiveMarkdownItems(relPath) {
+  const filePath = resolveCoordFile(relPath);
+  try {
+    if (!fs.existsSync(filePath)) return false;
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const activeMatch = content.match(/## ACTIVE[\s\S]*?(?=\n##\s|$)/i);
+    if (!activeMatch) return false;
+
+    const section = activeMatch[0];
+    if (/\(No active/i.test(section)) return false;
+    return /(^|\n)\s*(?:###\s+|- \*\*|- [^\n]+)/m.test(section);
+  } catch {
+    return false;
+  }
+}
+
+function getPendingTaskSignals() {
+  const taskPoolActiveCount = countActiveTaskPoolTasks();
+  const hasActiveBlockers = hasActiveMarkdownItems(path.join('build', 'blockers.md'));
+  const hasActiveErrors = hasActiveMarkdownItems(path.join('build', 'errors.md'));
+
+  return {
+    taskPoolActiveCount,
+    hasActiveBlockers,
+    hasActiveErrors,
+  };
+}
+
+function summarizePendingTaskSignals(signals) {
+  const parts = [];
+  if (signals.taskPoolActiveCount > 0) {
+    parts.push(`${signals.taskPoolActiveCount} task-pool item(s) open/in-progress`);
+  }
+  if (signals.hasActiveBlockers) {
+    parts.push('active blockers');
+  }
+  if (signals.hasActiveErrors) {
+    parts.push('active errors');
+  }
+  return parts.length > 0
+    ? `${parts.join(', ')}`
+    : 'No active coordination signals detected';
+}
 
 // Adaptive heartbeat intervals (ms)
 const HEARTBEAT_INTERVALS = {
@@ -518,9 +606,10 @@ function hasRecentActivity() {
  * Returns null if file doesn't exist or can't be read
  */
 function getStatusMdMtime() {
+  const statusMdPath = resolveCoordFile(path.join('build', 'status.md'));
   try {
-    if (fs.existsSync(STATUS_MD_PATH)) {
-      const stats = fs.statSync(STATUS_MD_PATH);
+    if (fs.existsSync(statusMdPath)) {
+      const stats = fs.statSync(statusMdPath);
       return stats.mtimeMs;
     }
   } catch (err) {
@@ -530,19 +619,17 @@ function getStatusMdMtime() {
 }
 
 /**
- * Check if there are pending/in-progress tasks in shared_context.md
+ * Check if there are pending/in-progress tasks via coordination state
  * Returns true if tasks found, false otherwise
  */
 function hasPendingTasks() {
   try {
-    if (fs.existsSync(SHARED_CONTEXT_PATH)) {
-      const content = fs.readFileSync(SHARED_CONTEXT_PATH, 'utf-8');
-      // Look for task indicators: 🔄 (in progress), PENDING, IN PROGRESS, ASSIGNED
-      const hasInProgress = /🔄|IN PROGRESS|PENDING|ASSIGNED/i.test(content);
-      return hasInProgress;
-    }
+    const signals = getPendingTaskSignals();
+    return signals.taskPoolActiveCount > 0
+      || signals.hasActiveBlockers
+      || signals.hasActiveErrors;
   } catch (err) {
-    logWarn(`[Heartbeat] Could not read shared_context.md: ${err.message}`);
+    logWarn(`[Heartbeat] Could not read coordination state: ${err.message}`);
   }
   return false;
 }
@@ -653,7 +740,7 @@ function sendAggressiveNudge(paneId) {
     return false;
   }
 
-  const triggerPath = path.join(TRIGGERS_PATH, triggerFile);
+  const triggerPath = getTriggerPath(triggerFile);
   const roleName = PANE_ROLES[paneId] || `Pane ${paneId}`;
   const message = `(AGGRESSIVE_NUDGE)\n`;
 
@@ -711,7 +798,7 @@ function alertUserAboutAgent(paneId) {
   });
 
   // Also write to all.txt as visible notification
-  const allTrigger = path.join(TRIGGERS_PATH, 'all.txt');
+  const allTrigger = getTriggerPath('all.txt');
   const message = `(SYSTEM): ⚠️ ${roleName} (pane ${paneId}) is stuck. Auto-nudge failed. Please check manually.\n`;
   try {
     fs.writeFileSync(allTrigger, message);
@@ -843,7 +930,7 @@ function sendHeartbeatToLead() {
   // Just send the trigger file message, let user manually ESC if needed.
 
   // Send heartbeat message via trigger file
-  const triggerPath = path.join(TRIGGERS_PATH, 'lead.txt');
+  const triggerPath = getTriggerPath('lead.txt');
   const message = '(SYSTEM): Heartbeat - check team status and nudge any stuck workers\n';
   try {
     fs.writeFileSync(triggerPath, message);
@@ -864,23 +951,10 @@ function directNudgeWorkers() {
 
   // ESC sending removed - PTY ESC breaks agents. Use trigger files instead.
 
-  // Read shared_context.md to find incomplete tasks
-  let incompleteTasksMsg = 'Check shared_context.md for your tasks';
-  try {
-    if (fs.existsSync(SHARED_CONTEXT_PATH)) {
-      const content = fs.readFileSync(SHARED_CONTEXT_PATH, 'utf-8');
-      // Look for IN PROGRESS or ASSIGNED tasks
-      const inProgress = content.match(/\|.*\|.*🔄.*\|.*\|/g);
-      if (inProgress && inProgress.length > 0) {
-        incompleteTasksMsg = `${inProgress.length} task(s) in progress - status update needed`;
-      }
-    }
-  } catch (err) {
-    logWarn(`[Heartbeat] Could not read shared_context: ${err.message}`);
-  }
+  const incompleteTasksMsg = summarizePendingTaskSignals(getPendingTaskSignals());
 
   // Nudge workers directly via trigger file
-  const workersTrigger = path.join(TRIGGERS_PATH, 'workers.txt');
+  const workersTrigger = getTriggerPath('workers.txt');
   const message = `(SYSTEM): Watchdog alert - Lead unresponsive. ${incompleteTasksMsg}. Reply with your status.\n`;
   try {
     fs.writeFileSync(workersTrigger, message);
@@ -897,7 +971,7 @@ function alertUser() {
   logError('[Heartbeat] ALL AGENTS UNRESPONSIVE - Alerting user');
 
   // Write to all.txt as last resort
-  const allTrigger = path.join(TRIGGERS_PATH, 'all.txt');
+  const allTrigger = getTriggerPath('all.txt');
   const message = '(SYSTEM): ⚠️ WATCHDOG ALERT - All agents appear stuck. User intervention needed.\n';
   try {
     fs.writeFileSync(allTrigger, message);
@@ -919,7 +993,7 @@ function alertUser() {
  */
 function checkLeadResponse() {
   // Check 1: Did Lead write to workers.txt after heartbeat?
-  const workersTrigger = path.join(TRIGGERS_PATH, 'workers.txt');
+  const workersTrigger = getTriggerPath('workers.txt');
   try {
     if (fs.existsSync(workersTrigger)) {
       const stats = fs.statSync(workersTrigger);
@@ -939,7 +1013,7 @@ function checkLeadResponse() {
   // Only actual actions (writing to workers.txt or clearing trigger file) count
 
   // Check 3: Original check - trigger file cleared (fallback)
-  const triggerPath = path.join(TRIGGERS_PATH, 'lead.txt');
+  const triggerPath = getTriggerPath('lead.txt');
   try {
     if (!fs.existsSync(triggerPath)) {
       return true; // File deleted
@@ -1007,7 +1081,7 @@ function heartbeatTick() {
         // Set timer for HB4 check
         setTimeout(() => {
           // If workers also don't respond, alert user
-          const workersTrigger = path.join(TRIGGERS_PATH, 'workers.txt');
+          const workersTrigger = getTriggerPath('workers.txt');
           try {
             if (fs.existsSync(workersTrigger)) {
               const content = fs.readFileSync(workersTrigger, 'utf-8').trim();
@@ -1117,7 +1191,7 @@ function generateMockResponse(input) {
   }
 
   if (trimmed.includes('sync') || trimmed.includes('hivemind')) {
-    return '\r\n[DRY-RUN] Sync received. Reading shared_context.md...\r\n[DRY-RUN] Worker acknowledged. Standing by for tasks.\r\n\r\n> ';
+    return '\r\n[DRY-RUN] Sync received. Reviewing ROLES.md and coordination state...\r\n[DRY-RUN] Worker acknowledged. Standing by for tasks.\r\n\r\n> ';
   }
 
   if (trimmed.includes('read') || trimmed.includes('cat')) {

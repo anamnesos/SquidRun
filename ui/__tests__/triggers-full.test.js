@@ -47,10 +47,6 @@ jest.mock('../modules/formatters', () => ({
   formatDuration: jest.fn(d => `${d}ms`),
 }));
 
-// Mock memory (optional, may fail require in real app but mocked here)
-jest.mock('../modules/memory', () => ({
-  logTriggerMessage: jest.fn(),
-}), { virtual: true });
 
 // Mock crypto
 const mockCrypto = {
@@ -160,10 +156,6 @@ describe('triggers.js module', () => {
       const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
       
       expect(result.success).toBe(true);
-      // Fixed: Now records to War Room first
-      expect(global.window.webContents.send).toHaveBeenCalledWith('war-room-message', expect.objectContaining({
-        msg: expect.stringContaining('hi')
-      }));
     });
 
     test('strips HM messageId marker before injection payload', () => {
@@ -339,62 +331,6 @@ describe('triggers.js module', () => {
     });
   });
 
-  describe('5. War Room logging + ambient updates', () => {
-    test('records war room entry for trigger messages', () => {
-      fs.readFileSync.mockImplementation((filePath) => {
-        if (String(filePath).includes('war-room.log')) return '';
-        return '(BACK #1): API ready';
-      });
-      triggers.init(global.window, new Map([['1', 'running']]), null);
-
-      triggers.handleTriggerFile('/test/workspace/triggers/architect.txt', 'architect.txt');
-
-      expect(fs.appendFileSync).toHaveBeenCalledWith(
-        expect.stringContaining('war-room.log'),
-        expect.stringContaining('"from":"DEVOPS"'),
-        'utf-8'
-      );
-      expect(global.window.webContents.send).toHaveBeenCalledWith(
-        'war-room-message',
-        expect.objectContaining({ from: 'DEVOPS', to: 'ARCH', msg: 'API ready' })
-      );
-    });
-
-    test('injects ambient update when role is mentioned', () => {
-      fs.readFileSync.mockImplementation((filePath) => {
-        if (String(filePath).includes('war-room.log')) return '';
-        return '(INFRA #2): Backend should check';
-      });
-      const running = new Map([['1', 'running'], ['2', 'running'], ['5', 'running']]);
-      triggers.init(global.window, running, null);
-
-      triggers.handleTriggerFile('/test/workspace/triggers/architect.txt', 'architect.txt');
-
-      // War room message should be emitted for mentioned role
-      expect(global.window.webContents.send).toHaveBeenCalledWith('war-room-message', expect.objectContaining({
-        from: 'DEVOPS',
-        to: 'ARCH',
-      }));
-    });
-
-    test('sanitizes carriage returns before war room emit/log', () => {
-      fs.readFileSync.mockImplementation((filePath) => {
-        if (String(filePath).includes('war-room.log')) return '';
-        return '(BACK #3): first line\r\nsecond line\r';
-      });
-      triggers.init(global.window, new Map([['1', 'running']]), null);
-
-      triggers.handleTriggerFile('/test/workspace/triggers/architect.txt', 'architect.txt');
-
-      expect(fs.appendFileSync).toHaveBeenCalledWith(
-        expect.stringContaining('war-room.log'),
-        expect.not.stringContaining('\\r'),
-        'utf-8'
-      );
-      expect(global.window.webContents.send).toHaveBeenCalledWith(
-        'war-room-message',
-        expect.objectContaining({ msg: 'first line\nsecond line' })
-      );
-    });
-  });
+  // War Room tests removed — war-room.js module deleted in S129
 });
+

@@ -30,8 +30,8 @@ jest.mock('../modules/logger', () => ({
   debug: jest.fn(),
 }));
 
-// Mock memory-summarizer
-jest.mock('../modules/memory/memory-summarizer', () => ({
+// Mock token-utils
+jest.mock('../modules/token-utils', () => ({
   estimateTokens: jest.fn((text) => {
     if (!text) return 0;
     return Math.ceil(text.length / 4);
@@ -45,7 +45,7 @@ jest.mock('../modules/memory/memory-summarizer', () => ({
 }));
 
 const fs = require('fs');
-const { estimateTokens, truncateToTokenBudget } = require('../modules/memory/memory-summarizer');
+const { estimateTokens, truncateToTokenBudget } = require('../modules/token-utils');
 const contextCompressor = require('../modules/context-compressor');
 const { _internals } = contextCompressor;
 
@@ -58,7 +58,6 @@ describe('Context Compressor Module', () => {
 
     // Reset internal state
     _internals.sharedStateRef = null;
-    _internals.memoryRef = null;
     _internals.mainWindowRef = null;
     _internals.lastSnapshots = {};
     _internals.initialized = false;
@@ -170,20 +169,15 @@ describe('Context Compressor Module', () => {
   // ===========================================================
 
   describe('buildTeamStatusSection', () => {
-    it('should build status from intent files', () => {
+    it('should build status from context snapshots', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockImplementation((filePath) => {
-        if (filePath.includes('intent') && filePath.includes('1')) {
-          return JSON.stringify({ pane: '1', role: 'Architect', session: 90, intent: 'Building P4', blockers: 'none', teammates: 'Frontend: active' });
-        }
-        if (filePath.includes('intent') && filePath.includes('2')) {
-          return JSON.stringify({ pane: '2', role: 'DevOps', session: 90, intent: 'Idle', blockers: 'none' });
-        }
-        if (filePath.includes('intent') && filePath.includes('5')) {
-          return JSON.stringify({ pane: '5', role: 'Analyst', session: 90, intent: 'Investigating', blockers: 'waiting on DevOps' });
-        }
         if (filePath.includes('context-snapshots')) {
-          return 'Session: 90';
+          return [
+            'Session: 90',
+            'Completed: P1 file watcher, P2 pipeline',
+            'Next: P4 context compressor',
+          ].join('\n');
         }
         return '{}';
       });
@@ -193,26 +187,23 @@ describe('Context Compressor Module', () => {
       expect(section.priority).toBe(100);
       expect(section.required).toBe(true);
       expect(section.content).toContain('Architect');
-      expect(section.content).toContain('Building P4');
+      expect(section.content).toContain('Session 90');
       expect(section.content).toContain('DevOps');
       expect(section.content).toContain('Analyst');
-      expect(section.content).toContain('waiting on DevOps');
-      expect(section.content).toContain('Frontend: active');
+      expect(section.content).toContain('Completed:');
+      expect(section.content).toContain('Next:');
     });
 
-    it('should handle missing intent files', () => {
+    it('should handle missing snapshot files', () => {
       fs.existsSync.mockReturnValue(false);
 
       const section = _internals.buildTeamStatusSection();
-      expect(section.content).toContain('No intent data');
+      expect(section.content).toContain('No recent status');
     });
 
-    it('should mark stale entries', () => {
+    it('should require completed/next entries for team status rows', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockImplementation((filePath) => {
-        if (filePath.includes('intent') && filePath.includes('1')) {
-          return JSON.stringify({ session: 80, intent: 'Old task', blockers: 'none' });
-        }
         if (filePath.includes('context-snapshots')) {
           return 'Session: 90';
         }
@@ -220,7 +211,7 @@ describe('Context Compressor Module', () => {
       });
 
       const section = _internals.buildTeamStatusSection();
-      expect(section.content).toContain('[STALE]');
+      expect(section.content).toContain('No recent status');
     });
   });
 
@@ -256,50 +247,6 @@ describe('Context Compressor Module', () => {
         getFormattedChangelog: jest.fn(() => { throw new Error('broken'); }),
       };
       const section = _internals.buildRecentChangesSection('1');
-      expect(section).toBeNull();
-    });
-  });
-
-  describe('buildActiveLearningsSection', () => {
-    it('should return null when no memory ref', () => {
-      _internals.memoryRef = null;
-      const section = _internals.buildActiveLearningsSection('1');
-      expect(section).toBeNull();
-    });
-
-    it('should return section when learnings are present', () => {
-      _internals.memoryRef = {
-        getContextInjection: jest.fn(() => '# Agent Context\n\n## Recent Learnings\n- topic: some learning\n- pattern: another'),
-      };
-      const section = _internals.buildActiveLearningsSection('1');
-      expect(section).not.toBeNull();
-      expect(section.id).toBe('activeLearnings');
-      expect(section.priority).toBe(80);
-      expect(section.content).toContain('Active Learnings');
-      expect(section.content).toContain('some learning');
-    });
-
-    it('should return null when no learnings section in injection', () => {
-      _internals.memoryRef = {
-        getContextInjection: jest.fn(() => '# Agent Context\nLast active: unknown'),
-      };
-      const section = _internals.buildActiveLearningsSection('1');
-      expect(section).toBeNull();
-    });
-
-    it('should return null on empty injection', () => {
-      _internals.memoryRef = {
-        getContextInjection: jest.fn(() => ''),
-      };
-      const section = _internals.buildActiveLearningsSection('1');
-      expect(section).toBeNull();
-    });
-
-    it('should handle memory errors gracefully', () => {
-      _internals.memoryRef = {
-        getContextInjection: jest.fn(() => { throw new Error('broken'); }),
-      };
-      const section = _internals.buildActiveLearningsSection('1');
       expect(section).toBeNull();
     });
   });
@@ -402,49 +349,6 @@ describe('Context Compressor Module', () => {
     });
   });
 
-  describe('buildKeyDecisionsSection', () => {
-    it('should return null when no memory ref', () => {
-      _internals.memoryRef = null;
-      const section = _internals.buildKeyDecisionsSection('1');
-      expect(section).toBeNull();
-    });
-
-    it('should return section with decisions', () => {
-      _internals.memoryRef = {
-        getContextSummary: jest.fn(() => ({
-          recentDecisions: [
-            { action: 'Combined P3a+P3b' },
-            { action: 'Used Ana for Gate 7' },
-          ],
-        })),
-      };
-
-      const section = _internals.buildKeyDecisionsSection('1');
-      expect(section).not.toBeNull();
-      expect(section.id).toBe('keyDecisions');
-      expect(section.priority).toBe(60);
-      expect(section.content).toContain('Combined P3a+P3b');
-    });
-
-    it('should return null when no decisions', () => {
-      _internals.memoryRef = {
-        getContextSummary: jest.fn(() => ({ recentDecisions: [] })),
-      };
-
-      const section = _internals.buildKeyDecisionsSection('1');
-      expect(section).toBeNull();
-    });
-
-    it('should handle memory errors gracefully', () => {
-      _internals.memoryRef = {
-        getContextSummary: jest.fn(() => { throw new Error('broken'); }),
-      };
-
-      const section = _internals.buildKeyDecisionsSection('1');
-      expect(section).toBeNull();
-    });
-  });
-
   // ===========================================================
   // SNAPSHOT GENERATION
   // ===========================================================
@@ -455,15 +359,6 @@ describe('Context Compressor Module', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockImplementation((filePath) => {
         if (typeof filePath !== 'string') return '{}';
-        if (filePath.includes('intent') && filePath.includes('1')) {
-          return JSON.stringify({ session: 90, intent: 'Building P4', blockers: 'none' });
-        }
-        if (filePath.includes('intent') && filePath.includes('2')) {
-          return JSON.stringify({ session: 90, intent: 'Idle', blockers: 'none' });
-        }
-        if (filePath.includes('intent') && filePath.includes('5')) {
-          return JSON.stringify({ session: 90, intent: 'Idle', blockers: 'none' });
-        }
         if (filePath.includes('context-snapshots')) {
           return [
             '## Context Restoration (auto-generated)',
@@ -489,14 +384,14 @@ describe('Context Compressor Module', () => {
       expect(snapshot).toContain('Session 90');
       expect(snapshot).toContain('### Team Status');
       expect(snapshot).toContain('Architect');
-      expect(snapshot).toContain('Building P4');
+      expect(snapshot).toContain('P4 context compressor');
     });
 
     it('should cache the snapshot', () => {
       contextCompressor.generateSnapshot('1');
       const cached = contextCompressor.getLastSnapshot('1');
       expect(cached).not.toBeNull();
-      expect(cached).toContain('Building P4');
+      expect(cached).toContain('P4 context compressor');
     });
 
     it('should write snapshot to disk', () => {
@@ -523,17 +418,6 @@ describe('Context Compressor Module', () => {
       const snapshot = contextCompressor.generateSnapshot('1');
       expect(snapshot).toContain('Recent Changes');
       expect(snapshot).toContain('Intent changed');
-    });
-
-    it('should include active learnings when memory has data', () => {
-      _internals.memoryRef = {
-        getContextInjection: jest.fn(() => '# Agent\n\n## Recent Learnings\n- config: Always mock PANE_IDS'),
-        getContextSummary: jest.fn(() => ({ recentDecisions: [] })),
-      };
-
-      const snapshot = contextCompressor.generateSnapshot('1');
-      expect(snapshot).toContain('Active Learnings');
-      expect(snapshot).toContain('Always mock PANE_IDS');
     });
 
     it('should respect token budget', () => {
@@ -627,10 +511,8 @@ describe('Context Compressor Module', () => {
   describe('section prioritization', () => {
     it('should have correct priority ordering', () => {
       expect(_internals.SECTION_PRIORITIES.teamStatus).toBeGreaterThan(_internals.SECTION_PRIORITIES.recentChanges);
-      expect(_internals.SECTION_PRIORITIES.recentChanges).toBeGreaterThan(_internals.SECTION_PRIORITIES.activeLearnings);
-      expect(_internals.SECTION_PRIORITIES.activeLearnings).toBeGreaterThan(_internals.SECTION_PRIORITIES.activeIssues);
+      expect(_internals.SECTION_PRIORITIES.recentChanges).toBeGreaterThan(_internals.SECTION_PRIORITIES.activeIssues);
       expect(_internals.SECTION_PRIORITIES.activeIssues).toBeGreaterThan(_internals.SECTION_PRIORITIES.sessionProgress);
-      expect(_internals.SECTION_PRIORITIES.sessionProgress).toBeGreaterThan(_internals.SECTION_PRIORITIES.keyDecisions);
     });
 
     it('should place team status before other sections in output', () => {
@@ -858,18 +740,15 @@ describe('Context Compressor Module', () => {
   describe('init', () => {
     it('should store references', () => {
       const mockSharedState = { getFormattedChangelog: jest.fn() };
-      const mockMemory = { getContextInjection: jest.fn() };
 
       fs.existsSync.mockReturnValue(false);
 
       contextCompressor.init({
         sharedState: mockSharedState,
-        memory: mockMemory,
         mainWindow: mockMainWindow,
       });
 
       expect(_internals.sharedStateRef).toBe(mockSharedState);
-      expect(_internals.memoryRef).toBe(mockMemory);
       expect(_internals.mainWindowRef).toBe(mockMainWindow);
       expect(_internals.initialized).toBe(true);
     });
@@ -889,7 +768,7 @@ describe('Context Compressor Module', () => {
       contextCompressor.init({ watcher: mockWatcher });
 
       // Should register a watch for each file in WATCHED_FILES
-      expect(mockWatcher.addWatch).toHaveBeenCalledTimes(5);
+      expect(mockWatcher.addWatch).toHaveBeenCalledTimes(_internals.WATCHED_FILES.length);
     });
 
     it('should generate initial snapshots', () => {
@@ -993,12 +872,12 @@ describe('Context Compressor Module', () => {
   // ===========================================================
 
   describe('error handling', () => {
-    it('should handle corrupted intent files', () => {
+    it('should handle corrupted snapshot files', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockReturnValue('NOT JSON');
 
       const section = _internals.buildTeamStatusSection();
-      expect(section.content).toContain('No intent data');
+      expect(section.content).toContain('No recent status');
     });
 
     it('should handle missing workspace directory', () => {
@@ -1011,10 +890,6 @@ describe('Context Compressor Module', () => {
     it('should handle all sources failing simultaneously', () => {
       _internals.sharedStateRef = {
         getFormattedChangelog: jest.fn(() => { throw new Error('fail'); }),
-      };
-      _internals.memoryRef = {
-        getContextInjection: jest.fn(() => { throw new Error('fail'); }),
-        getContextSummary: jest.fn(() => { throw new Error('fail'); }),
       };
       fs.existsSync.mockReturnValue(false);
 
@@ -1030,11 +905,11 @@ describe('Context Compressor Module', () => {
   // ===========================================================
 
   describe('getSessionNumber', () => {
-    it('should return session number from intent files', () => {
+    it('should return session number from context snapshot', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockImplementation((filePath) => {
-        if (String(filePath).includes(path.join('intent', '1.json'))) {
-          return JSON.stringify({ session: 90 });
+        if (String(filePath).includes(path.join('context-snapshots', '1.md'))) {
+          return 'Session: 90';
         }
         return '{}';
       });

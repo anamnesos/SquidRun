@@ -28,16 +28,15 @@ Model assignment is runtime-configured in `ui/settings.json` (`paneCommands`).
 ### Startup Baseline
 
 **Architect (pane 1):**
-1. Read `.hivemind/app-status.json` (fallback `workspace/app-status.json`).
-2. Check `.hivemind/build/blockers.md` and `.hivemind/build/errors.md`.
-3. Read context snapshot at `.hivemind/context-snapshots/1.md` (fallback `workspace/context-snapshots/1.md`).
-4. Read intent files for panes `1`, `2`, `5`.
-5. Update own intent file.
+1. Query Evidence Ledger context: `node ui/scripts/hm-memory.js context --role architect`.
+2. Read `.hivemind/app-status.json`.
+3. Check `.hivemind/build/blockers.md` and `.hivemind/build/errors.md`.
+4. Read context snapshot at `.hivemind/context-snapshots/1.md`.
+5. Query Team Memory for active claims: `node ui/scripts/hm-claim.js query --status proposed`.
 
 **DevOps / Analyst (panes 2, 5):**
-1. Read own intent file only (`workspace/intent/{pane}.json`).
-2. Update own intent file with current focus.
-3. Check in to Architect via `hm-send` — one line, no extras.
+1. Verify auto-injected context (sourced from Team Memory DB).
+2. Check in to Architect via `hm-send` — one line, no extras.
 
 ## ARCHITECT
 
@@ -64,16 +63,17 @@ Responsibilities:
 - `ui/modules/main/*`, `ui/modules/ipc/*`, daemon/watcher/process lifecycle.
 - Build/test/deployment reliability and developer tooling.
 
-## ANALYST
+## ANALYST (ORACLE)
 
 Primary workflow:
-- Investigate defects and regressions.
+- High-level system monitor and vision-provider for native agent teams.
 - Produce root-cause findings with exact file/line evidence.
-- Prioritize reproducibility and actionable handoff notes.
+- Maintain the "Bridge" view and "Oracle" image generation services.
 
 Responsibilities:
-- Diagnosis-first workflow; implementation when explicitly assigned.
 - Observability, instrumentation, and validation support.
+- System-wide defect investigation and reproducibility.
+- Providing visual context and system "vision" to the coordinator.
 
 ## Global Rules
 
