@@ -279,14 +279,14 @@ describe('Terminal Injection', () => {
       expect(controller.isPromptReady('1')).toBe(false);
     });
 
-    test('detects > prompt pattern', () => {
+    test('detects named cli > prompt pattern', () => {
       terminals.set('1', {
         buffer: {
           active: {
             cursorY: 0,
             viewportY: 0,
             getLine: jest.fn().mockReturnValue({
-              translateToString: () => 'user@host>  ',
+              translateToString: () => 'codex>  ',
             }),
           },
         },
@@ -324,7 +324,7 @@ describe('Terminal Injection', () => {
       expect(controller.isPromptReady('1')).toBe(true);
     });
 
-    test('detects : prompt pattern', () => {
+    test('does not treat trailing : as prompt', () => {
       terminals.set('1', {
         buffer: {
           active: {
@@ -336,10 +336,10 @@ describe('Terminal Injection', () => {
           },
         },
       });
-      expect(controller.isPromptReady('1')).toBe(true);
+      expect(controller.isPromptReady('1')).toBe(false);
     });
 
-    test('detects ? prompt pattern', () => {
+    test('does not treat trailing ? as prompt', () => {
       terminals.set('1', {
         buffer: {
           active: {
@@ -351,7 +351,7 @@ describe('Terminal Injection', () => {
           },
         },
       });
-      expect(controller.isPromptReady('1')).toBe(true);
+      expect(controller.isPromptReady('1')).toBe(false);
     });
 
     test('returns false for non-prompt text', () => {
@@ -1152,7 +1152,7 @@ describe('Terminal Injection', () => {
     });
 
     test('retries submit once and succeeds when prompt transitions on retry', async () => {
-      let promptText = 'ready> ';
+      let promptText = 'codex> ';
       let enterCalls = 0;
       terminals.set('1', {
         _hivemindBypass: false,
@@ -1195,7 +1195,7 @@ describe('Terminal Injection', () => {
             cursorY: 0,
             viewportY: 0,
             getLine: jest.fn(() => ({
-              translateToString: () => 'ready> ',
+              translateToString: () => 'codex> ',
             })),
           },
         },
@@ -1230,7 +1230,7 @@ describe('Terminal Injection', () => {
             cursorY: 0,
             viewportY: 0,
             getLine: jest.fn(() => ({
-              translateToString: () => 'ready> ',
+              translateToString: () => 'codex> ',
             })),
           },
         },
@@ -1254,7 +1254,7 @@ describe('Terminal Injection', () => {
     });
 
     test('force-expired defer path auto-retries Enter with refocus', async () => {
-      let promptText = 'ready> ';
+      let promptText = 'codex> ';
       let enterCalls = 0;
       terminals.set('1', {
         _hivemindBypass: false,
@@ -1321,7 +1321,7 @@ describe('Terminal Injection', () => {
             cursorY: 0,
             viewportY: 0,
             getLine: jest.fn(() => ({
-              translateToString: () => 'ready> ',
+              translateToString: () => 'codex> ',
             })),
           },
         },

@@ -195,7 +195,12 @@ function createInjectionController(options = {}) {
       if (!line) return false;
 
       const lineText = line.translateToString(true).trimEnd();
-      const promptPatterns = [/>\s*$/, /\$\s*$/, /#\s*$/, /:\s*$/, /\?\s*$/];
+      const promptPatterns = [
+        /(?:^|[\s>])(codex|gemini|claude|cursor)>\s*$/i,
+        /(?:^|[\s>])PS\s+[^>\n]*>\s*$/i,
+        /(?:^|[\s>])[A-Za-z]:\\[^>\n]*>\s*$/,
+        /(?:^|[\w./~:-]+)[$#]\s*$/,
+      ];
       const hasPrompt = promptPatterns.some(p => p.test(lineText));
 
       if (hasPrompt) {

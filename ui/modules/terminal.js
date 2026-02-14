@@ -327,7 +327,8 @@ const MAX_FOCUS_RETRIES = 3;          // Max focus retry attempts before giving 
 const STARTUP_OSC_REGEX = /\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g;
 const STARTUP_CSI_REGEX = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const STARTUP_READY_PATTERNS = [
-  /(^|\n)>\s*(\n|$)/m,
+  /(^|\n)(?:codex|claude|gemini|cursor)>\s*(\n|$)/im,
+  /(^|\n)PS\s+[^\n>]*>\s*(\n|$)/m,
   /how can i help/i,
 ];
 
@@ -871,17 +872,24 @@ function clearStartupInjection(paneId) {
   if (!state) return;
   if (state.timeoutId) {
     clearTimeout(state.timeoutId);
+    state.timeoutId = null;
   }
+  if (state.sendTimeoutId) {
+    clearTimeout(state.sendTimeoutId);
+    state.sendTimeoutId = null;
+  }
+  state.cancelled = true;
   startupInjectionState.delete(String(paneId));
 }
 
 function triggerStartupInjection(paneId, state, reason) {
   if (!state || state.completed) return;
   state.completed = true;
+  state.cancelled = false;
   if (state.timeoutId) {
     clearTimeout(state.timeoutId);
+    state.timeoutId = null;
   }
-  startupInjectionState.delete(String(paneId));
 
   const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
   const timestamp = new Date().toISOString().split('T')[0];
@@ -890,7 +898,13 @@ function triggerStartupInjection(paneId, state, reason) {
   // Session 69 fix: Gemini needs longer delay - CLI takes longer to initialize input handling
   const identityDelayMs = state.isGemini ? 1000 : STARTUP_IDENTITY_DELAY_MS;
 
-  setTimeout(async () => {
+  state.sendTimeoutId = setTimeout(async () => {
+    const current = startupInjectionState.get(String(paneId));
+    if (!current || current !== state || current.cancelled) {
+      return;
+    }
+    state.sendTimeoutId = null;
+
     // Session 69: Gemini identity - match doSendToPane pattern exactly
     // Previous attempt failed because it was missing Ctrl+U clear
     if (state.isGemini) {
@@ -914,6 +928,7 @@ function triggerStartupInjection(paneId, state, reason) {
       sendToPane(paneId, identityMsg, { verifySubmitAccepted: false });
       log.info('spawnAgent', `Identity injected for ${role} (pane ${paneId}) [ready:${reason}]`);
     }
+    startupInjectionState.delete(String(paneId));
   }, identityDelayMs);
 
   // Startup context injection disabled: CLI tools load context natively.
@@ -925,9 +940,11 @@ function armStartupInjection(paneId, options = {}) {
   const state = {
     buffer: '',
     completed: false,
+    cancelled: false,
     modelType: options.modelType || 'claude',
     isGemini: Boolean(options.isGemini),
     timeoutId: null,
+    sendTimeoutId: null,
   };
 
   // Gemini CLI takes 8-12s to start (github.com/google-gemini/gemini-cli/issues/4544)
