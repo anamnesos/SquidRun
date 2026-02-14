@@ -16,6 +16,7 @@ const path = require('path');
 const fs = require('fs');
 const watcher = require('./watcher');
 const triggers = require('./triggers');
+const { getTaskPoolBridge } = require('./ipc/task-pool-handlers');
 const { WORKSPACE_PATH, PANE_IDS, PANE_ROLES } = require('../config');
 const log = require('./logger');
 
@@ -33,6 +34,66 @@ const TRIGGER_FILES = {
   '2': 'devops.txt',
   '5': 'analyst.txt',
 };
+
+function asNonEmptyString(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim();
+}
+
+function normalizeTaskResolutionStatus(status = 'completed') {
+  const raw = asNonEmptyString(status).toLowerCase();
+  if (!raw) return 'completed';
+  if (raw === 'completed' || raw === 'complete' || raw === 'done' || raw === 'success') return 'completed';
+  if (raw === 'failed' || raw === 'failure' || raw === 'error') return 'failed';
+  if (raw === 'needs_input') return 'needs_input';
+  return 'completed';
+}
+
+function runTaskPoolClaimSideEffect({ paneId, taskId }) {
+  const bridge = getTaskPoolBridge();
+  if (!bridge || typeof bridge.claimTask !== 'function') return;
+  Promise.resolve()
+    .then(() => bridge.claimTask({ paneId, taskId }))
+    .then((result) => {
+      if (!result?.success && result?.error !== 'Task not found') {
+        log.warn('MCP Bridge', `Task pool claim side-effect failed for ${taskId}: ${result.error || 'unknown'}`);
+      }
+    })
+    .catch((err) => {
+      log.warn('MCP Bridge', `Task pool claim side-effect failed for ${taskId}: ${err.message}`);
+    });
+}
+
+function runTaskPoolResolutionSideEffect({ paneId, taskId, status, resultSummary, errorMessage }) {
+  const bridge = getTaskPoolBridge();
+  if (!bridge || typeof bridge.updateTaskStatus !== 'function') return;
+  const metadata = {
+    paneId,
+    source: 'mcp.complete_task',
+  };
+  if (asNonEmptyString(resultSummary)) {
+    metadata.result = asNonEmptyString(resultSummary);
+  }
+  if (status === 'failed') {
+    metadata.error = {
+      message: asNonEmptyString(errorMessage) || asNonEmptyString(resultSummary) || 'Task failed',
+    };
+  }
+
+  Promise.resolve()
+    .then(() => bridge.updateTaskStatus({ taskId, status, metadata }))
+    .then((updateResult) => {
+      if (!updateResult?.success && updateResult?.error !== 'Task not found') {
+        log.warn(
+          'MCP Bridge',
+          `Task pool status side-effect failed for ${taskId} (${status}): ${updateResult.error || 'unknown'}`
+        );
+      }
+    })
+    .catch((err) => {
+      log.warn('MCP Bridge', `Task pool status side-effect failed for ${taskId}: ${err.message}`);
+    });
+}
 
 /**
  * Log MCP fallback event
@@ -316,7 +377,14 @@ function mcpClaimTask(sessionId, taskId, description = '') {
     return { success: false, error: validation.error };
   }
 
-  return watcher.claimAgent(validation.paneId, taskId, description);
+  const result = watcher.claimAgent(validation.paneId, taskId, description);
+  if (result?.success) {
+    runTaskPoolClaimSideEffect({
+      paneId: validation.paneId,
+      taskId,
+    });
+  }
+  return result;
 }
 
 /**
@@ -325,10 +393,31 @@ function mcpClaimTask(sessionId, taskId, description = '') {
  * @param {string} sessionId - Agent's MCP session
  * @returns {object} Result
  */
-function mcpCompleteTask(sessionId) {
+function mcpCompleteTask(sessionId, payload = {}) {
   const validation = validateSession(sessionId);
   if (!validation.valid) {
     return { success: false, error: validation.error };
+  }
+
+  const claims = watcher.getClaims();
+  const claim = claims && typeof claims === 'object' ? claims[validation.paneId] : null;
+  const taskId = asNonEmptyString(payload.taskId || payload.task_id || claim?.taskId);
+  const status = normalizeTaskResolutionStatus(payload.status || payload.outcome || 'completed');
+  const errorMessage = asNonEmptyString(
+    payload.errorMessage
+    || payload.error_message
+    || payload.error?.message
+  );
+  const resultSummary = asNonEmptyString(payload.result || payload.summary || payload.note);
+
+  if (taskId) {
+    runTaskPoolResolutionSideEffect({
+      paneId: validation.paneId,
+      taskId,
+      status,
+      resultSummary,
+      errorMessage,
+    });
   }
 
   return watcher.releaseAgent(validation.paneId);
@@ -465,7 +554,18 @@ function getMCPToolDefinitions() {
     {
       name: 'complete_task',
       description: 'Mark your current task as complete',
-      inputSchema: { type: 'object', properties: {} },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          taskId: { type: 'string', description: 'Optional explicit task id (defaults to current claim)' },
+          status: {
+            type: 'string',
+            description: 'Resolution status (completed|failed|needs_input). Default: completed',
+          },
+          result: { type: 'string', description: 'Optional completion/failure summary' },
+          errorMessage: { type: 'string', description: 'Optional failure message when status=failed' },
+        },
+      },
     },
     {
       name: 'get_claims',
@@ -524,7 +624,7 @@ function handleToolCall(sessionId, toolName, args = {}) {
       return mcpClaimTask(sessionId, args.taskId, args.description || '');
 
     case 'complete_task':
-      return mcpCompleteTask(sessionId);
+      return mcpCompleteTask(sessionId, args || {});
 
     case 'get_claims':
       return mcpGetClaims();

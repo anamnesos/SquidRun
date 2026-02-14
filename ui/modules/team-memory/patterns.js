@@ -82,6 +82,56 @@ function normalizeAgents(value) {
   return agents.sort();
 }
 
+function normalizeEventActor(entry = {}) {
+  return normalizeRole(entry.agent || entry.owner || entry.actor || entry.by, '');
+}
+
+function normalizeEventOutcome(entry = {}) {
+  const rawOutcome = asString(entry.outcome, '').toLowerCase();
+  if (rawOutcome === 'failure' || rawOutcome === 'error') return 'failure';
+  if (rawOutcome === 'success') return 'success';
+
+  const rawStatus = asString(entry.status, '').toLowerCase();
+  if (
+    rawStatus === 'failed'
+    || rawStatus === 'failure'
+    || rawStatus === 'error'
+    || rawStatus === 'contested'
+    || rawStatus === 'pending_proof'
+  ) {
+    return 'failure';
+  }
+  if (
+    rawStatus === 'completed'
+    || rawStatus === 'complete'
+    || rawStatus === 'success'
+    || rawStatus === 'confirmed'
+  ) {
+    return 'success';
+  }
+
+  return '';
+}
+
+function normalizePatternEvent(entry = {}) {
+  const actor = normalizeEventActor(entry);
+  const claimType = asString(entry.claimType || entry.claim_type, '').toLowerCase();
+  const outcome = normalizeEventOutcome(entry);
+  const status = asString(entry.status, '').toLowerCase();
+  const session = asString(entry.session || entry.session_id || entry.sessionId, '');
+
+  return {
+    ...entry,
+    agent: actor || null,
+    owner: actor || null,
+    claimType: claimType || null,
+    claim_type: claimType || null,
+    outcome: outcome || null,
+    status: status || null,
+    session: session || null,
+  };
+}
+
 function toSessionOrdinal(session) {
   const text = asString(session, '');
   if (!text) return null;
@@ -375,7 +425,7 @@ class TeamMemoryPatterns {
       const scope = asString(event.scope || event.file || event.path, '');
       if (!scope) continue;
       if (!byScope.has(scope)) byScope.set(scope, []);
-      byScope.get(scope).push(event);
+      byScope.get(scope).push(normalizePatternEvent(event));
     }
 
     const claimRows = this.db.prepare(`
@@ -391,7 +441,7 @@ class TeamMemoryPatterns {
       const scope = asString(row.scope, '');
       if (!scope) continue;
       if (!byScope.has(scope)) byScope.set(scope, []);
-      byScope.get(scope).push({
+      byScope.get(scope).push(normalizePatternEvent({
         claimId: row.id,
         agent: row.owner,
         claimType: row.claim_type,
@@ -399,32 +449,39 @@ class TeamMemoryPatterns {
         session: row.session,
         confidence: row.confidence,
         timestamp: row.created_at,
-      });
+      }));
     }
 
     for (const [scope, scopeEvents] of byScope.entries()) {
-      const agents = normalizeAgents(scopeEvents.map((entry) => entry.agent || entry.owner));
-      const failures = scopeEvents.filter((entry) => {
+      const normalizedScopeEvents = scopeEvents.map((entry) => normalizePatternEvent(entry));
+      const agents = normalizeAgents(normalizedScopeEvents.map((entry) => entry.agent || entry.owner));
+      const failures = normalizedScopeEvents.filter((entry) => {
         const outcome = asString(entry.outcome, '').toLowerCase();
         const claimType = asString(entry.claimType || entry.claim_type, '').toLowerCase();
         const status = asString(entry.status, '').toLowerCase();
         return outcome === 'failure'
           || outcome === 'error'
+          || status === 'failed'
+          || status === 'failure'
+          || status === 'error'
+          || status === 'pending_proof'
           || claimType === 'negative'
           || status === 'contested';
       });
-      const successes = scopeEvents.filter((entry) => {
+      const successes = normalizedScopeEvents.filter((entry) => {
         const outcome = asString(entry.outcome, '').toLowerCase();
         const claimType = asString(entry.claimType || entry.claim_type, '').toLowerCase();
         const status = asString(entry.status, '').toLowerCase();
         return outcome === 'success'
+          || status === 'completed'
+          || status === 'complete'
           || claimType === 'decision'
           || status === 'confirmed'
           || claimType === 'fact';
       });
 
-      if (agents.length >= 2 && scopeEvents.length >= 3) {
-        const frequencyDelta = Math.max(1, Math.floor(scopeEvents.length / 2));
+      if (agents.length >= 2 && normalizedScopeEvents.length >= 3) {
+        const frequencyDelta = Math.max(1, Math.floor(normalizedScopeEvents.length / 2));
         const confidence = clamp01(0.45 + Math.min(0.4, frequencyDelta * 0.08), 0.5);
         const created = this.upsertPattern({
           patternType: 'coordination',

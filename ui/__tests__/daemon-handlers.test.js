@@ -564,6 +564,26 @@ describe('daemon-handlers.js module', () => {
         ipcHandlers['completion-detected']({}, { paneId: '1', pattern: 'done' });
         expect(notifications.showToast).toHaveBeenCalled();
       });
+
+      test('should update task lifecycle on completion when pane has claim', async () => {
+        daemonHandlers.setupAutoTriggerListener();
+        ipcRenderer.invoke
+          .mockResolvedValueOnce({ '1': { taskId: 'T-99' } }) // get-claims
+          .mockResolvedValueOnce({ success: true }) // update-task-status
+          .mockResolvedValueOnce({ success: true }); // release-agent
+
+        await ipcHandlers['completion-detected']({}, { paneId: '1', pattern: 'done' });
+
+        expect(ipcRenderer.invoke).toHaveBeenCalledWith('get-claims');
+        expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+          'update-task-status',
+          expect.objectContaining({
+            taskId: 'T-99',
+            status: 'completed',
+          })
+        );
+        expect(ipcRenderer.invoke).toHaveBeenCalledWith('release-agent', '1');
+      });
     });
 
     describe('Throttle Queue UI Side Effects', () => {

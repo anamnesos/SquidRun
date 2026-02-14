@@ -530,10 +530,30 @@ function setupAutoTriggerListener() {
     uiView.showAutoTriggerFeedback(data);
   });
 
-  registerScopedIpcListener('auto-trigger', 'completion-detected', (event, data) => {
+  registerScopedIpcListener('auto-trigger', 'completion-detected', async (event, data) => {
     const { paneId, pattern } = data;
     log.info('Completion', `Pane ${paneId} completed: ${pattern}`);
     showToast(`${uiView.PANE_ROLES[paneId] || `Pane ${paneId}`} completed task`, 'info');
+
+    try {
+      const claims = await ipcRenderer.invoke('get-claims');
+      const claimEntry = (claims && typeof claims === 'object') ? claims[String(paneId)] : null;
+      const taskId = typeof claimEntry === 'string' ? claimEntry : claimEntry?.taskId;
+      if (!taskId) return;
+
+      await ipcRenderer.invoke('update-task-status', {
+        taskId,
+        status: 'completed',
+        metadata: {
+          paneId: String(paneId),
+          source: 'completion-detected',
+          pattern: pattern || null,
+        },
+      });
+      await ipcRenderer.invoke('release-agent', String(paneId));
+    } catch (err) {
+      log.warn('Completion', `Failed to resolve task lifecycle for pane ${paneId}: ${err.message}`);
+    }
   });
 }
 
