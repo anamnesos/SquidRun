@@ -6,6 +6,7 @@
 const { ipcRenderer } = require('electron');
 const log = require('./logger');
 const { registerScopedIpcListener } = require('./renderer-ipc-registry');
+const { escapeHtml } = require('./tabs/utils');
 
 // Session start time for duration tracking
 let sessionStartTime = Date.now();
@@ -181,8 +182,8 @@ function renderDropdownList(listEl, tasks, statusType) {
 
     return `
       <div class="status-dropdown-item">
-        <div class="status-dropdown-item-title">${task.subject || task.id}</div>
-        ${meta ? `<div class="status-dropdown-item-meta">${meta}</div>` : ''}
+        <div class="status-dropdown-item-title">${escapeHtml(task.subject || task.id)}</div>
+        ${meta ? `<div class="status-dropdown-item-meta">${escapeHtml(meta)}</div>` : ''}
       </div>
     `;
   }).join('');

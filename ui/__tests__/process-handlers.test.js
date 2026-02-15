@@ -68,9 +68,9 @@ describe('Process Handlers', () => {
     });
 
     test('uses custom cwd when provided', async () => {
-      await harness.invoke('spawn-process', 'ls', [], '/custom/path');
+      await harness.invoke('spawn-process', 'git', [], '/custom/path');
 
-      expect(spawn).toHaveBeenCalledWith('ls', [], expect.objectContaining({
+      expect(spawn).toHaveBeenCalledWith('git', [], expect.objectContaining({
         cwd: '/custom/path',
       }));
     });
@@ -78,11 +78,18 @@ describe('Process Handlers', () => {
     test('uses shell: false on non-Windows', async () => {
       os.platform.mockReturnValue('linux');
 
-      await harness.invoke('spawn-process', 'ls', []);
+      await harness.invoke('spawn-process', 'git', []);
 
-      expect(spawn).toHaveBeenCalledWith('ls', [], expect.objectContaining({
+      expect(spawn).toHaveBeenCalledWith('git', [], expect.objectContaining({
         shell: false,
       }));
+    });
+
+    test('rejects commands not in whitelist', async () => {
+      const result = await harness.invoke('spawn-process', 'rm', ['-rf', '/']);
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/not allowed/);
+      expect(spawn).not.toHaveBeenCalled();
     });
 
     test('stores process in backgroundProcesses', async () => {
@@ -102,7 +109,7 @@ describe('Process Handlers', () => {
         throw new Error('Spawn failed');
       });
 
-      const result = await harness.invoke('spawn-process', 'invalid', []);
+      const result = await harness.invoke('spawn-process', 'node', []);
 
       expect(result).toEqual({ success: false, error: 'Spawn failed' });
     });
@@ -111,7 +118,7 @@ describe('Process Handlers', () => {
       const mockProc = createMockProcess();
       spawn.mockImplementation(() => mockProc);
 
-      const result = await harness.invoke('spawn-process', 'echo', ['hello']);
+      const result = await harness.invoke('spawn-process', 'node', ['--version']);
 
       // Simulate stdout data
       mockProc.stdout.emit('data', 'Hello World\n');
@@ -124,7 +131,7 @@ describe('Process Handlers', () => {
       const mockProc = createMockProcess();
       spawn.mockImplementation(() => mockProc);
 
-      const result = await harness.invoke('spawn-process', 'failing', []);
+      const result = await harness.invoke('spawn-process', 'eslint', []);
 
       // Simulate stderr data
       mockProc.stderr.emit('data', 'Error occurred\n');
@@ -137,7 +144,7 @@ describe('Process Handlers', () => {
       const mockProc = createMockProcess();
       spawn.mockImplementation(() => mockProc);
 
-      const result = await harness.invoke('spawn-process', 'verbose', []);
+      const result = await harness.invoke('spawn-process', 'npx', ['verbose']);
 
       // Simulate many lines of output
       for (let i = 0; i < 150; i++) {
@@ -165,7 +172,7 @@ describe('Process Handlers', () => {
       const mockProc = createMockProcess();
       spawn.mockImplementation(() => mockProc);
 
-      const result = await harness.invoke('spawn-process', 'failing', []);
+      const result = await harness.invoke('spawn-process', 'jest', []);
 
       mockProc.emit('exit', 1);
 
@@ -178,7 +185,7 @@ describe('Process Handlers', () => {
       const mockProc = createMockProcess();
       spawn.mockImplementation(() => mockProc);
 
-      const result = await harness.invoke('spawn-process', 'failing', []);
+      const result = await harness.invoke('spawn-process', 'jest', []);
 
       mockProc.emit('error', new Error('Process crashed'));
 

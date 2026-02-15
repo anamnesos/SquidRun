@@ -98,7 +98,10 @@ function registerSettingsHandlers(ctx, deps) {
     };
 
     for (const [key, value] of Object.entries(updates)) {
-      if (value && validators[key] && !validators[key](value)) {
+      if (!validators[key]) {
+        return { success: false, error: `Unknown key: ${key}` };
+      }
+      if (value && !validators[key](value)) {
         return { success: false, error: `Invalid format for ${key.replace('_API_KEY', '')}` };
       }
     }

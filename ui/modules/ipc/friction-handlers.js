@@ -6,6 +6,13 @@
 const fs = require('fs');
 const path = require('path');
 
+function safeFrictionPath(frictionDir, filename) {
+  if (typeof filename !== 'string' || !filename) return null;
+  const resolved = path.resolve(frictionDir, filename);
+  if (!resolved.startsWith(path.resolve(frictionDir) + path.sep)) return null;
+  return resolved;
+}
+
 function registerFrictionHandlers(ctx) {
   const { ipcMain, FRICTION_DIR } = ctx;
 
@@ -37,7 +44,8 @@ function registerFrictionHandlers(ctx) {
 
   ipcMain.handle('read-friction', (event, filename) => {
     try {
-      const filePath = path.join(FRICTION_DIR, filename);
+      const filePath = safeFrictionPath(FRICTION_DIR, filename);
+      if (!filePath) return { success: false, error: 'Invalid filename' };
       if (!fs.existsSync(filePath)) {
         return { success: false, error: 'File not found' };
       }
@@ -50,7 +58,8 @@ function registerFrictionHandlers(ctx) {
 
   ipcMain.handle('delete-friction', (event, filename) => {
     try {
-      const filePath = path.join(FRICTION_DIR, filename);
+      const filePath = safeFrictionPath(FRICTION_DIR, filename);
+      if (!filePath) return { success: false, error: 'Invalid filename' };
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }

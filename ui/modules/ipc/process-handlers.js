@@ -4,8 +4,14 @@
  */
 
 const os = require('os');
+const path = require('path');
 const { spawn } = require('child_process');
 const { createBackgroundProcessController } = require('./background-processes');
+
+const ALLOWED_COMMANDS = new Set([
+  'npm', 'npx', 'node', 'git', 'jest', 'eslint', 'tsc', 'prettier',
+  'npm.cmd', 'npx.cmd', 'node.exe', 'git.exe',
+]);
 
 function registerProcessHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -23,6 +29,13 @@ function registerProcessHandlers(ctx) {
 
   ipcMain.handle('spawn-process', (event, command, args = [], cwd = null) => {
     try {
+      const baseName = path.basename(command).toLowerCase();
+      if (!ALLOWED_COMMANDS.has(baseName)) {
+        return { success: false, error: `Command not allowed: ${baseName}` };
+      }
+      if (!Array.isArray(args) || args.some(a => typeof a !== 'string')) {
+        return { success: false, error: 'Invalid args: must be array of strings' };
+      }
       const id = `proc-${ctx.processIdCounter++}`;
       const workDir = cwd || process.cwd();
 
