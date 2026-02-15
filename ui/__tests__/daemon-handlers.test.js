@@ -671,7 +671,7 @@ describe('daemon-handlers.js module', () => {
         });
       });
 
-      test('should emit explicit trigger-delivery-outcome when terminal delivery fails', () => {
+      test('should emit accepted.unverified outcome when terminal reports submit_not_accepted', () => {
         let injectHandler;
         ipcRenderer.on.mockImplementation((channel, handler) => {
           if (channel === 'inject-message') injectHandler = handler;
@@ -684,13 +684,13 @@ describe('daemon-handlers.js module', () => {
         injectHandler({}, { panes: ['5'], message: 'msg', deliveryId: 'delivery-failed-1' });
         jest.runAllTimers();
 
-        expect(uiView.showDeliveryFailed).toHaveBeenCalledWith('5', 'submit_not_accepted');
+        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('5', 'delivered');
         expect(ipcRenderer.send).toHaveBeenCalledWith('trigger-delivery-outcome', {
           deliveryId: 'delivery-failed-1',
           paneId: '5',
-          accepted: false,
+          accepted: true,
           verified: false,
-          status: 'submit_not_accepted',
+          status: 'accepted.unverified',
           reason: 'submit_not_accepted',
         });
         expect(ipcRenderer.send).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-failed-1', paneId: '5' });

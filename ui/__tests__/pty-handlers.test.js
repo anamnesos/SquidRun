@@ -253,68 +253,29 @@ describe('PTY Handlers', () => {
   });
 
   describe('codex-exec', () => {
-    test('returns error when daemon not connected', async () => {
-      ctx.daemonClient.connected = false;
+    test('returns unsupported_mode when called (legacy path disabled)', async () => {
       const result = await harness.invoke('codex-exec', '2', 'test prompt');
-
-      expect(result).toEqual({ success: false, error: 'Daemon not connected' });
-    });
-
-    test('executes codex with prompt', async () => {
-      ctx.daemonClient.connected = true;
-      const result = await harness.invoke('codex-exec', '2', 'write hello world');
-
-      expect(ctx.daemonClient.codexExec).toHaveBeenCalledWith('2', 'write hello world');
-      expect(result).toEqual(expect.objectContaining({
-        success: true,
-        status: 'sent_without_ack',
-        requestId: null,
-        queued: false,
-      }));
-    });
-
-    test('uses empty string when prompt is falsy', async () => {
-      ctx.daemonClient.connected = true;
-      await harness.invoke('codex-exec', '2', null);
-
-      expect(ctx.daemonClient.codexExec).toHaveBeenCalledWith('2', '');
-    });
-
-    test('awaits codexExecAndWait when available', async () => {
-      ctx.daemonClient.connected = true;
-      ctx.daemonClient.codexExecAndWait = jest.fn().mockResolvedValue({
-        success: true,
-        status: 'accepted',
-        requestId: 'codex-exec-1',
-      });
-
-      const result = await harness.invoke('codex-exec', '2', 'run something');
-
-      expect(ctx.daemonClient.codexExecAndWait).toHaveBeenCalledWith('2', 'run something');
-      expect(result).toEqual(expect.objectContaining({
-        success: true,
-        status: 'accepted',
-        requestId: 'codex-exec-1',
-        queued: false,
-      }));
-      expect(ctx.daemonClient.codexExec).not.toHaveBeenCalled();
-    });
-
-    test('returns failure when codexExecAndWait rejects execution', async () => {
-      ctx.daemonClient.connected = true;
-      ctx.daemonClient.codexExecAndWait = jest.fn().mockResolvedValue({
-        success: false,
-        status: 'rejected',
-        error: 'Codex exec already running',
-      });
-
-      const result = await harness.invoke('codex-exec', '2', 'run something');
 
       expect(result).toEqual({
         success: false,
-        status: 'rejected',
-        error: 'Codex exec already running',
+        status: 'unsupported_mode',
+        error: 'codex-exec is disabled; use interactive PTY messaging',
       });
+    });
+
+    test('does not call daemon codex-exec helpers', async () => {
+      ctx.daemonClient.connected = true;
+      const result = await harness.invoke('codex-exec', '2', 'write hello world');
+
+      expect(result).toEqual({
+        success: false,
+        status: 'unsupported_mode',
+        error: 'codex-exec is disabled; use interactive PTY messaging',
+      });
+      expect(ctx.daemonClient.codexExec).not.toHaveBeenCalled();
+      if (typeof ctx.daemonClient.codexExecAndWait === 'function') {
+        expect(ctx.daemonClient.codexExecAndWait).not.toHaveBeenCalled();
+      }
     });
   });
 

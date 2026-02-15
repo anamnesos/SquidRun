@@ -1044,6 +1044,7 @@ async function handleMessage(clientId, rawData) {
   }
 
   let wsDeliveryCount = 0;
+  let skipMessageHandler = false;
 
   // Handle agent-to-agent messages
   if (message.type === 'send') {
@@ -1056,8 +1057,9 @@ async function handleMessage(clientId, rawData) {
       persistIfOffline: false,
     })) {
       wsDeliveryCount = 1;
+      // Prevent duplicate delivery via both WebSocket route and terminal injection route.
+      skipMessageHandler = true;
     }
-    // Don't return - let messageHandler also route to terminals
   }
 
   // Handle broadcast
@@ -1073,7 +1075,7 @@ async function handleMessage(clientId, rawData) {
   let handlerResult = null;
 
   // Pass to external handler if set
-  if (messageHandler) {
+  if (messageHandler && !skipMessageHandler) {
     try {
       handlerResult = await messageHandler({
         clientId,

@@ -1189,7 +1189,7 @@ describe('Terminal Injection', () => {
       });
     });
 
-    test('does not treat output transition alone as accepted submit signal', async () => {
+    test('treats output-only submit verification as accepted but unverified', async () => {
       let enterCalls = 0;
       terminals.set('1', {
         _hivemindBypass: false,
@@ -1215,9 +1215,13 @@ describe('Terminal Injection', () => {
 
       expect(enterCalls).toBe(2);
       expect(onComplete).toHaveBeenCalledWith({
-        success: false,
+        success: true,
+        verified: false,
+        signal: 'accepted_unverified',
+        status: 'accepted.unverified',
         reason: 'submit_not_accepted',
       });
+      expect(mockOptions.markPotentiallyStuck).not.toHaveBeenCalled();
       expect(mockLog.warn).toHaveBeenCalledWith(
         expect.stringContaining('doSendToPane 1'),
         expect.stringContaining('signal=output_transition_only')
@@ -1354,7 +1358,7 @@ describe('Terminal Injection', () => {
       );
     });
 
-    test('fails submit when acceptance signal is never observed after retry', async () => {
+    test('returns accepted.unverified when acceptance signal is never observed after retry', async () => {
       terminals.set('1', {
         _hivemindBypass: false,
         buffer: {
@@ -1374,9 +1378,12 @@ describe('Terminal Injection', () => {
       await jest.advanceTimersByTimeAsync(4000);
 
       expect(mockPty.sendTrustedEnter).toHaveBeenCalledTimes(2);
-      expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
+      expect(mockOptions.markPotentiallyStuck).not.toHaveBeenCalled();
       expect(onComplete).toHaveBeenCalledWith({
-        success: false,
+        success: true,
+        verified: false,
+        signal: 'accepted_unverified',
+        status: 'accepted.unverified',
         reason: 'submit_not_accepted',
       });
     });

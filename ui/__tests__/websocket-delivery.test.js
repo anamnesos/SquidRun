@@ -275,7 +275,8 @@ describe('WebSocket Delivery Audit', () => {
       .filter((msg) => msg?.type === 'comms-metric' && msg?.eventType === 'comms.dedupe.hit');
 
     expect(deliveredCount).toBe(1);
-    expect(routedSendCalls).toHaveLength(1);
+    // Direct websocket route is now single-path for `send`; no terminal handler duplicate.
+    expect(routedSendCalls).toHaveLength(0);
     expect(dedupeMetricCalls).toHaveLength(1);
     expect(dedupeMetricCalls[0].payload.mode).toBe('cache');
     expect(secondAck.ok).toBe(true);
@@ -339,7 +340,8 @@ describe('WebSocket Delivery Audit', () => {
       .filter((msg) => msg?.payload?.mode === 'signature_cache');
 
     expect(deliveredCount).toBe(1);
-    expect(routedSendCalls).toHaveLength(1);
+    // Direct websocket route is now single-path for `send`; no terminal handler duplicate.
+    expect(routedSendCalls).toHaveLength(0);
     expect(signatureDedupeMetricCalls).toHaveLength(1);
     expect(secondAck.ok).toBe(true);
     expect(secondAck.status).toBe('delivered.websocket');
