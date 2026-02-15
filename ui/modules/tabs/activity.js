@@ -91,19 +91,21 @@ function createEntryNode(entry) {
   if (isMessage) {
     // Chat-style message rendering
     div.classList.add('activity-message-entry');
+    const agentId = escapeHtml(entry.agent || '');
     div.innerHTML = `
       <div class="activity-chat-header">
-        <span class="activity-agent" data-agent="${entry.agent || ''}">${ACTIVITY_AGENT_NAMES[entry.agent] || entry.agent || 'Unknown'}</span>
+        <span class="activity-agent" data-agent="${agentId}">${escapeHtml(ACTIVITY_AGENT_NAMES[entry.agent] || entry.agent || 'Unknown')}</span>
         <span class="activity-time">${formatActivityTime(entry.timestamp)}</span>
       </div>
       <div class="activity-chat-body">${escapeHtml(entry.message || '')}</div>
     `;
   } else {
     // Standard log-line rendering
+    const agentId = escapeHtml(entry.agent || '');
     div.innerHTML = `
       <span class="activity-time">${formatActivityTime(entry.timestamp)}</span>
-      <span class="activity-agent" data-agent="${entry.agent || ''}">${ACTIVITY_AGENT_NAMES[entry.agent] || entry.agent || ''}</span>
-      <span class="activity-type ${entry.type || ''}">${entry.type || ''}</span>
+      <span class="activity-agent" data-agent="${agentId}">${escapeHtml(ACTIVITY_AGENT_NAMES[entry.agent] || entry.agent || '')}</span>
+      <span class="activity-type ${escapeHtml(entry.type || '')}">${escapeHtml(entry.type || '')}</span>
       <span class="activity-msg">${escapeHtml(entry.message || '')}</span>
     `;
   }

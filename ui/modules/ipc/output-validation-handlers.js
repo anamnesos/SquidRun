@@ -77,7 +77,7 @@ function registerOutputValidationHandlers(ctx) {
 
     if (options.checkSyntax && options.language === 'javascript') {
       try {
-        new Function(text);
+        require('node:vm').compileFunction(text, [], { filename: 'validation-check.js' });
       } catch (err) {
         issues.push({
           type: 'syntax',
@@ -125,6 +125,11 @@ function registerOutputValidationHandlers(ctx) {
 
   ipcMain.handle('validate-file', async (event, filePath, options = {}) => {
     try {
+      const projectRoot = path.resolve(WORKSPACE_PATH, '..');
+      const resolved = path.resolve(filePath);
+      if (!resolved.startsWith(projectRoot + path.sep) && resolved !== projectRoot) {
+        return { success: false, error: 'Path outside project boundary' };
+      }
       if (!fs.existsSync(filePath)) {
         return { success: false, error: 'File not found' };
       }
