@@ -1164,6 +1164,9 @@ class HivemindApp {
     ipcMain.on('trigger-delivery-ack', (event, data) => {
       if (data?.deliveryId) triggers.handleDeliveryAck(data.deliveryId, data.paneId);
     });
+    ipcMain.on('trigger-delivery-outcome', (event, data) => {
+      if (data?.deliveryId) triggers.handleDeliveryOutcome(data.deliveryId, data.paneId, data);
+    });
   }
 
   async appendTeamMemoryPatternEvent(event, label = 'pattern-event') {

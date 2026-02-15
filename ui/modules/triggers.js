@@ -297,13 +297,17 @@ function waitForDeliveryVerification(deliveryId, expectedPanes, timeoutMs = getD
     return Promise.resolve({
       verified: false,
       ackedPanes: [],
+      failedPanes: [],
       missingPanes: Array.from(expected),
+      failureReason: null,
       timeoutMs,
     });
   }
 
   return new Promise((resolve) => {
     const acked = new Set();
+    const failed = new Set();
+    const failureByPane = new Map();
     let settled = false;
     const finish = (result) => {
       if (settled) return;
@@ -315,27 +319,50 @@ function waitForDeliveryVerification(deliveryId, expectedPanes, timeoutMs = getD
       resolve(result);
     };
 
-    const disposeListener = onDeliveryAck((ackDeliveryId, paneId) => {
+    const disposeListener = onDeliveryAck((ackDeliveryId, paneId, outcome = null) => {
       if (ackDeliveryId !== deliveryId) return;
       const paneKey = String(paneId);
       if (!expected.has(paneKey)) return;
-      acked.add(paneKey);
-      if (acked.size >= expected.size) {
+
+      const accepted = outcome?.accepted !== false;
+      if (accepted) {
+        acked.add(paneKey);
+        failed.delete(paneKey);
+      } else {
+        acked.delete(paneKey);
+        failed.add(paneKey);
+        failureByPane.set(paneKey, {
+          status: outcome?.status || outcome?.reason || 'delivery_failed',
+          reason: outcome?.reason || null,
+        });
+      }
+
+      if (acked.size + failed.size >= expected.size) {
+        const firstFailedPane = Array.from(failed)[0] || null;
+        const firstFailure = firstFailedPane ? failureByPane.get(firstFailedPane) : null;
         finish({
-          verified: true,
+          verified: failed.size === 0 && acked.size >= expected.size,
           ackedPanes: Array.from(acked),
-          missingPanes: [],
+          failedPanes: Array.from(failed),
+          missingPanes: Array.from(expected).filter((candidate) => !acked.has(candidate) && !failed.has(candidate)),
+          failureReason: firstFailure?.status || firstFailure?.reason || null,
+          failureByPane: Object.fromEntries(failureByPane.entries()),
           timeoutMs,
         });
       }
     });
 
     const timeoutId = setTimeout(() => {
-      const missingPanes = Array.from(expected).filter((paneId) => !acked.has(paneId));
+      const missingPanes = Array.from(expected).filter((paneId) => !acked.has(paneId) && !failed.has(paneId));
+      const firstFailedPane = Array.from(failed)[0] || null;
+      const firstFailure = firstFailedPane ? failureByPane.get(firstFailedPane) : null;
       finish({
         verified: false,
         ackedPanes: Array.from(acked),
+        failedPanes: Array.from(failed),
         missingPanes,
+        failureReason: firstFailure?.status || firstFailure?.reason || null,
+        failureByPane: Object.fromEntries(failureByPane.entries()),
         timeoutMs,
       });
     }, timeoutMs);
@@ -426,9 +453,33 @@ function handleDeliveryAck(deliveryId, paneId) {
   if (deliveryAckListeners.size === 0) return;
   for (const listener of deliveryAckListeners) {
     try {
-      listener(deliveryId, paneId);
+      listener(deliveryId, paneId, {
+        accepted: true,
+        verified: true,
+        status: 'delivered.verified',
+        reason: null,
+      });
     } catch (err) {
       log.warn('Trigger', `Delivery ack listener failed: ${err.message}`);
+    }
+  }
+}
+
+function handleDeliveryOutcome(deliveryId, paneId, outcome = {}) {
+  if (!deliveryId) return;
+  sequencing.handleDeliveryOutcome(deliveryId, paneId, outcome);
+  if (deliveryAckListeners.size === 0) return;
+  const normalizedOutcome = {
+    accepted: outcome?.accepted !== false,
+    verified: outcome?.verified === true,
+    status: outcome?.status || (outcome?.accepted === false ? 'delivery_failed' : 'delivered.verified'),
+    reason: outcome?.reason || null,
+  };
+  for (const listener of deliveryAckListeners) {
+    try {
+      listener(deliveryId, paneId, normalizedOutcome);
+    } catch (err) {
+      log.warn('Trigger', `Delivery outcome listener failed: ${err.message}`);
     }
   }
 }
@@ -607,16 +658,30 @@ function broadcastToAllAgents(message, fromRole = 'user', options = {}) {
       deliveryId,
       notified,
       Number(options?.deliveryTimeoutMs) || getDeliveryVerifyTimeoutMs()
-    ).then((verification) => buildDeliveryResult({
-      accepted: true,
-      queued: true,
-      verified: verification.verified,
-      status: verification.verified ? 'delivered.verified' : 'broadcast_unverified_timeout',
-      notified,
-      mode: 'pty',
-      deliveryId,
-      details: verification,
-    }));
+    ).then((verification) => {
+      if (verification?.failedPanes?.length) {
+        return buildDeliveryResult({
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: verification.failureReason || 'delivery_failed',
+          notified,
+          mode: 'pty',
+          deliveryId,
+          details: verification,
+        });
+      }
+      return buildDeliveryResult({
+        accepted: true,
+        queued: true,
+        verified: verification.verified,
+        status: verification.verified ? 'delivered.verified' : 'broadcast_unverified_timeout',
+        notified,
+        mode: 'pty',
+        deliveryId,
+        details: verification,
+      });
+    });
   }
   return buildDeliveryResult({
     accepted: true,
@@ -677,16 +742,30 @@ function sendDirectMessage(targetPanes, message, fromRole = null, options = {}) 
       deliveryId,
       notified,
       Number(options?.deliveryTimeoutMs) || getDeliveryVerifyTimeoutMs()
-    ).then((verification) => buildDeliveryResult({
-      accepted: true,
-      queued: true,
-      verified: verification.verified,
-      status: verification.verified ? 'delivered.verified' : 'routed_unverified_timeout',
-      notified,
-      mode: 'pty',
-      deliveryId,
-      details: verification,
-    }));
+    ).then((verification) => {
+      if (verification?.failedPanes?.length) {
+        return buildDeliveryResult({
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: verification.failureReason || 'delivery_failed',
+          notified,
+          mode: 'pty',
+          deliveryId,
+          details: verification,
+        });
+      }
+      return buildDeliveryResult({
+        accepted: true,
+        queued: true,
+        verified: verification.verified,
+        status: verification.verified ? 'delivered.verified' : 'routed_unverified_timeout',
+        notified,
+        mode: 'pty',
+        deliveryId,
+        details: verification,
+      });
+    });
   }
   return buildDeliveryResult({
     accepted: true,
@@ -706,6 +785,7 @@ module.exports = {
   getReliabilityStats: metrics.getReliabilityStats,
   getSequenceState: sequencing.getSequenceState,
   handleDeliveryAck,
+  handleDeliveryOutcome,
   onDeliveryAck,
   getNextSequence: sequencing.getNextSequence,
   parseMessageSequence: sequencing.parseMessageSequence,

@@ -645,6 +645,10 @@ describe('daemon-handlers.js module', () => {
         // Unverified but success=true means message was typed + Enter pressed = delivered
         expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('5', 'delivered');
         expect(ipcRenderer.send).toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-unverified-1', paneId: '5' });
+        expect(ipcRenderer.send).not.toHaveBeenCalledWith(
+          'trigger-delivery-outcome',
+          expect.objectContaining({ deliveryId: 'delivery-unverified-1', accepted: false })
+        );
       });
 
       test('should emit trigger-delivery-ack when terminal delivery is verified', () => {
@@ -665,6 +669,31 @@ describe('daemon-handlers.js module', () => {
           deliveryId: 'delivery-verified-1',
           paneId: '5',
         });
+      });
+
+      test('should emit explicit trigger-delivery-outcome when terminal delivery fails', () => {
+        let injectHandler;
+        ipcRenderer.on.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
+          setTimeout(() => options.onComplete({ success: false, reason: 'submit_not_accepted' }), 0);
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+        injectHandler({}, { panes: ['5'], message: 'msg', deliveryId: 'delivery-failed-1' });
+        jest.runAllTimers();
+
+        expect(uiView.showDeliveryFailed).toHaveBeenCalledWith('5', 'submit_not_accepted');
+        expect(ipcRenderer.send).toHaveBeenCalledWith('trigger-delivery-outcome', {
+          deliveryId: 'delivery-failed-1',
+          paneId: '5',
+          accepted: false,
+          verified: false,
+          status: 'submit_not_accepted',
+          reason: 'submit_not_accepted',
+        });
+        expect(ipcRenderer.send).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-failed-1', paneId: '5' });
       });
 
       test('caps throttle queue depth to prevent unbounded growth', () => {

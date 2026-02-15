@@ -152,6 +152,7 @@ function startDeliveryTracking(deliveryId, sender, seq, recipient, targets, msgT
     recipient,
     expected,
     received: new Set(),
+    failed: new Map(),
     timeoutId: null,
     sentAt,
     msgType,
@@ -167,24 +168,59 @@ function startDeliveryTracking(deliveryId, sender, seq, recipient, targets, msgT
   pendingDeliveries.set(deliveryId, pending);
 }
 
-function handleDeliveryAck(deliveryId, paneId) {
+function handleDeliveryOutcome(deliveryId, paneId, outcome = {}) {
   if (!deliveryId) return;
   const pending = pendingDeliveries.get(deliveryId);
   if (!pending) return;
 
   const paneKey = String(paneId);
-  pending.received.add(paneKey);
+  if (!pending.expected.has(paneKey)) return;
 
-  if (recordDeliveredFn) recordDeliveredFn(pending.mode, pending.msgType, paneKey, pending.sentAt);
+  const accepted = outcome?.accepted !== false;
+  if (accepted) {
+    pending.received.add(paneKey);
+    pending.failed.delete(paneKey);
+    if (recordDeliveredFn) recordDeliveredFn(pending.mode, pending.msgType, paneKey, pending.sentAt);
+  } else {
+    pending.received.delete(paneKey);
+    pending.failed.set(paneKey, {
+      accepted: false,
+      verified: false,
+      status: outcome?.status || outcome?.reason || 'delivery_failed',
+      reason: outcome?.reason || null,
+    });
+  }
 
-  if (pending.received.size < pending.expected.size) {
+  const resolvedCount = pending.received.size + pending.failed.size;
+  if (resolvedCount < pending.expected.size) {
     return;
   }
 
   clearTimeout(pending.timeoutId);
   pendingDeliveries.delete(deliveryId);
-  recordMessageSeen(pending.sender, pending.seq, pending.recipient);
-  log.info('Trigger', `Recorded delivery: ${pending.sender} #${pending.seq} -> ${pending.recipient}`);
+
+  if (pending.failed.size === 0) {
+    recordMessageSeen(pending.sender, pending.seq, pending.recipient);
+    log.info('Trigger', `Recorded delivery: ${pending.sender} #${pending.seq} -> ${pending.recipient}`);
+    return;
+  }
+
+  const failedPanes = Array.from(pending.failed.keys());
+  const firstFailure = pending.failed.get(failedPanes[0]) || {};
+  log.warn(
+    'Trigger',
+    `Delivery failed for ${pending.sender} #${pending.seq} -> ${pending.recipient} `
+    + `(acked ${pending.received.size}/${pending.expected.size}, failed=${failedPanes.join(',') || 'none'}, `
+    + `status=${firstFailure.status || 'delivery_failed'})`
+  );
+}
+
+function handleDeliveryAck(deliveryId, paneId) {
+  handleDeliveryOutcome(deliveryId, paneId, {
+    accepted: true,
+    verified: true,
+    status: 'delivered.verified',
+  });
 }
 
 function getNextSequence(sender) {
@@ -209,6 +245,7 @@ module.exports = {
   createDeliveryId,
   startDeliveryTracking,
   handleDeliveryAck,
+  handleDeliveryOutcome,
   getNextSequence,
   getSequenceState,
   setMetricsFunctions,

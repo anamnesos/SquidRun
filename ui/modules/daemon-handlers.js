@@ -773,6 +773,16 @@ function processThrottleQueue(paneId) {
       if (!accepted) {
         log.warn('Daemon', `Trigger delivery failed for pane ${paneId}: ${result.reason || 'unknown'}`);
         uiView.showDeliveryFailed(paneId, result.reason || 'Delivery failed');
+        if (deliveryId) {
+          ipcRenderer.send('trigger-delivery-outcome', {
+            deliveryId,
+            paneId,
+            accepted: false,
+            verified: false,
+            status: result?.status || result?.reason || 'delivery_failed',
+            reason: result?.reason || null,
+          });
+        }
       } else {
         // Message was typed + Enter pressed = delivered.
         // Verification is best-effort; unverified does NOT mean undelivered.
