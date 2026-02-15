@@ -833,20 +833,21 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
 
-    test('handles Codex pane with sendTrustedEnter', async () => {
+    test('handles Codex pane with PTY Enter', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('1', mockTerminal);
 
       const onComplete = jest.fn();
       const promise = controller.doSendToPane('1', 'test command\r', onComplete);
-      // Advance past enterDelayMs (50ms) + focusWithRetry retries (3×50ms) + bypass clear
+      // Advance past enterDelayMs (150ms) + verification
       await jest.advanceTimersByTimeAsync(500);
       await promise;
 
-      // Codex now uses PTY write for text and sendTrustedEnter for submission
+      // Codex uses PTY write for text and PTY \r for Enter submission
       expect(mockPty.write).toHaveBeenCalledWith('1', 'test command', expect.any(Object));
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      // Enter via PTY \r (not sendTrustedEnter)
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
       expect(mockPty.codexExec).not.toHaveBeenCalled();
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
       expect(onComplete).toHaveBeenCalledWith({
@@ -867,11 +868,12 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'pty_write_failed' });
     });
 
-    test('handles Codex sendTrustedEnter failure', async () => {
+    test('handles Codex PTY Enter failure', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
       terminals.set('1', { _hivemindBypass: false });
+      // First write succeeds (text), second write fails (Enter \r)
       mockPty.write.mockResolvedValueOnce(undefined);
-      mockPty.sendTrustedEnter.mockRejectedValueOnce(new Error('Enter failed'));
+      mockPty.write.mockRejectedValueOnce(new Error('Enter failed'));
       const onComplete = jest.fn();
 
       const promise = controller.doSendToPane('1', 'test\r', onComplete);

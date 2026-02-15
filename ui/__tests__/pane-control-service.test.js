@@ -60,18 +60,14 @@ describe('pane-control-service', () => {
     expect(ctx.daemonClient.write).not.toHaveBeenCalled();
   });
 
-  test('enter uses sendTrustedEnter for Codex, raw PTY for Gemini', () => {
+  test('enter uses raw PTY for Codex and Gemini', () => {
     const codex = executePaneControlAction(ctx, 'enter', { paneId: '2' });
     const gemini = executePaneControlAction(ctx, 'enter', { paneId: '5' });
 
     expect(codex.success).toBe(true);
-    expect(codex.method).toBe('sendTrustedEnter');
+    expect(codex.method).toBe('pty');
     expect(codex.model).toBe('codex');
-    expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('pane-enter', {
-      paneId: '2',
-      model: 'codex',
-      method: 'sendTrustedEnter',
-    });
+    expect(ctx.daemonClient.write).toHaveBeenCalledWith('2', '\r');
     expect(gemini.success).toBe(true);
     expect(gemini.method).toBe('pty');
     expect(ctx.daemonClient.write).toHaveBeenCalledWith('5', '\r');

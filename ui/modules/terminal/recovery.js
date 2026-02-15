@@ -57,7 +57,7 @@ function createRecoveryController(options = {}) {
    */
   function markPotentiallyStuck(paneId) {
     const id = String(paneId);
-    if (typeof isGeminiPane === 'function' && isGeminiPane(id)) return; // Only Claude/Codex panes use trusted Enter and can get stuck
+    if ((typeof isCodexPane === 'function' && isCodexPane(id)) || (typeof isGeminiPane === 'function' && isGeminiPane(id))) return; // Only Claude panes use trusted Enter and can get stuck
 
     const existing = potentiallyStuckPanes.get(id);
     if (existing) {
@@ -356,14 +356,14 @@ function createRecoveryController(options = {}) {
       if (textarea) {
         textarea.focus();
 
-        if (typeof isGeminiPane === 'function' && isGeminiPane(id)) {
-          // Gemini: PTY newline to submit (reads stdin directly)
+        if ((typeof isCodexPane === 'function' && isCodexPane(id)) || (typeof isGeminiPane === 'function' && isGeminiPane(id))) {
+          // Codex/Gemini: PTY newline to submit (reads stdin directly)
           window.hivemind.pty.write(id, '\r').catch(err => {
-            log.error(`aggressiveNudge ${id}`, 'Gemini PTY write failed:', err);
+            log.error(`aggressiveNudge ${id}`, 'PTY write failed:', err);
           });
-          log.info(`Terminal ${id}`, 'Aggressive nudge: PTY carriage return (Gemini)');
+          log.info(`Terminal ${id}`, 'Aggressive nudge: PTY carriage return');
         } else {
-          // Claude/Codex: use sendTrustedEnter with bypass flag
+          // Claude: use sendTrustedEnter with bypass flag
           const terminal = terminals.get(id);
           if (terminal) {
             terminal._hivemindBypass = true;

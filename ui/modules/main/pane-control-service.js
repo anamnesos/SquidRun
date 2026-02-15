@@ -57,7 +57,7 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
 
   if (normalizedAction === 'enter') {
     const model = detectPaneModel(paneId, ctx.currentSettings || {});
-    if (model === 'gemini') {
+    if (model === 'codex' || model === 'gemini') {
       if (!isDaemonAvailable(daemonClient)) {
         return { success: false, reason: 'daemon_not_connected', paneId, action: normalizedAction };
       }

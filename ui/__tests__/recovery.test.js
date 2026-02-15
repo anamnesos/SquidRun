@@ -530,15 +530,15 @@ describe('Terminal Recovery Controller', () => {
       expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
     });
 
-    test('uses sendTrustedEnter for Codex panes', async () => {
+    test('uses PTY carriage return for Codex panes', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
       controller = createRecoveryController(mockOptions);
 
       controller.aggressiveNudge('2');
       await jest.advanceTimersByTimeAsync(200);
 
-      // Codex now uses sendTrustedEnter like Claude
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      // Codex uses PTY \r like Gemini (not sendTrustedEnter)
+      expect(mockPty.write).toHaveBeenCalledWith('2', '\r');
     });
 
     test('sets bypass flag on terminal for Claude', async () => {
