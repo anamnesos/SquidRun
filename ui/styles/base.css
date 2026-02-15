@@ -931,3 +931,72 @@ kbd {
   clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
   animation: sparkle 0.6s ease-out forwards;
 }
+
+/* ============================================================
+   TOAST NOTIFICATIONS — Floating bottom-right alerts
+   ============================================================ */
+
+.toast-notification {
+  position: fixed;
+  bottom: var(--space-5);
+  right: var(--space-5);
+  max-width: 380px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  z-index: 10001;
+  box-shadow: var(--shadow-xl);
+  animation: toastSlideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  pointer-events: auto;
+  line-height: 1.5;
+  border: 1px solid;
+}
+
+/* Type variants */
+.toast-info {
+  background: linear-gradient(135deg, #0d1520 0%, #0a1018 100%);
+  border-color: rgba(0, 240, 255, 0.3);
+  box-shadow: var(--shadow-xl), 0 0 20px rgba(0, 240, 255, 0.1);
+}
+
+.toast-warning {
+  background: linear-gradient(135deg, #1a1408 0%, #141008 100%);
+  border-color: rgba(240, 160, 0, 0.3);
+  box-shadow: var(--shadow-xl), 0 0 20px rgba(240, 160, 0, 0.1);
+}
+
+.toast-error {
+  background: linear-gradient(135deg, #1a0810 0%, #140610 100%);
+  border-color: rgba(255, 32, 64, 0.3);
+  box-shadow: var(--shadow-xl), 0 0 20px rgba(255, 32, 64, 0.1);
+}
+
+/* Slide in from right */
+@keyframes toastSlideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Fade out */
+.toast-fade {
+  opacity: 0;
+  transform: translateX(20px);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-notification {
+    animation: none;
+  }
+  .toast-fade {
+    transition: opacity 0.3s ease;
+    transform: none;
+  }
+}

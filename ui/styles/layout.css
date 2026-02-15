@@ -1141,12 +1141,14 @@
   flex-direction: column;
   overflow: hidden;
   z-index: 10;
+  transition: width var(--transition-slow), border-color var(--transition-slow);
+  border-left: 1px solid transparent;
 }
 
 .right-panel.open {
   /* Cover the side-panes area: 2 of (3+2) = 40% */
   width: 40%;
-  border-left: 1px solid var(--color-bg-medium);
+  border-left-color: var(--color-bg-medium);
 }
 
 .panel-tabs {
