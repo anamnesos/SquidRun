@@ -102,11 +102,10 @@ function registerPtyHandlers(ctx, deps = {}) {
     const paneRoot = resolvePaneCwd(paneId);
     const cwd = paneRoot || workingDir || process.cwd();
 
-    const paneCommands = ctx.currentSettings.paneCommands || {};
-    const cmd = (paneCommands[paneId] || '').trim().toLowerCase();
-    const mode = cmd.includes('codex') ? 'codex-exec' : null;
-
-    ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, mode);
+    // All panes (Claude, Codex, Gemini) use interactive PTY mode.
+    // Codex panes previously used 'codex-exec' (non-interactive batch mode)
+    // but now run interactive `codex` CLI in a real PTY terminal.
+    ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null);
     return { paneId, cwd, dryRun: ctx.currentSettings.dryRun };
   });
 
@@ -223,6 +222,8 @@ function registerPtyHandlers(ctx, deps = {}) {
       success: true,
       status: result.status || 'accepted',
       requestId: result.requestId || null,
+      queued: result.queued === true,
+      queueDepth: Number.isFinite(result.queueDepth) ? result.queueDepth : null,
     };
   });
 

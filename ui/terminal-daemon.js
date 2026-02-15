@@ -1732,15 +1732,19 @@ function handleMessage(client, message) {
         const requestId = typeof msg.requestId === 'string' ? msg.requestId : null;
         const terminal = terminals.get(msg.paneId);
         const result = codexExecRunner.runCodexExec(msg.paneId, terminal, msg.prompt || '');
+        const accepted = result.success === true;
+        const status = result.status || (accepted ? 'accepted' : 'rejected');
         sendToClient(client, {
           event: 'codex-exec-result',
           paneId: msg.paneId,
           requestId,
-          success: result.success === true,
-          status: result.success ? 'accepted' : 'rejected',
-          error: result.success ? null : (result.error || 'Codex exec failed'),
+          success: accepted,
+          status,
+          queued: Boolean(result.queued),
+          queueDepth: Number.isFinite(result.queueDepth) ? result.queueDepth : undefined,
+          error: accepted ? null : (result.error || 'Codex exec failed'),
         });
-        if (!result.success) {
+        if (!accepted) {
           sendToClient(client, {
             event: 'error',
             paneId: msg.paneId,

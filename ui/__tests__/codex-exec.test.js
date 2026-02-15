@@ -90,15 +90,42 @@ describe('codex-exec runner', () => {
       expect(result).toEqual({ success: false, error: 'Codex exec not enabled for this pane' });
     });
 
-    test('returns busy when exec already running', () => {
+    test('queues request when exec already running', () => {
       const runner = createCodexExecRunner({ broadcast, logInfo, logWarn });
       const terminal = { alive: true, mode: 'codex-exec', execProcess: {} };
 
       const result = runner.runCodexExec('4', terminal, 'hi');
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('Codex exec already running');
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('queued');
+      expect(result.queued).toBe(true);
+      expect(Array.isArray(terminal.execQueue)).toBe(true);
+      expect(terminal.execQueue).toHaveLength(1);
       expect(broadcast).toHaveBeenCalled();
-      expect(broadcast.mock.calls[0][0].data).toMatch(/busy/i);
+      expect(broadcast.mock.calls[0][0].data).toMatch(/queued/i);
+    });
+  });
+
+  describe('queue behavior', () => {
+    test('runs queued prompt after active exec closes', () => {
+      const childA = createMockChild();
+      const childB = createMockChild();
+      spawn.mockReturnValueOnce(childA).mockReturnValueOnce(childB);
+
+      const runner = createCodexExecRunner({ broadcast, logInfo, logWarn });
+      const terminal = { alive: true, mode: 'codex-exec', cwd: 'C:\\work' };
+
+      const first = runner.runCodexExec('4', terminal, 'first');
+      expect(first.success).toBe(true);
+      const queued = runner.runCodexExec('4', terminal, 'second');
+      expect(queued.success).toBe(true);
+      expect(queued.status).toBe('queued');
+      expect(terminal.execQueue).toHaveLength(1);
+
+      childA.emit('close', 0);
+      jest.advanceTimersByTime(1);
+
+      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(childB.stdin.write).toHaveBeenCalledWith('second');
     });
   });
 

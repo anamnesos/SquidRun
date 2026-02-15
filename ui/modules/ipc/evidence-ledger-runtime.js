@@ -272,6 +272,10 @@ function normalizeListDecisionsPayload(input) {
   return asObject(input);
 }
 
+function normalizeListSessionsPayload(input) {
+  return asObject(input);
+}
+
 function normalizeSearchDecisionsPayload(input) {
   const payload = asObject(input);
   const query = asString(payload.query || payload.q || payload.search);
@@ -413,6 +417,11 @@ function executeEvidenceLedgerOperation(action, payload = {}, options = {}) {
         if (!memory) return { ok: false, reason: 'unavailable' };
         const filters = normalizeListDecisionsPayload(enrichedPayload);
         return memory.listDecisions(filters);
+      }
+      case 'list-sessions': {
+        if (!memory) return { ok: false, reason: 'unavailable' };
+        const filters = normalizeListSessionsPayload(enrichedPayload);
+        return memory.listSessions(filters);
       }
       case 'search-decisions': {
         if (!memory) return { ok: false, reason: 'unavailable' };

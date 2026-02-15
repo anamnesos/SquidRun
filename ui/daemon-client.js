@@ -288,6 +288,8 @@ class DaemonClient extends EventEmitter {
                 error: msg.error || null,
                 paneId: msg.paneId,
                 requestId,
+                queued: msg.queued === true,
+                queueDepth: Number.isFinite(msg.queueDepth) ? msg.queueDepth : null,
               });
             }
           }

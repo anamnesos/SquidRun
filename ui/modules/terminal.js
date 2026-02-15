@@ -560,24 +560,24 @@ function getPaneInjectionCapabilities(paneId) {
   const runtimeKey = classifyRuntimeFromIdentity(paneId);
   const baseByRuntime = {
     codex: {
-      mode: 'codex-exec',
-      modeLabel: 'codex-exec',
-      appliedMethod: 'codex-exec',
-      submitMethod: 'codex-exec',
+      mode: 'pty',
+      modeLabel: 'codex-pty',
+      appliedMethod: 'codex-pty',
+      submitMethod: 'codex-pty-enter',
       bypassGlobalLock: true,
       applyCompactionGate: false,
       requiresFocusForEnter: false,
-      enterMethod: 'none',
-      enterDelayMs: 0,
-      sanitizeMultiline: false,
-      clearLineBeforeWrite: false,
+      enterMethod: 'pty',
+      enterDelayMs: 100,
+      sanitizeMultiline: true,
+      clearLineBeforeWrite: true,
       useChunkedWrite: false,
       homeResetBeforeWrite: false,
       verifySubmitAccepted: false,
       deferSubmitWhilePaneActive: false,
       typingGuardWhenBypassing: true,
       sanitizeTransform: 'none',
-      enterFailureReason: 'enter_failed',
+      enterFailureReason: 'pty_enter_failed',
       displayName: 'Codex',
     },
     gemini: {
@@ -736,12 +736,11 @@ function syncTerminalInputBridge(paneId, options = {}) {
   const modelHint = typeof options?.modelHint === 'string' ? options.modelHint.toLowerCase() : '';
 
   let shouldAttach;
-  if (modelHint === 'codex') {
-    shouldAttach = false;
-  } else if (modelHint) {
+  // All PTY-based panes (claude, codex, gemini) need the input bridge attached
+  if (modelHint) {
     shouldAttach = true;
   } else {
-    shouldAttach = !isCodexPane(id);
+    shouldAttach = true;
   }
 
   if (!shouldAttach) {
@@ -1708,14 +1707,6 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       // Clear stuck status - output means pane is working
       clearStuckStatus(paneId);
       handleStartupOutput(paneId, data);
-      if (isCodexPane(paneId)) {
-        if (data.includes('[Working...]')) {
-          updatePaneStatus(paneId, 'Working');
-        }
-        if (data.includes('[Task complete]') || data.includes('[Codex exec exited')) {
-          updatePaneStatus(paneId, 'Codex exec ready');
-        }
-      }
     });
     if (typeof disposeOnData === 'function') {
       ptyDataListenerDisposers.set(String(paneId), disposeOnData);
@@ -1895,14 +1886,6 @@ async function reattachTerminal(paneId, scrollback) {
     // Clear stuck status - output means pane is working
     clearStuckStatus(paneId);
     handleStartupOutput(paneId, data);
-    if (isCodexPane(paneId)) {
-      if (data.includes('[Working...]')) {
-        updatePaneStatus(paneId, 'Working');
-      }
-      if (data.includes('[Task complete]') || data.includes('[Codex exec exited')) {
-        updatePaneStatus(paneId, 'Codex exec ready');
-      }
-    }
   });
   if (typeof disposeOnData === 'function') {
     ptyDataListenerDisposers.set(String(paneId), disposeOnData);
@@ -1927,14 +1910,14 @@ async function reattachTerminal(paneId, scrollback) {
   // Guardrails:
   // - Pane 1 only (do not re-trigger DevOps/Analyst startup on light reloads)
   // - Skip if identity marker is already present in scrollback
-  // - Skip Codex exec panes (identity for Codex is handled via codex-exec path)
+  // - Pane 1 only (Architect startup identity injection on reattach)
   const shouldArmStartupOnReattach =
     String(paneId) === '1' &&
-    !isCodexPane(String(paneId)) &&
     !hasStartupSessionHeader(scrollback, paneId);
   if (shouldArmStartupOnReattach) {
     const isGemini = isGeminiPane(paneId);
-    const modelType = isGemini ? 'gemini' : 'claude';
+    const isCodexReattach = isCodexPane(String(paneId));
+    const modelType = isGemini ? 'gemini' : isCodexReattach ? 'codex' : 'claude';
     const armed = armStartupInjection(paneId, { modelType, isGemini, source: 'reattach' });
     // Seed detector with restored scrollback so ready-pattern detection can fire
     // immediately instead of waiting for new daemon output.
@@ -2021,38 +2004,9 @@ async function spawnAgent(paneId, model = null) {
     log.info('spawnAgent', `Cleared CLI identity cache for pane ${paneId} (model switch to ${model})`);
   }
 
-  // Determine if this is a Codex pane
-  // If model is explicitly passed (from model switch), use it directly
-  // Otherwise fall back to checking settings/identity cache
-  const isCodex = model ? model === 'codex' : isCodexPane(String(paneId));
-
-  // Codex exec mode: non-interactive request/response
-  if (isCodex) {
-    updatePaneStatus(paneId, 'Starting Codex...');
-    syncTerminalInputBridge(paneId, { modelHint: 'codex' });
-    // We don't write the 'codex' command to the terminal because the daemon 
-    // uses a virtual terminal (no PTY) for codex-exec mode.
-    // Identity injection will happen via codex-exec IPC in the timeout below.
-    log.info('spawnAgent', `Codex pane ${paneId} ready (codex-exec mode)`);
-
-    // Send identity message after Codex starts (delayed to ensure Architect goes first)
-    resetCodexIdentity(paneId);
-    const timeoutId = setTimeout(() => {
-      const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
-      const d = new Date();
-      const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
-      sendToPane(paneId, identityMsg + '\r');
-      log.info('spawnAgent', `Codex exec identity sent for ${role} (pane ${paneId})`);
-      codexIdentityTimeouts.delete(String(paneId));
-    }, STARTUP_IDENTITY_DELAY_CODEX_MS);
-    codexIdentityTimeouts.set(String(paneId), timeoutId);
-
-    // Startup context injection disabled: Codex loads context natively.
-
-    updatePaneStatus(paneId, 'Codex exec ready');
-    return;
-  }
+  // Codex panes now use interactive PTY mode (same as Claude/Gemini).
+  // The spawn-claude IPC handler builds the right command (codex --yolo).
+  // Identity injection happens via the normal startup context path below.
 
   const terminal = terminals.get(paneId);
   if (terminal) {
@@ -2102,7 +2056,8 @@ async function spawnAgent(paneId, model = null) {
       // ID-1 + Finding #14: Wait for CLI ready prompt before identity/context injection
       // This avoids injecting while subscription prompts are blocking input.
       const isGemini = model ? model === 'gemini' : isGeminiPane(paneId);
-      const modelType = isGemini ? 'gemini' : 'claude';
+      const isCodexSpawn = model ? model === 'codex' : isCodexPane(String(paneId));
+      const modelType = isGemini ? 'gemini' : isCodexSpawn ? 'codex' : 'claude';
       armStartupInjection(paneId, { modelType, isGemini, source: 'spawn' });
 
     }

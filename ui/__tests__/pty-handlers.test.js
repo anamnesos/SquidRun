@@ -61,17 +61,18 @@ describe('PTY Handlers', () => {
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith('99', '/custom/dir', false, null);
     });
 
-    test('spawns with codex-exec mode when paneCommand includes codex', async () => {
+    test('spawns codex panes with null mode (interactive PTY, not codex-exec)', async () => {
       ctx.daemonClient.connected = true;
       ctx.currentSettings.paneCommands = { '2': 'codex --mode exec' };
 
       await harness.invoke('pty-create', '2', '/test/dir');
 
+      // All panes use interactive PTY mode — codex-exec mode removed
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
         '2',
         expect.any(String),
         false,
-        'codex-exec'
+        null
       );
     });
 
@@ -264,7 +265,12 @@ describe('PTY Handlers', () => {
       const result = await harness.invoke('codex-exec', '2', 'write hello world');
 
       expect(ctx.daemonClient.codexExec).toHaveBeenCalledWith('2', 'write hello world');
-      expect(result).toEqual({ success: true, status: 'sent_without_ack', requestId: null });
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        status: 'sent_without_ack',
+        requestId: null,
+        queued: false,
+      }));
     });
 
     test('uses empty string when prompt is falsy', async () => {
@@ -285,7 +291,12 @@ describe('PTY Handlers', () => {
       const result = await harness.invoke('codex-exec', '2', 'run something');
 
       expect(ctx.daemonClient.codexExecAndWait).toHaveBeenCalledWith('2', 'run something');
-      expect(result).toEqual({ success: true, status: 'accepted', requestId: 'codex-exec-1' });
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        status: 'accepted',
+        requestId: 'codex-exec-1',
+        queued: false,
+      }));
       expect(ctx.daemonClient.codexExec).not.toHaveBeenCalled();
     });
 

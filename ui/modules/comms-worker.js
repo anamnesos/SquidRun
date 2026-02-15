@@ -63,6 +63,7 @@ async function handleAction(action, payload = {}) {
       const options = payload.options || {};
       await websocketRuntime.start({
         port: options.port,
+        sessionScopeId: options.sessionScopeId,
         onMessage: async (data) => requestParent('onMessage', { data }, options.callbackTimeoutMs || DEFAULT_PARENT_CALLBACK_TIMEOUT_MS),
       });
       return {
