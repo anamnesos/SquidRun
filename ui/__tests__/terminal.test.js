@@ -305,6 +305,18 @@ describe('terminal.js module', () => {
   });
 
   describe('getPaneInjectionCapabilities', () => {
+    test('enables submit verification by default for Codex runtime', () => {
+      mockSettings.getSettings.mockReturnValue({
+        paneCommands: { '2': 'codex --yolo' },
+      });
+
+      const caps = terminal.getPaneInjectionCapabilities('2');
+      expect(caps.mode).toBe('pty');
+      expect(caps.modeLabel).toBe('codex-pty');
+      expect(caps.verifySubmitAccepted).toBe(true);
+      expect(caps.enterMethod).toBe('trusted');
+    });
+
     test('returns safe generic defaults for unknown runtimes', () => {
       mockSettings.getSettings.mockReturnValue({
         paneCommands: { '9': 'my-custom-cli --run' },

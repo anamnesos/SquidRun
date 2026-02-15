@@ -629,7 +629,7 @@ describe('daemon-handlers.js module', () => {
         );
       });
 
-      test('should emit trigger-delivery-ack even when terminal delivery is unverified (success=true)', () => {
+      test('should emit accepted.unverified outcome when terminal delivery is unverified (success=true)', () => {
         let injectHandler;
         ipcRenderer.on.mockImplementation((channel, handler) => {
           if (channel === 'inject-message') injectHandler = handler;
@@ -642,13 +642,21 @@ describe('daemon-handlers.js module', () => {
         injectHandler({}, { panes: ['5'], message: 'msg', deliveryId: 'delivery-unverified-1' });
         jest.runAllTimers();
 
-        // Unverified but success=true means message was typed + Enter pressed = delivered
+        // Unverified but success=true means message was typed + Enter pressed = delivered.
+        // We route as accepted.unverified to avoid inflating to delivered.verified ACK semantics.
         expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('5', 'delivered');
-        expect(ipcRenderer.send).toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-unverified-1', paneId: '5' });
-        expect(ipcRenderer.send).not.toHaveBeenCalledWith(
+        expect(ipcRenderer.send).toHaveBeenCalledWith(
           'trigger-delivery-outcome',
-          expect.objectContaining({ deliveryId: 'delivery-unverified-1', accepted: false })
+          {
+            deliveryId: 'delivery-unverified-1',
+            paneId: '5',
+            accepted: true,
+            verified: false,
+            status: 'accepted.unverified',
+            reason: 'timeout',
+          }
         );
+        expect(ipcRenderer.send).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-unverified-1', paneId: '5' });
       });
 
       test('should emit trigger-delivery-ack when terminal delivery is verified', () => {
@@ -677,7 +685,12 @@ describe('daemon-handlers.js module', () => {
           if (channel === 'inject-message') injectHandler = handler;
         });
         terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
-          setTimeout(() => options.onComplete({ success: false, reason: 'submit_not_accepted' }), 0);
+          setTimeout(() => options.onComplete({
+            success: true,
+            verified: false,
+            status: 'accepted.unverified',
+            reason: 'submit_not_accepted',
+          }), 0);
         });
 
         daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
