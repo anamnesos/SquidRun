@@ -36,6 +36,7 @@ describe('transition-ledger', () => {
     const transition = ledger.getByCorrelation('corr-create', '1');
 
     expect(transition).toBeTruthy();
+    expect(transition.causationId).toBe(evt.eventId);
     expect(transition.transitionType).toBe('message.submit');
     expect(transition.phase).toBe('requested');
     expect(transition.lifecycle).toBe('requested');
@@ -44,6 +45,28 @@ describe('transition-ledger', () => {
     expect(transition.sourceEventId).toBe(evt.eventId);
     expect(transition.preconditions).toEqual([]);
     expect(transition.verification.outcome).toBe('unknown');
+  });
+
+  test('includes required schema fields for lifecycle, evidence, and verification metadata', () => {
+    const invalidHandler = jest.fn();
+    bus.on('transition.invalid', invalidHandler);
+
+    emitRequested('corr-required-schema');
+    const transition = ledger.getByCorrelation('corr-required-schema', '1');
+
+    expect(transition).toBeTruthy();
+    expect(typeof transition.createdAt).toBe('number');
+    expect(typeof transition.updatedAt).toBe('number');
+    expect(transition.closed).toBe(false);
+    expect(transition.closedAt).toBeNull();
+    expect(Array.isArray(transition.evidence)).toBe(true);
+    expect(typeof transition.owner.acquiredAt).toBe('number');
+    expect(typeof transition.verification.confidence).toBe('number');
+    expect(transition.verification.verifiedAt).toBeNull();
+    expect(transition.outcome.resolvedBy).toBe('normal');
+    expect(
+      invalidHandler.mock.calls.some((call) => call[0].payload.reasonCode === 'missing_required_fields')
+    ).toBe(false);
   });
 
   test('tracks canonical phase progression to verifying', () => {
@@ -62,6 +85,40 @@ describe('transition-ledger', () => {
       'applied',
       'verifying',
     ]);
+  });
+
+  test('updates causationId to the eventId that triggered the current phase', () => {
+    const requested = emitRequested('corr-causation');
+    let transition = ledger.getByCorrelation('corr-causation', '1');
+    expect(transition.causationId).toBe(requested.eventId);
+
+    const queued = bus.emit('inject.queued', {
+      paneId: '1',
+      correlationId: 'corr-causation',
+      source: 'injection.js',
+    });
+    transition = ledger.getByCorrelation('corr-causation', '1');
+    expect(transition.phase).toBe('deferred');
+    expect(transition.causationId).toBe(queued.eventId);
+
+    const applied = bus.emit('inject.applied', {
+      paneId: '1',
+      correlationId: 'corr-causation',
+      source: 'injection.js',
+    });
+    transition = ledger.getByCorrelation('corr-causation', '1');
+    expect(transition.phase).toBe('applied');
+    expect(transition.causationId).toBe(applied.eventId);
+
+    const submitSent = bus.emit('inject.submit.sent', {
+      paneId: '1',
+      correlationId: 'corr-causation',
+      source: 'injection.js',
+    });
+    transition = ledger.getByCorrelation('corr-causation', '1');
+    expect(transition.phase).toBe('verifying');
+    expect(transition.causationId).toBe(submitSent.eventId);
+    expect(transition.phaseHistory[transition.phaseHistory.length - 1].eventId).toBe(submitSent.eventId);
   });
 
   test('records weak evidence from daemon.write.ack accepted', () => {
@@ -292,7 +349,7 @@ describe('transition-ledger', () => {
     expect(found.verification.evidenceClassObserved).toBe('disallowed');
   });
 
-  test('acceptedSignals disallows non-listed signals at classify time', () => {
+  test('acceptedSignals treats non-listed signals as irrelevant evidence (none)', () => {
     bus.emit('inject.requested', {
       paneId: '1',
       correlationId: 'corr-accepted-list',
@@ -323,9 +380,44 @@ describe('transition-ledger', () => {
     const transitions = ledger.listTransitions({ includeClosed: true, limit: 10 });
     const found = transitions.find((item) => item.correlationId === 'corr-accepted-list');
     expect(found.closed).toBe(true);
-    expect(found.phase).toBe('failed');
-    expect(found.outcome.reasonCode).toBe('disallowed_evidence');
-    expect(found.verification.evidenceClassObserved).toBe('disallowed');
+    expect(found.phase).toBe('timed_out');
+    expect(found.outcome.reasonCode).toBe('timeout_without_evidence');
+    expect(found.verification.evidenceClassObserved).toBe('none');
+    expect(found.evidence.length).toBe(0);
+  });
+
+  test('weak_allowed marks verified finalization with weak-only evidence as risked_pass', () => {
+    bus.emit('inject.requested', {
+      paneId: '1',
+      correlationId: 'corr-weak-allowed-verified',
+      source: 'injection.js',
+      payload: {
+        evidenceSpec: {
+          requiredClass: 'weak_allowed',
+          acceptedSignals: ['inject.submit.sent'],
+          disallowedSignals: [],
+        },
+      },
+    });
+
+    bus.emit('inject.submit.sent', {
+      paneId: '1',
+      correlationId: 'corr-weak-allowed-verified',
+      source: 'injection.js',
+    });
+    bus.emit('verify.pass', {
+      paneId: '1',
+      correlationId: 'corr-weak-allowed-verified',
+      source: 'verification.js',
+    });
+
+    const transition = ledger.getByCorrelation('corr-weak-allowed-verified');
+    expect(transition).toBeTruthy();
+    expect(transition.closed).toBe(true);
+    expect(transition.phase).toBe('verified');
+    expect(transition.verification.outcome).toBe('risked_pass');
+    expect(transition.lifecycle).toBe('delivered_unverified');
+    expect(transition.outcome.status).toBe('partial');
   });
 
   test('timeout is armed at submit.requested (before submit.sent)', () => {
@@ -363,6 +455,34 @@ describe('transition-ledger', () => {
     expect(found.phase).toBe('timed_out');
     expect(found.lifecycle).toBe('delivered_unverified');
     expect(found.verification.outcome).toBe('risked_pass');
+  });
+
+  test('timeout DROP fallback policy is reclassified to timed_out', () => {
+    bus.emit('inject.requested', {
+      paneId: '1',
+      correlationId: 'corr-timeout-drop-fallback',
+      source: 'injection.js',
+      payload: {
+        fallbackPolicy: {
+          onTimeout: 'drop',
+        },
+      },
+    });
+    bus.emit('inject.submit.requested', {
+      paneId: '1',
+      correlationId: 'corr-timeout-drop-fallback',
+      source: 'injection.js',
+    });
+
+    jest.advanceTimersByTime(5001);
+
+    const transition = ledger.getByCorrelation('corr-timeout-drop-fallback');
+    expect(transition).toBeTruthy();
+    expect(transition.closed).toBe(true);
+    expect(transition.phase).toBe('timed_out');
+    expect(transition.outcome.reasonCode).toBe('timeout_drop_fallback');
+    expect(transition.lifecycle).toBe('timed_out');
+    expect(transition.verification.outcome).toBe('unknown');
   });
 
   test('inject.failed settles transition with fail verification outcome', () => {
@@ -422,6 +542,27 @@ describe('transition-ledger', () => {
     expect(all.some((item) => item.correlationId === 'corr-prune-504')).toBe(true);
   });
 
+  test('prune skips open head transitions and evicts closed entries deeper in the list', () => {
+    emitRequested('corr-prune-open-head');
+    for (let i = 0; i < 505; i++) {
+      const corr = `corr-prune-skip-${i}`;
+      emitRequested(corr);
+      bus.emit('inject.dropped', {
+        paneId: '1',
+        correlationId: corr,
+        source: 'injection.js',
+        payload: { reason: 'prune_skip_test' },
+      });
+    }
+
+    const all = ledger.listTransitions({ includeClosed: true, limit: 1000 });
+    expect(all.length).toBe(500);
+    expect(all.some((item) => item.correlationId === 'corr-prune-open-head')).toBe(true);
+    expect(all.some((item) => item.correlationId === 'corr-prune-skip-0')).toBe(false);
+    expect(all.some((item) => item.correlationId === 'corr-prune-skip-5')).toBe(false);
+    expect(all.some((item) => item.correlationId === 'corr-prune-skip-6')).toBe(true);
+  });
+
   test('getByCorrelation scans all panes when paneId is omitted', () => {
     emitRequested('corr-scan-all', '2');
     const transition = ledger.getByCorrelation('corr-scan-all');
@@ -429,6 +570,28 @@ describe('transition-ledger', () => {
     expect(transition).toBeTruthy();
     expect(transition.paneId).toBe('2');
     expect(transition.correlationId).toBe('corr-scan-all');
+  });
+
+  test('getByCorrelation returns closed transitions by default and supports includeClosed=false', () => {
+    emitRequested('corr-closed-query');
+    bus.emit('inject.dropped', {
+      paneId: '1',
+      correlationId: 'corr-closed-query',
+      source: 'injection.js',
+      payload: { reason: 'closed_query_test' },
+    });
+
+    const defaultLookup = ledger.getByCorrelation('corr-closed-query');
+    const paneLookup = ledger.getByCorrelation('corr-closed-query', '1');
+    const activeOnlyLookup = ledger.getByCorrelation('corr-closed-query', { includeClosed: false });
+    const paneActiveOnlyLookup = ledger.getByCorrelation('corr-closed-query', '1', { includeClosed: false });
+
+    expect(defaultLookup).toBeTruthy();
+    expect(defaultLookup.closed).toBe(true);
+    expect(paneLookup).toBeTruthy();
+    expect(paneLookup.closed).toBe(true);
+    expect(activeOnlyLookup).toBeNull();
+    expect(paneActiveOnlyLookup).toBeNull();
   });
 
   test('supports query by phase and reasonCode', () => {
