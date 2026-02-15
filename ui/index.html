@@ -44,7 +44,6 @@
           <button class="dropdown-item btn-nudge" id="nudgeAllBtn" title="Send Esc+Enter to unstick churning agents"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Nudge All</button>
           <button class="dropdown-item btn-danger" id="killAllBtn" title="Terminate all running agent sessions"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> Kill All</button>
           <button class="dropdown-item btn-fresh" id="freshStartBtn" title="Kill all sessions and start fresh without context"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0z"/></svg> Fresh Start</button>
-          <div class="dropdown-divider"></div>
           <button class="dropdown-item btn-restart" id="fullRestartBtn" title="Shutdown cleanly (run 'npm start' to restart)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Shutdown</button>
         </div>
       </div>
@@ -334,18 +333,9 @@
           </div>
           <!-- Command bar - under pane 1 only -->
           <form class="command-bar" autocomplete="off" onsubmit="return false;">
-            <div class="command-target-wrapper">
-              <select class="command-target" id="commandTarget" title="Select message target">
-                <option value="auto">Auto-route</option>
-                <option value="1" selected>Architect</option>
-                <option value="all">All Agents</option>
-                <option value="2">DevOps</option>
-                <option value="5">Analyst</option>
-              </select>
-            </div>
             <textarea class="command-input" id="broadcastInput" rows="1"
                    placeholder="Type here to message Architect (Enter to send)"
-                   title="Send message to selected target"
+                   title="Send message to Architect"
                    autocomplete="new-password" autocorrect="off" autocapitalize="off"
                    spellcheck="false" data-lpignore="true" data-form-type="other"
                    data-1p-ignore="true"
@@ -593,7 +583,7 @@
     <span id="connectionStatus">Initializing...</span>
     <span class="voice-status" id="voiceStatus" title="Voice input status"></span>
     <span id="heartbeatIndicator" class="heartbeat-indicator idle" style="display: none;">HB: IDLE (10m)</span>
-    <span>Press Ctrl+1-4 to focus pane | Enter to send to Lead | /all to broadcast | /2 to target pane 2</span>
+    <span>Press Ctrl+1-4 to focus pane | Enter to send to Architect | Use /task to auto-route</span>
   </div>
 
   <script src="renderer.js"></script>

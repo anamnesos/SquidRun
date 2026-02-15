@@ -138,6 +138,7 @@
   align-items: center;
   gap: var(--space-2);
   width: 100%;
+  min-height: 44px;
   padding: var(--space-2) var(--space-3);
   border: none;
   background: transparent;
@@ -163,10 +164,10 @@
   color: white;
 }
 
-.dropdown-divider {
-  height: 1px;
-  background: var(--color-border);
-  margin: var(--space-1) 0;
+/* Keep action rows visually even; suppress button-style borders inside dropdown menus. */
+.dropdown-menu .dropdown-item {
+  border: 0;
+  border-radius: 0;
 }
 
 /* Tab badge for friction count */
@@ -796,39 +797,6 @@
 
 .command-input:focus::placeholder {
   color: #555;
-}
-
-/* Command target selector */
-.command-target-wrapper {
-  flex-shrink: 0;
-}
-
-.command-target {
-  background: var(--color-bg-dark);
-  border: 1px solid var(--color-bg-light);
-  color: var(--color-text);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: var(--text-base);
-  cursor: pointer;
-  min-width: 120px;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.command-target:hover {
-  border-color: var(--color-secondary);
-}
-
-.command-target:focus {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.15);
-}
-
-.command-target option {
-  background: var(--color-bg-dark);
-  color: var(--color-text);
-  padding: var(--space-2);
 }
 
 /* Command delivery status */
@@ -1546,115 +1514,3 @@
   transform: translate(-50%, 0);
 }
 
-/* Custom Target Dropdown (for pane preview on hover) */
-.custom-target-dropdown {
-  position: relative;
-  display: inline-block;
-}
-
-.custom-target-button {
-  background: var(--color-bg-dark);
-  border: 1px solid var(--color-bg-medium);
-  color: var(--color-text);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
-  cursor: pointer;
-  min-width: 140px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.custom-target-button:hover {
-  border-color: var(--color-secondary);
-}
-
-.custom-target-button:focus {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.15);
-}
-
-.custom-target-button .arrow {
-  font-size: 10px;
-  color: var(--color-text-muted);
-  transition: transform var(--transition-fast);
-}
-
-.custom-target-dropdown.open .custom-target-button .arrow {
-  transform: rotate(180deg);
-}
-
-.custom-target-list {
-  display: none;
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  right: 0;
-  background: var(--color-bg-dark);
-  border: 1px solid var(--color-secondary);
-  border-radius: var(--radius-sm);
-  margin-bottom: var(--space-1);
-  z-index: 1000;
-  box-shadow: var(--shadow-lg), 0 0 20px rgba(0, 240, 255, 0.1);
-  max-height: 280px;
-  overflow-y: auto;
-}
-
-.custom-target-dropdown.open .custom-target-list {
-  display: block;
-  animation: dropdownSlideUp 0.15s ease;
-}
-
-@keyframes dropdownSlideUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.custom-target-option {
-  padding: var(--space-2) var(--space-3);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  transition: background var(--transition-fast), transform var(--transition-fast);
-  border-bottom: 1px solid var(--color-bg-medium);
-}
-
-.custom-target-option:last-child {
-  border-bottom: none;
-}
-
-.custom-target-option:hover {
-  background: rgba(0, 240, 255, 0.12);
-  transform: translateX(2px);
-}
-
-.custom-target-option.selected {
-  background: rgba(0, 240, 255, 0.15);
-  color: var(--color-primary);
-}
-
-.custom-target-option .pane-number {
-  background: var(--color-bg-medium);
-  color: var(--color-text-muted);
-  font-size: 10px;
-  font-weight: 600;
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-sm);
-  min-width: 20px;
-  text-align: center;
-}
-
-.custom-target-option:hover .pane-number {
-  background: var(--color-warning);
-  color: var(--color-bg-dark);
-}
-
-.custom-target-option.selected .pane-number {
-  background: var(--color-secondary);
-  color: var(--color-bg-dark);
-}

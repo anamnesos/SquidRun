@@ -14,6 +14,7 @@ function createRecoveryController(options = {}) {
     lastOutputTime,
     lastTypedTime,
     isCodexPane,
+    isGeminiPane,
     updatePaneStatus,
     updateConnectionStatus,
     getInjectionInFlight,
@@ -56,7 +57,7 @@ function createRecoveryController(options = {}) {
    */
   function markPotentiallyStuck(paneId) {
     const id = String(paneId);
-    if (typeof isCodexPane === 'function' && isCodexPane(id)) return; // Only Claude panes can get stuck this way
+    if (typeof isGeminiPane === 'function' && isGeminiPane(id)) return; // Only Claude/Codex panes use trusted Enter and can get stuck
 
     const existing = potentiallyStuckPanes.get(id);
     if (existing) {
@@ -354,24 +355,21 @@ function createRecoveryController(options = {}) {
 
       if (textarea) {
         textarea.focus();
-        window.hivemind.pty.write(id, '\r').catch(err => {
-          log.error(`aggressiveNudge ${id}`, 'PTY write failed:', err);
-        });
 
-        if (typeof isCodexPane === 'function' && isCodexPane(id)) {
-          // Codex: PTY newline to submit (clipboard paste broken - Codex treats as image paste)
+        if (typeof isGeminiPane === 'function' && isGeminiPane(id)) {
+          // Gemini: PTY newline to submit (reads stdin directly)
           window.hivemind.pty.write(id, '\r').catch(err => {
-            log.error(`aggressiveNudge ${id}`, 'Codex PTY write failed:', err);
+            log.error(`aggressiveNudge ${id}`, 'Gemini PTY write failed:', err);
           });
-          log.info(`Terminal ${id}`, 'Aggressive nudge: PTY carriage return (Codex)');
+          log.info(`Terminal ${id}`, 'Aggressive nudge: PTY carriage return (Gemini)');
         } else {
-          // Claude: use sendTrustedEnter with bypass flag
+          // Claude/Codex: use sendTrustedEnter with bypass flag
           const terminal = terminals.get(id);
           if (terminal) {
             terminal._hivemindBypass = true;
           }
           window.hivemind.pty.sendTrustedEnter().then(() => {
-            log.info(`Terminal ${id}`, 'Aggressive nudge: trusted Enter dispatched (Claude)');
+            log.info(`Terminal ${id}`, 'Aggressive nudge: trusted Enter dispatched');
           }).catch(err => {
             log.error(`aggressiveNudge ${id}`, 'sendTrustedEnter failed:', err);
           }).finally(() => {

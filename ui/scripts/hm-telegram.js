@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * hm-telegram: CLI tool to send a Telegram message via Bot API.
- * Usage: node hm-telegram.js "Hey the user, build passed!"
+ * Usage: node hm-telegram.js "Hey, build passed!"
  */
 
 const path = require('path');

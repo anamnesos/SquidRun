@@ -314,7 +314,7 @@ describe('terminal.js module', () => {
       expect(caps.mode).toBe('pty');
       expect(caps.modeLabel).toBe('codex-pty');
       expect(caps.verifySubmitAccepted).toBe(true);
-      expect(caps.enterMethod).toBe('pty');
+      expect(caps.enterMethod).toBe('trusted');
     });
 
     test('returns safe generic defaults for unknown runtimes', () => {
@@ -504,9 +504,9 @@ describe('terminal.js module', () => {
       // ESC should be sent immediately
       expect(mockTextarea.dispatchEvent).toHaveBeenCalled();
 
-      // Enter should be sent after 150ms delay
+      // Enter should be sent after 150ms delay via sendTrustedEnter
       jest.advanceTimersByTime(150);
-      expect(mockHivemind.pty.write).toHaveBeenCalledWith('1', '\r');
+      expect(mockHivemind.pty.sendTrustedEnter).toHaveBeenCalled();
     });
   });
 

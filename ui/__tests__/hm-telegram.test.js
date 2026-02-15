@@ -31,7 +31,7 @@ describe('hm-telegram', () => {
   });
 
   test('parseMessage joins argument tokens', () => {
-    expect(hmTelegram.parseMessage(['Hey', 'the user,', 'build', 'passed!'])).toBe('Hey the user, build passed!');
+    expect(hmTelegram.parseMessage(['Hey,', 'build', 'passed!'])).toBe('Hey, build passed!');
   });
 
   test('getMissingConfigKeys reports required env vars', () => {

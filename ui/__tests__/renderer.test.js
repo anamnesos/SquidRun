@@ -174,11 +174,6 @@ jest.mock('../modules/command-palette', () => ({
   showCommandPalette: jest.fn(),
 }));
 
-// Mock target-dropdown
-jest.mock('../modules/target-dropdown', () => ({
-  initCustomTargetDropdown: jest.fn(),
-}));
-
 // Mock status-strip
 jest.mock('../modules/status-strip', () => ({
   initStatusStrip: jest.fn(),

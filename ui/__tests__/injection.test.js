@@ -833,21 +833,20 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
 
-    test('handles Codex pane with PTY Enter (interactive PTY)', async () => {
+    test('handles Codex pane with sendTrustedEnter', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('1', mockTerminal);
 
       const onComplete = jest.fn();
       const promise = controller.doSendToPane('1', 'test command\r', onComplete);
-      // Advance past enterDelayMs (100ms) + focusWithRetry retries (3×50ms) + bypass clear
+      // Advance past enterDelayMs (50ms) + focusWithRetry retries (3×50ms) + bypass clear
       await jest.advanceTimersByTimeAsync(500);
       await promise;
 
-      // Codex interactive uses PTY write for text and PTY Enter for submission
+      // Codex now uses PTY write for text and sendTrustedEnter for submission
       expect(mockPty.write).toHaveBeenCalledWith('1', 'test command', expect.any(Object));
-      expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
-      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
+      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
       expect(mockPty.codexExec).not.toHaveBeenCalled();
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
       expect(onComplete).toHaveBeenCalledWith({
@@ -868,20 +867,18 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'pty_write_failed' });
     });
 
-    test('handles Codex PTY Enter failure', async () => {
+    test('handles Codex sendTrustedEnter failure', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
       terminals.set('1', { _hivemindBypass: false });
-      mockPty.write
-        .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(new Error('Enter failed'));
+      mockPty.write.mockResolvedValueOnce(undefined);
+      mockPty.sendTrustedEnter.mockRejectedValueOnce(new Error('Enter failed'));
       const onComplete = jest.fn();
 
       const promise = controller.doSendToPane('1', 'test\r', onComplete);
-      await jest.advanceTimersByTimeAsync(200);
+      await jest.advanceTimersByTimeAsync(500);
       await promise;
 
       expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'enter_failed' });
-      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
     });
 
     // Gemini PTY path: sanitize text, then send Enter via PTY \r

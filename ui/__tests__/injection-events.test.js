@@ -251,13 +251,13 @@ describe('Injection Events', () => {
   // doSendToPane (Codex path): inject.applied, inject.submit.sent (interactive PTY + PTY Enter)
   // ──────────────────────────────────────────
   describe('doSendToPane Codex events', () => {
-    test('emits inject.applied and inject.submit.sent for Codex interactive PTY', async () => {
+    test('emits inject.applied and inject.submit.sent for Codex with sendTrustedEnter', async () => {
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('codex', mockTerminal);
 
       let onCompleteResult;
       controller.doSendToPane('codex', 'codex test', (result) => { onCompleteResult = result; });
-      // Advance past enterDelayMs (100ms) + focusWithRetry retries (3×50ms) + bypass clear
+      // Advance past enterDelayMs (50ms) + focusWithRetry retries (3×50ms) + bypass clear
       await jest.advanceTimersByTimeAsync(500);
 
       expect(onCompleteResult).toBeDefined();
@@ -267,9 +267,8 @@ describe('Injection Events', () => {
       expect(applied).toBeDefined();
       expect(applied[1].payload.method).toBe('codex-pty');
 
-      // Codex interactive uses PTY Enter, not trusted keyboard Enter/codexExec
-      expect(mockPty.write).toHaveBeenCalledWith('codex', '\r', expect.any(Object));
-      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
+      // Codex now uses sendTrustedEnter like Claude
+      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
       expect(mockPty.codexExec).not.toHaveBeenCalled();
     });
 
@@ -291,16 +290,15 @@ describe('Injection Events', () => {
       expect(failed[1].payload.reason).toBe('pty_write_failed');
     });
 
-    test('emits inject.failed when Codex PTY Enter fails', async () => {
+    test('emits inject.failed when Codex sendTrustedEnter fails', async () => {
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('codex', mockTerminal);
-      mockPty.write
-        .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(new Error('Enter failed'));
+      mockPty.write.mockResolvedValueOnce(undefined);
+      mockPty.sendTrustedEnter.mockRejectedValueOnce(new Error('Enter failed'));
 
       let onCompleteResult;
       controller.doSendToPane('codex', 'test', (result) => { onCompleteResult = result; });
-      await jest.advanceTimersByTimeAsync(250);
+      await jest.advanceTimersByTimeAsync(500);
 
       expect(onCompleteResult).toBeDefined();
       expect(onCompleteResult.success).toBe(false);

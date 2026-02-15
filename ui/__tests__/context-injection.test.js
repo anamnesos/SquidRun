@@ -252,17 +252,17 @@ describe('_buildUserProfileSection — user profile in context injection', () =>
   test('includes user name, experience, and communication style', () => {
     const manager = new ContextInjectionManager({
       currentSettings: {
-        userName: 'the user',
+        userName: 'Alex',
         userExperienceLevel: 'advanced',
         userPreferredStyle: 'concise',
       },
     });
     const section = manager._buildUserProfileSection();
     expect(section).toContain('## User Profile');
-    expect(section).toContain('Name: the user');
+    expect(section).toContain('Name: Alex');
     expect(section).toContain('Advanced');
     expect(section).toContain('Concise');
-    expect(section).toContain('Address the user as "the user"');
+    expect(section).toContain('Address the user as "Alex"');
   });
 
   test('defaults to intermediate/balanced when levels not set', () => {
@@ -281,7 +281,7 @@ describe('_buildUserProfileSection — user profile in context injection', () =>
 
     const manager = new ContextInjectionManager({
       currentSettings: {
-        userName: 'the user',
+        userName: 'Alex',
         userExperienceLevel: 'expert',
         userPreferredStyle: 'concise',
       },
@@ -290,7 +290,7 @@ describe('_buildUserProfileSection — user profile in context injection', () =>
 
     const context = await manager.buildContext('1', 'claude');
     expect(context).toContain('## User Profile');
-    expect(context).toContain('Name: the user');
+    expect(context).toContain('Name: Alex');
   });
 
   test('buildContext omits user profile when name is empty', async () => {

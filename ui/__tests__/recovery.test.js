@@ -80,6 +80,7 @@ describe('Terminal Recovery Controller', () => {
       lastOutputTime,
       lastTypedTime,
       isCodexPane: jest.fn().mockReturnValue(false),
+      isGeminiPane: jest.fn().mockReturnValue(false),
       updatePaneStatus: jest.fn(),
       updateConnectionStatus: jest.fn(),
       getInjectionInFlight: jest.fn().mockReturnValue(false),
@@ -145,13 +146,13 @@ describe('Terminal Recovery Controller', () => {
       expect(log.info).toHaveBeenCalledWith('StuckSweeper 1', 'Re-marked as stuck (retry #1)');
     });
 
-    test('skips Codex panes', () => {
-      mockOptions.isCodexPane.mockReturnValue(true);
+    test('skips Gemini panes', () => {
+      mockOptions.isGeminiPane.mockReturnValue(true);
       controller = createRecoveryController(mockOptions);
 
-      controller.markPotentiallyStuck('2');
+      controller.markPotentiallyStuck('5');
 
-      expect(controller.potentiallyStuckPanes.has('2')).toBe(false);
+      expect(controller.potentiallyStuckPanes.has('5')).toBe(false);
     });
   });
 
@@ -529,16 +530,15 @@ describe('Terminal Recovery Controller', () => {
       expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
     });
 
-    test('uses PTY write for Codex panes', async () => {
+    test('uses sendTrustedEnter for Codex panes', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
       controller = createRecoveryController(mockOptions);
 
       controller.aggressiveNudge('2');
       await jest.advanceTimersByTimeAsync(200);
 
-      // Should call PTY write (once in aggressiveNudge's inner setTimeout for Codex)
-      const writeCalls = mockPty.write.mock.calls.filter(c => c[0] === '2' && c[1] === '\r');
-      expect(writeCalls.length).toBeGreaterThanOrEqual(1);
+      // Codex now uses sendTrustedEnter like Claude
+      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
     });
 
     test('sets bypass flag on terminal for Claude', async () => {
