@@ -13,6 +13,7 @@ const { LEGACY_ROLE_ALIASES, ROLE_ID_MAP, WORKSPACE_PATH } = require('../config'
 const DEFAULT_PORT = 9900;
 const MESSAGE_ACK_TTL_MS = 60000;
 const ROUTING_STALE_MS = 60000;
+const CONTENT_DEDUPE_TTL_MS = Number.parseInt(process.env.HIVEMIND_COMMS_CONTENT_DEDUPE_TTL_MS || '15000', 10);
 const OUTBOUND_QUEUE_MAX_ENTRIES = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_ENTRIES || '500', 10);
 const OUTBOUND_QUEUE_MAX_AGE_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_AGE_MS || String(30 * 60 * 1000), 10);
 const OUTBOUND_QUEUE_FLUSH_INTERVAL_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_FLUSH_INTERVAL_MS || '30000', 10);
@@ -33,6 +34,8 @@ let clientIdCounter = 0;
 let messageHandler = null; // External handler for incoming messages
 let recentMessageAcks = new Map(); // messageId -> { ackPayload, expiresAt }
 let pendingMessageAcks = new Map(); // messageId -> Promise<ackPayload>
+let recentDispatchAcks = new Map(); // dedupeKey -> { ackPayload, expiresAt }
+let pendingDispatchAcks = new Map(); // dedupeKey -> Promise<ackPayload>
 let outboundQueue = []; // [{ id, target, content, meta, createdAt, attempts, lastAttemptAt, queuedBy }]
 let outboundQueueFlushTimer = null;
 let outboundQueueFlushInProgress = false;
@@ -581,6 +584,68 @@ function cacheMessageAck(messageId, ackPayload, now = Date.now()) {
   });
 }
 
+function getContentDedupeTtlMs() {
+  return Number.isFinite(CONTENT_DEDUPE_TTL_MS) && CONTENT_DEDUPE_TTL_MS > 0
+    ? CONTENT_DEDUPE_TTL_MS
+    : 15000;
+}
+
+function pruneExpiredDispatchAcks(now = Date.now()) {
+  for (const [key, entry] of recentDispatchAcks.entries()) {
+    if (!entry || entry.expiresAt <= now) {
+      recentDispatchAcks.delete(key);
+    }
+  }
+}
+
+function cacheDispatchAck(dedupeKey, ackPayload, now = Date.now()) {
+  if (!dedupeKey || !ackPayload) return;
+  recentDispatchAcks.set(dedupeKey, {
+    ackPayload,
+    expiresAt: now + getContentDedupeTtlMs(),
+  });
+}
+
+function buildDispatchDedupeKey(clientInfo, message = {}) {
+  if (!message || (message.type !== 'send' && message.type !== 'broadcast')) return null;
+  const senderRole = toNonEmptyString(clientInfo?.role) || null;
+  const senderPane = normalizePaneId(clientInfo?.paneId);
+  const target = message.type === 'send' ? toNonEmptyString(message.target) : '__broadcast__';
+  const content = typeof message.content === 'string' ? message.content : JSON.stringify(message.content ?? '');
+  if (!senderRole && !senderPane) return null;
+  if (!target || !content) return null;
+
+  const normalizedTarget = target.toLowerCase();
+  const normalizedPriority = toNonEmptyString(message.priority) || 'normal';
+  const material = [
+    `t:${message.type}`,
+    `r:${senderRole || ''}`,
+    `p:${senderPane || ''}`,
+    `g:${normalizedTarget}`,
+    `q:${normalizedPriority}`,
+    `c:${content}`,
+  ].join('|');
+
+  return crypto.createHash('sha1').update(material).digest('hex');
+}
+
+function buildDedupeAckPayload(baseAck, messageId, traceContext, dedupeMode, dedupeKey) {
+  if (!baseAck || typeof baseAck !== 'object') return null;
+  return {
+    ...baseAck,
+    type: 'send-ack',
+    messageId: messageId || null,
+    traceId: traceContext?.traceId || baseAck.traceId || messageId || null,
+    parentEventId: traceContext?.parentEventId || baseAck.parentEventId || null,
+    timestamp: Date.now(),
+    dedupe: {
+      mode: dedupeMode,
+      key: dedupeKey || null,
+      sourceMessageId: baseAck.messageId || null,
+    },
+  };
+}
+
 function getDeliveryCheckResult(messageId) {
   const normalizedMessageId = toNonEmptyString(messageId);
   if (!normalizedMessageId) {
@@ -636,6 +701,8 @@ function start(options = {}) {
   messageHandler = options.onMessage || null;
   recentMessageAcks.clear();
   pendingMessageAcks.clear();
+  recentDispatchAcks.clear();
+  pendingDispatchAcks.clear();
   loadOutboundQueue();
   stopOutboundQueueTimer();
 
@@ -812,6 +879,85 @@ async function handleMessage(clientId, rawData) {
     }
   }
 
+  const dispatchDedupeKey = ackEligible ? buildDispatchDedupeKey(clientInfo, message) : null;
+  if (ackEligible && dispatchDedupeKey) {
+    pruneExpiredDispatchAcks();
+
+    const cachedDispatch = recentDispatchAcks.get(dispatchDedupeKey);
+    if (cachedDispatch?.ackPayload) {
+      void emitCommsMetric(clientId, clientInfo, 'comms.dedupe.hit', {
+        mode: 'signature_cache',
+        dedupeKey: dispatchDedupeKey,
+        messageId: messageId || null,
+        target: message?.target || null,
+        status: cachedDispatch.ackPayload?.status || null,
+      });
+      const dedupeAck = buildDedupeAckPayload(
+        cachedDispatch.ackPayload,
+        messageId,
+        ingressTraceContext,
+        'signature_cache',
+        dispatchDedupeKey
+      );
+      if (dedupeAck) {
+        sendJson(clientInfo.ws, dedupeAck);
+        if (messageId) {
+          cacheMessageAck(messageId, dedupeAck);
+        }
+        return;
+      }
+    }
+
+    const pendingDispatch = pendingDispatchAcks.get(dispatchDedupeKey);
+    if (pendingDispatch) {
+      void emitCommsMetric(clientId, clientInfo, 'comms.dedupe.hit', {
+        mode: 'signature_pending',
+        dedupeKey: dispatchDedupeKey,
+        messageId: messageId || null,
+        target: message?.target || null,
+      });
+      try {
+        const pendingAck = await pendingDispatch;
+        const dedupeAck = buildDedupeAckPayload(
+          pendingAck,
+          messageId,
+          ingressTraceContext,
+          'signature_pending',
+          dispatchDedupeKey
+        );
+        if (dedupeAck) {
+          sendJson(clientInfo.ws, dedupeAck);
+          if (messageId) {
+            cacheMessageAck(messageId, dedupeAck);
+          }
+        }
+      } catch (err) {
+        const failedAck = {
+          type: 'send-ack',
+          messageId,
+          ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'handler_error',
+          error: err.message,
+          traceId: ingressTraceContext?.traceId || null,
+          parentEventId: ingressTraceContext?.parentEventId || null,
+          timestamp: Date.now(),
+          dedupe: {
+            mode: 'signature_pending',
+            key: dispatchDedupeKey,
+          },
+        };
+        sendJson(clientInfo.ws, failedAck);
+        if (messageId) {
+          cacheMessageAck(messageId, failedAck);
+        }
+      }
+      return;
+    }
+  }
+
   let resolvePendingAck = null;
   let rejectPendingAck = null;
   if (ackEligible && messageId) {
@@ -822,16 +968,43 @@ async function handleMessage(clientId, rawData) {
     pendingMessageAcks.set(messageId, pending);
   }
 
+  let resolvePendingDispatchAck = null;
+  let rejectPendingDispatchAck = null;
+  if (ackEligible && dispatchDedupeKey) {
+    const pendingDispatch = new Promise((resolve, reject) => {
+      resolvePendingDispatchAck = resolve;
+      rejectPendingDispatchAck = reject;
+    });
+    pendingDispatchAcks.set(dispatchDedupeKey, pendingDispatch);
+  }
+
   function finalizeAckTracking(ackPayload, err) {
-    if (!ackEligible || !messageId) return;
-    pendingMessageAcks.delete(messageId);
+    if (!ackEligible) return;
+    if (messageId) {
+      pendingMessageAcks.delete(messageId);
+    }
+    if (dispatchDedupeKey) {
+      pendingDispatchAcks.delete(dispatchDedupeKey);
+    }
+
     if (ackPayload) {
-      cacheMessageAck(messageId, ackPayload);
+      if (messageId) {
+        cacheMessageAck(messageId, ackPayload);
+      }
+      if (dispatchDedupeKey) {
+        cacheDispatchAck(dispatchDedupeKey, ackPayload);
+      }
       if (resolvePendingAck) resolvePendingAck(ackPayload);
+      if (resolvePendingDispatchAck) resolvePendingDispatchAck(ackPayload);
       return;
     }
+
+    const trackingError = err || new Error('ACK processing failed');
     if (rejectPendingAck) {
-      rejectPendingAck(err || new Error('ACK processing failed'));
+      rejectPendingAck(trackingError);
+    }
+    if (rejectPendingDispatchAck) {
+      rejectPendingDispatchAck(trackingError);
     }
   }
 
@@ -1058,6 +1231,8 @@ function stop() {
     clients.clear();
     recentMessageAcks.clear();
     pendingMessageAcks.clear();
+    recentDispatchAcks.clear();
+    pendingDispatchAcks.clear();
     outboundQueueFlushInProgress = false;
     outboundQueue = [];
 
