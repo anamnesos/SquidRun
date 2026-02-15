@@ -348,5 +348,13 @@ describe('Screenshot Handlers', () => {
       expect(result.path).toContain('missing.png');
       expect(result.exists).toBe(false);
     });
+
+    test('rejects path traversal filenames', async () => {
+      const result = await harness.invoke('get-screenshot-path', '../secret.txt');
+
+      expect(result.path).toBeNull();
+      expect(result.exists).toBe(false);
+      expect(result.error).toBe('Invalid filename');
+    });
   });
 });

@@ -189,7 +189,10 @@ function registerScreenshotHandlers(ctx) {
   });
 
   ipcMain.handle('get-screenshot-path', (event, filename) => {
-    const filePath = path.join(SCREENSHOTS_DIR, filename);
+    if (!isSafeScreenshotFilename(filename)) {
+      return { path: null, exists: false, error: 'Invalid filename' };
+    }
+    const filePath = path.join(SCREENSHOTS_DIR, filename.trim());
     return { path: filePath, exists: fs.existsSync(filePath) };
   });
 }
