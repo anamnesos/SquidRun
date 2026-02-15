@@ -11,8 +11,8 @@ const MAX_TRANSITIONS = 500;
 
 const ROLE_BY_PANE = Object.freeze({
   '1': 'architect',
-  '2': 'devops',
-  '5': 'analyst',
+  '2': 'builder',
+  '5': 'oracle',
   system: 'system',
 });
 

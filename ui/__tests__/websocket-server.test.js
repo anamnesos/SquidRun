@@ -76,8 +76,8 @@ describe('WebSocket Server Facade', () => {
     });
 
     test('sendToTarget delegates to workerClient', () => {
-      server.sendToTarget('devops', 'hello', { priority: 'high' });
-      expect(mockWorkerClient.sendToTarget).toHaveBeenCalledWith('devops', 'hello', { priority: 'high' });
+      server.sendToTarget('builder', 'hello', { priority: 'high' });
+      expect(mockWorkerClient.sendToTarget).toHaveBeenCalledWith('builder', 'hello', { priority: 'high' });
     });
 
     test('sendToPane delegates to workerClient', () => {
@@ -141,8 +141,8 @@ describe('WebSocket Server Facade', () => {
     });
 
     test('sendToTarget delegates to runtime', () => {
-      server.sendToTarget('analyst', 'data', { flag: true });
-      expect(mockRuntime.sendToTarget).toHaveBeenCalledWith('analyst', 'data', { flag: true });
+      server.sendToTarget('oracle', 'data', { flag: true });
+      expect(mockRuntime.sendToTarget).toHaveBeenCalledWith('oracle', 'data', { flag: true });
     });
 
     test('sendToPane delegates to runtime', () => {

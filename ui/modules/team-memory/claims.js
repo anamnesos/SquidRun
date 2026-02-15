@@ -5,16 +5,18 @@ const CLAIM_STATUS = new Set(['proposed', 'confirmed', 'contested', 'pending_pro
 const EVIDENCE_RELATIONS = new Set(['supports', 'contradicts', 'caused_by']);
 const DECISION_OUTCOMES = new Set(['success', 'partial', 'failure', 'unknown']);
 const CONSENSUS_POSITIONS = new Set(['support', 'challenge', 'abstain']);
-const DEFAULT_ACTIVE_AGENTS = Object.freeze(['architect', 'devops', 'analyst']);
+const DEFAULT_ACTIVE_AGENTS = Object.freeze(['architect', 'builder', 'oracle']);
 
 const ROLE_ALIASES = new Map([
   ['arch', 'architect'],
   ['architect', 'architect'],
-  ['ana', 'analyst'],
-  ['analyst', 'analyst'],
-  ['infra', 'devops'],
-  ['backend', 'devops'],
-  ['devops', 'devops'],
+  ['oracle', 'oracle'],
+  ['ana', 'oracle'],
+  ['analyst', 'oracle'],
+  ['builder', 'builder'],
+  ['infra', 'builder'],
+  ['backend', 'builder'],
+  ['devops', 'builder'],
   ['frontend', 'frontend'],
   ['reviewer', 'reviewer'],
   ['system', 'system'],

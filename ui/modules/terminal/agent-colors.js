@@ -8,8 +8,8 @@ const log = require('../logger');
 // Agent role colors (#RRGGBB format required by xterm.js decorations)
 const AGENT_COLORS = {
   architect: '#FF9500',  // Orange
-  devops:    '#00BCD4',  // Cyan
-  analyst:   '#AB47BC',  // Purple
+  builder:   '#00BCD4',  // Cyan
+  oracle:    '#AB47BC',  // Purple
   generic:   '#888888',  // Gray
 };
 
@@ -17,11 +17,11 @@ const AGENT_COLORS = {
 // Order matters — first match wins per line
 const AGENT_PATTERNS = [
   { pattern: /\(ARCH\s*#\d+\):/,           color: AGENT_COLORS.architect },
-  { pattern: /\(DEVOPS\s*#\d+\):/,         color: AGENT_COLORS.devops },
-  { pattern: /\(ANA\s*#\d+\):/,            color: AGENT_COLORS.analyst },
+  { pattern: /\(BUILDER\s*#\d+\):/,        color: AGENT_COLORS.builder },
+  { pattern: /\(ORACLE\s*#\d+\):/,         color: AGENT_COLORS.oracle },
   { pattern: /\[MSG from architect\]/i,     color: AGENT_COLORS.architect },
-  { pattern: /\[MSG from devops\]/i,        color: AGENT_COLORS.devops },
-  { pattern: /\[MSG from analyst\]/i,       color: AGENT_COLORS.analyst },
+  { pattern: /\[MSG from builder\]/i,       color: AGENT_COLORS.builder },
+  { pattern: /\[MSG from oracle\]/i,        color: AGENT_COLORS.oracle },
   { pattern: /\[AGENT MSG[^\]]*\]/,         color: AGENT_COLORS.generic },
 ];
 

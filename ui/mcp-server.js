@@ -3,7 +3,7 @@
  * Hivemind MCP Server
  * V11: Model Context Protocol integration for agent-to-agent communication
  *
- * Usage: node mcp-server.js --agent <architect|infra|backend|analyst>
+ * Usage: node mcp-server.js --agent <architect|builder|oracle>
  *
  * This server exposes tools for:
  * - Messaging: send_message, get_messages
@@ -55,20 +55,23 @@ function getTriggersPath(options = {}) {
 const AGENT_TO_PANE = {
   'architect': '1',
   'lead': '1',
-  'devops': '2',
+  'builder': '2',
   'infra': '2',
   'orchestrator': '2',
   'backend': '2',
   'implementer-b': '2',
   'worker-b': '2',
-  'analyst': '5',
+  'oracle': '5',
   'investigator': '5',
+  // Legacy aliases
+  'devops': '2',
+  'analyst': '5',
 };
 
 const PANE_TO_AGENT = {
   '1': 'architect',
-  '2': 'devops',
-  '5': 'analyst',
+  '2': 'builder',
+  '5': 'oracle',
 };
 
 // PANE_ROLES imported from config.js (canonical source)
@@ -89,7 +92,7 @@ function parseArgs() {
   }
 
   if (!agentName || !AGENT_TO_PANE[agentName]) {
-    log.error('MCP', 'Usage: node mcp-server.js --agent <architect|infra|backend|analyst>');
+    log.error('MCP', 'Usage: node mcp-server.js --agent <architect|builder|oracle>');
     process.exit(1);
   }
 
@@ -131,7 +134,7 @@ const TOOLS = [
       properties: {
         to: {
           type: 'string',
-          enum: ['architect', 'lead', 'orchestrator', 'implementer-a', 'worker-a', 'implementer-b', 'worker-b', 'investigator', 'reviewer', 'workers', 'all'],
+          enum: ['architect', 'builder', 'oracle', 'lead', 'orchestrator', 'infra', 'backend', 'investigator', 'workers', 'all'],
           description: 'Target agent(s). Use "workers" for implementers/investigator, "all" for everyone.',
         },
         content: {
@@ -174,7 +177,7 @@ const TOOLS = [
       properties: {
         agent: {
           type: 'string',
-          enum: ['architect', 'lead', 'orchestrator', 'implementer-a', 'worker-a', 'implementer-b', 'worker-b', 'investigator', 'reviewer', 'workers', 'all'],
+          enum: ['architect', 'builder', 'oracle', 'lead', 'orchestrator', 'infra', 'backend', 'investigator', 'workers', 'all'],
           description: 'Agent(s) to trigger.',
         },
         context: {
@@ -384,14 +387,15 @@ function resolvePaneIds(target) {
     case 'architect':
     case 'lead':
       return ['1'];
+    case 'builder':
     case 'infra':
     case 'orchestrator':
-      return ['2'];
     case 'backend':
     case 'implementer-b':
     case 'worker-b':
     case 'devops':
       return ['2'];
+    case 'oracle':
     case 'analyst':
     case 'investigator':
       return ['5'];

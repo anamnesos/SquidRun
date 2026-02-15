@@ -27,7 +27,7 @@ describe('team-memory daily integration helpers', () => {
 
     expect(payloads.length).toBeGreaterThan(1);
     expect(payloads[0]).toEqual(expect.objectContaining({
-      owner: 'devops',
+      owner: 'builder',
       sessionsBack: 2,
     }));
     expect(payloads.some((entry) => entry.scope === 'domain:backend')).toBe(true);
@@ -52,14 +52,14 @@ describe('team-memory daily integration helpers', () => {
     const message = formatReadBeforeWorkMessage({
       task: { id: 'T-11' },
       claims: [
-        { status: 'confirmed', claimType: 'fact', owner: 'devops', statement: 'First claim statement' },
-        { status: 'contested', claimType: 'negative', owner: 'analyst', statement: 'Second claim statement' },
+        { status: 'confirmed', claimType: 'fact', owner: 'builder', statement: 'First claim statement' },
+        { status: 'contested', claimType: 'negative', owner: 'oracle', statement: 'Second claim statement' },
       ],
     });
 
     expect(message).toContain('[TEAM MEMORY] Prior context for T-11');
-    expect(message).toContain('1. (confirmed/fact/devops)');
-    expect(message).toContain('2. (contested/negative/analyst)');
+    expect(message).toContain('1. (confirmed/fact/builder)');
+    expect(message).toContain('2. (contested/negative/oracle)');
   });
 
   test('buildTaskCloseClaimPayload maps completed and failed states', () => {
@@ -74,7 +74,7 @@ describe('team-memory daily integration helpers', () => {
       status: 'completed',
     });
     expect(completed.claimType).toBe('fact');
-    expect(completed.owner).toBe('devops');
+    expect(completed.owner).toBe('builder');
     expect(completed.idempotencyKey).toContain('task-close:T-20:completed');
 
     const failed = buildTaskCloseClaimPayload({
@@ -101,8 +101,8 @@ describe('team-memory daily integration helpers', () => {
 
     expect(event.eventType).toBe('task.status_changed');
     expect(event.status).toBe('failed');
-    expect(event.actor).toBe('devops');
-    expect(event.owner).toBe('devops');
+    expect(event.actor).toBe('builder');
+    expect(event.owner).toBe('builder');
 
     expect(isDeliveryFailureResult({ verified: true, status: 'delivered.verified' })).toBe(false);
     expect(isDeliveryFailureResult({ verified: false, status: 'routed_unverified_timeout' })).toBe(true);
@@ -120,7 +120,7 @@ describe('team-memory daily integration helpers', () => {
     expect(sessionEvent).toEqual(expect.objectContaining({
       eventType: 'session.lifecycle',
       paneId: '2',
-      actor: 'devops',
+      actor: 'builder',
       status: 'ended',
       exitCode: 1,
       reason: 'pty_exit',
@@ -145,7 +145,7 @@ describe('team-memory daily integration helpers', () => {
 
     const intentEvent = buildIntentUpdatePatternEvent({
       paneId: '5',
-      role: 'ana',
+      role: 'oracle',
       session: 129,
       intent: 'Investigating runtime bridge',
       previousIntent: 'Idle',
@@ -155,7 +155,7 @@ describe('team-memory daily integration helpers', () => {
     expect(intentEvent).toEqual(expect.objectContaining({
       eventType: 'intent.updated',
       paneId: '5',
-      actor: 'analyst',
+      actor: 'oracle',
       intent: 'Investigating runtime bridge',
       previousIntent: 'Idle',
       source: 'terminal.js',

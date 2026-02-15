@@ -159,7 +159,7 @@ describe('triggers.js module', () => {
     });
 
     test('strips HM messageId marker before injection payload', () => {
-      fs.readFileSync.mockReturnValue('[HM-MESSAGE-ID:hm-test-1]\n(ANALYST): marker strip');
+      fs.readFileSync.mockReturnValue('[HM-MESSAGE-ID:hm-test-1]\n(ORACLE): marker strip');
       triggers.init(global.window, new Map([['1', 'running']]), null);
 
       const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
@@ -175,7 +175,7 @@ describe('triggers.js module', () => {
     });
 
     test('deduplicates trigger fallback payloads by HM messageId marker', () => {
-      fs.readFileSync.mockReturnValue('[HM-MESSAGE-ID:hm-dup-1]\n(ANALYST): duplicate guard');
+      fs.readFileSync.mockReturnValue('[HM-MESSAGE-ID:hm-dup-1]\n(ORACLE): duplicate guard');
       triggers.init(global.window, new Map([['1', 'running']]), null);
 
       const first = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
@@ -291,7 +291,7 @@ describe('triggers.js module', () => {
       };
       triggers.setWatcher(mockWatcher);
 
-      // DevOps (2) is a worker
+      // Builder (2) is a worker
       const result = triggers.checkWorkflowGate(['2']);
       expect(result.allowed).toBe(true);
     });
@@ -334,21 +334,21 @@ describe('triggers.js module', () => {
       triggers.init(global.window, null, null);
       
       // Fixed: recordMessageSeen is exported
-      triggers.recordMessageSeen('analyst', 5, 'architect');
+      triggers.recordMessageSeen('oracle', 5, 'architect');
       
       // Test duplicate (seq 5 <= lastSeen 5)
-      const isDup = triggers.isDuplicateMessage('analyst', 5, 'architect');
+      const isDup = triggers.isDuplicateMessage('oracle', 5, 'architect');
       expect(isDup).toBe(true);
       
       // Test new message (seq 6 > lastSeen 5)
-      const isNew = triggers.isDuplicateMessage('analyst', 6, 'architect');
+      const isNew = triggers.isDuplicateMessage('oracle', 6, 'architect');
       expect(isNew).toBe(false);
     });
 
     test('should update state on new message', () => {
       // Simulate successful delivery updating state
       // recordMessageSeen is exported
-      triggers.recordMessageSeen('analyst', 10, 'architect');
+      triggers.recordMessageSeen('oracle', 10, 'architect');
       
       // Verify save (write to temp then rename)
       expect(fs.writeFileSync).toHaveBeenCalledWith(expect.stringContaining('.tmp'), expect.any(String), 'utf-8');
@@ -357,10 +357,10 @@ describe('triggers.js module', () => {
 
     test('should handle session reset banner', () => {
       // Reset logic requires banner IN the message content
-      fs.readFileSync.mockReturnValue('(ANALYST #1): # HIVEMIND SESSION: Reset');
+      fs.readFileSync.mockReturnValue('(ORACLE #1): # HIVEMIND SESSION: Reset');
       
       // Mock state to have seen #5
-      triggers.recordMessageSeen('analyst', 5, 'architect');
+      triggers.recordMessageSeen('oracle', 5, 'architect');
       
       // Now send #1 with session banner
       const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt'); // Architect recipient
@@ -368,7 +368,7 @@ describe('triggers.js module', () => {
       expect(result.success).toBe(true);
       // Verification of sequence reset happens internally:
       // If reset worked, #1 is NOT a duplicate even though lastSeen was 5
-      expect(triggers.isDuplicateMessage('analyst', 1, 'architect')).toBe(false);
+      expect(triggers.isDuplicateMessage('oracle', 1, 'architect')).toBe(false);
     });
   });
 

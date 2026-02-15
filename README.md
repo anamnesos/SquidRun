@@ -19,7 +19,7 @@ It is a working proof that one person can run a real AI engineering team with pr
 
 ### Core Runtime
 - **PTY-only architecture** - one runtime path, no mode split
-- **3 persistent panes** - Architect, DevOps, Analyst
+- **3 persistent panes** - Architect (Director), Builder, Oracle
 - **2 internal teammates** - Frontend + Reviewer under Architect
 - **WebSocket-first comms** - ACK/timeout/retry + fallback triggers
 
@@ -46,11 +46,11 @@ It is a working proof that one person can run a real AI engineering team with pr
 
 ## Agent Roles
 
-| Pane | Role | Domain |
-|------|------|--------|
-| 1 | Architect (+ Frontend + Reviewer teammates) | Architecture, coordination, delegation, integration |
-| 2 | DevOps | CI/CD, daemon/process/backend reliability |
-| 5 | Analyst | Debugging, profiling, root-cause investigations |
+| Pane | Role | Bundle | Sub-roles |
+|------|------|--------|-----------|
+| 1 | Architect (+ Frontend + Reviewer teammates) | Director | Architect, Data Engineer, Reviewer, Release Manager, UX Researcher, Memory Steward |
+| 2 | Builder | Builder | Frontend, Backend, DevOps, SRE, Tester, Validator, Security, Context Optimizer |
+| 5 | Oracle | Oracle | Investigator, Docs, Eval/Benchmark |
 
 Model/CLI assignment is runtime-configurable via `ui/settings.json` (`paneCommands`).
 
@@ -80,9 +80,9 @@ node ui/scripts/hm-telegram.js "message"
 | File | Target |
 |------|--------|
 | `.hivemind/triggers/architect.txt` | Architect (pane 1) |
-| `.hivemind/triggers/devops.txt` | DevOps (pane 2) |
-| `.hivemind/triggers/analyst.txt` | Analyst (pane 5) |
-| `.hivemind/triggers/workers.txt` | DevOps + Analyst |
+| `.hivemind/triggers/builder.txt` | Builder (pane 2) |
+| `.hivemind/triggers/oracle.txt` | Oracle (pane 5) |
+| `.hivemind/triggers/workers.txt` | Builder |
 | `.hivemind/triggers/all.txt` | Everyone |
 
 ## Tech Stack

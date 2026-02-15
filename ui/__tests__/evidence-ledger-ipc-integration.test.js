@@ -64,7 +64,7 @@ maybeDescribe('evidence-ledger IPC integration', () => {
     const createIncident = await harness.invoke('evidence-ledger:create-incident', {
       title: 'ERR-IPC-001 submit acceptance race',
       severity: 'high',
-      createdBy: 'analyst',
+      createdBy: 'oracle',
       tags: ['err-ipc-001', 'submit'],
       meta: { lane: 'integration' },
     });
@@ -75,7 +75,7 @@ maybeDescribe('evidence-ledger IPC integration', () => {
       incidentId: createIncident.incidentId,
       claim: 'CLI busy-state ignored Enter dispatch',
       confidence: 0.74,
-      author: 'analyst',
+      author: 'oracle',
       type: 'hypothesis',
       evidenceBindings: [
         {
@@ -111,7 +111,7 @@ maybeDescribe('evidence-ledger IPC integration', () => {
       confidence: 0.88,
       reason: 'Hypothesis corroborated by event + query evidence',
       keyAssertionIds: [addHypothesis.assertionId],
-      author: 'analyst',
+      author: 'oracle',
     });
     expect(recordVerdict.ok).toBe(true);
     expect(recordVerdict.version).toBe(1);
@@ -139,7 +139,7 @@ maybeDescribe('evidence-ledger IPC integration', () => {
       sessionNumber: 222,
       mode: 'PTY',
       stats: { test_suites: 120, tests_passed: 4001 },
-      team: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
     });
     expect(startSession.ok).toBe(true);
     expect(startSession.sessionId).toBe('ses-ipc-memory-1');
@@ -161,13 +161,13 @@ maybeDescribe('evidence-ledger IPC integration', () => {
         category: 'completion',
         title: 'Slice 3 Phase B delivered',
         body: 'IPC + CLI + seed utility',
-        author: 'devops',
+        author: 'builder',
       },
       {
         category: 'issue',
         title: 'ERR-MEM-IPC-01',
         body: 'Context drift between sessions',
-        author: 'analyst',
+        author: 'oracle',
       },
       {
         category: 'roadmap',

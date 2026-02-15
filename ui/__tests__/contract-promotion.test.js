@@ -145,7 +145,7 @@ describe('contract-promotion', () => {
         promotion.incrementSession('test-contract');
       }
       promotion.addSignoff('test-contract', 'architect');
-      promotion.addSignoff('test-contract', 'analyst');
+      promotion.addSignoff('test-contract', 'oracle');
       promotion.recordFalsePositive('test-contract');
 
       expect(promotion.isReadyForPromotion('test-contract')).toBe(false);
@@ -177,7 +177,7 @@ describe('contract-promotion', () => {
       promotion.addSignoff('test-contract', 'architect');
       expect(promotion.isReadyForPromotion('test-contract')).toBe(false);
 
-      promotion.addSignoff('test-contract', 'analyst');
+      promotion.addSignoff('test-contract', 'oracle');
       expect(promotion.isReadyForPromotion('test-contract')).toBe(true);
     });
   });
@@ -196,7 +196,7 @@ describe('contract-promotion', () => {
         promotion.incrementSession('test-contract');
       }
       promotion.addSignoff('test-contract', 'architect');
-      promotion.addSignoff('test-contract', 'analyst');
+      promotion.addSignoff('test-contract', 'oracle');
       expect(promotion.isReadyForPromotion('test-contract')).toBe(false);
     });
 
@@ -213,7 +213,7 @@ describe('contract-promotion', () => {
         promotion.incrementSession('test-contract');
       }
       promotion.addSignoff('test-contract', 'architect');
-      promotion.addSignoff('test-contract', 'analyst');
+      promotion.addSignoff('test-contract', 'oracle');
       expect(promotion.isReadyForPromotion('test-contract')).toBe(true);
     });
 
@@ -222,7 +222,7 @@ describe('contract-promotion', () => {
         promotion.incrementSession('test-contract');
       }
       promotion.addSignoff('test-contract', 'architect');
-      promotion.addSignoff('test-contract', 'analyst');
+      promotion.addSignoff('test-contract', 'oracle');
 
       // Promote it
       promotion.checkPromotions();
@@ -247,7 +247,7 @@ describe('contract-promotion', () => {
         promotion.incrementSession('contract-a');
       }
       promotion.addSignoff('contract-a', 'architect');
-      promotion.addSignoff('contract-a', 'analyst');
+      promotion.addSignoff('contract-a', 'oracle');
 
       const result = promotion.checkPromotions();
       expect(result).toEqual(['contract-a']);
@@ -258,7 +258,7 @@ describe('contract-promotion', () => {
         promotion.incrementSession('contract-a');
       }
       promotion.addSignoff('contract-a', 'architect');
-      promotion.addSignoff('contract-a', 'analyst');
+      promotion.addSignoff('contract-a', 'oracle');
 
       promotion.checkPromotions();
       const entry = promotion.getContractStats('contract-a');
@@ -273,7 +273,7 @@ describe('contract-promotion', () => {
         promotion.incrementSession('contract-a');
       }
       promotion.addSignoff('contract-a', 'architect');
-      promotion.addSignoff('contract-a', 'analyst');
+      promotion.addSignoff('contract-a', 'oracle');
 
       promotion.checkPromotions();
       expect(handler).toHaveBeenCalledTimes(1);
@@ -285,7 +285,7 @@ describe('contract-promotion', () => {
         promotion.incrementSession('contract-a');
       }
       promotion.addSignoff('contract-a', 'architect');
-      promotion.addSignoff('contract-a', 'analyst');
+      promotion.addSignoff('contract-a', 'oracle');
       promotion.recordFalsePositive('contract-a');
 
       const result = promotion.checkPromotions();
@@ -298,14 +298,14 @@ describe('contract-promotion', () => {
         promotion.incrementSession('contract-a');
       }
       promotion.addSignoff('contract-a', 'architect');
-      promotion.addSignoff('contract-a', 'analyst');
+      promotion.addSignoff('contract-a', 'oracle');
 
       // Contract B — not ready (only 3 sessions)
       for (let i = 0; i < 3; i++) {
         promotion.incrementSession('contract-b');
       }
       promotion.addSignoff('contract-b', 'architect');
-      promotion.addSignoff('contract-b', 'analyst');
+      promotion.addSignoff('contract-b', 'oracle');
 
       const result = promotion.checkPromotions();
       expect(result).toEqual(['contract-a']);
@@ -317,7 +317,7 @@ describe('contract-promotion', () => {
         promotion.incrementSession(contractId);
       }
       promotion.addSignoff(contractId, 'architect');
-      promotion.addSignoff(contractId, 'analyst');
+      promotion.addSignoff(contractId, 'oracle');
 
       const promoted = promotion.checkPromotions();
       expect(promoted).toEqual([contractId]);
@@ -343,7 +343,7 @@ describe('contract-promotion', () => {
         promotion.incrementSession('contract-a');
       }
       promotion.addSignoff('contract-a', 'architect');
-      promotion.addSignoff('contract-a', 'analyst');
+      promotion.addSignoff('contract-a', 'oracle');
 
       promotion.checkPromotions();
       expect(handler).toHaveBeenCalledTimes(1);

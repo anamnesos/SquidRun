@@ -3,9 +3,9 @@ const { ROLE_ID_MAP } = require('../../config');
 const DOMAIN_SCOPE_MAP = Object.freeze({
   architect: ['workspace/'],
   frontend: ['ui/renderer.js', 'ui/index.html', 'ui/modules/terminal.js', 'ui/modules/daemon-handlers.js'],
-  devops: ['ui/modules/main/', 'ui/modules/ipc/', 'ui/modules/triggers.js', 'ui/modules/watcher.js'],
+  builder: ['ui/modules/main/', 'ui/modules/ipc/', 'ui/modules/triggers.js', 'ui/modules/watcher.js'],
   backend: ['ui/modules/main/', 'ui/modules/ipc/', 'ui/modules/triggers.js', 'ui/modules/watcher.js'],
-  analyst: ['workspace/build/', 'workspace/errors.md', 'ui/modules/diagnostic-log.js'],
+  oracle: ['workspace/build/', 'workspace/errors.md', 'ui/modules/diagnostic-log.js'],
 });
 
 function asString(value, fallback = '') {
@@ -22,9 +22,9 @@ function asNumber(value, fallback = null) {
 function normalizeRole(role) {
   const raw = asString(role, '').toLowerCase();
   if (!raw) return 'system';
-  if (raw === 'infra' || raw === 'backend') return 'devops';
+  if (raw === 'infra' || raw === 'backend' || raw === 'devops') return 'builder';
   if (raw === 'arch') return 'architect';
-  if (raw === 'ana') return 'analyst';
+  if (raw === 'ana' || raw === 'analyst') return 'oracle';
   return raw;
 }
 
@@ -37,15 +37,16 @@ function roleFromPaneId(paneId) {
     }
   }
   if (pane === '1') return 'architect';
-  if (pane === '2') return 'devops';
-  if (pane === '5') return 'analyst';
+  if (pane === '2') return 'builder';
+  if (pane === '5') return 'oracle';
   return 'system';
 }
 
 function normalizeDomain(domain) {
   const normalized = asString(domain, '').toLowerCase();
   if (!normalized) return '';
-  if (normalized === 'infra') return 'devops';
+  if (normalized === 'infra' || normalized === 'devops') return 'builder';
+  if (normalized === 'analyst') return 'oracle';
   return normalized;
 }
 

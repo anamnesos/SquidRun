@@ -69,7 +69,7 @@ describe('task-pool handlers team-memory hooks', () => {
               id: 'clm_1',
               status: 'confirmed',
               claimType: 'fact',
-              owner: 'devops',
+              owner: 'builder',
               confidence: 0.9,
               updatedAt: Date.now(),
               statement: 'Prior trigger routing fix used delivery verification ACKs.',

@@ -93,7 +93,7 @@ const States = {
   PAUSED: 'paused',
 };
 
-// Active agents per state (pane IDs: 1=Architect, 2=DevOps, 5=Analyst)
+// Active agents per state (pane IDs: 1=Architect, 2=Builder, 5=Oracle)
 // Frontend and Reviewer are internal teammates of Architect (pane 1)
 const ACTIVE_AGENTS = {
   [States.IDLE]: [],
@@ -145,10 +145,10 @@ function parseWorkerAssignments() {
     const a = {};
     const frontend = c.match(/### (Frontend)[\s\S]*?(?=###|$)/i);
     const backend = c.match(/### (Backend)[\s\S]*?(?=###|$)/i);
-    const analyst = c.match(/### (Analyst)[\s\S]*?(?=###|$)/i);
+    const oracle = c.match(/### (Oracle)[\s\S]*?(?=###|$)/i);
     if (frontend) a['Frontend'] = extractFilePaths(frontend[0]);
     if (backend) a['Backend'] = extractFilePaths(backend[0]);
-    if (analyst) a['Analyst'] = extractFilePaths(analyst[0]);
+    if (oracle) a['Oracle'] = extractFilePaths(oracle[0]);
     return a;
   } catch (e) { return {}; }
 }

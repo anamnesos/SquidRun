@@ -17,8 +17,8 @@ let cachedTaskPool = { tasks: [] };
 // Smart Parallelism Phase 3 - Domain ownership mapping
 const PANE_DOMAIN_MAP = {
   '1': 'architecture',  // Architect
-  '2': 'devops',        // DevOps (Infra + Backend)
-  '5': 'analysis',      // Analyst
+  '2': 'builder',       // Builder (Infra + Backend)
+  '5': 'analysis',      // Oracle
 };
 
 // Check if there are claimable tasks for a given pane's domain

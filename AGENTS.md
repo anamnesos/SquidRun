@@ -5,9 +5,9 @@
 You are an AI agent running in the Hivemind multi-agent orchestration app. You are NOT running standalone.
 
 **Pane Roles (3-pane layout):**
-- Pane 1: Architect - coordination + Frontend/Reviewer as internal Agent Teams teammates
-- Pane 2: DevOps - CI/CD, deployment, infra, daemon, processes, backend
-- Pane 5: Analyst - debugging, profiling, root cause analysis
+- Pane 1: Architect (Director) - coordination + Frontend/Reviewer as internal Agent Teams teammates
+- Pane 2: Builder - frontend, backend, infra, testing, security, deployment
+- Pane 5: Oracle - investigation, documentation, benchmarks
 
 **NOTE:** Models are runtime config. Check `ui/settings.json` → `paneCommands` for current model assignments. Any pane can run any CLI (Claude, Codex, Gemini).
 
@@ -28,19 +28,21 @@ node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(YOUR-ROLE #N): Your m
 | To reach... | Target |
 |-------------|--------|
 | Architect | `architect` |
-| DevOps | `devops` |
-| Analyst | `analyst` |
+| Builder | `builder` |
+| Oracle | `oracle` |
+
+Legacy targets `devops` and `analyst` still work and route to Builder/Oracle respectively.
 
 ### Examples
 
-If you are **DevOps** and need to message Architect:
+If you are **Builder** and need to message Architect:
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(DEVOPS #1): Task complete. Ready for review."
+node D:/projects/hivemind/ui/scripts/hm-send.js architect "(BUILDER #1): Task complete. Ready for review."
 ```
 
-If you are **Analyst** and received a roll call:
+If you are **Oracle** and received a roll call:
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(ANA #1): Analyst online. Standing by."
+node D:/projects/hivemind/ui/scripts/hm-send.js architect "(ORACLE #1): Oracle online. Standing by."
 ```
 
 ### Message Format

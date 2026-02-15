@@ -25,7 +25,7 @@ jest.mock('crypto', () => ({
 jest.mock('../config', () => ({
   WORKSPACE_PATH: '/test/workspace',
   PANE_IDS: ['1', '2', '5'],
-  PANE_ROLES: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+  PANE_ROLES: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
 }));
 
 // Mock logger
@@ -66,7 +66,7 @@ describe('Pipeline Module', () => {
 
   describe('detectStage', () => {
     test('detects [PROPOSAL] structured tag', () => {
-      const result = pipeline.detectStage({ msg: '[PROPOSAL] We should fix the tooltip', from: 'ANA' });
+      const result = pipeline.detectStage({ msg: '[PROPOSAL] We should fix the tooltip', from: 'ORACLE' });
       expect(result).toEqual({ stage: 'proposed', method: 'structured' });
     });
 
@@ -76,12 +76,12 @@ describe('Pipeline Module', () => {
     });
 
     test('detects [DONE] structured tag as review_pending', () => {
-      const result = pipeline.detectStage({ msg: '[DONE] Tooltip fix complete', from: 'DEVOPS' });
+      const result = pipeline.detectStage({ msg: '[DONE] Tooltip fix complete', from: 'BUILDER' });
       expect(result).toEqual({ stage: 'review_pending', method: 'structured' });
     });
 
     test('detects [REVIEW] structured tag as review_pending', () => {
-      const result = pipeline.detectStage({ msg: '[REVIEW] Please check my changes', from: 'ANA' });
+      const result = pipeline.detectStage({ msg: '[REVIEW] Please check my changes', from: 'ORACLE' });
       expect(result).toEqual({ stage: 'review_pending', method: 'structured' });
     });
 
@@ -91,23 +91,23 @@ describe('Pipeline Module', () => {
     });
 
     test('detects [ASSIGNED] structured tag', () => {
-      const result = pipeline.detectStage({ msg: '[ASSIGNED] DevOps will handle this', from: 'ARCH' });
+      const result = pipeline.detectStage({ msg: '[ASSIGNED] Builder will handle this', from: 'ARCH' });
       expect(result).toEqual({ stage: 'assigned', method: 'structured' });
     });
 
     test('structured tags are case-insensitive', () => {
-      const result = pipeline.detectStage({ msg: '[proposal] small idea here', from: 'ANA' });
+      const result = pipeline.detectStage({ msg: '[proposal] small idea here', from: 'ORACLE' });
       expect(result).toEqual({ stage: 'proposed', method: 'structured' });
     });
 
     test('structured tags win over keywords', () => {
       // Message has [PROPOSAL] tag but also "done" keyword
-      const result = pipeline.detectStage({ msg: '[PROPOSAL] I am done thinking, we should refactor', from: 'ANA' });
+      const result = pipeline.detectStage({ msg: '[PROPOSAL] I am done thinking, we should refactor', from: 'ORACLE' });
       expect(result).toEqual({ stage: 'proposed', method: 'structured' });
     });
 
     test('keyword fallback detects "we should"', () => {
-      const result = pipeline.detectStage({ msg: 'I think we should refactor the triggers module', from: 'ANA' });
+      const result = pipeline.detectStage({ msg: 'I think we should refactor the triggers module', from: 'ORACLE' });
       expect(result).toEqual({ stage: 'proposed', method: 'keyword' });
     });
 
@@ -117,12 +117,12 @@ describe('Pipeline Module', () => {
     });
 
     test('keyword fallback detects "working on"', () => {
-      const result = pipeline.detectStage({ msg: 'I am working on the tooltip fix now', from: 'DEVOPS' });
+      const result = pipeline.detectStage({ msg: 'I am working on the tooltip fix now', from: 'BUILDER' });
       expect(result).toEqual({ stage: 'implementing', method: 'keyword' });
     });
 
     test('keyword fallback detects "ready for review"', () => {
-      const result = pipeline.detectStage({ msg: 'Changes are ready for review, please check', from: 'DEVOPS' });
+      const result = pipeline.detectStage({ msg: 'Changes are ready for review, please check', from: 'BUILDER' });
       expect(result).toEqual({ stage: 'review_pending', method: 'keyword' });
     });
 
@@ -132,12 +132,12 @@ describe('Pipeline Module', () => {
     });
 
     test('ignores short messages for keyword detection', () => {
-      const result = pipeline.detectStage({ msg: 'let me', from: 'ANA' });
+      const result = pipeline.detectStage({ msg: 'let me', from: 'ORACLE' });
       expect(result).toBeNull();
     });
 
     test('returns null for unrecognized messages', () => {
-      const result = pipeline.detectStage({ msg: 'Just checking in on the current status of things', from: 'ANA' });
+      const result = pipeline.detectStage({ msg: 'Just checking in on the current status of things', from: 'ORACLE' });
       expect(result).toBeNull();
     });
 
@@ -202,7 +202,7 @@ describe('Pipeline Module', () => {
     test('creates pipeline item on [PROPOSAL] tag', () => {
       pipeline.onMessage({
         ts: 1707350400,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: '[PROPOSAL] Fix tooltip alignment',
         type: 'broadcast',
@@ -211,14 +211,14 @@ describe('Pipeline Module', () => {
       const items = pipeline.getItems();
       expect(items.length).toBe(1);
       expect(items[0].stage).toBe('proposed');
-      expect(items[0].proposedBy).toBe('ANA');
+      expect(items[0].proposedBy).toBe('ORACLE');
       expect(items[0].title).toBe('Fix tooltip alignment');
     });
 
     test('creates pipeline item on keyword proposal', () => {
       pipeline.onMessage({
         ts: 1707350400,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: 'I think we should refactor the triggers module for better clarity',
         type: 'broadcast',
@@ -232,7 +232,7 @@ describe('Pipeline Module', () => {
     test('emits pipeline-update IPC on creation', () => {
       pipeline.onMessage({
         ts: 1707350400,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: '[PROPOSAL] New feature idea',
         type: 'broadcast',
@@ -249,7 +249,7 @@ describe('Pipeline Module', () => {
     test('persists to disk on creation', () => {
       pipeline.onMessage({
         ts: 1707350400,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: '[PROPOSAL] Save test',
         type: 'broadcast',
@@ -265,7 +265,7 @@ describe('Pipeline Module', () => {
       // Create a proposal first
       pipeline.onMessage({
         ts: 1707350400,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: '[PROPOSAL] Fix tooltip alignment',
         type: 'broadcast',
@@ -277,7 +277,7 @@ describe('Pipeline Module', () => {
       pipeline.onMessage({
         ts: 1707350401,
         from: 'ARCH',
-        to: 'ANA',
+        to: 'ORACLE',
         msg: '[ACCEPT] Go ahead with the tooltip fix',
         type: 'direct',
       });
@@ -290,20 +290,20 @@ describe('Pipeline Module', () => {
       pipeline.onMessage({
         ts: 1707350401,
         from: 'ARCH',
-        to: 'DEVOPS',
-        msg: '[ASSIGNED] DevOps handle the tooltip fix',
+        to: 'BUILDER',
+        msg: '[ASSIGNED] Builder handle the tooltip fix',
         type: 'direct',
       });
 
       const items = pipeline.getItems();
       expect(items[0].stage).toBe('assigned');
-      expect(items[0].assignedTo).toBe('DEVOPS');
+      expect(items[0].assignedTo).toBe('BUILDER');
     });
 
     test('skips intermediate stages (proposed -> review_pending)', () => {
       pipeline.onMessage({
         ts: 1707350401,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: '[DONE] Tooltip fix is complete',
         type: 'broadcast',
@@ -317,7 +317,7 @@ describe('Pipeline Module', () => {
       pipeline.onMessage({
         ts: 1707350401,
         from: 'ARCH',
-        to: 'ANA',
+        to: 'ORACLE',
         msg: '[ACCEPT] Approved',
         type: 'direct',
       });
@@ -336,7 +336,7 @@ describe('Pipeline Module', () => {
       pipeline.onMessage({
         ts: 1707350401,
         from: 'ARCH',
-        to: 'ANA',
+        to: 'ORACLE',
         msg: '[ACCEPT] Go ahead',
         type: 'direct',
       });
@@ -346,7 +346,7 @@ describe('Pipeline Module', () => {
       // Try to go back to proposed (should be ignored)
       pipeline.onMessage({
         ts: 1707350402,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: '[PROPOSAL] Actually let me rethink this',
         type: 'broadcast',
@@ -363,7 +363,7 @@ describe('Pipeline Module', () => {
       pipeline.onMessage({
         ts: 1707350401,
         from: 'ARCH',
-        to: 'ANA',
+        to: 'ORACLE',
         msg: '[ACCEPT] Go ahead',
         type: 'direct',
       });
@@ -380,7 +380,7 @@ describe('Pipeline Module', () => {
       // Create and advance a proposal to implementing
       pipeline.onMessage({
         ts: 1707350400,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: '[PROPOSAL] Fix tooltip alignment',
         type: 'broadcast',
@@ -388,7 +388,7 @@ describe('Pipeline Module', () => {
       pipeline.onMessage({
         ts: 1707350401,
         from: 'ARCH',
-        to: 'ANA',
+        to: 'ORACLE',
         msg: '[ACCEPT] Go ahead',
         type: 'direct',
       });
@@ -398,7 +398,7 @@ describe('Pipeline Module', () => {
     test('auto-notifies Architect when stage reaches review_pending', () => {
       pipeline.onMessage({
         ts: 1707350402,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: '[DONE] Tooltip fix is complete',
         type: 'broadcast',
@@ -420,7 +420,7 @@ describe('Pipeline Module', () => {
       // Advance to review_pending first
       pipeline.onMessage({
         ts: 1707350402,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: '[DONE] Tooltip fix is complete',
         type: 'broadcast',
@@ -455,7 +455,7 @@ describe('Pipeline Module', () => {
       expect(() => {
         pipeline.onMessage({
           ts: 1707350402,
-          from: 'ANA',
+          from: 'ORACLE',
           to: 'ALL',
           msg: '[DONE] Tooltip fix is complete',
           type: 'broadcast',
@@ -468,15 +468,15 @@ describe('Pipeline Module', () => {
     test('marks item as committed', () => {
       pipeline.onMessage({
         ts: 1707350400,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: '[PROPOSAL] Fix tooltip alignment',
         type: 'broadcast',
       });
 
       // Advance through stages
-      pipeline.onMessage({ ts: 1707350401, from: 'ARCH', to: 'ANA', msg: '[ACCEPT] Go', type: 'direct' });
-      pipeline.onMessage({ ts: 1707350402, from: 'ANA', to: 'ALL', msg: '[DONE] Done', type: 'broadcast' });
+      pipeline.onMessage({ ts: 1707350401, from: 'ARCH', to: 'ORACLE', msg: '[ACCEPT] Go', type: 'direct' });
+      pipeline.onMessage({ ts: 1707350402, from: 'ORACLE', to: 'ALL', msg: '[DONE] Done', type: 'broadcast' });
       pipeline.onMessage({ ts: 1707350403, from: 'ARCH', to: 'ALL', msg: '[APPROVED] Ship', type: 'broadcast' });
 
       const items = pipeline.getItems();
@@ -495,14 +495,14 @@ describe('Pipeline Module', () => {
     beforeEach(() => {
       pipeline.onMessage({
         ts: 1707350400,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: '[PROPOSAL] First item',
         type: 'broadcast',
       });
       pipeline.onMessage({
         ts: 1707350401,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: '[PROPOSAL] Second item',
         type: 'broadcast',
@@ -518,7 +518,7 @@ describe('Pipeline Module', () => {
       pipeline.onMessage({
         ts: 1707350402,
         from: 'ARCH',
-        to: 'ANA',
+        to: 'ORACLE',
         msg: '[ACCEPT] Go ahead with first',
         type: 'direct',
       });
@@ -530,8 +530,8 @@ describe('Pipeline Module', () => {
 
     test('getActiveItems excludes committed items', () => {
       // Advance first item all the way
-      pipeline.onMessage({ ts: 1707350402, from: 'ARCH', to: 'ANA', msg: '[ACCEPT] Go', type: 'direct' });
-      pipeline.onMessage({ ts: 1707350403, from: 'ANA', to: 'ALL', msg: '[DONE] Done', type: 'broadcast' });
+      pipeline.onMessage({ ts: 1707350402, from: 'ARCH', to: 'ORACLE', msg: '[ACCEPT] Go', type: 'direct' });
+      pipeline.onMessage({ ts: 1707350403, from: 'ORACLE', to: 'ALL', msg: '[DONE] Done', type: 'broadcast' });
       pipeline.onMessage({ ts: 1707350404, from: 'ARCH', to: 'ALL', msg: '[APPROVED] Ship', type: 'broadcast' });
 
       const items = pipeline.getItems();
@@ -551,7 +551,7 @@ describe('Pipeline Module', () => {
         items: [{
           id: 'pipe-123-abc',
           title: 'Existing item',
-          proposedBy: 'ANA',
+          proposedBy: 'ORACLE',
           assignedTo: null,
           stage: 'implementing',
           messages: [],
@@ -592,7 +592,7 @@ describe('Pipeline Module', () => {
     test('saves with atomic write pattern (tmp + rename)', () => {
       pipeline.onMessage({
         ts: 1707350400,
-        from: 'ANA',
+        from: 'ORACLE',
         to: 'ALL',
         msg: '[PROPOSAL] Test atomic write',
         type: 'broadcast',
@@ -632,7 +632,7 @@ describe('Pipeline Module', () => {
       pipeline.onMessage({
         ts: 1707350400,
         from: 'ARCH',
-        to: 'ANA',
+        to: 'ORACLE',
         msg: '[ACCEPT] Sounds good to me',
         type: 'direct',
       });
@@ -646,7 +646,7 @@ describe('Pipeline Module', () => {
       expect(() => {
         pipeline.onMessage({
           ts: 1707350400,
-          from: 'ANA',
+          from: 'ORACLE',
           to: 'ALL',
           msg: '[PROPOSAL] Window destroyed test',
           type: 'broadcast',

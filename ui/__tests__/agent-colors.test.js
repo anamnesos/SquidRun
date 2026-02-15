@@ -50,7 +50,7 @@ function createTerminal({ lines, cursorY = 0, baseY = 0, themeForeground, scroll
 
 describe('agent-colors', () => {
   test('adds explicit foreground reset after matched tag', () => {
-    const text = '[AGENT MSG] (ANA #12): investigating rendering bug';
+    const text = '[AGENT MSG] (ORACLE #12): investigating rendering bug';
     const terminal = createTerminal({
       lines: { 0: createLine(text) },
       themeForeground: '#f5f5f5',
@@ -60,11 +60,11 @@ describe('agent-colors', () => {
     terminal.triggerWriteParsed();
 
     const decorations = terminal.registerDecoration.mock.calls.map((call) => call[0]);
-    const matchStart = text.indexOf('(ANA #12):');
-    const matchWidth = '(ANA #12):'.length;
+    const matchStart = text.indexOf('(ORACLE #12):');
+    const matchWidth = '(ORACLE #12):'.length;
 
     expect(decorations[0]).toMatchObject({
-      foregroundColor: AGENT_COLORS.analyst,
+      foregroundColor: AGENT_COLORS.oracle,
       x: matchStart,
       width: matchWidth,
       height: 1,
@@ -77,7 +77,7 @@ describe('agent-colors', () => {
   });
 
   test('resets wrapped continuation lines for matched messages', () => {
-    const line0 = '[AGENT MSG] (ANA #2): long message that wraps';
+    const line0 = '[AGENT MSG] (ORACLE #2): long message that wraps';
     const line1 = 'continuation line';
     const terminal = createTerminal({
       lines: {
@@ -105,7 +105,7 @@ describe('agent-colors', () => {
   });
 
   test('uses fallback foreground when terminal theme color is unavailable', () => {
-    const text = '[AGENT MSG] (ANA #3): no theme foreground set';
+    const text = '[AGENT MSG] (ORACLE #3): no theme foreground set';
     const terminal = createTerminal({
       lines: { 0: createLine(text) },
     });
@@ -114,14 +114,14 @@ describe('agent-colors', () => {
     terminal.triggerWriteParsed();
 
     const decorations = terminal.registerDecoration.mock.calls.map((call) => call[0]);
-    const resetDecoration = decorations.find((item) => item.x === text.indexOf('(ANA #3):') + '(ANA #3):'.length);
+    const resetDecoration = decorations.find((item) => item.x === text.indexOf('(ORACLE #3):') + '(ORACLE #3):'.length);
     expect(resetDecoration.foregroundColor).toBe('#e8eaf0');
   });
 
   test('does not place reset decorations beyond currentLine', () => {
     // Scenario: agent tag on line 0, wrapped line at 1, but cursor is at line 0
     // (simulates cursor moved up while wrapped lines exist below)
-    const line0 = '(ANA #5): message that wraps to next row';
+    const line0 = '(ORACLE #5): message that wraps to next row';
     const line1 = 'wrapped beyond cursor';
     const terminal = createTerminal({
       lines: {
@@ -145,7 +145,7 @@ describe('agent-colors', () => {
 
   test('uses trimmed content width instead of full line.length', () => {
     // Line has trailing whitespace — trimmedLength is shorter than line.length
-    const text = '(DEVOPS #1): short msg';
+    const text = '(BUILDER #1): short msg';
     const paddedLength = 80;  // terminal column width with trailing blanks
     const line = createLine(text, false, { trimmedLength: text.length });
     // Override line.length to simulate terminal padding
@@ -162,12 +162,12 @@ describe('agent-colors', () => {
     terminal.triggerWriteParsed();
 
     const decorations = terminal.registerDecoration.mock.calls.map((call) => call[0]);
-    const tagMatch = '(DEVOPS #1):';
+    const tagMatch = '(BUILDER #1):';
     const matchEnd = text.indexOf(tagMatch) + tagMatch.length;
 
     // The color decoration width should be based on trimmed length, not paddedLength
     const colorDeco = decorations[0];
-    expect(colorDeco.foregroundColor).toBe(AGENT_COLORS.devops);
+    expect(colorDeco.foregroundColor).toBe(AGENT_COLORS.builder);
     expect(colorDeco.width).toBe(Math.min(tagMatch.length, text.length - text.indexOf(tagMatch)));
 
     // The reset decoration should cover from matchEnd to terminal.cols, not paddedLength or trimmedLength
@@ -178,14 +178,14 @@ describe('agent-colors', () => {
   });
 
   test('disposes stale decorations when line agent color changes', () => {
-    // Scenario: line 0 first has an analyst message, then is overwritten with an architect message
-    const analystText = '(ANA #1): investigating issue';
+    // Scenario: line 0 first has an oracle message, then is overwritten with an architect message
+    const oracleText = '(ORACLE #1): investigating issue';
     const archText = '(ARCH #2): delegating fix';
-    const analystLine = createLine(analystText);
+    const oracleLine = createLine(oracleText);
     const archLine = createLine(archText);
 
     const terminal = createTerminal({
-      lines: { 0: analystLine },
+      lines: { 0: oracleLine },
       cursorY: 0,
       baseY: 0,
       themeForeground: '#f0f0f0',
@@ -193,7 +193,7 @@ describe('agent-colors', () => {
 
     attachAgentColors('1', terminal);
 
-    // First write: analyst message decorated
+    // First write: oracle message decorated
     terminal.triggerWriteParsed();
     const firstCallCount = terminal.registerDecoration.mock.calls.length;
     expect(firstCallCount).toBeGreaterThan(0);
@@ -233,7 +233,7 @@ describe('agent-colors', () => {
     // Now currentLine=0, lastScannedLine=2. (0+1) < 2 is true → resync to 0.
     terminal.triggerWriteParsed();
 
-    // Old analyst decorations should have been disposed
+    // Old oracle decorations should have been disposed
     for (const d of firstDecos) {
       if (d && d.dispose) {
         expect(d.dispose).toHaveBeenCalled();
@@ -247,7 +247,7 @@ describe('agent-colors', () => {
   });
 
   test('does NOT create duplicate decorations when cursor stays on same line', () => {
-    const text = '(ANA #1): same line, no new output';
+    const text = '(ORACLE #1): same line, no new output';
     const terminal = createTerminal({
       lines: { 0: createLine(text) },
       cursorY: 0,
@@ -324,7 +324,7 @@ describe('agent-colors', () => {
     // Now simulate new output: line 1 is no longer wrapped, line 2 is new content.
     // Buffer clear triggers full rescan.
     const newLine1 = createLine('new independent line', false); // no longer isWrapped
-    const newLine2 = createLine('(DEVOPS #1): new output', false);
+    const newLine2 = createLine('(BUILDER #1): new output', false);
     terminal.buffer.active.getLine.mockImplementation((y) => {
       if (y === 0) return createLine(line0, false);
       if (y === 1) return newLine1;
@@ -347,7 +347,7 @@ describe('agent-colors', () => {
     // Write 2: line 12 is written. lastScannedLine starts at 11, currentLine is 12.
     // Scanner must back up to line 10 to find the tag and correctly color line 12.
     
-    const line10 = '(ANA #1): line 10';
+    const line10 = '(ORACLE #1): line 10';
     const line11 = 'line 11';
     const line12 = 'line 12';
     

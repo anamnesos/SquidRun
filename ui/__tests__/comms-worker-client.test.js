@@ -129,7 +129,7 @@ describe('comms-worker-client', () => {
       payload: {
         data: {
           role: 'architect',
-          message: { type: 'send', target: 'devops', content: 'ping' },
+          message: { type: 'send', target: 'builder', content: 'ping' },
         },
       },
     });
@@ -152,7 +152,7 @@ describe('comms-worker-client', () => {
   test('returns real worker delivery values for send/broadcast APIs', async () => {
     await client.start({ port: 0, onMessage: jest.fn(async () => ({ ok: true })) });
 
-    const sendToTargetResult = await client.sendToTarget('devops', 'hello');
+    const sendToTargetResult = await client.sendToTarget('builder', 'hello');
     const sendToPaneResult = await client.sendToPane('2', 'hello');
     const broadcastResult = await client.broadcast('hello-all');
 

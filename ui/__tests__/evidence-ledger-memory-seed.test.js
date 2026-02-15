@@ -99,8 +99,8 @@ maybeDescribe('evidence-ledger-memory seed utility', () => {
       },
       team: {
         '1': 'Architect',
-        '2': 'DevOps',
-        '5': 'Analyst',
+        '2': 'Builder',
+        '5': 'Oracle',
       },
     };
 

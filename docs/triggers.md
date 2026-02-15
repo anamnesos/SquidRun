@@ -13,8 +13,10 @@ node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(ROLE #N): message"
 | Target | Reaches |
 |--------|---------|
 | `architect` | Architect (pane 1) |
-| `devops` | DevOps (pane 2) |
-| `analyst` | Analyst (pane 5) |
+| `builder` | Builder (pane 2) |
+| `oracle` | Oracle (pane 5) |
+
+Legacy targets `devops` and `analyst` still work and route to Builder/Oracle respectively.
 
 **Why WebSocket over file triggers:**
 - Zero message loss (file triggers lose 40%+ under rapid messaging)
@@ -36,15 +38,15 @@ Legacy fallback: `D:\projects\hivemind\workspace\triggers\`
 | Pane | Role | Trigger file |
 |------|------|--------------|
 | 1 | Architect | `architect.txt` |
-| 2 | DevOps | `devops.txt` |
-| 5 | Analyst | `analyst.txt` |
+| 2 | Builder | `builder.txt` |
+| 5 | Oracle | `oracle.txt` |
 
 ### Broadcast and group triggers
 
 | File | Who Gets Triggered |
 |------|-------------------|
 | `all.txt` | All pane agents |
-| `workers.txt` | DevOps + Analyst |
+| `workers.txt` | Builder |
 
 ## Message format (required)
 
@@ -56,7 +58,7 @@ Every message must use this exact format:
 
 **Rules:**
 - `ROLE` is the **sender's role**, not the target's role.
-  - Example: DevOps -> Architect writes `(DEVOPS #1): ...` into `architect.txt`.
+  - Example: Builder -> Architect writes `(BUILDER #1): ...` into `architect.txt`.
 - `#N` must increment per sender. Duplicates are ignored.
 - Start at `#1` each session.
 
@@ -67,10 +69,12 @@ These are maintained for backward compatibility but should not be used for new w
 | Legacy name | Current target |
 |------------|----------------|
 | `lead.txt` | `architect.txt` |
-| `orchestrator.txt` | `devops.txt` |
-| `infra.txt` | `devops.txt` |
-| `backend.txt` | `devops.txt` |
-| `investigator.txt` | `analyst.txt` |
+| `devops.txt` | `builder.txt` |
+| `analyst.txt` | `oracle.txt` |
+| `orchestrator.txt` | `builder.txt` |
+| `infra.txt` | `builder.txt` |
+| `backend.txt` | `builder.txt` |
+| `investigator.txt` | `oracle.txt` |
 
 **Removed (no longer routed):** `frontend.txt`, `reviewer.txt`, `worker-a.txt`, `worker-b.txt`
 
@@ -78,17 +82,17 @@ These are maintained for backward compatibility but should not be used for new w
 
 **WebSocket (preferred):**
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(DEVOPS #1): Build complete, ready for review"
+node D:/projects/hivemind/ui/scripts/hm-send.js architect "(BUILDER #1): Build complete, ready for review"
 ```
 
 **PowerShell trigger file:**
 ```powershell
-"(DEVOPS #1): message" | Set-Content -Path "D:\projects\hivemind\workspace\triggers\architect.txt"
+"(BUILDER #1): message" | Set-Content -Path "D:\projects\hivemind\workspace\triggers\architect.txt"
 ```
 
 **Bash trigger file:**
 ```bash
-echo "(ANA #1): message" > "D:/projects/hivemind/workspace/triggers/architect.txt"
+echo "(ORACLE #1): message" > "D:/projects/hivemind/workspace/triggers/architect.txt"
 ```
 
 ## Notes

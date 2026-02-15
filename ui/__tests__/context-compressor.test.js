@@ -19,7 +19,7 @@ jest.mock('fs', () => ({
 jest.mock('../config', () => ({
   WORKSPACE_PATH: '/test/workspace',
   PANE_IDS: ['1', '2', '5'],
-  PANE_ROLES: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+  PANE_ROLES: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
 }));
 
 // Mock logger
@@ -188,8 +188,8 @@ describe('Context Compressor Module', () => {
       expect(section.required).toBe(true);
       expect(section.content).toContain('Architect');
       expect(section.content).toContain('Session 90');
-      expect(section.content).toContain('DevOps');
-      expect(section.content).toContain('Analyst');
+      expect(section.content).toContain('Builder');
+      expect(section.content).toContain('Oracle');
       expect(section.content).toContain('Completed:');
       expect(section.content).toContain('Next:');
     });

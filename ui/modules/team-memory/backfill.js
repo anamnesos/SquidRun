@@ -9,11 +9,13 @@ const DEFAULT_BACKFILL_LIMIT = 5000;
 const OWNER_ALIAS_MAP = new Map([
   ['arch', 'architect'],
   ['architect', 'architect'],
-  ['devops', 'devops'],
-  ['infra', 'devops'],
-  ['backend', 'devops'],
-  ['ana', 'analyst'],
-  ['analyst', 'analyst'],
+  ['builder', 'builder'],
+  ['devops', 'builder'],
+  ['infra', 'builder'],
+  ['backend', 'builder'],
+  ['oracle', 'oracle'],
+  ['ana', 'oracle'],
+  ['analyst', 'oracle'],
   ['frontend', 'frontend'],
   ['reviewer', 'reviewer'],
 ]);

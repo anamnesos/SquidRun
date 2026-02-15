@@ -110,8 +110,8 @@ describe('Smart Routing Core', () => {
   describe('scoreAgents', () => {
     const mockRoles = {
       '1': { name: 'Architect', type: 'coordination', skills: ['coordination', 'planning', 'architecture'] },
-      '2': { name: 'DevOps', type: 'backend', skills: ['backend', 'implementation', 'ipc', 'testing'] },
-      '5': { name: 'Analyst', type: 'analysis', skills: ['analysis', 'debugging', 'review'] },
+      '2': { name: 'Builder', type: 'backend', skills: ['backend', 'implementation', 'ipc', 'testing'] },
+      '5': { name: 'Oracle', type: 'analysis', skills: ['analysis', 'debugging', 'review'] },
     };
 
     const allRunning = { get: () => 'running' };
@@ -181,9 +181,9 @@ describe('Smart Routing Core', () => {
         runningMap: allRunning,
         learning,
       });
-      // Analyst (pane 5) should have higher learning score
-      const analyst = scores.find(s => s.paneId === '5');
-      expect(analyst.breakdown.learning).toBeGreaterThan(0.5);
+      // Oracle (pane 5) should have higher learning score
+      const oracle = scores.find(s => s.paneId === '5');
+      expect(oracle.breakdown.learning).toBeGreaterThan(0.5);
     });
 
     test('uses performance data when provided', () => {
@@ -199,8 +199,8 @@ describe('Smart Routing Core', () => {
         runningMap: allRunning,
         performance,
       });
-      const devops = scores.find(s => s.paneId === '2');
-      expect(devops.breakdown.performance).toBeGreaterThan(0.5);
+      const builder = scores.find(s => s.paneId === '2');
+      expect(builder.breakdown.performance).toBeGreaterThan(0.5);
     });
 
     test('returns empty array when no running agents', () => {
@@ -232,8 +232,8 @@ describe('Smart Routing Core', () => {
   describe('getBestAgent', () => {
     const mockRoles = {
       '1': { name: 'Architect', type: 'coordination', skills: ['coordination', 'planning'] },
-      '2': { name: 'DevOps', type: 'backend', skills: ['backend', 'implementation'] },
-      '5': { name: 'Analyst', type: 'analysis', skills: ['analysis', 'debugging'] },
+      '2': { name: 'Builder', type: 'backend', skills: ['backend', 'implementation'] },
+      '5': { name: 'Oracle', type: 'analysis', skills: ['analysis', 'debugging'] },
     };
     const allRunning = { get: () => 'running' };
 
@@ -324,7 +324,7 @@ describe('Smart Routing Core', () => {
         taskType: 'backend',
         message: 'fix the ipc daemon node process server api backend',
         roles: {
-          '2': { name: 'DevOps', type: 'backend', skills: ['backend', 'implementation', 'ipc'] },
+          '2': { name: 'Builder', type: 'backend', skills: ['backend', 'implementation', 'ipc'] },
         },
         runningMap: allRunning,
       });

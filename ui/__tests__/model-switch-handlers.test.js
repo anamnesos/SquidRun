@@ -48,7 +48,7 @@ describe('registerModelSwitchHandlers', () => {
         },
         paneRoles: {
           '1': 'Architect',
-          '5': 'Analyst',
+          '5': 'Oracle',
         }
       },
       daemonClient: {
@@ -171,7 +171,7 @@ describe('registerModelSwitchHandlers', () => {
       // Verify broadcast was written to all.txt trigger file
       expect(fs.writeFileSync).toHaveBeenCalledWith(
         expect.stringContaining('all.txt'),
-        '(SYSTEM): DevOps switched to Codex\n'
+        '(SYSTEM): Builder switched to Codex\n'
       );
     });
 

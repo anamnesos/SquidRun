@@ -7,13 +7,13 @@ jest.mock('../config', () => ({
   PANE_IDS: ['1', '2', '5'],
   PANE_ROLES: {
     '1': 'Architect',
-    '2': 'DevOps',
-    '5': 'Analyst',
+    '2': 'Builder',
+    '5': 'Oracle',
   },
   SHORT_AGENT_NAMES: {
     '1': 'Arch',
-    '2': 'DevOps',
-    '5': 'Ana',
+    '2': 'Builder',
+    '5': 'Oracle',
     'system': 'Sys',
   },
 }));
@@ -222,8 +222,8 @@ describe('bridge tab', () => {
       // Cards are created with innerHTML containing agent names
       const cards = agentsEl.children;
       expect(cards[0].innerHTML).toContain('Arch');
-      expect(cards[1].innerHTML).toContain('DevOps');
-      expect(cards[2].innerHTML).toContain('Ana');
+      expect(cards[1].innerHTML).toContain('Builder');
+      expect(cards[2].innerHTML).toContain('Oracle');
     });
   });
 

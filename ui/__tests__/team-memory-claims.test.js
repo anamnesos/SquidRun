@@ -30,7 +30,7 @@ maybeDescribe('team-memory claims module', () => {
     const created = claims.createClaim({
       statement: 'Avoid retry storms during reconnect windows',
       claimType: 'negative',
-      owner: 'devops',
+      owner: 'builder',
       session: 's_121',
       scopes: ['ui/modules/websocket-runtime.js', 'comms'],
     });
@@ -44,7 +44,7 @@ maybeDescribe('team-memory claims module', () => {
       scope: 'ui/modules/websocket-runtime.js',
       claimType: 'negative',
       status: 'proposed',
-      owner: 'devops',
+      owner: 'builder',
       session: 's_121',
     });
 
@@ -77,7 +77,7 @@ maybeDescribe('team-memory claims module', () => {
   test('enforces claim status state-machine transitions', () => {
     const created = claims.createClaim({
       statement: 'State machine test claim',
-      owner: 'devops',
+      owner: 'builder',
     });
     const claimId = created.claim.id;
 
@@ -85,14 +85,14 @@ maybeDescribe('team-memory claims module', () => {
     expect(valid.ok).toBe(true);
     expect(valid.claim.status).toBe('confirmed');
 
-    const contested = claims.updateClaimStatus(claimId, 'contested', 'analyst', 'regression detected');
+    const contested = claims.updateClaimStatus(claimId, 'contested', 'oracle', 'regression detected');
     expect(contested.ok).toBe(true);
     expect(contested.claim.status).toBe('contested');
 
     const pendingProof = claims.updateClaimStatus(
       claimId,
       'pending_proof',
-      'devops',
+      'builder',
       'guard queued experiment'
     );
     expect(pendingProof.ok).toBe(true);
@@ -101,7 +101,7 @@ maybeDescribe('team-memory claims module', () => {
     const resolved = claims.updateClaimStatus(
       claimId,
       'confirmed',
-      'devops',
+      'builder',
       'experiment succeeded'
     );
     expect(resolved.ok).toBe(true);
@@ -123,14 +123,14 @@ maybeDescribe('team-memory claims module', () => {
   test('binds evidence with added_by attribution', () => {
     const created = claims.createClaim({
       statement: 'Evidence binding claim',
-      owner: 'analyst',
+      owner: 'oracle',
     });
 
     const bind = claims.addEvidence(
       created.claim.id,
       'evt-proof-123',
       'supports',
-      { addedBy: 'devops', weight: 0.8 }
+      { addedBy: 'builder', weight: 0.8 }
     );
 
     expect(bind.ok).toBe(true);
@@ -138,7 +138,7 @@ maybeDescribe('team-memory claims module', () => {
     expect(bind.claim.evidence).toEqual([
       expect.objectContaining({
         evidenceRef: 'evt-proof-123',
-        addedBy: 'devops',
+        addedBy: 'builder',
         relation: 'supports',
       }),
     ]);
@@ -148,12 +148,12 @@ maybeDescribe('team-memory claims module', () => {
     const chosen = claims.createClaim({
       statement: 'Use worker process for watcher isolation',
       claimType: 'decision',
-      owner: 'devops',
+      owner: 'builder',
     }).claim;
     const alternative = claims.createClaim({
       statement: 'Keep watcher in main thread',
       claimType: 'hypothesis',
-      owner: 'devops',
+      owner: 'builder',
     }).claim;
 
     const decision = claims.createDecision({
@@ -184,7 +184,7 @@ maybeDescribe('team-memory claims module', () => {
     claims.createClaim({
       statement: 'Trigger queue must avoid duplicate injection during reconnect',
       claimType: 'negative',
-      owner: 'devops',
+      owner: 'builder',
       confidence: 0.35,
       session: 's_220',
       scopes: [scope],
@@ -193,7 +193,7 @@ maybeDescribe('team-memory claims module', () => {
     claims.createClaim({
       statement: 'Trigger queue duplicate injection was fixed with delivery check',
       claimType: 'negative',
-      owner: 'devops',
+      owner: 'builder',
       confidence: 0.92,
       session: 's_220',
       scopes: [scope],
@@ -202,7 +202,7 @@ maybeDescribe('team-memory claims module', () => {
     claims.createClaim({
       statement: 'Watcher worker restart policy',
       claimType: 'fact',
-      owner: 'devops',
+      owner: 'builder',
       confidence: 0.99,
       session: 's_220',
       scopes: ['ui/modules/watcher.js'],
@@ -227,25 +227,25 @@ maybeDescribe('team-memory claims module', () => {
   test('supports temporal retrieval using last N sessions', () => {
     claims.createClaim({
       statement: 'old session claim',
-      owner: 'devops',
+      owner: 'builder',
       session: 's_100',
       nowMs: 1000,
     });
     claims.createClaim({
       statement: 'session 101 claim',
-      owner: 'devops',
+      owner: 'builder',
       session: 's_101',
       nowMs: 2000,
     });
     claims.createClaim({
       statement: 'session 102 claim',
-      owner: 'devops',
+      owner: 'builder',
       session: 's_102',
       nowMs: 3000,
     });
     claims.createClaim({
       statement: 'session 103 claim',
-      owner: 'devops',
+      owner: 'builder',
       session: 's_103',
       nowMs: 4000,
     });
@@ -267,7 +267,7 @@ maybeDescribe('team-memory claims module', () => {
   test('records consensus and auto-promotes when all active agents agree', () => {
     const created = claims.createClaim({
       statement: 'Enable comms worker recovery backoff',
-      owner: 'devops',
+      owner: 'builder',
       status: 'proposed',
       session: 's_300',
       scopes: ['ui/modules/comms-worker-client.js'],
@@ -279,22 +279,22 @@ maybeDescribe('team-memory claims module', () => {
       agent: 'architect',
       position: 'agree',
       reason: 'reviewed',
-      activeAgents: ['architect', 'devops', 'analyst'],
+      activeAgents: ['architect', 'builder', 'oracle'],
     });
     expect(first.ok).toBe(true);
     expect(first.claim.status).toBe('proposed');
 
     claims.recordConsensus({
       claimId,
-      agent: 'devops',
+      agent: 'builder',
       position: 'agree',
-      activeAgents: ['architect', 'devops', 'analyst'],
+      activeAgents: ['architect', 'builder', 'oracle'],
     });
     const third = claims.recordConsensus({
       claimId,
-      agent: 'analyst',
+      agent: 'oracle',
       position: 'agree',
-      activeAgents: ['architect', 'devops', 'analyst'],
+      activeAgents: ['architect', 'builder', 'oracle'],
     });
 
     expect(third.ok).toBe(true);
@@ -305,7 +305,7 @@ maybeDescribe('team-memory claims module', () => {
   test('auto-contests claim when any agent disagrees', () => {
     const created = claims.createClaim({
       statement: 'Use strict submit verification',
-      owner: 'devops',
+      owner: 'builder',
       status: 'proposed',
       scopes: ['ui/modules/injection.js'],
     });
@@ -315,28 +315,28 @@ maybeDescribe('team-memory claims module', () => {
       claimId,
       agent: 'architect',
       position: 'agree',
-      activeAgents: ['architect', 'devops', 'analyst'],
+      activeAgents: ['architect', 'builder', 'oracle'],
     });
     claims.recordConsensus({
       claimId,
-      agent: 'devops',
+      agent: 'builder',
       position: 'agree',
-      activeAgents: ['architect', 'devops', 'analyst'],
+      activeAgents: ['architect', 'builder', 'oracle'],
     });
     claims.recordConsensus({
       claimId,
-      agent: 'analyst',
+      agent: 'oracle',
       position: 'agree',
-      activeAgents: ['architect', 'devops', 'analyst'],
+      activeAgents: ['architect', 'builder', 'oracle'],
     });
     expect(claims.getClaim(claimId).status).toBe('confirmed');
 
     const disagree = claims.recordConsensus({
       claimId,
-      agent: 'analyst',
+      agent: 'oracle',
       position: 'disagree',
       reason: 'new regression trace',
-      activeAgents: ['architect', 'devops', 'analyst'],
+      activeAgents: ['architect', 'builder', 'oracle'],
     });
     expect(disagree.ok).toBe(true);
     expect(disagree.claim.status).toBe('contested');
@@ -349,7 +349,7 @@ maybeDescribe('team-memory claims module', () => {
   test('creates belief snapshots and detects normalized contradictions', () => {
     const positive = claims.createClaim({
       statement: 'Inject startup prompt into pane 1',
-      owner: 'analyst',
+      owner: 'oracle',
       claimType: 'fact',
       confidence: 0.9,
       session: 's_301',
@@ -357,7 +357,7 @@ maybeDescribe('team-memory claims module', () => {
     }).claim;
     const negative = claims.createClaim({
       statement: 'Do not inject startup prompt into pane 1 on light restart',
-      owner: 'analyst',
+      owner: 'oracle',
       claimType: 'negative',
       confidence: 0.8,
       session: 's_301',
@@ -368,25 +368,25 @@ maybeDescribe('team-memory claims module', () => {
     expect(negative).toBeDefined();
 
     const snapshot = claims.createBeliefSnapshot({
-      agent: 'analyst',
+      agent: 'oracle',
       session: 's_301',
     });
     expect(snapshot.ok).toBe(true);
-    expect(snapshot.snapshot.agent).toBe('analyst');
+    expect(snapshot.snapshot.agent).toBe('oracle');
     expect(snapshot.snapshot.beliefs.length).toBeGreaterThanOrEqual(2);
     expect(snapshot.contradictions.count).toBeGreaterThanOrEqual(1);
 
-    const beliefs = claims.getAgentBeliefs({ agent: 'analyst', session: 's_301' });
+    const beliefs = claims.getAgentBeliefs({ agent: 'oracle', session: 's_301' });
     expect(beliefs.ok).toBe(true);
     expect(beliefs.latest).toBeTruthy();
     expect(Array.isArray(beliefs.latest.beliefs)).toBe(true);
 
-    const contradictions = claims.getContradictions({ agent: 'analyst', session: 's_301' });
+    const contradictions = claims.getContradictions({ agent: 'oracle', session: 's_301' });
     expect(contradictions.ok).toBe(true);
     expect(contradictions.total).toBeGreaterThanOrEqual(1);
     expect(contradictions.contradictions[0]).toEqual(
       expect.objectContaining({
-        agent: 'analyst',
+        agent: 'oracle',
         session: 's_301',
       })
     );

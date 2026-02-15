@@ -51,7 +51,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
       title: 'ERR-XYZ startup race',
       description: 'Intermittent queue freeze on startup',
       severity: 'high',
-      createdBy: 'devops',
+      createdBy: 'builder',
       tags: ['err-xyz', 'startup'],
       meta: { lane: 'runtime' },
       nowMs: 1000,
@@ -71,7 +71,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
     expect(updated.ok).toBe(true);
 
     const linked = investigator.linkTrace(created.incidentId, 'trace-xyz-1', {
-      linkedBy: 'analyst',
+      linkedBy: 'oracle',
       note: 'Primary failure trace',
       linkedAtMs: 1250,
     });
@@ -97,7 +97,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
     const before = Date.now();
     const created = investigator.createIncident({
       title: 'Null timestamp fallback',
-      createdBy: 'devops',
+      createdBy: 'builder',
       nowMs: null,
     });
     expect(created.ok).toBe(true);
@@ -110,7 +110,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
   test('assertion CRUD: add -> update -> supersede chain', () => {
     const created = investigator.createIncident({
       title: 'ERR-ASSERT flow',
-      createdBy: 'analyst',
+      createdBy: 'oracle',
       nowMs: 5000,
     });
     expect(created.ok).toBe(true);
@@ -119,7 +119,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
       claim: 'Queue deferral never drains due to stale focus state',
       type: 'hypothesis',
       confidence: 0.55,
-      author: 'analyst',
+      author: 'oracle',
       reasoning: 'Observed repeated defer logs and no submit events',
       evidenceBindings: [
         {
@@ -144,7 +144,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
     const superseded = investigator.supersedeAssertion(added.assertionId, {
       claim: 'Root cause is render loop starving injection scheduler',
       confidence: 0.86,
-      author: 'analyst',
+      author: 'oracle',
       reasoning: 'Renderer task queue deadline exceeded during chunk writes',
       evidenceBindings: [
         {
@@ -173,7 +173,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
   test('evidence bindings support all kinds and stale marking', () => {
     const created = investigator.createIncident({
       title: 'ERR-BINDINGS',
-      createdBy: 'devops',
+      createdBy: 'builder',
       nowMs: 6000,
     });
     expect(created.ok).toBe(true);
@@ -181,7 +181,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
     const assertion = investigator.addAssertion(created.incidentId, {
       claim: 'Transport truncation occurs before PTY',
       confidence: 0.6,
-      author: 'devops',
+      author: 'builder',
       evidenceBindings: [{ kind: 'event_ref', eventId: 'evt-transport-1' }],
       nowMs: 6100,
     });
@@ -194,7 +194,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
       fileLine: 775,
       fileColumn: 3,
       snapshotHash: 'sha256:abc123',
-      createdBy: 'devops',
+      createdBy: 'builder',
       nowMs: 6200,
     });
     expect(fileBinding.ok).toBe(true);
@@ -206,7 +206,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
       logStartMs: 6220,
       logEndMs: 6250,
       logFilter: { paneId: '1', level: 'warn' },
-      createdBy: 'analyst',
+      createdBy: 'oracle',
       nowMs: 6260,
     });
     expect(logBinding.ok).toBe(true);
@@ -216,7 +216,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
       relation: 'supports',
       query: { type: 'trace_lookup', traceId: 'trace-transport-1' },
       queryResultHash: 'sha256:def456',
-      createdBy: 'analyst',
+      createdBy: 'oracle',
       nowMs: 6300,
     });
     expect(queryBinding.ok).toBe(true);
@@ -275,7 +275,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
   test('stale detection utility marks changed file_line_ref bindings', () => {
     const created = investigator.createIncident({
       title: 'ERR-STALE-DETECT',
-      createdBy: 'devops',
+      createdBy: 'builder',
       nowMs: 8000,
     });
     expect(created.ok).toBe(true);
@@ -283,7 +283,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
     const assertion = investigator.addAssertion(created.incidentId, {
       claim: 'File snapshot should go stale after mutation',
       confidence: 0.8,
-      author: 'devops',
+      author: 'builder',
       evidenceBindings: [{ kind: 'event_ref', eventId: 'evt-stale-seed' }],
       nowMs: 8010,
     });
@@ -332,17 +332,17 @@ maybeDescribe('evidence-ledger-investigator', () => {
   test('verdict versioning and summary/timeline queries', () => {
     const created = investigator.createIncident({
       title: 'ERR-VERDICT',
-      createdBy: 'analyst',
+      createdBy: 'oracle',
       nowMs: 7000,
     });
     expect(created.ok).toBe(true);
 
-    expect(investigator.linkTrace(created.incidentId, 'trace-v-1', { linkedBy: 'analyst', linkedAtMs: 7010 }).ok).toBe(true);
+    expect(investigator.linkTrace(created.incidentId, 'trace-v-1', { linkedBy: 'oracle', linkedAtMs: 7010 }).ok).toBe(true);
 
     const assertion = investigator.addAssertion(created.incidentId, {
       claim: 'Busy-state ignored Enter',
       confidence: 0.7,
-      author: 'analyst',
+      author: 'oracle',
       evidenceBindings: [{ kind: 'event_ref', eventId: 'evt-verdict-1' }],
       nowMs: 7020,
     });
@@ -353,7 +353,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
       confidence: 0.62,
       reason: 'Initial synthesis',
       keyAssertionIds: [assertion.assertionId],
-      author: 'analyst',
+      author: 'oracle',
       nowMs: 7100,
     });
     const v2 = investigator.recordVerdict(created.incidentId, {
@@ -361,7 +361,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
       confidence: 0.86,
       reason: 'Added log evidence',
       keyAssertionIds: [assertion.assertionId],
-      author: 'analyst',
+      author: 'oracle',
       nowMs: 7200,
     });
 

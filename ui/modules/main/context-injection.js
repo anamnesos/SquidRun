@@ -20,8 +20,8 @@ const MODEL_NOTES = {
 function canonicalRoleFromPane(paneId) {
   const id = String(paneId || '');
   if (id === '1') return 'architect';
-  if (id === '2') return 'devops';
-  if (id === '5') return 'analyst';
+  if (id === '2') return 'builder';
+  if (id === '5') return 'oracle';
   return 'system';
 }
 
@@ -140,8 +140,8 @@ class ContextInjectionManager {
     const role = canonicalRoleFromPane(paneId);
     const roleSections = {
       architect: '## ARCHITECT',
-      devops: '## DEVOPS',
-      analyst: '## ANALYST',
+      builder: '## BUILDER',
+      oracle: '## ORACLE',
     };
     const myRoleHeader = roleSections[role];
     if (!myRoleHeader) return fullContent;
@@ -176,7 +176,7 @@ class ContextInjectionManager {
         if (!skipStartupBlock) result.push(line);
         continue;
       }
-      if (line.startsWith('**DevOps / Analyst')) {
+      if (line.startsWith('**Builder / Oracle')) {
         skipStartupBlock = isArchitect;
         if (!skipStartupBlock) result.push(line);
         continue;

@@ -19,7 +19,7 @@ function usage() {
   console.log('Usage: node hm-pane.js <command> <paneId> [message] [options]');
   console.log('Commands: enter, interrupt, restart, nudge');
   console.log('Common options:');
-  console.log('  --role <role>               Sender role (default: devops)');
+  console.log('  --role <role>               Sender role (default: builder)');
   console.log('  --port <port>               WebSocket port (default: 9900)');
   console.log('  --timeout <ms>              Response timeout (default: 5000)');
   console.log('  --payload-json <json>       Raw payload JSON (advanced)');
@@ -189,7 +189,7 @@ function closeSocket(ws) {
 
 async function run(action, payload, options) {
   const port = Number.isFinite(options.port) ? options.port : DEFAULT_PORT;
-  const role = asString(options.role, 'devops') || 'devops';
+  const role = asString(options.role, 'builder') || 'builder';
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : DEFAULT_RESPONSE_TIMEOUT_MS;
   const requestId = `pane-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -238,7 +238,7 @@ async function main() {
 
   const payload = buildPayload(command, positional, options);
   const response = await run(toAction(command), payload, {
-    role: asString(getOption(options, 'role', 'devops'), 'devops'),
+    role: asString(getOption(options, 'role', 'builder'), 'builder'),
     port: asNumber(getOption(options, 'port', DEFAULT_PORT), DEFAULT_PORT),
     timeoutMs: asNumber(getOption(options, 'timeout', DEFAULT_RESPONSE_TIMEOUT_MS), DEFAULT_RESPONSE_TIMEOUT_MS),
   });

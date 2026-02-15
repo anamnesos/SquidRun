@@ -54,7 +54,7 @@ maybeDescribe('team-memory integrity checker', () => {
       'idemp-1',
       'Test claim',
       'fact',
-      'devops',
+      'builder',
       1.0,
       'proposed',
       null,
@@ -67,11 +67,11 @@ maybeDescribe('team-memory integrity checker', () => {
     teamStore.db.prepare(`
       INSERT INTO claim_evidence (claim_id, evidence_ref, added_by, relation, weight, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run('claim-1', 'evt-existing', 'devops', 'supports', 1.0, Date.now());
+    `).run('claim-1', 'evt-existing', 'builder', 'supports', 1.0, Date.now());
     teamStore.db.prepare(`
       INSERT INTO claim_evidence (claim_id, evidence_ref, added_by, relation, weight, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run('claim-1', 'evt-missing', 'devops', 'supports', 1.0, Date.now());
+    `).run('claim-1', 'evt-missing', 'builder', 'supports', 1.0, Date.now());
 
     const scan = scanOrphanedEvidenceRefs({
       teamDb: teamStore.db,

@@ -42,8 +42,8 @@ describe('Triggers Routing', () => {
   describe('AGENT_ROLES', () => {
     test('defines roles for panes 1, 2, 5', () => {
       expect(AGENT_ROLES['1'].name).toBe('Architect');
-      expect(AGENT_ROLES['2'].name).toBe('DevOps');
-      expect(AGENT_ROLES['5'].name).toBe('Analyst');
+      expect(AGENT_ROLES['2'].name).toBe('Builder');
+      expect(AGENT_ROLES['5'].name).toBe('Oracle');
     });
 
     test('each role has skills array', () => {
@@ -530,7 +530,7 @@ describe('Triggers Routing', () => {
       expect(result.from).toBe('1');
       expect(result.to).toBe('2'); // first in chain ['2', '5']
       expect(result.fromRole).toBe('Architect');
-      expect(result.toRole).toBe('DevOps');
+      expect(result.toRole).toBe('Builder');
     });
 
     test('sends inject-message and auto-handoff events', () => {
@@ -586,7 +586,7 @@ describe('Triggers Routing', () => {
       const result = triggerAutoHandoff('5', 'analysis done');
       expect(result.success).toBe(true);
       expect(result.to).toBe('1');
-      expect(result.fromRole).toBe('Analyst');
+      expect(result.fromRole).toBe('Oracle');
       expect(result.toRole).toBe('Architect');
     });
   });

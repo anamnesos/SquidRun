@@ -73,7 +73,7 @@ describe('mcp-server tool handlers', () => {
     mockFileStore.clear();
     mockDirStore.clear();
     serverInstance = null;
-    process.argv = ['node', 'mcp-server.js', '--agent', 'devops'];
+    process.argv = ['node', 'mcp-server.js', '--agent', 'builder'];
     process.exit = jest.fn();
 
     jest.resetModules();
@@ -122,7 +122,7 @@ describe('mcp-server tool handlers', () => {
       from: '1',
       fromRole: 'Architect',
       to: '2',
-      toRole: 'DevOps',
+      toRole: 'Builder',
       content: 'Ping',
       timestamp: new Date().toISOString(),
       delivered: false,
@@ -148,12 +148,12 @@ describe('mcp-server tool handlers', () => {
     await callHandler({
       params: {
         name: 'trigger_agent',
-        arguments: { agent: 'analyst', context: 'Check status' },
+        arguments: { agent: 'oracle', context: 'Check status' },
       },
     });
 
-    const triggerPath = getTriggerPath('analyst.txt');
+    const triggerPath = getTriggerPath('oracle.txt');
     expect(mockFileStore.has(triggerPath)).toBe(true);
-    expect(mockFileStore.get(triggerPath)).toMatch(/DEVOPS/);
+    expect(mockFileStore.get(triggerPath)).toMatch(/BUILDER/);
   });
 });

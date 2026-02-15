@@ -35,7 +35,7 @@ maybeDescribe('team-memory runtime phase0', () => {
         type: 'incident.created',
         stage: 'incident',
         source: 'test-suite',
-        role: 'analyst',
+        role: 'oracle',
         payload: { summary: 'Message delivery failed during reconnect' },
       },
     ]);
@@ -88,7 +88,7 @@ maybeDescribe('team-memory runtime phase0', () => {
 
     const created = runtime.executeTeamMemoryOperation('create-claim', {
       statement: 'Trigger queue duplicate injection risk during reconnect',
-      owner: 'devops',
+      owner: 'builder',
       claimType: 'negative',
       confidence: 0.95,
       scopes: ['ui/modules/triggers.js'],
@@ -124,7 +124,7 @@ maybeDescribe('team-memory runtime phase0', () => {
 
     const created = runtime.executeTeamMemoryOperation('create-claim', {
       statement: 'Consensus runtime route test',
-      owner: 'devops',
+      owner: 'builder',
       claimType: 'fact',
       session: 's_333',
       scopes: ['ui/modules/triggers.js'],
@@ -146,20 +146,20 @@ maybeDescribe('team-memory runtime phase0', () => {
     expect(readConsensus.summary.agree).toBe(1);
 
     const snapshot = runtime.executeTeamMemoryOperation('create-belief-snapshot', {
-      agent: 'devops',
+      agent: 'builder',
       session: 's_333',
     });
     expect(snapshot.ok).toBe(true);
 
     const beliefs = runtime.executeTeamMemoryOperation('get-agent-beliefs', {
-      agent: 'devops',
+      agent: 'builder',
       session: 's_333',
     });
     expect(beliefs.ok).toBe(true);
     expect(beliefs.latest).toBeTruthy();
 
     const contradictions = runtime.executeTeamMemoryOperation('get-contradictions', {
-      agent: 'devops',
+      agent: 'builder',
       session: 's_333',
     });
     expect(contradictions.ok).toBe(true);
@@ -167,7 +167,7 @@ maybeDescribe('team-memory runtime phase0', () => {
     const pattern = runtime.executeTeamMemoryOperation('create-pattern', {
       patternType: 'failure',
       scope: 'ui/modules/triggers.js',
-      agents: ['architect', 'devops'],
+      agents: ['architect', 'builder'],
       frequency: 2,
       confidence: 0.8,
     });

@@ -41,7 +41,7 @@ jest.mock('../modules/ui-view', () => ({
   hideRollbackUI: jest.fn(),
   updatePaneProject: jest.fn(),
   updateAgentTasks: jest.fn(),
-  PANE_ROLES: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+  PANE_ROLES: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
   SYNC_FILES: { 'shared_context.md': { label: 'CTX' } },
   _resetForTesting: jest.fn(),
 }));
@@ -177,8 +177,8 @@ describe('evidence-ledger integration: trace continuity', () => {
         const rawTarget = String(payload.message.target || '').toLowerCase();
         const paneIdByTarget = {
           architect: '1',
-          devops: '2',
-          analyst: '5',
+          builder: '2',
+          oracle: '5',
           '1': '1',
           '2': '2',
           '5': '5',
@@ -316,7 +316,7 @@ describe('evidence-ledger integration: trace continuity', () => {
 
     sender.send(JSON.stringify({
       type: 'send',
-      target: 'analyst',
+      target: 'oracle',
       content: '(ARCH #INT): trace continuity probe',
       messageId: traceId,
       ackRequired: true,

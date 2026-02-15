@@ -20,7 +20,7 @@ describe('hm-experiment CLI helpers', () => {
     const options = new Map([
       ['profile', 'jest-file'],
       ['claim-id', 'clm_123'],
-      ['requested-by', 'devops'],
+      ['requested-by', 'builder'],
       ['session', 's_999'],
       ['arg', ['file=__tests__/team-memory-store.test.js', 'mode=watch']],
       ['env-allowlist', 'NODE_ENV,CI'],
@@ -33,7 +33,7 @@ describe('hm-experiment CLI helpers', () => {
       expect.objectContaining({
         profileId: 'jest-file',
         claimId: 'clm_123',
-        requestedBy: 'devops',
+        requestedBy: 'builder',
         session: 's_999',
         guardContext: {
           guardId: 'grd_12',
@@ -74,13 +74,13 @@ describe('hm-experiment CLI helpers', () => {
       ['run-id', 'exp_123'],
       ['claim-id', 'clm_1'],
       ['relation', 'supports'],
-      ['added-by', 'analyst'],
+      ['added-by', 'oracle'],
     ]);
     expect(hmExperiment.buildPayload('attach', attachOptions)).toEqual({
       runId: 'exp_123',
       claimId: 'clm_1',
       relation: 'supports',
-      addedBy: 'analyst',
+      addedBy: 'oracle',
       summary: '',
     });
   });
