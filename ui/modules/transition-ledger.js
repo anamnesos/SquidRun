@@ -96,21 +96,38 @@ const TRANSITION_STATES = Object.freeze({
 const REQUIRED_FIELDS = Object.freeze([
   'transitionId',
   'correlationId',
+  'causationId',
   'paneId',
   'category',
   'intentType',
+  'transitionType',
   'origin.actorType',
   'origin.actorRole',
   'origin.source',
   'owner.module',
   'owner.leaseId',
+  'owner.acquiredAt',
   'owner.leaseTtlMs',
   'phase',
   'timeoutBudget.overallMs',
   'fallbackPolicy.onTimeout',
   'verification.outcome',
+  'verification.confidence',
+  'verification.verifiedAt',
   'outcome.status',
   'outcome.reasonCode',
+  'outcome.resolvedBy',
+  'evidence',
+  'createdAt',
+  'updatedAt',
+  'closed',
+  'closedAt',
+]);
+
+const NULLABLE_REQUIRED_FIELDS = new Set([
+  'causationId',
+  'verification.verifiedAt',
+  'closedAt',
 ]);
 
 const DEFAULT_EVIDENCE_SPEC = Object.freeze({
@@ -209,7 +226,11 @@ function missingRequiredFields(transition) {
   const missing = [];
   for (const path of REQUIRED_FIELDS) {
     const value = getPath(transition, path);
-    if (value === undefined || value === null || value === '') {
+    if (
+      value === undefined
+      || value === ''
+      || (value === null && !NULLABLE_REQUIRED_FIELDS.has(path))
+    ) {
       missing.push(path);
     }
   }
@@ -287,12 +308,36 @@ function normalizeEvidenceSpec(event) {
   };
 }
 
+function normalizeFallbackPolicy(event) {
+  const candidate = event?.payload?.fallbackPolicy;
+  if (!candidate || typeof candidate !== 'object') {
+    return clone(DEFAULT_FALLBACK_POLICY);
+  }
+
+  const actionValues = new Set(Object.values(FALLBACK_ACTION));
+  const onTimeout = (typeof candidate.onTimeout === 'string' && actionValues.has(candidate.onTimeout))
+    ? candidate.onTimeout
+    : DEFAULT_FALLBACK_POLICY.onTimeout;
+  const maxRetries = Number.isInteger(candidate.maxRetries) && candidate.maxRetries >= 0
+    ? candidate.maxRetries
+    : DEFAULT_FALLBACK_POLICY.maxRetries;
+  const retryBackoffMs = Array.isArray(candidate.retryBackoffMs)
+    ? candidate.retryBackoffMs.filter((item) => Number.isFinite(item) && item >= 0)
+    : clone(DEFAULT_FALLBACK_POLICY.retryBackoffMs);
+
+  return {
+    onTimeout,
+    maxRetries,
+    retryBackoffMs,
+  };
+}
+
 function emitLedgerEvent(type, transition, event, payload = {}) {
   if (!bus) return null;
   return bus.emit(type, {
     paneId: transition.paneId,
     correlationId: transition.correlationId,
-    causationId: event?.eventId || transition.sourceEventId || null,
+    causationId: event?.eventId || transition.causationId || transition.sourceEventId || null,
     payload: {
       transitionId: transition.transitionId,
       phase: transition.phase,
@@ -318,7 +363,7 @@ function createTransitionFromEvent(event) {
   const transition = {
     transitionId: buildTransitionId(),
     correlationId,
-    causationId: event?.causationId || null,
+    causationId: event?.eventId || event?.causationId || null,
     paneId,
     category: TRANSITION_CATEGORY.INJECT,
     intentType: 'inject.requested',
@@ -337,7 +382,7 @@ function createTransitionFromEvent(event) {
     preconditions: [],
     evidenceSpec: normalizeEvidenceSpec(event),
     timeoutBudget: clone(DEFAULT_TIMEOUT_BUDGET),
-    fallbackPolicy: clone(DEFAULT_FALLBACK_POLICY),
+    fallbackPolicy: normalizeFallbackPolicy(event),
     phase: TRANSITION_PHASE.REQUESTED,
     phaseHistory: [
       { phase: TRANSITION_PHASE.REQUESTED, ts: createdAt, eventId: event?.eventId || null, note: 'created' },
@@ -482,6 +527,7 @@ function setPhase(transition, nextPhase, event, note = '') {
 
   transition.phase = nextPhase;
   transition.lifecycle = mapPhaseToLifecycle(nextPhase);
+  transition.causationId = event?.eventId || transition.causationId || transition.sourceEventId || null;
   transition.updatedAt = nowMs();
   transition.phaseHistory.push({
     phase: nextPhase,
@@ -535,7 +581,7 @@ function classifyEvidence(event, transition = null) {
   }
 
   if (Array.isArray(acceptedSignals) && !acceptedSignals.includes(signalType)) {
-    return EVIDENCE_CLASS.DISALLOWED;
+    return EVIDENCE_CLASS.NONE;
   }
 
   if (signalType === 'verify.pass' || signalType === 'inject.verified') {
@@ -631,8 +677,18 @@ function enforceEvidenceSpec(transition, terminalPhase, event, reasonCode, optio
   }
 
   if (requiredClass === 'weak_allowed') {
-    if (hasStrong || hasWeak) {
+    if (hasStrong) {
       return { terminalPhase, reasonCode, options };
+    }
+    if (hasWeak) {
+      return {
+        terminalPhase,
+        reasonCode,
+        options: {
+          ...options,
+          verificationOutcome: options.verificationOutcome || VERIFICATION_OUTCOME.RISKED_PASS,
+        },
+      };
     }
     markInvalid(transition, event, 'evidence_spec_missing_required', { requiredClass });
     return {
@@ -698,11 +754,17 @@ function finalizeTransition(transition, terminalPhase, event, reasonCode, option
   transition.outcome.resolvedBy = effectiveOptions.resolvedBy || 'normal';
 
   if (effectivePhase === TRANSITION_PHASE.VERIFIED) {
-    stats.settledVerified += 1;
-    transition.verification.outcome = VERIFICATION_OUTCOME.PASS;
     transition.verification.verifiedAt = transition.closedAt;
-    transition.outcome.status = 'success';
-    transition.lifecycle = TRANSITION_STATES.DELIVERED_VERIFIED;
+    transition.verification.outcome = effectiveOptions.verificationOutcome || VERIFICATION_OUTCOME.PASS;
+    if (transition.verification.outcome === VERIFICATION_OUTCOME.RISKED_PASS) {
+      stats.settledUnverified += 1;
+      transition.outcome.status = 'partial';
+      transition.lifecycle = TRANSITION_STATES.DELIVERED_UNVERIFIED;
+    } else {
+      stats.settledVerified += 1;
+      transition.outcome.status = 'success';
+      transition.lifecycle = TRANSITION_STATES.DELIVERED_VERIFIED;
+    }
   } else if (effectivePhase === TRANSITION_PHASE.TIMED_OUT) {
     stats.timedOut += 1;
     if (effectiveOptions.verificationOutcome) {
@@ -764,8 +826,9 @@ function handleTimeout(transitionId) {
   }
 
   if (transition.fallbackPolicy.onTimeout === FALLBACK_ACTION.DROP) {
-    finalizeTransition(transition, TRANSITION_PHASE.DROPPED, null, 'timeout_drop_fallback', {
+    finalizeTransition(transition, TRANSITION_PHASE.TIMED_OUT, null, 'timeout_drop_fallback', {
       resolvedBy: 'fallback',
+      verificationOutcome: VERIFICATION_OUTCOME.UNKNOWN,
     });
     return;
   }
@@ -785,13 +848,17 @@ function handleTimeout(transitionId) {
 }
 
 function pruneTransitions() {
-  while (transitionOrder.length > MAX_TRANSITIONS) {
-    const oldestId = transitionOrder[0];
-    const oldest = transitions.get(oldestId);
-    if (!oldest || !oldest.closed) break;
-    transitionOrder.shift();
-    transitions.delete(oldestId);
-    clearTransitionTimeout(oldestId);
+  let index = 0;
+  while (transitionOrder.length > MAX_TRANSITIONS && index < transitionOrder.length) {
+    const candidateId = transitionOrder[index];
+    const candidate = transitions.get(candidateId);
+    if (!candidate || candidate.closed) {
+      transitionOrder.splice(index, 1);
+      transitions.delete(candidateId);
+      clearTransitionTimeout(candidateId);
+      continue;
+    }
+    index += 1;
   }
 }
 
@@ -1034,16 +1101,38 @@ function getTransition(transitionId) {
   return item ? clone(item) : null;
 }
 
-function getByCorrelation(correlationId, paneId = null) {
+function getByCorrelation(correlationId, paneIdOrOptions = null, maybeOptions = {}) {
   if (!correlationId) return null;
+  let paneId = paneIdOrOptions;
+  let options = maybeOptions;
+  if (paneIdOrOptions && typeof paneIdOrOptions === 'object' && !Array.isArray(paneIdOrOptions)) {
+    paneId = null;
+    options = paneIdOrOptions;
+  }
+  const includeClosed = options?.includeClosed !== false;
+
   if (paneId !== null && paneId !== undefined) {
     const id = activeByKey.get(keyFor(paneId, correlationId));
-    if (!id) return null;
-    return getTransition(id);
+    if (id && transitions.has(id)) {
+      const transition = transitions.get(id);
+      if (includeClosed || !transition.closed) {
+        return clone(transition);
+      }
+    }
+    if (!includeClosed) return null;
+    for (const transition of transitions.values()) {
+      if (
+        transition.correlationId === correlationId
+        && String(transition.paneId) === String(paneId)
+      ) {
+        return clone(transition);
+      }
+    }
+    return null;
   }
 
   for (const transition of transitions.values()) {
-    if (transition.correlationId === correlationId && !transition.closed) {
+    if (transition.correlationId === correlationId && (includeClosed || !transition.closed)) {
       return clone(transition);
     }
   }
