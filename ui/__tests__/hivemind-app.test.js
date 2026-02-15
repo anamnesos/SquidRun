@@ -242,6 +242,72 @@ describe('HivemindApp', () => {
     });
   });
 
+  describe('initializeStartupSessionScope', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new HivemindApp(mockAppContext, mockManagers);
+    });
+
+    it('records next evidence-ledger session at startup and snapshots it', async () => {
+      const { executeEvidenceLedgerOperation } = require('../modules/ipc/evidence-ledger-handlers');
+      executeEvidenceLedgerOperation
+        .mockResolvedValueOnce([{ sessionNumber: 128, sessionId: 'ses-128' }])
+        .mockResolvedValueOnce({ ok: true, sessionId: 'ses-129' })
+        .mockResolvedValueOnce({ ok: true, snapshotId: 'snp-129' });
+
+      const result = await app.initializeStartupSessionScope();
+
+      expect(result).toEqual({ sessionId: 'ses-129', sessionNumber: 129 });
+      expect(app.commsSessionScopeId).toBe('app-session-129-ses-129');
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        1,
+        'list-sessions',
+        expect.objectContaining({ limit: 1, order: 'desc' }),
+        expect.objectContaining({
+          source: expect.objectContaining({ via: 'app-startup' }),
+        })
+      );
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        2,
+        'record-session-start',
+        expect.objectContaining({ sessionNumber: 129, mode: 'APP' }),
+        expect.any(Object)
+      );
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        3,
+        'snapshot-context',
+        expect.objectContaining({ sessionId: 'ses-129', trigger: 'session_start' }),
+        expect.any(Object)
+      );
+    });
+
+    it('retries startup session numbers on conflict', async () => {
+      const { executeEvidenceLedgerOperation } = require('../modules/ipc/evidence-ledger-handlers');
+      executeEvidenceLedgerOperation
+        .mockResolvedValueOnce([{ sessionNumber: 128 }])
+        .mockResolvedValueOnce({ ok: false, reason: 'conflict' })
+        .mockResolvedValueOnce({ ok: true, sessionId: 'ses-130' })
+        .mockResolvedValueOnce({ ok: true, snapshotId: 'snp-130' });
+
+      const result = await app.initializeStartupSessionScope();
+
+      expect(result).toEqual({ sessionId: 'ses-130', sessionNumber: 130 });
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        2,
+        'record-session-start',
+        expect.objectContaining({ sessionNumber: 129 }),
+        expect.any(Object)
+      );
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        3,
+        'record-session-start',
+        expect.objectContaining({ sessionNumber: 130 }),
+        expect.any(Object)
+      );
+    });
+  });
+
   describe('resolveTargetToPane', () => {
     let app;
 

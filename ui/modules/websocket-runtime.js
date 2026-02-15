@@ -19,6 +19,7 @@ const OUTBOUND_QUEUE_MAX_AGE_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUE
 const OUTBOUND_QUEUE_FLUSH_INTERVAL_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_FLUSH_INTERVAL_MS || '30000', 10);
 const OUTBOUND_QUEUE_PATH = process.env.HIVEMIND_COMMS_QUEUE_FILE
   || path.join(WORKSPACE_PATH, 'state', 'comms-outbound-queue.json');
+const DEFAULT_QUEUE_SESSION_SCOPE = 'default';
 const CANONICAL_ROLE_IDS = ['architect', 'devops', 'analyst'];
 const CANONICAL_ROLE_TO_PANE = new Map(
   CANONICAL_ROLE_IDS
@@ -39,6 +40,7 @@ let pendingDispatchAcks = new Map(); // dedupeKey -> Promise<ackPayload>
 let outboundQueue = []; // [{ id, target, content, meta, createdAt, attempts, lastAttemptAt, queuedBy }]
 let outboundQueueFlushTimer = null;
 let outboundQueueFlushInProgress = false;
+let queueSessionScopeId = DEFAULT_QUEUE_SESSION_SCOPE;
 
 function generateTraceToken(prefix = 'evt') {
   try {
@@ -225,6 +227,12 @@ function parsePositiveInt(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function normalizeQueueSessionScopeId(value) {
+  if (typeof value !== 'string') return DEFAULT_QUEUE_SESSION_SCOPE;
+  const trimmed = value.trim();
+  return trimmed || DEFAULT_QUEUE_SESSION_SCOPE;
+}
+
 function getQueueMaxEntries() {
   return parsePositiveInt(OUTBOUND_QUEUE_MAX_ENTRIES, 500);
 }
@@ -254,6 +262,7 @@ function makeQueueEntry(target, content, meta = {}, queuedBy = 'runtime', now = 
     createdAt: now,
     attempts: 0,
     lastAttemptAt: null,
+    sessionScopeId: queueSessionScopeId,
     queuedBy,
   };
 }
@@ -283,6 +292,7 @@ function normalizeQueueEntries(rawEntries, now = Date.now()) {
       createdAt,
       attempts: Number.isFinite(item.attempts) ? item.attempts : 0,
       lastAttemptAt: Number.isFinite(item.lastAttemptAt) ? item.lastAttemptAt : null,
+      sessionScopeId: normalizeQueueSessionScopeId(item.sessionScopeId || queueSessionScopeId),
       queuedBy: typeof item.queuedBy === 'string' ? item.queuedBy : 'runtime',
     });
   }
@@ -293,7 +303,11 @@ function normalizeQueueEntries(rawEntries, now = Date.now()) {
 function persistOutboundQueue() {
   try {
     ensureQueueDir();
-    const payload = JSON.stringify(outboundQueue, null, 2);
+    const payload = JSON.stringify({
+      version: 2,
+      sessionScopeId: queueSessionScopeId,
+      entries: outboundQueue,
+    }, null, 2);
     const tmpPath = `${OUTBOUND_QUEUE_PATH}.tmp`;
     fs.writeFileSync(tmpPath, payload, 'utf-8');
     fs.renameSync(tmpPath, OUTBOUND_QUEUE_PATH);
@@ -310,8 +324,28 @@ function loadOutboundQueue() {
     }
     const raw = fs.readFileSync(OUTBOUND_QUEUE_PATH, 'utf-8');
     const parsed = JSON.parse(raw);
-    outboundQueue = normalizeQueueEntries(parsed);
-    if (!Array.isArray(parsed) || parsed.length !== outboundQueue.length) {
+
+    // Legacy v1 format: raw array. Discard on startup to avoid cross-session ghost replays.
+    if (Array.isArray(parsed)) {
+      outboundQueue = [];
+      persistOutboundQueue();
+      log.info('WebSocket', 'Discarded legacy outbound queue on startup (session scope enforced)');
+      return;
+    }
+
+    const fileScopeId = normalizeQueueSessionScopeId(parsed?.sessionScopeId);
+    const fileEntries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+    if (fileScopeId !== queueSessionScopeId) {
+      outboundQueue = [];
+      persistOutboundQueue();
+      log.info('WebSocket', `Discarded outbound queue from prior session scope (${fileScopeId} -> ${queueSessionScopeId})`);
+      return;
+    }
+
+    outboundQueue = normalizeQueueEntries(fileEntries).filter(
+      (entry) => normalizeQueueSessionScopeId(entry.sessionScopeId) === queueSessionScopeId
+    );
+    if (!Array.isArray(parsed?.entries) || fileEntries.length !== outboundQueue.length) {
       persistOutboundQueue();
     }
   } catch (err) {
@@ -699,6 +733,7 @@ function getDeliveryCheckResult(messageId) {
 function start(options = {}) {
   const port = options.port ?? DEFAULT_PORT;
   messageHandler = options.onMessage || null;
+  queueSessionScopeId = normalizeQueueSessionScopeId(options.sessionScopeId);
   recentMessageAcks.clear();
   pendingMessageAcks.clear();
   recentDispatchAcks.clear();

@@ -1305,10 +1305,15 @@ function createInjectionController(options = {}) {
       );
     }
 
-    // User messages (priority) go to front of queue, agent messages go to back
+    // Priority lane: keep priority items ahead of normal items, while preserving
+    // FIFO order among priority messages to avoid rapid-send reordering.
     if (options.priority) {
-      queue.unshift(queueItem);
-      log.info(`Terminal ${id}`, 'USER message queued with PRIORITY (front of queue)');
+      let insertIndex = 0;
+      while (insertIndex < queue.length && queue[insertIndex]?.priority === true) {
+        insertIndex += 1;
+      }
+      queue.splice(insertIndex, 0, queueItem);
+      log.info(`Terminal ${id}`, `USER message queued with PRIORITY (lane index ${insertIndex})`);
     } else {
       queue.push(queueItem);
     }

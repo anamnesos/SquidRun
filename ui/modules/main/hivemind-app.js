@@ -60,6 +60,13 @@ const TEAM_MEMORY_PATTERN_MINING_INTERVAL_MS = Number.parseInt(
   10
 );
 const TEAM_MEMORY_BLOCK_GUARD_PROFILE = String(process.env.HIVEMIND_TEAM_MEMORY_BLOCK_GUARD_PROFILE || 'jest-suite').trim() || 'jest-suite';
+const APP_STARTUP_SESSION_RETRY_LIMIT = 3;
+
+function asPositiveInt(value, fallback = null) {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric <= 0) return fallback;
+  return numeric;
+}
 
 class HivemindApp {
   constructor(appContext, managers) {
@@ -89,6 +96,90 @@ class HivemindApp {
     this.teamMemoryInitialized = false;
     this.experimentInitialized = false;
     this.intentStateByPane = new Map();
+    this.ledgerAppSession = null;
+    this.commsSessionScopeId = `app-${process.pid}-${Date.now()}`;
+  }
+
+  async initializeStartupSessionScope() {
+    const startupSource = {
+      via: 'app-startup',
+      role: 'system',
+      paneId: null,
+    };
+    const fallbackScope = `app-${process.pid}-${Date.now()}`;
+    this.commsSessionScopeId = fallbackScope;
+
+    let nextSessionNumber = 1;
+    try {
+      const latestSessions = await executeEvidenceLedgerOperation(
+        'list-sessions',
+        { limit: 1, order: 'desc' },
+        { source: startupSource }
+      );
+      if (Array.isArray(latestSessions) && latestSessions.length > 0) {
+        const latestSessionNumber = asPositiveInt(latestSessions[0]?.sessionNumber, null);
+        if (latestSessionNumber) {
+          nextSessionNumber = latestSessionNumber + 1;
+        }
+      } else if (latestSessions?.ok === false) {
+        log.warn('EvidenceLedger', `Unable to inspect prior sessions at startup: ${latestSessions.reason || 'unknown'}`);
+      }
+    } catch (err) {
+      log.warn('EvidenceLedger', `Startup session lookup failed: ${err.message}`);
+    }
+
+    for (let attempt = 0; attempt < APP_STARTUP_SESSION_RETRY_LIMIT; attempt += 1) {
+      const sessionNumber = nextSessionNumber + attempt;
+      const startResult = await executeEvidenceLedgerOperation(
+        'record-session-start',
+        {
+          sessionNumber,
+          mode: 'APP',
+          meta: {
+            source: 'hivemind-app',
+            pid: process.pid,
+            startup: true,
+          },
+        },
+        { source: startupSource }
+      );
+
+      if (startResult?.ok) {
+        const sessionId = typeof startResult.sessionId === 'string' ? startResult.sessionId : null;
+        this.ledgerAppSession = {
+          sessionId,
+          sessionNumber,
+        };
+        this.commsSessionScopeId = sessionId
+          ? `app-session-${sessionNumber}-${sessionId}`
+          : `app-session-${sessionNumber}`;
+
+        log.info('EvidenceLedger', `Recorded app startup session ${sessionNumber}${sessionId ? ` (${sessionId})` : ''}`);
+
+        if (sessionId) {
+          const snapshotResult = await executeEvidenceLedgerOperation(
+            'snapshot-context',
+            {
+              sessionId,
+              trigger: 'session_start',
+            },
+            { source: startupSource }
+          );
+          if (snapshotResult?.ok === false) {
+            log.warn('EvidenceLedger', `Startup session snapshot failed: ${snapshotResult.reason || 'unknown'}`);
+          }
+        }
+        return this.ledgerAppSession;
+      }
+
+      if (startResult?.reason !== 'conflict') {
+        log.warn('EvidenceLedger', `Startup session start failed: ${startResult?.reason || 'unknown'}`);
+        break;
+      }
+    }
+
+    log.warn('EvidenceLedger', `Falling back to ephemeral comms session scope (${fallbackScope})`);
+    return null;
   }
 
   async init() {
@@ -227,6 +318,9 @@ class HivemindApp {
     // 8. Load usage stats
     this.usage.loadUsageStats();
 
+    // 8b. Increment Evidence Ledger startup session and bind comms scope.
+    await this.initializeStartupSessionScope();
+
     // 9. Initialize PTY daemon connection
     await this.initDaemonClient();
 
@@ -241,6 +335,7 @@ class HivemindApp {
     try {
       await websocketServer.start({
         port: websocketServer.DEFAULT_PORT,
+        sessionScopeId: this.commsSessionScopeId,
         onMessage: async (data) => {
           log.info('WebSocket', `Message from ${data.role || data.paneId || 'unknown'}: ${JSON.stringify(data.message).substring(0, 100)}`);
 

@@ -69,6 +69,7 @@ async function performRestart(attempt, reason = 'unexpected_exit') {
       options: {
         port: options.port,
         callbackTimeoutMs: options.callbackTimeoutMs,
+        sessionScopeId: options.sessionScopeId,
       },
     });
     running = true;
@@ -247,6 +248,7 @@ async function start(options = {}) {
   lastStartOptions = {
     port: options.port,
     callbackTimeoutMs: options.callbackTimeoutMs,
+    sessionScopeId: options.sessionScopeId,
   };
   desiredRunning = true;
   clearRestartTimer();
@@ -257,6 +259,7 @@ async function start(options = {}) {
       options: {
         port: options.port,
         callbackTimeoutMs: options.callbackTimeoutMs,
+        sessionScopeId: options.sessionScopeId,
       },
     });
     running = true;

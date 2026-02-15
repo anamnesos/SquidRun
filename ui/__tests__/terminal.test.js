@@ -632,7 +632,7 @@ describe('terminal.js module', () => {
       jest.useFakeTimers();
     });
 
-    test('should handle Codex pane differently', async () => {
+    test('should spawn Codex pane via PTY (same as Claude)', async () => {
       jest.useRealTimers();
       terminal.registerCodexPane('1');
       terminal.terminals.set('1', { write: jest.fn() });
@@ -641,11 +641,11 @@ describe('terminal.js module', () => {
 
       await terminal.spawnAgent('1');
 
-      // Codex exec mode: no claude.spawn or pty.write — uses codex-exec IPC
-      expect(mockHivemind.claude.spawn).not.toHaveBeenCalled();
-      expect(mockHivemind.pty.write).not.toHaveBeenCalled();
-      expect(statusCb).toHaveBeenCalledWith('1', 'Starting Codex...');
-      expect(statusCb).toHaveBeenCalledWith('1', 'Codex exec ready');
+      // Codex panes now use interactive PTY mode (same spawn path as Claude)
+      expect(mockHivemind.claude.spawn).toHaveBeenCalledWith('1');
+      expect(mockHivemind.pty.write).toHaveBeenCalled();
+      expect(statusCb).toHaveBeenCalledWith('1', 'Starting...');
+      expect(statusCb).toHaveBeenCalledWith('1', 'Working');
 
       terminal.unregisterCodexPane('1'); // Reset
       jest.useFakeTimers();

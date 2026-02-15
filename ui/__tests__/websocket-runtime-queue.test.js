@@ -18,7 +18,10 @@ function uniqueQueuePath() {
 
 function readQueue(queuePath) {
   if (!fs.existsSync(queuePath)) return [];
-  return JSON.parse(fs.readFileSync(queuePath, 'utf-8'));
+  const parsed = JSON.parse(fs.readFileSync(queuePath, 'utf-8'));
+  if (Array.isArray(parsed)) return parsed;
+  if (Array.isArray(parsed?.entries)) return parsed.entries;
+  return [];
 }
 
 async function closeClient(ws) {
@@ -114,7 +117,7 @@ describe('websocket-runtime outbound queue', () => {
     const runtime = loadRuntime({ queuePath });
     let receiver = null;
     try {
-      await runtime.start({ port: 0, onMessage: jest.fn() });
+      await runtime.start({ port: 0, sessionScopeId: 'scope-a', onMessage: jest.fn() });
       const port = runtime.getPort();
       expect(port).toBeTruthy();
 
@@ -141,19 +144,19 @@ describe('websocket-runtime outbound queue', () => {
     }
   });
 
-  test('replays queued messages after runtime restart', async () => {
+  test('replays queued messages after runtime restart when session scope matches', async () => {
     const runtimeA = loadRuntime({ queuePath });
     let runtimeB = null;
     let receiver = null;
     try {
-      await runtimeA.start({ port: 0, onMessage: jest.fn() });
+      await runtimeA.start({ port: 0, sessionScopeId: 'scope-a', onMessage: jest.fn() });
       const queued = runtimeA.sendToTarget('devops', 'survives-restart', { from: 'architect' });
       expect(queued).toBe(false);
       expect(readQueue(queuePath)).toHaveLength(1);
       await runtimeA.stop();
 
       runtimeB = loadRuntime({ queuePath });
-      await runtimeB.start({ port: 0, onMessage: jest.fn() });
+      await runtimeB.start({ port: 0, sessionScopeId: 'scope-a', onMessage: jest.fn() });
       const port = runtimeB.getPort();
       const connected = await connectAndRegister(port, 'devops', '2');
       receiver = connected.ws;
@@ -179,9 +182,43 @@ describe('websocket-runtime outbound queue', () => {
     }
   });
 
+  test('drops queued messages across session scope changes', async () => {
+    const runtimeA = loadRuntime({ queuePath });
+    let runtimeB = null;
+    let receiver = null;
+    try {
+      await runtimeA.start({ port: 0, sessionScopeId: 'scope-a', onMessage: jest.fn() });
+      const queued = runtimeA.sendToTarget('devops', 'stale-message', { from: 'architect' });
+      expect(queued).toBe(false);
+      expect(readQueue(queuePath)).toHaveLength(1);
+      await runtimeA.stop();
+
+      runtimeB = loadRuntime({ queuePath });
+      await runtimeB.start({ port: 0, sessionScopeId: 'scope-b', onMessage: jest.fn() });
+      const port = runtimeB.getPort();
+      const connected = await connectAndRegister(port, 'devops', '2');
+      receiver = connected.ws;
+
+      const staleDelivery = connected.inbox.find(
+        (msg) => msg.type === 'message' && msg.content === 'stale-message'
+      );
+      expect(staleDelivery).toBeUndefined();
+
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(readQueue(queuePath)).toHaveLength(0);
+    } finally {
+      await closeClient(receiver);
+      if (runtimeB) {
+        await runtimeB.stop();
+      } else {
+        await runtimeA.stop();
+      }
+    }
+  });
+
   test('enforces queue max entries by dropping oldest entries', async () => {
     const runtime = loadRuntime({ queuePath, maxEntries: 2 });
-    await runtime.start({ port: 0, onMessage: jest.fn() });
+    await runtime.start({ port: 0, sessionScopeId: 'scope-a', onMessage: jest.fn() });
 
     runtime.sendToTarget('devops', 'first', { from: 'architect' });
     runtime.sendToTarget('devops', 'second', { from: 'architect' });

@@ -453,6 +453,24 @@ describe('Terminal Injection', () => {
       expect(messageQueue['1'][1].message).toBe('third');
     });
 
+    test('preserves FIFO order within priority lane while keeping priority ahead of normal', () => {
+      const stalledController = createInjectionController({
+        ...mockOptions,
+        getInjectionInFlight: jest.fn().mockReturnValue(true),
+      });
+
+      stalledController.sendToPane('1', 'normal-1');
+      stalledController.sendToPane('1', 'priority-1', { priority: true });
+      stalledController.sendToPane('1', 'priority-2', { priority: true });
+      stalledController.sendToPane('1', 'normal-2');
+
+      expect(messageQueue['1']).toHaveLength(4);
+      expect(messageQueue['1'][0].message).toBe('priority-1');
+      expect(messageQueue['1'][1].message).toBe('priority-2');
+      expect(messageQueue['1'][2].message).toBe('normal-1');
+      expect(messageQueue['1'][3].message).toBe('normal-2');
+    });
+
     test('clearPaneQueue flushes queued messages and notifies callbacks', () => {
       const callbackA = jest.fn();
       const callbackB = jest.fn();

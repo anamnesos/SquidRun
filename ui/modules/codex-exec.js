@@ -4,6 +4,7 @@
  */
 
 const { spawn } = require('child_process');
+const MAX_EXEC_QUEUE_DEPTH = 20;
 
 // ANSI color codes for terminal output
 const ANSI = {
@@ -58,7 +59,7 @@ function createCodexExecRunner(options = {}) {
     emitMarker(terminal, paneId, WORKING_MARKER, 'execWorkingEmitted');
   }
 
-  function emitDoneOnce(terminal, paneId, exitCode) {
+  function emitDoneOnce(terminal, paneId, exitCode, options = {}) {
     if (!terminal || terminal.execDoneEmitted) return;
     terminal.execDoneEmitted = true;
     const code = typeof exitCode === 'number' ? exitCode : 'unknown';
@@ -68,7 +69,24 @@ function createCodexExecRunner(options = {}) {
     appendScrollback(terminal, marker);
     // Emit done activity, then ready after delay
     emitActivity(paneId, 'done', exitCode === 0 ? 'Success' : `Exit ${code}`);
-    setTimeout(() => emitActivity(paneId, 'ready'), 2000);
+    if (options.scheduleReady !== false) {
+      setTimeout(() => emitActivity(paneId, 'ready'), 2000);
+    }
+  }
+
+  function runNextQueuedExec(paneId, terminal) {
+    if (!terminal || terminal.execProcess) return false;
+    if (!Array.isArray(terminal.execQueue) || terminal.execQueue.length === 0) return false;
+    const queued = terminal.execQueue.shift();
+    const queuedPrompt = typeof queued?.prompt === 'string'
+      ? queued.prompt
+      : String(queued ?? '');
+    const remaining = terminal.execQueue.length;
+    const queuedMsg = `\r\n${ANSI.CYAN}[Codex exec queue] Running queued request (${remaining} remaining)${ANSI.RESET}\r\n`;
+    broadcast({ event: 'data', paneId, data: queuedMsg });
+    appendScrollback(terminal, queuedMsg);
+    setTimeout(() => runCodexExec(paneId, terminal, queuedPrompt), 0);
+    return true;
   }
 
   // Activity state emission for UI indicators
@@ -436,11 +454,33 @@ function createCodexExecRunner(options = {}) {
       return { success: false, error: 'Codex exec not enabled for this pane' };
     }
 
+    if (!Array.isArray(terminal.execQueue)) {
+      terminal.execQueue = [];
+    }
+    const payload = typeof prompt === 'string' ? prompt : '';
+
     if (terminal.execProcess) {
-      const busyMsg = '\r\n[Codex exec busy - wait for current run to finish]\r\n';
+      if (terminal.execQueue.length >= MAX_EXEC_QUEUE_DEPTH) {
+        const droppedMsg = `\r\n[Codex exec queue full (${MAX_EXEC_QUEUE_DEPTH}) - dropping request]\r\n`;
+        broadcast({ event: 'data', paneId, data: droppedMsg });
+        appendScrollback(terminal, droppedMsg);
+        return {
+          success: false,
+          status: 'queue_full',
+          queued: false,
+          error: `Codex exec queue full (${MAX_EXEC_QUEUE_DEPTH})`,
+        };
+      }
+      terminal.execQueue.push({ prompt: payload, queuedAt: Date.now() });
+      const busyMsg = `\r\n[Codex exec busy - queued (${terminal.execQueue.length} pending)]\r\n`;
       broadcast({ event: 'data', paneId, data: busyMsg });
       appendScrollback(terminal, busyMsg);
-      return { success: false, error: 'Codex exec already running' };
+      return {
+        success: true,
+        status: 'queued',
+        queued: true,
+        queueDepth: terminal.execQueue.length,
+      };
     }
 
     const workDir = terminal.cwd || process.cwd();
@@ -504,6 +544,7 @@ function createCodexExecRunner(options = {}) {
       const msg = `\r\n[Codex exec error] ${err.message}\r\n`;
       broadcast({ event: 'data', paneId, data: msg });
       appendScrollback(terminal, msg);
+      runNextQueuedExec(paneId, terminal);
     });
 
     child.on('close', (code) => {
@@ -527,17 +568,19 @@ function createCodexExecRunner(options = {}) {
         return;
       }
 
-      emitDoneOnce(terminal, paneId, code);
+      const startedQueuedExec = runNextQueuedExec(paneId, terminal);
+      emitDoneOnce(terminal, paneId, code, {
+        scheduleReady: !startedQueuedExec,
+      });
     });
 
-    const payload = typeof prompt === 'string' ? prompt : '';
     child.stdin.write(payload);
     if (!payload.endsWith('\n')) {
       child.stdin.write('\n');
     }
     child.stdin.end();
 
-    return { success: true };
+    return { success: true, status: 'accepted', queued: false };
   }
 
   return { runCodexExec };
