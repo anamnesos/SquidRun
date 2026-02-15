@@ -2,6 +2,7 @@
  * GitHub IPC Handlers
  * Channels:
  * - github:create-pr
+ * - github:build-pr-body
  * - github:update-pr
  * - github:get-pr
  * - github:list-prs
@@ -21,6 +22,7 @@ const { createGitHubService } = require('../main/github-service');
 
 const GITHUB_CHANNEL_ACTIONS = new Map([
   ['github:create-pr', 'createPR'],
+  ['github:build-pr-body', 'buildPRBody'],
   ['github:update-pr', 'updatePR'],
   ['github:get-pr', 'getPR'],
   ['github:list-prs', 'listPRs'],
@@ -53,6 +55,7 @@ function normalizeAction(action) {
 
   if (raw === 'status') return 'status';
   if (raw === 'create-pr' || raw === 'pr.create' || raw === 'pr_create') return 'createPR';
+  if (raw === 'build-pr-body' || raw === 'pr.create-auto' || raw === 'pr.build-body' || raw === 'pr_build_body') return 'buildPRBody';
   if (raw === 'update-pr' || raw === 'pr.update' || raw === 'pr_update') return 'updatePR';
   if (raw === 'get-pr' || raw === 'pr.get' || raw === 'pr_get') return 'getPR';
   if (raw === 'list-prs' || raw === 'pr.list' || raw === 'pr_list') return 'listPRs';
@@ -130,6 +133,8 @@ async function executeGitHubOperation(action, payload = {}, options = {}) {
       }
       case 'createPR':
         return { ok: true, action: normalizedAction, pr: await service.createPR(normalizedPayload) };
+      case 'buildPRBody':
+        return { ok: true, action: normalizedAction, body: await service.buildPRBody(normalizedPayload) };
       case 'updatePR': {
         const number = extractId(normalizedPayload, ['number', 'prNumber', 'id', 'pullNumber', 'pullRequestNumber']);
         if (!number) return { ok: false, action: normalizedAction, reason: 'missing_pr_number' };

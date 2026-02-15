@@ -19,6 +19,7 @@ describe('github IPC handlers', () => {
   beforeEach(() => {
     service = {
       createPR: jest.fn(async (payload) => ({ number: 1, title: payload.title || null })),
+      buildPRBody: jest.fn(async () => 'generated-body'),
       updatePR: jest.fn(async (number) => ({ number: Number(number), state: 'OPEN' })),
       getPR: jest.fn(async (number) => ({ number: Number(number), state: 'OPEN' })),
       listPRs: jest.fn(async () => []),
@@ -66,6 +67,20 @@ describe('github IPC handlers', () => {
       pr: { number: 1, title: 'Test PR' },
     });
     expect(service.createPR).toHaveBeenCalledWith({ title: 'Test PR' });
+  });
+
+  test('build-pr-body channel routes to service.buildPRBody', async () => {
+    registerGitHubHandlers(ctx);
+    const buildHandler = ipcMain.handle.mock.calls.find(([channel]) => channel === 'github:build-pr-body')[1];
+
+    const result = await buildHandler({}, { title: 'Auto PR', sessionNumber: 88 });
+
+    expect(result).toEqual({
+      ok: true,
+      action: 'buildPRBody',
+      body: 'generated-body',
+    });
+    expect(service.buildPRBody).toHaveBeenCalledWith({ title: 'Auto PR', sessionNumber: 88 });
   });
 
   test('get-pr returns missing_pr_number when id is absent', async () => {

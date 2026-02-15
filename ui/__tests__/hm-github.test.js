@@ -53,6 +53,31 @@ describe('hm-github CLI helpers', () => {
     });
   });
 
+  test('buildRequest maps pr create-auto with session and issue context', () => {
+    const options = new Map([
+      ['title', 'Auto PR'],
+      ['description', 'Auto-generated body from session context'],
+      ['session', '87'],
+      ['issues', '12,#34,invalid,34'],
+      ['base', 'main'],
+      ['head', 'feature/auto-pr'],
+      ['draft', true],
+    ]);
+
+    expect(hmGithub.buildRequest(['pr', 'create-auto'], options)).toEqual({
+      action: 'createPR',
+      payload: {
+        title: 'Auto PR',
+        description: 'Auto-generated body from session context',
+        sessionNumber: 87,
+        issueNumbers: [12, 34],
+        base: 'main',
+        head: 'feature/auto-pr',
+        draft: true,
+      },
+    });
+  });
+
   test('buildRequest maps pr merge', () => {
     expect(hmGithub.buildRequest(['pr', 'merge', '42'], new Map([['method', 'squash']]))).toEqual({
       action: 'mergePR',
