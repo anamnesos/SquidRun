@@ -1,7 +1,5 @@
 # Hivemind
 
-A plumber with zero software experience built this in a month.
-
 Hivemind is a working multi-agent engineering system where one person directs 3 persistent AI agents, plus 2 internal teammates, that coordinate, recover from failures, and build shared institutional memory over time.
 
 This is not a chatbot wrapper. It is a live orchestration runtime for team intelligence.
@@ -147,10 +145,7 @@ hivemind/
 │   │   │   ├── profiles.js
 │   │   │   ├── worker.js
 │   │   │   └── worker-client.js
-│   │   ├── evidence-ledger/
-│   │   │   ├── store.js
-│   │   │   ├── worker.js
-│   │   │   └── worker-client.js
+│   │   ├── evidence-ledger/        # spread across main/ and ipc/
 │   │   ├── main/
 │   │   │   ├── hivemind-app.js
 │   │   │   └── kernel-bridge.js

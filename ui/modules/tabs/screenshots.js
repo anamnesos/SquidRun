@@ -47,7 +47,7 @@ async function handleScreenshotDrop(files, updateStatusFn) {
         </div>
         <div class="screenshot-actions">
           <button class="screenshot-btn copy-btn" title="Copy path">Copy</button>
-          <button class="screenshot-btn delete-btn" title="Delete">X</button>
+          <button class="screenshot-btn delete-btn" title="Delete">Delete</button>
         </div>
       `;
 
@@ -104,7 +104,7 @@ async function loadScreenshots(updateStatusFn) {
         </div>
         <div class="screenshot-actions">
           <button class="screenshot-btn copy-btn" title="Copy path">Copy</button>
-          <button class="screenshot-btn delete-btn" title="Delete">X</button>
+          <button class="screenshot-btn delete-btn" title="Delete">Delete</button>
         </div>
       `;
 
