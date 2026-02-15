@@ -48,6 +48,7 @@ const { registerWhisperHandlers } = require('./whisper-handlers');
 const { registerEvidenceLedgerHandlers } = require('./evidence-ledger-handlers');
 const { registerContractPromotionHandlers } = require('./contract-promotion-handlers');
 const { registerTeamMemoryHandlers } = require('./team-memory-handlers');
+const { registerTransitionLedgerHandlers } = require('./transition-ledger-handlers');
 const HANDLER_REREGISTER_FLAG = '__hivemindHandlerReregister';
 
 const DEFAULT_HANDLERS = [
@@ -101,6 +102,7 @@ const DEFAULT_HANDLERS = [
   registerEvidenceLedgerHandlers,
   registerContractPromotionHandlers,
   registerTeamMemoryHandlers,
+  registerTransitionLedgerHandlers,
 ];
 
 function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {

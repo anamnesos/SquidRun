@@ -165,6 +165,11 @@ jest.mock('../modules/ipc/evidence-ledger-handlers', () => ({
   closeSharedRuntime: jest.fn(),
 }));
 
+// Mock transition-ledger handlers
+jest.mock('../modules/ipc/transition-ledger-handlers', () => ({
+  executeTransitionLedgerOperation: jest.fn(async () => ({ ok: true, count: 0, items: [] })),
+}));
+
 // Mock team-memory service
 jest.mock('../modules/team-memory', () => ({
   initializeTeamMemoryRuntime: jest.fn(async () => ({ ok: true, status: { driver: 'better-sqlite3' } })),
