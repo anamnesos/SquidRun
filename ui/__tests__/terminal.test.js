@@ -314,7 +314,7 @@ describe('terminal.js module', () => {
       expect(caps.mode).toBe('pty');
       expect(caps.modeLabel).toBe('codex-pty');
       expect(caps.verifySubmitAccepted).toBe(true);
-      expect(caps.enterMethod).toBe('trusted');
+      expect(caps.enterMethod).toBe('pty');
     });
 
     test('returns safe generic defaults for unknown runtimes', () => {
