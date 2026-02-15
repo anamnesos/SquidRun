@@ -12,6 +12,16 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 process.stdout.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 process.stderr.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 
+// Global error handlers — prevent main process crash on unhandled errors
+const log = require('./modules/logger');
+process.on('uncaughtException', (err) => {
+  log.error('[Main] Uncaught exception:', err?.message || err);
+  log.error('[Main] Stack:', err?.stack);
+});
+process.on('unhandledRejection', (reason) => {
+  log.error('[Main] Unhandled rejection:', reason?.message || reason);
+});
+
 const appContext = require('./modules/main/app-context');
 const SettingsManager = require('./modules/main/settings-manager');
 const ActivityManager = require('./modules/main/activity-manager');
@@ -40,7 +50,10 @@ const hivemindApp = new HivemindApp(appContext, {
 
 // 3. Electron Lifecycle Hooks
 app.whenReady().then(() => {
-  hivemindApp.init();
+  hivemindApp.init().catch((err) => {
+    log.error('[Main] App init failed:', err?.message || err);
+    log.error('[Main] Stack:', err?.stack);
+  });
 });
 
 app.on('window-all-closed', () => {

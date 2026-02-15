@@ -5,6 +5,7 @@
 
 const { ipcMain, dialog } = require('electron');
 const path = require('path');
+const log = require('./logger');
 const {
   WORKSPACE_PATH,
   PANE_IDS,
@@ -68,6 +69,9 @@ function setupIPCHandlers(deps) {
         const start = Date.now();
         try {
           return await handler(event, ...args);
+        } catch (err) {
+          log.error(`[IPC] Handler "${channel}" threw:`, err?.message || err);
+          return { success: false, error: err?.message || 'Unknown error' };
         } finally {
           const duration = Date.now() - start;
           if (typeof ctx.recordHandlerPerf === 'function') {
