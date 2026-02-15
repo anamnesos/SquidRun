@@ -1740,7 +1740,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 
 // Reattach to existing terminal (daemon reconnection)
 // U1: scrollback parameter contains buffered output to restore
-async function reattachTerminal(paneId, scrollback) {
+async function reattachTerminal(paneId, scrollback, options = {}) {
   const container = document.getElementById(`terminal-${paneId}`);
   if (!container) return;
 
@@ -1910,10 +1910,13 @@ async function reattachTerminal(paneId, scrollback) {
   // when no prior startup marker exists (e.g. reconnect edge cases).
   // Guardrails:
   // - Pane 1 only (do not re-trigger DevOps/Analyst startup on light reloads)
+  // - Skip if terminal has been alive for >60s (injection cycle already completed or failed)
   // - Skip if identity marker is already present in scrollback
-  // - Pane 1 only (Architect startup identity injection on reattach)
+  const REATTACH_INJECTION_WINDOW_MS = 60000;
+  const terminalAge = options.createdAt ? (Date.now() - options.createdAt) : Infinity;
   const shouldArmStartupOnReattach =
     String(paneId) === '1' &&
+    terminalAge < REATTACH_INJECTION_WINDOW_MS &&
     !hasStartupSessionHeader(scrollback, paneId);
   if (shouldArmStartupOnReattach) {
     const isGemini = isGeminiPane(paneId);

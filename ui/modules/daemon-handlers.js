@@ -365,7 +365,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
           }
 
           existingPaneIds.add(paneId);
-          await reattachTerminalFn(paneId, term.scrollback);
+          await reattachTerminalFn(paneId, term.scrollback, { createdAt: term.createdAt || null });
         }
       }
 
