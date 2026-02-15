@@ -102,9 +102,6 @@ function registerPtyHandlers(ctx, deps = {}) {
     const paneRoot = resolvePaneCwd(paneId);
     const cwd = paneRoot || workingDir || process.cwd();
 
-    // All panes (Claude, Codex, Gemini) use interactive PTY mode.
-    // Codex panes previously used 'codex-exec' (non-interactive batch mode)
-    // but now run interactive `codex` CLI in a real PTY terminal.
     ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null);
     return { paneId, cwd, dryRun: ctx.currentSettings.dryRun };
   });
@@ -193,16 +190,6 @@ function registerPtyHandlers(ctx, deps = {}) {
     ctx.daemonClient.write(paneId, '\x03');
     log.info('PTY', `Interrupt sent to pane ${paneId}`);
     return { success: true };
-  });
-
-  // Legacy non-interactive codex-exec mode is deprecated.
-  // Codex panes run interactive PTY only.
-  ipcMain.handle('codex-exec', async (event, paneId, prompt) => {
-    return {
-      success: false,
-      status: 'unsupported_mode',
-      error: 'codex-exec is disabled; use interactive PTY messaging',
-    };
   });
 
   // Send trusted keyboard Enter via Electron's native input API
@@ -349,7 +336,6 @@ function unregisterPtyHandlers(ctx) {
     ipcMain.removeHandler('pty-pause');
     ipcMain.removeHandler('pty-resume');
     ipcMain.removeHandler('interrupt-pane');
-    ipcMain.removeHandler('codex-exec');
     ipcMain.removeHandler('send-trusted-enter');
     ipcMain.removeHandler('clipboard-paste-text');
     ipcMain.removeHandler('pty-resize');

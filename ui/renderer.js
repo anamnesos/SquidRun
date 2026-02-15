@@ -202,7 +202,6 @@ Object.assign(window.hivemind, {
     write: (paneId, data, kernelMeta = null) => ipcRenderer.invoke('pty-write', paneId, data, kernelMeta),
     writeChunked: (paneId, fullText, options = {}, kernelMeta = null) =>
       ipcRenderer.invoke('pty-write-chunked', paneId, fullText, options, kernelMeta),
-    codexExec: (paneId, prompt) => ipcRenderer.invoke('codex-exec', paneId, prompt),
     sendTrustedEnter: () => ipcRenderer.invoke('send-trusted-enter'),
     clipboardPasteText: (text) => ipcRenderer.invoke('clipboard-paste-text', text),
     resize: (paneId, cols, rows, kernelMeta = null) => ipcRenderer.invoke('pty-resize', paneId, cols, rows, kernelMeta),

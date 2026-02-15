@@ -225,7 +225,6 @@ describe('evidence-ledger integration: trace continuity', () => {
             return { success: true };
           }),
           writeChunked: jest.fn(async () => ({ success: true, chunks: 1 })),
-          codexExec: jest.fn(async () => ({ success: true })),
           sendTrustedEnter: jest.fn(async () => ({ success: true })),
         },
         project: {

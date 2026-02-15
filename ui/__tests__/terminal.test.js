@@ -66,7 +66,6 @@ const mockHivemind = {
     onData: jest.fn(),
     onExit: jest.fn(),
     sendTrustedEnter: jest.fn().mockResolvedValue(),
-    codexExec: jest.fn().mockResolvedValue(),
   },
   claude: {
     spawn: jest.fn().mockResolvedValue({ success: true, command: 'claude' }),
