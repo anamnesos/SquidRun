@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 /**
- * hm-screenshot: Programmatic screenshot capture CLI over WebSocket.
+ * hm-pane: Pane control CLI over WebSocket.
  *
  * Commands:
- *   capture [--pane <id>]
+ *   enter <paneId>
+ *   interrupt <paneId>
+ *   restart <paneId>
+ *   nudge <paneId> [message]
  */
 
 const WebSocket = require('ws');
@@ -13,17 +16,18 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
 const DEFAULT_RESPONSE_TIMEOUT_MS = 5000;
 
 function usage() {
-  console.log('Usage: node hm-screenshot.js <command> [options]');
-  console.log('Commands: capture');
+  console.log('Usage: node hm-pane.js <command> <paneId> [message] [options]');
+  console.log('Commands: enter, interrupt, restart, nudge');
   console.log('Common options:');
-  console.log('  --pane <id>                Capture a specific pane only');
-  console.log('  --role <role>              Sender role (default: devops)');
-  console.log('  --port <port>              WebSocket port (default: 9900)');
-  console.log('  --timeout <ms>             Response timeout (default: 5000)');
-  console.log('  --payload-json <json>      Raw payload JSON (advanced)');
+  console.log('  --role <role>               Sender role (default: devops)');
+  console.log('  --port <port>               WebSocket port (default: 9900)');
+  console.log('  --timeout <ms>              Response timeout (default: 5000)');
+  console.log('  --payload-json <json>       Raw payload JSON (advanced)');
   console.log('Examples:');
-  console.log('  node hm-screenshot.js capture');
-  console.log('  node hm-screenshot.js capture --pane 2');
+  console.log('  node hm-pane.js enter 1');
+  console.log('  node hm-pane.js interrupt 2');
+  console.log('  node hm-pane.js restart 5');
+  console.log('  node hm-pane.js nudge 2 "Status check?"');
 }
 
 function parseArgs(argv) {
@@ -75,23 +79,42 @@ function parseJsonOption(raw, label) {
 
 function normalizeCommand(command) {
   const normalized = asString(command).toLowerCase();
-  if (normalized === 'shot') return 'capture';
+  if (normalized === 'ctrl-c') return 'interrupt';
+  if (normalized === 'kill') return 'interrupt';
+  if (normalized === 'enter-pane') return 'enter';
+  if (normalized === 'nudge-pane' || normalized === 'nudge-agent') return 'nudge';
   return normalized;
 }
 
-function buildPayload(command, options) {
+function toAction(command) {
+  switch (command) {
+    case 'enter':
+    case 'interrupt':
+    case 'restart':
+    case 'nudge':
+      return command;
+    default:
+      throw new Error(`Unsupported command: ${command}`);
+  }
+}
+
+function buildPayload(command, positional, options) {
   const payloadJson = getOption(options, 'payload-json');
   if (typeof payloadJson === 'string') {
     return parseJsonOption(payloadJson, '--payload-json');
   }
 
-  if (command !== 'capture') {
-    throw new Error(`Unsupported command: ${command}`);
+  const paneId = asString(getOption(options, 'pane', positional[1] || ''), '');
+  if (!paneId) {
+    throw new Error('paneId is required');
   }
 
-  const payload = {};
-  const paneId = asString(getOption(options, 'pane', getOption(options, 'pane-id', '')), '');
-  if (paneId) payload.paneId = paneId;
+  const payload = { paneId };
+  if (command === 'nudge') {
+    const messageFromPositional = positional.slice(2).join(' ').trim();
+    const message = asString(getOption(options, 'message', messageFromPositional), '');
+    if (message) payload.message = message;
+  }
   return payload;
 }
 
@@ -164,11 +187,11 @@ function closeSocket(ws) {
   });
 }
 
-async function run(payload, options) {
+async function run(action, payload, options) {
   const port = Number.isFinite(options.port) ? options.port : DEFAULT_PORT;
   const role = asString(options.role, 'devops') || 'devops';
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : DEFAULT_RESPONSE_TIMEOUT_MS;
-  const requestId = `screenshot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const requestId = `pane-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   const ws = new WebSocket(`ws://127.0.0.1:${port}`);
   await waitForMatch(ws, (msg) => msg.type === 'welcome', DEFAULT_CONNECT_TIMEOUT_MS, 'Connection timeout');
@@ -176,8 +199,8 @@ async function run(payload, options) {
   await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
 
   ws.send(JSON.stringify({
-    type: 'screenshot',
-    action: 'capture',
+    type: 'pane-control',
+    action,
     payload,
     requestId,
   }));
@@ -201,14 +224,20 @@ async function main() {
 
   const { positional, options } = parseArgs(argv);
   const command = normalizeCommand(positional[0]);
-  if (command !== 'capture') {
+  if (!command) {
+    usage();
+    process.exit(1);
+  }
+
+  const allowedCommands = new Set(['enter', 'interrupt', 'restart', 'nudge']);
+  if (!allowedCommands.has(command)) {
     console.error(`Unsupported command: ${command}`);
     usage();
     process.exit(1);
   }
 
-  const payload = buildPayload(command, options);
-  const response = await run(payload, {
+  const payload = buildPayload(command, positional, options);
+  const response = await run(toAction(command), payload, {
     role: asString(getOption(options, 'role', 'devops'), 'devops'),
     port: asNumber(getOption(options, 'port', DEFAULT_PORT), DEFAULT_PORT),
     timeoutMs: asNumber(getOption(options, 'timeout', DEFAULT_RESPONSE_TIMEOUT_MS), DEFAULT_RESPONSE_TIMEOUT_MS),
@@ -228,7 +257,7 @@ async function main() {
 
 if (require.main === module) {
   main().catch((err) => {
-    console.error(`hm-screenshot failed: ${err.message}`);
+    console.error(`hm-pane failed: ${err.message}`);
     process.exit(1);
   });
 }
@@ -237,6 +266,7 @@ module.exports = {
   parseArgs,
   getOption,
   normalizeCommand,
+  toAction,
   buildPayload,
   run,
   main,

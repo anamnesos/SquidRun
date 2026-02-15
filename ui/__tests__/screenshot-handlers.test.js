@@ -28,6 +28,7 @@ describe('Screenshot Handlers', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    fs.writeFileSync.mockImplementation(() => {});
     harness = createIpcHarness();
     ctx = createDefaultContext({ ipcMain: harness.ipcMain });
     ctx.SCREENSHOTS_DIR = '/test/screenshots';
@@ -157,6 +158,56 @@ describe('Screenshot Handlers', () => {
       const buffer = writeCall[1];
       // The buffer should be decoded from 'SGVsbG8=' (which is "Hello")
       expect(buffer.toString()).toBe('Hello');
+    });
+  });
+
+  describe('capture-screenshot', () => {
+    test('captures full window when pane is not specified', async () => {
+      fs.existsSync.mockReturnValue(true);
+      const image = { toPNG: jest.fn(() => Buffer.from('png-data')) };
+      ctx.mainWindow.webContents.capturePage = jest.fn().mockResolvedValue(image);
+      ctx.mainWindow.webContents.executeJavaScript = jest.fn();
+
+      const result = await harness.invoke('capture-screenshot');
+
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        paneId: null,
+        scope: 'all',
+      }));
+      expect(ctx.mainWindow.webContents.capturePage).toHaveBeenCalledWith();
+      expect(fs.writeFileSync).toHaveBeenCalledTimes(2);
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('latest.png'),
+        expect.any(Buffer)
+      );
+    });
+
+    test('captures specific pane region when pane rect resolves', async () => {
+      fs.existsSync.mockReturnValue(true);
+      const image = { toPNG: jest.fn(() => Buffer.from('pane-data')) };
+      const rect = { x: 10, y: 20, width: 300, height: 120 };
+      ctx.mainWindow.webContents.executeJavaScript = jest.fn().mockResolvedValue(rect);
+      ctx.mainWindow.webContents.capturePage = jest.fn().mockResolvedValue(image);
+
+      const result = await harness.invoke('capture-screenshot', { paneId: '5' });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        paneId: '5',
+        scope: 'pane',
+      }));
+      expect(ctx.mainWindow.webContents.executeJavaScript).toHaveBeenCalled();
+      expect(ctx.mainWindow.webContents.capturePage).toHaveBeenCalledWith(rect);
+      expect(result.filename).toMatch(/^capture-pane-5-\d+\.png$/);
+    });
+
+    test('returns window-not-available when window is destroyed', async () => {
+      ctx.mainWindow.isDestroyed = jest.fn(() => true);
+
+      const result = await harness.invoke('capture-screenshot');
+
+      expect(result).toEqual({ success: false, error: 'Window not available' });
     });
   });
 
