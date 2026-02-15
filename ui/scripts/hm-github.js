@@ -6,7 +6,7 @@
  *   status
  *   checks [--ref <ref>]
  *   runs [--branch <name>] [--status <status>] [--limit <n>]
- *   pr <create|list|get|update|merge> ...
+ *   pr <create|create-auto|list|get|update|merge> ...
  *   issue <create|list|get|close|comment> ...
  */
 
@@ -23,6 +23,7 @@ function usage() {
   console.log('  checks [--ref <ref>]');
   console.log('  runs [--branch <name>] [--status <status>] [--limit <n>]');
   console.log('  pr create --title "..." [--body "..."] [--base main] [--head branch] [--draft]');
+  console.log('  pr create-auto --title "..." [--description "..."] [--session <n>] [--issues 12,34] [--base main] [--head branch] [--draft]');
   console.log('  pr list [--state open|closed|all] [--head branch] [--base main] [--limit n]');
   console.log('  pr get <number>');
   console.log('  pr update <number> [--title "..."] [--body "..."] [--state open|closed]');
@@ -76,6 +77,21 @@ function asNumber(value, fallback = null) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return numeric;
+}
+
+function parseIssueNumbers(raw) {
+  const text = asString(raw, '');
+  if (!text) return [];
+  const values = text.split(',');
+  const result = [];
+  for (const value of values) {
+    const cleaned = value.trim().replace(/^#/, '');
+    if (!cleaned) continue;
+    const numeric = Number(cleaned);
+    if (!Number.isInteger(numeric) || numeric <= 0) continue;
+    result.push(numeric);
+  }
+  return Array.from(new Set(result));
 }
 
 function parseJsonOption(raw, label) {
@@ -153,6 +169,26 @@ function buildRequest(positional, options) {
       if (body) payload.body = body;
       if (base) payload.base = base;
       if (head) payload.head = head;
+      if (getOption(options, 'draft', false) === true) payload.draft = true;
+      return { action: 'createPR', payload };
+    }
+
+    if (sub === 'create-auto' || sub === 'createauto') {
+      const title = requireValue(getOption(options, 'title', ''), 'pr create-auto requires --title');
+      const payload = { title };
+      const description = asString(
+        getOption(options, 'description', getOption(options, 'summary', getOption(options, 'body', ''))),
+        ''
+      );
+      const base = asString(getOption(options, 'base', ''), '');
+      const head = asString(getOption(options, 'head', ''), '');
+      const sessionNumber = asNumber(getOption(options, 'session', getOption(options, 'session-number', null)), null);
+      const issueNumbers = parseIssueNumbers(getOption(options, 'issues', ''));
+      if (description) payload.description = description;
+      if (base) payload.base = base;
+      if (head) payload.head = head;
+      if (sessionNumber !== null) payload.sessionNumber = sessionNumber;
+      if (issueNumbers.length > 0) payload.issueNumbers = issueNumbers;
       if (getOption(options, 'draft', false) === true) payload.draft = true;
       return { action: 'createPR', payload };
     }

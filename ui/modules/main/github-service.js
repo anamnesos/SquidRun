@@ -2,6 +2,10 @@ const { execFile } = require('child_process');
 
 const DEFAULT_TIMEOUT_MS = 30000;
 const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024;
+const DEFAULT_PR_BODY_COMMIT_LIMIT = 8;
+const GIT_LOG_FIELD_SEPARATOR = '\x1f';
+const GIT_LOG_RECORD_SEPARATOR = '\x1e';
+const TEST_COUNT_PATTERN = /(\d+)\s+suites?\s*,\s*(\d+)\s+tests?/i;
 
 function asTrimmedString(value) {
   if (typeof value !== 'string') return '';
@@ -12,6 +16,72 @@ function asNullableString(value) {
   if (value === null || value === undefined) return null;
   const trimmed = String(value).trim();
   return trimmed || null;
+}
+
+function asNonNegativeInt(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return fallback;
+  return Math.floor(numeric);
+}
+
+function asPositiveInt(value, fallback = null) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  return Math.floor(numeric);
+}
+
+function parseTestCountsFromText(rawText) {
+  const text = asTrimmedString(rawText);
+  if (!text) return null;
+  const match = text.match(TEST_COUNT_PATTERN);
+  if (!match) return null;
+  return {
+    suites: asNonNegativeInt(match[1], 0),
+    tests: asNonNegativeInt(match[2], 0),
+  };
+}
+
+function parseGitLogEntries(rawLog) {
+  const text = String(rawLog || '');
+  if (!text.trim()) return [];
+
+  const entries = [];
+  for (const rawEntry of text.split(GIT_LOG_RECORD_SEPARATOR)) {
+    const entry = rawEntry.trim();
+    if (!entry) continue;
+    const [sha = '', subject = '', body = ''] = entry.split(GIT_LOG_FIELD_SEPARATOR);
+    entries.push({
+      sha: asTrimmedString(sha),
+      subject: asTrimmedString(subject),
+      body: asTrimmedString(body),
+    });
+  }
+  return entries;
+}
+
+function normalizeIssueNumbers(raw) {
+  const values = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+      ? raw.split(',')
+      : [];
+
+  const normalized = [];
+  for (const value of values) {
+    const cleaned = String(value || '').replace(/^#/, '').trim();
+    if (!cleaned) continue;
+    const numeric = Number(cleaned);
+    if (!Number.isInteger(numeric) || numeric <= 0) continue;
+    normalized.push(numeric);
+  }
+
+  return Array.from(new Set(normalized));
+}
+
+function shortSha(sha) {
+  const value = asTrimmedString(sha);
+  if (!value) return 'unknown';
+  return value.slice(0, 7);
 }
 
 function createValidationError(message, context = 'validation') {
@@ -187,6 +257,146 @@ function createGitHubService(options = {}) {
     }
   }
 
+  async function runGit(args = [], runOptions = {}) {
+    const context = runOptions.context || args.join(' ');
+    try {
+      return await execAsync('git', args, {
+        cwd: runOptions.cwd || baseCwd,
+        timeout: Number.isFinite(runOptions.timeoutMs) ? runOptions.timeoutMs : DEFAULT_TIMEOUT_MS,
+        maxBuffer: Number.isFinite(runOptions.maxBuffer) ? runOptions.maxBuffer : DEFAULT_MAX_BUFFER,
+      });
+    } catch (err) {
+      const stdout = asTrimmedString(err && err.stdout);
+      const stderr = asTrimmedString(err && err.stderr);
+      const rawMessage = asTrimmedString(err && err.message);
+      const message = stderr || stdout || rawMessage || `Git command failed (${context})`;
+      const wrapped = new Error(message);
+      wrapped.name = 'GitHubServiceGitError';
+      wrapped.reason = 'git_command_failed';
+      wrapped.context = context;
+      wrapped.stdout = stdout;
+      wrapped.stderr = stderr;
+      wrapped.exitCode = typeof err?.code === 'number' ? err.code : null;
+      wrapped.rawCode = err?.code;
+      throw wrapped;
+    }
+  }
+
+  async function getRecentCommits(limit = DEFAULT_PR_BODY_COMMIT_LIMIT) {
+    const safeLimit = asPositiveInt(limit, DEFAULT_PR_BODY_COMMIT_LIMIT) || DEFAULT_PR_BODY_COMMIT_LIMIT;
+    const prettyFormat = `%H%x1f%s%x1f%b%x1e`;
+
+    try {
+      const { stdout: upstreamStdout } = await runGit(
+        ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+        { context: 'git-upstream-ref' }
+      );
+      const upstream = asTrimmedString(upstreamStdout);
+      if (upstream) {
+        const { stdout } = await runGit(
+          ['log', `${upstream}..HEAD`, `--max-count=${safeLimit}`, `--pretty=format:${prettyFormat}`],
+          { context: 'git-log-since-upstream' }
+        );
+        const commits = parseGitLogEntries(stdout);
+        if (commits.length > 0) {
+          return commits;
+        }
+      }
+    } catch {
+      // best effort; fallback below
+    }
+
+    try {
+      const { stdout } = await runGit(
+        ['log', `--max-count=${safeLimit}`, `--pretty=format:${prettyFormat}`],
+        { context: 'git-log-last-n' }
+      );
+      return parseGitLogEntries(stdout);
+    } catch {
+      return [];
+    }
+  }
+
+  function getTransitionLedgerStats() {
+    try {
+      const transitionLedger = require('../transition-ledger');
+      if (transitionLedger && typeof transitionLedger.getStats === 'function') {
+        const stats = transitionLedger.getStats() || {};
+        return {
+          available: true,
+          active: asNonNegativeInt(stats.active, 0),
+          verified: asNonNegativeInt(stats.settledVerified, 0),
+          failed: asNonNegativeInt(stats.failed, 0) + asNonNegativeInt(stats.timedOut, 0),
+        };
+      }
+    } catch {
+      // fall through to unavailable marker
+    }
+
+    return {
+      available: false,
+      active: 0,
+      verified: 0,
+      failed: 0,
+    };
+  }
+
+  async function buildPRBody(input = {}) {
+    const title = asNullableString(input.title) || 'Untitled change';
+    const description = asNullableString(input.description) || title;
+    const sessionNumber = asPositiveInt(input.sessionNumber, null);
+    const issueNumbers = normalizeIssueNumbers(input.issueNumbers);
+    const commits = await getRecentCommits(input.commitLimit);
+    const transitionStats = getTransitionLedgerStats();
+
+    const latestCommit = commits[0] || null;
+    const testCounts = latestCommit
+      ? parseTestCountsFromText(`${latestCommit.subject}\n${latestCommit.body}`)
+      : null;
+
+    const lines = [];
+    lines.push('## Summary');
+    lines.push(description);
+    lines.push('');
+    lines.push(`## Session ${sessionNumber || 'Current'} Changes`);
+    lines.push(`- ${commits.length} commits`);
+    if (testCounts) {
+      lines.push(`- ${testCounts.suites} suites, ${testCounts.tests} tests passing`);
+    } else {
+      lines.push('- Test suite summary unavailable from recent commits');
+    }
+    if (commits.length > 0) {
+      lines.push('');
+      lines.push('### Recent Commits');
+      for (const commit of commits.slice(0, 8)) {
+        lines.push(`- ${shortSha(commit.sha)} ${commit.subject || '(no subject)'}`);
+      }
+    }
+    lines.push('');
+    lines.push('## Transition Ledger');
+    if (transitionStats.available) {
+      lines.push(`- ${transitionStats.active} active transitions`);
+      lines.push(`- ${transitionStats.verified} verified this session`);
+      lines.push(`- ${transitionStats.failed} failed/timed out`);
+    } else {
+      lines.push('- unavailable in this runtime context');
+    }
+    lines.push('');
+    lines.push('## Linked Issues');
+    if (issueNumbers.length > 0) {
+      for (const issueNumber of issueNumbers) {
+        lines.push(`- Closes #${issueNumber}`);
+      }
+    } else {
+      lines.push('- None specified');
+    }
+    lines.push('');
+    lines.push('---');
+    lines.push('🤖 Generated by Hivemind Architect');
+
+    return lines.join('\n');
+  }
+
   async function getAuthStatus() {
     try {
       await runGh(['auth', 'status', '--hostname', 'github.com'], { context: 'auth-status' });
@@ -283,7 +493,21 @@ function createGitHubService(options = {}) {
       throw createValidationError('PR title is required', 'pr-create');
     }
 
-    const args = ['pr', 'create', '--title', title, '--body', String(input.body || '')];
+    const hasExplicitBody = Object.prototype.hasOwnProperty.call(input, 'body');
+    let body = '';
+    if (hasExplicitBody) {
+      body = String(input.body ?? '');
+    } else {
+      body = await buildPRBody({
+        title,
+        description: input.description,
+        sessionNumber: input.sessionNumber,
+        issueNumbers: input.issueNumbers,
+        commitLimit: input.commitLimit,
+      });
+    }
+
+    const args = ['pr', 'create', '--title', title, '--body', body];
     if (asNullableString(input.base)) args.push('--base', asTrimmedString(input.base));
     if (asNullableString(input.head)) args.push('--head', asTrimmedString(input.head));
     if (input.draft === true) args.push('--draft');
@@ -597,6 +821,7 @@ function createGitHubService(options = {}) {
     getAuthStatus,
     checkAuth: getAuthStatus,
     getRepo,
+    buildPRBody,
     createPR,
     updatePR,
     getPR,
