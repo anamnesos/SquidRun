@@ -1254,6 +1254,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       dryRun: true,
       mode: 'dry-run',
       inputBuffer: '', // Buffer for accumulating input
+      createdAt: Date.now(), // Track terminal creation time (for reattach guard)
       lastActivity: Date.now(), // Track last activity
       lastMeaningfulActivity: Date.now(), // Smart Watchdog: last non-spinner output
       lastInputTime: Date.now(), // Track last user INPUT
@@ -1296,6 +1297,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     scrollback: '', // U1: Buffer for scrollback persistence
     dryRun: false,
     mode: 'pty',
+    createdAt: Date.now(), // Track terminal creation time (for reattach guard)
     lastActivity: Date.now(), // Track last PTY output
     lastMeaningfulActivity: Date.now(), // Smart Watchdog: last non-spinner output
     lastInputTime: Date.now(), // Track last user INPUT (not output)
@@ -1464,6 +1466,7 @@ function listTerminals() {
         // Include scrollback for session restoration
         scrollback: info.scrollback || '',
         dryRun: info.dryRun || false,
+        createdAt: info.createdAt || null,
         lastActivity: info.lastActivity || null,
         lastMeaningfulActivity: info.lastMeaningfulActivity || null, // Smart Watchdog
         lastInputTime: info.lastInputTime || null,
