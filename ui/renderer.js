@@ -29,6 +29,7 @@ const RENDERER_IPC_CHANNELS = Object.freeze([
   'watchdog-alert',
   'heartbeat-state-changed',
   'nudge-pane',
+  'pane-enter',
   'unstick-pane',
   'restart-pane',
   'restart-all-panes',
@@ -1085,6 +1086,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     const paneId = data?.paneId;
     if (paneId) {
       terminal.nudgePane(String(paneId));
+    }
+  });
+
+  ipcRenderer.on('pane-enter', async (event, data) => {
+    const paneId = String(data?.paneId || '');
+    if (!paneId) return;
+
+    const capabilities = typeof terminal.getPaneInjectionCapabilities === 'function'
+      ? terminal.getPaneInjectionCapabilities(paneId)
+      : null;
+
+    try {
+      if (capabilities?.enterMethod === 'pty') {
+        terminal.lastTypedTime[paneId] = Date.now();
+        await window.hivemind.pty.write(paneId, '\r');
+        return;
+      }
+
+      terminal.focusPane(paneId);
+      if (typeof terminal.sendEnterToPane === 'function') {
+        await terminal.sendEnterToPane(paneId);
+      } else {
+        await window.hivemind.pty.sendTrustedEnter();
+      }
+    } catch (err) {
+      log.error('PaneControl', `pane-enter failed for pane ${paneId}: ${err.message}`);
     }
   });
 

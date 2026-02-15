@@ -6,8 +6,92 @@
 const fs = require('fs');
 const path = require('path');
 
+function sanitizePaneSegment(paneId) {
+  const raw = String(paneId || '').trim();
+  if (!raw) return '';
+  return raw.replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
+async function resolvePaneCaptureRect(mainWindow, paneId) {
+  if (!mainWindow?.webContents?.executeJavaScript) return null;
+  const safePaneId = String(paneId || '').trim();
+  if (!safePaneId) return null;
+
+  const script = `(() => {
+    const pane = document.querySelector('.pane[data-pane-id="${safePaneId.replace(/"/g, '\\"')}"]');
+    if (!pane) return null;
+    const rect = pane.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const width = Math.max(0, Math.round(rect.width * dpr));
+    const height = Math.max(0, Math.round(rect.height * dpr));
+    if (!width || !height) return null;
+    return {
+      x: Math.max(0, Math.round(rect.left * dpr)),
+      y: Math.max(0, Math.round(rect.top * dpr)),
+      width,
+      height,
+    };
+  })();`;
+
+  try {
+    const rect = await mainWindow.webContents.executeJavaScript(script, true);
+    if (!rect || !Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return null;
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return rect;
+  } catch {
+    return null;
+  }
+}
+
+async function captureScreenshot(ctx, options = {}) {
+  const SCREENSHOTS_DIR = ctx?.SCREENSHOTS_DIR;
+  const mainWindow = ctx?.mainWindow;
+
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return { success: false, error: 'Window not available' };
+    }
+
+    const paneId = typeof options?.paneId === 'string' || typeof options?.paneId === 'number'
+      ? String(options.paneId).trim()
+      : '';
+    const rect = paneId ? await resolvePaneCaptureRect(mainWindow, paneId) : null;
+
+    const image = rect
+      ? await mainWindow.webContents.capturePage(rect)
+      : await mainWindow.webContents.capturePage();
+    const buffer = image.toPNG();
+
+    if (!fs.existsSync(SCREENSHOTS_DIR)) {
+      fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
+    }
+
+    const timestamp = Date.now();
+    const paneSegment = sanitizePaneSegment(paneId);
+    const filename = paneSegment
+      ? `capture-pane-${paneSegment}-${timestamp}.png`
+      : `capture-${timestamp}.png`;
+    const filePath = path.join(SCREENSHOTS_DIR, filename);
+
+    fs.writeFileSync(filePath, buffer);
+
+    const latestPath = path.join(SCREENSHOTS_DIR, 'latest.png');
+    fs.writeFileSync(latestPath, buffer);
+
+    return {
+      success: true,
+      filename,
+      path: filePath,
+      paneId: paneId || null,
+      scope: rect ? 'pane' : 'all',
+    };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 function registerScreenshotHandlers(ctx) {
-  const { ipcMain, SCREENSHOTS_DIR, mainWindow } = ctx;
+  const { ipcMain, SCREENSHOTS_DIR } = ctx;
 
   const isSafeScreenshotFilename = (name) => {
     if (typeof name !== 'string') return false;
@@ -23,34 +107,9 @@ function registerScreenshotHandlers(ctx) {
   };
 
   // Capture current window as screenshot (for Oracle Visual QA)
-  ipcMain.handle('capture-screenshot', async () => {
-    try {
-      if (!mainWindow || mainWindow.isDestroyed()) {
-        return { success: false, error: 'Window not available' };
-      }
-
-      // Capture the window contents
-      const image = await mainWindow.webContents.capturePage();
-      const buffer = image.toPNG();
-
-      if (!fs.existsSync(SCREENSHOTS_DIR)) {
-        fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
-      }
-
-      const timestamp = Date.now();
-      const filename = `capture-${timestamp}.png`;
-      const filePath = path.join(SCREENSHOTS_DIR, filename);
-
-      fs.writeFileSync(filePath, buffer);
-
-      // Also save as latest.png for easy access
-      const latestPath = path.join(SCREENSHOTS_DIR, 'latest.png');
-      fs.writeFileSync(latestPath, buffer);
-
-      return { success: true, filename, path: filePath };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
+  ipcMain.handle('capture-screenshot', async (event, payload = {}) => {
+    const options = (payload && typeof payload === 'object' && !Array.isArray(payload)) ? payload : {};
+    return captureScreenshot({ ...ctx, SCREENSHOTS_DIR }, options);
   });
 
   ipcMain.handle('save-screenshot', (event, base64Data, originalName) => {
@@ -147,4 +206,7 @@ function unregisterScreenshotHandlers(ctx) {
 }
 
 registerScreenshotHandlers.unregister = unregisterScreenshotHandlers;
-module.exports = { registerScreenshotHandlers };
+module.exports = {
+  registerScreenshotHandlers,
+  captureScreenshot,
+};
