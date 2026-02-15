@@ -6,6 +6,8 @@
  *   capture [--pane <id>]
  */
 
+const path = require('path');
+const { execSync } = require('child_process');
 const WebSocket = require('ws');
 
 const DEFAULT_PORT = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
@@ -17,6 +19,7 @@ function usage() {
   console.log('Commands: capture');
   console.log('Common options:');
   console.log('  --pane <id>                Capture a specific pane only');
+  console.log('  --send-telegram [caption]  Send screenshot to Telegram after capture');
   console.log('  --role <role>              Sender role (default: devops)');
   console.log('  --port <port>              WebSocket port (default: 9900)');
   console.log('  --timeout <ms>             Response timeout (default: 5000)');
@@ -24,6 +27,8 @@ function usage() {
   console.log('Examples:');
   console.log('  node hm-screenshot.js capture');
   console.log('  node hm-screenshot.js capture --pane 2');
+  console.log('  node hm-screenshot.js capture --send-telegram "Session update"');
+  console.log('  node hm-screenshot.js capture --pane 1 --send-telegram');
 }
 
 function parseArgs(argv) {
@@ -223,6 +228,25 @@ async function main() {
   if (result && typeof result === 'object' && result.success === false) {
     process.exit(1);
   }
+
+  // Send to Telegram if requested
+  const sendTelegram = options.has('send-telegram');
+  if (sendTelegram && result?.path) {
+    const caption = asString(getOption(options, 'send-telegram', ''), '') || 'Hivemind screenshot';
+    const telegramScript = path.join(__dirname, 'hm-telegram.js');
+    try {
+      console.log('[hm-screenshot] Sending to Telegram...');
+      const output = execSync(
+        `node "${telegramScript}" --photo "${result.path}" "${caption}"`,
+        { encoding: 'utf8', timeout: 30000 }
+      );
+      if (output.trim()) console.log(output.trim());
+    } catch (err) {
+      console.error('[hm-screenshot] Telegram send failed:', err.message);
+      process.exit(1);
+    }
+  }
+
   process.exit(0);
 }
 
