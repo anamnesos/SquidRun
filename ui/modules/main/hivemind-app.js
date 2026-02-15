@@ -27,6 +27,7 @@ const sharedState = require('../shared-state');
 const contextCompressor = require('../context-compressor');
 const smsPoller = require('../sms-poller');
 const telegramPoller = require('../telegram-poller');
+const { sendTelegram } = require('../../scripts/hm-telegram');
 const teamMemory = require('../team-memory');
 const experiment = require('../experiment');
 const {
@@ -47,6 +48,10 @@ const { executeContractPromotionAction } = require('../contract-promotion-servic
 const { createBufferedFileWriter } = require('../buffered-file-writer');
 const APP_IDLE_THRESHOLD_MS = 30000;
 const CONSOLE_LOG_FLUSH_INTERVAL_MS = 500;
+const TELEGRAM_REPLY_WINDOW_MS = Number.parseInt(
+  process.env.HIVEMIND_TELEGRAM_REPLY_WINDOW_MS || String(5 * 60 * 1000),
+  10
+);
 const TEAM_MEMORY_BACKFILL_LIMIT = Number.parseInt(process.env.HIVEMIND_TEAM_MEMORY_BACKFILL_LIMIT || '5000', 10);
 const TEAM_MEMORY_INTEGRITY_SWEEP_INTERVAL_MS = Number.parseInt(
   process.env.HIVEMIND_TEAM_MEMORY_INTEGRITY_SWEEP_MS || String(24 * 60 * 60 * 1000),
@@ -99,6 +104,10 @@ class HivemindApp {
     this.intentStateByPane = new Map();
     this.ledgerAppSession = null;
     this.commsSessionScopeId = `app-${process.pid}-${Date.now()}`;
+    this.telegramInboundContext = {
+      lastInboundAtMs: 0,
+      sender: null,
+    };
   }
 
   async initializeStartupSessionScope() {
@@ -524,6 +533,71 @@ class HivemindApp {
                 attempt,
                 maxAttempts,
               }, 'system', traceContext);
+            }
+
+            const telegramReplyTarget = this.isTelegramReplyTarget(target);
+            if (telegramReplyTarget) {
+              const normalizedTarget = this.normalizeOutboundTarget(target);
+              const preflight = await this.evaluateTeamMemoryGuardPreflight({
+                target: normalizedTarget,
+                content,
+                fromRole: data.role || 'unknown',
+                traceContext,
+              });
+              if (preflight.blocked) {
+                await this.recordDeliveryOutcomePattern({
+                  channel: 'send',
+                  target: normalizedTarget,
+                  fromRole: data.role || 'unknown',
+                  result: {
+                    accepted: false,
+                    queued: false,
+                    verified: false,
+                    status: 'guard_blocked',
+                  },
+                  traceContext,
+                });
+                return {
+                  ok: false,
+                  accepted: false,
+                  queued: false,
+                  verified: false,
+                  status: 'guard_blocked',
+                  target: normalizedTarget,
+                  guardActions: preflight.actions,
+                  traceId: traceContext?.traceId || traceContext?.correlationId || null,
+                };
+              }
+
+              const telegramResult = await this.routeTelegramReply({ target: normalizedTarget, content });
+              const deliveryResult = {
+                accepted: Boolean(telegramResult?.accepted),
+                queued: Boolean(telegramResult?.queued),
+                verified: Boolean(telegramResult?.verified),
+                status: telegramResult?.status || 'telegram_unhandled',
+                error: telegramResult?.error || null,
+              };
+              await this.recordDeliveryOutcomePattern({
+                channel: 'send',
+                target: normalizedTarget,
+                fromRole: data.role || 'unknown',
+                result: deliveryResult,
+                traceContext,
+              });
+              return {
+                ok: Boolean(telegramResult?.ok),
+                accepted: Boolean(telegramResult?.accepted),
+                queued: Boolean(telegramResult?.queued),
+                verified: Boolean(telegramResult?.verified),
+                status: telegramResult?.status || 'telegram_unhandled',
+                target: normalizedTarget,
+                mode: 'telegram',
+                messageId: telegramResult?.messageId || null,
+                chatId: telegramResult?.chatId || null,
+                error: telegramResult?.error || null,
+                guardActions: preflight.actions,
+                traceId: traceContext?.traceId || traceContext?.correlationId || null,
+              };
             }
 
             const paneId = this.resolveTargetToPane(target);
@@ -1479,6 +1553,99 @@ class HivemindApp {
     return null;
   }
 
+  normalizeOutboundTarget(target) {
+    if (typeof target !== 'string') return '';
+    return target.trim().toLowerCase();
+  }
+
+  isTelegramReplyTarget(target) {
+    const normalized = this.normalizeOutboundTarget(target);
+    return normalized === 'user' || normalized === 'telegram';
+  }
+
+  markTelegramInboundContext(sender = 'unknown') {
+    this.telegramInboundContext = {
+      lastInboundAtMs: Date.now(),
+      sender: typeof sender === 'string' && sender.trim() ? sender.trim() : 'unknown',
+    };
+    return this.telegramInboundContext;
+  }
+
+  hasRecentTelegramInbound(nowMs = Date.now()) {
+    const lastInboundAtMs = Number(this.telegramInboundContext?.lastInboundAtMs || 0);
+    if (!Number.isFinite(lastInboundAtMs) || lastInboundAtMs <= 0) return false;
+    return (nowMs - lastInboundAtMs) <= TELEGRAM_REPLY_WINDOW_MS;
+  }
+
+  async routeTelegramReply({ target, content } = {}) {
+    const normalizedTarget = this.normalizeOutboundTarget(target);
+    if (!this.isTelegramReplyTarget(normalizedTarget)) {
+      return {
+        handled: false,
+      };
+    }
+
+    const requiresRecentInbound = normalizedTarget !== 'telegram';
+    if (requiresRecentInbound && !this.hasRecentTelegramInbound()) {
+      return {
+        handled: true,
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'telegram_context_stale',
+      };
+    }
+
+    const message = typeof content === 'string' ? content.trim() : '';
+    if (!message) {
+      return {
+        handled: true,
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'telegram_empty_content',
+      };
+    }
+
+    try {
+      const result = await sendTelegram(message, process.env);
+      if (!result?.ok) {
+        return {
+          handled: true,
+          ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'telegram_send_failed',
+          error: result?.error || 'unknown_error',
+        };
+      }
+
+      return {
+        handled: true,
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'telegram_delivered',
+        messageId: result.messageId || null,
+        chatId: result.chatId || null,
+      };
+    } catch (err) {
+      return {
+        handled: true,
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'telegram_send_failed',
+        error: err.message,
+      };
+    }
+  }
+
   startSmsPoller() {
     const started = smsPoller.start({
       onMessage: (text, from) => {
@@ -1506,6 +1673,7 @@ class HivemindApp {
         const body = typeof text === 'string' ? text.trim() : '';
         if (!body) return;
 
+        this.markTelegramInboundContext(sender);
         const formatted = `[Telegram from ${sender}]: ${body}`;
         const result = triggers.sendDirectMessage(['1'], formatted, null);
         if (!result?.success) {

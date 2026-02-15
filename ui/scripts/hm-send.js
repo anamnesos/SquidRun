@@ -47,11 +47,12 @@ const DELIVERY_CHECK_RETRY_DELAY_MS = Number.parseInt(
 const DEFAULT_RETRIES = 3;
 const MAX_RETRIES = 5;
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
+const SPECIAL_USER_TARGETS = new Set(['user', 'telegram']);
 const args = process.argv.slice(2);
 
 if (args.length < 2) {
   console.log('Usage: node hm-send.js <target> <message> [--role <role>] [--priority urgent]');
-  console.log('  target: paneId (1,2,5) or role name (architect, devops, analyst)');
+  console.log('  target: paneId (1,2,5), role name (architect, devops, analyst), or user/telegram');
   console.log('  message: text to send');
   console.log('  --role: your role (for identification)');
   console.log('  --priority: normal or urgent');
@@ -228,6 +229,11 @@ function normalizeRole(targetInput) {
   return null;
 }
 
+function isSpecialTarget(targetInput) {
+  const normalized = String(targetInput || '').trim().toLowerCase();
+  return SPECIAL_USER_TARGETS.has(normalized);
+}
+
 function buildTriggerFallbackContent(content, messageId) {
   if (typeof messageId !== 'string' || !messageId.trim()) {
     return content;
@@ -394,10 +400,13 @@ async function queryDeliveryCheckBestEffort(ws, messageId, options = {}) {
   return null;
 }
 
-function isTargetHealthBlocking(health) {
+function isTargetHealthBlocking(health, targetInput = target) {
   if (!health || typeof health !== 'object') return false;
   const status = String(health.status || '').toLowerCase();
   if (status === 'invalid_target') {
+    if (isSpecialTarget(targetInput)) {
+      return false;
+    }
     return true;
   }
   return false;
@@ -445,7 +454,7 @@ async function sendViaWebSocketWithAck() {
   await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
 
   const health = await queryTargetHealthBestEffort(ws);
-  if (isTargetHealthBlocking(health)) {
+  if (isTargetHealthBlocking(health, target)) {
     await closeSocket(ws);
     return {
       ok: false,
