@@ -86,6 +86,14 @@ function applySettingsToUI() {
     }
   });
 
+  // Populate select dropdowns bound to settings
+  document.querySelectorAll('select[data-setting]').forEach(select => {
+    const key = select.dataset.setting;
+    if (key && currentSettings[key] !== undefined) {
+      select.value = currentSettings[key];
+    }
+  });
+
   window.dispatchEvent(new CustomEvent('hivemind-settings-updated', {
     detail: { ...currentSettings }
   }));
@@ -175,6 +183,20 @@ function setupSettings() {
         currentSettings = await ipcRenderer.invoke('set-setting', key, value);
         const safeValue = key.toLowerCase().includes('pass') ? '[hidden]' : value;
         log.info('Settings', `${key} updated: ${safeValue}`);
+      } catch (err) {
+        log.error('Settings', `Error updating ${key}`, err);
+      }
+    });
+  });
+
+  // Select dropdowns bound to settings
+  document.querySelectorAll('select[data-setting]').forEach(select => {
+    select.addEventListener('change', async () => {
+      const key = select.dataset.setting;
+      if (!key) return;
+      try {
+        currentSettings = await ipcRenderer.invoke('set-setting', key, select.value);
+        log.info('Settings', `${key} updated: ${select.value}`);
       } catch (err) {
         log.error('Settings', `Error updating ${key}`, err);
       }
