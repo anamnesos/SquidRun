@@ -202,7 +202,7 @@ describe('Injection Events', () => {
     });
 
     test('emits inject.mode.selected for Codex panes', () => {
-      const mockTerminal = { write: jest.fn() };
+      const mockTerminal = { _hivemindBypass: false };
       terminals.set('codex', mockTerminal);
       messageQueue['codex'] = [{ message: 'test', timestamp: Date.now(), correlationId: 'test-corr-id' }];
 
@@ -210,7 +210,7 @@ describe('Injection Events', () => {
 
       const modeSelected = mockBus.emit.mock.calls.find(c => c[0] === 'inject.mode.selected');
       expect(modeSelected).toBeDefined();
-      expect(modeSelected[1].payload.mode).toBe('codex-exec');
+      expect(modeSelected[1].payload.mode).toBe('codex-pty');
     });
 
     test('emits inject.mode.selected for Gemini panes', () => {
@@ -248,74 +248,62 @@ describe('Injection Events', () => {
   });
 
   // ──────────────────────────────────────────
-  // doSendToPane (Codex path): inject.applied, inject.submit.sent, inject.transform.applied
+  // doSendToPane (Codex path): inject.applied, inject.submit.sent (interactive PTY + trusted Enter)
   // ──────────────────────────────────────────
   describe('doSendToPane Codex events', () => {
-    test('emits inject.transform.applied, inject.applied, inject.submit.sent for Codex', (done) => {
-      const mockTerminal = { write: jest.fn() };
+    test('emits inject.applied and inject.submit.sent for Codex interactive PTY', async () => {
+      const mockTerminal = { _hivemindBypass: false };
       terminals.set('codex', mockTerminal);
 
-      controller.doSendToPane('codex', 'codex test', (result) => {
-        expect(result.success).toBe(true);
+      let onCompleteResult;
+      controller.doSendToPane('codex', 'codex test', (result) => { onCompleteResult = result; });
+      // Advance past enterDelayMs (100ms) + focusWithRetry retries (3×50ms) + bypass clear
+      await jest.advanceTimersByTimeAsync(500);
 
-        const transform = mockBus.emit.mock.calls.find(c => c[0] === 'inject.transform.applied');
-        expect(transform).toBeDefined();
-        expect(transform[1].payload.transform).toBe('codex-exec-prompt');
+      expect(onCompleteResult).toBeDefined();
+      expect(onCompleteResult.success).toBe(true);
 
-        const applied = mockBus.emit.mock.calls.find(c => c[0] === 'inject.applied');
-        expect(applied).toBeDefined();
-        expect(applied[1].payload.method).toBe('codex-exec');
+      const applied = mockBus.emit.mock.calls.find(c => c[0] === 'inject.applied');
+      expect(applied).toBeDefined();
+      expect(applied[1].payload.method).toBe('codex-pty');
 
-        const submitSent = mockBus.emit.mock.calls.find(c => c[0] === 'inject.submit.sent');
-        expect(submitSent).toBeDefined();
-        expect(submitSent[1].payload.method).toBe('codex-exec');
-
-        done();
-      });
-
-      // Flush timers for safety timer
-      jest.advanceTimersByTime(100);
+      // Codex interactive uses sendTrustedEnter, not codexExec
+      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      expect(mockPty.codexExec).not.toHaveBeenCalled();
     });
 
-    test('emits inject.failed on Codex exec error', async () => {
-      const mockTerminal = { write: jest.fn() };
+    test('emits inject.failed on Codex PTY write error', async () => {
+      const mockTerminal = { _hivemindBypass: false };
       terminals.set('codex', mockTerminal);
-      mockPty.codexExec.mockRejectedValue(new Error('exec failed'));
+      mockPty.write.mockRejectedValueOnce(new Error('write failed'));
 
-      await new Promise((resolve) => {
-        controller.doSendToPane('codex', 'test', resolve);
-        jest.advanceTimersByTime(100);
-      });
+      let onCompleteResult;
+      controller.doSendToPane('codex', 'test', (result) => { onCompleteResult = result; });
+      await jest.advanceTimersByTimeAsync(200);
 
-      // Allow promise rejection to propagate
-      await jest.advanceTimersByTimeAsync(0);
+      expect(onCompleteResult).toBeDefined();
+      expect(onCompleteResult.success).toBe(false);
+      expect(onCompleteResult.reason).toBe('pty_write_failed');
 
       const failed = mockBus.emit.mock.calls.find(c => c[0] === 'inject.failed');
       expect(failed).toBeDefined();
-      expect(failed[1].payload.reason).toBe('codex_exec_error');
+      expect(failed[1].payload.reason).toBe('pty_write_failed');
     });
 
-    test('emits inject.failed when Codex exec is rejected by daemon', async () => {
-      const mockTerminal = { write: jest.fn() };
+    test('emits inject.failed when Codex sendTrustedEnter fails', async () => {
+      const mockTerminal = { _hivemindBypass: false };
       terminals.set('codex', mockTerminal);
-      mockPty.codexExec.mockResolvedValue({
-        success: false,
-        status: 'rejected',
-        error: 'busy',
-      });
+      mockPty.sendTrustedEnter.mockRejectedValue(new Error('Enter failed'));
+      // DOM fallback also fails
+      mockTextarea.dispatchEvent = jest.fn(() => { throw new Error('no DOM'); });
 
-      const result = await new Promise((resolve) => {
-        controller.doSendToPane('codex', 'test', resolve);
-        jest.advanceTimersByTime(100);
-      });
+      let onCompleteResult;
+      controller.doSendToPane('codex', 'test', (result) => { onCompleteResult = result; });
+      await jest.advanceTimersByTimeAsync(500);
 
-      expect(result.success).toBe(false);
-      expect(result.reason).toBe('codex_exec_rejected');
-
-      const failed = mockBus.emit.mock.calls.find(c => c[0] === 'inject.failed');
-      expect(failed).toBeDefined();
-      expect(failed[1].payload.reason).toBe('codex_exec_rejected');
-      expect(failed[1].payload.status).toBe('rejected');
+      expect(onCompleteResult).toBeDefined();
+      expect(onCompleteResult.success).toBe(false);
+      expect(onCompleteResult.reason).toBe('enter_failed');
     });
   });
 
@@ -561,31 +549,27 @@ describe('Injection Events', () => {
   // State vector updates
   // ──────────────────────────────────────────
   describe('state vector updates', () => {
-    test('updates state to idle after Codex injection completes', (done) => {
-      const mockTerminal = { write: jest.fn() };
+    test('updates state to idle after Codex injection completes', async () => {
+      const mockTerminal = { _hivemindBypass: false };
       terminals.set('codex', mockTerminal);
-      messageQueue['codex'] = [{ message: 'test', timestamp: Date.now(), correlationId: 'test-corr-id' }];
 
-      // Override onComplete to check state
-      const origProcessIdleQueue = controller.processIdleQueue;
-
-      // Manually set up queue item with onComplete
+      let completeCalled = false;
       messageQueue['codex'] = [{
         message: 'test',
         timestamp: Date.now(),
         correlationId: 'test-corr-id',
-        onComplete: () => {
-          // After completion, state should have been set to idle
-          const idleCalls = mockBus.updateState.mock.calls.filter(
-            c => c[0] === 'codex' && c[1].activity === 'idle'
-          );
-          expect(idleCalls.length).toBeGreaterThan(0);
-          done();
-        },
+        onComplete: () => { completeCalled = true; },
       }];
 
       controller.processIdleQueue('codex');
-      jest.advanceTimersByTime(100);
+      // Advance past enterDelayMs + focusWithRetry retries + bypass clear
+      await jest.advanceTimersByTimeAsync(500);
+
+      expect(completeCalled).toBe(true);
+      const idleCalls = mockBus.updateState.mock.calls.filter(
+        c => c[0] === 'codex' && c[1].activity === 'idle'
+      );
+      expect(idleCalls.length).toBeGreaterThan(0);
     });
   });
 

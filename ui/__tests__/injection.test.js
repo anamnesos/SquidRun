@@ -833,32 +833,34 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
 
-    test('handles Codex pane differently', async () => {
+    test('handles Codex pane with trusted Enter (interactive PTY)', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
-      const mockTerminal = { write: jest.fn() };
+      const mockTerminal = { _hivemindBypass: false };
       terminals.set('1', mockTerminal);
 
       const onComplete = jest.fn();
-      await controller.doSendToPane('1', 'test command\r', onComplete);
+      const promise = controller.doSendToPane('1', 'test command\r', onComplete);
+      // Advance past enterDelayMs (100ms) + focusWithRetry retries (3×50ms) + bypass clear
+      await jest.advanceTimersByTimeAsync(500);
+      await promise;
 
-      expect(mockPty.codexExec).toHaveBeenCalled();
-      expect(mockTerminal.write).toHaveBeenCalled();
+      // Codex interactive uses PTY write for text, sendTrustedEnter for submission
+      expect(mockPty.write).toHaveBeenCalledWith('1', 'test command', expect.any(Object));
+      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      expect(mockPty.codexExec).not.toHaveBeenCalled();
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
 
-    test('handles Codex exec failure', async () => {
+    test('handles Codex PTY write failure', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
-      terminals.set('1', { write: jest.fn() });
-      mockPty.codexExec.mockRejectedValue(new Error('Exec failed'));
+      terminals.set('1', { _hivemindBypass: false });
+      mockPty.write.mockRejectedValueOnce(new Error('Write failed'));
+      const onComplete = jest.fn();
 
-      await controller.doSendToPane('1', 'test\r', jest.fn());
+      await controller.doSendToPane('1', 'test\r', onComplete);
 
-      expect(mockLog.error).toHaveBeenCalledWith(
-        expect.stringContaining('doSendToPane'),
-        expect.stringContaining('Codex exec failed'),
-        expect.any(Error)
-      );
+      expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'pty_write_failed' });
     });
 
     // Gemini PTY path: sanitize text, then send Enter via PTY \r
