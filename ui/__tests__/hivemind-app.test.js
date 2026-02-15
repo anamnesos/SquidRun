@@ -137,6 +137,13 @@ jest.mock('../modules/sms-poller', () => ({
   isRunning: jest.fn(() => false),
 }));
 
+// Mock telegram-poller
+jest.mock('../modules/telegram-poller', () => ({
+  start: jest.fn(() => false),
+  stop: jest.fn(),
+  isRunning: jest.fn(() => false),
+}));
+
 // Mock organic-ui-handlers
 jest.mock('../modules/ipc/organic-ui-handlers', () => ({
   registerHandlers: jest.fn(),
@@ -371,6 +378,7 @@ describe('HivemindApp', () => {
       const websocketServer = require('../modules/websocket-server');
       const watcher = require('../modules/watcher');
       const smsPoller = require('../modules/sms-poller');
+      const telegramPoller = require('../modules/telegram-poller');
       const { closeSharedRuntime } = require('../modules/ipc/evidence-ledger-handlers');
       const teamMemory = require('../modules/team-memory');
       const experiment = require('../modules/experiment');
@@ -385,6 +393,7 @@ describe('HivemindApp', () => {
       expect(teamMemory.closeTeamMemoryRuntime).toHaveBeenCalled();
       expect(websocketServer.stop).toHaveBeenCalled();
       expect(smsPoller.stop).toHaveBeenCalled();
+      expect(telegramPoller.stop).toHaveBeenCalled();
       expect(watcher.stopWatcher).toHaveBeenCalled();
       expect(watcher.stopTriggerWatcher).toHaveBeenCalled();
       expect(watcher.stopMessageWatcher).toHaveBeenCalled();
@@ -683,6 +692,33 @@ describe('HivemindApp', () => {
       expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
         ['1'],
         '[SMS from +15557654321]: build passed',
+        null
+      );
+    });
+  });
+
+  describe('Telegram poller wiring', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new HivemindApp(mockAppContext, mockManagers);
+    });
+
+    it('wires inbound Telegram callback to pane 1 trigger injection', () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      const triggers = require('../modules/triggers');
+      telegramPoller.start.mockReturnValue(true);
+
+      app.startTelegramPoller();
+
+      expect(telegramPoller.start).toHaveBeenCalledTimes(1);
+      const options = telegramPoller.start.mock.calls[0][0];
+      expect(typeof options.onMessage).toBe('function');
+
+      options.onMessage('build passed', 'james');
+      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
+        ['1'],
+        '[Telegram from james]: build passed',
         null
       );
     });

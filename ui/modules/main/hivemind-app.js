@@ -26,6 +26,7 @@ const pipeline = require('../pipeline');
 const sharedState = require('../shared-state');
 const contextCompressor = require('../context-compressor');
 const smsPoller = require('../sms-poller');
+const telegramPoller = require('../telegram-poller');
 const teamMemory = require('../team-memory');
 const experiment = require('../experiment');
 const {
@@ -678,6 +679,7 @@ class HivemindApp {
     }
 
     this.startSmsPoller();
+    this.startTelegramPoller();
 
     log.info('App', 'Initialization complete');
   }
@@ -1497,6 +1499,26 @@ class HivemindApp {
     }
   }
 
+  startTelegramPoller() {
+    const started = telegramPoller.start({
+      onMessage: (text, from) => {
+        const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
+        const body = typeof text === 'string' ? text.trim() : '';
+        if (!body) return;
+
+        const formatted = `[Telegram from ${sender}]: ${body}`;
+        const result = triggers.sendDirectMessage(['1'], formatted, null);
+        if (!result?.success) {
+          log.warn('Telegram', `Failed to inject inbound Telegram into pane 1 (${result?.error || 'unknown'})`);
+        }
+      },
+    });
+
+    if (started) {
+      log.info('Telegram', 'Inbound Telegram bridge enabled');
+    }
+  }
+
   async handleTeamMemoryGuardExperiment(entry = {}) {
     if (!entry || typeof entry !== 'object') return { ok: false, reason: 'invalid_guard_action' };
     if (String(entry.action || '').toLowerCase() !== 'block') return { ok: false, reason: 'not_block_action' };
@@ -1586,6 +1608,7 @@ class HivemindApp {
     });
     websocketServer.stop();
     smsPoller.stop();
+    telegramPoller.stop();
     this.consoleLogWriter.flush().catch((err) => {
       log.warn('App', `Failed flushing console.log buffer during shutdown: ${err.message}`);
     });

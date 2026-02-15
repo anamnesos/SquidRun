@@ -53,7 +53,9 @@ function registerSettingsHandlers(ctx, deps) {
       TWILIO_ACCOUNT_SID: null,
       TWILIO_AUTH_TOKEN: null,
       TWILIO_PHONE_NUMBER: null,
-      SMS_RECIPIENT: null
+      SMS_RECIPIENT: null,
+      TELEGRAM_BOT_TOKEN: null,
+      TELEGRAM_CHAT_ID: null
     };
 
     if (fs.existsSync(ENV_PATH)) {
@@ -62,7 +64,7 @@ function registerSettingsHandlers(ctx, deps) {
         const lines = content.split('\n');
 
         for (const line of lines) {
-          const match = line.match(/^(ANTHROPIC_API_KEY|OPENAI_API_KEY|GOOGLE_API_KEY|RECRAFT_API_KEY|TWILIO_ACCOUNT_SID|TWILIO_AUTH_TOKEN|TWILIO_PHONE_NUMBER|SMS_RECIPIENT)=(.+)$/);
+          const match = line.match(/^(ANTHROPIC_API_KEY|OPENAI_API_KEY|GOOGLE_API_KEY|RECRAFT_API_KEY|TWILIO_ACCOUNT_SID|TWILIO_AUTH_TOKEN|TWILIO_PHONE_NUMBER|SMS_RECIPIENT|TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID)=(.+)$/);
           if (match) {
             const [, keyName, value] = match;
             // Return masked version: show only last 4 chars
@@ -90,7 +92,9 @@ function registerSettingsHandlers(ctx, deps) {
       TWILIO_ACCOUNT_SID: v => !v || v.startsWith('AC'),
       TWILIO_AUTH_TOKEN: v => !v || v.length > 0,
       TWILIO_PHONE_NUMBER: v => !v || v.startsWith('+'),
-      SMS_RECIPIENT: v => !v || v.startsWith('+')
+      SMS_RECIPIENT: v => !v || v.startsWith('+'),
+      TELEGRAM_BOT_TOKEN: v => !v || v.length > 0,
+      TELEGRAM_CHAT_ID: v => !v || /^-?\d+$/.test(v)
     };
 
     for (const [key, value] of Object.entries(updates)) {

@@ -388,7 +388,7 @@
         <button class="panel-tab active" data-tab="screenshots" data-tab-group="primary" title="Drag & drop images for agents to reference">Screenshots</button>
         <button class="panel-tab" data-tab="oracle" data-tab-group="primary" title="AI image generation">Image Gen</button>
 
-        <button class="panel-tab" data-tab="api-keys" data-tab-group="primary" title="API key management">API Keys</button>
+        <button class="panel-tab" data-tab="api-keys" data-tab-group="primary" title="Secrets management">Secrets</button>
       </div>
       <div class="panel-content">
         <div class="tab-pane" id="tab-bridge">
@@ -457,8 +457,8 @@
           </div>
         </div>
         <div class="tab-pane" id="tab-api-keys">
-          <div class="tab-title">API Keys</div>
-          <div class="tab-description">Manage API keys for AI services</div>
+          <div class="tab-title">Secrets</div>
+          <div class="tab-description">Manage API keys and service credentials</div>
           <div class="api-keys-grid">
             <div class="api-keys-field">
               <label class="api-keys-label">Anthropic (Claude)</label>
@@ -530,8 +530,29 @@
               </div>
             </div>
           </div>
+          <div class="api-keys-section-header" id="telegramSectionToggle" style="cursor: pointer; padding: 8px 0; font-weight: 600; color: var(--text-secondary); user-select: none;">
+            <span class="api-keys-section-arrow" style="margin-right: 6px; display: inline-block; transition: transform 0.2s;">&#9654;</span> Telegram Bot
+          </div>
+          <div class="api-keys-section-content" id="telegramSectionContent" style="display: none;">
+            <div class="api-keys-field">
+              <label class="api-keys-label">Bot Token</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyTelegramToken"
+                       placeholder="Bot token from @BotFather" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyTelegramTokenMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">Chat ID</label>
+              <div class="api-keys-input-row">
+                <input type="text" class="api-keys-input" id="apiKeyTelegramChatId"
+                       placeholder="Your Telegram chat ID" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyTelegramChatIdMask">Not set</span>
+              </div>
+            </div>
+          </div>
           <div class="api-keys-actions">
-            <button class="btn btn-primary btn-sm" id="saveApiKeysBtn" title="Save API keys to .env file">Save Keys</button>
+            <button class="btn btn-primary btn-sm" id="saveApiKeysBtn" title="Save secrets to .env file">Save Keys</button>
             <span class="api-keys-status" id="apiKeyStatus"></span>
           </div>
           <div class="api-keys-info">Keys stored in .env (gitignored). Active immediately after save.</div>
