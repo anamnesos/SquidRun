@@ -204,10 +204,10 @@ const TRIGGER_TARGETS = {
 };
 
 // Protocol actions (client -> daemon)
-const PROTOCOL_ACTIONS = ['spawn', 'write', 'resize', 'kill', 'list', 'attach', 'ping', 'shutdown', 'health', 'codex-exec'];
+const PROTOCOL_ACTIONS = ['spawn', 'write', 'resize', 'kill', 'list', 'attach', 'ping', 'shutdown', 'health'];
 
 // Protocol events (daemon -> client)
-const PROTOCOL_EVENTS = ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected', 'shutdown', 'health', 'codex-exec-result'];
+const PROTOCOL_EVENTS = ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected', 'shutdown', 'health'];
 
 // Slice 1 evidence ledger gate.
 // Default enabled across dev/prod; runtime degrades if DB open fails.

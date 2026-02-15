@@ -252,33 +252,6 @@ describe('PTY Handlers', () => {
     });
   });
 
-  describe('codex-exec', () => {
-    test('returns unsupported_mode when called (legacy path disabled)', async () => {
-      const result = await harness.invoke('codex-exec', '2', 'test prompt');
-
-      expect(result).toEqual({
-        success: false,
-        status: 'unsupported_mode',
-        error: 'codex-exec is disabled; use interactive PTY messaging',
-      });
-    });
-
-    test('does not call daemon codex-exec helpers', async () => {
-      ctx.daemonClient.connected = true;
-      const result = await harness.invoke('codex-exec', '2', 'write hello world');
-
-      expect(result).toEqual({
-        success: false,
-        status: 'unsupported_mode',
-        error: 'codex-exec is disabled; use interactive PTY messaging',
-      });
-      expect(ctx.daemonClient.codexExec).not.toHaveBeenCalled();
-      if (typeof ctx.daemonClient.codexExecAndWait === 'function') {
-        expect(ctx.daemonClient.codexExecAndWait).not.toHaveBeenCalled();
-      }
-    });
-  });
-
   describe('send-trusted-enter', () => {
     test('sends enter key events to main window', async () => {
       await harness.invoke('send-trusted-enter');

@@ -10,7 +10,6 @@ const hivemindApi = {
       ipcRenderer.invoke('pty-write-chunked', paneId, fullText, options, kernelMeta),
     pause: (paneId) => ipcRenderer.invoke('pty-pause', paneId),
     resume: (paneId) => ipcRenderer.invoke('pty-resume', paneId),
-    codexExec: (paneId, prompt) => ipcRenderer.invoke('codex-exec', paneId, prompt),
     resize: (paneId, cols, rows, kernelMeta = null) => ipcRenderer.invoke('pty-resize', paneId, cols, rows, kernelMeta),
     kill: (paneId) => ipcRenderer.invoke('pty-kill', paneId),
     onData: (paneId, callback) => {

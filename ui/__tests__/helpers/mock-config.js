@@ -88,8 +88,8 @@ const mockDefaultConfig = {
     'others-worker-b.txt': ['1', '5'],
     'others-investigator.txt': ['1', '2'],
   },
-  PROTOCOL_ACTIONS: ['spawn', 'write', 'resize', 'kill', 'list', 'attach', 'ping', 'shutdown', 'health', 'codex-exec'],
-  PROTOCOL_EVENTS: ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected', 'shutdown', 'health', 'codex-exec-result'],
+  PROTOCOL_ACTIONS: ['spawn', 'write', 'resize', 'kill', 'list', 'attach', 'ping', 'shutdown', 'health'],
+  PROTOCOL_EVENTS: ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected', 'shutdown', 'health'],
   resolvePaneCwd: (paneId, options = {}) => {
     const id = String(paneId);
     if (Object.prototype.hasOwnProperty.call(mockDefaultConfig.PANE_ROLES, id)) {

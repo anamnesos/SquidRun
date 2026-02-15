@@ -83,7 +83,6 @@ function createDefaultContext(overrides = {}) {
       resize: jest.fn(),
       kill: jest.fn(),
       getTerminals: jest.fn(() => []),
-      codexExec: jest.fn(),
       shutdown: jest.fn(),
     },
     usageStats: { totalSpawns: 0, totalSessionTime: 0, sessionsToday: 0 },

@@ -16,7 +16,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const pty = require('node-pty');
-const { createCodexExecRunner } = require('./modules/codex-exec');
 const {
   PIPE_PATH,
   PANE_ROLES,
@@ -80,8 +79,6 @@ function formatUptime(seconds) {
 
 // Store PTY processes: Map<paneId, { pty, pid, alive, cwd, scrollback, dryRun, lastActivity }>
 const terminals = new Map();
-// Cache Codex exec session IDs so restarts can resume
-const codexSessionCache = new Map(); // paneId -> codexSessionId
 
 // Event Kernel: daemon-side event envelope sequencing
 let daemonKernelSeq = 0;
@@ -371,8 +368,6 @@ function saveSessionState() {
       alive: termInfo.alive,
       dryRun: termInfo.dryRun || false,
       scrollback: termInfo.scrollback || '',
-      codexSessionId: termInfo.codexSessionId || null,
-      codexHasSession: termInfo.codexHasSession || false,
       lastActivity: termInfo.lastActivity,
     });
   }
@@ -406,13 +401,6 @@ function loadSessionState() {
           logWarn(`[Session] Correcting pane ${term.paneId} cwd: ${term.cwd} -> ${expectedDir}`);
           term.cwd = expectedDir;
         }
-        if (term.codexSessionId) {
-          term.codexHasSession = term.codexHasSession || true;
-          codexSessionCache.set(String(term.paneId), term.codexSessionId);
-        } else {
-          term.codexSessionId = null;
-          term.codexHasSession = false;
-        }
       }
     }
     return state;
@@ -420,22 +408,6 @@ function loadSessionState() {
     logWarn(`Could not load session state: ${err.message}`);
     return null;
   }
-}
-
-function getCachedCodexSession(paneId) {
-  const id = String(paneId);
-  if (codexSessionCache.has(id)) {
-    return codexSessionCache.get(id);
-  }
-  const state = loadSessionState();
-  if (state && Array.isArray(state.terminals)) {
-    const saved = state.terminals.find(term => String(term.paneId) === id);
-    if (saved && saved.codexSessionId) {
-      codexSessionCache.set(id, saved.codexSessionId);
-      return saved.codexSessionId;
-    }
-  }
-  return null;
 }
 
 /**
@@ -1243,14 +1215,6 @@ function broadcast(message) {
   }
 }
 
-// Codex exec runner (non-interactive)
-const codexExecRunner = createCodexExecRunner({
-  broadcast,
-  logInfo,
-  logWarn,
-  scrollbackMaxSize: SCROLLBACK_MAX_SIZE,
-});
-
 // Spawn a new PTY for a pane (or mock terminal in dry-run mode)
 function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   // Kill existing terminal for this pane if any
@@ -1309,41 +1273,6 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     }, 300);
 
     return { paneId, pid: mockPid, dryRun: true, mode: 'dry-run' };
-  }
-
-  // CODEX EXEC MODE: Create a virtual terminal entry without PTY
-  if (options.mode === 'codex-exec') {
-    logInfo(`[CodexExec] Initializing virtual terminal for pane ${paneId} in ${workDir}`);
-
-    const restoredSessionId = getCachedCodexSession(paneId);
-    if (restoredSessionId) {
-      logInfo(`[CodexExec] Restored session id for pane ${paneId}`);
-    }
-
-    const terminalInfo = {
-      pty: null,
-      pid: 0,
-      alive: true,
-      cwd: workDir,
-      scrollback: '',
-      dryRun: false,
-      mode: 'codex-exec',
-      execProcess: null,
-      execBuffer: '',
-      codexHasSession: !!restoredSessionId,
-      codexSessionId: restoredSessionId || null,
-      lastActivity: Date.now(),
-      lastMeaningfulActivity: Date.now(), // Smart Watchdog
-      lastInputTime: Date.now(),
-    };
-
-    terminals.set(paneId, terminalInfo);
-
-    const welcomeMsg = `\r\n[Codex exec mode ready]\r\n`;
-    broadcast({ event: 'data', paneId, data: welcomeMsg });
-    terminalInfo.scrollback += welcomeMsg;
-
-    return { paneId, pid: 0, dryRun: false, mode: 'codex-exec' };
   }
 
   // NORMAL MODE: Spawn real PTY
@@ -1438,12 +1367,6 @@ function writeTerminal(paneId, data) {
     return { ok: false, status: 'rejected_not_alive' };
   }
 
-  // Codex exec terminals are non-interactive; ignore PTY writes
-  if (terminal.mode === 'codex-exec') {
-    logWarn(`Ignored PTY write to non-interactive Codex pane ${paneId}`);
-    return { ok: false, status: 'rejected_mode_noninteractive' };
-  }
-
   // DRY-RUN MODE: Handle input simulation
   if (terminal.dryRun) {
     // Track last INPUT time (for stuck detection)
@@ -1510,11 +1433,6 @@ function killTerminal(paneId) {
   const terminal = terminals.get(paneId);
   if (!terminal) return false;
 
-  if (terminal.mode === 'codex-exec' && terminal.codexSessionId) {
-    codexSessionCache.set(String(paneId), terminal.codexSessionId);
-    logInfo(`[CodexExec] Cached session id for pane ${paneId} on kill`);
-  }
-
   // Clean up dry-run timer if exists
   if (terminal.dryRunTimer) {
     clearTimeout(terminal.dryRunTimer);
@@ -1524,13 +1442,6 @@ function killTerminal(paneId) {
   if (terminal.pty && !terminal.dryRun) {
     try {
       terminal.pty.kill();
-    } catch (e) { /* ignore */ }
-  }
-
-  // Kill active Codex exec process if any
-  if (terminal.execProcess) {
-    try {
-      terminal.execProcess.kill();
     } catch (e) { /* ignore */ }
   }
 
@@ -1728,32 +1639,6 @@ function handleMessage(client, message) {
         break;
       }
 
-      case 'codex-exec': {
-        const requestId = typeof msg.requestId === 'string' ? msg.requestId : null;
-        const terminal = terminals.get(msg.paneId);
-        const result = codexExecRunner.runCodexExec(msg.paneId, terminal, msg.prompt || '');
-        const accepted = result.success === true;
-        const status = result.status || (accepted ? 'accepted' : 'rejected');
-        sendToClient(client, {
-          event: 'codex-exec-result',
-          paneId: msg.paneId,
-          requestId,
-          success: accepted,
-          status,
-          queued: Boolean(result.queued),
-          queueDepth: Number.isFinite(result.queueDepth) ? result.queueDepth : undefined,
-          error: accepted ? null : (result.error || 'Codex exec failed'),
-        });
-        if (!accepted) {
-          sendToClient(client, {
-            event: 'error',
-            paneId: msg.paneId,
-            message: result.error || 'Codex exec failed',
-          });
-        }
-        break;
-      }
-
       case 'resize': {
         const resized = resizeTerminal(msg.paneId, msg.cols, msg.rows);
         sendKernelEvent(client, 'pty.resize.ack', {
@@ -1776,7 +1661,7 @@ function handleMessage(client, message) {
           event: 'killed',
           paneId: msg.paneId,
         });
-        if (existing && (existing.dryRun || existing.mode === 'codex-exec')) {
+        if (existing && existing.dryRun) {
           broadcastKernelEvent('pty.down', {
             paneId: msg.paneId,
             payload: {

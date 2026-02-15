@@ -190,7 +190,6 @@ describe('Terminal Events', () => {
           onData: jest.fn(),
           onExit: jest.fn(),
           sendTrustedEnter: jest.fn().mockResolvedValue(undefined),
-          codexExec: jest.fn().mockResolvedValue(undefined),
           pause: jest.fn(),
           resume: jest.fn(),
         },
