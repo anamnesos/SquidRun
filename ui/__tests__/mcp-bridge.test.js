@@ -69,8 +69,8 @@ describe('MCP Bridge', () => {
       test('registers all 3 pane roles correctly', () => {
         const roles = {
           '1': 'Architect',
-          '2': 'DevOps',
-          '5': 'Analyst',
+          '2': 'Builder',
+          '5': 'Oracle',
         };
 
         for (const [paneId, expectedRole] of Object.entries(roles)) {
@@ -142,7 +142,7 @@ describe('MCP Bridge', () => {
 
         expect(agent).not.toBeNull();
         expect(agent.paneId).toBe('2');
-        expect(agent.role).toBe('DevOps');
+        expect(agent.role).toBe('Builder');
       });
 
       test('returns null for unknown session', () => {
@@ -188,7 +188,7 @@ describe('MCP Bridge', () => {
 
         expect(result.valid).toBe(true);
         expect(result.paneId).toBe('5');
-        expect(result.role).toBe('Analyst');
+        expect(result.role).toBe('Oracle');
       });
 
       test('returns invalid for unknown session', () => {
@@ -513,8 +513,8 @@ describe('MCP Bridge', () => {
       test('writes to correct trigger files for each pane', () => {
         const paneFiles = {
           '1': 'architect.txt',
-          '2': 'devops.txt',
-          '5': 'analyst.txt',
+          '2': 'builder.txt',
+          '5': 'oracle.txt',
         };
 
         for (const [paneId, expectedFile] of Object.entries(paneFiles)) {

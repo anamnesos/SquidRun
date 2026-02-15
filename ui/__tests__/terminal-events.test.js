@@ -77,7 +77,7 @@ jest.mock('../modules/terminal/agent-colors', () => ({
 // Mock config
 jest.mock('../config', () => ({
   PANE_IDS: ['1', '2', '5'],
-  PANE_ROLES: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+  PANE_ROLES: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
   WORKSPACE_PATH: '/tmp/workspace',
 }));
 

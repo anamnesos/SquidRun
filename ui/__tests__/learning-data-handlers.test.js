@@ -37,8 +37,8 @@ describe('Learning Data Handlers', () => {
     ctx.WORKSPACE_PATH = '/test/workspace';
     ctx.PANE_ROLES = {
       '1': 'Architect',
-      '2': 'DevOps',
-      '5': 'Analyst',
+      '2': 'Builder',
+      '5': 'Oracle',
     };
 
     // Default: no existing learning file
@@ -193,7 +193,7 @@ describe('Learning Data Handlers', () => {
 
       expect(result.insights.build.bestAgent.successRate).toBe(0.8);
       expect(result.insights.build.bestAgent.avgTime).toBe(5000);
-      expect(result.insights.build.bestAgent.role).toBe('DevOps');
+      expect(result.insights.build.bestAgent.role).toBe('Builder');
     });
   });
 
@@ -242,7 +242,7 @@ describe('Learning Data Handlers', () => {
       expect(result.success).toBe(true);
       expect(result.bestAgent.paneId).toBe('5');
       expect(result.bestAgent.successRate).toBe(0.9);
-      expect(result.bestAgent.role).toBe('Analyst');
+      expect(result.bestAgent.role).toBe('Oracle');
       expect(result.reason).toContain('90%');
     });
 

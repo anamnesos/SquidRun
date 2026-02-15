@@ -66,7 +66,7 @@ describe('context-injection runtime memory reads', () => {
       expect.objectContaining({
         source: expect.objectContaining({
           via: 'context-injection',
-          role: 'devops',
+          role: 'builder',
           paneId: '2',
         }),
       })
@@ -74,13 +74,13 @@ describe('context-injection runtime memory reads', () => {
     expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
       'query-claims',
       expect.objectContaining({
-        owner: 'devops',
+        owner: 'builder',
         sessionsBack: 6,
       }),
       expect.objectContaining({
         source: expect.objectContaining({
           via: 'context-injection',
-          role: 'devops',
+          role: 'builder',
           paneId: '2',
         }),
       })
@@ -135,8 +135,8 @@ describe('_scopeRolesContent — role-scoped ROLES.md injection', () => {
     '',
     '## Runtime Identity',
     '- Pane 1: Architect',
-    '- Pane 2: DevOps',
-    '- Pane 5: Analyst',
+    '- Pane 2: Builder',
+    '- Pane 5: Oracle',
     '',
     '## Shared Operating Baseline',
     '- Project root: D:/projects/hivemind/',
@@ -147,19 +147,19 @@ describe('_scopeRolesContent — role-scoped ROLES.md injection', () => {
     '1. Query Evidence Ledger context.',
     '2. Read app-status.json.',
     '',
-    '**DevOps / Analyst (panes 2, 5):**',
+    '**Builder / Oracle (panes 2, 5):**',
     '1. Verify auto-injected context.',
     '2. Check in to Architect.',
     '',
     '## ARCHITECT',
-    'Coordinate DevOps and Analyst work.',
+    'Coordinate Builder and Oracle work.',
     'Own commit sequencing.',
     '',
-    '## DEVOPS',
+    '## BUILDER',
     'Implement infrastructure/backend.',
     'Own daemon/process lifecycle.',
     '',
-    '## ANALYST (ORACLE)',
+    '## ORACLE',
     'System monitor and vision-provider.',
     'Root-cause findings.',
     '',
@@ -176,28 +176,28 @@ describe('_scopeRolesContent — role-scoped ROLES.md injection', () => {
   test('pane 1 (Architect) gets only ARCHITECT role section', () => {
     const scoped = manager._scopeRolesContent(FULL_ROLES, '1');
     expect(scoped).toContain('## ARCHITECT');
-    expect(scoped).toContain('Coordinate DevOps');
-    expect(scoped).not.toContain('## DEVOPS');
-    expect(scoped).not.toContain('## ANALYST');
+    expect(scoped).toContain('Coordinate Builder');
+    expect(scoped).not.toContain('## BUILDER');
+    expect(scoped).not.toContain('## ORACLE');
     expect(scoped).toContain('## Global Rules');
     expect(scoped).toContain('## Purpose');
   });
 
-  test('pane 2 (DevOps) gets only DEVOPS role section', () => {
+  test('pane 2 (Builder) gets only BUILDER role section', () => {
     const scoped = manager._scopeRolesContent(FULL_ROLES, '2');
-    expect(scoped).toContain('## DEVOPS');
+    expect(scoped).toContain('## BUILDER');
     expect(scoped).toContain('Implement infrastructure');
     expect(scoped).not.toContain('## ARCHITECT');
-    expect(scoped).not.toContain('## ANALYST');
+    expect(scoped).not.toContain('## ORACLE');
     expect(scoped).toContain('## Global Rules');
   });
 
-  test('pane 5 (Analyst) gets only ANALYST role section', () => {
+  test('pane 5 (Oracle) gets only ORACLE role section', () => {
     const scoped = manager._scopeRolesContent(FULL_ROLES, '5');
-    expect(scoped).toContain('## ANALYST');
+    expect(scoped).toContain('## ORACLE');
     expect(scoped).toContain('System monitor');
     expect(scoped).not.toContain('## ARCHITECT');
-    expect(scoped).not.toContain('## DEVOPS');
+    expect(scoped).not.toContain('## BUILDER');
     expect(scoped).toContain('## Global Rules');
   });
 
@@ -205,13 +205,13 @@ describe('_scopeRolesContent — role-scoped ROLES.md injection', () => {
     const scoped = manager._scopeRolesContent(FULL_ROLES, '1');
     expect(scoped).toContain('**Architect (pane 1):**');
     expect(scoped).toContain('Query Evidence Ledger');
-    expect(scoped).not.toContain('**DevOps / Analyst');
+    expect(scoped).not.toContain('**Builder / Oracle');
     expect(scoped).not.toContain('Verify auto-injected context');
   });
 
-  test('startup baseline scoped: DevOps gets worker baseline, not Architect', () => {
+  test('startup baseline scoped: Builder gets worker baseline, not Architect', () => {
     const scoped = manager._scopeRolesContent(FULL_ROLES, '2');
-    expect(scoped).toContain('**DevOps / Analyst');
+    expect(scoped).toContain('**Builder / Oracle');
     expect(scoped).toContain('Verify auto-injected context');
     expect(scoped).not.toContain('**Architect (pane 1):**');
     expect(scoped).not.toContain('Query Evidence Ledger');

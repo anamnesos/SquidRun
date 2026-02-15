@@ -61,8 +61,8 @@ const mockUiView = {
   updateAllPaneProjects: jest.fn(), // Missing in previous mock definition
   PANE_ROLES: {
     '1': 'Architect',
-    '2': 'DevOps',
-    '5': 'Analyst',
+    '2': 'Builder',
+    '5': 'Oracle',
   },
   SYNC_FILES: {
     'shared_context.md': { label: 'CTX' },
@@ -478,7 +478,7 @@ describe('daemon-handlers.js module', () => {
 
           terminals: [
             { paneId: '1', alive: true, scrollback: 'Claude Code\n> ', lastActivity: now, cwd: '/project/instances/arch' },
-            { paneId: '2', alive: true, scrollback: '', cwd: '/project/instances/devops' },
+            { paneId: '2', alive: true, scrollback: '', cwd: '/project/instances/builder' },
           ],
         };
 

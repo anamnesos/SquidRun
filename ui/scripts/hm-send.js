@@ -52,7 +52,7 @@ const args = process.argv.slice(2);
 
 if (args.length < 2) {
   console.log('Usage: node hm-send.js <target> <message> [--role <role>] [--priority urgent]');
-  console.log('  target: paneId (1,2,5), role name (architect, devops, analyst), or user/telegram');
+  console.log('  target: paneId (1,2,5), role name (architect, builder, oracle), or user/telegram');
   console.log('  message: text to send');
   console.log('  --role: your role (for identification)');
   console.log('  --priority: normal or urgent');
@@ -205,15 +205,15 @@ function closeSocket(ws) {
 function normalizeRole(targetInput) {
   const paneToRole = {
     '1': 'architect',
-    '2': 'devops',
-    '5': 'analyst',
+    '2': 'builder',
+    '5': 'oracle',
   };
 
   const targetValue = String(targetInput || '').trim().toLowerCase();
   if (!targetValue) return null;
   if (paneToRole[targetValue]) return paneToRole[targetValue];
 
-  if (targetValue === 'architect' || targetValue === 'devops' || targetValue === 'analyst') {
+  if (targetValue === 'architect' || targetValue === 'builder' || targetValue === 'oracle') {
     return targetValue;
   }
 

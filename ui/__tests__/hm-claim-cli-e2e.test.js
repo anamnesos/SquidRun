@@ -96,7 +96,7 @@ maybeDescribe('hm-claim CLI e2e', () => {
       '--statement',
       'hm-claim CLI regression sentinel',
       '--owner',
-      'devops',
+      'builder',
       '--scope',
       'ui/modules/team-memory/claims.js',
     ]);

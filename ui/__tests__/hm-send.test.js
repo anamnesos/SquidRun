@@ -81,7 +81,7 @@ describe('hm-send retry behavior', () => {
     });
 
     const result = await runHmSend(
-      ['devops', '(TEST #1): retry backoff', '--timeout', '80', '--retries', '1', '--no-fallback'],
+      ['builder', '(TEST #1): retry backoff', '--timeout', '80', '--retries', '1', '--no-fallback'],
       { HM_SEND_PORT: String(port) }
     );
 
@@ -145,7 +145,7 @@ describe('hm-send retry behavior', () => {
     });
 
     const result = await runHmSend(
-      ['devops', '(TEST #1b): no retry submit_not_accepted', '--timeout', '80', '--retries', '2', '--no-fallback'],
+      ['builder', '(TEST #1b): no retry submit_not_accepted', '--timeout', '80', '--retries', '2', '--no-fallback'],
       { HM_SEND_PORT: String(port) }
     );
 
@@ -205,7 +205,7 @@ describe('hm-send retry behavior', () => {
     });
 
     const result = await runHmSend(
-      ['devops', '(TEST #1c): no retry accepted.unverified', '--timeout', '80', '--retries', '2', '--no-fallback'],
+      ['builder', '(TEST #1c): no retry accepted.unverified', '--timeout', '80', '--retries', '2', '--no-fallback'],
       { HM_SEND_PORT: String(port) }
     );
 
@@ -273,7 +273,7 @@ describe('hm-send retry behavior', () => {
     });
 
     const result = await runHmSend(
-      ['devops', '(TEST #2): health stale', '--timeout', '80', '--retries', '1', '--no-fallback'],
+      ['builder', '(TEST #2): health stale', '--timeout', '80', '--retries', '1', '--no-fallback'],
       { HM_SEND_PORT: String(port) }
     );
 
@@ -344,7 +344,7 @@ describe('hm-send retry behavior', () => {
     });
 
     const result = await runHmSend(
-      ['devops', '(TEST #2c): accepted-unverified', '--timeout', '80', '--retries', '1', '--no-fallback'],
+      ['builder', '(TEST #2c): accepted-unverified', '--timeout', '80', '--retries', '1', '--no-fallback'],
       { HM_SEND_PORT: String(port) }
     );
 
@@ -352,7 +352,7 @@ describe('hm-send retry behavior', () => {
 
     expect(result.code).toBe(0);
     expect(sendAttempts).toHaveLength(1);
-    expect(result.stdout).toContain('Accepted by devops but unverified');
+    expect(result.stdout).toContain('Accepted by builder but unverified');
     expect(result.stdout).toContain('ack: routed_unverified');
   });
 
@@ -406,7 +406,7 @@ describe('hm-send retry behavior', () => {
     });
 
     const result = await runHmSend(
-      ['devops', '(TEST #2b): health invalid target', '--timeout', '80', '--retries', '1', '--no-fallback'],
+      ['builder', '(TEST #2b): health invalid target', '--timeout', '80', '--retries', '1', '--no-fallback'],
       { HM_SEND_PORT: String(port) }
     );
 
@@ -580,7 +580,7 @@ describe('hm-send retry behavior', () => {
     });
 
     const result = await runHmSend(
-      ['devops', '(TEST #3): health unsupported', '--timeout', '80', '--retries', '0', '--no-fallback'],
+      ['builder', '(TEST #3): health unsupported', '--timeout', '80', '--retries', '0', '--no-fallback'],
       { HM_SEND_PORT: String(port) }
     );
 
@@ -602,7 +602,7 @@ describe('hm-send retry behavior', () => {
     });
 
     const port = server.address().port;
-    const triggerPath = getTriggerPath('devops.txt');
+    const triggerPath = getTriggerPath('builder.txt');
     const hadOriginal = fs.existsSync(triggerPath);
     const originalContent = hadOriginal ? fs.readFileSync(triggerPath, 'utf8') : null;
     const uniqueSuffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -648,7 +648,7 @@ describe('hm-send retry behavior', () => {
 
     try {
       const result = await runHmSend(
-        ['devops', message, '--timeout', '80', '--retries', '1'],
+        ['builder', message, '--timeout', '80', '--retries', '1'],
         { HM_SEND_PORT: String(port) }
       );
 
@@ -680,7 +680,7 @@ describe('hm-send retry behavior', () => {
     });
 
     const port = server.address().port;
-    const triggerPath = getTriggerPath('devops.txt');
+    const triggerPath = getTriggerPath('builder.txt');
     const hadOriginal = fs.existsSync(triggerPath);
     const originalContent = hadOriginal ? fs.readFileSync(triggerPath, 'utf8') : null;
 
@@ -743,7 +743,7 @@ describe('hm-send retry behavior', () => {
 
     try {
       const result = await runHmSend(
-        ['devops', '(TEST #5): delivery-check-guard', '--timeout', '80', '--retries', '1'],
+        ['builder', '(TEST #5): delivery-check-guard', '--timeout', '80', '--retries', '1'],
         { HM_SEND_PORT: String(port) }
       );
 

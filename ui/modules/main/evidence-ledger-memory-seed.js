@@ -138,7 +138,7 @@ function deriveSeedRecords(contextSnapshot, options = {}) {
 
   const knownIssues = asObject(source.known_issues);
   for (const [title, rawValue] of Object.entries(knownIssues)) {
-    pushDecision('issue', title, toBody(rawValue), 'analyst');
+    pushDecision('issue', title, toBody(rawValue), 'oracle');
   }
 
   const architectureDecisions = buildArchitectureDecisions(source.architecture);

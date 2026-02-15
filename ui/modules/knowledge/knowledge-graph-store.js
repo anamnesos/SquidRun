@@ -71,8 +71,8 @@ function initialize(workspaceDir) {
   // Initialize agent nodes (always present)
   const agentNames = {
     '1': 'Architect',
-    '2': 'DevOps',
-    '5': 'Analyst'
+    '2': 'Builder',
+    '5': 'Oracle'
   };
 
   for (const [paneId, name] of Object.entries(agentNames)) {
@@ -562,10 +562,12 @@ function getAgentNodeId(roleOrPaneId) {
   // Map role names to pane IDs
   const roleToPane = {
     'architect': '1',
+    'builder': '2',
     'orchestrator': '2',
     'infra': '2',
     'backend': '2', 'implementer b': '2', 'implementer_b': '2', 'worker b': '2', 'worker_b': '2',
     'devops': '2',
+    'oracle': '5',
     'analyst': '5', 'investigator': '5'
   };
 

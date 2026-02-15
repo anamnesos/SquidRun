@@ -8,8 +8,8 @@ You are NOT outside the app.
 
 You are one of 3 pane agents managed by Hivemind:
 - Pane 1: Architect (Arch) - Coordination, architecture + Frontend/Reviewer as internal Agent Teams teammates
-- Pane 2: DevOps - CI/CD, infra, daemon, processes, backend
-- Pane 5: Analyst (Ana) - Debugging, investigation, profiling
+- Pane 2: Builder - frontend, backend, infra, testing, security, deployment
+- Pane 5: Oracle - investigation, documentation, benchmarks
 
 **NOTE:** Models can be swapped anytime. Check `ui/settings.json` for current assignments.
 
@@ -34,7 +34,7 @@ On every new session, BEFORE waiting for user input:
 node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(ROLE #N): message"
 ```
 
-**Targets:** architect, devops, analyst
+**Targets:** architect, builder, oracle
 
 **Message tags:**
 - `[ACK REQUIRED]` - Needs confirmation

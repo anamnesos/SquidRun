@@ -354,9 +354,9 @@ describe('HivemindApp', () => {
 
     it('should resolve role names to paneIds', () => {
       expect(app.resolveTargetToPane('architect')).toBe('1');
-      expect(app.resolveTargetToPane('devops')).toBe('2');
+      expect(app.resolveTargetToPane('builder')).toBe('2');
       expect(app.resolveTargetToPane('backend')).toBe('2');
-      expect(app.resolveTargetToPane('analyst')).toBe('5');
+      expect(app.resolveTargetToPane('oracle')).toBe('5');
     });
 
     it('should be case-insensitive for role names', () => {
@@ -453,7 +453,7 @@ describe('HivemindApp', () => {
           status: 'contested',
           session: 's_1',
           scope: 'ui/modules/triggers.js',
-          agent: 'analyst',
+          agent: 'oracle',
         },
       });
 
@@ -553,7 +553,7 @@ describe('HivemindApp', () => {
       });
 
       const result = await app.evaluateTeamMemoryGuardPreflight({
-        target: 'devops',
+        target: 'builder',
         content: 'run risky operation',
         fromRole: 'architect',
       });
@@ -598,7 +598,7 @@ describe('HivemindApp', () => {
       await app.recordDeliveryOutcomePattern({
         channel: 'send',
         target: '1',
-        fromRole: 'devops',
+        fromRole: 'builder',
         result: {
           accepted: true,
           queued: true,

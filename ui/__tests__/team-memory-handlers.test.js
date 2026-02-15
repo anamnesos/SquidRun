@@ -44,7 +44,7 @@ describe('team-memory IPC handlers', () => {
     await getHandler('team-memory:create')({}, {
       statement: 'Test claim',
       entity: 'claim',
-      owner: 'devops',
+      owner: 'builder',
     });
     expect(mockExecuteTeamMemoryOperation).toHaveBeenLastCalledWith(
       'create-claim',
@@ -68,7 +68,7 @@ describe('team-memory IPC handlers', () => {
     await getHandler('team-memory:create')({}, {
       entity: 'consensus',
       claimId: 'clm_1',
-      agent: 'devops',
+      agent: 'builder',
       position: 'agree',
     });
     expect(mockExecuteTeamMemoryOperation).toHaveBeenLastCalledWith(
@@ -79,11 +79,11 @@ describe('team-memory IPC handlers', () => {
 
     await getHandler('team-memory:create')({}, {
       entity: 'belief-snapshot',
-      agent: 'devops',
+      agent: 'builder',
     });
     expect(mockExecuteTeamMemoryOperation).toHaveBeenLastCalledWith(
       'create-belief-snapshot',
-      expect.objectContaining({ agent: 'devops' }),
+      expect.objectContaining({ agent: 'builder' }),
       expect.any(Object)
     );
 
@@ -123,17 +123,17 @@ describe('team-memory IPC handlers', () => {
       expect.any(Object)
     );
 
-    await getHandler('team-memory:query')({}, { entity: 'beliefs', agent: 'devops' });
+    await getHandler('team-memory:query')({}, { entity: 'beliefs', agent: 'builder' });
     expect(mockExecuteTeamMemoryOperation).toHaveBeenLastCalledWith(
       'get-agent-beliefs',
-      expect.objectContaining({ agent: 'devops' }),
+      expect.objectContaining({ agent: 'builder' }),
       expect.any(Object)
     );
 
-    await getHandler('team-memory:query')({}, { entity: 'contradictions', agent: 'devops' });
+    await getHandler('team-memory:query')({}, { entity: 'contradictions', agent: 'builder' });
     expect(mockExecuteTeamMemoryOperation).toHaveBeenLastCalledWith(
       'get-contradictions',
-      expect.objectContaining({ agent: 'devops' }),
+      expect.objectContaining({ agent: 'builder' }),
       expect.any(Object)
     );
 

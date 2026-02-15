@@ -41,7 +41,7 @@ describe('contract-promotion IPC handlers', () => {
     expect(approveCall).toBeDefined();
 
     const approveHandler = approveCall[1];
-    const payload = { contractId: 'overlay-fit-exclusion-shadow', agent: 'devops' };
+    const payload = { contractId: 'overlay-fit-exclusion-shadow', agent: 'builder' };
     await approveHandler({}, payload);
 
     expect(mockExecuteContractPromotionAction).toHaveBeenCalledWith(

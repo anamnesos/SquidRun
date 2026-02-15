@@ -146,7 +146,7 @@ maybeDescribe('experiment runtime isolation (phase6d)', () => {
   test('spawns PTY, captures stdout/stderr artifacts, and persists hashes', async () => {
     const created = runtime.createExperiment({
       profileId: 'isolation',
-      requestedBy: 'devops',
+      requestedBy: 'builder',
       session: 's_phase6d',
       input: {},
     });
@@ -179,7 +179,7 @@ maybeDescribe('experiment runtime isolation (phase6d)', () => {
 
     const created = runtime.createExperiment({
       profileId: 'isolation',
-      requestedBy: 'devops',
+      requestedBy: 'builder',
       timeoutMs: 25,
       input: {},
     });
@@ -219,13 +219,13 @@ maybeDescribe('experiment runtime isolation (phase6d)', () => {
 
     const first = runtime.createExperiment({
       profileId: 'isolation',
-      requestedBy: 'devops',
+      requestedBy: 'builder',
       idempotencyKey: 'exp-iso-first',
       input: {},
     });
     const second = runtime.createExperiment({
       profileId: 'isolation',
-      requestedBy: 'devops',
+      requestedBy: 'builder',
       idempotencyKey: 'exp-iso-second',
       input: {},
     });

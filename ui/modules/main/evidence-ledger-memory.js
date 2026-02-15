@@ -22,6 +22,8 @@ const DECISION_STATUSES = new Set([
 
 const DECISION_AUTHORS = new Set([
   'architect',
+  'builder',
+  'oracle',
   'devops',
   'analyst',
   'user',

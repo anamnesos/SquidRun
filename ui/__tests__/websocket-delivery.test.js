@@ -113,7 +113,7 @@ describe('WebSocket Delivery Audit', () => {
   });
 
   test('delivers send message to target pane', async () => {
-    const receiver = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    const receiver = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(receiver);
     const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
     activeClients.add(sender);
@@ -132,7 +132,7 @@ describe('WebSocket Delivery Audit', () => {
   });
 
   test('delivers send message to target role', async () => {
-    const receiver = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    const receiver = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(receiver);
     const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
     activeClients.add(sender);
@@ -141,7 +141,7 @@ describe('WebSocket Delivery Audit', () => {
 
     sender.send(JSON.stringify({
       type: 'send',
-      target: 'devops',
+      target: 'builder',
       content: 'role-ping',
       priority: 'normal',
     }));
@@ -151,7 +151,7 @@ describe('WebSocket Delivery Audit', () => {
   });
 
   test('returns send-ack when ackRequired is true and route is delivered', async () => {
-    const receiver = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    const receiver = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(receiver);
     const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
     activeClients.add(sender);
@@ -162,7 +162,7 @@ describe('WebSocket Delivery Audit', () => {
 
     sender.send(JSON.stringify({
       type: 'send',
-      target: 'devops',
+      target: 'builder',
       content: 'needs-ack',
       messageId,
       ackRequired: true,
@@ -230,7 +230,7 @@ describe('WebSocket Delivery Audit', () => {
   });
 
   test('deduplicates ackRequired send by messageId and reuses prior ack', async () => {
-    const receiver = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    const receiver = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(receiver);
     const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
     activeClients.add(sender);
@@ -248,7 +248,7 @@ describe('WebSocket Delivery Audit', () => {
     const firstDelivery = waitForMessage(receiver, (msg) => msg.type === 'message' && msg.content === 'dedup-payload');
     sender.send(JSON.stringify({
       type: 'send',
-      target: 'devops',
+      target: 'builder',
       content: 'dedup-payload',
       messageId,
       ackRequired: true,
@@ -258,7 +258,7 @@ describe('WebSocket Delivery Audit', () => {
     const secondAckPromise = waitForMessage(sender, (msg) => msg.type === 'send-ack' && msg.messageId === messageId);
     sender.send(JSON.stringify({
       type: 'send',
-      target: 'devops',
+      target: 'builder',
       content: 'dedup-payload',
       messageId,
       ackRequired: true,
@@ -284,9 +284,9 @@ describe('WebSocket Delivery Audit', () => {
   });
 
   test('deduplicates reconnect resend by sender/target/content signature when messageId changes', async () => {
-    const receiver = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    const receiver = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(receiver);
-    const sender = await connectAndRegister({ port, role: 'analyst', paneId: '5' });
+    const sender = await connectAndRegister({ port, role: 'oracle', paneId: '5' });
     activeClients.add(sender);
 
     const firstMessageId = 'ack-signature-dedup-1';
@@ -309,7 +309,7 @@ describe('WebSocket Delivery Audit', () => {
     );
     sender.send(JSON.stringify({
       type: 'send',
-      target: 'devops',
+      target: 'builder',
       content: 'signature-dedup-payload',
       messageId: firstMessageId,
       ackRequired: true,
@@ -322,7 +322,7 @@ describe('WebSocket Delivery Audit', () => {
     );
     sender.send(JSON.stringify({
       type: 'send',
-      target: 'devops',
+      target: 'builder',
       content: 'signature-dedup-payload',
       messageId: secondMessageId,
       ackRequired: true,
@@ -349,7 +349,7 @@ describe('WebSocket Delivery Audit', () => {
   });
 
   test('returns cached delivery-check result for previously ACKed messageId', async () => {
-    const receiver = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    const receiver = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(receiver);
     const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
     activeClients.add(sender);
@@ -358,7 +358,7 @@ describe('WebSocket Delivery Audit', () => {
     const ackPromise = waitForMessage(sender, (msg) => msg.type === 'send-ack' && msg.messageId === messageId);
     sender.send(JSON.stringify({
       type: 'send',
-      target: 'devops',
+      target: 'builder',
       content: 'delivery-check-payload',
       messageId,
       ackRequired: true,
@@ -389,7 +389,7 @@ describe('WebSocket Delivery Audit', () => {
   });
 
   test('tracks routing health and reports stale targets by threshold', async () => {
-    const targetClient = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    const targetClient = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(targetClient);
     const probeClient = await connectAndRegister({ port, role: 'architect', paneId: '1' });
     activeClients.add(probeClient);
@@ -401,13 +401,13 @@ describe('WebSocket Delivery Audit', () => {
     );
     probeClient.send(JSON.stringify({
       type: 'health-check',
-      target: 'devops',
+      target: 'builder',
       requestId: freshRequestId,
     }));
     const freshHealth = await freshHealthPromise;
     expect(freshHealth.healthy).toBe(true);
     expect(freshHealth.status).toBe('healthy');
-    expect(freshHealth.role).toBe('devops');
+    expect(freshHealth.role).toBe('builder');
     expect(freshHealth.paneId).toBe('2');
 
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -418,7 +418,7 @@ describe('WebSocket Delivery Audit', () => {
     );
     probeClient.send(JSON.stringify({
       type: 'health-check',
-      target: 'devops',
+      target: 'builder',
       requestId: staleRequestId,
       staleAfterMs: 1,
     }));
@@ -428,7 +428,7 @@ describe('WebSocket Delivery Audit', () => {
   });
 
   test('reports no route when registered client disconnects', async () => {
-    const targetClient = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    const targetClient = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(targetClient);
     const probeClient = await connectAndRegister({ port, role: 'architect', paneId: '1' });
     activeClients.add(probeClient);
@@ -444,7 +444,7 @@ describe('WebSocket Delivery Audit', () => {
     );
     probeClient.send(JSON.stringify({
       type: 'health-check',
-      target: 'devops',
+      target: 'builder',
       requestId,
     }));
 
@@ -452,11 +452,11 @@ describe('WebSocket Delivery Audit', () => {
     expect(health.healthy).toBe(false);
     expect(health.status).toBe('no_route');
     expect(health.paneId).toBe('2');
-    expect(health.role).toBe('devops');
+    expect(health.role).toBe('builder');
   });
 
   test('refreshes target health on message activity', async () => {
-    const targetClient = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    const targetClient = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(targetClient);
     const probeClient = await connectAndRegister({ port, role: 'architect', paneId: '1' });
     activeClients.add(probeClient);
@@ -470,7 +470,7 @@ describe('WebSocket Delivery Audit', () => {
     );
     probeClient.send(JSON.stringify({
       type: 'health-check',
-      target: 'devops',
+      target: 'builder',
       requestId: staleRequestId,
       staleAfterMs: 1,
     }));
@@ -491,7 +491,7 @@ describe('WebSocket Delivery Audit', () => {
     );
     probeClient.send(JSON.stringify({
       type: 'health-check',
-      target: 'devops',
+      target: 'builder',
       requestId: freshRequestId,
       staleAfterMs: 100,
     }));

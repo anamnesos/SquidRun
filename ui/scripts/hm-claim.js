@@ -24,26 +24,26 @@ function usage() {
   console.log('Usage: node hm-claim.js <command> [options]');
   console.log('Commands: create, query, search, support, challenge, abstain, consensus, beliefs, contradictions, snapshot, pattern-create, patterns, pattern-activate, pattern-deactivate, guard-create, guards, guard-activate, guard-deactivate, update, deprecate');
   console.log('Common options:');
-  console.log('  --role <role>               Sender role (default: devops)');
+  console.log('  --role <role>               Sender role (default: builder)');
   console.log('  --port <port>               WebSocket port (default: 9900)');
   console.log('  --timeout <ms>              Response timeout (default: 5000)');
   console.log('  --payload-json <json>       Raw payload JSON (advanced)');
   console.log('Examples:');
-  console.log('  node hm-claim.js create --statement "Use queue for retries" --type decision --owner devops --scope ui/modules/comms-worker.js');
+  console.log('  node hm-claim.js create --statement "Use queue for retries" --type decision --owner builder --scope ui/modules/comms-worker.js');
   console.log('  node hm-claim.js query --scope ui/modules/triggers.js --type negative');
   console.log('  node hm-claim.js search "retry storm" --scope ui/modules/triggers.js --type negative --sessions-back 3');
-  console.log('  node hm-claim.js support --id clm_123 --agent devops --reason "Validated in test run"');
-  console.log('  node hm-claim.js challenge --id clm_123 --agent analyst --reason "Contradicted by logs"');
+  console.log('  node hm-claim.js support --id clm_123 --agent builder --reason "Validated in test run"');
+  console.log('  node hm-claim.js challenge --id clm_123 --agent oracle --reason "Contradicted by logs"');
   console.log('  node hm-claim.js consensus --id clm_123');
-  console.log('  node hm-claim.js snapshot --agent devops --session s_123');
-  console.log('  node hm-claim.js contradictions --agent devops --session s_123');
-  console.log('  node hm-claim.js pattern-create --type failure --scope ui/modules/triggers.js --agents architect,analyst --frequency 2 --confidence 0.8');
+  console.log('  node hm-claim.js snapshot --agent builder --session s_123');
+  console.log('  node hm-claim.js contradictions --agent builder --session s_123');
+  console.log('  node hm-claim.js pattern-create --type failure --scope ui/modules/triggers.js --agents architect,oracle --frequency 2 --confidence 0.8');
   console.log('  node hm-claim.js patterns --type failure --scope ui/modules/triggers.js');
   console.log('  node hm-claim.js pattern-activate --id pat_123');
   console.log('  node hm-claim.js guard-create --action warn --scope ui/modules/triggers.js --pattern-type failure');
   console.log('  node hm-claim.js guards --scope ui/modules/triggers.js --active true');
   console.log('  node hm-claim.js guard-activate --id grd_123');
-  console.log('  node hm-claim.js update --id clm_123 --status contested --by analyst --reason "Contradicted by trace data"');
+  console.log('  node hm-claim.js update --id clm_123 --status contested --by oracle --reason "Contradicted by trace data"');
   console.log('  node hm-claim.js deprecate --id clm_123 --by architect --reason "Superseded by clm_456"');
 }
 
@@ -451,7 +451,7 @@ function closeSocket(ws) {
 
 async function run(action, payload, options) {
   const port = Number.isFinite(options.port) ? options.port : DEFAULT_PORT;
-  const role = asString(options.role, 'devops') || 'devops';
+  const role = asString(options.role, 'builder') || 'builder';
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : DEFAULT_RESPONSE_TIMEOUT_MS;
   const requestId = `claim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -522,7 +522,7 @@ async function main() {
 
   const payload = buildPayload(command, options, positional);
   const response = await run(toAction(command), payload, {
-    role: asString(getOption(options, 'role', 'devops'), 'devops'),
+    role: asString(getOption(options, 'role', 'builder'), 'builder'),
     port: asNumber(getOption(options, 'port', DEFAULT_PORT), DEFAULT_PORT),
     timeoutMs: asNumber(getOption(options, 'timeout', DEFAULT_RESPONSE_TIMEOUT_MS), DEFAULT_RESPONSE_TIMEOUT_MS),
   });

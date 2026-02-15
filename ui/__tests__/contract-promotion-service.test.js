@@ -103,14 +103,14 @@ describe('contract-promotion-service', () => {
   test('approve action adds signoff, checks promotions, and persists', () => {
     const result = service.executeContractPromotionAction(
       'approve',
-      { contractId, agent: 'devops' },
-      { source: { role: 'devops' } }
+      { contractId, agent: 'builder' },
+      { source: { role: 'builder' } }
     );
 
     expect(result.ok).toBe(true);
     expect(result.status).toBe('approved');
     expect(result.promoted).toBe(true);
-    expect(mockContractPromotion.addSignoff).toHaveBeenCalledWith(contractId, 'devops');
+    expect(mockContractPromotion.addSignoff).toHaveBeenCalledWith(contractId, 'builder');
     expect(mockContractPromotion.checkPromotions).toHaveBeenCalledTimes(1);
     expect(mockContractPromotion.saveStats).toHaveBeenCalledTimes(1);
   });
@@ -119,7 +119,7 @@ describe('contract-promotion-service', () => {
     const result = service.executeContractPromotionAction(
       'reject',
       { contractId, reason: 'false positive observed' },
-      { source: { role: 'analyst' } }
+      { source: { role: 'oracle' } }
     );
 
     expect(result.ok).toBe(true);

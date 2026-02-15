@@ -2,12 +2,12 @@ const { parseMessageSequence } = require('../modules/triggers');
 
 describe('parseMessageSequence', () => {
   test('should parse standard format correctly', () => {
-    const message = '(ANALYST #123): This is a test message.';
+    const message = '(ORACLE #123): This is a test message.';
     const result = parseMessageSequence(message);
     expect(result).toEqual({
       seq: 123,
-      sender: 'analyst',
-      content: '(ANALYST): This is a test message.',
+      sender: 'oracle',
+      content: '(ORACLE): This is a test message.',
     });
   });
 
@@ -62,22 +62,22 @@ describe('parseMessageSequence', () => {
   });
 
   test('should return null for sender and seq for malformed messages with wrong brackets', () => {
-    const message = '[ANALYST #123]: Wrong brackets.';
+    const message = '[ORACLE #123]: Wrong brackets.';
     const result = parseMessageSequence(message);
     expect(result).toEqual({
       seq: null,
       sender: null,
-      content: '[ANALYST #123]: Wrong brackets.',
+      content: '[ORACLE #123]: Wrong brackets.',
     });
   });
 
   test('should not parse role with spaces when hash is missing', () => {
-    const message = '(ANALYST 123): Missing hash.';
+    const message = '(ORACLE 123): Missing hash.';
     const result = parseMessageSequence(message);
     expect(result).toEqual({
       seq: null,
       sender: null,
-      content: '(ANALYST 123): Missing hash.',
+      content: '(ORACLE 123): Missing hash.',
     });
   });
   
@@ -102,12 +102,12 @@ describe('parseMessageSequence', () => {
   });
 
   test('should not parse a message without a colon', () => {
-    const message = '(ANALYST #1)';
+    const message = '(ORACLE #1)';
     const result = parseMessageSequence(message);
     expect(result).toEqual({
         seq: null,
         sender: null,
-        content: '(ANALYST #1)',
+        content: '(ORACLE #1)',
     });
   });
 });

@@ -50,8 +50,8 @@ describe('Startup Source Of Truth', () => {
   test('legacy docs in docs/roles are explicit archive stubs', () => {
     const roleDocs = [
       path.join('docs', 'roles', 'ARCH.md'),
-      path.join('docs', 'roles', 'DEVOPS.md'),
-      path.join('docs', 'roles', 'ANA.md'),
+      path.join('docs', 'roles', 'BUILDER.md'),
+      path.join('docs', 'roles', 'ORACLE.md'),
     ];
 
     for (const relPath of roleDocs) {

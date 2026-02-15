@@ -91,7 +91,7 @@ describe('experiment runtime evidence chain (phase6b)', () => {
     const claims = new TeamMemoryClaims(bootstrapStore.db);
     const created = claims.createClaim({
       statement: 'Contested claim for experiment proof',
-      owner: 'analyst',
+      owner: 'oracle',
       status: 'contested',
       session: 's_phase6b',
       scopes: ['ui/modules/triggers.js'],
@@ -115,7 +115,7 @@ describe('experiment runtime evidence chain (phase6b)', () => {
     const createdRun = runtime.createExperiment({
       profileId: 'jest-suite',
       claimId,
-      requestedBy: 'devops',
+      requestedBy: 'builder',
       session: 's_phase6b',
       idempotencyKey: 'exp-success-1',
       guardContext: {
@@ -140,7 +140,7 @@ describe('experiment runtime evidence chain (phase6b)', () => {
     `).get(claimId);
     expect(evidenceRow.evidence_ref).toBe(experiment.attach.evidenceEventId);
     expect(evidenceRow.relation).toBe('supports');
-    expect(evidenceRow.added_by).toBe('devops');
+    expect(evidenceRow.added_by).toBe('builder');
 
     expect(ledgerEvents.length).toBeGreaterThanOrEqual(1);
     expect(ledgerEvents[0]).toEqual(
@@ -165,7 +165,7 @@ describe('experiment runtime evidence chain (phase6b)', () => {
     const claims = new TeamMemoryClaims(bootstrapStore.db);
     const created = claims.createClaim({
       statement: 'Contested claim for failing experiment',
-      owner: 'analyst',
+      owner: 'oracle',
       status: 'contested',
       session: 's_phase6b',
       scopes: ['ui/modules/injection.js'],
@@ -186,7 +186,7 @@ describe('experiment runtime evidence chain (phase6b)', () => {
     const createdRun = runtime.createExperiment({
       profileId: 'jest-suite',
       claimId,
-      requestedBy: 'analyst',
+      requestedBy: 'oracle',
       session: 's_phase6b',
       idempotencyKey: 'exp-fail-1',
       input: {},

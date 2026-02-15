@@ -1,4 +1,4 @@
-# DEVOPS.md (Archived)
+# ORACLE.md (Archived)
 
 This file is archived and no longer authoritative.
 

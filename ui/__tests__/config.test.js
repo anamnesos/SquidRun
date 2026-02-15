@@ -63,8 +63,8 @@ describe('config.js', () => {
 
     test('should have correct role names', () => {
       expect(PANE_ROLES['1']).toBe('Architect');
-      expect(PANE_ROLES['2']).toBe('DevOps');
-      expect(PANE_ROLES['5']).toBe('Analyst');
+      expect(PANE_ROLES['2']).toBe('Builder');
+      expect(PANE_ROLES['5']).toBe('Oracle');
     });
   });
 
@@ -83,7 +83,7 @@ describe('config.js', () => {
       expect(TRIGGER_TARGETS['architect.txt']).toEqual(['1']);
     });
 
-    test('workers.txt should target DevOps', () => {
+    test('workers.txt should target Builder', () => {
       expect(TRIGGER_TARGETS['workers.txt']).toEqual(['2']);
     });
 

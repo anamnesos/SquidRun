@@ -121,11 +121,11 @@ describe('websocket-runtime outbound queue', () => {
       const port = runtime.getPort();
       expect(port).toBeTruthy();
 
-      const immediate = runtime.sendToTarget('devops', 'queued-once', { from: 'architect' });
+      const immediate = runtime.sendToTarget('builder', 'queued-once', { from: 'architect' });
       expect(immediate).toBe(false);
       expect(readQueue(queuePath)).toHaveLength(1);
 
-      const connected = await connectAndRegister(port, 'devops', '2');
+      const connected = await connectAndRegister(port, 'builder', '2');
       receiver = connected.ws;
       const preRegisteredDelivery = connected.inbox.find(
         (msg) => msg.type === 'message' && msg.content === 'queued-once'
@@ -150,7 +150,7 @@ describe('websocket-runtime outbound queue', () => {
     let receiver = null;
     try {
       await runtimeA.start({ port: 0, sessionScopeId: 'scope-a', onMessage: jest.fn() });
-      const queued = runtimeA.sendToTarget('devops', 'survives-restart', { from: 'architect' });
+      const queued = runtimeA.sendToTarget('builder', 'survives-restart', { from: 'architect' });
       expect(queued).toBe(false);
       expect(readQueue(queuePath)).toHaveLength(1);
       await runtimeA.stop();
@@ -158,7 +158,7 @@ describe('websocket-runtime outbound queue', () => {
       runtimeB = loadRuntime({ queuePath });
       await runtimeB.start({ port: 0, sessionScopeId: 'scope-a', onMessage: jest.fn() });
       const port = runtimeB.getPort();
-      const connected = await connectAndRegister(port, 'devops', '2');
+      const connected = await connectAndRegister(port, 'builder', '2');
       receiver = connected.ws;
 
       const preRegisteredDelivery = connected.inbox.find(
@@ -188,7 +188,7 @@ describe('websocket-runtime outbound queue', () => {
     let receiver = null;
     try {
       await runtimeA.start({ port: 0, sessionScopeId: 'scope-a', onMessage: jest.fn() });
-      const queued = runtimeA.sendToTarget('devops', 'stale-message', { from: 'architect' });
+      const queued = runtimeA.sendToTarget('builder', 'stale-message', { from: 'architect' });
       expect(queued).toBe(false);
       expect(readQueue(queuePath)).toHaveLength(1);
       await runtimeA.stop();
@@ -196,7 +196,7 @@ describe('websocket-runtime outbound queue', () => {
       runtimeB = loadRuntime({ queuePath });
       await runtimeB.start({ port: 0, sessionScopeId: 'scope-b', onMessage: jest.fn() });
       const port = runtimeB.getPort();
-      const connected = await connectAndRegister(port, 'devops', '2');
+      const connected = await connectAndRegister(port, 'builder', '2');
       receiver = connected.ws;
 
       const staleDelivery = connected.inbox.find(
@@ -220,9 +220,9 @@ describe('websocket-runtime outbound queue', () => {
     const runtime = loadRuntime({ queuePath, maxEntries: 2 });
     await runtime.start({ port: 0, sessionScopeId: 'scope-a', onMessage: jest.fn() });
 
-    runtime.sendToTarget('devops', 'first', { from: 'architect' });
-    runtime.sendToTarget('devops', 'second', { from: 'architect' });
-    runtime.sendToTarget('devops', 'third', { from: 'architect' });
+    runtime.sendToTarget('builder', 'first', { from: 'architect' });
+    runtime.sendToTarget('builder', 'second', { from: 'architect' });
+    runtime.sendToTarget('builder', 'third', { from: 'architect' });
 
     const queue = readQueue(queuePath);
     expect(queue).toHaveLength(2);

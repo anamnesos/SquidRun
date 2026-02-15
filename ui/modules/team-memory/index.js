@@ -12,7 +12,7 @@ const DEFAULT_ERRORS_PATH = path.join(WORKSPACE_PATH, 'build', 'errors.md');
 const DEFAULT_INTEGRITY_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_BELIEF_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_PATTERN_MINING_INTERVAL_MS = 60 * 1000;
-const DEFAULT_BELIEF_AGENTS = Object.freeze(['architect', 'devops', 'analyst']);
+const DEFAULT_BELIEF_AGENTS = Object.freeze(['architect', 'builder', 'oracle']);
 const DEFAULT_EVIDENCE_LEDGER_DB_PATH = path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
 
 let integritySweepTimer = null;
@@ -40,9 +40,9 @@ function asFiniteNumber(value, fallback = null) {
 
 function normalizePatternHookRole(entry = {}) {
   const role = asString(entry.actor || entry.owner || entry.by || entry.role || '', '').toLowerCase();
-  if (role === 'infra' || role === 'backend') return 'devops';
+  if (role === 'infra' || role === 'backend' || role === 'devops') return 'builder';
   if (role === 'arch') return 'architect';
-  if (role === 'ana') return 'analyst';
+  if (role === 'ana' || role === 'analyst') return 'oracle';
   return role || 'system';
 }
 
@@ -52,8 +52,8 @@ function normalizePatternHookPane(entry = {}) {
 
   const role = normalizePatternHookRole(entry);
   if (role === 'architect') return '1';
-  if (role === 'devops') return '2';
-  if (role === 'analyst') return '5';
+  if (role === 'builder') return '2';
+  if (role === 'oracle') return '5';
   return 'system';
 }
 

@@ -231,9 +231,11 @@ function extractTriggerMessageId(message) {
 // Role to Pane mapping (duplicate for local use)
 const ROLE_TO_PANE = {
   'architect': '1', 'arch': '1',
-  'devops': '2', 'infra': '2', 'infrastructure': '2', 'backend': '2', 'back': '2',
-  'analyst': '5', 'ana': '5',
+  'builder': '2', 'infra': '2', 'infrastructure': '2', 'backend': '2', 'back': '2',
+  'oracle': '5',
   'lead': '1', 'orchestrator': '2', 'worker-b': '2', 'investigator': '5',
+  // Legacy aliases
+  'devops': '2', 'analyst': '5', 'ana': '5',
 };
 
 function resolvePaneIdFromRole(role) {
@@ -530,10 +532,11 @@ function resolveRecipientRole(filename) {
   const role = filename.replace('.txt', '').toLowerCase();
   // Use localized versions to avoid ReferenceError if called before module-level destructuring
   const roleMap = {
-    architect: '1', devops: '2', analyst: '5',
+    architect: '1', builder: '2', oracle: '5',
   };
   const legacyAliases = {
-    lead: 'architect', orchestrator: 'devops', infra: 'devops', backend: 'devops', 'worker-b': 'devops', investigator: 'analyst',
+    lead: 'architect', orchestrator: 'builder', infra: 'builder', backend: 'builder', 'worker-b': 'builder', investigator: 'oracle',
+    devops: 'builder', analyst: 'oracle', ana: 'oracle',
   };
   
   if (roleMap[role]) return role;

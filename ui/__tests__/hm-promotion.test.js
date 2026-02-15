@@ -28,12 +28,12 @@ describe('hm-promotion CLI helpers', () => {
   test('buildPayload creates approve payload', () => {
     const options = new Map([
       ['contract', 'overlay-fit-exclusion-shadow'],
-      ['agent', 'devops'],
+      ['agent', 'builder'],
     ]);
 
     expect(hmPromotion.buildPayload('approve', options)).toEqual({
       contractId: 'overlay-fit-exclusion-shadow',
-      agent: 'devops',
+      agent: 'builder',
     });
   });
 

@@ -40,7 +40,7 @@ maybeDescribe('team-memory patterns module', () => {
     claims.createClaim({
       statement: 'Triggers regression in session 401',
       claimType: 'negative',
-      owner: 'analyst',
+      owner: 'oracle',
       session: 's_401',
       status: 'contested',
       scopes: ['ui/modules/triggers.js'],
@@ -50,7 +50,7 @@ maybeDescribe('team-memory patterns module', () => {
     claims.createClaim({
       statement: 'Triggers regression in session 402',
       claimType: 'negative',
-      owner: 'devops',
+      owner: 'builder',
       session: 's_402',
       status: 'contested',
       scopes: ['ui/modules/triggers.js'],
@@ -69,10 +69,10 @@ maybeDescribe('team-memory patterns module', () => {
     });
 
     fs.writeFileSync(spoolPath, [
-      JSON.stringify({ scope: 'ui/modules/triggers.js', agent: 'devops', outcome: 'failure', session: 's_402' }),
-      JSON.stringify({ scope: 'ui/modules/triggers.js', agent: 'analyst', outcome: 'failure', session: 's_402' }),
+      JSON.stringify({ scope: 'ui/modules/triggers.js', agent: 'builder', outcome: 'failure', session: 's_402' }),
+      JSON.stringify({ scope: 'ui/modules/triggers.js', agent: 'oracle', outcome: 'failure', session: 's_402' }),
       JSON.stringify({ scope: 'ui/modules/triggers.js', agent: 'architect', outcome: 'failure', session: 's_403' }),
-      JSON.stringify({ scope: 'ui/modules/injection.js', agent: 'devops', outcome: 'success', session: 's_403' }),
+      JSON.stringify({ scope: 'ui/modules/injection.js', agent: 'builder', outcome: 'success', session: 's_403' }),
       '',
     ].join('\n'), 'utf-8');
 
@@ -90,11 +90,11 @@ maybeDescribe('team-memory patterns module', () => {
 
   test('classifies actor/status task events without outcome fields', () => {
     fs.writeFileSync(spoolPath, [
-      JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'devops', status: 'failed', session: 's_601' }),
-      JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'analyst', status: 'failed', session: 's_602' }),
+      JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'builder', status: 'failed', session: 's_601' }),
+      JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'oracle', status: 'failed', session: 's_602' }),
       JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'architect', status: 'in_progress', session: 's_602' }),
-      JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'devops', status: 'completed', session: 's_603' }),
-      JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'analyst', status: 'completed', session: 's_603' }),
+      JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'builder', status: 'completed', session: 's_603' }),
+      JSON.stringify({ scope: 'ui/modules/ipc/task-pool-handlers.js', actor: 'oracle', status: 'completed', session: 's_603' }),
       '',
     ].join('\n'), 'utf-8');
 
@@ -124,7 +124,7 @@ maybeDescribe('team-memory patterns module', () => {
 
     const append = await teamMemory.appendPatternHookEvent({
       scope: 'ui/modules/triggers.js',
-      agent: 'devops',
+      agent: 'builder',
       outcome: 'failure',
       session: 's_501',
     }, { spoolPath, evidenceLedgerDbPath: ledgerDbPath });
@@ -132,7 +132,7 @@ maybeDescribe('team-memory patterns module', () => {
     expect(append.ledger).toEqual(expect.objectContaining({ ok: true }));
     const appendSecond = await teamMemory.appendPatternHookEvent({
       scope: 'ui/modules/triggers.js',
-      agent: 'analyst',
+      agent: 'oracle',
       outcome: 'failure',
       session: 's_502',
     }, { spoolPath, evidenceLedgerDbPath: ledgerDbPath });

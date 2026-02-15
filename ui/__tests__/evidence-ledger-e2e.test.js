@@ -53,7 +53,7 @@ maybeDescribe('evidence-ledger e2e lifecycle', () => {
       mode: 'PTY',
       startedAtMs: 1700000000000,
       stats: { test_suites: 117, tests_passed: 3347 },
-      team: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
     });
     expect(sessionOneStart.ok).toBe(true);
 
@@ -74,13 +74,13 @@ maybeDescribe('evidence-ledger e2e lifecycle', () => {
         category: 'completion',
         title: 'Evidence Ledger Slice 3 Phase C complete',
         body: 'Snapshots + prune + e2e validated',
-        author: 'devops',
+        author: 'builder',
       },
       {
         category: 'issue',
         title: 'ERR-E2E-001',
         body: 'Example tracked issue for continuity',
-        author: 'analyst',
+        author: 'oracle',
       },
       {
         category: 'roadmap',
@@ -131,7 +131,7 @@ maybeDescribe('evidence-ledger e2e lifecycle', () => {
       endedAtMs: 1700000000300,
       summary: 'Completed Phase C implementation',
       stats: { test_suites: 117, tests_passed: 3347 },
-      team: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
     });
     expect(sessionOneEnd.ok).toBe(true);
 
@@ -141,7 +141,7 @@ maybeDescribe('evidence-ledger e2e lifecycle', () => {
       mode: 'PTY',
       startedAtMs: 1700001000000,
       stats: { test_suites: 117, tests_passed: 3347 },
-      team: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
     });
     expect(sessionTwoStart.ok).toBe(true);
 
@@ -162,7 +162,7 @@ maybeDescribe('evidence-ledger e2e lifecycle', () => {
       category: 'completion',
       title: 'Session 302 startup complete',
       body: 'Startup snapshot assembled for context windows',
-      author: 'devops',
+      author: 'builder',
       sessionId: 'ses-302',
       nowMs: 1700001000020,
     });

@@ -1909,7 +1909,7 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
   // Ensure Architect startup identity can still be injected on reattach
   // when no prior startup marker exists (e.g. reconnect edge cases).
   // Guardrails:
-  // - Pane 1 only (do not re-trigger DevOps/Analyst startup on light reloads)
+  // - Pane 1 only (do not re-trigger Builder/Oracle startup on light reloads)
   // - Skip if terminal has been alive for >60s (injection cycle already completed or failed)
   // - Skip if identity marker is already present in scrollback
   const REATTACH_INJECTION_WINDOW_MS = 60000;

@@ -50,8 +50,8 @@ describe('organic-ui-handlers', () => {
     it('should have correct role mappings', () => {
       expect(organicUI.SHORT_ROLES).toEqual({
         '1': 'arch',
-        '2': 'devops',
-        '5': 'ana',
+        '2': 'builder',
+        '5': 'oracle',
       });
     });
   });
@@ -89,7 +89,7 @@ describe('organic-ui-handlers', () => {
         'agent-state-changed',
         expect.objectContaining({
           agentId: '2',
-          role: 'devops',
+          role: 'builder',
           state: 'thinking',
           previousState: 'offline',
         })
@@ -123,13 +123,13 @@ describe('organic-ui-handlers', () => {
       });
       expect(states['2']).toEqual({
         state: 'thinking',
-        role: 'devops',
-        fullRole: 'DevOps',
+        role: 'builder',
+        fullRole: 'Builder',
       });
       expect(states['5']).toEqual({
         state: 'active',
-        role: 'ana',
-        fullRole: 'Analyst',
+        role: 'oracle',
+        fullRole: 'Oracle',
       });
     });
   });
@@ -152,8 +152,8 @@ describe('organic-ui-handlers', () => {
           'agent-online',
           expect.objectContaining({
             agentId: '2',
-            role: 'devops',
-            fullRole: 'DevOps',
+            role: 'builder',
+            fullRole: 'Builder',
           })
         );
       });
@@ -177,8 +177,8 @@ describe('organic-ui-handlers', () => {
           'agent-offline',
           expect.objectContaining({
             agentId: '5',
-            role: 'ana',
-            fullRole: 'Analyst',
+            role: 'oracle',
+            fullRole: 'Oracle',
           })
         );
       });
@@ -295,7 +295,7 @@ describe('organic-ui-handlers', () => {
             from: '1',
             fromRole: 'arch',
             to: '2',
-            toRole: 'devops',
+            toRole: 'builder',
             phase: 'queued',
           })
         );
@@ -314,9 +314,9 @@ describe('organic-ui-handlers', () => {
           expect.objectContaining({
             messageId: 'msg-2',
             from: '2',
-            fromRole: 'devops',
+            fromRole: 'builder',
             to: '5',
-            toRole: 'ana',
+            toRole: 'oracle',
             phase: 'sending',
           })
         );
@@ -351,7 +351,7 @@ describe('organic-ui-handlers', () => {
             from: '1',
             fromRole: 'arch',
             to: '5',
-            toRole: 'ana',
+            toRole: 'oracle',
             phase: 'delivered',
             duration: expect.any(Number),
           })
@@ -386,9 +386,9 @@ describe('organic-ui-handlers', () => {
           expect.objectContaining({
             messageId: 'msg-6',
             from: '2',
-            fromRole: 'devops',
+            fromRole: 'builder',
             to: '5',
-            toRole: 'ana',
+            toRole: 'oracle',
             phase: 'failed',
             error: 'Timeout exceeded',
           })
@@ -455,7 +455,7 @@ describe('organic-ui-handlers', () => {
         expect(result.success).toBe(true);
         expect(result.agentId).toBe('2');
         expect(result.state).toBe('active');
-        expect(result.role).toBe('devops');
+        expect(result.role).toBe('builder');
       });
     });
 

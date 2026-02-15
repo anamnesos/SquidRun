@@ -37,8 +37,8 @@ function getTriggerDir() {
 
 const TRIGGER_FILES = {
   '1': 'architect.txt',
-  '2': 'devops.txt',
-  '5': 'analyst.txt',
+  '2': 'builder.txt',
+  '5': 'oracle.txt',
 };
 
 function asNonEmptyString(value) {
@@ -505,7 +505,7 @@ function getMCPToolDefinitions() {
       inputSchema: {
         type: 'object',
         properties: {
-          paneId: { type: 'string', description: 'Agent pane ID (1=Architect, 2=DevOps, 5=Analyst)' },
+          paneId: { type: 'string', description: 'Agent pane ID (1=Architect, 2=Builder, 5=Oracle)' },
         },
         required: ['paneId'],
       },

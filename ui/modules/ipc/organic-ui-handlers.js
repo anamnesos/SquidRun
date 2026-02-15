@@ -25,8 +25,8 @@ const agentStates = new Map([
 // Short role names for UI
 const SHORT_ROLES = {
   '1': 'arch',
-  '2': 'devops',
-  '5': 'ana',
+  '2': 'builder',
+  '5': 'oracle',
 };
 
 // Active message routes for tracking in-flight messages

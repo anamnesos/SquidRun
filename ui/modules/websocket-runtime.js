@@ -23,7 +23,7 @@ const OUTBOUND_QUEUE_FLUSH_INTERVAL_MS = Number.parseInt(process.env.HIVEMIND_CO
 const OUTBOUND_QUEUE_PATH = process.env.HIVEMIND_COMMS_QUEUE_FILE
   || path.join(WORKSPACE_PATH, 'state', 'comms-outbound-queue.json');
 const DEFAULT_QUEUE_SESSION_SCOPE = 'default';
-const CANONICAL_ROLE_IDS = ['architect', 'devops', 'analyst'];
+const CANONICAL_ROLE_IDS = ['architect', 'builder', 'oracle'];
 const CANONICAL_ROLE_TO_PANE = new Map(
   CANONICAL_ROLE_IDS
     .map((role) => [role, String(ROLE_ID_MAP?.[role] || '')])

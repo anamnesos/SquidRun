@@ -67,7 +67,7 @@ maybeDescribe('team-memory runtime experiment action routing', () => {
       runId: 'exp_1',
       claimId: 'clm_1',
       relation: 'supports',
-      addedBy: 'devops',
+      addedBy: 'builder',
     });
     expect(mockExecuteExperimentOperation).toHaveBeenLastCalledWith(
       'attach-to-claim',

@@ -142,7 +142,7 @@ describe('github-service (Phase 1)', () => {
         headRefName: 'feature/github',
         baseRefName: 'main',
         mergeable: 'MERGEABLE',
-        author: { login: 'devops' },
+        author: { login: 'builder' },
       },
     ]));
 
@@ -155,7 +155,7 @@ describe('github-service (Phase 1)', () => {
         url: 'https://github.com/acme/hivemind/pull/42',
         head: 'feature/github',
         base: 'main',
-        author: 'devops',
+        author: 'builder',
       }),
     ]);
     expect(execFile).toHaveBeenCalledWith(
@@ -209,7 +209,7 @@ describe('github-service (Phase 1)', () => {
       headRefName: 'feature/pr-service',
       baseRefName: 'main',
       mergeable: 'MERGEABLE',
-      author: { login: 'devops' },
+      author: { login: 'builder' },
     }));
 
     const pr = await service.createPR({
@@ -320,7 +320,7 @@ describe('github-service (Phase 1)', () => {
       headRefName: 'feature/auto-body',
       baseRefName: 'main',
       mergeable: 'MERGEABLE',
-      author: { login: 'devops' },
+      author: { login: 'builder' },
     }));
 
     await service.createPR({
@@ -353,7 +353,7 @@ describe('github-service (Phase 1)', () => {
       headRefName: 'feature/manual',
       baseRefName: 'main',
       mergeable: 'MERGEABLE',
-      author: { login: 'devops' },
+      author: { login: 'builder' },
     }));
 
     await service.createPR({
@@ -383,7 +383,7 @@ describe('github-service (Phase 1)', () => {
       url: 'https://github.com/acme/hivemind/pull/15',
       headRefName: 'feature/old',
       baseRefName: 'main',
-      author: { login: 'devops' },
+      author: { login: 'builder' },
     }));
 
     const result = await service.updatePR(15, {
@@ -452,7 +452,7 @@ describe('github-service (Phase 1)', () => {
         state: 'OPEN',
         url: 'https://github.com/acme/hivemind/issues/12',
         labels: [{ name: 'bug' }, { name: 'high-priority' }],
-        assignees: [{ login: 'devops' }],
+        assignees: [{ login: 'builder' }],
         author: { login: 'architect' },
       },
     ]));
@@ -469,7 +469,7 @@ describe('github-service (Phase 1)', () => {
         html_url: 'https://github.com/acme/hivemind/issues/12',
         author: 'architect',
         labels: ['bug', 'high-priority'],
-        assignees: ['devops'],
+        assignees: ['builder'],
       },
     ]);
     expect(execFile).toHaveBeenCalledWith(
@@ -489,7 +489,7 @@ describe('github-service (Phase 1)', () => {
       state: 'OPEN',
       url: 'https://github.com/acme/hivemind/issues/33',
       labels: [{ name: 'docs' }],
-      assignees: [{ login: 'analyst' }],
+      assignees: [{ login: 'oracle' }],
       author: { login: 'architect' },
     }));
 
@@ -498,7 +498,7 @@ describe('github-service (Phase 1)', () => {
       number: 33,
       title: 'Improve docs',
       labels: ['docs'],
-      assignees: ['analyst'],
+      assignees: ['oracle'],
       author: 'architect',
     }));
   });
@@ -513,7 +513,7 @@ describe('github-service (Phase 1)', () => {
       state: 'OPEN',
       url: 'https://github.com/acme/hivemind/issues/88',
       labels: [{ name: 'bug' }],
-      assignees: [{ login: 'devops' }],
+      assignees: [{ login: 'builder' }],
       author: { login: 'architect' },
     }));
 
@@ -521,19 +521,19 @@ describe('github-service (Phase 1)', () => {
       title: 'New issue',
       body: 'Need fix',
       labels: ['bug'],
-      assignees: ['devops'],
+      assignees: ['builder'],
     });
 
     expect(issue).toEqual(expect.objectContaining({
       number: 88,
       title: 'New issue',
       labels: ['bug'],
-      assignees: ['devops'],
+      assignees: ['builder'],
     }));
     expect(execFile).toHaveBeenNthCalledWith(
       1,
       'gh',
-      expect.arrayContaining(['issue', 'create', '--title', 'New issue', '--body', 'Need fix', '--label', 'bug', '--assignee', 'devops', '--json', 'number,url']),
+      expect.arrayContaining(['issue', 'create', '--title', 'New issue', '--body', 'Need fix', '--label', 'bug', '--assignee', 'builder', '--json', 'number,url']),
       expect.any(Object),
       expect.any(Function)
     );
@@ -550,7 +550,7 @@ describe('github-service (Phase 1)', () => {
       url: 'https://github.com/acme/hivemind/issues/10',
       labels: [],
       assignees: [],
-      author: { login: 'devops' },
+      author: { login: 'builder' },
     }));
 
     const issue = await service.closeIssue(10);

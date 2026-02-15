@@ -20,15 +20,15 @@ Model and role instruction files now live at the project root:
 | Folder | Former Role | Removed In |
 |--------|-------------|------------|
 | `arch/` | Architect | Session 128 (workspace simplification) |
-| `devops/` | DevOps | Session 128 (workspace simplification) |
-| `ana/` | Analyst | Session 128 (workspace simplification) |
+| `devops/` | Builder (was DevOps) | Session 128 (workspace simplification) |
+| `ana/` | Oracle (was Analyst) | Session 128 (workspace simplification) |
 | `front/` | Frontend | Session 77 (migrated to Agent Teams teammate of Architect) |
-| `back/` | Backend | Session 79 (merged into DevOps) |
+| `back/` | Backend | Session 79 (merged into Builder) |
 | `rev/` | Reviewer | Session 77 (migrated to Agent Teams teammate of Architect) |
 
 ## For New Agents
 
 - Read `ROLES.md` first for your role definition and startup baseline
 - Read the model-specific shim (`CLAUDE.md`, `CODEX.md`, or `GEMINI.md`) for CLI quirks
-- Use your **role name** (Architect, DevOps, Analyst) in messages, not folder name
-- Trigger files and WebSocket targets use role names: `architect`, `devops`, `analyst`
+- Use your **role name** (Architect, Builder, Oracle) in messages, not folder name
+- Trigger files and WebSocket targets use role names: `architect`, `builder`, `oracle`

@@ -37,8 +37,8 @@ describe('Performance Tracking Handlers', () => {
     ctx.WORKSPACE_PATH = '/test/workspace';
     ctx.PANE_ROLES = {
       '1': 'Architect',
-      '2': 'DevOps',
-      '5': 'Analyst',
+      '2': 'Builder',
+      '5': 'Oracle',
     };
 
     // Default: no existing performance file

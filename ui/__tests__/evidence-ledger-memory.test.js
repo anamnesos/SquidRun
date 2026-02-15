@@ -82,7 +82,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       category: 'issue',
       title: 'ERR-008: Submit race',
       body: 'Detected in runtime validation',
-      author: 'analyst',
+      author: 'oracle',
       nowMs: 2000,
     });
     expect(original.ok).toBe(true);
@@ -113,7 +113,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       mode: 'PTY',
       startedAtMs: baseMs,
       stats: { test_suites: 114, tests_passed: 3337 },
-      team: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
     });
     expect(session.ok).toBe(true);
 
@@ -139,7 +139,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       category: 'completion',
       title: 'Slice 2 Phase C committed',
       body: 'IPC + CLI complete',
-      author: 'devops',
+      author: 'builder',
       sessionId: 'ses-114',
       nowMs: baseMs + 30,
     }).ok).toBe(true);
@@ -148,7 +148,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       category: 'issue',
       title: 'ERR-009',
       body: 'Investigating startup race',
-      author: 'analyst',
+      author: 'oracle',
       sessionId: 'ses-114',
       nowMs: baseMs + 40,
     }).ok).toBe(true);
@@ -217,7 +217,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       mode: 'PTY',
       startedAtMs: 5000,
       stats: { test_suites: 116, tests_passed: 3349 },
-      team: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
     }).ok).toBe(true);
 
     expect(memory.recordDecision({
@@ -233,7 +233,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       category: 'completion',
       title: 'Phase B shipped',
       body: 'IPC + CLI landed',
-      author: 'devops',
+      author: 'builder',
       sessionId: 'ses-116',
       nowMs: 5020,
     }).ok).toBe(true);
@@ -255,7 +255,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       mode: 'PTY',
       startedAtMs: 5200,
       stats: { test_suites: 117, tests_passed: 3351 },
-      team: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
+      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
     }).ok).toBe(true);
 
     const startupSnap = memory.snapshotContext('ses-117', {
@@ -303,7 +303,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       category: 'completion',
       title: 'Recent completion with bad timestamp',
       body: 'Should still be represented by latest snapshot context',
-      author: 'devops',
+      author: 'builder',
       sessionId: 'ses-122',
       nowMs: 0,
     }).ok).toBe(true);
@@ -331,7 +331,7 @@ maybeDescribe('evidence-ledger-memory', () => {
     const invalidDecision = memory.recordDecision({
       category: 'not_a_category',
       title: 'Invalid',
-      author: 'devops',
+      author: 'builder',
     });
     expect(invalidDecision.ok).toBe(false);
     expect(invalidDecision.reason).toBe('invalid_category');

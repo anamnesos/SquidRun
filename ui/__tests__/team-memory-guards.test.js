@@ -107,7 +107,7 @@ maybeDescribe('team-memory guards module', () => {
     const patternCreate = patterns.createPattern({
       patternType: 'failure',
       scope: 'ui/modules/triggers.js',
-      agents: ['architect', 'devops'],
+      agents: ['architect', 'builder'],
       frequency: 4,
       confidence: 0.92,
     });
