@@ -547,6 +547,15 @@ describe('Context Compressor Module', () => {
   // ===========================================================
 
   describe('auto-refresh on file watch events', () => {
+    // WATCHED_FILES is empty by default (pipeline.json/review.json removed S128).
+    // Inject a test file so watch-mechanism tests can exercise the callback path.
+    beforeEach(() => {
+      _internals.WATCHED_FILES.push('test-watch.json');
+    });
+    afterEach(() => {
+      _internals.WATCHED_FILES.length = 0;
+    });
+
     it('should register watches for all watched files on init', () => {
       fs.existsSync.mockReturnValue(false);
       const mockWatcher = { addWatch: jest.fn() };
@@ -627,6 +636,15 @@ describe('Context Compressor Module', () => {
       // Should not throw when no watcher
       expect(() => contextCompressor.init({})).not.toThrow();
       expect(_internals.watcherRef).toBeNull();
+    });
+
+    it('should register zero watches when WATCHED_FILES is empty', () => {
+      _internals.WATCHED_FILES.length = 0; // override the beforeEach push
+      fs.existsSync.mockReturnValue(false);
+      const mockWatcher = { addWatch: jest.fn() };
+
+      contextCompressor.init({ watcher: mockWatcher });
+      expect(mockWatcher.addWatch).toHaveBeenCalledTimes(0);
     });
   });
 
@@ -765,10 +783,10 @@ describe('Context Compressor Module', () => {
       fs.existsSync.mockReturnValue(false);
       const mockWatcher = { addWatch: jest.fn() };
 
+      // WATCHED_FILES is empty by default (dead files removed S128)
+      // — verify no watches registered with empty config
       contextCompressor.init({ watcher: mockWatcher });
-
-      // Should register a watch for each file in WATCHED_FILES
-      expect(mockWatcher.addWatch).toHaveBeenCalledTimes(_internals.WATCHED_FILES.length);
+      expect(mockWatcher.addWatch).toHaveBeenCalledTimes(0);
     });
 
     it('should generate initial snapshots', () => {

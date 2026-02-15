@@ -24,7 +24,6 @@ const { estimateTokens, truncateToTokenBudget } = require('./token-utils');
 const SNAPSHOTS_DIR = path.join(WORKSPACE_PATH, 'context-snapshots');
 const DEFAULT_MAX_TOKENS = 1500;
 const REFRESH_INTERVAL_MS = 300000; // 300 seconds
-const IDLE_REFRESH_THRESHOLD_MS = 30000;
 
 // Priority sections for token budget allocation
 const SECTION_PRIORITIES = {
@@ -34,11 +33,10 @@ const SECTION_PRIORITIES = {
   sessionProgress: 70,
 };
 
-// Files to watch for auto-refresh (same set as shared-state.js)
-const WATCHED_FILES = [
-  'pipeline.json',
-  'review.json',
-];
+// Files to watch for auto-refresh
+// NOTE: pipeline.json and review.json were removed in S128 workspace cleanup.
+// Currently empty — refresh is timer-driven only (300s interval).
+const WATCHED_FILES = [];
 
 // Module state
 let sharedStateRef = null;
@@ -512,7 +510,6 @@ module.exports = {
     SNAPSHOTS_DIR,
     DEFAULT_MAX_TOKENS,
     REFRESH_INTERVAL_MS,
-    IDLE_REFRESH_THRESHOLD_MS,
     SECTION_PRIORITIES,
   },
 };
