@@ -45,6 +45,7 @@ const {
   closeSharedRuntime,
 } = require('../ipc/evidence-ledger-handlers');
 const { executeTransitionLedgerOperation } = require('../ipc/transition-ledger-handlers');
+const { executeGitHubOperation } = require('../ipc/github-handlers');
 const { executePaneControlAction } = require('./pane-control-service');
 const { captureScreenshot } = require('../ipc/screenshot-handlers');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
@@ -433,6 +434,14 @@ class HivemindApp {
             return executeTransitionLedgerOperation(
               data.message.action,
               data.message.payload || {}
+            );
+          }
+
+          if (data.message.type === 'github') {
+            return executeGitHubOperation(
+              data.message.action,
+              data.message.payload || {},
+              { ctx: this.ctx }
             );
           }
 
