@@ -1,17 +1,17 @@
 /**
- * Hivemind Status Strip - Task status overview
- * Extracted from renderer.js for modularization
+ * Hivemind Status Strip (legacy module)
+ * Status strip UI was removed; this module now maintains only session timer text.
  */
 
 const { ipcRenderer } = require('electron');
 const log = require('./logger');
-const { registerScopedIpcListener } = require('./renderer-ipc-registry');
-const { escapeHtml } = require('./tabs/utils');
 
 // Session start time for duration tracking
 let sessionStartTime = Date.now();
+let sessionTimerInterval = null;
+let initialized = false;
 
-// Cached task pool data
+// Kept for compatibility with existing exports/callers.
 let cachedTaskPool = { tasks: [] };
 
 // Smart Parallelism Phase 3 - Domain ownership mapping
@@ -47,30 +47,8 @@ function getClaimableTasksForPane(paneId) {
   );
 }
 
-let sessionTimerInterval = null;
-let pollInterval = null;
-let initialized = false;
-
 /**
- * Update session timer display
- */
-function updateSessionTimer() {
-  const timerEl = document.getElementById('sessionTimer');
-  if (!timerEl) return;
-
-  const elapsed = Date.now() - sessionStartTime;
-  const hours = Math.floor(elapsed / 3600000);
-  const minutes = Math.floor((elapsed % 3600000) / 60000);
-
-  if (hours > 0) {
-    timerEl.textContent = `Session: ${hours}h ${minutes}m`;
-  } else {
-    timerEl.textContent = `Session: ${minutes}m`;
-  }
-}
-
-/**
- * Fetch task pool via IPC (uses existing get-task-list handler)
+ * Fetch task pool via IPC (kept for compatibility)
  */
 async function fetchTaskPool() {
   try {
@@ -85,199 +63,45 @@ async function fetchTaskPool() {
 }
 
 /**
- * Count tasks by status
- * @param {Array} tasks - Array of task objects
- * @returns {Object} Counts object with completed, in_progress, waiting, failed
+ * Update session timer display in X:XX format.
  */
-function countTasksByStatus(tasks) {
-  const counts = {
-    completed: 0,
-    in_progress: 0,
-    waiting: 0,
-    failed: 0
-  };
+function updateSessionTimer() {
+  const timerEl = document.getElementById('sessionTimer');
+  if (!timerEl) return;
 
-  tasks.forEach(task => {
-    const status = task.status || 'open';
-
-    if (status === 'completed') {
-      counts.completed++;
-    } else if (status === 'in_progress') {
-      counts.in_progress++;
-    } else if (status === 'failed') {
-      counts.failed++;
-    } else if (status === 'needs_input') {
-      counts.waiting++;
-    } else if (task.blockedBy && task.blockedBy.length > 0) {
-      // Check if blockers are still open
-      const hasUnresolvedBlocker = task.blockedBy.some(blockerId => {
-        const blocker = tasks.find(t => t.id === blockerId);
-        return blocker && blocker.status !== 'completed';
-      });
-      if (hasUnresolvedBlocker) {
-        counts.waiting++;
-      }
-    }
-  });
-
-  return counts;
+  const elapsed = Date.now() - sessionStartTime;
+  const totalMinutes = Math.floor(elapsed / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  timerEl.textContent = `Session: ${hours}:${String(minutes).padStart(2, '0')}`;
 }
 
 /**
- * Get tasks filtered by status for dropdown display
- * @param {Array} tasks - Array of task objects
- * @param {string} statusFilter - Status filter (completed, in_progress, waiting, failed)
- * @returns {Array} Filtered tasks
- */
-function getTasksByStatus(tasks, statusFilter) {
-  return tasks.filter(task => {
-    const status = task.status || 'open';
-
-    if (statusFilter === 'completed') {
-      return status === 'completed';
-    } else if (statusFilter === 'in_progress') {
-      return status === 'in_progress';
-    } else if (statusFilter === 'failed') {
-      return status === 'failed';
-    } else if (statusFilter === 'waiting') {
-      if (status === 'needs_input') return true;
-      if (task.blockedBy && task.blockedBy.length > 0) {
-        const hasUnresolvedBlocker = task.blockedBy.some(blockerId => {
-          const blocker = tasks.find(t => t.id === blockerId);
-          return blocker && blocker.status !== 'completed';
-        });
-        return hasUnresolvedBlocker;
-      }
-      return false;
-    }
-    return false;
-  });
-}
-
-/**
- * Render dropdown list for a status segment
- * @param {Element} listEl - DOM element for the list
- * @param {Array} tasks - Tasks to render
- * @param {string} statusType - Status type for formatting
- */
-function renderDropdownList(listEl, tasks, statusType) {
-  if (!listEl) return;
-
-  if (tasks.length === 0) {
-    listEl.innerHTML = '<div class="status-dropdown-empty">None</div>';
-    return;
-  }
-
-  listEl.innerHTML = tasks.map(task => {
-    let meta = '';
-    if (statusType === 'waiting' && task.status === 'needs_input') {
-      meta = 'Needs human input';
-    } else if (statusType === 'waiting' && task.blockedBy) {
-      meta = `Blocked by: ${task.blockedBy.join(', ')}`;
-    } else if (statusType === 'failed' && task.metadata?.error) {
-      meta = task.metadata.error.message || 'Error';
-    } else if (task.owner) {
-      meta = `Owner: ${task.owner}`;
-    }
-
-    return `
-      <div class="status-dropdown-item">
-        <div class="status-dropdown-item-title">${escapeHtml(task.subject || task.id)}</div>
-        ${meta ? `<div class="status-dropdown-item-meta">${escapeHtml(meta)}</div>` : ''}
-      </div>
-    `;
-  }).join('');
-}
-
-/**
- * Update status strip UI with current task counts
+ * Legacy no-op now that status strip counters are removed.
  */
 function updateStatusStrip() {
-  const tasks = cachedTaskPool.tasks || [];
-  const counts = countTasksByStatus(tasks);
-
-  // Update counts
-  const updateSegment = (id, count, statusType) => {
-    const countEl = document.getElementById(`count${id}`);
-    const segmentEl = document.getElementById(`status${id}`);
-    const listEl = document.getElementById(`list${id}`);
-
-    if (countEl) countEl.textContent = count;
-    if (segmentEl) {
-      segmentEl.classList.toggle('zero', count === 0);
-    }
-
-    // Update dropdown list
-    const filteredTasks = getTasksByStatus(tasks, statusType);
-    renderDropdownList(listEl, filteredTasks, statusType);
-  };
-
-  updateSegment('Done', counts.completed, 'completed');
-  updateSegment('Running', counts.in_progress, 'in_progress');
-  updateSegment('Waiting', counts.waiting, 'waiting');
-  updateSegment('Failed', counts.failed, 'failed');
+  // Intentionally blank: done/running/waiting/failed segments were removed from the DOM.
 }
 
 /**
- * Initialize status strip event handlers
+ * Initialize session timer behavior.
  */
 function initStatusStrip() {
   if (initialized) return;
   initialized = true;
-  const segments = document.querySelectorAll('.status-segment');
 
-  segments.forEach(segment => {
-    // Toggle dropdown on click
-    segment.addEventListener('click', (e) => {
-      // Close other dropdowns
-      segments.forEach(s => {
-        if (s !== segment) s.classList.remove('open');
-      });
-
-      // Toggle this dropdown
-      segment.classList.toggle('open');
-      e.stopPropagation();
-    });
-  });
-
-  // Close dropdowns when clicking outside
-  document.addEventListener('click', () => {
-    segments.forEach(s => s.classList.remove('open'));
-  });
-
-  // Initial fetch and update
-  fetchTaskPool().then(() => updateStatusStrip());
-
-  // Poll every 30 seconds as backup (primary updates come via task-list-updated IPC event)
-  pollInterval = setInterval(async () => {
-    await fetchTaskPool();
-    updateStatusStrip();
-  }, 30000);
-
-  // Listen for immediate task updates from main process
-  registerScopedIpcListener('status-strip', 'task-list-updated', (event, data) => {
-    if (data && Array.isArray(data.tasks)) {
-      cachedTaskPool = { tasks: data.tasks };
-      updateStatusStrip();
-    }
-  });
-
-  // Update session timer every minute
+  sessionStartTime = Date.now();
   updateSessionTimer();
   sessionTimerInterval = setInterval(updateSessionTimer, 60000);
 
-  log.info('StatusStrip', 'Initialized');
+  log.info('StatusStrip', 'Initialized (timer-only mode)');
 }
 
 /**
- * Shutdown status strip and clear intervals
+ * Shutdown and clear timer interval.
  */
 function shutdownStatusStrip() {
   initialized = false;
-  if (pollInterval) {
-    clearInterval(pollInterval);
-    pollInterval = null;
-  }
   if (sessionTimerInterval) {
     clearInterval(sessionTimerInterval);
     sessionTimerInterval = null;
