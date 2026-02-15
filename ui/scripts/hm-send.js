@@ -17,10 +17,33 @@ const {
 const parsedPort = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
 const PORT = Number.isFinite(parsedPort) ? parsedPort : 9900;
 const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
-const DEFAULT_ACK_TIMEOUT_MS = 1200;
 const DEFAULT_HEALTH_TIMEOUT_MS = 500;
 const TARGET_HEARTBEAT_STALE_MS = 60000;
-const DELIVERY_CHECK_RETRY_DELAY_MS = 200;
+const DEFAULT_TRIGGER_VERIFY_TIMEOUT_MS = Number.parseInt(
+  process.env.HIVEMIND_DELIVERY_VERIFY_TIMEOUT_MS || '5000',
+  10
+);
+const DEFAULT_ACK_TIMEOUT_BUFFER_MS = Number.parseInt(
+  process.env.HM_SEND_ACK_TIMEOUT_BUFFER_MS || '1500',
+  10
+);
+const DEFAULT_ACK_TIMEOUT_MS = Math.max(
+  1200,
+  (Number.isFinite(DEFAULT_TRIGGER_VERIFY_TIMEOUT_MS) ? DEFAULT_TRIGGER_VERIFY_TIMEOUT_MS : 5000)
+    + (Number.isFinite(DEFAULT_ACK_TIMEOUT_BUFFER_MS) ? DEFAULT_ACK_TIMEOUT_BUFFER_MS : 1500)
+);
+const DEFAULT_DELIVERY_CHECK_TIMEOUT_MS = Number.parseInt(
+  process.env.HM_SEND_DELIVERY_CHECK_TIMEOUT_MS || '1200',
+  10
+);
+const DEFAULT_DELIVERY_CHECK_MAX_CHECKS = Number.parseInt(
+  process.env.HM_SEND_DELIVERY_CHECK_MAX_CHECKS || '6',
+  10
+);
+const DELIVERY_CHECK_RETRY_DELAY_MS = Number.parseInt(
+  process.env.HM_SEND_DELIVERY_CHECK_RETRY_MS || '250',
+  10
+);
 const DEFAULT_RETRIES = 3;
 const MAX_RETRIES = 5;
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
@@ -32,7 +55,7 @@ if (args.length < 2) {
   console.log('  message: text to send');
   console.log('  --role: your role (for identification)');
   console.log('  --priority: normal or urgent');
-  console.log('  --timeout: ack timeout in ms (default: 1200)');
+  console.log(`  --timeout: ack timeout in ms (default: ${DEFAULT_ACK_TIMEOUT_MS})`);
   console.log('  --retries: retry count after first send (default: 3)');
   console.log('  --no-fallback: disable trigger file fallback');
   process.exit(1);
@@ -66,7 +89,7 @@ for (; i < args.length; i++) {
   }
   if (args[i] === '--timeout' && args[i+1]) {
     const parsed = Number.parseInt(args[i + 1], 10);
-    if (Number.isFinite(parsed) && parsed >= 100) {
+    if (Number.isFinite(parsed) && parsed >= 10) {
       ackTimeoutMs = parsed;
     }
     i++;
@@ -285,6 +308,33 @@ function getBackoffDelayMs(baseTimeoutMs, attempt) {
   return baseTimeoutMs * Math.pow(2, attempt - 1);
 }
 
+function normalizePositiveInt(value, fallback, min = 1) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed < min) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function getDeliveryCheckOptions(ackTimeoutValue) {
+  const ackTimeout = Number.isFinite(ackTimeoutValue) ? ackTimeoutValue : DEFAULT_ACK_TIMEOUT_MS;
+  const perCheckTimeoutMs = Math.max(
+    200,
+    Math.min(
+      normalizePositiveInt(DEFAULT_DELIVERY_CHECK_TIMEOUT_MS, 1200),
+      Math.max(DEFAULT_HEALTH_TIMEOUT_MS, ackTimeout)
+    )
+  );
+  const maxChecks = ackTimeout < 1000
+    ? 2
+    : normalizePositiveInt(DEFAULT_DELIVERY_CHECK_MAX_CHECKS, 6);
+  return {
+    perCheckTimeoutMs,
+    maxChecks,
+    retryDelayMs: normalizePositiveInt(DELIVERY_CHECK_RETRY_DELAY_MS, 250, 0),
+  };
+}
+
 async function queryTargetHealthBestEffort(ws) {
   const requestId = `health-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -308,8 +358,11 @@ async function queryTargetHealthBestEffort(ws) {
   }
 }
 
-async function queryDeliveryCheckBestEffort(ws, messageId, maxChecks = 2) {
+async function queryDeliveryCheckBestEffort(ws, messageId, options = {}) {
   if (!messageId) return null;
+  const maxChecks = normalizePositiveInt(options.maxChecks, 2);
+  const perCheckTimeoutMs = normalizePositiveInt(options.perCheckTimeoutMs, DEFAULT_HEALTH_TIMEOUT_MS);
+  const retryDelayMs = normalizePositiveInt(options.retryDelayMs, DELIVERY_CHECK_RETRY_DELAY_MS, 0);
 
   for (let check = 1; check <= maxChecks; check++) {
     const requestId = `delivery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -323,12 +376,12 @@ async function queryDeliveryCheckBestEffort(ws, messageId, maxChecks = 2) {
       const result = await waitForMatch(
         ws,
         (msg) => msg.type === 'delivery-check-result' && msg.requestId === requestId,
-        DEFAULT_HEALTH_TIMEOUT_MS,
+        perCheckTimeoutMs,
         'Delivery check timeout'
       );
 
       if (result?.status === 'pending' && check < maxChecks) {
-        await sleep(DELIVERY_CHECK_RETRY_DELAY_MS);
+        await sleep(retryDelayMs);
         continue;
       }
 
@@ -470,7 +523,11 @@ async function sendViaWebSocketWithAck() {
     }
   }
 
-  const deliveryCheck = await queryDeliveryCheckBestEffort(ws, messageId);
+  const deliveryCheck = await queryDeliveryCheckBestEffort(
+    ws,
+    messageId,
+    getDeliveryCheckOptions(ackTimeoutMs)
+  );
   if (deliveryCheck?.known && (deliveryCheck?.ack?.ok || deliveryCheck?.ack?.accepted === true)) {
     await closeSocket(ws);
     return {
@@ -509,7 +566,8 @@ async function main() {
     if (sendResult.delivered === false) {
       console.log(
         `Accepted by ${target} but unverified: ${previewMessage(message)} `
-        + `(ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed})`
+        + `(ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed}). `
+        + 'Delivery may already have happened; avoid immediate resend.'
       );
     } else {
       console.log(`Delivered to ${target}: ${previewMessage(message)} (ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed})`);
