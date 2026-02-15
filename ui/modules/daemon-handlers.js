@@ -767,7 +767,16 @@ function processThrottleQueue(paneId) {
   terminal.sendToPane(paneId, routedMessage, {
     traceContext: traceContext || undefined,
     onComplete: (result) => {
-      const submitUnverified = result?.success === false && result?.reason === 'submit_not_accepted';
+      const status = typeof result?.status === 'string' ? result.status : '';
+      const reason = typeof result?.reason === 'string' ? result.reason : '';
+      const statusLower = status.toLowerCase();
+      const reasonLower = reason.toLowerCase();
+      const submitUnverified = (
+        reasonLower === 'submit_not_accepted'
+        || statusLower === 'submit_not_accepted'
+        || statusLower.includes('unverified')
+        || (result?.verified === false && result?.success !== false)
+      );
       const accepted = submitUnverified || !result || result.success !== false;
       if (!accepted) {
         log.warn('Daemon', `Trigger delivery failed for pane ${paneId}: ${result.reason || 'unknown'}`);
@@ -791,14 +800,14 @@ function processThrottleQueue(paneId) {
         }
         uiView.showDeliveryIndicator(paneId, 'delivered');
         if (deliveryId) {
-          if (submitUnverified) {
+          if (!verified) {
             ipcRenderer.send('trigger-delivery-outcome', {
               deliveryId,
               paneId,
               accepted: true,
               verified: false,
               status: 'accepted.unverified',
-              reason: result?.reason || 'submit_not_accepted',
+              reason: result?.reason || (result?.status || 'delivery_unverified'),
             });
           } else {
             ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });

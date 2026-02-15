@@ -523,7 +523,7 @@ function createInjectionController(options = {}) {
         clearLineBeforeWrite: true,
         useChunkedWrite: false,
         homeResetBeforeWrite: false,
-        verifySubmitAccepted: false,
+        verifySubmitAccepted: true,
         deferSubmitWhilePaneActive: false,
         typingGuardWhenBypassing: false,
         sanitizeTransform: 'none',

@@ -849,7 +849,11 @@ describe('Terminal Injection', () => {
       expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
       expect(mockPty.codexExec).not.toHaveBeenCalled();
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
-      expect(onComplete).toHaveBeenCalledWith({ success: true });
+      expect(onComplete).toHaveBeenCalledWith({
+        success: true,
+        verified: true,
+        signal: 'prompt_probe_unavailable',
+      });
     });
 
     test('handles Codex PTY write failure', async () => {
