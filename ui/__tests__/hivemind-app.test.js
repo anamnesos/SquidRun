@@ -144,6 +144,15 @@ jest.mock('../modules/telegram-poller', () => ({
   isRunning: jest.fn(() => false),
 }));
 
+// Mock Telegram sender
+jest.mock('../scripts/hm-telegram', () => ({
+  sendTelegram: jest.fn(async () => ({
+    ok: true,
+    chatId: 123456789,
+    messageId: 42,
+  })),
+}));
+
 // Mock organic-ui-handlers
 jest.mock('../modules/ipc/organic-ui-handlers', () => ({
   registerHandlers: jest.fn(),
@@ -720,6 +729,83 @@ describe('HivemindApp', () => {
         ['1'],
         '[Telegram from james]: build passed',
         null
+      );
+      expect(app.telegramInboundContext).toEqual(
+        expect.objectContaining({
+          sender: 'james',
+        })
+      );
+      expect(app.telegramInboundContext.lastInboundAtMs).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Telegram auto-reply routing', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new HivemindApp(mockAppContext, mockManagers);
+    });
+
+    it('routes user target to Telegram when inbound context is recent', async () => {
+      const { sendTelegram } = require('../scripts/hm-telegram');
+      app.markTelegramInboundContext('james');
+
+      const result = await app.routeTelegramReply({
+        target: 'user',
+        content: 'Build passed.',
+      });
+
+      expect(sendTelegram).toHaveBeenCalledWith('Build passed.', process.env);
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: true,
+          status: 'telegram_delivered',
+        })
+      );
+    });
+
+    it('does not route user target when inbound context is stale', async () => {
+      const { sendTelegram } = require('../scripts/hm-telegram');
+      app.telegramInboundContext = {
+        sender: 'james',
+        lastInboundAtMs: Date.now() - (6 * 60 * 1000),
+      };
+
+      const result = await app.routeTelegramReply({
+        target: 'user',
+        content: 'Build passed.',
+      });
+
+      expect(sendTelegram).not.toHaveBeenCalled();
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: false,
+          status: 'telegram_context_stale',
+        })
+      );
+    });
+
+    it('routes explicit telegram target even without recent inbound context', async () => {
+      const { sendTelegram } = require('../scripts/hm-telegram');
+      app.telegramInboundContext = {
+        sender: null,
+        lastInboundAtMs: 0,
+      };
+
+      const result = await app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Direct ping.',
+      });
+
+      expect(sendTelegram).toHaveBeenCalledWith('Direct ping.', process.env);
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: true,
+          status: 'telegram_delivered',
+        })
       );
     });
   });

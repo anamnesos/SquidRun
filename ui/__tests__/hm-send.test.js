@@ -417,6 +417,124 @@ describe('hm-send retry behavior', () => {
     expect(result.stderr.toLowerCase()).toContain('invalid_target');
   });
 
+  test('allows user target even when health-check reports invalid_target', async () => {
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: false,
+            status: 'invalid_target',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            status: 'telegram_delivered',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    const result = await runHmSend(
+      ['user', '(TEST #2d): user special target', '--timeout', '80', '--retries', '1', '--no-fallback'],
+      { HM_SEND_PORT: String(port) }
+    );
+
+    await new Promise((resolve) => server.close(resolve));
+
+    expect(result.code).toBe(0);
+    expect(sendAttempts).toHaveLength(1);
+    expect(sendAttempts[0].target).toBe('user');
+    expect(result.stdout).toContain('ack: telegram_delivered');
+  });
+
+  test('allows telegram target even when health-check reports invalid_target', async () => {
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: false,
+            status: 'invalid_target',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            status: 'telegram_delivered',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    const result = await runHmSend(
+      ['telegram', '(TEST #2e): telegram special target', '--timeout', '80', '--retries', '1', '--no-fallback'],
+      { HM_SEND_PORT: String(port) }
+    );
+
+    await new Promise((resolve) => server.close(resolve));
+
+    expect(result.code).toBe(0);
+    expect(sendAttempts).toHaveLength(1);
+    expect(sendAttempts[0].target).toBe('telegram');
+    expect(result.stdout).toContain('ack: telegram_delivered');
+  });
+
   test('continues with websocket send when health-check is unsupported', async () => {
     const sendAttempts = [];
     let server;
