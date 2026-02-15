@@ -36,6 +36,11 @@ It is a working proof that one person can run a real AI engineering team with pr
 - **Team Memory Runtime (fully shipped)** - Claim Graph -> Search -> Consensus -> Pattern Engine -> Control Plane
 - **Experiment Engine (Phase 6 shipped)** - isolated PTY execution that attaches tamper-evident results back to claims
 
+### Notification Channels
+- **Telegram bot (two-way)** - inbound polling + auto-reply routing via `hm-send user/telegram`
+- **SMS poller** - inbound SMS relay to Architect pane
+- **Image generation** - Recraft V3 (primary) + OpenAI gpt-image-1 (fallback), accessible via CLI and Oracle tab
+
 ### Developer Experience
 - **Quality gates** - ESLint, Jest, pre-commit gates, review gate
 - **Current test count** - see latest CI/Jest output (changes frequently)
@@ -51,13 +56,25 @@ It is a working proof that one person can run a real AI engineering team with pr
 
 Model/CLI assignment is runtime-configurable via `ui/settings.json` (`paneCommands`).
 
-## How Triggers Work
+## How Messaging Works
 
 Agents communicate through WebSocket messaging (primary) with trigger-file fallback.
 
 **WebSocket (preferred):**
 ```bash
+# Send to an agent
 node ui/scripts/hm-send.js <target> "(ROLE #N): message"
+
+# Send to user via Telegram (explicit)
+node ui/scripts/hm-send.js telegram "message"
+
+# Send to user (auto-routes to Telegram if recent inbound, 5min window)
+node ui/scripts/hm-send.js user "message"
+```
+
+**Telegram (standalone):**
+```bash
+node ui/scripts/hm-telegram.js "message"
 ```
 
 **Trigger files (fallback):**
@@ -78,6 +95,7 @@ node ui/scripts/hm-send.js <target> "(ROLE #N): message"
 - **node-pty 1.1.0**
 - **SQLite (WAL mode)** for evidence + team memory runtimes
 - **WebSocket (`ws`)** for low-latency agent messaging
+- **Telegram Bot API** for two-way mobile notifications
 - **Claude Code CLI / Codex CLI / Gemini CLI**
 
 ## Getting Started
@@ -92,6 +110,9 @@ npm start
 # Run tests
 npm test
 ```
+
+Telegram integration requires `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`.
+Image generation requires `RECRAFT_API_TOKEN` and/or `OPENAI_API_KEY` in `.env`.
 
 ## Project Structure
 
@@ -113,6 +134,8 @@ hivemind/
 │   │   ├── event-bus.js
 │   │   ├── websocket-server.js
 │   │   ├── daemon-handlers.js
+│   │   ├── telegram-poller.js
+│   │   ├── sms-poller.js
 │   │   ├── team-memory/
 │   │   │   ├── store.js
 │   │   │   ├── claims.js
@@ -122,6 +145,10 @@ hivemind/
 │   │   ├── experiment/
 │   │   │   ├── runtime.js
 │   │   │   ├── profiles.js
+│   │   │   ├── worker.js
+│   │   │   └── worker-client.js
+│   │   ├── evidence-ledger/
+│   │   │   ├── store.js
 │   │   │   ├── worker.js
 │   │   │   └── worker-client.js
 │   │   ├── main/
@@ -134,8 +161,13 @@ hivemind/
 │   │       └── team-memory-handlers.js
 │   ├── scripts/
 │   │   ├── hm-send.js
+│   │   ├── hm-telegram.js
 │   │   ├── hm-claim.js
-│   │   └── hm-experiment.js
+│   │   ├── hm-memory.js
+│   │   ├── hm-investigate.js
+│   │   ├── hm-experiment.js
+│   │   ├── hm-promotion.js
+│   │   └── hm-image-gen.js
 │   └── __tests__/
 ├── .hivemind/
 │   ├── app-status.json
