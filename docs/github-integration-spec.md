@@ -1,8 +1,8 @@
 # GitHub Integration Spec v0.1
 
-## Status: DRAFT
+## Status: SHIPPED (S139)
 ## Owner: Architect
-## Priority: Active
+## Priority: Complete
 
 ---
 

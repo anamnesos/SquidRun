@@ -2,27 +2,33 @@
 
 ## Current Architecture (3-Pane, Session 79+)
 
-| Folder | Role | Pane | Status |
-|--------|------|------|--------|
-| `arch/` | **Architect** | 1 | Active |
-| `devops/` | **DevOps** | 2 | Active |
-| `ana/` | **Analyst** | 5 | Active |
+Instance directories (`arch/`, `devops/`, `ana/`) were removed in S128 (workspace simplification).
+Model and role instruction files now live at the project root:
+
+| File | Purpose |
+|------|---------|
+| `ROLES.md` | Canonical role definitions and startup baseline |
+| `CLAUDE.md` | Claude-specific shim |
+| `CODEX.md` | Codex-specific shim |
+| `GEMINI.md` | Gemini-specific shim |
+| `AGENTS.md` | Shared agent instructions (identity, comms, startup) |
 
 **NOTE:** Models are runtime config. Check `ui/settings.json` → `paneCommands` for current CLI assignments. Any pane can run any CLI.
 
-**Note:** The folder was renamed from `infra/` to `devops/` to match the role name.
-
-## Legacy Folders (kept for history, not active)
+## Legacy Folders (removed, kept for history)
 
 | Folder | Former Role | Removed In |
 |--------|-------------|------------|
+| `arch/` | Architect | Session 128 (workspace simplification) |
+| `devops/` | DevOps | Session 128 (workspace simplification) |
+| `ana/` | Analyst | Session 128 (workspace simplification) |
 | `front/` | Frontend | Session 77 (migrated to Agent Teams teammate of Architect) |
 | `back/` | Backend | Session 79 (merged into DevOps) |
 | `rev/` | Reviewer | Session 77 (migrated to Agent Teams teammate of Architect) |
 
 ## For New Agents
 
-- Your folder contains a `CLAUDE.md` (or `AGENTS.md` / `GEMINI.md`) with role-specific instructions
-- Follow those instructions — they define your identity and responsibilities
+- Read `ROLES.md` first for your role definition and startup baseline
+- Read the model-specific shim (`CLAUDE.md`, `CODEX.md`, or `GEMINI.md`) for CLI quirks
 - Use your **role name** (Architect, DevOps, Analyst) in messages, not folder name
 - Trigger files and WebSocket targets use role names: `architect`, `devops`, `analyst`

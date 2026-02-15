@@ -45,7 +45,6 @@ node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(ROLE #N): message"
 
 1. **Only touch files assigned to your role**
 2. **Read before editing** - Understand code first
-3. **Update status.md when done**
-4. **Report blockers immediately**
-5. **Message via triggers, not terminal output** (for agent-to-agent)
-6. **Check logs yourself** - Never ask user to check DevTools
+3. **Report blockers immediately**
+4. **Message via hm-send.js, not terminal output** (for agent-to-agent)
+5. **Check logs yourself** - Never ask user to check DevTools

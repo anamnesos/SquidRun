@@ -103,7 +103,7 @@ Payload:
   file?: string,
   sender?: string,
   seq?: number,
-  mode: 'sdk' | 'pty'
+  mode: 'pty'
 }
 ```
 
