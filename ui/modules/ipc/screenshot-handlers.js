@@ -17,17 +17,18 @@ async function resolvePaneCaptureRect(mainWindow, paneId) {
   const safePaneId = String(paneId || '').trim();
   if (!safePaneId) return null;
 
+  // capturePage() expects DIP (device-independent pixel) coordinates — same units
+  // as getBoundingClientRect(). Do NOT multiply by devicePixelRatio.
   const script = `(() => {
     const pane = document.querySelector('.pane[data-pane-id="${safePaneId.replace(/"/g, '\\"')}"]');
     if (!pane) return null;
     const rect = pane.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    const width = Math.max(0, Math.round(rect.width * dpr));
-    const height = Math.max(0, Math.round(rect.height * dpr));
+    const width = Math.max(0, Math.round(rect.width));
+    const height = Math.max(0, Math.round(rect.height));
     if (!width || !height) return null;
     return {
-      x: Math.max(0, Math.round(rect.left * dpr)),
-      y: Math.max(0, Math.round(rect.top * dpr)),
+      x: Math.max(0, Math.round(rect.left)),
+      y: Math.max(0, Math.round(rect.top)),
       width,
       height,
     };
