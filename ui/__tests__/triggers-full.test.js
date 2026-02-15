@@ -235,6 +235,47 @@ describe('triggers.js module', () => {
         message: expect.stringContaining('[MSG from architect]: Direct msg'),
       }));
     });
+
+    test('sendDirectMessage awaitDelivery returns explicit failure when delivery outcome reports submit_not_accepted', async () => {
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['5', 'idle']]), null);
+
+      const pendingResult = triggers.sendDirectMessage(
+        ['2'],
+        'Direct msg',
+        'architect',
+        { awaitDelivery: true, deliveryTimeoutMs: 5000 }
+      );
+
+      // Flush staggered send (single-target 0ms timeout).
+      jest.advanceTimersByTime(0);
+
+      const injectCall = global.window.webContents.send.mock.calls.find(
+        ([channel, payload]) => channel === 'inject-message' && payload?.deliveryId
+      );
+      expect(injectCall).toBeDefined();
+      const deliveryId = injectCall[1].deliveryId;
+
+      triggers.handleDeliveryOutcome(deliveryId, '2', {
+        accepted: false,
+        verified: false,
+        status: 'submit_not_accepted',
+        reason: 'submit_not_accepted',
+      });
+
+      const result = await pendingResult;
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'submit_not_accepted',
+        mode: 'pty',
+      }));
+      expect(result.details).toEqual(expect.objectContaining({
+        failedPanes: ['2'],
+        failureReason: 'submit_not_accepted',
+      }));
+    });
   });
 
   describe('3. Workflow Gate (checkWorkflowGate)', () => {
@@ -333,4 +374,3 @@ describe('triggers.js module', () => {
 
   // War Room tests removed — war-room.js module deleted in S129
 });
-
