@@ -88,7 +88,7 @@ function buildBackfillRecord(event, nowMs) {
     session,
     scope,
     evidenceRef: eventId,
-    createdAt: Number.isFinite(Number(event?.ts)) ? Number(event.ts) : nowMs,
+    createdAt: (event?.ts !== null && event?.ts !== undefined && Number.isFinite(Number(event?.ts))) ? Number(event.ts) : nowMs,
     updatedAt: nowMs,
   };
 }
@@ -100,7 +100,9 @@ function runBackfill(options = {}) {
   }
 
   const limit = Math.max(1, Math.min(50000, Number(options.limit) || DEFAULT_BACKFILL_LIMIT));
-  const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+  const nowMs = (options.nowMs !== null && options.nowMs !== undefined && Number.isFinite(Number(options.nowMs)))
+    ? Number(options.nowMs)
+    : Date.now();
   const evidenceLedgerDbPath = options.evidenceLedgerDbPath || DEFAULT_EVIDENCE_LEDGER_DB_PATH;
 
   const ledgerStore = new EvidenceLedgerStore({

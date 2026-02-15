@@ -105,11 +105,13 @@ maybeDescribe('evidence-ledger-memory', () => {
   });
 
   test('session lifecycle + context assembly matches handoff-like shape', () => {
+    // Use a real date (Feb 14 2026 noon local) so local-date conversion is testable
+    const baseMs = new Date(2026, 1, 14, 12, 0, 0).getTime(); // month is 0-indexed
     const session = memory.recordSessionStart({
       sessionNumber: 114,
       sessionId: 'ses-114',
       mode: 'PTY',
-      startedAtMs: 3000,
+      startedAtMs: baseMs,
       stats: { test_suites: 114, tests_passed: 3337 },
       team: { '1': 'Architect', '2': 'DevOps', '5': 'Analyst' },
     });
@@ -121,7 +123,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       body: 'Kernel bridge is primary transport',
       author: 'architect',
       sessionId: 'ses-114',
-      nowMs: 3010,
+      nowMs: baseMs + 10,
     }).ok).toBe(true);
 
     expect(memory.recordDecision({
@@ -130,7 +132,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       body: 'User preference',
       author: 'user',
       sessionId: 'ses-114',
-      nowMs: 3020,
+      nowMs: baseMs + 20,
     }).ok).toBe(true);
 
     expect(memory.recordDecision({
@@ -139,7 +141,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       body: 'IPC + CLI complete',
       author: 'devops',
       sessionId: 'ses-114',
-      nowMs: 3030,
+      nowMs: baseMs + 30,
     }).ok).toBe(true);
 
     expect(memory.recordDecision({
@@ -148,7 +150,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       body: 'Investigating startup race',
       author: 'analyst',
       sessionId: 'ses-114',
-      nowMs: 3040,
+      nowMs: baseMs + 40,
     }).ok).toBe(true);
 
     expect(memory.recordDecision({
@@ -157,19 +159,19 @@ maybeDescribe('evidence-ledger-memory', () => {
       body: 'IPC + hm-memory CLI',
       author: 'architect',
       sessionId: 'ses-114',
-      nowMs: 3050,
+      nowMs: baseMs + 50,
     }).ok).toBe(true);
 
     expect(memory.recordSessionEnd('ses-114', {
       summary: 'Completed Slice 3 Phase A',
-      endedAtMs: 3999,
+      endedAtMs: baseMs + 999,
       stats: { test_suites: 115, tests_passed: 3340 },
     }).ok).toBe(true);
 
     const context = memory.getLatestContext();
     expect(context.source).toBe('ledger');
     expect(context.session).toBe(114);
-    expect(context.date).toBe('1970-01-01');
+    expect(context.date).toBe('2026-02-14');
     expect(context.mode).toBe('PTY');
     expect(Array.isArray(context.completed)).toBe(true);
     expect(typeof context.architecture).toBe('object');

@@ -83,7 +83,11 @@ function toIsoDate(ms) {
   const ts = asFiniteNumber(ms, null);
   if (!Number.isFinite(ts)) return null;
   try {
-    return new Date(ts).toISOString().slice(0, 10);
+    const d = new Date(ts);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   } catch {
     return null;
   }

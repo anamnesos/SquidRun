@@ -1931,7 +1931,8 @@ function handleMessage(client, message) {
         }
 
         const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
-        const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+        const d = new Date();
+        const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
         // Identity message that becomes part of Claude conversation
         // This shows in /resume session list, making it identifiable

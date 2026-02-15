@@ -82,6 +82,7 @@ function asString(value, fallback = '') {
 }
 
 function asNumber(value, fallback = null) {
+  if (value === null || value === undefined) return fallback;
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return numeric;
