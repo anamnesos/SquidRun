@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 /**
- * hm-telegram: CLI tool to send a Telegram message via Bot API.
+ * hm-telegram: CLI tool to send a Telegram message or photo via Bot API.
  * Usage: node hm-telegram.js "Hey, build passed!"
+ *        node hm-telegram.js --photo path/to/image.png "Optional caption"
  */
 
 const path = require('path');
+const fs = require('fs');
 const https = require('https');
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
 function usage() {
   console.log('Usage: node hm-telegram.js <message>');
+  console.log('       node hm-telegram.js --photo <image-path> [caption]');
   console.log('Env required: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID');
 }
 
@@ -67,6 +70,93 @@ function requestTelegram(path, body) {
   });
 }
 
+function requestTelegramMultipart(apiPath, fields, fileField) {
+  return new Promise((resolve, reject) => {
+    const boundary = '----HivemindBoundary' + Date.now();
+    const parts = [];
+
+    for (const [key, value] of Object.entries(fields)) {
+      parts.push(
+        `--${boundary}\r\nContent-Disposition: form-data; name="${key}"\r\n\r\n${value}\r\n`
+      );
+    }
+
+    const fileData = fs.readFileSync(fileField.path);
+    const fileName = path.basename(fileField.path);
+    parts.push(
+      `--${boundary}\r\nContent-Disposition: form-data; name="${fileField.name}"; filename="${fileName}"\r\nContent-Type: image/png\r\n\r\n`
+    );
+    const epilogue = `\r\n--${boundary}--\r\n`;
+
+    const preFile = Buffer.from(parts.join(''), 'utf8');
+    const postFile = Buffer.from(epilogue, 'utf8');
+    const bodyLength = preFile.length + fileData.length + postFile.length;
+
+    const request = https.request(
+      {
+        hostname: 'api.telegram.org',
+        port: 443,
+        path: apiPath,
+        method: 'POST',
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Content-Length': bodyLength,
+        },
+      },
+      (response) => {
+        let responseBody = '';
+        response.on('data', (chunk) => { responseBody += chunk; });
+        response.on('end', () => {
+          resolve({ statusCode: response.statusCode || 0, body: responseBody });
+        });
+      }
+    );
+
+    request.on('error', reject);
+    request.write(preFile);
+    request.write(fileData);
+    request.write(postFile);
+    request.end();
+  });
+}
+
+async function sendTelegramPhoto(photoPath, caption, env = process.env) {
+  const config = getTelegramConfig(env);
+  const missing = getMissingConfigKeys(config);
+  if (missing.length > 0) {
+    return { ok: false, error: `Missing required env vars: ${missing.join(', ')}` };
+  }
+
+  const resolvedPath = path.resolve(photoPath);
+  if (!fs.existsSync(resolvedPath)) {
+    return { ok: false, error: `Photo not found: ${resolvedPath}` };
+  }
+
+  const fields = { chat_id: String(config.chatId) };
+  if (caption) fields.caption = caption;
+
+  const apiPath = `/bot${config.botToken}/sendPhoto`;
+  const response = await requestTelegramMultipart(apiPath, fields, { name: 'photo', path: resolvedPath });
+
+  let payload = null;
+  try { payload = JSON.parse(response.body || '{}'); } catch { payload = null; }
+
+  if (response.statusCode >= 200 && response.statusCode < 300 && payload?.ok !== false) {
+    return {
+      ok: true,
+      statusCode: response.statusCode,
+      messageId: payload?.result?.message_id || null,
+      chatId: payload?.result?.chat?.id || config.chatId,
+    };
+  }
+
+  return {
+    ok: false,
+    statusCode: response.statusCode,
+    error: payload?.description || `Telegram photo request failed (${response.statusCode})`,
+  };
+}
+
 async function sendTelegram(message, env = process.env) {
   const config = getTelegramConfig(env);
   const missing = getMissingConfigKeys(config);
@@ -113,6 +203,25 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     process.exit(argv.length < 1 ? 1 : 0);
   }
 
+  // Handle --photo flag
+  if (argv[0] === '--photo') {
+    if (argv.length < 2) {
+      console.error('[hm-telegram] --photo requires an image path');
+      process.exit(1);
+    }
+    const photoPath = argv[1];
+    const caption = argv.slice(2).join(' ').trim() || '';
+    const result = await sendTelegramPhoto(photoPath, caption, env);
+    if (!result.ok) {
+      console.error(`[hm-telegram] Photo failed: ${result.error}`);
+      process.exit(1);
+    }
+    console.log(
+      `[hm-telegram] Sent Telegram photo successfully to ${result.chatId}${result.messageId ? ` (message_id: ${result.messageId})` : ''}`
+    );
+    process.exit(0);
+  }
+
   const message = parseMessage(argv);
   if (!message) {
     console.error('[hm-telegram] Message cannot be empty');
@@ -143,6 +252,8 @@ module.exports = {
   getTelegramConfig,
   getMissingConfigKeys,
   requestTelegram,
+  requestTelegramMultipart,
   sendTelegram,
+  sendTelegramPhoto,
   main,
 };
