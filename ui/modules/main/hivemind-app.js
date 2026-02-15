@@ -44,6 +44,9 @@ const {
   initializeEvidenceLedgerRuntime,
   closeSharedRuntime,
 } = require('../ipc/evidence-ledger-handlers');
+const { executeTransitionLedgerOperation } = require('../ipc/transition-ledger-handlers');
+const { executePaneControlAction } = require('./pane-control-service');
+const { captureScreenshot } = require('../ipc/screenshot-handlers');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
 const { createBufferedFileWriter } = require('../buffered-file-writer');
 const APP_IDLE_THRESHOLD_MS = 30000;
@@ -426,6 +429,27 @@ class HivemindApp {
             );
           }
 
+          if (data.message.type === 'transition-ledger') {
+            return executeTransitionLedgerOperation(
+              data.message.action,
+              data.message.payload || {}
+            );
+          }
+
+          if (data.message.type === 'pane-control') {
+            return executePaneControlAction(
+              {
+                daemonClient: this.ctx.daemonClient,
+                mainWindow: this.ctx.mainWindow,
+                currentSettings: this.ctx.currentSettings,
+                recoveryManager: this.ctx.recoveryManager,
+                agentRunning: this.ctx.agentRunning,
+              },
+              data.message.action,
+              data.message.payload || {}
+            );
+          }
+
           if (data.message.type === 'comms-event' || data.message.type === 'comms-metric') {
             return emitKernelCommsEvent(
               data.message.eventType,
@@ -436,45 +460,27 @@ class HivemindApp {
 
           // Handle screenshot requests from agents
           if (data.message.type === 'screenshot') {
-            log.info('WebSocket', 'Screenshot request received');
             try {
-              if (!this.ctx.mainWindow || this.ctx.mainWindow.isDestroyed()) {
-                websocketServer.sendToTarget(data.role || data.clientId, JSON.stringify({
+              const payload = data.message.payload || {};
+              const paneId = payload.paneId || data.message.paneId || null;
+              const result = await captureScreenshot({
+                mainWindow: this.ctx.mainWindow,
+                SCREENSHOTS_DIR: path.join(WORKSPACE_PATH, 'screenshots'),
+              }, { paneId });
+
+              // Legacy mode: if no requestId is present, push event result to requester role/client.
+              if (!data.message.requestId) {
+                websocketServer.sendToTarget(data.role || String(data.clientId), JSON.stringify({
                   type: 'screenshot-result',
-                  success: false,
-                  error: 'Window not available'
+                  success: Boolean(result?.success),
+                  ...result,
                 }));
-                return;
               }
-              const image = await this.ctx.mainWindow.webContents.capturePage();
-              const buffer = image.toPNG();
-              const screenshotsDir = path.join(WORKSPACE_PATH, 'screenshots');
-              if (!fs.existsSync(screenshotsDir)) {
-                fs.mkdirSync(screenshotsDir, { recursive: true });
-              }
-              const timestamp = Date.now();
-              const filename = `capture-${timestamp}.png`;
-              const filePath = path.join(screenshotsDir, filename);
-              fs.writeFileSync(filePath, buffer);
-              const latestPath = path.join(screenshotsDir, 'latest.png');
-              fs.writeFileSync(latestPath, buffer);
-              log.info('WebSocket', `Screenshot saved to ${filePath}`);
-              // Send result back - note: WebSocket clients need to listen for this
-              websocketServer.broadcast(JSON.stringify({
-                type: 'screenshot-result',
-                success: true,
-                path: latestPath,
-                filename
-              }));
+              return result;
             } catch (err) {
               log.error('WebSocket', `Screenshot failed: ${err.message}`);
-              websocketServer.broadcast(JSON.stringify({
-                type: 'screenshot-result',
-                success: false,
-                error: err.message
-              }));
+              return { success: false, error: err.message };
             }
-            return;
           }
 
           // Handle image generation requests from agents
