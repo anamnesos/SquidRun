@@ -162,11 +162,17 @@ hivemind/
 │   ├── scripts/
 │   │   ├── hm-send.js
 │   │   ├── hm-telegram.js
+│   │   ├── hm-sms.js
 │   │   ├── hm-claim.js
 │   │   ├── hm-memory.js
+│   │   ├── hm-search.js
 │   │   ├── hm-investigate.js
 │   │   ├── hm-experiment.js
 │   │   ├── hm-promotion.js
+│   │   ├── hm-transition.js
+│   │   ├── hm-github.js
+│   │   ├── hm-pane.js
+│   │   ├── hm-screenshot.js
 │   │   └── hm-image-gen.js
 │   └── __tests__/
 ├── .hivemind/

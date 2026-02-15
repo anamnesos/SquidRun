@@ -1,6 +1,6 @@
 # Transition Ledger Specification
 
-**Version:** 0.1 | **Status:** Draft / Formalization Phase
+**Version:** 0.1 | **Status:** Shipped (S139)
 **Authors:** Analyst, Architect, DevOps
 
 ---

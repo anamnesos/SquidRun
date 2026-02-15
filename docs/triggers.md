@@ -27,8 +27,9 @@ node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(ROLE #N): message"
 
 All trigger files live here:
 ```
-D:\projects\hivemind\workspace\triggers\
+D:\projects\hivemind\.hivemind\triggers\
 ```
+Legacy fallback: `D:\projects\hivemind\workspace\triggers\`
 
 ### Canonical trigger files
 
