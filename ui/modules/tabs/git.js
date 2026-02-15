@@ -5,6 +5,7 @@
 
 const { ipcRenderer } = require('electron');
 const log = require('../logger');
+const { escapeHtml } = require('./utils');
 
 let gitStatus = null;
 
@@ -14,7 +15,7 @@ function renderGitFileList(listEl, files, className, emptyLabel) {
     listEl.innerHTML = `<div class="git-empty">${emptyLabel || 'No files'}</div>`;
     return;
   }
-  listEl.innerHTML = files.map(file => `<div class="git-file-item ${className || ''}" title="${file}">${file}</div>`).join('');
+  listEl.innerHTML = files.map(file => `<div class="git-file-item ${escapeHtml(className) || ''}" title="${escapeHtml(file)}">${escapeHtml(file)}</div>`).join('');
 }
 
 function renderGitStatus() {
