@@ -88,8 +88,10 @@ function deriveSeedRecords(contextSnapshot, options = {}) {
     hasSessionNumber ? `ses_seed_${sessionNumber}` : stableId('ses_seed', { date: source.date || null })
   );
 
-  const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
-  const startedAtMs = Number.isFinite(Number(options.startedAtMs))
+  const nowMs = (options.nowMs !== null && options.nowMs !== undefined && Number.isFinite(Number(options.nowMs)))
+    ? Number(options.nowMs)
+    : Date.now();
+  const startedAtMs = (options.startedAtMs !== null && options.startedAtMs !== undefined && Number.isFinite(Number(options.startedAtMs)))
     ? Number(options.startedAtMs)
     : toMsFromDate(source.date, nowMs);
 
@@ -206,7 +208,9 @@ function seedDecisionMemory(memory, contextSnapshot, options = {}) {
 
   if (options.markSessionEnded === true) {
     const end = memory.recordSessionEnd(session.sessionId, {
-      endedAtMs: Number.isFinite(Number(options.endedAtMs)) ? Number(options.endedAtMs) : Date.now(),
+      endedAtMs: (options.endedAtMs !== null && options.endedAtMs !== undefined && Number.isFinite(Number(options.endedAtMs)))
+        ? Number(options.endedAtMs)
+        : Date.now(),
       summary: asString(options.summary, '') || asString(contextSnapshot?.status, '') || null,
       stats: asObject(contextSnapshot?.stats),
       team: asObject(contextSnapshot?.team),

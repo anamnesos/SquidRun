@@ -682,7 +682,8 @@ function buildCodexExecPrompt(paneId, text) {
   }
 
   const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
-  const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const d = new Date();
+  const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const identity = `# HIVEMIND SESSION: ${role} - Started ${timestamp}\n`;
   codexIdentityInjected.add(paneId);
   return identity + safeText;
@@ -990,7 +991,9 @@ async function runStartupIdentityAttempt(paneId, state, reason) {
   state.sendTimeoutId = null;
 
   const role = PANE_ROLES[id] || `Pane ${id}`;
-  const identityMsg = state.identityMsg || `# HIVEMIND SESSION: ${role} - Started ${new Date().toISOString().split('T')[0]}`;
+  const d = new Date();
+  const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const identityMsg = state.identityMsg || `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
   state.identityMsg = identityMsg;
   state.attemptCount = (Number(state.attemptCount) || 0) + 1;
   const attempt = state.attemptCount;
@@ -1073,7 +1076,8 @@ function triggerStartupInjection(paneId, state, reason) {
   // Session 69 fix: Gemini needs longer delay - CLI takes longer to initialize input handling
   const identityDelayMs = state.isGemini ? 1000 : STARTUP_IDENTITY_DELAY_MS;
   const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
-  const timestamp = new Date().toISOString().split('T')[0];
+  const d = new Date();
+  const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   state.identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
   state.attemptCount = 0;
 
@@ -2035,7 +2039,8 @@ async function spawnAgent(paneId, model = null) {
     resetCodexIdentity(paneId);
     const timeoutId = setTimeout(() => {
       const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
-      const timestamp = new Date().toISOString().split('T')[0];
+      const d = new Date();
+      const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
       sendToPane(paneId, identityMsg + '\r');
       log.info('spawnAgent', `Codex exec identity sent for ${role} (pane ${paneId})`);
