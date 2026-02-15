@@ -19,7 +19,6 @@ const COORD_FILE_PATTERN = "app-status\\.json|shared_context\\.md|review\\.json|
 
 const SKIP_FILE_SEGMENTS = [
   '__tests__',
-  'modules/scaffolding/',
 ];
 
 function listJsFiles(rootDir) {

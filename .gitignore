@@ -23,6 +23,9 @@ __pycache__/
 *.swp
 *.swo
 
+# Claude Code local permissions (machine-specific)
+.claude/settings.local.json
+
 # Electron
 ui/daemon.pid
 ui/daemon.log
