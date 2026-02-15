@@ -251,13 +251,13 @@ describe('Injection Events', () => {
   // doSendToPane (Codex path): inject.applied, inject.submit.sent (interactive PTY + PTY Enter)
   // ──────────────────────────────────────────
   describe('doSendToPane Codex events', () => {
-    test('emits inject.applied and inject.submit.sent for Codex with sendTrustedEnter', async () => {
+    test('emits inject.applied and inject.submit.sent for Codex with PTY Enter', async () => {
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('codex', mockTerminal);
 
       let onCompleteResult;
       controller.doSendToPane('codex', 'codex test', (result) => { onCompleteResult = result; });
-      // Advance past enterDelayMs (50ms) + focusWithRetry retries (3×50ms) + bypass clear
+      // Advance past enterDelayMs (150ms) + verification
       await jest.advanceTimersByTimeAsync(500);
 
       expect(onCompleteResult).toBeDefined();
@@ -267,8 +267,8 @@ describe('Injection Events', () => {
       expect(applied).toBeDefined();
       expect(applied[1].payload.method).toBe('codex-pty');
 
-      // Codex now uses sendTrustedEnter like Claude
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      // Codex uses PTY \r for Enter (not sendTrustedEnter)
+      expect(mockPty.write).toHaveBeenCalledWith('codex', '\r', expect.any(Object));
       expect(mockPty.codexExec).not.toHaveBeenCalled();
     });
 
@@ -290,11 +290,12 @@ describe('Injection Events', () => {
       expect(failed[1].payload.reason).toBe('pty_write_failed');
     });
 
-    test('emits inject.failed when Codex sendTrustedEnter fails', async () => {
+    test('emits inject.failed when Codex PTY Enter fails', async () => {
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('codex', mockTerminal);
+      // First write succeeds (text), second write fails (Enter \r)
       mockPty.write.mockResolvedValueOnce(undefined);
-      mockPty.sendTrustedEnter.mockRejectedValueOnce(new Error('Enter failed'));
+      mockPty.write.mockRejectedValueOnce(new Error('Enter failed'));
 
       let onCompleteResult;
       controller.doSendToPane('codex', 'test', (result) => { onCompleteResult = result; });
