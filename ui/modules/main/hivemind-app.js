@@ -210,105 +210,48 @@ class HivemindApp {
     // 3. Pre-configure Codex
     this.settings.ensureCodexConfig();
 
-    // 4. Initialize Evidence Ledger runtime early (DB + optional seed)
-    const ledgerInit = await initializeEvidenceLedgerRuntime({
-      runtimeOptions: {
-        seedOptions: {
-          enabled: true,
-        },
-      },
-      recreateUnavailable: true,
-    });
-    if (ledgerInit.ok) {
-      log.info('EvidenceLedger', `Startup initialization ready (driver=${ledgerInit.status?.driver || 'unknown'})`);
+    // 4. Initialize all database runtimes in parallel (Evidence Ledger, Team Memory, Experiment)
+    const initStart = Date.now();
+    const [ledgerInit, teamMemoryInit, experimentInit] = await Promise.allSettled([
+      initializeEvidenceLedgerRuntime({
+        runtimeOptions: { seedOptions: { enabled: true } },
+        recreateUnavailable: true,
+      }),
+      teamMemory.initializeTeamMemoryRuntime({
+        runtimeOptions: {},
+        recreateUnavailable: true,
+      }),
+      experiment.initializeExperimentRuntime({
+        runtimeOptions: {},
+        recreateUnavailable: true,
+      }),
+    ]);
+    log.info('App', `DB runtimes initialized in ${Date.now() - initStart}ms`);
+
+    // 4a. Log Evidence Ledger result
+    const ledgerResult = ledgerInit.status === 'fulfilled' ? ledgerInit.value : null;
+    if (ledgerResult?.ok) {
+      log.info('EvidenceLedger', `Startup initialization ready (driver=${ledgerResult.status?.driver || 'unknown'})`);
     } else {
-      log.warn('EvidenceLedger', `Startup initialization degraded: ${ledgerInit.status?.degradedReason || ledgerInit.initResult?.reason || 'unavailable'}`);
+      log.warn('EvidenceLedger', `Startup initialization degraded: ${ledgerResult?.status?.degradedReason || ledgerResult?.initResult?.reason || ledgerInit.reason?.message || 'unavailable'}`);
     }
 
-    // 4b. Initialize Team Memory runtime foundation (Phase 0).
-    const teamMemoryInit = await teamMemory.initializeTeamMemoryRuntime({
-      runtimeOptions: {},
-      recreateUnavailable: true,
-    });
-    this.teamMemoryInitialized = teamMemoryInit?.ok === true;
+    // 4b. Log Team Memory result (backfill/sweeps deferred to after window)
+    const tmResult = teamMemoryInit.status === 'fulfilled' ? teamMemoryInit.value : null;
+    this.teamMemoryInitialized = tmResult?.ok === true;
     if (this.teamMemoryInitialized) {
-      log.info('TeamMemory', `Startup initialization ready (driver=${teamMemoryInit.status?.driver || 'unknown'})`);
-      const backfillResult = await teamMemory.runBackfill({
-        payload: {
-          limit: Number.isFinite(TEAM_MEMORY_BACKFILL_LIMIT) ? TEAM_MEMORY_BACKFILL_LIMIT : 5000,
-        },
-      });
-      if (backfillResult?.ok) {
-        log.info(
-          'TeamMemory',
-          `Backfill scan complete (events=${backfillResult.scannedEvents || 0}, inserted=${backfillResult.insertedClaims || 0}, duplicates=${backfillResult.duplicateClaims || 0})`
-        );
-      } else {
-        log.warn('TeamMemory', `Backfill unavailable: ${backfillResult?.reason || 'unknown'}`);
-      }
-
-      const integrityResult = await teamMemory.runIntegrityCheck({});
-      if (integrityResult?.ok === false) {
-        log.warn('TeamMemory', `Initial integrity scan unavailable: ${integrityResult.reason || 'unknown'}`);
-      }
-      teamMemory.startIntegritySweep({
-        intervalMs: TEAM_MEMORY_INTEGRITY_SWEEP_INTERVAL_MS,
-        immediate: true,
-      });
-      teamMemory.startBeliefSnapshotSweep({
-        intervalMs: TEAM_MEMORY_BELIEF_SNAPSHOT_INTERVAL_MS,
-        immediate: true,
-      });
-      teamMemory.startPatternMiningSweep({
-        intervalMs: TEAM_MEMORY_PATTERN_MINING_INTERVAL_MS,
-        immediate: true,
-        onGuardAction: (entry) => {
-          if (!entry || typeof entry !== 'object') return;
-          const paneId = String(this.resolveTargetToPane(entry?.event?.target || '') || '1');
-          const message = String(entry.message || 'Team memory guard fired');
-          this.activity.logActivity('guard', paneId, message, entry);
-          if ((entry.action === 'warn' || entry.action === 'block') && this.ctx.externalNotifier) {
-            this.ctx.externalNotifier.notify({
-              category: entry.action === 'block' ? 'alert' : 'warning',
-              title: `Team Memory Guard (${entry.action})`,
-              message,
-              meta: {
-                guardId: entry.guardId || null,
-                scope: entry.scope || null,
-                sourcePattern: entry.sourcePattern || null,
-              },
-            }).catch((notifyErr) => {
-              log.warn('TeamMemoryGuard', `Guard notification failed: ${notifyErr.message}`);
-            });
-          }
-          this.handleTeamMemoryGuardExperiment(entry).catch((err) => {
-            log.warn('TeamMemoryGuard', `Failed block-guard experiment dispatch: ${err.message}`);
-          });
-          this.appendTeamMemoryPatternEvent(
-            buildGuardFiringPatternEvent(entry, Date.now()),
-            'guard-firing'
-          ).catch((err) => {
-            log.warn('TeamMemoryGuard', `Failed guard-firing pattern append: ${err.message}`);
-          });
-        },
-      });
+      log.info('TeamMemory', `Startup initialization ready (driver=${tmResult.status?.driver || 'unknown'})`);
     } else {
-      log.warn('TeamMemory', `Startup initialization degraded: ${teamMemoryInit?.status?.degradedReason || teamMemoryInit?.initResult?.reason || 'unavailable'}`);
+      log.warn('TeamMemory', `Startup initialization degraded: ${tmResult?.status?.degradedReason || tmResult?.initResult?.reason || teamMemoryInit.reason?.message || 'unavailable'}`);
     }
 
-    // 4c. Initialize Experiment runtime foundation (Phase 6a).
-    const experimentInit = await experiment.initializeExperimentRuntime({
-      runtimeOptions: {},
-      recreateUnavailable: true,
-    });
-    this.experimentInitialized = experimentInit?.ok === true;
+    // 4c. Log Experiment result
+    const expResult = experimentInit.status === 'fulfilled' ? experimentInit.value : null;
+    this.experimentInitialized = expResult?.ok === true;
     if (this.experimentInitialized) {
-      log.info('Experiment', `Startup initialization ready (driver=${experimentInit.status?.driver || 'worker'})`);
+      log.info('Experiment', `Startup initialization ready (driver=${expResult.status?.driver || 'worker'})`);
     } else {
-      log.warn(
-        'Experiment',
-        `Startup initialization degraded: ${experimentInit?.status?.degradedReason || experimentInit?.initResult?.reason || 'unavailable'}`
-      );
+      log.warn('Experiment', `Startup initialization degraded: ${expResult?.status?.degradedReason || expResult?.initResult?.reason || experimentInit.reason?.message || 'unavailable'}`);
     }
 
     // 5. Setup external notifications
@@ -770,7 +713,85 @@ class HivemindApp {
     this.startSmsPoller();
     this.startTelegramPoller();
 
+    // 13. Deferred Team Memory background tasks (backfill, integrity, sweeps)
+    //     Runs after window is up — does not block time-to-window
+    if (this.teamMemoryInitialized) {
+      this._deferredTeamMemoryStartup().catch((err) => {
+        log.warn('TeamMemory', `Deferred startup failed: ${err.message}`);
+      });
+    }
+
     log.info('App', 'Initialization complete');
+  }
+
+  /**
+   * Deferred Team Memory tasks — runs AFTER window is visible.
+   * Backfill, integrity check, and periodic sweeps are not time-critical
+   * and should not block startup.
+   */
+  async _deferredTeamMemoryStartup() {
+    const backfillResult = await teamMemory.runBackfill({
+      payload: {
+        limit: Number.isFinite(TEAM_MEMORY_BACKFILL_LIMIT) ? TEAM_MEMORY_BACKFILL_LIMIT : 5000,
+      },
+    });
+    if (backfillResult?.ok) {
+      log.info(
+        'TeamMemory',
+        `Backfill scan complete (events=${backfillResult.scannedEvents || 0}, inserted=${backfillResult.insertedClaims || 0}, duplicates=${backfillResult.duplicateClaims || 0})`
+      );
+    } else {
+      log.warn('TeamMemory', `Backfill unavailable: ${backfillResult?.reason || 'unknown'}`);
+    }
+
+    const integrityResult = await teamMemory.runIntegrityCheck({});
+    if (integrityResult?.ok === false) {
+      log.warn('TeamMemory', `Initial integrity scan unavailable: ${integrityResult.reason || 'unknown'}`);
+    }
+
+    teamMemory.startIntegritySweep({
+      intervalMs: TEAM_MEMORY_INTEGRITY_SWEEP_INTERVAL_MS,
+      immediate: true,
+    });
+    teamMemory.startBeliefSnapshotSweep({
+      intervalMs: TEAM_MEMORY_BELIEF_SNAPSHOT_INTERVAL_MS,
+      immediate: true,
+    });
+    teamMemory.startPatternMiningSweep({
+      intervalMs: TEAM_MEMORY_PATTERN_MINING_INTERVAL_MS,
+      immediate: true,
+      onGuardAction: (entry) => {
+        if (!entry || typeof entry !== 'object') return;
+        const paneId = String(this.resolveTargetToPane(entry?.event?.target || '') || '1');
+        const message = String(entry.message || 'Team memory guard fired');
+        this.activity.logActivity('guard', paneId, message, entry);
+        if ((entry.action === 'warn' || entry.action === 'block') && this.ctx.externalNotifier) {
+          this.ctx.externalNotifier.notify({
+            category: entry.action === 'block' ? 'alert' : 'warning',
+            title: `Team Memory Guard (${entry.action})`,
+            message,
+            meta: {
+              guardId: entry.guardId || null,
+              scope: entry.scope || null,
+              sourcePattern: entry.sourcePattern || null,
+            },
+          }).catch((notifyErr) => {
+            log.warn('TeamMemoryGuard', `Guard notification failed: ${notifyErr.message}`);
+          });
+        }
+        this.handleTeamMemoryGuardExperiment(entry).catch((err) => {
+          log.warn('TeamMemoryGuard', `Failed block-guard experiment dispatch: ${err.message}`);
+        });
+        this.appendTeamMemoryPatternEvent(
+          buildGuardFiringPatternEvent(entry, Date.now()),
+          'guard-firing'
+        ).catch((err) => {
+          log.warn('TeamMemoryGuard', `Failed guard-firing pattern append: ${err.message}`);
+        });
+      },
+    });
+
+    log.info('TeamMemory', 'Deferred startup tasks complete (backfill + sweeps)');
   }
 
   async createWindow() {
