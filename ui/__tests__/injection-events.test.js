@@ -488,7 +488,7 @@ describe('Injection Events', () => {
       expect(failed[1].payload.reason).toBe('enter_failed');
     });
 
-    test('emits inject.failed with submit_not_accepted after retry exhaustion', async () => {
+    test('returns accepted.unverified when submit verification exhausts retries', async () => {
       let promptText = 'ready> ';
       terminals.set('1', {
         _hivemindBypass: false,
@@ -512,14 +512,17 @@ describe('Injection Events', () => {
       await jest.advanceTimersByTimeAsync(4000);
       const result = await resultPromise;
 
-      expect(result.success).toBe(false);
+      expect(result.success).toBe(true);
+      expect(result.verified).toBe(false);
+      expect(result.status).toBe('accepted.unverified');
+      expect(result.reason).toBe('submit_not_accepted');
       const submitSentCalls = mockBus.emit.mock.calls.filter(c => c[0] === 'inject.submit.sent');
       expect(submitSentCalls.length).toBe(2);
 
       const failed = mockBus.emit.mock.calls.find(
         c => c[0] === 'inject.failed' && c[1]?.payload?.reason === 'submit_not_accepted'
       );
-      expect(failed).toBeDefined();
+      expect(failed).toBeUndefined();
     });
   });
 

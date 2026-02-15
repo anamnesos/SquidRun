@@ -291,7 +291,7 @@ function shouldRetryAck(ack) {
   if (ack.accepted === true) return false;
   const status = String(ack.status || '').toLowerCase();
   if (!status) return true;
-  if (status === 'invalid_target') return false;
+  if (status === 'invalid_target' || status === 'submit_not_accepted' || status === 'accepted.unverified') return false;
   return true;
 }
 

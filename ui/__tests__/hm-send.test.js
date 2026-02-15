@@ -96,6 +96,126 @@ describe('hm-send retry behavior', () => {
     expect(result.stdout).toContain('attempt 2');
   });
 
+  test('does not retry when ACK status is submit_not_accepted', async () => {
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: false,
+            accepted: false,
+            verified: false,
+            status: 'submit_not_accepted',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    const result = await runHmSend(
+      ['devops', '(TEST #1b): no retry submit_not_accepted', '--timeout', '80', '--retries', '2', '--no-fallback'],
+      { HM_SEND_PORT: String(port) }
+    );
+
+    await new Promise((resolve) => server.close(resolve));
+
+    expect(result.code).toBe(1);
+    expect(sendAttempts).toHaveLength(1);
+    expect(result.stderr).toContain('submit_not_accepted');
+  });
+
+  test('does not retry when ACK status is accepted.unverified', async () => {
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: false,
+            accepted: false,
+            verified: false,
+            status: 'accepted.unverified',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    const result = await runHmSend(
+      ['devops', '(TEST #1c): no retry accepted.unverified', '--timeout', '80', '--retries', '2', '--no-fallback'],
+      { HM_SEND_PORT: String(port) }
+    );
+
+    await new Promise((resolve) => server.close(resolve));
+
+    expect(result.code).toBe(1);
+    expect(sendAttempts).toHaveLength(1);
+    expect(result.stderr).toContain('accepted.unverified');
+  });
+
   test('continues with websocket send attempts when target health is stale', async () => {
     const sendAttempts = [];
     let server;

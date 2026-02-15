@@ -18,7 +18,6 @@ function createInjectionController(options = {}) {
     getPaneCapabilities,
     isCodexPane,
     isGeminiPane,
-    buildCodexExecPrompt,
     userIsTyping,
     userInputFocused,
     updatePaneStatus,
@@ -111,8 +110,7 @@ function createInjectionController(options = {}) {
     // Terminal.input succeeds but Claude ignores it - messages sit until nudged
     // MUST use sendTrustedEnter which sends native Electron keyboard events
     //
-    // Terminal.input is disabled for Claude panes until a working focus-free path is found
-    // (Codex panes use codex-exec path, not this function)
+    // Terminal.input is disabled until a working focus-free path is found.
 
     // Always use sendTrustedEnter for Claude panes (requires focus)
     // sendInputEvent can produce isTrusted=false, which the key handler blocks unless bypassed
@@ -323,10 +321,12 @@ function createInjectionController(options = {}) {
       await sleep(SUBMIT_ACCEPT_POLL_MS);
     }
 
-    if (allowOutputTransitionOnly && outputTransitionObserved) {
+    // If prompt was not ready at baseline, prompt transition cannot be observed.
+    // In that case, treat output transition as sufficient acceptance signal.
+    if ((allowOutputTransitionOnly || !promptWasReady) && outputTransitionObserved) {
       return {
         accepted: true,
-        signal: 'output_transition_allowed',
+        signal: allowOutputTransitionOnly ? 'output_transition_allowed' : 'output_transition_prompt_unavailable',
         outputTransitionObserved,
         promptTransitionObserved,
       };
@@ -583,9 +583,8 @@ function createInjectionController(options = {}) {
   function normalizeCapabilities(raw, fallbackCaps, paneId) {
     const id = String(paneId);
     const source = (raw && typeof raw === 'object') ? raw : fallbackCaps;
-    const modeValue = toNonEmptyString(source.mode) || toNonEmptyString(source.deliveryMode) || fallbackCaps.mode || 'pty';
-    const mode = modeValue === 'codex-exec' ? 'codex-exec' : 'pty';
-    const fallbackEnterMethod = mode === 'codex-exec' ? 'none' : (fallbackCaps.enterMethod || 'pty');
+    const mode = 'pty';
+    const fallbackEnterMethod = fallbackCaps.enterMethod || 'pty';
     const enterMethod = normalizeEnterMethod(source.enterMethod, fallbackEnterMethod);
     const requiresFocusForEnter = normalizeBoolean(
       source.requiresFocusForEnter,
@@ -599,8 +598,8 @@ function createInjectionController(options = {}) {
     return {
       paneId: id,
       mode,
-      modeLabel: normalizeModeLabel(source.modeLabel, fallbackCaps.modeLabel || (mode === 'codex-exec' ? 'codex-exec' : 'generic-pty')),
-      appliedMethod: normalizeModeLabel(source.appliedMethod, fallbackCaps.appliedMethod || (mode === 'codex-exec' ? 'codex-exec' : 'generic-pty')),
+      modeLabel: normalizeModeLabel(source.modeLabel, fallbackCaps.modeLabel || 'generic-pty'),
+      appliedMethod: normalizeModeLabel(source.appliedMethod, fallbackCaps.appliedMethod || 'generic-pty'),
       submitMethod: normalizeModeLabel(
         source.submitMethod,
         fallbackCaps.submitMethod || (enterMethod === 'trusted' ? 'sendTrustedEnter' : (enterMethod === 'pty' ? 'pty-enter' : 'none'))
@@ -615,9 +614,9 @@ function createInjectionController(options = {}) {
           ? Math.max(0, Number(fallbackCaps.enterDelayMs))
           : SAFE_DEFAULT_ENTER_DELAY_MS),
       sanitizeMultiline: normalizeBoolean(source.sanitizeMultiline, false),
-      clearLineBeforeWrite: normalizeBoolean(source.clearLineBeforeWrite, mode !== 'codex-exec'),
-      useChunkedWrite: normalizeBoolean(source.useChunkedWrite, mode !== 'codex-exec'),
-      homeResetBeforeWrite: normalizeBoolean(source.homeResetBeforeWrite, mode !== 'codex-exec'),
+      clearLineBeforeWrite: normalizeBoolean(source.clearLineBeforeWrite, true),
+      useChunkedWrite: normalizeBoolean(source.useChunkedWrite, true),
+      homeResetBeforeWrite: normalizeBoolean(source.homeResetBeforeWrite, true),
       verifySubmitAccepted: normalizeBoolean(source.verifySubmitAccepted, false),
       deferSubmitWhilePaneActive: normalizeBoolean(source.deferSubmitWhilePaneActive, false),
       typingGuardWhenBypassing: normalizeBoolean(source.typingGuardWhenBypassing, bypassGlobalLock),
@@ -837,7 +836,6 @@ function createInjectionController(options = {}) {
       : capabilities.verifySubmitAccepted;
     const isStartupInjection = Boolean(behaviorOverrides.startupInjection);
     const allowOutputTransitionOnly = Boolean(behaviorOverrides.acceptOutputTransitionOnly);
-    const isCodex = capabilities.mode === 'codex-exec';
     const normalizedTraceContext = normalizeTraceContext(traceContext);
     const corrId = normalizedTraceContext?.traceId
       || normalizedTraceContext?.correlationId
@@ -860,67 +858,6 @@ function createInjectionController(options = {}) {
       currentParentEventId = eventId;
       return kernelMeta;
     };
-
-    // Codex exec mode: bypass PTY/textarea injection
-    if (isCodex) {
-      bus.emit('inject.transform.applied', {
-        paneId: id,
-        payload: { transform: 'codex-exec-prompt' },
-        correlationId: corrId,
-        source: EVENT_SOURCE,
-      });
-      const prompt = buildCodexExecPrompt(id, text);
-      // Echo user input to xterm so it's visible
-      const terminal = terminals.get(id);
-      if (terminal) {
-        terminal.write(`\r\n\x1b[36m> ${text}\x1b[0m\r\n`);
-      }
-      bus.emit('inject.applied', {
-        paneId: id,
-        payload: { method: capabilities.appliedMethod || 'codex-exec', textLen: text.length },
-        correlationId: corrId,
-        source: EVENT_SOURCE,
-      });
-      bus.emit('inject.submit.sent', {
-        paneId: id,
-        payload: { method: capabilities.submitMethod || 'codex-exec' },
-        correlationId: corrId,
-        source: EVENT_SOURCE,
-      });
-      try {
-        const execResult = await window.hivemind.pty.codexExec(id, prompt);
-        if (execResult && execResult.success === false) {
-          const rejectionReason = execResult.status || 'codex_exec_rejected';
-          bus.emit('inject.failed', {
-            paneId: id,
-            payload: {
-              reason: 'codex_exec_rejected',
-              status: execResult.status || null,
-              error: execResult.error || rejectionReason,
-            },
-            correlationId: corrId,
-            source: EVENT_SOURCE,
-          });
-          finishWithClear({ success: false, reason: 'codex_exec_rejected' });
-          return;
-        }
-      } catch (err) {
-        log.error(`doSendToPane ${id}`, 'Codex exec failed:', err);
-        bus.emit('inject.failed', {
-          paneId: id,
-          payload: { reason: 'codex_exec_error', error: String(err) },
-          correlationId: corrId,
-          source: EVENT_SOURCE,
-        });
-        finishWithClear({ success: false, reason: 'codex_exec_error' });
-        return;
-      }
-      updatePaneStatus(id, 'Working');
-      lastTypedTime[id] = Date.now();
-      lastOutputTime[id] = Date.now();
-      finishWithClear({ success: true });
-      return;
-    }
 
     const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
     let textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
@@ -1199,25 +1136,26 @@ function createInjectionController(options = {}) {
         }
       }
 
+      let submitVerified = true;
       if (!submitAccepted) {
-        bus.emit('inject.failed', {
-          paneId: id,
-          payload: { reason: 'submit_not_accepted', attempts: maxSubmitAttempts },
-          correlationId: corrId,
-          source: EVENT_SOURCE,
-        });
-        markPotentiallyStuck(id);
-        finishWithClear({ success: false, reason: 'submit_not_accepted' });
-        return;
+        // Enter succeeded; treat submit verification as advisory so delivery is not downgraded.
+        submitVerified = false;
+        submitAccepted = { accepted: true, signal: 'accepted_unverified' };
+        log.warn(
+          `doSendToPane ${id}`,
+          `Submit acceptance not observed after ${maxSubmitAttempts} attempt(s); treating as accepted.unverified`
+        );
       }
 
       updatePaneStatus(id, 'Working');
       lastTypedTime[id] = Date.now();
-      if (capabilities.mode !== 'codex-exec') {
-        lastOutputTime[id] = Date.now();
-      }
+      lastOutputTime[id] = Date.now();
       const successResult = shouldVerifySubmitAccepted
-        ? { success: true, verified: true, signal: submitAccepted.signal }
+        ? (
+          submitVerified
+            ? { success: true, verified: true, signal: submitAccepted.signal }
+            : { success: true, verified: false, signal: submitAccepted.signal, status: 'accepted.unverified', reason: 'submit_not_accepted' }
+        )
         : { success: true };
       finishWithClear({
         ...successResult,

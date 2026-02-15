@@ -1,6 +1,6 @@
 /**
  * PTY IPC Handlers (via Daemon)
- * Channels: pty-create, pty-write, pty-write-chunked, codex-exec, send-trusted-enter,
+ * Channels: pty-create, pty-write, pty-write-chunked, send-trusted-enter,
  *           clipboard-paste-text, pty-resize, pty-kill, intent-update, spawn-claude,
  *           get-claude-state, get-daemon-terminals
  */
@@ -195,35 +195,13 @@ function registerPtyHandlers(ctx, deps = {}) {
     return { success: true };
   });
 
-  // Codex exec (non-interactive) - run a single prompt through codex exec --json
+  // Legacy non-interactive codex-exec mode is deprecated.
+  // Codex panes run interactive PTY only.
   ipcMain.handle('codex-exec', async (event, paneId, prompt) => {
-    if (!ctx.daemonClient || !ctx.daemonClient.connected) {
-      return { success: false, error: 'Daemon not connected' };
-    }
-    let result;
-    if (typeof ctx.daemonClient.codexExecAndWait === 'function') {
-      result = await ctx.daemonClient.codexExecAndWait(paneId, prompt || '');
-    } else {
-      const sent = ctx.daemonClient.codexExec(paneId, prompt || '');
-      result = sent === false
-        ? { success: false, status: 'send_failed', error: 'Failed to send codex-exec request to daemon' }
-        : { success: true, status: 'sent_without_ack' };
-    }
-
-    if (!result || result.success === false) {
-      return {
-        success: false,
-        error: result?.error || result?.status || 'Codex exec request failed',
-        status: result?.status || 'rejected',
-      };
-    }
-
     return {
-      success: true,
-      status: result.status || 'accepted',
-      requestId: result.requestId || null,
-      queued: result.queued === true,
-      queueDepth: Number.isFinite(result.queueDepth) ? result.queueDepth : null,
+      success: false,
+      status: 'unsupported_mode',
+      error: 'codex-exec is disabled; use interactive PTY messaging',
     };
   });
 

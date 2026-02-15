@@ -186,7 +186,6 @@ const CLI_PROMPT_REGEXES = [
   /(^|\n)>\s/m, // Claude/Gemini prompt at line start
   /(^|\n)codex>\s/m,
   /(^|\n)gemini>\s/m,
-  /codex exec mode ready/i,
   /gemini cli/i,
 ];
 const SHELL_PROMPT_REGEXES = [
@@ -226,9 +225,8 @@ function hasCliContent(scrollback = '', meta = {}) {
     return isProcessRunning(meta?.pid);
   }
 
-  // Non-PTY modes have no reliable OS pid checks but can still represent
-  // legitimate running sessions.
-  if (alive && (mode === 'codex-exec' || mode === 'dry-run')) {
+  // Dry-run mode has no real PTY process and is tracked by alive status only.
+  if (alive && mode === 'dry-run') {
     return true;
   }
 
@@ -769,7 +767,8 @@ function processThrottleQueue(paneId) {
   terminal.sendToPane(paneId, routedMessage, {
     traceContext: traceContext || undefined,
     onComplete: (result) => {
-      const accepted = !result || result.success !== false;
+      const submitUnverified = result?.success === false && result?.reason === 'submit_not_accepted';
+      const accepted = submitUnverified || !result || result.success !== false;
       if (!accepted) {
         log.warn('Daemon', `Trigger delivery failed for pane ${paneId}: ${result.reason || 'unknown'}`);
         uiView.showDeliveryFailed(paneId, result.reason || 'Delivery failed');
@@ -786,13 +785,24 @@ function processThrottleQueue(paneId) {
       } else {
         // Message was typed + Enter pressed = delivered.
         // Verification is best-effort; unverified does NOT mean undelivered.
-        const verified = result?.verified !== false;
+        const verified = submitUnverified ? false : (result?.verified !== false);
         if (!verified) {
           log.info('Daemon', `Trigger delivery sent for pane ${paneId} (verification skipped: ${result?.reason || 'agent busy'})`);
         }
         uiView.showDeliveryIndicator(paneId, 'delivered');
         if (deliveryId) {
-          ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
+          if (submitUnverified) {
+            ipcRenderer.send('trigger-delivery-outcome', {
+              deliveryId,
+              paneId,
+              accepted: true,
+              verified: false,
+              status: 'accepted.unverified',
+              reason: result?.reason || 'submit_not_accepted',
+            });
+          } else {
+            ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
+          }
         }
       }
 
