@@ -81,3 +81,4 @@ Responsibilities:
 - Validate behavior before claiming completion.
 - Report command/tool failures promptly to Architect via `hm-send`.
 - Avoid content-free acknowledgments.
+- Always commit before declaring "ready for restart." Uncommitted work is lost on restart.
