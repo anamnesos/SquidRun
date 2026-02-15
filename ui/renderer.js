@@ -14,11 +14,9 @@ const daemonHandlers = require('./modules/daemon-handlers');
 const { showStatusNotice } = require('./modules/notifications');
 const { debounceButton, applyShortcutTooltips } = require('./modules/utils');
 const { initCommandPalette } = require('./modules/command-palette');
-const { initCustomTargetDropdown } = require('./modules/target-dropdown');
 const { initStatusStrip } = require('./modules/status-strip');
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = require('./modules/model-selector');
 const bus = require('./modules/event-bus');
-const healthStrip = require('./modules/health-strip');
 const { clearScopedIpcListeners, registerScopedIpcListener } = require('./modules/renderer-ipc-registry');
 
 const dynamicPtyIpcChannels = new Set();
@@ -393,7 +391,6 @@ function setupEventListeners() {
 
   // Command bar input - Enter re-enabled (ghost text fix is in xterm, not here)
   const broadcastInput = document.getElementById('broadcastInput');
-  const commandTarget = document.getElementById('commandTarget');
   const commandDeliveryStatus = document.getElementById('commandDeliveryStatus');
   const voiceInputBtn = document.getElementById('voiceInputBtn');
   const voiceStatus = document.getElementById('voiceStatus');
@@ -415,30 +412,11 @@ function setupEventListeners() {
   ]);
   let lastBroadcastTime = 0;
 
-  // Update placeholder based on selected target
+  // Keep command bar copy explicit now that target selection UI is removed.
   function updateCommandPlaceholder() {
-    if (!broadcastInput || !commandTarget) return;
-    const target = commandTarget.value;
-    const targetName = commandTarget.options[commandTarget.selectedIndex]?.text || 'Architect';
-
-    const roleHints = {
-      '1': 'architecture or strategy',
-      '2': 'infrastructure, builds, or backend logic',
-      '5': 'debugging or analysis',
-    };
-
-    const hint = roleHints[target] ? ` about ${roleHints[target]}` : '';
-
-    if (target === 'auto') {
-      broadcastInput.placeholder = 'Describe a task to auto-route (Enter to send)';
-      broadcastInput.title = 'Auto-route a task based on description';
-    } else if (target === 'all') {
-      broadcastInput.placeholder = 'Type here to message all agents (Enter to send)';
-      broadcastInput.title = 'Send message to all agents';
-    } else {
-      broadcastInput.placeholder = `Type a message to ${targetName}${hint} (Enter to send)`;
-      broadcastInput.title = `Send message to ${targetName}`;
-    }
+    if (!broadcastInput) return;
+    broadcastInput.placeholder = 'Type here to message Architect (Enter to send)';
+    broadcastInput.title = 'Send message to Architect';
   }
 
   // showStatusNotice now imported from ./modules/notifications
@@ -626,14 +604,9 @@ function setupEventListeners() {
     }
   }
 
-  // Target selector change event
-  if (commandTarget) {
-    commandTarget.addEventListener('change', updateCommandPlaceholder);
-    updateCommandPlaceholder(); // Set initial placeholder
-  }
+  updateCommandPlaceholder();
 
-  // Helper function to send broadcast - routes through PTY terminals
-  // Supports pane targeting via dropdown or /1, /2, /5 prefix
+  // Helper function to send user text through PTY delivery path.
   function resolveDeliveryState(result) {
     const accepted = !result || result.success !== false;
     if (!accepted) {
@@ -646,16 +619,6 @@ function setupEventListeners() {
     }
     showDeliveryStatus('delivered');
     return true;
-  }
-
-  function sendUserMessageToPane(targetPaneId, content) {
-    return new Promise((resolve) => {
-      terminal.sendToPane(targetPaneId, content, {
-        priority: true,
-        immediate: true,
-        onComplete: (result) => resolve(resolveDeliveryState(result)),
-      });
-    });
   }
 
   function sendArchitectMessage(content) {
@@ -682,19 +645,8 @@ function setupEventListeners() {
       return await routeNaturalTask(trimmed.slice(6));
     }
 
-    if (commandTarget && commandTarget.value === 'auto') {
-      return await routeNaturalTask(trimmed);
-    }
-
-    // PTY mode - use terminal broadcast with target from dropdown
-    const targetPaneId = commandTarget ? commandTarget.value : 'all';
-    log.info('Broadcast', `Target: ${targetPaneId}`);
-    if (targetPaneId === 'all') {
-      return await sendArchitectMessage(message + '\r');
-    }
-
-    // Send to specific pane - user messages get priority + immediate
-    return await sendUserMessageToPane(targetPaneId, message + '\r');
+    // Direct command-bar messages default to Architect.
+    return await sendArchitectMessage(message + '\r');
   }
 
   if (broadcastInput) {
@@ -933,9 +885,6 @@ function setupEventListeners() {
     });
   });
 
-  // Custom target dropdown with pane preview on hover
-  initCustomTargetDropdown();
-
   // Command palette (Ctrl+K)
   initCommandPalette();
 
@@ -951,8 +900,6 @@ function setupEventListeners() {
     }
   });
 }
-
-// Custom target dropdown - imported from modules/target-dropdown.js
 
 // Command Palette - imported from modules/command-palette.js
 
@@ -1426,12 +1373,4 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // 6. Health Strip — real-time pane status indicators
-  const terminalsSection = document.getElementById('terminalsSection');
-  if (terminalsSection) {
-    const healthContainer = document.createElement('div');
-    healthContainer.id = 'health-strip-container';
-    terminalsSection.appendChild(healthContainer);
-    healthStrip.init(bus, healthContainer);
-  }
 });

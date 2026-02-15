@@ -105,10 +105,6 @@ jest.mock('../modules/command-palette', () => ({
   initCommandPalette: jest.fn(),
 }));
 
-jest.mock('../modules/target-dropdown', () => ({
-  initCustomTargetDropdown: jest.fn(),
-}));
-
 jest.mock('../modules/status-strip', () => ({
   initStatusStrip: jest.fn(),
 }));
@@ -117,11 +113,6 @@ jest.mock('../modules/model-selector', () => ({
   initModelSelectors: jest.fn(),
   setupModelSelectorListeners: jest.fn(),
   setupModelChangeListener: jest.fn(),
-}));
-
-jest.mock('../modules/health-strip', () => ({
-  init: jest.fn(),
-  destroy: jest.fn(),
 }));
 
 // Integration tests: MutationObserver callback → event bus (matches renderer.js production wiring pattern)

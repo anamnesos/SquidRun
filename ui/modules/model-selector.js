@@ -23,18 +23,13 @@ function detectModelFamily(cmd) {
 }
 
 /**
- * Set the data-cli attribute on a pane element and its health-strip counterpart
- * for CSS variable binding
+ * Set the data-cli attribute on a pane element for CSS variable binding.
  * @param {string} paneId - Pane ID
  * @param {string} model - Model family ('claude', 'codex', 'gemini')
  */
 function setPaneCliAttribute(paneId, model) {
   const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
   if (pane) pane.dataset.cli = model;
-
-  // Also update health strip pane indicator
-  const healthStripPane = document.querySelector(`.health-strip-pane[data-pane-id="${paneId}"]`);
-  if (healthStripPane) healthStripPane.dataset.cli = model;
 }
 
 /**

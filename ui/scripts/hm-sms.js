@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * hm-sms: CLI tool to send an SMS via Twilio REST API.
- * Usage: node hm-sms.js "Hey the user, build passed!"
+ * Usage: node hm-sms.js "Hey, build passed!"
  */
 
 const path = require('path');

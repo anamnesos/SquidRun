@@ -57,7 +57,7 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
 
   if (normalizedAction === 'enter') {
     const model = detectPaneModel(paneId, ctx.currentSettings || {});
-    if (model === 'codex' || model === 'gemini') {
+    if (model === 'gemini') {
       if (!isDaemonAvailable(daemonClient)) {
         return { success: false, reason: 'daemon_not_connected', paneId, action: normalizedAction };
       }
@@ -77,7 +77,7 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
 
     mainWindow.webContents.send('pane-enter', {
       paneId,
-      model: 'claude',
+      model,
       method: 'sendTrustedEnter',
     });
     return {
@@ -85,7 +85,7 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
       paneId,
       action: normalizedAction,
       method: 'sendTrustedEnter',
-      model: 'claude',
+      model,
     };
   }
 
