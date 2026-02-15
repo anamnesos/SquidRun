@@ -13,6 +13,9 @@ const { LEGACY_ROLE_ALIASES, ROLE_ID_MAP, WORKSPACE_PATH } = require('../config'
 const DEFAULT_PORT = 9900;
 const MESSAGE_ACK_TTL_MS = 60000;
 const ROUTING_STALE_MS = 60000;
+const RATE_LIMIT_WINDOW_MS = 1000;  // 1-second sliding window
+const RATE_LIMIT_MAX_MESSAGES = 50; // max messages per window per client
+const MAX_MESSAGE_SIZE = 256 * 1024; // 256KB max message size
 const CONTENT_DEDUPE_TTL_MS = Number.parseInt(process.env.HIVEMIND_COMMS_CONTENT_DEDUPE_TTL_MS || '15000', 10);
 const OUTBOUND_QUEUE_MAX_ENTRIES = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_ENTRIES || '500', 10);
 const OUTBOUND_QUEUE_MAX_AGE_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_AGE_MS || String(30 * 60 * 1000), 10);
@@ -803,6 +806,27 @@ function start(options = {}) {
 async function handleMessage(clientId, rawData) {
   const clientInfo = clients.get(clientId);
   if (!clientInfo) return;
+
+  // Rate limiting: sliding window per client
+  const now = Date.now();
+  if (!clientInfo._rateBucketStart || now - clientInfo._rateBucketStart > RATE_LIMIT_WINDOW_MS) {
+    clientInfo._rateBucketStart = now;
+    clientInfo._rateBucketCount = 0;
+  }
+  clientInfo._rateBucketCount++;
+  if (clientInfo._rateBucketCount > RATE_LIMIT_MAX_MESSAGES) {
+    log.warn('WebSocket', `Rate limit exceeded for client ${clientId} (${clientInfo._rateBucketCount}/${RATE_LIMIT_MAX_MESSAGES} per ${RATE_LIMIT_WINDOW_MS}ms)`);
+    sendJson(clientInfo.ws, { type: 'error', message: 'Rate limit exceeded' });
+    return;
+  }
+
+  // Message size limit
+  const rawSize = typeof rawData === 'string' ? rawData.length : rawData.byteLength || 0;
+  if (rawSize > MAX_MESSAGE_SIZE) {
+    log.warn('WebSocket', `Oversized message from client ${clientId}: ${rawSize} bytes (max ${MAX_MESSAGE_SIZE})`);
+    sendJson(clientInfo.ws, { type: 'error', message: 'Message too large' });
+    return;
+  }
 
   let message;
   try {
