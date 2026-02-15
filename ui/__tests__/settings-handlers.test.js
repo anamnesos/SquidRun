@@ -3,12 +3,21 @@
  * Target: Full coverage of settings-handlers.js
  */
 
+const fs = require('fs');
+const path = require('path');
+
 const {
   createIpcHarness,
   createDefaultContext,
   createDepsMock,
 } = require('./helpers/ipc-harness');
 
+// Mock feature-capabilities
+jest.mock('../modules/feature-capabilities', () => ({
+  getFeatureCapabilities: jest.fn(() => ({ imageGen: true, voice: false })),
+}));
+
+const { getFeatureCapabilities } = require('../modules/feature-capabilities');
 const { registerSettingsHandlers } = require('../modules/ipc/settings-handlers');
 
 describe('Settings Handlers', () => {
@@ -25,6 +34,7 @@ describe('Settings Handlers', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+    jest.restoreAllMocks();
   });
 
   describe('get-settings', () => {
@@ -102,6 +112,208 @@ describe('Settings Handlers', () => {
 
       expect(deps.loadSettings).toHaveBeenCalled();
       expect(result).toEqual(mockSettings);
+    });
+  });
+
+  describe('get-feature-capabilities', () => {
+    test('returns capabilities from process.env', async () => {
+      const result = await harness.invoke('get-feature-capabilities');
+      expect(getFeatureCapabilities).toHaveBeenCalledWith(process.env);
+      expect(result).toEqual({ imageGen: true, voice: false });
+    });
+  });
+
+  describe('get-api-keys', () => {
+    test('returns null keys when .env does not exist', async () => {
+      jest.spyOn(fs, 'existsSync').mockReturnValue(false);
+
+      const result = await harness.invoke('get-api-keys');
+
+      expect(result.ANTHROPIC_API_KEY).toBeNull();
+      expect(result.OPENAI_API_KEY).toBeNull();
+      expect(result.RECRAFT_API_KEY).toBeNull();
+      expect(result.TELEGRAM_BOT_TOKEN).toBeNull();
+    });
+
+    test('returns masked keys from .env file', async () => {
+      jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+      jest.spyOn(fs, 'readFileSync').mockReturnValue(
+        'ANTHROPIC_API_KEY=sk-ant-1234567890abcdef\nOPENAI_API_KEY=sk-proj-xyz123\nTELEGRAM_CHAT_ID=12345'
+      );
+
+      const result = await harness.invoke('get-api-keys');
+
+      expect(result.ANTHROPIC_API_KEY).toBe('***cdef');
+      expect(result.OPENAI_API_KEY).toBe('***z123');
+      expect(result.TELEGRAM_CHAT_ID).toBe('***2345');
+      expect(result.RECRAFT_API_KEY).toBeNull(); // not in .env
+    });
+
+    test('masks short keys with ****', async () => {
+      jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+      jest.spyOn(fs, 'readFileSync').mockReturnValue('TELEGRAM_CHAT_ID=123');
+
+      const result = await harness.invoke('get-api-keys');
+
+      expect(result.TELEGRAM_CHAT_ID).toBe('****');
+    });
+
+    test('handles .env read error gracefully', async () => {
+      jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+      jest.spyOn(fs, 'readFileSync').mockImplementation(() => { throw new Error('perm denied'); });
+
+      const result = await harness.invoke('get-api-keys');
+
+      expect(result.ANTHROPIC_API_KEY).toBeNull();
+    });
+
+    test('ignores non-whitelisted env vars', async () => {
+      jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+      jest.spyOn(fs, 'readFileSync').mockReturnValue('SECRET_STUFF=should_not_appear\nOPENAI_API_KEY=sk-test1234');
+
+      const result = await harness.invoke('get-api-keys');
+
+      expect(result).not.toHaveProperty('SECRET_STUFF');
+      expect(result.OPENAI_API_KEY).toBe('***1234');
+    });
+
+    test('handles \\r in .env file', async () => {
+      jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+      jest.spyOn(fs, 'readFileSync').mockReturnValue('OPENAI_API_KEY=sk-test5678\r\nRECRAFT_API_KEY=rk-abcdefgh\r\n');
+
+      const result = await harness.invoke('get-api-keys');
+
+      expect(result.OPENAI_API_KEY).toBe('***5678');
+      expect(result.RECRAFT_API_KEY).toBe('***efgh');
+    });
+  });
+
+  describe('set-api-keys', () => {
+    beforeEach(() => {
+      jest.spyOn(fs, 'existsSync').mockReturnValue(false);
+      jest.spyOn(fs, 'readFileSync').mockReturnValue('');
+      jest.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+    });
+
+    test('rejects unknown key', async () => {
+      const result = await harness.invoke('set-api-keys', { UNKNOWN_KEY: 'value' });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Unknown key');
+    });
+
+    test('rejects invalid ANTHROPIC_API_KEY format', async () => {
+      const result = await harness.invoke('set-api-keys', { ANTHROPIC_API_KEY: 'invalid-key' });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Invalid format');
+    });
+
+    test('rejects invalid OPENAI_API_KEY format', async () => {
+      const result = await harness.invoke('set-api-keys', { OPENAI_API_KEY: 'not-sk-prefix' });
+      expect(result.success).toBe(false);
+    });
+
+    test('rejects invalid GOOGLE_API_KEY format', async () => {
+      const result = await harness.invoke('set-api-keys', { GOOGLE_API_KEY: 'bad-prefix' });
+      expect(result.success).toBe(false);
+    });
+
+    test('rejects invalid TWILIO_ACCOUNT_SID format', async () => {
+      const result = await harness.invoke('set-api-keys', { TWILIO_ACCOUNT_SID: 'not-ac-prefix' });
+      expect(result.success).toBe(false);
+    });
+
+    test('rejects invalid TWILIO_PHONE_NUMBER format', async () => {
+      const result = await harness.invoke('set-api-keys', { TWILIO_PHONE_NUMBER: '5551234' });
+      expect(result.success).toBe(false);
+    });
+
+    test('rejects invalid SMS_RECIPIENT format', async () => {
+      const result = await harness.invoke('set-api-keys', { SMS_RECIPIENT: '5551234' });
+      expect(result.success).toBe(false);
+    });
+
+    test('rejects invalid TELEGRAM_CHAT_ID format', async () => {
+      const result = await harness.invoke('set-api-keys', { TELEGRAM_CHAT_ID: 'not-a-number' });
+      expect(result.success).toBe(false);
+    });
+
+    test('accepts valid keys and writes .env', async () => {
+      const result = await harness.invoke('set-api-keys', {
+        OPENAI_API_KEY: 'sk-testkey12345'
+      });
+      expect(result.success).toBe(true);
+      expect(fs.writeFileSync).toHaveBeenCalled();
+      expect(process.env.OPENAI_API_KEY).toBe('sk-testkey12345');
+      expect(result.capabilities).toBeDefined();
+    });
+
+    test('updates existing key in .env', async () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockReturnValue('OPENAI_API_KEY=sk-old-key\nOTHER=val');
+
+      const result = await harness.invoke('set-api-keys', { OPENAI_API_KEY: 'sk-new-key' });
+      expect(result.success).toBe(true);
+
+      const writtenContent = fs.writeFileSync.mock.calls[0][1];
+      expect(writtenContent).toContain('OPENAI_API_KEY=sk-new-key');
+      expect(writtenContent).toContain('OTHER=val');
+    });
+
+    test('appends new key to .env', async () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockReturnValue('OPENAI_API_KEY=sk-existing');
+
+      const result = await harness.invoke('set-api-keys', { RECRAFT_API_KEY: 'rk-new' });
+      expect(result.success).toBe(true);
+
+      const writtenContent = fs.writeFileSync.mock.calls[0][1];
+      expect(writtenContent).toContain('OPENAI_API_KEY=sk-existing');
+      expect(writtenContent).toContain('RECRAFT_API_KEY=rk-new');
+    });
+
+    test('skips empty values', async () => {
+      const result = await harness.invoke('set-api-keys', { OPENAI_API_KEY: '' });
+      expect(result.success).toBe(true);
+      // Should not have written anything meaningful
+    });
+
+    test('allows empty value (clears key)', async () => {
+      // Empty string passes validator since validators check !v first
+      const result = await harness.invoke('set-api-keys', { ANTHROPIC_API_KEY: '' });
+      expect(result.success).toBe(true);
+    });
+
+    test('sends feature-capabilities-updated to renderer', async () => {
+      const result = await harness.invoke('set-api-keys', { RECRAFT_API_KEY: 'rk-test' });
+      expect(result.success).toBe(true);
+      expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith(
+        'feature-capabilities-updated',
+        expect.any(Object)
+      );
+    });
+
+    test('handles write error gracefully', async () => {
+      fs.writeFileSync.mockImplementation(() => { throw new Error('disk full'); });
+      const result = await harness.invoke('set-api-keys', { RECRAFT_API_KEY: 'rk-test' });
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('disk full');
+    });
+
+    test('accepts valid TELEGRAM_CHAT_ID with negative number', async () => {
+      const result = await harness.invoke('set-api-keys', { TELEGRAM_CHAT_ID: '-123456' });
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('unregister', () => {
+    test('removes all settings handlers', () => {
+      registerSettingsHandlers.unregister({ ipcMain: harness.ipcMain });
+      expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-settings');
+      expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('set-setting');
+      expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-all-settings');
+      expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-api-keys');
+      expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('set-api-keys');
+      expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-feature-capabilities');
     });
   });
 });
