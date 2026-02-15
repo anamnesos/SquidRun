@@ -194,6 +194,38 @@ class ContextInjectionManager {
     return result.join('\n').replace(/\n{3,}/g, '\n\n');
   }
 
+  _buildUserProfileSection() {
+    const settings = this.ctx.currentSettings || {};
+    const name = asNonEmptyString(settings.userName);
+    if (!name) return '';
+
+    const level = asNonEmptyString(settings.userExperienceLevel) || 'intermediate';
+    const style = asNonEmptyString(settings.userPreferredStyle) || 'balanced';
+
+    const LEVEL_LABELS = {
+      beginner: 'Beginner — explain concepts thoroughly, avoid jargon, provide examples',
+      intermediate: 'Intermediate — standard explanations, some jargon is fine',
+      advanced: 'Advanced — be concise, skip basic explanations',
+      expert: 'Expert — minimal explanation, focus on implementation details',
+    };
+    const STYLE_LABELS = {
+      detailed: 'Detailed — thorough, step-by-step explanations',
+      balanced: 'Balanced — standard detail level',
+      concise: 'Concise — brief and direct, minimal prose',
+    };
+
+    const lines = [
+      '## User Profile',
+      `- Name: ${name}`,
+      `- Experience: ${LEVEL_LABELS[level] || level}`,
+      `- Communication: ${STYLE_LABELS[style] || style}`,
+      '',
+      `Address the user as "${name}". Adjust your language and detail level to match their experience and communication preferences.`,
+    ];
+
+    return lines.join('\n');
+  }
+
   async buildContext(paneId, model) {
     const parts = [];
 
@@ -224,6 +256,12 @@ class ContextInjectionManager {
     const runtimeSnapshot = await this.buildRuntimeMemorySnapshot(paneId);
     if (runtimeSnapshot) {
       parts.push(runtimeSnapshot);
+    }
+
+    // 5. User profile — name, experience level, communication preferences
+    const userProfile = this._buildUserProfileSection();
+    if (userProfile) {
+      parts.push(userProfile);
     }
 
     return parts.join('\n\n---\n\n');

@@ -237,3 +237,70 @@ describe('_scopeRolesContent — role-scoped ROLES.md injection', () => {
     expect(scoped).not.toMatch(/\n{3,}/);
   });
 });
+
+describe('_buildUserProfileSection — user profile in context injection', () => {
+  test('returns empty string when userName is not set', () => {
+    const manager = new ContextInjectionManager({ currentSettings: {} });
+    expect(manager._buildUserProfileSection()).toBe('');
+  });
+
+  test('returns empty string when userName is blank', () => {
+    const manager = new ContextInjectionManager({ currentSettings: { userName: '  ' } });
+    expect(manager._buildUserProfileSection()).toBe('');
+  });
+
+  test('includes user name, experience, and communication style', () => {
+    const manager = new ContextInjectionManager({
+      currentSettings: {
+        userName: 'the user',
+        userExperienceLevel: 'advanced',
+        userPreferredStyle: 'concise',
+      },
+    });
+    const section = manager._buildUserProfileSection();
+    expect(section).toContain('## User Profile');
+    expect(section).toContain('Name: the user');
+    expect(section).toContain('Advanced');
+    expect(section).toContain('Concise');
+    expect(section).toContain('Address the user as "the user"');
+  });
+
+  test('defaults to intermediate/balanced when levels not set', () => {
+    const manager = new ContextInjectionManager({
+      currentSettings: { userName: 'Alice' },
+    });
+    const section = manager._buildUserProfileSection();
+    expect(section).toContain('Name: Alice');
+    expect(section).toContain('Intermediate');
+    expect(section).toContain('Balanced');
+  });
+
+  test('buildContext includes user profile when name is set', async () => {
+    executeEvidenceLedgerOperation.mockResolvedValueOnce({});
+    teamMemory.executeTeamMemoryOperation.mockResolvedValueOnce({ ok: true, claims: [] });
+
+    const manager = new ContextInjectionManager({
+      currentSettings: {
+        userName: 'the user',
+        userExperienceLevel: 'expert',
+        userPreferredStyle: 'concise',
+      },
+    });
+    jest.spyOn(manager, 'readFileIfExists').mockReturnValue('');
+
+    const context = await manager.buildContext('1', 'claude');
+    expect(context).toContain('## User Profile');
+    expect(context).toContain('Name: the user');
+  });
+
+  test('buildContext omits user profile when name is empty', async () => {
+    executeEvidenceLedgerOperation.mockResolvedValueOnce({});
+    teamMemory.executeTeamMemoryOperation.mockResolvedValueOnce({ ok: true, claims: [] });
+
+    const manager = new ContextInjectionManager({ currentSettings: {} });
+    jest.spyOn(manager, 'readFileIfExists').mockReturnValue('');
+
+    const context = await manager.buildContext('1', 'claude');
+    expect(context).not.toContain('## User Profile');
+  });
+});

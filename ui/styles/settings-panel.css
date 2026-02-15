@@ -93,6 +93,22 @@
   outline: none;
 }
 
+.settings-select {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  color: var(--color-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-select:focus {
+  border-color: var(--color-primary);
+  outline: none;
+}
+
 .settings-input-short {
   max-width: 120px;
 }

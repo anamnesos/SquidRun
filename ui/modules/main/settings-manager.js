@@ -90,6 +90,9 @@ const DEFAULT_SETTINGS = {
   voiceInputEnabled: false,
   voiceAutoSend: false,
   voiceLanguage: 'en-US',
+  userName: '',
+  userExperienceLevel: 'intermediate',
+  userPreferredStyle: 'balanced',
 };
 
 class SettingsManager {
