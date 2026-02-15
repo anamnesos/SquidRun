@@ -29,6 +29,7 @@ const { registerSettingsHandlers } = require('./settings-handlers');
 const { registerExternalNotificationHandlers } = require('./external-notification-handlers');
 const { registerPtyHandlers } = require('./pty-handlers');
 const { registerGitHandlers } = require('./git-handlers');
+const { registerGitHubHandlers } = require('./github-handlers');
 const { registerKnowledgeHandlers } = require('./knowledge-handlers');
 const { registerKnowledgeGraphHandlers } = require('./knowledge-graph-handlers');
 const { registerDebugReplayHandlers } = require('./debug-replay-handlers');
@@ -83,6 +84,7 @@ const DEFAULT_HANDLERS = [
   registerExternalNotificationHandlers,
   registerPtyHandlers,
   registerGitHandlers,
+  registerGitHubHandlers,
   registerKnowledgeHandlers,
   registerKnowledgeGraphHandlers,
   registerDebugReplayHandlers,
