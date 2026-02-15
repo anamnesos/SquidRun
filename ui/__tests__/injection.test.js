@@ -833,7 +833,7 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
 
-    test('handles Codex pane with trusted Enter (interactive PTY)', async () => {
+    test('handles Codex pane with PTY Enter (interactive PTY)', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('1', mockTerminal);
@@ -844,9 +844,10 @@ describe('Terminal Injection', () => {
       await jest.advanceTimersByTimeAsync(500);
       await promise;
 
-      // Codex interactive uses PTY write for text, sendTrustedEnter for submission
+      // Codex interactive uses PTY write for text and PTY Enter for submission
       expect(mockPty.write).toHaveBeenCalledWith('1', 'test command', expect.any(Object));
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
+      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
       expect(mockPty.codexExec).not.toHaveBeenCalled();
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
       expect(onComplete).toHaveBeenCalledWith({
@@ -865,6 +866,22 @@ describe('Terminal Injection', () => {
       await controller.doSendToPane('1', 'test\r', onComplete);
 
       expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'pty_write_failed' });
+    });
+
+    test('handles Codex PTY Enter failure', async () => {
+      mockOptions.isCodexPane.mockReturnValue(true);
+      terminals.set('1', { _hivemindBypass: false });
+      mockPty.write
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('Enter failed'));
+      const onComplete = jest.fn();
+
+      const promise = controller.doSendToPane('1', 'test\r', onComplete);
+      await jest.advanceTimersByTimeAsync(200);
+      await promise;
+
+      expect(onComplete).toHaveBeenCalledWith({ success: false, reason: 'enter_failed' });
+      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
     });
 
     // Gemini PTY path: sanitize text, then send Enter via PTY \r

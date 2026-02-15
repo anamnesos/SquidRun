@@ -248,7 +248,7 @@ describe('Injection Events', () => {
   });
 
   // ──────────────────────────────────────────
-  // doSendToPane (Codex path): inject.applied, inject.submit.sent (interactive PTY + trusted Enter)
+  // doSendToPane (Codex path): inject.applied, inject.submit.sent (interactive PTY + PTY Enter)
   // ──────────────────────────────────────────
   describe('doSendToPane Codex events', () => {
     test('emits inject.applied and inject.submit.sent for Codex interactive PTY', async () => {
@@ -267,8 +267,9 @@ describe('Injection Events', () => {
       expect(applied).toBeDefined();
       expect(applied[1].payload.method).toBe('codex-pty');
 
-      // Codex interactive uses sendTrustedEnter, not codexExec
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      // Codex interactive uses PTY Enter, not trusted keyboard Enter/codexExec
+      expect(mockPty.write).toHaveBeenCalledWith('codex', '\r', expect.any(Object));
+      expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
       expect(mockPty.codexExec).not.toHaveBeenCalled();
     });
 
@@ -290,16 +291,16 @@ describe('Injection Events', () => {
       expect(failed[1].payload.reason).toBe('pty_write_failed');
     });
 
-    test('emits inject.failed when Codex sendTrustedEnter fails', async () => {
+    test('emits inject.failed when Codex PTY Enter fails', async () => {
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('codex', mockTerminal);
-      mockPty.sendTrustedEnter.mockRejectedValue(new Error('Enter failed'));
-      // DOM fallback also fails
-      mockTextarea.dispatchEvent = jest.fn(() => { throw new Error('no DOM'); });
+      mockPty.write
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('Enter failed'));
 
       let onCompleteResult;
       controller.doSendToPane('codex', 'test', (result) => { onCompleteResult = result; });
-      await jest.advanceTimersByTimeAsync(500);
+      await jest.advanceTimersByTimeAsync(250);
 
       expect(onCompleteResult).toBeDefined();
       expect(onCompleteResult.success).toBe(false);

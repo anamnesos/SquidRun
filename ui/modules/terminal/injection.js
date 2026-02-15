@@ -513,11 +513,11 @@ function createInjectionController(options = {}) {
         mode: 'pty',
         modeLabel: 'codex-pty',
         appliedMethod: 'codex-pty',
-        submitMethod: 'sendTrustedEnter',
+        submitMethod: 'codex-pty-enter',
         bypassGlobalLock: false,
         applyCompactionGate: false,
-        requiresFocusForEnter: true,
-        enterMethod: 'trusted',
+        requiresFocusForEnter: false,
+        enterMethod: 'pty',
         enterDelayMs: 100,
         sanitizeMultiline: true,
         clearLineBeforeWrite: true,
@@ -527,7 +527,7 @@ function createInjectionController(options = {}) {
         deferSubmitWhilePaneActive: false,
         typingGuardWhenBypassing: false,
         sanitizeTransform: 'none',
-        enterFailureReason: 'enter_failed',
+        enterFailureReason: 'pty_enter_failed',
         displayName: 'Codex',
       };
     }
