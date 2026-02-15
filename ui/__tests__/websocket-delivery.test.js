@@ -282,6 +282,70 @@ describe('WebSocket Delivery Audit', () => {
     expect(secondAck.status).toBe('delivered.websocket');
   });
 
+  test('deduplicates reconnect resend by sender/target/content signature when messageId changes', async () => {
+    const receiver = await connectAndRegister({ port, role: 'devops', paneId: '2' });
+    activeClients.add(receiver);
+    const sender = await connectAndRegister({ port, role: 'analyst', paneId: '5' });
+    activeClients.add(sender);
+
+    const firstMessageId = 'ack-signature-dedup-1';
+    const secondMessageId = 'ack-signature-dedup-2';
+    let deliveredCount = 0;
+    receiver.on('message', (raw) => {
+      const msg = JSON.parse(raw.toString());
+      if (msg.type === 'message' && msg.content === 'signature-dedup-payload') {
+        deliveredCount++;
+      }
+    });
+
+    const firstAckPromise = waitForMessage(
+      sender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === firstMessageId
+    );
+    const firstDeliveryPromise = waitForMessage(
+      receiver,
+      (msg) => msg.type === 'message' && msg.content === 'signature-dedup-payload'
+    );
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'devops',
+      content: 'signature-dedup-payload',
+      messageId: firstMessageId,
+      ackRequired: true,
+    }));
+    await Promise.all([firstAckPromise, firstDeliveryPromise]);
+
+    const secondAckPromise = waitForMessage(
+      sender,
+      (msg) => msg.type === 'send-ack' && msg.messageId === secondMessageId
+    );
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'devops',
+      content: 'signature-dedup-payload',
+      messageId: secondMessageId,
+      ackRequired: true,
+    }));
+    const secondAck = await secondAckPromise;
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const routedSendCalls = onMessageSpy.mock.calls
+      .map(([payload]) => payload?.message)
+      .filter((msg) => msg?.type === 'send' && msg?.content === 'signature-dedup-payload');
+    const signatureDedupeMetricCalls = onMessageSpy.mock.calls
+      .map(([payload]) => payload?.message)
+      .filter((msg) => msg?.type === 'comms-metric' && msg?.eventType === 'comms.dedupe.hit')
+      .filter((msg) => msg?.payload?.mode === 'signature_cache');
+
+    expect(deliveredCount).toBe(1);
+    expect(routedSendCalls).toHaveLength(1);
+    expect(signatureDedupeMetricCalls).toHaveLength(1);
+    expect(secondAck.ok).toBe(true);
+    expect(secondAck.status).toBe('delivered.websocket');
+    expect(secondAck.messageId).toBe(secondMessageId);
+  });
+
   test('returns cached delivery-check result for previously ACKed messageId', async () => {
     const receiver = await connectAndRegister({ port, role: 'devops', paneId: '2' });
     activeClients.add(receiver);
