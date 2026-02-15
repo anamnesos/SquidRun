@@ -132,6 +132,68 @@ class ContextInjectionManager {
     return ['## Runtime Memory Snapshot', ...parts].join('\n\n');
   }
 
+  /**
+   * Scope ROLES.md to only include sections relevant to the given pane.
+   * Strips other roles' ## sections and irrelevant startup baseline sub-sections.
+   */
+  _scopeRolesContent(fullContent, paneId) {
+    const role = canonicalRoleFromPane(paneId);
+    const roleSections = {
+      architect: '## ARCHITECT',
+      devops: '## DEVOPS',
+      analyst: '## ANALYST',
+    };
+    const myRoleHeader = roleSections[role];
+    if (!myRoleHeader) return fullContent;
+
+    const allRoleHeaders = Object.values(roleSections);
+    const isArchitect = role === 'architect';
+    const lines = fullContent.split('\n');
+    const result = [];
+    let skipRoleSection = false;
+    let skipStartupBlock = false;
+
+    for (const line of lines) {
+      // Top-level role section headers — keep only this pane's role
+      const isRoleSectionHeader = allRoleHeaders.some(h => line.startsWith(h));
+      if (isRoleSectionHeader) {
+        skipRoleSection = !line.startsWith(myRoleHeader);
+        skipStartupBlock = false; // reset on any section boundary
+        if (!skipRoleSection) result.push(line);
+        continue;
+      }
+
+      // Any non-role ## header ends both role section and startup block skips
+      if (line.startsWith('## ')) {
+        skipRoleSection = false;
+        skipStartupBlock = false;
+      }
+      if (skipRoleSection) continue;
+
+      // Scope startup baseline sub-sections (bold markers within ### Startup Baseline)
+      if (line.startsWith('**Architect (pane 1):')) {
+        skipStartupBlock = !isArchitect;
+        if (!skipStartupBlock) result.push(line);
+        continue;
+      }
+      if (line.startsWith('**DevOps / Analyst')) {
+        skipStartupBlock = isArchitect;
+        if (!skipStartupBlock) result.push(line);
+        continue;
+      }
+
+      // Bold marker or section header ends startup block skip
+      if (skipStartupBlock && (line.startsWith('**') || line.startsWith('#'))) {
+        skipStartupBlock = false;
+      }
+      if (!skipStartupBlock) {
+        result.push(line);
+      }
+    }
+
+    return result.join('\n').replace(/\n{3,}/g, '\n\n');
+  }
+
   async buildContext(paneId, model) {
     const parts = [];
 
@@ -142,11 +204,11 @@ class ContextInjectionManager {
       parts.push(baseContent);
     }
 
-    // 2. Canonical role contract
+    // 2. Canonical role contract — scoped to this pane's role only
     const rolesPath = path.join(this.projectRoot, 'ROLES.md');
     const rolesContent = this.readFileIfExists(rolesPath);
     if (rolesContent) {
-      parts.push(rolesContent);
+      parts.push(this._scopeRolesContent(rolesContent, paneId));
     }
 
     // 3. Model-specific runtime quirks

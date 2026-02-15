@@ -125,3 +125,115 @@ describe('context-injection runtime memory reads', () => {
 
   });
 });
+
+describe('_scopeRolesContent — role-scoped ROLES.md injection', () => {
+  const FULL_ROLES = [
+    '# ROLES.md',
+    '',
+    '## Purpose',
+    'Canonical role definitions.',
+    '',
+    '## Runtime Identity',
+    '- Pane 1: Architect',
+    '- Pane 2: DevOps',
+    '- Pane 5: Analyst',
+    '',
+    '## Shared Operating Baseline',
+    '- Project root: D:/projects/hivemind/',
+    '',
+    '### Startup Baseline',
+    '',
+    '**Architect (pane 1):**',
+    '1. Query Evidence Ledger context.',
+    '2. Read app-status.json.',
+    '',
+    '**DevOps / Analyst (panes 2, 5):**',
+    '1. Verify auto-injected context.',
+    '2. Check in to Architect.',
+    '',
+    '## ARCHITECT',
+    'Coordinate DevOps and Analyst work.',
+    'Own commit sequencing.',
+    '',
+    '## DEVOPS',
+    'Implement infrastructure/backend.',
+    'Own daemon/process lifecycle.',
+    '',
+    '## ANALYST (ORACLE)',
+    'System monitor and vision-provider.',
+    'Root-cause findings.',
+    '',
+    '## Global Rules',
+    '- Prefer simple solutions.',
+    '- Validate before claiming completion.',
+  ].join('\n');
+
+  let manager;
+  beforeEach(() => {
+    manager = new ContextInjectionManager({});
+  });
+
+  test('pane 1 (Architect) gets only ARCHITECT role section', () => {
+    const scoped = manager._scopeRolesContent(FULL_ROLES, '1');
+    expect(scoped).toContain('## ARCHITECT');
+    expect(scoped).toContain('Coordinate DevOps');
+    expect(scoped).not.toContain('## DEVOPS');
+    expect(scoped).not.toContain('## ANALYST');
+    expect(scoped).toContain('## Global Rules');
+    expect(scoped).toContain('## Purpose');
+  });
+
+  test('pane 2 (DevOps) gets only DEVOPS role section', () => {
+    const scoped = manager._scopeRolesContent(FULL_ROLES, '2');
+    expect(scoped).toContain('## DEVOPS');
+    expect(scoped).toContain('Implement infrastructure');
+    expect(scoped).not.toContain('## ARCHITECT');
+    expect(scoped).not.toContain('## ANALYST');
+    expect(scoped).toContain('## Global Rules');
+  });
+
+  test('pane 5 (Analyst) gets only ANALYST role section', () => {
+    const scoped = manager._scopeRolesContent(FULL_ROLES, '5');
+    expect(scoped).toContain('## ANALYST');
+    expect(scoped).toContain('System monitor');
+    expect(scoped).not.toContain('## ARCHITECT');
+    expect(scoped).not.toContain('## DEVOPS');
+    expect(scoped).toContain('## Global Rules');
+  });
+
+  test('startup baseline scoped: Architect gets own baseline, not workers', () => {
+    const scoped = manager._scopeRolesContent(FULL_ROLES, '1');
+    expect(scoped).toContain('**Architect (pane 1):**');
+    expect(scoped).toContain('Query Evidence Ledger');
+    expect(scoped).not.toContain('**DevOps / Analyst');
+    expect(scoped).not.toContain('Verify auto-injected context');
+  });
+
+  test('startup baseline scoped: DevOps gets worker baseline, not Architect', () => {
+    const scoped = manager._scopeRolesContent(FULL_ROLES, '2');
+    expect(scoped).toContain('**DevOps / Analyst');
+    expect(scoped).toContain('Verify auto-injected context');
+    expect(scoped).not.toContain('**Architect (pane 1):**');
+    expect(scoped).not.toContain('Query Evidence Ledger');
+  });
+
+  test('shared sections preserved for all panes', () => {
+    for (const paneId of ['1', '2', '5']) {
+      const scoped = manager._scopeRolesContent(FULL_ROLES, paneId);
+      expect(scoped).toContain('## Purpose');
+      expect(scoped).toContain('## Runtime Identity');
+      expect(scoped).toContain('## Shared Operating Baseline');
+      expect(scoped).toContain('## Global Rules');
+    }
+  });
+
+  test('unknown pane returns full content unchanged', () => {
+    const scoped = manager._scopeRolesContent(FULL_ROLES, '99');
+    expect(scoped).toBe(FULL_ROLES);
+  });
+
+  test('collapses excessive blank lines', () => {
+    const scoped = manager._scopeRolesContent(FULL_ROLES, '1');
+    expect(scoped).not.toMatch(/\n{3,}/);
+  });
+});
