@@ -268,6 +268,64 @@ describe('HivemindApp', () => {
     });
   });
 
+  describe('lazy worker initialization', () => {
+    it('does not prewarm non-critical runtimes during init', async () => {
+      const app = new HivemindApp(mockAppContext, mockManagers);
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const teamMemory = require('../modules/team-memory');
+      const experiment = require('../modules/experiment');
+
+      app.initDaemonClient = jest.fn().mockResolvedValue();
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+
+      await app.init();
+
+      expect(evidenceLedger.initializeEvidenceLedgerRuntime).not.toHaveBeenCalled();
+      expect(teamMemory.initializeTeamMemoryRuntime).not.toHaveBeenCalled();
+      expect(experiment.initializeExperimentRuntime).not.toHaveBeenCalled();
+      expect(app.initializeStartupSessionScope).not.toHaveBeenCalled();
+    });
+
+    it('initializes team memory lazily on first pattern append', async () => {
+      const app = new HivemindApp(mockAppContext, mockManagers);
+      const teamMemory = require('../modules/team-memory');
+
+      await app.appendTeamMemoryPatternEvent({ eventType: 'test.pattern' }, 'test');
+
+      expect(teamMemory.initializeTeamMemoryRuntime).toHaveBeenCalledTimes(1);
+      expect(teamMemory.appendPatternHookEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'test.pattern' })
+      );
+    });
+
+    it('initializes experiment lazily for guard block dispatch', async () => {
+      const app = new HivemindApp(mockAppContext, mockManagers);
+      const experiment = require('../modules/experiment');
+
+      const result = await app.handleTeamMemoryGuardExperiment({
+        action: 'block',
+        guardId: 'grd_lazy',
+        event: {
+          claimId: 'claim_lazy',
+          status: 'contested',
+          session: 's_lazy',
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(experiment.initializeExperimentRuntime).toHaveBeenCalledTimes(1);
+      expect(experiment.executeExperimentOperation).toHaveBeenCalledWith(
+        'run-experiment',
+        expect.objectContaining({
+          claimId: 'claim_lazy',
+        })
+      );
+    });
+  });
+
   describe('initializeStartupSessionScope', () => {
     let app;
 

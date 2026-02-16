@@ -41,7 +41,6 @@ const {
 } = require('../team-memory/daily-integration');
 const {
   executeEvidenceLedgerOperation,
-  initializeEvidenceLedgerRuntime,
   closeSharedRuntime,
 } = require('../ipc/evidence-ledger-handlers');
 const { executeTransitionLedgerOperation } = require('../ipc/transition-ledger-handlers');
@@ -104,7 +103,12 @@ class HivemindApp {
     this.cliIdentityForwarderRegistered = false;
     this.triggerAckForwarderRegistered = false;
     this.teamMemoryInitialized = false;
+    this.teamMemoryInitPromise = null;
+    this.teamMemoryInitFailed = false;
+    this.teamMemoryDeferredStartupStarted = false;
     this.experimentInitialized = false;
+    this.experimentInitPromise = null;
+    this.experimentInitFailed = false;
     this.intentStateByPane = new Map();
     this.ledgerAppSession = null;
     this.commsSessionScopeId = `app-${process.pid}-${Date.now()}`;
@@ -210,49 +214,12 @@ class HivemindApp {
     // 3. Pre-configure Codex
     this.settings.ensureCodexConfig();
 
-    // 4. Initialize all database runtimes in parallel (Evidence Ledger, Team Memory, Experiment)
-    const initStart = Date.now();
-    const [ledgerInit, teamMemoryInit, experimentInit] = await Promise.allSettled([
-      initializeEvidenceLedgerRuntime({
-        runtimeOptions: { seedOptions: { enabled: true } },
-        recreateUnavailable: true,
-      }),
-      teamMemory.initializeTeamMemoryRuntime({
-        runtimeOptions: {},
-        recreateUnavailable: true,
-      }),
-      experiment.initializeExperimentRuntime({
-        runtimeOptions: {},
-        recreateUnavailable: true,
-      }),
-    ]);
-    log.info('App', `DB runtimes initialized in ${Date.now() - initStart}ms`);
-
-    // 4a. Log Evidence Ledger result
-    const ledgerResult = ledgerInit.status === 'fulfilled' ? ledgerInit.value : null;
-    if (ledgerResult?.ok) {
-      log.info('EvidenceLedger', `Startup initialization ready (driver=${ledgerResult.status?.driver || 'unknown'})`);
-    } else {
-      log.warn('EvidenceLedger', `Startup initialization degraded: ${ledgerResult?.status?.degradedReason || ledgerResult?.initResult?.reason || ledgerInit.reason?.message || 'unavailable'}`);
-    }
-
-    // 4b. Log Team Memory result (backfill/sweeps deferred to after window)
-    const tmResult = teamMemoryInit.status === 'fulfilled' ? teamMemoryInit.value : null;
-    this.teamMemoryInitialized = tmResult?.ok === true;
-    if (this.teamMemoryInitialized) {
-      log.info('TeamMemory', `Startup initialization ready (driver=${tmResult.status?.driver || 'unknown'})`);
-    } else {
-      log.warn('TeamMemory', `Startup initialization degraded: ${tmResult?.status?.degradedReason || tmResult?.initResult?.reason || teamMemoryInit.reason?.message || 'unavailable'}`);
-    }
-
-    // 4c. Log Experiment result
-    const expResult = experimentInit.status === 'fulfilled' ? experimentInit.value : null;
-    this.experimentInitialized = expResult?.ok === true;
-    if (this.experimentInitialized) {
-      log.info('Experiment', `Startup initialization ready (driver=${expResult.status?.driver || 'worker'})`);
-    } else {
-      log.warn('Experiment', `Startup initialization degraded: ${expResult?.status?.degradedReason || expResult?.initResult?.reason || experimentInit.reason?.message || 'unavailable'}`);
-    }
+    // 4. Defer non-critical worker runtimes until first use.
+    // Keep startup focused on rendering + core watchers.
+    log.info(
+      'App',
+      'Deferring startup worker prewarm (evidence-ledger/team-memory/experiment/comms) until first use'
+    );
 
     // 5. Setup external notifications
     this.ctx.setExternalNotifier(createExternalNotifier({
@@ -272,23 +239,20 @@ class HivemindApp {
     // 7. Load usage stats
     this.usage.loadUsageStats();
 
-    // 8. Increment Evidence Ledger startup session and bind comms scope.
-    await this.initializeStartupSessionScope();
-
-    // 9. Initialize PTY daemon connection
+    // 8. Initialize PTY daemon connection
     await this.initDaemonClient();
     this.settings.writeAppStatus({
       incrementSession: this.ctx.daemonClient?.didSpawnDuringLastConnect?.() === true,
     });
 
-    // 10. Create main window
+    // 9. Create main window
     await this.createWindow();
 
-    // 11. Setup global IPC forwarders
+    // 10. Setup global IPC forwarders
     this.ensureCliIdentityForwarder();
     this.ensureTriggerDeliveryAckForwarder();
 
-    // 12. Start WebSocket server for instant agent messaging
+    // 11. Start WebSocket server for instant agent messaging
     try {
       await websocketServer.start({
         port: websocketServer.DEFAULT_PORT,
@@ -712,14 +676,6 @@ class HivemindApp {
 
     this.startSmsPoller();
     this.startTelegramPoller();
-
-    // 13. Deferred Team Memory background tasks (backfill, integrity, sweeps)
-    //     Runs after window is up — does not block time-to-window
-    if (this.teamMemoryInitialized) {
-      this._deferredTeamMemoryStartup().catch((err) => {
-        log.warn('TeamMemory', `Deferred startup failed: ${err.message}`);
-      });
-    }
 
     log.info('App', 'Initialization complete');
   }
@@ -1376,8 +1332,104 @@ class HivemindApp {
     });
   }
 
+  ensureDeferredTeamMemoryStartup() {
+    if (this.teamMemoryDeferredStartupStarted) return;
+    this.teamMemoryDeferredStartupStarted = true;
+    this._deferredTeamMemoryStartup().catch((err) => {
+      log.warn('TeamMemory', `Deferred startup failed: ${err.message}`);
+    });
+  }
+
+  async ensureTeamMemoryInitialized(reason = 'first-use') {
+    if (this.teamMemoryInitialized) {
+      this.ensureDeferredTeamMemoryStartup();
+      return true;
+    }
+    if (this.teamMemoryInitFailed) {
+      return false;
+    }
+    if (this.teamMemoryInitPromise) {
+      return this.teamMemoryInitPromise;
+    }
+
+    this.teamMemoryInitPromise = (async () => {
+      try {
+        const result = await teamMemory.initializeTeamMemoryRuntime({
+          runtimeOptions: {},
+          recreateUnavailable: true,
+        });
+        this.teamMemoryInitialized = result?.ok === true;
+        this.teamMemoryInitFailed = !this.teamMemoryInitialized;
+        if (this.teamMemoryInitialized) {
+          this.ensureDeferredTeamMemoryStartup();
+          log.info('TeamMemory', `Lazy initialization ready (trigger=${reason})`);
+          return true;
+        }
+        log.warn(
+          'TeamMemory',
+          `Lazy initialization degraded (trigger=${reason}): ${result?.status?.degradedReason || result?.initResult?.reason || 'unavailable'}`
+        );
+        return false;
+      } catch (err) {
+        this.teamMemoryInitialized = false;
+        this.teamMemoryInitFailed = true;
+        log.warn('TeamMemory', `Lazy initialization failed (trigger=${reason}): ${err.message}`);
+        return false;
+      } finally {
+        this.teamMemoryInitPromise = null;
+      }
+    })();
+
+    return this.teamMemoryInitPromise;
+  }
+
+  async ensureExperimentInitialized(reason = 'first-use') {
+    if (this.experimentInitialized) {
+      return true;
+    }
+    if (this.experimentInitFailed) {
+      return false;
+    }
+    if (this.experimentInitPromise) {
+      return this.experimentInitPromise;
+    }
+
+    this.experimentInitPromise = (async () => {
+      try {
+        const result = await experiment.initializeExperimentRuntime({
+          runtimeOptions: {},
+          recreateUnavailable: true,
+        });
+        this.experimentInitialized = result?.ok === true;
+        this.experimentInitFailed = !this.experimentInitialized;
+        if (this.experimentInitialized) {
+          log.info('Experiment', `Lazy initialization ready (trigger=${reason})`);
+          return true;
+        }
+        log.warn(
+          'Experiment',
+          `Lazy initialization degraded (trigger=${reason}): ${result?.status?.degradedReason || result?.initResult?.reason || 'unavailable'}`
+        );
+        return false;
+      } catch (err) {
+        this.experimentInitialized = false;
+        this.experimentInitFailed = true;
+        log.warn('Experiment', `Lazy initialization failed (trigger=${reason}): ${err.message}`);
+        return false;
+      } finally {
+        this.experimentInitPromise = null;
+      }
+    })();
+
+    return this.experimentInitPromise;
+  }
+
   async appendTeamMemoryPatternEvent(event, label = 'pattern-event') {
-    if (!this.teamMemoryInitialized || !event) {
+    if (!event) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+    const ready = await this.ensureTeamMemoryInitialized(`append:${label}`);
+    if (!ready) {
       return { ok: false, reason: 'team_memory_unavailable' };
     }
     try {
@@ -1393,7 +1445,8 @@ class HivemindApp {
   }
 
   async evaluateTeamMemoryGuardPreflight({ target, content, fromRole, traceContext } = {}) {
-    if (!this.teamMemoryInitialized) {
+    const ready = await this.ensureTeamMemoryInitialized('guard-preflight');
+    if (!ready) {
       return { blocked: false, actions: [] };
     }
 
@@ -1444,7 +1497,8 @@ class HivemindApp {
   }
 
   async recordSessionLifecyclePattern({ paneId, status, exitCode = null, reason = '' } = {}) {
-    if (!this.teamMemoryInitialized) return;
+    const ready = await this.ensureTeamMemoryInitialized('session-lifecycle');
+    if (!ready) return;
     const event = buildSessionLifecyclePatternEvent({
       paneId,
       status,
@@ -1457,7 +1511,8 @@ class HivemindApp {
   }
 
   async recordDeliveryOutcomePattern({ channel, target, fromRole, result, traceContext } = {}) {
-    if (!this.teamMemoryInitialized) return;
+    const ready = await this.ensureTeamMemoryInitialized('delivery-outcome');
+    if (!ready) return;
     const nowMs = Date.now();
 
     await this.appendTeamMemoryPatternEvent(
@@ -1514,7 +1569,8 @@ class HivemindApp {
       last_update: new Date(nowMs).toISOString(),
     });
 
-    if (!this.teamMemoryInitialized) {
+    const ready = await this.ensureTeamMemoryInitialized('intent-update');
+    if (!ready) {
       return {
         ok: false,
         reason: 'team_memory_unavailable',
@@ -1726,7 +1782,8 @@ class HivemindApp {
   async handleTeamMemoryGuardExperiment(entry = {}) {
     if (!entry || typeof entry !== 'object') return { ok: false, reason: 'invalid_guard_action' };
     if (String(entry.action || '').toLowerCase() !== 'block') return { ok: false, reason: 'not_block_action' };
-    if (!this.experimentInitialized) return { ok: false, reason: 'experiment_unavailable' };
+    const experimentReady = await this.ensureExperimentInitialized('guard-block');
+    if (!experimentReady) return { ok: false, reason: 'experiment_unavailable' };
 
     const event = (entry.event && typeof entry.event === 'object') ? entry.event : {};
     const claimId = String(event.claimId || event.claim_id || '').trim();
