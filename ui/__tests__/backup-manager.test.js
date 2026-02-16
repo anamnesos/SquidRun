@@ -80,7 +80,7 @@ describe('Backup Manager', () => {
 
       const config = manager.getConfig();
       expect(config.enabled).toBe(true);
-      expect(config.maxBackups).toBe(20);
+      expect(config.maxBackups).toBe(5);
     });
   });
 
@@ -401,6 +401,31 @@ describe('Backup Manager', () => {
   });
 
   describe('pruneBackups', () => {
+    test('enforces a maximum of 5 backups even when config is higher', () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockImplementation(p => {
+        if (p.includes('config')) {
+          return JSON.stringify({ maxBackups: 20, maxAgeDays: 0 });
+        }
+        return JSON.stringify({
+          backups: [
+            { id: 'backup-1', createdAt: '2026-01-30' },
+            { id: 'backup-2', createdAt: '2026-01-29' },
+            { id: 'backup-3', createdAt: '2026-01-28' },
+            { id: 'backup-4', createdAt: '2026-01-27' },
+            { id: 'backup-5', createdAt: '2026-01-26' },
+            { id: 'backup-6', createdAt: '2026-01-25' },
+            { id: 'backup-7', createdAt: '2026-01-24' },
+          ],
+        });
+      });
+
+      const removed = manager.pruneBackups();
+
+      expect(removed).toBe(2);
+      expect(fs.rmSync).toHaveBeenCalledTimes(2);
+    });
+
     test('removes backups exceeding maxBackups', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockImplementation(p => {

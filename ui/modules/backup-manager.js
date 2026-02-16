@@ -22,7 +22,7 @@ const COORD_BACKUP_FILES = [
 const DEFAULT_CONFIG = {
   enabled: true,
   intervalMinutes: 60,
-  maxBackups: 20,
+  maxBackups: 5,
   maxAgeDays: 30,
   createRestorePoint: true,
   includePaths: [
@@ -48,6 +48,7 @@ const DEFAULT_CONFIG = {
 
 const INDEX_FILE = 'index.json';
 const META_FILE = 'backup.json';
+const ENFORCED_MAX_BACKUPS = 5;
 
 function ensureDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
@@ -371,7 +372,10 @@ function createBackupManager(options = {}) {
   function pruneBackups() {
     loadConfig();
     loadIndex();
-    const maxBackups = Number(config.maxBackups || 0);
+    const configuredMaxBackups = Number(config.maxBackups || 0);
+    const maxBackups = configuredMaxBackups > 0
+      ? Math.min(configuredMaxBackups, ENFORCED_MAX_BACKUPS)
+      : ENFORCED_MAX_BACKUPS;
     const maxAgeDays = Number(config.maxAgeDays || 0);
     const now = Date.now();
     let removed = 0;
