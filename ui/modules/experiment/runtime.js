@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { execFileSync, spawnSync } = require('child_process');
-const pty = require('node-pty');
 const { WORKSPACE_PATH } = require('../../config');
 const log = require('../logger');
 const { TeamMemoryStore } = require('../team-memory/store');
@@ -900,6 +899,7 @@ class ExperimentRuntime {
     const invocation = buildShellInvocation(job.command, rawStdoutPath, rawStderrPath);
     const startedAt = Date.now();
 
+    const pty = require('node-pty');
     const runResult = await new Promise((resolve) => {
       let timedOut = false;
       let settled = false;
