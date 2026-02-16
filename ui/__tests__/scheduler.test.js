@@ -7,6 +7,7 @@
 jest.mock('fs', () => ({
   existsSync: jest.fn(),
   readFileSync: jest.fn(),
+  mkdirSync: jest.fn(),
   writeFileSync: jest.fn(),
   renameSync: jest.fn(),
 }));
@@ -66,6 +67,7 @@ describe('Scheduler Module', () => {
     // Default fs mock behaviors
     fs.existsSync.mockReturnValue(false);
     fs.readFileSync.mockReturnValue('{}');
+    fs.mkdirSync.mockImplementation(() => {});
     fs.writeFileSync.mockImplementation(() => {});
     fs.renameSync.mockImplementation(() => {});
 

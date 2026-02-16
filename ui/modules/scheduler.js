@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
+const { WORKSPACE_PATH, GLOBAL_STATE_ROOT, resolveGlobalPath } = require('../config');
 const log = require('./logger');
 const taskParser = require('./task-parser');
 
@@ -158,9 +158,9 @@ function computeNextRun(schedule, referenceDate = new Date()) {
 }
 
 function createScheduler({ triggers, workspacePath }) {
-  const filePath = typeof resolveCoordPath === 'function'
-    ? resolveCoordPath('schedules.json', { forWrite: true })
-    : path.join(workspacePath || WORKSPACE_PATH, 'schedules.json');
+  const filePath = typeof resolveGlobalPath === 'function'
+    ? resolveGlobalPath('schedules.json', { forWrite: true })
+    : path.join(workspacePath || GLOBAL_STATE_ROOT || WORKSPACE_PATH, 'schedules.json');
   let scheduleState = { ...DEFAULT_SCHEDULE_STATE };
   let timer = null;
 
@@ -179,6 +179,7 @@ function createScheduler({ triggers, workspacePath }) {
   function save() {
     try {
       scheduleState.lastUpdated = new Date().toISOString();
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
       const tempPath = filePath + '.tmp';
       fs.writeFileSync(tempPath, JSON.stringify(scheduleState, null, 2), 'utf-8');
       fs.renameSync(tempPath, filePath);

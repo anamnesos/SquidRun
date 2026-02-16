@@ -54,7 +54,10 @@ describe('Coord Path Integration', () => {
       const mentionsCoordFile = COORD_FILE_HINTS.some((hint) => source.includes(hint));
       if (!mentionsCoordFile) continue;
 
-      const hasResolver = source.includes('resolveCoordPath(') || source.includes('resolveCoordFile(');
+      const hasResolver =
+        source.includes('resolveCoordPath(')
+        || source.includes('resolveCoordFile(')
+        || source.includes('resolveGlobalPath(');
       if (hasResolver) continue;
 
       const usesWorkspaceJoinForCoord =
