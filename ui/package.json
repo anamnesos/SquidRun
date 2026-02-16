@@ -44,6 +44,33 @@
   ],
   "author": "Hivemind",
   "license": "MIT",
+  "build": {
+    "appId": "com.hivemind.app",
+    "productName": "Hivemind",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!coverage/**",
+      "!out/**"
+    ],
+    "mac": {
+      "icon": "assets/hivemind-icon.icns",
+      "category": "public.app-category.developer-tools",
+      "target": ["dmg", "zip"]
+    },
+    "win": {
+      "icon": "assets/hivemind-icon.ico",
+      "target": ["nsis"]
+    },
+    "linux": {
+      "icon": "assets/hivemind-icon.png",
+      "target": ["AppImage", "deb"],
+      "category": "Development"
+    }
+  },
   "devDependencies": {
     "@electron/rebuild": "^3.5.0",
     "electron": "^28.0.0",
