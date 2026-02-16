@@ -114,9 +114,12 @@
           <div class="toggle active" id="toggleMCPAutoConfig" data-setting="mcpAutoConfig"></div>
           <span class="setting-label">Auto-configure MCP on spawn</span>
         </div>
-        <div class="setting-item" title="Inject role firmware at spawn via CLI-native priority mechanisms (--system-prompt-file, GEMINI_SYSTEM_MD)">
-          <div class="toggle" id="toggleFirmwareInjectionEnabled" data-setting="firmwareInjectionEnabled"></div>
-          <span class="setting-label">Firmware injection (role identity at spawn)</span>
+        <div class="setting-item" title="Developer Mode: agents read project instruction files directly (for working on Hivemind itself). Project Mode: agents get role identity from firmware, project instructions are respected but Hivemind protocols take priority.">
+          <span class="setting-label">Operating Mode</span>
+          <select class="settings-select" data-setting="operatingMode">
+            <option value="developer">Developer Mode (direct instructions)</option>
+            <option value="project">Project Mode (firmware + decoupled)</option>
+          </select>
         </div>
       </div>
     </div>
