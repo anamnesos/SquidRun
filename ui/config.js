@@ -45,6 +45,9 @@ function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
 
 const PROJECT_ROOT = discoverProjectRoot();
 const COORD_ROOT = path.join(PROJECT_ROOT, '.hivemind');
+const GLOBAL_STATE_ROOT = os.platform() === 'win32'
+  ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'hivemind')
+  : path.join(os.homedir(), '.config', 'hivemind');
 const legacyCoordFallbackWarnings = new Set();
 
 // Legacy instance working directories (kept for compatibility during migration)
@@ -183,6 +186,22 @@ function resolveCoordPath(relPath, options = {}) {
   return path.join(root, normalizedRelPath);
 }
 
+function resolveGlobalPath(relPath, options = {}) {
+  const normalizedRelPath = String(relPath || '')
+    .replace(/^[\\/]+/, '')
+    .replace(/[\\/]+/g, path.sep);
+
+  const root = path.resolve(GLOBAL_STATE_ROOT);
+  fs.mkdirSync(root, { recursive: true });
+
+  const resolved = path.join(root, normalizedRelPath);
+  if (options.forWrite === true) {
+    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  }
+
+  return resolved;
+}
+
 // Trigger file targets - maps filename to target pane IDs
 const TRIGGER_TARGETS = {
   // Primary trigger names
@@ -236,6 +255,7 @@ module.exports = {
   WORKSPACE_PATH,
   PROJECT_ROOT,
   COORD_ROOT,
+  GLOBAL_STATE_ROOT,
   PANE_IDS,
   PANE_ROLES,
   SHORT_AGENT_NAMES,
@@ -250,4 +270,5 @@ module.exports = {
   resolveCoordRoot,
   getCoordRoots,
   resolveCoordPath,
+  resolveGlobalPath,
 };

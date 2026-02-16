@@ -6,14 +6,14 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
+const { WORKSPACE_PATH, GLOBAL_STATE_ROOT, resolveGlobalPath } = require('../../config');
 
 class UsageManager {
   constructor(appContext) {
     this.ctx = appContext;
-    this.usageFilePath = typeof resolveCoordPath === 'function'
-      ? resolveCoordPath('usage-stats.json', { forWrite: true })
-      : path.join(WORKSPACE_PATH, 'usage-stats.json');
+    this.usageFilePath = typeof resolveGlobalPath === 'function'
+      ? resolveGlobalPath('usage-stats.json', { forWrite: true })
+      : path.join(GLOBAL_STATE_ROOT || WORKSPACE_PATH, 'usage-stats.json');
     this.ctx.usageStats = {
       totalSpawns: 0,
       spawnsPerPane: { '1': 0, '2': 0, '5': 0 },
@@ -45,6 +45,7 @@ class UsageManager {
 
   saveUsageStats() {
     try {
+      fs.mkdirSync(path.dirname(this.usageFilePath), { recursive: true });
       const tempPath = this.usageFilePath + '.tmp';
       fs.writeFileSync(tempPath, JSON.stringify(this.ctx.usageStats, null, 2), 'utf-8');
       fs.renameSync(tempPath, this.usageFilePath);

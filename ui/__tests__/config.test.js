@@ -10,12 +10,14 @@ const {
   WORKSPACE_PATH,
   PROJECT_ROOT,
   COORD_ROOT,
+  GLOBAL_STATE_ROOT,
   PANE_ROLES,
   TRIGGER_TARGETS,
   PROTOCOL_ACTIONS,
   PROTOCOL_EVENTS,
   resolvePaneCwd,
   resolveCoordRoot,
+  resolveGlobalPath,
 } = require('../config');
 
 describe('config.js', () => {
@@ -59,6 +61,13 @@ describe('config.js', () => {
     test('resolveCoordRoot should return .hivemind when present, else workspace', () => {
       const expected = fs.existsSync(COORD_ROOT) ? COORD_ROOT : WORKSPACE_PATH;
       expect(resolveCoordRoot()).toBe(expected);
+    });
+
+    test('resolveGlobalPath should resolve under GLOBAL_STATE_ROOT and ensure directory exists', () => {
+      const resolved = resolveGlobalPath('usage-stats.json', { forWrite: true });
+      const expected = path.join(GLOBAL_STATE_ROOT, 'usage-stats.json');
+      expect(path.resolve(resolved)).toBe(path.resolve(expected));
+      expect(fs.existsSync(path.resolve(GLOBAL_STATE_ROOT))).toBe(true);
     });
   });
 
