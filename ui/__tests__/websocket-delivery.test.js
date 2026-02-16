@@ -150,6 +150,25 @@ describe('WebSocket Delivery Audit', () => {
     expect(received.from).toBe('architect');
   });
 
+  test('normalizes sender role alias director to architect on registration', async () => {
+    const receiver = await connectAndRegister({ port, role: 'builder', paneId: '2' });
+    activeClients.add(receiver);
+    const sender = await connectAndRegister({ port, role: 'director', paneId: '1' });
+    activeClients.add(sender);
+
+    const delivery = waitForMessage(receiver, (msg) => msg.type === 'message' && msg.content === 'alias-role-ping');
+
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'builder',
+      content: 'alias-role-ping',
+      priority: 'normal',
+    }));
+
+    const received = await delivery;
+    expect(received.from).toBe('architect');
+  });
+
   test('returns send-ack when ackRequired is true and route is delivered', async () => {
     const receiver = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(receiver);

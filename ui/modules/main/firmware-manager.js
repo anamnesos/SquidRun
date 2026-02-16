@@ -8,13 +8,16 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const log = require('../logger');
-const { PROJECT_ROOT, COORD_ROOT } = require('../../config');
+const { PROJECT_ROOT, COORD_ROOT, getHivemindRoot } = require('../../config');
 const { execFileSync } = require('child_process');
 
 const SPEC_RELATIVE_PATH = path.join('workspace', 'specs', 'firmware-injection-spec.md');
 const FIRMWARE_SUBDIR = 'firmware';
 const CODEX_OVERRIDE_FILENAME = 'AGENTS.override.md';
 const PREFLIGHT_SCRIPT_PATH = path.join(__dirname, '..', '..', 'scripts', 'hm-preflight.js');
+const TEMPLATE_PLACEHOLDERS = Object.freeze({
+  HIVEMIND_ROOT: '{HIVEMIND_ROOT}',
+});
 
 const PANE_ROLE_FILE = {
   '1': 'director',
@@ -82,8 +85,11 @@ class FirmwareManager {
   constructor(appContext, options = {}) {
     this.ctx = appContext;
     this.projectRoot = path.resolve(options.projectRoot || PROJECT_ROOT);
+    this.hivemindRoot = path.resolve(
+      options.hivemindRoot || (typeof getHivemindRoot === 'function' ? getHivemindRoot() : PROJECT_ROOT)
+    );
     this.coordRoot = path.resolve(options.coordRoot || COORD_ROOT);
-    this.specPath = path.resolve(options.specPath || path.join(this.projectRoot, SPEC_RELATIVE_PATH));
+    this.specPath = path.resolve(options.specPath || path.join(this.hivemindRoot, SPEC_RELATIVE_PATH));
     this.firmwareDir = path.resolve(options.firmwareDir || path.join(this.coordRoot, FIRMWARE_SUBDIR));
     this.codexRulesDir = path.resolve(
       options.codexRulesDir || path.join(os.homedir(), '.codex', 'rules')
@@ -196,17 +202,48 @@ class FirmwareManager {
     }
   }
 
+  getFirmwareTemplateValues() {
+    return {
+      HIVEMIND_ROOT: String(this.hivemindRoot || '').replace(/\\/g, '/'),
+    };
+  }
+
+  applyFirmwareTemplate(line, templateValues = {}) {
+    let rendered = String(line || '');
+    Object.entries(templateValues).forEach(([key, value]) => {
+      const placeholder = `{${key}}`;
+      rendered = rendered.split(placeholder).join(String(value || ''));
+    });
+    return rendered;
+  }
+
+  assertNoUnresolvedFirmwareTemplate(body) {
+    const unresolved = Object.values(TEMPLATE_PLACEHOLDERS).filter((placeholder) =>
+      String(body || '').includes(placeholder)
+    );
+    if (unresolved.length > 0) {
+      throw new Error(`Firmware template placeholder not resolved: ${unresolved.join(', ')}`);
+    }
+  }
+
   buildFirmwarePayloadsFromSpec(preflightResults = []) {
     const specMarkdown = this.readSpec();
     const sections = extractMarkdownH3Sections(specMarkdown);
+    const templateValues = this.getFirmwareTemplateValues();
 
-    const directive = normalizeDirective(sections.get('2.1 Directive: SYSTEM PRIORITY'));
+    const directive = this.applyFirmwareTemplate(
+      normalizeDirective(sections.get('2.1 Directive: SYSTEM PRIORITY')),
+      templateValues
+    );
     const sharedProtocol = extractBulletLines(
       sections.get('2.2 Shared Team Protocol (Include in all roles)')
-    );
-    const directorProtocol = extractBulletLines(sections.get('3.1 Director (Architect)'));
-    const builderProtocol = extractBulletLines(sections.get('3.2 Builder'));
-    const oracleProtocol = extractBulletLines(sections.get('3.3 Oracle'));
+    ).map((line) => this.applyFirmwareTemplate(line, templateValues));
+    const directorProtocol = extractBulletLines(sections.get('3.1 Director (Architect)'))
+      .map((line) => this.applyFirmwareTemplate(line, templateValues));
+    const builderProtocol = extractBulletLines(sections.get('3.2 Builder'))
+      .map((line) => this.applyFirmwareTemplate(line, templateValues));
+    const oracleProtocol = extractBulletLines(sections.get('3.3 Oracle'))
+      .map((line) => this.applyFirmwareTemplate(line, templateValues));
 
     if (!directive) {
       throw new Error('Firmware spec missing 2.1 SYSTEM PRIORITY directive');
@@ -251,7 +288,9 @@ class FirmwareManager {
       }
 
       parts.push('');
-      return parts.join('\n');
+      const body = parts.join('\n');
+      this.assertNoUnresolvedFirmwareTemplate(body);
+      return body;
     };
 
     return {

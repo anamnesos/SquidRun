@@ -764,4 +764,31 @@ describe('hm-send retry behavior', () => {
       await new Promise((resolve) => server.close(resolve));
     }
   });
+
+  test('routes director target alias to architect fallback path when using --role director', async () => {
+    const triggerPath = getTriggerPath('architect.txt');
+    const hadOriginal = fs.existsSync(triggerPath);
+    const originalContent = hadOriginal ? fs.readFileSync(triggerPath, 'utf8') : null;
+    const uniqueSuffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const message = `(TEST #6): director-alias ${uniqueSuffix}`;
+
+    try {
+      const result = await runHmSend(
+        ['director', message, '--role', 'director', '--timeout', '80', '--retries', '0'],
+        { HM_SEND_PORT: '65534' } // force websocket failure -> trigger fallback
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stderr.toLowerCase()).toContain('architect.txt');
+      expect(fs.existsSync(triggerPath)).toBe(true);
+      const fallbackContent = fs.readFileSync(triggerPath, 'utf8');
+      expect(fallbackContent).toContain(message);
+    } finally {
+      if (hadOriginal) {
+        fs.writeFileSync(triggerPath, originalContent, 'utf8');
+      } else if (fs.existsSync(triggerPath)) {
+        fs.unlinkSync(triggerPath);
+      }
+    }
+  });
 });
