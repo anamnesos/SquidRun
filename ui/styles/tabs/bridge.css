@@ -113,6 +113,66 @@
   letter-spacing: 0.5px;
 }
 
+/* --- Transport Health --- */
+
+.bridge-transport {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: var(--space-3);
+  padding: 8px 10px;
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.bridge-transport-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.bridge-transport-kv {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 120px;
+}
+
+.bridge-transport-key {
+  font-size: 10px;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.bridge-transport-value {
+  font-size: 12px;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+}
+
+.bridge-transport-value.good {
+  color: #4caf50;
+}
+
+.bridge-transport-value.warn {
+  color: #ff9800;
+}
+
+.bridge-transport-value.bad {
+  color: #f44336;
+}
+
+.bridge-transport-sparkline {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-dim);
+  white-space: pre;
+}
+
 /* --- Event Stream --- */
 
 .bridge-stream {

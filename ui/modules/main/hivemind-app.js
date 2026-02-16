@@ -3,7 +3,7 @@
  * Main process application controller
  */
 
-const { BrowserWindow, ipcMain, session } = require('electron');
+const { BrowserWindow, ipcMain, session, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
@@ -117,6 +117,10 @@ class HivemindApp {
       lastInboundAtMs: 0,
       sender: null,
     };
+    this.powerMonitorListeners = [];
+    this.lastSystemSuspendAtMs = null;
+    this.lastSystemResumeAtMs = null;
+    this.wakeRecoveryInFlight = false;
   }
 
   async initializeStartupSessionScope(options = {}) {
@@ -282,11 +286,14 @@ class HivemindApp {
     // 9. Create main window
     await this.createWindow();
 
-    // 10. Setup global IPC forwarders
+    // 10. Register sleep/wake listeners for laptop resilience.
+    this.setupPowerMonitorListeners();
+
+    // 11. Setup global IPC forwarders
     this.ensureCliIdentityForwarder();
     this.ensureTriggerDeliveryAckForwarder();
 
-    // 11. Start WebSocket server for instant agent messaging
+    // 12. Start WebSocket server for instant agent messaging
     try {
       await websocketServer.start({
         port: websocketServer.DEFAULT_PORT,
@@ -929,6 +936,154 @@ class HivemindApp {
     ipcMain.handle('context-snapshot-refresh', (event, paneId) => {
       if (paneId) return contextCompressor.refresh(paneId);
       return contextCompressor.refreshAll();
+    });
+  }
+
+  emitCommsBridgeEvent(eventType, payload = {}) {
+    if (typeof eventType !== 'string' || !eventType.startsWith('comms.')) return false;
+    this.kernelBridge.emitBridgeEvent(eventType, payload, 'system');
+    return true;
+  }
+
+  async requestDaemonTerminalSnapshot(timeoutMs = 2000) {
+    const daemonClient = this.ctx.daemonClient;
+    if (!daemonClient || typeof daemonClient.list !== 'function') return [];
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer = null;
+
+      const cleanup = () => {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        daemonClient.off('list', handleList);
+      };
+
+      const finish = (terminals) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (Array.isArray(terminals)) {
+          resolve(terminals);
+          return;
+        }
+        resolve(daemonClient.getTerminals?.() || []);
+      };
+
+      const handleList = (terminals) => {
+        finish(terminals);
+      };
+
+      daemonClient.on('list', handleList);
+      timer = setTimeout(() => {
+        finish(null);
+      }, Math.max(250, Number(timeoutMs) || 2000));
+
+      const sent = daemonClient.list();
+      if (!sent) {
+        finish(null);
+      }
+    });
+  }
+
+  async runWakeRecovery() {
+    if (this.wakeRecoveryInFlight) {
+      this.emitCommsBridgeEvent('comms.transport.recovery.skipped', {
+        reason: 'already_in_flight',
+      });
+      return;
+    }
+
+    this.wakeRecoveryInFlight = true;
+    const startedAtMs = Date.now();
+    this.emitCommsBridgeEvent('comms.transport.recovery.started', {
+      startedAtMs,
+    });
+
+    try {
+      const daemonClient = this.ctx.daemonClient;
+      if (!daemonClient) {
+        this.emitCommsBridgeEvent('comms.transport.recovery.failed', {
+          reason: 'daemon_client_unavailable',
+        });
+        return;
+      }
+
+      if (!daemonClient.connected) {
+        this.emitCommsBridgeEvent('comms.transport.reconnect.attempted', {
+          reason: 'post_wake',
+        });
+        const connected = await daemonClient.connect();
+        if (!connected) {
+          this.emitCommsBridgeEvent('comms.transport.reconnect.failed', {
+            reason: 'connect_failed',
+          });
+          this.emitCommsBridgeEvent('comms.transport.recovery.failed', {
+            reason: 'connect_failed',
+          });
+          return;
+        }
+        this.emitCommsBridgeEvent('comms.transport.reconnect.succeeded', {
+          reason: 'post_wake',
+        });
+      }
+
+      const terminals = await this.requestDaemonTerminalSnapshot(2500);
+      for (const paneId of PANE_IDS) {
+        daemonClient.resume(String(paneId));
+      }
+
+      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+        this.ctx.mainWindow.webContents.send('daemon-connected', { terminals });
+      }
+
+      this.emitCommsBridgeEvent('comms.transport.recovery.completed', {
+        durationMs: Math.max(0, Date.now() - startedAtMs),
+        terminalCount: Array.isArray(terminals) ? terminals.length : 0,
+      });
+    } catch (err) {
+      this.emitCommsBridgeEvent('comms.transport.recovery.failed', {
+        reason: err.message,
+      });
+    } finally {
+      this.wakeRecoveryInFlight = false;
+    }
+  }
+
+  setupPowerMonitorListeners() {
+    if (!powerMonitor || typeof powerMonitor.on !== 'function') return;
+    if (this.powerMonitorListeners.length > 0) return;
+
+    const register = (eventName, handler) => {
+      powerMonitor.on(eventName, handler);
+      this.powerMonitorListeners.push({ eventName, handler });
+    };
+
+    register('suspend', () => {
+      const suspendedAtMs = Date.now();
+      this.lastSystemSuspendAtMs = suspendedAtMs;
+      this.emitCommsBridgeEvent('comms.system.suspend', {
+        timestamp: suspendedAtMs,
+      });
+
+      if (this.ctx.daemonClient?.connected) {
+        this.ctx.daemonClient.saveSession();
+      }
+    });
+
+    register('resume', () => {
+      const resumedAtMs = Date.now();
+      this.lastSystemResumeAtMs = resumedAtMs;
+      const sleptMs = Number.isFinite(this.lastSystemSuspendAtMs)
+        ? Math.max(0, resumedAtMs - this.lastSystemSuspendAtMs)
+        : null;
+      this.emitCommsBridgeEvent('comms.system.resume', {
+        timestamp: resumedAtMs,
+        sleptMs,
+      });
+      void this.runWakeRecovery();
     });
   }
 
@@ -1911,6 +2066,12 @@ class HivemindApp {
     watcher.stopWatcher();
     watcher.stopTriggerWatcher();
     watcher.stopMessageWatcher();
+    if (powerMonitor && typeof powerMonitor.removeListener === 'function') {
+      for (const entry of this.powerMonitorListeners) {
+        powerMonitor.removeListener(entry.eventName, entry.handler);
+      }
+    }
+    this.powerMonitorListeners = [];
 
     if (this.ctx.daemonClient) {
       this.clearDaemonClientListeners(this.ctx.daemonClient);
