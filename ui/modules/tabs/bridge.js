@@ -8,7 +8,7 @@ const { escapeHtml } = require('./utils');
 
 const MAX_STREAM_ENTRIES = 100;
 const MAX_ACK_LATENCY_SAMPLES = 24;
-const SPARKLINE_CHARS = ' .:-=+*#%@';
+const SPARKLINE_CHARS = '._:-=+*#%@';
 
 const ACTIVITY_COLORS = {
   idle: '#4caf50',

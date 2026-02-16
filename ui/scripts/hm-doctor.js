@@ -101,7 +101,11 @@ async function checkPortAvailable(port) {
 
     server.once('error', (err) => {
       if (err && err.code === 'EADDRINUSE') {
-        resolve({ ok: false, detail: `Port ${port} is already in use` });
+        resolve({
+          ok: true,
+          warn: true,
+          detail: `Port ${port} is already in use (Hivemind may already own this port)`,
+        });
         return;
       }
       resolve({ ok: false, detail: `Port ${port} check failed: ${err.message}` });
@@ -203,6 +207,7 @@ async function main() {
   ];
 
   let passCount = 0;
+  let warnCount = 0;
   let failCount = 0;
 
   for (const check of checks) {
@@ -210,8 +215,13 @@ async function main() {
       // Support both sync and async checks with one path.
       const result = await Promise.resolve(check.run());
       if (result.ok) {
-        passCount += 1;
-        printStatus('pass', check.title, result.detail);
+        if (result.warn) {
+          warnCount += 1;
+          printStatus('warn', check.title, result.detail);
+        } else {
+          passCount += 1;
+          printStatus('pass', check.title, result.detail);
+        }
       } else {
         failCount += 1;
         printStatus('fail', check.title, result.detail);
@@ -223,7 +233,7 @@ async function main() {
   }
 
   console.log('');
-  console.log(`Summary: ${passCount} passed, ${failCount} failed`);
+  console.log(`Summary: ${passCount} passed, ${warnCount} warned, ${failCount} failed`);
 
   if (failCount > 0) {
     process.exitCode = 1;
