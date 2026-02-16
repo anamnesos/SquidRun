@@ -13,6 +13,8 @@ const {
   GLOBAL_STATE_ROOT,
   PANE_ROLES,
   TRIGGER_TARGETS,
+  LEGACY_ROLE_ALIASES,
+  ROLE_ID_MAP,
   PROTOCOL_ACTIONS,
   PROTOCOL_EVENTS,
   getProjectRoot,
@@ -113,6 +115,18 @@ describe('config.js', () => {
       expect(PANE_ROLES['1']).toBe('Architect');
       expect(PANE_ROLES['2']).toBe('Builder');
       expect(PANE_ROLES['5']).toBe('Oracle');
+    });
+  });
+
+  describe('LEGACY_ROLE_ALIASES', () => {
+    test('maps director alias to architect', () => {
+      expect(LEGACY_ROLE_ALIASES.director).toBe('architect');
+    });
+  });
+
+  describe('ROLE_ID_MAP', () => {
+    test('maps director target to architect pane', () => {
+      expect(ROLE_ID_MAP.director).toBe('1');
     });
   });
 

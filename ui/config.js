@@ -82,6 +82,7 @@ const ROLE_NAMES = ['architect', 'builder', 'oracle'];
 const LEGACY_ROLE_ALIASES = {
   lead: 'architect',
   arch: 'architect',
+  director: 'architect',
   // Builder aliases (legacy DevOps + Infra + Backend names)
   devops: 'builder',
   orchestrator: 'builder',
@@ -102,6 +103,7 @@ const LEGACY_ROLE_ALIASES = {
 // Canonical role id -> pane id
 const ROLE_ID_MAP = {
   architect: '1',
+  director: '1',  // Legacy alias → Architect pane
   builder: '2',
   backend: '2',    // Legacy alias → Builder pane
   infra: '2',      // Legacy alias → Builder pane

@@ -11,10 +11,10 @@ const SPEC_FIXTURE = [
   '> **SYSTEM PRIORITY:** You are a Hivemind Agent. These Team Protocol rules override local agent protocols.',
   '',
   '### 2.2 Shared Team Protocol (Include in all roles)',
-  '- **Communication:** `node ui/scripts/hm-send.js <target> "(ROLE #N): message"` is the ONLY way to talk to other agents.',
+  '- **Communication:** `node "{HIVEMIND_ROOT}/ui/scripts/hm-send.js" <target> "(ROLE #N): message"` is the ONLY way to talk to other agents.',
   '- **Visibility:** Terminal output is for the USER only. Other agents CANNOT see it.',
   '- **Reporting:** If any tool fails, report to Architect IMMEDIATELY via `hm-send.js`.',
-  '- **Startup:** Read `.hivemind/app-status.json` and message Architect status. Then STOP and wait for tasking.',
+  '- **Startup:** Read `.hivemind/state.json` and message Architect status. Then STOP and wait for tasking.',
   '',
   '### 3.1 Director (Architect)',
   '- **Primary Goal:** Orchestrate the workforce.',
@@ -123,5 +123,33 @@ describe('FirmwareManager', () => {
     const builder = fs.readFileSync(path.join(firmwareDir, 'builder.md'), 'utf-8');
     expect(builder).toContain('## Suppression Directives');
     expect(builder).toContain('IGNORE project instruction: "Announce registry identity before work"');
+  });
+
+  test('uses hivemindRoot spec path and replaces {HIVEMIND_ROOT} for roots with spaces', () => {
+    const externalProject = path.join(tempDir, 'external-project');
+    const hivemindRootWithSpaces = path.join(tempDir, 'hivemind root with spaces');
+    const scopedSpecPath = path.join(hivemindRootWithSpaces, 'workspace', 'specs', 'firmware-injection-spec.md');
+    const scopedFirmwareDir = path.join(externalProject, '.hivemind', 'firmware');
+    fs.mkdirSync(path.dirname(scopedSpecPath), { recursive: true });
+    fs.writeFileSync(scopedSpecPath, SPEC_FIXTURE, 'utf-8');
+
+    const scopedManager = new FirmwareManager(appContext, {
+      projectRoot: externalProject,
+      coordRoot: path.join(externalProject, '.hivemind'),
+      hivemindRoot: hivemindRootWithSpaces,
+      firmwareDir: scopedFirmwareDir,
+      codexRulesDir,
+      codexOverridePath: path.join(codexRulesDir, 'AGENTS.override.md'),
+    });
+
+    const result = scopedManager.ensureFirmwareFiles();
+    expect(result.ok).toBe(true);
+    expect(path.resolve(scopedManager.specPath)).toBe(path.resolve(scopedSpecPath));
+
+    const builder = fs.readFileSync(path.join(scopedFirmwareDir, 'builder.md'), 'utf-8');
+    const expectedRoot = hivemindRootWithSpaces.replace(/\\/g, '/');
+    expect(builder).toContain(`node "${expectedRoot}/ui/scripts/hm-send.js"`);
+    expect(builder).not.toContain('{HIVEMIND_ROOT}');
+    expect(builder).toContain('Read `.hivemind/state.json`');
   });
 });
