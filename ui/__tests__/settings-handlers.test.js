@@ -4,6 +4,7 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const {
@@ -101,6 +102,63 @@ describe('Settings Handlers', () => {
       expect(deps.saveSettings).toHaveBeenCalledWith({ existing: 'new' });
       expect(result.existing).toBe('new');
     });
+
+    test('runs preflight scan when paneProjects paths change', async () => {
+      const previousProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-prev-pane-'));
+      const nextProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-next-pane-'));
+      const preflightResults = [{ file: 'CLAUDE.md', hasAgentProtocols: true, conflicts: [] }];
+      const firmwareManager = {
+        runPreflight: jest.fn(() => preflightResults),
+        getAllCachedPreflightResults: jest.fn(() => preflightResults),
+        ensureFirmwareFiles: jest.fn(),
+      };
+      deps.firmwareManager = firmwareManager;
+      deps.loadSettings.mockReturnValue({
+        operatingMode: 'developer',
+        firmwareInjectionEnabled: false,
+        paneProjects: { '1': previousProject, '2': null, '5': null },
+      });
+
+      await harness.invoke('set-setting', 'paneProjects', {
+        '1': nextProject,
+        '2': null,
+        '5': null,
+      });
+
+      expect(firmwareManager.runPreflight).toHaveBeenCalledWith(path.resolve(nextProject), { cache: true });
+      expect(ctx.preflightScanResults).toEqual(preflightResults);
+      expect(firmwareManager.ensureFirmwareFiles).not.toHaveBeenCalled();
+    });
+
+    test('regenerates firmware in project mode when preflight finds conflicts', async () => {
+      const previousProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-prev-project-'));
+      const nextProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-next-project-'));
+      const conflictResults = [{
+        file: 'CLAUDE.md',
+        hasAgentProtocols: true,
+        conflicts: ['[registry] Agent protocol conflict'],
+      }];
+      const firmwareManager = {
+        runPreflight: jest.fn(() => conflictResults),
+        getAllCachedPreflightResults: jest.fn(() => conflictResults),
+        ensureFirmwareFiles: jest.fn(),
+      };
+      deps.firmwareManager = firmwareManager;
+      deps.loadSettings.mockReturnValue({
+        operatingMode: 'project',
+        firmwareInjectionEnabled: true,
+        paneProjects: { '1': previousProject, '2': null, '5': null },
+      });
+
+      await harness.invoke('set-setting', 'paneProjects', {
+        '1': nextProject,
+        '2': null,
+        '5': null,
+      });
+
+      expect(firmwareManager.runPreflight).toHaveBeenCalledWith(path.resolve(nextProject), { cache: true });
+      expect(firmwareManager.ensureFirmwareFiles).toHaveBeenCalledWith(conflictResults);
+    });
   });
 
   describe('get-all-settings', () => {
@@ -120,6 +178,51 @@ describe('Settings Handlers', () => {
       const result = await harness.invoke('get-feature-capabilities');
       expect(getFeatureCapabilities).toHaveBeenCalledWith(process.env);
       expect(result).toEqual({ imageGen: true, voice: false });
+    });
+  });
+
+  describe('preflight-scan', () => {
+    test('runs manual preflight scan and returns results', async () => {
+      const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-manual-preflight-'));
+      const scanResults = [{
+        file: 'GEMINI.md',
+        hasAgentProtocols: true,
+        conflicts: ['[protocol] conflicting protocol'],
+      }];
+      const firmwareManager = {
+        runPreflight: jest.fn(() => scanResults),
+        getAllCachedPreflightResults: jest.fn(() => scanResults),
+        ensureFirmwareFiles: jest.fn(),
+      };
+      deps.firmwareManager = firmwareManager;
+      deps.loadSettings.mockReturnValue({
+        operatingMode: 'project',
+        firmwareInjectionEnabled: true,
+      });
+
+      const result = await harness.invoke('preflight-scan', targetDir);
+
+      expect(result.success).toBe(true);
+      expect(result.targetDir).toBe(path.resolve(targetDir));
+      expect(result.results).toEqual(scanResults);
+      expect(result.hasConflicts).toBe(true);
+      expect(firmwareManager.runPreflight).toHaveBeenCalledWith(path.resolve(targetDir), { cache: true });
+      expect(firmwareManager.ensureFirmwareFiles).toHaveBeenCalledWith(scanResults);
+    });
+
+    test('returns error when directory does not exist', async () => {
+      const firmwareManager = {
+        runPreflight: jest.fn(),
+      };
+      deps.firmwareManager = firmwareManager;
+      deps.loadSettings.mockReturnValue({ operatingMode: 'project', firmwareInjectionEnabled: true });
+
+      const missingDir = path.join(os.tmpdir(), 'hivemind-does-not-exist', String(Date.now()));
+      const result = await harness.invoke('preflight-scan', missingDir);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('does not exist');
+      expect(firmwareManager.runPreflight).not.toHaveBeenCalled();
     });
   });
 
@@ -314,6 +417,7 @@ describe('Settings Handlers', () => {
       expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-api-keys');
       expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('set-api-keys');
       expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-feature-capabilities');
+      expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('preflight-scan');
     });
   });
 });
