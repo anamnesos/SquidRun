@@ -176,7 +176,19 @@ class SettingsManager {
         ? 'sdk'
         : (this.ctx.currentSettings.dryRun ? 'dry-run' : 'pty');
 
-      const existingSession = asPositiveInt(existing.session ?? existing.sessionNumber, null);
+      let existingSession = asPositiveInt(existing.session ?? existing.sessionNumber, null);
+
+      // Seed from legacy workspace path if new global/coord paths have no session yet
+      if (existingSession === null) {
+        try {
+          const legacyPath = path.join(WORKSPACE_PATH, 'app-status.json');
+          if (fs.existsSync(legacyPath)) {
+            const legacy = JSON.parse(fs.readFileSync(legacyPath, 'utf-8'));
+            existingSession = asPositiveInt(legacy.session ?? legacy.sessionNumber, null);
+          }
+        } catch (_) { /* non-fatal */ }
+      }
+
       const overrideSession = asPositiveInt(opts.session, null);
       let session = overrideSession !== null ? overrideSession : existingSession;
       if (opts.incrementSession === true) {
