@@ -833,6 +833,14 @@ class TeamMemoryClaims {
         id, snapshot_id, claim_a, claim_b, agent, session, detected_at, reason, resolved_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+    const existingContradiction = this.db.prepare(`
+      SELECT id FROM belief_contradictions
+      WHERE claim_a = ? AND claim_b = ? AND reason = ? AND resolved_at IS NULL
+      LIMIT 1
+    `);
+
+    let insertedCount = 0;
+    let skippedCount = 0;
 
     try {
       this.db.exec('BEGIN IMMEDIATE;');
@@ -844,6 +852,15 @@ class TeamMemoryClaims {
         JSON.stringify(beliefs)
       );
       for (const contradiction of contradictions) {
+        const existing = existingContradiction.get(
+          contradiction.claimA,
+          contradiction.claimB,
+          contradiction.reason
+        );
+        if (existing) {
+          skippedCount += 1;
+          continue;
+        }
         insertContradiction.run(
           toId('bc'),
           snapshotId,
@@ -860,6 +877,7 @@ class TeamMemoryClaims {
             nowMs
           )
         );
+        insertedCount += 1;
       }
       this.db.exec('COMMIT;');
     } catch (err) {
@@ -883,6 +901,8 @@ class TeamMemoryClaims {
       },
       contradictions: {
         count: contradictions.length,
+        inserted: insertedCount,
+        skipped: skippedCount,
         items: contradictions,
       },
     };
