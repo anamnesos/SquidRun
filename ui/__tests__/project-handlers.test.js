@@ -7,10 +7,15 @@ const {
   createIpcHarness,
   createDefaultContext,
 } = require('./helpers/ipc-harness');
+const path = require('path');
 
 // Mock fs
 jest.mock('fs', () => ({
   existsSync: jest.fn(),
+  mkdirSync: jest.fn(),
+  writeFileSync: jest.fn(),
+  renameSync: jest.fn(),
+  unlinkSync: jest.fn(),
 }));
 
 // Mock logger
@@ -52,6 +57,8 @@ describe('Project Handlers', () => {
     deps = {
       loadSettings: jest.fn(() => ({ recentProjects: [], paneProjects: {} })),
       saveSettings: jest.fn(),
+      readAppStatus: jest.fn(() => ({ session: 321 })),
+      getSessionId: jest.fn(() => 'app-session-321'),
     };
 
     fs.existsSync.mockReturnValue(true);
@@ -72,6 +79,53 @@ describe('Project Handlers', () => {
       expect(result.name).toBe('project');
       expect(ctx.watcher.writeState).toHaveBeenCalled();
       expect(ctx.watcher.transition).toHaveBeenCalledWith('project_selected');
+      expect(result.bootstrap).toBeDefined();
+      expect(result.bootstrap.session_id).toBe('app-session-321');
+    });
+
+    test('writes bootstrap link.json and README-FIRST.md', async () => {
+      await harness.invoke('select-project');
+
+      const normalizePath = (value) => String(value || '').replace(/\\/g, '/');
+      const linkWrite = fs.writeFileSync.mock.calls.find(([filePath]) =>
+        normalizePath(filePath).endsWith('/selected/project/.hivemind/link.json.tmp')
+      );
+      const readmeWrite = fs.writeFileSync.mock.calls.find(([filePath]) =>
+        normalizePath(filePath).endsWith('/selected/project/.hivemind/README-FIRST.md.tmp')
+      );
+
+      expect(linkWrite).toBeDefined();
+      expect(readmeWrite).toBeDefined();
+
+      const linkPayload = JSON.parse(linkWrite[1]);
+      expect(linkPayload).toEqual(expect.objectContaining({
+        hivemind_root: expect.any(String),
+        workspace: path.resolve('/selected/project').replace(/\\/g, '/'),
+        session_id: 'app-session-321',
+        version: 1,
+      }));
+      expect(linkPayload.comms.hm_send).toContain('ui/scripts/hm-send.js');
+      expect(linkPayload.role_targets).toEqual({
+        architect: 'architect',
+        builder: 'builder',
+        oracle: 'oracle',
+      });
+      expect(readmeWrite[1]).toContain('Connectivity Test');
+      expect(readmeWrite[1]).toContain('node ');
+      expect(readmeWrite[1]).toContain('hm-send.js architect');
+    });
+
+    test('returns error when bootstrap write fails', async () => {
+      fs.writeFileSync.mockImplementationOnce(() => {
+        throw new Error('Disk full');
+      });
+
+      const result = await harness.invoke('select-project');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Failed to initialize .hivemind bootstrap');
+      expect(ctx.watcher.writeState).not.toHaveBeenCalled();
+      expect(ctx.watcher.transition).not.toHaveBeenCalled();
     });
 
     test('handles dialog cancel', async () => {
@@ -258,6 +312,8 @@ describe('Project Handlers', () => {
       expect(result.path).toBe('/new/project');
       expect(ctx.watcher.writeState).toHaveBeenCalled();
       expect(ctx.watcher.transition).toHaveBeenCalled();
+      expect(result.bootstrap).toBeDefined();
+      expect(result.bootstrap.session_id).toBe('app-session-321');
     });
 
     test('returns error for non-existent path', async () => {

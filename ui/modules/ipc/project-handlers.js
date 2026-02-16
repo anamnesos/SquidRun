@@ -8,7 +8,116 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { setProjectRoot } = require('../../config');
+const { setProjectRoot, getHivemindRoot } = require('../../config');
+
+const LINK_SCHEMA_VERSION = 1;
+const ROLE_TARGETS = Object.freeze({
+  architect: 'architect',
+  builder: 'builder',
+  oracle: 'oracle',
+});
+
+function normalizeToPosix(value) {
+  return String(value || '').replace(/\\/g, '/');
+}
+
+function buildSessionId(deps = {}) {
+  try {
+    const explicitSessionId = typeof deps.getSessionId === 'function'
+      ? deps.getSessionId()
+      : null;
+    if (typeof explicitSessionId === 'string' && explicitSessionId.trim()) {
+      return explicitSessionId.trim();
+    }
+  } catch (_) {
+    // Fall back to app-status based session below.
+  }
+
+  try {
+    const status = typeof deps.readAppStatus === 'function'
+      ? deps.readAppStatus()
+      : null;
+    const sessionValue = status?.session_id ?? status?.sessionId ?? status?.session ?? status?.sessionNumber;
+    if (sessionValue === 0 || sessionValue) {
+      const sessionText = String(sessionValue).trim();
+      if (sessionText) return sessionText;
+    }
+  } catch (_) {
+    // Fall back to default when app status is unavailable.
+  }
+
+  return 'unknown';
+}
+
+function writeFileAtomic(filePath, content) {
+  const normalizedPath = path.resolve(filePath);
+  const dir = path.dirname(normalizedPath);
+  const tempPath = `${normalizedPath}.tmp`;
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    fs.writeFileSync(tempPath, content, 'utf-8');
+    fs.renameSync(tempPath, normalizedPath);
+  } catch (err) {
+    if (fs.existsSync(tempPath)) {
+      try { fs.unlinkSync(tempPath); } catch (_) { /* ignore cleanup error */ }
+    }
+    throw err;
+  }
+}
+
+function buildReadmeFirstContent({ hmSendRelative }) {
+  return [
+    '# README-FIRST',
+    '',
+    'This project was attached by Hivemind in Project Select mode.',
+    '',
+    '## Connectivity Test',
+    'Run this from the project root to verify agent messaging:',
+    '',
+    '```bash',
+    `node ${hmSendRelative} architect "(BUILDER #1): Connectivity test"`,
+    '```',
+    '',
+    'If this fails, re-run project selection in Hivemind.',
+    '',
+  ].join('\n');
+}
+
+function writeProjectBootstrapFiles(projectPath, deps = {}) {
+  const projectRoot = path.resolve(projectPath);
+  const hivemindRoot = path.resolve(
+    typeof getHivemindRoot === 'function'
+      ? getHivemindRoot()
+      : path.resolve(path.join(__dirname, '..', '..', '..'))
+  );
+  const hmSendAbsolute = path.join(hivemindRoot, 'ui', 'scripts', 'hm-send.js');
+  const hmSendRelative = normalizeToPosix(path.relative(projectRoot, hmSendAbsolute));
+  const sessionId = buildSessionId(deps);
+  const coordDir = path.join(projectRoot, '.hivemind');
+  const linkFilePath = path.join(coordDir, 'link.json');
+  const readmePath = path.join(coordDir, 'README-FIRST.md');
+
+  const linkPayload = {
+    hivemind_root: normalizeToPosix(hivemindRoot),
+    comms: {
+      hm_send: hmSendRelative,
+    },
+    workspace: normalizeToPosix(projectRoot),
+    session_id: sessionId,
+    role_targets: ROLE_TARGETS,
+    version: LINK_SCHEMA_VERSION,
+  };
+
+  writeFileAtomic(linkFilePath, `${JSON.stringify(linkPayload, null, 2)}\n`);
+  writeFileAtomic(readmePath, buildReadmeFirstContent({ hmSendRelative }));
+
+  return {
+    linkFilePath,
+    readmePath,
+    hmSendRelative,
+    sessionId,
+  };
+}
 
 function registerProjectHandlers(ctx, deps) {
   const { ipcMain, PANE_IDS } = ctx;
@@ -40,6 +149,16 @@ function registerProjectHandlers(ctx, deps) {
 
     const projectPath = result.filePaths[0];
     const projectName = path.basename(projectPath);
+    let bootstrap = null;
+    try {
+      bootstrap = writeProjectBootstrapFiles(projectPath, deps);
+    } catch (err) {
+      log.error('Project', `Failed to write bootstrap files for ${projectPath}: ${err.message}`);
+      return {
+        success: false,
+        error: `Failed to initialize .hivemind bootstrap: ${err.message}`,
+      };
+    }
 
     const state = ctx.watcher.readState();
     state.project = projectPath;
@@ -63,7 +182,16 @@ function registerProjectHandlers(ctx, deps) {
       ctx.mainWindow.webContents.send('project-changed', projectPath);
     }
 
-    return { success: true, path: projectPath, name: projectName };
+    return {
+      success: true,
+      path: projectPath,
+      name: projectName,
+      bootstrap: {
+        link: bootstrap.linkFilePath,
+        readme: bootstrap.readmePath,
+        session_id: bootstrap.sessionId,
+      },
+    };
   });
 
   ipcMain.handle('get-project', () => {
@@ -137,6 +265,16 @@ function registerProjectHandlers(ctx, deps) {
     if (!projectPath || !fs.existsSync(projectPath)) {
       return { success: false, error: 'Project path does not exist' };
     }
+    let bootstrap = null;
+    try {
+      bootstrap = writeProjectBootstrapFiles(projectPath, deps);
+    } catch (err) {
+      log.error('Project', `Failed to write bootstrap files for ${projectPath}: ${err.message}`);
+      return {
+        success: false,
+        error: `Failed to initialize .hivemind bootstrap: ${err.message}`,
+      };
+    }
 
     const state = ctx.watcher.readState();
     state.project = projectPath;
@@ -162,7 +300,16 @@ function registerProjectHandlers(ctx, deps) {
 
     ctx.watcher.transition(ctx.watcher.States.PROJECT_SELECTED);
 
-    return { success: true, path: projectPath, name: projectName };
+    return {
+      success: true,
+      path: projectPath,
+      name: projectName,
+      bootstrap: {
+        link: bootstrap.linkFilePath,
+        readme: bootstrap.readmePath,
+        session_id: bootstrap.sessionId,
+      },
+    };
   });
 
   // === PER-PANE PROJECT ASSIGNMENT ===
