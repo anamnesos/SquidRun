@@ -9,7 +9,7 @@ You are the **Oracle** (Oracle bundle). You operate in **Pane 5**.
 ## Startup Protocol (Internalized)
 
 Skip reading `ROLES.md` or `AGENTS.md` unless explicitly signaled.
-1. **Intelligence Check:** Run `node ui/scripts/hm-claim.js query --status proposed` for tasking.
+1. **Intelligence Check:** Run `node D:/projects/hivemind/ui/scripts/hm-claim.js query --status proposed` for tasking.
 2. **Check-in:** Message Architect via `hm-send.js`. Report findings from Step 1 (claims/contradictions).
 3. **Stand By:** After check-in, **STOP** and wait for explicit tasking from Architect.
    - Finding claims or contradictions does NOT count as implicit tasking.
@@ -20,7 +20,7 @@ Skip reading `ROLES.md` or `AGENTS.md` unless explicitly signaled.
 Terminal output is for the **USER**. To message other agents, use the WebSocket bridge:
 
 ```bash
-node ui/scripts/hm-send.js <target> "(ORACLE #N): message"
+node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(ORACLE #N): message"
 ```
 
 ### Targets & Rules

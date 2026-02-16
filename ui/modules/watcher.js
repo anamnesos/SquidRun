@@ -14,6 +14,7 @@ const {
   PANE_ROLES,
   resolveCoordPath,
   getCoordRoots,
+  getHivemindRoot,
 } = require('../config');
 const log = require('./logger');
 const { TRIGGER_READ_RETRY_MS, WATCHER_DEBOUNCE_MS } = require('./constants');
@@ -354,6 +355,16 @@ function writeState(state) {
     const dir = path.dirname(statePath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
+    }
+
+    // Ensure hivemind_root is always present so agents in external projects
+    // can locate hivemind scripts (hm-send.js etc.) regardless of their cwd.
+    if (!state.hivemind_root && typeof getHivemindRoot === 'function') {
+      try {
+        state.hivemind_root = getHivemindRoot();
+      } catch (_) {
+        // Tolerate missing config in test environments.
+      }
     }
 
     // Atomic write: write to temp file, then rename

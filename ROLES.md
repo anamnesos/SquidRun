@@ -42,18 +42,18 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 - Project root: `./`
 - App source: `./ui/`
 - Tests: `./ui/__tests__/`
-- Agent messaging: `node ui/scripts/hm-send.js <target> "(ROLE #N): message"`
+- Agent messaging: `node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(ROLE #N): message"`
 - Coordination state root: `.hivemind/` with temporary read fallback to `workspace/`
 - Terminal output is user-facing; agent-to-agent communication uses `hm-send.js`
 
 ### Startup Baseline
 
 **Architect (pane 1):**
-1. Query Evidence Ledger context: `node ui/scripts/hm-memory.js context --role architect`.
+1. Query Evidence Ledger context: `node D:/projects/hivemind/ui/scripts/hm-memory.js context --role architect`.
 2. Read `.hivemind/app-status.json`.
 3. Check `.hivemind/build/blockers.md` and `.hivemind/build/errors.md`.
 4. Read context snapshot at `.hivemind/context-snapshots/1.md`.
-5. Query Team Memory for active claims: `node ui/scripts/hm-claim.js query --status proposed`.
+5. Query Team Memory for active claims: `node D:/projects/hivemind/ui/scripts/hm-claim.js query --status proposed`.
 
 **Builder / Oracle (panes 2, 5):**
 1. Verify auto-injected context (sourced from Team Memory DB).
@@ -106,6 +106,6 @@ Responsibilities:
 
 - Prefer simple, reliable solutions over clever complexity.
 - Validate behavior before claiming completion.
-- Report command/tool failures promptly to Architect via `hm-send`.
+- Report command/tool failures promptly to Architect via `hm-send.js`.
 - Avoid content-free acknowledgments.
 - Always commit before declaring "ready for restart." Uncommitted work is lost on restart.
