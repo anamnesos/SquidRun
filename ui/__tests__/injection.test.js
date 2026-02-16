@@ -71,6 +71,7 @@ describe('Terminal Injection', () => {
     mockTextarea = {
       focus: jest.fn(),
       value: '',
+      dispatchEvent: jest.fn(),
     };
     mockPaneEl = {
       querySelector: jest.fn().mockReturnValue(mockTextarea),
@@ -88,6 +89,18 @@ describe('Terminal Injection', () => {
       body: {
         contains: jest.fn().mockReturnValue(true),
       },
+    };
+
+    global.KeyboardEvent = class KeyboardEvent {
+      constructor(type, options = {}) {
+        this.type = type;
+        this.key = options.key || '';
+        this.code = options.code || '';
+        this.keyCode = options.keyCode || 0;
+        this.which = options.which || 0;
+        this.bubbles = options.bubbles || false;
+        this.cancelable = options.cancelable || false;
+      }
     };
 
     // Default mock options
@@ -115,6 +128,7 @@ describe('Terminal Injection', () => {
     jest.useRealTimers();
     delete global.window;
     delete global.document;
+    delete global.KeyboardEvent;
   });
 
   describe('createInjectionController', () => {
@@ -183,15 +197,15 @@ describe('Terminal Injection', () => {
   });
 
   describe('sendEnterToPane', () => {
-    test('sets bypass flag and sends trusted Enter', async () => {
+    test('sets bypass flag and dispatches Enter via DOM events', async () => {
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('1', mockTerminal);
 
       const result = await controller.sendEnterToPane('1');
 
       expect(result.success).toBe(true);
-      expect(result.method).toBe('sendTrustedEnter');
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      expect(result.method).toBe('domFallback');
+      expect(mockTextarea.dispatchEvent).toHaveBeenCalledTimes(3);
       expect(mockTerminal._hivemindBypass).toBe(true);
     });
 
@@ -207,34 +221,21 @@ describe('Terminal Injection', () => {
       expect(mockTerminal._hivemindBypass).toBe(false);
     });
 
-    test('handles sendTrustedEnter failure', async () => {
-      mockPty.sendTrustedEnter.mockRejectedValue(new Error('Enter failed'));
+    test('returns failure when DOM textarea is unavailable', async () => {
+      document.querySelector.mockReturnValue(null);
 
       const result = await controller.sendEnterToPane('1');
 
       expect(result.success).toBe(false);
-      expect(result.method).toBe('sendTrustedEnter');
-      expect(mockLog.error).toHaveBeenCalled();
+      expect(result.method).toBe('domFallback');
     });
 
-    test('falls back to DOM dispatch when sendTrustedEnter fails', async () => {
-      mockPty.sendTrustedEnter.mockRejectedValue(new Error('Enter failed'));
+    test('dispatches DOM events with bypass marker on each event', async () => {
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('1', mockTerminal);
 
       mockTextarea.dispatchEvent = jest.fn();
-      const originalKeyboardEvent = global.KeyboardEvent;
-      if (!originalKeyboardEvent) {
-        global.KeyboardEvent = function KeyboardEvent(type, options) {
-          return { type, ...options };
-        };
-      }
-
       const result = await controller.sendEnterToPane('1');
-
-      if (!originalKeyboardEvent) {
-        delete global.KeyboardEvent;
-      }
 
       expect(result.success).toBe(true);
       expect(result.method).toBe('domFallback');
@@ -1025,7 +1026,7 @@ describe('Terminal Injection', () => {
       // Advance past base 50ms delay
       await jest.advanceTimersByTimeAsync(100);
 
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      expect(mockTextarea.dispatchEvent).toHaveBeenCalled();
     });
 
     test('scales Enter delay by payload size for long Claude messages', async () => {
@@ -1084,13 +1085,11 @@ describe('Terminal Injection', () => {
       // Advance past fixed delay
       await jest.advanceTimersByTimeAsync(100);
 
-      // Claude panes always send Enter (via sendTrustedEnter)
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      // Claude panes always send Enter via DOM key events
+      expect(mockTextarea.dispatchEvent).toHaveBeenCalled();
     });
 
-    test('times out and returns unverified success', async () => {
-      // Simulate Enter taking too long by making sendTrustedEnter hang
-      mockPty.sendTrustedEnter.mockReturnValue(new Promise(() => {})); // Never resolves
+    test('returns completion after submit flow settles', async () => {
       const onComplete = jest.fn();
 
       const promise = controller.doSendToPane('1', 'test\r', onComplete);
@@ -1156,12 +1155,14 @@ describe('Terminal Injection', () => {
         expect.stringContaining('focus failed, proceeding with Enter anyway')
       );
       // Enter should still be sent (not abandoned)
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      expect(mockTextarea.dispatchEvent).toHaveBeenCalled();
     });
 
     test('handles Enter send failure', async () => {
       document.activeElement = mockTextarea;
-      mockPty.sendTrustedEnter.mockRejectedValue(new Error('Enter failed'));
+      mockTextarea.dispatchEvent.mockImplementation(() => {
+        throw new Error('Enter failed');
+      });
       const onComplete = jest.fn();
 
       await controller.doSendToPane('1', 'test\r', onComplete);
@@ -1190,18 +1191,21 @@ describe('Terminal Injection', () => {
         },
       });
       document.activeElement = mockTextarea;
-      mockPty.sendTrustedEnter.mockImplementation(async () => {
-        enterCalls += 1;
-        if (enterCalls === 2) {
-          promptText = 'running...';
+      mockTextarea.dispatchEvent.mockImplementation((evt) => {
+        if (evt.type === 'keydown') {
+          enterCalls += 1;
+          if (enterCalls === 2) {
+            promptText = 'running...';
+          }
         }
+        return true;
       });
       const onComplete = jest.fn();
 
       await controller.doSendToPane('1', 'test\r', onComplete);
       await jest.advanceTimersByTimeAsync(4000);
 
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalledTimes(2);
+      expect(enterCalls).toBe(2);
       expect(onComplete).toHaveBeenCalledWith({
         success: true,
         verified: true,
@@ -1224,9 +1228,12 @@ describe('Terminal Injection', () => {
         },
       });
       document.activeElement = mockTextarea;
-      mockPty.sendTrustedEnter.mockImplementation(async () => {
-        enterCalls += 1;
-        lastOutputTime['1'] = Date.now();
+      mockTextarea.dispatchEvent.mockImplementation((evt) => {
+        if (evt.type === 'keydown') {
+          enterCalls += 1;
+          lastOutputTime['1'] = Date.now();
+        }
+        return true;
       });
       const onComplete = jest.fn();
 
@@ -1263,9 +1270,12 @@ describe('Terminal Injection', () => {
         },
       });
       document.activeElement = mockTextarea;
-      mockPty.sendTrustedEnter.mockImplementation(async () => {
-        enterCalls += 1;
-        lastOutputTime['1'] = Date.now();
+      mockTextarea.dispatchEvent.mockImplementation((evt) => {
+        if (evt.type === 'keydown') {
+          enterCalls += 1;
+          lastOutputTime['1'] = Date.now();
+        }
+        return true;
       });
       const onComplete = jest.fn();
 
@@ -1295,9 +1305,12 @@ describe('Terminal Injection', () => {
         },
       });
       document.activeElement = mockTextarea;
-      mockPty.sendTrustedEnter.mockImplementation(async () => {
-        enterCalls += 1;
-        lastOutputTime['1'] = Date.now();
+      mockTextarea.dispatchEvent.mockImplementation((evt) => {
+        if (evt.type === 'keydown') {
+          enterCalls += 1;
+          lastOutputTime['1'] = Date.now();
+        }
+        return true;
       });
       const onComplete = jest.fn();
 
@@ -1350,11 +1363,14 @@ describe('Terminal Injection', () => {
         },
       });
 
-      mockPty.sendTrustedEnter.mockImplementation(async () => {
-        enterCalls += 1;
-        if (enterCalls === 2) {
-          promptText = 'running...';
+      mockTextarea.dispatchEvent.mockImplementation((evt) => {
+        if (evt.type === 'keydown') {
+          enterCalls += 1;
+          if (enterCalls === 2) {
+            promptText = 'running...';
+          }
         }
+        return true;
       });
 
       const onComplete = jest.fn();
@@ -1379,6 +1395,7 @@ describe('Terminal Injection', () => {
     });
 
     test('returns accepted.unverified when acceptance signal is never observed after retry', async () => {
+      let enterCalls = 0;
       terminals.set('1', {
         _hivemindBypass: false,
         buffer: {
@@ -1392,12 +1409,18 @@ describe('Terminal Injection', () => {
         },
       });
       document.activeElement = mockTextarea;
+      mockTextarea.dispatchEvent.mockImplementation((evt) => {
+        if (evt.type === 'keydown') {
+          enterCalls += 1;
+        }
+        return true;
+      });
       const onComplete = jest.fn();
 
       await controller.doSendToPane('1', 'test\r', onComplete);
       await jest.advanceTimersByTimeAsync(4000);
 
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalledTimes(2);
+      expect(enterCalls).toBe(2);
       expect(mockOptions.markPotentiallyStuck).not.toHaveBeenCalled();
       expect(onComplete).toHaveBeenCalledWith({
         success: true,
