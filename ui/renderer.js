@@ -735,14 +735,27 @@ function setupEventListeners() {
           log.info('Broadcast', 'Blocked untrusted Enter');
           return;
         }
-        e.preventDefault();
+        
         const input = broadcastInput;
-        if (input.value && input.value.trim()) {
-          const message = input.value.trim();
+        const message = input.value.trim();
+        
+        if (message) {
+          e.preventDefault();
+          // FIX: Clear immediately before async call to prevent race/stuck text on Windows
           input.value = '';
           input.style.height = '';
           input.focus();
           await sendBroadcast(message);
+        }
+      }
+    });
+
+    // Safeguard for Windows: clear any leftover newlines on keyup after Enter
+    broadcastInput.addEventListener('keyup', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        if (broadcastInput.value === '\n' || broadcastInput.value === '\r\n') {
+          broadcastInput.value = '';
+          broadcastInput.style.height = '';
         }
       }
     });
@@ -760,6 +773,7 @@ function setupEventListeners() {
       const input = document.getElementById('broadcastInput');
       if (input && input.value && input.value.trim()) {
         const message = input.value.trim();
+        // FIX: Clear immediately before async call
         input.value = '';
         input.style.height = '';
         input.focus();
