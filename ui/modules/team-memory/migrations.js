@@ -5,8 +5,9 @@ const migrationV4 = require('./migrations/004-phase4-patterns');
 const migrationV5 = require('./migrations/005-phase5-guards');
 const migrationV6 = require('./migrations/006-phase6-experiments');
 const migrationV7 = require('./migrations/007-phase6b-pending-proof');
+const migrationV8 = require('./migrations/008-phase6c-contradiction-resolution');
 
-const MIGRATIONS = [migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7];
+const MIGRATIONS = [migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7, migrationV8];
 
 function toEpochMs(value = Date.now()) {
   const numeric = Number(value);

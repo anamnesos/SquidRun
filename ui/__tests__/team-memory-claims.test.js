@@ -391,4 +391,93 @@ maybeDescribe('team-memory claims module', () => {
       })
     );
   });
+
+  test('resolves contradiction rows on deprecate and supports active-only filtering', () => {
+    const positive = claims.createClaim({
+      statement: 'Delivery verified for routing path',
+      owner: 'oracle',
+      claimType: 'fact',
+      session: 's_302',
+      scopes: ['team-memory.pattern-hook'],
+    }).claim;
+    const negative = claims.createClaim({
+      statement: 'Routing timed out without verification',
+      owner: 'oracle',
+      claimType: 'negative',
+      session: 's_302',
+      scopes: ['team-memory.pattern-hook'],
+    }).claim;
+
+    expect(positive).toBeDefined();
+    expect(negative).toBeDefined();
+
+    const snapshot = claims.createBeliefSnapshot({
+      agent: 'oracle',
+      session: 's_302',
+    });
+    expect(snapshot.ok).toBe(true);
+    expect(snapshot.contradictions.count).toBeGreaterThanOrEqual(1);
+
+    const activeBefore = claims.getContradictions({ agent: 'oracle', session: 's_302', activeOnly: true });
+    expect(activeBefore.ok).toBe(true);
+    expect(activeBefore.total).toBeGreaterThanOrEqual(1);
+    expect(activeBefore.contradictions.every((entry) => entry.resolvedAt === null)).toBe(true);
+
+    const deprecated = claims.deprecateClaim(negative.id, 'architect', 'superseded by verified delivery');
+    expect(deprecated.ok).toBe(true);
+    expect(deprecated.resolvedContradictions).toBeGreaterThanOrEqual(1);
+
+    const activeAfter = claims.getContradictions({ agent: 'oracle', session: 's_302', activeOnly: true });
+    expect(activeAfter.ok).toBe(true);
+    expect(activeAfter.total).toBe(0);
+
+    const history = claims.getContradictions({ agent: 'oracle', session: 's_302', activeOnly: false });
+    expect(history.ok).toBe(true);
+    expect(history.total).toBeGreaterThanOrEqual(1);
+    expect(history.contradictions.every((entry) => Number.isFinite(entry.resolvedAt))).toBe(true);
+  });
+
+  test('resolves contradiction rows when a claim is superseded by a new claim', () => {
+    const baseline = claims.createClaim({
+      statement: 'Legacy delivery assumption',
+      owner: 'builder',
+      claimType: 'fact',
+      session: 's_303',
+      scopes: ['team-memory.pattern-hook'],
+    }).claim;
+    const conflicting = claims.createClaim({
+      statement: 'Legacy path timed out and was unverified',
+      owner: 'builder',
+      claimType: 'negative',
+      session: 's_303',
+      scopes: ['team-memory.pattern-hook'],
+    }).claim;
+
+    const snapshot = claims.createBeliefSnapshot({
+      agent: 'builder',
+      session: 's_303',
+    });
+    expect(snapshot.ok).toBe(true);
+    expect(snapshot.contradictions.count).toBeGreaterThanOrEqual(1);
+
+    const superseding = claims.createClaim({
+      statement: 'Delivery verified by new evidence chain',
+      owner: 'architect',
+      claimType: 'fact',
+      session: 's_303',
+      supersedes: conflicting.id,
+    });
+    expect(superseding.ok).toBe(true);
+    expect(superseding.resolvedContradictions).toBeGreaterThanOrEqual(1);
+
+    const activeAfter = claims.getContradictions({ agent: 'builder', session: 's_303', activeOnly: true });
+    expect(activeAfter.ok).toBe(true);
+    expect(activeAfter.total).toBe(0);
+
+    const allRows = claims.getContradictions({ agent: 'builder', session: 's_303', activeOnly: false });
+    expect(allRows.ok).toBe(true);
+    expect(allRows.total).toBeGreaterThanOrEqual(1);
+    expect(allRows.contradictions.every((entry) => Number.isFinite(entry.resolvedAt))).toBe(true);
+    expect(baseline).toBeDefined();
+  });
 });

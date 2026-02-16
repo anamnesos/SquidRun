@@ -117,4 +117,64 @@ maybeDescribe('hm-claim CLI e2e', () => {
       queryResult.claims.some((claim) => claim.statement === 'hm-claim CLI regression sentinel')
     ).toBe(true);
   });
+
+  test('contradictions soft-hide resolved rows by default and can include history with --active-only false', async () => {
+    const session = 's_cli_contradictions';
+    const scope = 'team-memory.pattern-hook';
+
+    const fact = await teamMemory.executeTeamMemoryOperation('create-claim', {
+      statement: 'delivery verified',
+      owner: 'oracle',
+      claimType: 'fact',
+      session,
+      scopes: [scope],
+    }, { useWorker: false });
+    expect(fact.ok).toBe(true);
+
+    const negative = await teamMemory.executeTeamMemoryOperation('create-claim', {
+      statement: 'delivery timed out',
+      owner: 'oracle',
+      claimType: 'negative',
+      session,
+      scopes: [scope],
+    }, { useWorker: false });
+    expect(negative.ok).toBe(true);
+
+    const snapshot = await teamMemory.executeTeamMemoryOperation('create-belief-snapshot', {
+      agent: 'oracle',
+      session,
+    }, { useWorker: false });
+    expect(snapshot.ok).toBe(true);
+    expect(snapshot.contradictions.count).toBeGreaterThanOrEqual(1);
+
+    const deprecated = await teamMemory.executeTeamMemoryOperation('deprecate-claim', {
+      claimId: negative.claim.id,
+      changedBy: 'architect',
+      reason: 'superseded',
+    }, { useWorker: false });
+    expect(deprecated.ok).toBe(true);
+
+    const activeOnly = await runHmClaimCli(port, [
+      'contradictions',
+      '--agent',
+      'oracle',
+      '--session',
+      session,
+    ]);
+    expect(activeOnly.ok).toBe(true);
+    expect(activeOnly.total).toBe(0);
+
+    const includeResolved = await runHmClaimCli(port, [
+      'contradictions',
+      '--agent',
+      'oracle',
+      '--session',
+      session,
+      '--active-only',
+      'false',
+    ]);
+    expect(includeResolved.ok).toBe(true);
+    expect(includeResolved.total).toBeGreaterThanOrEqual(1);
+    expect(includeResolved.contradictions.every((entry) => Number.isFinite(entry.resolvedAt))).toBe(true);
+  });
 });

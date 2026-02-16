@@ -116,13 +116,15 @@ CREATE TABLE IF NOT EXISTS belief_contradictions (
   agent TEXT NOT NULL,
   session TEXT NOT NULL,
   detected_at INTEGER NOT NULL,
-  reason TEXT
+  reason TEXT,
+  resolved_at INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_contradictions_agent ON belief_contradictions(agent);
 CREATE INDEX IF NOT EXISTS idx_contradictions_session ON belief_contradictions(session);
 CREATE INDEX IF NOT EXISTS idx_contradictions_claim_a ON belief_contradictions(claim_a);
 CREATE INDEX IF NOT EXISTS idx_contradictions_claim_b ON belief_contradictions(claim_b);
+CREATE INDEX IF NOT EXISTS idx_contradictions_resolved_at ON belief_contradictions(resolved_at);
 
 CREATE TABLE IF NOT EXISTS patterns (
   id TEXT PRIMARY KEY,
