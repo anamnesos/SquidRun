@@ -22,7 +22,7 @@ You are an AI agent running in the Hivemind multi-agent orchestration app. You a
 Use WebSocket via `hm-send.js`:
 
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(YOUR-ROLE #N): Your message"
+node ui/scripts/hm-send.js <target> "(YOUR-ROLE #N): Your message"
 ```
 
 | To reach... | Target |
@@ -37,12 +37,12 @@ Legacy targets `devops` and `analyst` still work and route to Builder/Oracle res
 
 If you are **Builder** and need to message Architect:
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(BUILDER #1): Task complete. Ready for review."
+node ui/scripts/hm-send.js architect "(BUILDER #1): Task complete. Ready for review."
 ```
 
 If you are **Oracle** and received a roll call:
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(ORACLE #1): Oracle online. Standing by."
+node ui/scripts/hm-send.js architect "(ORACLE #1): Oracle online. Standing by."
 ```
 
 ### Message Format
@@ -67,7 +67,7 @@ I received the roll call. Standing by.
 
 **RIGHT:**
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(YOUR-ROLE #1): Online and ready."
+node ui/scripts/hm-send.js architect "(YOUR-ROLE #1): Online and ready."
 ```
 
 ---
@@ -78,7 +78,7 @@ node D:/projects/hivemind/ui/scripts/hm-send.js architect "(YOUR-ROLE #1): Onlin
 2. Read `ROLES.md` and follow its startup baseline for your role
 3. Message Architect to check in:
    ```bash
-   node D:/projects/hivemind/ui/scripts/hm-send.js architect "(YOUR-ROLE #1): [Role] online. Standing by."
+   node ui/scripts/hm-send.js architect "(YOUR-ROLE #1): [Role] online. Standing by."
    ```
 
 ---
@@ -89,4 +89,4 @@ node D:/projects/hivemind/ui/scripts/hm-send.js architect "(YOUR-ROLE #1): Onlin
 - WebSocket has zero message loss
 - ~10ms delivery vs 500ms+ for file triggers
 
-File triggers still work as fallback: write to `D:\projects\hivemind\.hivemind\triggers\{role}.txt` (legacy fallback: `workspace\triggers\{role}.txt`)
+File triggers still work as fallback: write to `.hivemind/triggers/{role}.txt` (legacy fallback: `workspace/triggers/{role}.txt`)

@@ -39,10 +39,10 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 
 ## Shared Operating Baseline
 
-- Project root: `D:/projects/hivemind/`
-- App source: `D:/projects/hivemind/ui/`
-- Tests: `D:/projects/hivemind/ui/__tests__/`
-- Agent messaging: `node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(ROLE #N): message"`
+- Project root: `./`
+- App source: `./ui/`
+- Tests: `./ui/__tests__/`
+- Agent messaging: `node ui/scripts/hm-send.js <target> "(ROLE #N): message"`
 - Coordination state root: `.hivemind/` with temporary read fallback to `workspace/`
 - Terminal output is user-facing; agent-to-agent communication uses `hm-send.js`
 
