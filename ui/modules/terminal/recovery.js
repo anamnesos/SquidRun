@@ -127,7 +127,7 @@ function createRecoveryController(options = {}) {
       if (textarea) {
         const focusOk = await focusWithRetry(textarea);
         if (focusOk) {
-          // Use sendEnterToPane helper (handles bypass flag + Terminal.input fallback)
+          // Use sendEnterToPane helper (handles bypass flag + DOM Enter dispatch)
           const enterResult = await sendEnterToPane(paneId);
           if (enterResult.success) {
             log.info(`StuckSweeper ${paneId}`, `Recovery Enter sent via ${enterResult.method}`);
@@ -354,8 +354,6 @@ function createRecoveryController(options = {}) {
       const textarea = paneEl?.querySelector('.xterm-helper-textarea');
 
       if (textarea) {
-        textarea.focus();
-
         if ((typeof isCodexPane === 'function' && isCodexPane(id)) || (typeof isGeminiPane === 'function' && isGeminiPane(id))) {
           // Codex/Gemini: PTY newline to submit (reads stdin directly)
           window.hivemind.pty.write(id, '\r').catch(err => {
@@ -363,20 +361,36 @@ function createRecoveryController(options = {}) {
           });
           log.info(`Terminal ${id}`, 'Aggressive nudge: PTY carriage return');
         } else {
-          // Claude: use sendTrustedEnter with bypass flag
+          // Claude: direct Enter keyboard dispatch with bypass flag
           const terminal = terminals.get(id);
           if (terminal) {
             terminal._hivemindBypass = true;
           }
-          window.hivemind.pty.sendTrustedEnter().then(() => {
-            log.info(`Terminal ${id}`, 'Aggressive nudge: trusted Enter dispatched');
-          }).catch(err => {
-            log.error(`aggressiveNudge ${id}`, 'sendTrustedEnter failed:', err);
-          }).finally(() => {
+          try {
+            const makeEvent = (type) => {
+              const evt = new KeyboardEvent(type, {
+                key: 'Enter',
+                code: 'Enter',
+                keyCode: 13,
+                which: 13,
+                bubbles: true,
+                cancelable: true,
+              });
+              evt._hivemindBypass = true;
+              return evt;
+            };
+
+            textarea.dispatchEvent(makeEvent('keydown'));
+            textarea.dispatchEvent(makeEvent('keypress'));
+            textarea.dispatchEvent(makeEvent('keyup'));
+            log.info(`Terminal ${id}`, 'Aggressive nudge: DOM Enter dispatched');
+          } catch (err) {
+            log.error(`aggressiveNudge ${id}`, 'DOM Enter dispatch failed:', err);
+          } finally {
             if (terminal) {
               setTimeout(() => { terminal._hivemindBypass = false; }, BYPASS_CLEAR_DELAY_MS);
             }
-          });
+          }
         }
       } else {
         // Fallback if textarea truly missing

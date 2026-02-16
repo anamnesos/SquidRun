@@ -97,37 +97,29 @@ function createInjectionController(options = {}) {
   }
 
   /**
-   * Send Enter to terminal via sendTrustedEnter (native Electron keyboard events).
-   * Terminal.input() is DISABLED for Claude panes - it doesn't work with ink TUI.
+   * Send Enter to terminal via direct DOM keyboard dispatch on xterm textarea.
    * @param {string} paneId - The pane ID
    * @returns {Promise<{success: boolean, method: string}>}
    */
   async function sendEnterToPane(paneId) {
     const terminal = terminals.get(paneId);
-
-    // NOTE: Terminal.input('\r') does NOT work for Claude's ink TUI
-    // It routes through onData -> pty.write, same as direct PTY '\r' (no-op for ink TUI)
-    // Terminal.input succeeds but Claude ignores it - messages sit until nudged
-    // MUST use sendTrustedEnter which sends native Electron keyboard events
-    //
-    // Terminal.input is disabled until a working focus-free path is found.
-
-    // Always use sendTrustedEnter for Claude panes (requires focus)
-    // sendInputEvent can produce isTrusted=false, which the key handler blocks unless bypassed
-    // Set bypass flag so attachCustomKeyEventHandler allows the Enter through
+    // sendInputEvent can produce isTrusted=false, which the key handler blocks
+    // unless bypassed. Set bypass flag so attachCustomKeyEventHandler allows Enter.
     if (terminal) {
       terminal._hivemindBypass = true;
-      log.debug(`sendEnterToPane ${paneId}`, 'Set _hivemindBypass=true for sendTrustedEnter');
+      log.debug(`sendEnterToPane ${paneId}`, 'Set _hivemindBypass=true for DOM dispatch');
     }
 
     const tryDomFallback = () => {
       if (typeof document === 'undefined') return false;
-      const paneEl = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
-      const textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
+      let textarea = document.querySelector(`.pane[data-pane-id="${paneId}"] .xterm-helper-textarea`);
+      if (!textarea || typeof textarea.dispatchEvent !== 'function') {
+        const paneEl = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+        textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
+      }
       if (!textarea) return false;
 
       try {
-        textarea.focus();
         const makeEvent = (type) => {
           const evt = new KeyboardEvent(type, {
             key: 'Enter',
@@ -143,28 +135,20 @@ function createInjectionController(options = {}) {
         textarea.dispatchEvent(makeEvent('keydown'));
         textarea.dispatchEvent(makeEvent('keypress'));
         textarea.dispatchEvent(makeEvent('keyup'));
-        log.info(`sendEnterToPane ${paneId}`, 'Enter sent via DOM fallback dispatch');
+        log.info(`sendEnterToPane ${paneId}`, 'Enter sent via DOM dispatch');
         return true;
       } catch (err) {
-        log.warn(`sendEnterToPane ${paneId}`, 'DOM fallback failed:', err);
+        log.warn(`sendEnterToPane ${paneId}`, 'DOM dispatch failed:', err);
         return false;
       }
     };
 
     try {
-      const result = await window.hivemind.pty.sendTrustedEnter();
-      if (result && result.success === false) {
-        throw new Error(result.error || 'sendTrustedEnter failed');
-      }
-      log.info(`sendEnterToPane ${paneId}`, 'Enter sent via sendTrustedEnter (focus-based, bypass enabled)');
-      return { success: true, method: 'sendTrustedEnter' };
-    } catch (err) {
-      log.error(`sendEnterToPane ${paneId}`, 'sendTrustedEnter failed:', err);
       const fallbackOk = tryDomFallback();
       if (fallbackOk) {
         return { success: true, method: 'domFallback' };
       }
-      return { success: false, method: 'sendTrustedEnter' };
+      return { success: false, method: 'domFallback' };
     } finally {
       // Clear bypass flag after Enter is processed (next tick to ensure event handled)
       if (terminal) {

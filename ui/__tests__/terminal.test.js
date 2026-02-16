@@ -504,9 +504,9 @@ describe('terminal.js module', () => {
       // ESC should be sent immediately
       expect(mockTextarea.dispatchEvent).toHaveBeenCalled();
 
-      // Enter should be sent after 150ms delay via sendTrustedEnter
+      // Enter should be sent after 150ms delay via DOM key dispatch
       jest.advanceTimersByTime(150);
-      expect(mockHivemind.pty.sendTrustedEnter).toHaveBeenCalled();
+      expect(mockTextarea.dispatchEvent.mock.calls.length).toBeGreaterThanOrEqual(5);
     });
   });
 

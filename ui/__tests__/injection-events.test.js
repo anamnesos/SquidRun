@@ -85,6 +85,17 @@ describe('Injection Events', () => {
         contains: jest.fn().mockReturnValue(true),
       },
     };
+    global.KeyboardEvent = class KeyboardEvent {
+      constructor(type, options = {}) {
+        this.type = type;
+        this.key = options.key || '';
+        this.code = options.code || '';
+        this.keyCode = options.keyCode || 0;
+        this.which = options.which || 0;
+        this.bubbles = options.bubbles || false;
+        this.cancelable = options.cancelable || false;
+      }
+    };
     global.requestAnimationFrame = (cb) => setTimeout(cb, 0);
 
     mockBus.emit.mockClear();
@@ -116,6 +127,7 @@ describe('Injection Events', () => {
     jest.useRealTimers();
     delete global.window;
     delete global.document;
+    delete global.KeyboardEvent;
     delete global.requestAnimationFrame;
   });
 
@@ -474,7 +486,9 @@ describe('Injection Events', () => {
       const mockTerminal = { _hivemindBypass: false };
       terminals.set('1', mockTerminal);
       global.document.activeElement = mockTextarea;
-      mockPty.sendTrustedEnter.mockResolvedValue({ success: false, error: 'enter failed' });
+      mockTextarea.dispatchEvent.mockImplementation(() => {
+        throw new Error('enter dispatch failed');
+      });
 
       const resultPromise = new Promise((resolve) => {
         controller.doSendToPane('1', 'test', resolve);
@@ -503,7 +517,6 @@ describe('Injection Events', () => {
         },
       });
       global.document.activeElement = mockTextarea;
-      mockPty.sendTrustedEnter.mockResolvedValue(undefined);
 
       const resultPromise = new Promise((resolve) => {
         controller.doSendToPane('1', 'test', resolve);

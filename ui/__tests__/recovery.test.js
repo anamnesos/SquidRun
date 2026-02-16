@@ -527,7 +527,7 @@ describe('Terminal Recovery Controller', () => {
       await jest.advanceTimersByTimeAsync(200);
 
       // Enter should now be sent
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      expect(mockTextarea.dispatchEvent.mock.calls.length).toBeGreaterThanOrEqual(5);
     });
 
     test('uses PTY carriage return for Codex panes', async () => {
@@ -542,13 +542,15 @@ describe('Terminal Recovery Controller', () => {
     });
 
     test('sets bypass flag on terminal for Claude', async () => {
-      terminals.set('1', { _hivemindBypass: false });
+      const terminal = { _hivemindBypass: false };
+      terminals.set('1', terminal);
 
       controller.aggressiveNudge('1');
       await jest.advanceTimersByTimeAsync(200);
 
-      // The bypass flag is set before calling sendTrustedEnter
-      expect(mockPty.sendTrustedEnter).toHaveBeenCalled();
+      // The bypass flag is set before DOM Enter dispatch and cleared later by timer
+      expect(terminal._hivemindBypass).toBe(true);
+      expect(mockTextarea.dispatchEvent).toHaveBeenCalled();
     });
 
     test('handles missing textarea with fallback', async () => {
@@ -561,13 +563,18 @@ describe('Terminal Recovery Controller', () => {
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
     });
 
-    test('handles sendTrustedEnter failure', async () => {
-      mockPty.sendTrustedEnter.mockRejectedValueOnce(new Error('Enter error'));
+    test('handles DOM Enter dispatch failure', async () => {
+      mockTextarea.dispatchEvent.mockImplementation((evt) => {
+        if (evt?.key === 'Enter') {
+          throw new Error('Enter error');
+        }
+        return true;
+      });
 
       controller.aggressiveNudge('1');
       await jest.advanceTimersByTimeAsync(200);
 
-      expect(log.error).toHaveBeenCalledWith('aggressiveNudge 1', 'sendTrustedEnter failed:', expect.any(Error));
+      expect(log.error).toHaveBeenCalledWith('aggressiveNudge 1', 'DOM Enter dispatch failed:', expect.any(Error));
     });
   });
 
