@@ -5,6 +5,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const fsp = fs.promises;
 const { fork } = require('child_process');
 const {
   WORKSPACE_PATH,
@@ -69,7 +70,47 @@ const MESSAGE_MARK_DELIVERED_RETRY_BASE_MS = 250;
 const MESSAGE_MARK_DELIVERED_RETRY_MAX_MS = 5000;
 const pendingMessageDeliveries = new Map(); // key -> delivery state
 const pendingMessageDeliveryById = new Map(); // deliveryId -> key
+const queueMutationChains = new Map(); // queueFile -> promise chain
 let unsubscribeTriggerDeliveryAck = null;
+
+async function pathExists(filePath) {
+  try {
+    await fsp.access(filePath, fs.constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function buildQueueTempPath(queueFile) {
+  return `${queueFile}.${process.pid}.${Date.now()}-${Math.random().toString(36).slice(2, 8)}.tmp`;
+}
+
+function serializeQueueMutation(queueFile, operation) {
+  const previous = queueMutationChains.get(queueFile) || Promise.resolve();
+  const next = previous.then(operation, operation);
+  queueMutationChains.set(queueFile, next.catch(() => {}));
+  return next.finally(() => {
+    if (queueMutationChains.get(queueFile) === next) {
+      queueMutationChains.delete(queueFile);
+    }
+  });
+}
+
+async function readQueueMessages(queueFile) {
+  if (!(await pathExists(queueFile))) {
+    return [];
+  }
+  const content = await fsp.readFile(queueFile, 'utf-8');
+  const parsed = JSON.parse(content);
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+async function writeQueueMessagesAtomic(queueFile, messages) {
+  const tempPath = buildQueueTempPath(queueFile);
+  await fsp.writeFile(tempPath, JSON.stringify(messages, null, 2), 'utf-8');
+  await fsp.rename(tempPath, queueFile);
+}
 
 // ============================================================
 // STATE MACHINE
@@ -815,18 +856,18 @@ function removeWatch(filePath) {
 /**
  * Initialize message queue directory
  */
-function initMessageQueue() {
+async function initMessageQueue() {
   try {
-    if (!fs.existsSync(MESSAGE_QUEUE_DIR)) {
-      fs.mkdirSync(MESSAGE_QUEUE_DIR, { recursive: true });
+    if (!(await pathExists(MESSAGE_QUEUE_DIR))) {
+      await fsp.mkdir(MESSAGE_QUEUE_DIR, { recursive: true });
       log.info('MessageQueue', 'Created message directory');
     }
 
     // Create queue files for each pane if they don't exist
     for (const paneId of PANE_IDS) {
       const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${paneId}.json`);
-      if (!fs.existsSync(queueFile)) {
-        fs.writeFileSync(queueFile, '[]', 'utf-8');
+      if (!(await pathExists(queueFile))) {
+        await fsp.writeFile(queueFile, '[]', 'utf-8');
       }
     }
 
@@ -843,15 +884,11 @@ function initMessageQueue() {
  * @param {boolean} undeliveredOnly - Only return undelivered messages
  * @returns {Array} Messages
  */
-function getMessages(paneId, undeliveredOnly = false) {
+async function getMessages(paneId, undeliveredOnly = false) {
   const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${paneId}.json`);
 
   try {
-    if (!fs.existsSync(queueFile)) {
-      return [];
-    }
-    const content = fs.readFileSync(queueFile, 'utf-8');
-    const messages = JSON.parse(content);
+    const messages = await readQueueMessages(queueFile);
 
     if (undeliveredOnly) {
       return messages.filter(m => !m.delivered);
@@ -872,52 +909,43 @@ function getMessages(paneId, undeliveredOnly = false) {
  * @param {string} type - Message type: 'direct' | 'broadcast' | 'system'
  * @returns {{ success: boolean, messageId?: string }}
  */
-function sendMessage(fromPaneId, toPaneId, content, type = 'direct') {
+async function sendMessage(fromPaneId, toPaneId, content, type = 'direct') {
   const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${toPaneId}.json`);
 
   try {
     // Ensure directory exists
-    if (!fs.existsSync(MESSAGE_QUEUE_DIR)) {
-      const initResult = initMessageQueue();
-      if (!initResult.success) {
-        return { success: false, error: initResult.error || 'Message queue init failed' };
-      }
+    const initResult = await initMessageQueue();
+    if (!initResult.success) {
+      return { success: false, error: initResult.error || 'Message queue init failed' };
     }
 
-    // Read existing messages
-    let messages = [];
-    if (fs.existsSync(queueFile)) {
-      const existing = fs.readFileSync(queueFile, 'utf-8');
-      messages = JSON.parse(existing);
-    }
-
-    // Create new message
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-    const message = {
-      id: messageId,
-      from: fromPaneId,
-      fromRole: PANE_ROLES[fromPaneId] || `Pane ${fromPaneId}`,
-      to: toPaneId,
-      toRole: PANE_ROLES[toPaneId] || `Pane ${toPaneId}`,
-      content,
-      type,
-      timestamp: new Date().toISOString(),
-      delivered: false,
-      deliveredAt: null,
-    };
+    const message = await serializeQueueMutation(queueFile, async () => {
+      let messages = await readQueueMessages(queueFile);
 
-    // Append message
-    messages.push(message);
+      const nextMessage = {
+        id: messageId,
+        from: fromPaneId,
+        fromRole: PANE_ROLES[fromPaneId] || `Pane ${fromPaneId}`,
+        to: toPaneId,
+        toRole: PANE_ROLES[toPaneId] || `Pane ${toPaneId}`,
+        content,
+        type,
+        timestamp: new Date().toISOString(),
+        delivered: false,
+        deliveredAt: null,
+      };
 
-    // Keep only last 100 messages per queue
-    if (messages.length > 100) {
-      messages = messages.slice(-100);
-    }
+      messages.push(nextMessage);
 
-    // Atomic write
-    const tempPath = queueFile + '.tmp';
-    fs.writeFileSync(tempPath, JSON.stringify(messages, null, 2), 'utf-8');
-    fs.renameSync(tempPath, queueFile);
+      // Keep only last 100 messages per queue
+      if (messages.length > 100) {
+        messages = messages.slice(-100);
+      }
+
+      await writeQueueMessagesAtomic(queueFile, messages);
+      return nextMessage;
+    });
 
     log.info('MessageQueue', `${PANE_ROLES[fromPaneId]} → ${PANE_ROLES[toPaneId]}: ${content.substring(0, 50)}...`);
 
@@ -942,29 +970,30 @@ function sendMessage(fromPaneId, toPaneId, content, type = 'direct') {
  * @param {string} messageId - Message ID to mark
  * @returns {{ success: boolean }}
  */
-function markMessageDelivered(paneId, messageId) {
+async function markMessageDelivered(paneId, messageId) {
   const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${paneId}.json`);
 
   try {
-    if (!fs.existsSync(queueFile)) {
-      return { success: false, error: 'Queue not found' };
+    const result = await serializeQueueMutation(queueFile, async () => {
+      if (!(await pathExists(queueFile))) {
+        return { success: false, error: 'Queue not found' };
+      }
+
+      const messages = await readQueueMessages(queueFile);
+      const message = messages.find(m => m.id === messageId);
+      if (!message) {
+        return { success: false, error: 'Message not found' };
+      }
+
+      message.delivered = true;
+      message.deliveredAt = new Date().toISOString();
+      await writeQueueMessagesAtomic(queueFile, messages);
+      return { success: true };
+    });
+
+    if (!result.success) {
+      return result;
     }
-
-    const content = fs.readFileSync(queueFile, 'utf-8');
-    const messages = JSON.parse(content);
-
-    const message = messages.find(m => m.id === messageId);
-    if (!message) {
-      return { success: false, error: 'Message not found' };
-    }
-
-    message.delivered = true;
-    message.deliveredAt = new Date().toISOString();
-
-    // Atomic write
-    const tempPath = queueFile + '.tmp';
-    fs.writeFileSync(tempPath, JSON.stringify(messages, null, 2), 'utf-8');
-    fs.renameSync(tempPath, queueFile);
 
     log.info('MessageQueue', `Marked delivered: ${messageId}`);
 
@@ -987,21 +1016,21 @@ function markMessageDelivered(paneId, messageId) {
  * @param {string} paneId - Pane ID (or 'all' for all panes)
  * @param {boolean} deliveredOnly - Only clear delivered messages
  */
-function clearMessages(paneId, deliveredOnly = false) {
+async function clearMessages(paneId, deliveredOnly = false) {
   try {
     const panes = paneId === 'all' ? PANE_IDS : [paneId];
 
     for (const p of panes) {
       const queueFile = path.join(MESSAGE_QUEUE_DIR, `queue-${p}.json`);
-      if (!fs.existsSync(queueFile)) continue;
-
-      if (deliveredOnly) {
-        const content = fs.readFileSync(queueFile, 'utf-8');
-        const messages = JSON.parse(content).filter(m => !m.delivered);
-        fs.writeFileSync(queueFile, JSON.stringify(messages, null, 2), 'utf-8');
-      } else {
-        fs.writeFileSync(queueFile, '[]', 'utf-8');
-      }
+      await serializeQueueMutation(queueFile, async () => {
+        if (!(await pathExists(queueFile))) return;
+        if (deliveredOnly) {
+          const messages = (await readQueueMessages(queueFile)).filter(m => !m.delivered);
+          await writeQueueMessagesAtomic(queueFile, messages);
+          return;
+        }
+        await writeQueueMessagesAtomic(queueFile, []);
+      });
     }
 
     log.info('MessageQueue', `Cleared messages for ${paneId}`);
@@ -1020,17 +1049,21 @@ function clearMessages(paneId, deliveredOnly = false) {
  * Get message queue status
  * @returns {{ queues: Object, totalMessages: number, undelivered: number }}
  */
-function getMessageQueueStatus() {
+async function getMessageQueueStatus() {
   const status = {
     queues: {},
     totalMessages: 0,
     undelivered: 0,
   };
 
-  for (const paneId of PANE_IDS) {
-    const messages = getMessages(paneId);
+  const paneResults = await Promise.all(PANE_IDS.map(async (paneId) => {
+    const messages = await getMessages(paneId);
     const undelivered = messages.filter(m => !m.delivered);
+    return { paneId, messages, undelivered };
+  }));
 
+  for (const entry of paneResults) {
+    const { paneId, messages, undelivered } = entry;
     status.queues[paneId] = {
       role: PANE_ROLES[paneId],
       total: messages.length,
@@ -1113,17 +1146,17 @@ function scheduleMessageDeliveryRetry(entry, reason) {
   );
 }
 
-function attemptMarkQueueMessageDelivered(entry) {
+async function attemptMarkQueueMessageDelivered(entry) {
   if (!entry || !pendingMessageDeliveries.has(entry.key)) return;
 
-  const result = markMessageDelivered(entry.paneId, entry.messageId);
+  const result = await markMessageDelivered(entry.paneId, entry.messageId);
   if (result.success) {
     clearPendingMessageDelivery(entry);
     return;
   }
 
   // Queue was modified externally; treat "not found" as already handled.
-  const queueMessages = getMessages(entry.paneId, false);
+  const queueMessages = await getMessages(entry.paneId, false);
   const stillExists = queueMessages.some((msg) => msg.id === entry.messageId);
   if (!stillExists) {
     clearPendingMessageDelivery(entry);
@@ -1141,7 +1174,9 @@ function attemptMarkQueueMessageDelivered(entry) {
   }
   entry.markRetryTimer = setTimeout(() => {
     entry.markRetryTimer = null;
-    attemptMarkQueueMessageDelivered(entry);
+    attemptMarkQueueMessageDelivered(entry).catch((err) => {
+      log.warn('MessageQueue', `Retry mark-delivered failed: ${err.message}`);
+    });
   }, nextDelay);
 
   log.warn(
@@ -1174,7 +1209,9 @@ function handleTriggerDeliveryAck(deliveryId, paneId) {
   }
   entry.deliveryId = null;
   entry.retryDelayMs = 0;
-  attemptMarkQueueMessageDelivered(entry);
+  attemptMarkQueueMessageDelivered(entry).catch((err) => {
+    log.warn('MessageQueue', `ACK processing failed: ${err.message}`);
+  });
 }
 
 function attemptQueueMessageDelivery(entry) {
@@ -1275,14 +1312,14 @@ function registerTriggerDeliveryAckListener() {
  * Handle message queue file changes
  * @param {string} filePath - Path to changed queue file
  */
-function handleMessageQueueChange(filePath) {
+async function handleMessageQueueChange(filePath) {
   const filename = path.basename(filePath);
   const match = filename.match(/queue-(\d+)\.json/);
 
   if (!match) return;
 
   const paneId = match[1];
-  const undelivered = getMessages(paneId, true);
+  const undelivered = await getMessages(paneId, true);
 
   if (undelivered.length > 0) {
     log.info('MessageQueue', `${undelivered.length} undelivered message(s) for pane ${paneId}`);
@@ -1311,30 +1348,41 @@ function handleMessageQueueChange(filePath) {
 /**
  * Start watching message queue directory
  */
-function startMessageWatcher() {
-  // Ensure directory exists
-  const initResult = initMessageQueue();
-  if (!initResult.success) {
-    log.error('MessageQueue', 'Skipping watcher start - init failed', initResult.error);
-    return;
-  }
+async function startMessageWatcher() {
+  try {
+    const initResult = await initMessageQueue();
+    if (!initResult.success) {
+      log.error('MessageQueue', 'Skipping watcher start - init failed', initResult.error);
+      return { success: false, error: initResult.error || 'Message queue init failed' };
+    }
 
-  if (messageWatcher) {
-    stopWatcherWorker('message', 'message', { reason: 'restart', clearRestart: false });
-  }
-  registerTriggerDeliveryAckListener();
+    if (messageWatcher) {
+      stopWatcherWorker('message', 'message', { reason: 'restart', clearRestart: false });
+    }
+    registerTriggerDeliveryAckListener();
 
-  messageWatcher = startWatcherWorker(
-    'message',
-    (filePath, eventType) => {
-      if (eventType === 'add' || eventType === 'change') {
-        handleMessageQueueChange(filePath);
+    messageWatcher = startWatcherWorker(
+      'message',
+      (filePath, eventType) => {
+        if (eventType === 'add' || eventType === 'change') {
+          handleMessageQueueChange(filePath).catch((err) => {
+            log.error('MessageQueue', `Failed handling message queue change: ${err.message}`);
+          });
+        }
+      },
+      () => {
+        startMessageWatcher().catch((err) => {
+          log.error('MessageQueue', `Failed to restart message watcher: ${err.message}`);
+        });
       }
-    },
-    () => startMessageWatcher()
-  );
+    );
 
-  log.info('MessageQueue', `Watching ${MESSAGE_QUEUE_DIR}`);
+    log.info('MessageQueue', `Watching ${MESSAGE_QUEUE_DIR}`);
+    return { success: true, path: MESSAGE_QUEUE_DIR };
+  } catch (err) {
+    log.error('MessageQueue', `Failed to initialize watcher: ${err.message}`);
+    return { success: false, error: err.message };
+  }
 }
 
 /**

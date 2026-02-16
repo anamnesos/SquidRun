@@ -211,26 +211,26 @@ describe('MCP Bridge', () => {
     });
 
     describe('mcpSendMessage', () => {
-      test('sends message via watcher on success', () => {
+      test('sends message via watcher on success', async () => {
         mockWatcher.sendMessage.mockReturnValue({ success: true });
 
-        const result = mcpBridge.mcpSendMessage('test-session', '2', 'Hello', 'direct');
+        const result = await mcpBridge.mcpSendMessage('test-session', '2', 'Hello', 'direct');
 
         expect(result.success).toBe(true);
         expect(mockWatcher.sendMessage).toHaveBeenCalledWith('1', '2', 'Hello', 'direct');
       });
 
-      test('returns error for invalid session', () => {
-        const result = mcpBridge.mcpSendMessage('invalid-session', '2', 'Hello', 'direct');
+      test('returns error for invalid session', async () => {
+        const result = await mcpBridge.mcpSendMessage('invalid-session', '2', 'Hello', 'direct');
 
         expect(result.success).toBe(false);
         expect(result.error).toBe('Invalid or expired session');
       });
 
-      test('falls back to file trigger on watcher failure', () => {
+      test('falls back to file trigger on watcher failure', async () => {
         mockWatcher.sendMessage.mockReturnValue({ success: false, error: 'Queue full' });
 
-        const result = mcpBridge.mcpSendMessage('test-session', '2', 'Hello', 'direct');
+        const result = await mcpBridge.mcpSendMessage('test-session', '2', 'Hello', 'direct');
 
         expect(result.fallback).toBe(true);
         expect(result.warning).toContain('file trigger');
@@ -238,22 +238,22 @@ describe('MCP Bridge', () => {
         expect(log.warn).toHaveBeenCalledWith('MCP Bridge', expect.stringContaining('FALLBACK'));
       });
 
-      test('falls back on watcher exception', () => {
+      test('falls back on watcher exception', async () => {
         mockWatcher.sendMessage.mockImplementation(() => {
           throw new Error('Watcher crashed');
         });
 
-        const result = mcpBridge.mcpSendMessage('test-session', '2', 'Hello', 'direct');
+        const result = await mcpBridge.mcpSendMessage('test-session', '2', 'Hello', 'direct');
 
         expect(result.fallback).toBe(true);
       });
     });
 
     describe('mcpBroadcastMessage', () => {
-      test('broadcasts to all other panes', () => {
+      test('broadcasts to all other panes', async () => {
         mockWatcher.sendMessage.mockReturnValue({ success: true });
 
-        const result = mcpBridge.mcpBroadcastMessage('test-session', 'Broadcast msg');
+        const result = await mcpBridge.mcpBroadcastMessage('test-session', 'Broadcast msg');
 
         expect(result.success).toBe(true);
         expect(result.results.length).toBe(2); // All except sender (pane 1)
@@ -264,8 +264,8 @@ describe('MCP Bridge', () => {
         }
       });
 
-      test('returns error for invalid session', () => {
-        const result = mcpBridge.mcpBroadcastMessage('invalid-session', 'Broadcast');
+      test('returns error for invalid session', async () => {
+        const result = await mcpBridge.mcpBroadcastMessage('invalid-session', 'Broadcast');
 
         expect(result.success).toBe(false);
         expect(result.error).toBe('Invalid or expired session');
@@ -273,13 +273,13 @@ describe('MCP Bridge', () => {
     });
 
     describe('mcpGetMessages', () => {
-      test('gets messages for agent', () => {
+      test('gets messages for agent', async () => {
         mockWatcher.getMessages.mockReturnValue([
           { id: '1', content: 'msg1' },
           { id: '2', content: 'msg2' },
         ]);
 
-        const result = mcpBridge.mcpGetMessages('test-session', false);
+        const result = await mcpBridge.mcpGetMessages('test-session', false);
 
         expect(result.success).toBe(true);
         expect(result.messages.length).toBe(2);
@@ -287,33 +287,33 @@ describe('MCP Bridge', () => {
         expect(mockWatcher.getMessages).toHaveBeenCalledWith('1', false);
       });
 
-      test('gets only undelivered messages when flag set', () => {
+      test('gets only undelivered messages when flag set', async () => {
         mockWatcher.getMessages.mockReturnValue([{ id: '1' }]);
 
-        mcpBridge.mcpGetMessages('test-session', true);
+        await mcpBridge.mcpGetMessages('test-session', true);
 
         expect(mockWatcher.getMessages).toHaveBeenCalledWith('1', true);
       });
 
-      test('returns error for invalid session', () => {
-        const result = mcpBridge.mcpGetMessages('invalid-session', false);
+      test('returns error for invalid session', async () => {
+        const result = await mcpBridge.mcpGetMessages('invalid-session', false);
 
         expect(result.success).toBe(false);
       });
     });
 
     describe('mcpMarkDelivered', () => {
-      test('marks message as delivered', () => {
+      test('marks message as delivered', async () => {
         mockWatcher.markMessageDelivered.mockReturnValue({ success: true });
 
-        const result = mcpBridge.mcpMarkDelivered('test-session', 'msg-123');
+        const result = await mcpBridge.mcpMarkDelivered('test-session', 'msg-123');
 
         expect(result.success).toBe(true);
         expect(mockWatcher.markMessageDelivered).toHaveBeenCalledWith('1', 'msg-123');
       });
 
-      test('returns error for invalid session', () => {
-        const result = mcpBridge.mcpMarkDelivered('invalid-session', 'msg-123');
+      test('returns error for invalid session', async () => {
+        const result = await mcpBridge.mcpMarkDelivered('invalid-session', 'msg-123');
 
         expect(result.success).toBe(false);
       });
@@ -477,10 +477,10 @@ describe('MCP Bridge', () => {
     });
 
     describe('mcpGetQueueStatus', () => {
-      test('returns queue status', () => {
+      test('returns queue status', async () => {
         mockWatcher.getMessageQueueStatus.mockReturnValue({ queued: 5, delivered: 10 });
 
-        const result = mcpBridge.mcpGetQueueStatus();
+        const result = await mcpBridge.mcpGetQueueStatus();
 
         expect(result.queued).toBe(5);
         expect(result.delivered).toBe(10);
@@ -602,8 +602,8 @@ describe('MCP Bridge', () => {
       mcpBridge.unregisterAgent('tool-session');
     });
 
-    test('handles register_agent', () => {
-      const result = mcpBridge.handleToolCall('new-session', 'register_agent', { paneId: '2' });
+    test('handles register_agent', async () => {
+      const result = await mcpBridge.handleToolCall('new-session', 'register_agent', { paneId: '2' });
 
       expect(result.success).toBe(true);
       expect(result.agent.paneId).toBe('2');
@@ -612,10 +612,10 @@ describe('MCP Bridge', () => {
       mcpBridge.unregisterAgent('new-session');
     });
 
-    test('handles send_message', () => {
+    test('handles send_message', async () => {
       mockWatcher.sendMessage.mockReturnValue({ success: true });
 
-      const result = mcpBridge.handleToolCall('tool-session', 'send_message', {
+      const result = await mcpBridge.handleToolCall('tool-session', 'send_message', {
         to: '2',
         content: 'Hello',
       });
@@ -623,63 +623,63 @@ describe('MCP Bridge', () => {
       expect(result.success).toBe(true);
     });
 
-    test('handles broadcast_message', () => {
+    test('handles broadcast_message', async () => {
       mockWatcher.sendMessage.mockReturnValue({ success: true });
 
-      const result = mcpBridge.handleToolCall('tool-session', 'broadcast_message', {
+      const result = await mcpBridge.handleToolCall('tool-session', 'broadcast_message', {
         content: 'Broadcast',
       });
 
       expect(result.success).toBe(true);
     });
 
-    test('handles get_messages', () => {
+    test('handles get_messages', async () => {
       mockWatcher.getMessages.mockReturnValue([]);
 
-      const result = mcpBridge.handleToolCall('tool-session', 'get_messages', {});
+      const result = await mcpBridge.handleToolCall('tool-session', 'get_messages', {});
 
       expect(result.success).toBe(true);
       expect(result.messages).toEqual([]);
     });
 
-    test('handles get_messages with undeliveredOnly flag', () => {
+    test('handles get_messages with undeliveredOnly flag', async () => {
       mockWatcher.getMessages.mockReturnValue([]);
 
-      mcpBridge.handleToolCall('tool-session', 'get_messages', { undeliveredOnly: true });
+      await mcpBridge.handleToolCall('tool-session', 'get_messages', { undeliveredOnly: true });
 
       expect(mockWatcher.getMessages).toHaveBeenCalledWith('1', true);
     });
 
-    test('handles mark_delivered', () => {
+    test('handles mark_delivered', async () => {
       mockWatcher.markMessageDelivered.mockReturnValue({ success: true });
 
-      const result = mcpBridge.handleToolCall('tool-session', 'mark_delivered', {
+      const result = await mcpBridge.handleToolCall('tool-session', 'mark_delivered', {
         messageId: 'msg-1',
       });
 
       expect(result.success).toBe(true);
     });
 
-    test('handles get_state', () => {
+    test('handles get_state', async () => {
       mockWatcher.readState.mockReturnValue({ state: 'idle' });
 
-      const result = mcpBridge.handleToolCall('tool-session', 'get_state', {});
+      const result = await mcpBridge.handleToolCall('tool-session', 'get_state', {});
 
       expect(result.success).toBe(true);
     });
 
-    test('handles get_active_agents', () => {
+    test('handles get_active_agents', async () => {
       mockWatcher.readState.mockReturnValue({ state: 'idle', active_agents: [], claims: {} });
 
-      const result = mcpBridge.handleToolCall('tool-session', 'get_active_agents', {});
+      const result = await mcpBridge.handleToolCall('tool-session', 'get_active_agents', {});
 
       expect(result.success).toBe(true);
     });
 
-    test('handles claim_task', () => {
+    test('handles claim_task', async () => {
       mockWatcher.claimAgent.mockReturnValue({ success: true });
 
-      const result = mcpBridge.handleToolCall('tool-session', 'claim_task', {
+      const result = await mcpBridge.handleToolCall('tool-session', 'claim_task', {
         taskId: 'task-1',
         description: 'Test task',
       });
@@ -687,10 +687,10 @@ describe('MCP Bridge', () => {
       expect(result.success).toBe(true);
     });
 
-    test('handles claim_task without description', () => {
+    test('handles claim_task without description', async () => {
       mockWatcher.claimAgent.mockReturnValue({ success: true });
 
-      const result = mcpBridge.handleToolCall('tool-session', 'claim_task', {
+      const result = await mcpBridge.handleToolCall('tool-session', 'claim_task', {
         taskId: 'task-1',
       });
 
@@ -698,10 +698,10 @@ describe('MCP Bridge', () => {
       expect(mockWatcher.claimAgent).toHaveBeenCalledWith('1', 'task-1', '');
     });
 
-    test('handles complete_task', () => {
+    test('handles complete_task', async () => {
       mockWatcher.releaseAgent.mockReturnValue({ success: true });
 
-      const result = mcpBridge.handleToolCall('tool-session', 'complete_task', {});
+      const result = await mcpBridge.handleToolCall('tool-session', 'complete_task', {});
 
       expect(result.success).toBe(true);
     });
@@ -711,7 +711,7 @@ describe('MCP Bridge', () => {
       mockWatcher.releaseAgent.mockReturnValue({ success: true });
       mockGetTaskPoolBridge.mockReturnValue(mockTaskPoolBridge);
 
-      const result = mcpBridge.handleToolCall('tool-session', 'complete_task', {
+      const result = await mcpBridge.handleToolCall('tool-session', 'complete_task', {
         status: 'failed',
         errorMessage: 'submit timed out',
       });
@@ -724,18 +724,18 @@ describe('MCP Bridge', () => {
       }));
     });
 
-    test('handles get_claims', () => {
+    test('handles get_claims', async () => {
       mockWatcher.getClaims.mockReturnValue({});
 
-      const result = mcpBridge.handleToolCall('tool-session', 'get_claims', {});
+      const result = await mcpBridge.handleToolCall('tool-session', 'get_claims', {});
 
       expect(result.success).toBe(true);
     });
 
-    test('handles trigger_agent', () => {
+    test('handles trigger_agent', async () => {
       mockTriggers.sendDirectMessage.mockReturnValue({ success: true, notified: ['2'] });
 
-      const result = mcpBridge.handleToolCall('tool-session', 'trigger_agent', {
+      const result = await mcpBridge.handleToolCall('tool-session', 'trigger_agent', {
         targetPaneId: '2',
         message: 'Trigger!',
       });
@@ -743,44 +743,44 @@ describe('MCP Bridge', () => {
       expect(result.success).toBe(true);
     });
 
-    test('handles get_queue_status', () => {
+    test('handles get_queue_status', async () => {
       mockWatcher.getMessageQueueStatus.mockReturnValue({ queued: 0 });
 
-      const result = mcpBridge.handleToolCall('tool-session', 'get_queue_status', {});
+      const result = await mcpBridge.handleToolCall('tool-session', 'get_queue_status', {});
 
       expect(result.queued).toBe(0);
     });
 
-    test('handles heartbeat', () => {
-      const result = mcpBridge.handleToolCall('tool-session', 'heartbeat', {});
+    test('handles heartbeat', async () => {
+      const result = await mcpBridge.handleToolCall('tool-session', 'heartbeat', {});
 
       expect(result.success).toBe(true);
     });
 
-    test('handles unregister', () => {
+    test('handles unregister', async () => {
       mcpBridge.registerAgent('unreg-session', '2');
-      const result = mcpBridge.handleToolCall('unreg-session', 'unregister', {});
+      const result = await mcpBridge.handleToolCall('unreg-session', 'unregister', {});
 
       expect(result.success).toBe(true);
     });
 
-    test('handles get_mcp_health', () => {
-      const result = mcpBridge.handleToolCall('tool-session', 'get_mcp_health', {});
+    test('handles get_mcp_health', async () => {
+      const result = await mcpBridge.handleToolCall('tool-session', 'get_mcp_health', {});
 
       expect(result).toHaveProperty('healthy');
     });
 
-    test('returns error for unknown tool', () => {
-      const result = mcpBridge.handleToolCall('tool-session', 'unknown_tool', {});
+    test('returns error for unknown tool', async () => {
+      const result = await mcpBridge.handleToolCall('tool-session', 'unknown_tool', {});
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Unknown tool');
     });
 
-    test('logs tool calls', () => {
+    test('logs tool calls', async () => {
       mockWatcher.readState.mockReturnValue({ state: 'idle' });
 
-      mcpBridge.handleToolCall('tool-session', 'get_state', { test: 'arg' });
+      await mcpBridge.handleToolCall('tool-session', 'get_state', { test: 'arg' });
 
       expect(log.info).toHaveBeenCalledWith('MCP Bridge', 'Tool call: get_state', { test: 'arg' });
     });

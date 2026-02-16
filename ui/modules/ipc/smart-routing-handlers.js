@@ -4,6 +4,7 @@
  */
 
 const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
 const log = require('../logger');
 
@@ -40,22 +41,24 @@ function registerSmartRoutingHandlers(ctx) {
     lastUpdated: null,
   };
 
-  function loadPerformance() {
+  async function loadPerformance() {
     if (!PERFORMANCE_FILE_PATH) {
       return { ...DEFAULT_PERFORMANCE };
     }
     try {
-      if (fs.existsSync(PERFORMANCE_FILE_PATH)) {
-        const content = fs.readFileSync(PERFORMANCE_FILE_PATH, 'utf-8');
-        return { ...DEFAULT_PERFORMANCE, ...JSON.parse(content) };
-      }
+      await fsp.access(PERFORMANCE_FILE_PATH, fs.constants.F_OK);
+      const content = await fsp.readFile(PERFORMANCE_FILE_PATH, 'utf-8');
+      return { ...DEFAULT_PERFORMANCE, ...JSON.parse(content) };
     } catch (err) {
+      if (err && err.code === 'ENOENT') {
+        return { ...DEFAULT_PERFORMANCE };
+      }
       log.error('Smart Routing', 'Error loading performance:', err.message);
     }
     return { ...DEFAULT_PERFORMANCE };
   }
 
-  ipcMain.handle('route-task', (event, taskType, message) => {
+  ipcMain.handle('route-task', async (event, taskType, message) => {
     const { ok, triggers, error } = getTriggers();
     if (!ok) {
       return missingDependency(error);
@@ -63,11 +66,11 @@ function registerSmartRoutingHandlers(ctx) {
     if (typeof triggers.routeTask !== 'function') {
       return missingDependency('triggers.routeTask');
     }
-    const perf = loadPerformance();
+    const perf = await loadPerformance();
     return triggers.routeTask(taskType, message, perf);
   });
 
-  ipcMain.handle('get-best-agent', (event, taskType) => {
+  ipcMain.handle('get-best-agent', async (event, taskType) => {
     const { ok, triggers, error } = getTriggers();
     if (!ok) {
       return missingDependency(error);
@@ -75,7 +78,7 @@ function registerSmartRoutingHandlers(ctx) {
     if (typeof triggers.getBestAgent !== 'function') {
       return missingDependency('triggers.getBestAgent');
     }
-    const perf = loadPerformance();
+    const perf = await loadPerformance();
     return triggers.getBestAgent(taskType, perf);
   });
 

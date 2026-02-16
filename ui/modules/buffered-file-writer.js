@@ -10,6 +10,13 @@ function createBufferedFileWriter(options = {}) {
   const maxPendingLines = Number.isFinite(options.maxPendingLines)
     ? Math.max(1, Number(options.maxPendingLines))
     : 2000;
+  const rotateMaxBytes = Number.isFinite(options.rotateMaxBytes) && Number(options.rotateMaxBytes) > 0
+    ? Number(options.rotateMaxBytes)
+    : 0;
+  const rotateMaxFiles = Number.isFinite(options.rotateMaxFiles)
+    ? Math.max(0, Math.floor(Number(options.rotateMaxFiles)))
+    : 0;
+  const rotationEnabled = Boolean(filePath && rotateMaxBytes > 0 && rotateMaxFiles > 0);
 
   let queue = [];
   let flushTimer = null;
@@ -48,6 +55,88 @@ function createBufferedFileWriter(options = {}) {
     }
   }
 
+  function renameIfExists(sourcePath, targetPath, done) {
+    if (typeof fs.rename !== 'function') {
+      done();
+      return;
+    }
+    fs.rename(sourcePath, targetPath, (err) => {
+      if (err && err.code !== 'ENOENT') {
+        done(err);
+        return;
+      }
+      done();
+    });
+  }
+
+  function removeIfExists(targetPath, done) {
+    if (typeof fs.unlink !== 'function') {
+      done();
+      return;
+    }
+    fs.unlink(targetPath, (err) => {
+      if (err && err.code !== 'ENOENT') {
+        done(err);
+        return;
+      }
+      done();
+    });
+  }
+
+  function shiftRotatedFiles(index, done) {
+    if (index < 1) {
+      renameIfExists(filePath, `${filePath}.1`, done);
+      return;
+    }
+    const sourcePath = `${filePath}.${index}`;
+    const targetPath = `${filePath}.${index + 1}`;
+    renameIfExists(sourcePath, targetPath, (err) => {
+      if (err) {
+        done(err);
+        return;
+      }
+      shiftRotatedFiles(index - 1, done);
+    });
+  }
+
+  function rotateFiles(done) {
+    const oldestPath = `${filePath}.${rotateMaxFiles}`;
+    removeIfExists(oldestPath, (removeErr) => {
+      if (removeErr) {
+        done(removeErr);
+        return;
+      }
+      shiftRotatedFiles(rotateMaxFiles - 1, done);
+    });
+  }
+
+  function rotateIfNeeded(chunk, done) {
+    if (!rotationEnabled || typeof fs.stat !== 'function') {
+      done();
+      return;
+    }
+
+    const incomingBytes = Buffer.byteLength(chunk, 'utf8');
+    fs.stat(filePath, (statErr, stats) => {
+      if (statErr) {
+        if (statErr.code === 'ENOENT') {
+          done();
+          return;
+        }
+        done(statErr);
+        return;
+      }
+
+      const size = stats && typeof stats.size === 'number' ? stats.size : 0;
+      if ((size + incomingBytes) <= rotateMaxBytes) {
+        done();
+        return;
+      }
+
+      rotateFiles(done);
+    });
+  }
+
   function flushInternal() {
     if (stopped || !filePath) {
       queue = [];
@@ -64,18 +153,24 @@ function createBufferedFileWriter(options = {}) {
     const chunk = queue.join('');
     queue = [];
 
-    fs.appendFile(filePath, chunk, 'utf8', (err) => {
-      flushing = false;
-      if (err) {
-        emitError(err);
+    rotateIfNeeded(chunk, (rotateErr) => {
+      if (rotateErr) {
+        emitError(rotateErr);
       }
 
-      if (queue.length > 0) {
-        flushInternal();
-        return;
-      }
+      fs.appendFile(filePath, chunk, 'utf8', (err) => {
+        flushing = false;
+        if (err) {
+          emitError(err);
+        }
 
-      resolvePendingFlushes();
+        if (queue.length > 0) {
+          flushInternal();
+          return;
+        }
+
+        resolvePendingFlushes();
+      });
     });
   }
 

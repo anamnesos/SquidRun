@@ -251,7 +251,7 @@ function validateSession(sessionId) {
  * @param {string} type - Message type (direct, broadcast)
  * @returns {object} Result
  */
-function mcpSendMessage(sessionId, toPaneId, content, type = 'direct') {
+async function mcpSendMessage(sessionId, toPaneId, content, type = 'direct') {
   const validation = validateSession(sessionId);
   if (!validation.valid) {
     return { success: false, error: validation.error };
@@ -261,7 +261,7 @@ function mcpSendMessage(sessionId, toPaneId, content, type = 'direct') {
 
   try {
     // Primary: Use message queue
-    const result = watcher.sendMessage(fromPaneId, toPaneId, content, type);
+    const result = await watcher.sendMessage(fromPaneId, toPaneId, content, type);
     if (result.success) {
       return result;
     }
@@ -289,7 +289,7 @@ function mcpSendMessage(sessionId, toPaneId, content, type = 'direct') {
  * @param {string} content - Message content
  * @returns {object} Result
  */
-function mcpBroadcastMessage(sessionId, content) {
+async function mcpBroadcastMessage(sessionId, content) {
   const validation = validateSession(sessionId);
   if (!validation.valid) {
     return { success: false, error: validation.error };
@@ -300,7 +300,7 @@ function mcpBroadcastMessage(sessionId, content) {
 
   for (const toPaneId of PANE_IDS) {
     if (toPaneId !== fromPaneId) {
-      const result = watcher.sendMessage(fromPaneId, toPaneId, content, 'broadcast');
+      const result = await watcher.sendMessage(fromPaneId, toPaneId, content, 'broadcast');
       results.push({ toPaneId, ...result });
     }
   }
@@ -315,13 +315,13 @@ function mcpBroadcastMessage(sessionId, content) {
  * @param {boolean} undeliveredOnly - Only return undelivered messages
  * @returns {object} Result with messages
  */
-function mcpGetMessages(sessionId, undeliveredOnly = false) {
+async function mcpGetMessages(sessionId, undeliveredOnly = false) {
   const validation = validateSession(sessionId);
   if (!validation.valid) {
     return { success: false, error: validation.error };
   }
 
-  const messages = watcher.getMessages(validation.paneId, undeliveredOnly);
+  const messages = await watcher.getMessages(validation.paneId, undeliveredOnly);
   return { success: true, messages, count: messages.length };
 }
 
@@ -332,7 +332,7 @@ function mcpGetMessages(sessionId, undeliveredOnly = false) {
  * @param {string} messageId - Message ID to mark
  * @returns {object} Result
  */
-function mcpMarkDelivered(sessionId, messageId) {
+async function mcpMarkDelivered(sessionId, messageId) {
   const validation = validateSession(sessionId);
   if (!validation.valid) {
     return { success: false, error: validation.error };
@@ -485,7 +485,7 @@ function mcpTriggerAgent(sessionId, targetPaneId, message) {
  * Get message queue status for all agents
  * @returns {object} Queue status
  */
-function mcpGetQueueStatus() {
+async function mcpGetQueueStatus() {
   return watcher.getMessageQueueStatus();
 }
 
@@ -604,7 +604,7 @@ function getMCPToolDefinitions() {
  * @param {object} args - Tool arguments
  * @returns {object} Tool result
  */
-function handleToolCall(sessionId, toolName, args = {}) {
+async function handleToolCall(sessionId, toolName, args = {}) {
   log.info('MCP Bridge', `Tool call: ${toolName}`, args);
 
   switch (toolName) {

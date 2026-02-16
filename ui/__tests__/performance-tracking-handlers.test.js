@@ -9,12 +9,55 @@ const {
 } = require('./helpers/ipc-harness');
 
 // Mock fs
-jest.mock('fs', () => ({
-  existsSync: jest.fn(),
-  readFileSync: jest.fn(),
-  writeFileSync: jest.fn(),
-  renameSync: jest.fn(),
-}));
+jest.mock('fs', () => {
+  const existsSync = jest.fn();
+  const readFileSync = jest.fn();
+  const writeFileSync = jest.fn();
+  const renameSync = jest.fn();
+
+  const promises = {
+    access: jest.fn((targetPath) => {
+      if (existsSync(targetPath)) {
+        return Promise.resolve();
+      }
+      const err = new Error('ENOENT');
+      err.code = 'ENOENT';
+      return Promise.reject(err);
+    }),
+    readFile: jest.fn((targetPath, encoding) => {
+      try {
+        return Promise.resolve(readFileSync(targetPath, encoding));
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    }),
+    writeFile: jest.fn((targetPath, data, encoding) => {
+      try {
+        writeFileSync(targetPath, data, encoding);
+        return Promise.resolve();
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    }),
+    rename: jest.fn((sourcePath, targetPath) => {
+      try {
+        renameSync(sourcePath, targetPath);
+        return Promise.resolve();
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    }),
+  };
+
+  return {
+    constants: { F_OK: 0 },
+    existsSync,
+    readFileSync,
+    writeFileSync,
+    renameSync,
+    promises,
+  };
+});
 
 // Mock logger
 jest.mock('../modules/logger', () => ({
