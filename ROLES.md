@@ -54,6 +54,7 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 3. Check `.hivemind/build/blockers.md` and `.hivemind/build/errors.md`.
 4. Read context snapshot at `.hivemind/context-snapshots/1.md`.
 5. Query Team Memory for active claims: `node D:/projects/hivemind/ui/scripts/hm-claim.js query --status proposed`.
+6. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
 
 **Builder / Oracle (panes 2, 5):**
 1. Verify auto-injected context (sourced from Team Memory DB).
