@@ -22,6 +22,12 @@ function registerSettingsHandlers(ctx, deps) {
   ipcMain.handle('set-setting', (event, key, value) => {
     const settings = loadSettings();
     settings[key] = value;
+
+    // Operating mode drives firmware injection
+    if (key === 'operatingMode') {
+      settings.firmwareInjectionEnabled = value === 'project';
+    }
+
     saveSettings(settings);
 
     if (key === 'watcherEnabled') {
