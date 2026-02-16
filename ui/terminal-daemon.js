@@ -1231,9 +1231,8 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     }
   }
 
-  // Use configured pane cwd if available
-  const instanceDir = resolvePaneCwd(paneId);
-  const workDir = instanceDir || cwd || process.cwd();
+  // Use cwd from Electron (already resolved with paneProjects), else daemon fallback
+  const workDir = cwd || resolvePaneCwd(paneId) || process.cwd();
   const runtimeEnv = {
     ...process.env,
     ...(options.env && typeof options.env === 'object' ? options.env : {}),
