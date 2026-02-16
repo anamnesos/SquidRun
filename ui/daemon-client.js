@@ -27,6 +27,7 @@ class DaemonClient extends EventEmitter {
     super();
     this.client = null;
     this.connected = false;
+    this.spawnedDuringLastConnect = false;
     this.buffer = '';
     this.reconnecting = false;
     this.terminals = new Map(); // Cache of known terminals
@@ -40,6 +41,8 @@ class DaemonClient extends EventEmitter {
    * @returns {Promise<boolean>} true if connected
    */
   async connect() {
+    this.spawnedDuringLastConnect = false;
+
     // Try to connect first
     const connected = await this._tryConnect();
     if (connected) {
@@ -57,11 +60,13 @@ class DaemonClient extends EventEmitter {
     // Try to connect again
     const retryConnected = await this._tryConnect();
     if (retryConnected) {
+      this.spawnedDuringLastConnect = true;
       log.info('DaemonClient', 'Connected to newly spawned daemon');
       return true;
     }
 
     log.error('DaemonClient', 'Failed to connect to daemon after spawn');
+    this.spawnedDuringLastConnect = false;
     return false;
   }
 
@@ -614,6 +619,15 @@ class DaemonClient extends EventEmitter {
       this.client = null;
     }
     this.connected = false;
+  }
+
+  /**
+   * True if the daemon was spawned during the most recent connect() call.
+   * This distinguishes full daemon restarts from lightweight app reconnects.
+   * @returns {boolean}
+   */
+  didSpawnDuringLastConnect() {
+    return this.spawnedDuringLastConnect === true;
   }
 
   /**

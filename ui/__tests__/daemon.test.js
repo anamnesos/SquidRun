@@ -101,6 +101,35 @@ describe('DaemonClient', () => {
 
       expect(connectedHandler).toHaveBeenCalledWith([]);
     });
+
+    test('tracks whether daemon was spawned during latest connect', async () => {
+      await client.connect();
+      expect(client.didSpawnDuringLastConnect()).toBe(false);
+
+      let connectionAttempt = 0;
+      net.createConnection.mockImplementation(() => {
+        const socket = new EventEmitter();
+        socket.write = jest.fn();
+        socket.destroy = jest.fn();
+        socket.destroyed = false;
+
+        setTimeout(() => {
+          connectionAttempt += 1;
+          if (connectionAttempt === 1) {
+            socket.emit('error', new Error('ENOENT'));
+          } else {
+            socket.emit('connect');
+          }
+        }, 10);
+
+        return socket;
+      });
+
+      const spawnedClient = new DaemonClient();
+      await spawnedClient.connect();
+      expect(spawnedClient.didSpawnDuringLastConnect()).toBe(true);
+      spawnedClient.disconnect();
+    });
   });
 
   describe('disconnect', () => {

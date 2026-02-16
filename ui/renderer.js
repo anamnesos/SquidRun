@@ -104,8 +104,6 @@ function extractSessionNumberFromStatus(status) {
     asPositiveInt(status.session)
     || asPositiveInt(status.sessionNumber)
     || asPositiveInt(status.currentSession)
-    || asPositiveInt(status.context?.session)
-    || asPositiveInt(status.ledger?.session)
     || null
   );
 }
@@ -118,14 +116,14 @@ function updateHeaderSessionBadge(sessionNumber) {
     badge.textContent = `Session ${sessionNumber}`;
     badge.classList.remove('pending');
     badge.classList.add('ready');
-    badge.title = `Current Evidence Ledger session: ${sessionNumber}`;
+    badge.title = `Current app session: ${sessionNumber}`;
     return;
   }
 
   badge.textContent = 'Session --';
   badge.classList.remove('ready');
   badge.classList.add('pending');
-  badge.title = 'Current Evidence Ledger session unavailable';
+  badge.title = 'Current app session unavailable';
 }
 
 function readSessionFromAppStatusFallback() {
@@ -143,36 +141,12 @@ function readSessionFromAppStatusFallback() {
   return null;
 }
 
-async function resolveCurrentSessionNumber() {
-  try {
-    const context = await ipcRenderer.invoke('evidence-ledger:get-context', {
-      role: 'architect',
-      sessionWindow: 1,
-    });
-    const sessionFromContext = asPositiveInt(context?.session);
-    if (sessionFromContext) return sessionFromContext;
-  } catch (err) {
-    log.debug('HeaderSession', `evidence-ledger:get-context failed: ${err.message}`);
-  }
-
-  try {
-    const sessions = await ipcRenderer.invoke('evidence-ledger:list-sessions', {
-      limit: 1,
-      order: 'desc',
-    });
-    if (Array.isArray(sessions) && sessions.length > 0) {
-      const latestSession = asPositiveInt(sessions[0]?.sessionNumber);
-      if (latestSession) return latestSession;
-    }
-  } catch (err) {
-    log.debug('HeaderSession', `evidence-ledger:list-sessions failed: ${err.message}`);
-  }
-
+function resolveCurrentSessionNumber() {
   return readSessionFromAppStatusFallback();
 }
 
-async function refreshHeaderSessionBadge() {
-  const sessionNumber = await resolveCurrentSessionNumber();
+function refreshHeaderSessionBadge() {
+  const sessionNumber = resolveCurrentSessionNumber();
   updateHeaderSessionBadge(sessionNumber);
 }
 
@@ -1015,7 +989,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Status Strip - task counts at a glance
   initStatusStrip();
-  await refreshHeaderSessionBadge();
+  refreshHeaderSessionBadge();
 
   // Model Selector - per-pane model switching
   setupModelSelectorListeners();

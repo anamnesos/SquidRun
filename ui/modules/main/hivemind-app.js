@@ -266,20 +266,20 @@ class HivemindApp {
       watcher.setExternalNotifier((payload) => this.ctx.externalNotifier?.notify(payload));
     }
 
-    // 6. Initial app status
-    this.settings.writeAppStatus();
-
-    // 7. Load activity log
+    // 6. Load activity log
     this.activity.loadActivityLog();
 
-    // 8. Load usage stats
+    // 7. Load usage stats
     this.usage.loadUsageStats();
 
-    // 8b. Increment Evidence Ledger startup session and bind comms scope.
+    // 8. Increment Evidence Ledger startup session and bind comms scope.
     await this.initializeStartupSessionScope();
 
     // 9. Initialize PTY daemon connection
     await this.initDaemonClient();
+    this.settings.writeAppStatus({
+      incrementSession: this.ctx.daemonClient?.didSpawnDuringLastConnect?.() === true,
+    });
 
     // 10. Create main window
     await this.createWindow();

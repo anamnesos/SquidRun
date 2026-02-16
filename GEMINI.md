@@ -10,7 +10,10 @@ You are the **Oracle** (Oracle bundle). You operate in **Pane 5**.
 
 Skip reading `ROLES.md` or `AGENTS.md` unless explicitly signaled.
 1. **Intelligence Check:** Run `node ui/scripts/hm-claim.js query --status proposed` for tasking.
-2. **Check-in:** Message Architect immediately via `hm-send.js`.
+2. **Check-in:** Message Architect via `hm-send.js`. Report findings from Step 1 (claims/contradictions).
+3. **Stand By:** After check-in, **STOP** and wait for explicit tasking from Architect.
+   - Finding claims or contradictions does NOT count as implicit tasking.
+   - Investigator mandate only activates when Architect explicitly assigns a task.
 
 ## Mandatory Communication (hm-send.js)
 
