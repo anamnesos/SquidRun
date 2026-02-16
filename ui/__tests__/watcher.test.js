@@ -187,32 +187,32 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
-  test('message queue lifecycle works', () => {
+  test('message queue lifecycle works', async () => {
     const { watcher, tempDir, mainWindow } = setupWatcher();
 
-    const initResult = watcher.initMessageQueue();
+    const initResult = await watcher.initMessageQueue();
     expect(initResult.success).toBe(true);
 
     const queueFile = path.join(watcher.MESSAGE_QUEUE_DIR, 'queue-1.json');
     expect(fs.existsSync(queueFile)).toBe(true);
 
-    const sendResult = watcher.sendMessage('1', '2', 'Hello');
+    const sendResult = await watcher.sendMessage('1', '2', 'Hello');
     expect(sendResult.success).toBe(true);
 
-    const messages = watcher.getMessages('2');
+    const messages = await watcher.getMessages('2');
     expect(messages.length).toBe(1);
 
-    const deliver = watcher.markMessageDelivered('2', messages[0].id);
+    const deliver = await watcher.markMessageDelivered('2', messages[0].id);
     expect(deliver.success).toBe(true);
     expect(mainWindow.webContents.send).toHaveBeenCalledWith(
       'message-delivered',
       expect.objectContaining({ paneId: '2', messageId: messages[0].id }),
     );
 
-    const undelivered = watcher.getMessages('2', true);
+    const undelivered = await watcher.getMessages('2', true);
     expect(undelivered.length).toBe(0);
 
-    const cleared = watcher.clearMessages('2');
+    const cleared = await watcher.clearMessages('2');
     expect(cleared.success).toBe(true);
 
     cleanupDir(tempDir);
@@ -443,12 +443,12 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
-  test('getMessageQueueStatus returns queue summary', () => {
+  test('getMessageQueueStatus returns queue summary', async () => {
     const { watcher, tempDir } = setupWatcher();
-    watcher.initMessageQueue();
-    watcher.sendMessage('1', '2', 'Hello');
+    await watcher.initMessageQueue();
+    await watcher.sendMessage('1', '2', 'Hello');
 
-    const status = watcher.getMessageQueueStatus();
+    const status = await watcher.getMessageQueueStatus();
 
     expect(status.totalMessages).toBeGreaterThanOrEqual(1);
     expect(status.queues['2']).toBeDefined();
@@ -478,10 +478,10 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
-  test('startMessageWatcher and stopMessageWatcher work', () => {
+  test('startMessageWatcher and stopMessageWatcher work', async () => {
     const { watcher, tempDir, childProcessMock, getWorker } = setupWatcher();
 
-    watcher.startMessageWatcher();
+    await watcher.startMessageWatcher();
     const workerInstance = getWorker(0);
     expect(childProcessMock.fork).toHaveBeenCalledWith(
       expect.stringContaining('watcher-worker.js'),
@@ -499,59 +499,60 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
-  test('message queue waits for delivery ack before marking delivered', () => {
-    jest.useFakeTimers();
+  test('message queue waits for delivery ack before marking delivered', async () => {
     const { watcher, tempDir, triggers, getWorker, emitDeliveryAck } = setupWatcher();
-    watcher.initMessageQueue();
-    watcher.sendMessage('1', '2', 'Deliver after ack');
+    await watcher.initMessageQueue();
+    await watcher.sendMessage('1', '2', 'Deliver after ack');
     triggers.notifyAgents.mockReturnValue(['2']);
 
-    watcher.startMessageWatcher();
+    await watcher.startMessageWatcher();
     const worker = getWorker(0);
     const queuePath = path.join(watcher.MESSAGE_QUEUE_DIR, 'queue-2.json');
 
     worker.emit('message', { watcherName: 'message', type: 'change', path: queuePath });
+    await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(triggers.notifyAgents).toHaveBeenCalledWith(
       ['2'],
       '[MSG from Architect]: Deliver after ack',
       expect.objectContaining({ deliveryId: expect.any(String) })
     );
-    expect(watcher.getMessages('2', true)).toHaveLength(1);
+    expect(await watcher.getMessages('2', true)).toHaveLength(1);
 
     const deliveryId = triggers.notifyAgents.mock.calls[0][2].deliveryId;
     emitDeliveryAck(deliveryId, '2');
 
-    expect(watcher.getMessages('2', true)).toHaveLength(0);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(await watcher.getMessages('2', true)).toHaveLength(0);
     watcher.stopMessageWatcher();
     cleanupDir(tempDir);
   });
 
-  test('message queue retries when delivery cannot be routed', () => {
-    jest.useFakeTimers();
+  test('message queue retries when delivery cannot be routed', async () => {
     const { watcher, tempDir, triggers, getWorker } = setupWatcher();
-    watcher.initMessageQueue();
-    watcher.sendMessage('1', '2', 'Retry route');
+    await watcher.initMessageQueue();
+    await watcher.sendMessage('1', '2', 'Retry route');
     triggers.notifyAgents.mockReturnValue([]);
 
-    watcher.startMessageWatcher();
+    await watcher.startMessageWatcher();
     const worker = getWorker(0);
     const queuePath = path.join(watcher.MESSAGE_QUEUE_DIR, 'queue-2.json');
     worker.emit('message', { watcherName: 'message', type: 'change', path: queuePath });
+    await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(triggers.notifyAgents).toHaveBeenCalledTimes(1);
-    jest.advanceTimersByTime(550);
+    await new Promise((resolve) => setTimeout(resolve, 650));
     expect(triggers.notifyAgents).toHaveBeenCalledTimes(2);
-    expect(watcher.getMessages('2', true)).toHaveLength(1);
+    expect(await watcher.getMessages('2', true)).toHaveLength(1);
 
     watcher.stopMessageWatcher();
     cleanupDir(tempDir);
   });
 
-  test('markMessageDelivered returns error for missing queue', () => {
+  test('markMessageDelivered returns error for missing queue', async () => {
     const { watcher, tempDir } = setupWatcher();
 
-    const result = watcher.markMessageDelivered('99', 'msg-123');
+    const result = await watcher.markMessageDelivered('99', 'msg-123');
 
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not found/i);
@@ -559,11 +560,11 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
-  test('markMessageDelivered returns error for missing message', () => {
+  test('markMessageDelivered returns error for missing message', async () => {
     const { watcher, tempDir } = setupWatcher();
-    watcher.initMessageQueue();
+    await watcher.initMessageQueue();
 
-    const result = watcher.markMessageDelivered('1', 'nonexistent-msg');
+    const result = await watcher.markMessageDelivered('1', 'nonexistent-msg');
 
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/not found/i);
@@ -571,35 +572,35 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
-  test('clearMessages with deliveredOnly preserves undelivered', () => {
+  test('clearMessages with deliveredOnly preserves undelivered', async () => {
     const { watcher, tempDir } = setupWatcher();
-    watcher.initMessageQueue();
+    await watcher.initMessageQueue();
 
-    watcher.sendMessage('1', '2', 'Message 1');
-    watcher.sendMessage('1', '2', 'Message 2');
-    const messages = watcher.getMessages('2');
-    watcher.markMessageDelivered('2', messages[0].id);
+    await watcher.sendMessage('1', '2', 'Message 1');
+    await watcher.sendMessage('1', '2', 'Message 2');
+    const messages = await watcher.getMessages('2');
+    await watcher.markMessageDelivered('2', messages[0].id);
 
-    watcher.clearMessages('2', true);
+    await watcher.clearMessages('2', true);
 
-    const remaining = watcher.getMessages('2');
+    const remaining = await watcher.getMessages('2');
     expect(remaining.length).toBe(1);
     expect(remaining[0].content).toBe('Message 2');
 
     cleanupDir(tempDir);
   });
 
-  test('clearMessages with all clears all panes', () => {
+  test('clearMessages with all clears all panes', async () => {
     const { watcher, tempDir } = setupWatcher();
-    watcher.initMessageQueue();
+    await watcher.initMessageQueue();
 
-    watcher.sendMessage('1', '1', 'Pane 1');
-    watcher.sendMessage('2', '2', 'Pane 2');
+    await watcher.sendMessage('1', '1', 'Pane 1');
+    await watcher.sendMessage('2', '2', 'Pane 2');
 
-    watcher.clearMessages('all');
+    await watcher.clearMessages('all');
 
-    expect(watcher.getMessages('1').length).toBe(0);
-    expect(watcher.getMessages('2').length).toBe(0);
+    expect((await watcher.getMessages('1')).length).toBe(0);
+    expect((await watcher.getMessages('2')).length).toBe(0);
 
     cleanupDir(tempDir);
   });

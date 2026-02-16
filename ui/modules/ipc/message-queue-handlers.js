@@ -5,58 +5,58 @@
 
   const { ipcMain } = ctx;
 
-  ipcMain.handle('init-message-queue', () => {
+  ipcMain.handle('init-message-queue', async () => {
     return ctx.watcher.initMessageQueue();
   });
 
-  ipcMain.handle('send-message', (event, fromPaneId, toPaneId, content, type = 'direct') => {
+  ipcMain.handle('send-message', async (event, fromPaneId, toPaneId, content, type = 'direct') => {
     return ctx.watcher.sendMessage(fromPaneId, toPaneId, content, type);
   });
 
-  ipcMain.handle('send-broadcast-message', (event, fromPaneId, content) => {
+  ipcMain.handle('send-broadcast-message', async (event, fromPaneId, content) => {
     const results = [];
     for (const toPaneId of ctx.PANE_IDS) {
       if (toPaneId !== fromPaneId) {
-        const result = ctx.watcher.sendMessage(fromPaneId, toPaneId, content, 'broadcast');
+        const result = await ctx.watcher.sendMessage(fromPaneId, toPaneId, content, 'broadcast');
         results.push({ toPaneId, ...result });
       }
     }
     return { success: true, results };
   });
 
-  ipcMain.handle('send-group-message', (event, fromPaneId, toPaneIds, content) => {
+  ipcMain.handle('send-group-message', async (event, fromPaneId, toPaneIds, content) => {
     const results = [];
     for (const toPaneId of toPaneIds) {
       if (toPaneId !== fromPaneId) {
-        const result = ctx.watcher.sendMessage(fromPaneId, toPaneId, content, 'direct');
+        const result = await ctx.watcher.sendMessage(fromPaneId, toPaneId, content, 'direct');
         results.push({ toPaneId, ...result });
       }
     }
     return { success: true, results };
   });
 
-  ipcMain.handle('get-messages', (event, paneId, undeliveredOnly = false) => {
-    const messages = ctx.watcher.getMessages(paneId, undeliveredOnly);
+  ipcMain.handle('get-messages', async (event, paneId, undeliveredOnly = false) => {
+    const messages = await ctx.watcher.getMessages(paneId, undeliveredOnly);
     return { success: true, messages, count: messages.length };
   });
 
-  ipcMain.handle('get-all-messages', () => {
+  ipcMain.handle('get-all-messages', async () => {
     const allMessages = {};
     for (const paneId of ctx.PANE_IDS) {
-      allMessages[paneId] = ctx.watcher.getMessages(paneId);
+      allMessages[paneId] = await ctx.watcher.getMessages(paneId);
     }
     return { success: true, messages: allMessages };
   });
 
-  ipcMain.handle('mark-message-delivered', (event, paneId, messageId) => {
+  ipcMain.handle('mark-message-delivered', async (event, paneId, messageId) => {
     return ctx.watcher.markMessageDelivered(paneId, messageId);
   });
 
-  ipcMain.handle('clear-messages', (event, paneId, deliveredOnly = false) => {
+  ipcMain.handle('clear-messages', async (event, paneId, deliveredOnly = false) => {
     return ctx.watcher.clearMessages(paneId, deliveredOnly);
   });
 
-  ipcMain.handle('get-message-queue-status', () => {
+  ipcMain.handle('get-message-queue-status', async () => {
     return ctx.watcher.getMessageQueueStatus();
   });
 

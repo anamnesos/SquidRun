@@ -26,6 +26,8 @@ const LOG_DIR = path.join(WORKSPACE_PATH, 'logs');
 const LOG_FILE_PATH = path.join(LOG_DIR, 'app.log');
 let logDirReady = false;
 const LOG_FLUSH_INTERVAL_MS = 500;
+const LOG_ROTATE_MAX_BYTES = 10 * 1024 * 1024;
+const LOG_ROTATE_MAX_FILES = 3;
 
 function ensureLogDir() {
   if (logDirReady) return;
@@ -41,6 +43,8 @@ const bufferedWriter = createBufferedFileWriter({
   filePath: LOG_FILE_PATH,
   flushIntervalMs: LOG_FLUSH_INTERVAL_MS,
   ensureDir: ensureLogDir,
+  rotateMaxBytes: LOG_ROTATE_MAX_BYTES,
+  rotateMaxFiles: LOG_ROTATE_MAX_FILES,
 });
 
 function timestamp() {

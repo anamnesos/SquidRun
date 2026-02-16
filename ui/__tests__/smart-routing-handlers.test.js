@@ -9,10 +9,35 @@ const {
 } = require('./helpers/ipc-harness');
 
 // Mock fs
-jest.mock('fs', () => ({
-  existsSync: jest.fn(() => false),
-  readFileSync: jest.fn(),
-}));
+jest.mock('fs', () => {
+  const existsSync = jest.fn(() => false);
+  const readFileSync = jest.fn();
+
+  const promises = {
+    access: jest.fn((targetPath) => {
+      if (existsSync(targetPath)) {
+        return Promise.resolve();
+      }
+      const err = new Error('ENOENT');
+      err.code = 'ENOENT';
+      return Promise.reject(err);
+    }),
+    readFile: jest.fn((targetPath, encoding) => {
+      try {
+        return Promise.resolve(readFileSync(targetPath, encoding));
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    }),
+  };
+
+  return {
+    constants: { F_OK: 0 },
+    existsSync,
+    readFileSync,
+    promises,
+  };
+});
 
 // Mock logger
 jest.mock('../modules/logger', () => ({

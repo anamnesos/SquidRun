@@ -4,6 +4,7 @@
  */
 
 const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
 const log = require('../logger');
 const taskParser = require('../task-parser');
@@ -41,16 +42,18 @@ function registerTaskParserHandlers(ctx) {
     lastUpdated: null,
   };
 
-  function loadPerformance() {
+  async function loadPerformance() {
     if (!PERFORMANCE_FILE_PATH) {
       return { ...DEFAULT_PERFORMANCE };
     }
     try {
-      if (fs.existsSync(PERFORMANCE_FILE_PATH)) {
-        const content = fs.readFileSync(PERFORMANCE_FILE_PATH, 'utf-8');
-        return { ...DEFAULT_PERFORMANCE, ...JSON.parse(content) };
-      }
+      await fsp.access(PERFORMANCE_FILE_PATH, fs.constants.F_OK);
+      const content = await fsp.readFile(PERFORMANCE_FILE_PATH, 'utf-8');
+      return { ...DEFAULT_PERFORMANCE, ...JSON.parse(content) };
     } catch (err) {
+      if (err && err.code === 'ENOENT') {
+        return { ...DEFAULT_PERFORMANCE };
+      }
       log.error('TaskParser', 'Error loading performance:', err.message);
     }
     return { ...DEFAULT_PERFORMANCE };
@@ -67,7 +70,7 @@ function registerTaskParserHandlers(ctx) {
     };
   });
 
-  ipcMain.handle('route-task-input', (event, input, options = {}) => {
+  ipcMain.handle('route-task-input', async (event, input, options = {}) => {
     const { ok, triggers, error } = getTriggers();
     if (!ok) {
       return missingDependency(error);
@@ -90,7 +93,7 @@ function registerTaskParserHandlers(ctx) {
       };
     }
 
-    const performance = loadPerformance();
+    const performance = await loadPerformance();
     const routed = [];
     let allSuccess = true;
 

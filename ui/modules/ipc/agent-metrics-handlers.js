@@ -12,6 +12,7 @@
  */
 
 const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
 const { formatDuration } = require('../formatters');
 const log = require('../logger');
@@ -55,31 +56,33 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     return successes / attempts;
   };
 
-  function loadPerformance() {
+  async function loadPerformance() {
     try {
-      if (fs.existsSync(PERFORMANCE_FILE_PATH)) {
-        const content = fs.readFileSync(PERFORMANCE_FILE_PATH, 'utf-8');
-        return { ...DEFAULT_PERFORMANCE, ...JSON.parse(content) };
-      }
+      await fsp.access(PERFORMANCE_FILE_PATH, fs.constants.F_OK);
+      const content = await fsp.readFile(PERFORMANCE_FILE_PATH, 'utf-8');
+      return { ...DEFAULT_PERFORMANCE, ...JSON.parse(content) };
     } catch (err) {
+      if (err && err.code === 'ENOENT') {
+        return { ...DEFAULT_PERFORMANCE };
+      }
       log.error('Performance', 'Error loading:', err.message);
     }
     return { ...DEFAULT_PERFORMANCE };
   }
 
-  function savePerformance(data) {
+  async function savePerformance(data) {
     try {
       data.lastUpdated = new Date().toISOString();
       const tempPath = PERFORMANCE_FILE_PATH + '.tmp';
-      fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
-      fs.renameSync(tempPath, PERFORMANCE_FILE_PATH);
+      await fsp.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+      await fsp.rename(tempPath, PERFORMANCE_FILE_PATH);
     } catch (err) {
       log.error('Performance', 'Error saving:', err.message);
     }
   }
 
-  function buildPerformanceStats() {
-    const perf = loadPerformance();
+  async function buildPerformanceStats() {
+    const perf = await loadPerformance();
     const stats = {};
 
     for (const [paneId, data] of Object.entries(perf.agents)) {
@@ -100,28 +103,30 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     return { perf, stats };
   }
 
-  function resetPerformanceData() {
-    savePerformance({ ...DEFAULT_PERFORMANCE });
+  async function resetPerformanceData() {
+    await savePerformance({ ...DEFAULT_PERFORMANCE });
   }
 
-  function loadLearning() {
+  async function loadLearning() {
     try {
-      if (fs.existsSync(LEARNING_FILE_PATH)) {
-        const content = fs.readFileSync(LEARNING_FILE_PATH, 'utf-8');
-        return { ...DEFAULT_LEARNING, ...JSON.parse(content) };
-      }
+      await fsp.access(LEARNING_FILE_PATH, fs.constants.F_OK);
+      const content = await fsp.readFile(LEARNING_FILE_PATH, 'utf-8');
+      return { ...DEFAULT_LEARNING, ...JSON.parse(content) };
     } catch (err) {
+      if (err && err.code === 'ENOENT') {
+        return { ...DEFAULT_LEARNING };
+      }
       log.error('Learning', 'Error loading:', err.message);
     }
     return { ...DEFAULT_LEARNING };
   }
 
-  function saveLearning(data) {
+  async function saveLearning(data) {
     try {
       data.lastUpdated = new Date().toISOString();
       const tempPath = LEARNING_FILE_PATH + '.tmp';
-      fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
-      fs.renameSync(tempPath, LEARNING_FILE_PATH);
+      await fsp.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+      await fsp.rename(tempPath, LEARNING_FILE_PATH);
     } catch (err) {
       log.error('Learning', 'Error saving:', err.message);
     }
@@ -133,44 +138,44 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     ...fallback,
   });
 
-  ipcMain.handle('record-completion', (event, paneId) => {
-    const perf = loadPerformance();
+  ipcMain.handle('record-completion', async (event, paneId) => {
+    const perf = await loadPerformance();
     if (!perf.agents[paneId]) {
       perf.agents[paneId] = { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 };
     }
     perf.agents[paneId].completions++;
-    savePerformance(perf);
+    await savePerformance(perf);
 
     log.info('Performance', `Pane ${paneId} completion recorded. Total: ${perf.agents[paneId].completions}`);
     return { success: true, completions: perf.agents[paneId].completions };
   });
 
-  ipcMain.handle('record-error', (event, paneId) => {
-    const perf = loadPerformance();
+  ipcMain.handle('record-error', async (event, paneId) => {
+    const perf = await loadPerformance();
     if (!perf.agents[paneId]) {
       perf.agents[paneId] = { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 };
     }
     perf.agents[paneId].errors++;
-    savePerformance(perf);
+    await savePerformance(perf);
 
     return { success: true, errors: perf.agents[paneId].errors };
   });
 
-  ipcMain.handle('record-response-time', (event, paneId, timeMs) => {
-    const perf = loadPerformance();
+  ipcMain.handle('record-response-time', async (event, paneId, timeMs) => {
+    const perf = await loadPerformance();
     if (!perf.agents[paneId]) {
       perf.agents[paneId] = { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 };
     }
     perf.agents[paneId].totalResponseTime += timeMs;
     perf.agents[paneId].responseCount++;
-    savePerformance(perf);
+    await savePerformance(perf);
 
     const avg = Math.round(perf.agents[paneId].totalResponseTime / perf.agents[paneId].responseCount);
     return { success: true, avgResponseTime: avg };
   });
 
-  ipcMain.handle('get-performance', () => {
-    const { perf, stats } = buildPerformanceStats();
+  ipcMain.handle('get-performance', async () => {
+    const { perf, stats } = await buildPerformanceStats();
     return {
       success: true,
       agents: stats,
@@ -178,8 +183,8 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     };
   });
 
-  ipcMain.handle('get-performance-stats', () => {
-    const { perf, stats } = buildPerformanceStats();
+  ipcMain.handle('get-performance-stats', async () => {
+    const { perf, stats } = await buildPerformanceStats();
     return {
       success: true,
       stats,
@@ -187,18 +192,18 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     };
   });
 
-  ipcMain.handle('reset-performance', () => {
-    resetPerformanceData();
+  ipcMain.handle('reset-performance', async () => {
+    await resetPerformanceData();
     return { success: true };
   });
 
-  ipcMain.handle('reset-performance-stats', () => {
-    resetPerformanceData();
+  ipcMain.handle('reset-performance-stats', async () => {
+    await resetPerformanceData();
     return { success: true };
   });
 
-  ipcMain.handle('record-task-outcome', (event, taskType, paneId, success, timeMs) => {
-    const learning = loadLearning();
+  ipcMain.handle('record-task-outcome', async (event, taskType, paneId, success, timeMs) => {
+    const learning = await loadLearning();
 
     if (!learning.taskTypes[taskType]) {
       learning.taskTypes[taskType] = {
@@ -233,7 +238,7 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     const successRate = calculateSuccessRate(agentStats.success, agentStats.failure);
     learning.routingWeights[paneId] = 0.5 + (successRate * 0.5);
 
-    saveLearning(learning);
+    await saveLearning(learning);
 
     log.info('Learning', `${taskType} by pane ${paneId}: ${success ? 'SUCCESS' : 'FAILURE'} (rate: ${(successRate * 100).toFixed(1)}%)`);
 
@@ -246,8 +251,8 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     };
   });
 
-  ipcMain.handle('get-learning-data', () => {
-    const learning = loadLearning();
+  ipcMain.handle('get-learning-data', async () => {
+    const learning = await loadLearning();
 
     const insights = {};
     for (const [taskType, data] of Object.entries(learning.taskTypes)) {
@@ -278,8 +283,8 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     };
   });
 
-  ipcMain.handle('get-best-agent-for-task', (event, taskType) => {
-    const learning = loadLearning();
+  ipcMain.handle('get-best-agent-for-task', async (event, taskType) => {
+    const learning = await loadLearning();
 
     const taskData = learning.taskTypes[taskType];
     if (!taskData || Object.keys(taskData.agentStats).length === 0) {
@@ -312,14 +317,14 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     };
   });
 
-  ipcMain.handle('reset-learning', () => {
-    saveLearning({ ...DEFAULT_LEARNING });
+  ipcMain.handle('reset-learning', async () => {
+    await saveLearning({ ...DEFAULT_LEARNING });
     log.info('Learning', 'Reset all learning data');
     return { success: true };
   });
 
-  ipcMain.handle('get-routing-weights', () => {
-    const learning = loadLearning();
+  ipcMain.handle('get-routing-weights', async () => {
+    const learning = await loadLearning();
     return {
       success: true,
       weights: learning.routingWeights,
@@ -380,7 +385,7 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     };
   });
 
-  ipcMain.handle('reset-usage-stats', () => {
+  ipcMain.handle('reset-usage-stats', async () => {
     ctx.usageStats.totalSpawns = 0;
     ctx.usageStats.spawnsPerPane = { '1': 0, '2': 0, '5': 0 };
     ctx.usageStats.totalSessionTimeMs = 0;
@@ -389,7 +394,7 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     ctx.usageStats.lastResetDate = new Date().toISOString().split('T')[0];
     ctx.usageStats.history = [];
     ctx.costAlertSent = false;
-    saveUsageStats();
+    await Promise.resolve(saveUsageStats());
     return { success: true };
   });
 
@@ -405,28 +410,28 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     };
   });
 
-  ipcMain.handle('clear-activity-log', () => {
+  ipcMain.handle('clear-activity-log', async () => {
     if (typeof clearActivityLog !== 'function') {
       return missingDependency('activity log provider');
     }
-    clearActivityLog();
+    await Promise.resolve(clearActivityLog());
     log.info('Activity', 'Log cleared');
     return { success: true };
   });
 
-  ipcMain.handle('save-activity-log', () => {
+  ipcMain.handle('save-activity-log', async () => {
     if (typeof saveActivityLog !== 'function') {
       return missingDependency('activity log provider');
     }
-    saveActivityLog();
+    await Promise.resolve(saveActivityLog());
     return { success: true };
   });
 
-  ipcMain.handle('log-activity', (event, type, paneId, message, details = {}) => {
+  ipcMain.handle('log-activity', async (event, type, paneId, message, details = {}) => {
     if (typeof logActivity !== 'function') {
       return missingDependency('activity log provider');
     }
-    logActivity(type, paneId, message, details);
+    await Promise.resolve(logActivity(type, paneId, message, details));
     return { success: true };
   });
 }
