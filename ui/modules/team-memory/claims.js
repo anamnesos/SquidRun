@@ -123,6 +123,16 @@ function asPositiveInt(value, fallback = null) {
   return Math.floor(numeric);
 }
 
+function parseBoolean(value, fallback = null) {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  return fallback;
+}
+
 function parseFtsQuery(raw) {
   const text = asString(raw, '');
   if (!text) return '';
@@ -297,10 +307,14 @@ class TeamMemoryClaims {
       }
 
       this.db.exec('COMMIT;');
+      const resolvedContradictions = supersedes
+        ? this.resolveContradictionsForClaimIds([supersedes], nowMs)
+        : 0;
       return {
         ok: true,
         status: 'created',
         claim: this.getClaim(id),
+        resolvedContradictions,
       };
     } catch (err) {
       try { this.db.exec('ROLLBACK;'); } catch {}
@@ -667,7 +681,7 @@ class TeamMemoryClaims {
 
     const placeholders = uniqueIds.map(() => '?').join(', ');
     const rows = this.db.prepare(`
-      SELECT c.id, c.claim_type, c.statement, c.supersedes, cs.scope
+      SELECT c.id, c.claim_type, c.statement, c.supersedes, c.status, cs.scope
       FROM claims c
       LEFT JOIN claim_scopes cs ON cs.claim_id = c.id
       WHERE c.id IN (${placeholders})
@@ -681,12 +695,67 @@ class TeamMemoryClaims {
         claimType: row.claim_type,
         statement: row.statement || '',
         supersedes: row.supersedes || null,
+        status: row.status || 'proposed',
+        isSuperseded: false,
         scopes: new Set(),
       };
       if (row.scope) existing.scopes.add(row.scope);
       map.set(row.id, existing);
     }
+
+    const supersededRows = this.db.prepare(`
+      SELECT DISTINCT supersedes
+      FROM claims
+      WHERE supersedes IN (${placeholders})
+    `).all(...uniqueIds);
+    for (const row of supersededRows) {
+      const supersededId = asString(row?.supersedes, '');
+      if (!supersededId) continue;
+      const detail = map.get(supersededId);
+      if (detail) {
+        detail.isSuperseded = true;
+      }
+    }
+
     return map;
+  }
+
+  isClaimResolvedForContradictions(claimDetails = null) {
+    return Boolean(
+      claimDetails
+      && (
+        claimDetails.status === 'deprecated'
+        || claimDetails.isSuperseded === true
+      )
+    );
+  }
+
+  getContradictionResolvedAt(claimAId, claimBId, claimDetails = new Map(), nowMs = Date.now()) {
+    const claimA = claimDetails.get(claimAId);
+    const claimB = claimDetails.get(claimBId);
+    const isResolved = this.isClaimResolvedForContradictions(claimA)
+      || this.isClaimResolvedForContradictions(claimB);
+    return isResolved ? asTimestamp(nowMs) : null;
+  }
+
+  resolveContradictionsForClaimIds(claimIds = [], nowMs = Date.now()) {
+    if (!Array.isArray(claimIds) || claimIds.length === 0) return 0;
+    const ids = [...new Set(claimIds.map((id) => asString(id, '')).filter(Boolean))];
+    if (ids.length === 0) return 0;
+
+    const placeholders = ids.map(() => '?').join(', ');
+    const resolvedAt = asTimestamp(nowMs);
+    const result = this.db.prepare(`
+      UPDATE belief_contradictions
+      SET resolved_at = ?
+      WHERE resolved_at IS NULL
+        AND (
+          claim_a IN (${placeholders})
+          OR claim_b IN (${placeholders})
+        )
+    `).run(resolvedAt, ...ids, ...ids);
+
+    return Number(result?.changes || 0);
   }
 
   findBeliefContradictions(beliefs = [], claimDetails = new Map()) {
@@ -749,9 +818,10 @@ class TeamMemoryClaims {
       confidence: normalizeConfidence(row.confidence, 1.0),
     }));
     const snapshotId = asString(input.snapshotId, toId('bls'));
+    const claimDetails = this.getClaimDetailsForIds(beliefs.map((entry) => entry.claimId));
     const contradictions = this.findBeliefContradictions(
       beliefs,
-      this.getClaimDetailsForIds(beliefs.map((entry) => entry.claimId))
+      claimDetails
     );
 
     const insertSnapshot = this.db.prepare(`
@@ -760,8 +830,8 @@ class TeamMemoryClaims {
     `);
     const insertContradiction = this.db.prepare(`
       INSERT INTO belief_contradictions (
-        id, snapshot_id, claim_a, claim_b, agent, session, detected_at, reason
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        id, snapshot_id, claim_a, claim_b, agent, session, detected_at, reason, resolved_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     try {
@@ -782,7 +852,13 @@ class TeamMemoryClaims {
           agent,
           session,
           nowMs,
-          contradiction.reason
+          contradiction.reason,
+          this.getContradictionResolvedAt(
+            contradiction.claimA,
+            contradiction.claimB,
+            claimDetails,
+            nowMs
+          )
         );
       }
       this.db.exec('COMMIT;');
@@ -870,6 +946,7 @@ class TeamMemoryClaims {
     const claimId = asString(filters.claimId || filters.claim_id, '');
     const since = asNumber(filters.since ?? filters.sinceMs, null);
     const until = asNumber(filters.until ?? filters.untilMs, null);
+    const activeOnly = parseBoolean(filters.activeOnly ?? filters.active_only, false) === true;
     const limit = Math.max(1, Math.min(1000, asNumber(filters.limit, 100)));
 
     if (agent) {
@@ -892,9 +969,12 @@ class TeamMemoryClaims {
       clauses.push('bc.detected_at <= ?');
       params.push(Math.floor(until));
     }
+    if (activeOnly) {
+      clauses.push('bc.resolved_at IS NULL');
+    }
 
     const rows = this.db.prepare(`
-      SELECT bc.id, bc.snapshot_id, bc.claim_a, bc.claim_b, bc.agent, bc.session, bc.detected_at, bc.reason
+      SELECT bc.id, bc.snapshot_id, bc.claim_a, bc.claim_b, bc.agent, bc.session, bc.detected_at, bc.reason, bc.resolved_at
       FROM belief_contradictions bc
       WHERE ${clauses.join(' AND ')}
       ORDER BY bc.detected_at DESC, bc.id DESC
@@ -912,6 +992,9 @@ class TeamMemoryClaims {
         session: row.session,
         detectedAt: Number(row.detected_at),
         reason: row.reason || null,
+        resolvedAt: row.resolved_at === null || row.resolved_at === undefined
+          ? null
+          : Number(row.resolved_at),
       })),
       total: rows.length,
     };
@@ -931,7 +1014,10 @@ class TeamMemoryClaims {
     if (!claim) return { ok: false, reason: 'claim_not_found', claimId: id };
 
     if (claim.status === targetStatus) {
-      return { ok: true, status: 'no_change', claim };
+      const resolvedContradictions = targetStatus === 'deprecated'
+        ? this.resolveContradictionsForClaimIds([id], nowMs)
+        : 0;
+      return { ok: true, status: 'no_change', claim, resolvedContradictions };
     }
 
     const allowed = ALLOWED_TRANSITIONS.get(claim.status) || new Set();
@@ -971,10 +1057,14 @@ class TeamMemoryClaims {
         changedAt
       );
       this.db.exec('COMMIT;');
+      const resolvedContradictions = targetStatus === 'deprecated'
+        ? this.resolveContradictionsForClaimIds([id], changedAt)
+        : 0;
       return {
         ok: true,
         status: 'updated',
         claim: this.getClaim(id),
+        resolvedContradictions,
       };
     } catch (err) {
       try { this.db.exec('ROLLBACK;'); } catch {}

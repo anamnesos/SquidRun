@@ -28,6 +28,7 @@ function usage() {
   console.log('  --port <port>               WebSocket port (default: 9900)');
   console.log('  --timeout <ms>              Response timeout (default: 5000)');
   console.log('  --payload-json <json>       Raw payload JSON (advanced)');
+  console.log('  --active-only <bool>        Contradictions only: unresolved rows only (default: true)');
   console.log('Examples:');
   console.log('  node hm-claim.js create --statement "Use queue for retries" --type decision --owner builder --scope ui/modules/comms-worker.js');
   console.log('  node hm-claim.js query --scope ui/modules/triggers.js --type negative');
@@ -37,6 +38,7 @@ function usage() {
   console.log('  node hm-claim.js consensus --id clm_123');
   console.log('  node hm-claim.js snapshot --agent builder --session s_123');
   console.log('  node hm-claim.js contradictions --agent builder --session s_123');
+  console.log('  node hm-claim.js contradictions --agent builder --active-only false');
   console.log('  node hm-claim.js pattern-create --type failure --scope ui/modules/triggers.js --agents architect,oracle --frequency 2 --confidence 0.8');
   console.log('  node hm-claim.js patterns --type failure --scope ui/modules/triggers.js');
   console.log('  node hm-claim.js pattern-activate --id pat_123');
@@ -102,6 +104,16 @@ function parseJsonOption(raw, label) {
   } catch (err) {
     throw new Error(`Invalid ${label}: ${err.message}`);
   }
+}
+
+function parseBooleanOption(options, key, fallback = null) {
+  const raw = getOption(options, key, null);
+  if (raw === null || raw === undefined) return fallback;
+  if (raw === true) return true;
+  const normalized = String(raw).trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  return fallback;
 }
 
 function normalizeCommand(command) {
@@ -259,6 +271,7 @@ function buildPayload(command, options, positional = []) {
         session: asString(getOption(options, 'session', ''), ''),
         claimId: asString(getOption(options, 'id', getOption(options, 'claim-id', '')), ''),
         limit: asNumber(getOption(options, 'limit', null), null),
+        activeOnly: parseBooleanOption(options, 'active-only', true),
       };
       const sinceMs = asNumber(getOption(options, 'since-ms', null), null);
       const untilMs = asNumber(getOption(options, 'until-ms', null), null);
