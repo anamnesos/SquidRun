@@ -202,20 +202,30 @@ echo ""
 
 echo "Gate 6: Trigger path enforcement..."
 
-# Find any workspace/triggers/*.txt path that isn't prefixed with D:\projects\hivemind\
+# Resolve project root in Windows path form so this check is machine-agnostic.
+if command -v cygpath >/dev/null 2>&1; then
+    PROJECT_ROOT_WIN=$(cygpath -w "$(pwd -P)")
+else
+    PROJECT_ROOT_WIN=$(pwd -P | sed -E 's#^/([A-Za-z])/#\1:/#; s#/#\\#g')
+fi
+
+# Find any workspace/triggers/*.txt path that isn't prefixed with <project-root>\
 # This catches relative paths in CLAUDE.md and AGENTS.md files that cause ghost folder bugs
 # Only flags actual file paths (containing .txt), not intro text or diagnostic references
 
+ABS_TRIGGER_FWD="${PROJECT_ROOT_WIN}\\workspace/triggers/"
+ABS_TRIGGER_BACK="${PROJECT_ROOT_WIN}\\workspace\\triggers"
+
 RELATIVE_PATHS=$(rg -n "workspace/triggers/[a-z-]+\.txt" CLAUDE.md workspace/instances/ --glob "*.md" 2>/dev/null | \
-    grep -v "D:\\\\projects\\\\hivemind\\\\workspace/triggers/" | \
-    grep -v "D:\\\\projects\\\\hivemind\\\\workspace\\\\triggers" | \
+    grep -vF "$ABS_TRIGGER_FWD" | \
+    grep -vF "$ABS_TRIGGER_BACK" | \
     grep -v "ghost folder\|resolve WRONG\|Expected:\|Actual:\|ghost files" || true)
 
 if [ -n "$RELATIVE_PATHS" ]; then
     echo "❌ Found relative trigger paths (must use absolute paths):"
     echo "$RELATIVE_PATHS"
     echo ""
-    echo "   Fix: Replace 'workspace/triggers/X.txt' with 'D:\\projects\\hivemind\\workspace\\triggers\\X.txt'"
+    echo "   Fix: Replace 'workspace/triggers/X.txt' with '${PROJECT_ROOT_WIN}\\workspace\\triggers\\X.txt'"
     FAILED=1
 else
     echo "✅ All trigger paths are absolute"

@@ -9,10 +9,12 @@ const path = require('path');
 const os = require('os');
 const log = require('../logger');
 const { PROJECT_ROOT, COORD_ROOT } = require('../../config');
+const { execFileSync } = require('child_process');
 
 const SPEC_RELATIVE_PATH = path.join('workspace', 'specs', 'firmware-injection-spec.md');
 const FIRMWARE_SUBDIR = 'firmware';
 const CODEX_OVERRIDE_FILENAME = 'AGENTS.override.md';
+const PREFLIGHT_SCRIPT_PATH = path.join(__dirname, '..', '..', 'scripts', 'hm-preflight.js');
 
 const PANE_ROLE_FILE = {
   '1': 'director',
@@ -112,7 +114,19 @@ class FirmwareManager {
     return fs.readFileSync(this.specPath, 'utf-8');
   }
 
-  buildFirmwarePayloadsFromSpec() {
+  runPreflight(targetDir = this.projectRoot) {
+    try {
+      const output = execFileSync('node', [PREFLIGHT_SCRIPT_PATH, targetDir], {
+        encoding: 'utf-8',
+      });
+      return JSON.parse(output);
+    } catch (err) {
+      log.warn('Firmware', `Pre-flight scan failed: ${err.message}`);
+      return [];
+    }
+  }
+
+  buildFirmwarePayloadsFromSpec(preflightResults = []) {
     const specMarkdown = this.readSpec();
     const sections = extractMarkdownH3Sections(specMarkdown);
 
@@ -128,10 +142,29 @@ class FirmwareManager {
       throw new Error('Firmware spec missing 2.1 SYSTEM PRIORITY directive');
     }
 
+    const suppressionLines = [];
+    if (Array.isArray(preflightResults) && preflightResults.length > 0) {
+      preflightResults.forEach((res) => {
+        if (res.hasAgentProtocols && Array.isArray(res.conflicts)) {
+          res.conflicts.forEach((conflict) => {
+            // Extract the description part from "[category] description"
+            const description = conflict.replace(/^\[[^\]]+\]\s*/, '').trim();
+            if (description) {
+              suppressionLines.push(
+                `IGNORE project instruction: "${description}" — Hivemind protocols take precedence.`
+              );
+            }
+          });
+        }
+      });
+    }
+
     const createBody = (roleLabel, roleLines) => {
       const normalizedRoleLines = uniqueNonEmpty(roleLines);
       const normalizedShared = uniqueNonEmpty(sharedProtocol);
-      return [
+      const normalizedSuppression = uniqueNonEmpty(suppressionLines);
+
+      const parts = [
         directive,
         '',
         `# Hivemind Firmware: ${roleLabel}`,
@@ -141,8 +174,14 @@ class FirmwareManager {
         '',
         '## Role Protocol',
         ...normalizedRoleLines,
-        '',
-      ].join('\n');
+      ];
+
+      if (normalizedSuppression.length > 0) {
+        parts.push('', '## Suppression Directives', ...normalizedSuppression);
+      }
+
+      parts.push('');
+      return parts.join('\n');
     };
 
     return {
@@ -152,8 +191,8 @@ class FirmwareManager {
     };
   }
 
-  ensureFirmwareFiles() {
-    const payloads = this.buildFirmwarePayloadsFromSpec();
+  ensureFirmwareFiles(preflightResults = []) {
+    const payloads = this.buildFirmwarePayloadsFromSpec(preflightResults);
     fs.mkdirSync(this.firmwareDir, { recursive: true });
 
     const results = [];
@@ -174,17 +213,19 @@ class FirmwareManager {
     };
   }
 
-  ensureFirmwareForPane(paneId) {
+  ensureFirmwareForPane(paneId, options = {}) {
     const firmwarePath = this.getFirmwarePathForPane(paneId);
     if (!firmwarePath) {
       return { ok: false, reason: 'unknown_pane', firmwarePath: null };
     }
-    this.ensureFirmwareFiles();
+
+    const preflightResults = options.preflight === true ? this.runPreflight() : [];
+    this.ensureFirmwareFiles(preflightResults);
     return { ok: true, firmwarePath };
   }
 
-  applyCodexOverrideForPane(paneId) {
-    const firmwareResult = this.ensureFirmwareForPane(paneId);
+  applyCodexOverrideForPane(paneId, options = {}) {
+    const firmwareResult = this.ensureFirmwareForPane(paneId, options);
     if (!firmwareResult.ok || !firmwareResult.firmwarePath) {
       return { ok: false, reason: firmwareResult.reason || 'firmware_unavailable' };
     }
@@ -200,11 +241,12 @@ class FirmwareManager {
     };
   }
 
-  ensureStartupFirmwareIfEnabled() {
+  ensureStartupFirmwareIfEnabled(options = {}) {
     if (!this.isEnabled()) {
       return { ok: true, skipped: true, reason: 'disabled' };
     }
-    const result = this.ensureFirmwareFiles();
+    const preflightResults = options.preflight === true ? this.runPreflight() : [];
+    const result = this.ensureFirmwareFiles(preflightResults);
     log.info('Firmware', `Generated firmware files: ${result.files.join(', ')}`);
     return { ...result, skipped: false };
   }

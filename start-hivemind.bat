@@ -1,3 +1,3 @@
 @echo off
-cd /d D:\projects\hivemind\ui
+cd /d "%~dp0ui"
 npm start

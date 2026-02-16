@@ -2,13 +2,24 @@
 /**
  * hm-search: safer rg wrapper for Windows/PowerShell environments.
  * Usage:
- *   node D:/projects/hivemind/ui/scripts/hm-search.js "pattern" "path" [--glob "*.js"]
+ *   node ui/scripts/hm-search.js "pattern" "path" [--glob "*.js"]
  */
 
 const { spawnSync } = require('child_process');
+const path = require('path');
+
+function getUsageScriptPath() {
+  const relative = path.relative(process.cwd(), __filename);
+  if (relative && !relative.startsWith('..')) {
+    return relative.replace(/\\/g, '/');
+  }
+  return __filename.replace(/\\/g, '/');
+}
+
+const USAGE_SCRIPT = getUsageScriptPath();
 
 function printUsage() {
-  console.log('Usage: node D:/projects/hivemind/ui/scripts/hm-search.js "pattern" "path" [--glob "*.js"] [--regex]');
+  console.log(`Usage: node ${USAGE_SCRIPT} "pattern" "path" [--glob "*.js"] [--regex]`);
   console.log('  pattern: text to search for');
   console.log('  path: file or directory to search');
   console.log('  --glob: optional rg glob filter (repeatable)');
