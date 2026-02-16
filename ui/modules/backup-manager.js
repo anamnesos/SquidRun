@@ -7,15 +7,20 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const log = require('./logger');
-const { resolveCoordPath } = require('../config');
+const { resolveCoordPath, resolveGlobalPath } = require('../config');
 
+// Files backed up from project .hivemind/ (coord root)
 const COORD_BACKUP_FILES = [
-  'app-status.json',
   'shared_context.md',
   'state.json',
+  'activity.json',
+];
+
+// Files backed up from GLOBAL_STATE_ROOT (%APPDATA%/hivemind)
+const GLOBAL_BACKUP_FILES = [
+  'app-status.json',
   'message-state.json',
   'schedules.json',
-  'activity.json',
   'usage-stats.json',
 ];
 
@@ -119,12 +124,35 @@ function resolveCoordBackupPath(relPath, repoRoot, workspacePath) {
   return relativePath;
 }
 
+function resolveGlobalBackupPath(relPath, repoRoot) {
+  let resolved = null;
+  if (typeof resolveGlobalPath === 'function') {
+    try {
+      resolved = resolveGlobalPath(relPath);
+    } catch (_) {
+      resolved = null;
+    }
+  }
+  if (!resolved) return null;
+
+  const relativePath = normalizePath(path.relative(repoRoot, resolved));
+  // Global paths will be outside the repo — use absolute path as key
+  if (!relativePath || relativePath.startsWith('..')) {
+    return normalizePath(resolved);
+  }
+  return relativePath;
+}
+
 function buildDefaultIncludePaths(repoRoot, workspacePath) {
   const coordEntries = COORD_BACKUP_FILES
     .map((relPath) => resolveCoordBackupPath(relPath, repoRoot, workspacePath))
     .filter((relPath) => relPath && !relPath.startsWith('..'));
 
-  return [...coordEntries, ...DEFAULT_CONFIG.includePaths];
+  const globalEntries = GLOBAL_BACKUP_FILES
+    .map((relPath) => resolveGlobalBackupPath(relPath, repoRoot))
+    .filter(Boolean);
+
+  return [...coordEntries, ...globalEntries, ...DEFAULT_CONFIG.includePaths];
 }
 
 function createBackupManager(options = {}) {

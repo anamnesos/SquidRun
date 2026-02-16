@@ -86,6 +86,13 @@ function clearRendererIpcListeners() {
 const MAIN_PANE_CONTAINER_SELECTOR = '.main-pane-container';
 const SIDE_PANES_CONTAINER_SELECTOR = '.side-panes-container';
 const APP_STATUS_FALLBACK_PATHS = Object.freeze([
+  (() => {
+    const os = require('os');
+    const root = os.platform() === 'win32'
+      ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'hivemind')
+      : path.join(os.homedir(), '.config', 'hivemind');
+    return path.join(root, 'app-status.json');
+  })(),
   path.resolve(__dirname, '..', '.hivemind', 'app-status.json'),
   path.resolve(__dirname, '..', 'workspace', 'app-status.json'),
 ]);

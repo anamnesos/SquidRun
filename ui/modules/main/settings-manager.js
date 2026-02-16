@@ -8,7 +8,7 @@ const path = require('path');
 const os = require('os');
 const { spawnSync } = require('child_process');
 const log = require('../logger');
-const { WORKSPACE_PATH, PROJECT_ROOT, resolvePaneCwd, resolveCoordPath } = require('../../config');
+const { WORKSPACE_PATH, PROJECT_ROOT, resolvePaneCwd, resolveGlobalPath } = require('../../config');
 
 const CLI_NAMES = ['claude', 'codex', 'gemini'];
 const CLI_PREFERENCES = {
@@ -107,8 +107,8 @@ class SettingsManager {
   constructor(appContext) {
     this.ctx = appContext;
     this.settingsPath = path.join(__dirname, '..', '..', 'settings.json');
-    this.appStatusPath = typeof resolveCoordPath === 'function'
-      ? resolveCoordPath('app-status.json', { forWrite: true })
+    this.appStatusPath = typeof resolveGlobalPath === 'function'
+      ? resolveGlobalPath('app-status.json', { forWrite: true })
       : path.join(WORKSPACE_PATH, 'app-status.json');
     
     // Deep clone defaults to prevent reference sharing

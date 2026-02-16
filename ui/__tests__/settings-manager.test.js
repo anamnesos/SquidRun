@@ -25,6 +25,10 @@ jest.mock('../modules/logger', () => ({
 jest.mock('../config', () => ({
   WORKSPACE_PATH: 'D:\\projects\\hivemind\\workspace',
   resolvePaneCwd: () => 'D:\\projects\\hivemind',
+  resolveGlobalPath: (relPath, opts) => {
+    const p = require('path');
+    return p.join('C:\\Users\\mock\\AppData\\Roaming\\hivemind', relPath);
+  },
 }));
 
 const { spawnSync } = require('child_process');
