@@ -8,7 +8,7 @@ const path = require('path');
 const os = require('os');
 const { spawnSync } = require('child_process');
 const log = require('../logger');
-const { WORKSPACE_PATH, PROJECT_ROOT, resolvePaneCwd, resolveGlobalPath } = require('../../config');
+const { WORKSPACE_PATH, PROJECT_ROOT, resolvePaneCwd, resolveGlobalPath, resolveCoordPath } = require('../../config');
 
 const CLI_NAMES = ['claude', 'codex', 'gemini'];
 const CLI_PREFERENCES = {
@@ -110,7 +110,12 @@ class SettingsManager {
     this.appStatusPath = typeof resolveGlobalPath === 'function'
       ? resolveGlobalPath('app-status.json', { forWrite: true })
       : path.join(WORKSPACE_PATH, 'app-status.json');
-    
+
+    // Secondary copy in project .hivemind/ so agents can read it at their expected path
+    this.appStatusCoordCopy = typeof resolveCoordPath === 'function'
+      ? resolveCoordPath('app-status.json', { forWrite: true })
+      : null;
+
     // Deep clone defaults to prevent reference sharing
     this.ctx.currentSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   }
@@ -198,10 +203,26 @@ class SettingsManager {
         delete status.session;
       }
 
+      const serialized = JSON.stringify(status, null, 2);
+
+      // Primary write: GLOBAL_STATE_ROOT
       fs.mkdirSync(path.dirname(this.appStatusPath), { recursive: true });
       const tempPath = this.appStatusPath + '.tmp';
-      fs.writeFileSync(tempPath, JSON.stringify(status, null, 2), 'utf-8');
+      fs.writeFileSync(tempPath, serialized, 'utf-8');
       fs.renameSync(tempPath, this.appStatusPath);
+
+      // Secondary write: project .hivemind/ (agents read from here)
+      if (this.appStatusCoordCopy && this.appStatusCoordCopy !== this.appStatusPath) {
+        try {
+          fs.mkdirSync(path.dirname(this.appStatusCoordCopy), { recursive: true });
+          const coordTemp = this.appStatusCoordCopy + '.tmp';
+          fs.writeFileSync(coordTemp, serialized, 'utf-8');
+          fs.renameSync(coordTemp, this.appStatusCoordCopy);
+        } catch (_) {
+          // Non-fatal — global copy is the source of truth
+        }
+      }
+
       log.info('App Status', `Written${session !== null ? ` (session ${session})` : ''}`);
     } catch (err) {
       log.error('App Status', 'Error writing', err.message);

@@ -29,6 +29,10 @@ jest.mock('../config', () => ({
     const p = require('path');
     return p.join('C:\\Users\\mock\\AppData\\Roaming\\hivemind', relPath);
   },
+  resolveCoordPath: (relPath, opts) => {
+    const p = require('path');
+    return p.join('D:\\projects\\hivemind\\.hivemind', relPath);
+  },
 }));
 
 const { spawnSync } = require('child_process');
