@@ -56,8 +56,8 @@ function buildWatcherConfigs() {
         ignoreInitial: true,
         persistent: true,
         usePolling: true,
-        interval: 300,
-        binaryInterval: 300,
+        interval: 1000,
+        binaryInterval: 1000,
         awaitWriteFinish: false,
         atomic: false,
         ignored: [
