@@ -214,6 +214,21 @@ async function emitCommsMetric(clientId, clientInfo, eventType, payload = {}) {
   }
 }
 
+function emitAckLatencyMetric(clientId, clientInfo, message, ackPayload, receivedAtMs) {
+  if (!ackPayload || !Number.isFinite(receivedAtMs)) return;
+  const ackLatencyMs = Math.max(0, Date.now() - receivedAtMs);
+  ackPayload.ackLatencyMs = ackLatencyMs;
+  void emitCommsMetric(clientId, clientInfo, 'comms.ack.latency', {
+    ackLatencyMs,
+    messageType: message?.type || null,
+    messageId: message?.messageId || null,
+    target: message?.target || null,
+    status: ackPayload.status || null,
+    verified: ackPayload.verified === true,
+    wsDeliveryCount: Number(ackPayload.wsDeliveryCount) || 0,
+  });
+}
+
 function sendJson(ws, payload) {
   if (!ws || ws.readyState !== 1) return false;
   try {
@@ -809,6 +824,7 @@ async function handleMessage(clientId, rawData) {
 
   // Rate limiting: sliding window per client
   const now = Date.now();
+  const receivedAtMs = now;
   if (!clientInfo._rateBucketStart || now - clientInfo._rateBucketStart > RATE_LIMIT_WINDOW_MS) {
     clientInfo._rateBucketStart = now;
     clientInfo._rateBucketCount = 0;
@@ -1134,6 +1150,7 @@ async function handleMessage(clientId, rawData) {
           parentEventId: ingressTraceContext?.parentEventId || null,
           timestamp: Date.now(),
         };
+        emitAckLatencyMetric(clientId, clientInfo, message, ackPayload, receivedAtMs);
         sendJson(clientInfo.ws, ackPayload);
         finalizeAckTracking(ackPayload, err);
       }
@@ -1188,6 +1205,7 @@ async function handleMessage(clientId, rawData) {
       parentEventId: ingressTraceContext?.parentEventId || null,
       timestamp: Date.now(),
     };
+    emitAckLatencyMetric(clientId, clientInfo, message, ackPayload, receivedAtMs);
     sendJson(clientInfo.ws, ackPayload);
     finalizeAckTracking(ackPayload);
     return;

@@ -34,7 +34,8 @@
     "notify:production": "echo 'Deployed to production'",
     "daemon:start": "node terminal-daemon.js",
     "daemon:stop": "node -e \"const fs=require('fs');const p=fs.readFileSync('daemon.pid','utf-8').trim();process.kill(parseInt(p),'SIGTERM');fs.unlinkSync('daemon.pid');console.log('Daemon stopped')\"",
-    "daemon:status": "node -e \"const fs=require('fs');try{const p=fs.readFileSync('daemon.pid','utf-8').trim();process.kill(parseInt(p),0);console.log('Daemon running (PID '+p+')')}catch(e){console.log('Daemon not running')}\""
+    "daemon:status": "node -e \"const fs=require('fs');try{const p=fs.readFileSync('daemon.pid','utf-8').trim();process.kill(parseInt(p),0);console.log('Daemon running (PID '+p+')')}catch(e){console.log('Daemon not running')}\"",
+    "doctor": "node scripts/hm-doctor.js"
   },
   "keywords": [
     "electron",

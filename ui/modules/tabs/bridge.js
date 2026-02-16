@@ -7,6 +7,8 @@ const { PANE_IDS, PANE_ROLES, SHORT_AGENT_NAMES } = require('../../config');
 const { escapeHtml } = require('./utils');
 
 const MAX_STREAM_ENTRIES = 100;
+const MAX_ACK_LATENCY_SAMPLES = 24;
+const SPARKLINE_CHARS = ' .:-=+*#%@';
 
 const ACTIVITY_COLORS = {
   idle: '#4caf50',
@@ -35,6 +37,21 @@ const NOISY_PREFIXES = ['pty.data.', 'contract.checked', 'daemon.write.', 'bus.e
 let busRef = null;
 let handlers = [];
 let streamEntries = 0;
+let transportState = null;
+
+function defaultTransportState() {
+  return {
+    daemonConnected: true,
+    wakeState: 'awake',
+    recoveryState: 'idle',
+    ackSamples: [],
+    ackLastMs: null,
+    ackAvgMs: null,
+    retries: 0,
+    dedupeHits: 0,
+    lastResumeAt: null,
+  };
+}
 
 function isNoisyEvent(type) {
   for (const prefix of NOISY_PREFIXES) {
@@ -74,6 +91,158 @@ function summarizePayload(payload) {
     }
   }
   return parts.join(' ');
+}
+
+function toFiniteNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildAsciiSparkline(samples) {
+  if (!Array.isArray(samples) || samples.length === 0) return '(no ack samples)';
+  const min = Math.min(...samples);
+  const max = Math.max(...samples);
+  const range = Math.max(1, max - min);
+  return samples.map((value) => {
+    const normalized = Math.max(0, Math.min(1, (value - min) / range));
+    const index = Math.min(SPARKLINE_CHARS.length - 1, Math.floor(normalized * (SPARKLINE_CHARS.length - 1)));
+    return SPARKLINE_CHARS[index];
+  }).join('');
+}
+
+function addAckSample(latencyMs) {
+  if (!transportState) return;
+  transportState.ackSamples.push(latencyMs);
+  if (transportState.ackSamples.length > MAX_ACK_LATENCY_SAMPLES) {
+    transportState.ackSamples.shift();
+  }
+  transportState.ackLastMs = latencyMs;
+  const sum = transportState.ackSamples.reduce((acc, sample) => acc + sample, 0);
+  transportState.ackAvgMs = transportState.ackSamples.length > 0
+    ? Math.round(sum / transportState.ackSamples.length)
+    : null;
+}
+
+function classifyAckLatency(latencyMs) {
+  if (!Number.isFinite(latencyMs)) return 'warn';
+  if (latencyMs <= 300) return 'good';
+  if (latencyMs <= 1200) return 'warn';
+  return 'bad';
+}
+
+function classifyRecoveryState(state) {
+  if (state === 'completed' || state === 'idle') return 'good';
+  if (state === 'failed') return 'bad';
+  return 'warn';
+}
+
+function trackTransportEvent(event) {
+  if (!transportState || !event || typeof event.type !== 'string') return;
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
+
+  if (event.type === 'bridge.connected') {
+    transportState.daemonConnected = true;
+    return;
+  }
+  if (event.type === 'bridge.disconnected') {
+    transportState.daemonConnected = false;
+    return;
+  }
+
+  if (event.type === 'comms.retry.attempted') {
+    transportState.retries += 1;
+    return;
+  }
+  if (event.type === 'comms.dedupe.hit') {
+    transportState.dedupeHits += 1;
+    return;
+  }
+  if (event.type === 'comms.ack.latency') {
+    const ackLatencyMs = toFiniteNumber(payload.ackLatencyMs);
+    if (Number.isFinite(ackLatencyMs)) {
+      addAckSample(Math.max(0, Math.round(ackLatencyMs)));
+    }
+    return;
+  }
+
+  if (event.type === 'comms.system.suspend') {
+    transportState.wakeState = 'sleeping';
+    return;
+  }
+  if (event.type === 'comms.system.resume') {
+    transportState.wakeState = 'awake';
+    transportState.lastResumeAt = Number.isFinite(event.ts) ? event.ts : Date.now();
+    return;
+  }
+
+  if (event.type === 'comms.transport.recovery.started') {
+    transportState.recoveryState = 'running';
+    return;
+  }
+  if (event.type === 'comms.transport.recovery.completed') {
+    transportState.recoveryState = 'completed';
+    return;
+  }
+  if (event.type === 'comms.transport.recovery.failed') {
+    transportState.recoveryState = 'failed';
+  }
+}
+
+function renderTransportHealth() {
+  const container = document.getElementById('bridgeTransport');
+  if (!container) return;
+
+  const state = transportState || defaultTransportState();
+  const daemonClass = state.daemonConnected ? 'good' : 'bad';
+  const wakeClass = state.wakeState === 'sleeping' ? 'warn' : 'good';
+  const ackClass = classifyAckLatency(state.ackLastMs);
+  const recoveryClass = classifyRecoveryState(state.recoveryState);
+  const lastResume = Number.isFinite(state.lastResumeAt) ? formatTimestamp(state.lastResumeAt) : '-';
+  const ackLast = Number.isFinite(state.ackLastMs) ? `${state.ackLastMs}ms` : '-';
+  const ackAvg = Number.isFinite(state.ackAvgMs) ? `${state.ackAvgMs}ms` : '-';
+  const sparkline = buildAsciiSparkline(state.ackSamples);
+
+  container.innerHTML = `
+    <div class="bridge-transport-row">
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Daemon</span>
+        <span class="bridge-transport-value ${daemonClass}">${state.daemonConnected ? 'connected' : 'disconnected'}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Wake</span>
+        <span class="bridge-transport-value ${wakeClass}">${escapeHtml(state.wakeState)}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Recovery</span>
+        <span class="bridge-transport-value ${recoveryClass}">${escapeHtml(state.recoveryState)}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Last Resume</span>
+        <span class="bridge-transport-value">${lastResume}</span>
+      </div>
+    </div>
+    <div class="bridge-transport-row">
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">ACK Last</span>
+        <span class="bridge-transport-value ${ackClass}">${ackLast}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">ACK Avg</span>
+        <span class="bridge-transport-value">${ackAvg}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Retries</span>
+        <span class="bridge-transport-value">${state.retries}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Dedupe</span>
+        <span class="bridge-transport-value">${state.dedupeHits}</span>
+      </div>
+    </div>
+    <div class="bridge-transport-sparkline" title="Recent ACK latency samples (older -> newer)">
+      ack ${escapeHtml(sparkline)}
+    </div>
+  `;
 }
 
 // --- Agent Status Cards ---
@@ -224,9 +393,11 @@ function setupBridgeTab(bus) {
   if (!bus) return;
   busRef = bus;
   streamEntries = 0;
+  transportState = defaultTransportState();
 
   renderAgentCards(bus);
   renderMetrics(bus);
+  renderTransportHealth();
 
   // State change handler
   const stateHandler = (event) => {
@@ -241,6 +412,8 @@ function setupBridgeTab(bus) {
   // Event stream — subscribe to significant event patterns
   const patterns = ['pane.state.changed', 'comms.*', 'contract.*', 'inject.*', 'safemode.*'];
   const streamHandler = (event) => {
+    trackTransportEvent(event);
+    renderTransportHealth();
     if (isNoisyEvent(event.type)) return;
     addStreamEntry(event);
     renderMetrics(bus);
@@ -250,6 +423,15 @@ function setupBridgeTab(bus) {
     bus.on(pattern, streamHandler);
     handlers.push({ type: pattern, fn: streamHandler });
   }
+
+  const bridgeTransportHandler = (event) => {
+    trackTransportEvent(event);
+    renderTransportHealth();
+    addStreamEntry(event);
+    renderMetrics(bus);
+  };
+  bus.on('bridge.*', bridgeTransportHandler);
+  handlers.push({ type: 'bridge.*', fn: bridgeTransportHandler });
 }
 
 function destroy() {
@@ -270,6 +452,9 @@ function destroy() {
   if (agents) agents.innerHTML = '';
   const metrics = document.getElementById('bridgeMetrics');
   if (metrics) metrics.innerHTML = '';
+  const transport = document.getElementById('bridgeTransport');
+  if (transport) transport.innerHTML = '';
+  transportState = null;
 }
 
 module.exports = { setupBridgeTab, destroy };

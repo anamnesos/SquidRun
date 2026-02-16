@@ -1,0 +1,122 @@
+# Hivemind Agent Protocol Specification (v1.0)
+
+**Status:** Canonical | **Target Audience:** Agents & Developers
+
+This document formalizes the communication and coordination protocols for the Hivemind multi-agent system. It transforms the "tribal knowledge" of the system into a practical specification for message formats, routing, reliability, and lifecycle management.
+
+---
+
+## 1. Message Format
+
+All agent-to-agent communication must follow the standard envelope format. This ensures messages are attributable, ordered, and parsable by both humans and machines.
+
+### 1.1 The Role Header
+Every message must begin with a role identifier and a sequence number:
+`([ROLE] #[N]): [Message Content]`
+
+- **[ROLE]:** The canonical role name (e.g., `ARCH`, `BUILDER`, `ORACLE`).
+- **#[N]:** A session-relative monotonic sequence number (e.g., `#1`, `#2`).
+
+### 1.2 Sequence Numbering Rules
+- **Reset:** Start from `#1` at the beginning of every session (app startup).
+- **Monotonicity:** Increment the number by exactly 1 for every message sent by that agent.
+- **Persistence:** Never reuse a sequence number within the same session.
+
+### 1.3 Examples
+- `(ARCH #1): Roll call. Report status.`
+- `(BUILDER #42): Implementation complete. Running tests.`
+
+---
+
+## 2. Routing & Targets
+
+Messages are routed via the `ui/scripts/hm-send.js` utility.
+
+### 2.1 Canonical Targets
+| Target | Role | Pane ID | Responsibilities |
+|--------|------|---------|------------------|
+| `architect` | Architect | 1 | Coordination, Decisions, Review |
+| `builder` | Builder | 2 | Implementation, Testing, DevOps |
+| `oracle` | Oracle | 5 | Investigation, Docs, Benchmarks |
+
+### 2.2 Special Targets
+- **`user`:** Routes to the terminal and automatically to Telegram if an inbound message was received in the last 5 minutes.
+- **`telegram`:** Explicitly routes to the configured Telegram bot.
+
+### 2.3 Legacy Aliases
+The system maintains aliases for backward compatibility:
+- `devops` → Routes to `builder`
+- `analyst` → Routes to `oracle`
+
+---
+
+## 3. Delivery & Reliability
+
+Hivemind uses a dual-path delivery system to ensure no message is lost.
+
+### 3.1 Path A: WebSocket (Primary)
+- **Mechanism:** Direct connection to the internal message bus (Port 9900).
+- **Latency:** ~10ms.
+- **Reliability:** High. Supports instant ACKs and delivery verification.
+
+### 3.2 Path B: Trigger Files (Fallback)
+- **Mechanism:** Writing to `.hivemind/triggers/[target].txt`.
+- **Latency:** 500ms - 2000ms (dependent on file watchers).
+- **Use Case:** Automatically used by `hm-send.js` if the WebSocket connection fails or times out.
+
+### 3.3 ACK & Delivery Semantics
+- **`delivered.verified`:** The target agent's runtime acknowledged receipt of the message.
+- **`accepted.unverified`:** The message was accepted by the bus but the target agent hasn't acknowledged it yet (common during high load or sleep/wake cycles).
+- **`fallback.triggered`:** WebSocket failed; the message was written to a trigger file.
+
+---
+
+## 4. Priority Tags
+
+Priority tags are used at the start of the message body (after the header) to signal required handling.
+
+| Tag | Meaning | Expected Action |
+|-----|---------|-----------------|
+| `[ACK REQUIRED]` | High-stakes message. | Target must acknowledge receipt immediately via `hm-send`. |
+| `[URGENT]` | Blocker or critical failure. | Target should interrupt current task to address. |
+| `[FYI]` | Informational only. | No response expected. |
+| `[TASK]` | Formal delegation. | Target should treat as a new claim/task in the system. |
+
+Example: `(ARCH #5): [URGENT] Build is failing on main. Oracle, investigate.`
+
+---
+
+## 5. Startup & Onboarding
+
+### 5.1 The Check-in Procedure
+On startup, every agent must follow this sequence:
+1. **Identify Role:** Determine role and pane from environment variables (`HIVEMIND_ROLE`, `HIVEMIND_PANE_ID`).
+2. **Intelligence Check:** Query Team Memory for active/proposed claims: `node ui/scripts/hm-claim.js query --status proposed`.
+3. **Signal Readiness:** Message the Architect to check in:
+   `node ui/scripts/hm-send.js architect "(ROLE #1): [Role] online. Intelligence check complete. Standing by."`
+
+### 5.2 Failure Escalation
+If an agent encounters a tool failure or a system blocker:
+1. **Local Retry:** Attempt once if the error is transient.
+2. **Escalate:** Notify the Architect immediately with the error logs.
+3. **Document:** If the failure is a recurring pattern, notify the Oracle to document it as "Negative Knowledge."
+
+---
+
+## 6. Extending the System (Adding a New Agent)
+
+To add a new agent (e.g., `Reviewer` or `SRE`) to the Hivemind:
+
+1. **Update Config:** Add the role and Pane ID to `ui/config.js`.
+2. **Define Role:** Add responsibilities and sub-roles to `ROLES.md`.
+3. **Provision Pane:** Update `ui/settings.json` (`paneCommands`) to include the new CLI command.
+4. **Update Spec:** Add the new canonical target to Section 2.1 of this document.
+5. **Initial Roll Call:** The Architect should perform a system-wide roll call to verify the new agent's `hm-send` path is active.
+
+---
+
+## 7. Operational Safety
+
+- **Terminal vs. Agent:** Terminal output is for the USER. Never assume another agent can see your terminal.
+- **No Content-Free ACKs:** Avoid "Okay" or "Received" unless `[ACK REQUIRED]` was specified. Prefer status-rich updates.
+- **Commit First:** Always commit work before declaring "Ready for restart." Uncommitted state is lost when a pane restarts.
