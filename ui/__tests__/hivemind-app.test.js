@@ -225,6 +225,7 @@ describe('HivemindApp', () => {
         loadSettings: jest.fn(),
         ensureCodexConfig: jest.fn(),
         writeAppStatus: jest.fn(),
+        readAppStatus: jest.fn().mockReturnValue({ session: 147 }),
         getSettings: jest.fn().mockReturnValue({}),
       },
       activity: {
@@ -306,6 +307,29 @@ describe('HivemindApp', () => {
       expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).toHaveBeenCalledTimes(1);
     });
 
+    it('records startup ledger session only when daemon was freshly spawned', async () => {
+      const app = new HivemindApp(mockAppContext, mockManagers);
+
+      app.initDaemonClient = jest.fn().mockImplementation(async () => {
+        mockAppContext.daemonClient = {
+          didSpawnDuringLastConnect: jest.fn().mockReturnValue(true),
+        };
+      });
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+
+      await app.init();
+
+      expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ incrementSession: true })
+      );
+      expect(app.initializeStartupSessionScope).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionNumber: 147 })
+      );
+    });
+
     it('initializes team memory lazily on first pattern append', async () => {
       const app = new HivemindApp(mockAppContext, mockManagers);
       const teamMemory = require('../modules/team-memory');
@@ -379,6 +403,30 @@ describe('HivemindApp', () => {
         3,
         'snapshot-context',
         expect.objectContaining({ sessionId: 'ses-129', trigger: 'session_start' }),
+        expect.any(Object)
+      );
+    });
+
+    it('uses provided session number from app-status when available', async () => {
+      const { executeEvidenceLedgerOperation } = require('../modules/ipc/evidence-ledger-handlers');
+      executeEvidenceLedgerOperation
+        .mockResolvedValueOnce({ ok: true, sessionId: 'ses-147' })
+        .mockResolvedValueOnce({ ok: true, snapshotId: 'snp-147' });
+
+      const result = await app.initializeStartupSessionScope({ sessionNumber: 147 });
+
+      expect(result).toEqual({ sessionId: 'ses-147', sessionNumber: 147 });
+      expect(executeEvidenceLedgerOperation).toHaveBeenCalledTimes(2);
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        1,
+        'record-session-start',
+        expect.objectContaining({ sessionNumber: 147, mode: 'APP' }),
+        expect.any(Object)
+      );
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        2,
+        'snapshot-context',
+        expect.objectContaining({ sessionId: 'ses-147', trigger: 'session_start' }),
         expect.any(Object)
       );
     });
