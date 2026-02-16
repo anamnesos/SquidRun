@@ -11,6 +11,198 @@ const { getFeatureCapabilities } = require('../feature-capabilities');
 // Path to .env file (project root)
 const ENV_PATH = path.join(__dirname, '..', '..', '..', '.env');
 
+function normalizeDirectoryPath(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return path.resolve(trimmed);
+}
+
+function asPaneProjects(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
+function getChangedPaneProjectTargets(previousPaneProjects, nextPaneProjects) {
+  const previous = asPaneProjects(previousPaneProjects);
+  const next = asPaneProjects(nextPaneProjects);
+  const paneIds = new Set([...Object.keys(previous), ...Object.keys(next)]);
+  const changedTargets = [];
+
+  paneIds.forEach((paneId) => {
+    const before = normalizeDirectoryPath(previous[paneId]);
+    const after = normalizeDirectoryPath(next[paneId]);
+    if (before === after) return;
+    if (after) changedTargets.push(after);
+  });
+
+  return [...new Set(changedTargets)];
+}
+
+function flattenScanResults(resultsByTarget) {
+  return Object.values(resultsByTarget || {}).reduce((acc, value) => {
+    if (Array.isArray(value)) {
+      acc.push(...value);
+    }
+    return acc;
+  }, []);
+}
+
+function hasPreflightConflicts(preflightResults) {
+  if (!Array.isArray(preflightResults)) return false;
+  return preflightResults.some((entry) => (
+    entry
+    && entry.hasAgentProtocols === true
+    && Array.isArray(entry.conflicts)
+    && entry.conflicts.length > 0
+  ));
+}
+
+function isProjectMode(settings) {
+  return settings?.operatingMode === 'project' || settings?.firmwareInjectionEnabled === true;
+}
+
+function getFirmwareManager(ctx, deps) {
+  return deps?.firmwareManager || ctx?.firmwareManager || null;
+}
+
+function getCachedResultsFromManager(firmwareManager) {
+  if (!firmwareManager || typeof firmwareManager.getAllCachedPreflightResults !== 'function') {
+    return [];
+  }
+  return firmwareManager.getAllCachedPreflightResults();
+}
+
+function maybeRegenerateFirmwareFromConflicts(firmwareManager, settings, scannedResultsByTarget) {
+  if (!firmwareManager || typeof firmwareManager.ensureFirmwareFiles !== 'function') return;
+  if (!isProjectMode(settings)) return;
+
+  const hasConflict = Object.values(scannedResultsByTarget || {}).some((results) => hasPreflightConflicts(results));
+  if (!hasConflict) return;
+
+  const cached = getCachedResultsFromManager(firmwareManager);
+  const mergedResults = cached.length > 0 ? cached : flattenScanResults(scannedResultsByTarget);
+  firmwareManager.ensureFirmwareFiles(mergedResults);
+}
+
+function runPreflightForPaneProjectChanges(ctx, deps, settings, previousPaneProjects, nextPaneProjects) {
+  const firmwareManager = getFirmwareManager(ctx, deps);
+  if (!firmwareManager || typeof firmwareManager.runPreflight !== 'function') {
+    return { scanned: false, targets: [], resultsByTarget: {}, combinedResults: [] };
+  }
+
+  const changedTargets = getChangedPaneProjectTargets(previousPaneProjects, nextPaneProjects);
+  if (changedTargets.length === 0) {
+    return { scanned: false, targets: [], resultsByTarget: {}, combinedResults: [] };
+  }
+
+  const resultsByTarget = {};
+  changedTargets.forEach((targetDir) => {
+    resultsByTarget[targetDir] = firmwareManager.runPreflight(targetDir, { cache: true });
+  });
+
+  const combinedResults = (() => {
+    const cached = getCachedResultsFromManager(firmwareManager);
+    return cached.length > 0 ? cached : flattenScanResults(resultsByTarget);
+  })();
+
+  ctx.preflightScanResults = combinedResults;
+  ctx.lastPreflightScan = {
+    source: 'set-setting:paneProjects',
+    scannedAt: new Date().toISOString(),
+    targets: changedTargets,
+    resultsByTarget,
+  };
+
+  maybeRegenerateFirmwareFromConflicts(firmwareManager, settings, resultsByTarget);
+
+  return {
+    scanned: true,
+    targets: changedTargets,
+    resultsByTarget,
+    combinedResults,
+  };
+}
+
+function runManualPreflightScan(ctx, deps, settings, targetDir) {
+  const firmwareManager = getFirmwareManager(ctx, deps);
+  if (!firmwareManager || typeof firmwareManager.runPreflight !== 'function') {
+    return {
+      success: false,
+      error: 'Firmware manager unavailable',
+      targetDir: null,
+      results: [],
+      hasConflicts: false,
+    };
+  }
+
+  const normalizedTarget = normalizeDirectoryPath(targetDir);
+  if (!normalizedTarget) {
+    return {
+      success: false,
+      error: 'Directory path is required',
+      targetDir: null,
+      results: [],
+      hasConflicts: false,
+    };
+  }
+
+  if (!fs.existsSync(normalizedTarget)) {
+    return {
+      success: false,
+      error: 'Directory does not exist',
+      targetDir: normalizedTarget,
+      results: [],
+      hasConflicts: false,
+    };
+  }
+
+  let stat = null;
+  try {
+    stat = fs.statSync(normalizedTarget);
+  } catch {
+    stat = null;
+  }
+
+  if (!stat || !stat.isDirectory()) {
+    return {
+      success: false,
+      error: 'Path is not a directory',
+      targetDir: normalizedTarget,
+      results: [],
+      hasConflicts: false,
+    };
+  }
+
+  const results = firmwareManager.runPreflight(normalizedTarget, { cache: true });
+  const hasConflicts = hasPreflightConflicts(results);
+  const combinedResults = (() => {
+    const cached = getCachedResultsFromManager(firmwareManager);
+    return cached.length > 0 ? cached : (Array.isArray(results) ? results : []);
+  })();
+
+  ctx.preflightScanResults = combinedResults;
+  ctx.lastPreflightScan = {
+    source: 'manual:preflight-scan',
+    scannedAt: new Date().toISOString(),
+    targets: [normalizedTarget],
+    resultsByTarget: {
+      [normalizedTarget]: results,
+    },
+  };
+
+  if (isProjectMode(settings) && hasConflicts && typeof firmwareManager.ensureFirmwareFiles === 'function') {
+    firmwareManager.ensureFirmwareFiles(combinedResults);
+  }
+
+  return {
+    success: true,
+    targetDir: normalizedTarget,
+    results,
+    hasConflicts,
+  };
+}
+
 function registerSettingsHandlers(ctx, deps) {
   const { ipcMain } = ctx;
   const { loadSettings, saveSettings } = deps;
@@ -21,6 +213,10 @@ function registerSettingsHandlers(ctx, deps) {
 
   ipcMain.handle('set-setting', (event, key, value) => {
     const settings = loadSettings();
+    const previousPaneProjects = key === 'paneProjects'
+      ? { ...asPaneProjects(settings.paneProjects) }
+      : null;
+
     settings[key] = value;
 
     // Operating mode drives firmware injection
@@ -29,6 +225,16 @@ function registerSettingsHandlers(ctx, deps) {
     }
 
     saveSettings(settings);
+
+    if (key === 'paneProjects') {
+      runPreflightForPaneProjectChanges(
+        ctx,
+        deps,
+        settings,
+        previousPaneProjects,
+        settings.paneProjects
+      );
+    }
 
     if (key === 'watcherEnabled') {
       if (value) {
@@ -47,6 +253,11 @@ function registerSettingsHandlers(ctx, deps) {
 
   ipcMain.handle('get-feature-capabilities', () => {
     return getFeatureCapabilities(process.env);
+  });
+
+  ipcMain.handle('preflight-scan', (event, targetDir) => {
+    const settings = loadSettings();
+    return runManualPreflightScan(ctx, deps, settings, targetDir);
   });
 
   // Get masked API keys for display (never returns full keys)
@@ -161,6 +372,7 @@ function unregisterSettingsHandlers(ctx) {
     ipcMain.removeHandler('get-api-keys');
     ipcMain.removeHandler('set-api-keys');
     ipcMain.removeHandler('get-feature-capabilities');
+    ipcMain.removeHandler('preflight-scan');
   }
 }
 

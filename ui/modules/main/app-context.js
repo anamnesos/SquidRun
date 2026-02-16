@@ -35,6 +35,9 @@ class AppContext {
     // Usage Stats
     this.usageStats = {};
     this.sessionStartTimes = new Map();
+
+    // Firmware pre-flight scan cache keyed by absolute target directory.
+    this.preflightScanResults = {};
   }
 
   setMainWindow(window) {

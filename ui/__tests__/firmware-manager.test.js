@@ -95,4 +95,33 @@ describe('FirmwareManager', () => {
     expect(result.skipped).toBe(true);
     expect(fs.existsSync(path.join(firmwareDir, 'director.md'))).toBe(false);
   });
+
+  test('caches preflight results by target directory', () => {
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-preflight-target-'));
+    const preflightResults = [{ file: 'CLAUDE.md', hasAgentProtocols: true, conflicts: [] }];
+
+    manager.cachePreflightResults(targetDir, preflightResults);
+
+    expect(manager.getCachedPreflightResults(targetDir)).toEqual(preflightResults);
+    expect(manager.getAllCachedPreflightResults()).toEqual(preflightResults);
+  });
+
+  test('ensureFirmwareForPane uses cached preflight conflicts for suppression directives', () => {
+    const paneProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-pane-project-'));
+    appContext.currentSettings.paneProjects = { '1': null, '2': paneProject, '5': null };
+
+    const conflictResults = [{
+      file: 'CLAUDE.md',
+      hasAgentProtocols: true,
+      conflicts: ['[protocol] Announce registry identity before work'],
+    }];
+    manager.cachePreflightResults(paneProject, conflictResults);
+
+    const result = manager.ensureFirmwareForPane('2');
+    expect(result.ok).toBe(true);
+
+    const builder = fs.readFileSync(path.join(firmwareDir, 'builder.md'), 'utf-8');
+    expect(builder).toContain('## Suppression Directives');
+    expect(builder).toContain('IGNORE project instruction: "Announce registry identity before work"');
+  });
 });

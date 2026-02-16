@@ -93,6 +93,66 @@ class FirmwareManager {
     );
   }
 
+  normalizeTargetDir(targetDir) {
+    if (typeof targetDir !== 'string') return null;
+    const trimmed = targetDir.trim();
+    if (!trimmed) return null;
+    return path.resolve(trimmed);
+  }
+
+  ensurePreflightCache() {
+    if (!this.ctx || typeof this.ctx !== 'object') return {};
+    if (!this.ctx.preflightScanResults || typeof this.ctx.preflightScanResults !== 'object' || Array.isArray(this.ctx.preflightScanResults)) {
+      this.ctx.preflightScanResults = {};
+    }
+    return this.ctx.preflightScanResults;
+  }
+
+  cachePreflightResults(targetDir, results) {
+    const normalizedTarget = this.normalizeTargetDir(targetDir) || this.projectRoot;
+    const cache = this.ensurePreflightCache();
+    cache[normalizedTarget] = Array.isArray(results) ? results : [];
+    return cache[normalizedTarget];
+  }
+
+  getCachedPreflightResults(targetDir) {
+    const normalizedTarget = this.normalizeTargetDir(targetDir);
+    if (!normalizedTarget) return [];
+    const cache = this.ensurePreflightCache();
+    return Array.isArray(cache[normalizedTarget]) ? cache[normalizedTarget] : [];
+  }
+
+  getAllCachedPreflightResults() {
+    const cache = this.ensurePreflightCache();
+    const combined = [];
+    Object.values(cache).forEach((value) => {
+      if (Array.isArray(value)) {
+        combined.push(...value);
+      }
+    });
+    return combined;
+  }
+
+  hasConflicts(preflightResults = []) {
+    if (!Array.isArray(preflightResults)) return false;
+    return preflightResults.some((result) => (
+      result
+      && result.hasAgentProtocols === true
+      && Array.isArray(result.conflicts)
+      && result.conflicts.length > 0
+    ));
+  }
+
+  resolveTargetDirForPane(paneId) {
+    const paneProjects = this.ctx?.currentSettings?.paneProjects;
+    if (paneProjects && typeof paneProjects === 'object') {
+      const paneProjectPath = paneProjects[String(paneId)];
+      const normalized = this.normalizeTargetDir(paneProjectPath);
+      if (normalized) return normalized;
+    }
+    return this.projectRoot;
+  }
+
   isEnabled() {
     return this.ctx?.currentSettings?.firmwareInjectionEnabled === true;
   }
@@ -114,14 +174,24 @@ class FirmwareManager {
     return fs.readFileSync(this.specPath, 'utf-8');
   }
 
-  runPreflight(targetDir = this.projectRoot) {
+  runPreflight(targetDir = this.projectRoot, options = {}) {
+    const normalizedTarget = this.normalizeTargetDir(targetDir) || this.projectRoot;
+    const shouldCache = options.cache !== false;
     try {
-      const output = execFileSync('node', [PREFLIGHT_SCRIPT_PATH, targetDir], {
+      const output = execFileSync('node', [PREFLIGHT_SCRIPT_PATH, normalizedTarget], {
         encoding: 'utf-8',
       });
-      return JSON.parse(output);
+      const parsed = JSON.parse(output);
+      const results = Array.isArray(parsed) ? parsed : [];
+      if (shouldCache) {
+        this.cachePreflightResults(normalizedTarget, results);
+      }
+      return results;
     } catch (err) {
       log.warn('Firmware', `Pre-flight scan failed: ${err.message}`);
+      if (shouldCache) {
+        this.cachePreflightResults(normalizedTarget, []);
+      }
       return [];
     }
   }
@@ -219,9 +289,18 @@ class FirmwareManager {
       return { ok: false, reason: 'unknown_pane', firmwarePath: null };
     }
 
-    const preflightResults = options.preflight === true ? this.runPreflight() : [];
+    const targetDir = this.normalizeTargetDir(options.targetDir) || this.resolveTargetDirForPane(paneId);
+    let preflightResults = [];
+    if (Array.isArray(options.preflightResults)) {
+      preflightResults = options.preflightResults;
+      this.cachePreflightResults(targetDir, preflightResults);
+    } else if (options.preflight === true) {
+      preflightResults = this.runPreflight(targetDir, { cache: true });
+    } else {
+      preflightResults = this.getCachedPreflightResults(targetDir);
+    }
     this.ensureFirmwareFiles(preflightResults);
-    return { ok: true, firmwarePath };
+    return { ok: true, firmwarePath, targetDir };
   }
 
   applyCodexOverrideForPane(paneId, options = {}) {
