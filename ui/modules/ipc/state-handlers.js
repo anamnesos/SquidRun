@@ -3,6 +3,8 @@
  * Channels: get-state, set-state, trigger-sync, broadcast-message, start-planning
  */
 
+const { setProjectRoot } = require('../../config');
+
 function registerStateHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerStateHandlers requires ctx.ipcMain');
@@ -86,6 +88,9 @@ function registerStateHandlers(ctx) {
     const state = watcher.readState();
     state.project = project;
     watcher.writeState(state);
+    if (typeof setProjectRoot === 'function') {
+      setProjectRoot(project || null);
+    }
     watcher.transition(watcher.States.PLANNING);
     return watcher.readState();
   });

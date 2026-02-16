@@ -15,12 +15,24 @@ const {
   TRIGGER_TARGETS,
   PROTOCOL_ACTIONS,
   PROTOCOL_EVENTS,
+  getProjectRoot,
+  setProjectRoot,
+  resetProjectRoot,
   resolvePaneCwd,
   resolveCoordRoot,
+  resolveCoordPath,
   resolveGlobalPath,
 } = require('../config');
 
 describe('config.js', () => {
+  beforeEach(() => {
+    resetProjectRoot();
+  });
+
+  afterEach(() => {
+    resetProjectRoot();
+  });
+
   describe('PIPE_PATH', () => {
     test('should be a string', () => {
       expect(typeof PIPE_PATH).toBe('string');
@@ -51,6 +63,20 @@ describe('config.js', () => {
       expect(resolvePaneCwd('5')).toBe(PROJECT_ROOT);
     });
 
+    test('resolvePaneCwd should use active project root fallback for known panes', () => {
+      setProjectRoot('/tmp/switched-project');
+      const expected = path.resolve('/tmp/switched-project');
+      expect(getProjectRoot()).toBe(expected);
+      expect(resolvePaneCwd('1')).toBe(expected);
+      expect(resolvePaneCwd('2')).toBe(expected);
+      expect(resolvePaneCwd('5')).toBe(expected);
+    });
+
+    test('resolvePaneCwd should prefer state project fallback when no pane override exists', () => {
+      const expected = path.resolve('/tmp/state-project');
+      expect(resolvePaneCwd('2', { projectRoot: '/tmp/state-project' })).toBe(expected);
+    });
+
     test('resolvePaneCwd should support injected instanceDirs for unknown panes', () => {
       const override = { '99': '/override/agent' };
       expect(resolvePaneCwd('99', { instanceDirs: override })).toBe('/override/agent');
@@ -68,6 +94,13 @@ describe('config.js', () => {
       const expected = path.join(GLOBAL_STATE_ROOT, 'usage-stats.json');
       expect(path.resolve(resolved)).toBe(path.resolve(expected));
       expect(fs.existsSync(path.resolve(GLOBAL_STATE_ROOT))).toBe(true);
+    });
+
+    test('resolveCoordPath should write under active project .hivemind root', () => {
+      const switchedProject = path.resolve('/tmp/switched-project');
+      setProjectRoot(switchedProject);
+      const resolved = resolveCoordPath('app-status.json', { forWrite: true });
+      expect(path.resolve(resolved)).toBe(path.join(switchedProject, '.hivemind', 'app-status.json'));
     });
   });
 

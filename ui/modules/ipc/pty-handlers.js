@@ -119,6 +119,15 @@ function registerPtyHandlers(ctx, deps = {}) {
     const paneProjects = ctx?.currentSettings?.paneProjects;
     return paneProjects && typeof paneProjects === 'object' ? paneProjects : {};
   };
+  const getActiveProjectRoot = () => {
+    try {
+      const state = ctx?.watcher?.readState?.();
+      const project = typeof state?.project === 'string' ? state.project.trim() : '';
+      return project || null;
+    } catch (_) {
+      return null;
+    }
+  };
   const isFirmwareEnabled = () => ctx?.currentSettings?.firmwareInjectionEnabled === true;
 
   function resolveFirmwarePathForPane(paneId) {
@@ -140,7 +149,10 @@ function registerPtyHandlers(ctx, deps = {}) {
       return { error: 'Daemon not connected' };
     }
 
-    const paneRoot = resolvePaneCwd(paneId, { paneProjects: getPaneProjects() });
+    const paneRoot = resolvePaneCwd(paneId, {
+      paneProjects: getPaneProjects(),
+      projectRoot: getActiveProjectRoot(),
+    });
     const cwd = paneRoot || workingDir || process.cwd();
     const paneCommand = getPaneCommandForRuntime(ctx, paneId);
     const runtime = detectCliFromCommand(paneCommand);
