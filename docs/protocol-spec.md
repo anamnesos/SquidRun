@@ -91,9 +91,11 @@ Example: `(ARCH #5): [URGENT] Build is failing on main. Oracle, investigate.`
 ### 5.1 The Check-in Procedure
 On startup, every agent must follow this sequence:
 1. **Identify Role:** Determine role and pane from environment variables (`HIVEMIND_ROLE`, `HIVEMIND_PANE_ID`).
-2. **Intelligence Check:** Query Team Memory for active/proposed claims: `node ui/scripts/hm-claim.js query --status proposed`.
-3. **Signal Readiness:** Message the Architect to check in:
-   `node ui/scripts/hm-send.js architect "(ROLE #1): [Role] online. Intelligence check complete. Standing by."`
+2. **Role-Specific Baseline:**
+   - **Architect only:** Query Team Memory for active/proposed claims: `node ui/scripts/hm-claim.js query --status proposed`.
+   - **Builder/Oracle:** Verify auto-injected context from Team Memory and skip the `hm-claim` startup query.
+3. **Signal Readiness:** Message the Architect to check in with a one-line status:
+   `node ui/scripts/hm-send.js architect "(ROLE #1): [Role] online. Standing by."`
 
 ### 5.2 Failure Escalation
 If an agent encounters a tool failure or a system blocker:
