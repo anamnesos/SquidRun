@@ -119,7 +119,8 @@ class HivemindApp {
     };
   }
 
-  async initializeStartupSessionScope() {
+  async initializeStartupSessionScope(options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
     const startupSource = {
       via: 'app-startup',
       role: 'system',
@@ -128,23 +129,27 @@ class HivemindApp {
     const fallbackScope = `app-${process.pid}-${Date.now()}`;
     this.commsSessionScopeId = fallbackScope;
 
-    let nextSessionNumber = 1;
-    try {
-      const latestSessions = await executeEvidenceLedgerOperation(
-        'list-sessions',
-        { limit: 1, order: 'desc' },
-        { source: startupSource }
-      );
-      if (Array.isArray(latestSessions) && latestSessions.length > 0) {
-        const latestSessionNumber = asPositiveInt(latestSessions[0]?.sessionNumber, null);
-        if (latestSessionNumber) {
-          nextSessionNumber = latestSessionNumber + 1;
+    const preferredSessionNumber = asPositiveInt(opts.sessionNumber ?? opts.session, null);
+
+    let nextSessionNumber = preferredSessionNumber || 1;
+    if (!preferredSessionNumber) {
+      try {
+        const latestSessions = await executeEvidenceLedgerOperation(
+          'list-sessions',
+          { limit: 1, order: 'desc' },
+          { source: startupSource }
+        );
+        if (Array.isArray(latestSessions) && latestSessions.length > 0) {
+          const latestSessionNumber = asPositiveInt(latestSessions[0]?.sessionNumber, null);
+          if (latestSessionNumber) {
+            nextSessionNumber = latestSessionNumber + 1;
+          }
+        } else if (latestSessions?.ok === false) {
+          log.warn('EvidenceLedger', `Unable to inspect prior sessions at startup: ${latestSessions.reason || 'unknown'}`);
         }
-      } else if (latestSessions?.ok === false) {
-        log.warn('EvidenceLedger', `Unable to inspect prior sessions at startup: ${latestSessions.reason || 'unknown'}`);
+      } catch (err) {
+        log.warn('EvidenceLedger', `Startup session lookup failed: ${err.message}`);
       }
-    } catch (err) {
-      log.warn('EvidenceLedger', `Startup session lookup failed: ${err.message}`);
     }
 
     for (let attempt = 0; attempt < APP_STARTUP_SESSION_RETRY_LIMIT; attempt += 1) {
@@ -201,6 +206,16 @@ class HivemindApp {
     return null;
   }
 
+  getCurrentAppStatusSessionNumber() {
+    try {
+      if (!this.settings || typeof this.settings.readAppStatus !== 'function') return null;
+      const status = this.settings.readAppStatus();
+      return asPositiveInt(status?.session ?? status?.sessionNumber, null);
+    } catch {
+      return null;
+    }
+  }
+
   async init() {
     log.info('App', 'Initializing Hivemind Application');
 
@@ -254,9 +269,15 @@ class HivemindApp {
 
     // 8. Initialize PTY daemon connection
     await this.initDaemonClient();
+    const didSpawnDuringLastConnect = this.ctx.daemonClient?.didSpawnDuringLastConnect?.() === true;
     this.settings.writeAppStatus({
-      incrementSession: this.ctx.daemonClient?.didSpawnDuringLastConnect?.() === true,
+      incrementSession: didSpawnDuringLastConnect,
     });
+    if (didSpawnDuringLastConnect) {
+      await this.initializeStartupSessionScope({
+        sessionNumber: this.getCurrentAppStatusSessionNumber(),
+      });
+    }
 
     // 9. Create main window
     await this.createWindow();
