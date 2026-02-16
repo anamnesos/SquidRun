@@ -34,6 +34,28 @@ function toNonEmptyString(value) {
   return trimmed ? trimmed : null;
 }
 
+function detectCliFromCommand(command) {
+  const normalized = String(command || '').trim().toLowerCase();
+  if (!normalized) return 'claude';
+  if (normalized.startsWith('gemini')) return 'gemini';
+  if (normalized.startsWith('codex')) return 'codex';
+  if (normalized.startsWith('claude')) return 'claude';
+  if (normalized.includes('gemini')) return 'gemini';
+  if (normalized.includes('codex')) return 'codex';
+  return 'claude';
+}
+
+function hasClaudeSystemPromptFlag(command) {
+  return /--system-prompt-file(?:\s|=)/i.test(String(command || ''));
+}
+
+function getPaneCommandForRuntime(ctx, paneId) {
+  const id = String(paneId);
+  const paneCommands = ctx?.currentSettings?.paneCommands || {};
+  const command = paneCommands[id];
+  return typeof command === 'string' ? command : '';
+}
+
 function normalizeKernelMetaForTrace(kernelMeta) {
   if (!kernelMeta || typeof kernelMeta !== 'object') {
     return null;
@@ -92,10 +114,25 @@ function registerPtyHandlers(ctx, deps = {}) {
   const { ipcMain } = ctx;
   const { broadcastClaudeState, recordSessionStart, recordSessionLifecycle, updateIntentState } = deps;
   const getRecoveryManager = () => deps?.recoveryManager || ctx.recoveryManager;
+  const getFirmwareManager = () => deps?.firmwareManager || ctx.firmwareManager;
   const getPaneProjects = () => {
     const paneProjects = ctx?.currentSettings?.paneProjects;
     return paneProjects && typeof paneProjects === 'object' ? paneProjects : {};
   };
+  const isFirmwareEnabled = () => ctx?.currentSettings?.firmwareInjectionEnabled === true;
+
+  function resolveFirmwarePathForPane(paneId) {
+    if (!isFirmwareEnabled()) return null;
+    const firmwareManager = getFirmwareManager();
+    if (!firmwareManager || typeof firmwareManager.ensureFirmwareForPane !== 'function') {
+      return null;
+    }
+    const result = firmwareManager.ensureFirmwareForPane(paneId);
+    if (!result?.ok || !result.firmwarePath) {
+      return null;
+    }
+    return result.firmwarePath;
+  }
 
   ipcMain.handle('pty-create', async (event, paneId, workingDir) => {
     if (!ctx.daemonClient || !ctx.daemonClient.connected) {
@@ -105,8 +142,26 @@ function registerPtyHandlers(ctx, deps = {}) {
 
     const paneRoot = resolvePaneCwd(paneId, { paneProjects: getPaneProjects() });
     const cwd = paneRoot || workingDir || process.cwd();
+    const paneCommand = getPaneCommandForRuntime(ctx, paneId);
+    const runtime = detectCliFromCommand(paneCommand);
 
-    ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null);
+    let spawnEnv = null;
+    if (runtime === 'gemini') {
+      try {
+        const firmwarePath = resolveFirmwarePathForPane(paneId);
+        if (firmwarePath) {
+          spawnEnv = { GEMINI_SYSTEM_MD: firmwarePath };
+        }
+      } catch (err) {
+        log.warn('Firmware', `Failed to resolve Gemini firmware for pane ${paneId}: ${err.message}`);
+      }
+    }
+
+    if (spawnEnv) {
+      ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, spawnEnv);
+    } else {
+      ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null);
+    }
     return { paneId, cwd, dryRun: ctx.currentSettings.dryRun };
   });
 
@@ -288,6 +343,25 @@ function registerPtyHandlers(ctx, deps = {}) {
     const paneCommands = ctx.currentSettings.paneCommands || {};
     let agentCmd = (paneCommands[paneId] || 'claude').trim();
     if (!agentCmd) agentCmd = 'claude';
+    const runtime = detectCliFromCommand(agentCmd);
+
+    if (isFirmwareEnabled()) {
+      const firmwareManager = getFirmwareManager();
+      if (firmwareManager) {
+        try {
+          if (runtime === 'claude') {
+            const firmwarePath = resolveFirmwarePathForPane(paneId);
+            if (firmwarePath && !hasClaudeSystemPromptFlag(agentCmd)) {
+              agentCmd = `${agentCmd} --system-prompt-file "${firmwarePath}"`;
+            }
+          } else if (runtime === 'codex' && typeof firmwareManager.applyCodexOverrideForPane === 'function') {
+            firmwareManager.applyCodexOverrideForPane(paneId);
+          }
+        } catch (err) {
+          log.warn('Firmware', `Failed firmware preparation for pane ${paneId}: ${err.message}`);
+        }
+      }
+    }
 
     // Always add autonomy flags - no permission prompts in Hivemind
     if (agentCmd.startsWith('claude') && !agentCmd.includes('--dangerously-skip-permissions')) {

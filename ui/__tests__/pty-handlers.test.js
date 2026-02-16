@@ -111,6 +111,27 @@ describe('PTY Handlers', () => {
       expect(result.dryRun).toBe(true);
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith('1', expect.any(String), true, null);
     });
+
+    test('sets GEMINI_SYSTEM_MD env for gemini panes when firmware injection is enabled', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.firmwareInjectionEnabled = true;
+      ctx.currentSettings.paneCommands = { '5': 'gemini --yolo' };
+      deps.firmwareManager = {
+        ensureFirmwareForPane: jest.fn(() => ({ ok: true, firmwarePath: '/tmp/fw/oracle.md' })),
+      };
+
+      const result = await harness.invoke('pty-create', '5', '/fallback/dir');
+
+      expect(result.paneId).toBe('5');
+      expect(deps.firmwareManager.ensureFirmwareForPane).toHaveBeenCalledWith('5');
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '5',
+        expect.any(String),
+        false,
+        null,
+        { GEMINI_SYSTEM_MD: '/tmp/fw/oracle.md' }
+      );
+    });
   });
 
   describe('pty-write', () => {
@@ -456,6 +477,36 @@ describe('PTY Handlers', () => {
       const result = await harness.invoke('spawn-claude', '1', '/dir');
 
       expect(result.command).toBe('claude --dangerously-skip-permissions');
+    });
+
+    test('adds --system-prompt-file for claude when firmware injection is enabled', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.firmwareInjectionEnabled = true;
+      ctx.currentSettings.paneCommands = { '1': 'claude' };
+      deps.firmwareManager = {
+        ensureFirmwareForPane: jest.fn(() => ({ ok: true, firmwarePath: '/tmp/fw/director.md' })),
+      };
+
+      const result = await harness.invoke('spawn-claude', '1', '/dir');
+
+      expect(deps.firmwareManager.ensureFirmwareForPane).toHaveBeenCalledWith('1');
+      expect(result.command).toContain('--system-prompt-file "/tmp/fw/director.md"');
+      expect(result.command).toContain('--dangerously-skip-permissions');
+    });
+
+    test('writes Codex override when firmware injection is enabled', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.firmwareInjectionEnabled = true;
+      ctx.currentSettings.paneCommands = { '2': 'codex' };
+      deps.firmwareManager = {
+        applyCodexOverrideForPane: jest.fn(() => ({ ok: true, overridePath: '/tmp/.codex/rules/AGENTS.override.md' })),
+      };
+
+      const result = await harness.invoke('spawn-claude', '2', '/dir');
+
+      expect(deps.firmwareManager.applyCodexOverrideForPane).toHaveBeenCalledWith('2');
+      expect(result.command).toContain('codex');
+      expect(result.command).toContain('--yolo');
     });
   });
 

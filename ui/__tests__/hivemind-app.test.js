@@ -241,6 +241,9 @@ describe('HivemindApp', () => {
       contextInjection: {
         inject: jest.fn().mockResolvedValue(),
       },
+      firmwareManager: {
+        ensureStartupFirmwareIfEnabled: jest.fn(() => ({ ok: true, skipped: true })),
+      },
     };
   });
 
@@ -287,6 +290,20 @@ describe('HivemindApp', () => {
       expect(teamMemory.initializeTeamMemoryRuntime).not.toHaveBeenCalled();
       expect(experiment.initializeExperimentRuntime).not.toHaveBeenCalled();
       expect(app.initializeStartupSessionScope).not.toHaveBeenCalled();
+    });
+
+    it('runs firmware startup generation hook during init', async () => {
+      const app = new HivemindApp(mockAppContext, mockManagers);
+
+      app.initDaemonClient = jest.fn().mockResolvedValue();
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+
+      await app.init();
+
+      expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).toHaveBeenCalledTimes(1);
     });
 
     it('initializes team memory lazily on first pattern append', async () => {
