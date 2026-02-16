@@ -24,6 +24,14 @@ const LEGACY_PANE_CWD_FALLBACK = {
   '5': '/test/legacy-pane-cwd/oracle',
 };
 
+function asPaneProjectPath(paneProjects, paneId) {
+  if (!paneProjects || typeof paneProjects !== 'object') return null;
+  const candidate = paneProjects[String(paneId)];
+  if (typeof candidate !== 'string') return null;
+  const trimmed = candidate.trim();
+  return trimmed ? trimmed : null;
+}
+
 const mockDefaultConfig = {
   PIPE_PATH: '\\\\.\\pipe\\hivemind-terminal-test',
   WORKSPACE_PATH: '/test/workspace',
@@ -100,6 +108,10 @@ const mockDefaultConfig = {
   PROTOCOL_EVENTS: ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected', 'shutdown', 'health'],
   resolvePaneCwd: (paneId, options = {}) => {
     const id = String(paneId);
+    const paneProjectPath = asPaneProjectPath(options.paneProjects, id);
+    if (paneProjectPath) {
+      return paneProjectPath;
+    }
     if (Object.prototype.hasOwnProperty.call(mockDefaultConfig.PANE_ROLES, id)) {
       return mockDefaultConfig.PROJECT_ROOT;
     }

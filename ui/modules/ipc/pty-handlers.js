@@ -92,6 +92,10 @@ function registerPtyHandlers(ctx, deps = {}) {
   const { ipcMain } = ctx;
   const { broadcastClaudeState, recordSessionStart, recordSessionLifecycle, updateIntentState } = deps;
   const getRecoveryManager = () => deps?.recoveryManager || ctx.recoveryManager;
+  const getPaneProjects = () => {
+    const paneProjects = ctx?.currentSettings?.paneProjects;
+    return paneProjects && typeof paneProjects === 'object' ? paneProjects : {};
+  };
 
   ipcMain.handle('pty-create', async (event, paneId, workingDir) => {
     if (!ctx.daemonClient || !ctx.daemonClient.connected) {
@@ -99,7 +103,7 @@ function registerPtyHandlers(ctx, deps = {}) {
       return { error: 'Daemon not connected' };
     }
 
-    const paneRoot = resolvePaneCwd(paneId);
+    const paneRoot = resolvePaneCwd(paneId, { paneProjects: getPaneProjects() });
     const cwd = paneRoot || workingDir || process.cwd();
 
     ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null);

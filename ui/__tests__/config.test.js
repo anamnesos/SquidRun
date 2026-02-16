@@ -4,6 +4,7 @@
 
 const os = require('os');
 const fs = require('fs');
+const path = require('path');
 const {
   PIPE_PATH,
   WORKSPACE_PATH,
@@ -37,6 +38,11 @@ describe('config.js', () => {
   });
 
   describe('Resolvers', () => {
+    test('resolvePaneCwd should prefer paneProjects for known panes when provided', () => {
+      const paneProjects = { '2': '/tmp/target-repo' };
+      expect(resolvePaneCwd('2', { paneProjects })).toBe(path.resolve('/tmp/target-repo'));
+    });
+
     test('resolvePaneCwd should return project root for known panes', () => {
       expect(resolvePaneCwd('1')).toBe(PROJECT_ROOT);
       expect(resolvePaneCwd('2')).toBe(PROJECT_ROOT);
