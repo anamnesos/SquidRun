@@ -43,12 +43,12 @@ function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
   return PROJECT_ROOT_FALLBACK;
 }
 
-const PROJECT_ROOT = discoverProjectRoot();
-const COORD_ROOT = path.join(PROJECT_ROOT, '.hivemind');
+const DEFAULT_PROJECT_ROOT = discoverProjectRoot();
 const GLOBAL_STATE_ROOT = os.platform() === 'win32'
   ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'hivemind')
   : path.join(os.homedir(), '.config', 'hivemind');
 const legacyCoordFallbackWarnings = new Set();
+let activeProjectRoot = DEFAULT_PROJECT_ROOT;
 
 // Legacy instance working directories (kept for compatibility during migration)
 // Active pane cwd resolution now uses project root via resolvePaneCwd().
@@ -112,19 +112,52 @@ const ROLE_ID_MAP = {
 
 const PANE_IDS = Object.keys(PANE_ROLES);
 
+function normalizeProjectPath(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? path.resolve(trimmed) : null;
+}
+
+function getProjectRoot() {
+  return activeProjectRoot;
+}
+
+function setProjectRoot(projectRoot) {
+  activeProjectRoot = normalizeProjectPath(projectRoot) || DEFAULT_PROJECT_ROOT;
+  return activeProjectRoot;
+}
+
+function resetProjectRoot() {
+  return setProjectRoot(null);
+}
+
+function getCoordRoot() {
+  return path.join(getProjectRoot(), '.hivemind');
+}
+
 function resolvePaneCwd(paneId, options = {}) {
   const id = String(paneId);
   const paneProjects = options.paneProjects && typeof options.paneProjects === 'object'
     ? options.paneProjects
     : null;
+  const projectRoot = normalizeProjectPath(
+    options.projectRoot
+    || options.activeProject
+    || options.stateProject
+  );
 
-  const paneProject = paneProjects ? paneProjects[id] : null;
-  if (typeof paneProject === 'string' && paneProject.trim()) {
-    return path.resolve(paneProject.trim());
+  const paneProject = normalizeProjectPath(paneProjects ? paneProjects[id] : null);
+  if (paneProject) {
+    return paneProject;
   }
 
-  if (Object.prototype.hasOwnProperty.call(PANE_ROLES, id)) {
-    return PROJECT_ROOT;
+  const isKnownPane = Object.prototype.hasOwnProperty.call(PANE_ROLES, id);
+  if (isKnownPane && projectRoot) {
+    return projectRoot;
+  }
+
+  if (isKnownPane) {
+    return getProjectRoot();
   }
 
   const instanceDirs = options.instanceDirs && typeof options.instanceDirs === 'object'
@@ -134,8 +167,9 @@ function resolvePaneCwd(paneId, options = {}) {
 }
 
 function resolveCoordRoot() {
-  if (fs.existsSync(COORD_ROOT)) {
-    return COORD_ROOT;
+  const coordRoot = getCoordRoot();
+  if (fs.existsSync(coordRoot)) {
+    return coordRoot;
   }
   return WORKSPACE_PATH;
 }
@@ -144,9 +178,10 @@ function getCoordRoots(options = {}) {
   const includeMissing = options.includeMissing === true;
   const includeLegacy = options.includeLegacy !== false;
   const roots = [];
+  const coordRoot = getCoordRoot();
 
-  if (includeMissing || fs.existsSync(COORD_ROOT)) {
-    roots.push(COORD_ROOT);
+  if (includeMissing || fs.existsSync(coordRoot)) {
+    roots.push(coordRoot);
   }
   if (includeLegacy && (includeMissing || fs.existsSync(WORKSPACE_PATH))) {
     roots.push(WORKSPACE_PATH);
@@ -162,6 +197,7 @@ function resolveCoordPath(relPath, options = {}) {
 
   const forWrite = options.forWrite === true;
   const roots = getCoordRoots({ includeMissing: true, includeLegacy: options.includeLegacy !== false });
+  const coordRoot = getCoordRoot();
 
   if (!forWrite) {
     for (const root of roots) {
@@ -169,7 +205,7 @@ function resolveCoordPath(relPath, options = {}) {
       if (fs.existsSync(candidate)) {
         if (
           path.resolve(root) === path.resolve(WORKSPACE_PATH)
-          && fs.existsSync(COORD_ROOT)
+          && fs.existsSync(coordRoot)
           && !legacyCoordFallbackWarnings.has(normalizedRelPath)
         ) {
           legacyCoordFallbackWarnings.add(normalizedRelPath);
@@ -182,7 +218,7 @@ function resolveCoordPath(relPath, options = {}) {
     }
   }
 
-  const root = resolveCoordRoot();
+  const root = forWrite ? getCoordRoot() : resolveCoordRoot();
   return path.join(root, normalizedRelPath);
 }
 
@@ -253,8 +289,12 @@ const evidenceLedgerEnabled = envFlagEnabled('HIVEMIND_EVIDENCE_LEDGER_ENABLED',
 module.exports = {
   PIPE_PATH,
   WORKSPACE_PATH,
-  PROJECT_ROOT,
-  COORD_ROOT,
+  get PROJECT_ROOT() {
+    return getProjectRoot();
+  },
+  get COORD_ROOT() {
+    return getCoordRoot();
+  },
   GLOBAL_STATE_ROOT,
   PANE_IDS,
   PANE_ROLES,
@@ -266,6 +306,10 @@ module.exports = {
   evidenceLedgerEnabled,
   PROTOCOL_ACTIONS,
   PROTOCOL_EVENTS,
+  getProjectRoot,
+  setProjectRoot,
+  resetProjectRoot,
+  getCoordRoot,
   resolvePaneCwd,
   resolveCoordRoot,
   getCoordRoots,

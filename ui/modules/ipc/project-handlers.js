@@ -8,10 +8,23 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
+const { setProjectRoot } = require('../../config');
 
 function registerProjectHandlers(ctx, deps) {
   const { ipcMain, PANE_IDS } = ctx;
   const { loadSettings, saveSettings } = deps;
+  const syncProjectRoot = (projectPath) => {
+    if (typeof setProjectRoot === 'function') {
+      setProjectRoot(projectPath || null);
+    }
+  };
+
+  try {
+    const initialProject = ctx?.watcher?.readState?.()?.project || null;
+    syncProjectRoot(initialProject);
+  } catch (_) {
+    // Keep startup resilient if watcher state is not available yet.
+  }
 
   // === PROJECT/FOLDER PICKER ===
 
@@ -31,6 +44,7 @@ function registerProjectHandlers(ctx, deps) {
     const state = ctx.watcher.readState();
     state.project = projectPath;
     ctx.watcher.writeState(state);
+    syncProjectRoot(projectPath);
 
     const settings = loadSettings();
     const projects = settings.recentProjects || [];
@@ -127,6 +141,7 @@ function registerProjectHandlers(ctx, deps) {
     const state = ctx.watcher.readState();
     state.project = projectPath;
     ctx.watcher.writeState(state);
+    syncProjectRoot(projectPath);
 
     const settings = loadSettings();
     const projects = settings.recentProjects || [];
