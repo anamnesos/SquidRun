@@ -4,6 +4,8 @@
  */
 
 const { ipcRenderer } = require('electron');
+const fs = require('fs');
+const path = require('path');
 const log = require('./modules/logger');
 
 // Import modules
@@ -83,9 +85,96 @@ function clearRendererIpcListeners() {
 
 const MAIN_PANE_CONTAINER_SELECTOR = '.main-pane-container';
 const SIDE_PANES_CONTAINER_SELECTOR = '.side-panes-container';
+const APP_STATUS_FALLBACK_PATHS = Object.freeze([
+  path.resolve(__dirname, '..', '.hivemind', 'app-status.json'),
+  path.resolve(__dirname, '..', 'workspace', 'app-status.json'),
+]);
 let mainPaneId = '1';
 const RESIZE_DEBOUNCE_MS = 175;
 let resizeDebounceTimer = null;
+
+function asPositiveInt(value) {
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+}
+
+function extractSessionNumberFromStatus(status) {
+  if (!status || typeof status !== 'object') return null;
+  return (
+    asPositiveInt(status.session)
+    || asPositiveInt(status.sessionNumber)
+    || asPositiveInt(status.currentSession)
+    || asPositiveInt(status.context?.session)
+    || asPositiveInt(status.ledger?.session)
+    || null
+  );
+}
+
+function updateHeaderSessionBadge(sessionNumber) {
+  const badge = document.getElementById('headerSessionBadge');
+  if (!badge) return;
+
+  if (asPositiveInt(sessionNumber)) {
+    badge.textContent = `Session ${sessionNumber}`;
+    badge.classList.remove('pending');
+    badge.classList.add('ready');
+    badge.title = `Current Evidence Ledger session: ${sessionNumber}`;
+    return;
+  }
+
+  badge.textContent = 'Session --';
+  badge.classList.remove('ready');
+  badge.classList.add('pending');
+  badge.title = 'Current Evidence Ledger session unavailable';
+}
+
+function readSessionFromAppStatusFallback() {
+  for (const statusPath of APP_STATUS_FALLBACK_PATHS) {
+    try {
+      if (!fs.existsSync(statusPath)) continue;
+      const raw = fs.readFileSync(statusPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      const session = extractSessionNumberFromStatus(parsed);
+      if (session) return session;
+    } catch (err) {
+      log.debug('HeaderSession', `Failed to read session from ${statusPath}: ${err.message}`);
+    }
+  }
+  return null;
+}
+
+async function resolveCurrentSessionNumber() {
+  try {
+    const context = await ipcRenderer.invoke('evidence-ledger:get-context', {
+      role: 'architect',
+      sessionWindow: 1,
+    });
+    const sessionFromContext = asPositiveInt(context?.session);
+    if (sessionFromContext) return sessionFromContext;
+  } catch (err) {
+    log.debug('HeaderSession', `evidence-ledger:get-context failed: ${err.message}`);
+  }
+
+  try {
+    const sessions = await ipcRenderer.invoke('evidence-ledger:list-sessions', {
+      limit: 1,
+      order: 'desc',
+    });
+    if (Array.isArray(sessions) && sessions.length > 0) {
+      const latestSession = asPositiveInt(sessions[0]?.sessionNumber);
+      if (latestSession) return latestSession;
+    }
+  } catch (err) {
+    log.debug('HeaderSession', `evidence-ledger:list-sessions failed: ${err.message}`);
+  }
+
+  return readSessionFromAppStatusFallback();
+}
+
+async function refreshHeaderSessionBadge() {
+  const sessionNumber = await resolveCurrentSessionNumber();
+  updateHeaderSessionBadge(sessionNumber);
+}
 
 function scheduleTerminalResize(delayMs = RESIZE_DEBOUNCE_MS) {
   if (resizeDebounceTimer) {
@@ -926,6 +1015,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Status Strip - task counts at a glance
   initStatusStrip();
+  await refreshHeaderSessionBadge();
 
   // Model Selector - per-pane model switching
   setupModelSelectorListeners();
