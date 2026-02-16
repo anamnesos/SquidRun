@@ -19,6 +19,12 @@ const CLI_PREFERENCES = {
 const CLI_DISCOVERY_TIMEOUT_MS = 2000;
 const CLI_VERSION_TIMEOUT_MS = 2500;
 
+function asPositiveInt(value, fallback = null) {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric <= 0) return fallback;
+  return numeric;
+}
+
 function buildGeminiCommand() {
   const includeDir = resolvePaneCwd('1') || PROJECT_ROOT || path.resolve(path.join(WORKSPACE_PATH, '..'));
   return `gemini --yolo --include-directories "${includeDir}"`;
@@ -141,25 +147,60 @@ class SettingsManager {
     return this.ctx.currentSettings;
   }
 
-  writeAppStatus() {
+  readAppStatus() {
     try {
+      if (!fs.existsSync(this.appStatusPath)) return {};
+      const raw = fs.readFileSync(this.appStatusPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+      return parsed;
+    } catch {
+      return {};
+    }
+  }
+
+  writeAppStatus(options = {}) {
+    try {
+      const opts = options && typeof options === 'object' ? options : {};
+      const nowIso = new Date().toISOString();
+      const existing = this.readAppStatus();
+
       const explicitMode = this.ctx.currentSettings.sdkMode === true
         ? 'sdk'
         : (this.ctx.currentSettings.dryRun ? 'dry-run' : 'pty');
+
+      const existingSession = asPositiveInt(existing.session ?? existing.sessionNumber, null);
+      const overrideSession = asPositiveInt(opts.session, null);
+      let session = overrideSession !== null ? overrideSession : existingSession;
+      if (opts.incrementSession === true) {
+        session = (existingSession || 0) + 1;
+      }
+
       const status = {
-        started: new Date().toISOString(),
+        ...existing,
+        started: opts.incrementSession === true
+          ? nowIso
+          : (typeof existing.started === 'string' && existing.started.trim() ? existing.started : nowIso),
         mode: explicitMode,
         dryRun: this.ctx.currentSettings.dryRun || false,
         autoSpawn: this.ctx.currentSettings.autoSpawn || false,
         version: require('../../package.json').version || 'unknown',
         platform: process.platform,
         nodeVersion: process.version,
-        lastUpdated: new Date().toISOString(),
+        lastUpdated: nowIso,
       };
+
+      if (session !== null) {
+        status.session = session;
+      } else {
+        delete status.session;
+      }
+
+      fs.mkdirSync(path.dirname(this.appStatusPath), { recursive: true });
       const tempPath = this.appStatusPath + '.tmp';
       fs.writeFileSync(tempPath, JSON.stringify(status, null, 2), 'utf-8');
       fs.renameSync(tempPath, this.appStatusPath);
-      log.info('App Status', 'Written');
+      log.info('App Status', `Written${session !== null ? ` (session ${session})` : ''}`);
     } catch (err) {
       log.error('App Status', 'Error writing', err.message);
     }
