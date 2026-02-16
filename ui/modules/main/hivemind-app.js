@@ -85,6 +85,7 @@ class HivemindApp {
     this.usage = managers.usage;
     this.cliIdentity = managers.cliIdentity;
     this.contextInjection = managers.contextInjection;
+    this.firmwareManager = managers.firmwareManager;
     this.kernelBridge = createKernelBridge(() => this.ctx.mainWindow);
     this.lastDaemonOutputAtMs = Date.now();
     this.daemonClientListeners = [];
@@ -205,6 +206,18 @@ class HivemindApp {
 
     // 1. Load settings
     this.settings.loadSettings();
+
+    // 1b. Generate firmware files on startup when feature flag is enabled.
+    if (this.firmwareManager && typeof this.firmwareManager.ensureStartupFirmwareIfEnabled === 'function') {
+      try {
+        const firmwareResult = this.firmwareManager.ensureStartupFirmwareIfEnabled();
+        if (firmwareResult?.ok === false) {
+          log.warn('Firmware', `Startup generation failed: ${firmwareResult.reason || 'unknown'}`);
+        }
+      } catch (err) {
+        log.warn('Firmware', `Startup generation error: ${err.message}`);
+      }
+    }
 
     // 2. Auto-detect installed CLIs and patch invalid paneCommands (startup only)
     if (typeof this.settings.autoDetectPaneCommandsOnStartup === 'function') {
@@ -847,6 +860,7 @@ class HivemindApp {
       getActivityLog: (f) => this.activity.getActivityLog(f),
       clearActivityLog: () => this.activity.clearActivityLog(),
       saveActivityLog: () => this.activity.saveActivityLog(),
+      firmwareManager: this.firmwareManager,
     });
 
     // Pipeline

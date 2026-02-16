@@ -28,6 +28,7 @@ const ActivityManager = require('./modules/main/activity-manager');
 const UsageManager = require('./modules/main/usage-manager');
 const CliIdentityManager = require('./modules/main/cli-identity');
 const ContextInjectionManager = require('./modules/main/context-injection');
+const FirmwareManager = require('./modules/main/firmware-manager');
 const HivemindApp = require('./modules/main/hivemind-app');
 
 // 1. Initialize managers with shared context
@@ -36,8 +37,10 @@ const activity = new ActivityManager(appContext);
 const usage = new UsageManager(appContext);
 const cliIdentity = new CliIdentityManager(appContext);
 const contextInjection = new ContextInjectionManager(appContext);
+const firmwareManager = new FirmwareManager(appContext);
 
 appContext.setContextInjection(contextInjection);
+appContext.setFirmwareManager(firmwareManager);
 
 // 2. Create main application controller
 const hivemindApp = new HivemindApp(appContext, {
@@ -46,6 +49,7 @@ const hivemindApp = new HivemindApp(appContext, {
   usage,
   cliIdentity,
   contextInjection,
+  firmwareManager,
 });
 
 // 3. Electron Lifecycle Hooks

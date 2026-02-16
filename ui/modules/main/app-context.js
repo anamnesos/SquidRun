@@ -12,6 +12,7 @@ class AppContext {
     this.backupManager = null;
     this.externalNotifier = null;
     this.contextInjection = null;
+    this.firmwareManager = null;
     
     // Agent running state (renamed from claudeRunning - agents can be Claude, Codex, or Gemini)
     this.agentRunning = new Map([
@@ -62,6 +63,10 @@ class AppContext {
 
   setContextInjection(manager) {
     this.contextInjection = manager;
+  }
+
+  setFirmwareManager(manager) {
+    this.firmwareManager = manager;
   }
 }
 
