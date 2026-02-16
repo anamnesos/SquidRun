@@ -111,6 +111,15 @@ const PANE_IDS = Object.keys(PANE_ROLES);
 
 function resolvePaneCwd(paneId, options = {}) {
   const id = String(paneId);
+  const paneProjects = options.paneProjects && typeof options.paneProjects === 'object'
+    ? options.paneProjects
+    : null;
+
+  const paneProject = paneProjects ? paneProjects[id] : null;
+  if (typeof paneProject === 'string' && paneProject.trim()) {
+    return path.resolve(paneProject.trim());
+  }
+
   if (Object.prototype.hasOwnProperty.call(PANE_ROLES, id)) {
     return PROJECT_ROOT;
   }

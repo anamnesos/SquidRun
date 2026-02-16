@@ -8,6 +8,7 @@ const {
   createDefaultContext,
   createDepsMock,
 } = require('./helpers/ipc-harness');
+const path = require('path');
 
 // Mock electron clipboard
 jest.mock('electron', () => ({
@@ -52,6 +53,17 @@ describe('PTY Handlers', () => {
       expect(ctx.daemonClient.spawn).toHaveBeenCalled();
       expect(result.paneId).toBe('1');
       expect(result.dryRun).toBe(false);
+    });
+
+    test('uses paneProjects cwd for known panes when assigned', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneProjects = { '1': '/assigned/project' };
+
+      const result = await harness.invoke('pty-create', '1', '/fallback/dir');
+      const expectedCwd = path.resolve('/assigned/project');
+
+      expect(result.cwd).toBe(expectedCwd);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith('1', expectedCwd, false, null);
     });
 
     test('uses workingDir when pane cwd resolver has no mapping', async () => {

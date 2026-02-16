@@ -35,8 +35,11 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
       return { success: false, error: 'Invalid paneId' };
     }
 
-    // Build command based on model - use pane project root resolver
-    const includeDir = resolvePaneCwd(id) || path.resolve(path.join(__dirname, '..', '..', '..'));
+    // Build command based on model - use pane project cwd when assigned.
+    const paneProjects = (ctx.currentSettings && typeof ctx.currentSettings.paneProjects === 'object')
+      ? ctx.currentSettings.paneProjects
+      : {};
+    const includeDir = resolvePaneCwd(id, { paneProjects }) || path.resolve(path.join(__dirname, '..', '..', '..'));
     const commands = {
       'claude': 'claude',
       'codex': 'codex',

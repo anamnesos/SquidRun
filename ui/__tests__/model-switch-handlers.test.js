@@ -46,6 +46,11 @@ describe('registerModelSwitchHandlers', () => {
           '1': 'claude',
           '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind"',
         },
+        paneProjects: {
+          '1': null,
+          '2': null,
+          '5': null,
+        },
         paneRoles: {
           '1': 'Architect',
           '5': 'Oracle',
@@ -237,6 +242,15 @@ describe('registerModelSwitchHandlers', () => {
 
       expect(mockCtx.currentSettings.paneCommands['1']).toMatch(/gemini --yolo --include-directories ".+"/);
       expect(mockCtx.currentSettings.paneCommands['1']).not.toMatch(/workspace/i);
+    });
+
+    it('should use paneProjects cwd for gemini include directory when assigned', async () => {
+      mockCtx.currentSettings.paneProjects['1'] = 'D:\\external\\repo';
+      const switchPromise = switchHandler({}, { paneId: '1', model: 'gemini' });
+      mockCtx.daemonClient._killedHandler('1');
+      await switchPromise;
+
+      expect(mockCtx.currentSettings.paneCommands['1']).toBe('gemini --yolo --include-directories "D:\\external\\repo"');
     });
 
     it('should auto-inject context files after model switch', async () => {
