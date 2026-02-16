@@ -878,6 +878,8 @@ class HivemindApp {
     ipcHandlers.setupIPCHandlers({
       loadSettings: () => this.settings.loadSettings(),
       saveSettings: (s) => this.settings.saveSettings(s),
+      readAppStatus: () => this.settings.readAppStatus(),
+      getSessionId: () => this.commsSessionScopeId,
       recordSessionStart: (id) => this.usage.recordSessionStart(id),
       recordSessionEnd: (id) => this.usage.recordSessionEnd(id),
       recordSessionLifecycle: (payload = {}) => this.recordSessionLifecyclePattern(payload),

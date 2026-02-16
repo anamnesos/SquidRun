@@ -122,6 +122,10 @@ function getProjectRoot() {
   return activeProjectRoot;
 }
 
+function getHivemindRoot() {
+  return DEFAULT_PROJECT_ROOT;
+}
+
 function setProjectRoot(projectRoot) {
   activeProjectRoot = normalizeProjectPath(projectRoot) || DEFAULT_PROJECT_ROOT;
   return activeProjectRoot;
@@ -307,6 +311,7 @@ module.exports = {
   PROTOCOL_ACTIONS,
   PROTOCOL_EVENTS,
   getProjectRoot,
+  getHivemindRoot,
   setProjectRoot,
   resetProjectRoot,
   getCoordRoot,
