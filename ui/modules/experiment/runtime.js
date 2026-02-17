@@ -8,7 +8,6 @@ const { TeamMemoryStore } = require('../team-memory/store');
 const { TeamMemoryClaims } = require('../team-memory/claims');
 const { EvidenceLedgerStore } = require('../main/evidence-ledger-store');
 const {
-  DEFAULT_PROFILES_PATH,
   loadExperimentProfiles,
   resolveProfileAndCommand,
   buildExperimentEnv,
@@ -22,9 +21,22 @@ function resolveDefaultRuntimePath(relPath, options = {}) {
   return path.join(WORKSPACE_PATH, relPath);
 }
 
-const DEFAULT_DB_PATH = resolveDefaultRuntimePath(path.join('runtime', 'team-memory.sqlite'), { forWrite: true });
-const DEFAULT_ARTIFACT_ROOT = resolveDefaultRuntimePath(path.join('runtime', 'experiments'), { forWrite: true });
-const DEFAULT_EVIDENCE_LEDGER_DB_PATH = resolveDefaultRuntimePath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
+function getDefaultDbPath() {
+  return resolveDefaultRuntimePath(path.join('runtime', 'team-memory.sqlite'), { forWrite: true });
+}
+
+function getDefaultArtifactRoot() {
+  return resolveDefaultRuntimePath(path.join('runtime', 'experiments'), { forWrite: true });
+}
+
+function getDefaultEvidenceLedgerDbPath() {
+  return resolveDefaultRuntimePath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
+}
+
+function getDefaultProfilesPath() {
+  return resolveDefaultRuntimePath(path.join('runtime', 'experiment-profiles.json'), { forWrite: true });
+}
+
 const DEFAULT_OUTPUT_CAP_BYTES = 1024 * 1024;
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 500;
@@ -253,10 +265,10 @@ function normalizeGuardContext(value) {
 class ExperimentRuntime {
   constructor(options = {}) {
     this.options = asObject(options);
-    this.dbPath = asString(this.options.dbPath, DEFAULT_DB_PATH);
-    this.artifactRoot = asString(this.options.artifactRoot, DEFAULT_ARTIFACT_ROOT);
-    this.profilesPath = asString(this.options.profilesPath, DEFAULT_PROFILES_PATH);
-    this.evidenceLedgerDbPath = asString(this.options.evidenceLedgerDbPath, DEFAULT_EVIDENCE_LEDGER_DB_PATH);
+    this.dbPath = asString(this.options.dbPath, getDefaultDbPath());
+    this.artifactRoot = asString(this.options.artifactRoot, getDefaultArtifactRoot());
+    this.profilesPath = asString(this.options.profilesPath, getDefaultProfilesPath());
+    this.evidenceLedgerDbPath = asString(this.options.evidenceLedgerDbPath, getDefaultEvidenceLedgerDbPath());
     this.store = null;
     this.claims = null;
     this.profiles = {};
@@ -1249,7 +1261,11 @@ module.exports = {
   initializeExperimentRuntime,
   executeExperimentOperation,
   closeSharedRuntime,
-  DEFAULT_DB_PATH,
-  DEFAULT_ARTIFACT_ROOT,
+  get DEFAULT_DB_PATH() {
+    return getDefaultDbPath();
+  },
+  get DEFAULT_ARTIFACT_ROOT() {
+    return getDefaultArtifactRoot();
+  },
   DEFAULT_OUTPUT_CAP_BYTES,
 };

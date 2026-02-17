@@ -8,6 +8,7 @@ const {
   buildExperimentEnv,
   fingerprintEnv,
 } = require('../modules/experiment/profiles');
+const { setProjectRoot, resetProjectRoot } = require('../config');
 
 describe('experiment profiles', () => {
   let tempDir;
@@ -19,6 +20,7 @@ describe('experiment profiles', () => {
   });
 
   afterEach(() => {
+    resetProjectRoot();
     if (tempDir) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -106,5 +108,22 @@ describe('experiment profiles', () => {
     expect(fpA).toBe(fpB);
     expect(typeof fpA).toBe('string');
     expect(fpA.length).toBeGreaterThan(10);
+  });
+
+  test('default profiles path follows project root changes after import', () => {
+    const projectA = path.join(tempDir, 'project-a');
+    const projectB = path.join(tempDir, 'project-b');
+    fs.mkdirSync(projectA, { recursive: true });
+    fs.mkdirSync(projectB, { recursive: true });
+
+    setProjectRoot(projectA);
+    const first = loadExperimentProfiles({});
+    expect(first.ok).toBe(true);
+    expect(first.profilesPath).toBe(path.join(projectA, '.hivemind', 'runtime', 'experiment-profiles.json'));
+
+    setProjectRoot(projectB);
+    const second = loadExperimentProfiles({});
+    expect(second.ok).toBe(true);
+    expect(second.profilesPath).toBe(path.join(projectB, '.hivemind', 'runtime', 'experiment-profiles.json'));
   });
 });
