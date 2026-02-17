@@ -25,11 +25,6 @@ const CONTENT_DEDUPE_TTL_MS = Number.parseInt(process.env.HIVEMIND_COMMS_CONTENT
 const OUTBOUND_QUEUE_MAX_ENTRIES = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_ENTRIES || '500', 10);
 const OUTBOUND_QUEUE_MAX_AGE_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_AGE_MS || String(30 * 60 * 1000), 10);
 const OUTBOUND_QUEUE_FLUSH_INTERVAL_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_FLUSH_INTERVAL_MS || '30000', 10);
-const DEFAULT_OUTBOUND_QUEUE_PATH = typeof resolveCoordPath === 'function'
-  ? resolveCoordPath(path.join('state', 'comms-outbound-queue.json'), { forWrite: true })
-  : path.join(WORKSPACE_PATH, 'state', 'comms-outbound-queue.json');
-const OUTBOUND_QUEUE_PATH = process.env.HIVEMIND_COMMS_QUEUE_FILE
-  || DEFAULT_OUTBOUND_QUEUE_PATH;
 const DEFAULT_QUEUE_SESSION_SCOPE = 'default';
 const CANONICAL_ROLE_IDS = ['architect', 'builder', 'oracle'];
 const CANONICAL_ROLE_TO_PANE = new Map(
@@ -65,6 +60,21 @@ function toNonEmptyString(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function getDefaultOutboundQueuePath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('state', 'comms-outbound-queue.json'), { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'state', 'comms-outbound-queue.json');
+}
+
+function getOutboundQueuePath() {
+  const envPath = toNonEmptyString(process.env.HIVEMIND_COMMS_QUEUE_FILE);
+  if (envPath) {
+    return path.resolve(envPath);
+  }
+  return getDefaultOutboundQueuePath();
 }
 
 function normalizePaneId(paneId) {
@@ -272,7 +282,7 @@ function getQueueFlushIntervalMs() {
 }
 
 function getQueueDirPath() {
-  return path.dirname(OUTBOUND_QUEUE_PATH);
+  return path.dirname(getOutboundQueuePath());
 }
 
 function ensureQueueDir() {
@@ -328,15 +338,16 @@ function normalizeQueueEntries(rawEntries, now = Date.now()) {
 
 function persistOutboundQueue() {
   try {
+    const queuePath = getOutboundQueuePath();
     ensureQueueDir();
     const payload = JSON.stringify({
       version: 2,
       sessionScopeId: queueSessionScopeId,
       entries: outboundQueue,
     }, null, 2);
-    const tmpPath = `${OUTBOUND_QUEUE_PATH}.tmp`;
+    const tmpPath = `${queuePath}.tmp`;
     fs.writeFileSync(tmpPath, payload, 'utf-8');
-    fs.renameSync(tmpPath, OUTBOUND_QUEUE_PATH);
+    fs.renameSync(tmpPath, queuePath);
   } catch (err) {
     log.error('WebSocket', `Failed to persist outbound queue: ${err.message}`);
   }
@@ -344,11 +355,12 @@ function persistOutboundQueue() {
 
 function loadOutboundQueue() {
   try {
-    if (!fs.existsSync(OUTBOUND_QUEUE_PATH)) {
+    const queuePath = getOutboundQueuePath();
+    if (!fs.existsSync(queuePath)) {
       outboundQueue = [];
       return;
     }
-    const raw = fs.readFileSync(OUTBOUND_QUEUE_PATH, 'utf-8');
+    const raw = fs.readFileSync(queuePath, 'utf-8');
     const parsed = JSON.parse(raw);
 
     // Legacy v1 format: raw array. Discard on startup to avoid cross-session ghost replays.
