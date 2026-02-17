@@ -124,6 +124,70 @@ describe('context-injection runtime memory reads', () => {
     );
 
   });
+
+  test('buildContext falls back to snapshot file when ledger context is stale', async () => {
+    executeEvidenceLedgerOperation.mockResolvedValueOnce({
+      session: 120,
+      completed: ['Stale ledger item'],
+      not_yet_done: ['Old next step'],
+    });
+    teamMemory.executeTeamMemoryOperation.mockResolvedValueOnce({
+      ok: true,
+      claims: [],
+    });
+
+    const manager = new ContextInjectionManager({});
+    jest.spyOn(manager, 'readFileIfExists').mockImplementation((filePath) => {
+      const normalized = String(filePath || '').replace(/\\/g, '/');
+      if (normalized.endsWith('base-instructions.md')) return '# Base Instructions';
+      if (normalized.endsWith('/ROLES.md')) return '# ROLES';
+      if (normalized.endsWith('builder-notes.md')) return '# Builder Notes';
+      if (normalized.endsWith('app-status.json')) return JSON.stringify({ session: 121 });
+      if (normalized.endsWith('/context-snapshots/2.md')) {
+        return [
+          '## Context Restoration (auto-generated)',
+          'Session: 121',
+          'Completed: Fresh snapshot task',
+          'Next: Continue integration checks',
+          'Tests: 156 suites, 3160 tests',
+        ].join('\n');
+      }
+      return '';
+    });
+
+    const context = await manager.buildContext('2', 'codex');
+    expect(context).toContain('### Context Snapshot Fallback');
+    expect(context).toContain('Fresh snapshot task');
+    expect(context).not.toContain('### Evidence Ledger');
+    expect(context).not.toContain('Stale ledger item');
+  });
+
+  test('buildContext falls back to snapshot file when ledger query fails', async () => {
+    executeEvidenceLedgerOperation.mockRejectedValueOnce(new Error('db unavailable'));
+    teamMemory.executeTeamMemoryOperation.mockResolvedValueOnce({
+      ok: true,
+      claims: [],
+    });
+
+    const manager = new ContextInjectionManager({});
+    jest.spyOn(manager, 'readFileIfExists').mockImplementation((filePath) => {
+      const normalized = String(filePath || '').replace(/\\/g, '/');
+      if (normalized.endsWith('base-instructions.md')) return '# Base Instructions';
+      if (normalized.endsWith('/ROLES.md')) return '# ROLES';
+      if (normalized.endsWith('/context-snapshots/1.md')) {
+        return [
+          'Session: 122',
+          'Completed: Snapshot fallback still works',
+          'Next: Keep moving',
+        ].join('\n');
+      }
+      return '';
+    });
+
+    const context = await manager.buildContext('1', 'claude');
+    expect(context).toContain('### Context Snapshot Fallback');
+    expect(context).toContain('Snapshot fallback still works');
+  });
 });
 
 describe('_scopeRolesContent — role-scoped ROLES.md injection', () => {
