@@ -164,6 +164,14 @@ describe('Context Compressor Module', () => {
       fs.mkdirSync.mockImplementation(() => { throw new Error('permission denied'); });
       expect(() => _internals.ensureSnapshotsDir()).not.toThrow();
     });
+
+    it('should resolve snapshots directory via coord path for writes', () => {
+      fs.existsSync.mockReturnValue(false);
+
+      _internals.ensureSnapshotsDir();
+
+      expect(config.resolveCoordPath).toHaveBeenCalledWith('context-snapshots', { forWrite: true });
+    });
   });
 
   // ===========================================================
@@ -183,6 +191,14 @@ describe('Context Compressor Module', () => {
       fs.existsSync.mockReturnValue(false);
       const content = _internals.readHandoffFile('1');
       expect(content).toBe('');
+    });
+
+    it('should resolve handoff path through coord root', () => {
+      fs.existsSync.mockReturnValue(false);
+
+      _internals.readHandoffFile('2');
+
+      expect(config.resolveCoordPath).toHaveBeenCalledWith(path.join('handoffs', '2.md'), {});
     });
   });
 
@@ -527,11 +543,11 @@ describe('Context Compressor Module', () => {
     it('should write snapshot to disk', () => {
       contextCompressor.generateSnapshot('1');
 
-      expect(fs.writeFileSync).toHaveBeenCalledWith(
-        expect.stringContaining(path.join('context-snapshots', '1.md')),
-        expect.stringContaining('Context Restoration'),
-        'utf-8'
-      );
+      expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+      const [filePath, fileContent, encoding] = fs.writeFileSync.mock.calls[0];
+      expect(String(filePath).replace(/\\/g, '/')).toContain('context-snapshots/1.md');
+      expect(fileContent).toContain('Context Restoration');
+      expect(encoding).toBe('utf-8');
     });
 
     it('should include session progress section', () => {
@@ -859,11 +875,11 @@ describe('Context Compressor Module', () => {
     it('should write snapshot to correct path', () => {
       _internals.writeSnapshot('1', 'test content');
 
-      expect(fs.writeFileSync).toHaveBeenCalledWith(
-        expect.stringContaining(path.join('context-snapshots', '1.md')),
-        'test content',
-        'utf-8'
-      );
+      expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+      const [filePath, content, encoding] = fs.writeFileSync.mock.calls[0];
+      expect(String(filePath).replace(/\\/g, '/')).toContain('context-snapshots/1.md');
+      expect(content).toBe('test content');
+      expect(encoding).toBe('utf-8');
     });
 
     it('should ensure directory exists before writing', () => {
@@ -871,6 +887,14 @@ describe('Context Compressor Module', () => {
       _internals.writeSnapshot('2', 'content');
 
       expect(fs.mkdirSync).toHaveBeenCalled();
+    });
+
+    it('should resolve snapshot write path via coord root', () => {
+      fs.existsSync.mockReturnValue(false);
+
+      _internals.writeSnapshot('2', 'content');
+
+      expect(config.resolveCoordPath).toHaveBeenCalledWith(path.join('context-snapshots', '2.md'), { forWrite: true });
     });
 
     it('should handle write errors gracefully', () => {
