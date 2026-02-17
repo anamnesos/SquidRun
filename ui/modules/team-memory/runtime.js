@@ -4,6 +4,7 @@ const { TeamMemoryClaims } = require('./claims');
 const { TeamMemoryPatterns } = require('./patterns');
 const { TeamMemoryGuards } = require('./guards');
 const { runBackfill } = require('./backfill');
+const { extractTaggedClaimsFromComms } = require('./comms-tagged-extractor');
 const { scanOrphanedEvidenceRefs } = require('./integrity-checker');
 const { executeExperimentOperation } = require('../experiment/runtime');
 const { resolveCoordPath } = require('../../config');
@@ -285,6 +286,17 @@ function executeTeamMemoryOperation(action, payload = {}, options = {}) {
       return runBackfill({
         teamDb: store.db,
         evidenceLedgerDbPath: opPayload.evidenceLedgerDbPath,
+        limit: opPayload.limit,
+        nowMs: opPayload.nowMs,
+      });
+
+    case 'extract-comms-tagged-claims':
+      return extractTaggedClaimsFromComms({
+        teamDb: store.db,
+        evidenceLedgerDbPath: opPayload.evidenceLedgerDbPath,
+        sessionId: opPayload.sessionId || opPayload.session_id || null,
+        sinceMs: opPayload.sinceMs,
+        untilMs: opPayload.untilMs,
         limit: opPayload.limit,
         nowMs: opPayload.nowMs,
       });

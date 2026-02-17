@@ -551,6 +551,12 @@ function executeEvidenceLedgerOperation(action, payload = {}, options = {}) {
         const limit = normalizeGetLimitPayload(enrichedPayload, 50);
         return memory.getRecentCompletions(limit);
       }
+      case 'query-comms-journal': {
+        if (!runtime?.store || typeof runtime.store.queryCommsJournal !== 'function') {
+          return { ok: false, reason: 'unavailable' };
+        }
+        return runtime.store.queryCommsJournal(enrichedPayload);
+      }
       case 'upsert-comms-journal': {
         if (!runtime?.store || typeof runtime.store.upsertCommsJournal !== 'function') {
           return { ok: false, reason: 'unavailable' };

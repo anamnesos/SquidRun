@@ -35,6 +35,8 @@ const {
   removeLegacyPaneHandoffFiles,
 } = require('./auto-handoff-materializer');
 const { closeCommsJournalStores } = require('./comms-journal');
+const { queryCommsJournalEntries } = require('./comms-journal');
+const { buildStartupBrief } = require('./startup-brief');
 const {
   buildGuardFiringPatternEvent,
   buildGuardPreflightEvent,
@@ -77,6 +79,12 @@ const TEAM_MEMORY_BLOCK_GUARD_PROFILE = String(process.env.HIVEMIND_TEAM_MEMORY_
 const APP_STARTUP_SESSION_RETRY_LIMIT = 3;
 const AUTO_HANDOFF_INTERVAL_MS = Number.parseInt(process.env.HIVEMIND_AUTO_HANDOFF_INTERVAL_MS || '30000', 10);
 const AUTO_HANDOFF_ENABLED = process.env.HIVEMIND_AUTO_HANDOFF_ENABLED !== '0';
+const STARTUP_BRIEF_ENABLED = process.env.HIVEMIND_STARTUP_BRIEF_ENABLED !== '0';
+const STARTUP_BRIEF_DELAY_MS = Number.parseInt(process.env.HIVEMIND_STARTUP_BRIEF_DELAY_MS || '2000', 10);
+const TEAM_MEMORY_TAGGED_CLAIM_SWEEP_INTERVAL_MS = Number.parseInt(
+  process.env.HIVEMIND_TEAM_MEMORY_TAGGED_CLAIM_SWEEP_MS || '30000',
+  10
+);
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
@@ -130,6 +138,8 @@ class HivemindApp {
     this.autoHandoffTimer = null;
     this.autoHandoffWriteInFlight = false;
     this.autoHandoffEnabled = AUTO_HANDOFF_ENABLED && process.env.NODE_ENV !== 'test';
+    this.startupBriefEnabled = STARTUP_BRIEF_ENABLED && process.env.NODE_ENV !== 'test';
+    this.startupBriefTimer = null;
   }
 
   async initializeStartupSessionScope(options = {}) {
@@ -800,8 +810,81 @@ class HivemindApp {
     this.startSmsPoller();
     this.startTelegramPoller();
     this.startAutoHandoffMaterializer();
+    this.scheduleStartupBrief();
 
     log.info('App', 'Initialization complete');
+  }
+
+  scheduleStartupBrief() {
+    if (!this.startupBriefEnabled) return;
+    if (this.startupBriefTimer) {
+      clearTimeout(this.startupBriefTimer);
+      this.startupBriefTimer = null;
+    }
+
+    const delayMs = Math.max(250, Number.isFinite(STARTUP_BRIEF_DELAY_MS) ? STARTUP_BRIEF_DELAY_MS : 2000);
+    this.startupBriefTimer = setTimeout(() => {
+      this.startupBriefTimer = null;
+      this.emitStartupBrief().catch((err) => {
+        log.warn('StartupBrief', `Failed to emit startup brief: ${err.message}`);
+      });
+    }, delayMs);
+    if (typeof this.startupBriefTimer.unref === 'function') {
+      this.startupBriefTimer.unref();
+    }
+  }
+
+  async emitStartupBrief() {
+    if (!this.startupBriefEnabled) return { ok: false, reason: 'disabled' };
+
+    const sessionId = this.commsSessionScopeId || null;
+    const journalRows = queryCommsJournalEntries({
+      sessionId: sessionId || undefined,
+      order: 'desc',
+      limit: 5000,
+    });
+
+    let unresolvedClaims = {
+      proposed: [],
+      contested: [],
+      pending_proof: [],
+    };
+    const teamReady = await this.ensureTeamMemoryInitialized('startup-brief');
+    if (teamReady) {
+      const statuses = ['proposed', 'contested', 'pending_proof'];
+      const queries = await Promise.all(statuses.map((status) => teamMemory.executeTeamMemoryOperation('query-claims', {
+        status,
+        limit: 50,
+      })));
+      unresolvedClaims = statuses.reduce((acc, status, idx) => {
+        const claims = Array.isArray(queries[idx]?.claims) ? queries[idx].claims : [];
+        acc[status] = claims;
+        return acc;
+      }, {});
+    }
+
+    const brief = buildStartupBrief({
+      sessionId,
+      journalRows,
+      unresolvedClaims,
+      nowMs: Date.now(),
+    });
+
+    const sendResult = await triggers.sendDirectMessage(
+      ['1'],
+      brief,
+      'system',
+      { awaitDelivery: true }
+    );
+    if (!sendResult?.accepted && !sendResult?.success && !sendResult?.verified) {
+      log.warn('StartupBrief', `Architect brief delivery unverified (${sendResult?.status || 'unknown'})`);
+    }
+
+    return {
+      ok: true,
+      status: sendResult?.status || null,
+      openTasksHint: brief.includes('open_tasks=') ? true : false,
+    };
   }
 
   runAutoHandoffMaterializer(reason = 'timer') {
@@ -934,6 +1017,13 @@ class HivemindApp {
         });
       },
     });
+    if (typeof teamMemory.startCommsTaggedClaimsSweep === 'function') {
+      teamMemory.startCommsTaggedClaimsSweep({
+        intervalMs: TEAM_MEMORY_TAGGED_CLAIM_SWEEP_INTERVAL_MS,
+        immediate: true,
+        sessionId: this.commsSessionScopeId || null,
+      });
+    }
 
     log.info('TeamMemory', 'Deferred startup tasks complete (backfill + sweeps)');
   }
@@ -2289,11 +2379,18 @@ class HivemindApp {
 
   shutdown() {
     log.info('App', 'Shutting down Hivemind Application');
+    if (this.startupBriefTimer) {
+      clearTimeout(this.startupBriefTimer);
+      this.startupBriefTimer = null;
+    }
     this.stopAutoHandoffMaterializer({ flush: true });
     contextCompressor.shutdown();
     teamMemory.stopIntegritySweep();
     teamMemory.stopBeliefSnapshotSweep();
     teamMemory.stopPatternMiningSweep();
+    if (typeof teamMemory.stopCommsTaggedClaimsSweep === 'function') {
+      teamMemory.stopCommsTaggedClaimsSweep();
+    }
     try {
       closeSharedRuntime();
     } catch (err) {
