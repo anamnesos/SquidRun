@@ -2,9 +2,13 @@
  * Context Compressor - Smart context restoration after Claude Code compaction
  *
  * Generates token-budget-constrained markdown snapshots from multiple data sources
- * (shared state changelog, memory system, prior context snapshots, build status).
+ * (handoff files, app-status.json, shared state changelog, build status).
  * Snapshots are written to workspace/context-snapshots/{paneId}.md for lifecycle
  * hooks to read after compaction events.
+ *
+ * IMPORTANT: Agent handoff files (workspace/handoffs/{paneId}.md) are READ but
+ * never overwritten by this module. Agents write handoff content there before
+ * session end; this module incorporates that content into auto-generated snapshots.
  *
  * Auto-refreshes on watched file changes (via watcher.addWatch) and a 300s timer.
  */
@@ -22,11 +26,15 @@ const log = require('./logger');
 const { estimateTokens, truncateToTokenBudget } = require('./token-utils');
 
 const SNAPSHOTS_DIR = path.join(WORKSPACE_PATH, 'context-snapshots');
-const DEFAULT_MAX_TOKENS = 1500;
+const HANDOFFS_DIR = path.join(WORKSPACE_PATH, 'handoffs');
+const APP_STATUS_PATH = path.join(WORKSPACE_PATH, 'app-status.json');
+const DEFAULT_MAX_TOKENS = 3000;
 const REFRESH_INTERVAL_MS = 300000; // 300 seconds
 
 // Priority sections for token budget allocation
 const SECTION_PRIORITIES = {
+  handoff: 110,        // Agent-written handoff content — highest priority
+  appStatus: 105,      // Session number + note from app-status.json
   teamStatus: 100,
   recentChanges: 90,
   activeIssues: 75,
@@ -158,28 +166,109 @@ function readSnapshotProgress(paneId = '1') {
 }
 
 /**
- * Build the Team Status section from latest context snapshots.
+ * Read a handoff file for a specific pane.
+ * Handoff files are at workspace/handoffs/{paneId}.md — written by agents,
+ * NEVER overwritten by this module.
+ * @param {string} paneId
+ * @returns {string} Content or empty string
+ */
+function readHandoffFile(paneId) {
+  const id = String(paneId || '1');
+  const filePath = path.join(HANDOFFS_DIR, `${id}.md`);
+  return readTextFile(filePath);
+}
+
+/**
+ * Extract a one-line summary from handoff content for team status display.
+ * Looks for the first "Completed" or "Status" line, or falls back to first
+ * non-heading, non-empty line.
+ * @param {string} content - Handoff file content
+ * @returns {string} Summary line or empty string
+ */
+function extractHandoffSummary(content) {
+  if (!content) return '';
+  const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+
+  // Look for a "Completed:" or "Status:" line first
+  const statusLine = lines.find(l => /^(Completed|Status|Summary):/i.test(l));
+  if (statusLine) return statusLine;
+
+  // Fall back to first non-heading line
+  const firstContent = lines.find(l => !l.startsWith('#') && !l.startsWith('---') && !l.startsWith('Updated:') && !l.startsWith('Generated:'));
+  return firstContent || '';
+}
+
+/**
+ * Read app-status.json and return parsed data.
+ * @returns {{ session: number, note: string, started: string } | null}
+ */
+function readAppStatus() {
+  const data = readJsonFile(APP_STATUS_PATH);
+  if (!data) return null;
+  return {
+    session: typeof data.session === 'number' ? data.session : 0,
+    note: typeof data.note === 'string' ? data.note : '',
+    started: typeof data.started === 'string' ? data.started : '',
+  };
+}
+
+/**
+ * Build the Handoff section for a specific pane.
+ * Reads agent-written handoff content from workspace/handoffs/{paneId}.md.
+ * This is the highest-priority section — it carries session-to-session context.
+ */
+function buildHandoffSection(paneId) {
+  const content = readHandoffFile(paneId);
+  if (!content || content.length < 10) return null;
+
+  return {
+    id: 'handoff',
+    priority: SECTION_PRIORITIES.handoff,
+    content: `### Handoff\n${content}`,
+    required: true, // Always include if present — this is the key memory content
+  };
+}
+
+/**
+ * Build the App Status section from workspace/app-status.json.
+ * Provides session number and the session note (human-written summary).
+ */
+function buildAppStatusSection() {
+  const status = readAppStatus();
+  if (!status || (!status.session && !status.note)) return null;
+
+  const lines = ['### Session Info'];
+  if (status.session > 0) {
+    lines.push(`Session: ${status.session}`);
+  }
+  if (status.note) {
+    lines.push(`Note: ${status.note}`);
+  }
+
+  return {
+    id: 'appStatus',
+    priority: SECTION_PRIORITIES.appStatus,
+    content: lines.join('\n'),
+  };
+}
+
+/**
+ * Build the Team Status section from handoff files (NOT from own output).
+ * Reads workspace/handoffs/{paneId}.md for each pane to get a brief summary.
  */
 function buildTeamStatusSection() {
   const lines = ['### Team Status'];
   for (const paneId of PANE_IDS) {
     const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
-    const progress = readSnapshotProgress(paneId);
+    const handoffContent = readHandoffFile(paneId);
+    const summary = extractHandoffSummary(handoffContent);
 
-    if (progress.completed.length === 0 && progress.next.length === 0) {
-      lines.push(`- ${role}: No recent status`);
+    if (!summary) {
+      lines.push(`- ${role}: No handoff data`);
     } else {
-      const parts = [];
-      if (progress.session > 0) {
-        parts.push(`Session ${progress.session}`);
-      }
-      if (progress.completed.length > 0) {
-        parts.push(`Completed: ${progress.completed.slice(0, 2).join(', ')}`);
-      }
-      if (progress.next.length > 0) {
-        parts.push(`Next: ${progress.next.slice(0, 2).join(', ')}`);
-      }
-      lines.push(`- ${role}: ${parts.join(' | ')}`);
+      // Truncate long summaries to keep team status compact
+      const truncated = summary.length > 120 ? summary.slice(0, 117) + '...' : summary;
+      lines.push(`- ${role}: ${truncated}`);
     }
   }
   return {
@@ -245,27 +334,45 @@ function buildActiveIssuesSection() {
 }
 
 /**
- * Build the Session Progress section from prior context snapshots.
+ * Build the Session Progress section from handoff files (not circular self-read).
+ * Falls back to snapshot progress if handoff files are missing (backwards compat).
  */
 function buildSessionProgressSection() {
-  const snapshotProgress = readSnapshotProgress('1');
-  const sessionNumber = Math.max(getSessionNumber(), snapshotProgress.session || 0);
+  const sessionNumber = getSessionNumber();
   const lines = ['### Session Progress'];
+  let hasProgressData = false;
 
   if (sessionNumber > 0) {
     lines.push(`Session: ${sessionNumber}`);
   }
 
-  if (snapshotProgress.completed.length > 0) {
-    lines.push(`Completed: ${snapshotProgress.completed.slice(0, 5).join(', ')}`);
+  // Try to get progress from pane 1 handoff file first, then fall back to snapshot
+  const handoff = readHandoffFile('1');
+  if (handoff) {
+    const handoffLines = handoff.split('\n').map(l => l.trim()).filter(Boolean);
+    const completedLine = handoffLines.find(l => /^Completed:/i.test(l));
+    const nextLine = handoffLines.find(l => /^Next:/i.test(l));
+    const testsLine = handoffLines.find(l => /^Tests:/i.test(l));
+    if (completedLine) { lines.push(completedLine); hasProgressData = true; }
+    if (nextLine) { lines.push(nextLine); hasProgressData = true; }
+    if (testsLine) { lines.push(testsLine); hasProgressData = true; }
   }
 
-  if (snapshotProgress.next.length > 0) {
-    lines.push(`Next: ${snapshotProgress.next.slice(0, 3).join(', ')}`);
-  }
-
-  if (snapshotProgress.testsLine) {
-    lines.push(snapshotProgress.testsLine);
+  // Fall back to snapshot progress only if handoff didn't provide progress data
+  if (!hasProgressData) {
+    const snapshotProgress = readSnapshotProgress('1');
+    if (snapshotProgress.completed.length > 0) {
+      lines.push(`Completed: ${snapshotProgress.completed.slice(0, 5).join(', ')}`);
+      hasProgressData = true;
+    }
+    if (snapshotProgress.next.length > 0) {
+      lines.push(`Next: ${snapshotProgress.next.slice(0, 3).join(', ')}`);
+      hasProgressData = true;
+    }
+    if (snapshotProgress.testsLine) {
+      lines.push(snapshotProgress.testsLine);
+      hasProgressData = true;
+    }
   }
 
   if (lines.length <= 1) return null;
@@ -278,9 +385,17 @@ function buildSessionProgressSection() {
 }
 
 /**
- * Get current session number from context snapshots.
+ * Get current session number from app-status.json (primary) or context snapshots (fallback).
+ * No longer circular-reads from own output.
  */
 function getSessionNumber() {
+  // Primary: read from app-status.json — this is updated by the daemon
+  const appStatus = readAppStatus();
+  if (appStatus && appStatus.session > 0) {
+    return appStatus.session;
+  }
+
+  // Fallback: scan context snapshots (backwards compat)
   let maxSnapshotSession = 0;
   for (const paneId of PANE_IDS) {
     const snapshotSession = readSnapshotProgress(paneId).session || 0;
@@ -295,14 +410,16 @@ function getSessionNumber() {
  * Generate a context snapshot for a specific pane
  * @param {string} paneId
  * @param {Object} [options]
- * @param {number} [options.maxTokens=1500]
+ * @param {number} [options.maxTokens=3000]
  * @returns {string} Markdown snapshot
  */
 function generateSnapshot(paneId, options = {}) {
   const maxTokens = options.maxTokens || DEFAULT_MAX_TOKENS;
 
-  // Collect all sections
+  // Collect all sections — handoff + app status are new, high-priority sources
   const sections = [
+    buildHandoffSection(paneId),
+    buildAppStatusSection(),
     buildTeamStatusSection(),
     buildRecentChangesSection(paneId),
     buildActiveIssuesSection(),
@@ -336,8 +453,7 @@ function generateSnapshot(paneId, options = {}) {
           usedTokens += estimateTokens(truncated);
         }
       }
-      // Stop adding sections once we're over budget
-      break;
+      // Continue — don't break, later sections may be required
     }
   }
 
@@ -481,10 +597,15 @@ module.exports = {
   shutdown,
   // Exported for testing
   _internals: {
+    buildHandoffSection,
+    buildAppStatusSection,
     buildTeamStatusSection,
     buildRecentChangesSection,
     buildActiveIssuesSection,
     buildSessionProgressSection,
+    readHandoffFile,
+    extractHandoffSummary,
+    readAppStatus,
     readSnapshotProgress,
     parseSessionNumberFromText,
     getSessionNumber,
@@ -508,6 +629,8 @@ module.exports = {
     set initialized(v) { initialized = v; },
     WATCHED_FILES,
     SNAPSHOTS_DIR,
+    HANDOFFS_DIR,
+    APP_STATUS_PATH,
     DEFAULT_MAX_TOKENS,
     REFRESH_INTERVAL_MS,
     SECTION_PRIORITIES,

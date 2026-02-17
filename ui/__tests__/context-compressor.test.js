@@ -168,18 +168,124 @@ describe('Context Compressor Module', () => {
   // SECTION BUILDERS
   // ===========================================================
 
+  describe('readHandoffFile', () => {
+    it('should read handoff file content', () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockReturnValue('## Architect Handoff\nCompleted: P1 fix');
+
+      const content = _internals.readHandoffFile('1');
+      expect(content).toContain('Architect Handoff');
+    });
+
+    it('should return empty string when file missing', () => {
+      fs.existsSync.mockReturnValue(false);
+      const content = _internals.readHandoffFile('1');
+      expect(content).toBe('');
+    });
+  });
+
+  describe('extractHandoffSummary', () => {
+    it('should extract Completed line', () => {
+      const summary = _internals.extractHandoffSummary('## Handoff\nCompleted: P1 fix, P2 update\nNext: P3');
+      expect(summary).toBe('Completed: P1 fix, P2 update');
+    });
+
+    it('should extract Status line', () => {
+      const summary = _internals.extractHandoffSummary('## Handoff\nStatus: Standing by');
+      expect(summary).toBe('Status: Standing by');
+    });
+
+    it('should fall back to first non-heading line', () => {
+      const summary = _internals.extractHandoffSummary('## Handoff\n---\nWorking on memory fix');
+      expect(summary).toBe('Working on memory fix');
+    });
+
+    it('should return empty string for empty content', () => {
+      expect(_internals.extractHandoffSummary('')).toBe('');
+      expect(_internals.extractHandoffSummary(null)).toBe('');
+    });
+  });
+
+  describe('readAppStatus', () => {
+    it('should parse app-status.json', () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockReturnValue(JSON.stringify({
+        session: 158,
+        note: 'S158: Enter fix',
+        started: '2026-02-17T06:15:00.000Z',
+      }));
+
+      const status = _internals.readAppStatus();
+      expect(status.session).toBe(158);
+      expect(status.note).toBe('S158: Enter fix');
+    });
+
+    it('should return null when file missing', () => {
+      fs.existsSync.mockReturnValue(false);
+      const status = _internals.readAppStatus();
+      expect(status).toBeNull();
+    });
+  });
+
+  describe('buildHandoffSection', () => {
+    it('should build section from handoff file', () => {
+      fs.existsSync.mockImplementation((p) => typeof p === 'string' && p.includes('handoffs'));
+      fs.readFileSync.mockReturnValue('## Architect Handoff\nCompleted: P1 fix, P2 update\nNext: P3 investigation');
+
+      const section = _internals.buildHandoffSection('1');
+      expect(section).not.toBeNull();
+      expect(section.id).toBe('handoff');
+      expect(section.priority).toBe(110);
+      expect(section.required).toBe(true);
+      expect(section.content).toContain('Handoff');
+      expect(section.content).toContain('P1 fix');
+    });
+
+    it('should return null when handoff file missing', () => {
+      fs.existsSync.mockReturnValue(false);
+      const section = _internals.buildHandoffSection('1');
+      expect(section).toBeNull();
+    });
+
+    it('should return null for very short content', () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockReturnValue('empty');
+      const section = _internals.buildHandoffSection('1');
+      expect(section).toBeNull();
+    });
+  });
+
+  describe('buildAppStatusSection', () => {
+    it('should build section from app-status.json', () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockReturnValue(JSON.stringify({
+        session: 158,
+        note: 'S158: Enter fix and CWD leak fix',
+      }));
+
+      const section = _internals.buildAppStatusSection();
+      expect(section).not.toBeNull();
+      expect(section.id).toBe('appStatus');
+      expect(section.priority).toBe(105);
+      expect(section.content).toContain('Session: 158');
+      expect(section.content).toContain('S158: Enter fix');
+    });
+
+    it('should return null when app-status missing', () => {
+      fs.existsSync.mockReturnValue(false);
+      const section = _internals.buildAppStatusSection();
+      expect(section).toBeNull();
+    });
+  });
+
   describe('buildTeamStatusSection', () => {
-    it('should build status from context snapshots', () => {
+    it('should build status from handoff files', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockImplementation((filePath) => {
-        if (filePath.includes('context-snapshots')) {
-          return [
-            'Session: 90',
-            'Completed: P1 file watcher, P2 pipeline',
-            'Next: P4 context compressor',
-          ].join('\n');
+        if (typeof filePath === 'string' && filePath.includes('handoffs')) {
+          return '## Handoff\nCompleted: P1 fix, P2 update\nNext: P3';
         }
-        return '{}';
+        return '';
       });
 
       const section = _internals.buildTeamStatusSection();
@@ -187,31 +293,24 @@ describe('Context Compressor Module', () => {
       expect(section.priority).toBe(100);
       expect(section.required).toBe(true);
       expect(section.content).toContain('Architect');
-      expect(section.content).toContain('Session 90');
       expect(section.content).toContain('Builder');
       expect(section.content).toContain('Oracle');
       expect(section.content).toContain('Completed:');
-      expect(section.content).toContain('Next:');
     });
 
-    it('should handle missing snapshot files', () => {
+    it('should handle missing handoff files', () => {
       fs.existsSync.mockReturnValue(false);
 
       const section = _internals.buildTeamStatusSection();
-      expect(section.content).toContain('No recent status');
+      expect(section.content).toContain('No handoff data');
     });
 
-    it('should require completed/next entries for team status rows', () => {
+    it('should truncate long summaries', () => {
       fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockImplementation((filePath) => {
-        if (filePath.includes('context-snapshots')) {
-          return 'Session: 90';
-        }
-        return 'null';
-      });
+      fs.readFileSync.mockReturnValue('Completed: ' + 'X'.repeat(200));
 
       const section = _internals.buildTeamStatusSection();
-      expect(section.content).toContain('No recent status');
+      expect(section.content).toContain('...');
     });
   });
 
@@ -299,53 +398,65 @@ describe('Context Compressor Module', () => {
   });
 
   describe('buildSessionProgressSection', () => {
-    it('should return null when snapshot file missing', () => {
+    it('should return null when no data sources available', () => {
       fs.existsSync.mockReturnValue(false);
       const section = _internals.buildSessionProgressSection();
       expect(section).toBeNull();
     });
 
-    it('should build section from snapshot data', () => {
-      fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockReturnValue([
-        '## Context Restoration (auto-generated)',
-        'Generated: 2026-02-14T00:00:00.000Z | Session 90 | Budget: 1500 tokens',
-        '### Session Progress',
-        'Session: 90',
-        'Completed: P1 file watcher, P2 pipeline, P3 shared state',
-        'Next: P4 context compressor, P5 auto-inject',
-        'Tests: 91 suites, 2857 tests',
-      ].join('\n'));
+    it('should build section from handoff file data', () => {
+      fs.existsSync.mockImplementation((p) => {
+        if (typeof p !== 'string') return false;
+        return p.includes('handoffs') || p.includes('app-status');
+      });
+      fs.readFileSync.mockImplementation((filePath) => {
+        if (typeof filePath === 'string' && filePath.includes('app-status')) {
+          return JSON.stringify({ session: 158, note: 'S158 fixes' });
+        }
+        if (typeof filePath === 'string' && filePath.includes('handoffs')) {
+          return [
+            '## Handoff',
+            'Completed: P1 fix, P2 update, P3 context',
+            'Next: P4 compressor, P5 auto-inject',
+            'Tests: 156 suites, 3140 tests',
+          ].join('\n');
+        }
+        return '';
+      });
 
       const section = _internals.buildSessionProgressSection();
       expect(section).not.toBeNull();
       expect(section.id).toBe('sessionProgress');
       expect(section.priority).toBe(70);
-      expect(section.content).toContain('Session: 90');
-      expect(section.content).toContain('P3 shared state');
-      expect(section.content).toContain('P4 context compressor');
-      expect(section.content).toContain('91 suites');
-      expect(section.content).toContain('2857 tests');
+      expect(section.content).toContain('Session: 158');
+      expect(section.content).toContain('P3 context');
+      expect(section.content).toContain('P4 compressor');
+      expect(section.content).toContain('156 suites');
     });
 
-    it('should return null when snapshot has no useful data', () => {
+    it('should fall back to snapshot data when no handoff', () => {
+      fs.existsSync.mockImplementation((p) => {
+        if (typeof p !== 'string') return false;
+        return p.includes('context-snapshots');
+      });
+      fs.readFileSync.mockImplementation((filePath) => {
+        if (typeof filePath === 'string' && filePath.includes('context-snapshots')) {
+          return 'Session: 90\nCompleted: P1 fix\nNext: P2 update';
+        }
+        return '';
+      });
+
+      const section = _internals.buildSessionProgressSection();
+      expect(section).not.toBeNull();
+      expect(section.content).toContain('P1 fix');
+    });
+
+    it('should return null when handoff has no useful data', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockReturnValue('No session metadata here');
 
       const section = _internals.buildSessionProgressSection();
       expect(section).toBeNull();
-    });
-
-    it('should handle string roadmap items', () => {
-      fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockReturnValue([
-        'Session: 90',
-        'Next: task A, task B',
-      ].join('\n'));
-
-      const section = _internals.buildSessionProgressSection();
-      expect(section).not.toBeNull();
-      expect(section.content).toContain('task A');
     });
   });
 
@@ -355,20 +466,20 @@ describe('Context Compressor Module', () => {
 
   describe('generateSnapshot', () => {
     beforeEach(() => {
-      // Setup minimal data sources
+      // Setup minimal data sources — handoff files + app-status
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockImplementation((filePath) => {
         if (typeof filePath !== 'string') return '{}';
-        if (filePath.includes('context-snapshots')) {
+        if (filePath.includes('handoffs')) {
           return [
-            '## Context Restoration (auto-generated)',
-            'Generated: 2026-02-14T00:00:00.000Z | Session 90 | Budget: 1500 tokens',
-            '### Session Progress',
-            'Session: 90',
+            '## Architect Handoff',
             'Completed: P1 file watcher, P2 pipeline, P3 shared state',
             'Next: P4 context compressor',
             'Tests: 91 suites, 2857 tests',
           ].join('\n');
+        }
+        if (filePath.includes('app-status')) {
+          return JSON.stringify({ session: 90, note: 'S90: core fixes' });
         }
         if (filePath.includes('blockers') || filePath.includes('errors')) {
           return '(none)';
@@ -384,7 +495,18 @@ describe('Context Compressor Module', () => {
       expect(snapshot).toContain('Session 90');
       expect(snapshot).toContain('### Team Status');
       expect(snapshot).toContain('Architect');
+    });
+
+    it('should include handoff section', () => {
+      const snapshot = contextCompressor.generateSnapshot('1');
+      expect(snapshot).toContain('### Handoff');
       expect(snapshot).toContain('P4 context compressor');
+    });
+
+    it('should include app status section', () => {
+      const snapshot = contextCompressor.generateSnapshot('1');
+      expect(snapshot).toContain('### Session Info');
+      expect(snapshot).toContain('S90: core fixes');
     });
 
     it('should cache the snapshot', () => {
@@ -429,7 +551,7 @@ describe('Context Compressor Module', () => {
 
       const snapshot = contextCompressor.generateSnapshot('1', { maxTokens: 50 });
 
-      // Should still contain the header and team status (required)
+      // Should still contain the header and required sections (team status, handoff)
       expect(snapshot).toContain('Context Restoration');
 
       // Reset mock
@@ -445,7 +567,6 @@ describe('Context Compressor Module', () => {
 
       const snapshot = contextCompressor.generateSnapshot('1');
       expect(snapshot).toContain('Context Restoration');
-      // Should at least have header and team status (with "No intent data")
       expect(snapshot).toContain('Team Status');
     });
   });
@@ -455,7 +576,7 @@ describe('Context Compressor Module', () => {
   // ===========================================================
 
   describe('token budget enforcement', () => {
-    it('should always include required sections (team status)', () => {
+    it('should always include required sections (team status, handoff)', () => {
       // Make estimateTokens report huge values
       estimateTokens.mockImplementation((text) => {
         if (!text) return 0;
@@ -465,14 +586,15 @@ describe('Context Compressor Module', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockImplementation((filePath) => {
         if (typeof filePath !== 'string') return '{}';
-        if (filePath.includes('intent')) return JSON.stringify({ session: 90, intent: 'Test', blockers: 'none' });
-        if (filePath.includes('context-snapshots')) return 'Session: 90';
+        if (filePath.includes('handoffs')) return '## Handoff\nCompleted: P1 fix';
+        if (filePath.includes('app-status')) return JSON.stringify({ session: 90 });
         return '{}';
       });
 
       const snapshot = contextCompressor.generateSnapshot('1', { maxTokens: 10 });
-      // Team status is required, so it must be included regardless
+      // Team status and handoff are required, so they must be included regardless
       expect(snapshot).toContain('Team Status');
+      expect(snapshot).toContain('Handoff');
 
       estimateTokens.mockImplementation((text) => {
         if (!text) return 0;
@@ -481,9 +603,7 @@ describe('Context Compressor Module', () => {
     });
 
     it('should truncate sections to fit budget', () => {
-      let callCount = 0;
       truncateToTokenBudget.mockImplementation((text, budget) => {
-        callCount++;
         if (!text || budget <= 0) return '';
         const maxChars = Math.max(20, Math.floor(budget * 4));
         if (text.length <= maxChars) return text;
@@ -493,8 +613,8 @@ describe('Context Compressor Module', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockImplementation((filePath) => {
         if (typeof filePath !== 'string') return '{}';
-        if (filePath.includes('intent')) return JSON.stringify({ session: 90, intent: 'X'.repeat(200), blockers: 'none' });
-        if (filePath.includes('context-snapshots')) return `Session: 90\nCompleted: ${Array.from({length: 50}, (_, i) => `task-${i}`).join(', ')}`;
+        if (filePath.includes('handoffs')) return `## Handoff\nCompleted: ${Array.from({length: 50}, (_, i) => `task-${i}`).join(', ')}`;
+        if (filePath.includes('app-status')) return JSON.stringify({ session: 90, note: 'X'.repeat(200) });
         return '{}';
       });
 
@@ -510,34 +630,34 @@ describe('Context Compressor Module', () => {
 
   describe('section prioritization', () => {
     it('should have correct priority ordering', () => {
+      expect(_internals.SECTION_PRIORITIES.handoff).toBeGreaterThan(_internals.SECTION_PRIORITIES.appStatus);
+      expect(_internals.SECTION_PRIORITIES.appStatus).toBeGreaterThan(_internals.SECTION_PRIORITIES.teamStatus);
       expect(_internals.SECTION_PRIORITIES.teamStatus).toBeGreaterThan(_internals.SECTION_PRIORITIES.recentChanges);
       expect(_internals.SECTION_PRIORITIES.recentChanges).toBeGreaterThan(_internals.SECTION_PRIORITIES.activeIssues);
       expect(_internals.SECTION_PRIORITIES.activeIssues).toBeGreaterThan(_internals.SECTION_PRIORITIES.sessionProgress);
     });
 
-    it('should place team status before other sections in output', () => {
+    it('should place handoff before team status in output', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockImplementation((filePath) => {
         if (typeof filePath !== 'string') return '{}';
-        if (filePath.includes('intent') && filePath.includes('1')) {
-          return JSON.stringify({ session: 90, intent: 'Building', blockers: 'none' });
+        if (filePath.includes('handoffs')) {
+          return '## Architect Handoff\nCompleted: P1 fix\nNext: P2 update';
         }
-        if (filePath.includes('intent')) {
-          return JSON.stringify({ session: 90, intent: 'Idle', blockers: 'none' });
+        if (filePath.includes('app-status')) {
+          return JSON.stringify({ session: 90, note: 'S90 fixes' });
         }
-        if (filePath.includes('context-snapshots')) {
-          return [
-            'Session: 90',
-            'Completed: P1',
-            'Tests: 91 suites, 2857 tests',
-          ].join('\n');
+        if (filePath.includes('blockers') || filePath.includes('errors')) {
+          return '(none)';
         }
         return '{}';
       });
 
       const snapshot = contextCompressor.generateSnapshot('1');
+      const handoffIdx = snapshot.indexOf('### Handoff');
       const teamIdx = snapshot.indexOf('### Team Status');
       const progressIdx = snapshot.indexOf('### Session Progress');
+      expect(handoffIdx).toBeLessThan(teamIdx);
       expect(teamIdx).toBeLessThan(progressIdx);
     });
   });
@@ -890,12 +1010,12 @@ describe('Context Compressor Module', () => {
   // ===========================================================
 
   describe('error handling', () => {
-    it('should handle corrupted snapshot files', () => {
+    it('should handle corrupted handoff files', () => {
       fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockReturnValue('NOT JSON');
+      fs.readFileSync.mockReturnValue('');
 
       const section = _internals.buildTeamStatusSection();
-      expect(section.content).toContain('No recent status');
+      expect(section.content).toContain('No handoff data');
     });
 
     it('should handle missing workspace directory', () => {
@@ -923,10 +1043,25 @@ describe('Context Compressor Module', () => {
   // ===========================================================
 
   describe('getSessionNumber', () => {
-    it('should return session number from context snapshot', () => {
+    it('should return session number from app-status.json (primary)', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockImplementation((filePath) => {
-        if (String(filePath).includes(path.join('context-snapshots', '1.md'))) {
+        if (typeof filePath === 'string' && filePath.includes('app-status')) {
+          return JSON.stringify({ session: 158, note: 'S158 fixes' });
+        }
+        return '{}';
+      });
+
+      expect(_internals.getSessionNumber()).toBe(158);
+    });
+
+    it('should fall back to context snapshots when app-status missing', () => {
+      fs.existsSync.mockImplementation((p) => {
+        if (typeof p !== 'string') return false;
+        return p.includes('context-snapshots');
+      });
+      fs.readFileSync.mockImplementation((filePath) => {
+        if (typeof filePath === 'string' && filePath.includes('context-snapshots')) {
           return 'Session: 90';
         }
         return '{}';
@@ -935,12 +1070,12 @@ describe('Context Compressor Module', () => {
       expect(_internals.getSessionNumber()).toBe(90);
     });
 
-    it('should return 0 when snapshot file missing', () => {
+    it('should return 0 when all sources missing', () => {
       fs.existsSync.mockReturnValue(false);
       expect(_internals.getSessionNumber()).toBe(0);
     });
 
-    it('should return 0 for corrupted snapshot', () => {
+    it('should return 0 for corrupted data', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockReturnValue('CORRUPT');
       expect(_internals.getSessionNumber()).toBe(0);
