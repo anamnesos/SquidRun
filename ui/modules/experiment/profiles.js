@@ -10,7 +10,6 @@ function resolveDefaultProfilesPath() {
   return path.join(WORKSPACE_PATH, 'runtime', 'experiment-profiles.json');
 }
 
-const DEFAULT_PROFILES_PATH = resolveDefaultProfilesPath();
 const DEFAULT_PROFILE_CWD = path.join(WORKSPACE_PATH, '..', 'ui');
 const BASELINE_ENV_KEYS = Object.freeze([
   'PATH',
@@ -123,7 +122,7 @@ function normalizeProfilesMap(rawProfiles = {}) {
 }
 
 function ensureProfilesFile(options = {}) {
-  const profilesPath = asString(options.profilesPath, DEFAULT_PROFILES_PATH);
+  const profilesPath = asString(options.profilesPath, resolveDefaultProfilesPath());
   const defaults = normalizeProfilesMap(options.defaults || DEFAULT_EXPERIMENT_PROFILES);
 
   try {
@@ -162,7 +161,7 @@ function ensureProfilesFile(options = {}) {
 
 function loadExperimentProfiles(options = {}) {
   const ensureResult = ensureProfilesFile(options);
-  const profilesPath = ensureResult.profilesPath || asString(options.profilesPath, DEFAULT_PROFILES_PATH);
+  const profilesPath = ensureResult.profilesPath || asString(options.profilesPath, resolveDefaultProfilesPath());
 
   if (!ensureResult.ok) {
     return {
@@ -261,7 +260,9 @@ function fingerprintEnv(env = {}) {
 }
 
 module.exports = {
-  DEFAULT_PROFILES_PATH,
+  get DEFAULT_PROFILES_PATH() {
+    return resolveDefaultProfilesPath();
+  },
   DEFAULT_EXPERIMENT_PROFILES,
   DEFAULT_PROFILE_CWD,
   BASELINE_ENV_KEYS,
