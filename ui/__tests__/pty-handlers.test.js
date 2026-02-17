@@ -78,6 +78,20 @@ describe('PTY Handlers', () => {
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith('2', expectedCwd, false, null);
     });
 
+    test('does not read or use state.project when operatingMode is developer', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.operatingMode = 'developer';
+      ctx.currentSettings.paneProjects = {};
+      ctx.watcher.readState = jest.fn(() => ({ project: '/active/project' }));
+
+      const result = await harness.invoke('pty-create', '2', '/fallback/dir');
+      const stateProjectCwd = path.resolve('/active/project');
+
+      expect(ctx.watcher.readState).not.toHaveBeenCalled();
+      expect(result.cwd).not.toBe(stateProjectCwd);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith('2', result.cwd, false, null);
+    });
+
     test('uses workingDir when pane cwd resolver has no mapping', async () => {
       ctx.daemonClient.connected = true;
       const result = await harness.invoke('pty-create', '99', '/custom/dir');
