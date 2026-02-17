@@ -603,7 +603,7 @@ function setupRefreshButtons(sendToPaneFn) {
       const paneId = btn.dataset.paneId;
       const refreshPrompt =
         `Refresh startup context: read ROLES.md, runtime memory snapshot (Evidence Ledger + Team Memory), .hivemind/build/blockers.md, ` +
-        `.hivemind/build/errors.md, workspace/handoffs/${paneId}.md, and workspace/context-snapshots/${paneId}.md. Then report status.`;
+        `.hivemind/build/errors.md, workspace/handoffs/session.md, and workspace/context-snapshots/${paneId}.md. Then report status.`;
       sendToPaneFn(paneId, `${refreshPrompt}\r`);
       updatePaneStatus(paneId, 'Refreshed');
       setTimeout(() => {

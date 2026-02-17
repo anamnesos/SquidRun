@@ -62,6 +62,18 @@ function appendCommsJournalEntry(entry = {}, options = {}) {
   };
 }
 
+function queryCommsJournalEntries(filters = {}, options = {}) {
+  const opts = asObject(options);
+  const storeResult = resolveStore(opts.dbPath || null);
+  if (!storeResult.ok || !storeResult.store) {
+    return [];
+  }
+  if (typeof storeResult.store.queryCommsJournal !== 'function') {
+    return [];
+  }
+  return storeResult.store.queryCommsJournal(filters || {});
+}
+
 function closeCommsJournalStores() {
   for (const { store } of storeCache.values()) {
     try {
@@ -75,7 +87,7 @@ function closeCommsJournalStores() {
 
 module.exports = {
   appendCommsJournalEntry,
+  queryCommsJournalEntries,
   closeCommsJournalStores,
   resolveDefaultEvidenceLedgerDbPath,
 };
-

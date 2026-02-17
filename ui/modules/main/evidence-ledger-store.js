@@ -757,6 +757,65 @@ class EvidenceLedgerStore {
     return rows.map((row) => this._mapRowToEvent(row));
   }
 
+  queryCommsJournal(filters = {}) {
+    if (!this.isAvailable()) return [];
+
+    const clauses = [];
+    const params = [];
+
+    if (filters.messageId) {
+      clauses.push('message_id = ?');
+      params.push(String(filters.messageId));
+    }
+    if (filters.sessionId) {
+      clauses.push('session_id = ?');
+      params.push(String(filters.sessionId));
+    }
+    if (filters.channel) {
+      clauses.push('channel = ?');
+      params.push(String(filters.channel).toLowerCase());
+    }
+    if (filters.direction) {
+      clauses.push('direction = ?');
+      params.push(String(filters.direction).toLowerCase());
+    }
+    if (filters.status) {
+      clauses.push('status = ?');
+      params.push(String(filters.status).toLowerCase());
+    }
+    if (filters.senderRole) {
+      clauses.push('sender_role = ?');
+      params.push(String(filters.senderRole).toLowerCase());
+    }
+    if (filters.targetRole) {
+      clauses.push('target_role = ?');
+      params.push(String(filters.targetRole).toLowerCase());
+    }
+    if (filters.sinceMs !== undefined) {
+      clauses.push('COALESCE(brokered_at_ms, sent_at_ms, updated_at_ms) >= ?');
+      params.push(toMs(filters.sinceMs, 0));
+    }
+    if (filters.untilMs !== undefined) {
+      clauses.push('COALESCE(brokered_at_ms, sent_at_ms, updated_at_ms) <= ?');
+      params.push(toMs(filters.untilMs, Number.MAX_SAFE_INTEGER));
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const order = (String(filters.order || 'asc').toLowerCase() === 'desc')
+      ? 'ORDER BY COALESCE(brokered_at_ms, sent_at_ms, updated_at_ms) DESC, row_id DESC'
+      : 'ORDER BY COALESCE(brokered_at_ms, sent_at_ms, updated_at_ms) ASC, row_id ASC';
+    const limit = Math.max(1, Math.min(50_000, Number(filters.limit) || 5000));
+
+    const sql = `
+      SELECT * FROM comms_journal
+      ${where}
+      ${order}
+      LIMIT ?
+    `;
+    const rows = this.db.prepare(sql).all(...params, limit);
+    return rows.map((row) => mapCommsRow(row));
+  }
+
   upsertCommsJournal(entry = {}, options = {}) {
     if (!this.isAvailable()) {
       return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };

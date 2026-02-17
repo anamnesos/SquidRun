@@ -31,6 +31,11 @@ const { sendTelegram } = require('../../scripts/hm-telegram');
 const teamMemory = require('../team-memory');
 const experiment = require('../experiment');
 const {
+  materializeSessionHandoff,
+  removeLegacyPaneHandoffFiles,
+} = require('./auto-handoff-materializer');
+const { closeCommsJournalStores } = require('./comms-journal');
+const {
   buildGuardFiringPatternEvent,
   buildGuardPreflightEvent,
   buildSessionLifecyclePatternEvent,
@@ -70,6 +75,8 @@ const TEAM_MEMORY_PATTERN_MINING_INTERVAL_MS = Number.parseInt(
 );
 const TEAM_MEMORY_BLOCK_GUARD_PROFILE = String(process.env.HIVEMIND_TEAM_MEMORY_BLOCK_GUARD_PROFILE || 'jest-suite').trim() || 'jest-suite';
 const APP_STARTUP_SESSION_RETRY_LIMIT = 3;
+const AUTO_HANDOFF_INTERVAL_MS = Number.parseInt(process.env.HIVEMIND_AUTO_HANDOFF_INTERVAL_MS || '30000', 10);
+const AUTO_HANDOFF_ENABLED = process.env.HIVEMIND_AUTO_HANDOFF_ENABLED !== '0';
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
@@ -120,6 +127,9 @@ class HivemindApp {
     this.lastSystemSuspendAtMs = null;
     this.lastSystemResumeAtMs = null;
     this.wakeRecoveryInFlight = false;
+    this.autoHandoffTimer = null;
+    this.autoHandoffWriteInFlight = false;
+    this.autoHandoffEnabled = AUTO_HANDOFF_ENABLED && process.env.NODE_ENV !== 'test';
   }
 
   async initializeStartupSessionScope(options = {}) {
@@ -789,8 +799,73 @@ class HivemindApp {
 
     this.startSmsPoller();
     this.startTelegramPoller();
+    this.startAutoHandoffMaterializer();
 
     log.info('App', 'Initialization complete');
+  }
+
+  runAutoHandoffMaterializer(reason = 'timer') {
+    if (!this.autoHandoffEnabled) {
+      return { ok: false, reason: 'disabled' };
+    }
+    if (this.autoHandoffWriteInFlight) {
+      return { ok: false, reason: 'in_flight' };
+    }
+
+    this.autoHandoffWriteInFlight = true;
+    try {
+      const result = materializeSessionHandoff({
+        sessionId: this.commsSessionScopeId || null,
+      });
+      if (result?.ok === false) {
+        log.warn('AutoHandoff', `Materialize failed (${reason}): ${result.reason || result.error || 'unknown'}`);
+      } else if (result?.written) {
+        log.info(
+          'AutoHandoff',
+          `Materialized session handoff (${reason}): ${result.outputPath} rows=${result.rowsScanned || 0}`
+        );
+      }
+      return result;
+    } catch (err) {
+      log.warn('AutoHandoff', `Materialize error (${reason}): ${err.message}`);
+      return { ok: false, reason: 'materialize_error', error: err.message };
+    } finally {
+      this.autoHandoffWriteInFlight = false;
+    }
+  }
+
+  startAutoHandoffMaterializer() {
+    if (!this.autoHandoffEnabled) {
+      return;
+    }
+    this.stopAutoHandoffMaterializer({ flush: false });
+
+    const cleanup = removeLegacyPaneHandoffFiles({ ignoreErrors: true });
+    if (cleanup?.removed?.length > 0) {
+      log.info('AutoHandoff', `Removed legacy pane handoff files (${cleanup.removed.length})`);
+    }
+    if (cleanup?.failed?.length > 0) {
+      for (const failure of cleanup.failed) {
+        log.warn('AutoHandoff', `Failed removing legacy handoff file ${failure.path}: ${failure.error}`);
+      }
+    }
+
+    this.runAutoHandoffMaterializer('startup');
+    const intervalMs = Math.max(5000, Number.isFinite(AUTO_HANDOFF_INTERVAL_MS) ? AUTO_HANDOFF_INTERVAL_MS : 30000);
+    this.autoHandoffTimer = setInterval(() => {
+      this.runAutoHandoffMaterializer('timer');
+    }, intervalMs);
+  }
+
+  stopAutoHandoffMaterializer(options = {}) {
+    if (this.autoHandoffTimer) {
+      clearInterval(this.autoHandoffTimer);
+      this.autoHandoffTimer = null;
+    }
+
+    if (options.flush === true && this.autoHandoffEnabled) {
+      this.runAutoHandoffMaterializer('shutdown');
+    }
   }
 
   /**
@@ -2214,6 +2289,7 @@ class HivemindApp {
 
   shutdown() {
     log.info('App', 'Shutting down Hivemind Application');
+    this.stopAutoHandoffMaterializer({ flush: true });
     contextCompressor.shutdown();
     teamMemory.stopIntegritySweep();
     teamMemory.stopBeliefSnapshotSweep();
@@ -2230,6 +2306,7 @@ class HivemindApp {
     websocketServer.stop();
     smsPoller.stop();
     telegramPoller.stop();
+    closeCommsJournalStores();
     this.consoleLogWriter.flush().catch((err) => {
       log.warn('App', `Failed flushing console.log buffer during shutdown: ${err.message}`);
     });
