@@ -58,6 +58,7 @@ const STARTUP_CONTEXT_DELAY_ARCHITECT_MS = 3000; // Delay after ready prompt for
 const STARTUP_CONTEXT_DELAY_MS = 6000;    // Delay after ready prompt before context injection
 const STARTUP_IDENTITY_DELAY_CODEX_MS = 6000;  // Delay before Codex identity (after Architect's ~5.25s)
 const STARTUP_CONTEXT_DELAY_CODEX_MS = 10000;  // Delay before Codex context (after Architect's ~8s)
+const CODEX_ENTER_DELAY_MS = 200;        // Base delay between PTY text write and Enter for Codex
 const STARTUP_READY_BUFFER_MAX = 2000;    // Keep last N chars for ready-pattern detection
 const GEMINI_ENTER_DELAY_MS = 75;         // Delay between text write and Enter for Gemini (readline needs time to process text)
 const SUBMIT_ACCEPT_MAX_ATTEMPTS = 2;     // Max submit verification attempts before marking not accepted
@@ -102,6 +103,7 @@ module.exports = {
   STARTUP_CONTEXT_DELAY_MS,
   STARTUP_IDENTITY_DELAY_CODEX_MS,
   STARTUP_CONTEXT_DELAY_CODEX_MS,
+  CODEX_ENTER_DELAY_MS,
   STARTUP_READY_BUFFER_MAX,
   GEMINI_ENTER_DELAY_MS,
   SUBMIT_ACCEPT_MAX_ATTEMPTS,

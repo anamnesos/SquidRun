@@ -841,7 +841,7 @@ describe('Terminal Injection', () => {
 
       const onComplete = jest.fn();
       const promise = controller.doSendToPane('1', 'test command\r', onComplete);
-      // Advance past enterDelayMs (150ms) + verification
+      // Advance past enterDelayMs + verification
       await jest.advanceTimersByTimeAsync(500);
       await promise;
 
@@ -856,6 +856,22 @@ describe('Terminal Injection', () => {
         verified: true,
         signal: 'prompt_probe_unavailable',
       });
+    });
+
+    test('scales Enter delay by payload size for long Codex messages', async () => {
+      mockOptions.isCodexPane.mockReturnValue(true);
+      const timeoutSpy = jest.spyOn(global, 'setTimeout');
+      const longCodexText = `${'C'.repeat(1401)}\r`;
+      const payloadBytes = Buffer.byteLength('C'.repeat(1401), 'utf8');
+      const expectedScaledDelay = 200 + Math.min(250, Math.ceil(Math.max(0, payloadBytes - 256) / 64));
+
+      await controller.doSendToPane('1', longCodexText, jest.fn());
+
+      const delays = timeoutSpy.mock.calls
+        .map(call => call[1])
+        .filter(value => typeof value === 'number');
+      expect(delays).toContain(expectedScaledDelay);
+      timeoutSpy.mockRestore();
     });
 
     test('handles Codex PTY write failure', async () => {

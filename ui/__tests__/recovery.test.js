@@ -154,6 +154,15 @@ describe('Terminal Recovery Controller', () => {
 
       expect(controller.potentiallyStuckPanes.has('5')).toBe(false);
     });
+
+    test('tracks Codex panes for stuck recovery', () => {
+      mockOptions.isCodexPane.mockReturnValue(true);
+      controller = createRecoveryController(mockOptions);
+
+      controller.markPotentiallyStuck('2');
+
+      expect(controller.potentiallyStuckPanes.has('2')).toBe(true);
+    });
   });
 
   describe('clearStuckStatus', () => {
@@ -234,8 +243,8 @@ describe('Terminal Recovery Controller', () => {
       await controller.sweepStuckMessages();
 
       expect(mockOptions.getInjectionHelpers().focusWithRetry).toHaveBeenCalled();
-      expect(mockOptions.getInjectionHelpers().sendEnterToPane).toHaveBeenCalledWith('1');
-      expect(log.info).toHaveBeenCalledWith('StuckSweeper 1', expect.stringContaining('Recovery Enter sent'));
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
+      expect(log.info).toHaveBeenCalledWith('StuckSweeper 1', 'Recovery Enter sent via nudgePane');
     });
 
     test('logs warning if focus fails', async () => {
@@ -252,18 +261,15 @@ describe('Terminal Recovery Controller', () => {
       expect(log.warn).toHaveBeenCalledWith('StuckSweeper 1', 'Focus failed for recovery');
     });
 
-    test('logs error if Enter fails', async () => {
-      mockOptions.getInjectionHelpers.mockReturnValue({
-        focusWithRetry: jest.fn().mockResolvedValue(true),
-        sendEnterToPane: jest.fn().mockResolvedValue({ success: false }),
-      });
-      controller = createRecoveryController(mockOptions);
+    test('logs error if PTY nudge write fails', async () => {
+      mockPty.write.mockRejectedValueOnce(new Error('nudge failed'));
       controller.markPotentiallyStuck('1');
       lastOutputTime['1'] = Date.now() - 15000;
 
       await controller.sweepStuckMessages();
+      await Promise.resolve();
 
-      expect(log.error).toHaveBeenCalledWith('StuckSweeper 1', 'Recovery Enter failed');
+      expect(log.error).toHaveBeenCalledWith('nudgePane 1', 'PTY write failed:', expect.any(Error));
     });
 
     test('handles missing textarea gracefully', async () => {

@@ -37,6 +37,7 @@ function createInjectionController(options = {}) {
     INJECTION_LOCK_TIMEOUT_MS,
     BYPASS_CLEAR_DELAY_MS = DEFAULT_BYPASS_CLEAR_DELAY_MS,
     TYPING_GUARD_MS = 300,
+    CODEX_ENTER_DELAY_MS = 200,
     GEMINI_ENTER_DELAY_MS = 75,
     MAX_COMPACTION_DEFER_MS = 8000,
     CLAUDE_CHUNK_SIZE = 2048,
@@ -219,7 +220,12 @@ function createInjectionController(options = {}) {
   function computeScaledEnterDelayMs(baseDelayMs, payloadBytes, capabilities = {}) {
     const defaultBase = Math.max(0, Number(baseDelayMs) || 0);
     const byteLength = Math.max(0, Number(payloadBytes) || 0);
-    if (capabilities.enterMethod !== 'trusted') {
+    const explicitScaling = capabilities.scaleEnterDelayByPayload === true;
+    const displayName = String(capabilities.displayName || '').trim().toLowerCase();
+    const modeLabel = String(capabilities.modeLabel || '').trim().toLowerCase();
+    const isCodexCapability = displayName === 'codex' || modeLabel.includes('codex');
+    const shouldScale = explicitScaling || capabilities.enterMethod === 'trusted' || isCodexCapability;
+    if (!shouldScale) {
       return defaultBase;
     }
 
@@ -502,13 +508,14 @@ function createInjectionController(options = {}) {
         applyCompactionGate: true,
         requiresFocusForEnter: false,
         enterMethod: 'pty',
-        enterDelayMs: 150,
+        enterDelayMs: CODEX_ENTER_DELAY_MS,
         sanitizeMultiline: true,
         clearLineBeforeWrite: true,
         useChunkedWrite: false,
         homeResetBeforeWrite: false,
         verifySubmitAccepted: true,
         deferSubmitWhilePaneActive: false,
+        scaleEnterDelayByPayload: true,
         typingGuardWhenBypassing: false,
         sanitizeTransform: 'none',
         enterFailureReason: 'pty_enter_failed',
@@ -534,6 +541,7 @@ function createInjectionController(options = {}) {
         homeResetBeforeWrite: false,
         verifySubmitAccepted: false,
         deferSubmitWhilePaneActive: false,
+        scaleEnterDelayByPayload: false,
         typingGuardWhenBypassing: true,
         sanitizeTransform: 'gemini-sanitize',
         enterFailureReason: 'pty_enter_failed',
@@ -557,6 +565,7 @@ function createInjectionController(options = {}) {
       homeResetBeforeWrite: true,
       verifySubmitAccepted: true,
       deferSubmitWhilePaneActive: true,
+      scaleEnterDelayByPayload: true,
       typingGuardWhenBypassing: false,
       sanitizeTransform: 'none',
       enterFailureReason: 'enter_failed',
@@ -603,6 +612,13 @@ function createInjectionController(options = {}) {
       homeResetBeforeWrite: normalizeBoolean(source.homeResetBeforeWrite, true),
       verifySubmitAccepted: normalizeBoolean(source.verifySubmitAccepted, false),
       deferSubmitWhilePaneActive: normalizeBoolean(source.deferSubmitWhilePaneActive, false),
+      scaleEnterDelayByPayload: normalizeBoolean(
+        source.scaleEnterDelayByPayload,
+        normalizeBoolean(
+          fallbackCaps.scaleEnterDelayByPayload,
+          enterMethod === 'trusted'
+        )
+      ),
       typingGuardWhenBypassing: normalizeBoolean(source.typingGuardWhenBypassing, bypassGlobalLock),
       sanitizeTransform: normalizeModeLabel(source.sanitizeTransform, fallbackCaps.sanitizeTransform || 'sanitize-multiline'),
       enterFailureReason: normalizeModeLabel(source.enterFailureReason, fallbackCaps.enterFailureReason || 'enter_failed'),
