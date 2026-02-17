@@ -115,11 +115,15 @@ function registerPtyHandlers(ctx, deps = {}) {
   const { broadcastClaudeState, recordSessionStart, recordSessionLifecycle, updateIntentState } = deps;
   const getRecoveryManager = () => deps?.recoveryManager || ctx.recoveryManager;
   const getFirmwareManager = () => deps?.firmwareManager || ctx.firmwareManager;
+  const isDeveloperMode = () => String(ctx?.currentSettings?.operatingMode || '').toLowerCase() === 'developer';
   const getPaneProjects = () => {
     const paneProjects = ctx?.currentSettings?.paneProjects;
     return paneProjects && typeof paneProjects === 'object' ? paneProjects : {};
   };
   const getActiveProjectRoot = () => {
+    if (isDeveloperMode()) {
+      return null;
+    }
     try {
       const state = ctx?.watcher?.readState?.();
       const project = typeof state?.project === 'string' ? state.project.trim() : '';
