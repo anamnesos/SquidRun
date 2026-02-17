@@ -667,13 +667,15 @@ describe('Context Compressor Module', () => {
   // ===========================================================
 
   describe('auto-refresh on file watch events', () => {
-    // WATCHED_FILES is empty by default (pipeline.json/review.json removed S128).
-    // Inject a test file so watch-mechanism tests can exercise the callback path.
+    // Save/restore WATCHED_FILES since production code now populates it
+    let savedWatchedFiles;
     beforeEach(() => {
+      savedWatchedFiles = [..._internals.WATCHED_FILES];
       _internals.WATCHED_FILES.push('test-watch.json');
     });
     afterEach(() => {
       _internals.WATCHED_FILES.length = 0;
+      _internals.WATCHED_FILES.push(...savedWatchedFiles);
     });
 
     it('should register watches for all watched files on init', () => {
@@ -903,10 +905,10 @@ describe('Context Compressor Module', () => {
       fs.existsSync.mockReturnValue(false);
       const mockWatcher = { addWatch: jest.fn() };
 
-      // WATCHED_FILES is empty by default (dead files removed S128)
-      // — verify no watches registered with empty config
+      // WATCHED_FILES includes app-status.json + handoff files for each pane
       contextCompressor.init({ watcher: mockWatcher });
-      expect(mockWatcher.addWatch).toHaveBeenCalledTimes(0);
+      expect(mockWatcher.addWatch).toHaveBeenCalledTimes(_internals.WATCHED_FILES.length);
+      expect(mockWatcher.addWatch.mock.calls.length).toBeGreaterThan(0);
     });
 
     it('should generate initial snapshots', () => {
