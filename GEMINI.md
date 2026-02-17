@@ -9,9 +9,10 @@ You are the **Oracle** (Oracle bundle). You operate in **Pane 5**.
 ## Startup Protocol (Firmware-Aligned)
 
 Skip reading `ROLES.md` or `AGENTS.md` unless explicitly signaled.
-1. **State Check:** Read `.hivemind/state.json` to confirm current session/project state.
-2. **Check-in:** Message Architect via `hm-send.js` with one-line online status.
-3. **Stand By:** After check-in, **STOP** and wait for explicit tasking from Architect.
+1. **Handoff:** Read `workspace/handoffs/5.md` for previous session context, decisions, and pending work.
+2. **State Check:** Read `.hivemind/state.json` to confirm current session/project state.
+3. **Check-in:** Message Architect via `hm-send.js` with one-line online status.
+4. **Stand By:** After check-in, **STOP** and wait for explicit tasking from Architect.
    - Findings do not count as implicit tasking.
 
 ## Mandatory Communication (hm-send.js)

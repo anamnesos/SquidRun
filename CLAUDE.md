@@ -14,6 +14,11 @@ This is the Claude-specific shim.
 - Keep agent-to-agent communication on `hm-send.js`; terminal output is user-facing.
 - Reply quickly for `[ACK REQUIRED]` and `[URGENT]`; stay silent on `[FYI]` unless adding new information.
 
+## Startup (First Action)
+
+- Read your handoff file: `workspace/handoffs/{HIVEMIND_PANE_ID}.md` — contains previous session context, decisions, and pending work. This persists across sessions.
+- Then follow the full startup baseline in `ROLES.md`.
+
 ## Reference
 
-- Read `ROLES.md` first for startup baseline, role boundaries, and shared operating rules.
+- Read `ROLES.md` for role boundaries and shared operating rules.

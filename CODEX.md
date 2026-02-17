@@ -14,6 +14,11 @@ This is the Codex-specific shim.
 - Use non-interactive shell workflows and avoid destructive git operations by default.
 - Keep agent-to-agent communication on `hm-send.js`; terminal output is user-facing.
 
+## Startup (First Action)
+
+- Read your handoff file: `workspace/handoffs/{HIVEMIND_PANE_ID}.md` — contains previous session context, decisions, and pending work. This persists across sessions.
+- Then follow the full startup baseline in `ROLES.md`.
+
 ## Reference
 
-- Read `ROLES.md` first for startup baseline, role boundaries, and shared operating rules.
+- Read `ROLES.md` for role boundaries and shared operating rules.
