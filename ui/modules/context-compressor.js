@@ -41,10 +41,12 @@ const SECTION_PRIORITIES = {
   sessionProgress: 70,
 };
 
-// Files to watch for auto-refresh
-// NOTE: pipeline.json and review.json were removed in S128 workspace cleanup.
-// Currently empty — refresh is timer-driven only (300s interval).
-const WATCHED_FILES = [];
+// Files to watch for auto-refresh (relative to workspace/coord roots).
+// Handoff files and app-status trigger immediate refresh when agents update them.
+const WATCHED_FILES = [
+  'app-status.json',
+  ...PANE_IDS.map(id => path.join('handoffs', `${id}.md`)),
+];
 
 // Module state
 let sharedStateRef = null;
