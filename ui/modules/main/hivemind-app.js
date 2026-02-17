@@ -229,7 +229,7 @@ class HivemindApp {
     // 1b. Generate firmware files on startup when feature flag is enabled.
     if (this.firmwareManager && typeof this.firmwareManager.ensureStartupFirmwareIfEnabled === 'function') {
       try {
-        const firmwareResult = this.firmwareManager.ensureStartupFirmwareIfEnabled();
+        const firmwareResult = this.firmwareManager.ensureStartupFirmwareIfEnabled({ preflight: true });
         if (firmwareResult?.ok === false) {
           log.warn('Firmware', `Startup generation failed: ${firmwareResult.reason || 'unknown'}`);
         }

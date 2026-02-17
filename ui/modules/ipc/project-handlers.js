@@ -129,8 +129,10 @@ function registerProjectHandlers(ctx, deps) {
   };
 
   try {
+    const operatingMode = ctx?.currentSettings?.operatingMode
+      || loadSettings?.()?.operatingMode;
     const initialProject = ctx?.watcher?.readState?.()?.project || null;
-    syncProjectRoot(initialProject);
+    syncProjectRoot(operatingMode === 'developer' ? null : initialProject);
   } catch (_) {
     // Keep startup resilient if watcher state is not available yet.
   }
