@@ -11,6 +11,7 @@ const {
   WORKSPACE_PATH,
   LEGACY_ROLE_ALIASES,
   ROLE_ID_MAP,
+  setProjectRoot,
   resolveCoordPath,
 } = require('../config');
 
@@ -134,6 +135,71 @@ function parseJSON(raw) {
     return null;
   }
 }
+
+function readJsonFileSafe(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+function findNearestProjectLinkFile(startDir = process.cwd()) {
+  let currentDir = path.resolve(startDir);
+  while (true) {
+    const candidate = path.join(currentDir, '.hivemind', 'link.json');
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      return null;
+    }
+    currentDir = parentDir;
+  }
+}
+
+function resolveProjectContextFromLink(startDir = process.cwd()) {
+  const linkPath = findNearestProjectLinkFile(startDir);
+  if (!linkPath) return null;
+
+  const payload = readJsonFileSafe(linkPath);
+  if (!payload || typeof payload !== 'object') return null;
+
+  const fallbackProjectPath = path.resolve(path.join(path.dirname(linkPath), '..'));
+  const workspaceValue = typeof payload.workspace === 'string'
+    ? payload.workspace.trim()
+    : '';
+  const projectPath = workspaceValue
+    ? path.resolve(workspaceValue)
+    : fallbackProjectPath;
+
+  if (!projectPath) return null;
+
+  return {
+    source: 'link.json',
+    linkPath,
+    projectPath,
+    projectName: path.basename(projectPath),
+  };
+}
+
+function applyProjectContextFromLink(startDir = process.cwd()) {
+  const projectContext = resolveProjectContextFromLink(startDir);
+  if (!projectContext?.projectPath) return null;
+  if (typeof setProjectRoot === 'function') {
+    try {
+      setProjectRoot(projectContext.projectPath);
+    } catch (_) {
+      // Best-effort only; keep hm-send resilient.
+    }
+  }
+  return projectContext;
+}
+
+applyProjectContextFromLink(process.cwd());
 
 function waitForMatch(ws, predicate, timeoutMs, timeoutLabel) {
   return new Promise((resolve, reject) => {
