@@ -83,9 +83,6 @@ describe('registerModelSwitchHandlers', () => {
     // Mock dependencies passed to the function
     mockDeps = {
       saveSettings: jest.fn(),
-      contextInjection: {
-        injectContext: jest.fn().mockResolvedValue(undefined),
-      },
     };
   });
 
@@ -251,25 +248,6 @@ describe('registerModelSwitchHandlers', () => {
       await switchPromise;
 
       expect(mockCtx.currentSettings.paneCommands['1']).toBe('gemini --yolo --include-directories "D:\\external\\repo"');
-    });
-
-    it('should auto-inject context files after model switch', async () => {
-      const switchPromise = switchHandler({}, { paneId: '1', model: 'claude' });
-      mockCtx.daemonClient._killedHandler('1');
-      await switchPromise;
-
-      // Verify contextInjection.injectContext was called with correct params
-      // delay is 5000ms for claude, 6000ms for codex
-      expect(mockDeps.contextInjection.injectContext).toHaveBeenCalledWith('1', 'claude', 5000);
-    });
-
-    it('should use longer delay for codex context injection', async () => {
-      const switchPromise = switchHandler({}, { paneId: '1', model: 'codex' });
-      mockCtx.daemonClient._killedHandler('1');
-      await switchPromise;
-
-      // Codex gets 6000ms delay
-      expect(mockDeps.contextInjection.injectContext).toHaveBeenCalledWith('1', 'codex', 6000);
     });
 
     it('should handle missing daemonClient gracefully', async () => {

@@ -27,7 +27,6 @@ const SettingsManager = require('./modules/main/settings-manager');
 const ActivityManager = require('./modules/main/activity-manager');
 const UsageManager = require('./modules/main/usage-manager');
 const CliIdentityManager = require('./modules/main/cli-identity');
-const ContextInjectionManager = require('./modules/main/context-injection');
 const FirmwareManager = require('./modules/main/firmware-manager');
 const HivemindApp = require('./modules/main/hivemind-app');
 
@@ -36,10 +35,8 @@ const settings = new SettingsManager(appContext);
 const activity = new ActivityManager(appContext);
 const usage = new UsageManager(appContext);
 const cliIdentity = new CliIdentityManager(appContext);
-const contextInjection = new ContextInjectionManager(appContext);
 const firmwareManager = new FirmwareManager(appContext);
 
-appContext.setContextInjection(contextInjection);
 appContext.setFirmwareManager(firmwareManager);
 
 // 2. Create main application controller
@@ -48,7 +45,6 @@ const hivemindApp = new HivemindApp(appContext, {
   activity,
   usage,
   cliIdentity,
-  contextInjection,
   firmwareManager,
 });
 

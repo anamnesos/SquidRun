@@ -19,7 +19,6 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
   }
   const { ipcMain } = ctx;
   const { saveSettings } = deps;
-  const getContextInjection = () => deps?.contextInjection || ctx.contextInjection;
 
   // Get pane commands for UI initialization
   ipcMain.handle('get-pane-commands', () => {
@@ -113,12 +112,6 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
     // Signal renderer to respawn
     if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
       ctx.mainWindow.webContents.send('pane-model-changed', { paneId, model });
-
-      // Finding #14: Auto-inject context via manager
-      const contextInjection = getContextInjection();
-      if (contextInjection) {
-        await contextInjection.injectContext(id, model, model === 'codex' ? 6000 : 5000);
-      }
     }
 
     return { success: true, paneId, model };

@@ -84,7 +84,6 @@ class HivemindApp {
     this.activity = managers.activity;
     this.usage = managers.usage;
     this.cliIdentity = managers.cliIdentity;
-    this.contextInjection = managers.contextInjection;
     this.firmwareManager = managers.firmwareManager;
     this.kernelBridge = createKernelBridge(() => this.ctx.mainWindow);
     this.lastDaemonOutputAtMs = Date.now();
@@ -896,7 +895,6 @@ class HivemindApp {
       recoveryManager: this.ctx.recoveryManager,
       pluginManager: this.ctx.pluginManager,
       backupManager: this.ctx.backupManager,
-      contextInjection: this.ctx.contextInjection,
     });
 
     ipcHandlers.setupIPCHandlers({
