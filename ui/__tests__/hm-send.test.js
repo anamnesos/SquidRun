@@ -4,6 +4,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
@@ -17,11 +18,12 @@ function getTriggerPath(filename) {
   return path.join(WORKSPACE_PATH, 'triggers', filename);
 }
 
-function runHmSend(args, env = {}) {
+function runHmSend(args, env = {}, options = {}) {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-send.js');
     const child = spawn(process.execPath, [scriptPath, ...args], {
       env: { ...process.env, ...env },
+      cwd: options.cwd || path.join(__dirname, '..'),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -789,6 +791,35 @@ describe('hm-send retry behavior', () => {
       } else if (fs.existsSync(triggerPath)) {
         fs.unlinkSync(triggerPath);
       }
+    }
+  });
+
+  test('uses local .hivemind/link.json to scope fallback trigger path', async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-link-'));
+    const externalProjectPath = path.join(tempRoot, 'external-project');
+    const externalCoordPath = path.join(externalProjectPath, '.hivemind');
+    const linkPath = path.join(externalCoordPath, 'link.json');
+    const expectedTriggerPath = path.join(externalCoordPath, 'triggers', 'builder.txt');
+    fs.mkdirSync(externalCoordPath, { recursive: true });
+    fs.writeFileSync(linkPath, JSON.stringify({
+      workspace: externalProjectPath,
+      version: 1,
+    }, null, 2));
+
+    try {
+      const result = await runHmSend(
+        ['builder', '(TEST #7): link-scoped fallback', '--timeout', '80', '--retries', '0'],
+        { HM_SEND_PORT: '65534' },
+        { cwd: externalProjectPath }
+      );
+
+      expect(result.code).toBe(0);
+      expect(fs.existsSync(expectedTriggerPath)).toBe(true);
+      const fallbackContent = fs.readFileSync(expectedTriggerPath, 'utf8');
+      expect(fallbackContent).toContain('(TEST #7): link-scoped fallback');
+      expect(result.stderr.replace(/\\/g, '/')).toContain('/external-project/.hivemind/triggers/builder.txt');
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 });
