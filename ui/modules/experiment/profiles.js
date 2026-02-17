@@ -1,9 +1,16 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { WORKSPACE_PATH } = require('../../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 
-const DEFAULT_PROFILES_PATH = path.join(WORKSPACE_PATH, 'runtime', 'experiment-profiles.json');
+function resolveDefaultProfilesPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('runtime', 'experiment-profiles.json'), { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'runtime', 'experiment-profiles.json');
+}
+
+const DEFAULT_PROFILES_PATH = resolveDefaultProfilesPath();
 const DEFAULT_PROFILE_CWD = path.join(WORKSPACE_PATH, '..', 'ui');
 const BASELINE_ENV_KEYS = Object.freeze([
   'PATH',
@@ -258,6 +265,7 @@ module.exports = {
   DEFAULT_EXPERIMENT_PROFILES,
   DEFAULT_PROFILE_CWD,
   BASELINE_ENV_KEYS,
+  resolveDefaultProfilesPath,
   ensureProfilesFile,
   loadExperimentProfiles,
   resolveProfileAndCommand,
