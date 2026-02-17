@@ -106,6 +106,59 @@ maybeDescribe('evidence-ledger-store', () => {
     expect(batch.invalid).toBe(0);
   });
 
+  test('upsertCommsJournal is idempotent and keeps progressed status', () => {
+    expect(store.init().ok).toBe(true);
+
+    const first = store.upsertCommsJournal({
+      messageId: 'hm-1',
+      sessionId: 's_1',
+      senderRole: 'builder',
+      targetRole: 'architect',
+      channel: 'ws',
+      direction: 'outbound',
+      sentAtMs: 1000,
+      rawBody: '(BUILDER #1): hello',
+      status: 'recorded',
+      attempt: 1,
+      metadata: { source: 'hm-send' },
+    });
+    expect(first.ok).toBe(true);
+    expect(first.status).toBe('inserted');
+
+    const second = store.upsertCommsJournal({
+      messageId: 'hm-1',
+      channel: 'ws',
+      direction: 'outbound',
+      brokeredAtMs: 1050,
+      status: 'brokered',
+      attempt: 2,
+      metadata: { source: 'websocket-broker' },
+    });
+    expect(second.ok).toBe(true);
+    expect(second.status).toBe('updated');
+
+    const downgraded = store.upsertCommsJournal({
+      messageId: 'hm-1',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'recorded',
+      attempt: 1,
+    });
+    expect(downgraded.ok).toBe(true);
+
+    const row = store.db.prepare(`
+      SELECT * FROM comms_journal WHERE message_id = ?
+    `).get('hm-1');
+    expect(row).toBeTruthy();
+    expect(row.status).toBe('brokered');
+    expect(row.attempt).toBe(2);
+    expect(row.body_hash).toBeTruthy();
+    expect(row.body_bytes).toBeGreaterThan(0);
+    expect(JSON.parse(row.metadata_json)).toMatchObject({
+      source: 'websocket-broker',
+    });
+  });
+
   test('prune applies ttl and hard-cap', () => {
     store.close();
     store = new EvidenceLedgerStore({

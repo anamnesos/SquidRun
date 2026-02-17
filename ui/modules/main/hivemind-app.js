@@ -504,6 +504,51 @@ class HivemindApp {
             const maxAttempts = Number(data.message.maxAttempts || 1);
             const messageId = data.message.messageId || null;
             const traceContext = data.traceContext || data.message.traceContext || null;
+            const nowMs = Date.now();
+            const targetPaneIdForJournal = this.resolveTargetToPane(target);
+            const targetRoleForJournal = (() => {
+              if (targetPaneIdForJournal === '1') return 'architect';
+              if (targetPaneIdForJournal === '2') return 'builder';
+              if (targetPaneIdForJournal === '5') return 'oracle';
+              if (this.isTelegramReplyTarget(target)) return this.normalizeOutboundTarget(target);
+              return null;
+            })();
+
+            if (messageId) {
+              const journalResult = await executeEvidenceLedgerOperation(
+                'upsert-comms-journal',
+                {
+                  messageId,
+                  sessionId: this.commsSessionScopeId || null,
+                  senderRole: data.role || 'unknown',
+                  targetRole: targetRoleForJournal,
+                  channel: 'ws',
+                  direction: 'outbound',
+                  sentAtMs: Number(data.message.sentAtMs || data.message.timestamp || nowMs),
+                  brokeredAtMs: nowMs,
+                  rawBody: typeof content === 'string' ? content : String(content ?? ''),
+                  status: 'brokered',
+                  attempt,
+                  metadata: {
+                    source: 'websocket-broker',
+                    targetRaw: target || null,
+                    traceId: traceContext?.traceId || traceContext?.correlationId || null,
+                    project: data.message?.metadata?.project || null,
+                    maxAttempts,
+                  },
+                },
+                {
+                  source: {
+                    via: 'websocket',
+                    role: data.role || 'system',
+                    paneId: data.paneId || null,
+                  },
+                }
+              );
+              if (journalResult?.ok === false) {
+                log.warn('EvidenceLedger', `Comms journal broker upsert failed: ${journalResult.reason || 'unknown'}`);
+              }
+            }
 
             if (attempt === 1) {
               emitKernelCommsEvent('comms.send.started', {

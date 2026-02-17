@@ -14,6 +14,10 @@ const {
   setProjectRoot,
   resolveCoordPath,
 } = require('../config');
+const {
+  appendCommsJournalEntry,
+  closeCommsJournalStores,
+} = require('../modules/main/comms-journal');
 
 const parsedPort = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
 const PORT = Number.isFinite(parsedPort) ? parsedPort : 9900;
@@ -569,7 +573,7 @@ async function emitCommsEventBestEffort(eventType, payload = {}) {
   }
 }
 
-async function sendViaWebSocketWithAck() {
+async function sendViaWebSocketWithAck(messageId) {
   const socketUrl = `ws://127.0.0.1:${PORT}`;
   const ws = new WebSocket(socketUrl);
 
@@ -586,11 +590,10 @@ async function sendViaWebSocketWithAck() {
       skippedByHealth: true,
       health,
       attemptsUsed: 0,
-      messageId: null,
+      messageId,
     };
   }
 
-  const messageId = `hm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const attempts = retries + 1;
   let lastAck = null;
   let lastError = null;
@@ -688,11 +691,38 @@ async function sendViaWebSocketWithAck() {
 }
 
 async function main() {
+  const messageId = `hm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const targetRole = normalizeRole(target)
+    || (isSpecialTarget(target) ? String(target).trim().toLowerCase() : null);
+  const preSendJournal = appendCommsJournalEntry({
+    messageId,
+    sessionId: projectMetadata?.session_id || null,
+    senderRole: role || 'cli',
+    targetRole,
+    channel: 'ws',
+    direction: 'outbound',
+    sentAtMs: Date.now(),
+    rawBody: message,
+    status: 'recorded',
+    attempt: 1,
+    metadata: {
+      source: 'hm-send',
+      priority,
+      maxAttempts: retries + 1,
+      project: projectMetadata || null,
+      targetRaw: target,
+    },
+  });
+
+  if (preSendJournal?.ok !== true) {
+    console.warn(`Comms journal pre-send record unavailable: ${preSendJournal?.reason || 'unknown'}`);
+  }
+
   let sendResult = null;
   let wsError = null;
 
   try {
-    sendResult = await sendViaWebSocketWithAck();
+    sendResult = await sendViaWebSocketWithAck(messageId);
   } catch (err) {
     wsError = err;
   }
@@ -707,6 +737,7 @@ async function main() {
     } else {
       console.log(`Delivered to ${target}: ${previewMessage(message)} (ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed})`);
     }
+    closeCommsJournalStores();
     process.exit(0);
   }
 
@@ -735,9 +766,11 @@ async function main() {
         ts: Date.now(),
       });
       console.warn(`WebSocket send unverified (${reason}). Wrote trigger fallback: ${fallbackResult.path}`);
+      closeCommsJournalStores();
       process.exit(0);
     }
     console.error(`WebSocket failed and fallback failed: ${fallbackResult.error}`);
+    closeCommsJournalStores();
     process.exit(1);
   }
 
@@ -749,10 +782,12 @@ async function main() {
       ? `target health ${sendResult?.health?.status || 'unhealthy'}`
     : (sendResult?.error || wsError?.message || 'unknown error');
   console.error(`Send failed: ${reason}`);
+  closeCommsJournalStores();
   process.exit(1);
 }
 
 main().catch((err) => {
+  closeCommsJournalStores();
   console.error('Fatal error:', err.message);
   process.exit(1);
 });

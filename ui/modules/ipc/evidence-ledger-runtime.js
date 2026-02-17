@@ -406,6 +406,30 @@ function normalizeGetIssuesPayload(input) {
   };
 }
 
+function normalizeCommsJournalPayload(input) {
+  const payload = asObject(input);
+  return {
+    messageId: asString(payload.messageId || payload.message_id),
+    sessionId: asString(payload.sessionId || payload.session_id),
+    senderRole: asString(payload.senderRole || payload.sender_role),
+    targetRole: asString(payload.targetRole || payload.target_role),
+    channel: asString(payload.channel),
+    direction: asString(payload.direction),
+    sentAtMs: toNumberOrFallback(payload.sentAtMs ?? payload.sent_at_ms, null),
+    brokeredAtMs: toNumberOrFallback(payload.brokeredAtMs ?? payload.brokered_at_ms, null),
+    rawBody: typeof payload.rawBody === 'string'
+      ? payload.rawBody
+      : (typeof payload.raw_body === 'string' ? payload.raw_body : ''),
+    bodyHash: asString(payload.bodyHash || payload.body_hash),
+    bodyBytes: toNumberOrFallback(payload.bodyBytes ?? payload.body_bytes, null),
+    status: asString(payload.status),
+    ackStatus: asString(payload.ackStatus || payload.ack_status),
+    errorCode: asString(payload.errorCode || payload.error_code),
+    attempt: toNumberOrFallback(payload.attempt, null),
+    metadata: asObject(payload.metadata || payload.meta || payload.metadata_json),
+  };
+}
+
 function enrichPayloadForSource(payload = {}, source = {}) {
   const base = asObject(payload);
   if (!base.createdBy && source.role) {
@@ -526,6 +550,15 @@ function executeEvidenceLedgerOperation(action, payload = {}, options = {}) {
         if (!memory) return { ok: false, reason: 'unavailable' };
         const limit = normalizeGetLimitPayload(enrichedPayload, 50);
         return memory.getRecentCompletions(limit);
+      }
+      case 'upsert-comms-journal': {
+        if (!runtime?.store || typeof runtime.store.upsertCommsJournal !== 'function') {
+          return { ok: false, reason: 'unavailable' };
+        }
+        const record = normalizeCommsJournalPayload(enrichedPayload);
+        return runtime.store.upsertCommsJournal(record, {
+          nowMs: toNumberOrFallback(enrichedPayload.nowMs, null),
+        });
       }
       default:
         return {
