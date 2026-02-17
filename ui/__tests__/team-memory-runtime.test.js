@@ -39,6 +39,19 @@ maybeDescribe('team-memory runtime phase0', () => {
         payload: { summary: 'Message delivery failed during reconnect' },
       },
     ]);
+    evidenceStore.upsertCommsJournal({
+      messageId: 'msg-tag-1',
+      sessionId: 's_444',
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      sentAtMs: 1500,
+      brokeredAtMs: 1501,
+      rawBody: '(ARCHITECT #1): DECISION: Session handoff is source of truth',
+      status: 'brokered',
+      metadata: { traceId: 'trace-tag-1' },
+    }, { nowMs: 1600 });
   });
 
   afterEach(() => {
@@ -220,5 +233,35 @@ maybeDescribe('team-memory runtime phase0', () => {
     });
     expect(guardDeactivated.ok).toBe(true);
     expect(guardDeactivated.guard.active).toBe(false);
+  });
+
+  test('routes extract-comms-tagged-claims action', () => {
+    const init = runtime.initializeTeamMemoryRuntime({
+      runtimeOptions: {
+        storeOptions: {
+          dbPath: path.join(tempDir, 'team-memory.sqlite'),
+        },
+      },
+      forceRuntimeRecreate: true,
+    });
+    expect(init.ok).toBe(true);
+
+    const extracted = runtime.executeTeamMemoryOperation('extract-comms-tagged-claims', {
+      evidenceLedgerDbPath: path.join(tempDir, 'evidence-ledger.db'),
+      sessionId: 's_444',
+      limit: 100,
+      nowMs: 2000,
+    });
+    expect(extracted.ok).toBe(true);
+    expect(extracted.insertedClaims).toBeGreaterThanOrEqual(1);
+
+    const query = runtime.executeTeamMemoryOperation('query-claims', {
+      claimType: 'decision',
+      sessionsBack: 10,
+      limit: 20,
+    });
+    expect(query.ok).toBe(true);
+    expect(query.claims.length).toBeGreaterThanOrEqual(1);
+    expect(query.claims.some((claim) => claim.statement.includes('Session handoff'))).toBe(true);
   });
 });

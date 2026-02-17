@@ -45,6 +45,15 @@ jest.mock('../modules/token-utils', () => ({
   }),
 }));
 
+jest.mock('../modules/main/comms-journal', () => ({
+  queryCommsJournalEntries: jest.fn(() => []),
+}));
+
+jest.mock('../modules/main/auto-handoff-materializer', () => ({
+  materializeSessionHandoff: jest.fn(() => ({ ok: false, reason: 'not_materialized' })),
+  buildSessionHandoffMarkdown: jest.fn(() => ''),
+}));
+
 const fs = require('fs');
 const config = require('../config');
 const { estimateTokens, truncateToTokenBudget } = require('../modules/token-utils');
@@ -198,7 +207,7 @@ describe('Context Compressor Module', () => {
 
       _internals.readHandoffFile('2');
 
-      expect(config.resolveCoordPath).toHaveBeenCalledWith(path.join('handoffs', '2.md'), {});
+      expect(config.resolveCoordPath).toHaveBeenCalledWith(path.join('handoffs', 'session.md'), {});
     });
   });
 

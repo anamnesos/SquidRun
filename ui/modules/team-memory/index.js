@@ -40,12 +40,15 @@ const DEFAULT_ERRORS_PATH = resolveDefaultErrorsPath();
 const DEFAULT_INTEGRITY_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_BELIEF_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_PATTERN_MINING_INTERVAL_MS = 60 * 1000;
+const DEFAULT_COMMS_TAGGED_CLAIMS_INTERVAL_MS = 30 * 1000;
 const DEFAULT_BELIEF_AGENTS = Object.freeze(['architect', 'builder', 'oracle']);
 const DEFAULT_EVIDENCE_LEDGER_DB_PATH = resolveDefaultEvidenceLedgerDbPath();
 
 let integritySweepTimer = null;
 let beliefSnapshotTimer = null;
 let patternMiningTimer = null;
+let commsTaggedClaimsTimer = null;
+let lastTaggedExtractionCursorMs = null;
 let patternHookLedgerStore = null;
 let patternHookLedgerStorePath = null;
 
@@ -456,10 +459,87 @@ function isPatternMiningSweepRunning() {
   return Boolean(patternMiningTimer);
 }
 
+async function runCommsTaggedClaimsExtraction(options = {}) {
+  const payload = asObject(options.payload);
+  const opPayload = {
+    evidenceLedgerDbPath: options.evidenceLedgerDbPath || payload.evidenceLedgerDbPath || DEFAULT_EVIDENCE_LEDGER_DB_PATH,
+    sessionId: options.sessionId || payload.sessionId || null,
+    sinceMs: options.sinceMs ?? payload.sinceMs ?? null,
+    untilMs: options.untilMs ?? payload.untilMs ?? null,
+    limit: options.limit ?? payload.limit,
+    nowMs: options.nowMs ?? payload.nowMs,
+  };
+  return executeTeamMemoryOperation('extract-comms-tagged-claims', opPayload, options);
+}
+
+function startCommsTaggedClaimsSweep(options = {}) {
+  stopCommsTaggedClaimsSweep();
+
+  const intervalMsRaw = Number(options.intervalMs);
+  const intervalMs = Number.isFinite(intervalMsRaw) && intervalMsRaw > 0
+    ? Math.floor(intervalMsRaw)
+    : DEFAULT_COMMS_TAGGED_CLAIMS_INTERVAL_MS;
+  const initialSinceMs = Number.isFinite(Number(options.initialSinceMs))
+    ? Math.floor(Number(options.initialSinceMs))
+    : null;
+  lastTaggedExtractionCursorMs = initialSinceMs;
+
+  const runExtraction = async () => {
+    try {
+      const result = await runCommsTaggedClaimsExtraction({
+        ...options,
+        sinceMs: lastTaggedExtractionCursorMs,
+      });
+      if (result?.ok === false) {
+        log.warn('TeamMemory', `Comms tagged claim extraction unavailable: ${result.reason || 'unknown'}`);
+        return;
+      }
+
+      const newestTsMs = Number.isFinite(Number(result?.newestTsMs))
+        ? Math.floor(Number(result.newestTsMs))
+        : null;
+      if (newestTsMs !== null) {
+        lastTaggedExtractionCursorMs = newestTsMs + 1;
+      }
+
+      if (Number(result?.insertedClaims || 0) > 0) {
+        log.info(
+          'TeamMemory',
+          `Comms tagged extraction inserted ${result.insertedClaims} claim(s) from ${result.taggedMessages || 0} tagged message(s)`
+        );
+      }
+    } catch (err) {
+      log.warn('TeamMemory', `Comms tagged claim extraction failed: ${err.message}`);
+    }
+  };
+
+  if (options.immediate !== false) {
+    runExtraction();
+  }
+
+  commsTaggedClaimsTimer = setInterval(runExtraction, intervalMs);
+  if (typeof commsTaggedClaimsTimer.unref === 'function') {
+    commsTaggedClaimsTimer.unref();
+  }
+}
+
+function stopCommsTaggedClaimsSweep() {
+  if (commsTaggedClaimsTimer) {
+    clearInterval(commsTaggedClaimsTimer);
+    commsTaggedClaimsTimer = null;
+  }
+  lastTaggedExtractionCursorMs = null;
+}
+
+function isCommsTaggedClaimsSweepRunning() {
+  return Boolean(commsTaggedClaimsTimer);
+}
+
 function closeTeamMemoryRuntime(options = {}) {
   stopIntegritySweep();
   stopBeliefSnapshotSweep();
   stopPatternMiningSweep();
+  stopCommsTaggedClaimsSweep();
   closePatternHookLedgerStore();
   runtime.closeSharedRuntime();
   return workerClient.closeRuntime({
@@ -471,6 +551,7 @@ async function resetForTests() {
   stopIntegritySweep();
   stopBeliefSnapshotSweep();
   stopPatternMiningSweep();
+  stopCommsTaggedClaimsSweep();
   closePatternHookLedgerStore();
   runtime.closeSharedRuntime();
   await workerClient.resetForTests();
@@ -491,6 +572,10 @@ module.exports = {
   startPatternMiningSweep,
   stopPatternMiningSweep,
   isPatternMiningSweepRunning,
+  runCommsTaggedClaimsExtraction,
+  startCommsTaggedClaimsSweep,
+  stopCommsTaggedClaimsSweep,
+  isCommsTaggedClaimsSweepRunning,
   closeTeamMemoryRuntime,
   resetForTests,
 };

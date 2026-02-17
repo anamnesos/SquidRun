@@ -2,13 +2,12 @@
  * Context Compressor - Smart context restoration after Claude Code compaction
  *
  * Generates token-budget-constrained markdown snapshots from multiple data sources
- * (handoff files, app-status.json, shared state changelog, build status).
+ * (auto-handoff index, comms journal, app-status.json, shared state changelog, build status).
  * Snapshots are written to coord-root/context-snapshots/{paneId}.md for lifecycle
  * hooks to read after compaction events.
  *
- * IMPORTANT: Agent handoff files (coord-root/handoffs/{paneId}.md) are READ but
- * never overwritten by this module. Agents write handoff content there before
- * session end; this module incorporates that content into auto-generated snapshots.
+ * IMPORTANT: Handoff content is sourced from coord-root/handoffs/session.md
+ * (auto-materialized from comms_journal). Per-pane handoff files are deprecated.
  *
  * Auto-refreshes on watched file changes (via watcher.addWatch) and a 300s timer.
  */
@@ -24,16 +23,21 @@ const {
 } = require('../config');
 const log = require('./logger');
 const { estimateTokens, truncateToTokenBudget } = require('./token-utils');
+const {
+  materializeSessionHandoff,
+  buildSessionHandoffMarkdown,
+} = require('./main/auto-handoff-materializer');
+const { queryCommsJournalEntries } = require('./main/comms-journal');
 
 const SNAPSHOTS_RELATIVE_DIR = 'context-snapshots';
-const HANDOFFS_RELATIVE_DIR = 'handoffs';
+const SESSION_HANDOFF_RELATIVE_PATH = path.join('handoffs', 'session.md');
 const APP_STATUS_RELATIVE_PATH = 'app-status.json';
 const DEFAULT_MAX_TOKENS = 3000;
 const REFRESH_INTERVAL_MS = 300000; // 300 seconds
 
 // Priority sections for token budget allocation
 const SECTION_PRIORITIES = {
-  handoff: 110,        // Agent-written handoff content — highest priority
+  handoff: 110,        // Auto-materialized handoff content — highest priority
   appStatus: 105,      // Session number + note from app-status.json
   teamStatus: 100,
   recentChanges: 90,
@@ -42,10 +46,10 @@ const SECTION_PRIORITIES = {
 };
 
 // Files to watch for auto-refresh (relative to workspace/coord roots).
-// Handoff files and app-status trigger immediate refresh when agents update them.
+// Session handoff + app-status trigger immediate refresh.
 const WATCHED_FILES = [
   APP_STATUS_RELATIVE_PATH,
-  ...PANE_IDS.map(id => path.join('handoffs', `${id}.md`)),
+  SESSION_HANDOFF_RELATIVE_PATH,
 ];
 
 // Module state
@@ -80,18 +84,13 @@ function getSnapshotsDir(options = {}) {
   return resolveCoordFile(SNAPSHOTS_RELATIVE_DIR, options);
 }
 
-function getHandoffsDir(options = {}) {
-  return resolveCoordFile(HANDOFFS_RELATIVE_DIR, options);
-}
-
 function getSnapshotPath(paneId, options = {}) {
   const id = String(paneId || '1');
   return resolveCoordFile(path.join(SNAPSHOTS_RELATIVE_DIR, `${id}.md`), options);
 }
 
-function getHandoffPath(paneId, options = {}) {
-  const id = String(paneId || '1');
-  return resolveCoordFile(path.join(HANDOFFS_RELATIVE_DIR, `${id}.md`), options);
+function getSessionHandoffPath(options = {}) {
+  return resolveCoordFile(SESSION_HANDOFF_RELATIVE_PATH, options);
 }
 
 /**
@@ -191,15 +190,46 @@ function readSnapshotProgress(paneId = '1') {
 }
 
 /**
- * Read a handoff file for a specific pane.
- * Handoff files are at coord-root/handoffs/{paneId}.md — written by agents,
- * NEVER overwritten by this module.
- * @param {string} paneId
+ * Read the auto-generated session handoff index.
+ * If missing, attempt to materialize from comms_journal first.
+ * @param {string} paneId - retained for API compatibility (ignored).
  * @returns {string} Content or empty string
  */
-function readHandoffFile(paneId) {
-  const filePath = getHandoffPath(paneId);
-  return readTextFile(filePath);
+function readHandoffFile(_paneId) {
+  const filePath = getSessionHandoffPath();
+  const fromFile = readTextFile(filePath);
+  if (fromFile) return fromFile;
+
+  try {
+    const materialized = materializeSessionHandoff({
+      outputPath: getSessionHandoffPath({ forWrite: true }),
+      legacyMirrorPath: false,
+    });
+    if (materialized?.ok) {
+      const retry = readTextFile(filePath);
+      if (retry) return retry;
+    }
+  } catch {
+    // Fall through to direct journal render.
+  }
+
+  try {
+    const rows = queryCommsJournalEntries({
+      order: 'asc',
+      limit: 1000,
+    });
+    if (Array.isArray(rows) && rows.length > 0) {
+      return buildSessionHandoffMarkdown(rows, {
+        sessionId: '-',
+        nowMs: Date.now(),
+        recentLimit: 120,
+      });
+    }
+  } catch {
+    // best effort fallback only
+  }
+
+  return '';
 }
 
 /**
@@ -237,9 +267,8 @@ function readAppStatus() {
 }
 
 /**
- * Build the Handoff section for a specific pane.
- * Reads agent-written handoff content from workspace/handoffs/{paneId}.md.
- * This is the highest-priority section — it carries session-to-session context.
+ * Build the Handoff section from auto-generated session index.
+ * Highest-priority section for session-to-session context.
  */
 function buildHandoffSection(paneId) {
   const content = readHandoffFile(paneId);
@@ -277,22 +306,53 @@ function buildAppStatusSection() {
 }
 
 /**
- * Build the Team Status section from handoff files (NOT from own output).
- * Reads workspace/handoffs/{paneId}.md for each pane to get a brief summary.
+ * Build the Team Status section from comms_journal activity snapshots.
  */
 function buildTeamStatusSection() {
   const lines = ['### Team Status'];
+
+  let byRole = {};
+  try {
+    const rows = queryCommsJournalEntries({
+      order: 'desc',
+      limit: 500,
+    });
+    for (const row of rows) {
+      const role = String(row?.senderRole || '').trim().toLowerCase();
+      if (!role) continue;
+      if (!byRole[role]) {
+        byRole[role] = {
+          sent: 0,
+          failed: 0,
+          lastMessage: '',
+        };
+      }
+      byRole[role].sent += 1;
+      if (String(row?.status || '').toLowerCase() === 'failed') {
+        byRole[role].failed += 1;
+      }
+      if (!byRole[role].lastMessage && row?.rawBody) {
+        byRole[role].lastMessage = extractHandoffSummary(String(row.rawBody));
+      }
+    }
+  } catch {
+    byRole = {};
+  }
+
+  const fallbackSummary = extractHandoffSummary(readHandoffFile('1'));
   for (const paneId of PANE_IDS) {
     const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
-    const handoffContent = readHandoffFile(paneId);
-    const summary = extractHandoffSummary(handoffContent);
+    const roleKey = role.toLowerCase();
+    const stats = byRole[roleKey] || null;
+    const summary = stats?.lastMessage || fallbackSummary;
 
     if (!summary) {
       lines.push(`- ${role}: No handoff data`);
     } else {
-      // Truncate long summaries to keep team status compact
       const truncated = summary.length > 120 ? summary.slice(0, 117) + '...' : summary;
-      lines.push(`- ${role}: ${truncated}`);
+      const sent = Number(stats?.sent || 0);
+      const failed = Number(stats?.failed || 0);
+      lines.push(`- ${role}: ${truncated} (sent=${sent}, failed=${failed})`);
     }
   }
   return {
@@ -358,7 +418,7 @@ function buildActiveIssuesSection() {
 }
 
 /**
- * Build the Session Progress section from handoff files (not circular self-read).
+ * Build the Session Progress section from handoff index (not circular self-read).
  * Falls back to snapshot progress if handoff files are missing (backwards compat).
  */
 function buildSessionProgressSection() {
@@ -370,7 +430,7 @@ function buildSessionProgressSection() {
     lines.push(`Session: ${sessionNumber}`);
   }
 
-  // Try to get progress from pane 1 handoff file first, then fall back to snapshot
+  // Try to get progress from session handoff first, then fall back to snapshot
   const handoff = readHandoffFile('1');
   if (handoff) {
     const handoffLines = handoff.split('\n').map(l => l.trim()).filter(Boolean);
@@ -380,6 +440,26 @@ function buildSessionProgressSection() {
     if (completedLine) { lines.push(completedLine); hasProgressData = true; }
     if (nextLine) { lines.push(nextLine); hasProgressData = true; }
     if (testsLine) { lines.push(testsLine); hasProgressData = true; }
+    if (!hasProgressData) {
+      const taggedTasks = handoffLines
+        .filter((line) => /\|\s*TASK\s*\|/i.test(line))
+        .slice(-3)
+        .map((line) => line.split('|').map((part) => part.trim()).filter(Boolean).pop())
+        .filter(Boolean);
+      const taggedBlockers = handoffLines
+        .filter((line) => /\|\s*BLOCKER\s*\|/i.test(line))
+        .slice(-2)
+        .map((line) => line.split('|').map((part) => part.trim()).filter(Boolean).pop())
+        .filter(Boolean);
+      if (taggedTasks.length > 0) {
+        lines.push(`Open Tasks: ${taggedTasks.join(' | ')}`);
+        hasProgressData = true;
+      }
+      if (taggedBlockers.length > 0) {
+        lines.push(`Blockers: ${taggedBlockers.join(' | ')}`);
+        hasProgressData = true;
+      }
+    }
   }
 
   // Fall back to snapshot progress only if handoff didn't provide progress data
@@ -440,7 +520,7 @@ function getSessionNumber() {
 function generateSnapshot(paneId, options = {}) {
   const maxTokens = options.maxTokens || DEFAULT_MAX_TOKENS;
 
-  // Collect all sections — handoff + app status are new, high-priority sources
+  // Collect all sections — session handoff + app status are high-priority sources
   const sections = [
     buildHandoffSection(paneId),
     buildAppStatusSection(),
@@ -654,7 +734,8 @@ module.exports = {
     set initialized(v) { initialized = v; },
     WATCHED_FILES,
     get SNAPSHOTS_DIR() { return getSnapshotsDir(); },
-    get HANDOFFS_DIR() { return getHandoffsDir(); },
+    get HANDOFFS_DIR() { return path.dirname(getSessionHandoffPath()); },
+    get SESSION_HANDOFF_PATH() { return getSessionHandoffPath(); },
     APP_STATUS_RELATIVE_PATH,
     get APP_STATUS_PATH() { return getAppStatusPath(); },
     DEFAULT_MAX_TOKENS,
