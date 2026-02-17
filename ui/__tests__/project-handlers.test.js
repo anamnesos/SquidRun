@@ -8,6 +8,7 @@ const {
   createDefaultContext,
 } = require('./helpers/ipc-harness');
 const path = require('path');
+const { getProjectRoot, getHivemindRoot, setProjectRoot, resetProjectRoot } = require('../config');
 
 // Mock fs
 jest.mock('fs', () => ({
@@ -35,6 +36,7 @@ describe('Project Handlers', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    resetProjectRoot();
     harness = createIpcHarness();
     ctx = createDefaultContext({ ipcMain: harness.ipcMain });
     ctx.PANE_IDS = ['1', '2', '5'];
@@ -67,7 +69,38 @@ describe('Project Handlers', () => {
   });
 
   afterEach(() => {
+    resetProjectRoot();
     jest.clearAllMocks();
+  });
+
+  describe('startup operating mode sync', () => {
+    test('resets stale project root when startup mode is developer', () => {
+      setProjectRoot('/stale/project-root');
+      expect(path.resolve(getProjectRoot())).toBe(path.resolve('/stale/project-root'));
+
+      const startupHarness = createIpcHarness();
+      const startupCtx = createDefaultContext({ ipcMain: startupHarness.ipcMain });
+      startupCtx.PANE_IDS = ['1', '2', '5'];
+      startupCtx.currentSettings = {
+        operatingMode: 'developer',
+      };
+      startupCtx.watcher.readState = jest.fn(() => ({ project: '/external/project' }));
+
+      const startupDeps = {
+        loadSettings: jest.fn(() => ({ recentProjects: [], paneProjects: {} })),
+        saveSettings: jest.fn(),
+        readAppStatus: jest.fn(() => ({ session: 159 })),
+        getSessionId: jest.fn(() => 'app-session-159'),
+      };
+
+      registerProjectHandlers(startupCtx, startupDeps);
+
+      expect(path.resolve(getProjectRoot())).toBe(path.resolve(getHivemindRoot()));
+      expect(startupCtx.mainWindow.webContents.send).not.toHaveBeenCalledWith(
+        'project-warning',
+        expect.anything()
+      );
+    });
   });
 
   describe('select-project', () => {
