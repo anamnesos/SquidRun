@@ -132,7 +132,17 @@ function registerProjectHandlers(ctx, deps) {
     const operatingMode = ctx?.currentSettings?.operatingMode
       || loadSettings?.()?.operatingMode;
     const initialProject = ctx?.watcher?.readState?.()?.project || null;
-    syncProjectRoot(operatingMode === 'developer' ? null : initialProject);
+    if (operatingMode === 'developer') {
+      syncProjectRoot(null);
+    } else {
+      syncProjectRoot(initialProject);
+      if (!initialProject) {
+        log.warn('Project', 'Operating in project mode but no project selected — agents will use Hivemind root as CWD');
+        if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
+          ctx.mainWindow.webContents.send('project-warning', 'No project selected');
+        }
+      }
+    }
   } catch (_) {
     // Keep startup resilient if watcher state is not available yet.
   }

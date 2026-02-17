@@ -194,6 +194,33 @@ class ContextInjectionManager {
     return result.join('\n').replace(/\n{3,}/g, '\n\n');
   }
 
+  _buildActiveProjectSection() {
+    try {
+      const state = this.ctx?.watcher?.readState?.();
+      const project = typeof state?.project === 'string' ? state.project.trim() : '';
+      if (!project) return '';
+
+      const hivemindRoot = path.resolve(this.projectRoot);
+      const normalizedProject = path.resolve(project);
+
+      // Skip if project IS Hivemind itself (developer mode)
+      if (normalizedProject === hivemindRoot) return '';
+
+      const projectName = path.basename(normalizedProject);
+      const lines = [
+        '## Active Project',
+        `- Project: ${projectName}`,
+        `- Path: ${normalizedProject}`,
+        `- Hivemind root: ${hivemindRoot}`,
+        '',
+        `Your working directory is the project above, NOT Hivemind. Hivemind coordination files (.hivemind/app-status.json, triggers, etc.) are at the Hivemind root path.`,
+      ];
+      return lines.join('\n');
+    } catch (_) {
+      return '';
+    }
+  }
+
   _buildUserProfileSection() {
     const settings = this.ctx.currentSettings || {};
     const name = asNonEmptyString(settings.userName);
@@ -258,7 +285,13 @@ class ContextInjectionManager {
       parts.push(runtimeSnapshot);
     }
 
-    // 5. User profile — name, experience level, communication preferences
+    // 5. Active project context — explicit project awareness for agents
+    const projectSection = this._buildActiveProjectSection();
+    if (projectSection) {
+      parts.push(projectSection);
+    }
+
+    // 6. User profile — name, experience level, communication preferences
     const userProfile = this._buildUserProfileSection();
     if (userProfile) {
       parts.push(userProfile);

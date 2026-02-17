@@ -559,6 +559,11 @@ function setupProjectListener() {
   registerScopedIpcListener('project', 'project-changed', (event, projectPath) => {
     log.info('Project', 'Changed to:', projectPath);
     uiView.updateProjectDisplay(projectPath);
+    showToast(`Project changed to ${projectPath ? require('path').basename(projectPath) : 'none'} — restart agents to apply`, 'warning');
+  });
+  registerScopedIpcListener('project', 'project-warning', (event, message) => {
+    log.warn('Project', message);
+    showToast(message, 'warning');
   });
 }
 
