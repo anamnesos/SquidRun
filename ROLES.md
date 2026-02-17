@@ -57,8 +57,9 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 6. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
 
 **Builder / Oracle (panes 2, 5):**
-1. Verify auto-injected context (sourced from Team Memory DB).
-2. Check in to Architect via `hm-send` — one line, no extras.
+1. Read handoff file at `workspace/handoffs/{paneId}.md` (persists across sessions).
+2. Verify auto-injected context (sourced from Team Memory DB).
+3. Check in to Architect via `hm-send` — one line, no extras.
 
 ## ARCHITECT
 
