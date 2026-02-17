@@ -57,7 +57,7 @@ function createRecoveryController(options = {}) {
    */
   function markPotentiallyStuck(paneId) {
     const id = String(paneId);
-    if ((typeof isCodexPane === 'function' && isCodexPane(id)) || (typeof isGeminiPane === 'function' && isGeminiPane(id))) return; // Only Claude panes use trusted Enter and can get stuck
+    if (typeof isGeminiPane === 'function' && isGeminiPane(id)) return; // Gemini PTY submit is reliable enough to skip stuck sweeper
 
     const existing = potentiallyStuckPanes.get(id);
     if (existing) {
@@ -81,7 +81,7 @@ function createRecoveryController(options = {}) {
   }
 
   /**
-   * Stuck message sweeper - periodic safety net for Claude panes
+   * Stuck message sweeper - periodic safety net for non-Gemini panes
    * Checks panes marked as potentially stuck and retries Enter if idle
    */
   async function sweepStuckMessages() {
@@ -90,8 +90,7 @@ function createRecoveryController(options = {}) {
 
     const helpers = typeof getInjectionHelpers === 'function' ? getInjectionHelpers() : null;
     const focusWithRetry = helpers?.focusWithRetry;
-    const sendEnterToPane = helpers?.sendEnterToPane;
-    if (typeof focusWithRetry !== 'function' || typeof sendEnterToPane !== 'function') {
+    if (typeof focusWithRetry !== 'function') {
       return;
     }
 
@@ -124,20 +123,18 @@ function createRecoveryController(options = {}) {
       const paneEl = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
       const textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
 
-      if (textarea) {
-        const focusOk = await focusWithRetry(textarea);
-        if (focusOk) {
-          // Use sendEnterToPane helper (handles bypass flag + DOM Enter dispatch)
-          const enterResult = await sendEnterToPane(paneId);
-          if (enterResult.success) {
-            log.info(`StuckSweeper ${paneId}`, `Recovery Enter sent via ${enterResult.method}`);
-            // Don't remove from stuck list yet - wait for output to confirm success
-          } else {
-            log.error(`StuckSweeper ${paneId}`, 'Recovery Enter failed');
-          }
-        } else {
-          log.warn(`StuckSweeper ${paneId}`, 'Focus failed for recovery');
-        }
+      if (!textarea) {
+        log.warn(`StuckSweeper ${paneId}`, 'No textarea available for recovery');
+        continue;
+      }
+
+      const focusOk = await focusWithRetry(textarea);
+      if (focusOk) {
+        // Use nudge path (PTY Enter) for all runtimes.
+        nudgePane(paneId);
+        log.info(`StuckSweeper ${paneId}`, 'Recovery Enter sent via nudgePane');
+      } else {
+        log.warn(`StuckSweeper ${paneId}`, 'Focus failed for recovery');
       }
     }
 
@@ -282,7 +279,7 @@ function createRecoveryController(options = {}) {
     resetUnstickState(id);
   }
 
-  // Nudge a stuck pane - sends Enter to unstick Claude Code
+  // Nudge a stuck pane - sends PTY Enter to unstick all runtimes.
   // Uses Enter only (ESC sequences were interrupting active agents)
   function nudgePane(paneId) {
     // Mark as typed so our own Enter isn't blocked
