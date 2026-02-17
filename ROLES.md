@@ -49,16 +49,16 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 ### Startup Baseline
 
 **Architect (pane 1):**
-1. Query Evidence Ledger context: `node D:/projects/hivemind/ui/scripts/hm-memory.js context --role architect`.
+1. Read the **Startup Briefing** delivered to your terminal (summarizes Comm Journal, open Tasks, and unresolved Claims).
 2. Read `.hivemind/app-status.json`.
 3. Check `.hivemind/build/blockers.md` and `.hivemind/build/errors.md`.
-4. Read session handoff index at `workspace/handoffs/session.md` (auto-generated, persists across sessions).
-5. Query Team Memory for active claims: `node D:/projects/hivemind/ui/scripts/hm-claim.js query --status proposed`.
+4. Read session handoff index at `workspace/handoffs/session.md` (auto-generated from `comms_journal`).
+5. Process unresolved Claims via `record-consensus` as your first technical action.
 6. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
 
 **Builder / Oracle (panes 2, 5):**
-1. Read session handoff index at `workspace/handoffs/session.md` (auto-generated, persists across sessions).
-2. Verify auto-injected context (sourced from Team Memory DB).
+1. Read session handoff index at `workspace/handoffs/session.md` (auto-generated from `comms_journal`).
+2. Verify context snapshots in `.hivemind/context-snapshots/[paneId].md`.
 3. Check in to Architect via `hm-send` — one line, no extras.
 
 ## ARCHITECT
