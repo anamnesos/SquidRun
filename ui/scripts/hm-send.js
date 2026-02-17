@@ -186,8 +186,47 @@ function resolveProjectContextFromLink(startDir = process.cwd()) {
   };
 }
 
-function applyProjectContextFromLink(startDir = process.cwd()) {
-  const projectContext = resolveProjectContextFromLink(startDir);
+function readProjectContextFromState() {
+  const candidates = [];
+  if (typeof resolveCoordPath === 'function') {
+    candidates.push(resolveCoordPath('state.json'));
+  }
+  candidates.push(path.join(WORKSPACE_PATH, 'state.json'));
+
+  for (const candidate of candidates) {
+    const parsed = readJsonFileSafe(candidate);
+    const projectValue = typeof parsed?.project === 'string'
+      ? parsed.project.trim()
+      : '';
+    if (!projectValue) continue;
+    const projectPath = path.resolve(projectValue);
+    return {
+      source: 'state.json',
+      statePath: candidate,
+      projectPath,
+      projectName: path.basename(projectPath),
+    };
+  }
+
+  return null;
+}
+
+function resolveLocalProjectContext(startDir = process.cwd()) {
+  const fromLink = resolveProjectContextFromLink(startDir);
+  if (fromLink?.projectPath) return fromLink;
+
+  const fromState = readProjectContextFromState();
+  if (fromState?.projectPath) return fromState;
+
+  const cwdPath = path.resolve(startDir);
+  return {
+    source: 'cwd',
+    projectPath: cwdPath,
+    projectName: path.basename(cwdPath),
+  };
+}
+
+function applyProjectContext(projectContext = null) {
   if (!projectContext?.projectPath) return null;
   if (typeof setProjectRoot === 'function') {
     try {
@@ -199,7 +238,21 @@ function applyProjectContextFromLink(startDir = process.cwd()) {
   return projectContext;
 }
 
-applyProjectContextFromLink(process.cwd());
+const localProjectContext = applyProjectContext(resolveLocalProjectContext(process.cwd()));
+
+function buildProjectMetadata(context = localProjectContext) {
+  if (!context?.projectPath) return null;
+  const projectPath = String(context.projectPath || '').trim();
+  const projectName = String(context.projectName || path.basename(projectPath) || '').trim();
+  if (!projectPath && !projectName) return null;
+  return {
+    name: projectName || null,
+    path: projectPath || null,
+    source: String(context.source || 'unknown'),
+  };
+}
+
+const projectMetadata = buildProjectMetadata(localProjectContext);
 
 function waitForMatch(ws, predicate, timeoutMs, timeoutLabel) {
   return new Promise((resolve, reject) => {
@@ -542,6 +595,7 @@ async function sendViaWebSocketWithAck() {
       target,
       content: message,
       priority,
+      metadata: projectMetadata ? { project: projectMetadata } : undefined,
       messageId,
       ackRequired: true,
       attempt,
@@ -666,6 +720,7 @@ async function main() {
         messageId: sendResult?.messageId || null,
         target,
         role,
+        project: projectMetadata || null,
         reason,
         attemptsUsed: sendResult?.attemptsUsed ?? (retries + 1),
         maxAttempts: retries + 1,
