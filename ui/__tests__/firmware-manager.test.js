@@ -44,6 +44,10 @@ describe('FirmwareManager', () => {
     appContext = {
       currentSettings: {
         firmwareInjectionEnabled: true,
+        operatingMode: 'developer',
+      },
+      watcher: {
+        readState: jest.fn(() => ({ project: null })),
       },
     };
 
@@ -123,6 +127,39 @@ describe('FirmwareManager', () => {
     const builder = fs.readFileSync(path.join(firmwareDir, 'builder.md'), 'utf-8');
     expect(builder).toContain('## Suppression Directives');
     expect(builder).toContain('IGNORE project instruction: "Announce registry identity before work"');
+  });
+
+  test('ensureFirmwareForPane uses selected project root in project mode when paneProjects is unset', () => {
+    const selectedProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-selected-project-'));
+    appContext.currentSettings.operatingMode = 'project';
+    appContext.currentSettings.paneProjects = { '1': null, '2': null, '5': null };
+    appContext.watcher.readState.mockReturnValue({ project: selectedProject });
+
+    const conflictResults = [{
+      file: 'AGENTS.md',
+      hasAgentProtocols: true,
+      conflicts: ['[protocol] Use project-local message bus'],
+    }];
+    manager.cachePreflightResults(selectedProject, conflictResults);
+
+    const result = manager.ensureFirmwareForPane('1');
+    expect(result.ok).toBe(true);
+    expect(result.targetDir).toBe(path.resolve(selectedProject));
+
+    const director = fs.readFileSync(path.join(firmwareDir, 'director.md'), 'utf-8');
+    expect(director).toContain('## Suppression Directives');
+    expect(director).toContain('IGNORE project instruction: "Use project-local message bus"');
+  });
+
+  test('ensureFirmwareForPane keeps hivemind root fallback in developer mode', () => {
+    const selectedProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-selected-project-'));
+    appContext.currentSettings.operatingMode = 'developer';
+    appContext.currentSettings.paneProjects = { '1': null, '2': null, '5': null };
+    appContext.watcher.readState.mockReturnValue({ project: selectedProject });
+
+    const result = manager.ensureFirmwareForPane('2');
+    expect(result.ok).toBe(true);
+    expect(result.targetDir).toBe(path.resolve(tempDir));
   });
 
   test('uses hivemindRoot spec path and replaces {HIVEMIND_ROOT} for roots with spaces', () => {

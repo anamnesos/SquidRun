@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const log = require('../logger');
-const { PROJECT_ROOT, COORD_ROOT, getHivemindRoot } = require('../../config');
+const { PROJECT_ROOT, COORD_ROOT, getHivemindRoot, getProjectRoot } = require('../../config');
 const { execFileSync } = require('child_process');
 
 const SPEC_RELATIVE_PATH = path.join('workspace', 'specs', 'firmware-injection-spec.md');
@@ -149,6 +149,30 @@ class FirmwareManager {
     ));
   }
 
+  getOperatingMode() {
+    return String(this.ctx?.currentSettings?.operatingMode || '').trim().toLowerCase();
+  }
+
+  getSelectedProjectRoot() {
+    if (this.getOperatingMode() === 'developer') {
+      return null;
+    }
+
+    try {
+      const state = this.ctx?.watcher?.readState?.();
+      const projectFromState = this.normalizeTargetDir(state?.project);
+      if (projectFromState) return projectFromState;
+    } catch (_) {
+      // Fallback to config project root when watcher state is unavailable.
+    }
+
+    if (typeof getProjectRoot === 'function') {
+      return this.normalizeTargetDir(getProjectRoot());
+    }
+
+    return null;
+  }
+
   resolveTargetDirForPane(paneId) {
     const paneProjects = this.ctx?.currentSettings?.paneProjects;
     if (paneProjects && typeof paneProjects === 'object') {
@@ -156,6 +180,10 @@ class FirmwareManager {
       const normalized = this.normalizeTargetDir(paneProjectPath);
       if (normalized) return normalized;
     }
+
+    const selectedProjectRoot = this.getSelectedProjectRoot();
+    if (selectedProjectRoot) return selectedProjectRoot;
+
     return this.projectRoot;
   }
 
