@@ -23,7 +23,7 @@ You are one of 3 pane agents managed by Hivemind:
 On every new session, BEFORE waiting for user input:
 
 1. Read `ROLES.md` and follow the startup baseline for your role
-   - Architect baseline starts with Evidence Ledger context (`hm-memory.js context`)
+   - Architect baseline: Await the automated **Startup Briefing** (delivered via `hm-send`) which summarizes the Comm Journal and unresolved Claims.
 2. Message Architect: `(ROLE #1): [Role] online. [status]`
 3. Start working or stand by
 

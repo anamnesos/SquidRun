@@ -1,8 +1,18 @@
 # Team Memory Runtime — Build Spec v0.3
 
-**Status:** FINAL — DevOps + Architect aligned
+**Status:** FINAL + Runtime Addendum (updated 2026-02-17)
 **Author:** Architect (with inputs from DevOps #9-#12, Analyst #10-#12)
 **Date:** 2026-02-13
+
+---
+
+## Runtime Addendum (2026-02-17)
+
+- Layer 0 is now implemented as `comms_journal` in the Evidence Ledger database.
+- Deterministic session continuity is generated to `.hivemind/handoffs/session.md` and mirrored to `workspace/handoffs/session.md`.
+- Layer 2 extraction is live for explicit tags (`DECISION:`, `TASK:`, `FINDING:`, `BLOCKER:`).
+- Startup continuity is split: Architect receives an automated startup brief; Builder/Oracle read the session handoff index.
+- Runtime coordination paths write to `.hivemind/*` with `workspace/*` as legacy read fallback.
 
 ---
 
@@ -38,7 +48,7 @@ Layer 4: PATTERN ENGINE            — recurring motifs, risk prediction, drift
 Layer 3: BELIEF & CONSENSUS        — what agents think is true, contradictions
 Layer 2: SEARCH & RETRIEVAL        — FTS5, scope queries, temporal queries
 Layer 1: CLAIM GRAPH               — causal DAG, decision lineage, negative knowledge
-Layer 0: EVENT STORE               — immutable evidence (ALREADY BUILT)
+Layer 0: COMMUNICATION JOURNAL     — append-only comms history in Evidence Ledger DB
 ```
 
 ---
@@ -47,12 +57,12 @@ Layer 0: EVENT STORE               — immutable evidence (ALREADY BUILT)
 
 ### 4.1 Location & Ownership
 
-- **Path:** `workspace/runtime/team-memory.sqlite` (persistent across sessions, co-located with Evidence Ledger)
+- **Path:** `.hivemind/runtime/team-memory.sqlite` (persistent across sessions, co-located with Evidence Ledger; `workspace/runtime/team-memory.sqlite` remains legacy fallback)
 - **Single writer:** Dedicated fork worker process (like Evidence Ledger). All writes go through the worker.
 - **Read access:** Any agent can query via IPC (`team-memory:query`)
-- **Failure mode:** If worker is down, reads continue (SQLite WAL allows concurrent reads). Writes spool to a **durable append-only file** at `workspace/runtime/team-memory-spool.jsonl` (same pattern as outbound WS queue). On worker recovery, spool is replayed and truncated. No silent drops — if app crashes while worker is down, spooled writes survive on disk.
+- **Failure mode:** If worker is down, reads continue (SQLite WAL allows concurrent reads). Writes spool to a **durable append-only file** at `.hivemind/runtime/team-memory-spool.jsonl` (same pattern as outbound WS queue). On worker recovery, spool is replayed and truncated. No silent drops — if app crashes while worker is down, spooled writes survive on disk.
 - **Write ack semantics:** When worker is healthy, API returns `{accepted: true, committed: true}`. When worker is down and write is spooled, API returns `{accepted: true, queued: true}`. Callers must NOT treat queued writes as committed. A `team-memory:flushed` IPC event fires when spooled writes are committed after worker recovery.
-- **Agent identity:** Canonical agent identifiers are `architect`, `devops`, `analyst`, `frontend`, `reviewer`. An alias map normalizes variants (`arch`→`architect`, `ana`→`analyst`, `infra`→`devops`, etc.) at the API boundary before any write. Consensus and claim tables store only canonical IDs — no fragmented identities.
+- **Agent identity:** Canonical agent identifiers are `architect`, `builder`, `oracle`. Alias normalization maps legacy variants (`devops`/`infra`/`backend`→`builder`, `analyst`/`ana`→`oracle`, `arch`→`architect`) at the API boundary before any write. Consensus and claim tables store only canonical IDs.
 
 ### 4.2 Schema Versioning
 
@@ -83,7 +93,7 @@ CREATE TABLE claims (
   claim_type    TEXT NOT NULL CHECK (claim_type IN ('fact', 'decision', 'hypothesis', 'negative')),
   owner         TEXT NOT NULL,          -- which agent/role created this
   confidence    REAL DEFAULT 1.0 CHECK (confidence BETWEEN 0.0 AND 1.0),
-  status        TEXT DEFAULT 'proposed' CHECK (status IN ('proposed', 'confirmed', 'contested', 'deprecated')),
+  status        TEXT DEFAULT 'proposed' CHECK (status IN ('proposed', 'confirmed', 'contested', 'pending_proof', 'deprecated')),
   supersedes    TEXT REFERENCES claims(id),
   session       TEXT,                   -- session ID (matches Evidence Ledger session_id convention)
   ttl_hours     INTEGER,               -- optional expiry (NULL = permanent)
@@ -283,6 +293,10 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 - `proposed → deprecated`: Owner deprecates own unconfirmed claim
 - `confirmed → contested`: New `challenge` edge added
 - `confirmed → deprecated`: Owner or Architect deprecates
+- `contested → pending_proof`: Guard/experiment policy requires executable proof before resolution
+- `pending_proof → confirmed`: Experiment/evidence supports claim resolution
+- `pending_proof → contested`: Proof run failed or was inconclusive
+- `pending_proof → deprecated`: Owner or Architect deprecates
 - `contested → confirmed`: All `challenge` edges withdrawn (agent changes position to support)
 - `contested → deprecated`: Owner or Architect deprecates
 - `deprecated → (any)`: **NOT ALLOWED** — deprecated is terminal. Create a new claim with `supersedes` instead.
@@ -411,7 +425,7 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 
 ### What's New
 
-- `workspace/runtime/team-memory.sqlite` — single database for Layers 1-5
+- `.hivemind/runtime/team-memory.sqlite` — single database for Layers 1-5
 - `ui/modules/team-memory/` — module directory
   - `worker.js` — fork worker (single writer)
   - `claims.js` — CRUD for claims + evidence bindings + decisions
@@ -439,7 +453,7 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 
 | Question | Resolution |
 |----------|-----------|
-| Where does team-memory.sqlite live? | `workspace/runtime/` — persistent, co-located with Evidence Ledger |
+| Where does team-memory.sqlite live? | `.hivemind/runtime/` (with `workspace/runtime/` as legacy fallback) — persistent, co-located with Evidence Ledger |
 | Single writer or multi-writer? | Single writer (fork worker) — consistent with Evidence Ledger pattern |
 | Claims survive across sessions? | Yes — that's the whole point |
 | Pattern engine: worker or hook? | HYBRID — hooks for cheap ingestion/immediate checks, worker for heavy mining/scoring |
@@ -507,7 +521,7 @@ Experiments do NOT attach raw file paths to claims. Evidence flows through the L
 1. Agent calls run_experiment(profile, claimId)
 2. Fork worker spawns isolated PTY (no UI binding)
 3. Captures stdout, stderr, exit code, duration
-4. Artifacts saved to workspace/runtime/experiments/<runId>/
+4. Artifacts saved to `.hivemind/runtime/experiments/<runId>/`
    ├── stdout.log
    ├── stderr.log
    └── meta.json (git SHA, cwd, env fingerprint, timestamps, hashes)
@@ -552,7 +566,7 @@ CREATE INDEX idx_experiments_session ON experiments(session);
 Experiments run **named profiles**, not arbitrary commands. This prevents command injection from claim text.
 
 ```json
-// workspace/runtime/experiment-profiles.json
+// .hivemind/runtime/experiment-profiles.json
 {
   "jest-suite": {
     "command": "cd /d/projects/hivemind/ui && npx jest --no-coverage",
@@ -662,16 +676,16 @@ Integrity rule: attach always goes through Evidence Ledger event_id. Ledger even
 ### 12.9 Build Phases
 
 #### Phase 6a: Foundation
-- [ ] Experiment profiles schema + loader (`workspace/runtime/experiment-profiles.json`)
+- [ ] Experiment profiles schema + loader (`.hivemind/runtime/experiment-profiles.json`)
 - [ ] `experiments` table via migration v6
 - [ ] Worker pair: `ui/modules/experiment/worker.js` + `worker-client.js`
 - [ ] PTY spawn + capture + timeout + kill tree
-- [ ] Artifact storage: `workspace/runtime/experiments/<runId>/`
+- [ ] Artifact storage: `.hivemind/runtime/experiments/<runId>/`
 
 #### Phase 6b: Evidence Chain
 - [ ] Evidence Ledger integration: `experiment.completed` event with hashes
 - [ ] Auto-attach to claim_evidence (supports/contradicts based on exit code)
-- [ ] `pending_proof` claim status (add to state machine)
+- [x] `pending_proof` claim status added to state machine/runtime
 - [ ] Guard trigger: block-path guards auto-queue experiments
 
 #### Phase 6c: CLI + IPC

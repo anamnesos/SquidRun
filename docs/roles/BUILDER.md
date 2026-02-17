@@ -3,4 +3,4 @@
 This file is archived and no longer authoritative.
 
 Use `ROLES.md` for role definitions and startup behavior.
-Use Evidence Ledger + `.hivemind/` coordination state for current-session truth.
+Session continuity source is the auto-generated handoff index: `workspace/handoffs/session.md` (materialized from `comms_journal`).

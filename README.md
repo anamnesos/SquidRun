@@ -8,10 +8,10 @@ This is not a chatbot wrapper. It is a live orchestration runtime for team intel
 
 Most AI tools still treat memory as chat history. Hivemind treats memory as a team system:
 
-- Shared persistent memory with a claim graph
-- Consensus and disagreement tracking
+- Layer 1 (floor): durable cross-channel transcript via Comms Journal (`comms_journal`)
+- Layer 2: tagged claim extraction into Team Memory (`DECISION:`, `TASK:`, `FINDING:`, `BLOCKER:`)
+- Layer 3: deterministic session handoff + startup brief for fast continuity
 - Executable evidence via isolated experiments
-- Real delivery/reliability plumbing across agents
 
 It is a working proof that one person can run a real AI engineering team with production-level coordination.
 
@@ -30,8 +30,10 @@ It is a working proof that one person can run a real AI engineering team with pr
 
 ### Intelligence Layers
 - **Event Kernel (Phases 1-4 complete)** - interaction contracts, telemetry, bridge
-- **Evidence Ledger (runtime active)** - causal event history in SQLite WAL
+- **Evidence Ledger (runtime active)** - causal event history + Comms Journal (`comms_journal`) in SQLite WAL
+- **Auto-Handoff Materializer (runtime active)** - deterministic `.hivemind/handoffs/session.md` from journal rows (mirrored to `workspace/handoffs/session.md`)
 - **Team Memory Runtime (fully shipped)** - Claim Graph -> Search -> Consensus -> Pattern Engine -> Control Plane
+- **Layer 2 Tagged Extraction (runtime active)** - async claim extraction from journal tags into Team Memory
 - **Experiment Engine (Phase 6 shipped)** - isolated PTY execution that attaches tamper-evident results back to claims
 
 ### Notification Channels
@@ -42,7 +44,7 @@ It is a working proof that one person can run a real AI engineering team with pr
 ### Developer Experience
 - **Quality gates** - ESLint, Jest, pre-commit gates, review gate
 - **Current test count** - see latest CI/Jest output (changes frequently)
-- **Session continuity** - intent board + context snapshots + Evidence Ledger hooks
+- **Session continuity** - communication journal + context snapshots + startup briefing
 
 ## Agent Roles
 
@@ -172,11 +174,13 @@ hivemind/
 │   └── __tests__/
 ├── .hivemind/
 │   ├── app-status.json
-│   ├── intent/
+│   ├── handoffs/
+│   │   └── session.md
 │   ├── triggers/
 │   ├── build/
 │   ├── context-snapshots/
 │   ├── runtime/
+│   │   ├── evidence-ledger.db
 │   │   ├── team-memory.sqlite
 │   │   └── experiments/
 ├── workspace/                  # legacy fallback during migration
@@ -194,9 +198,10 @@ hivemind/
 5. `ui/modules/terminal.js` - PTY runtime + pane behavior
 6. `ui/modules/terminal/injection.js` - Injection and submit verification logic
 7. `ui/modules/triggers.js` - Agent-to-agent delivery paths
-8. `ui/modules/team-memory/runtime.js` - Team Memory runtime lifecycle
-9. `ui/modules/experiment/runtime.js` - Experiment execution runtime
-10. `docs/team-memory-spec.md` - Claim graph + experiment architecture
+8. `ui/modules/main/auto-handoff-materializer.js` - deterministic session handoff generation
+9. `ui/modules/team-memory/runtime.js` - Team Memory runtime lifecycle
+10. `ui/modules/experiment/runtime.js` - Experiment execution runtime
+11. `docs/team-memory-spec.md` - Claim graph + experiment architecture (with runtime addendum)
 
 ## Platform
 

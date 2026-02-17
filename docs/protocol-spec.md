@@ -92,8 +92,8 @@ Example: `(ARCH #5): [URGENT] Build is failing on main. Oracle, investigate.`
 On startup, every agent must follow this sequence:
 1. **Identify Role:** Determine role and pane from environment variables (`HIVEMIND_ROLE`, `HIVEMIND_PANE_ID`).
 2. **Role-Specific Baseline:**
-   - **Architect only:** Query Team Memory for active/proposed claims: `node ui/scripts/hm-claim.js query --status proposed`.
-   - **Builder/Oracle:** Verify auto-injected context from Team Memory and skip the `hm-claim` startup query.
+   - **Architect only:** Await the automated **Startup Briefing** (summarizing `comms_journal`, unresolved claims, and failed deliveries).
+   - **Builder/Oracle:** Read the **Session Handoff Index** at `workspace/handoffs/session.md` (auto-materialized from `comms_journal`).
 3. **Signal Readiness:** Message the Architect to check in with a one-line status:
    `node ui/scripts/hm-send.js architect "(ROLE #1): [Role] online. Standing by."`
 
