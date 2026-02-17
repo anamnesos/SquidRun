@@ -20,6 +20,7 @@ jest.mock('../config', () => ({
   WORKSPACE_PATH: '/test/workspace',
   PANE_IDS: ['1', '2', '5'],
   PANE_ROLES: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
+  resolveCoordPath: jest.fn((relPath) => `/coord-root/${String(relPath || '').replace(/\\/g, '/')}`),
 }));
 
 // Mock logger
@@ -45,6 +46,7 @@ jest.mock('../modules/token-utils', () => ({
 }));
 
 const fs = require('fs');
+const config = require('../config');
 const { estimateTokens, truncateToTokenBudget } = require('../modules/token-utils');
 const contextCompressor = require('../modules/context-compressor');
 const { _internals } = contextCompressor;
@@ -218,6 +220,12 @@ describe('Context Compressor Module', () => {
       const status = _internals.readAppStatus();
       expect(status.session).toBe(158);
       expect(status.note).toBe('S158: Enter fix');
+    });
+
+    it('should resolve app-status path through coord root', () => {
+      fs.existsSync.mockReturnValue(false);
+      _internals.readAppStatus();
+      expect(config.resolveCoordPath).toHaveBeenCalledWith('app-status.json', {});
     });
 
     it('should return null when file missing', () => {
@@ -1084,4 +1092,3 @@ describe('Context Compressor Module', () => {
     });
   });
 });
-
