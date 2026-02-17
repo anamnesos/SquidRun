@@ -8,7 +8,38 @@
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
+const {
+  appendCommsJournalEntry,
+  closeCommsJournalStores,
+} = require('../modules/main/comms-journal');
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
+
+function asObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
+function asRole(value, fallback = 'system') {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim().toLowerCase();
+  return normalized || fallback;
+}
+
+function buildJournalMessageId(prefix = 'tg') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function upsertTelegramJournal(entry = {}) {
+  const result = appendCommsJournalEntry({
+    channel: 'telegram',
+    direction: 'outbound',
+    ...entry,
+  });
+  if (result?.ok !== true) {
+    console.warn(`[hm-telegram] journal write unavailable: ${result?.reason || 'unknown'}`);
+  }
+  return result;
+}
 
 function usage() {
   console.log('Usage: node hm-telegram.js <message>');
@@ -120,15 +151,62 @@ function requestTelegramMultipart(apiPath, fields, fileField) {
   });
 }
 
-async function sendTelegramPhoto(photoPath, caption, env = process.env) {
+async function sendTelegramPhoto(photoPath, caption, env = process.env, options = {}) {
+  const opts = asObject(options);
+  const messageId = typeof opts.messageId === 'string' && opts.messageId.trim()
+    ? opts.messageId.trim()
+    : buildJournalMessageId('tg-photo');
+  const nowMs = Date.now();
+  const senderRole = asRole(opts.senderRole || opts.fromRole || 'system', 'system');
+  const sessionId = typeof opts.sessionId === 'string' ? opts.sessionId.trim() : '';
+  const targetRole = 'telegram';
+
+  upsertTelegramJournal({
+    messageId,
+    sessionId: sessionId || null,
+    senderRole,
+    targetRole,
+    sentAtMs: nowMs,
+    rawBody: caption ? `[photo] ${caption}` : '[photo]',
+    status: 'recorded',
+    attempt: 1,
+    metadata: {
+      source: 'hm-telegram',
+      mode: 'photo',
+      photoPath: path.resolve(photoPath),
+    },
+  });
+
   const config = getTelegramConfig(env);
   const missing = getMissingConfigKeys(config);
   if (missing.length > 0) {
+    upsertTelegramJournal({
+      messageId,
+      sessionId: sessionId || null,
+      senderRole,
+      targetRole,
+      status: 'failed',
+      errorCode: 'missing_config',
+      metadata: {
+        missing,
+      },
+    });
     return { ok: false, error: `Missing required env vars: ${missing.join(', ')}` };
   }
 
   const resolvedPath = path.resolve(photoPath);
   if (!fs.existsSync(resolvedPath)) {
+    upsertTelegramJournal({
+      messageId,
+      sessionId: sessionId || null,
+      senderRole,
+      targetRole,
+      status: 'failed',
+      errorCode: 'photo_not_found',
+      metadata: {
+        photoPath: resolvedPath,
+      },
+    });
     return { ok: false, error: `Photo not found: ${resolvedPath}` };
   }
 
@@ -142,6 +220,18 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env) {
   try { payload = JSON.parse(response.body || '{}'); } catch { payload = null; }
 
   if (response.statusCode >= 200 && response.statusCode < 300 && payload?.ok !== false) {
+    upsertTelegramJournal({
+      messageId,
+      sessionId: sessionId || null,
+      senderRole,
+      targetRole,
+      status: 'acked',
+      ackStatus: 'telegram_delivered',
+      metadata: {
+        telegramMessageId: payload?.result?.message_id || null,
+        chatId: payload?.result?.chat?.id || config.chatId,
+      },
+    });
     return {
       ok: true,
       statusCode: response.statusCode,
@@ -150,6 +240,18 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env) {
     };
   }
 
+  upsertTelegramJournal({
+    messageId,
+    sessionId: sessionId || null,
+    senderRole,
+    targetRole,
+    status: 'failed',
+    errorCode: String(response.statusCode || 'telegram_request_failed'),
+    metadata: {
+      statusCode: response.statusCode || 0,
+      error: payload?.description || null,
+    },
+  });
   return {
     ok: false,
     statusCode: response.statusCode,
@@ -157,10 +259,45 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env) {
   };
 }
 
-async function sendTelegram(message, env = process.env) {
+async function sendTelegram(message, env = process.env, options = {}) {
+  const opts = asObject(options);
+  const messageId = typeof opts.messageId === 'string' && opts.messageId.trim()
+    ? opts.messageId.trim()
+    : buildJournalMessageId('tg');
+  const nowMs = Date.now();
+  const senderRole = asRole(opts.senderRole || opts.fromRole || 'system', 'system');
+  const sessionId = typeof opts.sessionId === 'string' ? opts.sessionId.trim() : '';
+  const targetRole = 'telegram';
+
+  upsertTelegramJournal({
+    messageId,
+    sessionId: sessionId || null,
+    senderRole,
+    targetRole,
+    sentAtMs: nowMs,
+    rawBody: message,
+    status: 'recorded',
+    attempt: 1,
+    metadata: {
+      source: 'hm-telegram',
+      mode: 'message',
+    },
+  });
+
   const config = getTelegramConfig(env);
   const missing = getMissingConfigKeys(config);
   if (missing.length > 0) {
+    upsertTelegramJournal({
+      messageId,
+      sessionId: sessionId || null,
+      senderRole,
+      targetRole,
+      status: 'failed',
+      errorCode: 'missing_config',
+      metadata: {
+        missing,
+      },
+    });
     return {
       ok: false,
       error: `Missing required env vars: ${missing.join(', ')}`,
@@ -182,6 +319,18 @@ async function sendTelegram(message, env = process.env) {
   }
 
   if (response.statusCode >= 200 && response.statusCode < 300 && payload?.ok !== false) {
+    upsertTelegramJournal({
+      messageId,
+      sessionId: sessionId || null,
+      senderRole,
+      targetRole,
+      status: 'acked',
+      ackStatus: 'telegram_delivered',
+      metadata: {
+        telegramMessageId: payload?.result?.message_id || null,
+        chatId: payload?.result?.chat?.id || config.chatId,
+      },
+    });
     return {
       ok: true,
       statusCode: response.statusCode,
@@ -190,6 +339,18 @@ async function sendTelegram(message, env = process.env) {
     };
   }
 
+  upsertTelegramJournal({
+    messageId,
+    sessionId: sessionId || null,
+    senderRole,
+    targetRole,
+    status: 'failed',
+    errorCode: String(response.statusCode || 'telegram_request_failed'),
+    metadata: {
+      statusCode: response.statusCode || 0,
+      error: payload?.description || payload?.message || payload?.detail || null,
+    },
+  });
   return {
     ok: false,
     statusCode: response.statusCode,
@@ -213,9 +374,11 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     const caption = argv.slice(2).join(' ').trim() || '';
     const result = await sendTelegramPhoto(photoPath, caption, env);
     if (!result.ok) {
+      closeCommsJournalStores();
       console.error(`[hm-telegram] Photo failed: ${result.error}`);
       process.exit(1);
     }
+    closeCommsJournalStores();
     console.log(
       `[hm-telegram] Sent Telegram photo successfully to ${result.chatId}${result.messageId ? ` (message_id: ${result.messageId})` : ''}`
     );
@@ -230,10 +393,12 @@ async function main(argv = process.argv.slice(2), env = process.env) {
 
   const result = await sendTelegram(message, env);
   if (!result.ok) {
+    closeCommsJournalStores();
     console.error(`[hm-telegram] Failed: ${result.error}`);
     process.exit(1);
   }
 
+  closeCommsJournalStores();
   console.log(
     `[hm-telegram] Sent Telegram message successfully to ${result.chatId}${result.messageId ? ` (message_id: ${result.messageId})` : ''}`
   );
@@ -242,6 +407,7 @@ async function main(argv = process.argv.slice(2), env = process.env) {
 
 if (require.main === module) {
   main().catch((err) => {
+    closeCommsJournalStores();
     console.error(`[hm-telegram] Error: ${err.message}`);
     process.exit(1);
   });

@@ -889,7 +889,14 @@ describe('HivemindApp', () => {
         content: 'Build passed.',
       });
 
-      expect(sendTelegram).toHaveBeenCalledWith('Build passed.', process.env);
+      expect(sendTelegram).toHaveBeenCalledWith(
+        'Build passed.',
+        process.env,
+        expect.objectContaining({
+          senderRole: 'system',
+          sessionId: expect.any(String),
+        })
+      );
       expect(result).toEqual(
         expect.objectContaining({
           handled: true,
@@ -933,7 +940,14 @@ describe('HivemindApp', () => {
         content: 'Direct ping.',
       });
 
-      expect(sendTelegram).toHaveBeenCalledWith('Direct ping.', process.env);
+      expect(sendTelegram).toHaveBeenCalledWith(
+        'Direct ping.',
+        process.env,
+        expect.objectContaining({
+          senderRole: 'system',
+          sessionId: expect.any(String),
+        })
+      );
       expect(result).toEqual(
         expect.objectContaining({
           handled: true,

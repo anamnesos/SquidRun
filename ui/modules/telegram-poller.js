@@ -105,6 +105,12 @@ function normalizeBody(rawBody) {
   return rawBody.trim();
 }
 
+function parseMessageTimestampMs(message) {
+  const dateSeconds = Number(message?.date);
+  if (!Number.isFinite(dateSeconds) || dateSeconds <= 0) return null;
+  return Math.floor(dateSeconds * 1000);
+}
+
 async function pollNow() {
   if (!running || !config || pollInFlight) return;
   pollInFlight = true;
@@ -154,7 +160,14 @@ async function pollNow() {
 
         if (typeof onMessage === 'function') {
           try {
-            onMessage(text, normalizeFrom(message.from));
+            onMessage(text, normalizeFrom(message.from), {
+              updateId,
+              messageId: Number.isFinite(Number(message?.message_id))
+                ? Number(message.message_id)
+                : null,
+              chatId: getAuthorizedChatId(message),
+              timestampMs: parseMessageTimestampMs(message),
+            });
           } catch (err) {
             log.warn('Telegram', `Telegram callback failed: ${err.message}`);
           }

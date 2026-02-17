@@ -600,7 +600,11 @@ class HivemindApp {
                 };
               }
 
-              const telegramResult = await this.routeTelegramReply({ target: normalizedTarget, content });
+              const telegramResult = await this.routeTelegramReply({
+                target: normalizedTarget,
+                content,
+                fromRole: data.role || 'unknown',
+              });
               const deliveryResult = {
                 accepted: Boolean(telegramResult?.accepted),
                 queued: Boolean(telegramResult?.queued),
@@ -1928,7 +1932,7 @@ class HivemindApp {
     return (nowMs - lastInboundAtMs) <= TELEGRAM_REPLY_WINDOW_MS;
   }
 
-  async routeTelegramReply({ target, content } = {}) {
+  async routeTelegramReply({ target, content, fromRole = 'system' } = {}) {
     const normalizedTarget = this.normalizeOutboundTarget(target);
     if (!this.isTelegramReplyTarget(normalizedTarget)) {
       return {
@@ -1961,7 +1965,10 @@ class HivemindApp {
     }
 
     try {
-      const result = await sendTelegram(message, process.env);
+      const result = await sendTelegram(message, process.env, {
+        senderRole: fromRole,
+        sessionId: this.commsSessionScopeId || null,
+      });
       if (!result?.ok) {
         return {
           handled: true,
@@ -1999,10 +2006,52 @@ class HivemindApp {
 
   startSmsPoller() {
     const started = smsPoller.start({
-      onMessage: (text, from) => {
+      onMessage: (text, from, metadata = {}) => {
         const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
         const body = typeof text === 'string' ? text.trim() : '';
         if (!body) return;
+
+        const inboundSid = typeof metadata?.sid === 'string' ? metadata.sid.trim() : '';
+        const inboundMessageId = inboundSid
+          ? `sms-in-${inboundSid}`
+          : `sms-in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const sentAtMs = Number.isFinite(Number(metadata?.timestampMs))
+          ? Math.floor(Number(metadata.timestampMs))
+          : Date.now();
+        void Promise.resolve(executeEvidenceLedgerOperation(
+          'upsert-comms-journal',
+          {
+            messageId: inboundMessageId,
+            sessionId: this.commsSessionScopeId || null,
+            senderRole: 'user',
+            targetRole: 'architect',
+            channel: 'sms',
+            direction: 'inbound',
+            sentAtMs,
+            brokeredAtMs: Date.now(),
+            rawBody: body,
+            status: 'brokered',
+            attempt: 1,
+            metadata: {
+              source: 'sms-poller',
+              from: sender,
+              sid: inboundSid || null,
+            },
+          },
+          {
+            source: {
+              via: 'sms-poller',
+              role: 'system',
+              paneId: 'system',
+            },
+          }
+        )).then((result) => {
+          if (result?.ok === false) {
+            log.warn('EvidenceLedger', `SMS inbound journal upsert failed: ${result.reason || 'unknown'}`);
+          }
+        }).catch((err) => {
+          log.warn('EvidenceLedger', `SMS inbound journal upsert error: ${err.message}`);
+        });
 
         const formatted = `[SMS from ${sender}]: ${body}`;
         const result = triggers.sendDirectMessage(['1'], formatted, null);
@@ -2019,12 +2068,64 @@ class HivemindApp {
 
   startTelegramPoller() {
     const started = telegramPoller.start({
-      onMessage: (text, from) => {
+      onMessage: (text, from, metadata = {}) => {
         const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
         const body = typeof text === 'string' ? text.trim() : '';
         if (!body) return;
 
         this.markTelegramInboundContext(sender);
+        const updateId = Number.isFinite(Number(metadata?.updateId))
+          ? Math.floor(Number(metadata.updateId))
+          : null;
+        const messageId = Number.isFinite(Number(metadata?.messageId))
+          ? Math.floor(Number(metadata.messageId))
+          : null;
+        const inboundMessageId = updateId !== null
+          ? `telegram-in-${updateId}`
+          : (messageId !== null
+            ? `telegram-in-msg-${messageId}`
+            : `telegram-in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+        const sentAtMs = Number.isFinite(Number(metadata?.timestampMs))
+          ? Math.floor(Number(metadata.timestampMs))
+          : Date.now();
+        void Promise.resolve(executeEvidenceLedgerOperation(
+          'upsert-comms-journal',
+          {
+            messageId: inboundMessageId,
+            sessionId: this.commsSessionScopeId || null,
+            senderRole: 'user',
+            targetRole: 'architect',
+            channel: 'telegram',
+            direction: 'inbound',
+            sentAtMs,
+            brokeredAtMs: Date.now(),
+            rawBody: body,
+            status: 'brokered',
+            attempt: 1,
+            metadata: {
+              source: 'telegram-poller',
+              from: sender,
+              updateId,
+              telegramMessageId: messageId,
+              chatId: Number.isFinite(Number(metadata?.chatId))
+                ? Number(metadata.chatId)
+                : null,
+            },
+          },
+          {
+            source: {
+              via: 'telegram-poller',
+              role: 'system',
+              paneId: 'system',
+            },
+          }
+        )).then((result) => {
+          if (result?.ok === false) {
+            log.warn('EvidenceLedger', `Telegram inbound journal upsert failed: ${result.reason || 'unknown'}`);
+          }
+        }).catch((err) => {
+          log.warn('EvidenceLedger', `Telegram inbound journal upsert error: ${err.message}`);
+        });
         const formatted = `[Telegram from ${sender}]: ${body}`;
         const result = triggers.sendDirectMessage(['1'], formatted, null);
         if (!result?.success) {

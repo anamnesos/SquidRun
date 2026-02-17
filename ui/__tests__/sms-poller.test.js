@@ -95,6 +95,12 @@ describe('sms-poller', () => {
     await smsPoller._internals.pollNow();
 
     expect(onMessage).toHaveBeenCalledTimes(1);
-    expect(onMessage).toHaveBeenCalledWith('hello from twilio', '+15557654321');
+    expect(onMessage).toHaveBeenCalledWith(
+      'hello from twilio',
+      '+15557654321',
+      expect.objectContaining({
+        sid: 'SM0001',
+      })
+    );
   });
 });

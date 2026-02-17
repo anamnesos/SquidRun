@@ -89,7 +89,14 @@ describe('telegram-poller', () => {
     await telegramPoller._internals.pollNow();
 
     expect(onMessage).toHaveBeenCalledTimes(1);
-    expect(onMessage).toHaveBeenCalledWith('hello from telegram', '@james');
+    expect(onMessage).toHaveBeenCalledWith(
+      'hello from telegram',
+      '@james',
+      expect.objectContaining({
+        updateId: 10,
+        messageId: null,
+      })
+    );
   });
 
   test('pollNow rejects unauthorized chat ids', async () => {
