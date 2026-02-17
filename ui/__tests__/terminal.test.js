@@ -305,7 +305,7 @@ describe('terminal.js module', () => {
   });
 
   describe('getPaneInjectionCapabilities', () => {
-    test('enables submit verification by default for Codex runtime', () => {
+    test('disables submit verification by default for Codex runtime', () => {
       mockSettings.getSettings.mockReturnValue({
         paneCommands: { '2': 'codex --yolo' },
       });
@@ -313,7 +313,7 @@ describe('terminal.js module', () => {
       const caps = terminal.getPaneInjectionCapabilities('2');
       expect(caps.mode).toBe('pty');
       expect(caps.modeLabel).toBe('codex-pty');
-      expect(caps.verifySubmitAccepted).toBe(true);
+      expect(caps.verifySubmitAccepted).toBe(false);
       expect(caps.enterMethod).toBe('pty');
     });
 

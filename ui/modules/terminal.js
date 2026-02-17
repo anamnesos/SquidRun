@@ -574,7 +574,7 @@ function getPaneInjectionCapabilities(paneId) {
       clearLineBeforeWrite: true,
       useChunkedWrite: false,
       homeResetBeforeWrite: false,
-      verifySubmitAccepted: true,
+      verifySubmitAccepted: false,
       deferSubmitWhilePaneActive: false,
       scaleEnterDelayByPayload: true,
       typingGuardWhenBypassing: false,
