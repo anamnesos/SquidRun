@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { execFileSync, spawnSync } = require('child_process');
-const { WORKSPACE_PATH } = require('../../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 const log = require('../logger');
 const { TeamMemoryStore } = require('../team-memory/store');
 const { TeamMemoryClaims } = require('../team-memory/claims');
@@ -15,9 +15,16 @@ const {
   fingerprintEnv,
 } = require('./profiles');
 
-const DEFAULT_DB_PATH = path.join(WORKSPACE_PATH, 'runtime', 'team-memory.sqlite');
-const DEFAULT_ARTIFACT_ROOT = path.join(WORKSPACE_PATH, 'runtime', 'experiments');
-const DEFAULT_EVIDENCE_LEDGER_DB_PATH = path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
+function resolveDefaultRuntimePath(relPath, options = {}) {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(relPath, options);
+  }
+  return path.join(WORKSPACE_PATH, relPath);
+}
+
+const DEFAULT_DB_PATH = resolveDefaultRuntimePath(path.join('runtime', 'team-memory.sqlite'), { forWrite: true });
+const DEFAULT_ARTIFACT_ROOT = resolveDefaultRuntimePath(path.join('runtime', 'experiments'), { forWrite: true });
+const DEFAULT_EVIDENCE_LEDGER_DB_PATH = resolveDefaultRuntimePath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
 const DEFAULT_OUTPUT_CAP_BYTES = 1024 * 1024;
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 500;
@@ -1148,6 +1155,11 @@ function asRuntimeOptions(value = {}) {
   return asObject(value);
 }
 
+function getRequestedRuntimeDbPath(runtimeOptions = {}) {
+  const options = asObject(runtimeOptions);
+  return asString(options.dbPath, '');
+}
+
 function createExperimentRuntime(options = {}) {
   const runtime = new ExperimentRuntime(asRuntimeOptions(options));
   const initResult = runtime.init(options);
@@ -1160,6 +1172,7 @@ function createExperimentRuntime(options = {}) {
 function initializeExperimentRuntime(options = {}) {
   const opts = asObject(options);
   const runtimeOptions = asRuntimeOptions(opts.runtimeOptions);
+  const requestedDbPath = getRequestedRuntimeDbPath(runtimeOptions);
   const forceRuntimeRecreate = opts.forceRuntimeRecreate === true;
   const recreateUnavailable = opts.recreateUnavailable !== false;
 
@@ -1168,6 +1181,15 @@ function initializeExperimentRuntime(options = {}) {
   }
 
   if (sharedRuntime && recreateUnavailable && sharedRuntime.runtime?.isAvailable() !== true) {
+    closeSharedRuntime();
+  }
+  const activeDbPath = asString(sharedRuntime?.runtime?.dbPath, '');
+  if (
+    sharedRuntime
+    && requestedDbPath
+    && activeDbPath
+    && path.resolve(requestedDbPath) !== path.resolve(activeDbPath)
+  ) {
     closeSharedRuntime();
   }
 
@@ -1186,6 +1208,7 @@ function initializeExperimentRuntime(options = {}) {
 function executeExperimentOperation(action, payload = {}, options = {}) {
   const opts = asObject(options);
   const runtimeOptions = asRuntimeOptions(opts.runtimeOptions);
+  const requestedDbPath = getRequestedRuntimeDbPath(runtimeOptions);
   const forceRuntimeRecreate = opts.forceRuntimeRecreate === true;
   const recreateUnavailable = opts.recreateUnavailable !== false;
 
@@ -1193,6 +1216,15 @@ function executeExperimentOperation(action, payload = {}, options = {}) {
     closeSharedRuntime();
   }
   if (sharedRuntime && recreateUnavailable && sharedRuntime.runtime?.isAvailable() !== true) {
+    closeSharedRuntime();
+  }
+  const activeDbPath = asString(sharedRuntime?.runtime?.dbPath, '');
+  if (
+    sharedRuntime
+    && requestedDbPath
+    && activeDbPath
+    && path.resolve(requestedDbPath) !== path.resolve(activeDbPath)
+  ) {
     closeSharedRuntime();
   }
   if (!sharedRuntime) {

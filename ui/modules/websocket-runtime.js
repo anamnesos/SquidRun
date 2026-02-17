@@ -8,7 +8,12 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
-const { LEGACY_ROLE_ALIASES, ROLE_ID_MAP, WORKSPACE_PATH } = require('../config');
+const {
+  LEGACY_ROLE_ALIASES,
+  ROLE_ID_MAP,
+  WORKSPACE_PATH,
+  resolveCoordPath,
+} = require('../config');
 
 const DEFAULT_PORT = 9900;
 const MESSAGE_ACK_TTL_MS = 60000;
@@ -20,8 +25,11 @@ const CONTENT_DEDUPE_TTL_MS = Number.parseInt(process.env.HIVEMIND_COMMS_CONTENT
 const OUTBOUND_QUEUE_MAX_ENTRIES = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_ENTRIES || '500', 10);
 const OUTBOUND_QUEUE_MAX_AGE_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_AGE_MS || String(30 * 60 * 1000), 10);
 const OUTBOUND_QUEUE_FLUSH_INTERVAL_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_FLUSH_INTERVAL_MS || '30000', 10);
+const DEFAULT_OUTBOUND_QUEUE_PATH = typeof resolveCoordPath === 'function'
+  ? resolveCoordPath(path.join('state', 'comms-outbound-queue.json'), { forWrite: true })
+  : path.join(WORKSPACE_PATH, 'state', 'comms-outbound-queue.json');
 const OUTBOUND_QUEUE_PATH = process.env.HIVEMIND_COMMS_QUEUE_FILE
-  || path.join(WORKSPACE_PATH, 'state', 'comms-outbound-queue.json');
+  || DEFAULT_OUTBOUND_QUEUE_PATH;
 const DEFAULT_QUEUE_SESSION_SCOPE = 'default';
 const CANONICAL_ROLE_IDS = ['architect', 'builder', 'oracle'];
 const CANONICAL_ROLE_TO_PANE = new Map(
