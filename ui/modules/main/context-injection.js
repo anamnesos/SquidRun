@@ -6,7 +6,7 @@
 const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
-const { PANE_ROLES } = require('../../config');
+const { PANE_ROLES, WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 const { executeEvidenceLedgerOperation } = require('../ipc/evidence-ledger-handlers');
 const teamMemory = require('../team-memory');
 
@@ -38,6 +38,30 @@ function summarizeClaimStatement(statement, maxLength = 120) {
   return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
+function parseSessionFromText(content) {
+  const text = String(content || '');
+  const patterns = [
+    /Session:\s*(\d+)/i,
+    /\|\s*Session\s+(\d+)\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const parsed = Number.parseInt(match[1], 10);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+
+  return 0;
+}
+
+function parseList(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => asNonEmptyString(item))
+    .filter(Boolean);
+}
+
 class ContextInjectionManager {
   constructor(appContext) {
     this.ctx = appContext;
@@ -59,9 +83,56 @@ class ContextInjectionManager {
     return '';
   }
 
+  resolveCoordFile(relPath) {
+    if (typeof resolveCoordPath === 'function') {
+      return resolveCoordPath(relPath, {});
+    }
+    return path.join(WORKSPACE_PATH, relPath);
+  }
+
+  readAppStatusSession() {
+    try {
+      const filePath = this.resolveCoordFile('app-status.json');
+      const raw = this.readFileIfExists(filePath);
+      if (!raw) return 0;
+      const parsed = JSON.parse(raw);
+      const session = Number.parseInt(parsed?.session, 10);
+      return Number.isInteger(session) && session > 0 ? session : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  buildContextSnapshotFallback(paneId) {
+    const filePath = this.resolveCoordFile(path.join('context-snapshots', `${paneId}.md`));
+    const text = this.readFileIfExists(filePath);
+    if (!text) return null;
+
+    const session = parseSessionFromText(text);
+    const completedMatch = text.match(/^Completed:\s*(.+)$/im);
+    const nextMatch = text.match(/^Next:\s*(.+)$/im);
+    const testsMatch = text.match(/^Tests:\s*(.+)$/im);
+
+    const completed = completedMatch ? parseList(completedMatch[1]).slice(0, 3) : [];
+    const next = nextMatch ? parseList(nextMatch[1]).slice(0, 3) : [];
+    const tests = asNonEmptyString(testsMatch?.[1] || '');
+
+    const lines = [];
+    if (session > 0) lines.push(`- Session: ${session}`);
+    completed.forEach((item) => lines.push(`- Completed: ${item}`));
+    next.forEach((item) => lines.push(`- Next: ${item}`));
+    if (tests) lines.push(`- Tests: ${tests}`);
+
+    if (lines.length === 0) return null;
+    return { session, lines };
+  }
+
   async buildRuntimeMemorySnapshot(paneId) {
     const role = canonicalRoleFromPane(paneId);
     const parts = [];
+    let ledgerLines = [];
+    let ledgerSession = 0;
+    let ledgerAvailable = false;
 
     try {
       const ledgerContext = await executeEvidenceLedgerOperation(
@@ -77,7 +148,7 @@ class ContextInjectionManager {
       );
 
       if (ledgerContext?.ok !== false && ledgerContext && typeof ledgerContext === 'object') {
-        const session = ledgerContext.session;
+        const session = Number.parseInt(ledgerContext.session, 10);
         const completed = Array.isArray(ledgerContext.completed)
           ? ledgerContext.completed.slice(0, 3)
           : [];
@@ -85,17 +156,31 @@ class ContextInjectionManager {
           ? ledgerContext.not_yet_done.slice(0, 3)
           : [];
 
-        const ledgerLines = [];
-        if (session !== null && session !== undefined) ledgerLines.push(`- Session: ${session}`);
+        if (Number.isInteger(session) && session > 0) {
+          ledgerSession = session;
+          ledgerLines.push(`- Session: ${session}`);
+        }
         for (const item of completed) ledgerLines.push(`- Completed: ${asNonEmptyString(item)}`);
         for (const item of notYetDone) ledgerLines.push(`- Next: ${asNonEmptyString(item)}`);
-
-        if (ledgerLines.length > 0) {
-          parts.push('### Evidence Ledger\n' + ledgerLines.join('\n'));
-        }
+        ledgerLines = ledgerLines.filter((line) => !line.endsWith(': '));
+        ledgerAvailable = ledgerLines.length > 0;
       }
     } catch (err) {
       log.warn('ContextInjection', `Evidence Ledger runtime query failed: ${err.message}`);
+    }
+
+    const appStatusSession = this.readAppStatusSession();
+    const snapshotFallback = this.buildContextSnapshotFallback(paneId);
+    const snapshotSession = snapshotFallback?.session || 0;
+    const ledgerIsStale = ledgerAvailable && ledgerSession > 0 && (
+      (appStatusSession > 0 && appStatusSession > ledgerSession)
+      || (snapshotSession > 0 && snapshotSession > ledgerSession)
+    );
+
+    if (ledgerAvailable && !ledgerIsStale) {
+      parts.push('### Evidence Ledger\n' + ledgerLines.join('\n'));
+    } else if (snapshotFallback?.lines?.length > 0) {
+      parts.push('### Context Snapshot Fallback\n' + snapshotFallback.lines.join('\n'));
     }
 
     try {
