@@ -175,6 +175,9 @@ function resolveProjectContextFromLink(startDir = process.cwd()) {
   const projectPath = workspaceValue
     ? path.resolve(workspaceValue)
     : fallbackProjectPath;
+  const sessionId = typeof payload.session_id === 'string'
+    ? payload.session_id.trim()
+    : (typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '');
 
   if (!projectPath) return null;
 
@@ -183,6 +186,7 @@ function resolveProjectContextFromLink(startDir = process.cwd()) {
     linkPath,
     projectPath,
     projectName: path.basename(projectPath),
+    sessionId: sessionId || null,
   };
 }
 
@@ -244,10 +248,12 @@ function buildProjectMetadata(context = localProjectContext) {
   if (!context?.projectPath) return null;
   const projectPath = String(context.projectPath || '').trim();
   const projectName = String(context.projectName || path.basename(projectPath) || '').trim();
+  const sessionId = typeof context.sessionId === 'string' ? context.sessionId.trim() : '';
   if (!projectPath && !projectName) return null;
   return {
     name: projectName || null,
     path: projectPath || null,
+    session_id: sessionId || null,
     source: String(context.source || 'unknown'),
   };
 }
