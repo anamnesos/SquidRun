@@ -52,12 +52,12 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 1. Query Evidence Ledger context: `node D:/projects/hivemind/ui/scripts/hm-memory.js context --role architect`.
 2. Read `.hivemind/app-status.json`.
 3. Check `.hivemind/build/blockers.md` and `.hivemind/build/errors.md`.
-4. Read handoff file at `workspace/handoffs/1.md` (persists across sessions).
+4. Read session handoff index at `workspace/handoffs/session.md` (auto-generated, persists across sessions).
 5. Query Team Memory for active claims: `node D:/projects/hivemind/ui/scripts/hm-claim.js query --status proposed`.
 6. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
 
 **Builder / Oracle (panes 2, 5):**
-1. Read handoff file at `workspace/handoffs/{paneId}.md` (persists across sessions).
+1. Read session handoff index at `workspace/handoffs/session.md` (auto-generated, persists across sessions).
 2. Verify auto-injected context (sourced from Team Memory DB).
 3. Check in to Architect via `hm-send` — one line, no extras.
 
@@ -111,4 +111,4 @@ Responsibilities:
 - Report command/tool failures promptly to Architect via `hm-send.js`.
 - Avoid content-free acknowledgments.
 - Always commit before declaring "ready for restart." Uncommitted work is lost on restart.
-- Before session end, update your handoff file at `workspace/handoffs/{paneId}.md` with: what you completed, what's pending, key decisions, and test status. This file persists across sessions — the next agent reads it on startup.
+- Do not manually maintain per-pane handoff files. `workspace/handoffs/session.md` is materialized automatically from the comms journal.
