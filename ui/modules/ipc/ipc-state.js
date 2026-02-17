@@ -10,7 +10,6 @@
   backupManager: null,
   usageStats: null,
   sessionStartTimes: null,
-  contextInjection: null,
   costAlertSent: false,
   backgroundProcesses: new Map(),
   processIdCounter: 1,
@@ -34,7 +33,6 @@ function initState(deps = {}) {
   assign('backupManager');
   assign('usageStats');
   assign('sessionStartTimes');
-  assign('contextInjection');
 }
 
 function setDaemonClient(client) {

@@ -11,7 +11,6 @@ class AppContext {
     this.pluginManager = null;
     this.backupManager = null;
     this.externalNotifier = null;
-    this.contextInjection = null;
     this.firmwareManager = null;
     
     // Agent running state (renamed from claudeRunning - agents can be Claude, Codex, or Gemini)
@@ -62,10 +61,6 @@ class AppContext {
 
   setExternalNotifier(notifier) {
     this.externalNotifier = notifier;
-  }
-
-  setContextInjection(manager) {
-    this.contextInjection = manager;
   }
 
   setFirmwareManager(manager) {

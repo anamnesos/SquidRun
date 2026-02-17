@@ -31,12 +31,9 @@ describe('Startup Source Of Truth', () => {
     }
   });
 
-  test('context injection only composes ROLES + model notes (no legacy role docs)', () => {
-    const source = fs.readFileSync(path.join(UI_ROOT, 'modules', 'main', 'context-injection.js'), 'utf-8');
-
-    expect(source).toContain("ROLES.md");
-    expect(source).not.toMatch(/docs[\\/]+roles/i);
-    expect(source).not.toMatch(/AGENTS\.md|CLAUDE\.md|GEMINI\.md/i);
+  test('startup auto-injection manager has been removed', () => {
+    const removedPath = path.join(UI_ROOT, 'modules', 'main', 'context-injection.js');
+    expect(fs.existsSync(removedPath)).toBe(false);
   });
 
   test('runtime refresh/watchdog paths do not depend on shared_context startup flow', () => {

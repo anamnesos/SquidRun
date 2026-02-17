@@ -1086,8 +1086,6 @@ function triggerStartupInjection(paneId, state, reason) {
   state.attemptCount = 0;
 
   scheduleStartupIdentityAttempt(String(paneId), state, reason, identityDelayMs);
-
-  // Startup context injection disabled: CLI tools load context natively.
 }
 
 function armStartupInjection(paneId, options = {}) {
