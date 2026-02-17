@@ -335,6 +335,29 @@ class HivemindApp {
             return `${AGENT_MESSAGE_PREFIX}${content}`;
           };
 
+          const withProjectContext = (content, metadata = null) => {
+            const text = typeof content === 'string' ? content : String(content ?? '');
+            if (!text) return text;
+            const project = (metadata && typeof metadata === 'object' && !Array.isArray(metadata))
+              ? (metadata.project && typeof metadata.project === 'object' ? metadata.project : metadata)
+              : null;
+            if (!project || typeof project !== 'object') return text;
+
+            const name = typeof project.name === 'string' ? project.name.trim() : '';
+            const projectPath = typeof project.path === 'string' ? project.path.trim() : '';
+            if (!name && !projectPath) return text;
+
+            const marker = '[PROJECT CONTEXT]';
+            if (text.includes(marker)) return text;
+
+            const fields = [];
+            if (name) fields.push(`name=${name}`);
+            if (projectPath) fields.push(`path=${projectPath}`);
+            if (fields.length === 0) return text;
+
+            return `${text}\n${marker} ${fields.join(' | ')}`;
+          };
+
           if (data.message.type === 'evidence-ledger') {
             return executeEvidenceLedgerOperation(
               data.message.action,
@@ -477,6 +500,7 @@ class HivemindApp {
           // Route WebSocket messages via triggers module (handles delivery)
           if (data.message.type === 'send') {
             const { target, content } = data.message;
+            const contentWithProjectContext = withProjectContext(content, data.message.metadata);
             const attempt = Number(data.message.attempt || 1);
             const maxAttempts = Number(data.message.maxAttempts || 1);
             const messageId = data.message.messageId || null;
@@ -567,7 +591,7 @@ class HivemindApp {
             if (paneId) {
               const preflight = await this.evaluateTeamMemoryGuardPreflight({
                 target: target || String(paneId),
-                content,
+                content: contentWithProjectContext,
                 fromRole: data.role || 'unknown',
                 traceContext,
               });
@@ -599,7 +623,7 @@ class HivemindApp {
               log.info('WebSocket', `Routing 'send' to pane ${paneId} (via triggers)`);
               const result = await triggers.sendDirectMessage(
                 [String(paneId)],
-                withAgentPrefix(content),
+                withAgentPrefix(contentWithProjectContext),
                 data.role || 'unknown',
                 { traceContext, awaitDelivery: true }
               );

@@ -400,11 +400,15 @@ function queueOutboundMessage(target, content, meta = {}, queuedBy = 'runtime', 
 
 function buildOutboundPayload(content, meta = {}) {
   const traceContext = meta?.traceContext || null;
+  const messageMetadata = (meta?.metadata && typeof meta.metadata === 'object' && !Array.isArray(meta.metadata))
+    ? meta.metadata
+    : null;
   return JSON.stringify({
     type: 'message',
     from: meta.from || 'system',
     priority: meta.priority || 'normal',
     content,
+    metadata: messageMetadata,
     traceId: traceContext?.traceId || null,
     parentEventId: traceContext?.parentEventId || null,
     eventId: traceContext?.eventId || null,
@@ -1088,11 +1092,12 @@ async function handleMessage(clientId, rawData) {
 
   // Handle agent-to-agent messages
   if (message.type === 'send') {
-    const { target, content, priority } = message;
+    const { target, content, priority, metadata } = message;
     // Try WebSocket clients first (for future direct agent-to-agent)
     if (sendToTarget(target, content, {
       from: clientInfo.role || clientId,
       priority,
+      metadata: (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) ? metadata : null,
       traceContext: dispatchTraceContext,
       persistIfOffline: false,
     })) {
