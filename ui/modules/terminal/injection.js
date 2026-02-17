@@ -18,6 +18,7 @@ function createInjectionController(options = {}) {
     getPaneCapabilities,
     isCodexPane,
     isGeminiPane,
+    buildCodexExecPrompt,
     userIsTyping,
     userInputFocused,
     updatePaneStatus,
@@ -1166,6 +1167,21 @@ function createInjectionController(options = {}) {
   // options.priority = true puts message at FRONT of queue (for user messages)
   function sendToPane(paneId, message, options = {}) {
     const id = String(paneId);
+    const capabilities = getPaneInjectionCapabilities(id);
+    const isCodexRuntime = String(capabilities?.displayName || '').toLowerCase() === 'codex'
+      || String(capabilities?.modeLabel || '').toLowerCase().includes('codex');
+    const shouldApplyCodexExecPrompt = isCodexRuntime
+      && typeof buildCodexExecPrompt === 'function'
+      && options.startupInjection !== true;
+    let payloadMessage = message;
+    if (shouldApplyCodexExecPrompt) {
+      try {
+        payloadMessage = buildCodexExecPrompt(id, payloadMessage);
+      } catch (err) {
+        log.warn(`Terminal ${id}`, `Codex exec prompt build failed, using raw payload: ${err.message}`);
+      }
+    }
+
     const incomingTraceContext = normalizeTraceContext(options.traceContext);
     const corrId = incomingTraceContext?.traceId
       || incomingTraceContext?.correlationId
@@ -1176,7 +1192,7 @@ function createInjectionController(options = {}) {
 
     const requestedEvent = bus.emit('inject.requested', {
       paneId: id,
-      payload: { priority: options.priority || false, messageLen: message.length },
+      payload: { priority: options.priority || false, messageLen: payloadMessage.length },
       correlationId: corrId,
       causationId,
       source: EVENT_SOURCE,
@@ -1197,7 +1213,7 @@ function createInjectionController(options = {}) {
     };
 
     const queueItem = {
-      message: message,
+      message: payloadMessage,
       timestamp: Date.now(),
       onComplete: options.onComplete,
       priority: options.priority || false,

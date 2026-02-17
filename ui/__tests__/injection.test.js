@@ -408,6 +408,28 @@ describe('Terminal Injection', () => {
       expect(messageQueue['1'][0].timestamp).toBeLessThanOrEqual(after);
     });
 
+    test('applies Codex exec prompt builder for Codex panes', () => {
+      mockOptions.getInjectionInFlight.mockReturnValue(true);
+      mockOptions.isCodexPane.mockReturnValue(true);
+
+      controller.sendToPane('1', 'run checks');
+
+      expect(mockOptions.buildCodexExecPrompt).toHaveBeenCalledWith('1', 'run checks');
+      expect(messageQueue['1'][0].message).toBe('prompt: run checks');
+    });
+
+    test('skips Codex exec prompt builder for startup injections', () => {
+      mockOptions.getInjectionInFlight.mockReturnValue(true);
+      mockOptions.isCodexPane.mockReturnValue(true);
+
+      controller.sendToPane('1', '# HIVEMIND SESSION: Builder - Started 2026-02-17', {
+        startupInjection: true,
+      });
+
+      expect(mockOptions.buildCodexExecPrompt).not.toHaveBeenCalled();
+      expect(messageQueue['1'][0].message).toBe('# HIVEMIND SESSION: Builder - Started 2026-02-17');
+    });
+
     test('includes onComplete callback in queue', () => {
       // Block immediate processing
       mockOptions.getInjectionInFlight.mockReturnValue(true);
