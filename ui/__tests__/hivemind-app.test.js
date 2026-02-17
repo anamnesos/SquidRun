@@ -305,6 +305,7 @@ describe('HivemindApp', () => {
       await app.init();
 
       expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).toHaveBeenCalledTimes(1);
+      expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).toHaveBeenCalledWith({ preflight: true });
     });
 
     it('records startup ledger session only when daemon was freshly spawned', async () => {
