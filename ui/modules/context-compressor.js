@@ -3,10 +3,10 @@
  *
  * Generates token-budget-constrained markdown snapshots from multiple data sources
  * (handoff files, app-status.json, shared state changelog, build status).
- * Snapshots are written to workspace/context-snapshots/{paneId}.md for lifecycle
+ * Snapshots are written to coord-root/context-snapshots/{paneId}.md for lifecycle
  * hooks to read after compaction events.
  *
- * IMPORTANT: Agent handoff files (workspace/handoffs/{paneId}.md) are READ but
+ * IMPORTANT: Agent handoff files (coord-root/handoffs/{paneId}.md) are READ but
  * never overwritten by this module. Agents write handoff content there before
  * session end; this module incorporates that content into auto-generated snapshots.
  *
@@ -25,8 +25,8 @@ const {
 const log = require('./logger');
 const { estimateTokens, truncateToTokenBudget } = require('./token-utils');
 
-const SNAPSHOTS_DIR = path.join(WORKSPACE_PATH, 'context-snapshots');
-const HANDOFFS_DIR = path.join(WORKSPACE_PATH, 'handoffs');
+const SNAPSHOTS_RELATIVE_DIR = 'context-snapshots';
+const HANDOFFS_RELATIVE_DIR = 'handoffs';
 const APP_STATUS_RELATIVE_PATH = 'app-status.json';
 const DEFAULT_MAX_TOKENS = 3000;
 const REFRESH_INTERVAL_MS = 300000; // 300 seconds
@@ -76,13 +76,32 @@ function getAppStatusPath() {
   return resolveCoordFile(APP_STATUS_RELATIVE_PATH);
 }
 
+function getSnapshotsDir(options = {}) {
+  return resolveCoordFile(SNAPSHOTS_RELATIVE_DIR, options);
+}
+
+function getHandoffsDir(options = {}) {
+  return resolveCoordFile(HANDOFFS_RELATIVE_DIR, options);
+}
+
+function getSnapshotPath(paneId, options = {}) {
+  const id = String(paneId || '1');
+  return resolveCoordFile(path.join(SNAPSHOTS_RELATIVE_DIR, `${id}.md`), options);
+}
+
+function getHandoffPath(paneId, options = {}) {
+  const id = String(paneId || '1');
+  return resolveCoordFile(path.join(HANDOFFS_RELATIVE_DIR, `${id}.md`), options);
+}
+
 /**
  * Ensure the snapshots directory exists
  */
 function ensureSnapshotsDir() {
   try {
-    if (!fs.existsSync(SNAPSHOTS_DIR)) {
-      fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+    const snapshotsDir = getSnapshotsDir({ forWrite: true });
+    if (!fs.existsSync(snapshotsDir)) {
+      fs.mkdirSync(snapshotsDir, { recursive: true });
     }
   } catch (err) {
     log.warn('ContextCompressor', `Failed to create snapshots dir: ${err.message}`);
@@ -132,10 +151,10 @@ function parseSessionNumberFromText(content) {
 
 function readSnapshotProgress(paneId = '1') {
   const id = String(paneId || '1');
-  const relPath = path.join('context-snapshots', `${id}.md`);
+  const relPath = path.join(SNAPSHOTS_RELATIVE_DIR, `${id}.md`);
   const candidates = [
     resolveCoordFile(relPath),
-    path.join(SNAPSHOTS_DIR, `${id}.md`),
+    getSnapshotPath(id, { forWrite: true }),
   ];
 
   for (const filePath of candidates) {
@@ -173,14 +192,13 @@ function readSnapshotProgress(paneId = '1') {
 
 /**
  * Read a handoff file for a specific pane.
- * Handoff files are at workspace/handoffs/{paneId}.md — written by agents,
+ * Handoff files are at coord-root/handoffs/{paneId}.md — written by agents,
  * NEVER overwritten by this module.
  * @param {string} paneId
  * @returns {string} Content or empty string
  */
 function readHandoffFile(paneId) {
-  const id = String(paneId || '1');
-  const filePath = path.join(HANDOFFS_DIR, `${id}.md`);
+  const filePath = getHandoffPath(paneId);
   return readTextFile(filePath);
 }
 
@@ -481,7 +499,7 @@ function generateSnapshot(paneId, options = {}) {
 function writeSnapshot(paneId, content) {
   ensureSnapshotsDir();
   try {
-    const filePath = path.join(SNAPSHOTS_DIR, `${paneId}.md`);
+    const filePath = getSnapshotPath(paneId, { forWrite: true });
     fs.writeFileSync(filePath, content, 'utf-8');
   } catch (err) {
     log.warn('ContextCompressor', `Failed to write snapshot for pane ${paneId}: ${err.message}`);
@@ -578,7 +596,8 @@ function init(options = {}) {
   refreshAll();
 
   initialized = true;
-  log.info('ContextCompressor', `Initialized — snapshots dir: ${SNAPSHOTS_DIR}, refresh interval: ${REFRESH_INTERVAL_MS / 1000}s`);
+  const snapshotsDir = getSnapshotsDir({ forWrite: true });
+  log.info('ContextCompressor', `Initialized — snapshots dir: ${snapshotsDir}, refresh interval: ${REFRESH_INTERVAL_MS / 1000}s`);
 }
 
 /**
@@ -634,8 +653,8 @@ module.exports = {
     get initialized() { return initialized; },
     set initialized(v) { initialized = v; },
     WATCHED_FILES,
-    SNAPSHOTS_DIR,
-    HANDOFFS_DIR,
+    get SNAPSHOTS_DIR() { return getSnapshotsDir(); },
+    get HANDOFFS_DIR() { return getHandoffsDir(); },
     APP_STATUS_RELATIVE_PATH,
     get APP_STATUS_PATH() { return getAppStatusPath(); },
     DEFAULT_MAX_TOKENS,
