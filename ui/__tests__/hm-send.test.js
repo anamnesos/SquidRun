@@ -600,6 +600,7 @@ describe('hm-send retry behavior', () => {
     fs.mkdirSync(externalCoordPath, { recursive: true });
     fs.writeFileSync(path.join(externalCoordPath, 'link.json'), JSON.stringify({
       workspace: externalProjectPath,
+      session_id: 'session-meta-123',
       version: 1,
     }, null, 2));
 
@@ -661,6 +662,7 @@ describe('hm-send retry behavior', () => {
         project: expect.objectContaining({
           name: 'external-project',
           path: path.resolve(externalProjectPath),
+          session_id: 'session-meta-123',
         }),
       }));
     } finally {
