@@ -27,7 +27,7 @@ const { estimateTokens, truncateToTokenBudget } = require('./token-utils');
 
 const SNAPSHOTS_DIR = path.join(WORKSPACE_PATH, 'context-snapshots');
 const HANDOFFS_DIR = path.join(WORKSPACE_PATH, 'handoffs');
-const APP_STATUS_PATH = path.join(WORKSPACE_PATH, 'app-status.json');
+const APP_STATUS_RELATIVE_PATH = 'app-status.json';
 const DEFAULT_MAX_TOKENS = 3000;
 const REFRESH_INTERVAL_MS = 300000; // 300 seconds
 
@@ -44,7 +44,7 @@ const SECTION_PRIORITIES = {
 // Files to watch for auto-refresh (relative to workspace/coord roots).
 // Handoff files and app-status trigger immediate refresh when agents update them.
 const WATCHED_FILES = [
-  'app-status.json',
+  APP_STATUS_RELATIVE_PATH,
   ...PANE_IDS.map(id => path.join('handoffs', `${id}.md`)),
 ];
 
@@ -70,6 +70,10 @@ function getCoordWatchPaths(relPath) {
       .map((root) => path.join(root, relPath));
   }
   return [path.join(WORKSPACE_PATH, relPath)];
+}
+
+function getAppStatusPath() {
+  return resolveCoordFile(APP_STATUS_RELATIVE_PATH);
 }
 
 /**
@@ -205,7 +209,7 @@ function extractHandoffSummary(content) {
  * @returns {{ session: number, note: string, started: string } | null}
  */
 function readAppStatus() {
-  const data = readJsonFile(APP_STATUS_PATH);
+  const data = readJsonFile(getAppStatusPath());
   if (!data) return null;
   return {
     session: typeof data.session === 'number' ? data.session : 0,
@@ -632,7 +636,8 @@ module.exports = {
     WATCHED_FILES,
     SNAPSHOTS_DIR,
     HANDOFFS_DIR,
-    APP_STATUS_PATH,
+    APP_STATUS_RELATIVE_PATH,
+    get APP_STATUS_PATH() { return getAppStatusPath(); },
     DEFAULT_MAX_TOKENS,
     REFRESH_INTERVAL_MS,
     SECTION_PRIORITIES,
