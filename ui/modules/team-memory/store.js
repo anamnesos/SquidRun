@@ -1,10 +1,17 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { WORKSPACE_PATH } = require('../../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 const { runMigrations } = require('./migrations');
 
-const DEFAULT_DB_PATH = path.join(WORKSPACE_PATH, 'runtime', 'team-memory.sqlite');
+function resolveDefaultDbPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('runtime', 'team-memory.sqlite'), { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'runtime', 'team-memory.sqlite');
+}
+
+const DEFAULT_DB_PATH = resolveDefaultDbPath();
 
 function loadSqliteDriver() {
   try {
@@ -34,7 +41,7 @@ function loadSqliteDriver() {
 
 class TeamMemoryStore {
   constructor(options = {}) {
-    this.dbPath = options.dbPath || DEFAULT_DB_PATH;
+    this.dbPath = options.dbPath || resolveDefaultDbPath();
     this.enabled = options.enabled !== false;
     this.db = null;
     this.driverName = null;
@@ -130,5 +137,6 @@ class TeamMemoryStore {
 module.exports = {
   TeamMemoryStore,
   DEFAULT_DB_PATH,
+  resolveDefaultDbPath,
   loadSqliteDriver,
 };

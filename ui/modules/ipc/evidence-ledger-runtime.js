@@ -13,9 +13,19 @@ const log = require('../logger');
 const { resolveCoordPath } = require('../../config');
 
 let sharedRuntime = null;
-const DEFAULT_CONTEXT_SNAPSHOT_PATH = typeof resolveCoordPath === 'function'
-  ? resolveCoordPath(path.join('context-snapshots', '1.md'))
-  : null;
+function resolveDefaultContextSnapshotPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('context-snapshots', '1.md'));
+  }
+  return null;
+}
+
+function resolveDefaultEvidenceLedgerDbPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
+  }
+  return null;
+}
 
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -36,6 +46,37 @@ function toNumberOrFallback(value, fallback = null) {
 
 function isRuntimeAvailable(runtime) {
   return Boolean(runtime?.store && typeof runtime.store.isAvailable === 'function' && runtime.store.isAvailable());
+}
+
+function normalizeRuntimeOptions(runtimeOptions = {}) {
+  const options = asObject(runtimeOptions);
+  const storeOptions = asObject(options.storeOptions);
+  const seedOptions = asObject(options.seedOptions);
+
+  if (!storeOptions.dbPath) {
+    const defaultDbPath = resolveDefaultEvidenceLedgerDbPath();
+    if (defaultDbPath) {
+      storeOptions.dbPath = defaultDbPath;
+    }
+  }
+  if (!seedOptions.contextSnapshotPath) {
+    const defaultSnapshotPath = resolveDefaultContextSnapshotPath();
+    if (defaultSnapshotPath) {
+      seedOptions.contextSnapshotPath = defaultSnapshotPath;
+    }
+  }
+
+  return {
+    ...options,
+    storeOptions,
+    seedOptions,
+  };
+}
+
+function getExplicitStoreDbPath(runtimeOptions = {}) {
+  const options = asObject(runtimeOptions);
+  const storeOptions = asObject(options.storeOptions);
+  return asString(storeOptions.dbPath, '');
 }
 
 function shouldSeedRuntime(runtime) {
@@ -97,7 +138,7 @@ function maybeSeedDecisionMemory(runtime, options = {}) {
     return { ok: true, skipped: true, reason: 'already_populated' };
   }
 
-  const snapshotPath = asString(seedOptions.contextSnapshotPath, DEFAULT_CONTEXT_SNAPSHOT_PATH || '');
+  const snapshotPath = asString(seedOptions.contextSnapshotPath, resolveDefaultContextSnapshotPath() || '');
   if (!snapshotPath || !fs.existsSync(snapshotPath)) {
     return { ok: true, skipped: true, reason: 'context_snapshot_missing', snapshotPath };
   }
@@ -145,12 +186,13 @@ function maybeSeedDecisionMemory(runtime, options = {}) {
 }
 
 function createEvidenceLedgerRuntime(options = {}) {
-  const storeOptions = asObject(options.storeOptions);
+  const normalizedOptions = normalizeRuntimeOptions(options);
+  const storeOptions = asObject(normalizedOptions.storeOptions);
   const store = new EvidenceLedgerStore(storeOptions);
   const initResult = store.init();
   const investigator = new EvidenceLedgerInvestigator(store);
   const memory = new EvidenceLedgerMemory(store);
-  const seedResult = maybeSeedDecisionMemory({ store, investigator, memory }, asObject(options.seedOptions));
+  const seedResult = maybeSeedDecisionMemory({ store, investigator, memory }, asObject(normalizedOptions.seedOptions));
   if (seedResult && seedResult.ok === false) {
     log.warn('EvidenceLedger', `Startup seed skipped due to error: ${seedResult.reason || seedResult.error || 'unknown'}`);
   }
@@ -167,7 +209,9 @@ function getSharedRuntime(deps = {}) {
   const factory = typeof deps.createEvidenceLedgerRuntime === 'function'
     ? deps.createEvidenceLedgerRuntime
     : createEvidenceLedgerRuntime;
-  const runtimeOptions = asObject(deps.runtimeOptions);
+  const runtimeOptionsRaw = asObject(deps.runtimeOptions);
+  const explicitRequestedDbPath = getExplicitStoreDbPath(runtimeOptionsRaw);
+  const runtimeOptions = normalizeRuntimeOptions(runtimeOptionsRaw);
   const forceRuntimeRecreate = deps.forceRuntimeRecreate === true;
   const recreateUnavailable = deps.recreateUnavailable !== false;
 
@@ -176,6 +220,16 @@ function getSharedRuntime(deps = {}) {
   }
 
   if (sharedRuntime && recreateUnavailable && !isRuntimeAvailable(sharedRuntime)) {
+    closeSharedRuntime();
+  }
+
+  const activeDbPath = asString(sharedRuntime?.store?.dbPath, '');
+  if (
+    sharedRuntime
+    && explicitRequestedDbPath
+    && activeDbPath
+    && path.resolve(explicitRequestedDbPath) !== path.resolve(activeDbPath)
+  ) {
     closeSharedRuntime();
   }
 
@@ -365,7 +419,12 @@ function enrichPayloadForSource(payload = {}, source = {}) {
 
 function executeEvidenceLedgerOperation(action, payload = {}, options = {}) {
   const deps = asObject(options.deps);
-  const runtime = getSharedRuntime(deps);
+  const runtime = getSharedRuntime({
+    ...deps,
+    runtimeOptions: options.runtimeOptions || deps.runtimeOptions,
+    forceRuntimeRecreate: options.forceRuntimeRecreate === true || deps.forceRuntimeRecreate === true,
+    recreateUnavailable: options.recreateUnavailable !== false && deps.recreateUnavailable !== false,
+  });
   const investigator = runtime?.investigator;
   const memory = runtime?.memory;
   const source = asObject(options.source);

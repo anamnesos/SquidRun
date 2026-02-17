@@ -21,8 +21,10 @@
  */
 
 const log = require('../logger');
+const path = require('path');
 const workerClient = require('./evidence-ledger-worker-client');
 const runtime = require('./evidence-ledger-runtime');
+const { resolveCoordPath } = require('../../config');
 
 const EVIDENCE_LEDGER_CHANNEL_ACTIONS = new Map([
   ['evidence-ledger:create-incident', 'create-incident'],
@@ -70,8 +72,24 @@ function shouldUseWorker(options = {}) {
 function extractWorkerOptions(options = {}) {
   const opts = asObject(options);
   const deps = asObject(opts.deps);
+  const baseRuntimeOptions = opts.runtimeOptions || deps.runtimeOptions;
+  const runtimeOptions = asObject(baseRuntimeOptions);
+  const storeOptions = asObject(runtimeOptions.storeOptions);
+  const seedOptions = asObject(runtimeOptions.seedOptions);
+
+  if (!storeOptions.dbPath && typeof resolveCoordPath === 'function') {
+    storeOptions.dbPath = resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
+  }
+  if (!seedOptions.contextSnapshotPath && typeof resolveCoordPath === 'function') {
+    seedOptions.contextSnapshotPath = resolveCoordPath(path.join('context-snapshots', '1.md'));
+  }
+
   return {
-    runtimeOptions: opts.runtimeOptions || deps.runtimeOptions,
+    runtimeOptions: {
+      ...runtimeOptions,
+      storeOptions,
+      seedOptions,
+    },
     forceRuntimeRecreate: opts.forceRuntimeRecreate === true || deps.forceRuntimeRecreate === true,
     recreateUnavailable: opts.recreateUnavailable !== false && deps.recreateUnavailable !== false,
   };

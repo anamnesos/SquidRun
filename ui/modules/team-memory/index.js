@@ -1,19 +1,47 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { WORKSPACE_PATH } = require('../../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 const workerClient = require('./worker-client');
 const runtime = require('./runtime');
 const { EvidenceLedgerStore } = require('../main/evidence-ledger-store');
 const { upsertIntegrityReport } = require('./integrity-checker');
 const { DEFAULT_PATTERN_SPOOL_PATH } = require('./patterns');
 
-const DEFAULT_ERRORS_PATH = path.join(WORKSPACE_PATH, 'build', 'errors.md');
+function resolveDefaultErrorsPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('build', 'errors.md'), { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'build', 'errors.md');
+}
+
+function resolveDefaultEvidenceLedgerDbPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
+}
+
+function resolveDefaultTeamMemoryDbPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('runtime', 'team-memory.sqlite'), { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'runtime', 'team-memory.sqlite');
+}
+
+function resolveDefaultPatternSpoolPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('runtime', 'team-memory-pattern-spool.jsonl'), { forWrite: true });
+  }
+  return DEFAULT_PATTERN_SPOOL_PATH;
+}
+
+const DEFAULT_ERRORS_PATH = resolveDefaultErrorsPath();
 const DEFAULT_INTEGRITY_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_BELIEF_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_PATTERN_MINING_INTERVAL_MS = 60 * 1000;
 const DEFAULT_BELIEF_AGENTS = Object.freeze(['architect', 'builder', 'oracle']);
-const DEFAULT_EVIDENCE_LEDGER_DB_PATH = path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
+const DEFAULT_EVIDENCE_LEDGER_DB_PATH = resolveDefaultEvidenceLedgerDbPath();
 
 let integritySweepTimer = null;
 let beliefSnapshotTimer = null;
@@ -155,8 +183,23 @@ function shouldUseWorker(options = {}) {
 function extractRuntimeOptions(options = {}) {
   const opts = asObject(options);
   const deps = asObject(opts.deps);
+  const runtimeOptions = asObject(opts.runtimeOptions || deps.runtimeOptions);
+  const storeOptions = asObject(runtimeOptions.storeOptions);
+  const patternOptions = asObject(runtimeOptions.patternOptions);
+
+  if (!storeOptions.dbPath) {
+    storeOptions.dbPath = resolveDefaultTeamMemoryDbPath();
+  }
+  if (!patternOptions.spoolPath) {
+    patternOptions.spoolPath = resolveDefaultPatternSpoolPath();
+  }
+
   return {
-    runtimeOptions: opts.runtimeOptions || deps.runtimeOptions,
+    runtimeOptions: {
+      ...runtimeOptions,
+      storeOptions,
+      patternOptions,
+    },
     forceRuntimeRecreate: opts.forceRuntimeRecreate === true || deps.forceRuntimeRecreate === true,
     recreateUnavailable: opts.recreateUnavailable !== false && deps.recreateUnavailable !== false,
   };

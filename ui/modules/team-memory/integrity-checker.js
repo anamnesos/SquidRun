@@ -1,10 +1,24 @@
 const fs = require('fs');
 const path = require('path');
-const { WORKSPACE_PATH } = require('../../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 const { EvidenceLedgerStore } = require('../main/evidence-ledger-store');
 
-const DEFAULT_EVIDENCE_LEDGER_DB_PATH = path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
-const DEFAULT_ERRORS_MD_PATH = path.join(WORKSPACE_PATH, 'build', 'errors.md');
+function resolveDefaultEvidenceLedgerDbPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
+}
+
+function resolveDefaultErrorsPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('build', 'errors.md'), { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'build', 'errors.md');
+}
+
+const DEFAULT_EVIDENCE_LEDGER_DB_PATH = resolveDefaultEvidenceLedgerDbPath();
+const DEFAULT_ERRORS_MD_PATH = resolveDefaultErrorsPath();
 const INTEGRITY_BLOCK_START = '<!-- TEAM_MEMORY_EVIDENCE_REF_CHECK_START -->';
 const INTEGRITY_BLOCK_END = '<!-- TEAM_MEMORY_EVIDENCE_REF_CHECK_END -->';
 
@@ -161,4 +175,6 @@ function upsertIntegrityReport(scanResult, options = {}) {
 module.exports = {
   scanOrphanedEvidenceRefs,
   upsertIntegrityReport,
+  resolveDefaultEvidenceLedgerDbPath,
+  resolveDefaultErrorsPath,
 };
