@@ -19,6 +19,7 @@ const contractPromotion = require('./contract-promotion');
 const transitionLedger = require('./transition-ledger');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
+const { appendCommsJournalEntry } = require('./main/comms-journal');
 
 const TERMINAL_EVENT_SOURCE = 'terminal.js';
 const { attachAgentColors } = require('./terminal/agent-colors');
@@ -1984,6 +1985,29 @@ function blurAllTerminals() {
 // Send message to Architect only (user interacts with Architect, Architect coordinates execution)
 // User messages get PRIORITY + IMMEDIATE - bypass queue ordering AND idle gating
 function broadcast(message, options = {}) {
+  const messageText = typeof message === 'string' ? message.trim() : String(message ?? '').trim();
+  if (messageText) {
+    const userMessageId = `user-ui-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const journalResult = appendCommsJournalEntry({
+      messageId: userMessageId,
+      sessionId: null,
+      senderRole: 'user',
+      targetRole: 'architect',
+      channel: 'user',
+      direction: 'outbound',
+      sentAtMs: Date.now(),
+      rawBody: messageText,
+      status: 'recorded',
+      attempt: 1,
+      metadata: {
+        source: 'ui.broadcast',
+      },
+    });
+    if (journalResult?.ok !== true) {
+      log.warn('Terminal', `User message journal write unavailable: ${journalResult?.reason || 'unknown'}`);
+    }
+  }
+
   // Send directly to Architect (pane 1), no broadcast prefix needed
   // priority: true ensures user message jumps to front of queue
   // immediate: true bypasses idle threshold checks (user wants to send NOW)

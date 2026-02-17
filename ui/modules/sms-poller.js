@@ -157,7 +157,10 @@ async function pollNow() {
 
         if (typeof onMessage === 'function') {
           try {
-            onMessage(text, normalizeFrom(message.from));
+            onMessage(text, normalizeFrom(message.from), {
+              sid: sid || null,
+              timestampMs,
+            });
           } catch (err) {
             log.warn('SMS', `SMS callback failed: ${err.message}`);
           }
