@@ -1,3 +1,4 @@
+const path = require('path');
 const { TeamMemoryStore } = require('./store');
 const { TeamMemoryClaims } = require('./claims');
 const { TeamMemoryPatterns } = require('./patterns');
@@ -5,12 +6,47 @@ const { TeamMemoryGuards } = require('./guards');
 const { runBackfill } = require('./backfill');
 const { scanOrphanedEvidenceRefs } = require('./integrity-checker');
 const { executeExperimentOperation } = require('../experiment/runtime');
+const { resolveCoordPath } = require('../../config');
 
 let sharedRuntime = null;
 
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
+}
+
+function asString(value, fallback = '') {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed || fallback;
+}
+
+function resolveDefaultTeamMemoryDbPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('runtime', 'team-memory.sqlite'), { forWrite: true });
+  }
+  return null;
+}
+
+function normalizeRuntimeOptions(runtimeOptions = {}) {
+  const options = asObject(runtimeOptions);
+  const storeOptions = asObject(options.storeOptions);
+  if (!storeOptions.dbPath) {
+    const defaultDbPath = resolveDefaultTeamMemoryDbPath();
+    if (defaultDbPath) {
+      storeOptions.dbPath = defaultDbPath;
+    }
+  }
+  return {
+    ...options,
+    storeOptions,
+  };
+}
+
+function getExplicitRuntimeDbPath(runtimeOptions = {}) {
+  const options = asObject(runtimeOptions);
+  const storeOptions = asObject(options.storeOptions);
+  return asString(storeOptions.dbPath, '');
 }
 
 function isRuntimeAvailable(runtime) {
@@ -39,7 +75,9 @@ function getSharedRuntime(deps = {}) {
   const factory = typeof deps.createTeamMemoryRuntime === 'function'
     ? deps.createTeamMemoryRuntime
     : createTeamMemoryRuntime;
-  const runtimeOptions = asObject(deps.runtimeOptions);
+  const runtimeOptionsRaw = asObject(deps.runtimeOptions);
+  const explicitRequestedDbPath = getExplicitRuntimeDbPath(runtimeOptionsRaw);
+  const runtimeOptions = normalizeRuntimeOptions(runtimeOptionsRaw);
   const forceRuntimeRecreate = deps.forceRuntimeRecreate === true;
   const recreateUnavailable = deps.recreateUnavailable !== false;
 
@@ -48,6 +86,16 @@ function getSharedRuntime(deps = {}) {
   }
 
   if (sharedRuntime && recreateUnavailable && !isRuntimeAvailable(sharedRuntime)) {
+    closeSharedRuntime();
+  }
+
+  const activeDbPath = asString(sharedRuntime?.store?.dbPath, '');
+  if (
+    sharedRuntime
+    && explicitRequestedDbPath
+    && activeDbPath
+    && path.resolve(explicitRequestedDbPath) !== path.resolve(activeDbPath)
+  ) {
     closeSharedRuntime();
   }
 
@@ -90,7 +138,12 @@ function initializeTeamMemoryRuntime(options = {}) {
 function executeTeamMemoryOperation(action, payload = {}, options = {}) {
   const normalizedAction = String(action || '').trim().toLowerCase();
   const deps = asObject(options.deps);
-  const runtime = getSharedRuntime(deps);
+  const runtime = getSharedRuntime({
+    ...deps,
+    runtimeOptions: options.runtimeOptions || deps.runtimeOptions,
+    forceRuntimeRecreate: options.forceRuntimeRecreate === true || deps.forceRuntimeRecreate === true,
+    recreateUnavailable: options.recreateUnavailable !== false && deps.recreateUnavailable !== false,
+  });
   const store = runtime?.store;
   const claims = runtime?.claims;
   const patterns = runtime?.patterns;

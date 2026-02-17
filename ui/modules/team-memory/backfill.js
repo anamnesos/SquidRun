@@ -1,9 +1,16 @@
 const crypto = require('crypto');
 const path = require('path');
-const { WORKSPACE_PATH } = require('../../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 const { EvidenceLedgerStore } = require('../main/evidence-ledger-store');
 
-const DEFAULT_EVIDENCE_LEDGER_DB_PATH = path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
+function resolveDefaultEvidenceLedgerDbPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
+}
+
+const DEFAULT_EVIDENCE_LEDGER_DB_PATH = resolveDefaultEvidenceLedgerDbPath();
 const DEFAULT_BACKFILL_LIMIT = 5000;
 
 const OWNER_ALIAS_MAP = new Map([
@@ -229,4 +236,5 @@ function runBackfill(options = {}) {
 module.exports = {
   runBackfill,
   buildBackfillRecord,
+  resolveDefaultEvidenceLedgerDbPath,
 };

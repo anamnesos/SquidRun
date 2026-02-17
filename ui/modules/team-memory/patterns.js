@@ -1,10 +1,17 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { WORKSPACE_PATH } = require('../../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 const { normalizeRole } = require('./claims');
 
-const DEFAULT_PATTERN_SPOOL_PATH = path.join(WORKSPACE_PATH, 'runtime', 'team-memory-pattern-spool.jsonl');
+function resolveDefaultPatternSpoolPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('runtime', 'team-memory-pattern-spool.jsonl'), { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'runtime', 'team-memory-pattern-spool.jsonl');
+}
+
+const DEFAULT_PATTERN_SPOOL_PATH = resolveDefaultPatternSpoolPath();
 const INTERNAL_PATTERN_TYPES = new Set(['handoff_loop', 'stall', 'escalation_spiral']);
 const EXTERNAL_PATTERN_TYPES = new Set(['coordination', 'failure', 'success']);
 
@@ -553,4 +560,5 @@ class TeamMemoryPatterns {
 module.exports = {
   TeamMemoryPatterns,
   DEFAULT_PATTERN_SPOOL_PATH,
+  resolveDefaultPatternSpoolPath,
 };

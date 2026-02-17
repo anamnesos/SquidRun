@@ -6,10 +6,21 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { WORKSPACE_PATH, evidenceLedgerEnabled: CONFIG_EVIDENCE_LEDGER_ENABLED } = require('../../config');
+const {
+  WORKSPACE_PATH,
+  resolveCoordPath,
+  evidenceLedgerEnabled: CONFIG_EVIDENCE_LEDGER_ENABLED,
+} = require('../../config');
 const { prepareEventForStorage } = require('./evidence-ledger-ingest');
 
-const DEFAULT_DB_PATH = path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
+function resolveDefaultDbPath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
+  }
+  return path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
+}
+
+const DEFAULT_DB_PATH = resolveDefaultDbPath();
 const DEFAULT_MAX_ROWS = 2_000_000;
 const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const LOGGED_DEGRADE_KEYS = new Set();
@@ -296,7 +307,7 @@ function loadSqliteDriver() {
 
 class EvidenceLedgerStore {
   constructor(options = {}) {
-    this.dbPath = options.dbPath || DEFAULT_DB_PATH;
+    this.dbPath = options.dbPath || resolveDefaultDbPath();
     this.maxRows = Math.max(1, Number(options.maxRows) || DEFAULT_MAX_ROWS);
     this.retentionMs = Math.max(1_000, Number(options.retentionMs) || DEFAULT_RETENTION_MS);
     this.sessionId = typeof options.sessionId === 'string' ? options.sessionId : null;
@@ -744,6 +755,7 @@ class EvidenceLedgerStore {
 module.exports = {
   EvidenceLedgerStore,
   DEFAULT_DB_PATH,
+  resolveDefaultDbPath,
   DEFAULT_MAX_ROWS,
   DEFAULT_RETENTION_MS,
 };
