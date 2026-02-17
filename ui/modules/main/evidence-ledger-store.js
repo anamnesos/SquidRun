@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const log = require('../logger');
 const {
   WORKSPACE_PATH,
@@ -261,6 +262,48 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_session
   ON ledger_context_snapshots(session_id, created_at_ms DESC);
 `;
 
+const SCHEMA_V4_SQL = `
+CREATE TABLE IF NOT EXISTS comms_journal (
+  row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id TEXT NOT NULL UNIQUE,
+  session_id TEXT,
+  sender_role TEXT,
+  target_role TEXT,
+  channel TEXT NOT NULL CHECK (channel IN ('ws', 'telegram', 'sms', 'user')),
+  direction TEXT NOT NULL CHECK (direction IN ('inbound', 'outbound')),
+  sent_at_ms INTEGER,
+  brokered_at_ms INTEGER,
+  raw_body TEXT,
+  body_hash TEXT,
+  body_bytes INTEGER,
+  status TEXT NOT NULL CHECK (status IN ('recorded', 'brokered', 'routed', 'acked', 'failed')),
+  ack_status TEXT,
+  error_code TEXT,
+  attempt INTEGER,
+  metadata_json TEXT DEFAULT '{}',
+  updated_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_comms_journal_session_brokered
+  ON comms_journal(session_id, brokered_at_ms);
+
+CREATE INDEX IF NOT EXISTS idx_comms_journal_status
+  ON comms_journal(status);
+
+CREATE INDEX IF NOT EXISTS idx_comms_journal_sender_brokered
+  ON comms_journal(sender_role, brokered_at_ms);
+`;
+
+const COMMS_CHANNELS = new Set(['ws', 'telegram', 'sms', 'user']);
+const COMMS_DIRECTIONS = new Set(['inbound', 'outbound']);
+const COMMS_STATUS_RANK = Object.freeze({
+  recorded: 1,
+  brokered: 2,
+  routed: 3,
+  acked: 4,
+  failed: 4,
+});
+
 function toMs(value, fallback) {
   const numeric = Number(value);
   if (Number.isFinite(numeric) && numeric >= 0) {
@@ -276,6 +319,98 @@ function parseJson(value, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function toOptionalString(value, fallback = null) {
+  if (value === null || value === undefined) return fallback;
+  const text = String(value).trim();
+  return text ? text : fallback;
+}
+
+function toOptionalMs(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return null;
+  return Math.floor(numeric);
+}
+
+function normalizeCommsChannel(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  return COMMS_CHANNELS.has(normalized) ? normalized : null;
+}
+
+function normalizeCommsDirection(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  return COMMS_DIRECTIONS.has(normalized) ? normalized : null;
+}
+
+function normalizeCommsStatus(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  return Object.prototype.hasOwnProperty.call(COMMS_STATUS_RANK, normalized) ? normalized : null;
+}
+
+function statusRank(status) {
+  if (!status) return 0;
+  return COMMS_STATUS_RANK[status] || 0;
+}
+
+function chooseProgressedStatus(currentStatus, nextStatus) {
+  if (!nextStatus) return currentStatus || null;
+  if (!currentStatus) return nextStatus;
+  return statusRank(nextStatus) >= statusRank(currentStatus) ? nextStatus : currentStatus;
+}
+
+function toOptionalAttempt(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return null;
+  return Math.floor(numeric);
+}
+
+function ensureObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
+function mergeMetadata(existing, incoming) {
+  const left = ensureObject(existing);
+  const right = ensureObject(incoming);
+  return {
+    ...left,
+    ...right,
+  };
+}
+
+function hashBody(rawBody) {
+  return crypto.createHash('sha256').update(rawBody, 'utf8').digest('hex');
+}
+
+function mapCommsRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  return {
+    rowId: row.row_id,
+    messageId: row.message_id,
+    sessionId: row.session_id,
+    senderRole: row.sender_role,
+    targetRole: row.target_role,
+    channel: row.channel,
+    direction: row.direction,
+    sentAtMs: row.sent_at_ms,
+    brokeredAtMs: row.brokered_at_ms,
+    rawBody: row.raw_body,
+    bodyHash: row.body_hash,
+    bodyBytes: row.body_bytes,
+    status: row.status,
+    ackStatus: row.ack_status,
+    errorCode: row.error_code,
+    attempt: row.attempt,
+    metadata: parseJson(row.metadata_json, {}),
+    updatedAtMs: row.updated_at_ms,
+  };
 }
 
 function loadSqliteDriver() {
@@ -374,6 +509,7 @@ class EvidenceLedgerStore {
     this.db.exec(SCHEMA_V1_SQL);
     this.db.exec(SCHEMA_V2_SQL);
     this.db.exec(SCHEMA_V3_SQL);
+    this.db.exec(SCHEMA_V4_SQL);
   }
 
   isAvailable() {
@@ -619,6 +755,178 @@ class EvidenceLedgerStore {
 
     const rows = this.db.prepare(sql).all(...params, limit);
     return rows.map((row) => this._mapRowToEvent(row));
+  }
+
+  upsertCommsJournal(entry = {}, options = {}) {
+    if (!this.isAvailable()) {
+      return { ok: false, status: 'unavailable', reason: this.degradedReason || 'store_unavailable' };
+    }
+
+    const nowMs = toMs(options.nowMs, Date.now());
+    const messageId = toOptionalString(entry.messageId || entry.message_id, null);
+    if (!messageId) {
+      return { ok: false, status: 'invalid', reason: 'message_id_required' };
+    }
+
+    const channel = normalizeCommsChannel(entry.channel) || 'ws';
+    const direction = normalizeCommsDirection(entry.direction) || 'outbound';
+    const incomingStatus = normalizeCommsStatus(entry.status) || 'recorded';
+
+    const rawBody = typeof entry.rawBody === 'string'
+      ? entry.rawBody
+      : (typeof entry.raw_body === 'string' ? entry.raw_body : '');
+    const incomingBodyHash = toOptionalString(entry.bodyHash || entry.body_hash, null);
+    const incomingBodyBytes = Number.isFinite(Number(entry.bodyBytes ?? entry.body_bytes))
+      ? Math.max(0, Math.floor(Number(entry.bodyBytes ?? entry.body_bytes)))
+      : null;
+
+    const incomingMetadata = ensureObject(
+      entry.metadata ?? entry.meta ?? entry.metadata_json
+    );
+
+    const incoming = {
+      messageId,
+      sessionId: toOptionalString(entry.sessionId || entry.session_id, null),
+      senderRole: toOptionalString(entry.senderRole || entry.sender_role, null),
+      targetRole: toOptionalString(entry.targetRole || entry.target_role, null),
+      channel,
+      direction,
+      sentAtMs: toOptionalMs(entry.sentAtMs ?? entry.sent_at_ms),
+      brokeredAtMs: toOptionalMs(entry.brokeredAtMs ?? entry.brokered_at_ms),
+      rawBody,
+      bodyHash: incomingBodyHash,
+      bodyBytes: incomingBodyBytes,
+      status: incomingStatus,
+      ackStatus: toOptionalString(entry.ackStatus || entry.ack_status, null),
+      errorCode: toOptionalString(entry.errorCode || entry.error_code, null),
+      attempt: toOptionalAttempt(entry.attempt),
+      metadata: incomingMetadata,
+    };
+
+    const existingRow = this.db.prepare('SELECT * FROM comms_journal WHERE message_id = ?').get(messageId);
+    const existing = mapCommsRow(existingRow);
+
+    const mergedRawBody = incoming.rawBody || existing?.rawBody || '';
+    const mergedBodyHash = incoming.bodyHash
+      || (mergedRawBody ? hashBody(mergedRawBody) : (existing?.bodyHash || null));
+    const mergedBodyBytes = Number.isFinite(incoming.bodyBytes)
+      ? incoming.bodyBytes
+      : (mergedRawBody ? Buffer.byteLength(mergedRawBody, 'utf8') : (existing?.bodyBytes ?? 0));
+
+    const merged = {
+      messageId,
+      sessionId: incoming.sessionId || existing?.sessionId || null,
+      senderRole: incoming.senderRole || existing?.senderRole || null,
+      targetRole: incoming.targetRole || existing?.targetRole || null,
+      channel: incoming.channel || existing?.channel || 'ws',
+      direction: incoming.direction || existing?.direction || 'outbound',
+      sentAtMs: (
+        Number.isFinite(incoming.sentAtMs) && Number.isFinite(existing?.sentAtMs)
+          ? Math.min(incoming.sentAtMs, existing.sentAtMs)
+          : (incoming.sentAtMs ?? existing?.sentAtMs ?? null)
+      ),
+      brokeredAtMs: (
+        Number.isFinite(incoming.brokeredAtMs) && Number.isFinite(existing?.brokeredAtMs)
+          ? Math.max(incoming.brokeredAtMs, existing.brokeredAtMs)
+          : (incoming.brokeredAtMs ?? existing?.brokeredAtMs ?? null)
+      ),
+      rawBody: mergedRawBody,
+      bodyHash: mergedBodyHash,
+      bodyBytes: mergedBodyBytes,
+      status: chooseProgressedStatus(existing?.status || null, incoming.status) || 'recorded',
+      ackStatus: incoming.ackStatus || existing?.ackStatus || null,
+      errorCode: incoming.errorCode || existing?.errorCode || null,
+      attempt: (
+        Number.isFinite(incoming.attempt) && Number.isFinite(existing?.attempt)
+          ? Math.max(incoming.attempt, existing.attempt)
+          : (incoming.attempt ?? existing?.attempt ?? null)
+      ),
+      metadata: mergeMetadata(existing?.metadata, incoming.metadata),
+      updatedAtMs: nowMs,
+    };
+
+    const metadataJson = JSON.stringify(merged.metadata || {});
+
+    try {
+      if (!existing) {
+        const insert = this.db.prepare(`
+          INSERT INTO comms_journal (
+            message_id, session_id, sender_role, target_role, channel, direction,
+            sent_at_ms, brokered_at_ms, raw_body, body_hash, body_bytes, status,
+            ack_status, error_code, attempt, metadata_json, updated_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        insert.run(
+          merged.messageId,
+          merged.sessionId,
+          merged.senderRole,
+          merged.targetRole,
+          merged.channel,
+          merged.direction,
+          merged.sentAtMs,
+          merged.brokeredAtMs,
+          merged.rawBody,
+          merged.bodyHash,
+          merged.bodyBytes,
+          merged.status,
+          merged.ackStatus,
+          merged.errorCode,
+          merged.attempt,
+          metadataJson,
+          merged.updatedAtMs
+        );
+        return { ok: true, status: 'inserted', messageId: merged.messageId };
+      }
+
+      const update = this.db.prepare(`
+        UPDATE comms_journal
+        SET
+          session_id = ?,
+          sender_role = ?,
+          target_role = ?,
+          channel = ?,
+          direction = ?,
+          sent_at_ms = ?,
+          brokered_at_ms = ?,
+          raw_body = ?,
+          body_hash = ?,
+          body_bytes = ?,
+          status = ?,
+          ack_status = ?,
+          error_code = ?,
+          attempt = ?,
+          metadata_json = ?,
+          updated_at_ms = ?
+        WHERE message_id = ?
+      `);
+      update.run(
+        merged.sessionId,
+        merged.senderRole,
+        merged.targetRole,
+        merged.channel,
+        merged.direction,
+        merged.sentAtMs,
+        merged.brokeredAtMs,
+        merged.rawBody,
+        merged.bodyHash,
+        merged.bodyBytes,
+        merged.status,
+        merged.ackStatus,
+        merged.errorCode,
+        merged.attempt,
+        metadataJson,
+        merged.updatedAtMs,
+        merged.messageId
+      );
+      return { ok: true, status: 'updated', messageId: merged.messageId };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 'db_error',
+        reason: err.message,
+        messageId,
+      };
+    }
   }
 
   prune(options = {}) {
