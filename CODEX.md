@@ -16,7 +16,7 @@ This is the Codex-specific shim.
 
 ## Startup (First Action)
 
-- Read the session handoff index: `workspace/handoffs/session.md` — contains previous session context, decisions, and pending work. This persists across sessions.
+- Read the session handoff index: `workspace/handoffs/session.md` — auto-generated from `comms_journal` and mirrored from `.hivemind/handoffs/session.md`.
 - Then follow the full startup baseline in `ROLES.md`.
 
 ## Reference
