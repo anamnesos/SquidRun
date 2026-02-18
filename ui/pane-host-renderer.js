@@ -15,8 +15,6 @@ function readPaneIdFromQuery() {
 const paneId = readPaneIdFromQuery();
 let injectedScrollback = false;
 let injectChain = Promise.resolve();
-let paneCommand = '';
-let codexIdentityInjected = false;
 let ptyOutputTick = 0;
 let lastPtyOutputAtMs = 0;
 const pendingOutputWaiters = new Set();
@@ -82,12 +80,6 @@ terminal.onData((data) => {
     // No-op: daemon write failures are surfaced in main app logs.
   });
 });
-
-ipcRenderer.invoke('get-settings')
-  .then((settings) => {
-    paneCommand = String(settings?.paneCommands?.[paneId] || '').toLowerCase();
-  })
-  .catch(() => {});
 
 function stripInternalRoutingWrappers(value) {
   if (typeof value !== 'string') return '';
@@ -160,17 +152,9 @@ async function deferSubmitWhilePaneActive(maxWaitMs = SUBMIT_DEFER_MAX_WAIT_MS) 
 }
 
 async function injectMessage(payload = {}) {
-  let text = stripInternalRoutingWrappers(String(payload.message || ''));
+  const text = stripInternalRoutingWrappers(String(payload.message || ''));
   const deliveryId = payload.deliveryId || null;
   const traceContext = payload.traceContext || null;
-  if (paneCommand.includes('codex') && !codexIdentityInjected) {
-    const roleMap = { '1': 'Architect', '2': 'Builder', '5': 'Oracle' };
-    const role = roleMap[paneId] || `Pane ${paneId}`;
-    const d = new Date();
-    const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    text = `# HIVEMIND SESSION: ${role} - Started ${stamp}\n${text}`;
-    codexIdentityInjected = true;
-  }
 
   try {
     // Use chunked write for large payloads to prevent PTY pipe truncation.
@@ -180,8 +164,7 @@ async function injectMessage(payload = {}) {
     } else {
       await window.hivemind.pty.write(paneId, text, traceContext || null);
     }
-    // Mirror visible-path submit deferral: wait for output activity to settle
-    // instead of relying on a guessed fixed delay before Enter.
+    // Wait for output activity to settle before sending Enter.
     const payloadBytes = typeof Buffer !== 'undefined'
       ? Buffer.byteLength(text, 'utf8')
       : text.length;
@@ -196,9 +179,16 @@ async function injectMessage(payload = {}) {
         + 'sending Enter while output is still active'
       );
     }
-    // Submit via direct PTY Enter.
+    // Submit via dedicated main-process Enter dispatch — bypasses pty-write IPC
+    // to use the same direct daemonClient.write('\r') path as the working Enter button.
     const outputBaseline = ptyOutputTick;
-    await window.hivemind.pty.write(paneId, '\r', traceContext || null);
+    const enterResult = await ipcRenderer.invoke('pane-host-dispatch-enter', paneId);
+    if (!enterResult || !enterResult.success) {
+      console.error(
+        `[PaneHost] pane-host-dispatch-enter FAILED for pane ${paneId}:`,
+        enterResult?.reason || 'unknown'
+      );
+    }
     const outputObserved = await waitForPtyOutputAfter(outputBaseline, POST_ENTER_VERIFY_TIMEOUT_MS);
 
     if (deliveryId) {
@@ -222,6 +212,7 @@ async function injectMessage(payload = {}) {
       );
     }
   } catch (err) {
+    console.error(`[PaneHost] injectMessage FAILED for pane ${paneId}:`, err.message);
     if (deliveryId) {
       ipcRenderer.send('trigger-delivery-outcome', {
         deliveryId,
@@ -247,7 +238,6 @@ ipcRenderer.on('pane-host:pty-exit', (_event, payload = {}) => {
   if (String(payload.paneId || '') !== paneId) return;
   const code = payload.code ?? '?';
   terminal.write(`\r\n[Process exited with code ${code}]\r\n`);
-  codexIdentityInjected = false;
 });
 
 ipcRenderer.on('pane-host:prime-scrollback', (_event, payload = {}) => {
@@ -263,7 +253,9 @@ ipcRenderer.on('pane-host:inject-message', (_event, payload = {}) => {
   if (String(payload.paneId || '') !== paneId) return;
   injectChain = injectChain
     .then(() => injectMessage(payload))
-    .catch(() => {});
+    .catch((err) => {
+      console.error(`[PaneHost] Inject chain error for pane ${paneId}:`, err?.message || err);
+    });
 });
 
 // Notify main process that the host is ready to receive payloads.
