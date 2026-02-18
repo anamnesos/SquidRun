@@ -26,6 +26,7 @@ let watcher = null;
 let logActivityFn = null;
 let selfHealing = null;
 let pluginManager = null;
+let injectMessageRouter = null;
 
 // Shared constants
 const TRIGGER_PREFIX = '\x1b[1;33m[TRIGGER]\x1b[0m ';
@@ -121,6 +122,30 @@ function setPluginManager(manager) {
 function setWatcher(watcherModule) {
   watcher = watcherModule;
   routing.setSharedState({ watcher });
+}
+
+function setInjectMessageRouter(routerFn) {
+  injectMessageRouter = typeof routerFn === 'function' ? routerFn : null;
+}
+
+function dispatchInjectMessage(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+
+  if (injectMessageRouter) {
+    try {
+      const handled = injectMessageRouter(payload);
+      if (handled === true) return true;
+    } catch (err) {
+      log.warn('Trigger', `Inject router failed: ${err.message}`);
+    }
+  }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('inject-message', payload);
+    return true;
+  }
+
+  return false;
 }
 
 function formatTriggerMessage(message) {
@@ -429,12 +454,10 @@ function notifyAgents(agents, message, options = {}) {
   const notified = [];
   for (const paneId of targets) { if (agentRunning && agentRunning.get(paneId) === 'running') notified.push(paneId); }
   if (notified.length > 0) {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      const payload = { panes: notified, message: formatTriggerMessage(message) };
-      if (deliveryId) payload.deliveryId = deliveryId;
-      if (traceContext) payload.traceContext = traceContext;
-      mainWindow.webContents.send('inject-message', payload);
-    }
+    const payload = { panes: notified, message: formatTriggerMessage(message) };
+    if (deliveryId) payload.deliveryId = deliveryId;
+    if (traceContext) payload.traceContext = traceContext;
+    dispatchInjectMessage(payload);
     logTriggerActivity('Sent (PTY)', notified, message, { mode: 'pty' });
   }
   return notified;
@@ -499,7 +522,7 @@ function notifyAllAgentsSync(triggerFile) {
     }
   }
   if (runningPanes.length > 0) {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('inject-message', { panes: runningPanes, message: formatTriggerMessage(message) });
+    dispatchInjectMessage({ panes: runningPanes, message: formatTriggerMessage(message) });
   }
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sync-triggered', { file: triggerFile, notified: runningPanes });
   return runningPanes;
@@ -516,14 +539,12 @@ function sendStaggered(panes, message, meta = {}) {
   panes.forEach((paneId, index) => {
     const delay = panes.length === 1 || isPriority ? 0 : (index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS);
     setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('inject-message', {
-          panes: [paneId],
-          message,
-          deliveryId,
-          traceContext,
-        });
-      }
+      dispatchInjectMessage({
+        panes: [paneId],
+        message,
+        deliveryId,
+        traceContext,
+      });
     }, delay);
   });
 }
@@ -783,6 +804,7 @@ function sendDirectMessage(targetPanes, message, fromRole = null, options = {}) 
 
 module.exports = {
   init, setSelfHealing, setPluginManager, setWatcher,
+  setInjectMessageRouter,
   notifyAgents, notifyAllAgentsSync, handleTriggerFile, broadcastToAllAgents, sendDirectMessage,
   checkWorkflowGate,
   getReliabilityStats: metrics.getReliabilityStats,

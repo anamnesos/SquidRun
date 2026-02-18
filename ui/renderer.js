@@ -801,8 +801,14 @@ function setupEventListeners() {
 
   window.addEventListener('hivemind-settings-updated', (event) => {
     refreshVoiceSettings(event.detail);
+    if (typeof terminal.refreshMirrorModeBindings === 'function') {
+      terminal.refreshMirrorModeBindings();
+    }
   });
   refreshVoiceSettings(settings.getSettings());
+  if (typeof terminal.refreshMirrorModeBindings === 'function') {
+    terminal.refreshMirrorModeBindings();
+  }
 
   // Fetch initial voice capability
   ipcRenderer.invoke('get-feature-capabilities').then(caps => {
@@ -1123,6 +1129,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   ipcRenderer.on('pane-enter', async (event, data) => {
     const paneId = String(data?.paneId || '');
     if (!paneId) return;
+    const hiddenPaneHostMode = process.env.HIVEMIND_HIDDEN_PANE_HOSTS === '1'
+      || settings.getSettings()?.hiddenPaneHostsEnabled === true;
+    if (hiddenPaneHostMode && window.hivemind?.paneHost?.inject) {
+      try {
+        await window.hivemind.paneHost.inject(paneId, { message: '' });
+        return;
+      } catch (err) {
+        log.warn('PaneControl', `pane-host Enter fallback for pane ${paneId}: ${err.message}`);
+      }
+    }
 
     const capabilities = typeof terminal.getPaneInjectionCapabilities === 'function'
       ? terminal.getPaneInjectionCapabilities(paneId)

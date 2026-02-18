@@ -14,6 +14,7 @@ const { createBackupManager } = require('../backup-manager');
 const { createRecoveryManager } = require('../recovery-manager');
 const { createExternalNotifier } = require('../external-notifications');
 const { createKernelBridge } = require('./kernel-bridge');
+const { createPaneHostWindowManager } = require('./pane-host-window-manager');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 
 // Import sub-modules
@@ -97,6 +98,9 @@ class HivemindApp {
     this.cliIdentity = managers.cliIdentity;
     this.firmwareManager = managers.firmwareManager;
     this.kernelBridge = createKernelBridge(() => this.ctx.mainWindow);
+    this.paneHostWindowManager = createPaneHostWindowManager({
+      getCurrentSettings: () => this.ctx.currentSettings || {},
+    });
     this.lastDaemonOutputAtMs = Date.now();
     this.daemonClientListeners = [];
     this.consoleLogPath = path.join(WORKSPACE_PATH, 'console.log');
@@ -134,6 +138,11 @@ class HivemindApp {
     this.autoHandoffTimer = null;
     this.autoHandoffWriteInFlight = false;
     this.autoHandoffEnabled = AUTO_HANDOFF_ENABLED && process.env.NODE_ENV !== 'test';
+    this.paneHostReady = new Set();
+    this.paneHostReadyIpcRegistered = false;
+    this.paneHostReadyListener = null;
+    this.mainWindowSendRaw = null;
+    this.mainWindowSendInterceptInstalled = false;
   }
 
   async initializeStartupSessionScope(options = {}) {
@@ -231,6 +240,125 @@ class HivemindApp {
     } catch {
       return null;
     }
+  }
+
+  isHiddenPaneHostModeEnabled() {
+    if (process.env.HIVEMIND_HIDDEN_PANE_HOSTS === '1') return true;
+    return this.ctx?.currentSettings?.hiddenPaneHostsEnabled === true;
+  }
+
+  getHiddenPaneHostPaneIds() {
+    if (!this.isHiddenPaneHostModeEnabled()) return [];
+    return [...PANE_IDS];
+  }
+
+  async ensurePaneHostWindows() {
+    const paneIds = this.getHiddenPaneHostPaneIds();
+    if (!paneIds.length) return;
+    try {
+      await this.paneHostWindowManager.ensurePaneWindows(paneIds);
+    } catch (err) {
+      log.warn('PaneHost', `Failed to ensure pane host windows: ${err.message}`);
+    }
+  }
+
+  sendPaneHostMessage(paneId, channel, payload = {}) {
+    if (!this.isHiddenPaneHostModeEnabled()) return false;
+    return this.paneHostWindowManager.sendToPaneWindow(String(paneId), channel, {
+      ...payload,
+      paneId: String(paneId),
+    });
+  }
+
+  sendToVisibleWindow(channel, payload) {
+    const window = this.ctx.mainWindow;
+    if (!window || window.isDestroyed()) return false;
+    const sender = typeof this.mainWindowSendRaw === 'function'
+      ? this.mainWindowSendRaw
+      : window.webContents.send.bind(window.webContents);
+    sender(channel, payload);
+    return true;
+  }
+
+  installMainWindowSendInterceptor() {
+    const window = this.ctx.mainWindow;
+    if (!window || window.isDestroyed() || !window.webContents) return;
+    if (this.mainWindowSendInterceptInstalled) return;
+
+    const originalSend = window.webContents.send.bind(window.webContents);
+    this.mainWindowSendRaw = originalSend;
+    window.webContents.send = (channel, payload, ...rest) => {
+      if (channel === 'inject-message' && this.isHiddenPaneHostModeEnabled()) {
+        const handled = this.routeInjectMessage(payload || {});
+        if (handled) return;
+      }
+      return originalSend(channel, payload, ...rest);
+    };
+    this.mainWindowSendInterceptInstalled = true;
+  }
+
+  primePaneHostFromTerminalSnapshot(terminals = []) {
+    if (!this.isHiddenPaneHostModeEnabled()) return;
+    const list = Array.isArray(terminals) ? terminals : [];
+    for (const term of list) {
+      const paneId = String(term?.paneId || '');
+      if (!paneId) continue;
+      if (!this.getHiddenPaneHostPaneIds().includes(paneId)) continue;
+      const scrollback = typeof term?.scrollback === 'string' ? term.scrollback : '';
+      if (!scrollback) continue;
+      this.sendPaneHostMessage(paneId, 'pane-host:prime-scrollback', { scrollback });
+    }
+  }
+
+  routeInjectMessage(payload = {}) {
+    if (!payload || typeof payload !== 'object') return false;
+    const panes = Array.isArray(payload.panes)
+      ? payload.panes.map((paneId) => String(paneId))
+      : [];
+    if (panes.length === 0) return false;
+
+    if (!this.isHiddenPaneHostModeEnabled()) {
+      return this.sendToVisibleWindow('inject-message', payload);
+    }
+
+    const mirrorPanes = [];
+    for (const paneId of panes) {
+      const routedToHost = this.sendPaneHostMessage(paneId, 'pane-host:inject-message', {
+        message: payload.message,
+        deliveryId: payload.deliveryId || null,
+        traceContext: payload.traceContext || null,
+        meta: payload.meta || null,
+      });
+      if (!routedToHost) {
+        mirrorPanes.push(paneId);
+      }
+    }
+
+    if (mirrorPanes.length > 0 && this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+      this.sendToVisibleWindow('inject-message', {
+        ...payload,
+        panes: mirrorPanes,
+      });
+    }
+    return true;
+  }
+
+  ensurePaneHostReadyForwarder() {
+    if (this.paneHostReadyIpcRegistered) return;
+    this.paneHostReadyIpcRegistered = true;
+
+    this.paneHostReadyListener = (_event, payload = {}) => {
+      const paneId = String(payload?.paneId || '').trim();
+      if (!paneId) return;
+      this.paneHostReady.add(paneId);
+      const terminal = this.ctx.daemonClient?.getTerminal?.(paneId);
+      if (terminal?.scrollback) {
+        this.sendPaneHostMessage(paneId, 'pane-host:prime-scrollback', {
+          scrollback: terminal.scrollback,
+        });
+      }
+    };
+    ipcMain.on('pane-host-ready', this.paneHostReadyListener);
   }
 
   async init() {
@@ -963,8 +1091,11 @@ class HivemindApp {
       title: 'Hivemind',
     });
 
+    this.installMainWindowSendInterceptor();
+    this.ensurePaneHostReadyForwarder();
     this.setupPermissions();
     this.ctx.mainWindow.loadFile('index.html');
+    await this.ensurePaneHostWindows();
 
     if (this.ctx.currentSettings.devTools) {
       this.ctx.mainWindow.webContents.openDevTools();
@@ -1001,6 +1132,29 @@ class HivemindApp {
     triggers.init(window, this.ctx.agentRunning, (type, paneId, msg, details) =>
       this.activity.logActivity(type, paneId, msg, details));
     triggers.setWatcher(watcher);
+    if (typeof triggers.setInjectMessageRouter === 'function') {
+      triggers.setInjectMessageRouter((payload) => this.routeInjectMessage(payload));
+    }
+
+    ipcMain.removeHandler('pane-host-inject');
+    ipcMain.handle('pane-host-inject', async (_event, paneId, payload = {}) => {
+      const id = String(paneId || '').trim();
+      if (!id) {
+        return { success: false, reason: 'missing_pane_id' };
+      }
+      if (!this.isHiddenPaneHostModeEnabled()) {
+        return { success: false, reason: 'hidden_hosts_disabled' };
+      }
+      const sent = this.sendPaneHostMessage(id, 'pane-host:inject-message', {
+        message: payload?.message || '',
+        deliveryId: payload?.deliveryId || null,
+        traceContext: payload?.traceContext || null,
+        meta: payload?.meta || null,
+      });
+      return sent
+        ? { success: true, paneId: id, mode: 'pane-host' }
+        : { success: false, reason: 'pane_host_unavailable', paneId: id };
+    });
 
     // Recovery
     this.ctx.setRecoveryManager(this.initRecoveryManager());
@@ -1197,6 +1351,7 @@ class HivemindApp {
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send('daemon-connected', { terminals });
       }
+      this.primePaneHostFromTerminalSnapshot(terminals);
 
       this.emitCommsBridgeEvent('comms.transport.recovery.completed', {
         durationMs: Math.max(0, Date.now() - startedAtMs),
@@ -1291,6 +1446,7 @@ class HivemindApp {
             window.webContents.send('daemon-connected', {
               terminals
             });
+            this.primePaneHostFromTerminalSnapshot(terminals);
             this.kernelBridge.emitBridgeEvent('bridge.connected', {
               transport: 'daemon-client',
               terminalCount: terminals.length,
@@ -1356,15 +1512,11 @@ class HivemindApp {
           const result = triggers.sendDirectMessage([String(paneId)], recoveryMessage, 'Self-Healing');
           return Boolean(result && result.success);
         }
-        if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
-          this.ctx.mainWindow.webContents.send('inject-message', {
-            panes: [String(paneId)],
-            message: `[RECOVERY] Resuming previous task\n${message}\r`,
-            meta,
-          });
-          return true;
-        }
-        return false;
+        return this.routeInjectMessage({
+          panes: [String(paneId)],
+          message: `[RECOVERY] Resuming previous task\n${message}\r`,
+          meta,
+        });
       },
       notifyEvent: (payload) => {
         const paneId = payload?.paneId ? String(payload.paneId) : 'system';
@@ -1461,6 +1613,7 @@ class HivemindApp {
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send(`pty-exit-${paneId}`, code);
       }
+      this.sendPaneHostMessage(paneId, 'pane-host:pty-exit', { code });
     };
 
     this.attachDaemonClientListener('data', (paneId, data) => {
@@ -1481,6 +1634,7 @@ class HivemindApp {
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send(`pty-data-${paneId}`, data);
       }
+      this.sendPaneHostMessage(paneId, 'pane-host:pty-data', { data });
 
       if (data.includes('Error') || data.includes('error:') || data.includes('FAILED')) {
         this.activity.logActivity('error', paneId, 'Terminal error detected', { snippet: data.substring(0, 200) }
@@ -1558,6 +1712,7 @@ class HivemindApp {
           terminals
         });
       }
+      this.primePaneHostFromTerminalSnapshot(terminals);
 
       this.kernelBridge.emitBridgeEvent('bridge.connected', {
         transport: 'daemon-client',
@@ -2300,6 +2455,26 @@ class HivemindApp {
 
   shutdown() {
     log.info('App', 'Shutting down Hivemind Application');
+    try {
+      ipcMain.removeHandler('pane-host-inject');
+    } catch (_) {
+      // no-op
+    }
+    if (this.paneHostReadyListener) {
+      ipcMain.removeListener('pane-host-ready', this.paneHostReadyListener);
+      this.paneHostReadyListener = null;
+      this.paneHostReadyIpcRegistered = false;
+    }
+    if (this.mainWindowSendInterceptInstalled && this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+      try {
+        this.ctx.mainWindow.webContents.send = this.mainWindowSendRaw;
+      } catch (_) {
+        // no-op
+      }
+    }
+    this.mainWindowSendRaw = null;
+    this.mainWindowSendInterceptInstalled = false;
+    this.paneHostWindowManager.closeAllPaneWindows();
     this.stopAutoHandoffMaterializer({ flush: true });
     contextCompressor.shutdown();
     teamMemory.stopIntegritySweep();
