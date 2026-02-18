@@ -450,7 +450,7 @@ class HivemindApp {
       if (!this.getHiddenPaneHostPaneIds().includes(paneId)) continue;
       const scrollback = typeof term?.scrollback === 'string' ? term.scrollback : '';
       if (!scrollback) continue;
-      this.sendPaneHostMessage(paneId, 'pane-host:prime-scrollback', { scrollback });
+      this.sendPaneHostMessage(paneId, 'pane-host:prime-scrollback', { paneId, scrollback });
     }
   }
 
@@ -502,6 +502,7 @@ class HivemindApp {
       const terminal = this.ctx.daemonClient?.getTerminal?.(paneId);
       if (terminal?.scrollback) {
         this.sendPaneHostMessage(paneId, 'pane-host:prime-scrollback', {
+          paneId,
           scrollback: terminal.scrollback,
         });
       }
@@ -1766,7 +1767,7 @@ class HivemindApp {
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send(`pty-exit-${paneId}`, code);
       }
-      this.sendPaneHostMessage(paneId, 'pane-host:pty-exit', { code });
+      this.sendPaneHostMessage(paneId, 'pane-host:pty-exit', { paneId, code });
     };
 
     this.attachDaemonClientListener('data', (paneId, data) => {
@@ -1787,7 +1788,7 @@ class HivemindApp {
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send(`pty-data-${paneId}`, data);
       }
-      this.sendPaneHostMessage(paneId, 'pane-host:pty-data', { data });
+      this.sendPaneHostMessage(paneId, 'pane-host:pty-data', { paneId, data });
 
       if (data.includes('Error') || data.includes('error:') || data.includes('FAILED')) {
         this.activity.logActivity('error', paneId, 'Terminal error detected', { snippet: data.substring(0, 200) }
