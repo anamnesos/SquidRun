@@ -230,7 +230,18 @@ async function runBackfill(options = {}) {
 
 async function runIntegrityCheck(options = {}) {
   const payload = asObject(options.payload);
-  const result = await executeTeamMemoryOperation('run-integrity-check', payload, options);
+  const effectivePayload = {
+    ...payload,
+  };
+
+  if (!Object.prototype.hasOwnProperty.call(effectivePayload, 'repairOrphans')) {
+    effectivePayload.repairOrphans = options.repairOrphans !== false;
+  }
+  if (!Object.prototype.hasOwnProperty.call(effectivePayload, 'nowMs') && Number.isFinite(Number(options.nowMs))) {
+    effectivePayload.nowMs = Math.floor(Number(options.nowMs));
+  }
+
+  const result = await executeTeamMemoryOperation('run-integrity-check', effectivePayload, options);
 
   if (!result || result.ok === false) {
     return result;

@@ -80,6 +80,8 @@ maybeDescribe('team-memory integrity checker', () => {
 
     expect(scan.ok).toBe(true);
     expect(scan.orphanCount).toBe(1);
+    expect(scan.initialOrphanCount).toBe(1);
+    expect(scan.repair).toBeNull();
     expect(scan.orphans[0]).toEqual({
       claimId: 'claim-1',
       evidenceRef: 'evt-missing',
@@ -115,5 +117,61 @@ maybeDescribe('team-memory integrity checker', () => {
     expect(cleared.ok).toBe(true);
     const finalContent = fs.readFileSync(errorsPath, 'utf-8');
     expect(finalContent).not.toContain('TEAM_MEMORY_EVIDENCE_REF_CHECK_START');
+  });
+
+  test('auto-repairs orphan evidence refs by backfilling ledger events', () => {
+    teamStore.db.prepare(`
+      INSERT INTO claims (
+        id, idempotency_key, statement, claim_type, owner, confidence,
+        status, supersedes, session, ttl_hours, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'claim-repair',
+      'idemp-repair',
+      'Repairable orphan claim',
+      'fact',
+      'builder',
+      1.0,
+      'proposed',
+      null,
+      's_repair',
+      null,
+      Date.now(),
+      Date.now()
+    );
+
+    teamStore.db.prepare(`
+      INSERT INTO claim_evidence (claim_id, evidence_ref, added_by, relation, weight, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('claim-repair', 'evt-backfill-repair', 'builder', 'supports', 1.0, Date.now());
+
+    const scan = scanOrphanedEvidenceRefs({
+      teamDb: teamStore.db,
+      evidenceLedgerDbPath: path.join(tempDir, 'evidence-ledger.db'),
+      repairOrphans: true,
+      nowMs: 1771416000000,
+    });
+
+    expect(scan.ok).toBe(true);
+    expect(scan.initialOrphanCount).toBe(1);
+    expect(scan.orphanCount).toBe(0);
+    expect(scan.orphans).toEqual([]);
+    expect(scan.repair).toEqual(expect.objectContaining({
+      ok: true,
+      attempted: 1,
+      repairedCount: 1,
+      failed: 0,
+    }));
+
+    const repairedEvent = evidenceStore.db.prepare(`
+      SELECT event_id, type, source
+      FROM ledger_events
+      WHERE event_id = ?
+      LIMIT 1
+    `).get('evt-backfill-repair');
+
+    expect(repairedEvent).toBeTruthy();
+    expect(repairedEvent.type).toBe('team-memory.integrity.backfill');
+    expect(repairedEvent.source).toBe('team-memory.integrity-checker');
   });
 });

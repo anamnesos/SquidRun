@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 const { EvidenceLedgerStore } = require('../main/evidence-ledger-store');
 
@@ -28,6 +29,153 @@ function asPositiveInt(value, fallback) {
   return Math.floor(numeric);
 }
 
+function asFiniteMs(value, fallback = Date.now()) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return Math.floor(fallback);
+  return Math.floor(numeric);
+}
+
+function safeSlug(value, fallback = 'unknown') {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+  const slug = raw.replace(/[^A-Za-z0-9._:-]+/g, '-');
+  return slug || fallback;
+}
+
+function buildRepairTraceId(orphan = {}) {
+  const evidenceRef = String(orphan?.evidenceRef || '').trim();
+  if (evidenceRef) {
+    const compact = safeSlug(evidenceRef, 'evidence');
+    return `trc_tm_integrity_${compact}`;
+  }
+  try {
+    return `trc_tm_integrity_${crypto.randomUUID()}`;
+  } catch {
+    return `trc_tm_integrity_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+function buildRepairPayload(claimInfo = {}, orphan = {}, nowMs = Date.now()) {
+  return {
+    reason: 'orphaned_evidence_ref_backfill',
+    claimId: String(orphan?.claimId || '').trim() || null,
+    evidenceRef: String(orphan?.evidenceRef || '').trim() || null,
+    claimStatus: String(claimInfo?.status || '').trim() || null,
+    claimType: String(claimInfo?.claimType || '').trim() || null,
+    claimOwner: String(claimInfo?.owner || '').trim() || null,
+    claimStatement: String(claimInfo?.statement || '').trim() || null,
+    repairedAt: new Date(asFiniteMs(nowMs)).toISOString(),
+  };
+}
+
+function loadClaimInfoById(teamDb, claimId) {
+  if (!teamDb || typeof teamDb.prepare !== 'function') return null;
+  const normalizedId = String(claimId || '').trim();
+  if (!normalizedId) return null;
+  const row = teamDb.prepare(`
+    SELECT id, statement, claim_type, owner, status, session
+    FROM claims
+    WHERE id = ?
+    LIMIT 1
+  `).get(normalizedId);
+  if (!row) return null;
+  return {
+    id: String(row.id || '').trim(),
+    statement: String(row.statement || '').trim(),
+    claimType: String(row.claim_type || '').trim(),
+    owner: String(row.owner || '').trim(),
+    status: String(row.status || '').trim(),
+    session: String(row.session || '').trim() || null,
+  };
+}
+
+function repairOrphanedEvidenceRefs(options = {}) {
+  const ledgerStore = options.ledgerStore;
+  if (!ledgerStore || typeof ledgerStore.appendEvent !== 'function') {
+    return {
+      ok: false,
+      reason: 'evidence_ledger_unavailable',
+      attempted: 0,
+      inserted: 0,
+      duplicated: 0,
+      failed: 0,
+      repairedCount: 0,
+      failures: [],
+    };
+  }
+
+  const teamDb = options.teamDb;
+  const nowMs = asFiniteMs(options.nowMs);
+  const claimInfoCache = new Map();
+  const orphans = Array.isArray(options.orphans) ? options.orphans : [];
+
+  let attempted = 0;
+  let inserted = 0;
+  let duplicated = 0;
+  let failed = 0;
+  const failures = [];
+
+  for (const orphan of orphans) {
+    const claimId = String(orphan?.claimId || '').trim();
+    const evidenceRef = String(orphan?.evidenceRef || '').trim();
+    if (!evidenceRef) continue;
+    attempted += 1;
+
+    let claimInfo = claimInfoCache.get(claimId);
+    if (claimInfo === undefined) {
+      claimInfo = loadClaimInfoById(teamDb, claimId);
+      claimInfoCache.set(claimId, claimInfo || null);
+    }
+
+    const appendResult = ledgerStore.appendEvent({
+      eventId: evidenceRef,
+      traceId: buildRepairTraceId(orphan),
+      type: 'team-memory.integrity.backfill',
+      stage: 'team_memory',
+      source: 'team-memory.integrity-checker',
+      paneId: 'system',
+      role: 'system',
+      ts: nowMs,
+      direction: 'internal',
+      payload: buildRepairPayload(claimInfo, orphan, nowMs),
+      meta: {
+        integrityRepair: true,
+        repairCode: 'ERR-TM-001',
+        claimId: claimId || null,
+      },
+    }, {
+      nowMs,
+      sessionId: claimInfo?.session || null,
+    });
+
+    if (appendResult?.ok === true && appendResult?.status === 'inserted') {
+      inserted += 1;
+      continue;
+    }
+    if (appendResult?.ok === true && appendResult?.status === 'duplicate') {
+      duplicated += 1;
+      continue;
+    }
+
+    failed += 1;
+    failures.push({
+      claimId: claimId || 'unknown-claim',
+      evidenceRef,
+      reason: appendResult?.reason || appendResult?.status || 'repair_failed',
+    });
+  }
+
+  return {
+    ok: true,
+    attempted,
+    inserted,
+    duplicated,
+    failed,
+    repairedCount: inserted + duplicated,
+    failures,
+  };
+}
+
 function scanOrphanedEvidenceRefs(options = {}) {
   const teamDb = options.teamDb;
   if (!teamDb || typeof teamDb.prepare !== 'function') {
@@ -36,6 +184,8 @@ function scanOrphanedEvidenceRefs(options = {}) {
 
   const limit = asPositiveInt(options.limit, 5000);
   const evidenceLedgerDbPath = options.evidenceLedgerDbPath || DEFAULT_EVIDENCE_LEDGER_DB_PATH;
+  const repairOrphans = options.repairOrphans === true;
+  const nowMs = asFiniteMs(options.nowMs);
   const refs = teamDb.prepare(`
     SELECT claim_id AS claimId, evidence_ref AS evidenceRef
     FROM claim_evidence
@@ -89,12 +239,33 @@ function scanOrphanedEvidenceRefs(options = {}) {
     }
   }
 
+  const initialOrphans = orphans;
+  let repair = null;
+  let unresolvedOrphans = initialOrphans;
+  if (repairOrphans && initialOrphans.length > 0) {
+    repair = repairOrphanedEvidenceRefs({
+      teamDb,
+      ledgerStore,
+      orphans: initialOrphans,
+      nowMs,
+    });
+    unresolvedOrphans = [];
+    for (const orphan of initialOrphans) {
+      const exists = lookupStmt.get(orphan.evidenceRef);
+      if (!exists) {
+        unresolvedOrphans.push(orphan);
+      }
+    }
+  }
+
   ledgerStore.close();
   return {
     ok: true,
     totalChecked: refs.length,
-    orphanCount: orphans.length,
-    orphans,
+    orphanCount: unresolvedOrphans.length,
+    orphans: unresolvedOrphans,
+    initialOrphanCount: initialOrphans.length,
+    repair,
   };
 }
 
@@ -174,6 +345,7 @@ function upsertIntegrityReport(scanResult, options = {}) {
 
 module.exports = {
   scanOrphanedEvidenceRefs,
+  repairOrphanedEvidenceRefs,
   upsertIntegrityReport,
   resolveDefaultEvidenceLedgerDbPath,
   resolveDefaultErrorsPath,
