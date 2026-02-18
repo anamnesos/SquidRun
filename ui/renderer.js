@@ -834,11 +834,11 @@ function setupEventListeners() {
 
   // Pane action buttons: Interrupt (ESC), Enter, Restart
   document.querySelectorAll('.interrupt-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
       const paneId = btn.dataset.paneId;
       if (paneId) {
-        log.info('Health', `Sending ESC to pane ${paneId}`);
-        terminal.sendUnstick(paneId);
+        log.info('Health', `Sending interrupt (Ctrl+C) to pane ${paneId}`);
+        await terminal.interruptPane(paneId);
       }
     });
   });
@@ -1011,11 +1011,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Global ESC key handler - interrupt agent AND release keyboard
   ipcRenderer.on('global-escape-pressed', () => {
-    // Send Ctrl+C (0x03) to focused pane to interrupt Claude
+    // Send daemon-backed interrupt to focused pane so hidden-pane-host mode
+    // still reaches the real agent process.
     const focusedPane = terminal.getFocusedPane();
     if (focusedPane) {
-      window.hivemind.pty.write(focusedPane, '\x03').catch(err => {
-        log.error('ESC', 'Failed to send Ctrl+C:', err);
+      terminal.interruptPane(focusedPane).catch(err => {
+        log.error('ESC', 'Failed to send interrupt:', err);
       });
     }
 
