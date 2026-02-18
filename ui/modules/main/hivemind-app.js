@@ -1094,15 +1094,19 @@ class HivemindApp {
     this.installMainWindowSendInterceptor();
     this.ensurePaneHostReadyForwarder();
     this.setupPermissions();
+
+    // Register IPC handlers and load listeners before renderer startup to avoid startup races.
+    this.initModules();
+    this.setupWindowListeners();
+
     this.ctx.mainWindow.loadFile('index.html');
-    await this.ensurePaneHostWindows();
+
+    // Hidden pane host windows are non-critical for first paint; initialize asynchronously.
+    void this.ensurePaneHostWindows();
 
     if (this.ctx.currentSettings.devTools) {
       this.ctx.mainWindow.webContents.openDevTools();
     }
-
-    this.initModules();
-    this.setupWindowListeners();
   }
 
   setupPermissions() {
