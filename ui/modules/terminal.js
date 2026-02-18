@@ -678,6 +678,23 @@ function getPaneInjectionCapabilities(paneId) {
     Object.assign(base, overrides);
   }
 
+  // Hidden pane host mode renders visible panes as read-only mirrors.
+  // For trusted-enter runtimes (Claude), submit via raw PTY Enter instead
+  // of simulated xterm key events.
+  if (isPaneReadOnlyMirrorMode(paneId) && base.enterMethod === 'trusted') {
+    Object.assign(base, {
+      submitMethod: 'hidden-pane-host-pty-enter',
+      bypassGlobalLock: true,
+      applyCompactionGate: false,
+      requiresFocusForEnter: false,
+      enterMethod: 'pty',
+      verifySubmitAccepted: false,
+      deferSubmitWhilePaneActive: false,
+      typingGuardWhenBypassing: true,
+      enterFailureReason: 'pty_enter_failed',
+    });
+  }
+
   return base;
 }
 

@@ -74,31 +74,6 @@ function stripInternalRoutingWrappers(value) {
   return clean;
 }
 
-function findXtermTextarea() {
-  return document.querySelector('.xterm-helper-textarea');
-}
-
-function dispatchDomEnter() {
-  const textarea = findXtermTextarea();
-  if (!textarea) return false;
-  textarea.focus();
-  const makeEvent = (type) => {
-    const evt = new KeyboardEvent(type, {
-      key: 'Enter',
-      code: 'Enter',
-      keyCode: 13,
-      which: 13,
-      bubbles: true,
-      cancelable: true,
-    });
-    return evt;
-  };
-  textarea.dispatchEvent(makeEvent('keydown'));
-  textarea.dispatchEvent(makeEvent('keypress'));
-  textarea.dispatchEvent(makeEvent('keyup'));
-  return true;
-}
-
 async function injectMessage(payload = {}) {
   let text = stripInternalRoutingWrappers(String(payload.message || ''));
   const deliveryId = payload.deliveryId || null;
@@ -114,10 +89,8 @@ async function injectMessage(payload = {}) {
 
   try {
     await window.hivemind.pty.write(paneId, text, traceContext || null);
-    const sentViaDom = dispatchDomEnter();
-    if (!sentViaDom) {
-      await window.hivemind.pty.write(paneId, '\r', traceContext || null);
-    }
+    // Hidden-pane-host mode should submit via direct PTY Enter only.
+    await window.hivemind.pty.write(paneId, '\r', traceContext || null);
 
     if (deliveryId) {
       ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
