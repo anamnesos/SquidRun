@@ -749,34 +749,6 @@
   z-index: 3;
 }
 
-/* Mirror mode: visible panes are read-only reflections of hidden pane hosts */
-.pane.mirror-mode .xterm-helper-textarea {
-  opacity: 0 !important;
-  pointer-events: none !important;
-}
-
-.pane.mirror-mode .xterm-cursor-layer {
-  display: none !important;
-}
-
-.pane.mirror-mode .pane-terminal::after {
-  content: 'READ-ONLY';
-  position: absolute;
-  top: 8px;
-  right: 10px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(0, 240, 255, 0.4);
-  background: rgba(10, 10, 15, 0.35);
-  border: 1px solid rgba(0, 240, 255, 0.22);
-  border-radius: 999px;
-  padding: 2px 7px;
-  pointer-events: none;
-  z-index: 4;
-}
-
 /* Link hover effect in terminal */
 .pane-terminal .xterm-link-layer {
   pointer-events: auto;
