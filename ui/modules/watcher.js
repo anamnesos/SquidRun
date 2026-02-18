@@ -44,6 +44,8 @@ let workspaceWatcher = null;
 let triggerWatcher = null; // UX-9: Fast watcher for trigger files (sub-50ms)
 let messageWatcher = null; // Separate watcher for message queues
 let messageWatcherStartPromise = null;
+let messageWatcherDesiredRunning = false;
+let messageWatcherStartGeneration = 0;
 let triggers = null; // Reference to triggers module
 let getSettings = null; // Settings getter for auto-sync control
 let notifyExternal = null; // External notification hook
@@ -682,6 +684,10 @@ function isWatcherWorkerRunning(worker) {
   if (worker.killed) return false;
   if (worker.exitCode !== null && worker.exitCode !== undefined) return false;
   return worker.connected !== false;
+}
+
+function shouldStartMessageWatcher(generation) {
+  return messageWatcherDesiredRunning && generation === messageWatcherStartGeneration;
 }
 
 function startWatcher() {
@@ -1369,6 +1375,14 @@ async function handleMessageQueueChange(filePath) {
  */
 async function startMessageWatcher(options = {}) {
   const forceRestart = options.forceRestart === true;
+  const fromRestart = options.fromRestart === true;
+  if (fromRestart && !messageWatcherDesiredRunning) {
+    return { success: false, reason: 'stopped' };
+  }
+  if (!fromRestart) {
+    messageWatcherDesiredRunning = true;
+  }
+
   if (!forceRestart && isWatcherWorkerRunning(messageWatcher)) {
     registerTriggerDeliveryAckListener();
     return { success: true, path: MESSAGE_QUEUE_DIR, alreadyRunning: true };
@@ -1377,6 +1391,7 @@ async function startMessageWatcher(options = {}) {
     return messageWatcherStartPromise;
   }
 
+  const generation = ++messageWatcherStartGeneration;
   const startPromise = (async () => {
     try {
       const initResult = await initMessageQueue();
@@ -1385,9 +1400,18 @@ async function startMessageWatcher(options = {}) {
         return { success: false, error: initResult.error || 'Message queue init failed' };
       }
 
+      if (!shouldStartMessageWatcher(generation)) {
+        return { success: false, reason: 'stopped' };
+      }
+
       if (messageWatcher) {
         stopWatcherWorker('message', 'message', { reason: 'restart', clearRestart: false });
       }
+
+      if (!shouldStartMessageWatcher(generation)) {
+        return { success: false, reason: 'stopped' };
+      }
+
       registerTriggerDeliveryAckListener();
 
       messageWatcher = startWatcherWorker(
@@ -1400,11 +1424,16 @@ async function startMessageWatcher(options = {}) {
           }
         },
         () => {
-          startMessageWatcher({ forceRestart: true }).catch((err) => {
+          startMessageWatcher({ forceRestart: true, fromRestart: true }).catch((err) => {
             log.error('MessageQueue', `Failed to restart message watcher: ${err.message}`);
           });
         }
       );
+
+      if (!shouldStartMessageWatcher(generation)) {
+        stopWatcherWorker('message', 'message', { reason: 'stale_start', clearRestart: false });
+        return { success: false, reason: 'stopped' };
+      }
 
       log.info('MessageQueue', `Watching ${MESSAGE_QUEUE_DIR}`);
       return { success: true, path: MESSAGE_QUEUE_DIR };
@@ -1428,6 +1457,8 @@ async function startMessageWatcher(options = {}) {
  * Stop message queue watcher
  */
 function stopMessageWatcher() {
+  messageWatcherDesiredRunning = false;
+  messageWatcherStartGeneration += 1;
   messageWatcherStartPromise = null;
   stopWatcherWorker('message', 'message');
   if (unsubscribeTriggerDeliveryAck) {
