@@ -193,6 +193,7 @@ const CLI_PROMPT_REGEXES = [
 const SHELL_PROMPT_REGEXES = [
   /(^|\n)PS [^\n>]*>\s/m,     // PowerShell prompt
   /(^|\n)[A-Z]:\\[^\n>]*>\s/m, // cmd.exe prompt
+  /(^|\n)[^\n]*[$%#]\s*$/m,   // Unix shell prompt (bash/zsh)
 ];
 
 function stripAnsi(value) {
