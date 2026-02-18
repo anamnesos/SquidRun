@@ -18,6 +18,7 @@ const { debounceButton, applyShortcutTooltips } = require('./modules/utils');
 const { initCommandPalette } = require('./modules/command-palette');
 const { initStatusStrip } = require('./modules/status-strip');
 const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = require('./modules/model-selector');
+const { PANE_ROLES, PANE_ROLE_BUNDLES } = require('./config');
 const bus = require('./modules/event-bus');
 const { clearScopedIpcListeners, registerScopedIpcListener } = require('./modules/renderer-ipc-registry');
 
@@ -390,6 +391,46 @@ function updateConnectionStatus(status) {
 // Pane expansion state
 let expandedPaneId = null;
 
+function getPaneRoleBundle(paneId) {
+  const id = String(paneId || '');
+  const configuredBundle = PANE_ROLE_BUNDLES[id];
+  const fallbackRole = PANE_ROLES[id] || `Pane ${id}`;
+  const heading = configuredBundle?.heading || fallbackRole;
+  const members = Array.isArray(configuredBundle?.members) && configuredBundle.members.length > 0
+    ? configuredBundle.members
+    : [fallbackRole];
+  return { id, heading, members };
+}
+
+function closePaneRoleModal() {
+  const overlay = document.getElementById('paneRoleModalOverlay');
+  if (!overlay || !overlay.classList.contains('open')) return false;
+  overlay.classList.remove('open');
+  overlay.setAttribute('aria-hidden', 'true');
+  return true;
+}
+
+function openPaneRoleModal(paneId) {
+  const overlay = document.getElementById('paneRoleModalOverlay');
+  const titleEl = document.getElementById('paneRoleModalTitle');
+  const subtitleEl = document.getElementById('paneRoleModalSubtitle');
+  const listEl = document.getElementById('paneRoleModalList');
+  if (!overlay || !titleEl || !subtitleEl || !listEl) return;
+
+  const bundle = getPaneRoleBundle(paneId);
+  titleEl.textContent = `${bundle.heading} Role Bundle`;
+  subtitleEl.textContent = `${bundle.heading} (Pane ${bundle.id})`;
+  listEl.innerHTML = '';
+  bundle.members.forEach((member) => {
+    const item = document.createElement('li');
+    item.textContent = member;
+    listEl.appendChild(item);
+  });
+
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden', 'false');
+}
+
 function toggleExpandPane(paneId) {
   const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
   const paneLayout = document.querySelector('.pane-layout');
@@ -430,6 +471,10 @@ function setupEventListeners() {
 
   // Keyboard shortcuts (consolidated — Ctrl+N focus + ESC collapse)
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && closePaneRoleModal()) {
+      e.preventDefault();
+      return;
+    }
     // Ctrl+number to focus panes
     if (e.ctrlKey && terminal.PANE_IDS.includes(e.key)) {
       e.preventDefault();
@@ -947,6 +992,29 @@ function setupEventListeners() {
     });
   });
 
+  // Role bundle info button + modal
+  document.querySelectorAll('.pane-role-info-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const paneId = btn.dataset.paneId;
+      if (paneId) openPaneRoleModal(paneId);
+    });
+  });
+  const paneRoleModalOverlay = document.getElementById('paneRoleModalOverlay');
+  const paneRoleModalClose = document.getElementById('paneRoleModalClose');
+  if (paneRoleModalClose) {
+    paneRoleModalClose.addEventListener('click', () => {
+      closePaneRoleModal();
+    });
+  }
+  if (paneRoleModalOverlay) {
+    paneRoleModalOverlay.addEventListener('click', (e) => {
+      if (e.target === paneRoleModalOverlay) {
+        closePaneRoleModal();
+      }
+    });
+  }
+
   // Lock icon click handler - toggle input lock for pane
   document.querySelectorAll('.lock-icon').forEach(icon => {
     icon.addEventListener('click', (e) => {
@@ -1285,12 +1353,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 1. Overlay events — observe settings panel + command palette open/close
   const settingsPanel = document.getElementById('settingsPanel');
   const cmdPaletteOverlay = document.getElementById('commandPaletteOverlay');
+  const paneRoleModalOverlay = document.getElementById('paneRoleModalOverlay');
 
   // Aggregate overlay state: open if ANY overlay is open
   function updateOverlayState() {
     const settingsOpen = settingsPanel && settingsPanel.classList.contains('open');
     const paletteOpen = cmdPaletteOverlay && cmdPaletteOverlay.classList.contains('open');
-    bus.updateState('system', { overlay: { open: !!(settingsOpen || paletteOpen) } });
+    const roleModalOpen = paneRoleModalOverlay && paneRoleModalOverlay.classList.contains('open');
+    bus.updateState('system', { overlay: { open: !!(settingsOpen || paletteOpen || roleModalOpen) } });
   }
 
   if (settingsPanel) {
@@ -1317,6 +1387,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
     paletteObserver.observe(cmdPaletteOverlay, { attributes: true, attributeFilter: ['class'] });
+  }
+  if (paneRoleModalOverlay) {
+    const roleModalObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.attributeName === 'class') {
+          const isOpen = paneRoleModalOverlay.classList.contains('open');
+          bus.emit(isOpen ? 'overlay.opened' : 'overlay.closed', { paneId: 'system', payload: { overlay: 'role-modal' }, source: 'renderer.js' });
+          updateOverlayState();
+        }
+      }
+    });
+    roleModalObserver.observe(paneRoleModalOverlay, { attributes: true, attributeFilter: ['class'] });
   }
 
   // 2. resize.requested — window resize events

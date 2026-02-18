@@ -400,11 +400,116 @@
 .pane[data-cli] .pane-title { color: var(--agent-color); }
 .pane[data-cli] .pane-title:hover { color: var(--agent-color-hover); }
 
-/* Role description in pane header */
-.role-desc {
-  font-weight: 400;
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
+/* Pane role info button */
+.pane-role-info-btn {
   margin-left: var(--space-1);
-  opacity: 0.7;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast), opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.pane-role-info-btn:hover {
+  opacity: 1;
+  border-color: currentColor;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  transform: translateY(-1px);
+}
+
+.pane-role-info-btn:active {
+  transform: translateY(0);
+}
+
+.pane-role-modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 10020;
+}
+
+.pane-role-modal-overlay.open {
+  display: flex;
+}
+
+.pane-role-modal {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background: linear-gradient(160deg, #121726 0%, #0d1220 100%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  padding: var(--space-4);
+}
+
+.pane-role-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.pane-role-modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.pane-role-modal-close {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.pane-role-modal-close:hover {
+  border-color: var(--color-primary);
+  background: rgba(0, 240, 255, 0.12);
+}
+
+.pane-role-modal-subtitle {
+  font-size: 12px;
+  color: var(--color-secondary);
+  margin-bottom: var(--space-3);
+}
+
+.pane-role-modal-list {
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.pane-role-modal-list li {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.pane-role-modal-list li::before {
+  content: "•";
+  margin-left: 0;
+  margin-right: var(--space-2);
+  color: var(--color-secondary);
 }

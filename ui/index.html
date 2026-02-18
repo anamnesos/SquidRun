@@ -34,6 +34,19 @@
     </div>
   </div>
 
+  <div class="pane-role-modal-overlay" id="paneRoleModalOverlay" aria-hidden="true">
+    <div class="pane-role-modal" role="dialog" aria-modal="true" aria-labelledby="paneRoleModalTitle">
+      <div class="pane-role-modal-header">
+        <h2 class="pane-role-modal-title" id="paneRoleModalTitle">Role Bundle</h2>
+        <button type="button" class="pane-role-modal-close" id="paneRoleModalClose" aria-label="Close role bundle">
+          <svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="pane-role-modal-subtitle" id="paneRoleModalSubtitle"></div>
+      <ul class="pane-role-modal-list" id="paneRoleModalList"></ul>
+    </div>
+  </div>
+
   <div class="header">
     <h1>Hivemind <span class="header-session-badge pending" id="headerSessionBadge" title="Current app session">Session --</span></h1>
     <span class="dry-run-indicator" id="dryRunIndicator" style="display: none;">DRY RUN</span>
@@ -276,7 +289,7 @@
         <div class="main-pane-container">
           <div class="pane" data-pane-id="1">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg></span><span class="agent-badge idle" id="badge-1"></span>Arch<span class="role-desc">- Your Main Point of Contact</span><span class="cli-badge" id="cli-badge-1"></span><span class="pane-project" id="project-1" title="Click to change project"></span><span class="agent-task" id="task-1"></span></span>
+            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg></span><span class="agent-badge idle" id="badge-1"></span>Arch<button type="button" class="pane-role-info-btn" data-pane-id="1" title="Show role bundle"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></button><span class="cli-badge" id="cli-badge-1"></span><span class="pane-project" id="project-1" title="Click to change project"></span><span class="agent-task" id="task-1"></span></span>
             <div class="pane-header-right">
               <select class="model-selector" id="model-selector-1" data-pane-id="1" title="Switch model for this pane">
                 <option value="claude">Claude</option>
@@ -312,7 +325,7 @@
         <div class="side-panes-container">
           <div class="pane" data-pane-id="2">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span><span class="agent-badge idle" id="badge-2"></span>Builder<span class="role-desc">- Frontend, Backend, DevOps, Testing, Security</span><span class="cli-badge" id="cli-badge-2"></span><span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
+            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span><span class="agent-badge idle" id="badge-2"></span>Builder<button type="button" class="pane-role-info-btn" data-pane-id="2" title="Show role bundle"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></button><span class="cli-badge" id="cli-badge-2"></span><span class="pane-project" id="project-2" title="Click to change project"></span><span class="agent-task" id="task-2"></span></span>
             <div class="pane-header-right">
               <select class="model-selector" id="model-selector-2" data-pane-id="2" title="Switch model for this pane">
                 <option value="claude">Claude</option>
@@ -334,7 +347,7 @@
 
         <div class="pane" data-pane-id="5">
           <div class="pane-header">
-            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><span class="agent-badge idle" id="badge-5"></span>Oracle<span class="role-desc">- Investigation, Docs, Benchmarks</span><span class="cli-badge" id="cli-badge-5"></span><span class="pane-project" id="project-5" title="Click to change project"></span><span class="agent-task" id="task-5"></span></span>
+            <span class="pane-title"><span class="agent-avatar"><svg class="avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><span class="agent-badge idle" id="badge-5"></span>Oracle<button type="button" class="pane-role-info-btn" data-pane-id="5" title="Show role bundle"><svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></button><span class="cli-badge" id="cli-badge-5"></span><span class="pane-project" id="project-5" title="Click to change project"></span><span class="agent-task" id="task-5"></span></span>
             <div class="pane-header-right">
               <select class="model-selector" id="model-selector-5" data-pane-id="5" title="Switch model for this pane">
                 <option value="claude">Claude</option>
