@@ -976,17 +976,15 @@ function createInjectionController(options = {}) {
             `${capabilities.modeLabel} pane: pre-PTY fingerprint textLen=${payloadText.length} first32="${first32}" last32="${last32}"`
           );
 
-          if (capabilities.homeResetBeforeWrite) {
-            try {
-              await window.hivemind.pty.write(id, '\x1b[H', createKernelMeta());
-            } catch (homeErr) {
-              log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: Home reset failed, continuing:`, homeErr);
-            }
-          }
+          // Prepend Home reset to payload so it arrives in the same PTY write,
+          // preventing split-chunk rendering of \x1b[H as literal "[H" text.
+          const writeText = capabilities.homeResetBeforeWrite
+            ? '\x1b[H' + payloadText
+            : payloadText;
 
           if (typeof window.hivemind?.pty?.writeChunked !== 'function') {
             log.warn(`doSendToPane ${id}`, 'writeChunked API unavailable, falling back to single PTY write');
-            await window.hivemind.pty.write(id, payloadText, createKernelMeta());
+            await window.hivemind.pty.write(id, writeText, createKernelMeta());
           } else {
             const chunkMin = Math.max(1, Number(CLAUDE_CHUNK_MIN_SIZE) || 1024);
             const chunkMax = Math.max(chunkMin, Number(CLAUDE_CHUNK_MAX_SIZE) || 8192);
@@ -998,7 +996,7 @@ function createInjectionController(options = {}) {
             }
             const chunkResult = await window.hivemind.pty.writeChunked(
               id,
-              payloadText,
+              writeText,
               chunkOptions,
               createKernelMeta()
             );

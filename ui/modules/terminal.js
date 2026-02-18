@@ -831,6 +831,12 @@ function detachPtyDataListener(paneId) {
     }
   }
   ptyDataListenerDisposers.delete(id);
+  // Nuclear cleanup: remove ALL listeners on this channel to prevent stacking.
+  // If dispose() silently failed (reference mismatch, preload/renderer swap),
+  // stale listeners would cause every byte of PTY data to render twice.
+  if (typeof window.hivemind?.pty?.removeAllDataListeners === 'function') {
+    window.hivemind.pty.removeAllDataListeners(id);
+  }
 }
 
 function detachPtyExitListener(paneId) {
@@ -844,6 +850,10 @@ function detachPtyExitListener(paneId) {
     }
   }
   ptyExitListenerDisposers.delete(id);
+  // Nuclear cleanup: same pattern as detachPtyDataListener
+  if (typeof window.hivemind?.pty?.removeAllExitListeners === 'function') {
+    window.hivemind.pty.removeAllExitListeners(id);
+  }
 }
 
 function detachPtyListeners(paneId) {
@@ -1306,6 +1316,14 @@ function updateIntentState(paneId, intent) {
 
 function toggleInputLock(paneId) {
   inputLocked[paneId] = !inputLocked[paneId];
+
+  // Prevent unlocking a pane that has an active hidden pane host —
+  // both input bridges would write to the same PTY, doubling keystrokes.
+  if (!inputLocked[paneId] && isHiddenPaneHostPane(paneId)) {
+    log.warn(`Terminal ${paneId}`, 'Cannot unlock input while hidden pane host is active — forcing lock');
+    inputLocked[paneId] = true;
+  }
+
   syncTerminalInputBridge(paneId);
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);
   if (lockIcon) {
@@ -1321,7 +1339,12 @@ function toggleInputLock(paneId) {
  * Set input lock state for a pane (without toggle)
  */
 function setInputLocked(paneId, locked) {
-  const nextLocked = Boolean(locked);
+  let nextLocked = Boolean(locked);
+  // Prevent unlocking a pane with an active hidden pane host.
+  if (!nextLocked && isHiddenPaneHostPane(paneId)) {
+    log.warn(`Terminal ${paneId}`, 'Cannot unlock input while hidden pane host is active — forcing lock');
+    nextLocked = true;
+  }
   inputLocked[paneId] = nextLocked;
   syncTerminalInputBridge(paneId);
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);

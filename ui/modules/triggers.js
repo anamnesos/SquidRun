@@ -141,7 +141,9 @@ function dispatchInjectMessage(payload) {
   }
 
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('inject-message', payload);
+    // Tag payload so the send-interceptor in hivemind-app.js
+    // knows routeInjectMessage was already attempted and skips re-routing.
+    mainWindow.webContents.send('inject-message', { ...payload, _routerAttempted: true });
     return true;
   }
 

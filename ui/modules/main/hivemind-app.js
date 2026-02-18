@@ -446,6 +446,13 @@ class HivemindApp {
     this.mainWindowSendRaw = originalSend;
     window.webContents.send = (channel, payload, ...rest) => {
       if (channel === 'inject-message' && this.isHiddenPaneHostModeEnabled()) {
+        // If triggers.js already tried routeInjectMessage and it failed,
+        // don't re-attempt — just deliver to visible renderer directly.
+        if (payload?._routerAttempted) {
+          const clean = { ...payload };
+          delete clean._routerAttempted;
+          return originalSend(channel, clean, ...rest);
+        }
         const handled = this.routeInjectMessage(payload || {});
         if (handled) return;
       }

@@ -18,11 +18,19 @@ const hivemindApi = {
       ipcRenderer.on(channel, handler);
       return () => ipcRenderer.removeListener(channel, handler);
     },
+    removeAllDataListeners: (paneId) => {
+      const channel = `pty-data-${paneId}`;
+      ipcRenderer.removeAllListeners(channel);
+    },
     onExit: (paneId, callback) => {
       const channel = `pty-exit-${paneId}`;
       const handler = (event, code) => callback(code);
       ipcRenderer.on(channel, handler);
       return () => ipcRenderer.removeListener(channel, handler);
+    },
+    removeAllExitListeners: (paneId) => {
+      const channel = `pty-exit-${paneId}`;
+      ipcRenderer.removeAllListeners(channel);
     },
     onKernelBridgeEvent: (callback) => {
       ipcRenderer.on('kernel:bridge-event', (event, data) => callback(data));
