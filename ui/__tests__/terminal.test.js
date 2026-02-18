@@ -305,6 +305,32 @@ describe('terminal.js module', () => {
   });
 
   describe('getPaneInjectionCapabilities', () => {
+    test('uses trusted Enter path for Claude panes when hidden host mode is off', () => {
+      mockSettings.getSettings.mockReturnValue({
+        hiddenPaneHostsEnabled: false,
+        paneCommands: { '1': 'claude --dangerously-skip-permissions' },
+      });
+
+      const caps = terminal.getPaneInjectionCapabilities('1');
+      expect(caps.enterMethod).toBe('trusted');
+      expect(caps.submitMethod).toBe('sendTrustedEnter');
+      expect(caps.requiresFocusForEnter).toBe(true);
+    });
+
+    test('uses PTY Enter path for Claude panes when hidden host mode is on', () => {
+      mockSettings.getSettings.mockReturnValue({
+        hiddenPaneHostsEnabled: true,
+        paneCommands: { '1': 'claude --dangerously-skip-permissions' },
+      });
+
+      const caps = terminal.getPaneInjectionCapabilities('1');
+      expect(caps.enterMethod).toBe('pty');
+      expect(caps.submitMethod).toBe('hidden-pane-host-pty-enter');
+      expect(caps.requiresFocusForEnter).toBe(false);
+      expect(caps.verifySubmitAccepted).toBe(false);
+      expect(caps.deferSubmitWhilePaneActive).toBe(false);
+    });
+
     test('disables submit verification by default for Codex runtime', () => {
       mockSettings.getSettings.mockReturnValue({
         paneCommands: { '2': 'codex --yolo' },
