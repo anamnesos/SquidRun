@@ -129,11 +129,10 @@ window.addEventListener('resize', () => {
   }
 });
 
-terminal.onData((data) => {
-  window.hivemind.pty.write(paneId, data).catch(() => {
-    // No-op: daemon write failures are surfaced in main app logs.
-  });
-});
+// Hidden host must NOT echo xterm responses back to PTY.
+// Both visible + hidden xterms receive the same escape sequences (e.g. DSR \e[6n).
+// If both respond, the PTY gets doubled responses → malformed/doubled output.
+// Injection uses pty.write() and dispatch-enter directly — onData is not needed here.
 
 function stripInternalRoutingWrappers(value) {
   if (typeof value !== 'string') return '';
