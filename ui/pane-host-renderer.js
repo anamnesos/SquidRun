@@ -119,17 +119,11 @@ const fitAddon = new FitAddon();
 terminal.loadAddon(fitAddon);
 terminal.open(document.getElementById('paneHostTerminal'));
 fitAddon.fit();
-try {
-  window.hivemind?.pty?.resize?.(paneId, terminal.cols, terminal.rows);
-} catch {
-  // Best-effort only.
-}
 terminal.focus();
 
 window.addEventListener('resize', () => {
   try {
     fitAddon.fit();
-    window.hivemind?.pty?.resize?.(paneId, terminal.cols, terminal.rows);
   } catch {
     // Best-effort only.
   }
