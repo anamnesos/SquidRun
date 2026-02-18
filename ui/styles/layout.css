@@ -373,6 +373,9 @@
 }
 
 .agent-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: var(--text-lg);
   margin-right: var(--space-1);
   filter: grayscale(0.3);
@@ -432,13 +435,6 @@
 .agent-health.stale { color: var(--color-warning); }
 
 /* Agent Avatar Icons */
-.agent-avatar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-right: var(--space-1);
-}
-
 .avatar-icon {
   width: 16px;
   height: 16px;
@@ -662,6 +658,8 @@
   flex-direction: column;
   width: 100%;
   box-sizing: border-box;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .pane-terminal .xterm {
@@ -704,10 +702,6 @@
   height: 100% !important;
 }
 
-.pane-terminal {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
 .pane-terminal::-webkit-scrollbar {
   display: none;
 }
