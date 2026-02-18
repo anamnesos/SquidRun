@@ -42,6 +42,10 @@ const LONG_PAYLOAD_BYTES = Number.parseInt(
   process.env.HIVEMIND_PANE_HOST_LONG_PAYLOAD_BYTES || '1024',
   10
 );
+const MIN_ENTER_DELAY_MS = Number.parseInt(
+  process.env.HIVEMIND_PANE_HOST_MIN_ENTER_DELAY_MS || '500',
+  10
+);
 
 const terminal = new Terminal({
   theme: {
@@ -164,7 +168,11 @@ async function injectMessage(payload = {}) {
     } else {
       await window.hivemind.pty.write(paneId, text, traceContext || null);
     }
-    // Wait for output activity to settle before sending Enter.
+    // Minimum wait for the PTY to process pasted text before sending Enter.
+    // Without this, Enter fires before text reaches the CLI (ConPTY round-trip latency).
+    const minDelay = Math.max(100, Number.isFinite(MIN_ENTER_DELAY_MS) ? MIN_ENTER_DELAY_MS : 500);
+    await sleep(minDelay);
+    // Then wait for output activity to settle.
     const payloadBytes = typeof Buffer !== 'undefined'
       ? Buffer.byteLength(text, 'utf8')
       : text.length;
