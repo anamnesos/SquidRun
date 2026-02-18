@@ -220,4 +220,29 @@ describe('SettingsManager CLI auto-detection', () => {
     expect(status.session).toBe(147);
     expect(status.started).not.toBe('2026-02-15T00:00:00.000Z');
   });
+
+  test('writeAppStatus merges statusPatch fields into app status payload', () => {
+    ctx.currentSettings = { dryRun: false, sdkMode: false, autoSpawn: true };
+    manager.writeAppStatus({
+      statusPatch: {
+        paneHost: {
+          degraded: true,
+          missingPanes: ['2'],
+          lastErrorReason: 'inject_hidden_window_unavailable',
+        },
+      },
+    });
+
+    const statusWriteCall = fs.writeFileSync.mock.calls
+      .filter((call) => String(call[0]).endsWith('app-status.json.tmp'))
+      .pop();
+    const status = JSON.parse(statusWriteCall[1]);
+    expect(status.paneHost).toEqual(
+      expect.objectContaining({
+        degraded: true,
+        missingPanes: ['2'],
+        lastErrorReason: 'inject_hidden_window_unavailable',
+      })
+    );
+  });
 });

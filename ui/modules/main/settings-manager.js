@@ -216,6 +216,30 @@ class SettingsManager {
         delete status.session;
       }
 
+      const statusPatch = (opts.statusPatch && typeof opts.statusPatch === 'object' && !Array.isArray(opts.statusPatch))
+        ? opts.statusPatch
+        : null;
+      if (statusPatch) {
+        for (const [key, value] of Object.entries(statusPatch)) {
+          const currentValue = status[key];
+          if (
+            value
+            && typeof value === 'object'
+            && !Array.isArray(value)
+            && currentValue
+            && typeof currentValue === 'object'
+            && !Array.isArray(currentValue)
+          ) {
+            status[key] = {
+              ...currentValue,
+              ...value,
+            };
+            continue;
+          }
+          status[key] = value;
+        }
+      }
+
       const serialized = JSON.stringify(status, null, 2);
 
       // Primary write: GLOBAL_STATE_ROOT
