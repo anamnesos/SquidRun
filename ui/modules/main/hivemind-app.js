@@ -1310,6 +1310,22 @@ class HivemindApp {
         : { success: false, reason: 'pane_host_unavailable', paneId: id };
     });
 
+    // Direct Enter dispatch for hidden pane hosts — bypasses pty-write IPC handler
+    // to use the same direct daemonClient.write path as the working Enter button.
+    ipcMain.removeHandler('pane-host-dispatch-enter');
+    ipcMain.handle('pane-host-dispatch-enter', (_event, paneId) => {
+      const id = String(paneId || '').trim();
+      if (!id) {
+        return { success: false, reason: 'missing_pane_id' };
+      }
+      const dc = this.ctx.daemonClient;
+      if (!dc || !dc.connected) {
+        return { success: false, reason: 'daemon_not_connected', paneId: id };
+      }
+      dc.write(id, '\r');
+      return { success: true, paneId: id };
+    });
+
     // Recovery
     this.ctx.setRecoveryManager(this.initRecoveryManager());
     triggers.setSelfHealing(this.ctx.recoveryManager);
