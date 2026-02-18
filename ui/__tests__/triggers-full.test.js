@@ -276,6 +276,47 @@ describe('triggers.js module', () => {
         failureReason: 'submit_not_accepted',
       }));
     });
+
+    test('sendDirectMessage awaitDelivery reports accepted.unverified when delivery is accepted but unverified', async () => {
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['5', 'idle']]), null);
+
+      const pendingResult = triggers.sendDirectMessage(
+        ['2'],
+        'Direct msg',
+        'architect',
+        { awaitDelivery: true, deliveryTimeoutMs: 5000 }
+      );
+
+      jest.advanceTimersByTime(0);
+
+      const injectCall = global.window.webContents.send.mock.calls.find(
+        ([channel, payload]) => channel === 'inject-message' && payload?.deliveryId
+      );
+      expect(injectCall).toBeDefined();
+      const deliveryId = injectCall[1].deliveryId;
+
+      triggers.handleDeliveryOutcome(deliveryId, '2', {
+        accepted: true,
+        verified: false,
+        status: 'accepted.unverified',
+        reason: 'post_enter_output_timeout',
+      });
+
+      const result = await pendingResult;
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'accepted.unverified',
+        mode: 'pty',
+      }));
+      expect(result.details).toEqual(expect.objectContaining({
+        unverifiedPanes: ['2'],
+        failedPanes: [],
+        failureReason: 'accepted.unverified',
+      }));
+    });
   });
 
   describe('3. Workflow Gate (checkWorkflowGate)', () => {

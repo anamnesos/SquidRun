@@ -17,6 +17,33 @@ let injectedScrollback = false;
 let injectChain = Promise.resolve();
 let paneCommand = '';
 let codexIdentityInjected = false;
+let ptyOutputTick = 0;
+let lastPtyOutputAtMs = 0;
+const pendingOutputWaiters = new Set();
+const POST_ENTER_VERIFY_TIMEOUT_MS = Number.parseInt(
+  process.env.HIVEMIND_PANE_HOST_VERIFY_TIMEOUT_MS || '4000',
+  10
+);
+const SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS = Number.parseInt(
+  process.env.HIVEMIND_PANE_HOST_ACTIVE_OUTPUT_WINDOW_MS || '350',
+  10
+);
+const SUBMIT_DEFER_MAX_WAIT_MS = Number.parseInt(
+  process.env.HIVEMIND_PANE_HOST_SUBMIT_DEFER_MAX_WAIT_MS || '2000',
+  10
+);
+const SUBMIT_DEFER_MAX_WAIT_LONG_MS = Number.parseInt(
+  process.env.HIVEMIND_PANE_HOST_SUBMIT_DEFER_MAX_WAIT_LONG_MS || '5000',
+  10
+);
+const SUBMIT_DEFER_POLL_MS = Number.parseInt(
+  process.env.HIVEMIND_PANE_HOST_SUBMIT_DEFER_POLL_MS || '100',
+  10
+);
+const LONG_PAYLOAD_BYTES = Number.parseInt(
+  process.env.HIVEMIND_PANE_HOST_LONG_PAYLOAD_BYTES || '1024',
+  10
+);
 
 const terminal = new Terminal({
   theme: {
@@ -74,6 +101,64 @@ function stripInternalRoutingWrappers(value) {
   return clean;
 }
 
+function waitForPtyOutputAfter(baselineTick, timeoutMs = POST_ENTER_VERIFY_TIMEOUT_MS) {
+  if (ptyOutputTick > baselineTick) return Promise.resolve(true);
+  const maxWaitMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 4000;
+
+  return new Promise((resolve) => {
+    const waiter = {
+      baselineTick,
+      resolve,
+      timeoutId: null,
+    };
+    waiter.timeoutId = setTimeout(() => {
+      pendingOutputWaiters.delete(waiter);
+      resolve(false);
+    }, maxWaitMs);
+    pendingOutputWaiters.add(waiter);
+  });
+}
+
+function resolveOutputWaiters() {
+  if (pendingOutputWaiters.size === 0) return;
+  for (const waiter of Array.from(pendingOutputWaiters)) {
+    if (ptyOutputTick <= waiter.baselineTick) continue;
+    pendingOutputWaiters.delete(waiter);
+    clearTimeout(waiter.timeoutId);
+    waiter.resolve(true);
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function paneHasRecentOutput(windowMs = SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS) {
+  const activeWindowMs = Number.isFinite(windowMs) && windowMs > 0
+    ? windowMs
+    : 350;
+  if (!lastPtyOutputAtMs) return false;
+  return (Date.now() - lastPtyOutputAtMs) <= activeWindowMs;
+}
+
+async function deferSubmitWhilePaneActive(maxWaitMs = SUBMIT_DEFER_MAX_WAIT_MS) {
+  const deferMaxWaitMs = Number.isFinite(maxWaitMs) && maxWaitMs > 0
+    ? maxWaitMs
+    : 2000;
+  const pollMs = Math.max(25, Number.isFinite(SUBMIT_DEFER_POLL_MS) ? SUBMIT_DEFER_POLL_MS : 100);
+  const start = Date.now();
+
+  while (paneHasRecentOutput() && (Date.now() - start) < deferMaxWaitMs) {
+    await sleep(pollMs);
+  }
+
+  const waitedMs = Math.max(0, Date.now() - start);
+  return {
+    waitedMs,
+    forcedExpire: paneHasRecentOutput(),
+  };
+}
+
 async function injectMessage(payload = {}) {
   let text = stripInternalRoutingWrappers(String(payload.message || ''));
   const deliveryId = payload.deliveryId || null;
@@ -95,15 +180,46 @@ async function injectMessage(payload = {}) {
     } else {
       await window.hivemind.pty.write(paneId, text, traceContext || null);
     }
-    // Allow CLI to consume pasted text before submitting Enter.
-    // Hidden windows fix focus contention; this delay handles PTY pipe buffering.
-    const enterDelayMs = Math.max(80, Math.min(300, Math.ceil(text.length / 20)));
-    await new Promise(resolve => setTimeout(resolve, enterDelayMs));
+    // Mirror visible-path submit deferral: wait for output activity to settle
+    // instead of relying on a guessed fixed delay before Enter.
+    const payloadBytes = typeof Buffer !== 'undefined'
+      ? Buffer.byteLength(text, 'utf8')
+      : text.length;
+    const isLongPayload = payloadBytes >= Math.max(1, Number(LONG_PAYLOAD_BYTES) || 1024);
+    const deferMaxWaitMs = isLongPayload
+      ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, SUBMIT_DEFER_MAX_WAIT_LONG_MS)
+      : SUBMIT_DEFER_MAX_WAIT_MS;
+    const deferResult = await deferSubmitWhilePaneActive(deferMaxWaitMs);
+    if (deferResult.forcedExpire) {
+      console.warn(
+        `[PaneHost] Submit defer window expired for pane ${paneId} after ${deferResult.waitedMs}ms; `
+        + 'sending Enter while output is still active'
+      );
+    }
     // Submit via direct PTY Enter.
+    const outputBaseline = ptyOutputTick;
     await window.hivemind.pty.write(paneId, '\r', traceContext || null);
+    const outputObserved = await waitForPtyOutputAfter(outputBaseline, POST_ENTER_VERIFY_TIMEOUT_MS);
 
     if (deliveryId) {
-      ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
+      if (outputObserved) {
+        ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
+      } else {
+        ipcRenderer.send('trigger-delivery-outcome', {
+          deliveryId,
+          paneId,
+          accepted: true,
+          verified: false,
+          status: 'accepted.unverified',
+          reason: 'post_enter_output_timeout',
+        });
+      }
+    }
+    if (!outputObserved) {
+      console.warn(
+        `[PaneHost] Delivery remained unverified for pane ${paneId} after Enter `
+        + `(${POST_ENTER_VERIFY_TIMEOUT_MS}ms without PTY output)`
+      );
     }
   } catch (err) {
     if (deliveryId) {
@@ -121,6 +237,9 @@ async function injectMessage(payload = {}) {
 
 ipcRenderer.on('pane-host:pty-data', (_event, payload = {}) => {
   if (String(payload.paneId || '') !== paneId) return;
+  ptyOutputTick += 1;
+  lastPtyOutputAtMs = Date.now();
+  resolveOutputWaiters();
   terminal.write(String(payload.data || ''));
 });
 

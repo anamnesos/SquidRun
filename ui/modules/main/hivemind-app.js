@@ -139,6 +139,11 @@ class HivemindApp {
     this.autoHandoffWriteInFlight = false;
     this.autoHandoffEnabled = AUTO_HANDOFF_ENABLED && process.env.NODE_ENV !== 'test';
     this.paneHostReady = new Set();
+    this.paneHostMissingPanes = new Set();
+    this.paneHostLastErrorReason = null;
+    this.paneHostLastErrorAt = null;
+    this.paneHostBootstrapTimer = null;
+    this.paneHostBootstrapVerifyTimer = null;
     this.paneHostReadyIpcRegistered = false;
     this.paneHostReadyListener = null;
     this.mainWindowSendRaw = null;
@@ -252,20 +257,152 @@ class HivemindApp {
     return [...PANE_IDS];
   }
 
+  updatePaneHostStatus() {
+    if (!this.settings || typeof this.settings.writeAppStatus !== 'function') return;
+    this.settings.writeAppStatus({
+      statusPatch: {
+        paneHost: {
+          hiddenModeEnabled: this.isHiddenPaneHostModeEnabled(),
+          degraded: this.paneHostMissingPanes.size > 0,
+          missingPanes: Array.from(this.paneHostMissingPanes).sort(),
+          readyPanes: Array.from(this.paneHostReady).sort(),
+          lastErrorReason: this.paneHostLastErrorReason,
+          lastErrorAt: this.paneHostLastErrorAt,
+          lastCheckedAt: new Date().toISOString(),
+        },
+      },
+    });
+  }
+
+  reportPaneHostDegraded({
+    paneId = null,
+    reason = 'unknown',
+    message = '',
+    details = null,
+  } = {}) {
+    const id = paneId === null || paneId === undefined ? null : String(paneId).trim();
+    const normalizedReason = String(reason || 'unknown');
+    const wasMissing = id ? this.paneHostMissingPanes.has(id) : false;
+    const reasonChanged = this.paneHostLastErrorReason !== normalizedReason;
+    const nowIso = new Date().toISOString();
+
+    if (id) {
+      this.paneHostMissingPanes.add(id);
+    }
+    this.paneHostLastErrorReason = normalizedReason;
+    this.paneHostLastErrorAt = nowIso;
+
+    const fallbackMessage = (typeof message === 'string' && message.trim())
+      ? message.trim()
+      : `Hidden pane host degraded for pane ${id || 'unknown'}.`;
+
+    log.error('PaneHost', fallbackMessage);
+    this.activity.logActivity('error', id || 'system', fallbackMessage, {
+      subsystem: 'pane-host',
+      reason: normalizedReason,
+      paneId: id,
+      ...(details && typeof details === 'object' ? details : {}),
+    });
+    if (this.ctx.externalNotifier && typeof this.ctx.externalNotifier.notify === 'function') {
+      this.ctx.externalNotifier.notify({
+        category: 'alert',
+        title: 'Hidden Pane Host Degraded',
+        message: fallbackMessage,
+        meta: {
+          reason: normalizedReason,
+          paneId: id,
+          ...(details && typeof details === 'object' ? details : {}),
+        },
+      }).catch((notifyErr) => {
+        log.warn('PaneHost', `Failed to emit degraded notification: ${notifyErr.message}`);
+      });
+    }
+
+    if (wasMissing && !reasonChanged) return;
+    this.updatePaneHostStatus();
+  }
+
+  clearPaneHostDegraded(paneId) {
+    const id = String(paneId || '').trim();
+    if (!id) return;
+    if (!this.paneHostMissingPanes.delete(id)) return;
+
+    if (this.paneHostMissingPanes.size === 0) {
+      this.paneHostLastErrorReason = null;
+      this.paneHostLastErrorAt = null;
+    }
+
+    log.info('PaneHost', `Hidden pane host recovered for pane ${id}`);
+    this.updatePaneHostStatus();
+  }
+
+  verifyPaneHostWindowsAfterBootstrap(source = 'startup') {
+    if (!this.isHiddenPaneHostModeEnabled()) return;
+    const paneIds = this.getHiddenPaneHostPaneIds();
+    if (!paneIds.length) return;
+
+    const missingWindows = paneIds.filter((paneId) => !this.paneHostWindowManager.getPaneWindow(paneId));
+    const missingReady = paneIds.filter((paneId) => !this.paneHostReady.has(String(paneId)));
+
+    if (missingWindows.length === 0 && missingReady.length === 0) {
+      log.info('PaneHost', `Verified hidden pane host bootstrap (${source}): windows ready for panes ${paneIds.join(', ')}`);
+      this.updatePaneHostStatus();
+      return;
+    }
+
+    for (const paneId of missingWindows) {
+      this.reportPaneHostDegraded({
+        paneId,
+        reason: 'bootstrap_window_missing',
+        message: `Hidden pane host window missing after bootstrap for pane ${paneId}.`,
+        details: { source },
+      });
+    }
+
+    for (const paneId of missingReady) {
+      this.reportPaneHostDegraded({
+        paneId,
+        reason: 'bootstrap_ready_signal_missing',
+        message: `Hidden pane host did not report ready after bootstrap for pane ${paneId}.`,
+        details: { source },
+      });
+    }
+  }
+
   async ensurePaneHostWindows() {
     const paneIds = this.getHiddenPaneHostPaneIds();
     if (!paneIds.length) return;
     try {
       await this.paneHostWindowManager.ensurePaneWindows(paneIds);
       log.info('PaneHost', `Hidden pane host windows created for panes: ${paneIds.join(', ')}`);
+      this.updatePaneHostStatus();
     } catch (err) {
-      log.warn('PaneHost', `Failed to ensure pane host windows: ${err.message}`);
+      this.reportPaneHostDegraded({
+        reason: 'bootstrap_ensure_failed',
+        message: `Failed to create hidden pane host windows: ${err.message}`,
+        details: { paneIds },
+      });
     }
   }
 
   schedulePaneHostBootstrap() {
-    setTimeout(() => {
-      void this.ensurePaneHostWindows();
+    if (this.paneHostBootstrapTimer) {
+      clearTimeout(this.paneHostBootstrapTimer);
+      this.paneHostBootstrapTimer = null;
+    }
+    if (this.paneHostBootstrapVerifyTimer) {
+      clearTimeout(this.paneHostBootstrapVerifyTimer);
+      this.paneHostBootstrapVerifyTimer = null;
+    }
+
+    this.paneHostBootstrapTimer = setTimeout(() => {
+      this.paneHostBootstrapTimer = null;
+      void this.ensurePaneHostWindows().finally(() => {
+        this.paneHostBootstrapVerifyTimer = setTimeout(() => {
+          this.paneHostBootstrapVerifyTimer = null;
+          this.verifyPaneHostWindowsAfterBootstrap('createWindow');
+        }, 1500);
+      });
     }, 0);
   }
 
@@ -337,14 +474,27 @@ class HivemindApp {
         meta: payload.meta || null,
       });
       if (routedToHost) {
+        this.clearPaneHostDegraded(paneId);
         log.info('PaneHost', `Routed inject to hidden window for pane ${paneId}`);
       } else {
-        log.warn('PaneHost', `Hidden window unavailable for pane ${paneId}, falling back to visible renderer`);
+        this.reportPaneHostDegraded({
+          paneId,
+          reason: 'inject_hidden_window_unavailable',
+          message: `Hidden pane host window unavailable for pane ${paneId} while hidden pane host mode is enabled. Falling back to visible renderer delivery (manual Enter may be required).`,
+          details: {
+            deliveryId: payload.deliveryId || null,
+            fallback: 'visible_renderer',
+          },
+        });
         mirrorPanes.push(paneId);
       }
     }
 
     if (mirrorPanes.length > 0 && this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+      log.error(
+        'PaneHost',
+        `Degraded inject routing for panes ${mirrorPanes.join(', ')}. Visible renderer fallback sent (manual Enter may be required).`
+      );
       this.sendToVisibleWindow('inject-message', {
         ...payload,
         panes: mirrorPanes,
@@ -361,6 +511,8 @@ class HivemindApp {
       const paneId = String(payload?.paneId || '').trim();
       if (!paneId) return;
       this.paneHostReady.add(paneId);
+      this.clearPaneHostDegraded(paneId);
+      this.updatePaneHostStatus();
       const terminal = this.ctx.daemonClient?.getTerminal?.(paneId);
       if (terminal?.scrollback) {
         this.sendPaneHostMessage(paneId, 'pane-host:prime-scrollback', {
@@ -1848,6 +2000,25 @@ class HivemindApp {
     });
     ipcMain.on('trigger-delivery-outcome', (event, data) => {
       if (data?.deliveryId) triggers.handleDeliveryOutcome(data.deliveryId, data.paneId, data);
+      const statusLower = String(data?.status || '').toLowerCase();
+      const isUnverified = (
+        data?.verified === false
+        || statusLower.includes('unverified')
+        || statusLower === 'delivered.enter_sent'
+      );
+      if (isUnverified) {
+        const paneId = String(data?.paneId || 'unknown');
+        const status = data?.status || 'accepted.unverified';
+        const reason = data?.reason || 'verification_unavailable';
+        const warning = `Delivery remained unverified for pane ${paneId} (${status}${reason ? `: ${reason}` : ''})`;
+        log.warn('Delivery', warning);
+        this.activity.logActivity('warning', paneId, warning, {
+          subsystem: 'delivery-verification',
+          deliveryId: data?.deliveryId || null,
+          status,
+          reason,
+        });
+      }
     });
   }
 
@@ -2470,6 +2641,14 @@ class HivemindApp {
 
   shutdown() {
     log.info('App', 'Shutting down Hivemind Application');
+    if (this.paneHostBootstrapTimer) {
+      clearTimeout(this.paneHostBootstrapTimer);
+      this.paneHostBootstrapTimer = null;
+    }
+    if (this.paneHostBootstrapVerifyTimer) {
+      clearTimeout(this.paneHostBootstrapVerifyTimer);
+      this.paneHostBootstrapVerifyTimer = null;
+    }
     try {
       ipcMain.removeHandler('pane-host-inject');
     } catch (_) {

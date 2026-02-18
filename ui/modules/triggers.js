@@ -324,6 +324,7 @@ function waitForDeliveryVerification(deliveryId, expectedPanes, timeoutMs = getD
     return Promise.resolve({
       verified: false,
       ackedPanes: [],
+      unverifiedPanes: [],
       failedPanes: [],
       missingPanes: Array.from(expected),
       failureReason: null,
@@ -333,6 +334,7 @@ function waitForDeliveryVerification(deliveryId, expectedPanes, timeoutMs = getD
 
   return new Promise((resolve) => {
     const acked = new Set();
+    const unverified = new Set();
     const failed = new Set();
     const failureByPane = new Map();
     let settled = false;
@@ -352,11 +354,31 @@ function waitForDeliveryVerification(deliveryId, expectedPanes, timeoutMs = getD
       if (!expected.has(paneKey)) return;
 
       const accepted = outcome?.accepted !== false;
-      if (accepted) {
+      const explicitlyVerified = outcome?.verified === true;
+      const statusLower = String(outcome?.status || '').toLowerCase();
+      const isUnverifiedSignal = (
+        outcome?.verified === false
+        || statusLower.includes('unverified')
+        || statusLower === 'delivered.enter_sent'
+      );
+      const isVerified = accepted && explicitlyVerified && !isUnverifiedSignal;
+
+      if (isVerified) {
         acked.add(paneKey);
+        unverified.delete(paneKey);
         failed.delete(paneKey);
+        failureByPane.delete(paneKey);
+      } else if (accepted) {
+        acked.delete(paneKey);
+        unverified.add(paneKey);
+        failed.delete(paneKey);
+        failureByPane.set(paneKey, {
+          status: outcome?.status || 'accepted.unverified',
+          reason: outcome?.reason || null,
+        });
       } else {
         acked.delete(paneKey);
+        unverified.delete(paneKey);
         failed.add(paneKey);
         failureByPane.set(paneKey, {
           status: outcome?.status || outcome?.reason || 'delivery_failed',
@@ -364,14 +386,18 @@ function waitForDeliveryVerification(deliveryId, expectedPanes, timeoutMs = getD
         });
       }
 
-      if (acked.size + failed.size >= expected.size) {
+      if (acked.size + unverified.size + failed.size >= expected.size) {
+        const firstUnverifiedPane = Array.from(unverified)[0] || null;
         const firstFailedPane = Array.from(failed)[0] || null;
-        const firstFailure = firstFailedPane ? failureByPane.get(firstFailedPane) : null;
+        const firstFailure = firstFailedPane
+          ? failureByPane.get(firstFailedPane)
+          : (firstUnverifiedPane ? failureByPane.get(firstUnverifiedPane) : null);
         finish({
-          verified: failed.size === 0 && acked.size >= expected.size,
+          verified: failed.size === 0 && unverified.size === 0 && acked.size >= expected.size,
           ackedPanes: Array.from(acked),
+          unverifiedPanes: Array.from(unverified),
           failedPanes: Array.from(failed),
-          missingPanes: Array.from(expected).filter((candidate) => !acked.has(candidate) && !failed.has(candidate)),
+          missingPanes: Array.from(expected).filter((candidate) => !acked.has(candidate) && !unverified.has(candidate) && !failed.has(candidate)),
           failureReason: firstFailure?.status || firstFailure?.reason || null,
           failureByPane: Object.fromEntries(failureByPane.entries()),
           timeoutMs,
@@ -380,12 +406,16 @@ function waitForDeliveryVerification(deliveryId, expectedPanes, timeoutMs = getD
     });
 
     const timeoutId = setTimeout(() => {
-      const missingPanes = Array.from(expected).filter((paneId) => !acked.has(paneId) && !failed.has(paneId));
+      const missingPanes = Array.from(expected).filter((paneId) => !acked.has(paneId) && !unverified.has(paneId) && !failed.has(paneId));
+      const firstUnverifiedPane = Array.from(unverified)[0] || null;
       const firstFailedPane = Array.from(failed)[0] || null;
-      const firstFailure = firstFailedPane ? failureByPane.get(firstFailedPane) : null;
+      const firstFailure = firstFailedPane
+        ? failureByPane.get(firstFailedPane)
+        : (firstUnverifiedPane ? failureByPane.get(firstUnverifiedPane) : null);
       finish({
         verified: false,
         ackedPanes: Array.from(acked),
+        unverifiedPanes: Array.from(unverified),
         failedPanes: Array.from(failed),
         missingPanes,
         failureReason: firstFailure?.status || firstFailure?.reason || null,
@@ -497,7 +527,11 @@ function handleDeliveryOutcome(deliveryId, paneId, outcome = {}) {
   const normalizedOutcome = {
     accepted: outcome?.accepted !== false,
     verified: outcome?.verified === true,
-    status: outcome?.status || (outcome?.accepted === false ? 'delivery_failed' : 'delivered.verified'),
+    status: outcome?.status || (
+      outcome?.accepted === false
+        ? 'delivery_failed'
+        : (outcome?.verified === true ? 'delivered.verified' : 'accepted.unverified')
+    ),
     reason: outcome?.reason || null,
   };
   for (const listener of deliveryAckListeners) {
@@ -699,7 +733,9 @@ function broadcastToAllAgents(message, fromRole = 'user', options = {}) {
         accepted: true,
         queued: true,
         verified: verification.verified,
-        status: verification.verified ? 'delivered.verified' : 'broadcast_unverified_timeout',
+        status: verification.verified
+          ? 'delivered.verified'
+          : (verification?.unverifiedPanes?.length ? 'accepted.unverified' : 'broadcast_unverified_timeout'),
         notified,
         mode: 'pty',
         deliveryId,
@@ -783,7 +819,9 @@ function sendDirectMessage(targetPanes, message, fromRole = null, options = {}) 
         accepted: true,
         queued: true,
         verified: verification.verified,
-        status: verification.verified ? 'delivered.verified' : 'routed_unverified_timeout',
+        status: verification.verified
+          ? 'delivered.verified'
+          : (verification?.unverifiedPanes?.length ? 'accepted.unverified' : 'routed_unverified_timeout'),
         notified,
         mode: 'pty',
         deliveryId,
