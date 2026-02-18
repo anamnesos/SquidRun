@@ -25,7 +25,7 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
 const DEFAULT_HEALTH_TIMEOUT_MS = 500;
 const TARGET_HEARTBEAT_STALE_MS = 60000;
 const DEFAULT_TRIGGER_VERIFY_TIMEOUT_MS = Number.parseInt(
-  process.env.HIVEMIND_DELIVERY_VERIFY_TIMEOUT_MS || '5000',
+  process.env.HIVEMIND_DELIVERY_VERIFY_TIMEOUT_MS || '7000',
   10
 );
 const DEFAULT_ACK_TIMEOUT_BUFFER_MS = Number.parseInt(
@@ -49,6 +49,7 @@ const DELIVERY_CHECK_RETRY_DELAY_MS = Number.parseInt(
   process.env.HM_SEND_DELIVERY_CHECK_RETRY_MS || '250',
   10
 );
+const FORCE_FALLBACK_ON_UNVERIFIED = process.env.HM_SEND_FORCE_FALLBACK_ON_UNVERIFIED !== '0';
 const DEFAULT_RETRIES = 3;
 const MAX_RETRIES = 5;
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
@@ -439,6 +440,21 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function shouldFallbackForUnverifiedSend(result, targetInput) {
+  if (!FORCE_FALLBACK_ON_UNVERIFIED) return false;
+  if (!result || result.ok !== true) return false;
+  if (result.delivered !== false) return false;
+  if (isSpecialTarget(targetInput)) return false;
+  const status = String(result?.ack?.status || '').toLowerCase();
+  if (!status) return true;
+  return (
+    status.includes('unverified')
+    || status.includes('timeout')
+    || status.includes('pending')
+    || status.includes('routed')
+  );
+}
+
 function getBackoffDelayMs(baseTimeoutMs, attempt) {
   return baseTimeoutMs * Math.pow(2, attempt - 1);
 }
@@ -728,6 +744,43 @@ async function main() {
   }
 
   if (sendResult?.ok) {
+    if (enableFallback && shouldFallbackForUnverifiedSend(sendResult, target)) {
+      const fallbackResult = writeTriggerFallback(target, message, {
+        messageId: sendResult?.messageId || null,
+      });
+      if (fallbackResult.ok) {
+        const reason = sendResult?.ack?.status
+          ? `ack=${sendResult.ack.status}`
+          : 'accepted_unverified';
+        await emitCommsEventBestEffort('comms.delivery.failed', {
+          messageId: sendResult?.messageId || null,
+          target,
+          role,
+          project: projectMetadata || null,
+          reason,
+          attemptsUsed: sendResult?.attemptsUsed ?? (retries + 1),
+          maxAttempts: retries + 1,
+          fallbackUsed: true,
+          fallbackPath: fallbackResult.path,
+          ts: Date.now(),
+        });
+        console.warn(
+          `Accepted by ${target} but unverified: ${previewMessage(message)} `
+          + `(ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed}). `
+          + `Forced trigger fallback: ${fallbackResult.path}`
+        );
+        closeCommsJournalStores();
+        process.exit(0);
+      }
+      console.warn(
+        `Accepted by ${target} but unverified: ${previewMessage(message)} `
+        + `(ack: ${sendResult.ack.status}, attempt ${sendResult.attemptsUsed}). `
+        + `Forced fallback failed: ${fallbackResult.error}`
+      );
+      closeCommsJournalStores();
+      process.exit(0);
+    }
+
     if (sendResult.delivered === false) {
       console.log(
         `Accepted by ${target} but unverified: ${previewMessage(message)} `

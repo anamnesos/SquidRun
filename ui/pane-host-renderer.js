@@ -12,6 +12,22 @@ function readPaneIdFromQuery() {
   }
 }
 
+function toNonEmptyString(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function isHmSendTraceContext(traceContext = null) {
+  const ctx = (traceContext && typeof traceContext === 'object') ? traceContext : {};
+  const messageId = toNonEmptyString(ctx.messageId);
+  const traceId = toNonEmptyString(ctx.traceId) || toNonEmptyString(ctx.correlationId);
+  return Boolean(
+    (messageId && messageId.startsWith('hm-'))
+    || (traceId && traceId.startsWith('hm-'))
+  );
+}
+
 const paneId = readPaneIdFromQuery();
 const IS_DARWIN = process.platform === 'darwin';
 const DEFAULT_POST_ENTER_VERIFY_TIMEOUT_MS = IS_DARWIN ? 3000 : 4000;
@@ -20,6 +36,7 @@ const DEFAULT_SUBMIT_DEFER_MAX_WAIT_MS = IS_DARWIN ? 1200 : 2000;
 const DEFAULT_SUBMIT_DEFER_MAX_WAIT_LONG_MS = IS_DARWIN ? 3000 : 5000;
 const DEFAULT_SUBMIT_DEFER_POLL_MS = IS_DARWIN ? 50 : 100;
 const DEFAULT_LONG_PAYLOAD_BYTES = IS_DARWIN ? 2048 : 1024;
+const DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS = IS_DARWIN ? 700 : 800;
 const DEFAULT_MIN_ENTER_DELAY_MS = IS_DARWIN ? 150 : 500;
 const DEFAULT_CHUNK_THRESHOLD_BYTES = IS_DARWIN ? 4096 : 2048;
 const DEFAULT_CHUNK_SIZE_BYTES = IS_DARWIN ? 4096 : 2048;
@@ -55,6 +72,11 @@ const LONG_PAYLOAD_BYTES = Number.parseInt(
   process.env.HIVEMIND_PANE_HOST_LONG_PAYLOAD_BYTES || String(DEFAULT_LONG_PAYLOAD_BYTES),
   10
 );
+const HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS = Number.parseInt(
+  process.env.HIVEMIND_PANE_HOST_HM_SEND_VERIFY_TIMEOUT_MS
+    || String(DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS),
+  10
+);
 const MIN_ENTER_DELAY_MS = Number.parseInt(
   process.env.HIVEMIND_PANE_HOST_MIN_ENTER_DELAY_MS || String(DEFAULT_MIN_ENTER_DELAY_MS),
   10
@@ -65,6 +87,14 @@ const CHUNK_THRESHOLD_BYTES = Number.parseInt(
 );
 const CHUNK_SIZE_BYTES = Number.parseInt(
   process.env.HIVEMIND_PANE_HOST_CHUNK_SIZE_BYTES || String(DEFAULT_CHUNK_SIZE_BYTES),
+  10
+);
+const WRITE_TIMEOUT_MS = Number.parseInt(
+  process.env.HIVEMIND_PANE_HOST_WRITE_TIMEOUT_MS || '8000',
+  10
+);
+const ENTER_TIMEOUT_MS = Number.parseInt(
+  process.env.HIVEMIND_PANE_HOST_ENTER_TIMEOUT_MS || '5000',
   10
 );
 
@@ -157,6 +187,24 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function withTimeout(promise, timeoutMs, label) {
+  const ms = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 5000;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    Promise.resolve(promise)
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
 function paneHasRecentOutput(windowMs = SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS) {
   const activeWindowMs = Number.isFinite(windowMs) && windowMs > 0
     ? windowMs
@@ -190,6 +238,7 @@ async function injectMessage(payload = {}) {
   const text = stripInternalRoutingWrappers(String(payload.message || ''));
   const deliveryId = payload.deliveryId || null;
   const traceContext = payload.traceContext || null;
+  const hmSendTrace = isHmSendTraceContext(traceContext);
 
   try {
     // Use chunked write for large payloads to prevent PTY pipe truncation.
@@ -200,9 +249,20 @@ async function injectMessage(payload = {}) {
       ? CHUNK_SIZE_BYTES
       : DEFAULT_CHUNK_SIZE_BYTES;
     if (text.length > chunkThreshold && window.hivemind.pty.writeChunked) {
-      await window.hivemind.pty.writeChunked(paneId, text, { chunkSize }, traceContext || null);
+      const chunkedResult = await withTimeout(
+        window.hivemind.pty.writeChunked(paneId, text, { chunkSize }, traceContext || null),
+        WRITE_TIMEOUT_MS,
+        'pane-host writeChunked'
+      );
+      if (chunkedResult && chunkedResult.success === false) {
+        throw new Error(chunkedResult.error || 'writeChunked returned failure');
+      }
     } else {
-      await window.hivemind.pty.write(paneId, text, traceContext || null);
+      await withTimeout(
+        window.hivemind.pty.write(paneId, text, traceContext || null),
+        WRITE_TIMEOUT_MS,
+        'pane-host write'
+      );
     }
     // Minimum wait for the PTY to process pasted text before sending Enter.
     // Without this, Enter fires before text reaches the CLI (ConPTY round-trip latency).
@@ -232,17 +292,31 @@ async function injectMessage(payload = {}) {
     // Submit via dedicated main-process Enter dispatch — bypasses pty-write IPC
     // to use the same direct daemonClient.write('\r') path as the working Enter button.
     const outputBaseline = ptyOutputTick;
-    const enterResult = await ipcRenderer.invoke('pane-host-dispatch-enter', paneId);
+    const enterResult = await withTimeout(
+      ipcRenderer.invoke('pane-host-dispatch-enter', paneId),
+      ENTER_TIMEOUT_MS,
+      'pane-host dispatch-enter'
+    );
     if (!enterResult || !enterResult.success) {
       console.error(
         `[PaneHost] pane-host-dispatch-enter FAILED for pane ${paneId}:`,
         enterResult?.reason || 'unknown'
       );
     }
-    const outputObserved = await waitForPtyOutputAfter(outputBaseline, POST_ENTER_VERIFY_TIMEOUT_MS);
+    const postEnterVerifyTimeoutMs = hmSendTrace
+      ? Math.max(
+        200,
+        Number.isFinite(HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS)
+          ? HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS
+          : DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS
+      )
+      : POST_ENTER_VERIFY_TIMEOUT_MS;
+    const outputObserved = await waitForPtyOutputAfter(outputBaseline, postEnterVerifyTimeoutMs);
+
+    const treatAsDelivered = Boolean(outputObserved || (hmSendTrace && enterResult?.success));
 
     if (deliveryId) {
-      if (outputObserved) {
+      if (treatAsDelivered) {
         ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
       } else {
         ipcRenderer.send('trigger-delivery-outcome', {
@@ -255,10 +329,16 @@ async function injectMessage(payload = {}) {
         });
       }
     }
-    if (!outputObserved) {
+
+    if (!outputObserved && hmSendTrace && enterResult?.success) {
+      console.warn(
+        `[PaneHost] hm-send trace accepted for pane ${paneId} without immediate PTY output `
+        + `(${postEnterVerifyTimeoutMs}ms window)`
+      );
+    } else if (!outputObserved) {
       console.warn(
         `[PaneHost] Delivery remained unverified for pane ${paneId} after Enter `
-        + `(${POST_ENTER_VERIFY_TIMEOUT_MS}ms without PTY output)`
+        + `(${postEnterVerifyTimeoutMs}ms without PTY output)`
       );
     }
   } catch (err) {

@@ -467,28 +467,80 @@ class HivemindApp {
       return this.sendToVisibleWindow('inject-message', payload);
     }
 
+    let routed = false;
     for (const paneId of panes) {
-      const routedToHost = this.sendPaneHostMessage(paneId, 'pane-host:inject-message', {
-        message: payload.message,
-        deliveryId: payload.deliveryId || null,
-        traceContext: payload.traceContext || null,
-        meta: payload.meta || null,
+      const hostWindow = this.paneHostWindowManager.getPaneWindow(paneId);
+      const hostWebContents = hostWindow && !hostWindow.isDestroyed()
+        ? hostWindow.webContents
+        : null;
+      const hostWindowPresent = Boolean(hostWebContents && !hostWebContents.isDestroyed?.());
+      const hostLoading = Boolean(
+        hostWindowPresent
+        && typeof hostWebContents.isLoadingMainFrame === 'function'
+        && hostWebContents.isLoadingMainFrame()
+      );
+      const hostReady = this.paneHostReady.has(paneId);
+      const canRouteToHiddenHost = hostWindowPresent && hostReady && !hostLoading;
+
+      if (canRouteToHiddenHost) {
+        const routedToHost = this.sendPaneHostMessage(paneId, 'pane-host:inject-message', {
+          message: payload.message,
+          deliveryId: payload.deliveryId || null,
+          traceContext: payload.traceContext || null,
+          meta: payload.meta || null,
+        });
+        if (routedToHost) {
+          routed = true;
+          this.clearPaneHostDegraded(paneId);
+          log.info('PaneHost', `Routed inject to hidden window for pane ${paneId}`);
+          continue;
+        }
+      }
+
+      const fallbackMeta = (payload.meta && typeof payload.meta === 'object')
+        ? { ...payload.meta }
+        : {};
+      fallbackMeta.deliveryPath = 'visible_fallback';
+      fallbackMeta.hiddenHostReady = hostReady;
+      fallbackMeta.hiddenHostWindowPresent = hostWindowPresent;
+      fallbackMeta.hiddenHostLoading = hostLoading;
+
+      const routedToVisible = this.sendToVisibleWindow('inject-message', {
+        ...payload,
+        panes: [paneId],
+        meta: fallbackMeta,
       });
-      if (routedToHost) {
-        this.clearPaneHostDegraded(paneId);
-        log.info('PaneHost', `Routed inject to hidden window for pane ${paneId}`);
+
+      if (routedToVisible) {
+        routed = true;
+        this.reportPaneHostDegraded({
+          paneId,
+          reason: canRouteToHiddenHost ? 'inject_hidden_send_failed' : 'inject_hidden_not_ready',
+          message: `Hidden pane host unavailable/not ready for pane ${paneId}. Routed inject via visible renderer fallback.`,
+          details: {
+            deliveryId: payload.deliveryId || null,
+            hiddenHostReady: hostReady,
+            hiddenHostWindowPresent: hostWindowPresent,
+            hiddenHostLoading: hostLoading,
+            fallback: 'visible_renderer',
+          },
+        });
+        log.warn('PaneHost', `Hidden-host inject fallback via visible renderer for pane ${paneId}`);
       } else {
         this.reportPaneHostDegraded({
           paneId,
-          reason: 'inject_hidden_window_unavailable',
-          message: `Hidden pane host window unavailable for pane ${paneId}. Delivery FAILED — no fallback. Hidden pane host mode is enabled; fix the hidden window instead of routing around it.`,
+          reason: 'inject_fallback_visible_unavailable',
+          message: `Hidden pane host unavailable for pane ${paneId}; visible renderer fallback also unavailable. Delivery FAILED.`,
           details: {
             deliveryId: payload.deliveryId || null,
+            hiddenHostReady: hostReady,
+            hiddenHostWindowPresent: hostWindowPresent,
+            hiddenHostLoading: hostLoading,
           },
         });
       }
     }
-    return true;
+    return routed;
   }
 
   ensurePaneHostReadyForwarder() {
