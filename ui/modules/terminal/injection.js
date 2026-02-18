@@ -921,14 +921,23 @@ function createInjectionController(options = {}) {
     }
 
     const normalizedText = String(text || '');
-    const payloadText = capabilities.sanitizeMultiline
+    const longMessageBytes = Math.max(1, Number(CLAUDE_LONG_MESSAGE_BYTES) || 1024);
+    const rawPayloadBytes = Buffer.byteLength(normalizedText, 'utf8');
+    const isLongPayload = rawPayloadBytes > longMessageBytes;
+    const modeFingerprint = `${String(capabilities.displayName || '').toLowerCase()} ${String(capabilities.modeLabel || '').toLowerCase()}`.trim();
+    const isCodexOrGeminiPane = modeFingerprint.includes('codex') || modeFingerprint.includes('gemini');
+    const preserveMultilineForLongRuntimePayload = isLongPayload && isCodexOrGeminiPane;
+    const shouldSanitizeMultiline = capabilities.sanitizeMultiline && !preserveMultilineForLongRuntimePayload;
+
+    const payloadText = shouldSanitizeMultiline
       ? normalizedText.replace(/[\r\n]/g, ' ').trimEnd()
       : normalizedText;
     const payloadBytes = Buffer.byteLength(payloadText, 'utf8');
     const enterDelayMs = computeScaledEnterDelayMs(capabilities.enterDelayMs, payloadBytes, capabilities);
+    const forceChunkedWriteForLongFastPath = hmSendFastEnter && isLongPayload;
+    const preferChunkedWrite = capabilities.useChunkedWrite || forceChunkedWriteForLongFastPath;
 
     // Defer before writing to avoid counting our own echoed input as "active output".
-    const longMessageBytes = Math.max(1, Number(CLAUDE_LONG_MESSAGE_BYTES) || 1024);
     const isLongClaudeMessage = capabilities.enterMethod === 'trusted' && payloadBytes >= longMessageBytes;
     let deferResult = { waitedMs: 0, forcedExpire: false };
     if (capabilities.deferSubmitWhilePaneActive) {
@@ -939,7 +948,7 @@ function createInjectionController(options = {}) {
     }
     const deferForcedExpire = !!deferResult?.forcedExpire;
 
-    if (capabilities.sanitizeMultiline && payloadText !== normalizedText.trimEnd()) {
+    if (shouldSanitizeMultiline && payloadText !== normalizedText.trimEnd()) {
       bus.emit('inject.transform.applied', {
         paneId: id,
         payload: {
@@ -953,27 +962,27 @@ function createInjectionController(options = {}) {
     }
 
     try {
-      if (capabilities.useChunkedWrite) {
+      if (preferChunkedWrite) {
         const chunkThresholdBytes = Math.max(1024, Number(CLAUDE_CHUNK_THRESHOLD_BYTES) || (8 * 1024));
-        const shouldChunkWrite = payloadBytes > chunkThresholdBytes;
+        const shouldChunkWrite = forceChunkedWriteForLongFastPath || payloadBytes > chunkThresholdBytes;
 
         if (!shouldChunkWrite) {
           await window.hivemind.pty.write(id, payloadText, createKernelMeta());
         } else {
-        const first32 = payloadText.slice(0, 32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
-        const last32 = payloadText.slice(-32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
-        log.info(
-          `doSendToPane ${id}`,
-          `${capabilities.modeLabel} pane: pre-PTY fingerprint textLen=${payloadText.length} first32="${first32}" last32="${last32}"`
-        );
+          const first32 = payloadText.slice(0, 32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+          const last32 = payloadText.slice(-32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+          log.info(
+            `doSendToPane ${id}`,
+            `${capabilities.modeLabel} pane: pre-PTY fingerprint textLen=${payloadText.length} first32="${first32}" last32="${last32}"`
+          );
 
-        if (capabilities.homeResetBeforeWrite) {
-          try {
-            await window.hivemind.pty.write(id, '\x1b[H', createKernelMeta());
-          } catch (homeErr) {
-            log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: Home reset failed, continuing:`, homeErr);
+          if (capabilities.homeResetBeforeWrite) {
+            try {
+              await window.hivemind.pty.write(id, '\x1b[H', createKernelMeta());
+            } catch (homeErr) {
+              log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: Home reset failed, continuing:`, homeErr);
+            }
           }
-        }
 
           if (typeof window.hivemind?.pty?.writeChunked !== 'function') {
             log.warn(`doSendToPane ${id}`, 'writeChunked API unavailable, falling back to single PTY write');
@@ -983,10 +992,14 @@ function createInjectionController(options = {}) {
             const chunkMax = Math.max(chunkMin, Number(CLAUDE_CHUNK_MAX_SIZE) || 8192);
             const chunkSize = Math.max(chunkMin, Math.min(chunkMax, Number(CLAUDE_CHUNK_SIZE) || 2048));
             const yieldEveryChunks = (Math.max(0, Number(CLAUDE_CHUNK_YIELD_MS) || 0) > 0) ? 1 : 0;
+            const chunkOptions = { chunkSize, yieldEveryChunks };
+            if (forceChunkedWriteForLongFastPath) {
+              chunkOptions.waitForWriteAck = true;
+            }
             const chunkResult = await window.hivemind.pty.writeChunked(
               id,
               payloadText,
-              { chunkSize, yieldEveryChunks },
+              chunkOptions,
               createKernelMeta()
             );
             if (chunkResult && chunkResult.success === false) {
