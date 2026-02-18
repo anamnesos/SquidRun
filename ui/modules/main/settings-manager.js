@@ -86,7 +86,7 @@ const DEFAULT_SETTINGS = {
   autoNudge: true,
   ptyStuckDetection: false,
   ptyStuckThreshold: 15000,
-  hiddenPaneHostsEnabled: false,
+  hiddenPaneHostsEnabled: true,
   operatingMode: 'developer',
   firmwareInjectionEnabled: false,
   paneProjects: { '1': null, '2': null, '5': null },
