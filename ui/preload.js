@@ -37,6 +37,10 @@ const hivemindApi = {
     spawn: (paneId, workingDir) => ipcRenderer.invoke('spawn-claude', paneId, workingDir),
   },
 
+  paneHost: {
+    inject: (paneId, payload = {}) => ipcRenderer.invoke('pane-host-inject', paneId, payload),
+  },
+
   // Shared context operations
   context: {
     read: () => ipcRenderer.invoke('read-shared-context'),

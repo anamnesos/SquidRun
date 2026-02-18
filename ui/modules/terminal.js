@@ -81,6 +81,12 @@ const terminalInputBridgeDisposables = new Map();
 // Prevents accidental typing in agent panes while allowing programmatic sends (sendToPane/triggers)
 const inputLocked = {};
 PANE_IDS.forEach(id => { inputLocked[id] = true; }); // Default: all panes locked
+const HIDDEN_PANE_HOSTS_ENV_FLAG = (
+  typeof process !== 'undefined'
+  && process
+  && process.env
+  && process.env.HIVEMIND_HIDDEN_PANE_HOSTS === '1'
+);
 
 // Per-pane typing idle timers for event bus typing.idle emission
 const typingIdleTimers = {};
@@ -133,6 +139,21 @@ let promotionCheckTimer = null;
 let uiFocusTrackerAbortController = null;
 // Per-pane controllers for container listeners (setupCopyPaste + click)
 const paneListenerAbortControllers = new Map();
+
+function isHiddenPaneHostModeEnabled() {
+  if (HIDDEN_PANE_HOSTS_ENV_FLAG) return true;
+  try {
+    return settings.getSettings()?.hiddenPaneHostsEnabled === true;
+  } catch {
+    return false;
+  }
+}
+
+function isPaneReadOnlyMirrorMode(paneId) {
+  const id = String(paneId || '');
+  if (!id) return false;
+  return isHiddenPaneHostModeEnabled() && PANE_IDS.includes(id);
+}
 
 function maybeResumePtyProducer(paneId, watermark) {
   if (watermark < LOW_WATERMARK && terminalPaused.get(paneId)) {
@@ -719,6 +740,10 @@ function detachTerminalInputBridge(paneId) {
 
 function attachTerminalInputBridge(paneId) {
   const id = String(paneId);
+  if (isPaneReadOnlyMirrorMode(id)) {
+    detachTerminalInputBridge(id);
+    return false;
+  }
   if (terminalInputBridgeDisposables.has(id)) {
     return true;
   }
@@ -739,6 +764,10 @@ function attachTerminalInputBridge(paneId) {
 
 function syncTerminalInputBridge(paneId, options = {}) {
   const id = String(paneId);
+  if (isPaneReadOnlyMirrorMode(id)) {
+    detachTerminalInputBridge(id);
+    return false;
+  }
   const modelHint = typeof options?.modelHint === 'string' ? options.modelHint.toLowerCase() : '';
 
   let shouldAttach;
@@ -755,6 +784,18 @@ function syncTerminalInputBridge(paneId, options = {}) {
   }
 
   return attachTerminalInputBridge(id);
+}
+
+function refreshMirrorModeBindings() {
+  for (const paneId of PANE_IDS) {
+    const id = String(paneId);
+    if (isPaneReadOnlyMirrorMode(id)) {
+      detachTerminalInputBridge(id);
+      setInputLocked(id, true);
+    } else {
+      syncTerminalInputBridge(id);
+    }
+  }
 }
 
 function detachPtyDataListener(paneId) {
@@ -1158,6 +1199,7 @@ function handleStartupOutput(paneId, data) {
  * Locked panes block keyboard input but allow programmatic sends
  */
 function isInputLocked(paneId) {
+  if (isPaneReadOnlyMirrorMode(paneId)) return true;
   return inputLocked[paneId] === true;
 }
 
@@ -1241,6 +1283,10 @@ function updateIntentState(paneId, intent) {
 }
 
 function toggleInputLock(paneId) {
+  if (isPaneReadOnlyMirrorMode(paneId)) {
+    setInputLocked(paneId, true);
+    return true;
+  }
   inputLocked[paneId] = !inputLocked[paneId];
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);
   if (lockIcon) {
@@ -1256,14 +1302,20 @@ function toggleInputLock(paneId) {
  * Set input lock state for a pane (without toggle)
  */
 function setInputLocked(paneId, locked) {
-  inputLocked[paneId] = locked;
+  const forcedLocked = isPaneReadOnlyMirrorMode(paneId) ? true : Boolean(locked);
+  inputLocked[paneId] = forcedLocked;
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);
   if (lockIcon) {
-    lockIcon.innerHTML = locked ? LOCK_ICON_SVG : UNLOCK_ICON_SVG;
-    lockIcon.dataset.tooltip = locked ? 'Locked (click to toggle)' : 'Unlocked (click to toggle)';
-    lockIcon.classList.toggle('unlocked', !locked);
+    lockIcon.innerHTML = forcedLocked ? LOCK_ICON_SVG : UNLOCK_ICON_SVG;
+    if (isPaneReadOnlyMirrorMode(paneId)) {
+      lockIcon.dataset.tooltip = 'Mirror mode (read-only)';
+      lockIcon.classList.remove('unlocked');
+    } else {
+      lockIcon.dataset.tooltip = forcedLocked ? 'Locked (click to toggle)' : 'Unlocked (click to toggle)';
+      lockIcon.classList.toggle('unlocked', !forcedLocked);
+    }
   }
-  log.info(`Terminal ${paneId}`, `Input ${locked ? 'locked' : 'unlocked'}`);
+  log.info(`Terminal ${paneId}`, `Input ${forcedLocked ? 'locked' : 'unlocked'}`);
 }
 
 /**
@@ -1448,8 +1500,35 @@ function doSendToPane(...args) {
   return injectionController.doSendToPane(...args);
 }
 
-function sendToPane(...args) {
-  return injectionController.sendToPane(...args);
+function sendToPane(paneId, message, options = {}) {
+  const id = String(paneId);
+  if (isPaneReadOnlyMirrorMode(id) && window?.hivemind?.paneHost?.inject) {
+    Promise.resolve(window.hivemind.paneHost.inject(id, {
+      message: String(message || ''),
+      traceContext: options?.traceContext || null,
+      deliveryId: options?.deliveryId || null,
+      meta: options?.meta || null,
+    }))
+      .then((result) => {
+        if (result?.success === false) {
+          return injectionController.sendToPane(id, message, options);
+        }
+        if (typeof options?.onComplete === 'function') {
+          options.onComplete({
+            success: true,
+            verified: true,
+            signal: 'pane_host_inject',
+            status: 'delivered.verified',
+          });
+        }
+      })
+      .catch((err) => {
+        log.warn(`Terminal ${id}`, `Pane host inject failed; falling back to renderer path: ${err.message}`);
+        injectionController.sendToPane(id, message, options);
+      });
+    return;
+  }
+  return injectionController.sendToPane(id, message, options);
 }
 
   // Initialize all terminals
@@ -1625,6 +1704,14 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 
     // Check if this is an Enter key (browsers use 'Enter', some use 'Return', keyCode 13)
     const isEnterKey = event.key === 'Enter' || event.key === 'Return' || event.keyCode === 13;
+
+    if (isPaneReadOnlyMirrorMode(paneId)) {
+      if (event.ctrlKey && event.key.toLowerCase() === 'f') {
+        openTerminalSearch(paneId);
+      }
+      const bypassed = isEnterKey && (event._hivemindBypass || terminal._hivemindBypass);
+      return Boolean(bypassed);
+    }
 
     // CRITICAL: Hivemind bypass check MUST come FIRST, before lock check
     // This allows programmatic Enter from sendTrustedEnter to bypass input lock
@@ -1812,6 +1899,14 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
 
     // Check if this is an Enter key (browsers use 'Enter', some use 'Return', keyCode 13)
     const isEnterKey = event.key === 'Enter' || event.key === 'Return' || event.keyCode === 13;
+
+    if (isPaneReadOnlyMirrorMode(paneId)) {
+      if (event.ctrlKey && event.key.toLowerCase() === 'f') {
+        openTerminalSearch(paneId);
+      }
+      const bypassed = isEnterKey && (event._hivemindBypass || terminal._hivemindBypass);
+      return Boolean(bypassed);
+    }
 
     // CRITICAL: Hivemind bypass check MUST come FIRST, before lock check
     // This allows programmatic Enter from sendTrustedEnter to bypass input lock
@@ -2468,6 +2563,7 @@ module.exports = {
   isInputLocked,       // Check if pane is locked
   toggleInputLock,     // Toggle lock state
   setInputLocked,      // Set lock state directly
+  refreshMirrorModeBindings,
   // Terminal search (Ctrl+F)
   searchAddons,        // Search addon instances
   openTerminalSearch,  // Open search bar for pane
