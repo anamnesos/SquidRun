@@ -19,6 +19,7 @@ const DEFAULT_FAILURE_LIMIT = 80;
 const DEFAULT_PENDING_LIMIT = 80;
 const PREVIEW_LIMIT = 180;
 const CLAIM_STATEMENT_LIMIT = 100;
+const PENDING_DELIVERY_STATUSES = new Set(['recorded', 'routed']);
 const UNRESOLVED_CLAIMS_MAX = 10;
 const UNRESOLVED_STATUS_ORDER = ['contested', 'pending_proof', 'proposed'];
 const UNRESOLVED_STATUS_SET = new Set(UNRESOLVED_STATUS_ORDER);
@@ -105,6 +106,32 @@ function extractTag(rawBody) {
 
 function formatCounts(counts, keys) {
   return keys.map((key) => `${key}=${counts[key] || 0}`).join(', ');
+}
+
+function normalizeDeliveryToken(value) {
+  return toOptionalString(value, '').toLowerCase();
+}
+
+function hasFailureDeliverySignal(ackStatus = '', errorCode = null) {
+  if (toOptionalString(errorCode, null)) return true;
+  return (
+    ackStatus.includes('fail')
+    || ackStatus.includes('error')
+    || ackStatus.includes('timeout')
+    || ackStatus.includes('rejected')
+  );
+}
+
+function hasPendingDeliverySignal(ackStatus = '') {
+  return (
+    ackStatus.includes('pending')
+    || ackStatus.includes('queue')
+    || ackStatus.includes('unverified')
+    || ackStatus.includes('accepted')
+    || ackStatus.includes('routed')
+    || ackStatus.includes('processing')
+    || ackStatus.includes('inflight')
+  );
 }
 
 function truncateClaimStatement(value, limit = CLAIM_STATEMENT_LIMIT) {
@@ -229,17 +256,27 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
   const failedRows = [];
   const pendingRows = [];
   for (const row of orderedRows) {
-    const status = toOptionalString(row?.status, 'unknown') || 'unknown';
-    const ackStatus = toOptionalString(row?.ackStatus, null);
+    const status = normalizeDeliveryToken(row?.status) || 'unknown';
+    const direction = toOptionalString(row?.direction, 'unknown') || 'unknown';
+    const ackStatus = normalizeDeliveryToken(row?.ackStatus);
     const errorCode = toOptionalString(row?.errorCode, null);
     const tag = extractTag(row?.rawBody || '');
+    const failed = status === 'failed' || hasFailureDeliverySignal(ackStatus, errorCode);
     if (tag) {
       taggedRows.push({ row, tag });
     }
-    if (status === 'failed' || ackStatus === 'failed' || errorCode) {
+    if (failed) {
       failedRows.push(row);
     }
-    if (status === 'recorded' || status === 'brokered' || status === 'routed') {
+    // Pending deliveries are unresolved outbound rows and must exclude failed outcomes.
+    const pending =
+      direction === 'outbound'
+      && !failed
+      && (
+        PENDING_DELIVERY_STATUSES.has(status)
+        || (status === 'brokered' && hasPendingDeliverySignal(ackStatus))
+      );
+    if (pending) {
       pendingRows.push(row);
     }
   }

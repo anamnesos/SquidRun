@@ -306,6 +306,8 @@ function executeTeamMemoryOperation(action, payload = {}, options = {}) {
         teamDb: store.db,
         evidenceLedgerDbPath: opPayload.evidenceLedgerDbPath,
         limit: opPayload.limit,
+        repairOrphans: opPayload.repairOrphans === true,
+        nowMs: opPayload.nowMs,
       });
 
     case 'create-experiment':

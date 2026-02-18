@@ -59,6 +59,122 @@ describe('auto-handoff-materializer', () => {
     expect(first).toContain('delivery_timeout');
   });
 
+  test('pending deliveries exclude failed rows and resolved brokered rows', () => {
+    const rows = [
+      {
+        messageId: 'm-brokered-resolved',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(ARCHITECT #1): standby',
+        brokeredAtMs: 1000,
+      },
+      {
+        messageId: 'm-brokered-unverified',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        ackStatus: 'accepted.unverified',
+        rawBody: '(ARCHITECT #2): check',
+        brokeredAtMs: 1100,
+      },
+      {
+        messageId: 'm-routed-failed',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        errorCode: 'delivery_timeout',
+        rawBody: '(ARCHITECT #3): timeout',
+        brokeredAtMs: 1200,
+      },
+      {
+        messageId: 'm-recorded-pending',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'recorded',
+        rawBody: '(BUILDER #1): queued',
+        brokeredAtMs: 1300,
+      },
+    ];
+
+    const markdown = buildSessionHandoffMarkdown(rows, {
+      sessionId: 's-pending-check',
+      nowMs: 2000,
+    });
+    const pendingSection = markdown.split('## Pending Deliveries')[1].split('## Recent Messages')[0];
+    const failedSection = markdown.split('## Failed Deliveries')[1].split('## Pending Deliveries')[0];
+
+    expect(markdown).toContain('- failed_rows: 1');
+    expect(markdown).toContain('- pending_rows: 2');
+    expect(pendingSection).toContain('| m-brokered-unverified |');
+    expect(pendingSection).toContain('| m-recorded-pending |');
+    expect(pendingSection).not.toContain('| m-brokered-resolved |');
+    expect(pendingSection).not.toContain('| m-routed-failed |');
+    expect(failedSection).toContain('| m-routed-failed |');
+  });
+
+  test('Pending Deliveries excludes brokered rows and tracks unresolved outbound rows only', () => {
+    const rows = [
+      {
+        messageId: 'm-recorded',
+        senderRole: 'architect',
+        targetRole: 'builder',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'recorded',
+        rawBody: '(ARCHITECT #1): TASK: Pending send',
+        brokeredAtMs: 1000,
+      },
+      {
+        messageId: 'm-brokered',
+        senderRole: 'architect',
+        targetRole: 'oracle',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'brokered',
+        rawBody: '(ARCHITECT #2): TASK: Delivered to broker',
+        brokeredAtMs: 1100,
+      },
+      {
+        messageId: 'm-routed',
+        senderRole: 'builder',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'outbound',
+        status: 'routed',
+        rawBody: '(BUILDER #1): Awaiting verification',
+        brokeredAtMs: 1200,
+      },
+      {
+        messageId: 'm-inbound-recorded',
+        senderRole: 'user',
+        targetRole: 'architect',
+        channel: 'telegram',
+        direction: 'inbound',
+        status: 'recorded',
+        rawBody: 'Hello',
+        brokeredAtMs: 1300,
+      },
+    ];
+
+    const markdown = buildSessionHandoffMarkdown(rows, { sessionId: 's-pending', nowMs: 2000 });
+    const pendingSection = markdown.split('## Pending Deliveries')[1].split('## Recent Messages')[0];
+
+    expect(markdown).toContain('- pending_rows: 2');
+    expect(pendingSection).toContain('m-recorded');
+    expect(pendingSection).toContain('m-routed');
+    expect(pendingSection).not.toContain('m-brokered');
+    expect(pendingSection).not.toContain('m-inbound-recorded');
+  });
+
   test('materializeSessionHandoff writes once and skips rewrite when unchanged', () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const rows = [
