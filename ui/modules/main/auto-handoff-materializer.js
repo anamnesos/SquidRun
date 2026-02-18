@@ -7,6 +7,7 @@ const {
 const {
   queryCommsJournalEntries,
 } = require('./comms-journal');
+const { executeTeamMemoryOperation } = require('../team-memory/runtime');
 
 const HANDOFFS_RELATIVE_DIR = 'handoffs';
 const SESSION_HANDOFF_FILE = 'session.md';
@@ -17,6 +18,10 @@ const DEFAULT_TAGGED_LIMIT = 120;
 const DEFAULT_FAILURE_LIMIT = 80;
 const DEFAULT_PENDING_LIMIT = 80;
 const PREVIEW_LIMIT = 180;
+const CLAIM_STATEMENT_LIMIT = 100;
+const UNRESOLVED_CLAIMS_MAX = 10;
+const UNRESOLVED_STATUS_ORDER = ['contested', 'pending_proof', 'proposed'];
+const UNRESOLVED_STATUS_SET = new Set(UNRESOLVED_STATUS_ORDER);
 const TAG_PATTERN = /\b(DECISION|TASK|ACTION|FINDING|BLOCKER|QUESTION|NEXT|DONE|TEST|PLAN|RISK|CLAIM)\s*:\s*(.+)/i;
 
 function toOptionalString(value, fallback = null) {
@@ -102,6 +107,86 @@ function formatCounts(counts, keys) {
   return keys.map((key) => `${key}=${counts[key] || 0}`).join(', ');
 }
 
+function truncateClaimStatement(value, limit = CLAIM_STATEMENT_LIMIT) {
+  return normalizeInline(value, Math.max(1, Number(limit) || CLAIM_STATEMENT_LIMIT));
+}
+
+function formatConfidence(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '-';
+  return Number(numeric.toFixed(2)).toString();
+}
+
+function normalizeUnresolvedClaims(claims = [], maxClaims = UNRESOLVED_CLAIMS_MAX) {
+  const limit = Math.max(1, Number(maxClaims) || UNRESOLVED_CLAIMS_MAX);
+  const dedup = new Map();
+  for (const claim of Array.isArray(claims) ? claims : []) {
+    const claimId = toOptionalString(claim?.id, null);
+    if (!claimId) continue;
+    const status = toOptionalString(claim?.status, '').toLowerCase();
+    if (!UNRESOLVED_STATUS_SET.has(status)) continue;
+    const normalized = {
+      id: claimId,
+      status,
+      statement: truncateClaimStatement(claim?.statement),
+      confidence: Number.isFinite(Number(claim?.confidence)) ? Number(claim.confidence) : null,
+    };
+    const current = dedup.get(claimId);
+    if (!current) {
+      dedup.set(claimId, normalized);
+      continue;
+    }
+    const currentConfidence = Number.isFinite(Number(current.confidence)) ? Number(current.confidence) : Number.NEGATIVE_INFINITY;
+    const nextConfidence = Number.isFinite(Number(normalized.confidence)) ? Number(normalized.confidence) : Number.NEGATIVE_INFINITY;
+    if (nextConfidence > currentConfidence) {
+      dedup.set(claimId, normalized);
+    }
+  }
+
+  const priority = new Map(UNRESOLVED_STATUS_ORDER.map((status, index) => [status, index]));
+  return Array.from(dedup.values())
+    .sort((left, right) => {
+      const leftPriority = priority.has(left.status) ? priority.get(left.status) : Number.MAX_SAFE_INTEGER;
+      const rightPriority = priority.has(right.status) ? priority.get(right.status) : Number.MAX_SAFE_INTEGER;
+      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
+      const leftConfidence = Number.isFinite(Number(left.confidence)) ? Number(left.confidence) : Number.NEGATIVE_INFINITY;
+      const rightConfidence = Number.isFinite(Number(right.confidence)) ? Number(right.confidence) : Number.NEGATIVE_INFINITY;
+      if (leftConfidence !== rightConfidence) return rightConfidence - leftConfidence;
+      return left.id.localeCompare(right.id);
+    })
+    .slice(0, limit);
+}
+
+function queryUnresolvedClaims(options = {}) {
+  const unresolvedLimit = Math.max(1, Number(options.unresolvedLimitPerStatus) || UNRESOLVED_CLAIMS_MAX);
+  const queryFn = typeof options.queryClaims === 'function'
+    ? options.queryClaims
+    : (payload, queryOptions) => executeTeamMemoryOperation('query-claims', payload, queryOptions);
+  const queryOptions = {};
+  if (toOptionalString(options.teamMemoryDbPath, null)) {
+    queryOptions.runtimeOptions = {
+      storeOptions: {
+        dbPath: options.teamMemoryDbPath,
+      },
+    };
+  }
+
+  const claims = [];
+  for (const status of UNRESOLVED_STATUS_ORDER) {
+    try {
+      const result = queryFn({
+        status,
+        limit: unresolvedLimit,
+      }, queryOptions);
+      const rows = Array.isArray(result?.claims) ? result.claims : [];
+      claims.push(...rows);
+    } catch {
+      // Best-effort only: unresolved claim rendering should never block handoff output.
+    }
+  }
+  return normalizeUnresolvedClaims(claims, options.unresolvedClaimsMax);
+}
+
 function sortByEventTsAsc(rows) {
   return [...rows].sort((left, right) => {
     const leftTs = toEventTsMs(left);
@@ -116,6 +201,10 @@ function sortByEventTsAsc(rows) {
 function buildSessionHandoffMarkdown(rows, options = {}) {
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
   const sessionId = toOptionalString(options.sessionId, '-') || '-';
+  const unresolvedClaims = normalizeUnresolvedClaims(
+    Array.isArray(options.unresolvedClaims) ? options.unresolvedClaims : [],
+    options.unresolvedClaimsMax
+  );
   const orderedRows = sortByEventTsAsc(Array.isArray(rows) ? rows : []);
   const totalRows = orderedRows.length;
   const recentLimit = Math.max(1, Number(options.recentLimit) || DEFAULT_RECENT_LIMIT);
@@ -177,10 +266,35 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
     `- failed_rows: ${failedRows.length}`,
     `- pending_rows: ${pendingRows.length}`,
     '',
+    '## Unresolved Claims',
+    '| claim_id | status | statement excerpt | confidence |',
+    '| --- | --- | --- | --- |',
+  ];
+
+  if (unresolvedClaims.length === 0) {
+    lines.push('| - | - | - | - |');
+  } else {
+    for (const claim of unresolvedClaims) {
+      lines.push([
+        '|',
+        escapeMarkdownCell(claim.id),
+        '|',
+        escapeMarkdownCell(claim.status),
+        '|',
+        escapeMarkdownCell(claim.statement),
+        '|',
+        escapeMarkdownCell(formatConfidence(claim.confidence)),
+        '|',
+      ].join(' '));
+    }
+  }
+
+  lines.push(
+    '',
     '## Tagged Signals (explicit markers only)',
     '| sent_at | tag | message_id | trace_id | sender | target | status | detail |',
     '| --- | --- | --- | --- | --- | --- | --- | --- |',
-  ];
+  );
 
   const taggedRowsTail = taggedRows.slice(Math.max(0, taggedRows.length - taggedLimit));
   if (taggedRowsTail.length === 0) {
@@ -366,6 +480,14 @@ function materializeSessionHandoff(options = {}) {
     }, {
       dbPath: options.dbPath || null,
     });
+  const unresolvedClaims = Array.isArray(options.unresolvedClaims)
+    ? normalizeUnresolvedClaims(options.unresolvedClaims, options.unresolvedClaimsMax)
+    : queryUnresolvedClaims({
+      queryClaims: options.queryClaims,
+      teamMemoryDbPath: options.teamMemoryDbPath,
+      unresolvedLimitPerStatus: options.unresolvedLimitPerStatus,
+      unresolvedClaimsMax: options.unresolvedClaimsMax,
+    });
 
   const markdown = buildSessionHandoffMarkdown(rows, {
     sessionId: sessionId || '-',
@@ -374,6 +496,8 @@ function materializeSessionHandoff(options = {}) {
     taggedLimit: options.taggedLimit,
     failureLimit: options.failureLimit,
     pendingLimit: options.pendingLimit,
+    unresolvedClaims,
+    unresolvedClaimsMax: options.unresolvedClaimsMax,
   });
 
   const primaryPath = toOptionalString(options.outputPath, null) || resolvePrimarySessionHandoffPath();
@@ -470,6 +594,8 @@ module.exports = {
     extractTag,
     extractTraceId,
     normalizeInline,
+    normalizeUnresolvedClaims,
+    queryUnresolvedClaims,
     toEventTsMs,
     toIso,
     resolvePrimarySessionHandoffPath,

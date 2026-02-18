@@ -79,6 +79,16 @@ function normalizeTraceContext(traceContext = null, fallback = {}) {
   };
 }
 
+function isHmSendTraceContext(traceContext = null) {
+  const ctx = (traceContext && typeof traceContext === 'object') ? traceContext : {};
+  const messageId = toNonEmptyString(ctx.messageId);
+  const traceId = toNonEmptyString(ctx.traceId) || toNonEmptyString(ctx.correlationId);
+  return Boolean(
+    (messageId && messageId.startsWith('hm-'))
+    || (traceId && traceId.startsWith('hm-'))
+  );
+}
+
 function getThrottleQueueMaxItems() {
   return Number.isFinite(THROTTLE_QUEUE_MAX_ITEMS) && THROTTLE_QUEUE_MAX_ITEMS > 0
     ? THROTTLE_QUEUE_MAX_ITEMS
@@ -728,6 +738,7 @@ function processThrottleQueue(paneId) {
   const routedMessage = stripInternalRoutingWrappers(message);
   const deliveryId = item && typeof item === 'object' ? item.deliveryId : null;
   const traceContext = item && typeof item === 'object' ? (item.traceContext || null) : null;
+  const hmSendFastEnter = isHmSendTraceContext(traceContext);
   const corrId = traceContext?.traceId || traceContext?.correlationId || undefined;
   const causationId = traceContext?.parentEventId || traceContext?.causationId || undefined;
 
@@ -770,6 +781,7 @@ function processThrottleQueue(paneId) {
 
   terminal.sendToPane(paneId, routedMessage, {
     traceContext: traceContext || undefined,
+    hmSendFastEnter,
     onComplete: (result) => {
       const status = typeof result?.status === 'string' ? result.status : '';
       const reason = typeof result?.reason === 'string' ? result.reason : '';
