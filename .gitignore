@@ -71,9 +71,11 @@ workspace/build/integration/
 ui/coverage/
 ui/coverage-output.txt
 
-# Temp scripts
+# Temp scripts and debug artifacts
 workspace/scripts/*.ps1
 workspace/inspect_dbs*.js
+workspace/inspect_claims.js
+workspace/all_claims.json
 workspace/capture.ps1
 workspace/oracle-qa.js
 workspace/oracle-test.js
@@ -89,5 +91,18 @@ workspace/performance-audit.md
 
 # Screenshots (user-specific)
 workspace/screenshots/
+
+# Audit screens (ephemeral)
+workspace/audit-screens/
+
+# Runtime databases (regenerated)
+workspace/evidence-ledger.db
+
+# Auto-generated handoffs (materialized from comms_journal)
+workspace/handoffs/session.md
+
+# Runtime app status
+workspace/app-status.json
+
 nul
 .env
