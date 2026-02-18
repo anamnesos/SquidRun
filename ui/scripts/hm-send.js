@@ -18,6 +18,7 @@ const {
   appendCommsJournalEntry,
   closeCommsJournalStores,
 } = require('../modules/main/comms-journal');
+const { sendTelegram } = require('./hm-telegram');
 
 const parsedPort = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
 const PORT = Number.isFinite(parsedPort) ? parsedPort : 9900;
@@ -362,6 +363,33 @@ function normalizeRole(targetInput) {
 function isSpecialTarget(targetInput) {
   const normalized = String(targetInput || '').trim().toLowerCase();
   return SPECIAL_USER_TARGETS.has(normalized);
+}
+
+async function sendSpecialTargetFallback(targetInput, content, options = {}) {
+  const normalized = String(targetInput || '').trim().toLowerCase();
+  if (!SPECIAL_USER_TARGETS.has(normalized)) {
+    return { ok: false, error: `Unsupported special target '${targetInput}'` };
+  }
+
+  try {
+    const result = await sendTelegram(content, process.env, {
+      messageId: typeof options.messageId === 'string' ? options.messageId : null,
+      senderRole: role || 'system',
+      sessionId: projectMetadata?.session_id || null,
+    });
+    if (!result?.ok) {
+      return { ok: false, error: result?.error || 'telegram_fallback_failed' };
+    }
+    return {
+      ok: true,
+      channel: 'telegram',
+      chatId: result.chatId || null,
+      statusCode: result.statusCode || null,
+      messageId: result.messageId || null,
+    };
+  } catch (err) {
+    return { ok: false, error: err?.message || 'telegram_fallback_exception' };
+  }
 }
 
 function buildTriggerFallbackContent(content, messageId) {
@@ -795,6 +823,30 @@ async function main() {
   }
 
   if (enableFallback) {
+    if (isSpecialTarget(target)) {
+      const fallbackResult = await sendSpecialTargetFallback(target, message, {
+        messageId: sendResult?.messageId || null,
+      });
+      if (fallbackResult.ok) {
+        const reason = sendResult?.ack
+          ? `ack=${sendResult.ack.status}`
+          : sendResult?.deliveryCheck
+            ? `delivery-check=${sendResult.deliveryCheck.status || 'unknown'}`
+            : sendResult?.skippedByHealth
+              ? `health=${sendResult?.health?.status || 'unknown'}`
+              : (sendResult?.error || wsError?.message || 'no_ack');
+        console.warn(
+          `WebSocket send unverified (${reason}). `
+          + `Sent ${target} via Telegram fallback${fallbackResult.chatId ? ` (chat ${fallbackResult.chatId})` : ''}.`
+        );
+        closeCommsJournalStores();
+        process.exit(0);
+      }
+      console.error(`WebSocket failed and special-target fallback failed: ${fallbackResult.error}`);
+      closeCommsJournalStores();
+      process.exit(1);
+    }
+
     const fallbackResult = writeTriggerFallback(target, message, {
       messageId: sendResult?.messageId || null,
     });

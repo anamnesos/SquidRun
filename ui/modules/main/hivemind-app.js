@@ -84,6 +84,14 @@ const TEAM_MEMORY_TAGGED_CLAIM_SWEEP_INTERVAL_MS = Number.parseInt(
   process.env.HIVEMIND_TEAM_MEMORY_TAGGED_CLAIM_SWEEP_MS || '30000',
   10
 );
+const WEBSOCKET_START_RETRY_BASE_MS = Number.parseInt(
+  process.env.HIVEMIND_WEBSOCKET_START_RETRY_BASE_MS || '500',
+  10
+);
+const WEBSOCKET_START_RETRY_MAX_MS = Number.parseInt(
+  process.env.HIVEMIND_WEBSOCKET_START_RETRY_MAX_MS || '10000',
+  10
+);
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
@@ -150,6 +158,9 @@ class HivemindApp {
     this.paneHostReadyListener = null;
     this.mainWindowSendRaw = null;
     this.mainWindowSendInterceptInstalled = false;
+    this.websocketStartRetryTimer = null;
+    this.websocketStartRetryAttempt = 0;
+    this.shuttingDown = false;
   }
 
   async initializeStartupSessionScope(options = {}) {
@@ -564,6 +575,59 @@ class HivemindApp {
     ipcMain.on('pane-host-ready', this.paneHostReadyListener);
   }
 
+  clearWebSocketStartRetry() {
+    if (this.websocketStartRetryTimer) {
+      clearTimeout(this.websocketStartRetryTimer);
+      this.websocketStartRetryTimer = null;
+    }
+    this.websocketStartRetryAttempt = 0;
+  }
+
+  isRetryableWebSocketStartError(err) {
+    const message = String(err?.message || '');
+    return (
+      message.includes('EADDRINUSE')
+      || message.includes('address already in use')
+      || message.includes('EACCES')
+      || message.includes('comms worker exited')
+      || message.includes('comms worker timeout')
+    );
+  }
+
+  getWebSocketStartRetryDelayMs(attempt) {
+    const baseMs = Number.isFinite(WEBSOCKET_START_RETRY_BASE_MS) && WEBSOCKET_START_RETRY_BASE_MS > 0
+      ? WEBSOCKET_START_RETRY_BASE_MS
+      : 500;
+    const maxMs = Number.isFinite(WEBSOCKET_START_RETRY_MAX_MS) && WEBSOCKET_START_RETRY_MAX_MS > 0
+      ? WEBSOCKET_START_RETRY_MAX_MS
+      : 10000;
+    const exponent = Math.max(0, Number(attempt || 1) - 1);
+    return Math.min(maxMs, baseMs * Math.pow(2, exponent));
+  }
+
+  scheduleWebSocketStartRetry(startOptions, err) {
+    if (this.shuttingDown) return;
+    if (!startOptions || !this.isRetryableWebSocketStartError(err)) return;
+    if (this.websocketStartRetryTimer) return;
+
+    this.websocketStartRetryAttempt += 1;
+    const attempt = this.websocketStartRetryAttempt;
+    const delayMs = this.getWebSocketStartRetryDelayMs(attempt);
+    log.warn('WebSocket', `Retrying server start in ${delayMs}ms (attempt ${attempt + 1})`);
+    this.websocketStartRetryTimer = setTimeout(async () => {
+      this.websocketStartRetryTimer = null;
+      if (this.shuttingDown) return;
+      try {
+        await websocketServer.start(startOptions);
+        this.clearWebSocketStartRetry();
+        log.info('WebSocket', 'Server start recovery succeeded');
+      } catch (retryErr) {
+        log.error('WebSocket', `Failed to start server: ${retryErr.message}`);
+        this.scheduleWebSocketStartRetry(startOptions, retryErr);
+      }
+    }, delayMs);
+  }
+
   async init() {
     log.info('App', 'Initializing Hivemind Application');
 
@@ -638,8 +702,9 @@ class HivemindApp {
     this.ensureTriggerDeliveryAckForwarder();
 
     // 13. Start WebSocket server for instant agent messaging
+    let webSocketStartOptions = null;
     try {
-      await websocketServer.start({
+      webSocketStartOptions = {
         port: websocketServer.DEFAULT_PORT,
         sessionScopeId: this.commsSessionScopeId,
         onMessage: async (data) => {
@@ -1127,9 +1192,12 @@ class HivemindApp {
 
           return null;
         }
-      });
+      };
+      await websocketServer.start(webSocketStartOptions);
+      this.clearWebSocketStartRetry();
     } catch (err) {
       log.error('WebSocket', `Failed to start server: ${err.message}`);
+      this.scheduleWebSocketStartRetry(webSocketStartOptions, err);
     }
 
     this.startSmsPoller();
@@ -2695,6 +2763,8 @@ class HivemindApp {
 
   shutdown() {
     log.info('App', 'Shutting down Hivemind Application');
+    this.shuttingDown = true;
+    this.clearWebSocketStartRetry();
     if (this.paneHostBootstrapTimer) {
       clearTimeout(this.paneHostBootstrapTimer);
       this.paneHostBootstrapTimer = null;
