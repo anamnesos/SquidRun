@@ -1094,6 +1094,11 @@ async function runStartupIdentityAttempt(paneId, state, reason) {
       await window.hivemind.pty.write(id, '\r');
     }
 
+    // PTY write succeeded — trust the delivery. Scrollback verification is unreliable
+    // (CLI consumes input before xterm buffer updates) and caused triple-delivery when
+    // all retry attempts fired despite successful writes.
+    state.completed = true;
+    startupInjectionState.delete(id);
     log.info(
       'spawnAgent',
       `Identity injected for ${role} (pane ${id}) [ready:${reason}] [attempt:${attempt}/${maxAttempts}] [${deliveryMethod}]`
@@ -1109,37 +1114,6 @@ async function runStartupIdentityAttempt(paneId, state, reason) {
     }
     return;
   }
-
-  await new Promise(resolve => setTimeout(resolve, verifyDelayMs));
-  const latest = startupInjectionState.get(id);
-  if (!latest || latest !== state || latest.cancelled || latest.completed) {
-    return;
-  }
-
-  const scrollback = getStartupScrollbackSnapshot(id);
-  const verified = hasStartupSessionHeader(scrollback, id);
-  if (verified) {
-    state.completed = true;
-    startupInjectionState.delete(id);
-    log.info('spawnAgent', `Identity verified in scrollback for ${role} (pane ${id}) [attempt:${attempt}/${maxAttempts}]`);
-    return;
-  }
-
-  if (attempt < maxAttempts) {
-    log.warn(
-      'spawnAgent',
-      `Identity not visible in scrollback for ${role} (pane ${id}) after attempt ${attempt}/${maxAttempts}; retrying in ${retryDelayMs}ms`
-    );
-    scheduleStartupIdentityAttempt(id, state, reason, retryDelayMs);
-    return;
-  }
-
-  state.completed = true;
-  startupInjectionState.delete(id);
-  log.error(
-    'spawnAgent',
-    `Identity injection failed verification for ${role} (pane ${id}) after ${maxAttempts} attempts`
-  );
 }
 
 function triggerStartupInjection(paneId, state, reason) {
