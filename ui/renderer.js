@@ -33,7 +33,6 @@ const RENDERER_IPC_CHANNELS = Object.freeze([
   'unstick-pane',
   'restart-pane',
   'restart-all-panes',
-  'codex-activity',
   'agent-stuck-detected',
   'pane-cli-identity',
   'daemon-connected',
@@ -381,35 +380,6 @@ Object.assign(window.hivemind, {
   },
 });
 
-// Status update functions (shared across modules)
-function updatePaneStatus(paneId, status) {
-  const statusEl = document.getElementById(`status-${paneId}`);
-  if (statusEl) {
-    // Update text (preserve spinner if working)
-    const spinnerEl = statusEl.querySelector('.pane-spinner');
-    if (spinnerEl) {
-      statusEl.innerHTML = '';
-      statusEl.appendChild(spinnerEl);
-      statusEl.appendChild(document.createTextNode(status));
-    } else {
-      statusEl.textContent = status;
-    }
-
-    // Toggle CSS classes based on status
-    statusEl.classList.remove('idle', 'starting', 'running', 'working');
-    const statusLower = status.toLowerCase();
-    if (statusLower === 'ready' || statusLower === 'idle' || statusLower === 'stopped') {
-      statusEl.classList.add('idle');
-    } else if (statusLower === 'starting' || statusLower === 'spawning') {
-      statusEl.classList.add('starting');
-    } else if (statusLower === 'working' || statusLower === 'processing') {
-      statusEl.classList.add('working');
-    } else if (statusLower === 'running' || statusLower.includes('running')) {
-      statusEl.classList.add('running');
-    }
-  }
-}
-
 function updateConnectionStatus(status) {
   const statusEl = document.getElementById('connectionStatus');
   if (statusEl) {
@@ -447,11 +417,11 @@ function toggleExpandPane(paneId) {
 // Status Strip - imported from modules/status-strip.js
 
 // Wire up module callbacks
-terminal.setStatusCallbacks(updatePaneStatus, updateConnectionStatus);
+terminal.setStatusCallbacks(null, updateConnectionStatus);
 tabs.setConnectionStatusCallback(updateConnectionStatus);
 settings.setConnectionStatusCallback(updateConnectionStatus);
 settings.setSettingsLoadedCallback(markSettingsLoaded);
-daemonHandlers.setStatusCallbacks(updateConnectionStatus, updatePaneStatus);
+daemonHandlers.setStatusCallbacks(updateConnectionStatus);
 
 
 // Setup event listeners
@@ -1201,93 +1171,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Task list updates handled by status-strip.js (SSOT for task-list-updated IPC)
-
-  // Codex activity indicator - update pane status based on Codex exec activity
-  // State labels for UI display
-  const CODEX_ACTIVITY_LABELS = {
-    thinking: 'Thinking',
-    tool: 'Tool',
-    command: 'Command',
-    file: 'File',
-    streaming: 'Streaming',
-    done: 'Done',
-    ready: 'Ready',
-  };
-
-  // Glyph spinner sequence (Claude TUI style)
-  const SPINNER_GLYPHS = ['◐', '◓', '◑', '◒'];
-  const spinnerTimers = new Map(); // paneId -> intervalId
-
-  // Start glyph cycling for a pane
-  function startSpinnerCycle(paneId, spinnerEl) {
-    // Clear existing timer if any
-    if (spinnerTimers.has(paneId)) {
-      clearInterval(spinnerTimers.get(paneId));
-    }
-    // Check reduced motion preference
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reducedMotion) {
-      spinnerEl.textContent = '●';
-      return;
-    }
-    // Cycle through glyphs
-    let index = 0;
-    spinnerEl.textContent = SPINNER_GLYPHS[0];
-    const timerId = setInterval(() => {
-      index = (index + 1) % SPINNER_GLYPHS.length;
-      spinnerEl.textContent = SPINNER_GLYPHS[index];
-    }, 500);
-    spinnerTimers.set(paneId, timerId);
-  }
-
-  // Stop glyph cycling for a pane
-  function stopSpinnerCycle(paneId) {
-    if (spinnerTimers.has(paneId)) {
-      clearInterval(spinnerTimers.get(paneId));
-      spinnerTimers.delete(paneId);
-    }
-  }
-
-  ipcRenderer.on('codex-activity', (event, data) => {
-    const { paneId, state, detail } = data;
-    const statusEl = document.getElementById(`status-${paneId}`);
-    if (!statusEl) return;
-
-    // Get or create spinner element
-    let spinnerEl = statusEl.querySelector('.pane-spinner');
-    if (!spinnerEl) {
-      spinnerEl = document.createElement('span');
-      spinnerEl.className = 'pane-spinner';
-      statusEl.insertBefore(spinnerEl, statusEl.firstChild);
-    }
-
-    // Update status text with optional detail truncated
-    const label = CODEX_ACTIVITY_LABELS[state] || state;
-    const displayDetail = detail && detail.length > 30 ? detail.slice(0, 27) + '...' : detail;
-    const statusText = displayDetail ? `${label}: ${displayDetail}` : label;
-
-    // Set tooltip for full detail
-    statusEl.title = detail || '';
-
-    // Update text content (preserve spinner)
-    statusEl.innerHTML = '';
-    statusEl.appendChild(spinnerEl);
-    statusEl.appendChild(document.createTextNode(statusText));
-
-    // Update CSS classes for activity state
-    statusEl.classList.remove('idle', 'starting', 'running', 'working', 'activity-thinking', 'activity-tool', 'activity-command', 'activity-file', 'activity-streaming', 'activity-done');
-
-    if (state === 'ready') {
-      statusEl.classList.add('idle');
-      stopSpinnerCycle(paneId);
-    } else if (state === 'done') {
-      statusEl.classList.add('activity-done');
-      stopSpinnerCycle(paneId);
-    } else {
-      statusEl.classList.add('working', `activity-${state}`);
-      startSpinnerCycle(paneId, spinnerEl);
-    }
-  });
 
   // Single agent stuck detection - notify user (we can't auto-ESC via PTY)
   // Track shown alerts to avoid spamming

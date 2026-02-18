@@ -1951,9 +1951,6 @@ class HivemindApp {
     });
 
     this.attachDaemonClientListener('codex-activity', (paneId, state, detail) => {
-      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
-        this.ctx.mainWindow.webContents.send('codex-activity', { paneId, state, detail });
-      }
       if (this.ctx.pluginManager?.hasHook('agent:activity')) {
         this.ctx.pluginManager.dispatch('agent:activity', { paneId: String(paneId), state, detail })
           .catch(err => log.error('Plugins', `Error in agent:activity hook: ${err.message}`));

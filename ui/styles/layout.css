@@ -408,87 +408,13 @@
   100% { background-color: var(--color-bg-medium); }
 }
 
-.pane-status {
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
-  transition: color var(--transition-normal), opacity var(--transition-normal), text-shadow var(--transition-normal), transform var(--transition-normal);
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pane-status.idle { color: var(--color-text-muted); }
-.pane-status.starting { color: var(--color-warning); }
-.pane-status.running { color: var(--color-primary); }
-.pane-status.working { color: var(--color-primary); }
-
-/* Activity state colors */
-.pane-status.activity-thinking { color: var(--color-primary); }
-.pane-status.activity-tool { color: #bb86fc; }
-.pane-status.activity-command { color: var(--color-warning); }
-.pane-status.activity-file { color: var(--color-info); }
-.pane-status.activity-streaming { color: var(--color-primary); }
-.pane-status.activity-done { color: var(--color-success); }
-
-.pane-status.running,
-.pane-status.activity-thinking,
-.pane-status.activity-tool,
-.pane-status.activity-command,
-.pane-status.activity-file,
-.pane-status.activity-streaming {
-  animation: activityPulse 2.2s ease-in-out infinite;
-  text-shadow: 0 0 10px color-mix(in srgb, currentColor 35%, transparent);
-  will-change: transform, opacity;
-}
-
-/* Glyph spinner for working status (Claude TUI style) */
-.pane-spinner {
-  display: none;
-  margin-right: var(--space-1);
-  font-size: var(--text-base);
-}
-
-.pane-status.running .pane-spinner,
-.pane-status.working .pane-spinner,
-.pane-status.activity-thinking .pane-spinner,
-.pane-status.activity-tool .pane-spinner,
-.pane-status.activity-command .pane-spinner,
-.pane-status.activity-file .pane-spinner,
-.pane-status.activity-streaming .pane-spinner {
-  display: inline-block;
-  animation: breathe 2s ease-in-out infinite;
-  will-change: opacity;
-}
-
-/* Breathing opacity animation */
-@keyframes breathe {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-@keyframes activityPulse {
-  0%, 100% { transform: translateY(0); opacity: 0.95; }
-  50% { transform: translateY(-1px); opacity: 1; }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .pane-status.running,
-  .pane-status.activity-thinking,
-  .pane-status.activity-tool,
-  .pane-status.activity-command,
-  .pane-status.activity-file,
-  .pane-status.activity-streaming,
-  .pane-spinner,
   .watchdog-alert,
   .pane.preview-highlight,
   .voice-status.listening {
     animation: none !important;
     transform: none !important;
     transition: none !important;
-  }
-  .pane-spinner {
-    opacity: 1;
   }
 }
 

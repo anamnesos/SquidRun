@@ -205,32 +205,6 @@ function injectWorkingAnimation() {
 function updateAgentStatus(paneId, state) {
   injectWorkingAnimation();
 
-  const statusEl = document.getElementById(`status-${paneId}`);
-  if (statusEl) {
-    const hasActiveActivity = Array.from(statusEl.classList).some(c => c.startsWith('activity-'));
-    const spinnerEl = statusEl.querySelector('.pane-spinner');
-
-    if (hasActiveActivity && spinnerEl) {
-      // Skip status text if activity indicator is active
-    } else {
-      const labels = {
-        'idle': 'Ready',
-        'starting': 'Starting...',
-        'running': 'Working',
-      };
-      const statusText = labels[state] || state;
-      if (spinnerEl) {
-        statusEl.innerHTML = '';
-        statusEl.appendChild(spinnerEl);
-        statusEl.appendChild(document.createTextNode(statusText));
-      } else {
-        statusEl.textContent = statusText;
-      }
-      statusEl.classList.remove('idle', 'starting', 'running');
-      statusEl.classList.add(state || 'idle');
-    }
-  }
-
   const badge = document.getElementById(`badge-${paneId}`);
   if (badge) {
     badge.classList.remove('idle', 'active', 'working', 'starting');

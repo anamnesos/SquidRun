@@ -122,11 +122,9 @@ let timerInterval = null;
 
 // Callbacks
 let onConnectionStatusUpdate = null;
-let onPaneStatusUpdate = null;
 
-function setStatusCallbacks(connectionCb, paneCb) {
+function setStatusCallbacks(connectionCb) {
   onConnectionStatusUpdate = connectionCb;
-  onPaneStatusUpdate = paneCb;
 }
 
 function removeIpcListener(channel, handler) {
@@ -161,12 +159,6 @@ function clearScopedIpcListeners(scope = null) {
 function updateConnectionStatus(status) {
   if (onConnectionStatusUpdate) {
     onConnectionStatusUpdate(status);
-  }
-}
-
-function updatePaneStatus(paneId, status) {
-  if (onPaneStatusUpdate) {
-    onPaneStatusUpdate(paneId, status);
   }
 }
 
@@ -615,14 +607,6 @@ function setupRefreshButtons(sendToPaneFn) {
         `Refresh startup context: read ROLES.md, runtime memory snapshot (Evidence Ledger + Team Memory), .hivemind/build/blockers.md, ` +
         `.hivemind/build/errors.md, workspace/handoffs/session.md, and workspace/context-snapshots/${paneId}.md. Then report status.`;
       sendToPaneFn(paneId, `${refreshPrompt}\r`);
-      updatePaneStatus(paneId, 'Refreshed');
-      setTimeout(() => {
-        // This is a small UI update, could be moved to uiView but okay for now
-        const statusEl = document.getElementById(`status-${paneId}`);
-        if (statusEl && statusEl.textContent === 'Refreshed') {
-          statusEl.textContent = 'Ready';
-        }
-      }, 2000);
     });
   });
 }
