@@ -13,37 +13,58 @@ function readPaneIdFromQuery() {
 }
 
 const paneId = readPaneIdFromQuery();
+const IS_DARWIN = process.platform === 'darwin';
+const DEFAULT_POST_ENTER_VERIFY_TIMEOUT_MS = IS_DARWIN ? 3000 : 4000;
+const DEFAULT_SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS = IS_DARWIN ? 250 : 350;
+const DEFAULT_SUBMIT_DEFER_MAX_WAIT_MS = IS_DARWIN ? 1200 : 2000;
+const DEFAULT_SUBMIT_DEFER_MAX_WAIT_LONG_MS = IS_DARWIN ? 3000 : 5000;
+const DEFAULT_SUBMIT_DEFER_POLL_MS = IS_DARWIN ? 50 : 100;
+const DEFAULT_LONG_PAYLOAD_BYTES = IS_DARWIN ? 2048 : 1024;
+const DEFAULT_MIN_ENTER_DELAY_MS = IS_DARWIN ? 150 : 500;
+const DEFAULT_CHUNK_THRESHOLD_BYTES = IS_DARWIN ? 4096 : 2048;
+const DEFAULT_CHUNK_SIZE_BYTES = IS_DARWIN ? 4096 : 2048;
+const TERMINAL_FONT_FAMILY = IS_DARWIN
+  ? "'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace"
+  : "'Consolas', 'Monaco', 'Courier New', monospace";
 let injectedScrollback = false;
 let injectChain = Promise.resolve();
 let ptyOutputTick = 0;
 let lastPtyOutputAtMs = 0;
 const pendingOutputWaiters = new Set();
 const POST_ENTER_VERIFY_TIMEOUT_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_VERIFY_TIMEOUT_MS || '4000',
+  process.env.HIVEMIND_PANE_HOST_VERIFY_TIMEOUT_MS || String(DEFAULT_POST_ENTER_VERIFY_TIMEOUT_MS),
   10
 );
 const SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_ACTIVE_OUTPUT_WINDOW_MS || '350',
+  process.env.HIVEMIND_PANE_HOST_ACTIVE_OUTPUT_WINDOW_MS || String(DEFAULT_SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS),
   10
 );
 const SUBMIT_DEFER_MAX_WAIT_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_SUBMIT_DEFER_MAX_WAIT_MS || '2000',
+  process.env.HIVEMIND_PANE_HOST_SUBMIT_DEFER_MAX_WAIT_MS || String(DEFAULT_SUBMIT_DEFER_MAX_WAIT_MS),
   10
 );
 const SUBMIT_DEFER_MAX_WAIT_LONG_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_SUBMIT_DEFER_MAX_WAIT_LONG_MS || '5000',
+  process.env.HIVEMIND_PANE_HOST_SUBMIT_DEFER_MAX_WAIT_LONG_MS || String(DEFAULT_SUBMIT_DEFER_MAX_WAIT_LONG_MS),
   10
 );
 const SUBMIT_DEFER_POLL_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_SUBMIT_DEFER_POLL_MS || '100',
+  process.env.HIVEMIND_PANE_HOST_SUBMIT_DEFER_POLL_MS || String(DEFAULT_SUBMIT_DEFER_POLL_MS),
   10
 );
 const LONG_PAYLOAD_BYTES = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_LONG_PAYLOAD_BYTES || '1024',
+  process.env.HIVEMIND_PANE_HOST_LONG_PAYLOAD_BYTES || String(DEFAULT_LONG_PAYLOAD_BYTES),
   10
 );
 const MIN_ENTER_DELAY_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_MIN_ENTER_DELAY_MS || '500',
+  process.env.HIVEMIND_PANE_HOST_MIN_ENTER_DELAY_MS || String(DEFAULT_MIN_ENTER_DELAY_MS),
+  10
+);
+const CHUNK_THRESHOLD_BYTES = Number.parseInt(
+  process.env.HIVEMIND_PANE_HOST_CHUNK_THRESHOLD_BYTES || String(DEFAULT_CHUNK_THRESHOLD_BYTES),
+  10
+);
+const CHUNK_SIZE_BYTES = Number.parseInt(
+  process.env.HIVEMIND_PANE_HOST_CHUNK_SIZE_BYTES || String(DEFAULT_CHUNK_SIZE_BYTES),
   10
 );
 
@@ -55,7 +76,7 @@ const terminal = new Terminal({
     cursorAccent: '#0a0a0f',
     selection: 'rgba(0, 240, 255, 0.25)',
   },
-  fontFamily: "'Consolas', 'Monaco', 'Courier New', monospace",
+  fontFamily: TERMINAL_FONT_FAMILY,
   fontSize: 13,
   cursorBlink: true,
   cursorStyle: 'block',
@@ -68,6 +89,11 @@ const fitAddon = new FitAddon();
 terminal.loadAddon(fitAddon);
 terminal.open(document.getElementById('paneHostTerminal'));
 fitAddon.fit();
+try {
+  window.hivemind?.pty?.resize?.(paneId, terminal.cols, terminal.rows);
+} catch {
+  // Best-effort only.
+}
 terminal.focus();
 
 window.addEventListener('resize', () => {
@@ -99,7 +125,9 @@ function stripInternalRoutingWrappers(value) {
 
 function waitForPtyOutputAfter(baselineTick, timeoutMs = POST_ENTER_VERIFY_TIMEOUT_MS) {
   if (ptyOutputTick > baselineTick) return Promise.resolve(true);
-  const maxWaitMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 4000;
+  const maxWaitMs = Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : DEFAULT_POST_ENTER_VERIFY_TIMEOUT_MS;
 
   return new Promise((resolve) => {
     const waiter = {
@@ -132,7 +160,7 @@ function sleep(ms) {
 function paneHasRecentOutput(windowMs = SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS) {
   const activeWindowMs = Number.isFinite(windowMs) && windowMs > 0
     ? windowMs
-    : 350;
+    : DEFAULT_SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS;
   if (!lastPtyOutputAtMs) return false;
   return (Date.now() - lastPtyOutputAtMs) <= activeWindowMs;
 }
@@ -140,8 +168,11 @@ function paneHasRecentOutput(windowMs = SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS) {
 async function deferSubmitWhilePaneActive(maxWaitMs = SUBMIT_DEFER_MAX_WAIT_MS) {
   const deferMaxWaitMs = Number.isFinite(maxWaitMs) && maxWaitMs > 0
     ? maxWaitMs
-    : 2000;
-  const pollMs = Math.max(25, Number.isFinite(SUBMIT_DEFER_POLL_MS) ? SUBMIT_DEFER_POLL_MS : 100);
+    : DEFAULT_SUBMIT_DEFER_MAX_WAIT_MS;
+  const pollMs = Math.max(
+    25,
+    Number.isFinite(SUBMIT_DEFER_POLL_MS) ? SUBMIT_DEFER_POLL_MS : DEFAULT_SUBMIT_DEFER_POLL_MS
+  );
   const start = Date.now();
 
   while (paneHasRecentOutput() && (Date.now() - start) < deferMaxWaitMs) {
@@ -162,21 +193,32 @@ async function injectMessage(payload = {}) {
 
   try {
     // Use chunked write for large payloads to prevent PTY pipe truncation.
-    const CHUNK_THRESHOLD = 2048;
-    if (text.length > CHUNK_THRESHOLD && window.hivemind.pty.writeChunked) {
-      await window.hivemind.pty.writeChunked(paneId, text, { chunkSize: 2048 }, traceContext || null);
+    const chunkThreshold = Number.isFinite(CHUNK_THRESHOLD_BYTES) && CHUNK_THRESHOLD_BYTES > 0
+      ? CHUNK_THRESHOLD_BYTES
+      : DEFAULT_CHUNK_THRESHOLD_BYTES;
+    const chunkSize = Number.isFinite(CHUNK_SIZE_BYTES) && CHUNK_SIZE_BYTES > 0
+      ? CHUNK_SIZE_BYTES
+      : DEFAULT_CHUNK_SIZE_BYTES;
+    if (text.length > chunkThreshold && window.hivemind.pty.writeChunked) {
+      await window.hivemind.pty.writeChunked(paneId, text, { chunkSize }, traceContext || null);
     } else {
       await window.hivemind.pty.write(paneId, text, traceContext || null);
     }
     // Minimum wait for the PTY to process pasted text before sending Enter.
     // Without this, Enter fires before text reaches the CLI (ConPTY round-trip latency).
-    const minDelay = Math.max(100, Number.isFinite(MIN_ENTER_DELAY_MS) ? MIN_ENTER_DELAY_MS : 500);
+    const minDelay = Math.max(
+      100,
+      Number.isFinite(MIN_ENTER_DELAY_MS) ? MIN_ENTER_DELAY_MS : DEFAULT_MIN_ENTER_DELAY_MS
+    );
     await sleep(minDelay);
     // Then wait for output activity to settle.
     const payloadBytes = typeof Buffer !== 'undefined'
       ? Buffer.byteLength(text, 'utf8')
       : text.length;
-    const isLongPayload = payloadBytes >= Math.max(1, Number(LONG_PAYLOAD_BYTES) || 1024);
+    const isLongPayload = payloadBytes >= Math.max(
+      1,
+      Number.isFinite(LONG_PAYLOAD_BYTES) ? LONG_PAYLOAD_BYTES : DEFAULT_LONG_PAYLOAD_BYTES
+    );
     const deferMaxWaitMs = isLongPayload
       ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, SUBMIT_DEFER_MAX_WAIT_LONG_MS)
       : SUBMIT_DEFER_MAX_WAIT_MS;

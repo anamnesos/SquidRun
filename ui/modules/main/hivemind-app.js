@@ -55,6 +55,8 @@ const { executePaneControlAction } = require('./pane-control-service');
 const { captureScreenshot } = require('../ipc/screenshot-handlers');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
 const { createBufferedFileWriter } = require('../buffered-file-writer');
+const IS_DARWIN = process.platform === 'darwin';
+const PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS = IS_DARWIN ? 900 : 1500;
 const APP_IDLE_THRESHOLD_MS = 30000;
 const CONSOLE_LOG_FLUSH_INTERVAL_MS = 500;
 const TELEGRAM_REPLY_WINDOW_MS = Number.parseInt(
@@ -401,7 +403,7 @@ class HivemindApp {
         this.paneHostBootstrapVerifyTimer = setTimeout(() => {
           this.paneHostBootstrapVerifyTimer = null;
           this.verifyPaneHostWindowsAfterBootstrap('createWindow');
-        }, 1500);
+        }, PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS);
       });
     }, 0);
   }
