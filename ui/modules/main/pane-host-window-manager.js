@@ -1,6 +1,9 @@
 const { BrowserWindow } = require('electron');
 const path = require('path');
 const log = require('../logger');
+const IS_DARWIN = process.platform === 'darwin';
+const HIDDEN_PANE_HOST_WIDTH = IS_DARWIN ? 1400 : 1200;
+const HIDDEN_PANE_HOST_HEIGHT = IS_DARWIN ? 600 : 500;
 
 function createPaneHostWindowManager(options = {}) {
   const {
@@ -33,8 +36,8 @@ function createPaneHostWindowManager(options = {}) {
     if (existing) return existing;
 
     const win = new BrowserWindow({
-      width: 1200,
-      height: 500,
+      width: HIDDEN_PANE_HOST_WIDTH,
+      height: HIDDEN_PANE_HOST_HEIGHT,
       show: false,
       backgroundColor: '#0a0a0f',
       webPreferences: {
