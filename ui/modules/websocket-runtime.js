@@ -47,6 +47,7 @@ let outboundQueue = []; // [{ id, target, content, meta, createdAt, attempts, la
 let outboundQueueFlushTimer = null;
 let outboundQueueFlushInProgress = false;
 let queueSessionScopeId = DEFAULT_QUEUE_SESSION_SCOPE;
+let startInFlightPromise = null;
 
 function generateTraceToken(prefix = 'evt') {
   try {
@@ -765,6 +766,24 @@ function getDeliveryCheckResult(messageId) {
   };
 }
 
+function closeServerQuietly(server) {
+  if (!server) return;
+  try {
+    if (typeof server.removeAllListeners === 'function') {
+      server.removeAllListeners();
+    }
+  } catch {
+    // Best effort cleanup.
+  }
+  try {
+    if (typeof server.close === 'function') {
+      server.close();
+    }
+  } catch {
+    // Best effort cleanup.
+  }
+}
+
 /**
  * Start the WebSocket server
  * @param {object} options - Configuration options
@@ -773,27 +792,58 @@ function getDeliveryCheckResult(messageId) {
  * @returns {Promise<WebSocketServer>}
  */
 function start(options = {}) {
+  if (wss) {
+    if (typeof options.onMessage === 'function') {
+      messageHandler = options.onMessage;
+    }
+    return Promise.resolve(wss);
+  }
+
+  if (startInFlightPromise) {
+    return startInFlightPromise;
+  }
+
   const port = options.port ?? DEFAULT_PORT;
-  messageHandler = options.onMessage || null;
-  queueSessionScopeId = normalizeQueueSessionScopeId(options.sessionScopeId);
-  recentMessageAcks.clear();
-  pendingMessageAcks.clear();
-  recentDispatchAcks.clear();
-  pendingDispatchAcks.clear();
-  loadOutboundQueue();
-  stopOutboundQueueTimer();
+  const nextMessageHandler = options.onMessage || null;
+  const nextSessionScopeId = normalizeQueueSessionScopeId(options.sessionScopeId);
 
-  return new Promise((resolve, reject) => {
+  startInFlightPromise = new Promise((resolve, reject) => {
+    let settled = false;
+    let server = null;
+
+    const rejectStart = (err) => {
+      if (settled) return;
+      settled = true;
+      stopOutboundQueueTimer();
+      closeServerQuietly(server);
+      if (wss === server) {
+        wss = null;
+      }
+      reject(err);
+    };
+
     try {
-      wss = new WebSocketServer({ port, host: '127.0.0.1' });
+      messageHandler = nextMessageHandler;
+      queueSessionScopeId = nextSessionScopeId;
+      recentMessageAcks.clear();
+      pendingMessageAcks.clear();
+      recentDispatchAcks.clear();
+      pendingDispatchAcks.clear();
+      loadOutboundQueue();
+      stopOutboundQueueTimer();
 
-      wss.on('listening', () => {
+      server = new WebSocketServer({ port, host: '127.0.0.1' });
+
+      server.on('listening', () => {
+        if (settled) return;
+        settled = true;
+        wss = server;
         log.info('WebSocket', `Server listening on ws://127.0.0.1:${port}`);
         startOutboundQueueTimer();
         resolve(wss);
       });
 
-      wss.on('connection', (ws, req) => {
+      server.on('connection', (ws, req) => {
         const clientId = ++clientIdCounter;
         const now = Date.now();
         const clientInfo = { ws, paneId: null, role: null, connectedAt: now, lastSeen: now };
@@ -822,19 +872,24 @@ function start(options = {}) {
         ws.send(JSON.stringify({ type: 'welcome', clientId }));
       });
 
-      wss.on('error', (err) => {
+      server.on('error', (err) => {
         log.error('WebSocket', `Server error: ${err.message}`);
+        if (settled) return;
         if (err.code === 'EADDRINUSE') {
-          stopOutboundQueueTimer();
-          reject(new Error(`Port ${port} already in use`));
+          rejectStart(new Error(`Port ${port} already in use`));
+          return;
         }
+        rejectStart(err);
       });
 
     } catch (err) {
-      stopOutboundQueueTimer();
-      reject(err);
+      rejectStart(err);
     }
+  }).finally(() => {
+    startInFlightPromise = null;
   });
+
+  return startInFlightPromise;
 }
 
 /**
@@ -1318,31 +1373,42 @@ function getClients() {
 /**
  * Stop the WebSocket server
  */
-function stop() {
-  return new Promise((resolve) => {
+async function stop() {
+  stopOutboundQueueTimer();
+  if (!wss && startInFlightPromise) {
+    try {
+      await startInFlightPromise;
+    } catch {
+      // Ignore startup failure; cleanup below will reset local state.
+    }
     stopOutboundQueueTimer();
-    if (!wss) {
-      outboundQueueFlushInProgress = false;
-      outboundQueue = [];
-      resolve();
-      return;
-    }
+  }
 
-    // Close all client connections
-    for (const [clientId, info] of clients) {
-      info.ws.close(1000, 'Server shutting down');
-    }
-    clients.clear();
-    recentMessageAcks.clear();
-    pendingMessageAcks.clear();
-    recentDispatchAcks.clear();
-    pendingDispatchAcks.clear();
+  const server = wss;
+  if (!server) {
     outboundQueueFlushInProgress = false;
     outboundQueue = [];
+    return;
+  }
 
-    wss.close(() => {
+  // Close all client connections
+  for (const [, info] of clients) {
+    info.ws.close(1000, 'Server shutting down');
+  }
+  clients.clear();
+  recentMessageAcks.clear();
+  pendingMessageAcks.clear();
+  recentDispatchAcks.clear();
+  pendingDispatchAcks.clear();
+  outboundQueueFlushInProgress = false;
+  outboundQueue = [];
+
+  await new Promise((resolve) => {
+    server.close(() => {
       log.info('WebSocket', 'Server stopped');
-      wss = null;
+      if (wss === server) {
+        wss = null;
+      }
       resolve();
     });
   });

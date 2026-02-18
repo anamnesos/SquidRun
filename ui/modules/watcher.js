@@ -43,6 +43,7 @@ let mainWindow = null;
 let workspaceWatcher = null;
 let triggerWatcher = null; // UX-9: Fast watcher for trigger files (sub-50ms)
 let messageWatcher = null; // Separate watcher for message queues
+let messageWatcherStartPromise = null;
 let triggers = null; // Reference to triggers module
 let getSettings = null; // Settings getter for auto-sync control
 let notifyExternal = null; // External notification hook
@@ -674,6 +675,13 @@ function startWatcherWorker(watcherName, onEvent, restartFn) {
   });
 
   return worker;
+}
+
+function isWatcherWorkerRunning(worker) {
+  if (!worker) return false;
+  if (worker.killed) return false;
+  if (worker.exitCode !== null && worker.exitCode !== undefined) return false;
+  return worker.connected !== false;
 }
 
 function startWatcher() {
@@ -1359,40 +1367,60 @@ async function handleMessageQueueChange(filePath) {
 /**
  * Start watching message queue directory
  */
-async function startMessageWatcher() {
-  try {
-    const initResult = await initMessageQueue();
-    if (!initResult.success) {
-      log.error('MessageQueue', 'Skipping watcher start - init failed', initResult.error);
-      return { success: false, error: initResult.error || 'Message queue init failed' };
-    }
-
-    if (messageWatcher) {
-      stopWatcherWorker('message', 'message', { reason: 'restart', clearRestart: false });
-    }
+async function startMessageWatcher(options = {}) {
+  const forceRestart = options.forceRestart === true;
+  if (!forceRestart && isWatcherWorkerRunning(messageWatcher)) {
     registerTriggerDeliveryAckListener();
+    return { success: true, path: MESSAGE_QUEUE_DIR, alreadyRunning: true };
+  }
+  if (messageWatcherStartPromise) {
+    return messageWatcherStartPromise;
+  }
 
-    messageWatcher = startWatcherWorker(
-      'message',
-      (filePath, eventType) => {
-        if (eventType === 'add' || eventType === 'change') {
-          handleMessageQueueChange(filePath).catch((err) => {
-            log.error('MessageQueue', `Failed handling message queue change: ${err.message}`);
+  const startPromise = (async () => {
+    try {
+      const initResult = await initMessageQueue();
+      if (!initResult.success) {
+        log.error('MessageQueue', 'Skipping watcher start - init failed', initResult.error);
+        return { success: false, error: initResult.error || 'Message queue init failed' };
+      }
+
+      if (messageWatcher) {
+        stopWatcherWorker('message', 'message', { reason: 'restart', clearRestart: false });
+      }
+      registerTriggerDeliveryAckListener();
+
+      messageWatcher = startWatcherWorker(
+        'message',
+        (filePath, eventType) => {
+          if (eventType === 'add' || eventType === 'change') {
+            handleMessageQueueChange(filePath).catch((err) => {
+              log.error('MessageQueue', `Failed handling message queue change: ${err.message}`);
+            });
+          }
+        },
+        () => {
+          startMessageWatcher({ forceRestart: true }).catch((err) => {
+            log.error('MessageQueue', `Failed to restart message watcher: ${err.message}`);
           });
         }
-      },
-      () => {
-        startMessageWatcher().catch((err) => {
-          log.error('MessageQueue', `Failed to restart message watcher: ${err.message}`);
-        });
-      }
-    );
+      );
 
-    log.info('MessageQueue', `Watching ${MESSAGE_QUEUE_DIR}`);
-    return { success: true, path: MESSAGE_QUEUE_DIR };
-  } catch (err) {
-    log.error('MessageQueue', `Failed to initialize watcher: ${err.message}`);
-    return { success: false, error: err.message };
+      log.info('MessageQueue', `Watching ${MESSAGE_QUEUE_DIR}`);
+      return { success: true, path: MESSAGE_QUEUE_DIR };
+    } catch (err) {
+      log.error('MessageQueue', `Failed to initialize watcher: ${err.message}`);
+      return { success: false, error: err.message };
+    }
+  })();
+
+  messageWatcherStartPromise = startPromise;
+  try {
+    return await startPromise;
+  } finally {
+    if (messageWatcherStartPromise === startPromise) {
+      messageWatcherStartPromise = null;
+    }
   }
 }
 
@@ -1400,6 +1428,7 @@ async function startMessageWatcher() {
  * Stop message queue watcher
  */
 function stopMessageWatcher() {
+  messageWatcherStartPromise = null;
   stopWatcherWorker('message', 'message');
   if (unsubscribeTriggerDeliveryAck) {
     unsubscribeTriggerDeliveryAck();

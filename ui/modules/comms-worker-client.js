@@ -20,6 +20,7 @@ let lastStartOptions = null;
 let restartTimer = null;
 let restartAttempt = 0;
 let restartInFlightPromise = null;
+let startInFlightPromise = null;
 
 function nextRequestId() {
   requestCounter += 1;
@@ -88,7 +89,7 @@ async function performRestart(attempt, reason = 'unexpected_exit') {
 
 function scheduleRestart(reason = 'unexpected_exit') {
   if (!desiredRunning) return;
-  if (restartTimer || restartInFlightPromise) return;
+  if (restartTimer || restartInFlightPromise || startInFlightPromise) return;
 
   restartAttempt += 1;
   const attempt = restartAttempt;
@@ -112,6 +113,14 @@ function scheduleRestart(reason = 'unexpected_exit') {
 async function ensureRunning(reason = 'request') {
   if (!desiredRunning) return false;
   if (running && workerProcess) return true;
+  if (startInFlightPromise) {
+    try {
+      await startInFlightPromise;
+      return true;
+    } catch {
+      return false;
+    }
+  }
   if (restartInFlightPromise) {
     return Boolean(await restartInFlightPromise);
   }
@@ -253,22 +262,34 @@ async function start(options = {}) {
   desiredRunning = true;
   clearRestartTimer();
   restartAttempt = 0;
-
-  try {
-    const result = await sendRequest('start', {
-      options: {
-        port: options.port,
-        callbackTimeoutMs: options.callbackTimeoutMs,
-        sessionScopeId: options.sessionScopeId,
-      },
-    });
-    running = true;
-    cachedPort = result?.port || null;
-    return result;
-  } catch (err) {
-    desiredRunning = false;
-    throw err;
+  if (running && workerProcess) {
+    return { port: cachedPort };
   }
+  if (startInFlightPromise) {
+    return startInFlightPromise;
+  }
+
+  startInFlightPromise = (async () => {
+    try {
+      const result = await sendRequest('start', {
+        options: {
+          port: options.port,
+          callbackTimeoutMs: options.callbackTimeoutMs,
+          sessionScopeId: options.sessionScopeId,
+        },
+      });
+      running = true;
+      cachedPort = result?.port || null;
+      return result;
+    } catch (err) {
+      desiredRunning = false;
+      throw err;
+    } finally {
+      startInFlightPromise = null;
+    }
+  })();
+
+  return startInFlightPromise;
 }
 
 async function stop() {
@@ -276,6 +297,15 @@ async function stop() {
   clearRestartTimer();
   restartAttempt = 0;
   restartInFlightPromise = null;
+  const pendingStart = startInFlightPromise;
+  if (pendingStart) {
+    try {
+      await pendingStart;
+    } catch {
+      // Ignore startup error; continue shutdown cleanup.
+    }
+  }
+  startInFlightPromise = null;
 
   const worker = workerProcess;
   if (!worker) {
@@ -393,6 +423,7 @@ async function resetForTests() {
   clearRestartTimer();
   restartAttempt = 0;
   restartInFlightPromise = null;
+  startInFlightPromise = null;
   rejectAllPending(new Error('reset'));
 }
 
