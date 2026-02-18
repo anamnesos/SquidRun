@@ -75,6 +75,15 @@ function normalizeKernelMetaForTrace(kernelMeta) {
   };
 }
 
+function isPaneHostSender(event) {
+  const frameUrl = String(
+    event?.senderFrame?.url
+    || (typeof event?.sender?.getURL === 'function' ? event.sender.getURL() : '')
+    || ''
+  ).toLowerCase();
+  return frameUrl.includes('/pane-host.html') || frameUrl.includes('\\pane-host.html');
+}
+
 function buildChunkKernelMeta(kernelMeta, chunkIndex) {
   const normalized = normalizeKernelMetaForTrace(kernelMeta);
   if (!normalized) {
@@ -306,6 +315,13 @@ function registerPtyHandlers(ctx, deps = {}) {
   });
 
   ipcMain.handle('pty-resize', (event, paneId, cols, rows, kernelMeta = null) => {
+    // Hidden pane hosts are mirror windows and must not own PTY geometry.
+    // Only the visible renderer should drive resize to avoid cursor/wrap drift.
+    if (isPaneHostSender(event)) {
+      log.warn('PTY', `Ignored pane-host resize for pane ${paneId} (${cols}x${rows})`);
+      return { ignored: true, reason: 'pane_host_resize_blocked' };
+    }
+
     if (ctx.daemonClient && ctx.daemonClient.connected) {
       const normalizedKernelMeta = normalizeKernelMetaForTrace(kernelMeta);
       if (kernelMeta) {
@@ -314,6 +330,7 @@ function registerPtyHandlers(ctx, deps = {}) {
         ctx.daemonClient.resize(paneId, cols, rows);
       }
     }
+    return { ignored: false };
   });
 
   ipcMain.handle('pty-kill', (event, paneId) => {

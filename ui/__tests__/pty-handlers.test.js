@@ -360,6 +360,21 @@ describe('PTY Handlers', () => {
   });
 
   describe('pty-resize', () => {
+    test('blocks resize requests from hidden pane-host windows', async () => {
+      ctx.daemonClient.connected = true;
+      const handler = harness.handlers.get('pty-resize');
+      const paneHostEvent = {
+        senderFrame: {
+          url: 'file:///D:/projects/hivemind/ui/pane-host.html?paneId=1',
+        },
+      };
+
+      const result = await handler(paneHostEvent, '1', 120, 40);
+
+      expect(result).toEqual({ ignored: true, reason: 'pane_host_resize_blocked' });
+      expect(ctx.daemonClient.resize).not.toHaveBeenCalled();
+    });
+
     test('resizes when daemon connected', async () => {
       ctx.daemonClient.connected = true;
       await harness.invoke('pty-resize', '1', 120, 40);

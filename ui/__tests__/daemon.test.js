@@ -130,6 +130,56 @@ describe('DaemonClient', () => {
       expect(spawnedClient.didSpawnDuringLastConnect()).toBe(true);
       spawnedClient.disconnect();
     });
+
+    test('reuses active connection instead of opening duplicate sockets', async () => {
+      await client.connect();
+      expect(net.createConnection).toHaveBeenCalledTimes(1);
+
+      await client.connect();
+      expect(net.createConnection).toHaveBeenCalledTimes(1);
+    });
+
+    test('dedupes concurrent connect calls to a single socket attempt', async () => {
+      const first = client.connect();
+      const second = client.connect();
+      await Promise.all([first, second]);
+
+      expect(net.createConnection).toHaveBeenCalledTimes(1);
+    });
+
+    test('ignores stale socket data after reconnect swap', async () => {
+      const socketA = new EventEmitter();
+      socketA.write = jest.fn();
+      socketA.destroy = jest.fn();
+      socketA.destroyed = false;
+
+      const socketB = new EventEmitter();
+      socketB.write = jest.fn();
+      socketB.destroy = jest.fn();
+      socketB.destroyed = false;
+
+      let connectCall = 0;
+      net.createConnection.mockImplementation(() => {
+        connectCall += 1;
+        const socket = connectCall === 1 ? socketA : socketB;
+        setTimeout(() => socket.emit('connect'), 0);
+        return socket;
+      });
+
+      const dataHandler = jest.fn();
+      client.on('data', dataHandler);
+
+      await client.connect();
+      // Force a reconnect path while socketA still exists.
+      client.connected = false;
+      await client.connect();
+
+      socketA.emit('data', JSON.stringify({ event: 'data', paneId: '1', data: 'from-stale' }) + '\n');
+      socketB.emit('data', JSON.stringify({ event: 'data', paneId: '1', data: 'from-active' }) + '\n');
+
+      expect(dataHandler).toHaveBeenCalledTimes(1);
+      expect(dataHandler).toHaveBeenCalledWith('1', 'from-active');
+    });
   });
 
   describe('disconnect', () => {

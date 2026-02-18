@@ -27,6 +27,7 @@ class DaemonClient extends EventEmitter {
     super();
     this.client = null;
     this.connected = false;
+    this.connectPromise = null;
     this.spawnedDuringLastConnect = false;
     this.buffer = '';
     this.reconnecting = false;
@@ -41,6 +42,23 @@ class DaemonClient extends EventEmitter {
    * @returns {Promise<boolean>} true if connected
    */
   async connect() {
+    if (this.connected && this.client && !this.client.destroyed) {
+      this.spawnedDuringLastConnect = false;
+      return true;
+    }
+    if (this.connectPromise) {
+      return this.connectPromise;
+    }
+
+    this.connectPromise = this._connectInternal();
+    try {
+      return await this.connectPromise;
+    } finally {
+      this.connectPromise = null;
+    }
+  }
+
+  async _connectInternal() {
     this.spawnedDuringLastConnect = false;
 
     // Try to connect first
@@ -77,34 +95,78 @@ class DaemonClient extends EventEmitter {
   _tryConnect() {
     return new Promise((resolve) => {
       const client = net.createConnection(PIPE_PATH);
+      let settled = false;
+      let timeout = null;
 
-      const timeout = setTimeout(() => {
-        client.destroy();
+      const cleanup = () => {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+        client.removeListener('connect', onConnect);
+        client.removeListener('error', onError);
+      };
+
+      const onConnect = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (this.client && this.client !== client) {
+          this._teardownSocket(this.client);
+        }
+        this.client = client;
+        this.connected = true;
+        this._setupClient(client);
+        resolve(true);
+      };
+
+      const onError = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        this._teardownSocket(client);
+        resolve(false);
+      };
+
+      timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        this._teardownSocket(client);
         resolve(false);
       }, 2000);
 
-      client.on('connect', () => {
-        clearTimeout(timeout);
-        this.client = client;
-        this.connected = true;
-        this._setupClient();
-        resolve(true);
-      });
-
-      client.on('error', (err) => {
-        clearTimeout(timeout);
-        resolve(false);
-      });
+      client.on('connect', onConnect);
+      client.on('error', onError);
     });
+  }
+
+  _teardownSocket(socket) {
+    if (!socket) return;
+    try {
+      if (typeof socket.removeAllListeners === 'function') {
+        socket.removeAllListeners();
+      }
+    } catch {
+      // Ignore listener cleanup failures during reconnect churn.
+    }
+    try {
+      if (!socket.destroyed && typeof socket.destroy === 'function') {
+        socket.destroy();
+      }
+    } catch {
+      // Ignore teardown failures; reconnect path will recover.
+    }
   }
 
   /**
    * Setup client event handlers
    */
-  _setupClient() {
+  _setupClient(socket = this.client) {
     this.buffer = '';
 
-    this.client.on('data', (data) => {
+    socket.on('data', (data) => {
+      if (socket !== this.client) return;
       this.buffer += data.toString();
 
       // Process complete messages (newline-delimited)
@@ -118,7 +180,8 @@ class DaemonClient extends EventEmitter {
       }
     });
 
-    this.client.on('close', () => {
+    socket.on('close', () => {
+      if (socket !== this.client) return;
       log.warn('DaemonClient', 'Connection closed');
       this.connected = false;
       this.client = null;
@@ -131,7 +194,8 @@ class DaemonClient extends EventEmitter {
       }
     });
 
-    this.client.on('error', (err) => {
+    socket.on('error', (err) => {
+      if (socket !== this.client) return;
       log.error('DaemonClient', 'Connection error', err.message);
       this.connected = false;
       this._rejectPendingWriteAcks('daemon_connection_error');
@@ -289,6 +353,7 @@ class DaemonClient extends EventEmitter {
    */
   async _attemptReconnect() {
     if (this.reconnecting) return;
+    if (this.connected && this.client && !this.client.destroyed) return;
     this.reconnecting = true;
 
     log.info('DaemonClient', 'Attempting to reconnect...');
@@ -615,7 +680,7 @@ class DaemonClient extends EventEmitter {
   disconnect() {
     this._rejectPendingWriteAcks('daemon_disconnected');
     if (this.client) {
-      this.client.destroy();
+      this._teardownSocket(this.client);
       this.client = null;
     }
     this.connected = false;
