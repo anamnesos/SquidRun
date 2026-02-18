@@ -99,6 +99,65 @@ describe('auto-handoff-materializer', () => {
     expect(content).toContain('TASK');
   });
 
+  test('materializeSessionHandoff includes concise unresolved claims section', () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const longStatement = 'A very long contested claim statement '.repeat(6);
+    const proposedClaims = Array.from({ length: 12 }, (_, index) => ({
+      id: `clm_proposed_${String(index).padStart(2, '0')}`,
+      status: 'proposed',
+      statement: `Proposed claim #${index}`,
+      confidence: 0.4 + (index * 0.01),
+    }));
+
+    const result = materializeSessionHandoff({
+      rows: [],
+      outputPath,
+      legacyMirrorPath: false,
+      sessionId: 'session-claims',
+      nowMs: 6000,
+      queryClaims: ({ status }) => {
+        if (status === 'contested') {
+          return {
+            ok: true,
+            claims: [{
+              id: 'clm_contested',
+              status: 'contested',
+              statement: longStatement,
+              confidence: 0.91,
+            }],
+          };
+        }
+        if (status === 'pending_proof') {
+          return {
+            ok: true,
+            claims: [{
+              id: 'clm_pending',
+              status: 'pending_proof',
+              statement: 'Pending proof claim',
+              confidence: 0.73,
+            }],
+          };
+        }
+        return { ok: true, claims: proposedClaims };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    const content = fs.readFileSync(outputPath, 'utf8');
+    expect(content).toContain('## Unresolved Claims');
+    expect(content).toContain('| clm_contested | contested |');
+    expect(content).toContain('| clm_pending | pending_proof |');
+
+    const unresolvedRows = content
+      .split('\n')
+      .filter((line) => line.startsWith('| clm_'));
+    expect(unresolvedRows.length).toBe(10);
+
+    const contestedRow = unresolvedRows.find((line) => line.includes('| clm_contested |'));
+    expect(contestedRow).toBeDefined();
+    expect(contestedRow).toContain('...');
+  });
+
   test('removeLegacyPaneHandoffFiles deletes legacy files', () => {
     const handoffsDir = path.join(tempDir, 'handoffs');
     fs.mkdirSync(handoffsDir, { recursive: true });

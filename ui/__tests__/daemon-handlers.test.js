@@ -629,6 +629,33 @@ describe('daemon-handlers.js module', () => {
         );
       });
 
+      test('enables hm-send fast Enter path when trace context carries hm-send message id', () => {
+        let injectHandler;
+        ipcRenderer.on.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['2'],
+          message: 'msg',
+          deliveryId: 'delivery-hm-1',
+          traceContext: {
+            messageId: 'hm-abc123',
+            traceId: 'hm-abc123',
+            parentEventId: 'evt-parent-1',
+          },
+        });
+
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          'msg',
+          expect.objectContaining({
+            hmSendFastEnter: true,
+          })
+        );
+      });
+
       test('should emit accepted.unverified outcome when terminal delivery is unverified (success=true)', () => {
         let injectHandler;
         ipcRenderer.on.mockImplementation((channel, handler) => {

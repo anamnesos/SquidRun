@@ -727,6 +727,25 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalled();
     });
 
+    test('bypasses injection lock for hm-send fast-path trace contexts', async () => {
+      const lockedOptions = {
+        ...mockOptions,
+        getInjectionInFlight: jest.fn().mockReturnValue(true),
+        setInjectionInFlight: jest.fn(),
+      };
+      const lockedController = createInjectionController(lockedOptions);
+      messageQueue['1'] = [{
+        message: 'hm lock bypass\r',
+        timestamp: Date.now(),
+        traceContext: { messageId: 'hm-42', traceId: 'hm-42' },
+      }];
+
+      lockedController.processIdleQueue('1');
+      await Promise.resolve();
+
+      expect(lockedOptions.setInjectionInFlight).not.toHaveBeenCalledWith(true);
+    });
+
     test('handles onComplete error gracefully', async () => {
       const onComplete = jest.fn(() => {
         throw new Error('Callback error');
@@ -854,6 +873,27 @@ describe('Terminal Injection', () => {
       expect(mockPty.write).toHaveBeenCalledWith('8', 'custom message', expect.any(Object));
       expect(mockPty.write).toHaveBeenCalledWith('8', '\r', expect.any(Object));
       expect(onComplete).toHaveBeenCalledWith({ success: true });
+    });
+
+    test('hm-send fast path submits Enter immediately via plain PTY write', async () => {
+      const onComplete = jest.fn();
+
+      await controller.doSendToPane(
+        '1',
+        'hm payload\r',
+        onComplete,
+        { messageId: 'hm-123', traceId: 'hm-123' },
+        { hmSendFastEnter: true }
+      );
+
+      expect(mockPty.write).toHaveBeenCalledWith('1', 'hm payload', expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
+      expect(mockTextarea.dispatchEvent).not.toHaveBeenCalled();
+      expect(onComplete).toHaveBeenCalledWith({
+        success: true,
+        verified: true,
+        signal: 'hm_send_fast_path',
+      });
     });
 
     test('handles Codex pane with PTY Enter', async () => {

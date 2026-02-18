@@ -479,6 +479,16 @@ function createInjectionController(options = {}) {
     };
   }
 
+  function isHmSendFastTraceContext(traceContext = null) {
+    const ctx = (traceContext && typeof traceContext === 'object') ? traceContext : {};
+    const messageId = toNonEmptyString(ctx.messageId);
+    const traceId = toNonEmptyString(ctx.traceId) || toNonEmptyString(ctx.correlationId);
+    return Boolean(
+      (messageId && messageId.startsWith('hm-'))
+      || (traceId && traceId.startsWith('hm-'))
+    );
+  }
+
   function normalizeBoolean(value, fallback = false) {
     return typeof value === 'boolean' ? value : fallback;
   }
@@ -652,15 +662,20 @@ function createInjectionController(options = {}) {
   // guard). No idle/busy timing — messages send immediately like user input.
   function processIdleQueue(paneId) {
     const id = String(paneId);
-    const capabilities = getPaneInjectionCapabilities(id);
-    const bypassesLock = capabilities.bypassGlobalLock;
-
     const queue = messageQueue[paneId];
     if (!queue || queue.length === 0) {
       clearDeferredState(id);
       compactionDeferStart.delete(id);
       return;
     }
+    const capabilities = getPaneInjectionCapabilities(id);
+    const peekItem = queue[0];
+    const peekTraceContext = normalizeTraceContext(peekItem && typeof peekItem === 'object' ? peekItem.traceContext : null);
+    const hmSendFastEnter = Boolean(
+      (peekItem && typeof peekItem === 'object' && peekItem.hmSendFastEnter === true)
+      || isHmSendFastTraceContext(peekTraceContext)
+    );
+    const bypassesLock = capabilities.bypassGlobalLock || hmSendFastEnter;
 
     // Compaction gate: never inject while compaction is confirmed on this pane.
     // Only applies to Claude panes — Codex/Gemini don't do Claude-style compaction.
@@ -727,6 +742,9 @@ function createInjectionController(options = {}) {
     const acceptOutputTransitionOnlyOverride = item && typeof item === 'object'
       ? item.acceptOutputTransitionOnly
       : undefined;
+    const hmSendFastEnterOverride = item && typeof item === 'object'
+      ? item.hmSendFastEnter
+      : undefined;
     const itemTraceContext = normalizeTraceContext(item && typeof item === 'object' ? item.traceContext : null);
     const itemCorrId = itemTraceContext?.traceId
       || itemTraceContext?.correlationId
@@ -744,6 +762,7 @@ function createInjectionController(options = {}) {
           : capabilities.verifySubmitAccepted,
         startupInjection: Boolean(startupInjectionOverride),
         acceptOutputTransitionOnly: Boolean(acceptOutputTransitionOnlyOverride),
+        hmSendFastEnter: Boolean(hmSendFastEnterOverride || isHmSendFastTraceContext(itemTraceContext)),
         useChunkedWrite: capabilities.useChunkedWrite,
       },
       correlationId: itemCorrId,
@@ -793,6 +812,7 @@ function createInjectionController(options = {}) {
       verifySubmitAccepted: verifySubmitAcceptedOverride,
       startupInjection: startupInjectionOverride,
       acceptOutputTransitionOnly: acceptOutputTransitionOnlyOverride,
+      hmSendFastEnter: hmSendFastEnterOverride,
     });
   }
 
@@ -838,6 +858,8 @@ function createInjectionController(options = {}) {
     const isStartupInjection = Boolean(behaviorOverrides.startupInjection);
     const allowOutputTransitionOnly = Boolean(behaviorOverrides.acceptOutputTransitionOnly);
     const normalizedTraceContext = normalizeTraceContext(traceContext);
+    const hmSendFastEnter = Boolean(behaviorOverrides.hmSendFastEnter)
+      || isHmSendFastTraceContext(normalizedTraceContext);
     const corrId = normalizedTraceContext?.traceId
       || normalizedTraceContext?.correlationId
       || bus.getCurrentCorrelation()
@@ -995,6 +1017,46 @@ function createInjectionController(options = {}) {
         source: EVENT_SOURCE,
       });
       finishWithClear({ success: false, reason: 'pty_write_failed' });
+      return;
+    }
+
+    if (hmSendFastEnter) {
+      bus.emit('inject.submit.requested', {
+        paneId: id,
+        payload: { method: 'hm-send-pty-enter', attempt: 1, maxAttempts: 1, fastPath: true },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
+      try {
+        // Match nudge/button behavior: immediate plain PTY carriage return.
+        await window.hivemind.pty.write(id, '\r');
+      } catch (err) {
+        log.error(`doSendToPane ${id}`, 'hm-send PTY Enter failed:', err);
+        bus.emit('inject.failed', {
+          paneId: id,
+          payload: { reason: 'enter_failed', method: 'hm-send-pty-enter' },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
+        markPotentiallyStuck(id);
+        finishWithClear({ success: false, reason: 'enter_failed' });
+        return;
+      }
+
+      bus.emit('inject.submit.sent', {
+        paneId: id,
+        payload: { method: 'hm-send-pty-enter', attempt: 1, maxAttempts: 1, fastPath: true },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
+      updatePaneStatus(id, 'Working');
+      lastTypedTime[id] = Date.now();
+      lastOutputTime[id] = Date.now();
+      finishWithClear({
+        success: true,
+        verified: true,
+        signal: 'hm_send_fast_path',
+      });
       return;
     }
 
@@ -1218,6 +1280,7 @@ function createInjectionController(options = {}) {
       onComplete: options.onComplete,
       priority: options.priority || false,
       immediate: options.immediate || false,
+      hmSendFastEnter: options.hmSendFastEnter === true,
       correlationId: corrId,
       traceContext: queueTraceContext,
       verifySubmitAccepted: typeof options.verifySubmitAccepted === 'boolean'
