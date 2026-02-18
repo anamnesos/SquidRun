@@ -1101,7 +1101,7 @@ describe('Terminal Injection', () => {
 
     test('treats writeChunked success=false as PTY write failure', async () => {
       const longText = `${'A'.repeat(9000)}\r`;
-      mockPty.write.mockResolvedValueOnce(undefined); // Home reset succeeds
+      // Home reset is now merged into writeChunked payload, no separate write
       mockPty.writeChunked.mockResolvedValueOnce({ success: false, error: 'write ack timeout after 2500ms' });
       const onComplete = jest.fn();
 
@@ -1123,11 +1123,12 @@ describe('Terminal Injection', () => {
       mockPty.writeChunked.mockResolvedValueOnce({ success: true, chunks: 5, chunkSize: 2048 });
       await controller.doSendToPane('1', longText, jest.fn());
 
+      // Home reset is now prepended to payload in the writeChunked call (no separate write)
       const ptyWrites = mockPty.write.mock.calls.map(call => call[1]);
-      expect(ptyWrites).toEqual(['\x1b[H']); // Home reset only (no Ctrl+U clear)
+      expect(ptyWrites).toEqual([]); // No separate writes — Home reset merged into chunked payload
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
         '1',
-        'A'.repeat(9000),
+        '\x1b[H' + 'A'.repeat(9000),
         { chunkSize: 2048, yieldEveryChunks: 0 },
         expect.any(Object)
       );

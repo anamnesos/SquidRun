@@ -305,6 +305,13 @@ Object.assign(window.hivemind, {
         untrackDynamicPtyIpcChannel(channel);
       };
     },
+    removeAllDataListeners: (paneId) => {
+      const channel = `pty-data-${paneId}`;
+      if (typeof ipcRenderer.removeAllListeners === 'function') {
+        ipcRenderer.removeAllListeners(channel);
+      }
+      untrackDynamicPtyIpcChannel(channel);
+    },
     onExit: (paneId, callback) => {
       const channel = `pty-exit-${paneId}`;
       const listener = (event, code) => callback(code);
@@ -318,6 +325,13 @@ Object.assign(window.hivemind, {
         }
         untrackDynamicPtyIpcChannel(channel);
       };
+    },
+    removeAllExitListeners: (paneId) => {
+      const channel = `pty-exit-${paneId}`;
+      if (typeof ipcRenderer.removeAllListeners === 'function') {
+        ipcRenderer.removeAllListeners(channel);
+      }
+      untrackDynamicPtyIpcChannel(channel);
     },
     onKernelBridgeEvent: (callback) => {
       const channel = 'kernel:bridge-event';
