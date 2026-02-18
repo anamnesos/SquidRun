@@ -43,29 +43,29 @@
   box-shadow: 0 0 8px rgba(187, 134, 252, 0.3);
 }
 
-/* CLI-specific pane action accents */
-.pane.cli-codex .pane-refresh-btn,
-.pane.cli-codex .pane-action-btn,
-.pane.cli-codex .lock-icon {
-  color: #00f0ff;
-  border-color: rgba(0, 240, 255, 0.45);
+/* CLI-specific pane action accents (model-scoped via data-cli from paneCommands) */
+.pane[data-cli] .pane-refresh-btn,
+.pane[data-cli] .pane-action-btn,
+.pane[data-cli] .lock-icon {
+  color: var(--agent-color);
+  border-color: rgba(var(--agent-color-rgb), 0.45);
 }
 
-.pane.cli-codex .pane-refresh-btn:hover,
-.pane.cli-codex .pane-action-btn:hover,
-.pane.cli-codex .lock-icon:hover {
-  color: #00f0ff;
-  border-color: #00f0ff;
-  background: rgba(0, 240, 255, 0.15);
-  box-shadow: 0 0 8px rgba(0, 240, 255, 0.2);
+.pane[data-cli] .pane-refresh-btn:hover,
+.pane[data-cli] .pane-action-btn:hover,
+.pane[data-cli] .lock-icon:hover {
+  color: var(--agent-color);
+  border-color: var(--agent-color);
+  background: rgba(var(--agent-color-rgb), 0.15);
+  box-shadow: 0 0 8px rgba(var(--agent-color-rgb), 0.2);
 }
 
-.pane.cli-codex .lock-icon.unlocked {
-  color: #66f5ff;
+.pane[data-cli] .lock-icon.unlocked {
+  color: var(--agent-color-hover);
 }
 
-.pane.cli-codex .lock-icon.unlocked:hover {
-  background: rgba(0, 240, 255, 0.2);
+.pane[data-cli] .lock-icon.unlocked:hover {
+  background: rgba(var(--agent-color-rgb), 0.2);
 }
 
 /* Per-pane project indicator */
