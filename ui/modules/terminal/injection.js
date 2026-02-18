@@ -8,6 +8,7 @@ const bus = require('../event-bus');
 const { BYPASS_CLEAR_DELAY_MS: DEFAULT_BYPASS_CLEAR_DELAY_MS } = require('../constants');
 
 const EVENT_SOURCE = 'injection.js';
+const IS_DARWIN = process.platform === 'darwin';
 
 function createInjectionController(options = {}) {
   const {
@@ -567,8 +568,8 @@ function createInjectionController(options = {}) {
       submitMethod: 'sendTrustedEnter',
       bypassGlobalLock: false,
       applyCompactionGate: true,
-      requiresFocusForEnter: true,
-      enterMethod: 'trusted',
+      requiresFocusForEnter: !IS_DARWIN,
+      enterMethod: IS_DARWIN ? 'pty' : 'trusted',
       enterDelayMs: CLAUDE_ENTER_DELAY_MS,
       sanitizeMultiline: false,
       clearLineBeforeWrite: true,

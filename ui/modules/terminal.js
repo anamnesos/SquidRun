@@ -81,6 +81,7 @@ const terminalInputBridgeDisposables = new Map();
 // Prevents accidental typing in agent panes while allowing programmatic sends (sendToPane/triggers)
 const inputLocked = {};
 PANE_IDS.forEach(id => { inputLocked[id] = true; }); // Default: all panes locked
+const IS_DARWIN = process.platform === 'darwin';
 const HIDDEN_PANE_HOSTS_ENV_FLAG = (
   typeof process !== 'undefined'
   && process
@@ -639,8 +640,8 @@ function getPaneInjectionCapabilities(paneId) {
       submitMethod: 'sendTrustedEnter',
       bypassGlobalLock: false,
       applyCompactionGate: true,
-      requiresFocusForEnter: true,
-      enterMethod: 'trusted',
+      requiresFocusForEnter: !IS_DARWIN,
+      enterMethod: IS_DARWIN ? 'pty' : 'trusted',
       enterDelayMs: 50,
       sanitizeMultiline: false,
       clearLineBeforeWrite: true,
@@ -2591,7 +2592,6 @@ module.exports = {
     initPromotionEngine,
   },
 };
-
 
 
 
