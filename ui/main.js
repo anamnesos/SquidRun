@@ -7,6 +7,14 @@ const path = require('path');
 const { app } = require('electron');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
+// Enforce single-instance ownership to prevent duplicate watcher/process
+// trees from racing on .hivemind trigger files.
+const singleInstanceLock = app.requestSingleInstanceLock();
+if (!singleInstanceLock) {
+  app.quit();
+  process.exit(0);
+}
+
 // Suppress EPIPE errors on stdout/stderr — broken pipes from console.log
 // must not crash the app (common when renderer disconnects or pipes close)
 process.stdout.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
@@ -46,6 +54,15 @@ const hivemindApp = new HivemindApp(appContext, {
   usage,
   cliIdentity,
   firmwareManager,
+});
+
+app.on('second-instance', () => {
+  const win = appContext.mainWindow;
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) {
+    win.restore();
+  }
+  win.focus();
 });
 
 // 3. Electron Lifecycle Hooks
