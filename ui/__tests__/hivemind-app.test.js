@@ -272,6 +272,43 @@ describe('HivemindApp', () => {
     });
   });
 
+  describe('createWindow startup ordering', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new HivemindApp(mockAppContext, mockManagers);
+      jest.spyOn(app, 'installMainWindowSendInterceptor').mockImplementation(() => {});
+      jest.spyOn(app, 'ensurePaneHostReadyForwarder').mockImplementation(() => {});
+      jest.spyOn(app, 'setupPermissions').mockImplementation(() => {});
+      jest.spyOn(app, 'initModules').mockImplementation(() => {});
+      jest.spyOn(app, 'setupWindowListeners').mockImplementation(() => {});
+    });
+
+    it('loads main window after core startup hooks are installed', async () => {
+      await app.createWindow();
+
+      const loadFile = app.ctx.mainWindow.loadFile;
+      expect(loadFile).toHaveBeenCalledWith('index.html');
+      expect(app.initModules.mock.invocationCallOrder[0]).toBeLessThan(loadFile.mock.invocationCallOrder[0]);
+      expect(app.setupWindowListeners.mock.invocationCallOrder[0]).toBeLessThan(loadFile.mock.invocationCallOrder[0]);
+    });
+
+    it('does not block createWindow on hidden pane host bootstrap', async () => {
+      jest.useFakeTimers();
+      const ensurePaneHostWindows = jest
+        .spyOn(app, 'ensurePaneHostWindows')
+        .mockImplementation(() => new Promise(() => {}));
+
+      await expect(app.createWindow()).resolves.toBeUndefined();
+
+      // Bootstrap is deferred; no pane-host startup should run until timer tick.
+      expect(ensurePaneHostWindows).not.toHaveBeenCalled();
+      jest.runOnlyPendingTimers();
+      expect(ensurePaneHostWindows).toHaveBeenCalledTimes(1);
+      jest.useRealTimers();
+    });
+  });
+
   describe('lazy worker initialization', () => {
     it('does not prewarm non-critical runtimes during init', async () => {
       const app = new HivemindApp(mockAppContext, mockManagers);
