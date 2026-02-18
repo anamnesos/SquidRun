@@ -896,6 +896,72 @@ describe('Terminal Injection', () => {
       });
     });
 
+    test('hm-send long payloads use chunked PTY write and Enter waits for chunk completion', async () => {
+      mockOptions.isCodexPane.mockReturnValue(true);
+      terminals.set('1', { _hivemindBypass: false });
+
+      let resolveChunkWrite;
+      mockPty.writeChunked.mockImplementationOnce(() => new Promise((resolve) => {
+        resolveChunkWrite = resolve;
+      }));
+      const onComplete = jest.fn();
+      const longPayload = `${'L'.repeat(1050)}\nline-two\r`;
+
+      const promise = controller.doSendToPane(
+        '1',
+        longPayload,
+        onComplete,
+        { messageId: 'hm-456', traceId: 'hm-456' },
+        { hmSendFastEnter: true }
+      );
+      await Promise.resolve();
+
+      expect(mockPty.writeChunked).toHaveBeenCalledWith(
+        '1',
+        `${'L'.repeat(1050)}\nline-two`,
+        expect.objectContaining({ waitForWriteAck: true }),
+        expect.any(Object)
+      );
+      expect(mockPty.write).not.toHaveBeenCalledWith('1', '\r');
+
+      resolveChunkWrite({ success: true, chunks: 2, chunkSize: 1024 });
+      await promise;
+
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
+      expect(onComplete).toHaveBeenCalledWith({
+        success: true,
+        verified: true,
+        signal: 'hm_send_fast_path',
+      });
+    });
+
+    test('preserves multiline content for long Codex injections', async () => {
+      mockOptions.isCodexPane.mockReturnValue(true);
+      terminals.set('1', { _hivemindBypass: false });
+      const onComplete = jest.fn();
+      const codexLongMessage = `${'C'.repeat(1030)}\nnext-line\r`;
+
+      const promise = controller.doSendToPane('1', codexLongMessage, onComplete);
+      await jest.advanceTimersByTimeAsync(500);
+      await promise;
+
+      expect(mockPty.write).toHaveBeenCalledWith('1', `${'C'.repeat(1030)}\nnext-line`, expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
+    });
+
+    test('preserves multiline content for long Gemini injections', async () => {
+      mockOptions.isGeminiPane.mockReturnValue(true);
+      const onComplete = jest.fn();
+      const geminiLongMessage = `${'G'.repeat(1030)}\nnext-line\r`;
+
+      const promise = controller.doSendToPane('1', geminiLongMessage, onComplete);
+      await jest.advanceTimersByTimeAsync(100);
+      await promise;
+
+      expect(mockPty.write).toHaveBeenCalledWith('1', `${'G'.repeat(1030)}\nnext-line`, expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
+    });
+
     test('handles Codex pane with PTY Enter', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
       const mockTerminal = { _hivemindBypass: false };
