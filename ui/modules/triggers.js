@@ -35,7 +35,7 @@ const SYNC_DEBOUNCE_MS = 3000;
 const SYNC_COALESCE_WINDOW_MS = 5000;
 const STAGGER_BASE_DELAY_MS = 150;
 const STAGGER_RANDOM_MS = 100;
-const DELIVERY_VERIFY_TIMEOUT_MS = Number.parseInt(process.env.HIVEMIND_DELIVERY_VERIFY_TIMEOUT_MS || '5000', 10);
+const DELIVERY_VERIFY_TIMEOUT_MS = Number.parseInt(process.env.HIVEMIND_DELIVERY_VERIFY_TIMEOUT_MS || '7000', 10);
 const PRIORITY_KEYWORDS = ['STOP', 'URGENT', 'BLOCKING', 'ERROR'];
 const TRIGGER_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 const TRIGGER_MESSAGE_ID_REGEX = /^\[HM-MESSAGE-ID:([^\]\r\n]+)\]\r?\n?/;
@@ -292,7 +292,7 @@ function resolveRoleFromPaneId(paneId) {
 function getDeliveryVerifyTimeoutMs() {
   return Number.isFinite(DELIVERY_VERIFY_TIMEOUT_MS) && DELIVERY_VERIFY_TIMEOUT_MS > 0
     ? DELIVERY_VERIFY_TIMEOUT_MS
-    : 5000;
+    : 7000;
 }
 
 function buildDeliveryResult({
