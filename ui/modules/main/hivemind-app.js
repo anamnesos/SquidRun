@@ -262,6 +262,12 @@ class HivemindApp {
     }
   }
 
+  schedulePaneHostBootstrap() {
+    setTimeout(() => {
+      void this.ensurePaneHostWindows();
+    }, 0);
+  }
+
   sendPaneHostMessage(paneId, channel, payload = {}) {
     if (!this.isHiddenPaneHostModeEnabled()) return false;
     return this.paneHostWindowManager.sendToPaneWindow(String(paneId), channel, {
@@ -1101,8 +1107,9 @@ class HivemindApp {
 
     this.ctx.mainWindow.loadFile('index.html');
 
-    // Hidden pane host windows are non-critical for first paint; initialize asynchronously.
-    void this.ensurePaneHostWindows();
+    // Hidden pane host windows are non-critical; defer to a separate task so
+    // main-window listeners/post-load init always install first.
+    this.schedulePaneHostBootstrap();
 
     if (this.ctx.currentSettings.devTools) {
       this.ctx.mainWindow.webContents.openDevTools();
