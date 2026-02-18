@@ -257,6 +257,7 @@ class HivemindApp {
     if (!paneIds.length) return;
     try {
       await this.paneHostWindowManager.ensurePaneWindows(paneIds);
+      log.info('PaneHost', `Hidden pane host windows created for panes: ${paneIds.join(', ')}`);
     } catch (err) {
       log.warn('PaneHost', `Failed to ensure pane host windows: ${err.message}`);
     }
@@ -335,7 +336,10 @@ class HivemindApp {
         traceContext: payload.traceContext || null,
         meta: payload.meta || null,
       });
-      if (!routedToHost) {
+      if (routedToHost) {
+        log.info('PaneHost', `Routed inject to hidden window for pane ${paneId}`);
+      } else {
+        log.warn('PaneHost', `Hidden window unavailable for pane ${paneId}, falling back to visible renderer`);
         mirrorPanes.push(paneId);
       }
     }

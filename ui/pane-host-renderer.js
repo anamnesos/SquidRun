@@ -88,8 +88,18 @@ async function injectMessage(payload = {}) {
   }
 
   try {
-    await window.hivemind.pty.write(paneId, text, traceContext || null);
-    // Hidden-pane-host mode should submit via direct PTY Enter only.
+    // Use chunked write for large payloads to prevent PTY pipe truncation.
+    const CHUNK_THRESHOLD = 2048;
+    if (text.length > CHUNK_THRESHOLD && window.hivemind.pty.writeChunked) {
+      await window.hivemind.pty.writeChunked(paneId, text, { chunkSize: 2048 }, traceContext || null);
+    } else {
+      await window.hivemind.pty.write(paneId, text, traceContext || null);
+    }
+    // Allow CLI to consume pasted text before submitting Enter.
+    // Hidden windows fix focus contention; this delay handles PTY pipe buffering.
+    const enterDelayMs = Math.max(80, Math.min(300, Math.ceil(text.length / 20)));
+    await new Promise(resolve => setTimeout(resolve, enterDelayMs));
+    // Submit via direct PTY Enter.
     await window.hivemind.pty.write(paneId, '\r', traceContext || null);
 
     if (deliveryId) {
