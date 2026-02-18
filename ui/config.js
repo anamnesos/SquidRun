@@ -65,6 +65,41 @@ const PANE_ROLES = {
   '5': 'Oracle',
 };
 
+const PANE_ROLE_BUNDLES = {
+  '1': {
+    heading: 'Director',
+    members: [
+      PANE_ROLES['1'],
+      'Data Engineer',
+      'Reviewer',
+      'Release Manager',
+      'UX Researcher',
+      'Memory Steward',
+    ],
+  },
+  '2': {
+    heading: PANE_ROLES['2'],
+    members: [
+      'Frontend',
+      'Backend',
+      'DevOps',
+      'SRE',
+      'Tester',
+      'Validator',
+      'Security',
+      'Context Optimizer',
+    ],
+  },
+  '5': {
+    heading: PANE_ROLES['5'],
+    members: [
+      'Investigator',
+      'Docs',
+      'Eval/Benchmark',
+    ],
+  },
+};
+
 // Short names for space-constrained UI elements
 const SHORT_AGENT_NAMES = {
   '1': 'Arch',
@@ -304,6 +339,7 @@ module.exports = {
   GLOBAL_STATE_ROOT,
   PANE_IDS,
   PANE_ROLES,
+  PANE_ROLE_BUNDLES,
   SHORT_AGENT_NAMES,
   ROLE_NAMES,
   LEGACY_ROLE_ALIASES,
