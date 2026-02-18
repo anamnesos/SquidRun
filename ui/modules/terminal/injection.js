@@ -1034,14 +1034,19 @@ function createInjectionController(options = {}) {
     }
 
     if (hmSendFastEnter) {
+      // Wait for the CLI to finish processing the pasted text before sending Enter.
+      // Without this delay, \r arrives while the CLI is still ingesting the paste
+      // and gets swallowed or treated as a literal newline — not a submit.
+      const fastPathDelayMs = Math.max(enterDelayMs, 80);
+      await sleep(fastPathDelayMs);
+
       bus.emit('inject.submit.requested', {
         paneId: id,
-        payload: { method: 'hm-send-pty-enter', attempt: 1, maxAttempts: 1, fastPath: true },
+        payload: { method: 'hm-send-pty-enter', attempt: 1, maxAttempts: 1, fastPath: true, delayMs: fastPathDelayMs },
         correlationId: corrId,
         source: EVENT_SOURCE,
       });
       try {
-        // Match nudge/button behavior: immediate plain PTY carriage return.
         await window.hivemind.pty.write(id, '\r');
       } catch (err) {
         log.error(`doSendToPane ${id}`, 'hm-send PTY Enter failed:', err);
