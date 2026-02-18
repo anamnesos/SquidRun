@@ -516,7 +516,10 @@ class HivemindApp {
     // 1. Load settings
     this.settings.loadSettings();
 
-    // 1b. Generate firmware files on startup when feature flag is enabled.
+    // 2. Create main window as early as possible so users see immediate startup feedback.
+    await this.createWindow();
+
+    // 3. Generate firmware files on startup when feature flag is enabled.
     if (this.firmwareManager && typeof this.firmwareManager.ensureStartupFirmwareIfEnabled === 'function') {
       try {
         const firmwareResult = this.firmwareManager.ensureStartupFirmwareIfEnabled({ preflight: true });
@@ -528,22 +531,22 @@ class HivemindApp {
       }
     }
 
-    // 2. Auto-detect installed CLIs and patch invalid paneCommands (startup only)
+    // 4. Auto-detect installed CLIs and patch invalid paneCommands (startup only)
     if (typeof this.settings.autoDetectPaneCommandsOnStartup === 'function') {
       this.settings.autoDetectPaneCommandsOnStartup();
     }
 
-    // 3. Pre-configure Codex
+    // 5. Pre-configure Codex
     this.settings.ensureCodexConfig();
 
-    // 4. Defer non-critical worker runtimes until first use.
+    // 6. Defer non-critical worker runtimes until first use.
     // Keep startup focused on rendering + core watchers.
     log.info(
       'App',
       'Deferring startup worker prewarm (evidence-ledger/team-memory/experiment/comms) until first use'
     );
 
-    // 5. Setup external notifications
+    // 7. Setup external notifications
     this.ctx.setExternalNotifier(createExternalNotifier({
       getSettings: () => this.ctx.currentSettings,
       log,
@@ -555,13 +558,13 @@ class HivemindApp {
       watcher.setExternalNotifier((payload) => this.ctx.externalNotifier?.notify(payload));
     }
 
-    // 6. Load activity log
+    // 8. Load activity log
     this.activity.loadActivityLog();
 
-    // 7. Load usage stats
+    // 9. Load usage stats
     this.usage.loadUsageStats();
 
-    // 8. Initialize PTY daemon connection
+    // 10. Initialize PTY daemon connection (heavy startup work begins after window is shown).
     await this.initDaemonClient();
     const didSpawnDuringLastConnect = this.ctx.daemonClient?.didSpawnDuringLastConnect?.() === true;
     this.settings.writeAppStatus({
@@ -573,17 +576,14 @@ class HivemindApp {
       });
     }
 
-    // 9. Create main window
-    await this.createWindow();
-
-    // 10. Register sleep/wake listeners for laptop resilience.
+    // 11. Register sleep/wake listeners for laptop resilience.
     this.setupPowerMonitorListeners();
 
-    // 11. Setup global IPC forwarders
+    // 12. Setup global IPC forwarders
     this.ensureCliIdentityForwarder();
     this.ensureTriggerDeliveryAckForwarder();
 
-    // 12. Start WebSocket server for instant agent messaging
+    // 13. Start WebSocket server for instant agent messaging
     try {
       await websocketServer.start({
         port: websocketServer.DEFAULT_PORT,
