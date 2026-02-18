@@ -36,6 +36,7 @@ const RENDERER_IPC_CHANNELS = Object.freeze([
   'codex-activity',
   'agent-stuck-detected',
   'pane-cli-identity',
+  'daemon-connected',
   // Channels registered in submodules — must be cleaned up here too
   'activity-logged',         // tabs/activity.js
   'oracle:image-generated',  // tabs/oracle.js
@@ -237,6 +238,7 @@ let initState = {
   terminalsReady: false,
   autoSpawnChecked: false
 };
+const STARTUP_OVERLAY_FADE_MS = 280;
 
 function checkInitComplete() {
   if (initState.settingsLoaded && initState.terminalsReady && !initState.autoSpawnChecked) {
@@ -261,6 +263,18 @@ function markTerminalsReady() {
   log.info('Init', 'Terminals ready');
 
   checkInitComplete();
+}
+
+function dismissStartupLoadingOverlay() {
+  const overlay = document.getElementById('startupLoadingOverlay');
+  if (!overlay || overlay.dataset.dismissed === 'true') return;
+  overlay.dataset.dismissed = 'true';
+  overlay.classList.add('hidden');
+  setTimeout(() => {
+    if (overlay.parentNode) {
+      overlay.parentNode.removeChild(overlay);
+    }
+  }, STARTUP_OVERLAY_FADE_MS + 40);
 }
 
 // Create hivemind API (merges with preload bridge to preserve workflow/graph/memory APIs)
@@ -1002,6 +1016,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (typeof daemonHandlers.teardownDaemonListeners === 'function') {
     daemonHandlers.teardownDaemonListeners();
   }
+  ipcRenderer.once('daemon-connected', () => {
+    dismissStartupLoadingOverlay();
+  });
 
   // Setup all event handlers
   setupEventListeners();

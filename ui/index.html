@@ -13,6 +13,13 @@
   <link rel="stylesheet" href="styles/tabs.css">
 </head>
 <body>
+  <div class="startup-loading-overlay" id="startupLoadingOverlay" aria-live="polite">
+    <div class="startup-loading-content">
+      <img class="startup-loading-logo" src="assets/hivemind-icon-rounded.png" alt="Hivemind logo">
+      <div class="startup-loading-spinner" aria-hidden="true"></div>
+    </div>
+  </div>
+
   <!-- Command Palette (Ctrl+K) -->
   <div class="command-palette-overlay" id="commandPaletteOverlay">
     <div class="command-palette" id="commandPalette">

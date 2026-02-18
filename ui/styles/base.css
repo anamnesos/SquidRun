@@ -148,6 +148,54 @@ body {
   line-height: 1.4;
 }
 
+.startup-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0a0a0f;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 280ms ease, visibility 280ms ease;
+}
+
+.startup-loading-overlay.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.startup-loading-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+.startup-loading-logo {
+  width: 88px;
+  height: 88px;
+  object-fit: contain;
+  opacity: 0.95;
+}
+
+.startup-loading-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid rgba(232, 234, 240, 0.22);
+  border-top-color: #00f0ff;
+  animation: startup-spin 0.8s linear infinite;
+}
+
+@keyframes startup-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Selection */
 ::selection {
   background: rgba(0, 240, 255, 0.3);
