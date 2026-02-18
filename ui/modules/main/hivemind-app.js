@@ -465,7 +465,6 @@ class HivemindApp {
       return this.sendToVisibleWindow('inject-message', payload);
     }
 
-    const mirrorPanes = [];
     for (const paneId of panes) {
       const routedToHost = this.sendPaneHostMessage(paneId, 'pane-host:inject-message', {
         message: payload.message,
@@ -480,25 +479,12 @@ class HivemindApp {
         this.reportPaneHostDegraded({
           paneId,
           reason: 'inject_hidden_window_unavailable',
-          message: `Hidden pane host window unavailable for pane ${paneId} while hidden pane host mode is enabled. Falling back to visible renderer delivery (manual Enter may be required).`,
+          message: `Hidden pane host window unavailable for pane ${paneId}. Delivery FAILED — no fallback. Hidden pane host mode is enabled; fix the hidden window instead of routing around it.`,
           details: {
             deliveryId: payload.deliveryId || null,
-            fallback: 'visible_renderer',
           },
         });
-        mirrorPanes.push(paneId);
       }
-    }
-
-    if (mirrorPanes.length > 0 && this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
-      log.error(
-        'PaneHost',
-        `Degraded inject routing for panes ${mirrorPanes.join(', ')}. Visible renderer fallback sent (manual Enter may be required).`
-      );
-      this.sendToVisibleWindow('inject-message', {
-        ...payload,
-        panes: mirrorPanes,
-      });
     }
     return true;
   }
