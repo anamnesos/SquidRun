@@ -875,16 +875,20 @@ describe('Terminal Injection', () => {
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
 
-    test('hm-send fast path submits Enter immediately via plain PTY write', async () => {
+    test('hm-send fast path submits Enter after delay via plain PTY write', async () => {
       const onComplete = jest.fn();
 
-      await controller.doSendToPane(
+      const promise = controller.doSendToPane(
         '1',
         'hm payload\r',
         onComplete,
         { messageId: 'hm-123', traceId: 'hm-123' },
         { hmSendFastEnter: true }
       );
+
+      // Fast path now waits for CLI to process paste before sending Enter
+      await jest.advanceTimersByTimeAsync(200);
+      await promise;
 
       expect(mockPty.write).toHaveBeenCalledWith('1', 'hm payload', expect.any(Object));
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
@@ -925,6 +929,8 @@ describe('Terminal Injection', () => {
       expect(mockPty.write).not.toHaveBeenCalledWith('1', '\r');
 
       resolveChunkWrite({ success: true, chunks: 2, chunkSize: 1024 });
+      // Fast path now waits for CLI to process paste before sending Enter
+      await jest.advanceTimersByTimeAsync(500);
       await promise;
 
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
