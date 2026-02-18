@@ -155,20 +155,6 @@ function isPaneReadOnlyMirrorMode(paneId) {
   return isHiddenPaneHostModeEnabled() && PANE_IDS.includes(id);
 }
 
-function syncPaneMirrorModeClass(paneId) {
-  const id = String(paneId || '');
-  if (!id || typeof document === 'undefined') return;
-  const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
-  if (!paneEl) return;
-  paneEl.classList.toggle('mirror-mode', isPaneReadOnlyMirrorMode(id));
-}
-
-function syncAllPaneMirrorModeClasses() {
-  for (const paneId of PANE_IDS) {
-    syncPaneMirrorModeClass(paneId);
-  }
-}
-
 function maybeResumePtyProducer(paneId, watermark) {
   if (watermark < LOW_WATERMARK && terminalPaused.get(paneId)) {
     if (window.hivemind?.pty?.resume) {
@@ -820,7 +806,6 @@ function syncTerminalInputBridge(paneId, options = {}) {
 function refreshMirrorModeBindings() {
   for (const paneId of PANE_IDS) {
     const id = String(paneId);
-    syncPaneMirrorModeClass(id);
     if (isPaneReadOnlyMirrorMode(id)) {
       detachTerminalInputBridge(id);
       setInputLocked(id, true);
@@ -1565,7 +1550,6 @@ function sendToPane(paneId, message, options = {}) {
 
   // Initialize all terminals
   async function initTerminals() {
-    syncAllPaneMirrorModeClasses();
     for (const paneId of PANE_IDS) {
       if (terminals.has(paneId)) continue;
       await initTerminal(paneId);
@@ -1679,7 +1663,6 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
     if (terminals.has(paneId)) return;
     const container = document.getElementById(`terminal-${paneId}`);
     if (!container) return;
-  syncPaneMirrorModeClass(paneId);
   teardownTerminalPane(paneId);
 
   // Create AbortController for this pane's container DOM listeners (destroy-before-setup)
@@ -1868,7 +1851,6 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 async function reattachTerminal(paneId, scrollback, options = {}) {
   const container = document.getElementById(`terminal-${paneId}`);
   if (!container) return;
-  syncPaneMirrorModeClass(paneId);
 
   if (terminals.has(paneId)) {
     log.info(`Terminal ${paneId}`, 'Already attached, skipping');
