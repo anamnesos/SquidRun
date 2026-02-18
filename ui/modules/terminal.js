@@ -149,10 +149,16 @@ function isHiddenPaneHostModeEnabled() {
   }
 }
 
-function isPaneReadOnlyMirrorMode(paneId) {
+function isHiddenPaneHostPane(paneId) {
   const id = String(paneId || '');
   if (!id) return false;
   return isHiddenPaneHostModeEnabled() && PANE_IDS.includes(id);
+}
+
+function isPaneReadOnlyMirrorMode(paneId) {
+  const id = String(paneId || '');
+  if (!id) return false;
+  return isHiddenPaneHostPane(id) && inputLocked[id] === true;
 }
 
 function maybeResumePtyProducer(paneId, watermark) {
@@ -678,10 +684,9 @@ function getPaneInjectionCapabilities(paneId) {
     Object.assign(base, overrides);
   }
 
-  // Hidden pane host mode renders visible panes as read-only mirrors.
-  // For trusted-enter runtimes (Claude), submit via raw PTY Enter instead
-  // of simulated xterm key events.
-  if (isPaneReadOnlyMirrorMode(paneId) && base.enterMethod === 'trusted') {
+  // In hidden pane host mode, trusted-enter runtimes (Claude) must submit
+  // through raw PTY Enter to avoid browser key-event delivery issues.
+  if (isHiddenPaneHostPane(paneId) && base.enterMethod === 'trusted') {
     Object.assign(base, {
       submitMethod: 'hidden-pane-host-pty-enter',
       bypassGlobalLock: true,
@@ -1300,11 +1305,8 @@ function updateIntentState(paneId, intent) {
 }
 
 function toggleInputLock(paneId) {
-  if (isPaneReadOnlyMirrorMode(paneId)) {
-    setInputLocked(paneId, true);
-    return true;
-  }
   inputLocked[paneId] = !inputLocked[paneId];
+  syncTerminalInputBridge(paneId);
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);
   if (lockIcon) {
     lockIcon.innerHTML = inputLocked[paneId] ? LOCK_ICON_SVG : UNLOCK_ICON_SVG;
@@ -1319,20 +1321,16 @@ function toggleInputLock(paneId) {
  * Set input lock state for a pane (without toggle)
  */
 function setInputLocked(paneId, locked) {
-  const forcedLocked = isPaneReadOnlyMirrorMode(paneId) ? true : Boolean(locked);
-  inputLocked[paneId] = forcedLocked;
+  const nextLocked = Boolean(locked);
+  inputLocked[paneId] = nextLocked;
+  syncTerminalInputBridge(paneId);
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);
   if (lockIcon) {
-    lockIcon.innerHTML = forcedLocked ? LOCK_ICON_SVG : UNLOCK_ICON_SVG;
-    if (isPaneReadOnlyMirrorMode(paneId)) {
-      lockIcon.dataset.tooltip = 'Mirror mode (read-only)';
-      lockIcon.classList.remove('unlocked');
-    } else {
-      lockIcon.dataset.tooltip = forcedLocked ? 'Locked (click to toggle)' : 'Unlocked (click to toggle)';
-      lockIcon.classList.toggle('unlocked', !forcedLocked);
-    }
+    lockIcon.innerHTML = nextLocked ? LOCK_ICON_SVG : UNLOCK_ICON_SVG;
+    lockIcon.dataset.tooltip = nextLocked ? 'Locked (click to toggle)' : 'Unlocked (click to toggle)';
+    lockIcon.classList.toggle('unlocked', !nextLocked);
   }
-  log.info(`Terminal ${paneId}`, `Input ${forcedLocked ? 'locked' : 'unlocked'}`);
+  log.info(`Terminal ${paneId}`, `Input ${nextLocked ? 'locked' : 'unlocked'}`);
 }
 
 /**
@@ -1519,7 +1517,7 @@ function doSendToPane(...args) {
 
 function sendToPane(paneId, message, options = {}) {
   const id = String(paneId);
-  if (isPaneReadOnlyMirrorMode(id) && window?.hivemind?.paneHost?.inject) {
+  if (isHiddenPaneHostPane(id) && window?.hivemind?.paneHost?.inject) {
     Promise.resolve(window.hivemind.paneHost.inject(id, {
       message: String(message || ''),
       traceContext: options?.traceContext || null,

@@ -148,12 +148,17 @@ describe('terminal.js module', () => {
     // Reset mocks
     mockHivemind.pty.write.mockResolvedValue();
     mockHivemind.claude.spawn.mockResolvedValue({ success: true, command: 'claude' });
+    delete mockHivemind.paneHost;
+    mockSettings.getSettings.mockReturnValue({ paneCommands: {} });
     mockDocument.getElementById.mockReturnValue(null);
     mockDocument.querySelector.mockReturnValue(null);
     mockDocument.querySelectorAll.mockReturnValue([]);
     mockDocument.activeElement = null;
     mockContractPromotion.checkPromotions.mockReturnValue([]);
     terminal.stopPromotionCheckTimer();
+    terminal.setInputLocked('1', true);
+    terminal.setInputLocked('2', true);
+    terminal.setInputLocked('5', true);
   });
 
   afterEach(() => {
@@ -331,6 +336,19 @@ describe('terminal.js module', () => {
       expect(caps.deferSubmitWhilePaneActive).toBe(false);
     });
 
+    test('keeps hidden-host PTY Enter path even when pane lock is toggled off', () => {
+      mockSettings.getSettings.mockReturnValue({
+        hiddenPaneHostsEnabled: true,
+        paneCommands: { '1': 'claude --dangerously-skip-permissions' },
+      });
+      terminal.setInputLocked('1', false);
+
+      const caps = terminal.getPaneInjectionCapabilities('1');
+      expect(caps.enterMethod).toBe('pty');
+      expect(caps.submitMethod).toBe('hidden-pane-host-pty-enter');
+      expect(caps.requiresFocusForEnter).toBe(false);
+    });
+
     test('disables submit verification by default for Codex runtime', () => {
       mockSettings.getSettings.mockReturnValue({
         paneCommands: { '2': 'codex --yolo' },
@@ -380,6 +398,30 @@ describe('terminal.js module', () => {
   });
 
   describe('sendToPane', () => {
+    test('uses pane host injection in hidden host mode even when pane is unlocked', async () => {
+      mockSettings.getSettings.mockReturnValue({
+        hiddenPaneHostsEnabled: true,
+        paneCommands: { '1': 'claude --dangerously-skip-permissions' },
+      });
+      mockHivemind.paneHost = {
+        inject: jest.fn().mockResolvedValue({ success: true }),
+      };
+      terminal.setInputLocked('1', false);
+      const onComplete = jest.fn();
+
+      terminal.sendToPane('1', 'test message', { onComplete });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockHivemind.paneHost.inject).toHaveBeenCalledWith('1', expect.objectContaining({
+        message: 'test message',
+      }));
+      expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({
+        success: true,
+        signal: 'pane_host_inject',
+      }));
+    });
+
     test('should queue message when injection in flight', () => {
       // Block immediate processing with injection lock
       terminal.setInjectionInFlight(true);
