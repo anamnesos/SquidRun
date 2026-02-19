@@ -327,7 +327,7 @@ describe('HivemindApp', () => {
       expect(evidenceLedger.initializeEvidenceLedgerRuntime).not.toHaveBeenCalled();
       expect(teamMemory.initializeTeamMemoryRuntime).not.toHaveBeenCalled();
       expect(experiment.initializeExperimentRuntime).not.toHaveBeenCalled();
-      expect(app.initializeStartupSessionScope).not.toHaveBeenCalled();
+      // initializeStartupSessionScope is always called now (session always increments on app launch)
     });
 
     it('runs firmware startup generation hook during init', async () => {
@@ -345,13 +345,11 @@ describe('HivemindApp', () => {
       expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).toHaveBeenCalledWith({ preflight: true });
     });
 
-    it('records startup ledger session only when daemon was freshly spawned', async () => {
+    it('always increments session and initializes startup scope on app launch', async () => {
       const app = new HivemindApp(mockAppContext, mockManagers);
 
       app.initDaemonClient = jest.fn().mockImplementation(async () => {
-        mockAppContext.daemonClient = {
-          didSpawnDuringLastConnect: jest.fn().mockReturnValue(true),
-        };
+        mockAppContext.daemonClient = {};
       });
       app.createWindow = jest.fn().mockResolvedValue();
       app.startSmsPoller = jest.fn();
