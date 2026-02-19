@@ -57,6 +57,7 @@ describe('auto-handoff-materializer', () => {
     expect(first).toContain('DECISION');
     expect(first).toContain('trc-1');
     expect(first).toContain('delivery_timeout');
+    expect(first).toContain('## Cross-Session Decisions');
   });
 
   test('pending deliveries exclude failed rows and resolved brokered rows', () => {
@@ -224,6 +225,12 @@ describe('auto-handoff-materializer', () => {
       statement: `Proposed claim #${index}`,
       confidence: 0.4 + (index * 0.01),
     }));
+    proposedClaims.push({
+      id: 'clm_noise',
+      status: 'proposed',
+      statement: 'delivered.verified',
+      confidence: 0.99,
+    });
 
     const result = materializeSessionHandoff({
       rows: [],
@@ -263,6 +270,8 @@ describe('auto-handoff-materializer', () => {
     expect(content).toContain('## Unresolved Claims');
     expect(content).toContain('| clm_contested | contested |');
     expect(content).toContain('| clm_pending | pending_proof |');
+    expect(content).not.toContain('clm_noise');
+    expect(content).not.toContain('delivered.verified');
 
     const unresolvedRows = content
       .split('\n')
@@ -272,6 +281,85 @@ describe('auto-handoff-materializer', () => {
     const contestedRow = unresolvedRows.find((line) => line.includes('| clm_contested |'));
     expect(contestedRow).toBeDefined();
     expect(contestedRow).toContain('...');
+  });
+
+  test('materializeSessionHandoff carries cross-session tagged decisions/tasks/findings/blockers', () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const queryCalls = [];
+    const result = materializeSessionHandoff({
+      sessionId: 'session-current',
+      outputPath,
+      legacyMirrorPath: false,
+      nowMs: 10_000,
+      queryCommsJournal: (filters = {}) => {
+        queryCalls.push(filters);
+        if (filters.sessionId === 'session-current') {
+          return [
+            {
+              messageId: 'm-current',
+              sessionId: 'session-current',
+              senderRole: 'architect',
+              targetRole: 'builder',
+              channel: 'ws',
+              direction: 'outbound',
+              status: 'brokered',
+              rawBody: '(ARCHITECT #9): TASK: Current session implementation',
+              brokeredAtMs: 3000,
+            },
+          ];
+        }
+        return [
+          {
+            messageId: 'm-old-1',
+            sessionId: 'session-old-1',
+            senderRole: 'architect',
+            targetRole: 'builder',
+            channel: 'ws',
+            direction: 'outbound',
+            status: 'brokered',
+            rawBody: '(ARCHITECT #2): DECISION: Keep coordinator deterministic',
+            brokeredAtMs: 1000,
+          },
+          {
+            messageId: 'm-old-2',
+            sessionId: 'session-old-2',
+            senderRole: 'oracle',
+            targetRole: 'architect',
+            channel: 'ws',
+            direction: 'outbound',
+            status: 'brokered',
+            rawBody: '(ORACLE #3): FINDING: Trigger delivery had no loss',
+            brokeredAtMs: 2000,
+          },
+          {
+            messageId: 'm-old-3',
+            sessionId: 'session-old-2',
+            senderRole: 'architect',
+            targetRole: 'builder',
+            channel: 'ws',
+            direction: 'outbound',
+            status: 'brokered',
+            rawBody: '(ARCHITECT #4): ACTION: This should not be in cross-session carry',
+            brokeredAtMs: 2100,
+          },
+        ];
+      },
+      queryClaims: () => ({ ok: true, claims: [] }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(queryCalls).toHaveLength(2);
+    expect(queryCalls[0].sessionId).toBe('session-current');
+    expect(queryCalls[1].sessionId).toBeUndefined();
+
+    const content = fs.readFileSync(outputPath, 'utf8');
+    const crossSessionSection = content
+      .split('## Cross-Session Decisions')[1]
+      .split('## Tagged Signals')[0];
+
+    expect(crossSessionSection).toContain('| session-old-1 | DECISION |');
+    expect(crossSessionSection).toContain('| session-old-2 | FINDING |');
+    expect(crossSessionSection).not.toContain('ACTION');
   });
 
   test('removeLegacyPaneHandoffFiles deletes legacy files', () => {
