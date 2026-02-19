@@ -6,6 +6,7 @@ const {
   materializeSessionHandoff,
   buildSessionHandoffMarkdown,
   removeLegacyPaneHandoffFiles,
+  _internals,
 } = require('../modules/main/auto-handoff-materializer');
 
 describe('auto-handoff-materializer', () => {
@@ -58,6 +59,25 @@ describe('auto-handoff-materializer', () => {
     expect(first).toContain('trc-1');
     expect(first).toContain('delivery_timeout');
     expect(first).toContain('## Cross-Session Decisions');
+  });
+
+  test('extractTag only matches anchored tags or known prefixed markers', () => {
+    expect(_internals.extractTag('DECISION: Canonical envelope')).toEqual({
+      tag: 'DECISION',
+      detail: 'Canonical envelope',
+    });
+    expect(_internals.extractTag('(ARCHITECT #1): FINDING: Queue race fixed')).toEqual({
+      tag: 'FINDING',
+      detail: 'Queue race fixed',
+    });
+    expect(_internals.extractTag('[AGENT MSG - reply via hm-send.js] (BUILDER #4): TASK: Add tests')).toEqual({
+      tag: 'TASK',
+      detail: 'Add tests',
+    });
+
+    expect(_internals.extractTag('We discussed DECISION: but this is inline prose')).toBeNull();
+    expect(_internals.extractTag('prefix DECISION: not anchored')).toBeNull();
+    expect(_internals.extractTag('(ARCHITECT #1): NOTE: not an allowed tag')).toBeNull();
   });
 
   test('pending deliveries exclude failed rows and resolved brokered rows', () => {
@@ -231,6 +251,18 @@ describe('auto-handoff-materializer', () => {
       statement: 'delivered.verified',
       confidence: 0.99,
     });
+    proposedClaims.push({
+      id: 'clm_noise_init',
+      status: 'proposed',
+      statement: 'Initializing session app-session-900',
+      confidence: 0.95,
+    });
+    proposedClaims.push({
+      id: 'clm_noise_start',
+      status: 'proposed',
+      statement: 'Session started for app-session-900',
+      confidence: 0.94,
+    });
 
     const result = materializeSessionHandoff({
       rows: [],
@@ -271,7 +303,11 @@ describe('auto-handoff-materializer', () => {
     expect(content).toContain('| clm_contested | contested |');
     expect(content).toContain('| clm_pending | pending_proof |');
     expect(content).not.toContain('clm_noise');
+    expect(content).not.toContain('clm_noise_init');
+    expect(content).not.toContain('clm_noise_start');
     expect(content).not.toContain('delivered.verified');
+    expect(content).not.toContain('Initializing session');
+    expect(content).not.toContain('Session started');
 
     const unresolvedRows = content
       .split('\n')
@@ -353,13 +389,75 @@ describe('auto-handoff-materializer', () => {
     expect(queryCalls[1].sessionId).toBeUndefined();
 
     const content = fs.readFileSync(outputPath, 'utf8');
+    const digestSection = content
+      .split('## Decision Digest')[1]
+      .split('## Cross-Session Decisions')[0];
     const crossSessionSection = content
       .split('## Cross-Session Decisions')[1]
       .split('## Tagged Signals')[0];
 
+    expect(digestSection).toContain('| session-old-1 |');
+    expect(digestSection).toContain('| session-old-2 |');
+    expect(digestSection).toContain('DECISION: Keep coordinator deterministic');
+    expect(digestSection).toContain('FINDING: Trigger delivery had no loss');
+    expect(digestSection).not.toContain('ACTION');
+
     expect(crossSessionSection).toContain('| session-old-1 | DECISION |');
     expect(crossSessionSection).toContain('| session-old-2 | FINDING |');
     expect(crossSessionSection).not.toContain('ACTION');
+  });
+
+  test('Decision Digest is grouped by session and capped to last 10 sessions', () => {
+    const outputPath = path.join(tempDir, 'handoffs', 'session.md');
+    const crossRows = Array.from({ length: 12 }, (_, index) => ({
+      messageId: `m-${index}`,
+      sessionId: `session-${index}`,
+      senderRole: 'architect',
+      targetRole: 'builder',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'brokered',
+      rawBody: `(ARCHITECT #${index + 1}): DECISION: Decision ${index}`,
+      brokeredAtMs: 1000 + index,
+    }));
+    crossRows.push({
+      messageId: 'm-task-ignore',
+      sessionId: 'session-11',
+      senderRole: 'builder',
+      targetRole: 'architect',
+      channel: 'ws',
+      direction: 'outbound',
+      status: 'brokered',
+      rawBody: '(BUILDER #77): TASK: Should not appear in digest highlights',
+      brokeredAtMs: 3000,
+    });
+
+    const result = materializeSessionHandoff({
+      rows: [],
+      crossSessionRows: crossRows,
+      queryClaims: () => ({ ok: true, claims: [] }),
+      outputPath,
+      legacyMirrorPath: false,
+      sessionId: 'session-current',
+      nowMs: 10_000,
+    });
+
+    expect(result.ok).toBe(true);
+    const content = fs.readFileSync(outputPath, 'utf8');
+    const digestSection = content
+      .split('## Decision Digest')[1]
+      .split('## Cross-Session Decisions')[0];
+
+    const sessionRows = digestSection
+      .split('\n')
+      .filter((line) => line.startsWith('| session-'));
+
+    expect(sessionRows.length).toBe(10);
+    expect(digestSection).toContain('| session-11 |');
+    expect(digestSection).toContain('| session-2 |');
+    expect(digestSection).not.toContain('| session-1 |');
+    expect(digestSection).not.toContain('| session-0 |');
+    expect(digestSection).not.toContain('TASK: Should not appear in digest highlights');
   });
 
   test('removeLegacyPaneHandoffFiles deletes legacy files', () => {

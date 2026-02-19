@@ -26,7 +26,12 @@ const TAG_RULES = Object.freeze({
   },
 });
 
-const TAG_PATTERN = /\b(DECISION|TASK|FINDING|BLOCKER)\s*:\s*(.+)$/i;
+const TAG_PATTERN = /^(DECISION|TASK|FINDING|BLOCKER)\s*:\s*(.+)$/i;
+const KNOWN_TAG_PREFIX_PATTERNS = [
+  /^\[[^\]]+\]\s*/,
+  /^\([^)]+#\d+\)\s*:\s*/i,
+  /^[-*]\s+/,
+];
 const DEFAULT_EXTRACT_LIMIT = 5000;
 
 const OWNER_ALIAS_MAP = new Map([
@@ -71,6 +76,23 @@ function normalizeDetail(rawDetail = '') {
   return `${normalized.slice(0, 317)}...`;
 }
 
+function stripKnownTagPrefixes(line) {
+  let normalized = String(line || '').trim();
+  if (!normalized) return '';
+  for (let i = 0; i < 6; i += 1) {
+    let changed = false;
+    for (const pattern of KNOWN_TAG_PREFIX_PATTERNS) {
+      const next = normalized.replace(pattern, '');
+      if (next !== normalized) {
+        normalized = next.trimStart();
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return normalized;
+}
+
 function toEventTsMs(row = {}, nowMs = Date.now()) {
   const candidates = [row.brokeredAtMs, row.sentAtMs, row.updatedAtMs, nowMs];
   for (const candidate of candidates) {
@@ -90,7 +112,8 @@ function extractTaggedItems(rawBody = '') {
 
   const items = [];
   for (const line of lines) {
-    const match = line.match(TAG_PATTERN);
+    const normalizedLine = stripKnownTagPrefixes(line);
+    const match = normalizedLine.match(TAG_PATTERN);
     if (!match) continue;
     const tag = String(match[1] || '').toUpperCase();
     const detail = normalizeDetail(match[2] || '');
