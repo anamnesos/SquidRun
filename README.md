@@ -1,6 +1,6 @@
 # Hivemind
 
-Hivemind is a local-first Electron app that runs **Claude, Codex, and Gemini simultaneously** as a coordinated coding team on your machine.
+Hivemind is a local-first Electron app that runs **Claude, Codex, and Gemini simultaneously** as a coordinated coding team on your machine. Most multi-agent tools run multiple copies of one model — Hivemind intentionally combines different providers so each role gets the model best suited for it.
 
 You can run it with a single model, but it's designed — and recommended — to run **different models from different companies** in each role:
 
@@ -34,11 +34,20 @@ Each pane in Hivemind runs a real CLI process — the same tool you'd use in you
 
 **This is just running official CLIs on your machine.** Hivemind launches and manages the same CLI tools you'd run in separate terminal windows — it just orchestrates them. Each provider explicitly includes CLI usage in their subscription plans (see links above). There's no API key scraping, no token proxying, no terms of service gray area.
 
+> Subscription details and pricing as of February 2026. Check each provider's links above for current terms.
+
 ### Talk To Your Team From Anywhere Via Telegram
 
 Hivemind integrates with Telegram so you can communicate with your agent team from your phone. Walk away from your desk, and your Architect agent keeps working — you can check status, give new instructions, or review progress from the field. The Architect relays your messages to Builder and Oracle, and sends you updates, screenshots, and results right in the chat.
 
 This turns Hivemind into an always-available development team you can manage from anywhere with a phone signal.
+
+**Quick setup:**
+1. Create a Telegram bot via [@BotFather](https://t.me/botfather) and copy your bot token
+2. Add `TELEGRAM_BOT_TOKEN=<your-token>` and `TELEGRAM_CHAT_ID=<your-chat-id>` to your `.env` file
+3. Start Hivemind — the Architect will automatically pick up messages from Telegram and reply in the same channel
+
+**Note:** Telegram messages can trigger real actions on your local machine (file edits, commands, git operations). Only use your own bot token and chat ID.
 
 ## Key Features
 
@@ -52,6 +61,25 @@ This turns Hivemind into an always-available development team you can manage fro
 - Durable communication history in SQLite via `comms_journal`
 - Auto-materialized session handoff for continuity across restarts
 - Screenshot capture with remote delivery for monitoring agent progress
+
+## Quickstart (5 Minutes)
+
+```bash
+# 1. Clone and install
+git clone https://github.com/anamnesos/hivemind.git
+cd hivemind/ui && npm install
+
+# 2. Make sure your CLIs are authenticated (run whichever you have)
+claude --version    # Sign in if prompted
+codex --version     # Sign in if prompted
+gemini --version    # Sign in with Google if prompted
+
+# 3. Launch
+npm start
+
+# 4. In Settings, assign each pane's CLI (e.g. pane 1 = claude, pane 2 = codex, pane 5 = gemini)
+# 5. You're running a multi-model agent team
+```
 
 ## Architecture Overview
 
@@ -88,22 +116,22 @@ This turns Hivemind into an always-available development team you can manage fro
 
 Core implementation lives in `ui/modules/`, `ui/modules/main/`, and `ui/scripts/`.
 
-## Setup And Install
+## Detailed Setup
 
 ### Prerequisites
 
 - Node.js 18+
 - npm
-- At least one coding CLI installed and authenticated with your subscription:
-  - `claude` — requires [Claude Pro or Max](https://claude.ai/upgrade) subscription
-  - `codex` — requires [ChatGPT Plus or Pro](https://chatgpt.com/) subscription
-  - `gemini` — works with [free tier](https://ai.google.dev/) or Google One AI Premium
-- For the full 3-agent experience, install all three (each runs in its own pane)
+- At least one coding CLI installed and authenticated:
+  - `claude` — requires [Claude Pro or Max](https://claude.ai/upgrade) subscription → run `claude` and sign in
+  - `codex` — requires [ChatGPT Plus, Pro, Business, or Enterprise](https://chatgpt.com/) subscription → run `codex` and sign in
+  - `gemini` — free with any [Google account](https://ai.google.dev/) (1,000 requests/day) → run `gemini` and sign in with Google
+- For the full multi-model experience, install all three (each runs in its own pane)
 
 ### Install
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/anamnesos/hivemind.git
 cd hivemind/ui
 npm install
 ```
