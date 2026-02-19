@@ -88,203 +88,208 @@
   </div>
 
   <div class="settings-panel" id="settingsPanel">
-    <div class="settings-section">
-      <div class="settings-section-title">User Profile</div>
-      <div class="settings-subgrid settings-two-col">
-        <div class="setting-field">
-          <label class="setting-label">Your name</label>
-          <input type="text" class="settings-input" data-setting="userName" placeholder="Enter name" spellcheck="false">
-        </div>
-        <div class="setting-field">
-          <label class="setting-label">Experience level</label>
-          <select class="settings-select" data-setting="userExperienceLevel">
-            <option value="beginner">Beginner</option>
-            <option value="intermediate">Intermediate</option>
-            <option value="advanced">Advanced</option>
-            <option value="expert">Expert</option>
-          </select>
-        </div>
+    <div class="settings-shell">
+      <div class="settings-header">
+        <p class="settings-eyebrow">Workspace Controls</p>
+        <h2 class="settings-heading">Session Settings</h2>
+        <p class="settings-subtitle">Tune launch behavior, autonomy, voice commands, and alert routing for this workspace.</p>
       </div>
-      <div class="settings-subgrid settings-two-col" style="margin-top: 0;">
-        <div class="setting-field">
-          <label class="setting-label">Communication style</label>
-          <select class="settings-select" data-setting="userPreferredStyle">
-            <option value="detailed">Detailed — thorough explanations</option>
-            <option value="balanced">Balanced — standard</option>
-            <option value="concise">Concise — brief and direct</option>
-          </select>
-        </div>
-      </div>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">General</div>
-      <div class="settings-grid">
-        <div class="setting-item" title="Automatically start agents in all panes when Hivemind launches">
-          <div class="toggle" id="toggleAutoSpawn" data-setting="autoSpawn"></div>
-          <span class="setting-label">Auto-spawn agents on start</span>
-        </div>
-        <div class="setting-item" title="Broadcast context updates to agents when workflow state changes">
-          <div class="toggle" id="toggleAutoSync" data-setting="autoSync"></div>
-          <span class="setting-label">Auto-sync context on state change</span>
-        </div>
-        <div class="setting-item" title="Play sound when agents complete tasks or encounter errors">
-          <div class="toggle" id="toggleNotifications" data-setting="notifications"></div>
-          <span class="setting-label">Sound notifications</span>
-        </div>
-        <div class="setting-item" title="Open Chrome DevTools when Hivemind starts (for debugging)">
-          <div class="toggle" id="toggleDevTools" data-setting="devTools"></div>
-          <span class="setting-label">Open DevTools on start</span>
-        </div>
-        <div class="setting-item" title="Send sync messages to agents when workflow state changes">
-          <div class="toggle active" id="toggleAgentNotify" data-setting="agentNotify"></div>
-          <span class="setting-label">Notify agents on state change</span>
-        </div>
-        <div class="setting-item" title="Watch for file changes in workspace (triggers, context updates)">
-          <div class="toggle active" id="toggleWatcher" data-setting="watcherEnabled"></div>
-          <span class="setting-label">File watcher enabled</span>
-        </div>
-        <div class="setting-item" title="Simulate agent responses without spawning real agent instances">
-          <div class="toggle" id="toggleDryRun" data-setting="dryRun"></div>
-          <span class="setting-label">Dry-run mode (simulate agents)</span>
-        </div>
-        <div class="setting-item" title="Automatically configure MCP server for each agent on spawn">
-          <div class="toggle active" id="toggleMCPAutoConfig" data-setting="mcpAutoConfig"></div>
-          <span class="setting-label">Auto-configure MCP on spawn</span>
-        </div>
-        <div class="setting-item" title="Developer Mode: agents read project instruction files directly (for working on Hivemind itself). Project Mode: agents get role identity from firmware, project instructions are respected but Hivemind protocols take priority.">
-          <span class="setting-label">Operating Mode</span>
-          <select class="settings-select" data-setting="operatingMode">
-            <option value="developer">Developer Mode (direct instructions)</option>
-            <option value="project">Project Mode (firmware + decoupled)</option>
-          </select>
-        </div>
-      </div>
-    </div>
 
-    <div class="settings-section">
-      <div class="settings-section-title">Voice Control</div>
-      <div class="settings-grid">
-        <div class="setting-item" title="Enable speech-to-text for the command bar">
-          <div class="toggle" id="toggleVoiceInputEnabled" data-setting="voiceInputEnabled"></div>
-          <span class="setting-label">Voice input</span>
+      <div class="settings-layout">
+        <div class="settings-section">
+          <div class="settings-section-title">General</div>
+          <p class="settings-section-description">Core runtime controls for startup and orchestration.</p>
+          <div class="settings-items">
+            <div class="setting-item" title="Automatically start agents in all panes when Hivemind launches">
+              <div class="setting-copy">
+                <span class="setting-label">Auto-spawn agents on start</span>
+                <span class="setting-description">Launch all panes after session initialization is complete.</span>
+              </div>
+              <div class="toggle" id="toggleAutoSpawn" data-setting="autoSpawn" role="switch" aria-label="Auto-spawn agents on start"></div>
+            </div>
+            <div class="setting-item" title="Broadcast context updates to agents when workflow state changes">
+              <div class="setting-copy">
+                <span class="setting-label">Auto-sync context on state change</span>
+                <span class="setting-description">Propagate state transitions across agents automatically.</span>
+              </div>
+              <div class="toggle" id="toggleAutoSync" data-setting="autoSync" role="switch" aria-label="Auto-sync context on state change"></div>
+            </div>
+            <div class="setting-item" title="Open Chrome DevTools when Hivemind starts (for debugging)">
+              <div class="setting-copy">
+                <span class="setting-label">Open DevTools on start</span>
+                <span class="setting-description">Useful when debugging renderer/main behavior locally.</span>
+              </div>
+              <div class="toggle" id="toggleDevTools" data-setting="devTools" role="switch" aria-label="Open DevTools on start"></div>
+            </div>
+            <div class="setting-item" title="Watch for file changes in workspace (triggers, context updates)">
+              <div class="setting-copy">
+                <span class="setting-label">File watcher enabled</span>
+                <span class="setting-description">Keep sync and triggers responsive to file updates.</span>
+              </div>
+              <div class="toggle" id="toggleWatcher" data-setting="watcherEnabled" role="switch" aria-label="File watcher enabled"></div>
+            </div>
+            <div class="setting-item" title="Simulate agent responses without spawning real agent instances">
+              <div class="setting-copy">
+                <span class="setting-label">Dry-run mode</span>
+                <span class="setting-description">Validate orchestration paths without launching live agents.</span>
+              </div>
+              <div class="toggle" id="toggleDryRun" data-setting="dryRun" role="switch" aria-label="Dry-run mode"></div>
+            </div>
+          </div>
+          <div class="setting-field">
+            <label class="setting-label" for="operatingModeSelect">Operating mode</label>
+            <p class="setting-description">Developer mode reads project instructions directly. Project mode prioritizes firmware protocol behavior.</p>
+            <select class="settings-select" id="operatingModeSelect" data-setting="operatingMode">
+              <option value="developer">Developer Mode (direct instructions)</option>
+              <option value="project">Project Mode (firmware + decoupled)</option>
+            </select>
+          </div>
         </div>
-        <div class="setting-item" title="Auto-send dictation when you stop listening">
-          <div class="toggle" id="toggleVoiceAutoSend" data-setting="voiceAutoSend"></div>
-          <span class="setting-label">Auto-send dictation</span>
-        </div>
-      </div>
-      <div class="settings-subgrid">
-        <div class="setting-field">
-          <label class="setting-label">Voice language</label>
-          <input type="text" class="settings-input" data-setting="voiceLanguage" placeholder="en-US" spellcheck="false">
-        </div>
-      </div>
-    </div>
 
-    <div class="settings-section">
-      <div class="settings-section-title">Permissions</div>
-      <div class="settings-grid">
-        <div class="setting-item" title="Enable autonomous mode (agents skip native CLI permission prompts)">
-          <div class="toggle" id="toggleAllowAllPermissions" data-setting="allowAllPermissions"></div>
-          <span class="setting-label">Autonomy mode (skip prompts)</span>
+        <div class="settings-section">
+          <div class="settings-section-title">Permissions</div>
+          <p class="settings-section-description">Controls for autonomous execution behavior.</p>
+          <div class="settings-items">
+            <div class="setting-item" title="Enable autonomous mode (agents skip native CLI permission prompts)">
+              <div class="setting-copy">
+                <span class="setting-label">Autonomy mode (skip prompts)</span>
+                <span class="setting-description">Lets trusted runs proceed without per-command confirmation.</span>
+              </div>
+              <div class="toggle" id="toggleAllowAllPermissions" data-setting="allowAllPermissions" role="switch" aria-label="Autonomy mode"></div>
+            </div>
+          </div>
+          <div class="permissions-warning" id="permissionsWarning" style="display: none;">
+            Autonomy mode bypasses native permission prompts. Use only for trusted projects.
+          </div>
         </div>
-        <div class="setting-item" title="Allow agents to read files from the filesystem">
-          <div class="toggle" id="toggleAllowRead" data-setting="allowRead"></div>
-          <span class="setting-label">Read files</span>
-        </div>
-        <div class="setting-item" title="Allow agents to create and modify files">
-          <div class="toggle" id="toggleAllowWrite" data-setting="allowWrite"></div>
-          <span class="setting-label">Write files</span>
-        </div>
-        <div class="setting-item" title="Allow agents to execute shell commands (npm, git, etc.)">
-          <div class="toggle" id="toggleAllowBash" data-setting="allowBash"></div>
-          <span class="setting-label">Run commands</span>
-        </div>
-      </div>
-      <div class="permissions-warning" id="permissionsWarning" style="display: none;">
-        ⚠️ Autonomy mode bypasses native permission prompts. Use only for trusted projects.
-      </div>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">Cost Alerts</div>
-      <div class="settings-grid">
-        <div class="setting-item" title="Show warning when estimated session cost exceeds threshold">
-          <div class="toggle active" id="toggleCostAlertEnabled" data-setting="costAlertEnabled"></div>
-          <span class="setting-label">Enable cost alerts</span>
-        </div>
-      </div>
-      <div class="cost-threshold-setting" title="Dollar amount that triggers a cost warning">
-        <label class="setting-label">Alert threshold: $</label>
-        <input type="number" id="costAlertThreshold" class="threshold-input" value="5.00" min="0.01" step="0.50" title="Estimated cost limit before warning">
-      </div>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">External Notifications</div>
-      <div class="settings-grid">
-        <div class="setting-item" title="Send external notifications for alerts and completions">
-          <div class="toggle" id="toggleExternalNotificationsEnabled" data-setting="externalNotificationsEnabled"></div>
-          <span class="setting-label">Enable external notifications</span>
-        </div>
-        <div class="setting-item" title="Send alerts (watchdog, cost, errors) to external channels">
-          <div class="toggle" id="toggleNotifyOnAlerts" data-setting="notifyOnAlerts"></div>
-          <span class="setting-label">Alerts</span>
-        </div>
-        <div class="setting-item" title="Send task completion notifications to external channels">
-          <div class="toggle" id="toggleNotifyOnCompletions" data-setting="notifyOnCompletions"></div>
-          <span class="setting-label">Task completions</span>
-        </div>
-      </div>
-      <div class="settings-subgrid">
-        <div class="setting-field">
-          <label class="setting-label">Slack webhook</label>
-          <input type="text" class="settings-input" data-setting="slackWebhookUrl" placeholder="https://hooks.slack.com/..." spellcheck="false">
-        </div>
-        <div class="setting-field">
-          <label class="setting-label">Discord webhook</label>
-          <input type="text" class="settings-input" data-setting="discordWebhookUrl" placeholder="https://discord.com/api/webhooks/..." spellcheck="false">
-        </div>
-      </div>
-      <div class="settings-subgrid">
-        <div class="setting-item" title="Send notifications via SMTP email">
-          <div class="toggle" id="toggleEmailNotificationsEnabled" data-setting="emailNotificationsEnabled"></div>
-          <span class="setting-label">Email notifications</span>
-        </div>
-        <div class="setting-item" title="Use SSL/TLS for SMTP (typically port 465)">
-          <div class="toggle" id="toggleSmtpSecure" data-setting="smtpSecure"></div>
-          <span class="setting-label">SMTP SSL/TLS</span>
-        </div>
-      </div>
-      <div class="settings-subgrid settings-two-col">
-        <div class="setting-field">
-          <label class="setting-label">SMTP host</label>
-          <input type="text" class="settings-input" data-setting="smtpHost" placeholder="smtp.example.com" spellcheck="false">
-        </div>
-        <div class="setting-field">
-          <label class="setting-label">SMTP port</label>
-          <input type="number" class="settings-input settings-input-short" data-setting="smtpPort" placeholder="587" min="1" step="1">
-        </div>
-        <div class="setting-field">
-          <label class="setting-label">SMTP user</label>
-          <input type="text" class="settings-input" data-setting="smtpUser" placeholder="user@example.com" spellcheck="false">
-        </div>
-        <div class="setting-field">
-          <label class="setting-label">SMTP password</label>
-          <input type="password" class="settings-input" data-setting="smtpPass" placeholder="app password">
-        </div>
-        <div class="setting-field">
-          <label class="setting-label">From</label>
-          <input type="text" class="settings-input" data-setting="smtpFrom" placeholder="alerts@example.com" spellcheck="false">
-        </div>
-        <div class="setting-field">
-          <label class="setting-label">To</label>
-          <input type="text" class="settings-input" data-setting="smtpTo" placeholder="you@example.com, team@example.com" spellcheck="false">
-        </div>
-      </div>
-      <div class="settings-actions">
-        <button class="btn btn-sm" id="sendExternalTestBtn" title="Send a test external notification">Send test</button>
-      </div>
-    </div>
 
+        <div class="settings-section">
+          <div class="settings-section-title">Voice Control</div>
+          <p class="settings-section-description">Speech-to-text behavior for the command bar.</p>
+          <div class="settings-items">
+            <div class="setting-item" title="Enable speech-to-text for the command bar">
+              <div class="setting-copy">
+                <span class="setting-label">Voice input</span>
+                <span class="setting-description">Enables microphone capture for command dictation.</span>
+              </div>
+              <div class="toggle" id="toggleVoiceInputEnabled" data-setting="voiceInputEnabled" role="switch" aria-label="Voice input"></div>
+            </div>
+            <div class="setting-item" title="Auto-send dictation when you stop listening">
+              <div class="setting-copy">
+                <span class="setting-label">Auto-send dictation</span>
+                <span class="setting-description">Submit recognized speech automatically when recording ends.</span>
+              </div>
+              <div class="toggle" id="toggleVoiceAutoSend" data-setting="voiceAutoSend" role="switch" aria-label="Auto-send dictation"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title">Cost Alerts</div>
+          <p class="settings-section-description">Warn when estimated session spend crosses your threshold.</p>
+          <div class="settings-items">
+            <div class="setting-item" title="Show warning when estimated session cost exceeds threshold">
+              <div class="setting-copy">
+                <span class="setting-label">Enable cost alerts</span>
+                <span class="setting-description">Tracks estimated spend and raises early warnings.</span>
+              </div>
+              <div class="toggle" id="toggleCostAlertEnabled" data-setting="costAlertEnabled" role="switch" aria-label="Enable cost alerts"></div>
+            </div>
+          </div>
+          <div class="cost-threshold-setting" title="Dollar amount that triggers a cost warning">
+            <label class="setting-label" for="costAlertThreshold">Alert threshold (USD)</label>
+            <input type="number" id="costAlertThreshold" class="threshold-input" value="5.00" min="0.01" step="0.50" title="Estimated cost limit before warning">
+          </div>
+        </div>
+
+        <div class="settings-section settings-section-wide">
+          <div class="settings-section-title">External Notifications</div>
+          <p class="settings-section-description">Send alerts and completion updates to webhook and email channels.</p>
+          <div class="settings-items">
+            <div class="setting-item" title="Send external notifications for alerts and completions">
+              <div class="setting-copy">
+                <span class="setting-label">Enable external notifications</span>
+                <span class="setting-description">Master switch for outbound notification delivery.</span>
+              </div>
+              <div class="toggle" id="toggleExternalNotificationsEnabled" data-setting="externalNotificationsEnabled" role="switch" aria-label="Enable external notifications"></div>
+            </div>
+            <div class="setting-item" title="Send alerts (watchdog, cost, errors) to external channels">
+              <div class="setting-copy">
+                <span class="setting-label">Send alert events</span>
+                <span class="setting-description">Includes watchdog warnings, errors, and cost alerts.</span>
+              </div>
+              <div class="toggle" id="toggleNotifyOnAlerts" data-setting="notifyOnAlerts" role="switch" aria-label="Send alert events"></div>
+            </div>
+            <div class="setting-item" title="Send task completion notifications to external channels">
+              <div class="setting-copy">
+                <span class="setting-label">Send completion events</span>
+                <span class="setting-description">Sends notifications when major tasks or flows complete.</span>
+              </div>
+              <div class="toggle" id="toggleNotifyOnCompletions" data-setting="notifyOnCompletions" role="switch" aria-label="Send completion events"></div>
+            </div>
+          </div>
+
+          <div class="settings-subgrid">
+            <div class="setting-field">
+              <label class="setting-label" for="slackWebhookField">Slack webhook</label>
+              <input type="text" id="slackWebhookField" class="settings-input" data-setting="slackWebhookUrl" placeholder="https://hooks.slack.com/..." spellcheck="false">
+            </div>
+            <div class="setting-field">
+              <label class="setting-label" for="discordWebhookField">Discord webhook</label>
+              <input type="text" id="discordWebhookField" class="settings-input" data-setting="discordWebhookUrl" placeholder="https://discord.com/api/webhooks/..." spellcheck="false">
+            </div>
+          </div>
+
+          <div class="settings-items">
+            <div class="setting-item" title="Send notifications via SMTP email">
+              <div class="setting-copy">
+                <span class="setting-label">Email notifications</span>
+                <span class="setting-description">Deliver messages through your SMTP server.</span>
+              </div>
+              <div class="toggle" id="toggleEmailNotificationsEnabled" data-setting="emailNotificationsEnabled" role="switch" aria-label="Email notifications"></div>
+            </div>
+            <div class="setting-item" title="Use SSL/TLS for SMTP (typically port 465)">
+              <div class="setting-copy">
+                <span class="setting-label">SMTP SSL/TLS</span>
+                <span class="setting-description">Use encrypted transport for SMTP delivery.</span>
+              </div>
+              <div class="toggle" id="toggleSmtpSecure" data-setting="smtpSecure" role="switch" aria-label="SMTP SSL/TLS"></div>
+            </div>
+          </div>
+
+          <div class="settings-subgrid settings-two-col">
+            <div class="setting-field">
+              <label class="setting-label" for="smtpHostField">SMTP host</label>
+              <input type="text" id="smtpHostField" class="settings-input" data-setting="smtpHost" placeholder="smtp.example.com" spellcheck="false">
+            </div>
+            <div class="setting-field">
+              <label class="setting-label" for="smtpPortField">SMTP port</label>
+              <input type="number" id="smtpPortField" class="settings-input settings-input-short" data-setting="smtpPort" placeholder="587" min="1" step="1">
+            </div>
+            <div class="setting-field">
+              <label class="setting-label" for="smtpUserField">SMTP user</label>
+              <input type="text" id="smtpUserField" class="settings-input" data-setting="smtpUser" placeholder="user@example.com" spellcheck="false">
+            </div>
+            <div class="setting-field">
+              <label class="setting-label" for="smtpPassField">SMTP password</label>
+              <input type="password" id="smtpPassField" class="settings-input" data-setting="smtpPass" placeholder="app password">
+            </div>
+            <div class="setting-field">
+              <label class="setting-label" for="smtpFromField">From</label>
+              <input type="text" id="smtpFromField" class="settings-input" data-setting="smtpFrom" placeholder="alerts@example.com" spellcheck="false">
+            </div>
+            <div class="setting-field">
+              <label class="setting-label" for="smtpToField">To</label>
+              <input type="text" id="smtpToField" class="settings-input" data-setting="smtpTo" placeholder="you@example.com, team@example.com" spellcheck="false">
+            </div>
+          </div>
+
+          <div class="settings-actions">
+            <button class="btn btn-sm" id="sendExternalTestBtn" title="Send a test external notification">Send Test Notification</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="state-bar">
