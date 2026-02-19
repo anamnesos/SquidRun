@@ -554,7 +554,7 @@ describe('HivemindApp', () => {
       }).not.toThrow();
     });
 
-    it('should call cleanup functions', () => {
+    it('should call cleanup functions', async () => {
       const websocketServer = require('../modules/websocket-server');
       const watcher = require('../modules/watcher');
       const smsPoller = require('../modules/sms-poller');
@@ -564,6 +564,7 @@ describe('HivemindApp', () => {
       const experiment = require('../modules/experiment');
 
       app.shutdown();
+      await new Promise((resolve) => setImmediate(resolve));
 
       expect(closeSharedRuntime).toHaveBeenCalled();
       expect(experiment.closeExperimentRuntime).toHaveBeenCalled();

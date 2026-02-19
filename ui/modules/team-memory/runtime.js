@@ -7,9 +7,36 @@ const { runBackfill } = require('./backfill');
 const { extractTaggedClaimsFromComms } = require('./comms-tagged-extractor');
 const { scanOrphanedEvidenceRefs } = require('./integrity-checker');
 const { executeExperimentOperation } = require('../experiment/runtime');
+const log = require('../logger');
 const { resolveCoordPath } = require('../../config');
 
 let sharedRuntime = null;
+const RUNTIME_LIFECYCLE_STATE = Object.freeze({
+  STOPPED: 'stopped',
+  STARTING: 'starting',
+  RUNNING: 'running',
+  STOPPING: 'stopping',
+});
+const ALLOWED_RUNTIME_TRANSITIONS = Object.freeze({
+  [RUNTIME_LIFECYCLE_STATE.STOPPED]: new Set([RUNTIME_LIFECYCLE_STATE.STARTING, RUNTIME_LIFECYCLE_STATE.STOPPING]),
+  [RUNTIME_LIFECYCLE_STATE.STARTING]: new Set([RUNTIME_LIFECYCLE_STATE.RUNNING, RUNTIME_LIFECYCLE_STATE.STOPPED]),
+  [RUNTIME_LIFECYCLE_STATE.RUNNING]: new Set([RUNTIME_LIFECYCLE_STATE.STOPPING]),
+  [RUNTIME_LIFECYCLE_STATE.STOPPING]: new Set([RUNTIME_LIFECYCLE_STATE.STOPPED]),
+});
+let runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
+
+function transitionRuntimeLifecycle(nextState, reason = 'unspecified') {
+  const currentState = runtimeLifecycleState;
+  if (currentState === nextState) return true;
+  const allowed = ALLOWED_RUNTIME_TRANSITIONS[currentState];
+  if (!allowed || !allowed.has(nextState)) {
+    log.warn('TeamMemoryRuntime', `Illegal runtime transition ${currentState} -> ${nextState} (${reason})`);
+    return false;
+  }
+  runtimeLifecycleState = nextState;
+  log.info('TeamMemoryRuntime', `Runtime transition ${currentState} -> ${nextState} (${reason})`);
+  return true;
+}
 
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -83,6 +110,9 @@ function getSharedRuntime(deps = {}) {
   const recreateUnavailable = deps.recreateUnavailable !== false;
 
   if (forceRuntimeRecreate) {
+    if (runtimeLifecycleState === RUNTIME_LIFECYCLE_STATE.STARTING || runtimeLifecycleState === RUNTIME_LIFECYCLE_STATE.STOPPING) {
+      log.warn('TeamMemoryRuntime', `forceRuntimeRecreate requested while ${runtimeLifecycleState}`);
+    }
     closeSharedRuntime();
   }
 
@@ -101,18 +131,35 @@ function getSharedRuntime(deps = {}) {
   }
 
   if (sharedRuntime) return sharedRuntime;
-  sharedRuntime = factory(runtimeOptions);
+  if (!transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STARTING, 'get-shared-runtime')) {
+    throw new Error(`illegal_runtime_transition:${runtimeLifecycleState}->${RUNTIME_LIFECYCLE_STATE.STARTING}`);
+  }
+  try {
+    sharedRuntime = factory(runtimeOptions);
+    transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.RUNNING, 'get-shared-runtime');
+  } catch (err) {
+    transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPED, 'get-shared-runtime-error');
+    throw err;
+  }
   return sharedRuntime;
 }
 
 function closeSharedRuntime() {
-  if (!sharedRuntime) return;
+  if (!sharedRuntime) {
+    if (runtimeLifecycleState !== RUNTIME_LIFECYCLE_STATE.STOPPED) {
+      transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPING, 'close-shared-runtime');
+      transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPED, 'close-shared-runtime');
+    }
+    return;
+  }
+  transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPING, 'close-shared-runtime');
   try {
     sharedRuntime.store?.close?.();
   } catch {
     // best effort
   }
   sharedRuntime = null;
+  transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPED, 'close-shared-runtime');
 }
 
 function initializeTeamMemoryRuntime(options = {}) {
@@ -346,4 +393,5 @@ module.exports = {
   initializeTeamMemoryRuntime,
   executeTeamMemoryOperation,
   closeSharedRuntime,
+  getRuntimeLifecycleState: () => runtimeLifecycleState,
 };
