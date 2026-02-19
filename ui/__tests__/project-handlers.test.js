@@ -25,8 +25,16 @@ jest.mock('../modules/logger', () => ({
   error: jest.fn(),
   warn: jest.fn(),
 }));
+jest.mock('../modules/ipc/evidence-ledger-runtime', () => ({
+  initializeEvidenceLedgerRuntime: jest.fn(() => ({ ok: true, status: { driver: 'in-process' } })),
+}));
+jest.mock('../modules/team-memory/runtime', () => ({
+  initializeTeamMemoryRuntime: jest.fn(() => ({ ok: true, status: { driver: 'in-process' } })),
+}));
 
 const fs = require('fs');
+const { initializeEvidenceLedgerRuntime } = require('../modules/ipc/evidence-ledger-runtime');
+const { initializeTeamMemoryRuntime } = require('../modules/team-memory/runtime');
 const { registerProjectHandlers } = require('../modules/ipc/project-handlers');
 
 describe('Project Handlers', () => {
@@ -66,6 +74,8 @@ describe('Project Handlers', () => {
     fs.existsSync.mockReturnValue(true);
 
     registerProjectHandlers(ctx, deps);
+    initializeEvidenceLedgerRuntime.mockClear();
+    initializeTeamMemoryRuntime.mockClear();
   });
 
   afterEach(() => {
@@ -178,6 +188,13 @@ describe('Project Handlers', () => {
       const savedSettings = deps.saveSettings.mock.calls[0][0];
       expect(savedSettings.recentProjects.length).toBe(1);
       expect(savedSettings.recentProjects[0].path).toBe('/selected/project');
+    });
+
+    test('rebinds evidence/team memory runtimes after selecting project', async () => {
+      await harness.invoke('select-project');
+
+      expect(initializeEvidenceLedgerRuntime).toHaveBeenCalledWith({ forceRuntimeRecreate: true });
+      expect(initializeTeamMemoryRuntime).toHaveBeenCalledWith({ forceRuntimeRecreate: true });
     });
 
     test('moves existing project to front', async () => {
@@ -362,6 +379,13 @@ describe('Project Handlers', () => {
       await harness.invoke('switch-project', '/project');
 
       expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('project-changed', '/project');
+    });
+
+    test('rebinds evidence/team memory runtimes after switching project', async () => {
+      await harness.invoke('switch-project', '/project');
+
+      expect(initializeEvidenceLedgerRuntime).toHaveBeenCalledWith({ forceRuntimeRecreate: true });
+      expect(initializeTeamMemoryRuntime).toHaveBeenCalledWith({ forceRuntimeRecreate: true });
     });
   });
 
