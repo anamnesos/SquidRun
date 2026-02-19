@@ -195,8 +195,28 @@ function maybeAutoApprovePrompt(paneId, data) {
   autoApproveState.set(paneId, state);
 }
 
-// U1: Scrollback buffer settings - keep last 50KB of output per terminal
+// U1: Scrollback buffer settings - keep last 50KB of output per terminal by default.
+// Background builders can override this per-terminal with a lower cap.
 const SCROLLBACK_MAX_SIZE = 50000;
+
+function normalizeScrollbackMaxSize(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return SCROLLBACK_MAX_SIZE;
+  }
+  return parsed;
+}
+
+function appendToScrollback(terminal, chunk) {
+  if (!terminal) return;
+  const text = typeof chunk === 'string' ? chunk : String(chunk ?? '');
+  if (!text) return;
+  terminal.scrollback += text;
+  const maxSize = normalizeScrollbackMaxSize(terminal.scrollbackMaxSize);
+  if (terminal.scrollback.length > maxSize) {
+    terminal.scrollback = terminal.scrollback.slice(-maxSize);
+  }
+}
 
 // Default stuck threshold (60 seconds)
 const DEFAULT_STUCK_THRESHOLD = 60000;
@@ -1131,10 +1151,7 @@ function sendMockData(paneId, text, callback) {
     if (index < text.length && terminal.alive) {
       const char = text[index];
       // Buffer for scrollback
-      terminal.scrollback += char;
-      if (terminal.scrollback.length > SCROLLBACK_MAX_SIZE) {
-        terminal.scrollback = terminal.scrollback.slice(-SCROLLBACK_MAX_SIZE);
-      }
+      appendToScrollback(terminal, char);
       // Broadcast character
       broadcast({ event: 'data', paneId, data: char });
 
@@ -1250,6 +1267,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
       alive: true,
       cwd: workDir,
       scrollback: '',
+      scrollbackMaxSize: normalizeScrollbackMaxSize(options?.scrollbackMaxSize),
       dryRun: true,
       mode: 'dry-run',
       inputBuffer: '', // Buffer for accumulating input
@@ -1294,6 +1312,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     alive: true,
     cwd: workDir,
     scrollback: '', // U1: Buffer for scrollback persistence
+    scrollbackMaxSize: normalizeScrollbackMaxSize(options?.scrollbackMaxSize),
     dryRun: false,
     mode: 'pty',
     createdAt: Date.now(), // Track terminal creation time (for reattach guard)
@@ -1323,11 +1342,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     maybeAutoApprovePrompt(paneId, data);
 
     // U1: Buffer output for scrollback persistence
-    terminalInfo.scrollback += data;
-    if (terminalInfo.scrollback.length > SCROLLBACK_MAX_SIZE) {
-      // Keep only the last SCROLLBACK_MAX_SIZE characters
-      terminalInfo.scrollback = terminalInfo.scrollback.slice(-SCROLLBACK_MAX_SIZE);
-    }
+    appendToScrollback(terminalInfo, data);
 
     broadcast({
       event: 'data',
@@ -1377,7 +1392,7 @@ function writeTerminal(paneId, data) {
     if (data === '\r' || data === '\n') {
       // Enter: echo newline and process command
       broadcast({ event: 'data', paneId, data: '\r\n' });
-      terminal.scrollback += '\r\n';
+      appendToScrollback(terminal, '\r\n');
 
       const input = terminal.inputBuffer;
       terminal.inputBuffer = '';
@@ -1401,7 +1416,7 @@ function writeTerminal(paneId, data) {
     } else {
       // Normal character: echo and add to buffer
       broadcast({ event: 'data', paneId, data });
-      terminal.scrollback += data;
+      appendToScrollback(terminal, data);
       terminal.inputBuffer += data;
     }
     return { ok: true, status: 'accepted' };
@@ -1531,6 +1546,7 @@ function handleMessage(client, message) {
         const result = spawnTerminal(msg.paneId, msg.cwd, msg.dryRun || false, {
           mode: msg.mode,
           env: msg.env,
+          ...(msg.options && typeof msg.options === 'object' ? msg.options : {}),
         });
         sendToClient(client, {
           event: 'spawned',
@@ -1832,7 +1848,7 @@ function handleMessage(client, message) {
         if (terminal.dryRun) {
           // Dry-run: just echo the message
           broadcast({ event: 'data', paneId, data: `\r\n${identityMsg}` });
-          terminal.scrollback += identityMsg;
+          appendToScrollback(terminal, identityMsg);
         } else if (terminal.pty) {
           // Real PTY: write the identity message
           terminal.pty.write(identityMsg);

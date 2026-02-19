@@ -147,7 +147,54 @@ const ROLE_ID_MAP = {
   analyst: '5',    // Legacy alias → Oracle pane
 };
 
+const BACKGROUND_BUILDER_OWNER_PANE_ID = '2';
+const BACKGROUND_BUILDER_MAX_AGENTS = 3;
+const BACKGROUND_BUILDER_SLOT_IDS = ['1', '2', '3'];
+const BACKGROUND_BUILDER_ALIAS_TO_PANE = Object.freeze({
+  'builder-bg-1': 'bg-2-1',
+  'builder-bg-2': 'bg-2-2',
+  'builder-bg-3': 'bg-2-3',
+});
+const BACKGROUND_BUILDER_PANE_TO_ALIAS = Object.freeze({
+  'bg-2-1': 'builder-bg-1',
+  'bg-2-2': 'builder-bg-2',
+  'bg-2-3': 'builder-bg-3',
+});
+const BACKGROUND_BUILDER_PANE_IDS = Object.freeze(
+  BACKGROUND_BUILDER_SLOT_IDS.map((slot) => `bg-${BACKGROUND_BUILDER_OWNER_PANE_ID}-${slot}`)
+);
+
 const PANE_IDS = Object.keys(PANE_ROLES);
+
+function normalizeBackgroundBuilderAlias(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  return BACKGROUND_BUILDER_ALIAS_TO_PANE[normalized] ? normalized : null;
+}
+
+function normalizeBackgroundBuilderPaneId(value) {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) return null;
+  return BACKGROUND_BUILDER_PANE_TO_ALIAS[normalized] ? normalized : null;
+}
+
+function resolveBackgroundBuilderPaneId(target) {
+  const alias = normalizeBackgroundBuilderAlias(target);
+  if (alias) return BACKGROUND_BUILDER_ALIAS_TO_PANE[alias];
+  return normalizeBackgroundBuilderPaneId(target);
+}
+
+function resolveBackgroundBuilderAlias(target) {
+  const paneId = resolveBackgroundBuilderPaneId(target);
+  if (!paneId) return null;
+  return BACKGROUND_BUILDER_PANE_TO_ALIAS[paneId] || null;
+}
+
+function isBackgroundBuilderTarget(target) {
+  return Boolean(resolveBackgroundBuilderPaneId(target));
+}
 
 function normalizeProjectPath(value) {
   if (typeof value !== 'string') return null;
@@ -375,6 +422,17 @@ module.exports = {
   ROLE_NAMES,
   LEGACY_ROLE_ALIASES,
   ROLE_ID_MAP,
+  BACKGROUND_BUILDER_OWNER_PANE_ID,
+  BACKGROUND_BUILDER_MAX_AGENTS,
+  BACKGROUND_BUILDER_SLOT_IDS,
+  BACKGROUND_BUILDER_ALIAS_TO_PANE,
+  BACKGROUND_BUILDER_PANE_TO_ALIAS,
+  BACKGROUND_BUILDER_PANE_IDS,
+  normalizeBackgroundBuilderAlias,
+  normalizeBackgroundBuilderPaneId,
+  resolveBackgroundBuilderPaneId,
+  resolveBackgroundBuilderAlias,
+  isBackgroundBuilderTarget,
   TRIGGER_TARGETS,
   evidenceLedgerEnabled,
   PROTOCOL_ACTIONS,

@@ -550,6 +550,12 @@ describe('HivemindApp', () => {
       expect(app.resolveTargetToPane('investigator')).toBe('5');
     });
 
+    it('should resolve background builder aliases and synthetic pane ids', () => {
+      expect(app.resolveTargetToPane('builder-bg-1')).toBe('bg-2-1');
+      expect(app.resolveTargetToPane('builder-bg-2')).toBe('bg-2-2');
+      expect(app.resolveTargetToPane('bg-2-3')).toBe('bg-2-3');
+    });
+
     it('should return null for invalid targets', () => {
       expect(app.resolveTargetToPane('invalid')).toBeNull();
       expect(app.resolveTargetToPane('7')).toBeNull();

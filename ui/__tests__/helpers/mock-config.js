@@ -77,6 +77,20 @@ const mockDefaultConfig = {
     oracle: '5',
     analyst: '5',
   },
+  BACKGROUND_BUILDER_OWNER_PANE_ID: '2',
+  BACKGROUND_BUILDER_MAX_AGENTS: 3,
+  BACKGROUND_BUILDER_SLOT_IDS: ['1', '2', '3'],
+  BACKGROUND_BUILDER_ALIAS_TO_PANE: {
+    'builder-bg-1': 'bg-2-1',
+    'builder-bg-2': 'bg-2-2',
+    'builder-bg-3': 'bg-2-3',
+  },
+  BACKGROUND_BUILDER_PANE_TO_ALIAS: {
+    'bg-2-1': 'builder-bg-1',
+    'bg-2-2': 'builder-bg-2',
+    'bg-2-3': 'builder-bg-3',
+  },
+  BACKGROUND_BUILDER_PANE_IDS: ['bg-2-1', 'bg-2-2', 'bg-2-3'],
   TRIGGER_TARGETS: {
     'architect.txt': ['1'],
     'builder.txt': ['2'],
@@ -127,6 +141,33 @@ const mockDefaultConfig = {
       .replace(/[/\\]+/g, '/');
     return `${mockDefaultConfig.WORKSPACE_PATH}/${normalized}`;
   },
+  normalizeBackgroundBuilderAlias: (value) => {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return null;
+    return mockDefaultConfig.BACKGROUND_BUILDER_ALIAS_TO_PANE[normalized] ? normalized : null;
+  },
+  normalizeBackgroundBuilderPaneId: (value) => {
+    if (typeof value !== 'string' && typeof value !== 'number') return null;
+    const normalized = String(value).trim().toLowerCase();
+    if (!normalized) return null;
+    return mockDefaultConfig.BACKGROUND_BUILDER_PANE_TO_ALIAS[normalized] ? normalized : null;
+  },
+  resolveBackgroundBuilderPaneId: (target) => {
+    if (typeof target !== 'string' && typeof target !== 'number') return null;
+    const normalized = String(target).trim().toLowerCase();
+    if (!normalized) return null;
+    if (mockDefaultConfig.BACKGROUND_BUILDER_ALIAS_TO_PANE[normalized]) {
+      return mockDefaultConfig.BACKGROUND_BUILDER_ALIAS_TO_PANE[normalized];
+    }
+    return mockDefaultConfig.BACKGROUND_BUILDER_PANE_TO_ALIAS[normalized] ? normalized : null;
+  },
+  resolveBackgroundBuilderAlias: (target) => {
+    const paneId = mockDefaultConfig.resolveBackgroundBuilderPaneId(target);
+    if (!paneId) return null;
+    return mockDefaultConfig.BACKGROUND_BUILDER_PANE_TO_ALIAS[paneId] || null;
+  },
+  isBackgroundBuilderTarget: (target) => Boolean(mockDefaultConfig.resolveBackgroundBuilderPaneId(target)),
 };
 
 /** Minimal mock — only WORKSPACE_PATH (for modules that just need the path) */
