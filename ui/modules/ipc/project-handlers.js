@@ -9,6 +9,8 @@ const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
 const { setProjectRoot, getHivemindRoot } = require('../../config');
+const { initializeEvidenceLedgerRuntime } = require('./evidence-ledger-runtime');
+const { initializeTeamMemoryRuntime } = require('../team-memory/runtime');
 
 const LINK_SCHEMA_VERSION = 1;
 const ROLE_TARGETS = Object.freeze({
@@ -122,10 +124,24 @@ function writeProjectBootstrapFiles(projectPath, deps = {}) {
 function registerProjectHandlers(ctx, deps) {
   const { ipcMain, PANE_IDS } = ctx;
   const { loadSettings, saveSettings } = deps;
+  const rebindProjectScopedRuntimes = () => {
+    try {
+      initializeEvidenceLedgerRuntime({ forceRuntimeRecreate: true });
+    } catch (err) {
+      log.warn('Project', `Evidence Ledger runtime rebind failed: ${err.message}`);
+    }
+
+    try {
+      initializeTeamMemoryRuntime({ forceRuntimeRecreate: true });
+    } catch (err) {
+      log.warn('Project', `Team Memory runtime rebind failed: ${err.message}`);
+    }
+  };
   const syncProjectRoot = (projectPath) => {
     if (typeof setProjectRoot === 'function') {
       setProjectRoot(projectPath || null);
     }
+    rebindProjectScopedRuntimes();
   };
 
   try {
