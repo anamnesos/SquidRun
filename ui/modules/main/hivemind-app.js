@@ -8,12 +8,20 @@ const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
 const { getDaemonClient } = require('../../daemon-client');
-const { WORKSPACE_PATH, PANE_IDS, ROLE_ID_MAP } = require('../../config');
+const {
+  WORKSPACE_PATH,
+  PANE_IDS,
+  ROLE_ID_MAP,
+  BACKGROUND_BUILDER_OWNER_PANE_ID,
+  resolveBackgroundBuilderAlias,
+  resolveBackgroundBuilderPaneId,
+} = require('../../config');
 const { createPluginManager } = require('../plugins');
 const { createBackupManager } = require('../backup-manager');
 const { createRecoveryManager } = require('../recovery-manager');
 const { createExternalNotifier } = require('../external-notifications');
 const { createKernelBridge } = require('./kernel-bridge');
+const { createBackgroundAgentManager } = require('./background-agent-manager');
 const { createPaneHostWindowManager } = require('./pane-host-window-manager');
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 
@@ -129,6 +137,25 @@ class HivemindApp {
     this.paneHostWindowManager = createPaneHostWindowManager({
       getCurrentSettings: () => this.ctx.currentSettings || {},
     });
+    this.backgroundAgentManager = createBackgroundAgentManager({
+      getDaemonClient: () => this.ctx.daemonClient,
+      getSettings: () => this.ctx.currentSettings || {},
+      getSessionScopeId: () => this.commsSessionScopeId,
+      resolveBuilderCwd: () => {
+        const configured = this.ctx.currentSettings?.paneProjects?.[BACKGROUND_BUILDER_OWNER_PANE_ID];
+        const normalized = typeof configured === 'string' ? configured.trim() : '';
+        return normalized || path.resolve(path.join(WORKSPACE_PATH, '..'));
+      },
+      logActivity: (type, paneId, message, details) => this.activity.logActivity(type, paneId, message, details),
+      onStateChanged: (agents) => {
+        if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+          this.ctx.mainWindow.webContents.send('background-agents-state', {
+            agents,
+            targetMap: this.backgroundAgentManager.getTargetMap(),
+          });
+        }
+      },
+    });
     this.lastDaemonOutputAtMs = Date.now();
     this.daemonClientListeners = [];
     this.consoleLogPath = path.join(WORKSPACE_PATH, 'console.log');
@@ -185,6 +212,14 @@ class HivemindApp {
 
   async initializeStartupSessionScope(options = {}) {
     const opts = options && typeof options === 'object' ? options : {};
+    const finalizeSessionScope = async (result) => {
+      try {
+        await this.backgroundAgentManager.handleSessionScopeChange(this.commsSessionScopeId || null);
+      } catch (err) {
+        log.warn('BackgroundAgent', `Session scope cleanup failed: ${err.message}`);
+      }
+      return result;
+    };
     const startupSource = {
       via: 'app-startup',
       role: 'system',
@@ -267,7 +302,7 @@ class HivemindApp {
             log.warn('EvidenceLedger', `Startup session snapshot failed: ${snapshotResult.reason || 'unknown'}`);
           }
         }
-        return this.ledgerAppSession;
+        return finalizeSessionScope(this.ledgerAppSession);
       }
 
       if (startResult?.reason === 'conflict' && preferredScopeId) {
@@ -279,7 +314,7 @@ class HivemindApp {
         };
         this.commsSessionScopeId = preferredScopeId;
         log.warn('EvidenceLedger', `Startup session ${preferredSessionNumber} already exists; reusing app-status scope.`);
-        return this.ledgerAppSession;
+        return finalizeSessionScope(this.ledgerAppSession);
       }
 
       if (startResult?.reason !== 'conflict') {
@@ -289,7 +324,7 @@ class HivemindApp {
     }
 
     log.warn('EvidenceLedger', `Falling back to ephemeral comms session scope (${fallbackScope})`);
-    return null;
+    return finalizeSessionScope(null);
   }
 
   getCurrentAppStatusSessionNumber() {
@@ -730,6 +765,7 @@ class HivemindApp {
 
     // 9. Initialize PTY daemon connection (heavy startup work begins after window is shown).
     await this.initDaemonClient();
+    this.backgroundAgentManager.start();
     this.settings.writeAppStatus({
       incrementSession: true,
     });
@@ -963,6 +999,8 @@ class HivemindApp {
               if (targetPaneIdForJournal === '1') return 'architect';
               if (targetPaneIdForJournal === '2') return 'builder';
               if (targetPaneIdForJournal === '5') return 'oracle';
+              const backgroundAlias = resolveBackgroundBuilderAlias(targetPaneIdForJournal || target);
+              if (backgroundAlias) return backgroundAlias;
               if (this.isTelegramReplyTarget(target)) return this.normalizeOutboundTarget(target);
               return null;
             })();
@@ -1034,6 +1072,36 @@ class HivemindApp {
                 attempt,
                 maxAttempts,
               }, 'system', traceContext);
+            }
+
+            const senderBackgroundAlias = resolveBackgroundBuilderAlias(data.role || '');
+            if (senderBackgroundAlias) {
+              const resolvedTargetPane = this.resolveTargetToPane(target);
+              const isBuilderTarget = (
+                String(resolvedTargetPane || '') === BACKGROUND_BUILDER_OWNER_PANE_ID
+                || String(target || '').trim().toLowerCase() === 'builder'
+                || String(target || '').trim() === BACKGROUND_BUILDER_OWNER_PANE_ID
+              );
+              if (!isBuilderTarget) {
+                const blocked = {
+                  ok: false,
+                  accepted: false,
+                  queued: false,
+                  verified: false,
+                  status: 'owner_binding_violation',
+                  target,
+                  sender: senderBackgroundAlias,
+                  traceId: traceContext?.traceId || traceContext?.correlationId || null,
+                };
+                await this.recordDeliveryOutcomePattern({
+                  channel: 'send',
+                  target: target || null,
+                  fromRole: data.role || 'unknown',
+                  result: blocked,
+                  traceContext,
+                });
+                return blocked;
+              }
             }
 
             const telegramReplyTarget = this.isTelegramReplyTarget(target);
@@ -1133,6 +1201,39 @@ class HivemindApp {
                   verified: false,
                   status: 'guard_blocked',
                   paneId: String(paneId),
+                  guardActions: preflight.actions,
+                  traceId: traceContext?.traceId || traceContext?.correlationId || null,
+                };
+              }
+
+              if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
+                log.info('WebSocket', `Routing 'send' to background pane ${paneId} (direct daemon write)`);
+                const result = await this.backgroundAgentManager.sendMessageToAgent(
+                  paneId,
+                  withAgentPrefix(contentWithProjectContext),
+                  {
+                    fromRole: data.role || 'unknown',
+                    traceContext,
+                  }
+                );
+                await this.recordDeliveryOutcomePattern({
+                  channel: 'send',
+                  target: String(paneId),
+                  fromRole: data.role || 'unknown',
+                  result,
+                  traceContext,
+                });
+                return {
+                  ok: Boolean(result?.ok),
+                  accepted: Boolean(result?.accepted),
+                  queued: Boolean(result?.queued),
+                  verified: Boolean(result?.verified),
+                  status: result?.status || 'delivery_failed',
+                  paneId: String(paneId),
+                  mode: result?.mode || 'daemon-pty',
+                  notified: Array.isArray(result?.notified) ? result.notified : [],
+                  deliveryId: result?.deliveryId || null,
+                  details: result?.details || null,
                   guardActions: preflight.actions,
                   traceId: traceContext?.traceId || traceContext?.correlationId || null,
                 };
@@ -2052,6 +2153,7 @@ class HivemindApp {
       this.lastDaemonOutputAtMs = Date.now();
       this.ctx.recoveryManager?.recordActivity(paneId);
       this.ctx.recoveryManager?.recordPtyOutput?.(paneId, data);
+      this.backgroundAgentManager.handleDaemonData(paneId, data);
 
       // Organic UI: Mark agent as active when outputting
       if (organicUI.getAgentState(paneId) !== 'offline') {
@@ -2092,7 +2194,15 @@ class HivemindApp {
     });
 
     this.attachDaemonClientListener('exit', (paneId, code) => {
+      this.backgroundAgentManager.handleDaemonExit(paneId, code);
       handlePaneExit(paneId, code);
+    });
+
+    this.attachDaemonClientListener('killed', (paneId) => {
+      this.backgroundAgentManager.handleDaemonKilled(paneId);
+      if (String(paneId) === BACKGROUND_BUILDER_OWNER_PANE_ID) {
+        this.ctx.agentRunning.set(String(paneId), 'idle');
+      }
     });
 
     this.attachDaemonClientListener('spawned', (paneId, pid) => {
@@ -2104,6 +2214,7 @@ class HivemindApp {
 
     this.attachDaemonClientListener('connected', (terminals) => {
       log.info('Daemon', `Connected. Existing terminals: ${terminals.length}`);
+      this.backgroundAgentManager.syncWithDaemonTerminals(terminals);
 
       if (terminals && terminals.length > 0) {
         for (const term of terminals) {
@@ -2154,6 +2265,7 @@ class HivemindApp {
 
     this.attachDaemonClientListener('disconnected', () => {
       log.warn('Daemon', 'Disconnected');
+      void this.backgroundAgentManager.killAll({ reason: 'daemon_disconnected' });
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send('daemon-disconnected');
       }
@@ -2562,18 +2674,26 @@ class HivemindApp {
   }
 
   /**
-   * Resolve target (role name or paneId) to numeric paneId
-   * @param {string} target - Role name (e.g., 'architect') or paneId (e.g., '1')
+   * Resolve target (role name, canonical paneId, or background alias) to paneId.
+   * @param {string} target - e.g. architect, 1, builder-bg-1, bg-2-1
    * @returns {string|null} paneId or null if not found
    */
   resolveTargetToPane(target) {
     if (!target) return null;
 
-    const targetLower = target.toLowerCase();
+    const targetRaw = String(target).trim();
+    if (!targetRaw) return null;
+    const targetLower = targetRaw.toLowerCase();
+
+    // Background builder aliases/synthetic pane IDs
+    const backgroundPaneId = resolveBackgroundBuilderPaneId(targetLower);
+    if (backgroundPaneId) {
+      return backgroundPaneId;
+    }
 
     // Direct paneId
-    if (PANE_IDS.includes(target)) {
-      return target;
+    if (PANE_IDS.includes(targetRaw)) {
+      return targetRaw;
     }
 
     // Role name lookup
@@ -2951,6 +3071,10 @@ class HivemindApp {
       log.warn('TeamMemory', `Failed to close team memory runtime during shutdown: ${err.message}`);
     });
     websocketServer.stop();
+    this.backgroundAgentManager.stop();
+    this.backgroundAgentManager.killAll({ reason: 'app_shutdown' }).catch((err) => {
+      log.warn('BackgroundAgent', `Failed to kill background agents during shutdown: ${err.message}`);
+    });
     smsPoller.stop();
     telegramPoller.stop();
     closeCommsJournalStores();

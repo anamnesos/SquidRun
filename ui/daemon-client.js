@@ -420,22 +420,30 @@ class DaemonClient extends EventEmitter {
    * @param {string} [cwd] - Working directory
    * @param {boolean} [dryRun=false] - If true, spawn mock terminal instead of real PTY
    */
-  spawn(paneId, cwd, dryRun = false, mode = null, env = null) {
+  spawn(paneId, cwd, dryRun = false, mode = null, env = null, spawnOptions = null) {
     const id = String(paneId);
-    const role = String(PANE_ROLES?.[id] || '').trim();
+    const incomingEnv = (env && typeof env === 'object') ? env : {};
+    const explicitRole = typeof incomingEnv.HIVEMIND_ROLE === 'string'
+      ? incomingEnv.HIVEMIND_ROLE.trim()
+      : '';
+    const role = explicitRole || String(PANE_ROLES?.[id] || '').trim();
     const spawnEnv = {
       HIVEMIND_ROLE: role,
       HIVEMIND_PANE_ID: id,
-      ...(env && typeof env === 'object' ? env : {}),
+      ...incomingEnv,
     };
-    return this._send({
+    const payload = {
       action: 'spawn',
       paneId: id,
       cwd,
       dryRun,
       mode,
       env: spawnEnv,
-    });
+    };
+    if (spawnOptions && typeof spawnOptions === 'object') {
+      payload.options = { ...spawnOptions };
+    }
+    return this._send(payload);
   }
 
   /**
