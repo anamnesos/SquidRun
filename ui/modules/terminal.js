@@ -1292,12 +1292,11 @@ function updateIntentState(paneId, intent) {
 function toggleInputLock(paneId) {
   inputLocked[paneId] = !inputLocked[paneId];
 
-  // Prevent unlocking a pane that has an active hidden pane host —
-  // both input bridges would write to the same PTY, doubling keystrokes.
-  if (!inputLocked[paneId] && isHiddenPaneHostPane(paneId)) {
-    log.warn(`Terminal ${paneId}`, 'Cannot unlock input while hidden pane host is active — forcing lock');
-    inputLocked[paneId] = true;
-  }
+  // Hidden pane host xterms do NOT have an onData bridge (by design —
+  // see pane-host-renderer.js). Only the visible xterm's input bridge
+  // calls pty.write(), so unlocking does NOT cause doubled keystrokes.
+  // The user needs to unlock to interact with CLI prompts (plan mode,
+  // permission dialogs, option selection).
 
   syncTerminalInputBridge(paneId);
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);
@@ -1314,12 +1313,7 @@ function toggleInputLock(paneId) {
  * Set input lock state for a pane (without toggle)
  */
 function setInputLocked(paneId, locked) {
-  let nextLocked = Boolean(locked);
-  // Prevent unlocking a pane with an active hidden pane host.
-  if (!nextLocked && isHiddenPaneHostPane(paneId)) {
-    log.warn(`Terminal ${paneId}`, 'Cannot unlock input while hidden pane host is active — forcing lock');
-    nextLocked = true;
-  }
+  const nextLocked = Boolean(locked);
   inputLocked[paneId] = nextLocked;
   syncTerminalInputBridge(paneId);
   const lockIcon = document.getElementById(`lock-icon-${paneId}`);
