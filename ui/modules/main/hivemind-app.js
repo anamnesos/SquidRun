@@ -103,6 +103,20 @@ function asPositiveInt(value, fallback = null) {
   return numeric;
 }
 
+const RUNTIME_LIFECYCLE_STATE = Object.freeze({
+  STOPPED: 'stopped',
+  STARTING: 'starting',
+  RUNNING: 'running',
+  STOPPING: 'stopping',
+});
+
+const ALLOWED_RUNTIME_LIFECYCLE_TRANSITIONS = Object.freeze({
+  [RUNTIME_LIFECYCLE_STATE.STOPPED]: new Set([RUNTIME_LIFECYCLE_STATE.STARTING]),
+  [RUNTIME_LIFECYCLE_STATE.STARTING]: new Set([RUNTIME_LIFECYCLE_STATE.RUNNING, RUNTIME_LIFECYCLE_STATE.STOPPED]),
+  [RUNTIME_LIFECYCLE_STATE.RUNNING]: new Set([RUNTIME_LIFECYCLE_STATE.STOPPING]),
+  [RUNTIME_LIFECYCLE_STATE.STOPPING]: new Set([RUNTIME_LIFECYCLE_STATE.STOPPED]),
+});
+
 class HivemindApp {
   constructor(appContext, managers) {
     this.ctx = appContext;
@@ -165,6 +179,8 @@ class HivemindApp {
     this.websocketStartRetryTimer = null;
     this.websocketStartRetryAttempt = 0;
     this.shuttingDown = false;
+    this.runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
+    this.runtimeLifecycleQueue = Promise.resolve();
   }
 
   async initializeStartupSessionScope(options = {}) {
@@ -1520,6 +1536,9 @@ class HivemindApp {
       clearActivityLog: () => this.activity.clearActivityLog(),
       saveActivityLog: () => this.activity.saveActivityLog(),
       firmwareManager: this.firmwareManager,
+      startRuntimeLifecycle: (reason) => this.startRuntimeServices(reason || 'ipc-start'),
+      stopRuntimeLifecycle: (reason) => this.stopRuntimeServices(reason || 'ipc-stop'),
+      getRuntimeLifecycleState: () => this.runtimeLifecycleState,
     });
 
     // Pipeline
@@ -1739,14 +1758,90 @@ class HivemindApp {
     });
   }
 
+  transitionRuntimeLifecycle(nextState, reason = 'unspecified') {
+    const currentState = this.runtimeLifecycleState;
+    if (currentState === nextState) return true;
+    const allowed = ALLOWED_RUNTIME_LIFECYCLE_TRANSITIONS[currentState];
+    if (!allowed || !allowed.has(nextState)) {
+      log.warn(
+        'RuntimeLifecycle',
+        `Illegal transition ${currentState} -> ${nextState} (${reason})`
+      );
+      return false;
+    }
+    this.runtimeLifecycleState = nextState;
+    log.info('RuntimeLifecycle', `Transition ${currentState} -> ${nextState} (${reason})`);
+    return true;
+  }
+
+  queueRuntimeLifecycleTask(taskName, taskFn) {
+    const run = async () => taskFn(taskName);
+    this.runtimeLifecycleQueue = this.runtimeLifecycleQueue.then(run, run);
+    return this.runtimeLifecycleQueue;
+  }
+
+  async startRuntimeServices(reason = 'manual-start') {
+    return this.queueRuntimeLifecycleTask('start', async () => {
+      if (this.runtimeLifecycleState === RUNTIME_LIFECYCLE_STATE.RUNNING) {
+        log.warn('RuntimeLifecycle', `Start ignored while already running (${reason})`);
+        return { ok: true, state: this.runtimeLifecycleState, alreadyRunning: true };
+      }
+      if (!this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STARTING, reason)) {
+        return { ok: false, state: this.runtimeLifecycleState, reason: 'illegal_transition' };
+      }
+
+      try {
+        watcher.startWatcher();
+        watcher.startTriggerWatcher();
+        watcher.startMessageWatcher();
+        this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.RUNNING, reason);
+        return { ok: true, state: this.runtimeLifecycleState };
+      } catch (err) {
+        this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPED, `${reason}:start-error`);
+        return { ok: false, state: this.runtimeLifecycleState, error: err.message };
+      }
+    });
+  }
+
+  async stopRuntimeServices(reason = 'manual-stop') {
+    return this.queueRuntimeLifecycleTask('stop', async () => {
+      const forceStop = reason === 'shutdown';
+      if (this.runtimeLifecycleState === RUNTIME_LIFECYCLE_STATE.STOPPED) {
+        if (!forceStop) {
+          log.warn('RuntimeLifecycle', `Stop ignored while already stopped (${reason})`);
+          return { ok: true, state: this.runtimeLifecycleState, alreadyStopped: true };
+        }
+        watcher.stopMessageWatcher();
+        watcher.stopTriggerWatcher();
+        watcher.stopWatcher();
+        return { ok: true, state: this.runtimeLifecycleState, alreadyStopped: true, forced: true };
+      }
+      if (!this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPING, reason)) {
+        return { ok: false, state: this.runtimeLifecycleState, reason: 'illegal_transition' };
+      }
+
+      try {
+        watcher.stopMessageWatcher();
+        watcher.stopTriggerWatcher();
+        watcher.stopWatcher();
+        this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPED, reason);
+        return { ok: true, state: this.runtimeLifecycleState };
+      } catch (err) {
+        this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPED, `${reason}:stop-error`);
+        return { ok: false, state: this.runtimeLifecycleState, error: err.message };
+      }
+    });
+  }
+
   async initPostLoad() {
     const window = this.ctx.mainWindow;
 
     const initAfterLoad = async (attempt = 1) => {
       try {
-        watcher.startWatcher();
-        watcher.startTriggerWatcher();
-        watcher.startMessageWatcher();
+        const lifecycleResult = await this.startRuntimeServices('post-load-init');
+        if (!lifecycleResult?.ok) {
+          throw new Error(lifecycleResult?.error || lifecycleResult?.reason || 'runtime_start_failed');
+        }
 
         const state = watcher.readState();
         if (window && !window.isDestroyed()) {
@@ -2843,9 +2938,9 @@ class HivemindApp {
     this.consoleLogWriter.flush().catch((err) => {
       log.warn('App', `Failed flushing console.log buffer during shutdown: ${err.message}`);
     });
-    watcher.stopWatcher();
-    watcher.stopTriggerWatcher();
-    watcher.stopMessageWatcher();
+    this.stopRuntimeServices('shutdown').catch((err) => {
+      log.warn('RuntimeLifecycle', `Failed stopping runtime services during shutdown: ${err.message}`);
+    });
     if (powerMonitor && typeof powerMonitor.removeListener === 'function') {
       for (const entry of this.powerMonitorListeners) {
         powerMonitor.removeListener(entry.eventName, entry.handler);

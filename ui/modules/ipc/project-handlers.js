@@ -18,6 +18,28 @@ const ROLE_TARGETS = Object.freeze({
   builder: 'builder',
   oracle: 'oracle',
 });
+const PROJECT_RUNTIME_LIFECYCLE_STATE = Object.freeze({
+  STOPPED: 'stopped',
+  STARTING: 'starting',
+  RUNNING: 'running',
+  STOPPING: 'stopping',
+});
+const ALLOWED_PROJECT_RUNTIME_TRANSITIONS = Object.freeze({
+  [PROJECT_RUNTIME_LIFECYCLE_STATE.STOPPED]: new Set([
+    PROJECT_RUNTIME_LIFECYCLE_STATE.STARTING,
+    PROJECT_RUNTIME_LIFECYCLE_STATE.STOPPING,
+  ]),
+  [PROJECT_RUNTIME_LIFECYCLE_STATE.STARTING]: new Set([
+    PROJECT_RUNTIME_LIFECYCLE_STATE.RUNNING,
+    PROJECT_RUNTIME_LIFECYCLE_STATE.STOPPED,
+  ]),
+  [PROJECT_RUNTIME_LIFECYCLE_STATE.RUNNING]: new Set([
+    PROJECT_RUNTIME_LIFECYCLE_STATE.STOPPING,
+  ]),
+  [PROJECT_RUNTIME_LIFECYCLE_STATE.STOPPING]: new Set([
+    PROJECT_RUNTIME_LIFECYCLE_STATE.STOPPED,
+  ]),
+});
 
 function normalizeToPosix(value) {
   return String(value || '').replace(/\\/g, '/');
@@ -124,25 +146,178 @@ function writeProjectBootstrapFiles(projectPath, deps = {}) {
 function registerProjectHandlers(ctx, deps) {
   const { ipcMain, PANE_IDS } = ctx;
   const { loadSettings, saveSettings } = deps;
+  let runtimeLifecycleState = PROJECT_RUNTIME_LIFECYCLE_STATE.STOPPED;
+  let runtimeLifecycleQueue = Promise.resolve();
+  let runtimeLifecycleSequence = 0;
+
+  const transitionRuntimeLifecycle = (nextState, reason = 'unspecified') => {
+    const currentState = runtimeLifecycleState;
+    if (currentState === nextState) return true;
+    const allowed = ALLOWED_PROJECT_RUNTIME_TRANSITIONS[currentState];
+    if (!allowed || !allowed.has(nextState)) {
+      log.warn(
+        'ProjectLifecycle',
+        `Illegal transition ${currentState} -> ${nextState} (${reason})`
+      );
+      return false;
+    }
+    runtimeLifecycleState = nextState;
+    log.info('ProjectLifecycle', `Transition ${currentState} -> ${nextState} (${reason})`);
+    return true;
+  };
+
+  const queueRuntimeLifecycleTask = (taskName, taskFn) => {
+    const run = async () => taskFn(taskName);
+    runtimeLifecycleQueue = runtimeLifecycleQueue.then(run, run);
+    return runtimeLifecycleQueue;
+  };
+
+  const failRuntimeLifecycle = (error, reason = 'runtime_lifecycle_failed') => {
+    const message = error instanceof Error ? error.message : String(error || reason);
+    runtimeLifecycleState = PROJECT_RUNTIME_LIFECYCLE_STATE.STOPPED;
+    return {
+      success: false,
+      error: reason,
+      detail: message,
+      state: runtimeLifecycleState,
+    };
+  };
+
+  const stopRuntimeLifecycle = async (reason) => {
+    if (typeof deps.stopRuntimeLifecycle === 'function') {
+      const result = await deps.stopRuntimeLifecycle(reason);
+      if (result?.ok === false) {
+        throw new Error(result?.error || result?.reason || 'runtime_stop_failed');
+      }
+      return result;
+    }
+    return { ok: true, skipped: true, reason: 'stop_not_configured' };
+  };
+
+  const startRuntimeLifecycle = async (reason) => {
+    if (typeof deps.startRuntimeLifecycle === 'function') {
+      const result = await deps.startRuntimeLifecycle(reason);
+      if (result?.ok === false) {
+        throw new Error(result?.error || result?.reason || 'runtime_start_failed');
+      }
+      return result;
+    }
+    return { ok: true, skipped: true, reason: 'start_not_configured' };
+  };
+
   const rebindProjectScopedRuntimes = () => {
+    const outcome = {
+      ok: true,
+      evidenceLedger: null,
+      teamMemory: null,
+      errors: [],
+    };
+
     try {
-      initializeEvidenceLedgerRuntime({ forceRuntimeRecreate: true });
+      outcome.evidenceLedger = initializeEvidenceLedgerRuntime({ forceRuntimeRecreate: true });
     } catch (err) {
       log.warn('Project', `Evidence Ledger runtime rebind failed: ${err.message}`);
+      outcome.ok = false;
+      outcome.errors.push(`evidence-ledger: ${err.message}`);
     }
 
     try {
-      initializeTeamMemoryRuntime({ forceRuntimeRecreate: true });
+      outcome.teamMemory = initializeTeamMemoryRuntime({ forceRuntimeRecreate: true });
     } catch (err) {
       log.warn('Project', `Team Memory runtime rebind failed: ${err.message}`);
+      outcome.ok = false;
+      outcome.errors.push(`team-memory: ${err.message}`);
     }
+
+    return outcome;
   };
-  const syncProjectRoot = (projectPath) => {
+
+  const syncProjectRoot = (projectPath, reason = 'sync-project-root') => {
+    const sequenceId = ++runtimeLifecycleSequence;
+    const transitionReason = `${reason}#${sequenceId}`;
+    if (!transitionRuntimeLifecycle(PROJECT_RUNTIME_LIFECYCLE_STATE.STARTING, transitionReason)) {
+      return {
+        ok: false,
+        errors: [`illegal_transition:${runtimeLifecycleState}`],
+      };
+    }
     if (typeof setProjectRoot === 'function') {
       setProjectRoot(projectPath || null);
     }
-    rebindProjectScopedRuntimes();
+    const rebindResult = rebindProjectScopedRuntimes();
+    if (!transitionRuntimeLifecycle(PROJECT_RUNTIME_LIFECYCLE_STATE.RUNNING, transitionReason)) {
+      return {
+        ok: false,
+        errors: [`illegal_transition:${runtimeLifecycleState}`],
+      };
+    }
+    return rebindResult;
   };
+
+  const switchProjectWithLifecycle = (projectPath, reason = 'project-switch') => queueRuntimeLifecycleTask('switch-project', async () => {
+    try {
+      const sequenceId = ++runtimeLifecycleSequence;
+      const transitionReason = `${reason}#${sequenceId}`;
+      if (runtimeLifecycleState === PROJECT_RUNTIME_LIFECYCLE_STATE.STARTING || runtimeLifecycleState === PROJECT_RUNTIME_LIFECYCLE_STATE.STOPPING) {
+        log.warn('ProjectLifecycle', `Project switch queued while ${runtimeLifecycleState} (${transitionReason})`);
+      }
+
+      if (!transitionRuntimeLifecycle(PROJECT_RUNTIME_LIFECYCLE_STATE.STOPPING, transitionReason)) {
+        return {
+          success: false,
+          error: 'illegal_transition',
+          state: runtimeLifecycleState,
+        };
+      }
+
+      await stopRuntimeLifecycle(`${transitionReason}:stop`);
+      if (!transitionRuntimeLifecycle(PROJECT_RUNTIME_LIFECYCLE_STATE.STOPPED, transitionReason)) {
+        return {
+          success: false,
+          error: 'illegal_transition',
+          state: runtimeLifecycleState,
+        };
+      }
+
+      if (typeof setProjectRoot === 'function') {
+        setProjectRoot(projectPath || null);
+      }
+
+      const rebindResult = rebindProjectScopedRuntimes();
+      if (!rebindResult.ok) {
+        log.warn(
+          'ProjectLifecycle',
+          `Runtime rebind failed during project switch: ${(rebindResult.errors || []).join(', ')}`
+        );
+        return failRuntimeLifecycle(rebindResult.errors.join(', '), 'runtime_rebind_failed');
+      }
+
+      if (!transitionRuntimeLifecycle(PROJECT_RUNTIME_LIFECYCLE_STATE.STARTING, transitionReason)) {
+        return {
+          success: false,
+          error: 'illegal_transition',
+          state: runtimeLifecycleState,
+        };
+      }
+
+      await startRuntimeLifecycle(`${transitionReason}:start`);
+      if (!transitionRuntimeLifecycle(PROJECT_RUNTIME_LIFECYCLE_STATE.RUNNING, transitionReason)) {
+        return {
+          success: false,
+          error: 'illegal_transition',
+          state: runtimeLifecycleState,
+        };
+      }
+
+      return {
+        success: true,
+        state: runtimeLifecycleState,
+        rebindResult,
+      };
+    } catch (err) {
+      return failRuntimeLifecycle(err, 'runtime_lifecycle_failed');
+    }
+  });
 
   try {
     const operatingMode = ctx?.currentSettings?.operatingMode
@@ -191,7 +366,16 @@ function registerProjectHandlers(ctx, deps) {
     const state = ctx.watcher.readState();
     state.project = projectPath;
     ctx.watcher.writeState(state);
-    syncProjectRoot(projectPath);
+    const switchResult = await switchProjectWithLifecycle(projectPath, 'select-project');
+    if (switchResult?.success === false) {
+      const switchError = switchResult.detail
+        ? `${switchResult.error || switchResult.state || 'unknown'} (${switchResult.detail})`
+        : (switchResult.error || switchResult.state || 'unknown');
+      return {
+        success: false,
+        error: `Failed switching project runtime: ${switchError}`,
+      };
+    }
 
     const settings = loadSettings();
     const projects = settings.recentProjects || [];
@@ -307,7 +491,16 @@ function registerProjectHandlers(ctx, deps) {
     const state = ctx.watcher.readState();
     state.project = projectPath;
     ctx.watcher.writeState(state);
-    syncProjectRoot(projectPath);
+    const switchResult = await switchProjectWithLifecycle(projectPath, 'switch-project');
+    if (switchResult?.success === false) {
+      const switchError = switchResult.detail
+        ? `${switchResult.error || switchResult.state || 'unknown'} (${switchResult.detail})`
+        : (switchResult.error || switchResult.state || 'unknown');
+      return {
+        success: false,
+        error: `Failed switching project runtime: ${switchError}`,
+      };
+    }
 
     const settings = loadSettings();
     const projects = settings.recentProjects || [];

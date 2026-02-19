@@ -264,4 +264,23 @@ maybeDescribe('team-memory runtime phase0', () => {
     expect(query.claims.length).toBeGreaterThanOrEqual(1);
     expect(query.claims.some((claim) => claim.statement.includes('Session handoff'))).toBe(true);
   });
+
+  test('tracks runtime lifecycle state across init and close', () => {
+    expect(runtime.getRuntimeLifecycleState()).toBe('stopped');
+
+    const init = runtime.initializeTeamMemoryRuntime({
+      runtimeOptions: {
+        storeOptions: {
+          dbPath: path.join(tempDir, 'team-memory.sqlite'),
+        },
+      },
+      forceRuntimeRecreate: true,
+    });
+
+    expect(init.ok).toBe(true);
+    expect(runtime.getRuntimeLifecycleState()).toBe('running');
+
+    runtime.closeSharedRuntime();
+    expect(runtime.getRuntimeLifecycleState()).toBe('stopped');
+  });
 });

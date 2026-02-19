@@ -69,6 +69,8 @@ describe('Project Handlers', () => {
       saveSettings: jest.fn(),
       readAppStatus: jest.fn(() => ({ session: 321 })),
       getSessionId: jest.fn(() => 'app-session-321'),
+      startRuntimeLifecycle: jest.fn(async () => ({ ok: true })),
+      stopRuntimeLifecycle: jest.fn(async () => ({ ok: true })),
     };
 
     fs.existsSync.mockReturnValue(true);
@@ -386,6 +388,51 @@ describe('Project Handlers', () => {
 
       expect(initializeEvidenceLedgerRuntime).toHaveBeenCalledWith({ forceRuntimeRecreate: true });
       expect(initializeTeamMemoryRuntime).toHaveBeenCalledWith({ forceRuntimeRecreate: true });
+    });
+
+    test('runs stop -> start runtime lifecycle around project rebind', async () => {
+      const result = await harness.invoke('switch-project', '/project');
+
+      expect(result.success).toBe(true);
+      expect(deps.stopRuntimeLifecycle).toHaveBeenCalledTimes(1);
+      expect(deps.startRuntimeLifecycle).toHaveBeenCalledTimes(1);
+      expect(deps.stopRuntimeLifecycle.mock.calls[0][0]).toContain(':stop');
+      expect(deps.startRuntimeLifecycle.mock.calls[0][0]).toContain(':start');
+    });
+
+    test('returns lifecycle failure when stop lifecycle fails', async () => {
+      deps.stopRuntimeLifecycle.mockImplementationOnce(async () => ({ ok: false, reason: 'busy' }));
+
+      const result = await harness.invoke('switch-project', '/project');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('runtime_lifecycle_failed');
+      expect(result.error).toContain('busy');
+    });
+
+    test('queues concurrent project switches without overlapping lifecycle calls', async () => {
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const settleAfterTick = async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        inFlight -= 1;
+        return { ok: true };
+      };
+
+      deps.stopRuntimeLifecycle.mockImplementation(settleAfterTick);
+      deps.startRuntimeLifecycle.mockImplementation(settleAfterTick);
+
+      const first = harness.invoke('switch-project', '/project-a');
+      const second = harness.invoke('switch-project', '/project-b');
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+
+      expect(firstResult.success).toBe(true);
+      expect(secondResult.success).toBe(true);
+      expect(maxInFlight).toBe(1);
+      expect(deps.stopRuntimeLifecycle).toHaveBeenCalledTimes(2);
+      expect(deps.startRuntimeLifecycle).toHaveBeenCalledTimes(2);
     });
   });
 
