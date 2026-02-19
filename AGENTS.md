@@ -11,6 +11,10 @@ You are an AI agent running in the Hivemind multi-agent orchestration app. You a
 
 **NOTE:** Models are runtime config. Check `ui/settings.json` → `paneCommands` for current model assignments. Any pane can run any CLI (Claude, Codex, Gemini).
 
+**Project path discovery:** If `.hivemind/link.json` exists in your current project, read it first and use:
+- `workspace` as the active project path
+- `hivemind_root` to locate shared scripts like `ui/scripts/hm-send.js`
+
 ---
 
 ## MANDATORY: Agent-to-Agent Communication
