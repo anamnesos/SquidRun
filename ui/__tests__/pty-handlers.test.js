@@ -365,7 +365,7 @@ describe('PTY Handlers', () => {
       const handler = harness.handlers.get('pty-resize');
       const paneHostEvent = {
         senderFrame: {
-          url: 'file:///D:/projects/hivemind/ui/pane-host.html?paneId=1',
+          url: 'file:///<project-root>/ui/pane-host.html?paneId=1',
         },
       };
 

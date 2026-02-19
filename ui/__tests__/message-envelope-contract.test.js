@@ -7,6 +7,8 @@ const {
   buildSpecialTargetRequest,
 } = require('../modules/comms/message-envelope');
 
+const PROJECT_PATH = '<project-root>';
+
 describe('message envelope contract', () => {
   test('builds canonical outbound envelope with required metadata fields', () => {
     const envelope = buildOutboundMessageEnvelope({
@@ -19,7 +21,7 @@ describe('message envelope contract', () => {
       target: { raw: 'builder', role: 'builder', pane_id: '2' },
       project: {
         name: 'hivemind',
-        path: 'D:/projects/hivemind',
+        path: PROJECT_PATH,
         session_id: 'app-session-186',
         source: 'link.json',
       },
@@ -36,7 +38,7 @@ describe('message envelope contract', () => {
       target: { raw: 'builder', role: 'builder', pane_id: '2' },
       project: {
         name: 'hivemind',
-        path: 'D:/projects/hivemind',
+        path: PROJECT_PATH,
         session_id: 'app-session-186',
         source: 'link.json',
       },
@@ -55,7 +57,7 @@ describe('message envelope contract', () => {
       target: { raw: 'architect', role: 'architect', pane_id: '1' },
       project: {
         name: 'hivemind',
-        path: 'D:/projects/hivemind',
+        path: PROJECT_PATH,
         session_id: 'app-session-247',
         source: 'state.json',
       },
@@ -82,4 +84,3 @@ describe('message envelope contract', () => {
     expect(specialRequest.sessionId).toBe(envelope.session_id);
   });
 });
-

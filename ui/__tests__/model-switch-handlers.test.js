@@ -44,7 +44,7 @@ describe('registerModelSwitchHandlers', () => {
       currentSettings: {
         paneCommands: {
           '1': 'claude',
-          '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind"',
+          '5': 'gemini --yolo --include-directories "<project-root>"',
         },
         paneProjects: {
           '1': null,
@@ -242,12 +242,12 @@ describe('registerModelSwitchHandlers', () => {
     });
 
     it('should use paneProjects cwd for gemini include directory when assigned', async () => {
-      mockCtx.currentSettings.paneProjects['1'] = 'D:\\external\\repo';
+      mockCtx.currentSettings.paneProjects['1'] = '<external-project-root>';
       const switchPromise = switchHandler({}, { paneId: '1', model: 'gemini' });
       mockCtx.daemonClient._killedHandler('1');
       await switchPromise;
 
-      expect(mockCtx.currentSettings.paneCommands['1']).toBe('gemini --yolo --include-directories "D:\\external\\repo"');
+      expect(mockCtx.currentSettings.paneCommands['1']).toBe('gemini --yolo --include-directories "<external-project-root>"');
     });
 
     it('should handle missing daemonClient gracefully', async () => {

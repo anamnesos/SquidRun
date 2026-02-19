@@ -5,7 +5,7 @@
 jest.mock('../modules/image-gen', () => ({
   generateImage: jest.fn(),
   removeHistoryEntryByPath: jest.fn(),
-  GENERATED_IMAGES_DIR: 'D:\\projects\\hivemind\\workspace\\generated-images',
+  GENERATED_IMAGES_DIR: 'workspace\\generated-images',
 }));
 
 const { generateImage, removeHistoryEntryByPath } = require('../modules/image-gen');
@@ -113,7 +113,7 @@ describe('oracle handlers', () => {
     test('routes history updates through image-gen canonical writer', async () => {
       const result = await harness.invoke(
         'oracle:deleteImage',
-        'D:\\projects\\hivemind\\workspace\\generated-images\\icon-test.png'
+        'workspace\\generated-images\\icon-test.png'
       );
       expect(result.success).toBe(true);
       expect(removeHistoryEntryByPath).toHaveBeenCalledWith(
@@ -122,7 +122,7 @@ describe('oracle handlers', () => {
     });
 
     test('rejects path outside generated-images directory', async () => {
-      const result = await harness.invoke('oracle:deleteImage', 'C:\\Windows\\system32\\evil.exe');
+      const result = await harness.invoke('oracle:deleteImage', 'outside\\evil.exe');
       expect(result.success).toBe(false);
       expect(result.error).toContain('outside');
     });
@@ -131,7 +131,7 @@ describe('oracle handlers', () => {
       removeHistoryEntryByPath.mockImplementation(() => { throw new Error('history fail'); });
       const result = await harness.invoke(
         'oracle:deleteImage',
-        'D:\\projects\\hivemind\\workspace\\generated-images\\test.png'
+        'workspace\\generated-images\\test.png'
       );
       expect(result.success).toBe(true);
     });
