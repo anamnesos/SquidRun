@@ -59,7 +59,9 @@ maybeDescribe('team-memory comms tagged extractor', () => {
       '(ARCHITECT #2): TASK: Implement startup brief',
       '(ORACLE #1): FINDING: Telegram ingress missing',
       '(BUILDER #3): BLOCKER: delivery ack timeout',
+      '[AGENT MSG - reply via hm-send.js] (BUILDER #7): DECISION: Keep payload deterministic',
       '(BUILDER #4): NOTE: not included',
+      'Inline prose with DECISION: should not be extracted',
     ].join('\n'));
 
     expect(tagged).toEqual([
@@ -67,6 +69,7 @@ maybeDescribe('team-memory comms tagged extractor', () => {
       { tag: 'TASK', detail: 'Implement startup brief' },
       { tag: 'FINDING', detail: 'Telegram ingress missing' },
       { tag: 'BLOCKER', detail: 'delivery ack timeout' },
+      { tag: 'DECISION', detail: 'Keep payload deterministic' },
     ]);
   });
 

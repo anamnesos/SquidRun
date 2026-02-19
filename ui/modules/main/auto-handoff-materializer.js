@@ -25,7 +25,21 @@ const UNRESOLVED_CLAIMS_MAX = 10;
 const UNRESOLVED_STATUS_ORDER = ['contested', 'pending_proof', 'proposed'];
 const UNRESOLVED_STATUS_SET = new Set(UNRESOLVED_STATUS_ORDER);
 const CROSS_SESSION_TAGS = new Set(['DECISION', 'TASK', 'FINDING', 'BLOCKER']);
-const TAG_PATTERN = /\b(DECISION|TASK|ACTION|FINDING|BLOCKER|QUESTION|NEXT|DONE|TEST|PLAN|RISK|CLAIM)\s*:\s*(.+)/i;
+const DIGEST_TAGS = new Set(['DECISION', 'FINDING']);
+const DIGEST_SESSION_LIMIT = 10;
+const DIGEST_HIGHLIGHT_LIMIT = 4;
+const TAG_PATTERN = /^(DECISION|TASK|FINDING|BLOCKER)\s*:\s*(.+)$/i;
+const KNOWN_TAG_PREFIX_PATTERNS = [
+  /^\[[^\]]+\]\s*/,
+  /^\([^)]+#\d+\)\s*:\s*/i,
+  /^[-*]\s+/,
+];
+const TRANSPORT_ARTIFACT_CLAIM_PATTERNS = [
+  /^(delivered|broadcast|routed)[._-]?(verified|unverified)$/i,
+  /\bdelivered[._-]?verified\b/i,
+  /\binitializing session\b/i,
+  /\bsession started\b/i,
+];
 
 function toOptionalString(value, fallback = null) {
   if (value === null || value === undefined) return fallback;
@@ -76,6 +90,23 @@ function safeJsonObject(value) {
   return value;
 }
 
+function stripKnownTagPrefixes(line) {
+  let normalized = String(line || '').trim();
+  if (!normalized) return '';
+  for (let i = 0; i < 6; i += 1) {
+    let changed = false;
+    for (const pattern of KNOWN_TAG_PREFIX_PATTERNS) {
+      const next = normalized.replace(pattern, '');
+      if (next !== normalized) {
+        normalized = next.trimStart();
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return normalized;
+}
+
 function extractTraceId(row) {
   const metadata = safeJsonObject(row?.metadata);
   const traceContext = safeJsonObject(metadata.traceContext);
@@ -96,11 +127,14 @@ function extractTag(rawBody) {
     .map((line) => line.trim())
     .filter(Boolean);
   for (const line of lines) {
-    const match = line.match(TAG_PATTERN);
+    const normalizedLine = stripKnownTagPrefixes(line);
+    const match = normalizedLine.match(TAG_PATTERN);
     if (!match) continue;
+    const detail = normalizeInline(match[2] || '');
+    if (!detail || detail === '-') continue;
     return {
       tag: String(match[1] || '').toUpperCase(),
-      detail: normalizeInline(match[2] || ''),
+      detail,
     };
   }
   return null;
@@ -146,10 +180,10 @@ function formatConfidence(value) {
   return Number(numeric.toFixed(2)).toString();
 }
 
-function isStaleDeliveryClaimStatement(statement) {
+function isTransportArtifactClaimStatement(statement) {
   const normalized = toOptionalString(statement, '').toLowerCase();
   if (!normalized) return false;
-  return /^(delivered|broadcast|routed)[._-]?(verified|unverified)$/.test(normalized);
+  return TRANSPORT_ARTIFACT_CLAIM_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 function normalizeUnresolvedClaims(claims = [], maxClaims = UNRESOLVED_CLAIMS_MAX) {
@@ -161,7 +195,7 @@ function normalizeUnresolvedClaims(claims = [], maxClaims = UNRESOLVED_CLAIMS_MA
     const status = toOptionalString(claim?.status, '').toLowerCase();
     if (!UNRESOLVED_STATUS_SET.has(status)) continue;
     const rawStatement = toOptionalString(claim?.statement, '');
-    if (!rawStatement || isStaleDeliveryClaimStatement(rawStatement)) continue;
+    if (!rawStatement || isTransportArtifactClaimStatement(rawStatement)) continue;
     const normalized = {
       id: claimId,
       status,
@@ -235,6 +269,69 @@ function sortByEventTsAsc(rows) {
   });
 }
 
+function buildDecisionDigestGroups(crossSessionTaggedRows = [], options = {}) {
+  const sessionLimit = Math.max(1, Number(options.digestSessionLimit) || DIGEST_SESSION_LIMIT);
+  const highlightLimit = Math.max(1, Number(options.digestHighlightLimit) || DIGEST_HIGHLIGHT_LIMIT);
+  const groups = new Map();
+
+  for (const entry of Array.isArray(crossSessionTaggedRows) ? crossSessionTaggedRows : []) {
+    const tag = toOptionalString(entry?.tag?.tag, '').toUpperCase();
+    if (!DIGEST_TAGS.has(tag)) continue;
+
+    const row = entry?.row || {};
+    const sessionId = toOptionalString(row?.sessionId, '-') || '-';
+    const detail = toOptionalString(entry?.tag?.detail, '');
+    if (!detail) continue;
+    const tsMs = toEventTsMs(row);
+
+    if (!groups.has(sessionId)) {
+      groups.set(sessionId, {
+        sessionId,
+        latestTsMs: tsMs,
+        decisions: 0,
+        findings: 0,
+        highlights: [],
+      });
+    }
+
+    const group = groups.get(sessionId);
+    group.latestTsMs = Math.max(group.latestTsMs, tsMs);
+    if (tag === 'DECISION') group.decisions += 1;
+    if (tag === 'FINDING') group.findings += 1;
+    group.highlights.push({
+      tsMs,
+      tag,
+      detail,
+      messageId: toOptionalString(row?.messageId, '-') || '-',
+    });
+  }
+
+  return Array.from(groups.values())
+    .sort((left, right) => {
+      if (left.latestTsMs !== right.latestTsMs) return right.latestTsMs - left.latestTsMs;
+      return left.sessionId.localeCompare(right.sessionId);
+    })
+    .slice(0, sessionLimit)
+    .map((group) => {
+      const highlights = group.highlights
+        .sort((left, right) => {
+          if (left.tsMs !== right.tsMs) return right.tsMs - left.tsMs;
+          if (left.messageId !== right.messageId) return left.messageId.localeCompare(right.messageId);
+          if (left.tag !== right.tag) return left.tag.localeCompare(right.tag);
+          return left.detail.localeCompare(right.detail);
+        })
+        .slice(0, highlightLimit)
+        .map((item) => `${item.tag}: ${item.detail}`);
+      return {
+        sessionId: group.sessionId,
+        latestTsMs: group.latestTsMs,
+        decisions: group.decisions,
+        findings: group.findings,
+        highlights,
+      };
+    });
+}
+
 function buildSessionHandoffMarkdown(rows, options = {}) {
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
   const sessionId = toOptionalString(options.sessionId, '-') || '-';
@@ -300,6 +397,7 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
     if (!tag || !CROSS_SESSION_TAGS.has(tag.tag)) continue;
     crossSessionTaggedRows.push({ row, tag });
   }
+  const decisionDigestGroups = buildDecisionDigestGroups(crossSessionTaggedRows, options);
 
   const latestTsMs = totalRows > 0 ? toEventTsMs(orderedRows[totalRows - 1]) : 0;
   const earliestTsMs = totalRows > 0 ? toEventTsMs(orderedRows[0]) : 0;
@@ -320,6 +418,7 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
     `- channels: ${formatCounts(channelCounts, Object.keys(channelCounts).sort()) || '-'}`,
     `- directions: ${formatCounts(directionCounts, Object.keys(directionCounts).sort()) || '-'}`,
     `- tagged_rows: ${taggedRows.length}`,
+    `- decision_digest_sessions: ${decisionDigestGroups.length}`,
     `- failed_rows: ${failedRows.length}`,
     `- pending_rows: ${pendingRows.length}`,
     '',
@@ -344,6 +443,33 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
         '|',
       ].join(' '));
       }
+  }
+
+  lines.push(
+    '',
+    '## Decision Digest',
+    '| session_id | latest_at | decisions | findings | highlights |',
+    '| --- | --- | --- | --- | --- |',
+  );
+
+  if (decisionDigestGroups.length === 0) {
+    lines.push('| - | - | - | - | - |');
+  } else {
+    for (const group of decisionDigestGroups) {
+      lines.push([
+        '|',
+        escapeMarkdownCell(group.sessionId),
+        '|',
+        escapeMarkdownCell(toIso(group.latestTsMs)),
+        '|',
+        escapeMarkdownCell(group.decisions),
+        '|',
+        escapeMarkdownCell(group.findings),
+        '|',
+        escapeMarkdownCell(normalizeInline(group.highlights.join(' ; '), 260)),
+        '|',
+      ].join(' '));
+    }
   }
 
   lines.push(
@@ -603,6 +729,8 @@ function materializeSessionHandoff(options = {}) {
     recentLimit: options.recentLimit,
     taggedLimit: options.taggedLimit,
     crossSessionLimit: options.crossSessionLimit,
+    digestSessionLimit: options.digestSessionLimit,
+    digestHighlightLimit: options.digestHighlightLimit,
     failureLimit: options.failureLimit,
     pendingLimit: options.pendingLimit,
     crossSessionTaggedRows: crossSessionRows,
@@ -703,6 +831,8 @@ module.exports = {
   _internals: {
     extractTag,
     extractTraceId,
+    stripKnownTagPrefixes,
+    buildDecisionDigestGroups,
     normalizeInline,
     normalizeUnresolvedClaims,
     queryUnresolvedClaims,
