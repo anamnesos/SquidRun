@@ -195,6 +195,15 @@ hivemind/
 └── ROLES.md     # Role definitions and startup baseline
 ```
 
+## Security Practices
+
+- **Local-first, no cloud dependency.** Everything runs on your machine. Hivemind itself does not send data to any external service — each CLI handles its own authentication and communication with its provider directly.
+- **No telemetry.** Hivemind does not phone home, collect analytics, or transmit usage data.
+- **Credentials stay local.** API keys and bot tokens live in your `.env` file, which is `.gitignore`d by default. Hivemind never stores or transmits your credentials — the CLIs manage their own auth.
+- **Git history audited.** Before open-sourcing, the full 702-commit history was audited for secrets — zero real credentials found. Runtime artifacts (session files, databases) are excluded from version control.
+- **Pre-commit quality gates.** Every commit runs through automated checks: ESLint, Jest tests (3,200+ tests), IPC handler validation, trigger path enforcement, and review sign-off verification.
+- **Telegram security note.** If you enable Telegram integration, messages from your bot can trigger real local actions (file edits, git operations, shell commands). Use your own private bot token and chat ID — do not share them.
+
 ## Current Status And Scope
 
 Hivemind is actively used for real multi-model coding sessions — the entire app was built by its own agent team. It is still early-stage and evolving rapidly.
