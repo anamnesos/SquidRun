@@ -18,7 +18,7 @@ Audit of the external project mode and state separation architecture. The invest
 *   **Mechanism:** `ui/scripts/hm-preflight.js` correctly identifies conflict patterns (role assignments, sign-ins) in project-local `CLAUDE.md`.
 *   **Failure Point:** In `ui/modules/main/firmware-manager.js`, the `ensureStartupFirmwareIfEnabled()` function (called at boot) runs the preflight scan but **passes an empty array `[]`** to `ensureFirmwareFiles()` if no options are provided.
 *   **Consequence:** Even if `hm-preflight.js` finds conflicts, the suppression lines are never generated in the actual firmware files (`director.md`, `builder.md`, `oracle.md`).
-*   **the user's Concern:** Confirmed. Agents currently receive Hivemind protocols via firmware and Project protocols via `CLAUDE.md`, with no active suppression of the latter.
+*   **Stakeholder Concern:** Confirmed. Agents currently receive Hivemind protocols via firmware and Project protocols via `CLAUDE.md`, with no active suppression of the latter.
 
 ## 3. `operatingMode` Lifecycle Trace
 *   **Switching Logic:** In `settings-handlers.js`, switching `operatingMode` to `project` simply sets `firmwareInjectionEnabled = true`.

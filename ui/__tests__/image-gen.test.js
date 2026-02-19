@@ -312,11 +312,11 @@ describe('Image Generation Module', () => {
     test('removeHistoryEntryByPath drops matching path and rewrites history', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockReturnValue(JSON.stringify([
-        { imagePath: 'D:\\projects\\hivemind\\workspace\\generated-images\\keep.png' },
-        { imagePath: 'D:\\projects\\hivemind\\workspace\\generated-images\\drop.png' },
+        { imagePath: 'workspace\\generated-images\\keep.png' },
+        { imagePath: 'workspace\\generated-images\\drop.png' },
       ]));
 
-      removeHistoryEntryByPath('D:\\projects\\hivemind\\workspace\\generated-images\\drop.png');
+      removeHistoryEntryByPath('workspace\\generated-images\\drop.png');
 
       const writeCall = fs.writeFileSync.mock.calls.find(call =>
         String(call[0]).includes('image-gen-history.json.tmp')

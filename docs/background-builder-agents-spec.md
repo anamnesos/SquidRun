@@ -12,8 +12,8 @@ This document captures landed behavior only.
 
 | Stage | Commit Hash | Date (UTC) | Author | Notes |
 |-------|-------------|------------|--------|-------|
-| Stage 1 | `365099bd6547e264bc23e5a3804b8d7570f08b8c` | `2026-02-19T06:50:43Z` | the user | Core runtime plumbing: manager, daemon spawn/options, alias routing, WS send path, owner binding, watchdog |
-| Stage 2/3 | `dcb91aaa55fb3297f76e6095c0a39699abf49412` | `2026-02-19T07:15:43Z` | the user | Builder control surface (`hm-bg`), WS `background-agent` actions, bg target-health alias recognition, UI/recovery side-effect suppression for bg panes, orphan-on-sync hard kill |
+| Stage 1 | `365099bd6547e264bc23e5a3804b8d7570f08b8c` | `2026-02-19T06:50:43Z` | Core team | Core runtime plumbing: manager, daemon spawn/options, alias routing, WS send path, owner binding, watchdog |
+| Stage 2/3 | `dcb91aaa55fb3297f76e6095c0a39699abf49412` | `2026-02-19T07:15:43Z` | Core team | Builder control surface (`hm-bg`), WS `background-agent` actions, bg target-health alias recognition, UI/recovery side-effect suppression for bg panes, orphan-on-sync hard kill |
 
 ---
 
