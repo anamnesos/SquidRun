@@ -1,14 +1,14 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
+const { resolveCoordPath } = require('../../config');
 const { runMigrations } = require('./migrations');
 
 function resolveDefaultDbPath() {
-  if (typeof resolveCoordPath === 'function') {
-    return resolveCoordPath(path.join('runtime', 'team-memory.sqlite'), { forWrite: true });
+  if (typeof resolveCoordPath !== 'function') {
+    throw new Error('resolveCoordPath unavailable; cannot resolve runtime/team-memory.sqlite');
   }
-  return path.join(WORKSPACE_PATH, 'runtime', 'team-memory.sqlite');
+  return resolveCoordPath(path.join('runtime', 'team-memory.sqlite'), { forWrite: true });
 }
 
 const DEFAULT_DB_PATH = resolveDefaultDbPath();

@@ -121,6 +121,12 @@ const mockDefaultConfig = {
     return instanceDirs[id] || null;
   },
   resolveCoordRoot: () => mockDefaultConfig.WORKSPACE_PATH,
+  resolveCoordPath: (relPath, _options = {}) => {
+    const normalized = String(relPath || '')
+      .replace(/^[/\\]+/, '')
+      .replace(/[/\\]+/g, '/');
+    return `${mockDefaultConfig.WORKSPACE_PATH}/${normalized}`;
+  },
 };
 
 /** Minimal mock — only WORKSPACE_PATH (for modules that just need the path) */

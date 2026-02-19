@@ -91,10 +91,12 @@ Example: `(ARCH #5): [URGENT] Build is failing on main. Oracle, investigate.`
 ### 5.1 The Check-in Procedure
 On startup, every agent must follow this sequence:
 1. **Identify Role:** Determine role and pane from environment variables (`HIVEMIND_ROLE`, `HIVEMIND_PANE_ID`).
-2. **Role-Specific Baseline:**
+2. **Read Runtime Truth:** Read `.hivemind/app-status.json` for active session number and treat it as canonical.
+3. **Use Canonical Journal Path:** For memory/comms checks, use `.hivemind/runtime/evidence-ledger.db`.
+4. **Role-Specific Baseline:**
    - **Architect only:** Await the automated **Startup Briefing** (summarizing `comms_journal`, unresolved claims, and failed deliveries).
    - **Builder/Oracle:** Read the **Session Handoff Index** at `workspace/handoffs/session.md` (auto-materialized from `comms_journal`).
-3. **Signal Readiness:** Message the Architect to check in with a one-line status:
+5. **Signal Readiness:** Message the Architect to check in with a one-line status:
    `node ui/scripts/hm-send.js architect "(ROLE #1): [Role] online. Standing by."`
 
 ### 5.2 Failure Escalation
@@ -121,4 +123,11 @@ To add a new agent (e.g., `Reviewer` or `SRE`) to the Hivemind:
 
 - **Terminal vs. Agent:** Terminal output is for the USER. Never assume another agent can see your terminal.
 - **No Content-Free ACKs:** Avoid "Okay" or "Received" unless `[ACK REQUIRED]` was specified. Prefer status-rich updates.
+- **Verify Before Redesign:** Validate that a subsystem is actually failing against live runtime data before proposing replacement architecture.
 - **Commit First:** Always commit work before declaring "Ready for restart." Uncommitted state is lost when a pane restarts.
+
+### 7.1 Pre-Restart Release Gate
+1. Builder completes fix + tests.
+2. Architect verifies independently.
+3. Oracle performs restart-risk review.
+4. Oracle updates startup-facing docs for changed behavior and lessons learned.

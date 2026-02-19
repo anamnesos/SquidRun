@@ -454,6 +454,7 @@ describe('HivemindApp', () => {
       const result = await app.initializeStartupSessionScope({ sessionNumber: 147 });
 
       expect(result).toEqual({ sessionId: 'ses-147', sessionNumber: 147 });
+      expect(app.commsSessionScopeId).toBe('app-session-147');
       expect(executeEvidenceLedgerOperation).toHaveBeenCalledTimes(2);
       expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
         1,
@@ -465,6 +466,24 @@ describe('HivemindApp', () => {
         2,
         'snapshot-context',
         expect.objectContaining({ sessionId: 'ses-147', trigger: 'session_start' }),
+        expect.any(Object)
+      );
+    });
+
+    it('keeps provided app-status scope when startup session number conflicts', async () => {
+      const { executeEvidenceLedgerOperation } = require('../modules/ipc/evidence-ledger-handlers');
+      executeEvidenceLedgerOperation
+        .mockResolvedValueOnce({ ok: false, reason: 'conflict' });
+
+      const result = await app.initializeStartupSessionScope({ sessionNumber: 186 });
+
+      expect(result).toEqual({ sessionId: null, sessionNumber: 186 });
+      expect(app.commsSessionScopeId).toBe('app-session-186');
+      expect(executeEvidenceLedgerOperation).toHaveBeenCalledTimes(1);
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        1,
+        'record-session-start',
+        expect.objectContaining({ sessionNumber: 186, mode: 'APP' }),
         expect.any(Object)
       );
     });

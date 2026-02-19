@@ -4,10 +4,10 @@ const crypto = require('crypto');
 const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
 
 function resolveDefaultProfilesPath() {
-  if (typeof resolveCoordPath === 'function') {
-    return resolveCoordPath(path.join('runtime', 'experiment-profiles.json'), { forWrite: true });
+  if (typeof resolveCoordPath !== 'function') {
+    throw new Error('resolveCoordPath unavailable; cannot resolve runtime/experiment-profiles.json');
   }
-  return path.join(WORKSPACE_PATH, 'runtime', 'experiment-profiles.json');
+  return resolveCoordPath(path.join('runtime', 'experiment-profiles.json'), { forWrite: true });
 }
 
 const DEFAULT_PROFILE_CWD = path.join(WORKSPACE_PATH, '..', 'ui');
