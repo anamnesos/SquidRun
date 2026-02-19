@@ -1,6 +1,6 @@
 # Hivemind
 
-Hivemind is a working multi-agent engineering system where one person directs 3 persistent AI agents, plus 2 internal teammates, that coordinate, recover from failures, and build shared institutional memory over time.
+Hivemind is a working multi-agent engineering system where one person directs 3 persistent AI agents that coordinate, recover from failures, and build shared institutional memory over time.
 
 This is not a chatbot wrapper. It is a live orchestration runtime for team intelligence.
 
@@ -20,7 +20,6 @@ It is a working proof that one person can run a real AI engineering team with pr
 ### Core Runtime
 - **PTY-only architecture** - one runtime path, no mode split
 - **3 persistent panes** - Architect (Director), Builder, Oracle
-- **2 internal teammates** - Frontend + Reviewer under Architect
 - **WebSocket-first comms** - ACK/timeout/retry + fallback triggers
 
 ### Reliability + Recovery
@@ -50,7 +49,7 @@ It is a working proof that one person can run a real AI engineering team with pr
 
 | Pane | Role | Bundle | Sub-roles |
 |------|------|--------|-----------|
-| 1 | Architect (+ Frontend + Reviewer teammates) | Director | Architect, Data Engineer, Reviewer, Release Manager, UX Researcher, Memory Steward |
+| 1 | Architect | Director | Architect, Data Engineer, Reviewer, Release Manager, UX Researcher, Memory Steward |
 | 2 | Builder | Builder | Frontend, Backend, DevOps, SRE, Tester, Validator, Security, Context Optimizer |
 | 5 | Oracle | Oracle | Investigator, Docs, Eval/Benchmark |
 
@@ -205,7 +204,7 @@ hivemind/
 
 ## Platform
 
-Windows-first (other platforms not yet fully validated).
+Cross-platform (Windows + macOS validated).
 
 ## Security Notes
 

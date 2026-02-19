@@ -22,9 +22,9 @@ Model and role instruction files now live at the project root:
 | `arch/` | Architect | Session 128 (workspace simplification) |
 | `devops/` | Builder (was DevOps) | Session 128 (workspace simplification) |
 | `ana/` | Oracle (was Analyst) | Session 128 (workspace simplification) |
-| `front/` | Frontend | Session 77 (migrated to Agent Teams teammate of Architect) |
+| `front/` | Frontend | Session 77 (merged into Architect) |
 | `back/` | Backend | Session 79 (merged into Builder) |
-| `rev/` | Reviewer | Session 77 (migrated to Agent Teams teammate of Architect) |
+| `rev/` | Reviewer | Session 77 (merged into Architect) |
 
 ## For New Agents
 
