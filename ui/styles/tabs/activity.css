@@ -2,8 +2,9 @@
 .activity-controls {
   display: flex;
   gap: var(--space-2);
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-3);
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .activity-filters {
@@ -12,51 +13,60 @@
 }
 
 .activity-filter {
-  background: var(--color-bg-dark);
-  border: 1px solid var(--color-border);
+  background: linear-gradient(180deg, rgba(26, 36, 55, 0.72) 0%, rgba(22, 31, 48, 0.65) 100%);
+  border: 1px solid rgba(111, 134, 160, 0.25);
   color: var(--color-text-muted);
-  padding: var(--space-1) var(--space-2);
+  padding: 5px var(--space-2);
   border-radius: var(--radius-md);
   font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
   cursor: pointer;
-  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast);
+  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .activity-filter:hover {
-  border-color: var(--color-secondary);
-  color: var(--color-secondary);
+  border-color: rgba(0, 240, 255, 0.4);
+  color: var(--color-text);
+  background: linear-gradient(180deg, rgba(31, 43, 65, 0.8) 0%, rgba(25, 36, 57, 0.76) 100%);
   transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(0, 240, 255, 0.11);
 }
 
 .activity-filter.active {
-  background: var(--color-secondary);
-  border-color: var(--color-secondary);
-  color: var(--color-bg-dark);
-  box-shadow: 0 2px 8px rgba(0, 240, 255, 0.3);
+  background: linear-gradient(180deg, rgba(0, 240, 255, 0.24) 0%, rgba(0, 240, 255, 0.14) 100%);
+  border-color: rgba(0, 240, 255, 0.48);
+  color: var(--color-primary);
+  box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.2), 0 8px 16px rgba(0, 240, 255, 0.12);
 }
 
 .activity-search {
   flex: 1;
-  min-width: 100px;
-  background: #0f0f1a;
-  border: 1px solid var(--color-border);
+  min-width: 130px;
+  background: linear-gradient(180deg, rgba(10, 14, 23, 0.95) 0%, rgba(8, 12, 20, 0.95) 100%);
+  border: 1px solid rgba(111, 134, 160, 0.25);
   border-radius: var(--radius-md);
-  padding: var(--space-1) var(--space-2);
+  padding: 6px var(--space-2);
   color: var(--color-text);
   font-size: var(--text-sm);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
 }
 
 .activity-search:focus {
-  border-color: var(--color-secondary);
+  border-color: rgba(0, 240, 255, 0.5);
   outline: none;
-  box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.15);
+  background: linear-gradient(180deg, rgba(11, 16, 27, 0.98) 0%, rgba(9, 14, 24, 0.98) 100%);
+  box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.13);
+}
+
+.activity-search::placeholder {
+  color: var(--color-text-dim);
 }
 
 /* Awaiting human banner */
 .awaiting-human-banner {
-  background: rgba(240, 160, 0, 0.15);
-  border: 1px solid rgba(240, 160, 0, 0.4);
+  background: linear-gradient(180deg, rgba(240, 160, 0, 0.2) 0%, rgba(240, 160, 0, 0.12) 100%);
+  border: 1px solid rgba(240, 160, 0, 0.46);
   color: var(--color-warning);
   text-align: center;
   padding: var(--space-2);
@@ -78,7 +88,7 @@
 }
 
 .activity-log {
-  background: #0a0a14;
+  background: linear-gradient(180deg, rgba(12, 17, 29, 0.9) 0%, rgba(10, 14, 24, 0.9) 100%);
   border-radius: var(--radius-md);
   flex: 1;
   min-height: 200px;
@@ -86,20 +96,23 @@
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   padding: var(--space-2);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(111, 134, 160, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 /* Standard log-line entry */
 .activity-entry {
-  padding: var(--space-1) 0;
-  border-bottom: 1px solid rgba(26, 26, 46, 0.8);
+  padding: 6px 5px;
+  border-bottom: 1px solid rgba(49, 64, 89, 0.45);
+  border-radius: var(--radius-sm);
   display: flex;
   gap: var(--space-2);
-  transition: background var(--transition-fast);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .activity-entry:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(0, 240, 255, 0.045);
+  border-bottom-color: rgba(0, 240, 255, 0.22);
 }
 
 .activity-entry:last-child {
@@ -111,16 +124,18 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  padding: var(--space-2) var(--space-2);
+  padding: var(--space-2) var(--space-3);
   margin: var(--space-1) 0;
-  background: rgba(255, 255, 255, 0.02);
+  background: linear-gradient(180deg, rgba(19, 27, 42, 0.58) 0%, rgba(15, 22, 35, 0.58) 100%);
   border-radius: var(--radius-md);
   border-bottom: none;
-  border-left: 2px solid var(--color-text-muted);
+  border-left: 2px solid rgba(149, 167, 190, 0.7);
+  border: 1px solid rgba(111, 134, 160, 0.2);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .activity-message-entry:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: linear-gradient(180deg, rgba(24, 34, 52, 0.7) 0%, rgba(18, 27, 43, 0.7) 100%);
 }
 
 /* Agent-colored left border for messages */
@@ -153,18 +168,18 @@
 .activity-chat-header .activity-time {
   width: auto;
   font-size: 10px;
-  color: #444;
+  color: var(--color-text-dim);
 }
 
 .activity-chat-body {
-  color: #ccc;
-  line-height: 1.5;
+  color: var(--color-text);
+  line-height: 1.6;
   word-break: break-word;
   white-space: pre-wrap;
 }
 
 .activity-time {
-  color: #555;
+  color: var(--color-text-dim);
   flex-shrink: 0;
   width: 55px;
 }
@@ -178,17 +193,18 @@
 .activity-agent[data-agent="1"] { color: var(--color-primary); }
 .activity-agent[data-agent="2"] { color: var(--color-secondary); }
 .activity-agent[data-agent="5"] { color: var(--color-info); }
-.activity-agent[data-agent="system"] { color: #666; }
+.activity-agent[data-agent="system"] { color: var(--color-text-muted); }
 
 .activity-type {
   flex-shrink: 0;
   width: 50px;
   padding: 2px var(--space-1);
   border-radius: var(--radius-sm);
-  font-size: var(--text-xs);
+  font-size: 9px;
+  font-weight: 600;
   text-align: center;
   text-transform: uppercase;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.04em;
 }
 
 .activity-type.error { background: rgba(255, 32, 64, 0.2); color: var(--color-error); }
@@ -199,13 +215,14 @@
 
 .activity-msg {
   flex: 1;
-  color: #bbb;
+  color: var(--color-text);
   word-break: break-word;
+  line-height: 1.45;
 }
 
 .activity-empty {
   text-align: center;
-  color: #555;
+  color: var(--color-text-dim);
   padding: var(--space-6) var(--space-5);
   font-style: italic;
 }

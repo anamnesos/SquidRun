@@ -17,8 +17,9 @@
 
 .api-keys-label {
   font-size: var(--text-sm);
-  font-weight: 500;
+  font-weight: 600;
   color: var(--color-text);
+  letter-spacing: 0.01em;
 }
 
 .api-keys-input-row {
@@ -30,19 +31,20 @@
 .api-keys-input {
   flex: 1;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-bg-light);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-md);
-  background: var(--color-bg-dark);
+  background: rgba(9, 11, 18, 0.9);
   color: var(--color-text);
   font-size: var(--text-sm);
   font-family: var(--font-mono);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
 }
 
 .api-keys-input:focus {
   outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px rgba(255, 32, 64, 0.2);
+  border-color: rgba(0, 240, 255, 0.5);
+  background: rgba(9, 11, 18, 1);
+  box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.12);
 }
 
 .api-keys-input::placeholder {
@@ -74,7 +76,7 @@
 }
 
 .api-keys-status.success {
-  color: var(--color-success, #28a745);
+  color: var(--color-success);
 }
 
 .api-keys-info {
