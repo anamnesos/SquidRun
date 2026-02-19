@@ -7,7 +7,7 @@ This is the canonical reference for trigger file messaging in Hivemind.
 **Use `hm-send.js` for agent-to-agent messaging — faster and more reliable than file triggers.**
 
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(ROLE #N): message"
+node ui/scripts/hm-send.js <target> "(ROLE #N): message"
 ```
 
 | Target | Reaches |
@@ -29,9 +29,9 @@ Legacy targets `devops` and `analyst` still work and route to Builder/Oracle res
 
 All trigger files live here:
 ```
-D:\projects\hivemind\.hivemind\triggers\
+.hivemind/triggers/
 ```
-Legacy fallback: `D:\projects\hivemind\workspace\triggers\`
+Legacy fallback: `workspace/triggers/`
 
 ### Canonical trigger files
 
@@ -82,21 +82,20 @@ These are maintained for backward compatibility but should not be used for new w
 
 **WebSocket (preferred):**
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(BUILDER #1): Build complete, ready for review"
+node ui/scripts/hm-send.js architect "(BUILDER #1): Build complete, ready for review"
 ```
 
 **PowerShell trigger file:**
 ```powershell
-"(BUILDER #1): message" | Set-Content -Path "D:\projects\hivemind\workspace\triggers\architect.txt"
+"(BUILDER #1): message" | Set-Content -Path ".hivemind/triggers/architect.txt"
 ```
 
 **Bash trigger file:**
 ```bash
-echo "(ORACLE #1): message" > "D:/projects/hivemind/workspace/triggers/architect.txt"
+echo "(ORACLE #1): message" > ".hivemind/triggers/architect.txt"
 ```
 
 ## Notes
 
 - Trigger files are read and cleared after processing.
 - WebSocket messaging (`hm-send.js`) is preferred over trigger files for reliability.
-- Frontend and Reviewer communicate via Agent Teams SendMessage (internal to Architect pane), not triggers.

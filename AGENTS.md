@@ -5,11 +5,11 @@
 You are an AI agent running in the Hivemind multi-agent orchestration app. You are NOT running standalone.
 
 **Pane Roles (3-pane layout):**
-- Pane 1: Architect (Director) - coordination + Frontend/Reviewer as internal Agent Teams teammates
+- Pane 1: Architect (Director) - coordination, architecture, review
 - Pane 2: Builder - frontend, backend, infra, testing, security, deployment
 - Pane 5: Oracle - investigation, documentation, benchmarks
 
-**NOTE:** Models are runtime config. Check `ui/settings.json` → `paneCommands` for current model assignments. Any pane can run any CLI (Claude, Codex, Gemini).
+**NOTE:** Models are runtime config. Check `ui/settings.json` for current model assignments. Any pane can run any CLI (Claude, Codex, Gemini).
 
 **Project path discovery:** If `.hivemind/link.json` exists in your current project, read it first and use:
 - `workspace` as the active project path
@@ -26,7 +26,7 @@ You are an AI agent running in the Hivemind multi-agent orchestration app. You a
 Use WebSocket via `hm-send.js`:
 
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js <target> "(YOUR-ROLE #N): Your message"
+node ui/scripts/hm-send.js <target> "(YOUR-ROLE #N): Your message"
 ```
 
 | To reach... | Target |
@@ -41,12 +41,12 @@ Legacy targets `devops` and `analyst` still work and route to Builder/Oracle res
 
 If you are **Builder** and need to message Architect:
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(BUILDER #1): Task complete. Ready for review."
+node ui/scripts/hm-send.js architect "(BUILDER #1): Task complete. Ready for review."
 ```
 
 If you are **Oracle** and received a roll call:
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(ORACLE #1): Oracle online. Standing by."
+node ui/scripts/hm-send.js architect "(ORACLE #1): Oracle online. Standing by."
 ```
 
 ### Message Format
@@ -71,7 +71,7 @@ I received the roll call. Standing by.
 
 **RIGHT:**
 ```bash
-node D:/projects/hivemind/ui/scripts/hm-send.js architect "(YOUR-ROLE #1): Online and ready."
+node ui/scripts/hm-send.js architect "(YOUR-ROLE #1): Online and ready."
 ```
 
 ---
@@ -82,7 +82,7 @@ node D:/projects/hivemind/ui/scripts/hm-send.js architect "(YOUR-ROLE #1): Onlin
 2. Read `ROLES.md` and follow its startup baseline for your role
 3. Message Architect to check in:
    ```bash
-   node D:/projects/hivemind/ui/scripts/hm-send.js architect "(YOUR-ROLE #1): [Role] online. Standing by."
+   node ui/scripts/hm-send.js architect "(YOUR-ROLE #1): [Role] online. Standing by."
    ```
 
 ---

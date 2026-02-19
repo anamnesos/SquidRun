@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="styles/state-bar.css">
   <link rel="stylesheet" href="styles/settings-panel.css">
   <link rel="stylesheet" href="styles/tabs.css">
+  <link rel="stylesheet" href="styles/tabs/comms-console.css">
 </head>
 <body>
   <div class="startup-loading-overlay" id="startupLoadingOverlay" aria-live="polite">
@@ -399,6 +400,16 @@
         <!-- Primary tabs (always visible) -->
         <button class="panel-tab" data-tab="bridge" data-tab-group="primary" title="System dashboard — agents, metrics, events">Bridge</button>
 
+        <button class="panel-tab" data-tab="comms" data-tab-group="primary" title="Agent + external comms console">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 12h2"></path>
+            <path d="M18 12h2"></path>
+            <path d="M7 12a5 5 0 0 1 10 0"></path>
+            <path d="M9 12a3 3 0 0 1 6 0"></path>
+            <path d="M12 12v.01"></path>
+          </svg>
+          Comms
+        </button>
         <button class="panel-tab active" data-tab="screenshots" data-tab-group="primary" title="Drag & drop images for agents to reference">Screenshots</button>
         <button class="panel-tab" data-tab="oracle" data-tab-group="primary" title="AI image generation">Image Gen</button>
 
@@ -413,6 +424,15 @@
           <div class="bridge-transport" id="bridgeTransport"></div>
           <div class="bridge-stream" id="bridgeStream">
             <div class="bridge-stream-empty">Waiting for events...</div>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-comms">
+          <div class="tab-title">Comms Console</div>
+          <div class="tab-description">Live agent transport messages and external Telegram/SMS routing.</div>
+          <div class="comms-console-shell">
+            <div class="comms-console-list" id="commsConsoleList">
+              <div class="comms-console-empty">Waiting for comms traffic...</div>
+            </div>
           </div>
         </div>
         <div class="tab-pane active" id="tab-screenshots">
