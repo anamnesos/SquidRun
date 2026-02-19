@@ -12,6 +12,7 @@ const { EventEmitter } = require('events');
 // Mock os and child_process
 jest.mock('os', () => ({
   platform: jest.fn(() => 'win32'),
+  homedir: jest.fn(() => '/tmp'),
 }));
 
 // Create a mock process factory

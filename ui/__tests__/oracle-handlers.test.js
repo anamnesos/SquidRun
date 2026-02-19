@@ -2,10 +2,12 @@
  * Oracle IPC handler tests — full coverage.
  */
 
+const path = require('path');
+
 jest.mock('../modules/image-gen', () => ({
   generateImage: jest.fn(),
   removeHistoryEntryByPath: jest.fn(),
-  GENERATED_IMAGES_DIR: 'workspace\\generated-images',
+  GENERATED_IMAGES_DIR: require('path').join('workspace', 'generated-images'),
 }));
 
 const { generateImage, removeHistoryEntryByPath } = require('../modules/image-gen');
@@ -113,7 +115,7 @@ describe('oracle handlers', () => {
     test('routes history updates through image-gen canonical writer', async () => {
       const result = await harness.invoke(
         'oracle:deleteImage',
-        'workspace\\generated-images\\icon-test.png'
+        path.join('workspace', 'generated-images', 'icon-test.png')
       );
       expect(result.success).toBe(true);
       expect(removeHistoryEntryByPath).toHaveBeenCalledWith(
@@ -122,7 +124,7 @@ describe('oracle handlers', () => {
     });
 
     test('rejects path outside generated-images directory', async () => {
-      const result = await harness.invoke('oracle:deleteImage', 'outside\\evil.exe');
+      const result = await harness.invoke('oracle:deleteImage', path.join('outside', 'evil.exe'));
       expect(result.success).toBe(false);
       expect(result.error).toContain('outside');
     });
@@ -131,7 +133,7 @@ describe('oracle handlers', () => {
       removeHistoryEntryByPath.mockImplementation(() => { throw new Error('history fail'); });
       const result = await harness.invoke(
         'oracle:deleteImage',
-        'workspace\\generated-images\\test.png'
+        path.join('workspace', 'generated-images', 'test.png')
       );
       expect(result.success).toBe(true);
     });

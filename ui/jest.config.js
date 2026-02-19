@@ -22,6 +22,10 @@ module.exports = {
     },
   },
   modulePathIgnorePatterns: ['<rootDir>/node_modules/'],
+  // Ensure tests can run in CI without Electron binary installation.
+  moduleNameMapper: {
+    '^electron$': '<rootDir>/__tests__/mocks/electron.js',
+  },
   // Setup file for global mocks
   setupFilesAfterEnv: ['<rootDir>/__tests__/setup.js'],
   // Increase timeout for async tests
