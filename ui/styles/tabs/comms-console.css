@@ -61,6 +61,33 @@
   letter-spacing: 0.04em;
 }
 
+.comms-console-session-sep {
+  position: relative;
+  margin: 12px 0;
+  text-align: center;
+  line-height: 1;
+}
+
+.comms-console-session-sep::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid rgba(0, 255, 208, 0.25);
+  transform: translateY(-50%);
+}
+
+.comms-console-session-sep > span {
+  position: relative;
+  z-index: 1;
+  display: inline-block;
+  padding: 0 8px;
+  color: rgba(164, 219, 212, 0.7);
+  font-size: 11px;
+  background: rgba(6, 11, 19, 0.95);
+}
+
 .comms-console-entry {
   padding: 9px 10px 8px;
   border: 1px solid rgba(0, 255, 208, 0.17);

@@ -120,6 +120,7 @@ function normalizeJournalRow(row) {
     targetRole,
     channel,
     body,
+    sessionId: row.sessionId || null,
   };
 }
 
@@ -152,6 +153,7 @@ function normalizeBusEvent(event) {
     targetRole,
     channel,
     body,
+    sessionId: payload.sessionId || null,
   };
 }
 
@@ -221,6 +223,23 @@ function createEntryNode(entry) {
   return div;
 }
 
+function sessionSeparatorLabel(sessionId) {
+  const raw = typeof sessionId === 'string' ? sessionId.trim() : '';
+  if (!raw) return null;
+  const match = raw.match(/app-session-(\d+)/i);
+  if (match && match[1]) return `--- Session ${match[1]} ---`;
+  return `--- ${raw} ---`;
+}
+
+function createSessionSeparatorNode(sessionId) {
+  const label = sessionSeparatorLabel(sessionId);
+  if (!label) return null;
+  const div = document.createElement('div');
+  div.className = 'comms-console-session-sep';
+  div.innerHTML = `<span>${escapeHtml(label)}</span>`;
+  return div;
+}
+
 function renderEntry(entry, { animate = true } = {}) {
   const list = document.getElementById('commsConsoleList');
   if (!list) return;
@@ -252,6 +271,19 @@ function addEntry(entry, options = {}) {
   if (entry.key && keySet.has(entry.key)) return;
   if (entry.key) keySet.add(entry.key);
 
+  const prevEntry = entries.length > 0 ? entries[entries.length - 1] : null;
+  const shouldInsertSessionSep = Boolean(
+    prevEntry
+    && prevEntry.sessionId
+    && entry.sessionId
+    && prevEntry.sessionId !== entry.sessionId
+  );
+  if (shouldInsertSessionSep) {
+    const list = document.getElementById('commsConsoleList');
+    const sepNode = createSessionSeparatorNode(entry.sessionId);
+    if (list && sepNode) list.appendChild(sepNode);
+  }
+
   entries.push(entry);
   renderEntry(entry, options);
 
@@ -260,7 +292,15 @@ function addEntry(entry, options = {}) {
     if (removed && removed.key) keySet.delete(removed.key);
     const list = document.getElementById('commsConsoleList');
     const first = list ? list.querySelector('.comms-console-entry') : null;
-    if (first) first.remove();
+    if (first) {
+      const prev = first.previousElementSibling;
+      first.remove();
+      if (prev && prev.classList.contains('comms-console-session-sep')) prev.remove();
+    }
+    if (list) {
+      const danglingSep = list.firstElementChild;
+      if (danglingSep && danglingSep.classList.contains('comms-console-session-sep')) danglingSep.remove();
+    }
   }
 }
 
@@ -288,6 +328,7 @@ async function backfillFromJournal() {
     });
     const rows = normalizeJournalResult(result).slice().reverse();
     appendRows(rows, { animate: false });
+    scrollToBottom();
     hasLoadedBackfill = true;
   } catch (_) {
     hasLoadedBackfill = true;
