@@ -30,7 +30,7 @@ Most multi-agent coding tools require API keys and charge per token. That adds u
 
 Each pane in Hivemind runs a real CLI process — the same tool you'd use in your terminal. No API keys needed for core agent work. Your subscription limits apply per-CLI, so running all three in parallel gives you the combined capacity of all your subscriptions.
 
-**API keys are optional.** The settings panel has API key fields for supplementary features like image generation (Recraft, OpenAI DALL-E). These are not required for the core multi-model workflow.
+**API keys are optional — they're a backup.** The settings panel has API key fields that serve as a fallback if you hit your subscription limits, plus supplementary features like image generation (Recraft, OpenAI DALL-E). Your subscriptions cover the core workflow; API keys are there if you need overflow capacity or extra features.
 
 **This is just running official CLIs on your machine.** Hivemind launches and manages the same CLI tools you'd run in separate terminal windows — it just orchestrates them. Each provider explicitly includes CLI usage in their subscription plans (see links above). There's no API key scraping, no token proxying, no terms of service gray area.
 
@@ -128,9 +128,9 @@ npm start
 2. In Settings, assign each pane's CLI command (`paneCommands`) to the tool you want — for example `claude`, `codex --full-auto`, or `gemini`.
 3. (Optional) Copy `.env.example` to `.env` for supplementary features.
 
-**What requires a subscription (free):** The core multi-agent workflow. Just have at least one CLI installed and logged in to your subscription.
+**What requires a subscription:** The core multi-model workflow. Just have at least one CLI installed and logged in to your subscription.
 
-**What requires API keys (optional):** Image generation (Recraft or OpenAI), Telegram bot integration, and other external tooling configured via `.env`.
+**What API keys are for (optional):** API keys act as overflow capacity if you hit your subscription limits, plus they enable supplementary features like image generation (Recraft or OpenAI) and Telegram bot integration. Configure them in `.env` — they're there when you need them, but not required to get started.
 
 ## Usage Basics
 
