@@ -38,12 +38,34 @@ Messages are routed via the `ui/scripts/hm-send.js` utility.
 | `architect` | Architect | 1 | Coordination, Decisions, Review |
 | `builder` | Builder | 2 | Implementation, Testing, DevOps |
 | `oracle` | Oracle | 5 | Investigation, Docs, Benchmarks |
+| `builder-bg-1` | Background Builder Slot 1 | `bg-2-1` | Builder-owned delegated implementation work |
+| `builder-bg-2` | Background Builder Slot 2 | `bg-2-2` | Builder-owned delegated implementation work |
+| `builder-bg-3` | Background Builder Slot 3 | `bg-2-3` | Builder-owned delegated implementation work |
 
 ### 2.2 Special Targets
 - **`user`:** Routes to the terminal and automatically to Telegram if an inbound message was received in the last 5 minutes.
 - **`telegram`:** Explicitly routes to the configured Telegram bot.
 
-### 2.3 Legacy Aliases
+### 2.3 Background Routing Rules (Stages 1-3)
+- Background targets resolve through `resolveTargetToPane()` and accept either alias (`builder-bg-*`) or synthetic pane ID (`bg-2-*`).
+- Brokered sends to background targets route through direct daemon PTY write (`delivered.daemon_write`) rather than trigger-file injection.
+- Owner binding is enforced:
+  - Background senders may message Builder only.
+  - Non-Builder target attempts are blocked with `owner_binding_violation`.
+
+### 2.4 Background Control Plane (Stage 2/3)
+- Message type `background-agent` is handled by the app WebSocket broker.
+- Builder-only actions:
+  - `spawn`
+  - `kill`
+  - `kill-all`
+  - `list`
+  - `target-map`
+- Non-Builder callers receive `owner_binding_violation`.
+- Builder CLI helper `ui/scripts/hm-bg.js` sends these actions over WebSocket.
+- Daemon event handling suppresses non-owner UI/recovery/CLI-identity side effects for background panes.
+
+### 2.5 Legacy Aliases
 The system maintains aliases for backward compatibility:
 - `devops` → Routes to `builder`
 - `analyst` → Routes to `oracle`
@@ -63,8 +85,17 @@ Hivemind uses a dual-path delivery system to ensure no message is lost.
 - **Mechanism:** Writing to `.hivemind/triggers/[target].txt`.
 - **Latency:** 500ms - 2000ms (dependent on file watchers).
 - **Use Case:** Automatically used by `hm-send.js` if the WebSocket connection fails or times out.
+- **Stage 1-3 Caveat:** Trigger fallback remains role/pane based; `builder-bg-*` aliases are WebSocket-route targets.
 
-### 3.3 ACK & Delivery Semantics
+### 3.3 Target Health Semantics
+- WebSocket `health-check` supports background aliases/pane IDs (`builder-bg-*`, `bg-2-*`).
+- Background health statuses:
+  - `healthy`: route active and within stale threshold.
+  - `stale`: route exists but exceeded stale threshold.
+  - `no_route`: target identity is valid but no active route is connected.
+- Invalid names still return `invalid_target`.
+
+### 3.4 ACK & Delivery Semantics
 - **`delivered.verified`:** The target agent's runtime acknowledged receipt of the message.
 - **`accepted.unverified`:** The message was accepted by the bus but the target agent hasn't acknowledged it yet (common during high load or sleep/wake cycles).
 - **`fallback.triggered`:** WebSocket failed; the message was written to a trigger file.
