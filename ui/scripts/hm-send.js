@@ -14,6 +14,7 @@ const {
   getHivemindRoot,
   setProjectRoot,
   resolveCoordPath,
+  resolveGlobalPath,
 } = require('../config');
 const {
   appendCommsJournalEntry,
@@ -508,9 +509,13 @@ function writeTriggerFallback(targetInput, content, options = {}) {
     };
   }
 
-  const triggersDir = typeof resolveCoordPath === 'function'
-    ? resolveCoordPath('triggers', { forWrite: true })
-    : path.join(WORKSPACE_PATH, 'triggers');
+  const triggersDir = typeof resolveGlobalPath === 'function'
+    ? resolveGlobalPath('triggers', { forWrite: true })
+    : (
+      typeof resolveCoordPath === 'function'
+        ? resolveCoordPath('triggers', { forWrite: true })
+        : path.join(WORKSPACE_PATH, 'triggers')
+    );
   const triggerPath = path.join(triggersDir, `${roleName}.txt`);
   const tempPath = path.join(
     triggersDir,

@@ -7,11 +7,14 @@ const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
-const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
+const { WORKSPACE_PATH, resolveCoordPath, resolveGlobalPath } = require('../config');
 
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 
 function getTriggerPath(filename) {
+  if (typeof resolveGlobalPath === 'function') {
+    return resolveGlobalPath(path.join('triggers', filename), { forWrite: true });
+  }
   if (typeof resolveCoordPath === 'function') {
     return resolveCoordPath(path.join('triggers', filename), { forWrite: true });
   }
@@ -953,12 +956,14 @@ describe('hm-send retry behavior', () => {
     }
   });
 
-  test('uses local .hivemind/link.json to scope fallback trigger path', async () => {
+  test('uses global trigger fallback path even when project link.json is present', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-link-'));
     const externalProjectPath = path.join(tempRoot, 'external-project');
     const externalCoordPath = path.join(externalProjectPath, '.hivemind');
     const linkPath = path.join(externalCoordPath, 'link.json');
-    const expectedTriggerPath = path.join(externalCoordPath, 'triggers', 'builder.txt');
+    const expectedTriggerPath = getTriggerPath('builder.txt');
+    const hadOriginal = fs.existsSync(expectedTriggerPath);
+    const originalContent = hadOriginal ? fs.readFileSync(expectedTriggerPath, 'utf8') : null;
     fs.mkdirSync(externalCoordPath, { recursive: true });
     fs.writeFileSync(linkPath, JSON.stringify({
       workspace: externalProjectPath,
@@ -976,8 +981,13 @@ describe('hm-send retry behavior', () => {
       expect(fs.existsSync(expectedTriggerPath)).toBe(true);
       const fallbackContent = fs.readFileSync(expectedTriggerPath, 'utf8');
       expect(fallbackContent).toContain('(TEST #7): link-scoped fallback');
-      expect(result.stderr.replace(/\\/g, '/')).toContain('/external-project/.hivemind/triggers/builder.txt');
+      expect(result.stderr.replace(/\\/g, '/')).toContain(expectedTriggerPath.replace(/\\/g, '/'));
     } finally {
+      if (hadOriginal) {
+        fs.writeFileSync(expectedTriggerPath, originalContent, 'utf8');
+      } else if (fs.existsSync(expectedTriggerPath)) {
+        fs.unlinkSync(expectedTriggerPath);
+      }
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });

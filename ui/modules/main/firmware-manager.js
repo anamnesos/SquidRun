@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const log = require('../logger');
-const { PROJECT_ROOT, COORD_ROOT, getHivemindRoot, getProjectRoot } = require('../../config');
+const { PROJECT_ROOT, COORD_ROOT, getHivemindRoot, getProjectRoot, resolveGlobalPath } = require('../../config');
 const { execFileSync } = require('child_process');
 
 const SPEC_RELATIVE_PATH = path.join('workspace', 'specs', 'firmware-injection-spec.md');
@@ -90,7 +90,14 @@ class FirmwareManager {
     );
     this.coordRoot = path.resolve(options.coordRoot || COORD_ROOT);
     this.specPath = path.resolve(options.specPath || path.join(this.hivemindRoot, SPEC_RELATIVE_PATH));
-    this.firmwareDir = path.resolve(options.firmwareDir || path.join(this.coordRoot, FIRMWARE_SUBDIR));
+    this.firmwareDir = path.resolve(
+      options.firmwareDir
+      || (
+        typeof resolveGlobalPath === 'function'
+          ? resolveGlobalPath(FIRMWARE_SUBDIR, { forWrite: true })
+          : path.join(this.coordRoot, FIRMWARE_SUBDIR)
+      )
+    );
     this.codexRulesDir = path.resolve(
       options.codexRulesDir || path.join(os.homedir(), '.codex', 'rules')
     );
