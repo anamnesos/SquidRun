@@ -229,7 +229,7 @@ describe('evidence-ledger integration: trace continuity', () => {
         },
         project: {
           select: jest.fn().mockResolvedValue({ canceled: true }),
-          get: jest.fn().mockResolvedValue('D:/projects/hivemind'),
+          get: jest.fn().mockResolvedValue('<project-root>'),
         },
       },
     };

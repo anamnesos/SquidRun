@@ -2,15 +2,24 @@
 node_modules/
 ui/node_modules/
 
+# Environment files
+.env
+.env.*
+!.env.example
+
 # Build outputs
 dist/
 out/
+build/
+coverage/
 *.log
 
 # OS files
 .DS_Store
 Thumbs.db
+ehthumbs.db
 desktop.ini
+$RECYCLE.BIN/
 
 # Python caches
 __pycache__/
@@ -20,6 +29,9 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+.vs/
+.vscode-test/
+*.code-workspace
 *.swp
 *.swo
 
@@ -29,6 +41,8 @@ __pycache__/
 # Electron
 ui/daemon.pid
 ui/daemon.log
+*.pid
+*.pid.lock
 
 # Runtime state (regenerated)
 workspace/state.json
@@ -61,7 +75,7 @@ workspace/triggers/
 # Agent-generated reports (ephemeral)
 workspace/!!_*
 
-# Build artifacts (old reviews, investigations, designs — nuked S128)
+# Build artifacts (old reviews, investigations, designs - nuked S128)
 workspace/build/reviews/
 workspace/build/investigations/
 workspace/build/designs/
@@ -91,12 +105,17 @@ workspace/performance-audit.md
 
 # Screenshots (user-specific)
 workspace/screenshots/
+screenshots/
 
 # Audit screens (ephemeral)
 workspace/audit-screens/
 
 # Runtime databases (regenerated)
 workspace/evidence-ledger.db
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
 
 # Auto-generated handoffs (materialized from comms_journal)
 workspace/handoffs/session.md
@@ -104,5 +123,6 @@ workspace/handoffs/session.md
 # Runtime app status
 workspace/app-status.json
 
-nul
-.env
+# Generic local caches
+.cache/
+.eslintcache
