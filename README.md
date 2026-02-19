@@ -216,7 +216,7 @@ hivemind/
 
 ## Current Status And Scope
 
-Hivemind is actively used for real multi-model coding sessions — the entire app was built by its own agent team. It is still early-stage and evolving rapidly.
+Hivemind is actively used for real multi-model coding sessions. The codebase has 3,200+ tests across 163 test suites, with pre-commit quality gates (ESLint, Jest, IPC validation, trigger path enforcement) on every commit. It is still early-stage and evolving rapidly.
 
 It is designed for trusted local environments and developer workflows, not hardened multi-tenant production use.
 
