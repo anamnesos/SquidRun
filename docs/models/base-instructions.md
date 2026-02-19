@@ -34,7 +34,13 @@ On every new session, BEFORE waiting for user input:
 node ui/scripts/hm-send.js <target> "(ROLE #N): message"
 ```
 
-**Targets:** architect, builder, oracle
+**Targets:** architect, builder, oracle, builder-bg-1, builder-bg-2, builder-bg-3
+
+Background target notes:
+- `builder-bg-*` are Builder-owned background workers (`bg-2-*` synthetic pane IDs).
+- Use them for Builder task delegation on heavy/multi-file work.
+- Background workers are owner-bound and should report to Builder, not Architect.
+- Use `node ui/scripts/hm-bg.js` for Builder control operations (spawn/list/kill/kill-all/map).
 
 **Message tags:**
 - `[ACK REQUIRED]` - Needs confirmation

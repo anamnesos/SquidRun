@@ -15,8 +15,18 @@ node ui/scripts/hm-send.js <target> "(ROLE #N): message"
 | `architect` | Architect (pane 1) |
 | `builder` | Builder (pane 2) |
 | `oracle` | Oracle (pane 5) |
+| `builder-bg-1` | Background Builder slot 1 (`bg-2-1`, Builder-owned) |
+| `builder-bg-2` | Background Builder slot 2 (`bg-2-2`, Builder-owned) |
+| `builder-bg-3` | Background Builder slot 3 (`bg-2-3`, Builder-owned) |
 
 Legacy targets `devops` and `analyst` still work and route to Builder/Oracle respectively.
+
+Background targets also accept synthetic pane IDs directly (`bg-2-1`, `bg-2-2`, `bg-2-3`) through the WebSocket broker.
+
+For Builder control operations (spawn/list/kill/kill-all/map), use:
+```bash
+node ui/scripts/hm-bg.js <command>
+```
 
 **Why WebSocket over file triggers:**
 - Zero message loss (file triggers lose 40%+ under rapid messaging)
@@ -29,6 +39,9 @@ Legacy targets `devops` and `analyst` still work and route to Builder/Oracle res
 
 `hm-send.js` writes fallback trigger files to global state (`resolveGlobalPath('triggers')` from `ui/config.js`).
 Compatibility watchers still monitor coordination-root trigger paths.
+
+Stage 1-3 note: trigger-file fallback is role/pane-file based and does not map `builder-bg-*` aliases directly.
+Background Builder messaging is expected to use the WebSocket route.
 
 Coordination-root trigger path:
 ```
@@ -86,6 +99,14 @@ These are maintained for backward compatibility but should not be used for new w
 **WebSocket (preferred):**
 ```bash
 node ui/scripts/hm-send.js architect "(BUILDER #1): Build complete, ready for review"
+```
+
+```bash
+node ui/scripts/hm-send.js builder-bg-1 "(BUILDER #7): Take ownership of docs + tests for commit 365099b."
+```
+
+```bash
+node ui/scripts/hm-bg.js spawn --slot 2
 ```
 
 **PowerShell trigger file:**
