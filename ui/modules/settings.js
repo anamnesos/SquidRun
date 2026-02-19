@@ -52,7 +52,15 @@ function applySettingsToUI() {
   for (const [key, value] of Object.entries(currentSettings)) {
     const toggle = document.getElementById(`toggle${key.charAt(0).toUpperCase() + key.slice(1)}`);
     if (toggle) {
-      toggle.classList.toggle('active', value);
+      const enabled = value === true;
+      toggle.classList.toggle('active', enabled);
+      toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
+      if (!toggle.hasAttribute('tabindex')) {
+        toggle.setAttribute('tabindex', '0');
+      }
+      if (!toggle.hasAttribute('role')) {
+        toggle.setAttribute('role', 'switch');
+      }
     }
   }
 
@@ -159,10 +167,25 @@ function setupSettings() {
 
   // Toggle switches
   document.querySelectorAll('.toggle').forEach(toggle => {
-    toggle.addEventListener('click', () => {
-      const setting = toggle.dataset.setting;
-      if (setting) {
-        toggleSetting(setting);
+    const setting = toggle.dataset.setting;
+    if (!setting) return;
+
+    if (!toggle.hasAttribute('tabindex')) {
+      toggle.setAttribute('tabindex', '0');
+    }
+    if (!toggle.hasAttribute('role')) {
+      toggle.setAttribute('role', 'switch');
+    }
+
+    const triggerToggle = () => {
+      toggleSetting(setting);
+    };
+
+    toggle.addEventListener('click', triggerToggle);
+    toggle.addEventListener('keydown', (event) => {
+      if (event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault();
+        triggerToggle();
       }
     });
   });
