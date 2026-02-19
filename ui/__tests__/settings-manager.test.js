@@ -23,15 +23,15 @@ jest.mock('../modules/logger', () => ({
 }));
 
 jest.mock('../config', () => ({
-  WORKSPACE_PATH: 'D:\\projects\\hivemind\\workspace',
-  resolvePaneCwd: () => 'D:\\projects\\hivemind',
+  WORKSPACE_PATH: 'workspace',
+  resolvePaneCwd: () => '<project-root>',
   resolveGlobalPath: (relPath, opts) => {
     const p = require('path');
-    return p.join('C:\\Users\\mock\\AppData\\Roaming\\hivemind', relPath);
+    return p.join('<global-state-root>', relPath);
   },
   resolveCoordPath: (relPath, opts) => {
     const p = require('path');
-    return p.join('D:\\projects\\hivemind\\.hivemind', relPath);
+    return p.join('<project-root>\\.hivemind', relPath);
   },
 }));
 
@@ -46,7 +46,7 @@ function mockCliAvailability(availability) {
 
     if (locatorCall) {
       if (availability[target]) {
-        return { status: 0, stdout: `C:\\mock\\${target}.exe\n`, stderr: '' };
+        return { status: 0, stdout: `<cli-bin>/${target}\n`, stderr: '' };
       }
       return { status: 1, stdout: '', stderr: '' };
     }
@@ -82,7 +82,7 @@ describe('SettingsManager CLI auto-detection', () => {
     ctx.currentSettings.paneCommands = {
       '1': 'codex --yolo',
       '2': 'claude',
-      '5': 'gemini --yolo --include-directories "C:\\custom\\workspace"',
+      '5': 'gemini --yolo --include-directories "<custom-workspace>"',
     };
 
     const result = manager.autoDetectPaneCommandsOnStartup();
@@ -92,7 +92,7 @@ describe('SettingsManager CLI auto-detection', () => {
     expect(ctx.currentSettings.paneCommands).toEqual({
       '1': 'codex --yolo',
       '2': 'claude',
-      '5': 'gemini --yolo --include-directories "C:\\custom\\workspace"',
+      '5': 'gemini --yolo --include-directories "<custom-workspace>"',
     });
   });
 
@@ -101,7 +101,7 @@ describe('SettingsManager CLI auto-detection', () => {
     ctx.currentSettings.paneCommands = {
       '1': '   ',
       '2': 'codex --yolo',
-      '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind"',
+      '5': 'gemini --yolo --include-directories "<project-root>"',
     };
 
     const result = manager.autoDetectPaneCommandsOnStartup();
@@ -112,13 +112,13 @@ describe('SettingsManager CLI auto-detection', () => {
     expect(ctx.currentSettings.paneCommands).toEqual({
       '1': 'claude',
       '2': 'codex --yolo',
-      '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind"',
+      '5': 'gemini --yolo --include-directories "<project-root>"',
     });
     expect(manager.saveSettings).toHaveBeenCalledWith({
       paneCommands: {
         '1': 'claude',
         '2': 'codex --yolo',
-        '5': 'gemini --yolo --include-directories "D:\\projects\\hivemind"',
+        '5': 'gemini --yolo --include-directories "<project-root>"',
       },
     });
   });

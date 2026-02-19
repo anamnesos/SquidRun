@@ -295,7 +295,7 @@ describe('full-restart handler', () => {
     jest.doMock('path', () => mockPath);
     jest.doMock('os', () => ({
       platform: jest.fn(() => 'win32'),
-      homedir: jest.fn(() => 'C:\\Users\\mock'),
+      homedir: jest.fn(() => '<home-dir>'),
     }));
 
     // Import fresh after mocks
@@ -404,7 +404,7 @@ describe('full-restart handler (non-Windows)', () => {
     jest.doMock('path', () => ({ join: jest.fn((...args) => args.join('/')), resolve: jest.fn((...args) => args.join('/')) }));
     jest.doMock('os', () => ({
       platform: jest.fn(() => 'darwin'),
-      homedir: jest.fn(() => '/Users/mock'),
+      homedir: jest.fn(() => '<home-dir>'),
     }));
 
     const { createIpcHarness, createDefaultContext } = require('./helpers/ipc-harness');

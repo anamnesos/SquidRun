@@ -512,7 +512,7 @@ describe('daemon-handlers.js module', () => {
             {
               paneId: '1',
               alive: true,
-              scrollback: 'Claude Code\nPS C:\\Users\\builder> ',
+              scrollback: 'Claude Code\nPS <user-home> >',
               lastActivity: now - 10 * 60 * 1000,
               cwd: '/project/instances/arch'
             },

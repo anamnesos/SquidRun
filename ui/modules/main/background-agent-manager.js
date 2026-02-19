@@ -29,7 +29,8 @@ const DEFAULT_BG_STARTUP_RETRY_MS = Number.parseInt(
   process.env.HIVEMIND_BG_STARTUP_RETRY_MS || '6500',
   10
 );
-const BG_COMPLETION_SENTINELS = ['__HM_BG_DONE__', '[BG_TASK_COMPLETE]'];
+const PRIMARY_BG_COMPLETION_SENTINEL = '__HM_BG_DONE__';
+const BG_COMPLETION_SENTINELS = [PRIMARY_BG_COMPLETION_SENTINEL, '[BG_TASK_COMPLETE]'];
 
 function asPositiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10);
@@ -75,6 +76,32 @@ function withAutonomyFlags(command, settings = {}) {
 
 function sanitizeMultilineForPty(value) {
   return String(value || '').replace(/\r?\n/g, ' ').trim();
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function containsCompletionSignal(text) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return false;
+
+  return lines.some((line) => BG_COMPLETION_SENTINELS.some((marker) => (
+    new RegExp(`^${escapeRegExp(marker)}(?:[.!])*\\s*$`).test(line)
+  )));
+}
+
+function appendCompletionDirective(content) {
+  const text = String(content ?? '');
+  if (BG_COMPLETION_SENTINELS.some((marker) => text.includes(marker))) {
+    return text;
+  }
+  const normalized = text.trimEnd();
+  const separator = normalized.length > 0 ? '\n' : '';
+  return `${normalized}${separator}When delegated work is complete, send Builder a completion update and print ${PRIMARY_BG_COMPLETION_SENTINEL} on its own line.`;
 }
 
 class BackgroundAgentManager {
@@ -187,7 +214,7 @@ class BackgroundAgentManager {
       + `Owner binding is strict: report only to Builder (pane 2) via `
       + `node ui/scripts/hm-send.js builder \"(${alias.toUpperCase()} #1): online and ready\" --role ${alias}. `
       + `Never message Architect directly. `
-      + `When a delegated task is complete, send Builder a completion update and print __HM_BG_DONE__.`
+      + `When a delegated task is complete, send Builder a completion update.`
     );
   }
 
@@ -428,7 +455,8 @@ class BackgroundAgentManager {
       };
     }
 
-    const payload = `${String(content ?? '')}\r`;
+    const payloadContent = appendCompletionDirective(content);
+    const payload = `${payloadContent}\r`;
     daemonClient.write(paneId, payload, options.traceContext || null);
     state.status = 'running';
     state.lastActivityAtMs = Date.now();
@@ -462,7 +490,7 @@ class BackgroundAgentManager {
     }
 
     const text = String(data || '');
-    if (BG_COMPLETION_SENTINELS.some((marker) => text.includes(marker))) {
+    if (containsCompletionSignal(text)) {
       // Fire and forget to avoid blocking daemon event loop path.
       void this.killAgent(paneKey, { reason: 'task_completed' });
       return;
@@ -609,4 +637,6 @@ function createBackgroundAgentManager(options = {}) {
 module.exports = {
   BackgroundAgentManager,
   createBackgroundAgentManager,
+  containsCompletionSignal,
+  appendCompletionDirective,
 };
