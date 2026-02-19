@@ -16,6 +16,7 @@ This is the Codex-specific shim.
 
 ## Startup (First Action)
 
+- If `.hivemind/link.json` exists, read it first for project discovery (`workspace`) and shared script root (`hivemind_root`).
 - Read the session handoff index: `workspace/handoffs/session.md` — auto-generated from `comms_journal` and mirrored from `.hivemind/handoffs/session.md`.
 - Then follow the full startup baseline in `ROLES.md`.
 

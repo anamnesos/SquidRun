@@ -16,6 +16,7 @@ This is the Claude-specific shim.
 
 ## Startup (First Action)
 
+- If `.hivemind/link.json` exists, read it first for project discovery (`workspace`) and shared script root (`hivemind_root`).
 - Read the session handoff index: `workspace/handoffs/session.md` — contains previous session context, decisions, and pending work. This persists across sessions.
 - Then follow the full startup baseline in `ROLES.md`.
 
