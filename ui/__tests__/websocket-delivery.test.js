@@ -503,6 +503,27 @@ describe('WebSocket Delivery Audit', () => {
     expect(health.role).toBe('builder');
   });
 
+  test('treats background alias targets as valid for health checks', async () => {
+    const probeClient = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(probeClient);
+
+    const requestId = 'health-bg-alias-1';
+    const healthPromise = waitForMessage(
+      probeClient,
+      (msg) => msg.type === 'health-check-result' && msg.requestId === requestId
+    );
+    probeClient.send(JSON.stringify({
+      type: 'health-check',
+      target: 'builder-bg-1',
+      requestId,
+    }));
+
+    const health = await healthPromise;
+    expect(health.status).toBe('no_route');
+    expect(health.paneId).toBe('bg-2-1');
+    expect(health.role).toBe('builder-bg-1');
+  });
+
   test('refreshes target health on message activity', async () => {
     const targetClient = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(targetClient);

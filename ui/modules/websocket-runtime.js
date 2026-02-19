@@ -13,6 +13,8 @@ const {
   ROLE_ID_MAP,
   WORKSPACE_PATH,
   resolveCoordPath,
+  resolveBackgroundBuilderAlias,
+  resolveBackgroundBuilderPaneId,
 } = require('../config');
 
 const DEFAULT_PORT = 9900;
@@ -137,6 +139,19 @@ function resolveTargetIdentity(target) {
   const rawTarget = String(target).trim().toLowerCase();
   if (!rawTarget) {
     return { role: null, paneId: null };
+  }
+
+  const backgroundPaneId = typeof resolveBackgroundBuilderPaneId === 'function'
+    ? resolveBackgroundBuilderPaneId(rawTarget)
+    : null;
+  if (backgroundPaneId) {
+    const backgroundAlias = typeof resolveBackgroundBuilderAlias === 'function'
+      ? resolveBackgroundBuilderAlias(rawTarget)
+      : null;
+    return {
+      role: backgroundAlias,
+      paneId: backgroundPaneId,
+    };
   }
 
   const paneId = normalizePaneId(rawTarget);
