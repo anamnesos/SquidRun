@@ -8,7 +8,26 @@ const { registerGitHandlers } = require('../modules/ipc/git-handlers');
 // Mock child_process
 jest.mock('child_process', () => {
   const execSync = jest.fn();
-  const exec = jest.fn((cmd, opts, callback) => {
+  const stringifyCommand = (file, args = []) => {
+    let quoteAfterDoubleDash = false;
+    const renderedArgs = args.map((rawArg, index) => {
+      const arg = String(rawArg);
+      if (quoteAfterDoubleDash) {
+        return `"${arg.replace(/"/g, '\\"')}"`;
+      }
+      if (arg === '--') {
+        quoteAfterDoubleDash = true;
+        return arg;
+      }
+      if (index > 0 && String(args[index - 1]) === '-m') {
+        return `"${arg.replace(/"/g, '\\"')}"`;
+      }
+      return arg;
+    });
+    return [file, ...renderedArgs].join(' ');
+  };
+  const execFile = jest.fn((file, args, opts, callback) => {
+    const cmd = stringifyCommand(file, Array.isArray(args) ? args : []);
     try {
       const output = execSync(cmd, opts);
       callback(null, output, '');
@@ -16,7 +35,7 @@ jest.mock('child_process', () => {
       callback(err, err.stdout?.toString() || '', err.stderr?.toString() || '');
     }
   });
-  return { execSync, exec };
+  return { execSync, execFile };
 });
 
 const { execSync } = require('child_process');
@@ -530,7 +549,7 @@ hash3|h3|Author3|a3@test.com|3000000|Msg3
       await handlers['git-stage']({}, { files: ['file1.js', 'file2.js'] });
 
       expect(execSync).toHaveBeenCalledWith(
-        'git add "file1.js" "file2.js"',
+        'git add -- "file1.js" "file2.js"',
         expect.any(Object)
       );
     });
@@ -603,7 +622,7 @@ hash3|h3|Author3|a3@test.com|3000000|Msg3
       await handlers['git-unstage']({}, { files: ['staged.js'] });
 
       expect(execSync).toHaveBeenCalledWith(
-        'git reset HEAD "staged.js"',
+        'git reset HEAD -- "staged.js"',
         expect.any(Object)
       );
     });
@@ -866,7 +885,7 @@ hash3|h3|Author3|a3@test.com|3000000|Msg3
       expect(result.success).toBe(true);
       expect(result.output).toBe(fileContent);
       expect(execSync).toHaveBeenCalledWith(
-        'git show HEAD:"src/file.js"',
+        'git show HEAD:src/file.js',
         expect.any(Object)
       );
     });
@@ -877,7 +896,7 @@ hash3|h3|Author3|a3@test.com|3000000|Msg3
       await handlers['git-show']({}, { file: 'file.js', revision: 'abc123' });
 
       expect(execSync).toHaveBeenCalledWith(
-        'git show abc123:"file.js"',
+        'git show abc123:file.js',
         expect.any(Object)
       );
     });

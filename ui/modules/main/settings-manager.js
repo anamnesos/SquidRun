@@ -5,7 +5,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { spawnSync } = require('child_process');
 const log = require('../logger');
 const { WORKSPACE_PATH, PROJECT_ROOT, resolvePaneCwd, resolveGlobalPath, resolveCoordPath } = require('../../config');
@@ -73,10 +72,13 @@ const DEFAULT_SETTINGS = {
   smtpPass: '',
   smtpFrom: '',
   smtpTo: '',
-  devTools: true,
+  devTools: false,
   agentNotify: true,
   watcherEnabled: true,
-  allowAllPermissions: true,
+  allowAllPermissions: false,
+  autonomyConsentGiven: false,
+  autonomyConsentChoice: 'pending',
+  autonomyConsentUpdatedAt: null,
   costAlertEnabled: true,
   costAlertThreshold: 5.00,
   dryRun: false,
@@ -126,6 +128,17 @@ class SettingsManager {
       if (fs.existsSync(this.settingsPath)) {
         const content = fs.readFileSync(this.settingsPath, 'utf-8');
         const loaded = JSON.parse(content);
+
+        // Migration: pre-consent builds had no autonomy consent fields.
+        // Preserve prior behavior for existing users by marking consent as resolved.
+        if (!Object.prototype.hasOwnProperty.call(loaded, 'autonomyConsentGiven')) {
+          loaded.autonomyConsentGiven = true;
+          if (typeof loaded.allowAllPermissions !== 'boolean') {
+            loaded.allowAllPermissions = false;
+          }
+          loaded.autonomyConsentChoice = loaded.allowAllPermissions ? 'enabled' : 'declined';
+          loaded.autonomyConsentUpdatedAt = null;
+        }
         
         // Deep merge paneCommands and paneProjects to preserve defaults for missing keys
         const paneCommands = { ...DEFAULT_SETTINGS.paneCommands, ...(loaded.paneCommands || {}) };
@@ -263,37 +276,6 @@ class SettingsManager {
       log.info('App Status', `Written${session !== null ? ` (session ${session})` : ''}`);
     } catch (err) {
       log.error('App Status', 'Error writing', err.message);
-    }
-  }
-
-  ensureCodexConfig() {
-    try {
-      const codexDir = path.join(os.homedir(), '.codex');
-      const configPath = path.join(codexDir, 'config.toml');
-
-      if (!fs.existsSync(codexDir)) {
-        fs.mkdirSync(codexDir, { recursive: true });
-      }
-
-      let content = '';
-      if (fs.existsSync(configPath)) {
-        content = fs.readFileSync(configPath, 'utf-8');
-      }
-
-      const sandboxRegex = /(^|\r?\n)\s*sandbox_mode\s*=/;
-      const sandboxLineRegex = /(^|\r?\n)(\s*sandbox_mode\s*=\s*)(["'][^"']*["'])/;
-      if (!sandboxRegex.test(content)) {
-        const needsNewline = content.length > 0 && !content.endsWith('\n');
-        content += (needsNewline ? '\n' : '') + 'sandbox_mode = "danger-full-access"\n';
-        log.info('Codex', 'Added sandbox_mode = "danger-full-access"');
-      } else {
-        content = content.replace(sandboxLineRegex, '$1$2"danger-full-access"');
-        log.info('Codex', 'Updated sandbox_mode to "danger-full-access"');
-      }
-
-      fs.writeFileSync(configPath, content, 'utf-8');
-    } catch (err) {
-      log.error('Codex', 'Failed to ensure config.toml:', err.message);
     }
   }
 

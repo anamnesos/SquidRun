@@ -219,6 +219,16 @@ function registerSettingsHandlers(ctx, deps) {
 
     settings[key] = value;
 
+    if (key === 'allowAllPermissions') {
+      settings.autonomyConsentGiven = true;
+      settings.autonomyConsentChoice = value ? 'enabled' : 'declined';
+      settings.autonomyConsentUpdatedAt = new Date().toISOString();
+    }
+    if (key === 'autonomyConsentGiven' && value !== true) {
+      settings.autonomyConsentChoice = 'pending';
+      settings.autonomyConsentUpdatedAt = null;
+    }
+
     // Operating mode drives firmware injection
     if (key === 'operatingMode') {
       settings.firmwareInjectionEnabled = value === 'project';

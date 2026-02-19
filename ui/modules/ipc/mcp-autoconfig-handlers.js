@@ -1,8 +1,22 @@
-﻿const path = require('path');
-const { exec } = require('child_process');
+const path = require('path');
+const { execFile } = require('child_process');
 const log = require('../logger');
 
 const MCP_SERVER_PATH = path.join(__dirname, '..', 'mcp-server.js');
+
+function runClaudeCommand(args = []) {
+  return new Promise((resolve) => {
+    execFile('claude', args, { timeout: 10000, windowsHide: true }, (error, stdout, stderr) => {
+      if (error) {
+        if (error.stdout == null) error.stdout = stdout;
+        if (error.stderr == null) error.stderr = stderr;
+        resolve({ success: false, error });
+        return;
+      }
+      resolve({ success: true, stdout, stderr });
+    });
+  });
+}
 
 function registerMcpAutoconfigHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -13,19 +27,19 @@ function registerMcpAutoconfigHandlers(ctx) {
 
   function configureAgent(paneId) {
     try {
-      const serverName = `hivemind-${paneId}`;
-      const serverCommand = `node "${MCP_SERVER_PATH}" --pane ${paneId}`;
-      const configCmd = `claude mcp add ${serverName} --command "${serverCommand}"`;
+      const normalizedPaneId = String(paneId || '').trim();
+      const serverName = `hivemind-${normalizedPaneId}`;
+      const serverCommand = `node "${MCP_SERVER_PATH}" --pane ${normalizedPaneId}`;
 
       return new Promise((resolve) => {
-        exec(configCmd, { timeout: 10000 }, (error) => {
-          if (error) {
-            log.error('MCP', `MCP config error for pane ${paneId}:`, error);
+        runClaudeCommand(['mcp', 'add', serverName, '--command', serverCommand]).then((result) => {
+          if (!result.success) {
+            log.error('MCP', `MCP config error for pane ${paneId}:`, result.error);
             ctx.mainWindow?.webContents.send('mcp-agent-error', {
               paneId,
-              error: error.message || 'Configuration failed'
+              error: result.error.message || 'Configuration failed'
             });
-            resolve({ success: false, error: error.message });
+            resolve({ success: false, error: result.error.message });
           } else {
             log.info('MCP', `MCP configured for pane ${paneId}`);
             ctx.mainWindow?.webContents.send('mcp-agent-connecting', { paneId });
@@ -53,13 +67,13 @@ function registerMcpAutoconfigHandlers(ctx) {
 
   ipcMain.handle('mcp-remove-agent-config', async (event, paneId) => {
     try {
-      const serverName = `hivemind-${paneId}`;
-      const removeCmd = `claude mcp remove ${serverName}`;
+      const normalizedPaneId = String(paneId || '').trim();
+      const serverName = `hivemind-${normalizedPaneId}`;
 
       return new Promise((resolve) => {
-        exec(removeCmd, { timeout: 10000 }, (error) => {
-          if (error) {
-            resolve({ success: false, error: error.message });
+        runClaudeCommand(['mcp', 'remove', serverName]).then((result) => {
+          if (!result.success) {
+            resolve({ success: false, error: result.error.message });
           } else {
             ctx.mainWindow?.webContents.send('mcp-agent-disconnected', { paneId });
             resolve({ success: true, paneId });

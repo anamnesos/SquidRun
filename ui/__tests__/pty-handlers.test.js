@@ -425,6 +425,11 @@ describe('PTY Handlers', () => {
   });
 
   describe('spawn-claude', () => {
+    beforeEach(() => {
+      ctx.currentSettings.allowAllPermissions = true;
+      ctx.currentSettings.autonomyConsentGiven = true;
+    });
+
     test('simulates spawn in dry-run mode', async () => {
       ctx.currentSettings.dryRun = true;
       const result = await harness.invoke('spawn-claude', '1', '/dir');
@@ -548,6 +553,30 @@ describe('PTY Handlers', () => {
       expect(deps.firmwareManager.applyCodexOverrideForPane).toHaveBeenCalledWith('2');
       expect(result.command).toContain('codex');
       expect(result.command).toContain('--yolo');
+    });
+
+    test('does not append autonomy flags when consent is pending', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '1': 'claude', '2': 'codex' };
+      ctx.currentSettings.autonomyConsentGiven = false;
+
+      const claude = await harness.invoke('spawn-claude', '1', '/dir');
+      const codex = await harness.invoke('spawn-claude', '2', '/dir');
+
+      expect(claude.command).toBe('claude');
+      expect(codex.command).toBe('codex');
+    });
+
+    test('does not append autonomy flags when user declines autonomy', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '1': 'claude', '2': 'codex' };
+      ctx.currentSettings.allowAllPermissions = false;
+
+      const claude = await harness.invoke('spawn-claude', '1', '/dir');
+      const codex = await harness.invoke('spawn-claude', '2', '/dir');
+
+      expect(claude.command).toBe('claude');
+      expect(codex.command).toBe('codex');
     });
   });
 

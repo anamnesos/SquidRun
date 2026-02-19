@@ -394,6 +394,10 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
           if (settings && settings.autoSpawn === false) {
             autoSpawnEnabled = false;
           }
+          if (settings && settings.autonomyConsentGiven !== true) {
+            autoSpawnEnabled = false;
+            log.info('Daemon', 'Auto-spawn blocked pending autonomy consent');
+          }
         } catch (err) {
           log.warn('Daemon', `Failed to read settings for auto-spawn: ${err.message}`);
         }

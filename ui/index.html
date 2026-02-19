@@ -20,6 +20,23 @@
     </div>
   </div>
 
+  <div class="autonomy-onboarding-overlay" id="autonomyOnboardingOverlay" aria-hidden="true">
+    <div class="autonomy-onboarding-card" role="dialog" aria-modal="true" aria-labelledby="autonomyOnboardingTitle">
+      <h2 class="autonomy-onboarding-title" id="autonomyOnboardingTitle">Autonomy Consent</h2>
+      <p class="autonomy-onboarding-copy">
+        Hivemind can optionally launch agents with permission-bypass flags. That mode reduces prompts, but agents can run
+        powerful actions without native CLI confirmation.
+      </p>
+      <p class="autonomy-onboarding-copy">
+        You can change this anytime in <strong>Settings > Permissions</strong>.
+      </p>
+      <div class="autonomy-onboarding-actions">
+        <button type="button" class="btn btn-primary" id="autonomyEnableBtn">Enable Autonomy</button>
+        <button type="button" class="btn" id="autonomyDeclineBtn">Decline (Use Native Prompts)</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Command Palette (Ctrl+K) -->
   <div class="command-palette-overlay" id="commandPaletteOverlay">
     <div class="command-palette" id="commandPalette">
@@ -167,9 +184,9 @@
     <div class="settings-section">
       <div class="settings-section-title">Permissions</div>
       <div class="settings-grid">
-        <div class="setting-item" title="Grant all permissions without prompting (use with caution!)">
+        <div class="setting-item" title="Enable autonomous mode (agents skip native CLI permission prompts)">
           <div class="toggle" id="toggleAllowAllPermissions" data-setting="allowAllPermissions"></div>
-          <span class="setting-label">Allow All (skip prompts)</span>
+          <span class="setting-label">Autonomy mode (skip prompts)</span>
         </div>
         <div class="setting-item" title="Allow agents to read files from the filesystem">
           <div class="toggle" id="toggleAllowRead" data-setting="allowRead"></div>
@@ -185,7 +202,7 @@
         </div>
       </div>
       <div class="permissions-warning" id="permissionsWarning" style="display: none;">
-        ⚠️ "Allow All" grants full access. Only use for trusted projects.
+        ⚠️ Autonomy mode bypasses native permission prompts. Use only for trusted projects.
       </div>
     </div>
     <div class="settings-section">

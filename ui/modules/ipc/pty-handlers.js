@@ -396,13 +396,17 @@ function registerPtyHandlers(ctx, deps = {}) {
       }
     }
 
-    // Always add autonomy flags - no permission prompts in Hivemind
-    if (agentCmd.startsWith('claude') && !agentCmd.includes('--dangerously-skip-permissions')) {
-      agentCmd = `${agentCmd} --dangerously-skip-permissions`;
-    }
-    if (agentCmd.startsWith('codex')) {
-      if (!agentCmd.includes('--dangerously-bypass-approvals-and-sandbox') && !agentCmd.includes('--yolo')) {
-        agentCmd = `${agentCmd} --yolo`;
+    const autonomyConsentGiven = ctx?.currentSettings?.autonomyConsentGiven === true;
+    const autonomyEnabled = autonomyConsentGiven && ctx?.currentSettings?.allowAllPermissions === true;
+
+    if (autonomyEnabled) {
+      if (agentCmd.startsWith('claude') && !agentCmd.includes('--dangerously-skip-permissions')) {
+        agentCmd = `${agentCmd} --dangerously-skip-permissions`;
+      }
+      if (agentCmd.startsWith('codex')) {
+        if (!agentCmd.includes('--dangerously-bypass-approvals-and-sandbox') && !agentCmd.includes('--yolo')) {
+          agentCmd = `${agentCmd} --yolo`;
+        }
       }
     }
 
