@@ -231,17 +231,48 @@ function getCoordRoots(options = {}) {
   return Array.from(new Set(roots.map((root) => path.resolve(root))));
 }
 
+function normalizeCoordRelPathForPolicy(relPath = '') {
+  return String(relPath || '')
+    .replace(/[\\/]+/g, '/')
+    .replace(/^\/+/, '')
+    .toLowerCase();
+}
+
+function shouldBlockLegacyWorkspaceFallback(relPath = '') {
+  const normalized = normalizeCoordRelPathForPolicy(relPath);
+  if (!normalized) return false;
+  if (normalized === 'runtime') return true;
+  if (normalized.startsWith('runtime/')) return true;
+  if (normalized.endsWith('/evidence-ledger.db') || normalized === 'evidence-ledger.db') return true;
+  return false;
+}
+
 function resolveCoordPath(relPath, options = {}) {
   const normalizedRelPath = String(relPath || '')
     .replace(/^[\\/]+/, '')
     .replace(/[\\/]+/g, path.sep);
 
   const forWrite = options.forWrite === true;
+  const blockLegacyWorkspaceFallback = shouldBlockLegacyWorkspaceFallback(normalizedRelPath);
   const roots = getCoordRoots({ includeMissing: true, includeLegacy: options.includeLegacy !== false });
   const coordRoot = getCoordRoot();
 
   if (!forWrite) {
     for (const root of roots) {
+      if (
+        blockLegacyWorkspaceFallback
+        && path.resolve(root) === path.resolve(WORKSPACE_PATH)
+        && fs.existsSync(coordRoot)
+      ) {
+        const warningKey = `blocked:${normalizedRelPath}`;
+        if (!legacyCoordFallbackWarnings.has(warningKey)) {
+          legacyCoordFallbackWarnings.add(warningKey);
+          console.warn(
+            `[Hivemind][CoordPath] Legacy workspace fallback blocked for "${normalizedRelPath}". Runtime paths must resolve from coord root only.`
+          );
+        }
+        continue;
+      }
       const candidate = path.join(root, normalizedRelPath);
       if (fs.existsSync(candidate)) {
         if (

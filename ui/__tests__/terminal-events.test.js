@@ -79,6 +79,7 @@ jest.mock('../config', () => ({
   PANE_IDS: ['1', '2', '5'],
   PANE_ROLES: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
   WORKSPACE_PATH: '/tmp/workspace',
+  resolveCoordPath: (relPath) => `/tmp/workspace/${String(relPath || '').replace(/^[/\\]+/, '').replace(/[/\\]+/g, '/')}`,
 }));
 
 // Mock constants

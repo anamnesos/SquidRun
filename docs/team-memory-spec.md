@@ -12,7 +12,7 @@
 - Deterministic session continuity is generated to `.hivemind/handoffs/session.md` and mirrored to `workspace/handoffs/session.md`.
 - Layer 2 extraction is live for explicit tags (`DECISION:`, `TASK:`, `FINDING:`, `BLOCKER:`).
 - Startup continuity is split: Architect receives an automated startup brief; Builder/Oracle read the session handoff index.
-- Runtime coordination paths write to `.hivemind/*` with `workspace/*` as legacy read fallback.
+- Runtime coordination paths write to `.hivemind/*`; runtime DB paths must not fall back to `workspace/*`.
 
 ---
 
@@ -57,7 +57,7 @@ Layer 0: COMMUNICATION JOURNAL     — append-only comms history in Evidence Led
 
 ### 4.1 Location & Ownership
 
-- **Path:** `.hivemind/runtime/team-memory.sqlite` (persistent across sessions, co-located with Evidence Ledger; `workspace/runtime/team-memory.sqlite` remains legacy fallback)
+- **Path:** `.hivemind/runtime/team-memory.sqlite` (persistent across sessions, co-located with Evidence Ledger)
 - **Single writer:** Dedicated fork worker process (like Evidence Ledger). All writes go through the worker.
 - **Read access:** Any agent can query via IPC (`team-memory:query`)
 - **Failure mode:** If worker is down, reads continue (SQLite WAL allows concurrent reads). Writes spool to a **durable append-only file** at `.hivemind/runtime/team-memory-spool.jsonl` (same pattern as outbound WS queue). On worker recovery, spool is replayed and truncated. No silent drops — if app crashes while worker is down, spooled writes survive on disk.
@@ -453,7 +453,7 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 
 | Question | Resolution |
 |----------|-----------|
-| Where does team-memory.sqlite live? | `.hivemind/runtime/` (with `workspace/runtime/` as legacy fallback) — persistent, co-located with Evidence Ledger |
+| Where does team-memory.sqlite live? | `.hivemind/runtime/` — persistent, co-located with Evidence Ledger |
 | Single writer or multi-writer? | Single writer (fork worker) — consistent with Evidence Ledger pattern |
 | Claims survive across sessions? | Yes — that's the whole point |
 | Pattern engine: worker or hook? | HYBRID — hooks for cheap ingestion/immediate checks, worker for heavy mining/scoring |

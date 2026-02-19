@@ -16,24 +16,24 @@ function resolveDefaultErrorsPath() {
 }
 
 function resolveDefaultEvidenceLedgerDbPath() {
-  if (typeof resolveCoordPath === 'function') {
-    return resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
+  if (typeof resolveCoordPath !== 'function') {
+    throw new Error('resolveCoordPath unavailable; cannot resolve runtime/evidence-ledger.db');
   }
-  return path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
+  return resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
 }
 
 function resolveDefaultTeamMemoryDbPath() {
-  if (typeof resolveCoordPath === 'function') {
-    return resolveCoordPath(path.join('runtime', 'team-memory.sqlite'), { forWrite: true });
+  if (typeof resolveCoordPath !== 'function') {
+    throw new Error('resolveCoordPath unavailable; cannot resolve runtime/team-memory.sqlite');
   }
-  return path.join(WORKSPACE_PATH, 'runtime', 'team-memory.sqlite');
+  return resolveCoordPath(path.join('runtime', 'team-memory.sqlite'), { forWrite: true });
 }
 
 function resolveDefaultPatternSpoolPath() {
-  if (typeof resolveCoordPath === 'function') {
-    return resolveCoordPath(path.join('runtime', 'team-memory-pattern-spool.jsonl'), { forWrite: true });
+  if (typeof resolveCoordPath !== 'function') {
+    throw new Error('resolveCoordPath unavailable; cannot resolve runtime/team-memory-pattern-spool.jsonl');
   }
-  return DEFAULT_PATTERN_SPOOL_PATH;
+  return resolveCoordPath(path.join('runtime', 'team-memory-pattern-spool.jsonl'), { forWrite: true });
 }
 
 const DEFAULT_ERRORS_PATH = resolveDefaultErrorsPath();

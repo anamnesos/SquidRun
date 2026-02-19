@@ -8,17 +8,16 @@ const path = require('path');
 const crypto = require('crypto');
 const log = require('../logger');
 const {
-  WORKSPACE_PATH,
   resolveCoordPath,
   evidenceLedgerEnabled: CONFIG_EVIDENCE_LEDGER_ENABLED,
 } = require('../../config');
 const { prepareEventForStorage } = require('./evidence-ledger-ingest');
 
 function resolveDefaultDbPath() {
-  if (typeof resolveCoordPath === 'function') {
-    return resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
+  if (typeof resolveCoordPath !== 'function') {
+    throw new Error('resolveCoordPath unavailable; cannot resolve runtime/evidence-ledger.db');
   }
-  return path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
+  return resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
 }
 
 const DEFAULT_DB_PATH = resolveDefaultDbPath();

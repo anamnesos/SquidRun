@@ -27,11 +27,14 @@ Legacy targets `devops` and `analyst` still work and route to Builder/Oracle res
 
 **Always use ABSOLUTE paths to avoid ghost folder bugs.**
 
-All trigger files live here:
+`hm-send.js` writes fallback trigger files to global state (`resolveGlobalPath('triggers')` from `ui/config.js`).
+Compatibility watchers still monitor coordination-root trigger paths.
+
+Coordination-root trigger path:
 ```
 .hivemind/triggers/
 ```
-Legacy fallback: `workspace/triggers/`
+Legacy compatibility path: `workspace/triggers/`
 
 ### Canonical trigger files
 

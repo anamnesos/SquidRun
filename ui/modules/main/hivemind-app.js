@@ -194,6 +194,14 @@ class HivemindApp {
     this.commsSessionScopeId = fallbackScope;
 
     const preferredSessionNumber = asPositiveInt(opts.sessionNumber ?? opts.session, null);
+    const hasPreferredSessionNumber = Number.isInteger(preferredSessionNumber);
+    const preferredScopeId = hasPreferredSessionNumber
+      ? `app-session-${preferredSessionNumber}`
+      : null;
+
+    if (preferredScopeId) {
+      this.commsSessionScopeId = preferredScopeId;
+    }
 
     let nextSessionNumber = preferredSessionNumber || 1;
     if (!preferredSessionNumber) {
@@ -217,7 +225,9 @@ class HivemindApp {
     }
 
     for (let attempt = 0; attempt < APP_STARTUP_SESSION_RETRY_LIMIT; attempt += 1) {
-      const sessionNumber = nextSessionNumber + attempt;
+      const sessionNumber = hasPreferredSessionNumber
+        ? preferredSessionNumber
+        : (nextSessionNumber + attempt);
       const startResult = await executeEvidenceLedgerOperation(
         'record-session-start',
         {
@@ -238,9 +248,9 @@ class HivemindApp {
           sessionId,
           sessionNumber,
         };
-        this.commsSessionScopeId = sessionId
+        this.commsSessionScopeId = preferredScopeId || (sessionId
           ? `app-session-${sessionNumber}-${sessionId}`
-          : `app-session-${sessionNumber}`;
+          : `app-session-${sessionNumber}`);
 
         log.info('EvidenceLedger', `Recorded app startup session ${sessionNumber}${sessionId ? ` (${sessionId})` : ''}`);
 
@@ -257,6 +267,18 @@ class HivemindApp {
             log.warn('EvidenceLedger', `Startup session snapshot failed: ${snapshotResult.reason || 'unknown'}`);
           }
         }
+        return this.ledgerAppSession;
+      }
+
+      if (startResult?.reason === 'conflict' && preferredScopeId) {
+        // App status already established the canonical app session number.
+        // If session-start for that number already exists, keep scope stable.
+        this.ledgerAppSession = {
+          sessionId: null,
+          sessionNumber: preferredSessionNumber,
+        };
+        this.commsSessionScopeId = preferredScopeId;
+        log.warn('EvidenceLedger', `Startup session ${preferredSessionNumber} already exists; reusing app-status scope.`);
         return this.ledgerAppSession;
       }
 

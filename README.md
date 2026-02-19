@@ -34,6 +34,7 @@ It is a working proof that one person can run a real AI engineering team with pr
 - **Team Memory Runtime (fully shipped)** - Claim Graph -> Search -> Consensus -> Pattern Engine -> Control Plane
 - **Layer 2 Tagged Extraction (runtime active)** - async claim extraction from journal tags into Team Memory
 - **Experiment Engine (Phase 6 shipped)** - isolated PTY execution that attaches tamper-evident results back to claims
+- **Runtime truth guardrails** - live journal path is `.hivemind/runtime/evidence-ledger.db`; root/workspace DB copies are treated as stale artifacts
 
 ### Notification Channels
 - **Telegram bot (two-way)** - inbound polling + auto-reply routing via `hm-send user/telegram`
@@ -182,7 +183,7 @@ hivemind/
 │   │   ├── evidence-ledger.db
 │   │   ├── team-memory.sqlite
 │   │   └── experiments/
-├── workspace/                  # legacy fallback during migration
+├── workspace/                  # legacy compatibility surface (runtime DB fallback blocked)
 ├── docs/
 │   └── team-memory-spec.md
 └── CLAUDE.md
