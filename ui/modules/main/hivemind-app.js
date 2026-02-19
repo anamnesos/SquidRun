@@ -730,15 +730,12 @@ class HivemindApp {
 
     // 9. Initialize PTY daemon connection (heavy startup work begins after window is shown).
     await this.initDaemonClient();
-    const didSpawnDuringLastConnect = this.ctx.daemonClient?.didSpawnDuringLastConnect?.() === true;
     this.settings.writeAppStatus({
-      incrementSession: didSpawnDuringLastConnect,
+      incrementSession: true,
     });
-    if (didSpawnDuringLastConnect) {
-      await this.initializeStartupSessionScope({
-        sessionNumber: this.getCurrentAppStatusSessionNumber(),
-      });
-    }
+    await this.initializeStartupSessionScope({
+      sessionNumber: this.getCurrentAppStatusSessionNumber(),
+    });
 
     // 10. Register sleep/wake listeners for laptop resilience.
     this.setupPowerMonitorListeners();
