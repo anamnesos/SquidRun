@@ -45,7 +45,12 @@ function bytesToMB(bytes) {
 }
 
 function getDriveLetter(workspacePath) {
-  const root = path.parse(workspacePath).root || '';
+  const normalized = String(workspacePath || '').trim();
+  const windowsDriveMatch = normalized.match(/^([a-zA-Z]):(?:[\\/]|$)/);
+  if (windowsDriveMatch) {
+    return windowsDriveMatch[1].toUpperCase();
+  }
+  const root = path.parse(normalized).root || '';
   const letter = root.replace(/[:\\\/]/g, '');
   return letter || 'C';
 }

@@ -10,6 +10,7 @@ const {
 // Mock os and child_process
 jest.mock('os', () => ({
   platform: jest.fn(() => 'win32'),
+  homedir: jest.fn(() => '/tmp'),
 }));
 
 jest.mock('child_process', () => ({
