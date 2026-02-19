@@ -2,19 +2,19 @@
 
 Hivemind is a local-first Electron app that runs **Claude, Codex, and Gemini simultaneously** as a coordinated coding team on your machine.
 
-This isn't three copies of the same model — it's three different AI models from three different companies (Anthropic, OpenAI, Google), each assigned a role, talking to each other, and working on your codebase in parallel:
+You can run it with a single model, but it's designed — and recommended — to run **different models from different companies** in each role:
 
-- `Architect` (pane 1): coordination, task decomposition, code review — powered by whichever model you choose
-- `Builder` (pane 2): implementation, testing, infrastructure — a different model with different strengths
-- `Oracle` (pane 5): investigation, documentation, benchmarking — a third model cross-checking the others
+- `Architect` (pane 1): coordination, task decomposition, code review
+- `Builder` (pane 2): implementation, testing, infrastructure
+- `Oracle` (pane 5): investigation, documentation, benchmarking
 
-Each model brings its own reasoning style, blind spots, and strengths. When they collaborate, they catch things a single model misses. The Architect delegates, the Builder implements, the Oracle verifies — and they communicate through a structured message protocol, not copy-paste.
+For example, Claude architects the solution, Codex builds it, and Gemini cross-checks it. Each model brings its own reasoning style and blind spots — when they collaborate, they catch things a single model misses. They communicate through a structured message protocol, not copy-paste.
 
 ## Why Hivemind Is Different
 
 ### Multi-Model, Not Just Multi-Agent
 
-Other multi-agent tools run multiple instances of the same model. Hivemind runs **different models from different providers** as a single team. Claude might architect the solution, Codex builds it, and Gemini reviews it — each model contributing what it's best at. You assign any model to any role through a single settings panel.
+Other multi-agent tools run multiple instances of the same model. Hivemind can run **different models from different providers** as a single team — and that's the recommended setup. Each model has different strengths, and cross-model collaboration catches errors that any single model would miss. You assign any model to any role through a single settings panel, or run one model across all panes if you prefer.
 
 ### Subscription-First, Not API-First
 
@@ -22,17 +22,17 @@ Most multi-agent coding tools require API keys and charge per token. That adds u
 
 **Hivemind runs on your existing CLI subscriptions instead.** It orchestrates the official CLI tools you already have:
 
-| CLI | Subscription | Included Limits |
+| CLI | Subscription | What's Included |
 |-----|-------------|-----------------|
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Claude Pro / Max plan | Generous daily usage included |
-| [Codex CLI](https://github.com/openai/codex) | ChatGPT Pro / Plus plan | Generous daily usage included |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Gemini Pro / free tier | Generous daily usage included |
+| [Claude Code](https://support.claude.com/en/articles/11145838-using-claude-code-with-your-pro-or-max-plan) | Claude Pro ($20/mo) or Max ($100-200/mo) | CLI usage included in your plan — "access to both Claude on the web and Claude Code in your terminal with one unified subscription" |
+| [Codex CLI](https://developers.openai.com/codex/pricing/) | ChatGPT Plus ($20/mo) or Pro ($200/mo) | CLI usage included — "anyone with a ChatGPT Plus, Pro, Business, Enterprise or Edu subscription can use Codex across the CLI" |
+| [Gemini CLI](https://google-gemini.github.io/gemini-cli/docs/quota-and-pricing.html) | Free with Google account | 1,000 requests/day free — no subscription required |
 
 Each pane in Hivemind runs a real CLI process — the same tool you'd use in your terminal. No API keys needed for core agent work. Your subscription limits apply per-CLI, so running all three in parallel gives you the combined capacity of all your subscriptions.
 
-**API keys are optional.** The settings panel has API key fields for supplementary features like image generation (Recraft, OpenAI DALL-E). These are not required for the core multi-agent workflow.
+**API keys are optional.** The settings panel has API key fields for supplementary features like image generation (Recraft, OpenAI DALL-E). These are not required for the core multi-model workflow.
 
-**No ToS concerns.** Hivemind simply launches and manages the official CLI tools on your local machine. You're using your own subscriptions through their intended interfaces — exactly the same as running them in separate terminal windows, just orchestrated.
+**This is just running official CLIs on your machine.** Hivemind launches and manages the same CLI tools you'd run in separate terminal windows — it just orchestrates them. Each provider explicitly includes CLI usage in their subscription plans (see links above). There's no API key scraping, no token proxying, no terms of service gray area.
 
 ### Talk To Your Team From Anywhere Via Telegram
 
