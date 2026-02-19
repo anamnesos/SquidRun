@@ -15,6 +15,7 @@ const LEGACY_PANE_HANDOFFS = ['1.md', '2.md', '5.md'];
 const DEFAULT_QUERY_LIMIT = 5000;
 const DEFAULT_RECENT_LIMIT = 250;
 const DEFAULT_TAGGED_LIMIT = 120;
+const DEFAULT_CROSS_SESSION_LIMIT = 120;
 const DEFAULT_FAILURE_LIMIT = 80;
 const DEFAULT_PENDING_LIMIT = 80;
 const PREVIEW_LIMIT = 180;
@@ -23,6 +24,7 @@ const PENDING_DELIVERY_STATUSES = new Set(['recorded', 'routed']);
 const UNRESOLVED_CLAIMS_MAX = 10;
 const UNRESOLVED_STATUS_ORDER = ['contested', 'pending_proof', 'proposed'];
 const UNRESOLVED_STATUS_SET = new Set(UNRESOLVED_STATUS_ORDER);
+const CROSS_SESSION_TAGS = new Set(['DECISION', 'TASK', 'FINDING', 'BLOCKER']);
 const TAG_PATTERN = /\b(DECISION|TASK|ACTION|FINDING|BLOCKER|QUESTION|NEXT|DONE|TEST|PLAN|RISK|CLAIM)\s*:\s*(.+)/i;
 
 function toOptionalString(value, fallback = null) {
@@ -144,6 +146,12 @@ function formatConfidence(value) {
   return Number(numeric.toFixed(2)).toString();
 }
 
+function isStaleDeliveryClaimStatement(statement) {
+  const normalized = toOptionalString(statement, '').toLowerCase();
+  if (!normalized) return false;
+  return /^(delivered|broadcast|routed)[._-]?(verified|unverified)$/.test(normalized);
+}
+
 function normalizeUnresolvedClaims(claims = [], maxClaims = UNRESOLVED_CLAIMS_MAX) {
   const limit = Math.max(1, Number(maxClaims) || UNRESOLVED_CLAIMS_MAX);
   const dedup = new Map();
@@ -152,10 +160,12 @@ function normalizeUnresolvedClaims(claims = [], maxClaims = UNRESOLVED_CLAIMS_MA
     if (!claimId) continue;
     const status = toOptionalString(claim?.status, '').toLowerCase();
     if (!UNRESOLVED_STATUS_SET.has(status)) continue;
+    const rawStatement = toOptionalString(claim?.statement, '');
+    if (!rawStatement || isStaleDeliveryClaimStatement(rawStatement)) continue;
     const normalized = {
       id: claimId,
       status,
-      statement: truncateClaimStatement(claim?.statement),
+      statement: truncateClaimStatement(rawStatement),
       confidence: Number.isFinite(Number(claim?.confidence)) ? Number(claim.confidence) : null,
     };
     const current = dedup.get(claimId);
@@ -236,6 +246,7 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
   const totalRows = orderedRows.length;
   const recentLimit = Math.max(1, Number(options.recentLimit) || DEFAULT_RECENT_LIMIT);
   const taggedLimit = Math.max(1, Number(options.taggedLimit) || DEFAULT_TAGGED_LIMIT);
+  const crossSessionLimit = Math.max(1, Number(options.crossSessionLimit) || DEFAULT_CROSS_SESSION_LIMIT);
   const failureLimit = Math.max(1, Number(options.failureLimit) || DEFAULT_FAILURE_LIMIT);
   const pendingLimit = Math.max(1, Number(options.pendingLimit) || DEFAULT_PENDING_LIMIT);
   const recentRows = orderedRows.slice(Math.max(0, orderedRows.length - recentLimit));
@@ -253,6 +264,7 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
   }
 
   const taggedRows = [];
+  const crossSessionTaggedRows = [];
   const failedRows = [];
   const pendingRows = [];
   for (const row of orderedRows) {
@@ -279,6 +291,14 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
     if (pending) {
       pendingRows.push(row);
     }
+  }
+  const crossSessionSourceRows = sortByEventTsAsc(
+    Array.isArray(options.crossSessionTaggedRows) ? options.crossSessionTaggedRows : orderedRows
+  );
+  for (const row of crossSessionSourceRows) {
+    const tag = extractTag(row?.rawBody || '');
+    if (!tag || !CROSS_SESSION_TAGS.has(tag.tag)) continue;
+    crossSessionTaggedRows.push({ row, tag });
   }
 
   const latestTsMs = totalRows > 0 ? toEventTsMs(orderedRows[totalRows - 1]) : 0;
@@ -321,6 +341,41 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
         escapeMarkdownCell(claim.statement),
         '|',
         escapeMarkdownCell(formatConfidence(claim.confidence)),
+        '|',
+      ].join(' '));
+      }
+  }
+
+  lines.push(
+    '',
+    '## Cross-Session Decisions',
+    '| sent_at | session_id | tag | message_id | trace_id | sender | target | detail |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
+  );
+
+  const crossSessionTaggedTail = crossSessionTaggedRows.slice(Math.max(0, crossSessionTaggedRows.length - crossSessionLimit));
+  if (crossSessionTaggedTail.length === 0) {
+    lines.push('| - | - | - | - | - | - | - | - |');
+  } else {
+    for (const entry of crossSessionTaggedTail) {
+      const row = entry.row;
+      lines.push([
+        '|',
+        escapeMarkdownCell(toIso(toEventTsMs(row))),
+        '|',
+        escapeMarkdownCell(toOptionalString(row?.sessionId, '-')),
+        '|',
+        escapeMarkdownCell(entry.tag.tag),
+        '|',
+        escapeMarkdownCell(toOptionalString(row?.messageId, '-')),
+        '|',
+        escapeMarkdownCell(extractTraceId(row)),
+        '|',
+        escapeMarkdownCell(toOptionalString(row?.senderRole, '-')),
+        '|',
+        escapeMarkdownCell(toOptionalString(row?.targetRole, '-')),
+        '|',
+        escapeMarkdownCell(entry.tag.detail),
         '|',
       ].join(' '));
     }
@@ -517,6 +572,22 @@ function materializeSessionHandoff(options = {}) {
     }, {
       dbPath: options.dbPath || null,
     });
+  const crossSessionRows = Array.isArray(options.crossSessionRows)
+    ? options.crossSessionRows
+    : (
+      Array.isArray(options.rows)
+        ? options.rows
+        : (
+          sessionId
+            ? queryFn({
+              order: 'asc',
+              limit: queryLimit,
+            }, {
+              dbPath: options.dbPath || null,
+            })
+            : rows
+        )
+    );
   const unresolvedClaims = Array.isArray(options.unresolvedClaims)
     ? normalizeUnresolvedClaims(options.unresolvedClaims, options.unresolvedClaimsMax)
     : queryUnresolvedClaims({
@@ -531,8 +602,10 @@ function materializeSessionHandoff(options = {}) {
     nowMs: options.nowMs,
     recentLimit: options.recentLimit,
     taggedLimit: options.taggedLimit,
+    crossSessionLimit: options.crossSessionLimit,
     failureLimit: options.failureLimit,
     pendingLimit: options.pendingLimit,
+    crossSessionTaggedRows: crossSessionRows,
     unresolvedClaims,
     unresolvedClaimsMax: options.unresolvedClaimsMax,
   });
