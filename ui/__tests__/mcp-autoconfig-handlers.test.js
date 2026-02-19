@@ -10,7 +10,7 @@ const {
 
 // Mock child_process
 jest.mock('child_process', () => ({
-  exec: jest.fn(),
+  execFile: jest.fn(),
 }));
 
 // Mock logger
@@ -20,7 +20,7 @@ jest.mock('../modules/logger', () => ({
   warn: jest.fn(),
 }));
 
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const { registerMcpAutoconfigHandlers } = require('../modules/ipc/mcp-autoconfig-handlers');
 
 describe('MCP Autoconfig Handlers', () => {
@@ -33,8 +33,8 @@ describe('MCP Autoconfig Handlers', () => {
     ctx = createDefaultContext({ ipcMain: harness.ipcMain });
     ctx.mainWindow.isDestroyed = jest.fn(() => false);
 
-    // Default: exec succeeds
-    exec.mockImplementation((cmd, opts, callback) => {
+    // Default: execFile succeeds
+    execFile.mockImplementation((command, args, opts, callback) => {
       callback(null, 'success');
     });
 
@@ -62,8 +62,9 @@ describe('MCP Autoconfig Handlers', () => {
       expect(result.success).toBe(true);
       expect(result.paneId).toBe('1');
       expect(result.serverName).toBe('hivemind-1');
-      expect(exec).toHaveBeenCalledWith(
-        expect.stringContaining('claude mcp add hivemind-1'),
+      expect(execFile).toHaveBeenCalledWith(
+        'claude',
+        expect.arrayContaining(['mcp', 'add', 'hivemind-1']),
         expect.any(Object),
         expect.any(Function)
       );
@@ -76,7 +77,7 @@ describe('MCP Autoconfig Handlers', () => {
     });
 
     test('handles exec error', async () => {
-      exec.mockImplementation((cmd, opts, callback) => {
+      execFile.mockImplementation((command, args, opts, callback) => {
         callback(new Error('Command failed'));
       });
 
@@ -87,7 +88,7 @@ describe('MCP Autoconfig Handlers', () => {
     });
 
     test('sends mcp-agent-error event on failure', async () => {
-      exec.mockImplementation((cmd, opts, callback) => {
+      execFile.mockImplementation((command, args, opts, callback) => {
         callback(new Error('Config failed'));
       });
 
@@ -117,7 +118,7 @@ describe('MCP Autoconfig Handlers', () => {
     });
 
     test('handles reconnect error', async () => {
-      exec.mockImplementation((cmd, opts, callback) => {
+      execFile.mockImplementation((command, args, opts, callback) => {
         callback(new Error('Reconnect failed'));
       });
 
@@ -134,8 +135,9 @@ describe('MCP Autoconfig Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.paneId).toBe('5');
-      expect(exec).toHaveBeenCalledWith(
-        expect.stringContaining('claude mcp remove hivemind-5'),
+      expect(execFile).toHaveBeenCalledWith(
+        'claude',
+        expect.arrayContaining(['mcp', 'remove', 'hivemind-5']),
         expect.any(Object),
         expect.any(Function)
       );
@@ -148,7 +150,7 @@ describe('MCP Autoconfig Handlers', () => {
     });
 
     test('handles remove error', async () => {
-      exec.mockImplementation((cmd, opts, callback) => {
+      execFile.mockImplementation((command, args, opts, callback) => {
         callback(new Error('Remove failed'));
       });
 

@@ -1,15 +1,16 @@
 ﻿const fs = require('fs');
 const path = require('path');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const log = require('../logger');
 
-async function runCommand(cmd, cwd) {
+async function runCommand(command, args, cwd) {
   return new Promise((resolve, reject) => {
-    exec(cmd, {
+    execFile(command, args, {
       cwd,
       encoding: 'utf-8',
       maxBuffer: 10 * 1024 * 1024,
       timeout: 30000,
+      windowsHide: true,
     }, (err, stdout, stderr) => {
       if (err) {
         if (err.stdout == null) err.stdout = stdout;
@@ -61,7 +62,7 @@ function registerPrecommitHandlers(ctx) {
     }
 
     try {
-      const stagedFiles = (await runCommand('git diff --cached --name-only', projectPath))
+      const stagedFiles = (await runCommand('git', ['diff', '--cached', '--name-only'], projectPath))
         .trim()
         .split('\n')
         .filter(f => f);
@@ -97,7 +98,7 @@ function registerPrecommitHandlers(ctx) {
     }
 
     try {
-      const stagedContent = await runCommand('git diff --cached', projectPath);
+      const stagedContent = await runCommand('git', ['diff', '--cached'], projectPath);
 
       const incompletePatterns = ctx.INCOMPLETE_PATTERNS || [];
       const hasIncomplete = incompletePatterns.some(p => p.test(stagedContent));

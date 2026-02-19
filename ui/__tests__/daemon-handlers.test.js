@@ -471,7 +471,7 @@ describe('daemon-handlers.js module', () => {
           onTerminalsReadyFn
         );
 
-        ipcRenderer.invoke.mockResolvedValueOnce({ autoSpawn: true });
+        ipcRenderer.invoke.mockResolvedValueOnce({ autoSpawn: true, autonomyConsentGiven: true });
         const now = Date.now();
 
         const data = {
@@ -503,7 +503,7 @@ describe('daemon-handlers.js module', () => {
           onTerminalsReadyFn
         );
 
-        ipcRenderer.invoke.mockResolvedValueOnce({ autoSpawn: true });
+        ipcRenderer.invoke.mockResolvedValueOnce({ autoSpawn: true, autonomyConsentGiven: true });
         const now = Date.now();
 
         const data = {

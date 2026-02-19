@@ -18,7 +18,8 @@ jest.mock('fs', () => ({
 // Mock child_process
 jest.mock('child_process', () => {
   const execSync = jest.fn();
-  const exec = jest.fn((cmd, opts, callback) => {
+  const execFile = jest.fn((file, args, opts, callback) => {
+    const cmd = [file, ...(Array.isArray(args) ? args : [])].join(' ');
     try {
       const output = execSync(cmd, opts);
       callback(null, output, '');
@@ -26,7 +27,7 @@ jest.mock('child_process', () => {
       callback(err, err.stdout?.toString() || '', err.stderr?.toString() || '');
     }
   });
-  return { execSync, exec };
+  return { execSync, execFile };
 });
 
 // Mock logger

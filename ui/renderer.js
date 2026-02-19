@@ -239,9 +239,93 @@ let initState = {
   autoSpawnChecked: false
 };
 const STARTUP_OVERLAY_FADE_MS = 280;
+let autonomyOnboardingBusy = false;
+
+function isAutonomyConsentRequired() {
+  if (typeof settings.requiresAutonomyConsent !== 'function') return false;
+  return settings.requiresAutonomyConsent();
+}
+
+function getAutonomyOnboardingElements() {
+  return {
+    overlay: document.getElementById('autonomyOnboardingOverlay'),
+    enableButton: document.getElementById('autonomyEnableBtn'),
+    declineButton: document.getElementById('autonomyDeclineBtn'),
+  };
+}
+
+function showAutonomyOnboarding() {
+  const { overlay } = getAutonomyOnboardingElements();
+  if (!overlay) return;
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden', 'false');
+}
+
+function hideAutonomyOnboarding() {
+  const { overlay } = getAutonomyOnboardingElements();
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  overlay.setAttribute('aria-hidden', 'true');
+}
+
+function setAutonomyOnboardingBusyState(isBusy) {
+  const { enableButton, declineButton } = getAutonomyOnboardingElements();
+  if (enableButton) enableButton.disabled = isBusy;
+  if (declineButton) declineButton.disabled = isBusy;
+}
+
+async function handleAutonomyOnboardingChoice(enabled) {
+  if (autonomyOnboardingBusy) return;
+  autonomyOnboardingBusy = true;
+  setAutonomyOnboardingBusyState(true);
+  try {
+    const result = await settings.setAutonomyConsentChoice(enabled);
+    if (!result?.success) {
+      showStatusNotice('Failed to save autonomy preference. Please try again.', 'warning', 3500);
+      return;
+    }
+
+    hideAutonomyOnboarding();
+    initState.autoSpawnChecked = false;
+    checkInitComplete();
+    showStatusNotice(
+      enabled
+        ? 'Autonomy enabled. Agents will skip native permission prompts.'
+        : 'Autonomy disabled. Agents will use native permission prompts.',
+      'info',
+      3500
+    );
+  } catch (err) {
+    log.error('Onboarding', 'Failed to save autonomy choice', err);
+    showStatusNotice('Failed to save autonomy preference. Please try again.', 'warning', 3500);
+  } finally {
+    autonomyOnboardingBusy = false;
+    setAutonomyOnboardingBusyState(false);
+  }
+}
+
+function setupAutonomyOnboardingHandlers() {
+  const { enableButton, declineButton } = getAutonomyOnboardingElements();
+  if (enableButton) {
+    enableButton.addEventListener('click', () => {
+      handleAutonomyOnboardingChoice(true);
+    });
+  }
+  if (declineButton) {
+    declineButton.addEventListener('click', () => {
+      handleAutonomyOnboardingChoice(false);
+    });
+  }
+}
 
 function checkInitComplete() {
   if (initState.settingsLoaded && initState.terminalsReady && !initState.autoSpawnChecked) {
+    if (isAutonomyConsentRequired()) {
+      log.info('Init', 'Autonomy consent required before auto-spawn');
+      showAutonomyOnboarding();
+      return;
+    }
+
     initState.autoSpawnChecked = true;
     log.info('Init', 'Both settings and terminals ready, checking auto-spawn...');
     settings.checkAutoSpawn(
@@ -254,6 +338,9 @@ function checkInitComplete() {
 function markSettingsLoaded() {
   initState.settingsLoaded = true;
   log.info('Init', 'Settings loaded');
+  if (isAutonomyConsentRequired()) {
+    showAutonomyOnboarding();
+  }
 
   checkInitComplete();
 }
@@ -1074,6 +1161,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Setup all event handlers
   setupEventListeners();
+  setupAutonomyOnboardingHandlers();
   initMainPaneState();
 
   // Enhance shortcut tooltips for controls with keyboard hints

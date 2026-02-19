@@ -661,17 +661,14 @@ class HivemindApp {
       this.settings.autoDetectPaneCommandsOnStartup();
     }
 
-    // 5. Pre-configure Codex
-    this.settings.ensureCodexConfig();
-
-    // 6. Defer non-critical worker runtimes until first use.
+    // 5. Defer non-critical worker runtimes until first use.
     // Keep startup focused on rendering + core watchers.
     log.info(
       'App',
       'Deferring startup worker prewarm (evidence-ledger/team-memory/experiment/comms) until first use'
     );
 
-    // 7. Setup external notifications
+    // 6. Setup external notifications
     this.ctx.setExternalNotifier(createExternalNotifier({
       getSettings: () => this.ctx.currentSettings,
       log,
@@ -683,13 +680,13 @@ class HivemindApp {
       watcher.setExternalNotifier((payload) => this.ctx.externalNotifier?.notify(payload));
     }
 
-    // 8. Load activity log
+    // 7. Load activity log
     this.activity.loadActivityLog();
 
-    // 9. Load usage stats
+    // 8. Load usage stats
     this.usage.loadUsageStats();
 
-    // 10. Initialize PTY daemon connection (heavy startup work begins after window is shown).
+    // 9. Initialize PTY daemon connection (heavy startup work begins after window is shown).
     await this.initDaemonClient();
     const didSpawnDuringLastConnect = this.ctx.daemonClient?.didSpawnDuringLastConnect?.() === true;
     this.settings.writeAppStatus({
@@ -701,14 +698,14 @@ class HivemindApp {
       });
     }
 
-    // 11. Register sleep/wake listeners for laptop resilience.
+    // 10. Register sleep/wake listeners for laptop resilience.
     this.setupPowerMonitorListeners();
 
-    // 12. Setup global IPC forwarders
+    // 11. Setup global IPC forwarders
     this.ensureCliIdentityForwarder();
     this.ensureTriggerDeliveryAckForwarder();
 
-    // 13. Start WebSocket server for instant agent messaging
+    // 12. Start WebSocket server for instant agent messaging
     let webSocketStartOptions = null;
     try {
       webSocketStartOptions = {
@@ -1383,7 +1380,8 @@ class HivemindApp {
     // main-window listeners/post-load init always install first.
     this.schedulePaneHostBootstrap();
 
-    if (this.ctx.currentSettings.devTools) {
+    const devToolsAllowedByEnv = process.env.HIVEMIND_DEBUG === '1' || process.env.NODE_ENV === 'development';
+    if (this.ctx.currentSettings.devTools && devToolsAllowedByEnv) {
       this.ctx.mainWindow.webContents.openDevTools();
     }
   }

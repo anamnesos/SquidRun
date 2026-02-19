@@ -116,6 +116,21 @@ function getSettings() {
   return currentSettings;
 }
 
+function requiresAutonomyConsent() {
+  return currentSettings?.autonomyConsentGiven !== true;
+}
+
+async function setAutonomyConsentChoice(enabled) {
+  try {
+    currentSettings = await ipcRenderer.invoke('set-setting', 'allowAllPermissions', Boolean(enabled));
+    applySettingsToUI();
+    return { success: true, settings: currentSettings };
+  } catch (err) {
+    log.error('Settings', 'Error saving autonomy consent choice', err);
+    return { success: false, error: err.message };
+  }
+}
+
 async function refreshSettingsFromMain({ applyUi = false } = {}) {
   try {
     currentSettings = await ipcRenderer.invoke('get-settings');
@@ -231,6 +246,11 @@ async function checkAutoSpawn(spawnAllAgentsFn, reconnectedToExisting) {
     return;
   }
 
+  if (requiresAutonomyConsent()) {
+    log.info('AutoSpawn', 'Pending autonomy consent, skipping auto-spawn until user chooses');
+    return;
+  }
+
   if (currentSettings.autoSpawn) {
     updateConnectionStatus('Auto-spawning agents in all panes...');
     await spawnAllAgentsFn();
@@ -244,6 +264,8 @@ module.exports = {
   applySettingsToUI,
   toggleSetting,
   getSettings,
+  requiresAutonomyConsent,
+  setAutonomyConsentChoice,
   refreshSettingsFromMain,
   setupSettings,
   checkAutoSpawn,
