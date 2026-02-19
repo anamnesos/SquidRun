@@ -11,6 +11,7 @@ const {
   WORKSPACE_PATH,
   LEGACY_ROLE_ALIASES,
   ROLE_ID_MAP,
+  getHivemindRoot,
   setProjectRoot,
   resolveCoordPath,
 } = require('../config');
@@ -184,6 +185,9 @@ function resolveProjectContextFromLink(startDir = process.cwd()) {
   const sessionId = typeof payload.session_id === 'string'
     ? payload.session_id.trim()
     : (typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '');
+  const hivemindRoot = typeof payload.hivemind_root === 'string'
+    ? payload.hivemind_root.trim()
+    : (typeof payload.hivemindRoot === 'string' ? payload.hivemindRoot.trim() : '');
 
   if (!projectPath) return null;
 
@@ -193,6 +197,7 @@ function resolveProjectContextFromLink(startDir = process.cwd()) {
     projectPath,
     projectName: path.basename(projectPath),
     sessionId: sessionId || null,
+    hivemindRoot: hivemindRoot ? path.resolve(hivemindRoot) : null,
   };
 }
 
@@ -250,11 +255,81 @@ function applyProjectContext(projectContext = null) {
 
 const localProjectContext = applyProjectContext(resolveLocalProjectContext(process.cwd()));
 
+function normalizeSessionId(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  if (/^app-session-/i.test(text)) return text;
+  if (/^\d+$/.test(text)) return `app-session-${text}`;
+  return text;
+}
+
+function looksLikeAppSessionId(value) {
+  return /^app-session-/i.test(String(value || '').trim());
+}
+
+function resolveCurrentSessionId(context = localProjectContext) {
+  const candidates = [];
+  const seen = new Set();
+  const addCandidate = (candidatePath) => {
+    if (!candidatePath) return;
+    const resolved = path.resolve(candidatePath);
+    if (seen.has(resolved)) return;
+    seen.add(resolved);
+    candidates.push(resolved);
+  };
+
+  if (context?.hivemindRoot) {
+    addCandidate(path.join(context.hivemindRoot, '.hivemind', 'app-status.json'));
+  }
+  if (typeof getHivemindRoot === 'function') {
+    try {
+      const root = getHivemindRoot();
+      if (root) {
+        addCandidate(path.join(root, '.hivemind', 'app-status.json'));
+      }
+    } catch (_) {
+      // best-effort lookup only
+    }
+  }
+  if (typeof resolveCoordPath === 'function') {
+    addCandidate(resolveCoordPath('app-status.json'));
+  }
+  addCandidate(path.join(WORKSPACE_PATH, 'app-status.json'));
+
+  for (const candidate of candidates) {
+    const parsed = readJsonFileSafe(candidate);
+    if (!parsed || typeof parsed !== 'object') continue;
+    const rawSession = parsed.session_id ?? parsed.sessionId ?? parsed.session ?? parsed.sessionNumber;
+    const normalized = normalizeSessionId(rawSession);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function chooseSessionId(linkSessionId, runtimeSessionId) {
+  const normalizedLinkSessionId = normalizeSessionId(linkSessionId);
+  const normalizedRuntimeSessionId = normalizeSessionId(runtimeSessionId);
+  if (!normalizedLinkSessionId) return normalizedRuntimeSessionId;
+  if (!normalizedRuntimeSessionId) return normalizedLinkSessionId;
+  if (
+    looksLikeAppSessionId(normalizedLinkSessionId)
+    && looksLikeAppSessionId(normalizedRuntimeSessionId)
+    && normalizedLinkSessionId !== normalizedRuntimeSessionId
+  ) {
+    return normalizedRuntimeSessionId;
+  }
+  return normalizedLinkSessionId;
+}
+
 function buildProjectMetadata(context = localProjectContext) {
   if (!context?.projectPath) return null;
   const projectPath = String(context.projectPath || '').trim();
   const projectName = String(context.projectName || path.basename(projectPath) || '').trim();
-  const sessionId = typeof context.sessionId === 'string' ? context.sessionId.trim() : '';
+  const sessionId = chooseSessionId(
+    typeof context.sessionId === 'string' ? context.sessionId.trim() : '',
+    resolveCurrentSessionId(context)
+  );
   if (!projectPath && !projectName) return null;
   return {
     name: projectName || null,
@@ -392,11 +467,36 @@ async function sendSpecialTargetFallback(targetInput, content, options = {}) {
   }
 }
 
-function buildTriggerFallbackContent(content, messageId) {
+function appendProjectContextMarker(content, metadata = null) {
+  const text = typeof content === 'string' ? content : String(content ?? '');
+  if (!text) return text;
+
+  const project = (metadata && typeof metadata === 'object' && !Array.isArray(metadata))
+    ? (metadata.project && typeof metadata.project === 'object' ? metadata.project : metadata)
+    : null;
+  if (!project || typeof project !== 'object') return text;
+
+  const name = typeof project.name === 'string' ? project.name.trim() : '';
+  const projectPath = typeof project.path === 'string' ? project.path.trim() : '';
+  if (!name && !projectPath) return text;
+
+  const marker = '[PROJECT CONTEXT]';
+  if (text.includes(marker)) return text;
+
+  const fields = [];
+  if (name) fields.push(`name=${name}`);
+  if (projectPath) fields.push(`path=${projectPath}`);
+  if (fields.length === 0) return text;
+
+  return `${text}\n${marker} ${fields.join(' | ')}`;
+}
+
+function buildTriggerFallbackContent(content, messageId, metadata = null) {
+  const withProjectContext = appendProjectContextMarker(content, metadata);
   if (typeof messageId !== 'string' || !messageId.trim()) {
-    return content;
+    return withProjectContext;
   }
-  return `${FALLBACK_MESSAGE_ID_PREFIX}${messageId.trim()}]\n${content}`;
+  return `${FALLBACK_MESSAGE_ID_PREFIX}${messageId.trim()}]\n${withProjectContext}`;
 }
 
 function writeTriggerFallback(targetInput, content, options = {}) {
@@ -416,7 +516,7 @@ function writeTriggerFallback(targetInput, content, options = {}) {
     triggersDir,
     `.${roleName}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
   );
-  const payload = buildTriggerFallbackContent(content, options.messageId);
+  const payload = buildTriggerFallbackContent(content, options.messageId, projectMetadata);
   try {
     fs.mkdirSync(triggersDir, { recursive: true });
     fs.writeFileSync(tempPath, payload, 'utf8');
