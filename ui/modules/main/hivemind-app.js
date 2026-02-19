@@ -985,6 +985,84 @@ class HivemindApp {
             return;
           }
 
+          if (data.message.type === 'background-agent') {
+            const action = String(data.message.action || '').trim().toLowerCase();
+            const payload = (data.message.payload && typeof data.message.payload === 'object' && !Array.isArray(data.message.payload))
+              ? data.message.payload
+              : {};
+            const senderRole = String(data.role || '').trim().toLowerCase();
+            const senderPaneId = String(data.paneId || '').trim();
+            const isBuilderSender = (
+              senderRole === 'builder'
+              || senderPaneId === BACKGROUND_BUILDER_OWNER_PANE_ID
+            );
+
+            if (!isBuilderSender) {
+              return {
+                ok: false,
+                accepted: false,
+                status: 'owner_binding_violation',
+                action: action || null,
+                senderRole: data.role || null,
+                senderPaneId: data.paneId || null,
+              };
+            }
+
+            if (action === 'spawn') {
+              const requestedSlot = Number.parseInt(String(payload.slot || ''), 10);
+              const requestedAlias = typeof payload.alias === 'string'
+                ? payload.alias
+                : (Number.isFinite(requestedSlot) && requestedSlot > 0 ? `builder-bg-${requestedSlot}` : null);
+              return this.backgroundAgentManager.spawnAgent({
+                ownerPaneId: BACKGROUND_BUILDER_OWNER_PANE_ID,
+                alias: requestedAlias,
+              });
+            }
+
+            if (action === 'kill') {
+              const target = payload.target || payload.alias || payload.paneId || null;
+              if (!target) {
+                return {
+                  ok: false,
+                  accepted: false,
+                  status: 'invalid_target',
+                  action,
+                };
+              }
+              return this.backgroundAgentManager.killAgent(target, { reason: 'builder_cli' });
+            }
+
+            if (action === 'kill-all' || action === 'killall') {
+              return this.backgroundAgentManager.killAll({ reason: 'builder_cli_kill_all' });
+            }
+
+            if (action === 'list' || action === 'status') {
+              return {
+                ok: true,
+                accepted: true,
+                status: 'ok',
+                agents: this.backgroundAgentManager.listAgents(),
+                targetMap: this.backgroundAgentManager.getTargetMap(),
+              };
+            }
+
+            if (action === 'target-map' || action === 'map') {
+              return {
+                ok: true,
+                accepted: true,
+                status: 'ok',
+                targetMap: this.backgroundAgentManager.getTargetMap(),
+              };
+            }
+
+            return {
+              ok: false,
+              accepted: false,
+              status: 'invalid_action',
+              action: action || null,
+            };
+          }
+
           // Route WebSocket messages via triggers module (handles delivery)
           if (data.message.type === 'send') {
             const { target, content } = data.message;
@@ -2127,6 +2205,9 @@ class HivemindApp {
     ipcHandlers.setDaemonClient(this.ctx.daemonClient);
 
     const handlePaneExit = (paneId, code) => {
+      if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
+        return;
+      }
       this.ctx.recoveryManager?.handleExit(paneId, code);
       this.usage.recordSessionEnd(paneId);
       this.recordSessionLifecyclePattern({
@@ -2151,9 +2232,14 @@ class HivemindApp {
 
     this.attachDaemonClientListener('data', (paneId, data) => {
       this.lastDaemonOutputAtMs = Date.now();
+      const isBackgroundPane = this.backgroundAgentManager.isBackgroundPaneId(paneId);
+      this.backgroundAgentManager.handleDaemonData(paneId, data);
+      if (isBackgroundPane) {
+        return;
+      }
+
       this.ctx.recoveryManager?.recordActivity(paneId);
       this.ctx.recoveryManager?.recordPtyOutput?.(paneId, data);
-      this.backgroundAgentManager.handleDaemonData(paneId, data);
 
       // Organic UI: Mark agent as active when outputting
       if (organicUI.getAgentState(paneId) !== 'offline') {
@@ -2207,6 +2293,9 @@ class HivemindApp {
 
     this.attachDaemonClientListener('spawned', (paneId, pid) => {
       log.info('Daemon', `Terminal spawned for pane ${paneId}, PID: ${pid}`);
+      if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
+        return;
+      }
       const command = this.cliIdentity.getPaneCommandForIdentity(String(paneId));
       this.cliIdentity.inferAndEmitCliIdentity(paneId, command);
       this.ctx.recoveryManager?.recordActivity(paneId);
@@ -2218,6 +2307,9 @@ class HivemindApp {
 
       if (terminals && terminals.length > 0) {
         for (const term of terminals) {
+          if (this.backgroundAgentManager.isBackgroundPaneId(term?.paneId)) {
+            continue;
+          }
           if (term.alive) {
             // Refine: Check if terminal actually has CLI content
             // Simple check here as we don't want to duplicate all regexes from daemon-handlers

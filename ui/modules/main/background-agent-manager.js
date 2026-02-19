@@ -514,6 +514,20 @@ class BackgroundAgentManager {
         .filter((term) => term && term.alive)
         .map((term) => String(term.paneId))
     );
+    const daemonClient = this.getDaemonClient();
+
+    // Hard-kill orphan background panes restored from a prior parent/session lifecycle.
+    for (const paneId of BACKGROUND_BUILDER_PANE_IDS) {
+      if (!live.has(paneId)) continue;
+      if (this.agents.has(paneId)) continue;
+      if (daemonClient?.connected) {
+        daemonClient.kill(paneId);
+      }
+      this.logEvent('stop', paneId, `Killed orphan background builder terminal (${paneId})`, {
+        paneId,
+        reason: 'orphan_on_sync',
+      });
+    }
 
     for (const paneId of Array.from(this.agents.keys())) {
       if (live.has(paneId)) continue;
