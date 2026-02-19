@@ -1,14 +1,24 @@
 # Hivemind
 
-Hivemind is a local-first Electron app that runs **Claude, Codex, and Gemini simultaneously** as a coordinated coding team on your machine. Most multi-agent tools run multiple copies of one model — Hivemind intentionally combines different providers so each role gets the model best suited for it.
+**Hivemind is not a code editor, IDE plugin, or cloud service.** It is a standalone, local-first Electron app that gives a **solo developer** a full AI coding team — running **Claude, Codex, and Gemini simultaneously** on your own machine, powered by your existing subscriptions.
 
-You can run it with a single model, but it's designed — and recommended — to run **different models from different companies** in each role:
+One person. Three different AI models. Three specialized roles. All running in parallel, talking to each other, and working on your codebase at the same time:
 
 - `Architect` (pane 1): coordination, task decomposition, code review
 - `Builder` (pane 2): implementation, testing, infrastructure
 - `Oracle` (pane 5): investigation, documentation, benchmarking
 
 For example, Claude architects the solution, Codex builds it, and Gemini cross-checks it. Each model brings its own reasoning style and blind spots — when they collaborate, they catch things a single model misses. They communicate through a structured message protocol, not copy-paste.
+
+You can run it with a single model, but it's designed — and recommended — to run **different models from different companies** in each role.
+
+## What Hivemind Is NOT
+
+- **Not a code editor or IDE.** It doesn't replace VS Code, Cursor, or any editor. It runs alongside your editor.
+- **Not a VS Code / JetBrains extension.** It's a standalone Electron app.
+- **Not a cloud service.** Everything runs locally on your machine. No data leaves your computer (beyond what each CLI sends to its own provider).
+- **Not a team collaboration tool for multiple humans.** The "team" is AI agents. Hivemind is designed for a **solo developer** managing multiple AI models.
+- **Not built on Continue, Copilot, or any other AI coding tool.** It's built from scratch — the orchestration layer, message routing, session persistence, all of it.
 
 ## Why Hivemind Is Different
 
