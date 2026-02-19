@@ -662,11 +662,25 @@ describe('hm-send retry behavior', () => {
       expect(result.code).toBe(0);
       expect(sendAttempts).toHaveLength(1);
       expect(sendAttempts[0].metadata).toEqual(expect.objectContaining({
+        envelope_version: 'hm-envelope-v1',
+        session_id: 'session-meta-123',
+        sender: expect.objectContaining({
+          role: 'cli',
+        }),
+        target: expect.objectContaining({
+          raw: 'builder',
+          role: 'builder',
+          pane_id: '2',
+        }),
         project: expect.objectContaining({
           name: 'external-project',
           path: path.resolve(externalProjectPath),
           session_id: 'session-meta-123',
         }),
+      }));
+      expect(sendAttempts[0].metadata.envelope).toEqual(expect.objectContaining({
+        version: 'hm-envelope-v1',
+        session_id: 'session-meta-123',
       }));
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });

@@ -21,6 +21,13 @@ const {
   closeCommsJournalStores,
 } = require('../modules/main/comms-journal');
 const { sendTelegram } = require('./hm-telegram');
+const {
+  buildOutboundMessageEnvelope,
+  buildCanonicalEnvelopeMetadata,
+  buildWebSocketDispatchMessage,
+  buildTriggerFallbackDescriptor,
+  buildSpecialTargetRequest,
+} = require('../modules/comms/message-envelope');
 
 const parsedPort = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
 const PORT = Number.isFinite(parsedPort) ? parsedPort : 9900;
@@ -436,22 +443,40 @@ function normalizeRole(targetInput) {
   return null;
 }
 
+function resolvePaneIdForRole(roleName) {
+  const normalized = String(roleName || '').trim().toLowerCase();
+  if (normalized === 'architect') return '1';
+  if (normalized === 'builder') return '2';
+  if (normalized === 'oracle') return '5';
+  return null;
+}
+
 function isSpecialTarget(targetInput) {
   const normalized = String(targetInput || '').trim().toLowerCase();
   return SPECIAL_USER_TARGETS.has(normalized);
 }
 
-async function sendSpecialTargetFallback(targetInput, content, options = {}) {
+async function sendSpecialTargetFallback(targetInput, request = null) {
   const normalized = String(targetInput || '').trim().toLowerCase();
   if (!SPECIAL_USER_TARGETS.has(normalized)) {
     return { ok: false, error: `Unsupported special target '${targetInput}'` };
   }
 
+  const specialRequest = (request && typeof request === 'object' && !Array.isArray(request))
+    ? request
+    : buildSpecialTargetRequest({
+      content: typeof request === 'string' ? request : '',
+      sender: { role: role || 'system' },
+      session_id: projectMetadata?.session_id || null,
+      project: projectMetadata || null,
+    });
+
   try {
-    const result = await sendTelegram(content, process.env, {
-      messageId: typeof options.messageId === 'string' ? options.messageId : null,
-      senderRole: role || 'system',
-      sessionId: projectMetadata?.session_id || null,
+    const result = await sendTelegram(specialRequest.content, process.env, {
+      messageId: specialRequest.messageId || null,
+      senderRole: specialRequest.senderRole || role || 'system',
+      sessionId: specialRequest.sessionId || null,
+      metadata: specialRequest.metadata || null,
     });
     if (!result?.ok) {
       return { ok: false, error: result?.error || 'telegram_fallback_failed' };
@@ -500,7 +525,7 @@ function buildTriggerFallbackContent(content, messageId, metadata = null) {
   return `${FALLBACK_MESSAGE_ID_PREFIX}${messageId.trim()}]\n${withProjectContext}`;
 }
 
-function writeTriggerFallback(targetInput, content, options = {}) {
+function writeTriggerFallback(targetInput, descriptorOrContent, options = {}) {
   const roleName = normalizeRole(targetInput);
   if (!roleName) {
     return {
@@ -508,6 +533,28 @@ function writeTriggerFallback(targetInput, content, options = {}) {
       error: `Cannot map target '${targetInput}' to trigger file`,
     };
   }
+
+  const descriptor = (descriptorOrContent && typeof descriptorOrContent === 'object' && !Array.isArray(descriptorOrContent))
+    ? descriptorOrContent
+    : {
+      content: typeof descriptorOrContent === 'string' ? descriptorOrContent : String(descriptorOrContent ?? ''),
+      messageId: typeof options.messageId === 'string' ? options.messageId : null,
+      metadata: (options.metadata && typeof options.metadata === 'object' && !Array.isArray(options.metadata))
+        ? options.metadata
+        : buildCanonicalEnvelopeMetadata({
+          message_id: typeof options.messageId === 'string' ? options.messageId : null,
+          content: typeof descriptorOrContent === 'string' ? descriptorOrContent : String(descriptorOrContent ?? ''),
+          sender: { role: role || 'cli' },
+          target: {
+            raw: String(targetInput || '').trim() || null,
+            role: roleName,
+            pane_id: resolvePaneIdForRole(roleName),
+          },
+          session_id: projectMetadata?.session_id || null,
+          project: projectMetadata || null,
+          timestamp_ms: Date.now(),
+        }),
+    };
 
   const triggersDir = typeof resolveGlobalPath === 'function'
     ? resolveGlobalPath('triggers', { forWrite: true })
@@ -521,7 +568,7 @@ function writeTriggerFallback(targetInput, content, options = {}) {
     triggersDir,
     `.${roleName}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
   );
-  const payload = buildTriggerFallbackContent(content, options.messageId, projectMetadata);
+  const payload = buildTriggerFallbackContent(descriptor.content, descriptor.messageId, descriptor.metadata);
   try {
     fs.mkdirSync(triggersDir, { recursive: true });
     fs.writeFileSync(tempPath, payload, 'utf8');
@@ -722,7 +769,7 @@ async function emitCommsEventBestEffort(eventType, payload = {}) {
   }
 }
 
-async function sendViaWebSocketWithAck(messageId) {
+async function sendViaWebSocketWithAck(envelope) {
   const socketUrl = `ws://127.0.0.1:${PORT}`;
   const ws = new WebSocket(socketUrl);
 
@@ -739,7 +786,7 @@ async function sendViaWebSocketWithAck(messageId) {
       skippedByHealth: true,
       health,
       attemptsUsed: 0,
-      messageId,
+      messageId: envelope.message_id,
     };
   }
 
@@ -748,22 +795,18 @@ async function sendViaWebSocketWithAck(messageId) {
   let lastError = null;
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    ws.send(JSON.stringify({
-      type: 'send',
+    ws.send(JSON.stringify(buildWebSocketDispatchMessage(envelope, {
       target,
-      content: message,
       priority,
-      metadata: projectMetadata ? { project: projectMetadata } : undefined,
-      messageId,
       ackRequired: true,
       attempt,
       maxAttempts: attempts,
-    }));
+    })));
 
     try {
       const ack = await waitForMatch(
         ws,
-        (msg) => msg.type === 'send-ack' && msg.messageId === messageId,
+        (msg) => msg.type === 'send-ack' && msg.messageId === envelope.message_id,
         ackTimeoutMs,
         `ACK timeout after ${ackTimeoutMs}ms`
       );
@@ -775,7 +818,7 @@ async function sendViaWebSocketWithAck(messageId) {
           ok: true,
           delivered: true,
           accepted: true,
-          messageId,
+          messageId: envelope.message_id,
           ack,
           attemptsUsed: attempt,
         };
@@ -787,7 +830,7 @@ async function sendViaWebSocketWithAck(messageId) {
           ok: true,
           delivered: false,
           accepted: true,
-          messageId,
+          messageId: envelope.message_id,
           ack,
           attemptsUsed: attempt,
         };
@@ -812,7 +855,7 @@ async function sendViaWebSocketWithAck(messageId) {
 
   const deliveryCheck = await queryDeliveryCheckBestEffort(
     ws,
-    messageId,
+    envelope.message_id,
     getDeliveryCheckOptions(ackTimeoutMs)
   );
   if (deliveryCheck?.known && (deliveryCheck?.ack?.ok || deliveryCheck?.ack?.accepted === true)) {
@@ -821,7 +864,7 @@ async function sendViaWebSocketWithAck(messageId) {
       ok: true,
       delivered: Boolean(deliveryCheck?.ack?.ok),
       accepted: true,
-      messageId,
+      messageId: envelope.message_id,
       ack: deliveryCheck.ack,
       attemptsUsed: attempts,
       deliveryCheck,
@@ -831,7 +874,7 @@ async function sendViaWebSocketWithAck(messageId) {
   await closeSocket(ws);
   return {
     ok: false,
-    messageId,
+    messageId: envelope.message_id,
     ack: lastAck,
     deliveryCheck,
     error: lastError ? lastError.message : null,
@@ -843,23 +886,38 @@ async function main() {
   const messageId = `hm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const targetRole = normalizeRole(target)
     || (isSpecialTarget(target) ? String(target).trim().toLowerCase() : null);
+  const envelope = buildOutboundMessageEnvelope({
+    message_id: messageId,
+    session_id: projectMetadata?.session_id || null,
+    sender: {
+      role: role || 'cli',
+    },
+    target: {
+      raw: target || null,
+      role: targetRole,
+      pane_id: resolvePaneIdForRole(targetRole),
+    },
+    content: message,
+    priority,
+    timestamp_ms: Date.now(),
+    project: projectMetadata || null,
+  });
+  const envelopeMetadata = buildCanonicalEnvelopeMetadata(envelope);
   const preSendJournal = appendCommsJournalEntry({
-    messageId,
-    sessionId: projectMetadata?.session_id || null,
-    senderRole: role || 'cli',
-    targetRole,
+    messageId: envelope.message_id,
+    sessionId: envelope.session_id || null,
+    senderRole: envelope.sender?.role || (role || 'cli'),
+    targetRole: envelope.target?.role || targetRole,
     channel: 'ws',
     direction: 'outbound',
-    sentAtMs: Date.now(),
-    rawBody: message,
+    sentAtMs: envelope.timestamp_ms,
+    rawBody: envelope.content,
     status: 'recorded',
     attempt: 1,
     metadata: {
       source: 'hm-send',
-      priority,
       maxAttempts: retries + 1,
-      project: projectMetadata || null,
-      targetRaw: target,
+      ...envelopeMetadata,
     },
   });
 
@@ -871,25 +929,27 @@ async function main() {
   let wsError = null;
 
   try {
-    sendResult = await sendViaWebSocketWithAck(messageId);
+    sendResult = await sendViaWebSocketWithAck(envelope);
   } catch (err) {
     wsError = err;
   }
 
   if (sendResult?.ok) {
     if (enableFallback && shouldFallbackForUnverifiedSend(sendResult, target)) {
-      const fallbackResult = writeTriggerFallback(target, message, {
-        messageId: sendResult?.messageId || null,
-      });
+      const fallbackResult = writeTriggerFallback(target, buildTriggerFallbackDescriptor(envelope));
       if (fallbackResult.ok) {
         const reason = sendResult?.ack?.status
           ? `ack=${sendResult.ack.status}`
           : 'accepted_unverified';
         await emitCommsEventBestEffort('comms.delivery.failed', {
-          messageId: sendResult?.messageId || null,
-          target,
-          role,
-          project: projectMetadata || null,
+          messageId: envelope.message_id,
+          target: envelope.target?.raw || target,
+          role: envelope.sender?.role || role,
+          sender: envelope.sender,
+          target_meta: envelope.target,
+          session_id: envelope.session_id,
+          timestamp_ms: envelope.timestamp_ms,
+          project: envelope.project,
           reason,
           attemptsUsed: sendResult?.attemptsUsed ?? (retries + 1),
           maxAttempts: retries + 1,
@@ -929,9 +989,7 @@ async function main() {
 
   if (enableFallback) {
     if (isSpecialTarget(target)) {
-      const fallbackResult = await sendSpecialTargetFallback(target, message, {
-        messageId: sendResult?.messageId || null,
-      });
+      const fallbackResult = await sendSpecialTargetFallback(target, buildSpecialTargetRequest(envelope));
       if (fallbackResult.ok) {
         const reason = sendResult?.ack
           ? `ack=${sendResult.ack.status}`
@@ -952,9 +1010,7 @@ async function main() {
       process.exit(1);
     }
 
-    const fallbackResult = writeTriggerFallback(target, message, {
-      messageId: sendResult?.messageId || null,
-    });
+    const fallbackResult = writeTriggerFallback(target, buildTriggerFallbackDescriptor(envelope));
     if (fallbackResult.ok) {
       const reason = sendResult?.ack
         ? `ack=${sendResult.ack.status}`
@@ -964,10 +1020,14 @@ async function main() {
           ? `health=${sendResult?.health?.status || 'unknown'}`
         : (sendResult?.error || wsError?.message || 'no_ack');
       await emitCommsEventBestEffort('comms.delivery.failed', {
-        messageId: sendResult?.messageId || null,
-        target,
-        role,
-        project: projectMetadata || null,
+        messageId: envelope.message_id,
+        target: envelope.target?.raw || target,
+        role: envelope.sender?.role || role,
+        sender: envelope.sender,
+        target_meta: envelope.target,
+        session_id: envelope.session_id,
+        timestamp_ms: envelope.timestamp_ms,
+        project: envelope.project,
         reason,
         attemptsUsed: sendResult?.attemptsUsed ?? (retries + 1),
         maxAttempts: retries + 1,

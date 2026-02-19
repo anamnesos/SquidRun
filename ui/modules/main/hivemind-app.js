@@ -29,6 +29,10 @@ const contextCompressor = require('../context-compressor');
 const smsPoller = require('../sms-poller');
 const telegramPoller = require('../telegram-poller');
 const { sendTelegram } = require('../../scripts/hm-telegram');
+const {
+  buildOutboundMessageEnvelope,
+  buildCanonicalEnvelopeMetadata,
+} = require('../comms/message-envelope');
 const teamMemory = require('../team-memory');
 const experiment = require('../experiment');
 const {
@@ -913,12 +917,12 @@ class HivemindApp {
           // Route WebSocket messages via triggers module (handles delivery)
           if (data.message.type === 'send') {
             const { target, content } = data.message;
-            const contentWithProjectContext = withProjectContext(content, data.message.metadata);
             const attempt = Number(data.message.attempt || 1);
             const maxAttempts = Number(data.message.maxAttempts || 1);
             const messageId = data.message.messageId || null;
             const traceContext = data.traceContext || data.message.traceContext || null;
             const nowMs = Date.now();
+            const sentAtMs = Number(data.message.sentAtMs || data.message.timestamp || nowMs);
             const targetPaneIdForJournal = this.resolveTargetToPane(target);
             const targetRoleForJournal = (() => {
               if (targetPaneIdForJournal === '1') return 'architect';
@@ -927,27 +931,44 @@ class HivemindApp {
               if (this.isTelegramReplyTarget(target)) return this.normalizeOutboundTarget(target);
               return null;
             })();
+            const canonicalEnvelope = buildOutboundMessageEnvelope({
+              ...(data.message?.metadata?.envelope || {}),
+              message_id: messageId,
+              session_id: data.message?.metadata?.session_id || this.commsSessionScopeId || null,
+              sender: data.message?.metadata?.sender || { role: data.role || 'unknown' },
+              target: data.message?.metadata?.target || {
+                raw: target || null,
+                role: targetRoleForJournal,
+                pane_id: targetPaneIdForJournal || null,
+              },
+              content: typeof content === 'string' ? content : String(content ?? ''),
+              priority: data.message?.priority || null,
+              timestamp_ms: sentAtMs,
+              project: data.message?.metadata?.project || null,
+            });
+            const canonicalMetadata = buildCanonicalEnvelopeMetadata(canonicalEnvelope);
+            const contentWithProjectContext = withProjectContext(canonicalEnvelope.content, canonicalMetadata);
 
-            if (messageId) {
+            if (canonicalEnvelope.message_id) {
               const journalResult = await executeEvidenceLedgerOperation(
                 'upsert-comms-journal',
                 {
-                  messageId,
-                  sessionId: this.commsSessionScopeId || null,
-                  senderRole: data.role || 'unknown',
-                  targetRole: targetRoleForJournal,
+                  messageId: canonicalEnvelope.message_id,
+                  sessionId: canonicalEnvelope.session_id || this.commsSessionScopeId || null,
+                  senderRole: canonicalEnvelope.sender?.role || data.role || 'unknown',
+                  targetRole: canonicalEnvelope.target?.role || targetRoleForJournal,
                   channel: 'ws',
                   direction: 'outbound',
-                  sentAtMs: Number(data.message.sentAtMs || data.message.timestamp || nowMs),
+                  sentAtMs: canonicalEnvelope.timestamp_ms,
                   brokeredAtMs: nowMs,
-                  rawBody: typeof content === 'string' ? content : String(content ?? ''),
+                  rawBody: canonicalEnvelope.content,
                   status: 'brokered',
                   attempt,
                   metadata: {
                     source: 'websocket-broker',
-                    targetRaw: target || null,
+                    ...canonicalMetadata,
+                    targetRaw: canonicalEnvelope.target?.raw || target || null,
                     traceId: traceContext?.traceId || traceContext?.correlationId || null,
-                    project: data.message?.metadata?.project || null,
                     maxAttempts,
                   },
                 },
@@ -966,15 +987,15 @@ class HivemindApp {
 
             if (attempt === 1) {
               emitKernelCommsEvent('comms.send.started', {
-                messageId,
-                target: target || null,
+                messageId: canonicalEnvelope.message_id,
+                target: canonicalEnvelope.target?.raw || target || null,
                 attempt,
                 maxAttempts,
               }, 'system', traceContext);
             } else if (attempt > 1) {
               emitKernelCommsEvent('comms.retry.attempted', {
-                messageId,
-                target: target || null,
+                messageId: canonicalEnvelope.message_id,
+                target: canonicalEnvelope.target?.raw || target || null,
                 attempt,
                 maxAttempts,
               }, 'system', traceContext);
@@ -985,7 +1006,7 @@ class HivemindApp {
               const normalizedTarget = this.normalizeOutboundTarget(target);
               const preflight = await this.evaluateTeamMemoryGuardPreflight({
                 target: normalizedTarget,
-                content,
+                content: canonicalEnvelope.content,
                 fromRole: data.role || 'unknown',
                 traceContext,
               });
@@ -1016,7 +1037,7 @@ class HivemindApp {
 
               const telegramResult = await this.routeTelegramReply({
                 target: normalizedTarget,
-                content,
+                content: canonicalEnvelope.content,
                 fromRole: data.role || 'unknown',
               });
               const deliveryResult = {
