@@ -235,19 +235,24 @@ describe('Settings Handlers', () => {
       expect(result.ANTHROPIC_API_KEY).toBeNull();
       expect(result.OPENAI_API_KEY).toBeNull();
       expect(result.RECRAFT_API_KEY).toBeNull();
+      expect(result.GODADDY_API_KEY).toBeNull();
+      expect(result.GODADDY_API_SECRET).toBeNull();
+      expect(result.GITHUB_TOKEN).toBeNull();
+      expect(result.VERCEL_TOKEN).toBeNull();
       expect(result.TELEGRAM_BOT_TOKEN).toBeNull();
     });
 
     test('returns masked keys from .env file', async () => {
       jest.spyOn(fs, 'existsSync').mockReturnValue(true);
       jest.spyOn(fs, 'readFileSync').mockReturnValue(
-        'ANTHROPIC_API_KEY=sk-ant-1234567890abcdef\nOPENAI_API_KEY=sk-proj-xyz123\nTELEGRAM_CHAT_ID=12345'
+        'ANTHROPIC_API_KEY=sk-ant-1234567890abcdef\nOPENAI_API_KEY=sk-proj-xyz123\nGITHUB_TOKEN=ghp_test_abcdef\nTELEGRAM_CHAT_ID=12345'
       );
 
       const result = await harness.invoke('get-api-keys');
 
       expect(result.ANTHROPIC_API_KEY).toBe('***cdef');
       expect(result.OPENAI_API_KEY).toBe('***z123');
+      expect(result.GITHUB_TOKEN).toBe('***cdef');
       expect(result.TELEGRAM_CHAT_ID).toBe('***2345');
       expect(result.RECRAFT_API_KEY).toBeNull(); // not in .env
     });
@@ -348,6 +353,12 @@ describe('Settings Handlers', () => {
       expect(fs.writeFileSync).toHaveBeenCalled();
       expect(process.env.OPENAI_API_KEY).toBe('sk-testkey12345');
       expect(result.capabilities).toBeDefined();
+    });
+
+    test('accepts valid GITHUB_TOKEN format', async () => {
+      const result = await harness.invoke('set-api-keys', { GITHUB_TOKEN: 'ghp_example_token' });
+      expect(result.success).toBe(true);
+      expect(process.env.GITHUB_TOKEN).toBe('ghp_example_token');
     });
 
     test('updates existing key in .env', async () => {

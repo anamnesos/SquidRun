@@ -14,6 +14,10 @@ async function loadApiKeys() {
     const maskOai = document.getElementById('apiKeyOpenaiMask');
     const maskGoogle = document.getElementById('apiKeyGoogleMask');
     const maskRecraft = document.getElementById('apiKeyRecraftMask');
+    const maskGodaddyApiKey = document.getElementById('apiKeyGodaddyApiKeyMask');
+    const maskGodaddyApiSecret = document.getElementById('apiKeyGodaddyApiSecretMask');
+    const maskGithubToken = document.getElementById('apiKeyGithubTokenMask');
+    const maskVercelToken = document.getElementById('apiKeyVercelTokenMask');
     const maskTwilioSid = document.getElementById('apiKeyTwilioSidMask');
     const maskTwilioAuth = document.getElementById('apiKeyTwilioAuthMask');
     const maskTwilioPhone = document.getElementById('apiKeyTwilioPhoneMask');
@@ -25,6 +29,10 @@ async function loadApiKeys() {
     if (maskOai) maskOai.textContent = keys.OPENAI_API_KEY || 'Not set';
     if (maskGoogle) maskGoogle.textContent = keys.GOOGLE_API_KEY || 'Not set';
     if (maskRecraft) maskRecraft.textContent = keys.RECRAFT_API_KEY || 'Not set';
+    if (maskGodaddyApiKey) maskGodaddyApiKey.textContent = keys.GODADDY_API_KEY || 'Not set';
+    if (maskGodaddyApiSecret) maskGodaddyApiSecret.textContent = keys.GODADDY_API_SECRET || 'Not set';
+    if (maskGithubToken) maskGithubToken.textContent = keys.GITHUB_TOKEN || 'Not set';
+    if (maskVercelToken) maskVercelToken.textContent = keys.VERCEL_TOKEN || 'Not set';
     if (maskTwilioSid) maskTwilioSid.textContent = keys.TWILIO_ACCOUNT_SID || 'Not set';
     if (maskTwilioAuth) maskTwilioAuth.textContent = keys.TWILIO_AUTH_TOKEN || 'Not set';
     if (maskTwilioPhone) maskTwilioPhone.textContent = keys.TWILIO_PHONE_NUMBER || 'Not set';
@@ -44,6 +52,10 @@ async function saveApiKeys() {
   const oaiInput = document.getElementById('apiKeyOpenai');
   const googleInput = document.getElementById('apiKeyGoogle');
   const recraftInput = document.getElementById('apiKeyRecraft');
+  const godaddyApiKeyInput = document.getElementById('apiKeyGodaddyApiKey');
+  const godaddyApiSecretInput = document.getElementById('apiKeyGodaddyApiSecret');
+  const githubTokenInput = document.getElementById('apiKeyGithubToken');
+  const vercelTokenInput = document.getElementById('apiKeyVercelToken');
   const twilioSidInput = document.getElementById('apiKeyTwilioSid');
   const twilioAuthInput = document.getElementById('apiKeyTwilioAuth');
   const twilioPhoneInput = document.getElementById('apiKeyTwilioPhone');
@@ -55,6 +67,10 @@ async function saveApiKeys() {
   if (oaiInput?.value) updates.OPENAI_API_KEY = oaiInput.value;
   if (googleInput?.value) updates.GOOGLE_API_KEY = googleInput.value;
   if (recraftInput?.value) updates.RECRAFT_API_KEY = recraftInput.value;
+  if (godaddyApiKeyInput?.value) updates.GODADDY_API_KEY = godaddyApiKeyInput.value;
+  if (godaddyApiSecretInput?.value) updates.GODADDY_API_SECRET = godaddyApiSecretInput.value;
+  if (githubTokenInput?.value) updates.GITHUB_TOKEN = githubTokenInput.value;
+  if (vercelTokenInput?.value) updates.VERCEL_TOKEN = vercelTokenInput.value;
   if (twilioSidInput?.value) updates.TWILIO_ACCOUNT_SID = twilioSidInput.value;
   if (twilioAuthInput?.value) updates.TWILIO_AUTH_TOKEN = twilioAuthInput.value;
   if (twilioPhoneInput?.value) updates.TWILIO_PHONE_NUMBER = twilioPhoneInput.value;
@@ -82,6 +98,10 @@ async function saveApiKeys() {
       if (oaiInput) oaiInput.value = '';
       if (googleInput) googleInput.value = '';
       if (recraftInput) recraftInput.value = '';
+      if (godaddyApiKeyInput) godaddyApiKeyInput.value = '';
+      if (godaddyApiSecretInput) godaddyApiSecretInput.value = '';
+      if (githubTokenInput) githubTokenInput.value = '';
+      if (vercelTokenInput) vercelTokenInput.value = '';
       if (twilioSidInput) twilioSidInput.value = '';
       if (twilioAuthInput) twilioAuthInput.value = '';
       if (twilioPhoneInput) twilioPhoneInput.value = '';
