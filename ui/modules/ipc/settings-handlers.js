@@ -277,6 +277,10 @@ function registerSettingsHandlers(ctx, deps) {
       OPENAI_API_KEY: null,
       GOOGLE_API_KEY: null,
       RECRAFT_API_KEY: null,
+      GODADDY_API_KEY: null,
+      GODADDY_API_SECRET: null,
+      GITHUB_TOKEN: null,
+      VERCEL_TOKEN: null,
       TWILIO_ACCOUNT_SID: null,
       TWILIO_AUTH_TOKEN: null,
       TWILIO_PHONE_NUMBER: null,
@@ -291,7 +295,7 @@ function registerSettingsHandlers(ctx, deps) {
         const lines = content.split('\n');
 
         for (const line of lines) {
-          const match = line.match(/^(ANTHROPIC_API_KEY|OPENAI_API_KEY|GOOGLE_API_KEY|RECRAFT_API_KEY|TWILIO_ACCOUNT_SID|TWILIO_AUTH_TOKEN|TWILIO_PHONE_NUMBER|SMS_RECIPIENT|TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID)=(.+)$/);
+          const match = line.match(/^(ANTHROPIC_API_KEY|OPENAI_API_KEY|GOOGLE_API_KEY|RECRAFT_API_KEY|GODADDY_API_KEY|GODADDY_API_SECRET|GITHUB_TOKEN|VERCEL_TOKEN|TWILIO_ACCOUNT_SID|TWILIO_AUTH_TOKEN|TWILIO_PHONE_NUMBER|SMS_RECIPIENT|TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID)=(.+)$/);
           if (match) {
             const [, keyName, value] = match;
             // Return masked version: show only last 4 chars
@@ -316,6 +320,10 @@ function registerSettingsHandlers(ctx, deps) {
       OPENAI_API_KEY: v => !v || v.startsWith('sk-'),
       GOOGLE_API_KEY: v => !v || v.startsWith('AIza'),
       RECRAFT_API_KEY: v => !v || v.length > 0,
+      GODADDY_API_KEY: v => !v || v.length > 0,
+      GODADDY_API_SECRET: v => !v || v.length > 0,
+      GITHUB_TOKEN: v => !v || v.length > 0,
+      VERCEL_TOKEN: v => !v || v.length > 0,
       TWILIO_ACCOUNT_SID: v => !v || v.startsWith('AC'),
       TWILIO_AUTH_TOKEN: v => !v || v.length > 0,
       TWILIO_PHONE_NUMBER: v => !v || v.startsWith('+'),
