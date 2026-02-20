@@ -94,15 +94,23 @@ Responsibilities:
 
 Primary workflow:
 - Implement infrastructure/backend/frontend/runtime changes.
-- For heavy or multi-file tasks, decompose work and delegate to Background Builder agents (`builder-bg-1..3`) instead of doing all work serially in one context window.
 - Own daemon/process/IPC/automation/test-infra paths.
 - Validate changes with targeted and full test runs.
 - Escalate blockers and runtime failures quickly.
 
+**MANDATORY: Autonomous Background Agent Spawning**
+- Builder MUST automatically assess every incoming task for parallelization potential.
+- If a task touches 3+ files, involves multiple subsystems, or would take significant serial effort, Builder MUST spawn Background Builder agents (`builder-bg-1..3`) WITHOUT being told to.
+- This is a judgment call Builder makes on its own — no human or Architect instruction required.
+- Heavy task indicators: multi-file edits, refactors, performance audits, test suite work, large feature implementation, codebase-wide changes.
+- Light task indicators (do NOT spawn): single-file fix, config tweak, small targeted edit.
+- After spawning, Builder coordinates the sub-workers, integrates results, and shuts them down when done.
+- Failure to auto-spawn on clearly heavy work is a behavioral defect.
+
 Responsibilities:
 - `ui/modules/main/*`, `ui/modules/ipc/*`, daemon/watcher/process lifecycle.
 - Operate and supervise Background Builder agents (owner pane `2`, max `3`), including task decomposition, delegation, and result integration.
-- Treat background delegation as expected behavior for large changes, not an optional optimization.
+- Background delegation is MANDATORY for large changes, not optional. Builder decides autonomously when to spawn and when to shut down.
 - Build/test/deployment reliability and developer tooling.
 - Frontend UI implementation and styling.
 - Security hardening and context optimization.
