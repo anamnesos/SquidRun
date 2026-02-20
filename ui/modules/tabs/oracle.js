@@ -28,23 +28,45 @@ async function loadGallery() {
       return;
     }
 
-    galleryList.innerHTML = images.map(img => {
-      const name = escapeHtml(img.filename);
-      // Use file:// URL (CSP allows file: protocol for images)
-      const src = toFileUrl(img.path);
-      return `
-        <div class="oracle-gallery-item" data-path="${escapeHtml(img.path)}">
-          <img class="oracle-gallery-img" src="${src}" alt="${name}" />
-          <div class="oracle-gallery-overlay">
-            <span class="oracle-gallery-name">${name}</span>
-            <div class="oracle-gallery-actions">
-              <button class="btn btn-sm oracle-gallery-copy" title="Copy to clipboard">Copy</button>
-              <button class="btn btn-sm btn-danger oracle-gallery-delete" title="Delete image">Delete</button>
-            </div>
-          </div>
-        </div>
-      `;
-    }).join('');
+    galleryList.innerHTML = '';
+    images.forEach((img) => {
+      const item = document.createElement('div');
+      item.className = 'oracle-gallery-item';
+      item.dataset.path = img.path;
+
+      const image = document.createElement('img');
+      image.className = 'oracle-gallery-img';
+      image.src = toFileUrl(img.path);
+      image.alt = String(img.filename || '');
+
+      const overlay = document.createElement('div');
+      overlay.className = 'oracle-gallery-overlay';
+
+      const name = document.createElement('span');
+      name.className = 'oracle-gallery-name';
+      name.textContent = String(img.filename || '');
+
+      const actions = document.createElement('div');
+      actions.className = 'oracle-gallery-actions';
+
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'btn btn-sm oracle-gallery-copy';
+      copyBtn.title = 'Copy to clipboard';
+      copyBtn.textContent = 'Copy';
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'btn btn-sm btn-danger oracle-gallery-delete';
+      deleteBtn.title = 'Delete image';
+      deleteBtn.textContent = 'Delete';
+
+      actions.appendChild(copyBtn);
+      actions.appendChild(deleteBtn);
+      overlay.appendChild(name);
+      overlay.appendChild(actions);
+      item.appendChild(image);
+      item.appendChild(overlay);
+      galleryList.appendChild(item);
+    });
 
     // Attach event handlers
     galleryList.querySelectorAll('.oracle-gallery-delete').forEach(btn => {
