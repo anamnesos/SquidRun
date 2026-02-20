@@ -93,6 +93,15 @@ async function captureScreenshot(ctx, options = {}) {
 
 function registerScreenshotHandlers(ctx) {
   const { ipcMain, SCREENSHOTS_DIR } = ctx;
+  const DEFAULT_LIST_LIMIT = 200;
+  const MAX_LIST_LIMIT = 500;
+
+  const parseScreenshotListLimit = (options) => {
+    const raw = options && typeof options === 'object' ? options.limit : undefined;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isInteger(parsed) || parsed <= 0) return DEFAULT_LIST_LIMIT;
+    return Math.min(parsed, MAX_LIST_LIMIT);
+  };
 
   const isSafeScreenshotFilename = (name) => {
     if (typeof name !== 'string') return false;
@@ -145,7 +154,7 @@ function registerScreenshotHandlers(ctx) {
     }
   });
 
-  ipcMain.handle('list-screenshots', () => {
+  ipcMain.handle('list-screenshots', (event, options = null) => {
     try {
       if (!fs.existsSync(SCREENSHOTS_DIR)) {
         fs.mkdirSync(SCREENSHOTS_DIR, { recursive: true });
@@ -153,6 +162,7 @@ function registerScreenshotHandlers(ctx) {
       }
 
       const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
+      const limit = parseScreenshotListLimit(options);
       const files = fs.readdirSync(SCREENSHOTS_DIR)
         .filter(f => f !== 'latest.png' && imageExts.includes(path.extname(f).toLowerCase()))
         .map(f => {
@@ -165,7 +175,8 @@ function registerScreenshotHandlers(ctx) {
             modified: stats.mtime.toISOString(),
           };
         })
-        .sort((a, b) => new Date(b.modified) - new Date(a.modified));
+        .sort((a, b) => new Date(b.modified) - new Date(a.modified))
+        .slice(0, limit);
 
       return { success: true, files };
     } catch (err) {
