@@ -5,7 +5,7 @@
 
 const os = require('os');
 const path = require('path');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const log = require('../logger');
 
 const MAX_BUFFER = 1024 * 1024;
@@ -55,21 +55,32 @@ function getDriveLetter(workspacePath) {
   return letter || 'C';
 }
 
-function execAsync(cmd) {
+function execFileAsync(file, args = []) {
   return new Promise((resolve, reject) => {
-    exec(cmd, { maxBuffer: MAX_BUFFER }, (err, stdout) => {
+    execFile(file, args, { maxBuffer: MAX_BUFFER }, (err, stdout) => {
       if (err) return reject(err);
       resolve(stdout.trim());
     });
   });
 }
 
+function normalizePidList(pids) {
+  const normalized = [];
+  for (const pid of pids) {
+    const numericPid = Number(pid);
+    if (!Number.isInteger(numericPid) || numericPid <= 0) continue;
+    normalized.push(numericPid);
+  }
+  return Array.from(new Set(normalized));
+}
+
 async function getDiskUsage(workspacePath) {
   try {
     if (process.platform === 'win32') {
-      const drive = getDriveLetter(workspacePath);
-      const cmd = `powershell -NoProfile -Command "Get-PSDrive -Name ${drive} | Select-Object Used,Free,Name | ConvertTo-Json -Compress"`;
-      const output = await execAsync(cmd);
+      const rawDrive = getDriveLetter(workspacePath);
+      const drive = /^[A-Z]$/.test(rawDrive) ? rawDrive : 'C';
+      const psScript = `Get-PSDrive -Name '${drive}' | Select-Object Used,Free,Name | ConvertTo-Json -Compress`;
+      const output = await execFileAsync('powershell', ['-NoProfile', '-Command', psScript]);
       if (!output) return null;
       const data = JSON.parse(output);
       const used = Number(data.Used) || 0;
@@ -84,8 +95,7 @@ async function getDiskUsage(workspacePath) {
       };
     }
 
-    const cmd = `df -kP \"${workspacePath}\"`;
-    const output = await execAsync(cmd);
+    const output = await execFileAsync('df', ['-kP', String(workspacePath || '')]);
     const lines = output.split('\n').filter(Boolean);
     const last = lines[lines.length - 1];
     if (!last) return null;
@@ -107,12 +117,13 @@ async function getDiskUsage(workspacePath) {
 
 async function getProcessStats(pids) {
   const stats = {};
-  if (!pids.length) return stats;
+  const safePids = normalizePidList(pids);
+  if (!safePids.length) return stats;
 
   if (process.platform === 'win32') {
-    const ids = pids.join(',');
-    const cmd = `powershell -NoProfile -Command "Get-Process -Id ${ids} -ErrorAction SilentlyContinue | Select-Object Id, CPU, WorkingSet64 | ConvertTo-Json -Compress"`;
-    const output = await execAsync(cmd).catch((err) => {
+    const ids = safePids.join(',');
+    const psScript = `Get-Process -Id ${ids} -ErrorAction SilentlyContinue | Select-Object Id, CPU, WorkingSet64 | ConvertTo-Json -Compress`;
+    const output = await execFileAsync('powershell', ['-NoProfile', '-Command', psScript]).catch((err) => {
       log.warn('Resources', 'Process usage lookup failed', err.message);
       return '';
     });
@@ -147,8 +158,7 @@ async function getProcessStats(pids) {
     return stats;
   }
 
-  const cmd = `ps -p ${pids.join(',')} -o pid=,pcpu=,rss=`;
-  const output = await execAsync(cmd).catch(() => '');
+  const output = await execFileAsync('ps', ['-p', safePids.join(','), '-o', 'pid=,pcpu=,rss=']).catch(() => '');
   if (!output) return stats;
 
   for (const line of output.split('\n')) {

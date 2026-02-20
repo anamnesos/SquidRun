@@ -41,7 +41,7 @@ describe('resource-handlers', () => {
     os.freemem.mockReturnValue(8 * 1024 * 1024 * 1024); // 8GB
 
     // Default exec mock - no output
-    childProcess.exec.mockImplementation((cmd, opts, callback) => {
+    childProcess.execFile.mockImplementation((file, args, opts, callback) => {
       callback(null, '', '');
     });
   });
@@ -219,21 +219,21 @@ describe('resource-handlers', () => {
     test('caches usage within TTL to avoid repeated shell calls', async () => {
       const handler = setupHandler({ cacheTtlMs: 7000 });
       await handler();
-      const callCountAfterFirst = childProcess.exec.mock.calls.length;
+      const callCountAfterFirst = childProcess.execFile.mock.calls.length;
 
       await handler();
-      expect(childProcess.exec.mock.calls.length).toBe(callCountAfterFirst);
+      expect(childProcess.execFile.mock.calls.length).toBe(callCountAfterFirst);
     });
 
     test('deduplicates concurrent requests while usage collection is in-flight', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
         setTimeout(() => callback(null, '', ''), 25);
       });
 
       const handler = setupHandler({ cacheTtlMs: 7000 });
       await Promise.all([handler(), handler()]);
 
-      expect(childProcess.exec).toHaveBeenCalledTimes(1);
+      expect(childProcess.execFile).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -260,8 +260,9 @@ describe('resource-handlers', () => {
     };
 
     test('fetches disk usage via PowerShell', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
-        if (cmd.includes('Get-PSDrive')) {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
+        const script = Array.isArray(args) ? String(args[2] || '') : '';
+        if (file === 'powershell' && script.includes('Get-PSDrive')) {
           callback(null, JSON.stringify({
             Used: 500 * 1024 * 1024 * 1024, // 500GB
             Free: 500 * 1024 * 1024 * 1024, // 500GB
@@ -284,7 +285,7 @@ describe('resource-handlers', () => {
     });
 
     test('handles empty disk output', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
         callback(null, '', '');
       });
 
@@ -295,8 +296,9 @@ describe('resource-handlers', () => {
     });
 
     test('handles disk lookup error', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
-        if (cmd.includes('Get-PSDrive')) {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
+        const script = Array.isArray(args) ? String(args[2] || '') : '';
+        if (file === 'powershell' && script.includes('Get-PSDrive')) {
           callback(new Error('PowerShell error'), '', '');
         } else {
           callback(null, '', '');
@@ -311,9 +313,10 @@ describe('resource-handlers', () => {
     });
 
     test('extracts drive letter from various paths', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
-        if (cmd.includes('Get-PSDrive')) {
-          const match = cmd.match(/-Name\s+(\w)/);
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
+        const script = Array.isArray(args) ? String(args[2] || '') : '';
+        if (file === 'powershell' && script.includes('Get-PSDrive')) {
+          const match = script.match(/-Name\s+'?([A-Z])'?/);
           const drive = match ? match[1] : 'C';
           callback(null, JSON.stringify({
             Used: 100 * 1024 * 1024 * 1024,
@@ -338,8 +341,9 @@ describe('resource-handlers', () => {
     });
 
     test('defaults to C drive when path has no drive letter', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
-        if (cmd.includes('Get-PSDrive')) {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
+        const script = Array.isArray(args) ? String(args[2] || '') : '';
+        if (file === 'powershell' && script.includes('Get-PSDrive')) {
           callback(null, JSON.stringify({
             Used: 100 * 1024 * 1024 * 1024,
             Free: 100 * 1024 * 1024 * 1024,
@@ -380,8 +384,8 @@ describe('resource-handlers', () => {
     };
 
     test('fetches disk usage via df', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
-        if (cmd.includes('df -kP')) {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
+        if (file === 'df') {
           callback(null, 'Filesystem     1K-blocks    Used Available Use% Mounted on\n/dev/sda1     1048576000 524288000 524288000  50% /', '');
         } else {
           callback(null, '', '');
@@ -400,7 +404,7 @@ describe('resource-handlers', () => {
     });
 
     test('handles empty df output', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
         callback(null, '', '');
       });
 
@@ -434,8 +438,9 @@ describe('resource-handlers', () => {
     };
 
     test('fetches process stats via PowerShell', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
-        if (cmd.includes('Get-Process')) {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
+        const script = Array.isArray(args) ? String(args[2] || '') : '';
+        if (file === 'powershell' && script.includes('Get-Process')) {
           callback(null, JSON.stringify([
             { Id: 1234, CPU: 10.5, WorkingSet64: 200 * 1024 * 1024 },
             { Id: 5678, CPU: 5.2, WorkingSet64: 100 * 1024 * 1024 },
@@ -461,8 +466,9 @@ describe('resource-handlers', () => {
     });
 
     test('handles single process response (non-array)', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
-        if (cmd.includes('Get-Process')) {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
+        const script = Array.isArray(args) ? String(args[2] || '') : '';
+        if (file === 'powershell' && script.includes('Get-Process')) {
           callback(null, JSON.stringify(
             { Id: 1234, CPU: 10.5, WorkingSet64: 200 * 1024 * 1024 }
           ), '');
@@ -481,8 +487,9 @@ describe('resource-handlers', () => {
     });
 
     test('handles process lookup error', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
-        if (cmd.includes('Get-Process')) {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
+        const script = Array.isArray(args) ? String(args[2] || '') : '';
+        if (file === 'powershell' && script.includes('Get-Process')) {
           callback(new Error('Process error'), '', '');
         } else {
           callback(null, '', '');
@@ -501,8 +508,9 @@ describe('resource-handlers', () => {
     });
 
     test('handles invalid JSON from Get-Process', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
-        if (cmd.includes('Get-Process')) {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
+        const script = Array.isArray(args) ? String(args[2] || '') : '';
+        if (file === 'powershell' && script.includes('Get-Process')) {
           callback(null, 'not valid json', '');
         } else {
           callback(null, '', '');
@@ -519,8 +527,9 @@ describe('resource-handlers', () => {
     });
 
     test('handles missing PID in process response', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
-        if (cmd.includes('Get-Process')) {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
+        const script = Array.isArray(args) ? String(args[2] || '') : '';
+        if (file === 'powershell' && script.includes('Get-Process')) {
           callback(null, JSON.stringify([
             { Id: null, CPU: 10.5, WorkingSet64: 200 * 1024 * 1024 },
           ]), '');
@@ -562,8 +571,8 @@ describe('resource-handlers', () => {
     };
 
     test('fetches process stats via ps', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
-        if (cmd.includes('ps -p')) {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
+        if (file === 'ps') {
           callback(null, '1234 5.5 102400\n5678 2.3 51200', '');
         } else {
           callback(null, '', '');
@@ -584,8 +593,8 @@ describe('resource-handlers', () => {
     });
 
     test('handles ps error', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
-        if (cmd.includes('ps -p')) {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
+        if (file === 'ps') {
           callback(new Error('ps error'), '', '');
         } else {
           callback(null, '', '');
@@ -602,8 +611,8 @@ describe('resource-handlers', () => {
     });
 
     test('handles malformed ps output', async () => {
-      childProcess.exec.mockImplementation((cmd, opts, callback) => {
-        if (cmd.includes('ps -p')) {
+      childProcess.execFile.mockImplementation((file, args, opts, callback) => {
+        if (file === 'ps') {
           callback(null, 'malformed line\n1234', '');
         } else {
           callback(null, '', '');
@@ -666,3 +675,4 @@ describe('resource-handlers', () => {
     });
   });
 });
+

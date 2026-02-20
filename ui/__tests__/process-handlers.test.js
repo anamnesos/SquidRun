@@ -59,8 +59,8 @@ describe('Process Handlers', () => {
     test('spawns a process and returns id', async () => {
       const result = await harness.invoke('spawn-process', 'npm', ['test']);
 
-      expect(spawn).toHaveBeenCalledWith('npm', ['test'], expect.objectContaining({
-        shell: true,
+      expect(spawn).toHaveBeenCalledWith('npm.cmd', ['test'], expect.objectContaining({
+        shell: false,
         cwd: expect.any(String),
       }));
       expect(result.success).toBe(true);

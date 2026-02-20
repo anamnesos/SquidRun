@@ -13,6 +13,15 @@ const ALLOWED_COMMANDS = new Set([
   'npm.cmd', 'npx.cmd', 'node.exe', 'git.exe',
 ]);
 
+const WINDOWS_COMMAND_MAP = Object.freeze({
+  npm: 'npm.cmd',
+  npx: 'npx.cmd',
+  jest: 'jest.cmd',
+  eslint: 'eslint.cmd',
+  tsc: 'tsc.cmd',
+  prettier: 'prettier.cmd',
+});
+
 function registerProcessHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerProcessHandlers requires ctx.ipcMain');
@@ -29,7 +38,11 @@ function registerProcessHandlers(ctx) {
 
   ipcMain.handle('spawn-process', (event, command, args = [], cwd = null) => {
     try {
-      const baseName = path.basename(command).toLowerCase();
+      if (typeof command !== 'string' || !command.trim()) {
+        return { success: false, error: 'Invalid command' };
+      }
+      const requestedCommand = command.trim();
+      const baseName = path.basename(requestedCommand).toLowerCase();
       if (!ALLOWED_COMMANDS.has(baseName)) {
         return { success: false, error: `Command not allowed: ${baseName}` };
       }
@@ -40,17 +53,20 @@ function registerProcessHandlers(ctx) {
       const workDir = cwd || process.cwd();
 
       const isWindows = os.platform() === 'win32';
+      const spawnCommand = isWindows
+        ? (WINDOWS_COMMAND_MAP[baseName] || requestedCommand)
+        : requestedCommand;
       const spawnOptions = {
         cwd: workDir,
-        shell: isWindows,
+        shell: false,
         env: process.env,
       };
 
-      const proc = spawn(command, args, spawnOptions);
+      const proc = spawn(spawnCommand, args, spawnOptions);
 
       const processInfo = {
         id,
-        command,
+        command: requestedCommand,
         args,
         cwd: workDir,
         pid: proc.pid,
