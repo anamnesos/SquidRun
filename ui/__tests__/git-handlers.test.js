@@ -945,15 +945,19 @@ hash3|h3|Author3|a3@test.com|3000000|Msg3
       expect(result.isRepo).toBe(true);
     });
 
-    test('returns false for non-repository', async () => {
+    test('returns explicit error payload for non-repository', async () => {
       execSync.mockImplementation(() => {
-        throw new Error('not a git repository');
+        const err = new Error('not a git repository');
+        err.stderr = 'fatal: not a git repository';
+        throw err;
       });
 
       const result = await handlers['git-is-repo']({}, {});
 
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
       expect(result.isRepo).toBe(false);
+      expect(result.error).toBe('not a git repository');
+      expect(result.stderr).toBe('fatal: not a git repository');
     });
 
     test('returns false for unexpected output', async () => {
@@ -1219,7 +1223,9 @@ index abc..def
 
       const result = await handlers['git-is-repo']({}, {});
 
+      expect(result.success).toBe(false);
       expect(result.isRepo).toBe(false);
+      expect(result.error).toBe('repo check exploded');
     });
   });
 });

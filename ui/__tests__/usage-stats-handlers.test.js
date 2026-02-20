@@ -62,6 +62,15 @@ describe('Usage Stats Handlers', () => {
     jest.clearAllMocks();
   });
 
+  describe('harness defaults', () => {
+    test('defaults costAlertSent to boolean false', () => {
+      const defaultCtx = createDefaultContext({ ipcMain: harness.ipcMain });
+
+      expect(defaultCtx.costAlertSent).toBe(false);
+      expect(typeof defaultCtx.costAlertSent).toBe('boolean');
+    });
+  });
+
   describe('get-usage-stats', () => {
     test('returns all usage stats', async () => {
       const result = await harness.invoke('get-usage-stats');

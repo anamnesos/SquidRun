@@ -43,32 +43,32 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 - App source: `./ui/`
 - Tests: `./ui/__tests__/`
 - Agent messaging: `node ui/scripts/hm-send.js <target> "(ROLE #N): message"`
-- Coordination state root: `.hivemind/` (legacy `workspace/` mirrors exist for specific compatibility paths only)
+- Coordination state root: `.squidrun/` (legacy mirrors: `.hivemind/` and `workspace/`, for compatibility only)
 - Terminal output is user-facing; agent-to-agent communication uses `hm-send.js`
 
 ### Runtime Truths (Must Verify Before Diagnosis)
 
-- Live comms journal DB: `.hivemind/runtime/evidence-ledger.db` (canonical)
-- Do not treat `.hivemind/evidence-ledger.db` or `workspace/*/evidence-ledger.db` as runtime truth; those paths may be stale artifacts.
-- Current session truth: `.hivemind/app-status.json` (`session` field).
-- `.hivemind/link.json` is project bootstrap metadata; `session_id` can lag and must not override app-status during diagnosis.
-- `workspace/handoffs/session.md` is a mirror of `.hivemind/handoffs/session.md`, not an independent source.
+- Live comms journal DB: `.squidrun/runtime/evidence-ledger.db` (canonical)
+- Do not treat `.hivemind/*/evidence-ledger.db` or `workspace/*/evidence-ledger.db` as runtime truth; those paths may be stale artifacts.
+- Current session truth: `.squidrun/app-status.json` (`session` field).
+- `.squidrun/link.json` is project bootstrap metadata; `session_id` can lag and must not override app-status during diagnosis. If `.squidrun/link.json` is absent, use legacy `.hivemind/link.json`.
+- `.hivemind/handoffs/session.md` and `workspace/handoffs/session.md` are mirrors of `.squidrun/handoffs/session.md`, not independent sources.
 - `session.md` fields are mixed-scope: `rows_scanned` is current-session scoped, while cross-session tables can still be populated from broader history.
 
 ### Startup Baseline
 
 **Architect (pane 1):**
 1. Read the **Startup Briefing** delivered to your terminal (summarizes Comm Journal, open Tasks, and unresolved Claims).
-2. Read `.hivemind/app-status.json`.
-3. Check `.hivemind/build/blockers.md` and `.hivemind/build/errors.md`.
-4. Read session handoff index at `workspace/handoffs/session.md` (auto-generated from `comms_journal`).
+2. Read `.squidrun/app-status.json` (fallback mirror: `.hivemind/app-status.json`).
+3. Check `.squidrun/build/blockers.md` and `.squidrun/build/errors.md` (legacy mirrors may exist under `.hivemind/build/` or `workspace/build/`).
+4. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`; mirrored to `.hivemind/` and `workspace/`).
 5. Process unresolved Claims via `record-consensus` as your first technical action.
 6. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
 
 **Builder / Oracle (panes 2, 3):**
-1. Read session handoff index at `workspace/handoffs/session.md` (auto-generated from `comms_journal`).
-2. Read `.hivemind/app-status.json` and note the current `session` number.
-3. Verify context snapshots in `.hivemind/context-snapshots/[paneId].md`.
+1. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`; mirrored to `.hivemind/` and `workspace/`).
+2. Read `.squidrun/app-status.json` and note the current `session` number.
+3. Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
 4. Check in to Architect via `hm-send` — one line, no extras.
 
 ## ARCHITECT
@@ -137,7 +137,7 @@ Responsibilities:
 - Report command/tool failures promptly to Architect via `hm-send.js`.
 - Avoid content-free acknowledgments.
 - Always commit before declaring "ready for restart." Uncommitted work is lost on restart.
-- Do not manually maintain per-pane handoff files. `workspace/handoffs/session.md` is materialized automatically from the comms journal.
+- Do not manually maintain per-pane handoff files. `.squidrun/handoffs/session.md` is materialized automatically from the comms journal, with legacy mirrors in `.hivemind/` and `workspace/`.
 
 ## Pre-Restart Gate (Mandatory)
 

@@ -156,7 +156,7 @@ describe('Process Handlers', () => {
       expect(entry.info.output.length).toBeLessThanOrEqual(100);
     });
 
-    test('updates status on process exit with code 0', async () => {
+    test('removes process from map on process exit with code 0', async () => {
       const mockProc = createMockProcess();
       spawn.mockImplementation(() => mockProc);
 
@@ -164,12 +164,10 @@ describe('Process Handlers', () => {
 
       mockProc.emit('exit', 0);
 
-      const entry = ctx.backgroundProcesses.get(result.id);
-      expect(entry.info.status).toBe('stopped');
-      expect(entry.info.exitCode).toBe(0);
+      expect(ctx.backgroundProcesses.has(result.id)).toBe(false);
     });
 
-    test('updates status on process exit with error code', async () => {
+    test('removes process from map on process exit with error code', async () => {
       const mockProc = createMockProcess();
       spawn.mockImplementation(() => mockProc);
 
@@ -177,12 +175,10 @@ describe('Process Handlers', () => {
 
       mockProc.emit('exit', 1);
 
-      const entry = ctx.backgroundProcesses.get(result.id);
-      expect(entry.info.status).toBe('error');
-      expect(entry.info.exitCode).toBe(1);
+      expect(ctx.backgroundProcesses.has(result.id)).toBe(false);
     });
 
-    test('updates status on process error', async () => {
+    test('removes process from map on process error', async () => {
       const mockProc = createMockProcess();
       spawn.mockImplementation(() => mockProc);
 
@@ -190,9 +186,7 @@ describe('Process Handlers', () => {
 
       mockProc.emit('error', new Error('Process crashed'));
 
-      const entry = ctx.backgroundProcesses.get(result.id);
-      expect(entry.info.status).toBe('error');
-      expect(entry.info.error).toBe('Process crashed');
+      expect(ctx.backgroundProcesses.has(result.id)).toBe(false);
     });
   });
 

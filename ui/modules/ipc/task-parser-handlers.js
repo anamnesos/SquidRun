@@ -3,11 +3,9 @@
  * Channels: parse-task-input, route-task-input
  */
 
-const fs = require('fs');
-const fsp = fs.promises;
-const path = require('path');
 const log = require('../logger');
 const taskParser = require('../task-parser');
+const { createPerformanceLoader } = require('../performance-data');
 
 function registerTaskParserHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -28,36 +26,12 @@ function registerTaskParserHandlers(ctx) {
     return { ok: true, triggers };
   };
 
-  const workspacePath = ctx.WORKSPACE_PATH;
-  const PERFORMANCE_FILE_PATH = workspacePath
-    ? path.join(workspacePath, 'performance.json')
-    : null;
-
-  const DEFAULT_PERFORMANCE = {
-    agents: {
-      '1': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
-      '2': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
-      '3': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
-    },
-    lastUpdated: null,
-  };
-
-  async function loadPerformance() {
-    if (!PERFORMANCE_FILE_PATH) {
-      return { ...DEFAULT_PERFORMANCE };
-    }
-    try {
-      await fsp.access(PERFORMANCE_FILE_PATH, fs.constants.F_OK);
-      const content = await fsp.readFile(PERFORMANCE_FILE_PATH, 'utf-8');
-      return { ...DEFAULT_PERFORMANCE, ...JSON.parse(content) };
-    } catch (err) {
-      if (err && err.code === 'ENOENT') {
-        return { ...DEFAULT_PERFORMANCE };
-      }
-      log.error('TaskParser', 'Error loading performance:', err.message);
-    }
-    return { ...DEFAULT_PERFORMANCE };
-  }
+  const loadPerformance = createPerformanceLoader({
+    workspacePath: ctx.WORKSPACE_PATH,
+    log,
+    logScope: 'TaskParser',
+    logMessage: 'Error loading performance:',
+  });
 
   ipcMain.handle('parse-task-input', (event, input) => {
     const parsed = taskParser.parseTaskInput(input);

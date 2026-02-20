@@ -10,7 +10,7 @@
 The Event Kernel is a two-lane system at the core of Hivemind that replaces implicit side-effect coordination with explicit, typed, traceable events.
 
 - **Lane A (Interaction Kernel):** Always-on control path. Enforces ownership, sequencing, and contracts. Cannot be disabled.
-- **Lane B (Timeline / Telemetry):** Optional observability path. Event logging, health strip, replay. Can be disabled via `telemetry.enabled` in settings.
+- **Lane B (Timeline / Telemetry):** Optional observability path. Event logging, health strip, replay. Controlled at runtime through Event Bus API controls (`setTelemetryEnabled`), not persisted settings toggles.
 
 **Feature flag / kill-switch:** Lane B has a kill-switch. Lane A does NOT — it is load-bearing infrastructure. If Lane A encounters errors, it degrades to safe mode (Section 5.4), never silently disables.
 
@@ -46,7 +46,7 @@ Every event in the system uses this shape, regardless of source (renderer or dae
 
 ### Payload Sanitization
 - By default, message body content is redacted: `{ redacted: true, length: N }`.
-- Full payloads available when `telemetry.devMode = true` in settings.
+- Full payloads available only when Event Bus dev mode is explicitly enabled (`setDevMode(true)`) for controlled debugging.
 
 ---
 
@@ -142,8 +142,8 @@ Every event in the system uses this shape, regardless of source (renderer or dae
 | `safemode.entered` | kernel | Safe mode activated (payload: `{ triggerReason }`) |
 | `safemode.exited` | kernel | Safe mode deactivated |
 | `bus.error` | event-bus.js | Internal bus error (Lane B affected, Lane A continues) |
-| `telemetry.enabled` | settings | Lane B enabled |
-| `telemetry.disabled` | settings | Lane B disabled |
+| `telemetry.enabled` | event-bus.js | Lane B enabled via API/runtime control |
+| `telemetry.disabled` | event-bus.js | Lane B disabled via API/runtime control |
 
 ---
 

@@ -70,16 +70,29 @@ function registerProcessHandlers(ctx) {
       proc.stdout.on('data', captureOutput);
       proc.stderr.on('data', captureOutput);
 
-      proc.on('error', (err) => {
-        processInfo.status = 'error';
-        processInfo.error = err.message;
+      let finalized = false;
+      const finalizeProcess = (updater) => {
+        if (finalized) return;
+        finalized = true;
+        if (typeof updater === 'function') {
+          updater(processInfo);
+        }
+        ctx.backgroundProcesses.delete(id);
         broadcastProcessList();
+      };
+
+      proc.on('error', (err) => {
+        finalizeProcess((info) => {
+          info.status = 'error';
+          info.error = err.message;
+        });
       });
 
       proc.on('exit', (code) => {
-        processInfo.status = code === 0 ? 'stopped' : 'error';
-        processInfo.exitCode = code;
-        broadcastProcessList();
+        finalizeProcess((info) => {
+          info.status = code === 0 ? 'stopped' : 'error';
+          info.exitCode = code;
+        });
       });
 
       ctx.backgroundProcesses.set(id, { process: proc, info: processInfo });

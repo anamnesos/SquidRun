@@ -112,6 +112,7 @@ workspace/screenshots/
 screenshots/
 
 # Audit screens (ephemeral)
+workspace/audit-logs/
 workspace/audit-screens/
 
 # Runtime databases (regenerated)

@@ -23,7 +23,7 @@ node D:/projects/hivemind/ui/scripts/hm-send.js architect "Your message here"
 ### Read replies from Architect:
 Query the comms_journal in the evidence ledger:
 ```bash
-node -e "const Database=require('node:sqlite').DatabaseSync;const db=new Database('D:/projects/hivemind/.hivemind/runtime/evidence-ledger.db');const rows=db.prepare('SELECT sent_at,sender,target,raw_body FROM comms_journal ORDER BY sent_at DESC LIMIT 10').all();rows.forEach(r=>console.log(r.sent_at,r.sender,'->',r.target,':',r.raw_body?.substring(0,120)))"
+node -e "const Database=require('node:sqlite').DatabaseSync;const db=new Database('D:/projects/hivemind/.squidrun/runtime/evidence-ledger.db');const rows=db.prepare('SELECT sent_at,sender,target,raw_body FROM comms_journal ORDER BY sent_at DESC LIMIT 10').all();rows.forEach(r=>console.log(r.sent_at,r.sender,'->',r.target,':',r.raw_body?.substring(0,120)))"
 ```
 
 ### Rules:
@@ -33,9 +33,9 @@ node -e "const Database=require('node:sqlite').DatabaseSync;const db=new Databas
 
 ## Project Discovery
 
-1. Read `.hivemind/link.json` for workspace path and session info
-2. Read `workspace/handoffs/session.md` for current session context
-3. Read `.hivemind/app-status.json` for active session number
+1. Read `.squidrun/link.json` for workspace path and session info (fallback: legacy `.hivemind/link.json`)
+2. Read `.squidrun/handoffs/session.md` for current session context (legacy mirrors: `.hivemind/` and `workspace/`)
+3. Read `.squidrun/app-status.json` for active session number
 4. Read `ROLES.md` for role boundaries and operating rules
 
 ## Your Unique Capabilities
