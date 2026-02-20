@@ -68,7 +68,7 @@ function withAutonomyFlags(command, settings = {}) {
   const lower = cmd.toLowerCase();
   if (lower.startsWith('claude') && !cmd.includes('--dangerously-skip-permissions')) {
     cmd = `${cmd} --dangerously-skip-permissions`;
-  } else if (lower.startsWith('codex') && !cmd.includes('--yolo') && !cmd.includes('--dangerously-bypass-approvals-and-sandbox')) {
+  } else if (lower.startsWith('codex') && !cmd.includes('--yolo') && !cmd.includes('--dangerously-bypass-approvals-and-sandbox') && !cmd.includes('-s danger-full-access')) {
     cmd = `${cmd} --yolo`;
   }
   return cmd;
