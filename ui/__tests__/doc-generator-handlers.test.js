@@ -34,6 +34,7 @@ describe('Documentation Generator IPC Handlers', () => {
   let mockIpcMain;
   let handlers;
   const WORKSPACE_PATH = '/test/workspace';
+  const PROJECT_ROOT = path.resolve(WORKSPACE_PATH, '..');
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -146,12 +147,24 @@ describe('Documentation Generator IPC Handlers', () => {
     });
 
     test('generates docs for absolute file path', async () => {
+      const absoluteFilePath = path.join(PROJECT_ROOT, 'absolute', 'path', 'file.js');
       const result = await handlers['docs-generate-file']({}, {
-        filePath: '/absolute/path/file.js',
+        filePath: absoluteFilePath,
       });
 
       expect(result.success).toBe(true);
-      expect(mockGeneratorInstance.generateForFile).toHaveBeenCalledWith('/absolute/path/file.js');
+      expect(mockGeneratorInstance.generateForFile).toHaveBeenCalledWith(absoluteFilePath);
+    });
+
+    test('rejects file path outside project root', async () => {
+      const outsidePath = path.resolve(PROJECT_ROOT, '..', 'escape.js');
+      const result = await handlers['docs-generate-file']({}, { filePath: outsidePath });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'File path must be inside project root',
+      });
+      expect(mockGeneratorInstance.generateForFile).not.toHaveBeenCalled();
     });
 
     test('uses custom format', async () => {
@@ -205,12 +218,24 @@ describe('Documentation Generator IPC Handlers', () => {
     });
 
     test('generates docs for absolute directory', async () => {
-      await handlers['docs-generate-directory']({}, { dirPath: '/absolute/path' });
+      const absoluteDirPath = path.join(PROJECT_ROOT, 'absolute', 'path');
+      await handlers['docs-generate-directory']({}, { dirPath: absoluteDirPath });
 
       expect(mockGeneratorInstance.generateForDirectory).toHaveBeenCalledWith(
-        '/absolute/path',
+        absoluteDirPath,
         expect.any(Object)
       );
+    });
+
+    test('rejects directory path outside project root', async () => {
+      const outsideDirPath = path.resolve(PROJECT_ROOT, '..', 'outside');
+      const result = await handlers['docs-generate-directory']({}, { dirPath: outsideDirPath });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Directory path must be inside project root',
+      });
+      expect(mockGeneratorInstance.generateForDirectory).not.toHaveBeenCalled();
     });
 
     test('respects recursive option', async () => {
@@ -251,12 +276,24 @@ describe('Documentation Generator IPC Handlers', () => {
     });
 
     test('writes to absolute output directory', async () => {
-      await handlers['docs-generate-project']({}, { outputDir: '/absolute/docs' });
+      const absoluteOutputDir = path.join(PROJECT_ROOT, 'absolute', 'docs');
+      await handlers['docs-generate-project']({}, { outputDir: absoluteOutputDir });
 
       expect(mockGeneratorInstance.writeDocumentation).toHaveBeenCalledWith(
         expect.any(Object),
-        '/absolute/docs'
+        absoluteOutputDir
       );
+    });
+
+    test('rejects output directory outside project root', async () => {
+      const outsideOutputDir = path.resolve(PROJECT_ROOT, '..', 'external-docs');
+      const result = await handlers['docs-generate-project']({}, { outputDir: outsideOutputDir });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Output directory must be inside project root',
+      });
+      expect(mockGeneratorInstance.writeDocumentation).not.toHaveBeenCalled();
     });
 
     test('does not write if generation fails', async () => {
@@ -308,6 +345,17 @@ describe('Documentation Generator IPC Handlers', () => {
       );
     });
 
+    test('rejects preview file path outside project root', async () => {
+      const outsideFilePath = path.resolve(PROJECT_ROOT, '..', 'outside.js');
+      const result = await handlers['docs-preview']({}, { filePath: outsideFilePath });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'File path must be inside project root',
+      });
+      expect(mockGeneratorInstance.generateForFile).not.toHaveBeenCalled();
+    });
+
     test('returns error if generation fails', async () => {
       mockGeneratorInstance.generateForFile.mockResolvedValue({
         success: false,
@@ -357,15 +405,39 @@ describe('Documentation Generator IPC Handlers', () => {
     });
 
     test('exports docs with absolute paths', async () => {
+      const absoluteSource = path.join(PROJECT_ROOT, 'absolute', 'src');
+      const absoluteOutput = path.join(PROJECT_ROOT, 'absolute', 'docs');
       await handlers['docs-export']({}, {
-        dirPath: '/absolute/src',
-        outputDir: '/absolute/docs',
+        dirPath: absoluteSource,
+        outputDir: absoluteOutput,
       });
 
       expect(mockGeneratorInstance.generateForDirectory).toHaveBeenCalledWith(
-        '/absolute/src',
+        absoluteSource,
         expect.any(Object)
       );
+    });
+
+    test('rejects export source path outside project root', async () => {
+      const outsideSource = path.resolve(PROJECT_ROOT, '..', 'outside-src');
+      const result = await handlers['docs-export']({}, { dirPath: outsideSource });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Source directory must be inside project root',
+      });
+      expect(mockGeneratorInstance.generateForDirectory).not.toHaveBeenCalled();
+    });
+
+    test('rejects export output path outside project root', async () => {
+      const outsideOutput = path.resolve(PROJECT_ROOT, '..', 'outside-docs');
+      const result = await handlers['docs-export']({}, { outputDir: outsideOutput });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Output directory must be inside project root',
+      });
+      expect(mockGeneratorInstance.writeDocumentation).not.toHaveBeenCalled();
     });
 
     test('returns error if generation fails', async () => {
@@ -469,6 +541,17 @@ describe('Documentation Generator IPC Handlers', () => {
       );
     });
 
+    test('rejects coverage path outside project root', async () => {
+      const outsideDirPath = path.resolve(PROJECT_ROOT, '..', 'outside-coverage');
+      const result = await handlers['docs-get-coverage']({}, { dirPath: outsideDirPath });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Directory path must be inside project root',
+      });
+      expect(mockGeneratorInstance.generateForDirectory).not.toHaveBeenCalled();
+    });
+
     test('calculates coverage percentage correctly', async () => {
       mockGeneratorInstance.generateForDirectory.mockResolvedValue({
         success: true,
@@ -559,12 +642,24 @@ describe('Documentation Generator IPC Handlers', () => {
     });
 
     test('handles absolute directory path', async () => {
-      await handlers['docs-get-undocumented']({}, { dirPath: '/absolute/path' });
+      const absoluteDirPath = path.join(PROJECT_ROOT, 'absolute', 'path');
+      await handlers['docs-get-undocumented']({}, { dirPath: absoluteDirPath });
 
       expect(mockGeneratorInstance.generateForDirectory).toHaveBeenCalledWith(
-        '/absolute/path',
+        absoluteDirPath,
         expect.any(Object)
       );
+    });
+
+    test('rejects undocumented directory path outside project root', async () => {
+      const outsideDirPath = path.resolve(PROJECT_ROOT, '..', 'outside-undoc');
+      const result = await handlers['docs-get-undocumented']({}, { dirPath: outsideDirPath });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Directory path must be inside project root',
+      });
+      expect(mockGeneratorInstance.generateForDirectory).not.toHaveBeenCalled();
     });
 
     test('returns error if generation fails', async () => {
