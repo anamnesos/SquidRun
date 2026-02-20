@@ -87,7 +87,7 @@ function createDefaultContext(overrides = {}) {
     },
     usageStats: { totalSpawns: 0, totalSessionTime: 0, sessionsToday: 0 },
     sessionStartTimes: new Map(),
-    costAlertSent: new Set(),
+    costAlertSent: false,
     backgroundProcesses: new Map(),
     processIdCounter: 0,
   };

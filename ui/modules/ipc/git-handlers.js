@@ -390,9 +390,19 @@ function registerGitHandlers(ctx) {
 
     try {
       const result = await execGit(['rev-parse', '--is-inside-work-tree'], cwd);
-      return { success: true, isRepo: result.success && result.output.trim() === 'true' };
+      if (!result.success) {
+        return {
+          success: false,
+          isRepo: false,
+          error: result.error,
+          stderr: result.stderr,
+          stdout: result.stdout,
+        };
+      }
+
+      return { success: true, isRepo: result.output.trim() === 'true' };
     } catch (err) {
-      return { success: true, isRepo: false };
+      return { success: false, isRepo: false, error: err.message };
     }
   });
 }

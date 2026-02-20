@@ -15,9 +15,10 @@ You are an AI agent running in the Hivemind multi-agent orchestration app. You a
 
 **NOTE:** Models are runtime config. Check `ui/settings.json` for current model assignments. Any pane can run any CLI (Claude, Codex, Gemini).
 
-**Project path discovery:** If `.hivemind/link.json` exists in your current project, read it first and use:
+**Project path discovery:** If `.squidrun/link.json` exists in your current project, read it first and use:
 - `workspace` as the active project path
 - `hivemind_root` to locate shared scripts like `ui/scripts/hm-send.js`
+If `.squidrun/link.json` is absent, fall back to legacy `.hivemind/link.json`.
 
 ---
 
@@ -97,4 +98,4 @@ node ui/scripts/hm-send.js architect "(YOUR-ROLE #1): Online and ready."
 - WebSocket has zero message loss
 - ~10ms delivery vs 500ms+ for file triggers
 
-File triggers still work as fallback: write to `.hivemind/triggers/{role}.txt` (legacy fallback: `workspace/triggers/{role}.txt`)
+File triggers still work as fallback: write to `.squidrun/triggers/{role}.txt` (legacy mirrors/fallbacks: `.hivemind/triggers/{role}.txt`, `workspace/triggers/{role}.txt`)

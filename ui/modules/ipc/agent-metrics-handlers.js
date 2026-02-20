@@ -16,6 +16,7 @@ const fsp = fs.promises;
 const path = require('path');
 const { formatDuration } = require('../formatters');
 const log = require('../logger');
+const { createDefaultPerformance, createPerformanceLoader } = require('../performance-data');
 
 function registerAgentMetricsHandlers(ctx, deps = {}) {
   if (!ctx || !ctx.ipcMain) {
@@ -34,15 +35,6 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
   const PERFORMANCE_FILE_PATH = path.join(WORKSPACE_PATH, 'performance.json');
   const LEARNING_FILE_PATH = path.join(WORKSPACE_PATH, 'learning.json');
 
-  const DEFAULT_PERFORMANCE = {
-    agents: {
-      '1': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
-      '2': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
-      '3': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
-    },
-    lastUpdated: null,
-  };
-
   const DEFAULT_LEARNING = {
     taskTypes: {},
     routingWeights: { '1': 1.0, '2': 1.0, '3': 1.0 },
@@ -56,19 +48,12 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     return successes / attempts;
   };
 
-  async function loadPerformance() {
-    try {
-      await fsp.access(PERFORMANCE_FILE_PATH, fs.constants.F_OK);
-      const content = await fsp.readFile(PERFORMANCE_FILE_PATH, 'utf-8');
-      return { ...DEFAULT_PERFORMANCE, ...JSON.parse(content) };
-    } catch (err) {
-      if (err && err.code === 'ENOENT') {
-        return { ...DEFAULT_PERFORMANCE };
-      }
-      log.error('Performance', 'Error loading:', err.message);
-    }
-    return { ...DEFAULT_PERFORMANCE };
-  }
+  const loadPerformance = createPerformanceLoader({
+    performanceFilePath: PERFORMANCE_FILE_PATH,
+    log,
+    logScope: 'Performance',
+    logMessage: 'Error loading:',
+  });
 
   async function savePerformance(data) {
     try {
@@ -104,7 +89,7 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
   }
 
   async function resetPerformanceData() {
-    await savePerformance({ ...DEFAULT_PERFORMANCE });
+    await savePerformance(createDefaultPerformance());
   }
 
   async function loadLearning() {

@@ -313,14 +313,18 @@ function shouldDropNoisyTelemetry(event) {
 function evictBuffer() {
   const now = typeof Date.now === 'function' ? Date.now() : Date.now();
   // Keep recent history, but trim faster under sustained burst pressure.
-  while (ringBuffer.length > BUFFER_MAX_SIZE && ringBuffer.length > 0) {
-    const oldest = ringBuffer[0];
+  let toDrop = 0;
+  while ((ringBuffer.length - toDrop) > BUFFER_MAX_SIZE && (ringBuffer.length - toDrop) > 0) {
+    const oldest = ringBuffer[toDrop];
     const oldestAge = oldest ? (now - oldest.ts) : 0;
-    if (oldestAge > BUFFER_MAX_AGE_MS || ringBuffer.length > BUFFER_EVICT_HIGH_WATERMARK) {
-      ringBuffer.shift();
+    if (oldestAge > BUFFER_MAX_AGE_MS || (ringBuffer.length - toDrop) > BUFFER_EVICT_HIGH_WATERMARK) {
+      toDrop++;
     } else {
       break;
     }
+  }
+  if (toDrop > 0) {
+    ringBuffer.splice(0, toDrop);
   }
 }
 
