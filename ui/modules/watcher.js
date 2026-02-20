@@ -138,7 +138,7 @@ const States = {
   PAUSED: 'paused',
 };
 
-// Active agents per state (pane IDs: 1=Architect, 2=Builder, 5=Oracle)
+// Active agents per state (pane IDs: 1=Architect, 2=Builder, 3=Oracle)
 // Frontend and Reviewer are internal teammates of Architect (pane 1)
 const ACTIVE_AGENTS = {
   [States.IDLE]: [],
@@ -146,10 +146,10 @@ const ACTIVE_AGENTS = {
   [States.PLANNING]: ['1', '2'],
   [States.PLAN_REVIEW]: ['1'],
   [States.PLAN_REVISION]: ['1', '2'],
-  [States.EXECUTING]: ['2', '5'],
+  [States.EXECUTING]: ['2', '3'],
   [States.CHECKPOINT]: [],
   [States.CHECKPOINT_REVIEW]: ['1'],
-  [States.CHECKPOINT_FIX]: ['1', '2', '5'],
+  [States.CHECKPOINT_FIX]: ['1', '2', '3'],
   [States.FRICTION_LOGGED]: [],
   [States.FRICTION_SYNC]: [],
   [States.FRICTION_RESOLUTION]: ['1', '2'],
@@ -262,7 +262,7 @@ function readState() {
 
 /**
  * Claim an agent role for a task
- * @param {string} paneId - The pane/agent ID (1, 2, or 5)
+ * @param {string} paneId - The pane/agent ID (1, 2, or 3)
  * @param {string} taskId - The task being claimed
  * @param {string} [description] - Optional description
  * @returns {{ success: boolean, error?: string }}

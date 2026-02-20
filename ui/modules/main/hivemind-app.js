@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Hivemind Application
  * Main process application controller
  */
@@ -1076,7 +1076,7 @@ class HivemindApp {
             const targetRoleForJournal = (() => {
               if (targetPaneIdForJournal === '1') return 'architect';
               if (targetPaneIdForJournal === '2') return 'builder';
-              if (targetPaneIdForJournal === '5') return 'oracle';
+              if (targetPaneIdForJournal === '3') return 'oracle';
               const backgroundAlias = resolveBackgroundBuilderAlias(targetPaneIdForJournal || target);
               if (backgroundAlias) return backgroundAlias;
               if (this.isTelegramReplyTarget(target)) return this.normalizeOutboundTarget(target);
@@ -2800,7 +2800,7 @@ class HivemindApp {
       'worker-b': '2',
       devops: '2',
       backend: '2',
-      investigator: '5',
+      investigator: '3',
     };
     if (legacyMap[targetLower]) {
       return legacyMap[targetLower];

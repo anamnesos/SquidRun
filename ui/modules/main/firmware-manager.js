@@ -22,7 +22,7 @@ const TEMPLATE_PLACEHOLDERS = Object.freeze({
 const PANE_ROLE_FILE = {
   '1': 'director',
   '2': 'builder',
-  '5': 'oracle',
+  '3': 'oracle',
 };
 
 function extractMarkdownH3Sections(markdown) {

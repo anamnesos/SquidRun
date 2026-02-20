@@ -26,7 +26,7 @@ function usage() {
   console.log('Examples:');
   console.log('  node hm-pane.js enter 1');
   console.log('  node hm-pane.js interrupt 2');
-  console.log('  node hm-pane.js restart 5');
+  console.log('  node hm-pane.js restart 3');
   console.log('  node hm-pane.js nudge 2 "Status check?"');
 }
 

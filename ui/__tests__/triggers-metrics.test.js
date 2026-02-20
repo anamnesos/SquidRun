@@ -6,7 +6,7 @@
 'use strict';
 
 jest.mock('../config', () => ({
-  PANE_IDS: ['1', '2', '5'],
+  PANE_IDS: ['1', '2', '3'],
 }));
 
 jest.mock('../modules/formatters', () => ({
@@ -18,7 +18,7 @@ let metrics;
 
 function loadFreshModule() {
   jest.resetModules();
-  jest.mock('../config', () => ({ PANE_IDS: ['1', '2', '5'] }));
+  jest.mock('../config', () => ({ PANE_IDS: ['1', '2', '3'] }));
   jest.mock('../modules/formatters', () => ({
     formatDuration: jest.fn((ms) => `${Math.round(ms / 1000)}s`),
   }));
@@ -60,11 +60,11 @@ describe('Triggers Metrics', () => {
     });
 
     test('increments per-pane stats for each pane', () => {
-      metrics.recordSent('pty', 'trigger', ['1', '2', '5']);
+      metrics.recordSent('pty', 'trigger', ['1', '2', '3']);
       const stats = metrics.getReliabilityStats();
       expect(stats.byPane['1'].sent).toBe(1);
       expect(stats.byPane['2'].sent).toBe(1);
-      expect(stats.byPane['5'].sent).toBe(1);
+      expect(stats.byPane['3'].sent).toBe(1);
     });
 
     test('returns sentAt timestamp', () => {
@@ -120,9 +120,9 @@ describe('Triggers Metrics', () => {
     });
 
     test('increments pane stats', () => {
-      metrics.recordDelivered('pty', 'trigger', '5');
+      metrics.recordDelivered('pty', 'trigger', '3');
       const stats = metrics.getReliabilityStats();
-      expect(stats.byPane['5'].delivered).toBe(1);
+      expect(stats.byPane['3'].delivered).toBe(1);
     });
 
     test('tracks latency when sentAt provided', () => {
@@ -226,7 +226,7 @@ describe('Triggers Metrics', () => {
     test('calculates correct success rate', () => {
       metrics.recordSent('pty', 'trigger', ['1']);
       metrics.recordSent('pty', 'trigger', ['2']);
-      metrics.recordSent('pty', 'trigger', ['5']);
+      metrics.recordSent('pty', 'trigger', ['3']);
       metrics.recordDelivered('pty', 'trigger', '1');
       metrics.recordDelivered('pty', 'trigger', '2');
       // 3rd not delivered

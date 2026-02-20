@@ -18,7 +18,7 @@ let cachedTaskPool = { tasks: [] };
 const PANE_DOMAIN_MAP = {
   '1': 'architecture',  // Architect
   '2': 'builder',       // Builder (Infra + Backend)
-  '5': 'analysis',      // Oracle
+  '3': 'analysis',      // Oracle
 };
 
 // Check if there are claimable tasks for a given pane's domain

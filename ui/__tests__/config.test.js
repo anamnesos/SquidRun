@@ -62,7 +62,7 @@ describe('config.js', () => {
     test('resolvePaneCwd should return project root for known panes', () => {
       expect(resolvePaneCwd('1')).toBe(PROJECT_ROOT);
       expect(resolvePaneCwd('2')).toBe(PROJECT_ROOT);
-      expect(resolvePaneCwd('5')).toBe(PROJECT_ROOT);
+      expect(resolvePaneCwd('3')).toBe(PROJECT_ROOT);
     });
 
     test('resolvePaneCwd should use active project root fallback for known panes', () => {
@@ -71,7 +71,7 @@ describe('config.js', () => {
       expect(getProjectRoot()).toBe(expected);
       expect(resolvePaneCwd('1')).toBe(expected);
       expect(resolvePaneCwd('2')).toBe(expected);
-      expect(resolvePaneCwd('5')).toBe(expected);
+      expect(resolvePaneCwd('3')).toBe(expected);
     });
 
     test('resolvePaneCwd should prefer state project fallback when no pane override exists', () => {
@@ -108,13 +108,13 @@ describe('config.js', () => {
 
   describe('PANE_ROLES', () => {
     test('should have all 3 pane IDs', () => {
-      expect(Object.keys(PANE_ROLES)).toEqual(['1', '2', '5']);
+      expect(Object.keys(PANE_ROLES)).toEqual(['1', '2', '3']);
     });
 
     test('should have correct role names', () => {
       expect(PANE_ROLES['1']).toBe('Architect');
       expect(PANE_ROLES['2']).toBe('Builder');
-      expect(PANE_ROLES['5']).toBe('Oracle');
+      expect(PANE_ROLES['3']).toBe('Oracle');
     });
   });
 
@@ -150,7 +150,7 @@ describe('config.js', () => {
     });
 
     test('all.txt should target all 3 panes', () => {
-      expect(TRIGGER_TARGETS['all.txt']).toEqual(['1', '2', '5']);
+      expect(TRIGGER_TARGETS['all.txt']).toEqual(['1', '2', '3']);
     });
   });
 

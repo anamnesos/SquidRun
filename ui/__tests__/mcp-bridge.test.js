@@ -70,7 +70,7 @@ describe('MCP Bridge', () => {
         const roles = {
           '1': 'Architect',
           '2': 'Builder',
-          '5': 'Oracle',
+          '3': 'Oracle',
         };
 
         for (const [paneId, expectedRole] of Object.entries(roles)) {
@@ -183,11 +183,11 @@ describe('MCP Bridge', () => {
 
     describe('validateSession', () => {
       test('validates registered session', () => {
-        mcpBridge.registerAgent('sess-valid', '5');
+        mcpBridge.registerAgent('sess-valid', '3');
         const result = mcpBridge.validateSession('sess-valid');
 
         expect(result.valid).toBe(true);
-        expect(result.paneId).toBe('5');
+        expect(result.paneId).toBe('3');
         expect(result.role).toBe('Oracle');
       });
 
@@ -258,8 +258,8 @@ describe('MCP Bridge', () => {
         expect(result.success).toBe(true);
         expect(result.results.length).toBe(2); // All except sender (pane 1)
 
-        // Verify it was called for panes 2, 5
-        for (const paneId of ['2', '5']) {
+        // Verify it was called for panes 2, 3
+        for (const paneId of ['2', '3']) {
           expect(mockWatcher.sendMessage).toHaveBeenCalledWith('1', paneId, 'Broadcast msg', 'broadcast');
         }
       });
@@ -514,7 +514,7 @@ describe('MCP Bridge', () => {
         const paneFiles = {
           '1': 'architect.txt',
           '2': 'builder.txt',
-          '5': 'oracle.txt',
+          '3': 'oracle.txt',
         };
 
         for (const [paneId, expectedFile] of Object.entries(paneFiles)) {

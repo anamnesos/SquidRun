@@ -82,7 +82,7 @@ describe('SettingsManager CLI auto-detection', () => {
     ctx.currentSettings.paneCommands = {
       '1': 'codex --yolo',
       '2': 'claude',
-      '5': 'gemini --yolo --include-directories "<custom-workspace>"',
+      '3': 'gemini --yolo --include-directories "<custom-workspace>"',
     };
 
     const result = manager.autoDetectPaneCommandsOnStartup();
@@ -92,7 +92,7 @@ describe('SettingsManager CLI auto-detection', () => {
     expect(ctx.currentSettings.paneCommands).toEqual({
       '1': 'codex --yolo',
       '2': 'claude',
-      '5': 'gemini --yolo --include-directories "<custom-workspace>"',
+      '3': 'gemini --yolo --include-directories "<custom-workspace>"',
     });
   });
 
@@ -101,24 +101,24 @@ describe('SettingsManager CLI auto-detection', () => {
     ctx.currentSettings.paneCommands = {
       '1': '   ',
       '2': 'codex --yolo',
-      '5': 'gemini --yolo --include-directories "<project-root>"',
+      '3': 'gemini --yolo --include-directories "<project-root>"',
     };
 
     const result = manager.autoDetectPaneCommandsOnStartup();
 
     expect(result.changed).toBe(true);
-    // Only pane 1 (blank) gets rewritten — pane 5 (gemini, user-chosen) is preserved
+    // Only pane 1 (blank) gets rewritten — Pane 3 (gemini, user-chosen) is preserved
     expect(result.updatedPanes).toEqual(['1']);
     expect(ctx.currentSettings.paneCommands).toEqual({
       '1': 'claude',
       '2': 'codex --yolo',
-      '5': 'gemini --yolo --include-directories "<project-root>"',
+      '3': 'gemini --yolo --include-directories "<project-root>"',
     });
     expect(manager.saveSettings).toHaveBeenCalledWith({
       paneCommands: {
         '1': 'claude',
         '2': 'codex --yolo',
-        '5': 'gemini --yolo --include-directories "<project-root>"',
+        '3': 'gemini --yolo --include-directories "<project-root>"',
       },
     });
   });

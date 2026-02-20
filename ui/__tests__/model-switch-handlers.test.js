@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Tests for model-switch-handlers.js
  */
 
@@ -44,16 +44,16 @@ describe('registerModelSwitchHandlers', () => {
       currentSettings: {
         paneCommands: {
           '1': 'claude',
-          '5': 'gemini --yolo --include-directories "<project-root>"',
+          '3': 'gemini --yolo --include-directories "<project-root>"',
         },
         paneProjects: {
           '1': null,
           '2': null,
-          '5': null,
+          '3': null,
         },
         paneRoles: {
           '1': 'Architect',
-          '5': 'Oracle',
+          '3': 'Oracle',
         }
       },
       daemonClient: {
@@ -207,10 +207,10 @@ describe('registerModelSwitchHandlers', () => {
       const logger = require('../modules/logger');
 
       // Get the promise for the handler
-      const switchPromise = switchHandler({}, { paneId: '5', model: 'claude' });
+      const switchPromise = switchHandler({}, { paneId: '3', model: 'claude' });
 
       // Ensure kill was still called
-      expect(mockCtx.daemonClient.kill).toHaveBeenCalledWith('5');
+      expect(mockCtx.daemonClient.kill).toHaveBeenCalledWith('3');
 
       // Advance timers to trigger the timeout
       jest.advanceTimersByTime(2000);
@@ -219,17 +219,17 @@ describe('registerModelSwitchHandlers', () => {
       const result = await switchPromise;
 
       // Check that a warning was logged
-      expect(logger.warn).toHaveBeenCalledWith('ModelSwitch', 'Kill timeout for pane 5, proceeding anyway');
+      expect(logger.warn).toHaveBeenCalledWith('ModelSwitch', 'Kill timeout for Pane 3, proceeding anyway');
 
       // Verify settings were still updated and saved
-      expect(mockCtx.currentSettings.paneCommands['5']).toBe('claude');
+      expect(mockCtx.currentSettings.paneCommands['3']).toBe('claude');
       expect(mockDeps.saveSettings).toHaveBeenCalledWith({ paneCommands: mockCtx.currentSettings.paneCommands });
 
       // Verify renderer was still signaled
-      expect(mockCtx.mainWindow.webContents.send).toHaveBeenCalledWith('pane-model-changed', { paneId: '5', model: 'claude' });
+      expect(mockCtx.mainWindow.webContents.send).toHaveBeenCalledWith('pane-model-changed', { paneId: '3', model: 'claude' });
 
       // Verify it still returns success
-      expect(result).toEqual({ success: true, paneId: '5', model: 'claude' });
+      expect(result).toEqual({ success: true, paneId: '3', model: 'claude' });
     });
 
     it('should construct the gemini command with the project-root include path', async () => {

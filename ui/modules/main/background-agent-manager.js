@@ -48,7 +48,7 @@ function normalizeRole(value) {
   if (!role) return '';
   if (role === 'builder' || role === '2') return 'builder';
   if (role === 'architect' || role === '1') return 'architect';
-  if (role === 'oracle' || role === '5') return 'oracle';
+  if (role === 'oracle' || role === '3') return 'oracle';
   return role;
 }
 

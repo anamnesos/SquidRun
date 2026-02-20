@@ -100,7 +100,7 @@ maybeDescribe('evidence-ledger-memory seed utility', () => {
       team: {
         '1': 'Architect',
         '2': 'Builder',
-        '5': 'Oracle',
+        '3': 'Oracle',
       },
     };
 

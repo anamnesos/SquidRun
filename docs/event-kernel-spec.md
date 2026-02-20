@@ -27,7 +27,7 @@ Every event in the system uses this shape, regardless of source (renderer or dae
   causationId: string,    // eventId of the direct parent event (null for root events)
   type: string,           // dot-notation, e.g. "inject.requested"
   source: string,         // emitting module, e.g. "injection.js", "daemon", "terminal.js"
-  paneId: string,         // "1" | "2" | "5" | "system"
+  paneId: string,         // "1" | "2" | "3" | "system"
   ts: number,             // Date.now() — millisecond timestamp
   seq: number,            // per-source monotonic sequence number (resets per session)
   payload: object         // action-specific data (sanitized by default)

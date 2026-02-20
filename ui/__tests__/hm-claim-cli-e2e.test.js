@@ -107,7 +107,7 @@ maybeDescribe('hm-claim CLI e2e', () => {
     const queryResult = await runHmClaimCli(port, [
       'query',
       '--limit',
-      '5',
+      '3',
     ]);
 
     expect(queryResult.ok).toBe(true);

@@ -24,7 +24,7 @@ Every transition object in the ledger MUST conform to this schema:
   transitionId: string,    // "tr-" prefix + timestamp + counter
   correlationId: string,   // Links events to this transition
   causationId: string,     // The eventId that triggered the current state
-  paneId: string,          // "1" | "2" | "5" | "system"
+  paneId: string,          // "1" | "2" | "3" | "system"
   category: string,        // e.g., "inject"
   intentType: string,      // e.g., "inject.requested"
   transitionType: string,  // e.g., "message.submit"

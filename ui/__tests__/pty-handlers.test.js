@@ -141,17 +141,17 @@ describe('PTY Handlers', () => {
     test('sets GEMINI_SYSTEM_MD env for gemini panes when firmware injection is enabled', async () => {
       ctx.daemonClient.connected = true;
       ctx.currentSettings.firmwareInjectionEnabled = true;
-      ctx.currentSettings.paneCommands = { '5': 'gemini --yolo' };
+      ctx.currentSettings.paneCommands = { '3': 'gemini --yolo' };
       deps.firmwareManager = {
         ensureFirmwareForPane: jest.fn(() => ({ ok: true, firmwarePath: '/tmp/fw/oracle.md' })),
       };
 
-      const result = await harness.invoke('pty-create', '5', '/fallback/dir');
+      const result = await harness.invoke('pty-create', '3', '/fallback/dir');
 
-      expect(result.paneId).toBe('5');
-      expect(deps.firmwareManager.ensureFirmwareForPane).toHaveBeenCalledWith('5');
+      expect(result.paneId).toBe('3');
+      expect(deps.firmwareManager.ensureFirmwareForPane).toHaveBeenCalledWith('3');
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
-        '5',
+        '3',
         expect.any(String),
         false,
         null,

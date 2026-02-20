@@ -23,10 +23,10 @@ describe('hm-pane CLI helpers', () => {
   test('buildPayload creates nudge payload with optional message', () => {
     const payload = hmPane.buildPayload(
       'nudge',
-      ['nudge', '5', 'Status?', 'Ping'],
+      ['nudge', '3', 'Status?', 'Ping'],
       new Map()
     );
-    expect(payload).toEqual({ paneId: '5', message: 'Status? Ping' });
+    expect(payload).toEqual({ paneId: '3', message: 'Status? Ping' });
   });
 
   test('buildPayload prefers --message over positional text', () => {

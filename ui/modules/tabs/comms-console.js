@@ -49,7 +49,7 @@ function normalizeRole(value) {
 function roleFromPaneId(paneId) {
   if (paneId === '1' || paneId === 1) return 'architect';
   if (paneId === '2' || paneId === 2) return 'builder';
-  if (paneId === '5' || paneId === 5) return 'oracle';
+  if (paneId === '3' || paneId === 3) return 'oracle';
   return null;
 }
 
@@ -59,7 +59,7 @@ function displayRole(role) {
   if (normalized === 'system') return SHORT_AGENT_NAMES.system || 'Sys';
   if (normalized === 'architect') return SHORT_AGENT_NAMES['1'] || PANE_ROLES['1'] || 'Architect';
   if (normalized === 'builder') return SHORT_AGENT_NAMES['2'] || PANE_ROLES['2'] || 'Builder';
-  if (normalized === 'oracle') return SHORT_AGENT_NAMES['5'] || PANE_ROLES['5'] || 'Oracle';
+  if (normalized === 'oracle') return SHORT_AGENT_NAMES['3'] || PANE_ROLES['3'] || 'Oracle';
   return normalized.slice(0, 1).toUpperCase() + normalized.slice(1);
 }
 

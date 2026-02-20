@@ -113,7 +113,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       mode: 'PTY',
       startedAtMs: baseMs,
       stats: { test_suites: 114, tests_passed: 3337 },
-      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
+      team: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
     });
     expect(session.ok).toBe(true);
 
@@ -217,7 +217,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       mode: 'PTY',
       startedAtMs: 5000,
       stats: { test_suites: 116, tests_passed: 3349 },
-      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
+      team: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
     }).ok).toBe(true);
 
     expect(memory.recordDecision({
@@ -255,7 +255,7 @@ maybeDescribe('evidence-ledger-memory', () => {
       mode: 'PTY',
       startedAtMs: 5200,
       stats: { test_suites: 117, tests_passed: 3351 },
-      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
+      team: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
     }).ok).toBe(true);
 
     const startupSnap = memory.snapshotContext('ses-117', {

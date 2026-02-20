@@ -19,14 +19,14 @@ const { PANE_ROLES } = require('../../config');
 const agentStates = new Map([
   ['1', 'offline'],
   ['2', 'offline'],
-  ['5', 'offline'],
+  ['3', 'offline'],
 ]);
 
 // Short role names for UI
 const SHORT_ROLES = {
   '1': 'arch',
   '2': 'builder',
-  '5': 'oracle',
+  '3': 'oracle',
 };
 
 // Active message routes for tracking in-flight messages
@@ -53,7 +53,7 @@ function emit(channel, data) {
 
 /**
  * Update agent state and emit event
- * @param {string} agentId - Pane ID ('1', '2', '5')
+ * @param {string} agentId - Pane ID ('1', '2', '3')
  * @param {string} newState - New state
  */
 function setAgentState(agentId, newState) {

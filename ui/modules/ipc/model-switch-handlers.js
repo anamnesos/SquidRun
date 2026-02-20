@@ -66,7 +66,7 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
     // Wait for kill confirmation (event-based with fallback timeout)
     await new Promise(resolve => {
       const timeout = setTimeout(() => {
-        log.warn('ModelSwitch', `Kill timeout for pane ${paneId}, proceeding anyway`);
+        log.warn('ModelSwitch', `Kill timeout for Pane ${paneId}, proceeding anyway`);
         if (ctx.daemonClient) {
           ctx.daemonClient.off('killed', handler);
         }

@@ -68,7 +68,7 @@ describe('Smart Routing Handlers', () => {
         '2': 'Worker A',
         '3': 'Worker B',
         '4': 'Reviewer',
-        '5': 'Investigator',
+        '3': 'Investigator',
         '6': 'Orchestrator',
       },
     };
@@ -194,7 +194,7 @@ describe('Smart Routing Handlers', () => {
         '2': 'Worker A',
         '3': 'Worker B',
         '4': 'Reviewer',
-        '5': 'Investigator',
+        '3': 'Investigator',
         '6': 'Orchestrator',
       });
     });

@@ -33,9 +33,9 @@ describe('Usage Stats Handlers', () => {
     // Set up usage stats
     ctx.usageStats = {
       totalSpawns: 10,
-      spawnsPerPane: { '1': 2, '2': 3, '5': 1 },
+      spawnsPerPane: { '1': 2, '2': 3, '3': 1 },
       totalSessionTimeMs: 3600000, // 1 hour
-      sessionTimePerPane: { '1': 600000, '2': 900000, '5': 600000 },
+      sessionTimePerPane: { '1': 600000, '2': 900000, '3': 600000 },
       sessionsToday: 5,
       lastResetDate: '2026-01-30',
       history: [
@@ -67,7 +67,7 @@ describe('Usage Stats Handlers', () => {
       const result = await harness.invoke('get-usage-stats');
 
       expect(result.totalSpawns).toBe(10);
-      expect(result.spawnsPerPane).toEqual({ '1': 2, '2': 3, '5': 1 });
+      expect(result.spawnsPerPane).toEqual({ '1': 2, '2': 3, '3': 1 });
       expect(result.totalSessionTimeMs).toBe(3600000);
       expect(result.sessionsToday).toBe(5);
       expect(result.lastResetDate).toBe('2026-01-30');
@@ -262,7 +262,7 @@ describe('Usage Stats Handlers', () => {
       await harness.invoke('reset-usage-stats');
 
       expect(ctx.usageStats.spawnsPerPane).toEqual({
-        '1': 0, '2': 0, '5': 0,
+        '1': 0, '2': 0, '3': 0,
       });
     });
 
@@ -270,7 +270,7 @@ describe('Usage Stats Handlers', () => {
       await harness.invoke('reset-usage-stats');
 
       expect(ctx.usageStats.sessionTimePerPane).toEqual({
-        '1': 0, '2': 0, '5': 0,
+        '1': 0, '2': 0, '3': 0,
       });
     });
 

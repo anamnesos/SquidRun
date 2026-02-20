@@ -62,7 +62,7 @@ const mockUiView = {
   PANE_ROLES: {
     '1': 'Architect',
     '2': 'Builder',
-    '5': 'Oracle',
+    '3': 'Oracle',
   },
   SYNC_FILES: {
     'shared_context.md': { label: 'CTX' },
@@ -137,8 +137,8 @@ describe('daemon-handlers.js module', () => {
       expect(daemonHandlers.PANE_IDS).toHaveLength(3);
     });
 
-    test('should be strings 1,2,5', () => {
-      expect(daemonHandlers.PANE_IDS).toEqual(['1', '2', '5']);
+    test('should be strings 1,2,3', () => {
+      expect(daemonHandlers.PANE_IDS).toEqual(['1', '2', '3']);
     });
   });
 
@@ -486,7 +486,7 @@ describe('daemon-handlers.js module', () => {
 
         expect(setReconnectedFn).toHaveBeenCalledWith(true);
         expect(terminal.spawnAgent).toHaveBeenCalledWith('2');
-        expect(terminal.spawnAgent).toHaveBeenCalledWith('5');
+        expect(terminal.spawnAgent).toHaveBeenCalledWith('3');
         expect(terminal.spawnAgent).not.toHaveBeenCalledWith('1');
       });
 
@@ -666,24 +666,24 @@ describe('daemon-handlers.js module', () => {
         });
 
         daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
-        injectHandler({}, { panes: ['5'], message: 'msg', deliveryId: 'delivery-unverified-1' });
+        injectHandler({}, { panes: ['3'], message: 'msg', deliveryId: 'delivery-unverified-1' });
         jest.runAllTimers();
 
         // Unverified but success=true means message was typed + Enter pressed = delivered.
         // We route as accepted.unverified to avoid inflating to delivered.verified ACK semantics.
-        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('5', 'delivered');
+        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'delivered');
         expect(ipcRenderer.send).toHaveBeenCalledWith(
           'trigger-delivery-outcome',
           {
             deliveryId: 'delivery-unverified-1',
-            paneId: '5',
+            paneId: '3',
             accepted: true,
             verified: false,
             status: 'accepted.unverified',
             reason: 'timeout',
           }
         );
-        expect(ipcRenderer.send).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-unverified-1', paneId: '5' });
+        expect(ipcRenderer.send).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-unverified-1', paneId: '3' });
       });
 
       test('should emit trigger-delivery-ack when terminal delivery is verified', () => {
@@ -696,13 +696,13 @@ describe('daemon-handlers.js module', () => {
         });
 
         daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
-        injectHandler({}, { panes: ['5'], message: 'msg', deliveryId: 'delivery-verified-1' });
+        injectHandler({}, { panes: ['3'], message: 'msg', deliveryId: 'delivery-verified-1' });
         jest.runAllTimers();
 
-        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('5', 'delivered');
+        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'delivered');
         expect(ipcRenderer.send).toHaveBeenCalledWith('trigger-delivery-ack', {
           deliveryId: 'delivery-verified-1',
-          paneId: '5',
+          paneId: '3',
         });
       });
 
@@ -721,19 +721,19 @@ describe('daemon-handlers.js module', () => {
         });
 
         daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
-        injectHandler({}, { panes: ['5'], message: 'msg', deliveryId: 'delivery-failed-1' });
+        injectHandler({}, { panes: ['3'], message: 'msg', deliveryId: 'delivery-failed-1' });
         jest.runAllTimers();
 
-        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('5', 'delivered');
+        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'delivered');
         expect(ipcRenderer.send).toHaveBeenCalledWith('trigger-delivery-outcome', {
           deliveryId: 'delivery-failed-1',
-          paneId: '5',
+          paneId: '3',
           accepted: true,
           verified: false,
           status: 'accepted.unverified',
           reason: 'submit_not_accepted',
         });
-        expect(ipcRenderer.send).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-failed-1', paneId: '5' });
+        expect(ipcRenderer.send).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-failed-1', paneId: '3' });
       });
 
       test('caps throttle queue depth to prevent unbounded growth', () => {

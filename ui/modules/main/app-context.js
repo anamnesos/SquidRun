@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Application Context
  * Centralized state and dependency management for the main process
  */
@@ -17,7 +17,7 @@ class AppContext {
     this.agentRunning = new Map([
       ['1', 'idle'],
       ['2', 'idle'],
-      ['5', 'idle'],
+      ['3', 'idle'],
     ]);
     // Backward compatibility alias
     this.claudeRunning = this.agentRunning;

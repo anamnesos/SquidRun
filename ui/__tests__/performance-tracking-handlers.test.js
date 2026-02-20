@@ -81,7 +81,7 @@ describe('Performance Tracking Handlers', () => {
     ctx.PANE_ROLES = {
       '1': 'Architect',
       '2': 'Builder',
-      '5': 'Oracle',
+      '3': 'Oracle',
     };
 
     // Default: no existing performance file

@@ -148,8 +148,8 @@ describe('WebSocket Server Facade', () => {
     });
 
     test('sendToPane delegates to workerClient', () => {
-      server.sendToPane('5', 'msg', {});
-      expect(mockWorkerClient.sendToPane).toHaveBeenCalledWith('5', 'msg', {});
+      server.sendToPane('3', 'msg', {});
+      expect(mockWorkerClient.sendToPane).toHaveBeenCalledWith('3', 'msg', {});
     });
 
     test('broadcast delegates to workerClient', () => {

@@ -139,7 +139,7 @@ maybeDescribe('evidence-ledger IPC integration', () => {
       sessionNumber: 222,
       mode: 'PTY',
       stats: { test_suites: 120, tests_passed: 4001 },
-      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
+      team: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
     });
     expect(startSession.ok).toBe(true);
     expect(startSession.sessionId).toBe('ses-ipc-memory-1');

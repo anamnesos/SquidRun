@@ -111,7 +111,7 @@ describe('Smart Routing Core', () => {
     const mockRoles = {
       '1': { name: 'Architect', type: 'coordination', skills: ['coordination', 'planning', 'architecture'] },
       '2': { name: 'Builder', type: 'backend', skills: ['backend', 'implementation', 'ipc', 'testing'] },
-      '5': { name: 'Oracle', type: 'analysis', skills: ['analysis', 'debugging', 'review'] },
+      '3': { name: 'Oracle', type: 'analysis', skills: ['analysis', 'debugging', 'review'] },
     };
 
     const allRunning = { get: () => 'running' };
@@ -169,7 +169,7 @@ describe('Smart Routing Core', () => {
         taskTypes: {
           analysis: {
             agentStats: {
-              '5': { attempts: 10, success: 9, totalTime: 50000 }
+              '3': { attempts: 10, success: 9, totalTime: 50000 }
             }
           }
         }
@@ -181,8 +181,8 @@ describe('Smart Routing Core', () => {
         runningMap: allRunning,
         learning,
       });
-      // Oracle (pane 5) should have higher learning score
-      const oracle = scores.find(s => s.paneId === '5');
+      // Oracle (Pane 3) should have higher learning score
+      const oracle = scores.find(s => s.paneId === '3');
       expect(oracle.breakdown.learning).toBeGreaterThan(0.5);
     });
 
@@ -233,7 +233,7 @@ describe('Smart Routing Core', () => {
     const mockRoles = {
       '1': { name: 'Architect', type: 'coordination', skills: ['coordination', 'planning'] },
       '2': { name: 'Builder', type: 'backend', skills: ['backend', 'implementation'] },
-      '5': { name: 'Oracle', type: 'analysis', skills: ['analysis', 'debugging'] },
+      '3': { name: 'Oracle', type: 'analysis', skills: ['analysis', 'debugging'] },
     };
     const allRunning = { get: () => 'running' };
 

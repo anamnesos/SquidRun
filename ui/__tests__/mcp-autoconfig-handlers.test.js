@@ -131,13 +131,13 @@ describe('MCP Autoconfig Handlers', () => {
 
   describe('mcp-remove-agent-config', () => {
     test('removes agent config successfully', async () => {
-      const result = await harness.invoke('mcp-remove-agent-config', '5');
+      const result = await harness.invoke('mcp-remove-agent-config', '3');
 
       expect(result.success).toBe(true);
-      expect(result.paneId).toBe('5');
+      expect(result.paneId).toBe('3');
       expect(execFile).toHaveBeenCalledWith(
         'claude',
-        expect.arrayContaining(['mcp', 'remove', 'hivemind-5']),
+        expect.arrayContaining(['mcp', 'remove', 'hivemind-3']),
         expect.any(Object),
         expect.any(Function)
       );

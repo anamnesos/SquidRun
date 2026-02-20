@@ -56,7 +56,7 @@ describe('agent-colors', () => {
       themeForeground: '#f5f5f5',
     });
 
-    attachAgentColors('5', terminal);
+    attachAgentColors('3', terminal);
     terminal.triggerWriteParsed();
 
     const decorations = terminal.registerDecoration.mock.calls.map((call) => call[0]);
@@ -88,7 +88,7 @@ describe('agent-colors', () => {
       themeForeground: '#d0d0d0',
     });
 
-    attachAgentColors('5', terminal);
+    attachAgentColors('3', terminal);
     terminal.triggerWriteParsed();
 
     const decorations = terminal.registerDecoration.mock.calls.map((call) => call[0]);
@@ -110,7 +110,7 @@ describe('agent-colors', () => {
       lines: { 0: createLine(text) },
     });
 
-    attachAgentColors('5', terminal);
+    attachAgentColors('3', terminal);
     terminal.triggerWriteParsed();
 
     const decorations = terminal.registerDecoration.mock.calls.map((call) => call[0]);
@@ -133,7 +133,7 @@ describe('agent-colors', () => {
       themeForeground: '#d0d0d0',
     });
 
-    attachAgentColors('5', terminal);
+    attachAgentColors('3', terminal);
     terminal.triggerWriteParsed();
 
     const markerOffsets = terminal.registerMarker.mock.calls.map((call) => call[0]);
@@ -254,7 +254,7 @@ describe('agent-colors', () => {
       baseY: 0,
     });
 
-    attachAgentColors('5', terminal);
+    attachAgentColors('3', terminal);
 
     // First callback — should create decorations
     terminal.triggerWriteParsed();
@@ -362,7 +362,7 @@ describe('agent-colors', () => {
       themeForeground: '#d0d0d0',
     });
 
-    attachAgentColors('5', terminal);
+    attachAgentColors('3', terminal);
 
     // First write: lines 0-11 scanned (mostly empty, but line 10 has tag)
     terminal.triggerWriteParsed();

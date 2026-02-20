@@ -259,10 +259,10 @@ function extractTriggerMessageId(message) {
 const ROLE_TO_PANE = {
   'architect': '1', 'arch': '1',
   'builder': '2', 'infra': '2', 'infrastructure': '2', 'backend': '2', 'back': '2',
-  'oracle': '5',
-  'lead': '1', 'orchestrator': '2', 'worker-b': '2', 'investigator': '5',
+  'oracle': '3',
+  'lead': '1', 'orchestrator': '2', 'worker-b': '2', 'investigator': '3',
   // Legacy aliases
-  'devops': '2', 'analyst': '5', 'ana': '5',
+  'devops': '2', 'analyst': '3', 'ana': '3',
 };
 
 function resolvePaneIdFromRole(role) {
@@ -589,7 +589,7 @@ function resolveRecipientRole(filename) {
   const role = filename.replace('.txt', '').toLowerCase();
   // Use localized versions to avoid ReferenceError if called before module-level destructuring
   const roleMap = {
-    architect: '1', builder: '2', oracle: '5',
+    architect: '1', builder: '2', oracle: '3',
   };
   const legacyAliases = {
     lead: 'architect', orchestrator: 'builder', infra: 'builder', backend: 'builder', 'worker-b': 'builder', investigator: 'oracle',

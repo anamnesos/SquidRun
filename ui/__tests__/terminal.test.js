@@ -158,7 +158,7 @@ describe('terminal.js module', () => {
     terminal.stopPromotionCheckTimer();
     terminal.setInputLocked('1', true);
     terminal.setInputLocked('2', true);
-    terminal.setInputLocked('5', true);
+    terminal.setInputLocked('3', true);
   });
 
   afterEach(() => {
@@ -171,8 +171,8 @@ describe('terminal.js module', () => {
       expect(terminal.PANE_IDS).toHaveLength(3);
     });
 
-    test('should be strings 1,2,5', () => {
-      expect(terminal.PANE_IDS).toEqual(['1', '2', '5']);
+    test('should be strings 1,2,3', () => {
+      expect(terminal.PANE_IDS).toEqual(['1', '2', '3']);
     });
   });
 
@@ -732,15 +732,15 @@ describe('terminal.js module', () => {
 
     test('should handle spawn failure', async () => {
       jest.useRealTimers();
-      terminal.unregisterCodexPane('5'); // Ensure pane 5 is not codex
-      terminal.terminals.set('5', { write: jest.fn() });
+      terminal.unregisterCodexPane('3'); // Ensure Pane 3 is not codex
+      terminal.terminals.set('3', { write: jest.fn() });
       mockHivemind.claude.spawn.mockRejectedValueOnce(new Error('spawn failed'));
       const statusCb = jest.fn();
       terminal.setStatusCallbacks(statusCb, null);
 
-      await terminal.spawnAgent('5');
+      await terminal.spawnAgent('3');
 
-      expect(statusCb).toHaveBeenCalledWith('5', 'Spawn failed');
+      expect(statusCb).toHaveBeenCalledWith('3', 'Spawn failed');
       jest.useFakeTimers();
     });
 
@@ -1035,33 +1035,33 @@ describe('terminal.js module', () => {
   describe('spawnAgent edge cases', () => {
     test('should handle spawn returning failure', async () => {
       jest.useRealTimers();
-      terminal.unregisterCodexPane('5'); // Ensure pane 5 is not codex
-      terminal.terminals.set('5', { write: jest.fn() });
+      terminal.unregisterCodexPane('3'); // Ensure Pane 3 is not codex
+      terminal.terminals.set('3', { write: jest.fn() });
       mockHivemind.claude.spawn.mockResolvedValueOnce({ success: false });
       const statusCb = jest.fn();
       terminal.setStatusCallbacks(statusCb, null);
 
-      await terminal.spawnAgent('5');
+      await terminal.spawnAgent('3');
 
       // Should still update status but not write command
-      expect(statusCb).toHaveBeenCalledWith('5', 'Starting...');
-      expect(statusCb).toHaveBeenCalledWith('5', 'Working');
+      expect(statusCb).toHaveBeenCalledWith('3', 'Starting...');
+      expect(statusCb).toHaveBeenCalledWith('3', 'Working');
       jest.useFakeTimers();
     });
 
     test('should handle Codex command detection', async () => {
       jest.useRealTimers();
-      terminal.unregisterCodexPane('5'); // Ensure pane 5 is not codex
-      terminal.terminals.set('5', { write: jest.fn() });
+      terminal.unregisterCodexPane('3'); // Ensure Pane 3 is not codex
+      terminal.terminals.set('3', { write: jest.fn() });
       mockHivemind.claude.spawn.mockResolvedValueOnce({
         success: true,
         command: 'codex --interactive',
       });
 
-      await terminal.spawnAgent('5');
+      await terminal.spawnAgent('3');
 
       // Should detect Codex command and write it via PTY
-      expect(mockHivemind.pty.write).toHaveBeenCalledWith('5', 'codex --interactive');
+      expect(mockHivemind.pty.write).toHaveBeenCalledWith('3', 'codex --interactive');
       jest.useFakeTimers();
     });
   });
@@ -1103,7 +1103,7 @@ describe('terminal.js module', () => {
     test('should have 3 pane IDs', () => {
       expect(terminal.PANE_IDS).toHaveLength(3);
       expect(terminal.PANE_IDS).toContain('1');
-      expect(terminal.PANE_IDS).toContain('5');
+      expect(terminal.PANE_IDS).toContain('3');
     });
   });
 

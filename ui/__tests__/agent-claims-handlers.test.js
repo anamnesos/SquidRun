@@ -66,7 +66,7 @@ describe('Agent Claims Handlers', () => {
     test('returns watcher result on failure', async () => {
       ctx.watcher.releaseAgent.mockReturnValue({ success: false, error: 'Not claimed' });
 
-      const result = await harness.invoke('release-agent', '5');
+      const result = await harness.invoke('release-agent', '3');
 
       expect(result).toEqual({ success: false, error: 'Not claimed' });
     });

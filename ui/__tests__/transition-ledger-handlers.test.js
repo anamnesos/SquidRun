@@ -111,16 +111,16 @@ describe('transition-ledger IPC handlers', () => {
 
     const result = await getHandler({}, {
       correlationId: 'corr-1',
-      paneId: '5',
+      paneId: '3',
       includeClosed: false,
     });
 
-    expect(mockGetByCorrelation).toHaveBeenCalledWith('corr-1', '5', { includeClosed: false });
+    expect(mockGetByCorrelation).toHaveBeenCalledWith('corr-1', '3', { includeClosed: false });
     expect(result).toEqual({
       ok: true,
       action: 'getByCorrelation',
       correlationId: 'corr-1',
-      paneId: '5',
+      paneId: '3',
       transition: { transitionId: 'tr-corr', correlationId: 'corr-1' },
     });
   });

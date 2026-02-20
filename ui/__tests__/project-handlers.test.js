@@ -47,7 +47,7 @@ describe('Project Handlers', () => {
     resetProjectRoot();
     harness = createIpcHarness();
     ctx = createDefaultContext({ ipcMain: harness.ipcMain });
-    ctx.PANE_IDS = ['1', '2', '5'];
+    ctx.PANE_IDS = ['1', '2', '3'];
     ctx.mainWindow.isDestroyed = jest.fn(() => false);
 
     // Mock dialog
@@ -92,7 +92,7 @@ describe('Project Handlers', () => {
 
       const startupHarness = createIpcHarness();
       const startupCtx = createDefaultContext({ ipcMain: startupHarness.ipcMain });
-      startupCtx.PANE_IDS = ['1', '2', '5'];
+      startupCtx.PANE_IDS = ['1', '2', '3'];
       startupCtx.currentSettings = {
         operatingMode: 'developer',
       };
@@ -567,7 +567,7 @@ describe('Project Handlers', () => {
       const result = await harness.invoke('get-all-pane-projects');
 
       expect(result.paneProjects).toEqual({
-        '1': null, '2': null, '5': null,
+        '1': null, '2': null, '3': null,
       });
     });
   });

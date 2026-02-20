@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Settings Manager
  * Handles configuration and settings persistence for the main process
  */
@@ -13,7 +13,7 @@ const CLI_NAMES = ['claude', 'codex', 'gemini'];
 const CLI_PREFERENCES = {
   '1': ['claude', 'codex', 'gemini'],
   '2': ['codex', 'claude', 'gemini'],
-  '5': ['gemini', 'codex', 'claude'],
+  '3': ['gemini', 'codex', 'claude'],
 };
 const CLI_DISCOVERY_TIMEOUT_MS = 2000;
 const CLI_VERSION_TIMEOUT_MS = 2500;
@@ -91,11 +91,11 @@ const DEFAULT_SETTINGS = {
   hiddenPaneHostsEnabled: process.platform === 'win32',
   operatingMode: 'developer',
   firmwareInjectionEnabled: false,
-  paneProjects: { '1': null, '2': null, '5': null },
+  paneProjects: { '1': null, '2': null, '3': null },
   paneCommands: {
     '1': 'claude',
     '2': 'codex',
-    '5': buildGeminiCommand(),
+    '3': buildGeminiCommand(),
   },
   templates: [],
   voiceInputEnabled: false,

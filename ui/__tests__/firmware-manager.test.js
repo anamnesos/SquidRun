@@ -82,7 +82,7 @@ describe('FirmwareManager', () => {
   });
 
   test('applyCodexOverrideForPane writes global Codex override from pane firmware', () => {
-    const result = manager.applyCodexOverrideForPane('5');
+    const result = manager.applyCodexOverrideForPane('3');
     expect(result.ok).toBe(true);
     expect(result.overridePath).toBe(path.join(codexRulesDir, 'AGENTS.override.md'));
     expect(fs.existsSync(result.overridePath)).toBe(true);
@@ -112,7 +112,7 @@ describe('FirmwareManager', () => {
 
   test('ensureFirmwareForPane uses cached preflight conflicts for suppression directives', () => {
     const paneProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-pane-project-'));
-    appContext.currentSettings.paneProjects = { '1': null, '2': paneProject, '5': null };
+    appContext.currentSettings.paneProjects = { '1': null, '2': paneProject, '3': null };
 
     const conflictResults = [{
       file: 'CLAUDE.md',
@@ -132,7 +132,7 @@ describe('FirmwareManager', () => {
   test('ensureFirmwareForPane uses selected project root in project mode when paneProjects is unset', () => {
     const selectedProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-selected-project-'));
     appContext.currentSettings.operatingMode = 'project';
-    appContext.currentSettings.paneProjects = { '1': null, '2': null, '5': null };
+    appContext.currentSettings.paneProjects = { '1': null, '2': null, '3': null };
     appContext.watcher.readState.mockReturnValue({ project: selectedProject });
 
     const conflictResults = [{
@@ -154,7 +154,7 @@ describe('FirmwareManager', () => {
   test('ensureFirmwareForPane keeps hivemind root fallback in developer mode', () => {
     const selectedProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-selected-project-'));
     appContext.currentSettings.operatingMode = 'developer';
-    appContext.currentSettings.paneProjects = { '1': null, '2': null, '5': null };
+    appContext.currentSettings.paneProjects = { '1': null, '2': null, '3': null };
     appContext.watcher.readState.mockReturnValue({ project: selectedProject });
 
     const result = manager.ensureFirmwareForPane('2');

@@ -7,7 +7,7 @@
 
 jest.mock('../config', () => ({
   WORKSPACE_PATH: '/workspace',
-  PANE_IDS: ['1', '2', '5'],
+  PANE_IDS: ['1', '2', '3'],
 }));
 
 jest.mock('../modules/logger', () => ({
@@ -40,16 +40,16 @@ describe('Triggers Routing', () => {
   // ── AGENT_ROLES ──
 
   describe('AGENT_ROLES', () => {
-    test('defines roles for panes 1, 2, 5', () => {
+    test('defines roles for panes 1, 2, 3', () => {
       expect(AGENT_ROLES['1'].name).toBe('Architect');
       expect(AGENT_ROLES['2'].name).toBe('Builder');
-      expect(AGENT_ROLES['5'].name).toBe('Oracle');
+      expect(AGENT_ROLES['3'].name).toBe('Oracle');
     });
 
     test('each role has skills array', () => {
       expect(Array.isArray(AGENT_ROLES['1'].skills)).toBe(true);
       expect(Array.isArray(AGENT_ROLES['2'].skills)).toBe(true);
-      expect(Array.isArray(AGENT_ROLES['5'].skills)).toBe(true);
+      expect(Array.isArray(AGENT_ROLES['3'].skills)).toBe(true);
     });
   });
 
@@ -442,7 +442,7 @@ describe('Triggers Routing', () => {
       };
       setSharedState({
         mainWindow,
-        agentRunning: new Map([['1', 'running'], ['2', 'running'], ['5', 'running']]),
+        agentRunning: new Map([['1', 'running'], ['2', 'running'], ['3', 'running']]),
         watcher: null,
         logTriggerActivity: jest.fn(),
         recordSelfHealingMessage: jest.fn(),
@@ -515,7 +515,7 @@ describe('Triggers Routing', () => {
       };
       setSharedState({
         mainWindow,
-        agentRunning: new Map([['1', 'running'], ['2', 'running'], ['5', 'running']]),
+        agentRunning: new Map([['1', 'running'], ['2', 'running'], ['3', 'running']]),
         watcher: null,
         logTriggerActivity: jest.fn(),
         recordSelfHealingMessage: jest.fn(),
@@ -528,7 +528,7 @@ describe('Triggers Routing', () => {
       const result = triggerAutoHandoff('1', 'task done');
       expect(result.success).toBe(true);
       expect(result.from).toBe('1');
-      expect(result.to).toBe('2'); // first in chain ['2', '5']
+      expect(result.to).toBe('2'); // first in chain ['2', '3']
       expect(result.fromRole).toBe('Architect');
       expect(result.toRole).toBe('Builder');
     });
@@ -567,10 +567,10 @@ describe('Triggers Routing', () => {
     });
 
     test('skips to next running pane in chain', () => {
-      // Pane 2 stopped, pane 5 running
+      // Pane 2 stopped, Pane 3 running
       setSharedState({
         mainWindow,
-        agentRunning: new Map([['1', 'running'], ['2', 'stopped'], ['5', 'running']]),
+        agentRunning: new Map([['1', 'running'], ['2', 'stopped'], ['3', 'running']]),
         watcher: null,
         logTriggerActivity: jest.fn(),
         formatTriggerMessage: jest.fn((msg) => msg),
@@ -579,11 +579,11 @@ describe('Triggers Routing', () => {
 
       const result = triggerAutoHandoff('1', 'done');
       expect(result.success).toBe(true);
-      expect(result.to).toBe('5'); // skipped pane 2
+      expect(result.to).toBe('3'); // skipped pane 2
     });
 
-    test('pane 5 hands off to pane 1', () => {
-      const result = triggerAutoHandoff('5', 'analysis done');
+    test('Pane 3 hands off to pane 1', () => {
+      const result = triggerAutoHandoff('3', 'analysis done');
       expect(result.success).toBe(true);
       expect(result.to).toBe('1');
       expect(result.fromRole).toBe('Oracle');

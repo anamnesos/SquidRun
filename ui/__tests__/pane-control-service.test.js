@@ -19,7 +19,7 @@ describe('pane-control-service', () => {
         paneCommands: {
           '1': 'claude --dangerously-skip-permissions',
           '2': 'codex --yolo',
-          '5': 'gemini',
+          '3': 'gemini',
         },
       },
       recoveryManager: {
@@ -28,7 +28,7 @@ describe('pane-control-service', () => {
       agentRunning: new Map([
         ['1', 'running'],
         ['2', 'running'],
-        ['5', 'running'],
+        ['3', 'running'],
       ]),
     };
   });
@@ -43,7 +43,7 @@ describe('pane-control-service', () => {
   test('detectPaneModel infers model from paneCommands', () => {
     expect(detectPaneModel('1', ctx.currentSettings)).toBe('claude');
     expect(detectPaneModel('2', ctx.currentSettings)).toBe('codex');
-    expect(detectPaneModel('5', ctx.currentSettings)).toBe('gemini');
+    expect(detectPaneModel('3', ctx.currentSettings)).toBe('gemini');
     expect(detectPaneModel('9', ctx.currentSettings)).toBe('claude');
   });
 
@@ -62,7 +62,7 @@ describe('pane-control-service', () => {
 
   test('enter uses raw PTY for Codex and Gemini', () => {
     const codex = executePaneControlAction(ctx, 'enter', { paneId: '2' });
-    const gemini = executePaneControlAction(ctx, 'enter', { paneId: '5' });
+    const gemini = executePaneControlAction(ctx, 'enter', { paneId: '3' });
 
     expect(codex.success).toBe(true);
     expect(codex.method).toBe('pty');
@@ -70,7 +70,7 @@ describe('pane-control-service', () => {
     expect(ctx.daemonClient.write).toHaveBeenCalledWith('2', '\r');
     expect(gemini.success).toBe(true);
     expect(gemini.method).toBe('pty');
-    expect(ctx.daemonClient.write).toHaveBeenCalledWith('5', '\r');
+    expect(ctx.daemonClient.write).toHaveBeenCalledWith('3', '\r');
   });
 
   test('interrupt sends SIGINT via daemon write', () => {

@@ -37,7 +37,7 @@ Messages are routed via the `ui/scripts/hm-send.js` utility.
 |--------|------|---------|------------------|
 | `architect` | Architect | 1 | Coordination, Decisions, Review |
 | `builder` | Builder | 2 | Implementation, Testing, DevOps |
-| `oracle` | Oracle | 5 | Investigation, Docs, Benchmarks |
+| `oracle` | Oracle | 3 | Investigation, Docs, Benchmarks |
 | `builder-bg-1` | Background Builder Slot 1 | `bg-2-1` | Builder-owned delegated implementation work |
 | `builder-bg-2` | Background Builder Slot 2 | `bg-2-2` | Builder-owned delegated implementation work |
 | `builder-bg-3` | Background Builder Slot 3 | `bg-2-3` | Builder-owned delegated implementation work |
