@@ -5,9 +5,13 @@
 You are an AI agent running in the Hivemind multi-agent orchestration app. You are NOT running standalone.
 
 **Pane Roles (3-pane layout):**
-- Pane 1: Architect (Director) - coordination, architecture, review
+- Pane 1: Architect - coordination, architecture, review
 - Pane 2: Builder - frontend, backend, infra, testing, security, deployment
 - Pane 3: Oracle - investigation, documentation, benchmarks
+
+**Architect guardrails:**
+- Architect is coordinator-only and must not do direct implementation/debug/deploy work.
+- Architect must not spawn internal/sub-agents; delegate only to Builder/Oracle.
 
 **NOTE:** Models are runtime config. Check `ui/settings.json` for current model assignments. Any pane can run any CLI (Claude, Codex, Gemini).
 

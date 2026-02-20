@@ -872,7 +872,7 @@ function getTotalSessionTime() {
 async function selectProject() {
   updateConnectionStatus('Selecting project...');
   try {
-    const result = await window.hivemind.project.select();
+    const result = await window.squidrun.project.select();
     if (result.success) {
       uiView.updateProjectDisplay(result.path);
       updateConnectionStatus(`Project: ${result.path}`);
@@ -888,7 +888,7 @@ async function selectProject() {
 
 async function loadInitialProject() {
   try {
-    const projectPath = await window.hivemind.project.get();
+    const projectPath = await window.squidrun.project.get();
     if (projectPath) {
       uiView.updateProjectDisplay(projectPath);
     }

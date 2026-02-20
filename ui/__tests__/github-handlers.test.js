@@ -31,7 +31,7 @@ describe('github IPC handlers', () => {
       addIssueComment: jest.fn(async () => ({ id: 'c1' })),
       getChecks: jest.fn(async () => [{ name: 'build', status: 'completed' }]),
       getWorkflowRuns: jest.fn(async () => [{ id: 123 }]),
-      getRepo: jest.fn(async () => ({ owner: 'acme', repo: 'hivemind' })),
+      getRepo: jest.fn(async () => ({ owner: 'acme', repo: 'squidrun' })),
       getAuthStatus: jest.fn(async () => ({ authenticated: true })),
     };
     mockCreateGitHubService.mockReset();
@@ -108,7 +108,7 @@ describe('github IPC handlers', () => {
       ok: true,
       action: 'status',
       auth: { authenticated: true },
-      repo: { owner: 'acme', repo: 'hivemind' },
+      repo: { owner: 'acme', repo: 'squidrun' },
       repoError: null,
     });
   });

@@ -8,7 +8,7 @@ const {
   createDefaultContext,
 } = require('./helpers/ipc-harness');
 const path = require('path');
-const { getProjectRoot, getHivemindRoot, setProjectRoot, resetProjectRoot } = require('../config');
+const { getProjectRoot, getSquidrunRoot, setProjectRoot, resetProjectRoot } = require('../config');
 
 // Mock fs
 jest.mock('fs', () => ({
@@ -107,7 +107,7 @@ describe('Project Handlers', () => {
 
       registerProjectHandlers(startupCtx, startupDeps);
 
-      expect(path.resolve(getProjectRoot())).toBe(path.resolve(getHivemindRoot()));
+      expect(path.resolve(getProjectRoot())).toBe(path.resolve(getSquidrunRoot()));
       expect(startupCtx.mainWindow.webContents.send).not.toHaveBeenCalledWith(
         'project-warning',
         expect.anything()
@@ -133,10 +133,10 @@ describe('Project Handlers', () => {
 
       const normalizePath = (value) => String(value || '').replace(/\\/g, '/');
       const linkWrite = fs.writeFileSync.mock.calls.find(([filePath]) =>
-        normalizePath(filePath).endsWith('/selected/project/.hivemind/link.json.tmp')
+        normalizePath(filePath).endsWith('/selected/project/.squidrun/link.json.tmp')
       );
       const readmeWrite = fs.writeFileSync.mock.calls.find(([filePath]) =>
-        normalizePath(filePath).endsWith('/selected/project/.hivemind/README-FIRST.md.tmp')
+        normalizePath(filePath).endsWith('/selected/project/.squidrun/README-FIRST.md.tmp')
       );
 
       expect(linkWrite).toBeDefined();
@@ -144,7 +144,7 @@ describe('Project Handlers', () => {
 
       const linkPayload = JSON.parse(linkWrite[1]);
       expect(linkPayload).toEqual(expect.objectContaining({
-        hivemind_root: expect.any(String),
+        squidrun_root: expect.any(String),
         workspace: path.resolve('/selected/project').replace(/\\/g, '/'),
         session_id: 'app-session-321',
         version: 1,
@@ -168,7 +168,7 @@ describe('Project Handlers', () => {
       const result = await harness.invoke('select-project');
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain('Failed to initialize .hivemind bootstrap');
+      expect(result.error).toContain('Failed to initialize .squidrun bootstrap');
       expect(ctx.watcher.writeState).not.toHaveBeenCalled();
       expect(ctx.watcher.transition).not.toHaveBeenCalled();
     });

@@ -14,7 +14,7 @@ const { seedDecisionMemory } = require('../modules/main/evidence-ledger-memory-s
 function usage() {
   console.log('Usage: node evidence-ledger-seed-memory.js [options]');
   console.log('Options:');
-  console.log('  --context <path>            Input context file (JSON or markdown; default: .hivemind/context-snapshots/1.md)');
+  console.log('  --context <path>            Input context file (JSON or markdown; default: .squidrun/context-snapshots/1.md)');
   console.log('  --handoff <path>            Deprecated alias for --context');
   console.log('  --db <path>                 Ledger DB path override');
   console.log('  --session-id <id>           Override deterministic seeded session id');

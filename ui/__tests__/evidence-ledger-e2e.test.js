@@ -30,7 +30,7 @@ maybeDescribe('evidence-ledger e2e lifecycle', () => {
   let memory;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-ledger-e2e-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-ledger-e2e-'));
     store = new EvidenceLedgerStore({
       dbPath: path.join(tempDir, 'evidence-ledger-e2e.db'),
       maxRows: 5000,

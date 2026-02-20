@@ -1,5 +1,5 @@
 /**
- * Consolidated notification system for Hivemind UI.
+ * Consolidated notification system for SquidRun UI.
  * Replaces duplicate implementations in renderer.js (showStatusNotice)
  * and daemon-handlers.js (showToast).
  *

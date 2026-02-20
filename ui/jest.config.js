@@ -1,5 +1,5 @@
 /**
- * Jest configuration for Hivemind UI tests
+ * Jest configuration for SquidRun UI tests
  */
 module.exports = {
   testEnvironment: 'node',

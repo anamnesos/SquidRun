@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * hm-image-gen: CLI tool for agents to trigger image generation via the Hivemind app.
+ * hm-image-gen: CLI tool for agents to trigger image generation via the SquidRun app.
  * Usage: node ui/scripts/hm-image-gen.js "a flaming gear icon" [--style realistic_image] [--size 1024x1024]
  *
  * Sends a WebSocket message to the main process, which generates the image
@@ -92,7 +92,7 @@ ws.on('message', (data) => {
 
 ws.on('error', (err) => {
   console.error('[hm-image-gen] WebSocket error:', err.message);
-  console.error('Is Hivemind running?');
+  console.error('Is SquidRun running?');
   process.exit(1);
 });
 

@@ -1,5 +1,5 @@
 /**
- * Unified formatting utilities for Hivemind UI.
+ * Unified formatting utilities for SquidRun UI.
  * Consolidates duplicate time formatting logic from:
  * - renderer.js (formatTimeSince)
  * - triggers.js (formatDuration)

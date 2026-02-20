@@ -14,7 +14,7 @@ function registerExternalNotificationHandlers(ctx) {
 
     const category = payload.category || 'alert';
     const title = payload.title || 'Test Notification';
-    const message = payload.message || 'This is a test notification from Hivemind.';
+    const message = payload.message || 'This is a test notification from SquidRun.';
 
     const result = await ctx.externalNotifier.notify({
       category,

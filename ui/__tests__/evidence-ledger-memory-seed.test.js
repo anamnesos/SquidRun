@@ -31,7 +31,7 @@ maybeDescribe('evidence-ledger-memory seed utility', () => {
   let memory;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-ledger-seed-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-ledger-seed-'));
     store = new EvidenceLedgerStore({
       dbPath: path.join(tempDir, 'evidence-ledger-seed.db'),
       maxRows: 5000,

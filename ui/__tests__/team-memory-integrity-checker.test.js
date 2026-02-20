@@ -17,7 +17,7 @@ maybeDescribe('team-memory integrity checker', () => {
   let evidenceStore;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-team-integrity-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-integrity-'));
     teamStore = new TeamMemoryStore({
       dbPath: path.join(tempDir, 'team-memory.sqlite'),
     });

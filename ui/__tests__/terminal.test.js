@@ -56,8 +56,8 @@ const mockContractPromotion = {
 };
 jest.mock('../modules/contract-promotion', () => mockContractPromotion);
 
-// Mock window.hivemind
-const mockHivemind = {
+// Mock window.squidrun
+const mockSquidRun = {
   pty: {
     create: jest.fn().mockResolvedValue(),
     write: jest.fn().mockResolvedValue(),
@@ -98,7 +98,7 @@ const mockClipboard = {
 };
 
 // Setup global mocks
-global.window = { hivemind: mockHivemind };
+global.window = { squidrun: mockSquidRun };
 global.document = mockDocument;
 global.navigator = { clipboard: mockClipboard };
 global.alert = jest.fn();
@@ -146,9 +146,9 @@ describe('terminal.js module', () => {
     }
 
     // Reset mocks
-    mockHivemind.pty.write.mockResolvedValue();
-    mockHivemind.claude.spawn.mockResolvedValue({ success: true, command: 'claude' });
-    delete mockHivemind.paneHost;
+    mockSquidRun.pty.write.mockResolvedValue();
+    mockSquidRun.claude.spawn.mockResolvedValue({ success: true, command: 'claude' });
+    delete mockSquidRun.paneHost;
     mockSettings.getSettings.mockReturnValue({ paneCommands: {} });
     mockDocument.getElementById.mockReturnValue(null);
     mockDocument.querySelector.mockReturnValue(null);
@@ -403,7 +403,7 @@ describe('terminal.js module', () => {
         hiddenPaneHostsEnabled: true,
         paneCommands: { '1': 'claude --dangerously-skip-permissions' },
       });
-      mockHivemind.paneHost = {
+      mockSquidRun.paneHost = {
         inject: jest.fn().mockResolvedValue({ success: true }),
       };
       terminal.setInputLocked('1', false);
@@ -413,7 +413,7 @@ describe('terminal.js module', () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      expect(mockHivemind.paneHost.inject).toHaveBeenCalledWith('1', expect.objectContaining({
+      expect(mockSquidRun.paneHost.inject).toHaveBeenCalledWith('1', expect.objectContaining({
         message: 'test message',
       }));
       expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({
@@ -504,7 +504,7 @@ describe('terminal.js module', () => {
 
       terminal.nudgePane('1');
 
-      expect(mockHivemind.pty.write).toHaveBeenCalledWith('1', '\r');
+      expect(mockSquidRun.pty.write).toHaveBeenCalledWith('1', '\r');
       expect(statusCb).toHaveBeenCalledWith('1', 'Nudged');
     });
 
@@ -524,7 +524,7 @@ describe('terminal.js module', () => {
       terminal.nudgeAllPanes();
 
       expect(connectionCb).toHaveBeenCalledWith('Nudging all agents...');
-      expect(mockHivemind.pty.write).toHaveBeenCalledTimes(3);
+      expect(mockSquidRun.pty.write).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -606,12 +606,12 @@ describe('terminal.js module', () => {
       await terminal.killAllTerminals();
 
       expect(connectionCb).toHaveBeenCalledWith('Killing all terminals...');
-      expect(mockHivemind.pty.kill).toHaveBeenCalledTimes(3);
+      expect(mockSquidRun.pty.kill).toHaveBeenCalledTimes(3);
       expect(connectionCb).toHaveBeenCalledWith('All terminals killed');
     });
 
     test('should handle kill errors gracefully', async () => {
-      mockHivemind.pty.kill.mockRejectedValueOnce(new Error('kill failed'));
+      mockSquidRun.pty.kill.mockRejectedValueOnce(new Error('kill failed'));
 
       await expect(terminal.killAllTerminals()).resolves.not.toThrow();
     });
@@ -645,7 +645,7 @@ describe('terminal.js module', () => {
       jest.advanceTimersByTime(150);
 
       expect(mockFitAddon.fit).toHaveBeenCalled();
-      expect(mockHivemind.pty.resize).toHaveBeenCalledWith('1', 120, 40);
+      expect(mockSquidRun.pty.resize).toHaveBeenCalledWith('1', 120, 40);
     });
 
     test('should handle resize errors gracefully', () => {
@@ -678,7 +678,7 @@ describe('terminal.js module', () => {
       await terminal.freshStartAll();
 
       expect(connectionCb).toHaveBeenCalledWith('Fresh start cancelled');
-      expect(mockHivemind.pty.kill).not.toHaveBeenCalled();
+      expect(mockSquidRun.pty.kill).not.toHaveBeenCalled();
     });
 
   });
@@ -689,7 +689,7 @@ describe('terminal.js module', () => {
 
       await terminal.spawnAgent('1');
 
-      expect(mockHivemind.claude.spawn).not.toHaveBeenCalled();
+      expect(mockSquidRun.claude.spawn).not.toHaveBeenCalled();
     });
 
     test('should spawn and write command', async () => {
@@ -705,8 +705,8 @@ describe('terminal.js module', () => {
       // Wait for initial spawn to complete
       await spawnPromise;
 
-      expect(mockHivemind.claude.spawn).toHaveBeenCalledWith('1');
-      expect(mockHivemind.pty.write).toHaveBeenCalledWith('1', 'claude');
+      expect(mockSquidRun.claude.spawn).toHaveBeenCalledWith('1');
+      expect(mockSquidRun.pty.write).toHaveBeenCalledWith('1', 'claude');
       expect(statusCb).toHaveBeenCalledWith('1', 'Starting...');
       jest.useFakeTimers();
     });
@@ -721,8 +721,8 @@ describe('terminal.js module', () => {
       await terminal.spawnAgent('1');
 
       // Codex panes now use interactive PTY mode (same spawn path as Claude)
-      expect(mockHivemind.claude.spawn).toHaveBeenCalledWith('1');
-      expect(mockHivemind.pty.write).toHaveBeenCalled();
+      expect(mockSquidRun.claude.spawn).toHaveBeenCalledWith('1');
+      expect(mockSquidRun.pty.write).toHaveBeenCalled();
       expect(statusCb).toHaveBeenCalledWith('1', 'Starting...');
       expect(statusCb).toHaveBeenCalledWith('1', 'Working');
 
@@ -734,7 +734,7 @@ describe('terminal.js module', () => {
       jest.useRealTimers();
       terminal.unregisterCodexPane('3'); // Ensure Pane 3 is not codex
       terminal.terminals.set('3', { write: jest.fn() });
-      mockHivemind.claude.spawn.mockRejectedValueOnce(new Error('spawn failed'));
+      mockSquidRun.claude.spawn.mockRejectedValueOnce(new Error('spawn failed'));
       const statusCb = jest.fn();
       terminal.setStatusCallbacks(statusCb, null);
 
@@ -750,7 +750,7 @@ describe('terminal.js module', () => {
     test('should spawn in all 3 panes', async () => {
       jest.useRealTimers();
       // Clear mock call counts from previous tests
-      mockHivemind.claude.spawn.mockClear();
+      mockSquidRun.claude.spawn.mockClear();
 
       // Ensure no panes are registered as Codex
       for (const paneId of terminal.PANE_IDS) {
@@ -768,7 +768,7 @@ describe('terminal.js module', () => {
       await terminal.spawnAllAgents();
 
       expect(connectionCb).toHaveBeenCalledWith('Starting agents in all panes...');
-      expect(mockHivemind.claude.spawn).toHaveBeenCalledTimes(3);
+      expect(mockSquidRun.claude.spawn).toHaveBeenCalledTimes(3);
       expect(connectionCb).toHaveBeenCalledWith('All agents running');
       jest.useFakeTimers();
     });
@@ -979,7 +979,7 @@ describe('terminal.js module', () => {
     });
 
     test('nudgePane should handle PTY write rejection', async () => {
-      mockHivemind.pty.write.mockRejectedValueOnce(new Error('write error'));
+      mockSquidRun.pty.write.mockRejectedValueOnce(new Error('write error'));
       expect(() => terminal.nudgePane('1')).not.toThrow();
     });
 
@@ -995,7 +995,7 @@ describe('terminal.js module', () => {
 
   describe('Codex detection', () => {
     test('isCodexPane should handle settings.get throwing', () => {
-      mockHivemind.settings.get.mockImplementationOnce(() => {
+      mockSquidRun.settings.get.mockImplementationOnce(() => {
         throw new Error('settings error');
       });
 
@@ -1003,12 +1003,12 @@ describe('terminal.js module', () => {
     });
 
     test('isCodexPane should handle missing paneCommands', () => {
-      mockHivemind.settings.get.mockReturnValue({});
+      mockSquidRun.settings.get.mockReturnValue({});
       expect(terminal.isCodexPane('999')).toBe(false);
     });
 
     test('isCodexPane should handle null settings', () => {
-      mockHivemind.settings.get.mockReturnValue(null);
+      mockSquidRun.settings.get.mockReturnValue(null);
       expect(terminal.isCodexPane('1')).toBe(false);
     });
   });
@@ -1037,7 +1037,7 @@ describe('terminal.js module', () => {
       jest.useRealTimers();
       terminal.unregisterCodexPane('3'); // Ensure Pane 3 is not codex
       terminal.terminals.set('3', { write: jest.fn() });
-      mockHivemind.claude.spawn.mockResolvedValueOnce({ success: false });
+      mockSquidRun.claude.spawn.mockResolvedValueOnce({ success: false });
       const statusCb = jest.fn();
       terminal.setStatusCallbacks(statusCb, null);
 
@@ -1053,7 +1053,7 @@ describe('terminal.js module', () => {
       jest.useRealTimers();
       terminal.unregisterCodexPane('3'); // Ensure Pane 3 is not codex
       terminal.terminals.set('3', { write: jest.fn() });
-      mockHivemind.claude.spawn.mockResolvedValueOnce({
+      mockSquidRun.claude.spawn.mockResolvedValueOnce({
         success: true,
         command: 'codex --interactive',
       });
@@ -1061,7 +1061,7 @@ describe('terminal.js module', () => {
       await terminal.spawnAgent('3');
 
       // Should detect Codex command and write it via PTY
-      expect(mockHivemind.pty.write).toHaveBeenCalledWith('3', 'codex --interactive');
+      expect(mockSquidRun.pty.write).toHaveBeenCalledWith('3', 'codex --interactive');
       jest.useFakeTimers();
     });
   });

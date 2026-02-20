@@ -283,7 +283,7 @@ maybeDescribe('evidence-ledger-query-contract TC-Q1', () => {
   let store;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-ledger-contract-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-ledger-contract-'));
     store = new EvidenceLedgerStore({
       dbPath: path.join(tempDir, 'evidence-ledger.db'),
       maxRows: 500,
@@ -397,7 +397,7 @@ maybeDescribe('evidence-ledger-query-contract TC-Q2', () => {
   let store;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-ledger-contract-q2-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-ledger-contract-q2-'));
     store = new EvidenceLedgerStore({
       dbPath: path.join(tempDir, 'evidence-ledger.db'),
       maxRows: 500,
@@ -532,7 +532,7 @@ maybeDescribe('evidence-ledger-query-contract TC-Q3', () => {
   let store;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-ledger-contract-q3-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-ledger-contract-q3-'));
     store = new EvidenceLedgerStore({
       dbPath: path.join(tempDir, 'evidence-ledger.db'),
       maxRows: 500,

@@ -30,7 +30,7 @@ maybeDescribe('evidence-ledger-memory', () => {
   let memory;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-ledger-memory-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-ledger-memory-'));
     store = new EvidenceLedgerStore({
       dbPath: path.join(tempDir, 'evidence-ledger.db'),
       maxRows: 5000,

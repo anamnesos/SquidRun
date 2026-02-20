@@ -13,7 +13,7 @@ maybeDescribe('team-memory runtime phase0', () => {
   let evidenceStore;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-team-runtime-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-runtime-'));
     evidenceStore = new EvidenceLedgerStore({
       dbPath: path.join(tempDir, 'evidence-ledger.db'),
       enabled: true,

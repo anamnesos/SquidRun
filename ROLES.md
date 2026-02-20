@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This file is the canonical role definition source for Hivemind agents.
+This file is the canonical role definition source for SquidRun agents.
 
 - Role identity comes from runtime env: `HIVEMIND_ROLE`, `HIVEMIND_PANE_ID`.
 - Model files (`CLAUDE.md`, `GEMINI.md`, `CODEX.md`) contain model quirks only.
@@ -10,7 +10,7 @@ This file is the canonical role definition source for Hivemind agents.
 
 ## Runtime Identity
 
-- Pane 1: `Architect` (Director bundle)
+- Pane 1: `Architect` (Architect bundle)
 - Pane 2: `Builder` (Builder bundle)
 - Pane 3: `Oracle` (Oracle bundle)
 
@@ -19,11 +19,11 @@ Any pane can run any CLI (Claude Code, Codex CLI, Gemini CLI). The role bundles 
 
 ## Role Bundles
 
-### Director (Pane 1 — Architect)
+### Architect (Pane 1)
 
 Sub-roles: Architect, Data Engineer, Reviewer, Release Manager, UX Researcher, Memory Steward
 
-The Director coordinates the team, owns architecture decisions, reviews code quality, manages releases, and maintains institutional memory. Does not implement — delegates to Builder and Oracle.
+The Architect coordinates the team, owns architecture decisions, reviews code quality, manages releases, and maintains institutional memory. Does not implement — delegates to Builder and Oracle.
 
 ### Builder (Pane 2)
 
@@ -78,6 +78,10 @@ Primary workflow:
 - Delegate implementation and investigation tasks.
 - Synthesize findings into clear execution decisions.
 - Own commit sequencing and integration strategy.
+
+Hard boundaries:
+- Architect is coordinator-only. Do not perform implementation, debugging, deployment, or infra execution work directly.
+- Do not spawn internal/sub-agents from pane 1. Delegate work only to Builder and Oracle via `hm-send.js`.
 
 Responsibilities:
 - Task decomposition and cross-agent routing.

@@ -104,8 +104,8 @@ describe('Settings Handlers', () => {
     });
 
     test('runs preflight scan when paneProjects paths change', async () => {
-      const previousProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-prev-pane-'));
-      const nextProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-next-pane-'));
+      const previousProject = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-prev-pane-'));
+      const nextProject = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-next-pane-'));
       const preflightResults = [{ file: 'CLAUDE.md', hasAgentProtocols: true, conflicts: [] }];
       const firmwareManager = {
         runPreflight: jest.fn(() => preflightResults),
@@ -131,8 +131,8 @@ describe('Settings Handlers', () => {
     });
 
     test('regenerates firmware in project mode when preflight finds conflicts', async () => {
-      const previousProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-prev-project-'));
-      const nextProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-next-project-'));
+      const previousProject = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-prev-project-'));
+      const nextProject = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-next-project-'));
       const conflictResults = [{
         file: 'CLAUDE.md',
         hasAgentProtocols: true,
@@ -183,7 +183,7 @@ describe('Settings Handlers', () => {
 
   describe('preflight-scan', () => {
     test('runs manual preflight scan and returns results', async () => {
-      const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-manual-preflight-'));
+      const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-manual-preflight-'));
       const scanResults = [{
         file: 'GEMINI.md',
         hasAgentProtocols: true,
@@ -217,7 +217,7 @@ describe('Settings Handlers', () => {
       deps.firmwareManager = firmwareManager;
       deps.loadSettings.mockReturnValue({ operatingMode: 'project', firmwareInjectionEnabled: true });
 
-      const missingDir = path.join(os.tmpdir(), 'hivemind-does-not-exist', String(Date.now()));
+      const missingDir = path.join(os.tmpdir(), 'squidrun-does-not-exist', String(Date.now()));
       const result = await harness.invoke('preflight-scan', missingDir);
 
       expect(result.success).toBe(false);

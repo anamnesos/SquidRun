@@ -30,7 +30,7 @@ maybeDescribe('evidence-ledger-investigator', () => {
   let investigator;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-ledger-investigator-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-ledger-investigator-'));
     store = new EvidenceLedgerStore({
       dbPath: path.join(tempDir, 'evidence-ledger.db'),
       maxRows: 1000,

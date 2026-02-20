@@ -11,7 +11,7 @@ maybeDescribe('team-memory store', () => {
   let store;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-team-memory-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-memory-'));
     store = new TeamMemoryStore({
       dbPath: path.join(tempDir, 'team-memory.sqlite'),
     });

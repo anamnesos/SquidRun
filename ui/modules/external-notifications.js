@@ -11,7 +11,7 @@ const DEFAULT_DEDUPE_WINDOW_MS = 30000;
 function createExternalNotifier(options = {}) {
   const getSettings = typeof options.getSettings === 'function' ? options.getSettings : () => ({});
   const log = options.log || console;
-  const appName = options.appName || 'Hivemind';
+  const appName = options.appName || 'SquidRun';
   const dedupeWindowMs = options.dedupeWindowMs || DEFAULT_DEDUPE_WINDOW_MS;
   const recentNotifications = new Map();
 
@@ -185,7 +185,7 @@ function createExternalNotifier(options = {}) {
         : net.connect(port, host);
 
       const reader = readline.createInterface({ input: socket });
-      const hostname = os.hostname() || 'hivemind';
+      const hostname = os.hostname() || 'squidrun';
 
       const finalize = (result) => {
         try { reader.close(); } catch (e) { /* ignore */ }

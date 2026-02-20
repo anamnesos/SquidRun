@@ -55,7 +55,7 @@ function attachWorkerListeners(worker) {
   });
 
   worker.on('exit', (code, signal) => {
-    const intentional = worker.__hivemindIntentionalStop === true;
+    const intentional = worker.__squidrunIntentionalStop === true;
     if (workerProcess === worker) {
       workerProcess = null;
     }
@@ -133,7 +133,7 @@ async function closeRuntime(options = {}) {
   const worker = workerProcess;
   if (!worker) return;
 
-  worker.__hivemindIntentionalStop = true;
+  worker.__squidrunIntentionalStop = true;
   const killTimeoutMs = Number(options.killTimeoutMs) || DEFAULT_CLOSE_TIMEOUT_MS;
 
   const exitPromise = new Promise((resolve) => {

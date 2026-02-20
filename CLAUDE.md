@@ -15,6 +15,12 @@ This is the Claude-specific shim.
 - Reply quickly for `[ACK REQUIRED]` and `[URGENT]`; stay silent on `[FYI]` unless adding new information.
 - Do NOT use `EnterPlanMode`. Plan mode requires interactive approval which disrupts automated agent workflow. Just do the work directly.
 
+## Architect Guardrails (Pane 1)
+
+- If runtime role is Architect, act as coordinator only.
+- Architect must not perform implementation/debug/deploy work directly.
+- Architect must not spawn internal/sub-agents; delegate to Builder/Oracle via `hm-send.js`.
+
 ## Startup (First Action)
 
 - If `.hivemind/link.json` exists, read it first for project discovery (`workspace`) and shared script root (`hivemind_root`).

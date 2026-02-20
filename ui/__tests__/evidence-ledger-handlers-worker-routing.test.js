@@ -81,7 +81,7 @@ describe('evidence-ledger handlers worker routing', () => {
       },
     };
 
-    unregisterEvidenceLedgerHandlers(ctx, { __hivemindHandlerReregister: true });
+    unregisterEvidenceLedgerHandlers(ctx, { __squidrunHandlerReregister: true });
 
     expect(ctx.ipcMain.removeHandler).toHaveBeenCalled();
     expect(runtime.closeSharedRuntime).not.toHaveBeenCalled();

@@ -73,7 +73,7 @@ describe('External Notification Handlers', () => {
       expect(mockNotify).toHaveBeenCalledWith({
         category: 'alert',
         title: 'Test Notification',
-        message: 'This is a test notification from Hivemind.',
+        message: 'This is a test notification from SquidRun.',
         meta: { test: true },
       });
     });
@@ -108,7 +108,7 @@ describe('External Notification Handlers', () => {
       expect(mockNotify).toHaveBeenCalledWith({
         category: 'alert',
         title: 'Test Notification',
-        message: 'This is a test notification from Hivemind.',
+        message: 'This is a test notification from SquidRun.',
         meta: { test: true },
       });
     });

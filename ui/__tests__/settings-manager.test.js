@@ -31,7 +31,7 @@ jest.mock('../config', () => ({
   },
   resolveCoordPath: (relPath, opts) => {
     const p = require('path');
-    return p.join('<project-root>\\.hivemind', relPath);
+    return p.join('<project-root>\\.squidrun', relPath);
   },
 }));
 

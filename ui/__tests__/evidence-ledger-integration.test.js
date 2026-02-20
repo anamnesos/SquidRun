@@ -218,7 +218,7 @@ describe('evidence-ledger integration: trace continuity', () => {
     };
 
     global.window = {
-      hivemind: {
+      squidrun: {
         pty: {
           write: jest.fn(async (paneId, data, kernelMeta = null) => {
             ptyWrites.push({ paneId: String(paneId), data, kernelMeta });

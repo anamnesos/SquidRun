@@ -1,7 +1,7 @@
 {
-  "name": "hivemind-ui",
+  "name": "squidrun-ui",
   "version": "0.1.0",
-  "description": "Multi-pane Claude Code orchestration UI",
+  "description": "SquidRun multi-pane AI orchestration UI",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -13,7 +13,7 @@
     "lint:docs": "node scripts/doc-lint.js",
     "lint:fix": "eslint modules/*.js renderer.js main.js --fix",
     "rebuild": "npx @electron/rebuild -f -w node-pty,better-sqlite3",
-    "build": "echo 'Building Hivemind...' && npm run lint && npm run test",
+    "build": "echo 'Building SquidRun...' && npm run lint && npm run test",
     "build:dev": "echo 'Development build...'",
     "build:staging": "npm run lint && npm run test && echo 'Staging build complete'",
     "build:prod": "npm run lint && npm run test && echo 'Production build complete'",
@@ -43,11 +43,11 @@
     "ai",
     "orchestration"
   ],
-  "author": "Hivemind",
+  "author": "SquidRun",
   "license": "MIT",
   "build": {
-    "appId": "com.hivemind.app",
-    "productName": "Hivemind",
+    "appId": "com.squidrun.app",
+    "productName": "SquidRun",
     "directories": {
       "output": "dist"
     },

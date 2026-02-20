@@ -232,7 +232,7 @@ async function main() {
   // Send to Telegram if requested
   const sendTelegram = options.has('send-telegram');
   if (sendTelegram && result?.path) {
-    const caption = asString(getOption(options, 'send-telegram', ''), '') || 'Hivemind screenshot';
+    const caption = asString(getOption(options, 'send-telegram', ''), '') || 'SquidRun screenshot';
     const telegramScript = path.join(__dirname, 'hm-telegram.js');
     try {
       console.log('[hm-screenshot] Sending to Telegram...');

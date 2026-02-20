@@ -13,7 +13,7 @@ maybeDescribe('team-memory claims module', () => {
   let claims;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-team-claims-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-claims-'));
     store = new TeamMemoryStore({
       dbPath: path.join(tempDir, 'team-memory.sqlite'),
     });

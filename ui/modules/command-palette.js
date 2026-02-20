@@ -1,5 +1,5 @@
 /**
- * Hivemind Command Palette - Quick access to all actions (Ctrl+K)
+ * SquidRun Command Palette - Quick access to all actions (Ctrl+K)
  * Extracted from renderer.js for modularization
  */
 
@@ -49,7 +49,7 @@ function initCommandPalette() {
     { id: 'select-project', label: 'Select Project Folder', icon: '📁', category: 'Project', action: () => document.getElementById('selectProjectBtn')?.click() },
 
     // System
-    { id: 'shutdown', label: 'Shutdown Hivemind', icon: '🔌', category: 'System', action: () => document.getElementById('fullRestartBtn')?.click() },
+    { id: 'shutdown', label: 'Shutdown SquidRun', icon: '🔌', category: 'System', action: () => document.getElementById('fullRestartBtn')?.click() },
   ];
 
   function openPalette() {

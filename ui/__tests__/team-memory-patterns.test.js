@@ -20,7 +20,7 @@ maybeDescribe('team-memory patterns module', () => {
   let patterns;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-team-patterns-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-patterns-'));
     dbPath = path.join(tempDir, 'team-memory.sqlite');
     ledgerDbPath = path.join(tempDir, 'evidence-ledger.db');
     spoolPath = path.join(tempDir, 'pattern-spool.jsonl');

@@ -1,5 +1,5 @@
 /**
- * Smoke tests for hivemind-app.js
+ * Smoke tests for squidrun-app.js
  * Tests basic initialization and core functions of the main application controller
  *
  * Session 72: Added per audit finding - 650 lines of core code had ZERO tests
@@ -199,9 +199,9 @@ jest.mock('../modules/experiment', () => ({
 }));
 
 // Now require the module under test
-const HivemindApp = require('../modules/main/hivemind-app');
+const SquidRunApp = require('../modules/main/hivemind-app');
 
-describe('HivemindApp', () => {
+describe('SquidRunApp', () => {
   let mockAppContext;
   let mockManagers;
 
@@ -251,12 +251,12 @@ describe('HivemindApp', () => {
   describe('constructor', () => {
     it('should create instance without throwing', () => {
       expect(() => {
-        new HivemindApp(mockAppContext, mockManagers);
+        new SquidRunApp(mockAppContext, mockManagers);
       }).not.toThrow();
     });
 
     it('should store context and managers', () => {
-      const app = new HivemindApp(mockAppContext, mockManagers);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
 
       expect(app.ctx).toBe(mockAppContext);
       expect(app.settings).toBe(mockManagers.settings);
@@ -265,7 +265,7 @@ describe('HivemindApp', () => {
     });
 
     it('should initialize forwarder flags to false', () => {
-      const app = new HivemindApp(mockAppContext, mockManagers);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
 
       expect(app.cliIdentityForwarderRegistered).toBe(false);
       expect(app.triggerAckForwarderRegistered).toBe(false);
@@ -276,7 +276,7 @@ describe('HivemindApp', () => {
     let app;
 
     beforeEach(() => {
-      app = new HivemindApp(mockAppContext, mockManagers);
+      app = new SquidRunApp(mockAppContext, mockManagers);
       jest.spyOn(app, 'installMainWindowSendInterceptor').mockImplementation(() => {});
       jest.spyOn(app, 'ensurePaneHostReadyForwarder').mockImplementation(() => {});
       jest.spyOn(app, 'setupPermissions').mockImplementation(() => {});
@@ -311,7 +311,7 @@ describe('HivemindApp', () => {
 
   describe('lazy worker initialization', () => {
     it('does not prewarm non-critical runtimes during init', async () => {
-      const app = new HivemindApp(mockAppContext, mockManagers);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
       const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
       const teamMemory = require('../modules/team-memory');
       const experiment = require('../modules/experiment');
@@ -331,7 +331,7 @@ describe('HivemindApp', () => {
     });
 
     it('runs firmware startup generation hook during init', async () => {
-      const app = new HivemindApp(mockAppContext, mockManagers);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
 
       app.initDaemonClient = jest.fn().mockResolvedValue();
       app.createWindow = jest.fn().mockResolvedValue();
@@ -346,7 +346,7 @@ describe('HivemindApp', () => {
     });
 
     it('always increments session and initializes startup scope on app launch', async () => {
-      const app = new HivemindApp(mockAppContext, mockManagers);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
 
       app.initDaemonClient = jest.fn().mockImplementation(async () => {
         mockAppContext.daemonClient = {};
@@ -367,7 +367,7 @@ describe('HivemindApp', () => {
     });
 
     it('initializes team memory lazily on first pattern append', async () => {
-      const app = new HivemindApp(mockAppContext, mockManagers);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
       const teamMemory = require('../modules/team-memory');
 
       await app.appendTeamMemoryPatternEvent({ eventType: 'test.pattern' }, 'test');
@@ -379,7 +379,7 @@ describe('HivemindApp', () => {
     });
 
     it('initializes experiment lazily for guard block dispatch', async () => {
-      const app = new HivemindApp(mockAppContext, mockManagers);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
       const experiment = require('../modules/experiment');
 
       const result = await app.handleTeamMemoryGuardExperiment({
@@ -407,7 +407,7 @@ describe('HivemindApp', () => {
     let app;
 
     beforeEach(() => {
-      app = new HivemindApp(mockAppContext, mockManagers);
+      app = new SquidRunApp(mockAppContext, mockManagers);
     });
 
     it('records next evidence-ledger session at startup and snapshots it', async () => {
@@ -516,7 +516,7 @@ describe('HivemindApp', () => {
     let app;
 
     beforeEach(() => {
-      app = new HivemindApp(mockAppContext, mockManagers);
+      app = new SquidRunApp(mockAppContext, mockManagers);
     });
 
     it('should return null for null/undefined input', () => {
@@ -568,7 +568,7 @@ describe('HivemindApp', () => {
     let app;
 
     beforeEach(() => {
-      app = new HivemindApp(mockAppContext, mockManagers);
+      app = new SquidRunApp(mockAppContext, mockManagers);
     });
 
     it('should not throw when called', () => {
@@ -606,7 +606,7 @@ describe('HivemindApp', () => {
     it('should disconnect daemon client if present', () => {
       const mockDaemonClient = { disconnect: jest.fn() };
       mockAppContext.daemonClient = mockDaemonClient;
-      app = new HivemindApp(mockAppContext, mockManagers);
+      app = new SquidRunApp(mockAppContext, mockManagers);
 
       app.shutdown();
 
@@ -622,7 +622,7 @@ describe('HivemindApp', () => {
     let app;
 
     beforeEach(() => {
-      app = new HivemindApp(mockAppContext, mockManagers);
+      app = new SquidRunApp(mockAppContext, mockManagers);
       app.experimentInitialized = true;
     });
 
@@ -717,7 +717,7 @@ describe('HivemindApp', () => {
     let app;
 
     beforeEach(() => {
-      app = new HivemindApp(mockAppContext, mockManagers);
+      app = new SquidRunApp(mockAppContext, mockManagers);
       app.teamMemoryInitialized = true;
     });
 
@@ -845,7 +845,7 @@ describe('HivemindApp', () => {
         daemonClient: sharedDaemonClient,
         agentRunning: new Map(),
       };
-      const app = new HivemindApp(ctx, mockManagers);
+      const app = new SquidRunApp(ctx, mockManagers);
 
       await app.initDaemonClient();
       const firstAttachCount = sharedDaemonClient.on.mock.calls.length;
@@ -860,13 +860,13 @@ describe('HivemindApp', () => {
   });
 
   describe('smoke test - full module loads', () => {
-    it('should export HivemindApp class', () => {
-      expect(HivemindApp).toBeDefined();
-      expect(typeof HivemindApp).toBe('function');
+    it('should export SquidRunApp class', () => {
+      expect(SquidRunApp).toBeDefined();
+      expect(typeof SquidRunApp).toBe('function');
     });
 
     it('should have expected methods', () => {
-      const app = new HivemindApp(mockAppContext, mockManagers);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
 
       expect(typeof app.init).toBe('function');
       expect(typeof app.shutdown).toBe('function');
@@ -878,7 +878,7 @@ describe('HivemindApp', () => {
     let app;
 
     beforeEach(() => {
-      app = new HivemindApp(mockAppContext, mockManagers);
+      app = new SquidRunApp(mockAppContext, mockManagers);
     });
 
     it('wires inbound SMS callback to pane 1 trigger injection', () => {
@@ -905,7 +905,7 @@ describe('HivemindApp', () => {
     let app;
 
     beforeEach(() => {
-      app = new HivemindApp(mockAppContext, mockManagers);
+      app = new SquidRunApp(mockAppContext, mockManagers);
     });
 
     it('wires inbound Telegram callback to pane 1 trigger injection', () => {
@@ -938,7 +938,7 @@ describe('HivemindApp', () => {
     let app;
 
     beforeEach(() => {
-      app = new HivemindApp(mockAppContext, mockManagers);
+      app = new SquidRunApp(mockAppContext, mockManagers);
     });
 
     it('routes user target to Telegram when inbound context is recent', async () => {

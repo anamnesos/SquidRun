@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { setProjectRoot, getHivemindRoot } = require('../../config');
+const { setProjectRoot, getSquidrunRoot, getHivemindRoot } = require('../../config');
 const { initializeEvidenceLedgerRuntime } = require('./evidence-ledger-runtime');
 const { initializeTeamMemoryRuntime } = require('../team-memory/runtime');
 
@@ -93,7 +93,7 @@ function buildReadmeFirstContent({ hmSendRelative }) {
   return [
     '# README-FIRST',
     '',
-    'This project was attached by Hivemind in Project Select mode.',
+    'This project was attached by SquidRun in Project Select mode.',
     '',
     '## Connectivity Test',
     'Run this from the project root to verify agent messaging:',
@@ -102,27 +102,30 @@ function buildReadmeFirstContent({ hmSendRelative }) {
     `node ${hmSendRelative} architect "(BUILDER #1): Connectivity test"`,
     '```',
     '',
-    'If this fails, re-run project selection in Hivemind.',
+    'If this fails, re-run project selection in SquidRun.',
     '',
   ].join('\n');
 }
 
 function writeProjectBootstrapFiles(projectPath, deps = {}) {
   const projectRoot = path.resolve(projectPath);
-  const hivemindRoot = path.resolve(
-    typeof getHivemindRoot === 'function'
-      ? getHivemindRoot()
-      : path.resolve(path.join(__dirname, '..', '..', '..'))
+  const squidrunRoot = path.resolve(
+    typeof getSquidrunRoot === 'function'
+      ? getSquidrunRoot()
+      : (typeof getHivemindRoot === 'function'
+        ? getHivemindRoot()
+        : path.resolve(path.join(__dirname, '..', '..', '..')))
   );
-  const hmSendAbsolute = path.join(hivemindRoot, 'ui', 'scripts', 'hm-send.js');
+  const hmSendAbsolute = path.join(squidrunRoot, 'ui', 'scripts', 'hm-send.js');
   const hmSendRelative = normalizeToPosix(path.relative(projectRoot, hmSendAbsolute));
   const sessionId = buildSessionId(deps);
-  const coordDir = path.join(projectRoot, '.hivemind');
+  const coordDir = path.join(projectRoot, '.squidrun');
   const linkFilePath = path.join(coordDir, 'link.json');
   const readmePath = path.join(coordDir, 'README-FIRST.md');
 
   const linkPayload = {
-    hivemind_root: normalizeToPosix(hivemindRoot),
+    squidrun_root: normalizeToPosix(squidrunRoot),
+    hivemind_root: normalizeToPosix(squidrunRoot), // Legacy field for compatibility.
     comms: {
       hm_send: hmSendRelative,
     },
@@ -328,7 +331,7 @@ function registerProjectHandlers(ctx, deps) {
     } else {
       syncProjectRoot(initialProject);
       if (!initialProject) {
-        log.warn('Project', 'Operating in project mode but no project selected — agents will use Hivemind root as CWD');
+        log.warn('Project', 'Operating in project mode but no project selected — agents will use SquidRun root as CWD');
         if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
           ctx.mainWindow.webContents.send('project-warning', 'No project selected');
         }
@@ -359,7 +362,7 @@ function registerProjectHandlers(ctx, deps) {
       log.error('Project', `Failed to write bootstrap files for ${projectPath}: ${err.message}`);
       return {
         success: false,
-        error: `Failed to initialize .hivemind bootstrap: ${err.message}`,
+        error: `Failed to initialize .squidrun bootstrap: ${err.message}`,
       };
     }
 
@@ -484,7 +487,7 @@ function registerProjectHandlers(ctx, deps) {
       log.error('Project', `Failed to write bootstrap files for ${projectPath}: ${err.message}`);
       return {
         success: false,
-        error: `Failed to initialize .hivemind bootstrap: ${err.message}`,
+        error: `Failed to initialize .squidrun bootstrap: ${err.message}`,
       };
     }
 

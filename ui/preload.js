@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 // Build the API object
-const hivemindApi = {
+const squidrunApi = {
   // PTY operations
   pty: {
     create: (paneId, workingDir) => ipcRenderer.invoke('pty-create', paneId, workingDir),
@@ -107,7 +107,9 @@ const hivemindApi = {
 // Expose to renderer: use contextBridge when contextIsolation is enabled,
 // fall back to direct window assignment when it's disabled
 if (process.contextIsolated) {
-  contextBridge.exposeInMainWorld('hivemind', hivemindApi);
+  contextBridge.exposeInMainWorld('squidrun', squidrunApi);
+  contextBridge.exposeInMainWorld('hivemind', squidrunApi); // Legacy alias
 } else {
-  window.hivemind = hivemindApi;
+  window.squidrun = squidrunApi;
+  window.hivemind = squidrunApi; // Legacy alias
 }

@@ -20,7 +20,7 @@ describe('experiment runtime evidence chain (phase6b)', () => {
 
   beforeEach(() => {
     jest.resetModules();
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-experiment-runtime-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-experiment-runtime-'));
     dbPath = path.join(tempDir, 'team-memory.sqlite');
     artifactRoot = path.join(tempDir, 'artifacts');
     profilesPath = path.join(tempDir, 'experiment-profiles.json');

@@ -61,10 +61,10 @@ describe('MCP Autoconfig Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.paneId).toBe('1');
-      expect(result.serverName).toBe('hivemind-1');
+      expect(result.serverName).toBe('squidrun-1');
       expect(execFile).toHaveBeenCalledWith(
         'claude',
-        expect.arrayContaining(['mcp', 'add', 'hivemind-1']),
+        expect.arrayContaining(['mcp', 'add', 'squidrun-1']),
         expect.any(Object),
         expect.any(Function)
       );
@@ -114,7 +114,7 @@ describe('MCP Autoconfig Handlers', () => {
       const result = await harness.invoke('mcp-reconnect-agent', '4');
 
       expect(result.success).toBe(true);
-      expect(result.serverName).toBe('hivemind-4');
+      expect(result.serverName).toBe('squidrun-4');
     });
 
     test('handles reconnect error', async () => {
@@ -137,7 +137,7 @@ describe('MCP Autoconfig Handlers', () => {
       expect(result.paneId).toBe('3');
       expect(execFile).toHaveBeenCalledWith(
         'claude',
-        expect.arrayContaining(['mcp', 'remove', 'hivemind-3']),
+        expect.arrayContaining(['mcp', 'remove', 'squidrun-3']),
         expect.any(Object),
         expect.any(Function)
       );

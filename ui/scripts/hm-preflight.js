@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * hm-preflight: Scans a target project for existing agent protocols that might conflict with Hivemind.
+ * hm-preflight: Scans a target project for existing agent protocols that might conflict with SquidRun.
  * Usage: node hm-preflight.js [target-dir]
  */
 

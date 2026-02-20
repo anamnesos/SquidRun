@@ -23,7 +23,7 @@ function makeState(overrides = {}) {
 }
 
 function setupWatcher(options = {}) {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-watcher-'));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watcher-'));
   const configMock = {
     WORKSPACE_PATH: tempDir,
     TRIGGER_TARGETS: { 'lead.txt': ['1'] },

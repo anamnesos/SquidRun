@@ -56,7 +56,7 @@ global.window = {
   requestAnimationFrame: jest.fn((cb) => setTimeout(cb, 16)),
   cancelAnimationFrame: jest.fn(),
   getComputedStyle: jest.fn().mockReturnValue({ getPropertyValue: jest.fn() }),
-  hivemind: {},
+  squidrun: {},
   innerWidth: 1920,
   innerHeight: 1080,
   speechRecognition: undefined,
@@ -191,8 +191,8 @@ describe('renderer.js smoke tests', () => {
   // Load the module once before all tests
   // This tests that the module can be required without throwing
   beforeAll(() => {
-    // Reset window.hivemind before loading
-    global.window.hivemind = {};
+    // Reset window.squidrun before loading
+    global.window.squidrun = {};
     require('../renderer');
   });
 
@@ -203,24 +203,24 @@ describe('renderer.js smoke tests', () => {
     });
   });
 
-  describe('window.hivemind API', () => {
-    it('should expose pty API on window.hivemind', () => {
-      expect(window.hivemind.pty).toBeDefined();
+  describe('window.squidrun API', () => {
+    it('should expose pty API on window.squidrun', () => {
+      expect(window.squidrun.pty).toBeDefined();
     });
 
-    it('should expose claude API on window.hivemind', () => {
-      expect(window.hivemind.claude).toBeDefined();
+    it('should expose claude API on window.squidrun', () => {
+      expect(window.squidrun.claude).toBeDefined();
     });
 
     it('pty API should have expected methods', () => {
-      expect(typeof window.hivemind.pty.create).toBe('function');
-      expect(typeof window.hivemind.pty.write).toBe('function');
-      expect(typeof window.hivemind.pty.resize).toBe('function');
-      expect(typeof window.hivemind.pty.kill).toBe('function');
+      expect(typeof window.squidrun.pty.create).toBe('function');
+      expect(typeof window.squidrun.pty.write).toBe('function');
+      expect(typeof window.squidrun.pty.resize).toBe('function');
+      expect(typeof window.squidrun.pty.kill).toBe('function');
     });
 
     it('claude API should have spawn method', () => {
-      expect(typeof window.hivemind.claude.spawn).toBe('function');
+      expect(typeof window.squidrun.claude.spawn).toBe('function');
     });
 
   });

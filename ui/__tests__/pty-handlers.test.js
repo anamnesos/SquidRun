@@ -530,13 +530,13 @@ describe('PTY Handlers', () => {
       ctx.currentSettings.firmwareInjectionEnabled = true;
       ctx.currentSettings.paneCommands = { '1': 'claude' };
       deps.firmwareManager = {
-        ensureFirmwareForPane: jest.fn(() => ({ ok: true, firmwarePath: '/tmp/fw/director.md' })),
+        ensureFirmwareForPane: jest.fn(() => ({ ok: true, firmwarePath: '/tmp/fw/architect.md' })),
       };
 
       const result = await harness.invoke('spawn-claude', '1', '/dir');
 
       expect(deps.firmwareManager.ensureFirmwareForPane).toHaveBeenCalledWith('1');
-      expect(result.command).toContain('--system-prompt-file "/tmp/fw/director.md"');
+      expect(result.command).toContain('--system-prompt-file "/tmp/fw/architect.md"');
       expect(result.command).toContain('--dangerously-skip-permissions');
     });
 

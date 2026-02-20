@@ -15,7 +15,7 @@ describe('experiment profiles', () => {
   let profilesPath;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-experiment-profiles-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-experiment-profiles-'));
     profilesPath = path.join(tempDir, 'experiment-profiles.json');
   });
 
@@ -119,11 +119,11 @@ describe('experiment profiles', () => {
     setProjectRoot(projectA);
     const first = loadExperimentProfiles({});
     expect(first.ok).toBe(true);
-    expect(first.profilesPath).toBe(path.join(projectA, '.hivemind', 'runtime', 'experiment-profiles.json'));
+    expect(first.profilesPath).toBe(path.join(projectA, '.squidrun', 'runtime', 'experiment-profiles.json'));
 
     setProjectRoot(projectB);
     const second = loadExperimentProfiles({});
     expect(second.ok).toBe(true);
-    expect(second.profilesPath).toBe(path.join(projectB, '.hivemind', 'runtime', 'experiment-profiles.json'));
+    expect(second.profilesPath).toBe(path.join(projectB, '.squidrun', 'runtime', 'experiment-profiles.json'));
   });
 });

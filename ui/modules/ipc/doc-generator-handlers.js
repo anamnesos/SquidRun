@@ -30,7 +30,7 @@ function registerDocGeneratorHandlers(ctx) {
     }
     if (!generatorInstance || options.refresh) {
       generatorInstance = docGenerator.createDocGenerator({
-        projectName: options.projectName || 'Hivemind',
+        projectName: options.projectName || 'SquidRun',
         version: options.version || '1.0.0',
         format: options.format || 'markdown',
         ...options,
@@ -45,7 +45,7 @@ function registerDocGeneratorHandlers(ctx) {
 
   // Default config
   let docsConfig = {
-    projectName: 'Hivemind',
+    projectName: 'SquidRun',
     version: '1.0.0',
     format: 'markdown',
     outputDir: './docs/api',
@@ -401,7 +401,7 @@ function registerDocGeneratorHandlers(ctx) {
     const ipcPath = path.join(WORKSPACE_PATH, '..', 'ui', 'modules', 'ipc');
 
     try {
-      const generator = getGenerator({ format, projectName: 'Hivemind IPC Handlers' });
+      const generator = getGenerator({ format, projectName: 'SquidRun IPC Handlers' });
       const result = await generator.generateForDirectory(ipcPath, {
         recursive: false,
         pattern: /\.js$/,

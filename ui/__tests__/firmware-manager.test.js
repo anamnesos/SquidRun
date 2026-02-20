@@ -5,18 +5,18 @@ const path = require('path');
 const FirmwareManager = require('../modules/main/firmware-manager');
 
 const SPEC_FIXTURE = [
-  '# Spec: Hivemind Firmware Injection',
+  '# Spec: SquidRun Firmware Injection',
   '',
   '### 2.1 Directive: SYSTEM PRIORITY',
-  '> **SYSTEM PRIORITY:** You are a Hivemind Agent. These Team Protocol rules override local agent protocols.',
+  '> **SYSTEM PRIORITY:** You are a SquidRun Agent. These Team Protocol rules override local agent protocols.',
   '',
   '### 2.2 Shared Team Protocol (Include in all roles)',
-  '- **Communication:** `node "{HIVEMIND_ROOT}/ui/scripts/hm-send.js" <target> "(ROLE #N): message"` is the ONLY way to talk to other agents.',
+  '- **Communication:** `node "{SQUIDRUN_ROOT}/ui/scripts/hm-send.js" <target> "(ROLE #N): message"` is the ONLY way to talk to other agents.',
   '- **Visibility:** Terminal output is for the USER only. Other agents CANNOT see it.',
   '- **Reporting:** If any tool fails, report to Architect IMMEDIATELY via `hm-send.js`.',
-  '- **Startup:** Read `.hivemind/state.json` and message Architect status. Then STOP and wait for tasking.',
+  '- **Startup:** Read `.squidrun/state.json` and message Architect status. Then STOP and wait for tasking.',
   '',
-  '### 3.1 Director (Architect)',
+  '### 3.1 Architect',
   '- **Primary Goal:** Orchestrate the workforce.',
   '',
   '### 3.2 Builder',
@@ -35,9 +35,9 @@ describe('FirmwareManager', () => {
   let appContext;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-firmware-manager-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-firmware-manager-'));
     specPath = path.join(tempDir, 'firmware-injection-spec.md');
-    firmwareDir = path.join(tempDir, '.hivemind', 'firmware');
+    firmwareDir = path.join(tempDir, '.squidrun', 'firmware');
     codexRulesDir = path.join(tempDir, '.codex', 'rules');
     fs.writeFileSync(specPath, SPEC_FIXTURE, 'utf-8');
 
@@ -53,7 +53,7 @@ describe('FirmwareManager', () => {
 
     manager = new FirmwareManager(appContext, {
       projectRoot: tempDir,
-      coordRoot: path.join(tempDir, '.hivemind'),
+      coordRoot: path.join(tempDir, '.squidrun'),
       specPath,
       firmwareDir,
       codexRulesDir,
@@ -61,18 +61,18 @@ describe('FirmwareManager', () => {
     });
   });
 
-  test('ensureFirmwareFiles generates director/builder/oracle firmware from spec templates', () => {
+  test('ensureFirmwareFiles generates architect/builder/oracle firmware from spec templates', () => {
     const result = manager.ensureFirmwareFiles();
     expect(result.ok).toBe(true);
-    expect(fs.existsSync(path.join(firmwareDir, 'director.md'))).toBe(true);
+    expect(fs.existsSync(path.join(firmwareDir, 'architect.md'))).toBe(true);
     expect(fs.existsSync(path.join(firmwareDir, 'builder.md'))).toBe(true);
     expect(fs.existsSync(path.join(firmwareDir, 'oracle.md'))).toBe(true);
 
-    const director = fs.readFileSync(path.join(firmwareDir, 'director.md'), 'utf-8');
-    expect(director.startsWith('**SYSTEM PRIORITY:**')).toBe(true);
-    expect(director).toContain('## Team Protocol');
-    expect(director).toContain('## Role Protocol');
-    expect(director).toContain('Orchestrate the workforce');
+    const architect = fs.readFileSync(path.join(firmwareDir, 'architect.md'), 'utf-8');
+    expect(architect.startsWith('**SYSTEM PRIORITY:**')).toBe(true);
+    expect(architect).toContain('## Team Protocol');
+    expect(architect).toContain('## Role Protocol');
+    expect(architect).toContain('Orchestrate the workforce');
   });
 
   test('ensureFirmwareForPane resolves pane-specific firmware path', () => {
@@ -88,7 +88,7 @@ describe('FirmwareManager', () => {
     expect(fs.existsSync(result.overridePath)).toBe(true);
 
     const override = fs.readFileSync(result.overridePath, 'utf-8');
-    expect(override).toContain('Hivemind Firmware: Oracle');
+    expect(override).toContain('SquidRun Firmware: Oracle');
     expect(override).toContain('Investigation, documentation, and evaluation');
   });
 
@@ -97,11 +97,11 @@ describe('FirmwareManager', () => {
     const result = manager.ensureStartupFirmwareIfEnabled();
     expect(result.ok).toBe(true);
     expect(result.skipped).toBe(true);
-    expect(fs.existsSync(path.join(firmwareDir, 'director.md'))).toBe(false);
+    expect(fs.existsSync(path.join(firmwareDir, 'architect.md'))).toBe(false);
   });
 
   test('caches preflight results by target directory', () => {
-    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-preflight-target-'));
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-preflight-target-'));
     const preflightResults = [{ file: 'CLAUDE.md', hasAgentProtocols: true, conflicts: [] }];
 
     manager.cachePreflightResults(targetDir, preflightResults);
@@ -111,7 +111,7 @@ describe('FirmwareManager', () => {
   });
 
   test('ensureFirmwareForPane uses cached preflight conflicts for suppression directives', () => {
-    const paneProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-pane-project-'));
+    const paneProject = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pane-project-'));
     appContext.currentSettings.paneProjects = { '1': null, '2': paneProject, '3': null };
 
     const conflictResults = [{
@@ -130,7 +130,7 @@ describe('FirmwareManager', () => {
   });
 
   test('ensureFirmwareForPane uses selected project root in project mode when paneProjects is unset', () => {
-    const selectedProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-selected-project-'));
+    const selectedProject = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-selected-project-'));
     appContext.currentSettings.operatingMode = 'project';
     appContext.currentSettings.paneProjects = { '1': null, '2': null, '3': null };
     appContext.watcher.readState.mockReturnValue({ project: selectedProject });
@@ -146,13 +146,13 @@ describe('FirmwareManager', () => {
     expect(result.ok).toBe(true);
     expect(result.targetDir).toBe(path.resolve(selectedProject));
 
-    const director = fs.readFileSync(path.join(firmwareDir, 'director.md'), 'utf-8');
-    expect(director).toContain('## Suppression Directives');
-    expect(director).toContain('IGNORE project instruction: "Use project-local message bus"');
+    const architect = fs.readFileSync(path.join(firmwareDir, 'architect.md'), 'utf-8');
+    expect(architect).toContain('## Suppression Directives');
+    expect(architect).toContain('IGNORE project instruction: "Use project-local message bus"');
   });
 
-  test('ensureFirmwareForPane keeps hivemind root fallback in developer mode', () => {
-    const selectedProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-selected-project-'));
+  test('ensureFirmwareForPane keeps squidrun root fallback in developer mode', () => {
+    const selectedProject = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-selected-project-'));
     appContext.currentSettings.operatingMode = 'developer';
     appContext.currentSettings.paneProjects = { '1': null, '2': null, '3': null };
     appContext.watcher.readState.mockReturnValue({ project: selectedProject });
@@ -162,18 +162,18 @@ describe('FirmwareManager', () => {
     expect(result.targetDir).toBe(path.resolve(tempDir));
   });
 
-  test('uses hivemindRoot spec path and replaces {HIVEMIND_ROOT} for roots with spaces', () => {
+  test('uses squidrunRoot spec path and replaces {SQUIDRUN_ROOT} for roots with spaces', () => {
     const externalProject = path.join(tempDir, 'external-project');
-    const hivemindRootWithSpaces = path.join(tempDir, 'hivemind root with spaces');
-    const scopedSpecPath = path.join(hivemindRootWithSpaces, 'workspace', 'specs', 'firmware-injection-spec.md');
-    const scopedFirmwareDir = path.join(externalProject, '.hivemind', 'firmware');
+    const squidrunRootWithSpaces = path.join(tempDir, 'squidrun root with spaces');
+    const scopedSpecPath = path.join(squidrunRootWithSpaces, 'workspace', 'specs', 'firmware-injection-spec.md');
+    const scopedFirmwareDir = path.join(externalProject, '.squidrun', 'firmware');
     fs.mkdirSync(path.dirname(scopedSpecPath), { recursive: true });
     fs.writeFileSync(scopedSpecPath, SPEC_FIXTURE, 'utf-8');
 
     const scopedManager = new FirmwareManager(appContext, {
       projectRoot: externalProject,
-      coordRoot: path.join(externalProject, '.hivemind'),
-      hivemindRoot: hivemindRootWithSpaces,
+      coordRoot: path.join(externalProject, '.squidrun'),
+      squidrunRoot: squidrunRootWithSpaces,
       firmwareDir: scopedFirmwareDir,
       codexRulesDir,
       codexOverridePath: path.join(codexRulesDir, 'AGENTS.override.md'),
@@ -184,9 +184,9 @@ describe('FirmwareManager', () => {
     expect(path.resolve(scopedManager.specPath)).toBe(path.resolve(scopedSpecPath));
 
     const builder = fs.readFileSync(path.join(scopedFirmwareDir, 'builder.md'), 'utf-8');
-    const expectedRoot = hivemindRootWithSpaces.replace(/\\/g, '/');
+    const expectedRoot = squidrunRootWithSpaces.replace(/\\/g, '/');
     expect(builder).toContain(`node "${expectedRoot}/ui/scripts/hm-send.js"`);
-    expect(builder).not.toContain('{HIVEMIND_ROOT}');
-    expect(builder).toContain('Read `.hivemind/state.json`');
+    expect(builder).not.toContain('{SQUIDRUN_ROOT}');
+    expect(builder).toContain('Read `.squidrun/state.json`');
   });
 });

@@ -599,7 +599,7 @@ describe('hm-send retry behavior', () => {
   test('includes project context metadata in websocket send payload', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-meta-'));
     const externalProjectPath = path.join(tempRoot, 'external-project');
-    const externalCoordPath = path.join(externalProjectPath, '.hivemind');
+    const externalCoordPath = path.join(externalProjectPath, '.squidrun');
     fs.mkdirSync(externalCoordPath, { recursive: true });
     fs.writeFileSync(path.join(externalCoordPath, 'link.json'), JSON.stringify({
       workspace: externalProjectPath,
@@ -691,18 +691,18 @@ describe('hm-send retry behavior', () => {
   test('refreshes stale app-session link metadata from current app-status session', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-session-refresh-'));
     const externalProjectPath = path.join(tempRoot, 'external-project');
-    const externalCoordPath = path.join(externalProjectPath, '.hivemind');
-    const fakeHivemindRoot = path.join(tempRoot, 'hivemind-root');
-    const fakeHivemindCoord = path.join(fakeHivemindRoot, '.hivemind');
+    const externalCoordPath = path.join(externalProjectPath, '.squidrun');
+    const fakeSquidRunRoot = path.join(tempRoot, 'squidrun-root');
+    const fakeSquidRunCoord = path.join(fakeSquidRunRoot, '.squidrun');
     fs.mkdirSync(externalCoordPath, { recursive: true });
-    fs.mkdirSync(fakeHivemindCoord, { recursive: true });
+    fs.mkdirSync(fakeSquidRunCoord, { recursive: true });
     fs.writeFileSync(path.join(externalCoordPath, 'link.json'), JSON.stringify({
       workspace: externalProjectPath,
-      hivemind_root: fakeHivemindRoot,
+      squidrun_root: fakeSquidRunRoot,
       session_id: 'app-session-159',
       version: 1,
     }, null, 2));
-    fs.writeFileSync(path.join(fakeHivemindCoord, 'app-status.json'), JSON.stringify({
+    fs.writeFileSync(path.join(fakeSquidRunCoord, 'app-status.json'), JSON.stringify({
       session: 186,
     }, null, 2));
 
@@ -973,7 +973,7 @@ describe('hm-send retry behavior', () => {
   test('uses global trigger fallback path even when project link.json is present', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-link-'));
     const externalProjectPath = path.join(tempRoot, 'external-project');
-    const externalCoordPath = path.join(externalProjectPath, '.hivemind');
+    const externalCoordPath = path.join(externalProjectPath, '.squidrun');
     const linkPath = path.join(externalCoordPath, 'link.json');
     const expectedTriggerPath = getTriggerPath('builder.txt');
     const hadOriginal = fs.existsSync(expectedTriggerPath);

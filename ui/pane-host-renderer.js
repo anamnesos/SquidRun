@@ -241,9 +241,9 @@ async function injectMessage(payload = {}) {
     const chunkSize = Number.isFinite(CHUNK_SIZE_BYTES) && CHUNK_SIZE_BYTES > 0
       ? CHUNK_SIZE_BYTES
       : DEFAULT_CHUNK_SIZE_BYTES;
-    if (text.length > chunkThreshold && window.hivemind.pty.writeChunked) {
+    if (text.length > chunkThreshold && window.squidrun.pty.writeChunked) {
       const chunkedResult = await withTimeout(
-        window.hivemind.pty.writeChunked(paneId, text, { chunkSize }, traceContext || null),
+        window.squidrun.pty.writeChunked(paneId, text, { chunkSize }, traceContext || null),
         WRITE_TIMEOUT_MS,
         'pane-host writeChunked'
       );
@@ -252,7 +252,7 @@ async function injectMessage(payload = {}) {
       }
     } else {
       await withTimeout(
-        window.hivemind.pty.write(paneId, text, traceContext || null),
+        window.squidrun.pty.write(paneId, text, traceContext || null),
         WRITE_TIMEOUT_MS,
         'pane-host write'
       );

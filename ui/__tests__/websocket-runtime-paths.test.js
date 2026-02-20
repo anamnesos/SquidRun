@@ -6,7 +6,7 @@ const { setProjectRoot, resetProjectRoot } = require('../config');
 const websocketRuntime = require('../modules/websocket-runtime');
 
 function queuePathForProject(projectRoot) {
-  return path.join(path.resolve(projectRoot), '.hivemind', 'state', 'comms-outbound-queue.json');
+  return path.join(path.resolve(projectRoot), '.squidrun', 'state', 'comms-outbound-queue.json');
 }
 
 function readQueueEntries(queuePath) {
@@ -23,8 +23,8 @@ describe('websocket runtime queue path resolution', () => {
   let previousQueueEnvPath;
 
   beforeEach(() => {
-    projectA = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-ws-path-a-'));
-    projectB = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-ws-path-b-'));
+    projectA = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-ws-path-a-'));
+    projectB = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-ws-path-b-'));
     previousQueueEnvPath = process.env.HIVEMIND_COMMS_QUEUE_FILE;
     delete process.env.HIVEMIND_COMMS_QUEUE_FILE;
   });

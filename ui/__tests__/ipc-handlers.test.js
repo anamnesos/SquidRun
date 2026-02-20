@@ -111,7 +111,7 @@ describe('IPC handler behavior samples', () => {
   });
 
   test('shared context handlers read/write roundtrip', async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-shared-'));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-shared-'));
     const sharedPath = path.join(tempDir, 'shared_context.md');
 
     const { ipcMain, invoke } = createIpcHarness();

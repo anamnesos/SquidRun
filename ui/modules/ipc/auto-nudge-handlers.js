@@ -129,7 +129,7 @@ function registerAutoNudgeHandlers(ctx, deps) {
       return { success: false, error: 'Daemon not connected' };
     }
 
-    const nudgeMessage = message || '[HIVEMIND] Are you still working? Please respond with your current status.';
+    const nudgeMessage = message || '[SQUIDRUN] Are you still working? Please respond with your current status.';
 
     if (ctx.agentRunning.get(paneId) !== 'running') {
       return { success: false, error: 'Agent not running in this pane' };
@@ -159,7 +159,7 @@ function registerAutoNudgeHandlers(ctx, deps) {
           if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
             ctx.mainWindow.webContents.send('inject-message', {
               panes: [paneId],
-              message: '[HIVEMIND] No activity detected. Please respond with your current status.\r'
+              message: '[SQUIDRUN] No activity detected. Please respond with your current status.\r'
             });
           }
           nudged.push(paneId);

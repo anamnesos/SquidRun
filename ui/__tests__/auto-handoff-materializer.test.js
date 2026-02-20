@@ -13,7 +13,7 @@ describe('auto-handoff-materializer', () => {
   let tempDir;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-auto-handoff-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-auto-handoff-'));
   });
 
   afterEach(() => {

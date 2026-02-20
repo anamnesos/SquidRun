@@ -15,7 +15,7 @@ maybeDescribe('team-memory guards module', () => {
   let guards;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-team-guards-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-guards-'));
     store = new TeamMemoryStore({
       dbPath: path.join(tempDir, 'team-memory.sqlite'),
     });

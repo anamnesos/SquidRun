@@ -9,14 +9,14 @@ const crypto = require('crypto');
 const log = require('./logger');
 const { resolveCoordPath, resolveGlobalPath } = require('../config');
 
-// Files backed up from project .hivemind/ (coord root)
+// Files backed up from project .squidrun/ (coord root)
 const COORD_BACKUP_FILES = [
   'shared_context.md',
   'state.json',
   'activity.json',
 ];
 
-// Files backed up from GLOBAL_STATE_ROOT (%APPDATA%/hivemind)
+// Files backed up from GLOBAL_STATE_ROOT (%APPDATA%/squidrun)
 const GLOBAL_BACKUP_FILES = [
   'app-status.json',
   'message-state.json',

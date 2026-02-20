@@ -163,7 +163,7 @@ function ensureWorker() {
   });
 
   worker.on('exit', (code, signal) => {
-    const intentional = worker.__hivemindIntentionalStop === true;
+    const intentional = worker.__squidrunIntentionalStop === true;
     if (workerProcess === worker) {
       workerProcess = null;
     }
@@ -315,7 +315,7 @@ async function stop() {
     return;
   }
 
-  worker.__hivemindIntentionalStop = true;
+  worker.__squidrunIntentionalStop = true;
   const exitPromise = new Promise((resolve) => {
     worker.once('exit', () => resolve());
   });

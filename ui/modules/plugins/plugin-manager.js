@@ -48,13 +48,13 @@ function readManifest(dirPath) {
   const pkgPath = path.join(dirPath, 'package.json');
   if (fs.existsSync(pkgPath)) {
     const pkg = safeReadJson(pkgPath);
-    if (pkg && pkg.hivemind) {
+    if (pkg && pkg.squidrun) {
       const manifest = {
-        ...pkg.hivemind,
-        id: pkg.hivemind.id || pkg.name,
-        name: pkg.hivemind.name || pkg.name,
-        version: pkg.hivemind.version || pkg.version || '0.0.0',
-        main: pkg.hivemind.main || pkg.main || 'index.js',
+        ...pkg.squidrun,
+        id: pkg.squidrun.id || pkg.name,
+        name: pkg.squidrun.name || pkg.name,
+        version: pkg.squidrun.version || pkg.version || '0.0.0',
+        main: pkg.squidrun.main || pkg.main || 'index.js',
       };
       return { manifest, manifestPath: pkgPath };
     }

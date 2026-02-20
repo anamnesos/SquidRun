@@ -1179,7 +1179,7 @@ function generateMockResponse(input) {
     return '';
   }
 
-  if (trimmed.includes('sync') || trimmed.includes('hivemind')) {
+  if (trimmed.includes('sync') || trimmed.includes('squidrun') || trimmed.includes('hivemind')) {
     return '\r\n[DRY-RUN] Sync received. Reviewing ROLES.md and coordination state...\r\n[DRY-RUN] Worker acknowledged. Standing by for tasks.\r\n\r\n> ';
   }
 
@@ -1843,7 +1843,7 @@ function handleMessage(client, message) {
 
         // Identity message that becomes part of Claude conversation
         // This shows in /resume session list, making it identifiable
-        const identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}\n`;
+        const identityMsg = `# SQUIDRUN SESSION: ${role} - Started ${timestamp}\n`;
 
         if (terminal.dryRun) {
           // Dry-run: just echo the message

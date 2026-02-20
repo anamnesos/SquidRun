@@ -69,7 +69,7 @@ describe('Terminal Recovery Controller', () => {
       querySelector: jest.fn().mockReturnValue(mockTextarea),
     };
 
-    global.window = { hivemind: { pty: mockPty } };
+    global.window = { squidrun: { pty: mockPty } };
     global.document = {
       querySelector: jest.fn().mockReturnValue(mockPaneEl),
     };
@@ -548,14 +548,14 @@ describe('Terminal Recovery Controller', () => {
     });
 
     test('sets bypass flag on terminal for Claude', async () => {
-      const terminal = { _hivemindBypass: false };
+      const terminal = { _squidrunBypass: false };
       terminals.set('1', terminal);
 
       controller.aggressiveNudge('1');
       await jest.advanceTimersByTimeAsync(200);
 
       // The bypass flag is set before DOM Enter dispatch and cleared later by timer
-      expect(terminal._hivemindBypass).toBe(true);
+      expect(terminal._squidrunBypass).toBe(true);
       expect(mockTextarea.dispatchEvent).toHaveBeenCalled();
     });
 
