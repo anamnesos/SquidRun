@@ -63,11 +63,11 @@
       "target": ["dmg", "zip"]
     },
     "win": {
-      "icon": "assets/hivemind-icon.ico",
+      "icon": "assets/squidrun-favicon.ico",
       "target": ["nsis"]
     },
     "linux": {
-      "icon": "assets/hivemind-icon.png",
+      "icon": "assets/squidrun-favicon-256.png",
       "target": ["AppImage", "deb"],
       "category": "Development"
     }
