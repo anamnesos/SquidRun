@@ -49,6 +49,10 @@ workspace/state.json
 workspace/console.log
 workspace/triggers/*.txt
 .hivemind/
+.squidrun/
+
+# Jest perf snapshots (large, regenerated)
+workspace/perf-jest.json
 ui/usage-stats.json
 ui/settings.json
 session-state.json
