@@ -17,7 +17,7 @@ maybeDescribe('team-memory runtime experiment action routing', () => {
   let tempDir;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-team-runtime-exp-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-runtime-exp-'));
     mockExecuteExperimentOperation.mockReset();
     mockExecuteExperimentOperation.mockReturnValue({ ok: true });
   });

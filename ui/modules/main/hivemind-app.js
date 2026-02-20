@@ -1,5 +1,5 @@
 /**
- * Hivemind Application
+ * SquidRun Application
  * Main process application controller
  */
 
@@ -125,7 +125,7 @@ const ALLOWED_RUNTIME_LIFECYCLE_TRANSITIONS = Object.freeze({
   [RUNTIME_LIFECYCLE_STATE.STOPPING]: new Set([RUNTIME_LIFECYCLE_STATE.STOPPED]),
 });
 
-class HivemindApp {
+class SquidRunApp {
   constructor(appContext, managers) {
     this.ctx = appContext;
     this.settings = managers.settings;
@@ -269,7 +269,7 @@ class HivemindApp {
           sessionNumber,
           mode: 'APP',
           meta: {
-            source: 'hivemind-app',
+            source: 'squidrun-app',
             pid: process.pid,
             startup: true,
           },
@@ -713,7 +713,7 @@ class HivemindApp {
   }
 
   async init() {
-    log.info('App', 'Initializing Hivemind Application');
+    log.info('App', 'Initializing SquidRun Application');
 
     // 1. Load settings
     this.settings.loadSettings();
@@ -749,7 +749,7 @@ class HivemindApp {
     this.ctx.setExternalNotifier(createExternalNotifier({
       getSettings: () => this.ctx.currentSettings,
       log,
-      appName: 'Hivemind',
+      appName: 'SquidRun',
     }));
 
     ipcHandlers.setExternalNotifier(this.ctx.externalNotifier);
@@ -1598,7 +1598,7 @@ class HivemindApp {
         contextIsolation: false,
         preload: path.join(__dirname, '..', '..', 'preload.js'),
       },
-      title: 'Hivemind',
+      title: 'SquidRun',
     });
 
     this.installMainWindowSendInterceptor();
@@ -3114,7 +3114,7 @@ class HivemindApp {
   }
 
   shutdown() {
-    log.info('App', 'Shutting down Hivemind Application');
+    log.info('App', 'Shutting down SquidRun Application');
     this.shuttingDown = true;
     this.clearWebSocketStartRetry();
     if (this.paneHostBootstrapTimer) {
@@ -3193,4 +3193,4 @@ class HivemindApp {
   }
 }
 
-module.exports = HivemindApp;
+module.exports = SquidRunApp;

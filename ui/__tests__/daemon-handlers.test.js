@@ -72,9 +72,9 @@ const mockUiView = {
 
 jest.mock('../modules/ui-view', () => mockUiView);
 
-// Mock window.hivemind
+// Mock window.squidrun
 global.window = {
-  hivemind: {
+  squidrun: {
     project: {
       select: jest.fn().mockResolvedValue({ success: true, path: '/test/project' }),
       get: jest.fn().mockResolvedValue('/test/project'),
@@ -350,39 +350,39 @@ describe('daemon-handlers.js module', () => {
 
   describe('selectProject', () => {
     test('should call project select and update display', async () => {
-      window.hivemind.project.select.mockResolvedValueOnce({
+      window.squidrun.project.select.mockResolvedValueOnce({
         success: true,
         path: '/new/project',
       });
 
       await daemonHandlers.selectProject();
 
-      expect(window.hivemind.project.select).toHaveBeenCalled();
+      expect(window.squidrun.project.select).toHaveBeenCalled();
       expect(uiView.updateProjectDisplay).toHaveBeenCalledWith('/new/project');
     });
 
     test('should handle canceled selection', async () => {
-      window.hivemind.project.select.mockResolvedValueOnce({ canceled: true });
+      window.squidrun.project.select.mockResolvedValueOnce({ canceled: true });
       await daemonHandlers.selectProject();
       // Should not throw
     });
 
     test('should handle errors', async () => {
-      window.hivemind.project.select.mockRejectedValueOnce(new Error('Selection failed'));
+      window.squidrun.project.select.mockRejectedValueOnce(new Error('Selection failed'));
       await expect(daemonHandlers.selectProject()).resolves.not.toThrow();
     });
   });
 
   describe('loadInitialProject', () => {
     test('should load and display project', async () => {
-      window.hivemind.project.get.mockResolvedValueOnce('/initial/project');
+      window.squidrun.project.get.mockResolvedValueOnce('/initial/project');
       await daemonHandlers.loadInitialProject();
-      expect(window.hivemind.project.get).toHaveBeenCalled();
+      expect(window.squidrun.project.get).toHaveBeenCalled();
       expect(uiView.updateProjectDisplay).toHaveBeenCalledWith('/initial/project');
     });
 
     test('should handle errors gracefully', async () => {
-      window.hivemind.project.get.mockRejectedValueOnce(new Error('Failed'));
+      window.squidrun.project.get.mockRejectedValueOnce(new Error('Failed'));
       await expect(daemonHandlers.loadInitialProject()).resolves.not.toThrow();
     });
   });

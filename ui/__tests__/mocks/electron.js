@@ -33,7 +33,7 @@ const app = {
   exit: jest.fn(),
   isPackaged: false,
   getPath: jest.fn((name) => {
-    if (name === 'userData') return '/tmp/hivemind-userdata';
+    if (name === 'userData') return '/tmp/squidrun-userdata';
     return '/tmp';
   }),
 };

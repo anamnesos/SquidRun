@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; connect-src 'self' ws://127.0.0.1:*; font-src 'self'">
-  <title>Hivemind</title>
+  <title>SquidRun</title>
   <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
   <link rel="stylesheet" href="styles/base.css">
   <link rel="stylesheet" href="styles/layout.css">
@@ -16,7 +16,7 @@
 <body>
   <div class="startup-loading-overlay" id="startupLoadingOverlay" aria-live="polite">
     <div class="startup-loading-content">
-      <img class="startup-loading-logo" src="assets/hivemind-icon-rounded.png" alt="Hivemind logo">
+      <img class="startup-loading-logo" src="assets/hivemind-icon-rounded.png" alt="SquidRun logo">
       <div class="startup-loading-spinner" aria-hidden="true"></div>
     </div>
   </div>
@@ -25,7 +25,7 @@
     <div class="autonomy-onboarding-card" role="dialog" aria-modal="true" aria-labelledby="autonomyOnboardingTitle">
       <h2 class="autonomy-onboarding-title" id="autonomyOnboardingTitle">Autonomy Consent</h2>
       <p class="autonomy-onboarding-copy">
-        Hivemind can optionally launch agents with permission-bypass flags. That mode reduces prompts, but agents can run
+        SquidRun can optionally launch agents with permission-bypass flags. That mode reduces prompts, but agents can run
         powerful actions without native CLI confirmation.
       </p>
       <p class="autonomy-onboarding-copy">
@@ -66,7 +66,7 @@
   </div>
 
   <div class="header">
-    <h1>Hivemind <span class="header-session-badge pending" id="headerSessionBadge" title="Current app session">Session --</span></h1>
+    <h1>SquidRun <span class="header-session-badge pending" id="headerSessionBadge" title="Current app session">Session --</span></h1>
     <span class="dry-run-indicator" id="dryRunIndicator" style="display: none;">DRY RUN</span>
     <div class="ci-status-indicator idle" id="ciStatusIndicator" style="display: none;">
       <span class="ci-status-icon" id="ciStatusIcon">-</span>
@@ -83,7 +83,7 @@
           <button class="dropdown-item btn-restart" id="fullRestartBtn" title="Shutdown cleanly (run 'npm start' to restart)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Shutdown</button>
         </div>
       </div>
-      <button class="btn settings-btn" id="settingsBtn" title="Configure Hivemind settings and permissions"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Settings</button>
+      <button class="btn settings-btn" id="settingsBtn" title="Configure SquidRun settings and permissions"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Settings</button>
       <button class="btn btn-panel" id="panelBtn" title="Toggle right panel (Screenshots, Tests, Activity, etc.)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg> Panel</button>
     </div>
   </div>
@@ -101,7 +101,7 @@
           <div class="settings-section-title">General</div>
           <p class="settings-section-description">Core runtime controls for startup and orchestration.</p>
           <div class="settings-items">
-            <div class="setting-item" title="Automatically start agents in all panes when Hivemind launches">
+            <div class="setting-item" title="Automatically start agents in all panes when SquidRun launches">
               <div class="setting-copy">
                 <span class="setting-label">Auto-spawn agents on start</span>
                 <span class="setting-description">Launch all panes after session initialization is complete.</span>
@@ -115,7 +115,7 @@
               </div>
               <div class="toggle" id="toggleAutoSync" data-setting="autoSync" role="switch" aria-label="Auto-sync context on state change"></div>
             </div>
-            <div class="setting-item" title="Open Chrome DevTools when Hivemind starts (for debugging)">
+            <div class="setting-item" title="Open Chrome DevTools when SquidRun starts (for debugging)">
               <div class="setting-copy">
                 <span class="setting-label">Open DevTools on start</span>
                 <span class="setting-description">Useful when debugging renderer/main behavior locally.</span>

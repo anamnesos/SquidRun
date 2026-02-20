@@ -1,5 +1,5 @@
 /**
- * Hivemind Renderer - Main entry point
+ * SquidRun Renderer - Main entry point
  * Orchestrates terminal, tabs, settings, and daemon handler modules
  */
 
@@ -90,11 +90,11 @@ const APP_STATUS_FALLBACK_PATHS = Object.freeze([
   (() => {
     const os = require('os');
     const root = os.platform() === 'win32'
-      ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'hivemind')
-      : path.join(os.homedir(), '.config', 'hivemind');
+      ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'squidrun')
+      : path.join(os.homedir(), '.config', 'squidrun');
     return path.join(root, 'app-status.json');
   })(),
-  path.resolve(__dirname, '..', '.hivemind', 'app-status.json'),
+  path.resolve(__dirname, '..', '.squidrun', 'app-status.json'),
   path.resolve(__dirname, '..', 'workspace', 'app-status.json'),
 ]);
 let mainPaneId = '1';
@@ -364,9 +364,9 @@ function dismissStartupLoadingOverlay() {
   }, STARTUP_OVERLAY_FADE_MS + 40);
 }
 
-// Create hivemind API (merges with preload bridge to preserve workflow/graph/memory APIs)
-window.hivemind = window.hivemind || {};
-Object.assign(window.hivemind, {
+// Create SquidRun API (merges with preload bridge to preserve workflow/graph/memory APIs)
+window.squidrun = window.squidrun || {};
+Object.assign(window.squidrun, {
   pty: {
     create: (paneId, workingDir) => ipcRenderer.invoke('pty-create', paneId, workingDir),
     write: (paneId, data, kernelMeta = null) => ipcRenderer.invoke('pty-write', paneId, data, kernelMeta),
@@ -481,6 +481,7 @@ Object.assign(window.hivemind, {
     isDebugMode: () => settings.getSettings()?.debugMode || false,
   },
 });
+window.hivemind = window.squidrun; // Legacy alias
 
 function updateConnectionStatus(status) {
   const statusEl = document.getElementById('connectionStatus');
@@ -664,7 +665,7 @@ function setupEventListeners() {
 
         try {
           const arrayBuf = await audioBlob.arrayBuffer();
-          const result = await window.hivemind.voice.transcribe(Buffer.from(arrayBuf));
+          const result = await window.squidrun.voice.transcribe(Buffer.from(arrayBuf));
           if (result.success && result.text) {
             const trimmed = result.text.trim();
             // Filter known Whisper silence hallucinations
@@ -929,7 +930,7 @@ function setupEventListeners() {
     });
   }
 
-  window.addEventListener('hivemind-settings-updated', (event) => {
+  window.addEventListener('squidrun-settings-updated', (event) => {
     refreshVoiceSettings(event.detail);
     if (typeof terminal.refreshMirrorModeBindings === 'function') {
       terminal.refreshMirrorModeBindings();
@@ -1218,7 +1219,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Show desktop notification
     if (Notification.permission === 'granted') {
-      new Notification('Hivemind Alert', {
+      new Notification('SquidRun Alert', {
         body: 'Agents stuck - auto-nudged with ESC+Enter',
         icon: 'assets/icon.png',
         requireInteraction: true
@@ -1226,7 +1227,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (Notification.permission !== 'denied') {
       Notification.requestPermission().then(perm => {
         if (perm === 'granted') {
-          new Notification('Hivemind Alert', {
+          new Notification('SquidRun Alert', {
             body: 'Agents stuck - auto-nudged with ESC+Enter',
             requireInteraction: true
           });
@@ -1289,9 +1290,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!paneId) return;
     const hiddenPaneHostMode = process.env.HIVEMIND_HIDDEN_PANE_HOSTS === '1'
       || settings.getSettings()?.hiddenPaneHostsEnabled === true;
-    if (hiddenPaneHostMode && window.hivemind?.paneHost?.inject) {
+    if (hiddenPaneHostMode && window.squidrun?.paneHost?.inject) {
       try {
-        await window.hivemind.paneHost.inject(paneId, { message: '' });
+        await window.squidrun.paneHost.inject(paneId, { message: '' });
         return;
       } catch (err) {
         log.warn('PaneControl', `pane-host Enter fallback for pane ${paneId}: ${err.message}`);
@@ -1305,7 +1306,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       if (capabilities?.enterMethod === 'pty') {
         terminal.lastTypedTime[paneId] = Date.now();
-        await window.hivemind.pty.write(paneId, '\r');
+        await window.squidrun.pty.write(paneId, '\r');
         return;
       }
 
@@ -1313,7 +1314,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (typeof terminal.sendEnterToPane === 'function') {
         await terminal.sendEnterToPane(paneId);
       } else {
-        await window.hivemind.pty.sendTrustedEnter();
+        await window.squidrun.pty.sendTrustedEnter();
       }
     } catch (err) {
       log.error('PaneControl', `pane-enter failed for pane ${paneId}: ${err.message}`);

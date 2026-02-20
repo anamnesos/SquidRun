@@ -46,7 +46,7 @@ function createPaneHostWindowManager(options = {}) {
         backgroundThrottling: false,
         preload: getPreloadPath(),
       },
-      title: `Hivemind Pane Host ${id}`,
+      title: `SquidRun Pane Host ${id}`,
     });
 
     paneWindows.set(id, win);

@@ -182,7 +182,7 @@ describe('Terminal Events', () => {
     };
 
     global.window = {
-      hivemind: {
+      squidrun: {
         pty: {
           create: jest.fn().mockResolvedValue(undefined),
           write: jest.fn().mockResolvedValue(undefined),
@@ -305,7 +305,7 @@ describe('Terminal Events', () => {
       const startupCall = mockInjectionController.sendToPane.mock.calls.find((args) => (
         args[0] === '1'
         && typeof args[1] === 'string'
-        && args[1].includes('# HIVEMIND SESSION: Architect - Started')
+        && args[1].includes('# SQUIDRUN SESSION: Architect - Started')
       ));
       expect(startupCall).toBeDefined();
       expect(startupCall[2]).toEqual(expect.objectContaining({

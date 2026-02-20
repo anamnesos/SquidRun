@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Hivemind MCP Server
+ * SquidRun MCP Server
  * V11: Model Context Protocol integration for agent-to-agent communication
  *
  * Usage: node mcp-server.js --agent <architect|builder|oracle>
@@ -110,7 +110,7 @@ const { agentName, paneId } = parseArgs();
 
 const server = new Server(
   {
-    name: 'hivemind',
+    name: 'squidrun',
     version: '1.0.0',
   },
   {
@@ -128,7 +128,7 @@ const TOOLS = [
   // MC2: Messaging Tools
   {
     name: 'send_message',
-    description: 'Send a message to another Hivemind agent. Messages are delivered to their message queue.',
+    description: 'Send a message to another SquidRun agent. Messages are delivered to their message queue.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -163,7 +163,7 @@ const TOOLS = [
   // MC3: Workflow Tools
   {
     name: 'get_workflow_state',
-    description: 'Get the current Hivemind workflow state including active agents and claims.',
+    description: 'Get the current SquidRun workflow state including active agents and claims.',
     inputSchema: {
       type: 'object',
       properties: {},

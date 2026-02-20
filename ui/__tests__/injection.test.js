@@ -56,7 +56,7 @@ describe('Terminal Injection', () => {
     lastTypedTime = {};
     messageQueue = {};
 
-    // Mock window.hivemind.pty
+    // Mock window.squidrun.pty
     mockPty = {
       sendTrustedEnter: jest.fn().mockResolvedValue(undefined),
       write: jest.fn().mockResolvedValue(undefined),
@@ -64,7 +64,7 @@ describe('Terminal Injection', () => {
       codexExec: jest.fn().mockResolvedValue(undefined),
     };
     global.window = {
-      hivemind: { pty: mockPty },
+      squidrun: { pty: mockPty },
     };
 
     // Mock DOM elements
@@ -198,7 +198,7 @@ describe('Terminal Injection', () => {
 
   describe('sendEnterToPane', () => {
     test('sets bypass flag and dispatches Enter via DOM events', async () => {
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('1', mockTerminal);
 
       const result = await controller.sendEnterToPane('1');
@@ -206,11 +206,11 @@ describe('Terminal Injection', () => {
       expect(result.success).toBe(true);
       expect(result.method).toBe('domFallback');
       expect(mockTextarea.dispatchEvent).toHaveBeenCalledTimes(3);
-      expect(mockTerminal._hivemindBypass).toBe(true);
+      expect(mockTerminal._squidrunBypass).toBe(true);
     });
 
     test('clears bypass flag after Enter', async () => {
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('1', mockTerminal);
 
       await controller.sendEnterToPane('1');
@@ -218,7 +218,7 @@ describe('Terminal Injection', () => {
       // Advance past bypass clear delay
       jest.advanceTimersByTime(DEFAULT_CONSTANTS.BYPASS_CLEAR_DELAY_MS + 5);
 
-      expect(mockTerminal._hivemindBypass).toBe(false);
+      expect(mockTerminal._squidrunBypass).toBe(false);
     });
 
     test('returns failure when DOM textarea is unavailable', async () => {
@@ -231,7 +231,7 @@ describe('Terminal Injection', () => {
     });
 
     test('dispatches DOM events with bypass marker on each event', async () => {
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('1', mockTerminal);
 
       mockTextarea.dispatchEvent = jest.fn();
@@ -242,7 +242,7 @@ describe('Terminal Injection', () => {
       expect(mockTextarea.dispatchEvent).toHaveBeenCalledTimes(3);
       const dispatchedEvents = mockTextarea.dispatchEvent.mock.calls.map(call => call[0]);
       dispatchedEvents.forEach((evt) => {
-        expect(evt._hivemindBypass).toBe(true);
+        expect(evt._squidrunBypass).toBe(true);
       });
     });
 
@@ -422,12 +422,12 @@ describe('Terminal Injection', () => {
       mockOptions.getInjectionInFlight.mockReturnValue(true);
       mockOptions.isCodexPane.mockReturnValue(true);
 
-      controller.sendToPane('1', '# HIVEMIND SESSION: Builder - Started 2026-02-17', {
+      controller.sendToPane('1', '# SQUIDRUN SESSION: Builder - Started 2026-02-17', {
         startupInjection: true,
       });
 
       expect(mockOptions.buildCodexExecPrompt).not.toHaveBeenCalled();
-      expect(messageQueue['1'][0].message).toBe('# HIVEMIND SESSION: Builder - Started 2026-02-17');
+      expect(messageQueue['1'][0].message).toBe('# SQUIDRUN SESSION: Builder - Started 2026-02-17');
     });
 
     test('includes onComplete callback in queue', () => {
@@ -902,7 +902,7 @@ describe('Terminal Injection', () => {
 
     test('hm-send long payloads use chunked PTY write and Enter waits for chunk completion', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
-      terminals.set('1', { _hivemindBypass: false });
+      terminals.set('1', { _squidrunBypass: false });
 
       let resolveChunkWrite;
       mockPty.writeChunked.mockImplementationOnce(() => new Promise((resolve) => {
@@ -943,7 +943,7 @@ describe('Terminal Injection', () => {
 
     test('preserves multiline content for long Codex injections', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
-      terminals.set('1', { _hivemindBypass: false });
+      terminals.set('1', { _squidrunBypass: false });
       const onComplete = jest.fn();
       const codexLongMessage = `${'C'.repeat(1030)}\nnext-line\r`;
 
@@ -970,7 +970,7 @@ describe('Terminal Injection', () => {
 
     test('handles Codex pane with PTY Enter', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('1', mockTerminal);
 
       const onComplete = jest.fn();
@@ -1010,7 +1010,7 @@ describe('Terminal Injection', () => {
 
     test('handles Codex PTY write failure', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
-      terminals.set('1', { _hivemindBypass: false });
+      terminals.set('1', { _squidrunBypass: false });
       mockPty.write.mockRejectedValueOnce(new Error('Write failed'));
       const onComplete = jest.fn();
 
@@ -1021,7 +1021,7 @@ describe('Terminal Injection', () => {
 
     test('handles Codex PTY Enter failure', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
-      terminals.set('1', { _hivemindBypass: false });
+      terminals.set('1', { _squidrunBypass: false });
       // First write succeeds (text), second write fails (Enter \r)
       mockPty.write.mockResolvedValueOnce(undefined);
       mockPty.write.mockRejectedValueOnce(new Error('Enter failed'));
@@ -1330,7 +1330,7 @@ describe('Terminal Injection', () => {
       let promptText = 'codex> ';
       let enterCalls = 0;
       terminals.set('1', {
-        _hivemindBypass: false,
+        _squidrunBypass: false,
         buffer: {
           active: {
             cursorY: 0,
@@ -1367,7 +1367,7 @@ describe('Terminal Injection', () => {
     test('treats output-only submit verification as accepted but unverified', async () => {
       let enterCalls = 0;
       terminals.set('1', {
-        _hivemindBypass: false,
+        _squidrunBypass: false,
         buffer: {
           active: {
             cursorY: 0,
@@ -1409,7 +1409,7 @@ describe('Terminal Injection', () => {
     test('allows per-message verification override for safe startup injections', async () => {
       let enterCalls = 0;
       terminals.set('1', {
-        _hivemindBypass: false,
+        _squidrunBypass: false,
         buffer: {
           active: {
             cursorY: 0,
@@ -1430,7 +1430,7 @@ describe('Terminal Injection', () => {
       });
       const onComplete = jest.fn();
 
-      controller.sendToPane('1', '# HIVEMIND SESSION: Architect - Started 2026-02-13', {
+      controller.sendToPane('1', '# SQUIDRUN SESSION: Architect - Started 2026-02-13', {
         verifySubmitAccepted: false,
         onComplete,
       });
@@ -1444,7 +1444,7 @@ describe('Terminal Injection', () => {
     test('accepts output transition for lightweight startup verification mode', async () => {
       let enterCalls = 0;
       terminals.set('1', {
-        _hivemindBypass: false,
+        _squidrunBypass: false,
         buffer: {
           active: {
             cursorY: 0,
@@ -1465,7 +1465,7 @@ describe('Terminal Injection', () => {
       });
       const onComplete = jest.fn();
 
-      controller.sendToPane('1', '# HIVEMIND SESSION: Architect - Started 2026-02-14', {
+      controller.sendToPane('1', '# SQUIDRUN SESSION: Architect - Started 2026-02-14', {
         verifySubmitAccepted: true,
         startupInjection: true,
         acceptOutputTransitionOnly: true,
@@ -1486,7 +1486,7 @@ describe('Terminal Injection', () => {
       let promptText = 'codex> ';
       let enterCalls = 0;
       terminals.set('1', {
-        _hivemindBypass: false,
+        _squidrunBypass: false,
         buffer: {
           active: {
             cursorY: 0,
@@ -1548,7 +1548,7 @@ describe('Terminal Injection', () => {
     test('returns accepted.unverified when acceptance signal is never observed after retry', async () => {
       let enterCalls = 0;
       terminals.set('1', {
-        _hivemindBypass: false,
+        _squidrunBypass: false,
         buffer: {
           active: {
             cursorY: 0,

@@ -12,7 +12,7 @@ const WebSocket = require('ws');
 function uniqueQueuePath() {
   return path.join(
     os.tmpdir(),
-    `hivemind-comms-outbound-queue-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`
+    `squidrun-comms-outbound-queue-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.json`
   );
 }
 

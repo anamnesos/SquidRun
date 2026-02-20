@@ -164,8 +164,8 @@ function isPaneReadOnlyMirrorMode(paneId) {
 
 function maybeResumePtyProducer(paneId, watermark) {
   if (watermark < LOW_WATERMARK && terminalPaused.get(paneId)) {
-    if (window.hivemind?.pty?.resume) {
-      window.hivemind.pty.resume(paneId);
+    if (window.squidrun?.pty?.resume) {
+      window.squidrun.pty.resume(paneId);
       terminalPaused.set(paneId, false);
       log.info(`Terminal ${paneId}`, `Low watermark reached (${watermark} bytes) - PTY resumed`);
     }
@@ -244,8 +244,8 @@ function queueTerminalWrite(paneId, terminal, data) {
 
   // If watermark exceeds high threshold, pause the PTY producer
   if (currentWatermark > HIGH_WATERMARK && !terminalPaused.get(paneId)) {
-    if (window.hivemind?.pty?.pause) {
-      window.hivemind.pty.pause(paneId);
+    if (window.squidrun?.pty?.pause) {
+      window.squidrun.pty.pause(paneId);
       terminalPaused.set(paneId, true);
       log.info(`Terminal ${paneId}`, `High watermark reached (${currentWatermark} bytes) - PTY paused`);
     }
@@ -734,7 +734,7 @@ function buildCodexExecPrompt(paneId, text) {
   const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
   const d = new Date();
   const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const identity = `# HIVEMIND SESSION: ${role} - Started ${timestamp}\n`;
+  const identity = `# SQUIDRUN SESSION: ${role} - Started ${timestamp}\n`;
   codexIdentityInjected.add(paneId);
   return identity + safeText;
 }
@@ -777,7 +777,7 @@ function attachTerminalInputBridge(paneId) {
   }
 
   const disposable = terminal.onData((data) => {
-    window.hivemind.pty.write(id, data).catch(err => {
+    window.squidrun.pty.write(id, data).catch(err => {
       log.error(`Terminal ${id}`, 'PTY write failed:', err);
     });
   });
@@ -835,8 +835,8 @@ function detachPtyDataListener(paneId) {
   // Nuclear cleanup: remove ALL listeners on this channel to prevent stacking.
   // If dispose() silently failed (reference mismatch, preload/renderer swap),
   // stale listeners would cause every byte of PTY data to render twice.
-  if (typeof window.hivemind?.pty?.removeAllDataListeners === 'function') {
-    window.hivemind.pty.removeAllDataListeners(id);
+  if (typeof window.squidrun?.pty?.removeAllDataListeners === 'function') {
+    window.squidrun.pty.removeAllDataListeners(id);
   }
 }
 
@@ -852,8 +852,8 @@ function detachPtyExitListener(paneId) {
   }
   ptyExitListenerDisposers.delete(id);
   // Nuclear cleanup: same pattern as detachPtyDataListener
-  if (typeof window.hivemind?.pty?.removeAllExitListeners === 'function') {
-    window.hivemind.pty.removeAllExitListeners(id);
+  if (typeof window.squidrun?.pty?.removeAllExitListeners === 'function') {
+    window.squidrun.pty.removeAllExitListeners(id);
   }
 }
 
@@ -950,9 +950,9 @@ function stripAnsiForStartup(input) {
 function hasStartupSessionHeader(scrollback, paneId) {
   const role = paneId ? (PANE_ROLES[String(paneId)] || '') : '';
   if (role) {
-    return new RegExp(`#\\s*HIVEMIND SESSION:\\s*${role}\\b`, 'i').test(String(scrollback || ''));
+    return new RegExp(`#\\s*SQUIDRUN SESSION:\\s*${role}\\b`, 'i').test(String(scrollback || ''));
   }
-  return /#\s*HIVEMIND SESSION:/i.test(String(scrollback || ''));
+  return /#\s*SQUIDRUN SESSION:/i.test(String(scrollback || ''));
 }
 
 function getStartupScrollbackSnapshot(paneId, maxLines = 400) {
@@ -1072,7 +1072,7 @@ async function runStartupIdentityAttempt(paneId, state, reason) {
   const role = PANE_ROLES[id] || `Pane ${id}`;
   const d = new Date();
   const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const identityMsg = state.identityMsg || `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
+  const identityMsg = state.identityMsg || `# SQUIDRUN SESSION: ${role} - Started ${timestamp}`;
   state.identityMsg = identityMsg;
   state.attemptCount = (Number(state.attemptCount) || 0) + 1;
   const attempt = state.attemptCount;
@@ -1090,9 +1090,9 @@ async function runStartupIdentityAttempt(paneId, state, reason) {
       }
       deliveryMethod = 'send-to-pane';
     } else {
-      await window.hivemind.pty.write(id, identityMsg);
+      await window.squidrun.pty.write(id, identityMsg);
       await new Promise(resolve => setTimeout(resolve, 200));
-      await window.hivemind.pty.write(id, '\r');
+      await window.squidrun.pty.write(id, '\r');
     }
 
     // PTY write succeeded — trust the delivery. Scrollback verification is unreliable
@@ -1131,7 +1131,7 @@ function triggerStartupInjection(paneId, state, reason) {
   const role = PANE_ROLES[paneId] || `Pane ${paneId}`;
   const d = new Date();
   const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  state.identityMsg = `# HIVEMIND SESSION: ${role} - Started ${timestamp}`;
+  state.identityMsg = `# SQUIDRUN SESSION: ${role} - Started ${timestamp}`;
   state.attemptCount = 0;
 
   scheduleStartupIdentityAttempt(String(paneId), state, reason, identityDelayMs);
@@ -1267,8 +1267,8 @@ function updateIntentState(paneId, intent) {
     last_update: new Date().toISOString(),
   };
   intentStateByPane.set(id, next);
-  if (window?.hivemind?.intent?.update) {
-    Promise.resolve(window.hivemind.intent.update({
+  if (window?.squidrun?.intent?.update) {
+    Promise.resolve(window.squidrun.intent.update({
       paneId: id,
       role,
       session,
@@ -1509,8 +1509,8 @@ function doSendToPane(...args) {
 
 function sendToPane(paneId, message, options = {}) {
   const id = String(paneId);
-  if (isHiddenPaneHostPane(id) && window?.hivemind?.paneHost?.inject) {
-    Promise.resolve(window.hivemind.paneHost.inject(id, {
+  if (isHiddenPaneHostPane(id) && window?.squidrun?.paneHost?.inject) {
+    Promise.resolve(window.squidrun.paneHost.inject(id, {
       message: String(message || ''),
       traceContext: options?.traceContext || null,
       deliveryId: options?.deliveryId || null,
@@ -1592,7 +1592,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       try {
         const text = await navigator.clipboard.readText();
         if (text) {
-          await window.hivemind.pty.write(paneId, text);
+          await window.squidrun.pty.write(paneId, text);
           updatePaneStatus(paneId, 'Pasted!');
           log.info('Clipboard', `Pasted ${text.length} chars to pane ${paneId}`);
           setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
@@ -1635,7 +1635,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       try {
         const text = await navigator.clipboard.readText();
         if (text) {
-          await window.hivemind.pty.write(paneId, text);
+          await window.squidrun.pty.write(paneId, text);
           updatePaneStatus(paneId, 'Pasted!');
           setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
         }
@@ -1695,7 +1695,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 
   // Sync PTY size to fitted terminal dimensions (PTY spawns at 80x24 by default)
   try {
-    window.hivemind.pty.resize(paneId, terminal.cols, terminal.rows);
+    window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
   } catch (err) {
     log.warn(`Terminal ${paneId}`, 'Initial PTY resize failed (PTY may not exist yet):', err);
   }
@@ -1716,15 +1716,15 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       if (event.ctrlKey && event.key.toLowerCase() === 'f') {
         openTerminalSearch(paneId);
       }
-      const bypassed = isEnterKey && (event._hivemindBypass || terminal._hivemindBypass);
+      const bypassed = isEnterKey && (event._squidrunBypass || terminal._squidrunBypass);
       return Boolean(bypassed);
     }
 
-    // CRITICAL: Hivemind bypass check MUST come FIRST, before lock check
+    // CRITICAL: SquidRun bypass check MUST come FIRST, before lock check
     // This allows programmatic Enter from sendTrustedEnter to bypass input lock
     // Note: sendInputEvent may produce isTrusted=true OR isTrusted=false depending on Electron version
-    if (isEnterKey && (event._hivemindBypass || terminal._hivemindBypass)) {
-      log.info(`Terminal ${paneId}`, `Allowing programmatic Enter (hivemind bypass, key=${event.key}, isTrusted=${event.isTrusted})`);
+    if (isEnterKey && (event._squidrunBypass || terminal._squidrunBypass)) {
+      log.info(`Terminal ${paneId}`, `Allowing programmatic Enter (squidrun bypass, key=${event.key}, isTrusted=${event.isTrusted})`);
       return true;
     }
 
@@ -1778,13 +1778,13 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
   setupResizeObserver(paneId);
 
   try {
-    await window.hivemind.pty.create(paneId, process.cwd());
+    await window.squidrun.pty.create(paneId, process.cwd());
     updatePaneStatus(paneId, 'Connected');
 
     // Now that PTY exists, sync size again (initial resize may have fired before PTY was created)
     try {
       fitAddon.fit();
-      window.hivemind.pty.resize(paneId, terminal.cols, terminal.rows);
+      window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
       log.info(`Terminal ${paneId}`, `PTY size synced: ${terminal.cols}x${terminal.rows}`);
     } catch (resizeErr) {
       log.warn(`Terminal ${paneId}`, 'Post-create PTY resize failed:', resizeErr);
@@ -1793,7 +1793,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
     syncTerminalInputBridge(paneId);
 
     detachPtyListeners(paneId);
-    const disposeOnData = window.hivemind.pty.onData(paneId, (data) => {
+    const disposeOnData = window.squidrun.pty.onData(paneId, (data) => {
       // Use flow control to prevent xterm buffer overflow
       queueTerminalWrite(paneId, terminal, data);
       // Track output time for idle detection - only for meaningful activity
@@ -1811,7 +1811,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       ptyDataListenerDisposers.set(String(paneId), disposeOnData);
     }
 
-  const disposeOnExit = window.hivemind.pty.onExit(paneId, (code) => {
+  const disposeOnExit = window.squidrun.pty.onExit(paneId, (code) => {
     if (shouldIgnoreExit(paneId)) {
       log.info('Terminal', `Ignoring exit for pane ${paneId} (restart in progress)`);
       return;
@@ -1889,7 +1889,7 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
 
   // Sync PTY size to fitted terminal dimensions (PTY already exists during reattach)
   try {
-    window.hivemind.pty.resize(paneId, terminal.cols, terminal.rows);
+    window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
     log.info(`Terminal ${paneId}`, `Reattach PTY size synced: ${terminal.cols}x${terminal.rows}`);
   } catch (err) {
     log.warn(`Terminal ${paneId}`, 'Reattach PTY resize failed:', err);
@@ -1911,15 +1911,15 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
       if (event.ctrlKey && event.key.toLowerCase() === 'f') {
         openTerminalSearch(paneId);
       }
-      const bypassed = isEnterKey && (event._hivemindBypass || terminal._hivemindBypass);
+      const bypassed = isEnterKey && (event._squidrunBypass || terminal._squidrunBypass);
       return Boolean(bypassed);
     }
 
-    // CRITICAL: Hivemind bypass check MUST come FIRST, before lock check
+    // CRITICAL: SquidRun bypass check MUST come FIRST, before lock check
     // This allows programmatic Enter from sendTrustedEnter to bypass input lock
     // Note: sendInputEvent may produce isTrusted=true OR isTrusted=false depending on Electron version
-    if (isEnterKey && (event._hivemindBypass || terminal._hivemindBypass)) {
-      log.info(`Terminal ${paneId}`, `Allowing programmatic Enter (hivemind bypass, key=${event.key}, isTrusted=${event.isTrusted})`);
+    if (isEnterKey && (event._squidrunBypass || terminal._squidrunBypass)) {
+      log.info(`Terminal ${paneId}`, `Allowing programmatic Enter (squidrun bypass, key=${event.key}, isTrusted=${event.isTrusted})`);
       return true;
     }
 
@@ -1980,7 +1980,7 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
   syncTerminalInputBridge(paneId);
 
   detachPtyListeners(paneId);
-  const disposeOnData = window.hivemind.pty.onData(paneId, (data) => {
+  const disposeOnData = window.squidrun.pty.onData(paneId, (data) => {
     // Use flow control to prevent xterm buffer overflow
     queueTerminalWrite(paneId, terminal, data);
     // Track output time for idle detection - only for meaningful activity
@@ -1998,7 +1998,7 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
     ptyDataListenerDisposers.set(String(paneId), disposeOnData);
   }
 
-    const disposeOnExit = window.hivemind.pty.onExit(paneId, (code) => {
+    const disposeOnExit = window.squidrun.pty.onExit(paneId, (code) => {
       if (shouldIgnoreExit(paneId)) {
         log.info('Terminal', `Ignoring exit for pane ${paneId} (restart in progress)`);
         return;
@@ -2147,7 +2147,7 @@ async function spawnAgent(paneId, model = null) {
     syncTerminalInputBridge(paneId, { modelHint: model });
     let result;
     try {
-      result = await window.hivemind.claude.spawn(paneId);
+      result = await window.squidrun.claude.spawn(paneId);
     } catch (err) {
       log.error(`spawnAgent ${paneId}`, 'Spawn failed:', err);
       updatePaneStatus(paneId, 'Spawn failed');
@@ -2157,7 +2157,7 @@ async function spawnAgent(paneId, model = null) {
       // Use pty.write directly instead of terminal.paste for reliability
       // terminal.paste() can fail if terminal isn't fully ready
       try {
-        await window.hivemind.pty.write(String(paneId), result.command);
+        await window.squidrun.pty.write(String(paneId), result.command);
       } catch (err) {
         log.error(`spawnAgent ${paneId}`, 'PTY write command failed:', err);
       }
@@ -2166,7 +2166,7 @@ async function spawnAgent(paneId, model = null) {
       // Small delay before sending Enter
       await new Promise(resolve => setTimeout(resolve, 100));
       try {
-        await window.hivemind.pty.write(String(paneId), '\r');
+        await window.squidrun.pty.write(String(paneId), '\r');
       } catch (err) {
         log.error(`spawnAgent ${paneId}`, 'PTY write Enter failed:', err);
       }
@@ -2179,7 +2179,7 @@ async function spawnAgent(paneId, model = null) {
       const isCodexCommand = result.command.startsWith('codex');
       if (isCodexCommand) {
         setTimeout(() => {
-          window.hivemind.pty.write(String(paneId), '\r').catch(err => {
+          window.squidrun.pty.write(String(paneId), '\r').catch(err => {
             log.error(`spawnAgent ${paneId}`, 'Codex startup Enter failed:', err);
           });
           log.info('spawnAgent', `Codex pane ${paneId}: PTY \\r to dismiss any startup prompt`);
@@ -2219,7 +2219,7 @@ async function killAllTerminals() {
   updateConnectionStatus('Killing all terminals...');
   for (const paneId of PANE_IDS) {
     try {
-      await window.hivemind.pty.kill(paneId);
+      await window.squidrun.pty.kill(paneId);
     } catch (err) {
       log.error(`Terminal ${paneId}`, 'Failed to kill pane', err);
     } finally {
@@ -2250,7 +2250,7 @@ async function freshStartAll() {
   // Kill all terminals and reset identity tracking
   for (const paneId of PANE_IDS) {
     try {
-      await window.hivemind.pty.kill(paneId);
+      await window.squidrun.pty.kill(paneId);
     } catch (err) {
       log.error(`Terminal ${paneId}`, 'Failed to kill pane', err);
     } finally {
@@ -2379,7 +2379,7 @@ function resizeSinglePane(paneId) {
       payload: { cols: terminal.cols, rows: terminal.rows, prevCols, prevRows },
       source: TERMINAL_EVENT_SOURCE,
     });
-    window.hivemind.pty.resize(paneId, terminal.cols, terminal.rows);
+    window.squidrun.pty.resize(paneId, terminal.cols, terminal.rows);
     bus.emit('resize.completed', {
       paneId,
       payload: { cols: terminal.cols, rows: terminal.rows },

@@ -20,7 +20,7 @@ describe('message envelope contract', () => {
       sender: { role: 'architect' },
       target: { raw: 'builder', role: 'builder', pane_id: '2' },
       project: {
-        name: 'hivemind',
+        name: 'squidrun',
         path: PROJECT_PATH,
         session_id: 'app-session-186',
         source: 'link.json',
@@ -37,7 +37,7 @@ describe('message envelope contract', () => {
       sender: { role: 'architect' },
       target: { raw: 'builder', role: 'builder', pane_id: '2' },
       project: {
-        name: 'hivemind',
+        name: 'squidrun',
         path: PROJECT_PATH,
         session_id: 'app-session-186',
         source: 'link.json',
@@ -56,7 +56,7 @@ describe('message envelope contract', () => {
       sender: { role: 'builder' },
       target: { raw: 'architect', role: 'architect', pane_id: '1' },
       project: {
-        name: 'hivemind',
+        name: 'squidrun',
         path: PROJECT_PATH,
         session_id: 'app-session-247',
         source: 'state.json',

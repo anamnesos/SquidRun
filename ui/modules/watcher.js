@@ -14,6 +14,7 @@ const {
   PANE_ROLES,
   resolveCoordPath,
   getCoordRoots,
+  getSquidrunRoot,
   getHivemindRoot,
 } = require('../config');
 const log = require('./logger');
@@ -160,13 +161,13 @@ const ACTIVE_AGENTS = {
 
 // Context messages for agents when state changes
 const CONTEXT_MESSAGES = {
-  [States.PLAN_REVIEW]: '[HIVEMIND] Plan submitted. Please review workspace/plan.md and write either plan-approved.md or plan-feedback.md',
-  [States.PLAN_REVISION]: '[HIVEMIND] Revision requested. Please read workspace/plan-feedback.md and update plan.md accordingly.',
-  [States.EXECUTING]: '[HIVEMIND] Plan approved. Begin implementation. Write to checkpoint.md when you reach a checkpoint.',
-  [States.CHECKPOINT_REVIEW]: '[HIVEMIND] Checkpoint reached. Please review the work and write checkpoint-approved.md or checkpoint-issues.md',
-  [States.CHECKPOINT_FIX]: '[HIVEMIND] Issues found at checkpoint. Please read checkpoint-issues.md and address the problems.',
-  [States.FRICTION_RESOLUTION]: '[HIVEMIND] Friction logged. Please read workspace/friction/ and propose fixes in friction-resolution.md',
-  [States.COMPLETE]: '[HIVEMIND] Task complete! All work has been reviewed and approved.',
+  [States.PLAN_REVIEW]: '[SQUIDRUN] Plan submitted. Please review workspace/plan.md and write either plan-approved.md or plan-feedback.md',
+  [States.PLAN_REVISION]: '[SQUIDRUN] Revision requested. Please read workspace/plan-feedback.md and update plan.md accordingly.',
+  [States.EXECUTING]: '[SQUIDRUN] Plan approved. Begin implementation. Write to checkpoint.md when you reach a checkpoint.',
+  [States.CHECKPOINT_REVIEW]: '[SQUIDRUN] Checkpoint reached. Please review the work and write checkpoint-approved.md or checkpoint-issues.md',
+  [States.CHECKPOINT_FIX]: '[SQUIDRUN] Issues found at checkpoint. Please read checkpoint-issues.md and address the problems.',
+  [States.FRICTION_RESOLUTION]: '[SQUIDRUN] Friction logged. Please read workspace/friction/ and propose fixes in friction-resolution.md',
+  [States.COMPLETE]: '[SQUIDRUN] Task complete! All work has been reviewed and approved.',
 };
 
 // ============================================================
@@ -360,11 +361,15 @@ function writeState(state) {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    // Ensure hivemind_root is always present so agents in external projects
-    // can locate hivemind scripts (hm-send.js etc.) regardless of their cwd.
-    if (!state.hivemind_root && typeof getHivemindRoot === 'function') {
+    // Ensure squidrun_root is always present so agents in external projects
+    // can locate SquidRun scripts (hm-send.js etc.) regardless of their cwd.
+    if (!state.squidrun_root && !state.hivemind_root && (typeof getSquidrunRoot === 'function' || typeof getHivemindRoot === 'function')) {
       try {
-        state.hivemind_root = getHivemindRoot();
+        const root = typeof getSquidrunRoot === 'function'
+          ? getSquidrunRoot()
+          : getHivemindRoot();
+        state.squidrun_root = root;
+        state.hivemind_root = root; // Legacy field for compatibility.
       } catch (_) {
         // Tolerate missing config in test environments.
       }
@@ -622,7 +627,7 @@ function stopWatcherWorker(watcherName, workerRefName, { reason = 'stop', clearR
       : messageWatcher;
   if (!worker) return false;
 
-  worker.__hivemindIntentionalStop = true;
+  worker.__squidrunIntentionalStop = true;
   try {
     worker.kill();
   } catch (err) {
@@ -662,7 +667,7 @@ function startWatcherWorker(watcherName, onEvent, restartFn) {
   });
 
   worker.on('exit', (code, signal) => {
-    const intentional = worker.__hivemindIntentionalStop === true;
+    const intentional = worker.__squidrunIntentionalStop === true;
     if (watcherName === 'workspace' && workspaceWatcher === worker) workspaceWatcher = null;
     if (watcherName === 'trigger' && triggerWatcher === worker) triggerWatcher = null;
     if (watcherName === 'message' && messageWatcher === worker) messageWatcher = null;

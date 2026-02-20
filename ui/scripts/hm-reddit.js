@@ -23,7 +23,7 @@ const {
 } = require('../modules/main/comms-journal');
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
-const USER_AGENT = 'hivemind-reddit-cli/1.0.0';
+const USER_AGENT = 'squidrun-reddit-cli/1.0.0';
 
 function buildJournalMessageId(prefix = 'reddit') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

@@ -176,7 +176,7 @@ function unregisterEvidenceLedgerHandlers(ctx) {
   for (const channel of EVIDENCE_LEDGER_CHANNEL_ACTIONS.keys()) {
     ipcMain.removeHandler(channel);
   }
-  const isReregister = asObject(deps).__hivemindHandlerReregister === true;
+  const isReregister = asObject(deps).__squidrunHandlerReregister === true;
   if (!isReregister) {
     closeSharedRuntime();
   }

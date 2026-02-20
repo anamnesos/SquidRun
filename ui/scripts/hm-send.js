@@ -11,6 +11,7 @@ const {
   WORKSPACE_PATH,
   LEGACY_ROLE_ALIASES,
   ROLE_ID_MAP,
+  getSquidrunRoot,
   getHivemindRoot,
   setProjectRoot,
   resolveCoordPath,
@@ -164,7 +165,7 @@ function readJsonFileSafe(filePath) {
 function findNearestProjectLinkFile(startDir = process.cwd()) {
   let currentDir = path.resolve(startDir);
   while (true) {
-    const candidate = path.join(currentDir, '.hivemind', 'link.json');
+    const candidate = path.join(currentDir, '.squidrun', 'link.json');
     if (fs.existsSync(candidate)) {
       return candidate;
     }
@@ -193,9 +194,12 @@ function resolveProjectContextFromLink(startDir = process.cwd()) {
   const sessionId = typeof payload.session_id === 'string'
     ? payload.session_id.trim()
     : (typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '');
-  const hivemindRoot = typeof payload.hivemind_root === 'string'
-    ? payload.hivemind_root.trim()
-    : (typeof payload.hivemindRoot === 'string' ? payload.hivemindRoot.trim() : '');
+  const squidrunRoot = (
+    (typeof payload.squidrun_root === 'string' ? payload.squidrun_root.trim() : '')
+    || (typeof payload.squidrunRoot === 'string' ? payload.squidrunRoot.trim() : '')
+    || (typeof payload.hivemind_root === 'string' ? payload.hivemind_root.trim() : '')
+    || (typeof payload.hivemindRoot === 'string' ? payload.hivemindRoot.trim() : '')
+  );
 
   if (!projectPath) return null;
 
@@ -205,7 +209,7 @@ function resolveProjectContextFromLink(startDir = process.cwd()) {
     projectPath,
     projectName: path.basename(projectPath),
     sessionId: sessionId || null,
-    hivemindRoot: hivemindRoot ? path.resolve(hivemindRoot) : null,
+    squidrunRoot: squidrunRoot ? path.resolve(squidrunRoot) : null,
   };
 }
 
@@ -287,14 +291,16 @@ function resolveCurrentSessionId(context = localProjectContext) {
     candidates.push(resolved);
   };
 
-  if (context?.hivemindRoot) {
-    addCandidate(path.join(context.hivemindRoot, '.hivemind', 'app-status.json'));
+  if (context?.squidrunRoot) {
+    addCandidate(path.join(context.squidrunRoot, '.squidrun', 'app-status.json'));
   }
-  if (typeof getHivemindRoot === 'function') {
+  if (typeof getSquidrunRoot === 'function' || typeof getHivemindRoot === 'function') {
     try {
-      const root = getHivemindRoot();
+      const root = typeof getSquidrunRoot === 'function'
+        ? getSquidrunRoot()
+        : getHivemindRoot();
       if (root) {
-        addCandidate(path.join(root, '.hivemind', 'app-status.json'));
+        addCandidate(path.join(root, '.squidrun', 'app-status.json'));
       }
     } catch (_) {
       // best-effort lookup only

@@ -141,7 +141,7 @@ function dispatchInjectMessage(payload) {
   }
 
   if (mainWindow && !mainWindow.isDestroyed()) {
-    // Tag payload so the send-interceptor in hivemind-app.js
+    // Tag payload so the send-interceptor in squidrun-app (hivemind-app.js)
     // knows routeInjectMessage was already attempted and skips re-routing.
     mainWindow.webContents.send('inject-message', { ...payload, _routerAttempted: true });
     return true;
@@ -549,7 +549,7 @@ function notifyAllAgentsSync(triggerFile) {
   const now = Date.now();
   if (now - lastGlobalSyncTime < SYNC_COALESCE_WINDOW_MS) return [];
   lastGlobalSyncTime = now;
-  const message = `[HIVEMIND SYNC] ${triggerFile} was updated. [FYI] Context updated. Do not respond.`;
+  const message = `[SQUIDRUN SYNC] ${triggerFile} was updated. [FYI] Context updated. Do not respond.`;
 
   const runningPanes = [];
   if (agentRunning) {
@@ -645,7 +645,7 @@ function handleTriggerFile(filePath, filename) {
     if (!sequencing.messageState.sequences[recipientRole]) {
       sequencing.messageState.sequences[recipientRole] = { outbound: 0, lastSeen: {} };
     }
-    if (parsed.seq === 1 && message.includes('# HIVEMIND SESSION:')) {
+    if (parsed.seq === 1 && message.includes('# SQUIDRUN SESSION:')) {
       if (!sequencing.messageState.sequences[recipientRole].lastSeen) {
         sequencing.messageState.sequences[recipientRole].lastSeen = {};
       }

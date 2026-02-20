@@ -53,7 +53,7 @@ describe('Auto-Nudge Handlers', () => {
 
       expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('inject-message', {
         panes: ['1'],
-        message: expect.stringContaining('[HIVEMIND]'),
+        message: expect.stringContaining('[SQUIDRUN]'),
       });
       expect(result).toEqual({ success: true, pane: '1' });
     });

@@ -16,8 +16,8 @@ const { PANE_ROLES } = require('./config');
 
 // Named pipe path (Windows) or Unix socket
 const PIPE_PATH = os.platform() === 'win32'
-  ? '\\\\.\\pipe\\hivemind-terminal'
-  : '/tmp/hivemind-terminal.sock';
+  ? '\\\\.\\pipe\\squidrun-terminal'
+  : '/tmp/squidrun-terminal.sock';
 
 const DAEMON_SCRIPT = path.join(__dirname, 'terminal-daemon.js');
 const DAEMON_PID_FILE = path.join(__dirname, 'daemon.pid');

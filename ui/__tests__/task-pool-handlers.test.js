@@ -30,7 +30,7 @@ describe('task-pool handlers team-memory hooks', () => {
         send: jest.fn(),
       },
     };
-    workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-task-pool-'));
+    workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-task-pool-'));
     fs.mkdirSync(path.join(workspacePath, 'triggers'), { recursive: true });
     fs.writeFileSync(path.join(workspacePath, 'task-pool.json'), JSON.stringify({
       tasks: [

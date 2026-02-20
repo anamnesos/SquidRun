@@ -1,5 +1,5 @@
 /**
- * Hivemind Utils - General utility functions
+ * SquidRun Utils - General utility functions
  * Extracted from renderer.js for modularization
  */
 

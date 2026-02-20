@@ -28,7 +28,7 @@ function registerMcpAutoconfigHandlers(ctx) {
   function configureAgent(paneId) {
     try {
       const normalizedPaneId = String(paneId || '').trim();
-      const serverName = `hivemind-${normalizedPaneId}`;
+      const serverName = `squidrun-${normalizedPaneId}`;
       const serverCommand = `node "${MCP_SERVER_PATH}" --pane ${normalizedPaneId}`;
 
       return new Promise((resolve) => {
@@ -68,7 +68,7 @@ function registerMcpAutoconfigHandlers(ctx) {
   ipcMain.handle('mcp-remove-agent-config', async (event, paneId) => {
     try {
       const normalizedPaneId = String(paneId || '').trim();
-      const serverName = `hivemind-${normalizedPaneId}`;
+      const serverName = `squidrun-${normalizedPaneId}`;
 
       return new Promise((resolve) => {
         runClaudeCommand(['mcp', 'remove', serverName]).then((result) => {

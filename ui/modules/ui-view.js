@@ -1,6 +1,6 @@
 ﻿/**
  * UI View module
- * Handles all DOM manipulation and UI updates for the Hivemind renderer
+ * Handles all DOM manipulation and UI updates for the SquidRun renderer
  * Separated from daemon-handlers.js (Session 60, Finding #5)
  */
 

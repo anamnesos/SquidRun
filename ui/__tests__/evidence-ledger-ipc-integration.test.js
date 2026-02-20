@@ -35,7 +35,7 @@ maybeDescribe('evidence-ledger IPC integration', () => {
   let ctx;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-ledger-ipc-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-ledger-ipc-'));
     dbPath = path.join(tempDir, 'evidence-ledger-ipc.db');
 
     harness = createIpcHarness();

@@ -27,7 +27,7 @@ async function handleScreenshotDrop(files, updateStatusFn) {
     const reader = new FileReader();
     reader.onload = async (e) => {
       const base64Data = e.target.result;
-      const result = await window.hivemind.screenshot.save(base64Data, file.name);
+      const result = await window.squidrun.screenshot.save(base64Data, file.name);
       if (!result.success) {
         if (updateStatusFn) updateStatusFn(`Failed to save ${file.name}: ${result.error}`);
         return;
@@ -52,7 +52,7 @@ async function handleScreenshotDrop(files, updateStatusFn) {
       `;
 
       item.querySelector('.delete-btn').addEventListener('click', async () => {
-        const delResult = await window.hivemind.screenshot.delete(savedFilename);
+        const delResult = await window.squidrun.screenshot.delete(savedFilename);
         if (delResult.success) {
           item.remove();
           if (listEl.children.length === 0) {
@@ -83,7 +83,7 @@ async function loadScreenshots(updateStatusFn) {
   if (!listEl) return;
 
   try {
-    const result = await window.hivemind.screenshot.list();
+    const result = await window.squidrun.screenshot.list();
     if (!result.success) return;
 
     if (result.files.length === 0) {
@@ -111,7 +111,7 @@ async function loadScreenshots(updateStatusFn) {
       const savedFilename = file.name;
       const savedPath = file.path;
       item.querySelector('.delete-btn').addEventListener('click', async () => {
-        const delResult = await window.hivemind.screenshot.delete(savedFilename);
+        const delResult = await window.squidrun.screenshot.delete(savedFilename);
         if (delResult.success) {
           item.remove();
           if (listEl.children.length === 0) {

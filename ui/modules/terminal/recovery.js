@@ -186,7 +186,7 @@ function createRecoveryController(options = {}) {
       if (ipcRenderer?.invoke) {
         await ipcRenderer.invoke('interrupt-pane', id);
       } else {
-        await window.hivemind.pty.write(id, '\x03');
+        await window.squidrun.pty.write(id, '\x03');
       }
       log.info('Terminal', `Interrupt sent to pane ${id}`);
       return true;
@@ -203,7 +203,7 @@ function createRecoveryController(options = {}) {
       markIgnoreNextExit(id);
     }
     try {
-      await window.hivemind.pty.kill(id);
+      await window.squidrun.pty.kill(id);
     } catch (err) {
       log.error('Terminal', `Failed to kill pane ${id} for restart:`, err);
     }
@@ -229,7 +229,7 @@ function createRecoveryController(options = {}) {
     // All panes need PTY recreated after kill - the kill destroys the PTY entirely
     // This applies to Claude, Codex, AND Gemini panes
     try {
-      await window.hivemind.pty.create(id);
+      await window.squidrun.pty.create(id);
       log.info('Terminal', `Recreated PTY for pane ${id}`);
     } catch (err) {
       log.error('Terminal', `Failed to recreate PTY for pane ${id}:`, err);
@@ -285,7 +285,7 @@ function createRecoveryController(options = {}) {
     // Mark as typed so our own Enter isn't blocked
     lastTypedTime[paneId] = Date.now();
     // Send Enter to prompt for new input
-    window.hivemind.pty.write(String(paneId), '\r').catch(err => {
+    window.squidrun.pty.write(String(paneId), '\r').catch(err => {
       log.error(`nudgePane ${paneId}`, 'PTY write failed:', err);
     });
     setPaneStatus(paneId, 'Nudged');
@@ -312,7 +312,7 @@ function createRecoveryController(options = {}) {
         bubbles: true,
         cancelable: true,
       });
-      escEvent._hivemindBypass = true;
+      escEvent._squidrunBypass = true;
       textarea.dispatchEvent(escEvent);
 
       // Also keyup for completeness
@@ -323,7 +323,7 @@ function createRecoveryController(options = {}) {
         which: 27,
         bubbles: true,
       });
-      escUpEvent._hivemindBypass = true;
+      escUpEvent._squidrunBypass = true;
       textarea.dispatchEvent(escUpEvent);
 
       log.info(`Terminal ${id}`, 'Sent ESC keyboard event to unstick agent');
@@ -353,7 +353,7 @@ function createRecoveryController(options = {}) {
       if (textarea) {
         if ((typeof isCodexPane === 'function' && isCodexPane(id)) || (typeof isGeminiPane === 'function' && isGeminiPane(id))) {
           // Codex/Gemini: PTY newline to submit (reads stdin directly)
-          window.hivemind.pty.write(id, '\r').catch(err => {
+          window.squidrun.pty.write(id, '\r').catch(err => {
             log.error(`aggressiveNudge ${id}`, 'PTY write failed:', err);
           });
           log.info(`Terminal ${id}`, 'Aggressive nudge: PTY carriage return');
@@ -361,7 +361,7 @@ function createRecoveryController(options = {}) {
           // Claude: direct Enter keyboard dispatch with bypass flag
           const terminal = terminals.get(id);
           if (terminal) {
-            terminal._hivemindBypass = true;
+            terminal._squidrunBypass = true;
           }
           try {
             const makeEvent = (type) => {
@@ -373,7 +373,7 @@ function createRecoveryController(options = {}) {
                 bubbles: true,
                 cancelable: true,
               });
-              evt._hivemindBypass = true;
+              evt._squidrunBypass = true;
               return evt;
             };
 
@@ -385,14 +385,14 @@ function createRecoveryController(options = {}) {
             log.error(`aggressiveNudge ${id}`, 'DOM Enter dispatch failed:', err);
           } finally {
             if (terminal) {
-              setTimeout(() => { terminal._hivemindBypass = false; }, BYPASS_CLEAR_DELAY_MS);
+              setTimeout(() => { terminal._squidrunBypass = false; }, BYPASS_CLEAR_DELAY_MS);
             }
           }
         }
       } else {
         // Fallback if textarea truly missing
         log.warn(`Terminal ${id}`, 'Aggressive nudge: no textarea, PTY fallback');
-        window.hivemind.pty.write(id, '\r').catch(err => {
+        window.squidrun.pty.write(id, '\r').catch(err => {
           log.error(`aggressiveNudge ${id}`, 'PTY fallback write failed:', err);
         });
       }

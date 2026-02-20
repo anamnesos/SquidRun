@@ -1,6 +1,6 @@
 /**
  * V11 MCP Bridge Module
- * Connects MCP server tools to existing Hivemind functionality
+ * Connects MCP server tools to existing SquidRun functionality
  *
  * MC4: Message queue integration
  * MC5: Agent identification/handshake
@@ -501,7 +501,7 @@ function getMCPToolDefinitions() {
   return [
     {
       name: 'register_agent',
-      description: 'Register this agent with the Hivemind system. Call this first.',
+      description: 'Register this agent with the SquidRun system. Call this first.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -545,7 +545,7 @@ function getMCPToolDefinitions() {
     },
     {
       name: 'get_state',
-      description: 'Get current Hivemind workflow state',
+      description: 'Get current SquidRun workflow state',
       inputSchema: { type: 'object', properties: {} },
     },
     {

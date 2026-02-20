@@ -63,7 +63,7 @@ describe('Injection Events', () => {
       codexExec: jest.fn().mockResolvedValue(undefined),
     };
     global.window = {
-      hivemind: { pty: mockPty },
+      squidrun: { pty: mockPty },
     };
 
     mockTextarea = {
@@ -200,7 +200,7 @@ describe('Injection Events', () => {
   describe('processIdleQueue events', () => {
     test('emits inject.mode.selected for Claude panes', () => {
       const mockTerminal = {
-        _hivemindBypass: false,
+        _squidrunBypass: false,
         buffer: { active: {} },
       };
       terminals.set('1', mockTerminal);
@@ -214,7 +214,7 @@ describe('Injection Events', () => {
     });
 
     test('emits inject.mode.selected for Codex panes', () => {
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('codex', mockTerminal);
       messageQueue['codex'] = [{ message: 'test', timestamp: Date.now(), correlationId: 'test-corr-id' }];
 
@@ -264,7 +264,7 @@ describe('Injection Events', () => {
   // ──────────────────────────────────────────
   describe('doSendToPane Codex events', () => {
     test('emits inject.applied and inject.submit.sent for Codex with PTY Enter', async () => {
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('codex', mockTerminal);
 
       let onCompleteResult;
@@ -285,7 +285,7 @@ describe('Injection Events', () => {
     });
 
     test('emits inject.failed on Codex PTY write error', async () => {
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('codex', mockTerminal);
       mockPty.write.mockRejectedValueOnce(new Error('write failed'));
 
@@ -303,7 +303,7 @@ describe('Injection Events', () => {
     });
 
     test('emits inject.failed when Codex PTY Enter fails', async () => {
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('codex', mockTerminal);
       // First write succeeds (text), second write fails (Enter \r)
       mockPty.write.mockResolvedValueOnce(undefined);
@@ -422,7 +422,7 @@ describe('Injection Events', () => {
     });
 
     test('emits inject.applied after successful PTY write', async () => {
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('1', mockTerminal);
       global.document.activeElement = mockTextarea;
 
@@ -442,7 +442,7 @@ describe('Injection Events', () => {
     });
 
     test('emits inject.submit.requested and inject.submit.sent for Claude Enter', async () => {
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('1', mockTerminal);
       global.document.activeElement = mockTextarea;
 
@@ -462,7 +462,7 @@ describe('Injection Events', () => {
     });
 
     test('emits inject.failed on PTY write failure', async () => {
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('1', mockTerminal);
       global.document.activeElement = mockTextarea;
       // First payload write fails
@@ -483,7 +483,7 @@ describe('Injection Events', () => {
     });
 
     test('emits inject.failed on Enter send failure', async () => {
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('1', mockTerminal);
       global.document.activeElement = mockTextarea;
       mockTextarea.dispatchEvent.mockImplementation(() => {
@@ -505,7 +505,7 @@ describe('Injection Events', () => {
     test('returns accepted.unverified when submit verification exhausts retries', async () => {
       let promptText = 'ready> ';
       terminals.set('1', {
-        _hivemindBypass: false,
+        _squidrunBypass: false,
         buffer: {
           active: {
             cursorY: 0,
@@ -544,7 +544,7 @@ describe('Injection Events', () => {
   // ──────────────────────────────────────────
   describe('timeout events', () => {
     test('emits inject.timeout when safety timer fires', () => {
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('1', mockTerminal);
       global.document.activeElement = mockTextarea;
       // Make PTY write hang forever
@@ -566,7 +566,7 @@ describe('Injection Events', () => {
   // ──────────────────────────────────────────
   describe('state vector updates', () => {
     test('updates state to idle after Codex injection completes', async () => {
-      const mockTerminal = { _hivemindBypass: false };
+      const mockTerminal = { _squidrunBypass: false };
       terminals.set('codex', mockTerminal);
 
       let completeCalled = false;

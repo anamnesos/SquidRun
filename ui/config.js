@@ -1,5 +1,5 @@
 /**
- * Shared configuration for Hivemind
+ * Shared configuration for SquidRun
  * Used by main.js, terminal-daemon.js, and tests
  */
 
@@ -20,8 +20,8 @@ function envFlagEnabled(name, defaultValue = true) {
 
 // Named pipe path (Windows) or Unix socket
 const PIPE_PATH = os.platform() === 'win32'
-  ? '\\\\.\\pipe\\hivemind-terminal'
-  : '/tmp/hivemind-terminal.sock';
+  ? '\\\\.\\pipe\\squidrun-terminal'
+  : '/tmp/squidrun-terminal.sock';
 
 // Workspace paths
 const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
@@ -45,15 +45,15 @@ function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
 
 const DEFAULT_PROJECT_ROOT = discoverProjectRoot();
 const GLOBAL_STATE_ROOT = os.platform() === 'win32'
-  ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'hivemind')
-  : path.join(os.homedir(), '.config', 'hivemind');
+  ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'squidrun')
+  : path.join(os.homedir(), '.config', 'squidrun');
 const legacyCoordFallbackWarnings = new Set();
 let activeProjectRoot = DEFAULT_PROJECT_ROOT;
 
 // Legacy instance working directories (kept for compatibility during migration)
 // Active pane cwd resolution now uses project root via resolvePaneCwd().
 const INSTANCE_DIRS = {
-  '1': path.join(WORKSPACE_PATH, 'instances', 'arch'),    // Architect (Director bundle)
+  '1': path.join(WORKSPACE_PATH, 'instances', 'arch'),    // Architect bundle
   '2': path.join(WORKSPACE_PATH, 'instances', 'devops'),  // Builder (legacy dir name kept)
   '3': path.join(WORKSPACE_PATH, 'instances', 'ana'),     // Oracle (legacy dir name kept)
 };
@@ -67,7 +67,7 @@ const PANE_ROLES = {
 
 const PANE_ROLE_BUNDLES = {
   '1': {
-    heading: 'Director',
+    heading: PANE_ROLES['1'],
     members: [
       PANE_ROLES['1'],
       'Data Engineer',
@@ -206,8 +206,13 @@ function getProjectRoot() {
   return activeProjectRoot;
 }
 
-function getHivemindRoot() {
+function getSquidrunRoot() {
   return DEFAULT_PROJECT_ROOT;
+}
+
+// Legacy alias for compatibility with older modules/scripts.
+function getHivemindRoot() {
+  return getSquidrunRoot();
 }
 
 function setProjectRoot(projectRoot) {
@@ -220,7 +225,7 @@ function resetProjectRoot() {
 }
 
 function getCoordRoot() {
-  return path.join(getProjectRoot(), '.hivemind');
+  return path.join(getProjectRoot(), '.squidrun');
 }
 
 function resolvePaneCwd(paneId, options = {}) {
@@ -315,7 +320,7 @@ function resolveCoordPath(relPath, options = {}) {
         if (!legacyCoordFallbackWarnings.has(warningKey)) {
           legacyCoordFallbackWarnings.add(warningKey);
           console.warn(
-            `[Hivemind][CoordPath] Legacy workspace fallback blocked for "${normalizedRelPath}". Runtime paths must resolve from coord root only.`
+            `[SquidRun][CoordPath] Legacy workspace fallback blocked for "${normalizedRelPath}". Runtime paths must resolve from coord root only.`
           );
         }
         continue;
@@ -329,7 +334,7 @@ function resolveCoordPath(relPath, options = {}) {
         ) {
           legacyCoordFallbackWarnings.add(normalizedRelPath);
           console.warn(
-            `[Hivemind][CoordPath] Legacy workspace fallback hit for "${normalizedRelPath}" -> "${candidate}".`
+            `[SquidRun][CoordPath] Legacy workspace fallback hit for "${normalizedRelPath}" -> "${candidate}".`
           );
         }
         return candidate;
@@ -438,6 +443,7 @@ module.exports = {
   PROTOCOL_ACTIONS,
   PROTOCOL_EVENTS,
   getProjectRoot,
+  getSquidrunRoot,
   getHivemindRoot,
   setProjectRoot,
   resetProjectRoot,

@@ -398,7 +398,7 @@ describe('triggers.js module', () => {
 
     test('should handle session reset banner', () => {
       // Reset logic requires banner IN the message content
-      fs.readFileSync.mockReturnValue('(ORACLE #1): # HIVEMIND SESSION: Reset');
+      fs.readFileSync.mockReturnValue('(ORACLE #1): # SQUIDRUN SESSION: Reset');
       
       // Mock state to have seen #5
       triggers.recordMessageSeen('oracle', 5, 'architect');

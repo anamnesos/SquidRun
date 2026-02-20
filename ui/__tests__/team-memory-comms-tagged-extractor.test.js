@@ -34,7 +34,7 @@ maybeDescribe('team-memory comms tagged extractor', () => {
   let memoryStore;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-tagged-extract-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-tagged-extract-'));
     evidenceStore = new EvidenceLedgerStore({
       dbPath: path.join(tempDir, 'evidence-ledger.db'),
       enabled: true,

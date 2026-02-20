@@ -6,7 +6,7 @@ const { setProjectRoot, resetProjectRoot } = require('../config');
 const experimentRuntime = require('../modules/experiment/runtime');
 
 function runtimeCoordRoot(projectRoot) {
-  return path.join(path.resolve(projectRoot), '.hivemind', 'runtime');
+  return path.join(path.resolve(projectRoot), '.squidrun', 'runtime');
 }
 
 describe('experiment runtime default path resolution', () => {
@@ -14,8 +14,8 @@ describe('experiment runtime default path resolution', () => {
   let projectB;
 
   beforeEach(() => {
-    projectA = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-exp-path-a-'));
-    projectB = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-exp-path-b-'));
+    projectA = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-exp-path-a-'));
+    projectB = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-exp-path-b-'));
   });
 
   afterEach(() => {

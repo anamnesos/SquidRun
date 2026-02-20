@@ -103,7 +103,7 @@ function requestTelegram(path, body) {
 
 function requestTelegramMultipart(apiPath, fields, fileField) {
   return new Promise((resolve, reject) => {
-    const boundary = '----HivemindBoundary' + Date.now();
+    const boundary = '----SquidRunBoundary' + Date.now();
     const parts = [];
 
     for (const [key, value] of Object.entries(fields)) {

@@ -33,7 +33,7 @@ function asPaneProjectPath(paneProjects, paneId) {
 }
 
 const mockDefaultConfig = {
-  PIPE_PATH: '\\\\.\\pipe\\hivemind-terminal-test',
+  PIPE_PATH: '\\\\.\\pipe\\squidrun-terminal-test',
   WORKSPACE_PATH: '/test/workspace',
   PROJECT_ROOT: '/test',
   PANE_IDS: ['1', '2', '3'],

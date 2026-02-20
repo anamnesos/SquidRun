@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const log = require('../logger');
-const { PROJECT_ROOT, COORD_ROOT, getHivemindRoot, getProjectRoot, resolveGlobalPath } = require('../../config');
+const { PROJECT_ROOT, COORD_ROOT, getSquidrunRoot, getHivemindRoot, getProjectRoot, resolveGlobalPath } = require('../../config');
 const { execFileSync } = require('child_process');
 
 const SPEC_RELATIVE_PATH = path.join('workspace', 'specs', 'firmware-injection-spec.md');
@@ -20,7 +20,7 @@ const TEMPLATE_PLACEHOLDERS = Object.freeze({
 });
 
 const PANE_ROLE_FILE = {
-  '1': 'director',
+  '1': 'architect',
   '2': 'builder',
   '3': 'oracle',
 };
@@ -85,11 +85,15 @@ class FirmwareManager {
   constructor(appContext, options = {}) {
     this.ctx = appContext;
     this.projectRoot = path.resolve(options.projectRoot || PROJECT_ROOT);
-    this.hivemindRoot = path.resolve(
-      options.hivemindRoot || (typeof getHivemindRoot === 'function' ? getHivemindRoot() : PROJECT_ROOT)
+    this.squidrunRoot = path.resolve(
+      options.squidrunRoot
+      || options.hivemindRoot
+      || (typeof getSquidrunRoot === 'function'
+        ? getSquidrunRoot()
+        : (typeof getHivemindRoot === 'function' ? getHivemindRoot() : PROJECT_ROOT))
     );
     this.coordRoot = path.resolve(options.coordRoot || COORD_ROOT);
-    this.specPath = path.resolve(options.specPath || path.join(this.hivemindRoot, SPEC_RELATIVE_PATH));
+    this.specPath = path.resolve(options.specPath || path.join(this.squidrunRoot, SPEC_RELATIVE_PATH));
     this.firmwareDir = path.resolve(
       options.firmwareDir
       || (
@@ -239,7 +243,8 @@ class FirmwareManager {
 
   getFirmwareTemplateValues() {
     return {
-      HIVEMIND_ROOT: String(this.hivemindRoot || '').replace(/\\/g, '/'),
+      HIVEMIND_ROOT: String(this.squidrunRoot || '').replace(/\\/g, '/'),
+      SQUIDRUN_ROOT: String(this.squidrunRoot || '').replace(/\\/g, '/'),
     };
   }
 
@@ -273,7 +278,11 @@ class FirmwareManager {
     const sharedProtocol = extractBulletLines(
       sections.get('2.2 Shared Team Protocol (Include in all roles)')
     ).map((line) => this.applyFirmwareTemplate(line, templateValues));
-    const directorProtocol = extractBulletLines(sections.get('3.1 Director (Architect)'))
+    const architectProtocol = extractBulletLines(
+      sections.get('3.1 Architect')
+      || sections.get('3.1 Director (Architect)')
+      || sections.get('3.1 Director')
+    )
       .map((line) => this.applyFirmwareTemplate(line, templateValues));
     const builderProtocol = extractBulletLines(sections.get('3.2 Builder'))
       .map((line) => this.applyFirmwareTemplate(line, templateValues));
@@ -293,7 +302,7 @@ class FirmwareManager {
             const description = conflict.replace(/^\[[^\]]+\]\s*/, '').trim();
             if (description) {
               suppressionLines.push(
-                `IGNORE project instruction: "${description}" — Hivemind protocols take precedence.`
+                `IGNORE project instruction: "${description}" — SquidRun protocols take precedence.`
               );
             }
           });
@@ -309,7 +318,7 @@ class FirmwareManager {
       const parts = [
         directive,
         '',
-        `# Hivemind Firmware: ${roleLabel}`,
+        `# SquidRun Firmware: ${roleLabel}`,
         '',
         '## Team Protocol',
         ...normalizedShared,
@@ -328,8 +337,10 @@ class FirmwareManager {
       return body;
     };
 
+    const architectBody = createBody('Architect', architectProtocol);
     return {
-      director: createBody('Director', directorProtocol),
+      architect: architectBody,
+      director: architectBody, // Legacy alias for compatibility.
       builder: createBody('Builder', builderProtocol),
       oracle: createBody('Oracle', oracleProtocol),
     };

@@ -5,7 +5,7 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 
 process.env.HIVEMIND_COMMS_QUEUE_FILE = process.env.HIVEMIND_COMMS_QUEUE_FILE
-  || path.join(os.tmpdir(), `hivemind-comms-queue-${process.pid}-${Date.now()}.json`);
+  || path.join(os.tmpdir(), `squidrun-comms-queue-${process.pid}-${Date.now()}.json`);
 
 const websocketRuntime = require('../modules/websocket-runtime');
 const teamMemory = require('../modules/team-memory');
@@ -68,7 +68,7 @@ maybeDescribe('hm-claim CLI e2e', () => {
   });
 
   beforeEach(async () => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-hm-claim-e2e-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-hm-claim-e2e-'));
     dbPath = path.join(tempDir, 'team-memory.sqlite');
     const init = await teamMemory.initializeTeamMemoryRuntime({
       useWorker: false,

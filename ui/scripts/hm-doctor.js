@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * hm-doctor: Preflight checks for running Hivemind on a fresh machine.
+ * hm-doctor: Preflight checks for running SquidRun on a fresh machine.
  * Usage: node ui/scripts/hm-doctor.js
  */
 
@@ -104,7 +104,7 @@ async function checkPortAvailable(port) {
         resolve({
           ok: true,
           warn: true,
-          detail: `Port ${port} is already in use (Hivemind may already own this port)`,
+          detail: `Port ${port} is already in use (SquidRun may already own this port)`,
         });
         return;
       }
@@ -163,8 +163,8 @@ function writeProbeFile(targetDir) {
 
 function checkFilePermissions() {
   const targets = [
-    path.join(ROOT_DIR, '.hivemind'),
-    path.join(ROOT_DIR, '.hivemind', 'triggers'),
+    path.join(ROOT_DIR, '.squidrun'),
+    path.join(ROOT_DIR, '.squidrun', 'triggers'),
     path.join(ROOT_DIR, 'workspace'),
     path.join(ROOT_DIR, 'workspace', 'triggers'),
   ];
@@ -192,7 +192,7 @@ function checkFilePermissions() {
 }
 
 async function main() {
-  console.log('Hivemind Doctor: preflight checks');
+  console.log('SquidRun Doctor: preflight checks');
   console.log(`Project root: ${ROOT_DIR}`);
   console.log('');
 

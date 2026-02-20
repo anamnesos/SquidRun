@@ -1,5 +1,5 @@
 # hm-screenshot-window.ps1
-# Captures just the Hivemind window using DPI-aware DWM extended frame bounds.
+# Captures just the SquidRun window using DPI-aware DWM extended frame bounds.
 # Usage: powershell -File hm-screenshot-window.ps1 [-OutPath path\to\output.png]
 
 param(
@@ -51,11 +51,11 @@ public class ScreenCapture {
 [ScreenCapture]::SetProcessDPIAware() | Out-Null
 Write-Host "DPI awareness set"
 
-# Find Hivemind window
-$proc = Get-Process | Where-Object { $_.MainWindowTitle -like '*Hivemind*' -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+# Find SquidRun window
+$proc = Get-Process | Where-Object { $_.MainWindowTitle -like '*SquidRun*' -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 
 if (-not $proc) {
-    Write-Error "No Hivemind window found"
+    Write-Error "No SquidRun window found"
     exit 1
 }
 

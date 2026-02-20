@@ -1,5 +1,5 @@
 /**
- * Structured logger for Hivemind
+ * Structured logger for SquidRun
  * Replaces raw console.* with leveled, timestamped, context-aware logging.
  *
  * Usage:

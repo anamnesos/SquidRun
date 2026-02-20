@@ -1,5 +1,5 @@
 ﻿/**
- * Hivemind - Electron Main Process
+ * SquidRun - Electron Main Process
  * Refactored to modular architecture (Session 60, Finding #4)
  */
 
@@ -36,7 +36,7 @@ const ActivityManager = require('./modules/main/activity-manager');
 const UsageManager = require('./modules/main/usage-manager');
 const CliIdentityManager = require('./modules/main/cli-identity');
 const FirmwareManager = require('./modules/main/firmware-manager');
-const HivemindApp = require('./modules/main/hivemind-app');
+const SquidRunApp = require('./modules/main/hivemind-app');
 
 // 1. Initialize managers with shared context
 const settings = new SettingsManager(appContext);
@@ -48,7 +48,7 @@ const firmwareManager = new FirmwareManager(appContext);
 appContext.setFirmwareManager(firmwareManager);
 
 // 2. Create main application controller
-const hivemindApp = new HivemindApp(appContext, {
+const squidrunApp = new SquidRunApp(appContext, {
   settings,
   activity,
   usage,
@@ -67,14 +67,14 @@ app.on('second-instance', () => {
 
 // 3. Electron Lifecycle Hooks
 app.whenReady().then(() => {
-  hivemindApp.init().catch((err) => {
+  squidrunApp.init().catch((err) => {
     log.error('[Main] App init failed:', err?.message || err);
     log.error('[Main] Stack:', err?.stack);
   });
 });
 
 app.on('window-all-closed', () => {
-  hivemindApp.shutdown();
+  squidrunApp.shutdown();
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -82,9 +82,9 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (appContext.mainWindow === null) {
-    hivemindApp.createWindow();
+    squidrunApp.createWindow();
   }
 });
 
 // Export context for debugging or other modules if needed
-module.exports = { appContext, hivemindApp };
+module.exports = { appContext, squidrunApp };

@@ -109,8 +109,8 @@ function createInjectionController(options = {}) {
     // sendInputEvent can produce isTrusted=false, which the key handler blocks
     // unless bypassed. Set bypass flag so attachCustomKeyEventHandler allows Enter.
     if (terminal) {
-      terminal._hivemindBypass = true;
-      log.debug(`sendEnterToPane ${paneId}`, 'Set _hivemindBypass=true for DOM dispatch');
+      terminal._squidrunBypass = true;
+      log.debug(`sendEnterToPane ${paneId}`, 'Set _squidrunBypass=true for DOM dispatch');
     }
 
     const tryDomFallback = () => {
@@ -132,7 +132,7 @@ function createInjectionController(options = {}) {
             bubbles: true,
             cancelable: true,
           });
-          evt._hivemindBypass = true;
+          evt._squidrunBypass = true;
           return evt;
         };
         textarea.dispatchEvent(makeEvent('keydown'));
@@ -156,8 +156,8 @@ function createInjectionController(options = {}) {
       // Clear bypass flag after Enter is processed (next tick to ensure event handled)
       if (terminal) {
         setTimeout(() => {
-          terminal._hivemindBypass = false;
-          log.debug(`sendEnterToPane ${paneId}`, 'Cleared _hivemindBypass');
+          terminal._squidrunBypass = false;
+          log.debug(`sendEnterToPane ${paneId}`, 'Cleared _squidrunBypass');
         }, BYPASS_CLEAR_DELAY_MS);
       }
     }
@@ -968,7 +968,7 @@ function createInjectionController(options = {}) {
         const shouldChunkWrite = forceChunkedWriteForLongFastPath || payloadBytes > chunkThresholdBytes;
 
         if (!shouldChunkWrite) {
-          await window.hivemind.pty.write(id, payloadText, createKernelMeta());
+          await window.squidrun.pty.write(id, payloadText, createKernelMeta());
         } else {
           const first32 = payloadText.slice(0, 32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
           const last32 = payloadText.slice(-32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
@@ -983,9 +983,9 @@ function createInjectionController(options = {}) {
             ? '\x1b[H' + payloadText
             : payloadText;
 
-          if (typeof window.hivemind?.pty?.writeChunked !== 'function') {
+          if (typeof window.squidrun?.pty?.writeChunked !== 'function') {
             log.warn(`doSendToPane ${id}`, 'writeChunked API unavailable, falling back to single PTY write');
-            await window.hivemind.pty.write(id, writeText, createKernelMeta());
+            await window.squidrun.pty.write(id, writeText, createKernelMeta());
           } else {
             const chunkMin = Math.max(1, Number(CLAUDE_CHUNK_MIN_SIZE) || 1024);
             const chunkMax = Math.max(chunkMin, Number(CLAUDE_CHUNK_MAX_SIZE) || 8192);
@@ -995,7 +995,7 @@ function createInjectionController(options = {}) {
             if (forceChunkedWriteForLongFastPath) {
               chunkOptions.waitForWriteAck = true;
             }
-            const chunkResult = await window.hivemind.pty.writeChunked(
+            const chunkResult = await window.squidrun.pty.writeChunked(
               id,
               writeText,
               chunkOptions,
@@ -1007,7 +1007,7 @@ function createInjectionController(options = {}) {
           }
         }
       } else {
-        await window.hivemind.pty.write(id, payloadText, createKernelMeta());
+        await window.squidrun.pty.write(id, payloadText, createKernelMeta());
       }
 
       bus.emit('inject.applied', {
@@ -1046,7 +1046,7 @@ function createInjectionController(options = {}) {
         source: EVENT_SOURCE,
       });
       try {
-        await window.hivemind.pty.write(id, '\r');
+        await window.squidrun.pty.write(id, '\r');
       } catch (err) {
         log.error(`doSendToPane ${id}`, 'hm-send PTY Enter failed:', err);
         bus.emit('inject.failed', {
@@ -1083,7 +1083,7 @@ function createInjectionController(options = {}) {
       }
       if (capabilities.enterMethod === 'pty') {
         try {
-          await window.hivemind.pty.write(id, '\r', createKernelMeta());
+          await window.squidrun.pty.write(id, '\r', createKernelMeta());
           return { success: true, method: capabilities.submitMethod };
         } catch (err) {
           log.error(`doSendToPane ${id}`, 'PTY Enter failed:', err);

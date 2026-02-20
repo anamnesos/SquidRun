@@ -1,5 +1,5 @@
 /**
- * Hivemind Status Strip (legacy module)
+ * SquidRun Status Strip (legacy module)
  * Status strip UI was removed; this module now maintains only session timer text.
  */
 

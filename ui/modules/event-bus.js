@@ -1,5 +1,5 @@
 /**
- * Event Kernel - Two-lane event system for Hivemind
+ * Event Kernel - Two-lane event system for SquidRun
  * Lane A: Interaction Kernel (always-on) - pub/sub, contracts, state vectors
  * Lane B: Timeline / Telemetry (optional) - ring buffer, query
  */

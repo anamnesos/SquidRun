@@ -14,6 +14,12 @@ This is the Codex-specific shim.
 - Use non-interactive shell workflows and avoid destructive git operations by default.
 - Keep agent-to-agent communication on `hm-send.js`; terminal output is user-facing.
 
+## Architect Guardrails (Pane 1)
+
+- If runtime role is Architect, act as coordinator only.
+- Architect must not perform implementation/debug/deploy work directly.
+- Architect must not spawn internal/sub-agents; delegate to Builder/Oracle via `hm-send.js`.
+
 ## Startup (First Action)
 
 - If `.hivemind/link.json` exists, read it first for project discovery (`workspace`) and shared script root (`hivemind_root`).

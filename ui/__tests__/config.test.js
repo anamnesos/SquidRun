@@ -86,7 +86,7 @@ describe('config.js', () => {
       expect(resolvePaneCwd('2', { instanceDirs: override })).toBe(PROJECT_ROOT);
     });
 
-    test('resolveCoordRoot should return .hivemind when present, else workspace', () => {
+    test('resolveCoordRoot should return .squidrun when present, else workspace', () => {
       const expected = fs.existsSync(COORD_ROOT) ? COORD_ROOT : WORKSPACE_PATH;
       expect(resolveCoordRoot()).toBe(expected);
     });
@@ -98,11 +98,11 @@ describe('config.js', () => {
       expect(fs.existsSync(path.resolve(GLOBAL_STATE_ROOT))).toBe(true);
     });
 
-    test('resolveCoordPath should write under active project .hivemind root', () => {
+    test('resolveCoordPath should write under active project .squidrun root', () => {
       const switchedProject = path.resolve('/tmp/switched-project');
       setProjectRoot(switchedProject);
       const resolved = resolveCoordPath('app-status.json', { forWrite: true });
-      expect(path.resolve(resolved)).toBe(path.join(switchedProject, '.hivemind', 'app-status.json'));
+      expect(path.resolve(resolved)).toBe(path.join(switchedProject, '.squidrun', 'app-status.json'));
     });
   });
 

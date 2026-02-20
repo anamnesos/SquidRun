@@ -21,7 +21,7 @@ maybeDescribe('experiment runtime shared scope', () => {
   }
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hivemind-exp-runtime-shared-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-exp-runtime-shared-'));
     profilesPath = path.join(tempDir, 'experiment-profiles.json');
     fs.writeFileSync(
       profilesPath,

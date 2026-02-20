@@ -1,5 +1,5 @@
 /**
- * Hivemind Model Selector - Per-pane model switching (Claude/Codex/Gemini)
+ * SquidRun Model Selector - Per-pane model switching (Claude/Codex/Gemini)
  * Extracted from renderer.js for modularization
  */
 
