@@ -1591,7 +1591,7 @@ class SquidRunApp {
     this.ctx.mainWindow = new BrowserWindow({
       width: 1400,
       height: 800,
-      icon: path.join(__dirname, '..', '..', 'assets', process.platform === 'win32' ? 'hivemind-icon.ico' : 'hivemind-icon.png'),
+      icon: path.join(__dirname, '..', '..', 'assets', process.platform === 'win32' ? 'squidrun-favicon.ico' : 'squidrun-favicon-256.png'),
       backgroundColor: '#0a0a0f',
       webPreferences: {
         nodeIntegration: true,

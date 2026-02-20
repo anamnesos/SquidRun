@@ -1221,7 +1221,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (Notification.permission === 'granted') {
       new Notification('SquidRun Alert', {
         body: 'Agents stuck - auto-nudged with ESC+Enter',
-        icon: 'assets/icon.png',
+        icon: 'assets/squidrun-favicon-64.png',
         requireInteraction: true
       });
     } else if (Notification.permission !== 'denied') {
