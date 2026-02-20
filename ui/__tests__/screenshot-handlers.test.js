@@ -288,6 +288,29 @@ describe('Screenshot Handlers', () => {
       expect(result.success).toBe(false);
       expect(result.error).toBe('Permission denied');
     });
+
+    test('honors optional list limit', async () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readdirSync.mockReturnValue(['a.png', 'b.png', 'c.png']);
+      fs.statSync.mockReturnValue({ size: 1000, mtime: new Date('2026-01-02') });
+
+      const result = await harness.invoke('list-screenshots', { limit: 2 });
+
+      expect(result.success).toBe(true);
+      expect(result.files).toHaveLength(2);
+    });
+
+    test('falls back to safe default limit for invalid values', async () => {
+      fs.existsSync.mockReturnValue(true);
+      const files = Array.from({ length: 260 }, (_, i) => `img-${i}.png`);
+      fs.readdirSync.mockReturnValue(files);
+      fs.statSync.mockReturnValue({ size: 1000, mtime: new Date('2026-01-02') });
+
+      const result = await harness.invoke('list-screenshots', { limit: 'bad' });
+
+      expect(result.success).toBe(true);
+      expect(result.files).toHaveLength(200);
+    });
   });
 
   describe('delete-screenshot', () => {

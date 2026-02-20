@@ -163,6 +163,16 @@ function scrollToBottom() {
   list.scrollTop = list.scrollHeight;
 }
 
+function toggleEntryBody(entryNode) {
+  if (!entryNode) return;
+  const bodyNode = entryNode.querySelector('.comms-console-entry-body');
+  if (!bodyNode || !bodyNode.classList.contains('is-truncated')) return;
+  const expanded = bodyNode.classList.toggle('expanded');
+  bodyNode.textContent = expanded ? bodyNode.dataset.full || '' : bodyNode.dataset.preview || '';
+  const toggle = entryNode.querySelector('[data-action="toggle-body"]');
+  if (toggle) toggle.textContent = expanded ? 'Collapse' : 'Expand';
+}
+
 function createEntryNode(entry) {
   const div = document.createElement('div');
   div.className = 'comms-console-entry';
@@ -194,30 +204,6 @@ function createEntryNode(entry) {
       bodyNode.dataset.preview = preview;
       bodyNode.dataset.full = fullBody;
     }
-  }
-
-  const bodyNode = div.querySelector('.comms-console-entry-body');
-  if (bodyNode) {
-    const bodyToggleHandler = () => {
-      if (!bodyNode.classList.contains('is-truncated')) return;
-      const expanded = bodyNode.classList.toggle('expanded');
-      bodyNode.textContent = expanded ? bodyNode.dataset.full || '' : bodyNode.dataset.preview || '';
-      const toggle = div.querySelector('[data-action="toggle-body"]');
-      if (toggle) toggle.textContent = expanded ? 'Collapse' : 'Expand';
-    };
-    bodyNode.addEventListener('click', bodyToggleHandler);
-    domCleanupFns.push(() => bodyNode.removeEventListener('click', bodyToggleHandler));
-  }
-
-  const toggle = div.querySelector('[data-action="toggle-body"]');
-  if (toggle && bodyNode) {
-    const clickHandler = () => {
-      const expanded = bodyNode.classList.toggle('expanded');
-      bodyNode.textContent = expanded ? bodyNode.dataset.full || '' : bodyNode.dataset.preview || '';
-      toggle.textContent = expanded ? 'Collapse' : 'Expand';
-    };
-    toggle.addEventListener('click', clickHandler);
-    domCleanupFns.push(() => toggle.removeEventListener('click', clickHandler));
   }
 
   return div;
@@ -361,6 +347,26 @@ function bindOpenBackfill() {
   domCleanupFns.push(() => tabBtn.removeEventListener('click', onOpen));
 }
 
+function bindEntryToggleDelegation() {
+  const list = document.getElementById('commsConsoleList');
+  if (!list) return;
+
+  const clickHandler = (event) => {
+    const toggle = event.target.closest('[data-action="toggle-body"]');
+    if (toggle) {
+      toggleEntryBody(toggle.closest('.comms-console-entry'));
+      return;
+    }
+
+    const bodyNode = event.target.closest('.comms-console-entry-body');
+    if (!bodyNode || !bodyNode.classList.contains('is-truncated')) return;
+    toggleEntryBody(bodyNode.closest('.comms-console-entry'));
+  };
+
+  list.addEventListener('click', clickHandler);
+  domCleanupFns.push(() => list.removeEventListener('click', clickHandler));
+}
+
 function setupCommsConsoleTab(bus) {
   destroy();
   busRef = bus || null;
@@ -369,6 +375,7 @@ function setupCommsConsoleTab(bus) {
   hasLoadedBackfill = false;
   resetListPlaceholder();
   bindOpenBackfill();
+  bindEntryToggleDelegation();
 
   const pane = document.getElementById('tab-comms');
   if (pane && pane.classList.contains('active')) {

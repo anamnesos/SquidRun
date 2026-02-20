@@ -4,75 +4,120 @@
 
 const log = require('../logger');
 
-function attachExpandToggle(item) {
-  const thumb = item.querySelector('.screenshot-thumb');
-  if (!thumb) return;
-  thumb.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const isExpanded = thumb.classList.toggle('expanded');
-    item.classList.toggle('has-expanded-thumb', isExpanded);
+const MAX_RENDERED_SCREENSHOTS = 80;
+
+// Track DOM listener cleanup functions
+let domCleanupFns = [];
+let screenshotPathByName = new Map();
+
+function renderEmptyState(listEl) {
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="screenshot-empty">No screenshots yet</div>';
+}
+
+function hasScreenshotItems(listEl) {
+  return Boolean(listEl && listEl.querySelector('.screenshot-item'));
+}
+
+function toFileUrl(filePath) {
+  if (!filePath) return '';
+  const normalized = String(filePath).replace(/\\/g, '/');
+  return `file://${encodeURI(normalized)}`;
+}
+
+function createScreenshotItem({ name, path, sizeBytes = 0 }) {
+  const item = document.createElement('div');
+  item.className = 'screenshot-item';
+  item.dataset.filename = name;
+  item.dataset.path = path || '';
+  item.innerHTML = `
+    <img
+      class="screenshot-thumb"
+      src="${toFileUrl(path)}"
+      alt="${name}"
+      loading="lazy"
+      decoding="async"
+      referrerpolicy="no-referrer"
+    >
+    <div class="screenshot-info">
+      <div class="screenshot-name" title="${path || ''}">${name}</div>
+      <div class="screenshot-size">${(Math.max(0, Number(sizeBytes) || 0) / 1024).toFixed(1)} KB</div>
+    </div>
+    <div class="screenshot-actions">
+      <button class="screenshot-btn copy-btn" data-action="copy" title="Copy path">Copy</button>
+      <button class="screenshot-btn delete-btn" data-action="delete" title="Delete">Delete</button>
+    </div>
+  `;
+  return item;
+}
+
+function pruneRenderedScreenshots(listEl, maxItems = MAX_RENDERED_SCREENSHOTS) {
+  if (!listEl) return;
+  const items = listEl.querySelectorAll('.screenshot-item');
+  if (items.length <= maxItems) return;
+  for (let i = maxItems; i < items.length; i += 1) {
+    const img = items[i].querySelector('img.screenshot-thumb');
+    if (img) {
+      img.src = '';
+    }
+    items[i].remove();
+  }
+}
+
+function appendScreenshotItem(listEl, screenshot) {
+  if (!listEl || !screenshot?.name || !screenshot?.path) return;
+  const emptyMsg = listEl.querySelector('.screenshot-empty');
+  if (emptyMsg) emptyMsg.remove();
+
+  // Replace existing node if filename already exists.
+  const existing = Array.from(listEl.querySelectorAll('.screenshot-item'))
+    .find((node) => node.dataset.filename === screenshot.name);
+  if (existing) {
+    const existingImg = existing.querySelector('img.screenshot-thumb');
+    if (existingImg) existingImg.src = '';
+    existing.remove();
+  }
+
+  const item = createScreenshotItem({
+    name: screenshot.name,
+    path: screenshot.path,
+    sizeBytes: screenshot.size || screenshot.sizeBytes || 0,
   });
+
+  // Newest first so cap removes oldest from the bottom.
+  listEl.prepend(item);
+  screenshotPathByName.set(screenshot.name, screenshot.path);
+  pruneRenderedScreenshots(listEl);
 }
 
 async function handleScreenshotDrop(files, updateStatusFn) {
   const listEl = document.getElementById('screenshotList');
   if (!listEl) return;
 
-  const emptyMsg = listEl.querySelector('.screenshot-empty');
-  if (emptyMsg) emptyMsg.remove();
-
   for (const file of files) {
-    if (!file.type.startsWith('image/')) continue;
+    if (!file || !file.type || !file.type.startsWith('image/')) continue;
 
     const reader = new FileReader();
     reader.onload = async (e) => {
-      const base64Data = e.target.result;
-      const result = await window.squidrun.screenshot.save(base64Data, file.name);
-      if (!result.success) {
-        if (updateStatusFn) updateStatusFn(`Failed to save ${file.name}: ${result.error}`);
-        return;
-      }
+      try {
+        const base64Data = e?.target?.result;
+        if (!base64Data) return;
 
-      const savedFilename = result.filename;
-      const savedPath = result.path;
-
-      const item = document.createElement('div');
-      item.className = 'screenshot-item';
-      item.dataset.filename = savedFilename;
-      item.innerHTML = `
-        <img class="screenshot-thumb" src="${base64Data}" alt="${savedFilename}">
-        <div class="screenshot-info">
-          <div class="screenshot-name" title="${savedPath}">${savedFilename}</div>
-          <div class="screenshot-size">${(file.size / 1024).toFixed(1)} KB</div>
-        </div>
-        <div class="screenshot-actions">
-          <button class="screenshot-btn copy-btn" title="Copy path">Copy</button>
-          <button class="screenshot-btn delete-btn" title="Delete">Delete</button>
-        </div>
-      `;
-
-      item.querySelector('.delete-btn').addEventListener('click', async () => {
-        const delResult = await window.squidrun.screenshot.delete(savedFilename);
-        if (delResult.success) {
-          item.remove();
-          if (listEl.children.length === 0) {
-            listEl.innerHTML = '<div class="screenshot-empty">No screenshots yet</div>';
-          }
-          if (updateStatusFn) updateStatusFn(`Deleted ${savedFilename}`);
-        } else {
-          if (updateStatusFn) updateStatusFn(`Failed to delete ${savedFilename}: ${delResult.error || 'Unknown error'}`);
+        const result = await window.squidrun.screenshot.save(base64Data, file.name);
+        if (!result?.success) {
+          if (updateStatusFn) updateStatusFn(`Failed to save ${file.name}: ${result?.error || 'Unknown error'}`);
+          return;
         }
-      });
 
-      item.querySelector('.copy-btn').addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(savedPath);
-          if (updateStatusFn) updateStatusFn(`Copied path: ${savedPath}`);
-        } catch (err) {}
-      });
-
-      attachExpandToggle(item);
-      listEl.appendChild(item);
+        appendScreenshotItem(listEl, {
+          name: result.filename,
+          path: result.path,
+          size: file.size,
+        });
+      } finally {
+        // Release large base64 payload references ASAP.
+        reader.onload = null;
+      }
     };
     reader.readAsDataURL(file);
   }
@@ -83,63 +128,85 @@ async function loadScreenshots(updateStatusFn) {
   if (!listEl) return;
 
   try {
-    const result = await window.squidrun.screenshot.list();
-    if (!result.success) return;
+    const result = await window.squidrun.screenshot.list({ limit: MAX_RENDERED_SCREENSHOTS });
+    if (!result?.success) return;
 
-    if (result.files.length === 0) {
-      listEl.innerHTML = '<div class="screenshot-empty">No screenshots yet</div>';
+    screenshotPathByName = new Map();
+    if (!Array.isArray(result.files) || result.files.length === 0) {
+      renderEmptyState(listEl);
       return;
     }
 
     listEl.innerHTML = '';
-    for (const file of result.files) {
-      const item = document.createElement('div');
-      item.className = 'screenshot-item';
-      item.dataset.filename = file.name;
-      item.innerHTML = `
-        <img class="screenshot-thumb" src="file://${file.path.replace(/\\/g, '/')}" alt="${file.name}">
-        <div class="screenshot-info">
-          <div class="screenshot-name" title="${file.path}">${file.name}</div>
-          <div class="screenshot-size">${(file.size / 1024).toFixed(1)} KB</div>
-        </div>
-        <div class="screenshot-actions">
-          <button class="screenshot-btn copy-btn" title="Copy path">Copy</button>
-          <button class="screenshot-btn delete-btn" title="Delete">Delete</button>
-        </div>
-      `;
-
-      const savedFilename = file.name;
-      const savedPath = file.path;
-      item.querySelector('.delete-btn').addEventListener('click', async () => {
-        const delResult = await window.squidrun.screenshot.delete(savedFilename);
-        if (delResult.success) {
-          item.remove();
-          if (listEl.children.length === 0) {
-            listEl.innerHTML = '<div class="screenshot-empty">No screenshots yet</div>';
-          }
-          if (updateStatusFn) updateStatusFn(`Deleted ${savedFilename}`);
-        } else {
-          if (updateStatusFn) updateStatusFn(`Failed to delete ${savedFilename}: ${delResult.error || 'Unknown error'}`);
-        }
-      });
-
-      item.querySelector('.copy-btn').addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(savedPath);
-          if (updateStatusFn) updateStatusFn(`Copied path: ${savedPath}`);
-        } catch (err) {}
-      });
-
-      attachExpandToggle(item);
-      listEl.appendChild(item);
+    for (const file of result.files.slice(0, MAX_RENDERED_SCREENSHOTS)) {
+      screenshotPathByName.set(file.name, file.path);
+      listEl.appendChild(createScreenshotItem({
+        name: file.name,
+        path: file.path,
+        sizeBytes: file.size,
+      }));
     }
   } catch (err) {
     log.error('Screenshots', 'Error loading screenshots', err);
+    if (updateStatusFn) updateStatusFn(`Failed to load screenshots: ${err.message}`);
   }
 }
 
-// Track DOM listener cleanup functions
-let domCleanupFns = [];
+function setupListDelegation(updateStatusFn) {
+  const listEl = document.getElementById('screenshotList');
+  if (!listEl) return;
+
+  const clickHandler = async (event) => {
+    const actionBtn = event.target?.closest?.('button[data-action]');
+    const thumb = event.target?.closest?.('.screenshot-thumb');
+
+    if (thumb) {
+      const item = thumb.closest('.screenshot-item');
+      if (!item) return;
+      event.stopPropagation();
+      const isExpanded = thumb.classList.toggle('expanded');
+      item.classList.toggle('has-expanded-thumb', isExpanded);
+      return;
+    }
+
+    if (!actionBtn) return;
+    const item = actionBtn.closest('.screenshot-item');
+    if (!item) return;
+
+    const filename = item.dataset.filename || '';
+    const path = item.dataset.path || screenshotPathByName.get(filename) || '';
+    const action = actionBtn.dataset.action;
+
+    if (action === 'copy') {
+      try {
+        await navigator.clipboard.writeText(path);
+        if (updateStatusFn) updateStatusFn(`Copied path: ${path}`);
+      } catch (err) {
+        if (updateStatusFn) updateStatusFn('Failed to copy screenshot path');
+      }
+      return;
+    }
+
+    if (action === 'delete') {
+      const delResult = await window.squidrun.screenshot.delete(filename);
+      if (delResult?.success) {
+        const img = item.querySelector('img.screenshot-thumb');
+        if (img) img.src = '';
+        item.remove();
+        screenshotPathByName.delete(filename);
+        if (!hasScreenshotItems(listEl)) {
+          renderEmptyState(listEl);
+        }
+        if (updateStatusFn) updateStatusFn(`Deleted ${filename}`);
+      } else if (updateStatusFn) {
+        updateStatusFn(`Failed to delete ${filename}: ${delResult?.error || 'Unknown error'}`);
+      }
+    }
+  };
+
+  listEl.addEventListener('click', clickHandler);
+  domCleanupFns.push(() => listEl.removeEventListener('click', clickHandler));
+}
 
 function setupScreenshots(updateStatusFn) {
   // Clean up previous listeners before re-init
@@ -147,8 +214,13 @@ function setupScreenshots(updateStatusFn) {
 
   const dropzone = document.getElementById('screenshotDropzone');
   if (dropzone) {
-    const dragoverHandler = (e) => { e.preventDefault(); dropzone.classList.add('dragover'); };
-    const dragleaveHandler = () => { dropzone.classList.remove('dragover'); };
+    const dragoverHandler = (e) => {
+      e.preventDefault();
+      dropzone.classList.add('dragover');
+    };
+    const dragleaveHandler = () => {
+      dropzone.classList.remove('dragover');
+    };
     const dropHandler = (e) => {
       e.preventDefault();
       dropzone.classList.remove('dragover');
@@ -156,7 +228,9 @@ function setupScreenshots(updateStatusFn) {
     };
     const clickHandler = () => {
       const input = document.createElement('input');
-      input.type = 'file'; input.accept = 'image/*'; input.multiple = true;
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.multiple = true;
       input.onchange = () => handleScreenshotDrop(input.files, updateStatusFn);
       input.click();
     };
@@ -170,33 +244,37 @@ function setupScreenshots(updateStatusFn) {
       () => dropzone.removeEventListener('dragover', dragoverHandler),
       () => dropzone.removeEventListener('dragleave', dragleaveHandler),
       () => dropzone.removeEventListener('drop', dropHandler),
-      () => dropzone.removeEventListener('click', clickHandler)
+      () => dropzone.removeEventListener('click', clickHandler),
     );
   }
 
   const pasteHandler = (e) => {
-    const items = e.clipboardData.items;
+    const items = e?.clipboardData?.items || [];
     const files = [];
     for (const item of items) {
-      if (item.type.startsWith('image/')) files.push(item.getAsFile());
+      if (item.type && item.type.startsWith('image/')) files.push(item.getAsFile());
     }
     if (files.length > 0) handleScreenshotDrop(files, updateStatusFn);
   };
   document.addEventListener('paste', pasteHandler);
   domCleanupFns.push(() => document.removeEventListener('paste', pasteHandler));
 
+  setupListDelegation(updateStatusFn);
   loadScreenshots(updateStatusFn);
 }
 
 function destroyScreenshots() {
   for (const fn of domCleanupFns) {
-    try { fn(); } catch (_) {}
+    try {
+      fn();
+    } catch (_) {}
   }
   domCleanupFns = [];
+  screenshotPathByName.clear();
 }
 
 module.exports = {
   setupScreenshots,
   destroyScreenshots,
-  loadScreenshots
+  loadScreenshots,
 };
