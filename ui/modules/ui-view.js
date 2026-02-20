@@ -232,20 +232,53 @@ function showRollbackUI(data, onConfirm, onDismiss) {
 
   const indicator = document.createElement('div');
   indicator.className = 'rollback-indicator';
-  indicator.innerHTML = `
-    <div class="rollback-header">
-      <span class="rollback-icon">⪚</span>
-      <span class="rollback-title">Rollback Available</span>
-    </div>
-    <div class="rollback-files">
-      ${files.slice(0, 5).map(f => `<div class="rollback-file">${f}</div>`).join('')}
-      ${files.length > 5 ? `<div class="rollback-file">... and ${files.length - 5} more</div>` : ''}
-    </div>
-    <div class="rollback-actions">
-      <button class="rollback-btn dismiss">Dismiss</button>
-      <button class="rollback-btn confirm">Rollback</button>
-    </div>
-  `;
+  const header = document.createElement('div');
+  header.className = 'rollback-header';
+
+  const icon = document.createElement('span');
+  icon.className = 'rollback-icon';
+  icon.textContent = '⪚';
+
+  const title = document.createElement('span');
+  title.className = 'rollback-title';
+  title.textContent = 'Rollback Available';
+
+  header.appendChild(icon);
+  header.appendChild(title);
+
+  const filesContainer = document.createElement('div');
+  filesContainer.className = 'rollback-files';
+  const normalizedFiles = Array.isArray(files) ? files : [];
+  normalizedFiles.slice(0, 5).forEach((f) => {
+    const fileEl = document.createElement('div');
+    fileEl.className = 'rollback-file';
+    fileEl.textContent = String(f);
+    filesContainer.appendChild(fileEl);
+  });
+  if (normalizedFiles.length > 5) {
+    const moreEl = document.createElement('div');
+    moreEl.className = 'rollback-file';
+    moreEl.textContent = `... and ${normalizedFiles.length - 5} more`;
+    filesContainer.appendChild(moreEl);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'rollback-actions';
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.className = 'rollback-btn dismiss';
+  dismissBtn.textContent = 'Dismiss';
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'rollback-btn confirm';
+  confirmBtn.textContent = 'Rollback';
+
+  actions.appendChild(dismissBtn);
+  actions.appendChild(confirmBtn);
+
+  indicator.appendChild(header);
+  indicator.appendChild(filesContainer);
+  indicator.appendChild(actions);
 
   document.body.appendChild(indicator);
 
@@ -283,18 +316,46 @@ function showHandoffNotification(data) {
 
   const notification = document.createElement('div');
   notification.className = 'handoff-notification';
-  notification.innerHTML = `
-    <div class="handoff-header">
-      <span class="handoff-icon">🔄</span>
-      <span class="handoff-title">Task Handoff</span>
-    </div>
-    <div class="handoff-agents">
-      <span class="handoff-agent from">${fromRole}</span>
-      <span class="handoff-arrow">→</span>
-      <span class="handoff-agent to">${toRole}</span>
-    </div>
-    <div class="handoff-reason">${reason || 'Task completed'}</div>
-  `;
+  const header = document.createElement('div');
+  header.className = 'handoff-header';
+
+  const icon = document.createElement('span');
+  icon.className = 'handoff-icon';
+  icon.textContent = '🔄';
+
+  const title = document.createElement('span');
+  title.className = 'handoff-title';
+  title.textContent = 'Task Handoff';
+
+  header.appendChild(icon);
+  header.appendChild(title);
+
+  const agents = document.createElement('div');
+  agents.className = 'handoff-agents';
+
+  const fromAgent = document.createElement('span');
+  fromAgent.className = 'handoff-agent from';
+  fromAgent.textContent = fromRole;
+
+  const arrow = document.createElement('span');
+  arrow.className = 'handoff-arrow';
+  arrow.textContent = '→';
+
+  const toAgent = document.createElement('span');
+  toAgent.className = 'handoff-agent to';
+  toAgent.textContent = toRole;
+
+  agents.appendChild(fromAgent);
+  agents.appendChild(arrow);
+  agents.appendChild(toAgent);
+
+  const reasonEl = document.createElement('div');
+  reasonEl.className = 'handoff-reason';
+  reasonEl.textContent = reason || 'Task completed';
+
+  notification.appendChild(header);
+  notification.appendChild(agents);
+  notification.appendChild(reasonEl);
   document.body.appendChild(notification);
 
   setTimeout(() => {
@@ -317,20 +378,47 @@ function showConflictNotification(data) {
 
   const notification = document.createElement('div');
   notification.className = 'conflict-notification';
-  notification.innerHTML = `
-    <div class="conflict-header">
-      <span class="conflict-icon">⚠️</span>
-      <span class="conflict-title">File Conflict</span>
-    </div>
-    <div class="conflict-file">${file}</div>
-    <div class="conflict-agents">
-      ${agentNames.map(name => `<span class="conflict-agent">${name}</span>`).join('')}
-    </div>
-    <div class="conflict-status ${status}">${resolution || (status === 'resolved' ? 'Conflict resolved' : 'Waiting for resolution...')}</div>
-  `;
+  const header = document.createElement('div');
+  header.className = 'conflict-header';
+
+  const icon = document.createElement('span');
+  icon.className = 'conflict-icon';
+  icon.textContent = '⚠️';
+
+  const title = document.createElement('span');
+  title.className = 'conflict-title';
+  title.textContent = 'File Conflict';
+
+  header.appendChild(icon);
+  header.appendChild(title);
+
+  const fileEl = document.createElement('div');
+  fileEl.className = 'conflict-file';
+  fileEl.textContent = file || '';
+
+  const agentsEl = document.createElement('div');
+  agentsEl.className = 'conflict-agents';
+  agentNames.forEach((name) => {
+    const agentEl = document.createElement('span');
+    agentEl.className = 'conflict-agent';
+    agentEl.textContent = name;
+    agentsEl.appendChild(agentEl);
+  });
+
+  const normalizedStatus = status === 'resolved' ? 'resolved' : 'pending';
+  const statusEl = document.createElement('div');
+  statusEl.className = `conflict-status ${normalizedStatus}`;
+  statusEl.textContent = resolution || (normalizedStatus === 'resolved'
+    ? 'Conflict resolved'
+    : 'Waiting for resolution...');
+
+  notification.appendChild(header);
+  notification.appendChild(fileEl);
+  notification.appendChild(agentsEl);
+  notification.appendChild(statusEl);
   document.body.appendChild(notification);
 
-  const timeout = status === 'resolved' ? 5000 : 10000;
+  const timeout = normalizedStatus === 'resolved' ? 5000 : 10000;
   setTimeout(() => {
     notification.classList.add('fade-out');
     setTimeout(() => notification.remove(), 400);
@@ -402,7 +490,11 @@ function showAutoTriggerFeedback(data) {
 
   const indicator = document.createElement('div');
   indicator.className = 'auto-trigger-indicator';
-  indicator.innerHTML = `<span class="auto-trigger-icon">⚡</span>${fromRole} → ${toRole}`;
+  const icon = document.createElement('span');
+  icon.className = 'auto-trigger-icon';
+  icon.textContent = '⚡';
+  indicator.appendChild(icon);
+  indicator.appendChild(document.createTextNode(`${fromRole} → ${toRole}`));
   document.body.appendChild(indicator);
 
   setTimeout(() => {

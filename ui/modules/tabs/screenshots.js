@@ -30,24 +30,51 @@ function createScreenshotItem({ name, path, sizeBytes = 0 }) {
   item.className = 'screenshot-item';
   item.dataset.filename = name;
   item.dataset.path = path || '';
-  item.innerHTML = `
-    <img
-      class="screenshot-thumb"
-      src="${toFileUrl(path)}"
-      alt="${name}"
-      loading="lazy"
-      decoding="async"
-      referrerpolicy="no-referrer"
-    >
-    <div class="screenshot-info">
-      <div class="screenshot-name" title="${path || ''}">${name}</div>
-      <div class="screenshot-size">${(Math.max(0, Number(sizeBytes) || 0) / 1024).toFixed(1)} KB</div>
-    </div>
-    <div class="screenshot-actions">
-      <button class="screenshot-btn copy-btn" data-action="copy" title="Copy path">Copy</button>
-      <button class="screenshot-btn delete-btn" data-action="delete" title="Delete">Delete</button>
-    </div>
-  `;
+
+  const thumb = document.createElement('img');
+  thumb.className = 'screenshot-thumb';
+  thumb.src = toFileUrl(path);
+  thumb.alt = String(name);
+  thumb.loading = 'lazy';
+  thumb.decoding = 'async';
+  thumb.referrerPolicy = 'no-referrer';
+
+  const info = document.createElement('div');
+  info.className = 'screenshot-info';
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'screenshot-name';
+  nameEl.title = path || '';
+  nameEl.textContent = String(name);
+
+  const sizeEl = document.createElement('div');
+  sizeEl.className = 'screenshot-size';
+  sizeEl.textContent = `${(Math.max(0, Number(sizeBytes) || 0) / 1024).toFixed(1)} KB`;
+
+  info.appendChild(nameEl);
+  info.appendChild(sizeEl);
+
+  const actions = document.createElement('div');
+  actions.className = 'screenshot-actions';
+
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'screenshot-btn copy-btn';
+  copyBtn.dataset.action = 'copy';
+  copyBtn.title = 'Copy path';
+  copyBtn.textContent = 'Copy';
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'screenshot-btn delete-btn';
+  deleteBtn.dataset.action = 'delete';
+  deleteBtn.title = 'Delete';
+  deleteBtn.textContent = 'Delete';
+
+  actions.appendChild(copyBtn);
+  actions.appendChild(deleteBtn);
+
+  item.appendChild(thumb);
+  item.appendChild(info);
+  item.appendChild(actions);
   return item;
 }
 
