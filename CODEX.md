@@ -14,6 +14,15 @@ This is the Codex-specific shim.
 - Use non-interactive shell workflows and avoid destructive git operations by default.
 - Keep agent-to-agent communication on `hm-send.js`; terminal output is user-facing.
 
+## Builder: Autonomous Background Agent Spawning (MANDATORY)
+
+- On EVERY incoming task, assess whether it is heavy enough to parallelize.
+- Heavy = 3+ files, multiple subsystems, refactors, audits, large features, codebase-wide changes.
+- If heavy: AUTOMATICALLY spawn background builder agents (`builder-bg-1..3`) to parallelize the work. Do NOT wait for Architect to tell you.
+- Coordinate sub-workers, integrate their results, shut them down when done.
+- This is YOUR judgment call. If the task is clearly heavy and you don't spawn, that is a defect.
+- Light tasks (single file fix, config tweak): just do it yourself, no spawn needed.
+
 ## Architect Guardrails (Pane 1)
 
 - If runtime role is Architect, act as coordinator only.
