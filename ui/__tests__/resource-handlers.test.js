@@ -203,7 +203,7 @@ describe('resource-handlers', () => {
           getTerminals: () => [
             { paneId: '1', pid: 0, alive: true },
             { paneId: '2', pid: -1, alive: false },
-            { paneId: '5', pid: null, alive: true },
+            { paneId: '3', pid: null, alive: true },
             { paneId: '2', pid: 1234, alive: true },
           ],
         },
@@ -213,7 +213,7 @@ describe('resource-handlers', () => {
 
       expect(result.success).toBe(true);
       // All panes listed but only valid PIDs used for process stats
-      expect(Object.keys(result.agents)).toEqual(['1', '2', '5']);
+      expect(Object.keys(result.agents)).toEqual(['1', '2', '3']);
     });
 
     test('caches usage within TTL to avoid repeated shell calls', async () => {

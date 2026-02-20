@@ -148,7 +148,7 @@
   border-left-color: var(--color-secondary);
 }
 
-.activity-message-entry:has(.activity-agent[data-agent="5"]) {
+.activity-message-entry:has(.activity-agent[data-agent="3"]) {
   border-left-color: var(--color-info);
 }
 
@@ -192,7 +192,7 @@
 
 .activity-agent[data-agent="1"] { color: var(--color-primary); }
 .activity-agent[data-agent="2"] { color: var(--color-secondary); }
-.activity-agent[data-agent="5"] { color: var(--color-info); }
+.activity-agent[data-agent="3"] { color: var(--color-info); }
 .activity-agent[data-agent="system"] { color: var(--color-text-muted); }
 
 .activity-type {

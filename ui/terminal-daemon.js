@@ -718,7 +718,7 @@ function exitRecoveryMode() {
 const PANE_TRIGGER_FILES = {
   '1': 'architect.txt',
   '2': 'devops.txt',
-  '5': 'analyst.txt',
+  '3': 'analyst.txt',
 };
 
 /**

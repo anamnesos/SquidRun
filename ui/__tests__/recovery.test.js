@@ -75,7 +75,7 @@ describe('Terminal Recovery Controller', () => {
     };
 
     mockOptions = {
-      PANE_IDS: ['1', '2', '5'],
+      PANE_IDS: ['1', '2', '3'],
       terminals,
       lastOutputTime,
       lastTypedTime,
@@ -150,9 +150,9 @@ describe('Terminal Recovery Controller', () => {
       mockOptions.isGeminiPane.mockReturnValue(true);
       controller = createRecoveryController(mockOptions);
 
-      controller.markPotentiallyStuck('5');
+      controller.markPotentiallyStuck('3');
 
-      expect(controller.potentiallyStuckPanes.has('5')).toBe(false);
+      expect(controller.potentiallyStuckPanes.has('3')).toBe(false);
     });
 
     test('tracks Codex panes for stuck recovery', () => {

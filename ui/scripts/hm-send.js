@@ -68,7 +68,7 @@ const args = process.argv.slice(2);
 
 if (args.length < 2) {
   console.log('Usage: node hm-send.js <target> <message> [--role <role>] [--priority urgent]');
-  console.log('  target: paneId (1,2,5), role name (architect, builder, oracle), or user/telegram');
+  console.log('  target: paneId (1,2,3), role name (architect, builder, oracle), or user/telegram');
   console.log('  message: text to send');
   console.log('  --role: your role (for identification)');
   console.log('  --priority: normal or urgent');
@@ -420,7 +420,7 @@ function normalizeRole(targetInput) {
   const paneToRole = {
     '1': 'architect',
     '2': 'builder',
-    '5': 'oracle',
+    '3': 'oracle',
   };
 
   const targetValue = String(targetInput || '').trim().toLowerCase();
@@ -447,7 +447,7 @@ function resolvePaneIdForRole(roleName) {
   const normalized = String(roleName || '').trim().toLowerCase();
   if (normalized === 'architect') return '1';
   if (normalized === 'builder') return '2';
-  if (normalized === 'oracle') return '5';
+  if (normalized === 'oracle') return '3';
   return null;
 }
 

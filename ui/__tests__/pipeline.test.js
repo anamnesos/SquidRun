@@ -24,8 +24,8 @@ jest.mock('crypto', () => ({
 // Mock config
 jest.mock('../config', () => ({
   WORKSPACE_PATH: '/test/workspace',
-  PANE_IDS: ['1', '2', '5'],
-  PANE_ROLES: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
+  PANE_IDS: ['1', '2', '3'],
+  PANE_ROLES: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
 }));
 
 // Mock logger

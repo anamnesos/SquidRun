@@ -4,7 +4,7 @@
 Update all documentation files in the `docs/` directory to use the current role names:
 - **Architect** (Pane 1)
 - **Builder** (Pane 2)
-- **Oracle** (Pane 5)
+- **Oracle** (Pane 3)
 
 Legacy names like **Analyst**, **DevOps**, **Infra**, **Dev**, etc., should be replaced with their modern counterparts as defined in `ROLES.md`.
 

@@ -13,7 +13,7 @@ const LOAD_HALF_LIFE_MS = 5 * 60 * 1000;
 
 const DEFAULT_LEARNING = {
   taskTypes: {},
-  routingWeights: { '1': 1.0, '2': 1.0, '5': 1.0 },
+  routingWeights: { '1': 1.0, '2': 1.0, '3': 1.0 },
   totalDecisions: 0,
   routingHistory: [],
   lastUpdated: null,

@@ -214,7 +214,7 @@ describe('triggers.js module', () => {
     });
 
     test('sendDirectMessage delivers even when target is not running', () => {
-      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['5', 'idle']]), null);
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
 
       const result = triggers.sendDirectMessage(['2'], 'Direct msg', 'architect');
 
@@ -237,7 +237,7 @@ describe('triggers.js module', () => {
     });
 
     test('sendDirectMessage awaitDelivery returns explicit failure when delivery outcome reports submit_not_accepted', async () => {
-      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['5', 'idle']]), null);
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
 
       const pendingResult = triggers.sendDirectMessage(
         ['2'],
@@ -278,7 +278,7 @@ describe('triggers.js module', () => {
     });
 
     test('sendDirectMessage awaitDelivery reports accepted.unverified when delivery is accepted but unverified', async () => {
-      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['5', 'idle']]), null);
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
 
       const pendingResult = triggers.sendDirectMessage(
         ['2'],

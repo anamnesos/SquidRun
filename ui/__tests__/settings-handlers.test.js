@@ -116,13 +116,13 @@ describe('Settings Handlers', () => {
       deps.loadSettings.mockReturnValue({
         operatingMode: 'developer',
         firmwareInjectionEnabled: false,
-        paneProjects: { '1': previousProject, '2': null, '5': null },
+        paneProjects: { '1': previousProject, '2': null, '3': null },
       });
 
       await harness.invoke('set-setting', 'paneProjects', {
         '1': nextProject,
         '2': null,
-        '5': null,
+        '3': null,
       });
 
       expect(firmwareManager.runPreflight).toHaveBeenCalledWith(path.resolve(nextProject), { cache: true });
@@ -147,13 +147,13 @@ describe('Settings Handlers', () => {
       deps.loadSettings.mockReturnValue({
         operatingMode: 'project',
         firmwareInjectionEnabled: true,
-        paneProjects: { '1': previousProject, '2': null, '5': null },
+        paneProjects: { '1': previousProject, '2': null, '3': null },
       });
 
       await harness.invoke('set-setting', 'paneProjects', {
         '1': nextProject,
         '2': null,
-        '5': null,
+        '3': null,
       });
 
       expect(firmwareManager.runPreflight).toHaveBeenCalledWith(path.resolve(nextProject), { cache: true });

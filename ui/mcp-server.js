@@ -61,17 +61,17 @@ const AGENT_TO_PANE = {
   'backend': '2',
   'implementer-b': '2',
   'worker-b': '2',
-  'oracle': '5',
-  'investigator': '5',
+  'oracle': '3',
+  'investigator': '3',
   // Legacy aliases
   'devops': '2',
-  'analyst': '5',
+  'analyst': '3',
 };
 
 const PANE_TO_AGENT = {
   '1': 'architect',
   '2': 'builder',
-  '5': 'oracle',
+  '3': 'oracle',
 };
 
 // PANE_ROLES imported from config.js (canonical source)
@@ -398,9 +398,9 @@ function resolvePaneIds(target) {
     case 'oracle':
     case 'analyst':
     case 'investigator':
-      return ['5'];
+      return ['3'];
     case 'workers':
-      return ['2', '5'];
+      return ['2', '3'];
     case 'all':
       return PANE_IDS.filter(id => id !== paneId);
     default:

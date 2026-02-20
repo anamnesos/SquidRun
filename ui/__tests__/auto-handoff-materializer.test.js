@@ -465,7 +465,7 @@ describe('auto-handoff-materializer', () => {
     fs.mkdirSync(handoffsDir, { recursive: true });
     fs.writeFileSync(path.join(handoffsDir, '1.md'), 'a', 'utf8');
     fs.writeFileSync(path.join(handoffsDir, '2.md'), 'b', 'utf8');
-    fs.writeFileSync(path.join(handoffsDir, '5.md'), 'c', 'utf8');
+    fs.writeFileSync(path.join(handoffsDir, '3.md'), 'c', 'utf8');
 
     const result = removeLegacyPaneHandoffFiles({
       roots: [handoffsDir],
@@ -475,6 +475,6 @@ describe('auto-handoff-materializer', () => {
     expect(result.removed).toHaveLength(3);
     expect(fs.existsSync(path.join(handoffsDir, '1.md'))).toBe(false);
     expect(fs.existsSync(path.join(handoffsDir, '2.md'))).toBe(false);
-    expect(fs.existsSync(path.join(handoffsDir, '5.md'))).toBe(false);
+    expect(fs.existsSync(path.join(handoffsDir, '3.md'))).toBe(false);
   });
 });

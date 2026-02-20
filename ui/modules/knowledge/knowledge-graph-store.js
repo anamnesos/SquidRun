@@ -72,7 +72,7 @@ function initialize(workspaceDir) {
   const agentNames = {
     '1': 'Architect',
     '2': 'Builder',
-    '5': 'Oracle'
+    '3': 'Oracle'
   };
 
   for (const [paneId, name] of Object.entries(agentNames)) {
@@ -567,8 +567,8 @@ function getAgentNodeId(roleOrPaneId) {
     'infra': '2',
     'backend': '2', 'implementer b': '2', 'implementer_b': '2', 'worker b': '2', 'worker_b': '2',
     'devops': '2',
-    'oracle': '5',
-    'analyst': '5', 'investigator': '5'
+    'oracle': '3',
+    'analyst': '3', 'investigator': '3'
   };
 
   const normalized = String(roleOrPaneId).toLowerCase().trim();

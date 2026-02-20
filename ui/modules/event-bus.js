@@ -4,7 +4,7 @@
  * Lane B: Timeline / Telemetry (optional) - ring buffer, query
  */
 
-const PANE_IDS = ['1', '2', '5', 'system'];
+const PANE_IDS = ['1', '2', '3', 'system'];
 
 // --- ID Generation ---
 let idCounter = 0;

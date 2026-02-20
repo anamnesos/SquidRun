@@ -14,7 +14,7 @@ jest.mock('fs', () => ({
 
 jest.mock('../config', () => ({
   WORKSPACE_PATH: '/test/workspace',
-  PANE_IDS: ['1', '2', '5'],
+  PANE_IDS: ['1', '2', '3'],
 }));
 
 jest.mock('../modules/logger', () => ({

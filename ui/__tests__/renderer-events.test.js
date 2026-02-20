@@ -20,7 +20,7 @@ jest.mock('../modules/logger', () => ({
 }));
 
 jest.mock('../modules/terminal', () => ({
-  PANE_IDS: ['1', '2', '5'],
+  PANE_IDS: ['1', '2', '3'],
   handleResize: jest.fn(),
   initTerminals: jest.fn().mockResolvedValue(),
   spawnAllAgents: jest.fn(),

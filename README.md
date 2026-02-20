@@ -6,7 +6,7 @@ One person. Three different AI models. Three specialized roles. All running in p
 
 - `Architect` (pane 1): coordination, task decomposition, code review
 - `Builder` (pane 2): implementation, testing, infrastructure
-- `Oracle` (pane 5): investigation, documentation, benchmarking
+- `Oracle` (Pane 3): investigation, documentation, benchmarking
 
 For example, Claude architects the solution, Codex builds it, and Gemini cross-checks it. Each model brings its own reasoning style and blind spots — when they collaborate, they catch things a single model misses. They communicate through a structured message protocol, not copy-paste.
 
@@ -87,7 +87,7 @@ gemini --version    # Sign in with Google if prompted
 # 3. Launch
 npm start
 
-# 4. In Settings, assign each pane's CLI (e.g. pane 1 = claude, pane 2 = codex, pane 5 = gemini)
+# 4. In Settings, assign each pane's CLI (e.g. pane 1 = claude, pane 2 = codex, Pane 3 = gemini)
 # 5. You're running a multi-model agent team
 ```
 
@@ -106,7 +106,7 @@ npm start
     +-----------------------------------------------------------+
     |  3-pane multi-model runtime                               |
     |                                                           |
-    |  Pane 1: Architect    Pane 2: Builder    Pane 5: Oracle   |
+    |  Pane 1: Architect    Pane 2: Builder    Pane 3: Oracle   |
     |  (e.g. Claude)        (e.g. Codex)       (e.g. Gemini)   |
     +-----------------------------------------------------------+
                        |

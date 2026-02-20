@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Usage Manager
  * Handles usage statistics tracking and persistence for the main process
  */
@@ -16,9 +16,9 @@ class UsageManager {
       : path.join(GLOBAL_STATE_ROOT || WORKSPACE_PATH, 'usage-stats.json');
     this.ctx.usageStats = {
       totalSpawns: 0,
-      spawnsPerPane: { '1': 0, '2': 0, '5': 0 },
+      spawnsPerPane: { '1': 0, '2': 0, '3': 0 },
       totalSessionTimeMs: 0,
-      sessionTimePerPane: { '1': 0, '2': 0, '5': 0 },
+      sessionTimePerPane: { '1': 0, '2': 0, '3': 0 },
       sessionsToday: 0,
       lastResetDate: new Date().toISOString().split('T')[0],
       history: [],

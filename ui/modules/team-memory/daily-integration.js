@@ -38,7 +38,7 @@ function roleFromPaneId(paneId) {
   }
   if (pane === '1') return 'architect';
   if (pane === '2') return 'builder';
-  if (pane === '5') return 'oracle';
+  if (pane === '3') return 'oracle';
   return 'system';
 }
 

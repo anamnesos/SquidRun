@@ -18,8 +18,8 @@ jest.mock('fs', () => ({
 // Mock config
 jest.mock('../config', () => ({
   WORKSPACE_PATH: '/test/workspace',
-  PANE_IDS: ['1', '2', '5'],
-  PANE_ROLES: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
+  PANE_IDS: ['1', '2', '3'],
+  PANE_ROLES: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
   resolveCoordPath: jest.fn((relPath) => `/coord-root/${String(relPath || '').replace(/\\/g, '/')}`),
 }));
 
@@ -1002,7 +1002,7 @@ describe('Context Compressor Module', () => {
       const writeArgs = fs.writeFileSync.mock.calls.map(c => c[0]);
       expect(writeArgs.some(p => p.includes('1.md'))).toBe(true);
       expect(writeArgs.some(p => p.includes('2.md'))).toBe(true);
-      expect(writeArgs.some(p => p.includes('5.md'))).toBe(true);
+      expect(writeArgs.some(p => p.includes('3.md'))).toBe(true);
     });
 
     it('should not throw if one pane fails', () => {

@@ -623,11 +623,11 @@ describe('Recovery Manager', () => {
 
     test('includes panes from getAllActivity', () => {
       const manager = createManager({
-        getAllActivity: () => ({ '1': Date.now(), '5': Date.now() }),
+        getAllActivity: () => ({ '1': Date.now(), '3': Date.now() }),
       });
       const status = manager.getStatus();
       expect(status['1']).toBeDefined();
-      expect(status['5']).toBeDefined();
+      expect(status['3']).toBeDefined();
     });
   });
 

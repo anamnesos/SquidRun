@@ -190,16 +190,16 @@ describe('Screenshot Handlers', () => {
       ctx.mainWindow.webContents.executeJavaScript = jest.fn().mockResolvedValue(rect);
       ctx.mainWindow.webContents.capturePage = jest.fn().mockResolvedValue(image);
 
-      const result = await harness.invoke('capture-screenshot', { paneId: '5' });
+      const result = await harness.invoke('capture-screenshot', { paneId: '3' });
 
       expect(result).toEqual(expect.objectContaining({
         success: true,
-        paneId: '5',
+        paneId: '3',
         scope: 'pane',
       }));
       expect(ctx.mainWindow.webContents.executeJavaScript).toHaveBeenCalled();
       expect(ctx.mainWindow.webContents.capturePage).toHaveBeenCalledWith(rect);
-      expect(result.filename).toMatch(/^capture-pane-5-\d+\.png$/);
+      expect(result.filename).toMatch(/^capture-pane-3-\d+\.png$/);
     });
 
     test('returns window-not-available when window is destroyed', async () => {

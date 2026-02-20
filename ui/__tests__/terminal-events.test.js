@@ -76,8 +76,8 @@ jest.mock('../modules/terminal/agent-colors', () => ({
 
 // Mock config
 jest.mock('../config', () => ({
-  PANE_IDS: ['1', '2', '5'],
-  PANE_ROLES: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
+  PANE_IDS: ['1', '2', '3'],
+  PANE_ROLES: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
   WORKSPACE_PATH: '/tmp/workspace',
   resolveCoordPath: (relPath) => `/tmp/workspace/${String(relPath || '').replace(/^[/\\]+/, '').replace(/[/\\]+/g, '/')}`,
 }));
@@ -256,14 +256,14 @@ describe('Terminal Events', () => {
 
     test('emits focus.changed on successive focus changes', () => {
       terminal.focusPane('2');
-      terminal.focusPane('5');
+      terminal.focusPane('3');
 
       const focusEvents = mockBus.emit.mock.calls.filter(c => c[0] === 'focus.changed');
       expect(focusEvents).toHaveLength(2);
       expect(focusEvents[0][1].payload.prevPane).toBe('1');
       expect(focusEvents[0][1].payload.newPane).toBe('2');
       expect(focusEvents[1][1].payload.prevPane).toBe('2');
-      expect(focusEvents[1][1].payload.newPane).toBe('5');
+      expect(focusEvents[1][1].payload.newPane).toBe('3');
     });
   });
 

@@ -55,14 +55,14 @@ let activeProjectRoot = DEFAULT_PROJECT_ROOT;
 const INSTANCE_DIRS = {
   '1': path.join(WORKSPACE_PATH, 'instances', 'arch'),    // Architect (Director bundle)
   '2': path.join(WORKSPACE_PATH, 'instances', 'devops'),  // Builder (legacy dir name kept)
-  '5': path.join(WORKSPACE_PATH, 'instances', 'ana'),     // Oracle (legacy dir name kept)
+  '3': path.join(WORKSPACE_PATH, 'instances', 'ana'),     // Oracle (legacy dir name kept)
 };
 
 // Pane roles for display
 const PANE_ROLES = {
   '1': 'Architect',
   '2': 'Builder',
-  '5': 'Oracle',
+  '3': 'Oracle',
 };
 
 const PANE_ROLE_BUNDLES = {
@@ -90,8 +90,8 @@ const PANE_ROLE_BUNDLES = {
       'Context Optimizer',
     ],
   },
-  '5': {
-    heading: PANE_ROLES['5'],
+  '3': {
+    heading: PANE_ROLES['3'],
     members: [
       'Investigator',
       'Docs',
@@ -104,7 +104,7 @@ const PANE_ROLE_BUNDLES = {
 const SHORT_AGENT_NAMES = {
   '1': 'Arch',
   '2': 'Builder',
-  '5': 'Oracle',
+  '3': 'Oracle',
   'system': 'Sys',
   'router': 'Rtr',
   'user': 'User'
@@ -143,8 +143,8 @@ const ROLE_ID_MAP = {
   backend: '2',    // Legacy alias → Builder pane
   infra: '2',      // Legacy alias → Builder pane
   devops: '2',     // Legacy alias → Builder pane
-  oracle: '5',
-  analyst: '5',    // Legacy alias → Oracle pane
+  oracle: '3',
+  analyst: '3',    // Legacy alias → Oracle pane
 };
 
 const BACKGROUND_BUILDER_OWNER_PANE_ID = '2';
@@ -362,36 +362,36 @@ const TRIGGER_TARGETS = {
   // Primary trigger names
   'architect.txt': ['1'],
   'builder.txt': ['2'],
-  'oracle.txt': ['5'],
+  'oracle.txt': ['3'],
 
   // Legacy trigger names (all route to current panes)
   'lead.txt': ['1'],
   'devops.txt': ['2'],
-  'analyst.txt': ['5'],
+  'analyst.txt': ['3'],
   'infra.txt': ['2'],
   'backend.txt': ['2'],
   'orchestrator.txt': ['2'],
   'worker-b.txt': ['2'],
-  'investigator.txt': ['5'],
+  'investigator.txt': ['3'],
 
   // Broadcast triggers
   'workers.txt': ['2'],                   // Builder only
   'implementers.txt': ['2'],              // Builder (legacy)
-  'all.txt': ['1', '2', '5'],
+  'all.txt': ['1', '2', '3'],
 
   // "Others" triggers - send to all EXCEPT the sender
-  'others-architect.txt': ['2', '5'],
-  'others-builder.txt': ['1', '5'],
+  'others-architect.txt': ['2', '3'],
+  'others-builder.txt': ['1', '3'],
   'others-oracle.txt': ['1', '2'],
 
   // Legacy "others" triggers
-  'others-lead.txt': ['2', '5'],
-  'others-devops.txt': ['1', '5'],
+  'others-lead.txt': ['2', '3'],
+  'others-devops.txt': ['1', '3'],
   'others-analyst.txt': ['1', '2'],
-  'others-infra.txt': ['1', '5'],
-  'others-backend.txt': ['1', '5'],
-  'others-orchestrator.txt': ['1', '5'],
-  'others-worker-b.txt': ['1', '5'],
+  'others-infra.txt': ['1', '3'],
+  'others-backend.txt': ['1', '3'],
+  'others-orchestrator.txt': ['1', '3'],
+  'others-worker-b.txt': ['1', '3'],
   'others-investigator.txt': ['1', '2'],
 };
 

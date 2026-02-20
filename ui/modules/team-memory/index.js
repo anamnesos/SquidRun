@@ -84,7 +84,7 @@ function normalizePatternHookPane(entry = {}) {
   const role = normalizePatternHookRole(entry);
   if (role === 'architect') return '1';
   if (role === 'builder') return '2';
-  if (role === 'oracle') return '5';
+  if (role === 'oracle') return '3';
   return 'system';
 }
 

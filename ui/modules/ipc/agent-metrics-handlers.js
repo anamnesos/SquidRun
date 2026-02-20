@@ -38,14 +38,14 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
     agents: {
       '1': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
       '2': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
-      '5': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
+      '3': { completions: 0, errors: 0, totalResponseTime: 0, responseCount: 0 },
     },
     lastUpdated: null,
   };
 
   const DEFAULT_LEARNING = {
     taskTypes: {},
-    routingWeights: { '1': 1.0, '2': 1.0, '5': 1.0 },
+    routingWeights: { '1': 1.0, '2': 1.0, '3': 1.0 },
     totalDecisions: 0,
     lastUpdated: null,
   };
@@ -387,9 +387,9 @@ function registerAgentMetricsHandlers(ctx, deps = {}) {
 
   ipcMain.handle('reset-usage-stats', async () => {
     ctx.usageStats.totalSpawns = 0;
-    ctx.usageStats.spawnsPerPane = { '1': 0, '2': 0, '5': 0 };
+    ctx.usageStats.spawnsPerPane = { '1': 0, '2': 0, '3': 0 };
     ctx.usageStats.totalSessionTimeMs = 0;
-    ctx.usageStats.sessionTimePerPane = { '1': 0, '2': 0, '5': 0 };
+    ctx.usageStats.sessionTimePerPane = { '1': 0, '2': 0, '3': 0 };
     ctx.usageStats.sessionsToday = 0;
     ctx.usageStats.lastResetDate = new Date().toISOString().split('T')[0];
     ctx.usageStats.history = [];

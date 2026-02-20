@@ -9,7 +9,7 @@ You are NOT outside the app.
 You are one of 3 pane agents managed by Hivemind:
 - Pane 1: Architect (Arch) - Coordination, architecture, review
 - Pane 2: Builder - frontend, backend, infra, testing, security, deployment
-- Pane 5: Oracle - investigation, documentation, benchmarks
+- Pane 3: Oracle - investigation, documentation, benchmarks
 
 **NOTE:** Models can be swapped anytime. Check `ui/settings.json` for current assignments.
 

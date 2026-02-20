@@ -4,16 +4,16 @@
  */
 
 jest.mock('../config', () => ({
-  PANE_IDS: ['1', '2', '5'],
+  PANE_IDS: ['1', '2', '3'],
   PANE_ROLES: {
     '1': 'Architect',
     '2': 'Builder',
-    '5': 'Oracle',
+    '3': 'Oracle',
   },
   SHORT_AGENT_NAMES: {
     '1': 'Arch',
     '2': 'Builder',
-    '5': 'Oracle',
+    '3': 'Oracle',
     'system': 'Sys',
   },
 }));

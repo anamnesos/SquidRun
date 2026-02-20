@@ -39,7 +39,7 @@ describe('Completion Quality Handlers', () => {
     ctx.PANE_ROLES = {
       '1': 'Architect',
       '2': 'Builder',
-      '5': 'Oracle',
+      '3': 'Oracle',
     };
 
     // Set up watcher with readState

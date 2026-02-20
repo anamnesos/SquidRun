@@ -81,7 +81,7 @@ describe('Learning Data Handlers', () => {
     ctx.PANE_ROLES = {
       '1': 'Architect',
       '2': 'Builder',
-      '5': 'Oracle',
+      '3': 'Oracle',
     };
 
     // Default: no existing learning file
@@ -106,11 +106,11 @@ describe('Learning Data Handlers', () => {
 
   describe('record-task-outcome', () => {
     test('records successful task outcome', async () => {
-      const result = await harness.invoke('record-task-outcome', 'code-review', '5', true, 5000);
+      const result = await harness.invoke('record-task-outcome', 'code-review', '3', true, 5000);
 
       expect(result.success).toBe(true);
       expect(result.taskType).toBe('code-review');
-      expect(result.paneId).toBe('5');
+      expect(result.paneId).toBe('3');
       expect(result.successRate).toBe(1);
       expect(result.newWeight).toBe(1.0); // 0.5 + (1.0 * 0.5)
     });
@@ -186,7 +186,7 @@ describe('Learning Data Handlers', () => {
       expect(result.success).toBe(true);
       expect(result.taskTypes).toEqual({});
       expect(result.routingWeights).toEqual({
-        '1': 1.0, '2': 1.0, '5': 1.0,
+        '1': 1.0, '2': 1.0, '3': 1.0,
       });
       expect(result.totalDecisions).toBe(0);
     });
@@ -197,13 +197,13 @@ describe('Learning Data Handlers', () => {
         taskTypes: {
           'code-review': {
             agentStats: {
-              '5': { success: 10, failure: 2, totalTime: 120000, attempts: 12 },
+              '3': { success: 10, failure: 2, totalTime: 120000, attempts: 12 },
               '1': { success: 3, failure: 1, totalTime: 40000, attempts: 4 },
             },
             totalAttempts: 16,
           },
         },
-        routingWeights: { '1': 0.875, '5': 0.916 },
+        routingWeights: { '1': 0.875, '3': 0.916 },
         totalDecisions: 16,
         lastUpdated: '2026-01-30T10:00:00Z',
       }));
@@ -212,7 +212,7 @@ describe('Learning Data Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.insights['code-review']).toBeDefined();
-      expect(result.insights['code-review'].bestAgent.paneId).toBe('5');
+      expect(result.insights['code-review'].bestAgent.paneId).toBe('3');
       expect(result.insights['code-review'].rankings.length).toBe(2);
       expect(result.lastUpdated).toBe('2026-01-30T10:00:00Z');
     });
@@ -273,7 +273,7 @@ describe('Learning Data Handlers', () => {
         taskTypes: {
           'code-review': {
             agentStats: {
-              '5': { success: 9, failure: 1, totalTime: 100000, attempts: 10 },
+              '3': { success: 9, failure: 1, totalTime: 100000, attempts: 10 },
               '1': { success: 6, failure: 4, totalTime: 80000, attempts: 10 },
             },
           },
@@ -283,7 +283,7 @@ describe('Learning Data Handlers', () => {
       const result = await harness.invoke('get-best-agent-for-task', 'code-review');
 
       expect(result.success).toBe(true);
-      expect(result.bestAgent.paneId).toBe('5');
+      expect(result.bestAgent.paneId).toBe('3');
       expect(result.bestAgent.successRate).toBe(0.9);
       expect(result.bestAgent.role).toBe('Oracle');
       expect(result.reason).toContain('90%');
@@ -333,7 +333,7 @@ describe('Learning Data Handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.weights).toEqual({
-        '1': 1.0, '2': 1.0, '5': 1.0,
+        '1': 1.0, '2': 1.0, '3': 1.0,
       });
     });
 

@@ -11,7 +11,7 @@ const { executeTeamMemoryOperation } = require('../team-memory/runtime');
 
 const HANDOFFS_RELATIVE_DIR = 'handoffs';
 const SESSION_HANDOFF_FILE = 'session.md';
-const LEGACY_PANE_HANDOFFS = ['1.md', '2.md', '5.md'];
+const LEGACY_PANE_HANDOFFS = ['1.md', '2.md', '3.md'];
 const DEFAULT_QUERY_LIMIT = 5000;
 const DEFAULT_RECENT_LIMIT = 250;
 const DEFAULT_TAGGED_LIMIT = 120;

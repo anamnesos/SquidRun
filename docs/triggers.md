@@ -14,7 +14,7 @@ node ui/scripts/hm-send.js <target> "(ROLE #N): message"
 |--------|---------|
 | `architect` | Architect (pane 1) |
 | `builder` | Builder (pane 2) |
-| `oracle` | Oracle (pane 5) |
+| `oracle` | Oracle (Pane 3) |
 | `builder-bg-1` | Background Builder slot 1 (`bg-2-1`, Builder-owned) |
 | `builder-bg-2` | Background Builder slot 2 (`bg-2-2`, Builder-owned) |
 | `builder-bg-3` | Background Builder slot 3 (`bg-2-3`, Builder-owned) |
@@ -55,7 +55,7 @@ Legacy compatibility path: `workspace/triggers/`
 |------|------|--------------|
 | 1 | Architect | `architect.txt` |
 | 2 | Builder | `builder.txt` |
-| 5 | Oracle | `oracle.txt` |
+| 3 | Oracle | `oracle.txt` |
 
 ### Broadcast and group triggers
 

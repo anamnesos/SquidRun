@@ -38,7 +38,7 @@ function getTriggerDir() {
 const TRIGGER_FILES = {
   '1': 'architect.txt',
   '2': 'builder.txt',
-  '5': 'oracle.txt',
+  '3': 'oracle.txt',
 };
 
 function asNonEmptyString(value) {
@@ -158,7 +158,7 @@ function getMCPHealth() {
 /**
  * Register an agent connection via MCP handshake
  * @param {string} sessionId - MCP session identifier
- * @param {string} paneId - Agent pane ID (1, 2, or 5)
+ * @param {string} paneId - Agent pane ID (1, 2, or 3)
  * @returns {{ success: boolean, agent: object }}
  */
 function registerAgent(sessionId, paneId) {
@@ -505,7 +505,7 @@ function getMCPToolDefinitions() {
       inputSchema: {
         type: 'object',
         properties: {
-          paneId: { type: 'string', description: 'Agent pane ID (1=Architect, 2=Builder, 5=Oracle)' },
+          paneId: { type: 'string', description: 'Agent pane ID (1=Architect, 2=Builder, 3=Oracle)' },
         },
         required: ['paneId'],
       },
@@ -516,7 +516,7 @@ function getMCPToolDefinitions() {
       inputSchema: {
         type: 'object',
         properties: {
-          to: { type: 'string', description: 'Recipient pane ID (1, 2, 5)' },
+          to: { type: 'string', description: 'Recipient pane ID (1, 2, 3)' },
           content: { type: 'string', description: 'Message content' },
         },
         required: ['to', 'content'],

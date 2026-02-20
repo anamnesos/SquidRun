@@ -334,7 +334,7 @@ describe('WebSocket Delivery Audit', () => {
   test('deduplicates reconnect resend by sender/target/content signature when messageId changes', async () => {
     const receiver = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(receiver);
-    const sender = await connectAndRegister({ port, role: 'oracle', paneId: '5' });
+    const sender = await connectAndRegister({ port, role: 'oracle', paneId: '3' });
     activeClients.add(sender);
 
     const firstMessageId = 'ack-signature-dedup-1';

@@ -524,17 +524,17 @@ describe('HivemindApp', () => {
       expect(app.resolveTargetToPane(undefined)).toBeNull();
     });
 
-    it('should return paneId for direct numeric strings 1, 2, 5', () => {
+    it('should return paneId for direct numeric strings 1, 2, 3', () => {
       expect(app.resolveTargetToPane('1')).toBe('1');
       expect(app.resolveTargetToPane('2')).toBe('2');
-      expect(app.resolveTargetToPane('5')).toBe('5');
+      expect(app.resolveTargetToPane('3')).toBe('3');
     });
 
     it('should resolve role names to paneIds', () => {
       expect(app.resolveTargetToPane('architect')).toBe('1');
       expect(app.resolveTargetToPane('builder')).toBe('2');
       expect(app.resolveTargetToPane('backend')).toBe('2');
-      expect(app.resolveTargetToPane('oracle')).toBe('5');
+      expect(app.resolveTargetToPane('oracle')).toBe('3');
     });
 
     it('should be case-insensitive for role names', () => {
@@ -547,7 +547,7 @@ describe('HivemindApp', () => {
       expect(app.resolveTargetToPane('lead')).toBe('1');
       expect(app.resolveTargetToPane('orchestrator')).toBe('2');
       expect(app.resolveTargetToPane('worker-b')).toBe('2');
-      expect(app.resolveTargetToPane('investigator')).toBe('5');
+      expect(app.resolveTargetToPane('investigator')).toBe('3');
     });
 
     it('should resolve background builder aliases and synthetic pane ids', () => {

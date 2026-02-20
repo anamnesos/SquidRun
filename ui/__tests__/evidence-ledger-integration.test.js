@@ -41,7 +41,7 @@ jest.mock('../modules/ui-view', () => ({
   hideRollbackUI: jest.fn(),
   updatePaneProject: jest.fn(),
   updateAgentTasks: jest.fn(),
-  PANE_ROLES: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
+  PANE_ROLES: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
   SYNC_FILES: { 'shared_context.md': { label: 'CTX' } },
   _resetForTesting: jest.fn(),
 }));
@@ -178,12 +178,12 @@ describe('evidence-ledger integration: trace continuity', () => {
         const paneIdByTarget = {
           architect: '1',
           builder: '2',
-          oracle: '5',
+          oracle: '3',
           '1': '1',
           '2': '2',
-          '5': '5',
+          '3': '3',
         };
-        const targetPane = paneIdByTarget[rawTarget] || String(payload.message.target || '5');
+        const targetPane = paneIdByTarget[rawTarget] || String(payload.message.target || '3');
 
         return triggers.sendDirectMessage(
           [targetPane],
@@ -245,7 +245,7 @@ describe('evidence-ledger integration: trace continuity', () => {
       lastTypedTime,
       messageQueue,
       isCodexPane: () => false,
-      isGeminiPane: (paneId) => String(paneId) === '5',
+      isGeminiPane: (paneId) => String(paneId) === '3',
       buildCodexExecPrompt: (_paneId, text) => text,
       userIsTyping: () => false,
       userInputFocused: () => false,
@@ -286,7 +286,7 @@ describe('evidence-ledger integration: trace continuity', () => {
       new Map([
         ['1', 'running'],
         ['2', 'running'],
-        ['5', 'running'],
+        ['3', 'running'],
       ]),
       jest.fn()
     );

@@ -12,19 +12,19 @@ const GEMINI_INCLUDE_DIR = PROJECT_ROOT.replace(/\\/g, '/');
 const DEFAULT_PANE_COMMANDS = {
   '1': 'claude',
   '2': 'codex',
-  '5': `gemini --yolo --include-directories "${GEMINI_INCLUDE_DIR}"`,
+  '3': `gemini --yolo --include-directories "${GEMINI_INCLUDE_DIR}"`,
 };
 
 const ALL_CLAUDE = {
   '1': 'claude',
   '2': 'claude',
-  '5': 'claude',
+  '3': 'claude',
 };
 
 const ALL_CODEX = {
   '1': 'codex',
   '2': 'codex',
-  '5': 'codex',
+  '3': 'codex',
 };
 
 const BUILTIN_TEMPLATES = [

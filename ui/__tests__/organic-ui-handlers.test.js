@@ -24,7 +24,7 @@ describe('organic-ui-handlers', () => {
     jest.useFakeTimers();
 
     // Reset agent states to offline before each test
-    for (const id of ['1', '2', '5']) {
+    for (const id of ['1', '2', '3']) {
       organicUI.setAgentState(id, 'offline');
     }
 
@@ -51,7 +51,7 @@ describe('organic-ui-handlers', () => {
       expect(organicUI.SHORT_ROLES).toEqual({
         '1': 'arch',
         '2': 'builder',
-        '5': 'oracle',
+        '3': 'oracle',
       });
     });
   });
@@ -112,7 +112,7 @@ describe('organic-ui-handlers', () => {
     it('should return all agent states with roles', () => {
       organicUI.setAgentState('1', 'idle');
       organicUI.setAgentState('2', 'thinking');
-      organicUI.setAgentState('5', 'active');
+      organicUI.setAgentState('3', 'active');
 
       const states = organicUI.getAllAgentStates();
 
@@ -126,7 +126,7 @@ describe('organic-ui-handlers', () => {
         role: 'builder',
         fullRole: 'Builder',
       });
-      expect(states['5']).toEqual({
+      expect(states['3']).toEqual({
         state: 'active',
         role: 'oracle',
         fullRole: 'Oracle',
@@ -161,22 +161,22 @@ describe('organic-ui-handlers', () => {
 
     describe('agentOffline', () => {
       it('should set agent to offline', () => {
-        organicUI.agentOnline('5');
-        organicUI.agentOffline('5');
-        expect(organicUI.getAgentState('5')).toBe('offline');
+        organicUI.agentOnline('3');
+        organicUI.agentOffline('3');
+        expect(organicUI.getAgentState('3')).toBe('offline');
       });
 
       it('should emit agent-offline event when transitioning from online', () => {
         organicUI.registerOrganicUIHandlers({ ipcMain: mockIpcMain, mainWindow: mockMainWindow });
-        organicUI.setAgentState('5', 'idle');
+        organicUI.setAgentState('3', 'idle');
         mockMainWindow.webContents.send.mockClear();
 
-        organicUI.agentOffline('5');
+        organicUI.agentOffline('3');
 
         expect(mockMainWindow.webContents.send).toHaveBeenCalledWith(
           'agent-offline',
           expect.objectContaining({
-            agentId: '5',
+            agentId: '3',
             role: 'oracle',
             fullRole: 'Oracle',
           })
@@ -186,15 +186,15 @@ describe('organic-ui-handlers', () => {
 
     describe('agentThinking', () => {
       it('should set agent to thinking', () => {
-        organicUI.agentThinking('5');
-        expect(organicUI.getAgentState('5')).toBe('thinking');
+        organicUI.agentThinking('3');
+        expect(organicUI.getAgentState('3')).toBe('thinking');
       });
 
       it('should auto-online offline agent first', () => {
-        organicUI.setAgentState('5', 'offline');
-        organicUI.agentThinking('5');
+        organicUI.setAgentState('3', 'offline');
+        organicUI.agentThinking('3');
         // Should not remain offline, should be thinking
-        expect(organicUI.getAgentState('5')).toBe('thinking');
+        expect(organicUI.getAgentState('3')).toBe('thinking');
       });
     });
 
@@ -242,17 +242,17 @@ describe('organic-ui-handlers', () => {
 
     describe('agentReceiving', () => {
       it('should set agent to receiving', () => {
-        organicUI.agentReceiving('5');
-        expect(organicUI.getAgentState('5')).toBe('receiving');
+        organicUI.agentReceiving('3');
+        expect(organicUI.getAgentState('3')).toBe('receiving');
       });
 
       it('should auto-transition to thinking after 500ms', () => {
-        organicUI.agentReceiving('5');
-        expect(organicUI.getAgentState('5')).toBe('receiving');
+        organicUI.agentReceiving('3');
+        expect(organicUI.getAgentState('3')).toBe('receiving');
 
         jest.advanceTimersByTime(500);
 
-        expect(organicUI.getAgentState('5')).toBe('thinking');
+        expect(organicUI.getAgentState('3')).toBe('thinking');
       });
 
       it('should auto-online offline agent first', () => {
@@ -304,7 +304,7 @@ describe('organic-ui-handlers', () => {
 
     describe('messageSending', () => {
       it('should emit message-routing event with sending phase', () => {
-        organicUI.messageQueued('msg-2', '2', '5');
+        organicUI.messageQueued('msg-2', '2', '3');
         mockMainWindow.webContents.send.mockClear();
 
         organicUI.messageSending('msg-2');
@@ -315,7 +315,7 @@ describe('organic-ui-handlers', () => {
             messageId: 'msg-2',
             from: '2',
             fromRole: 'builder',
-            to: '5',
+            to: '3',
             toRole: 'oracle',
             phase: 'sending',
           })
@@ -323,10 +323,10 @@ describe('organic-ui-handlers', () => {
       });
 
       it('should mark target agent as receiving', () => {
-        organicUI.messageQueued('msg-3', '1', '5');
+        organicUI.messageQueued('msg-3', '1', '3');
         organicUI.messageSending('msg-3');
 
-        expect(organicUI.getAgentState('5')).toBe('receiving');
+        expect(organicUI.getAgentState('3')).toBe('receiving');
       });
 
       it('should do nothing for unknown message', () => {
@@ -338,7 +338,7 @@ describe('organic-ui-handlers', () => {
 
     describe('messageDelivered', () => {
       it('should emit message-routing event with delivered phase', () => {
-        organicUI.messageQueued('msg-4', '1', '5');
+        organicUI.messageQueued('msg-4', '1', '3');
         organicUI.messageSending('msg-4');
         mockMainWindow.webContents.send.mockClear();
 
@@ -350,7 +350,7 @@ describe('organic-ui-handlers', () => {
             messageId: 'msg-4',
             from: '1',
             fromRole: 'arch',
-            to: '5',
+            to: '3',
             toRole: 'oracle',
             phase: 'delivered',
             duration: expect.any(Number),
@@ -359,7 +359,7 @@ describe('organic-ui-handlers', () => {
       });
 
       it('should cleanup route after 2000ms', () => {
-        organicUI.messageQueued('msg-5', '2', '5');
+        organicUI.messageQueued('msg-5', '2', '3');
         organicUI.messageDelivered('msg-5');
 
         // Route still exists immediately
@@ -376,7 +376,7 @@ describe('organic-ui-handlers', () => {
 
     describe('messageFailed', () => {
       it('should emit message-routing event with failed phase and error', () => {
-        organicUI.messageQueued('msg-6', '2', '5');
+        organicUI.messageQueued('msg-6', '2', '3');
         mockMainWindow.webContents.send.mockClear();
 
         organicUI.messageFailed('msg-6', 'Timeout exceeded');
@@ -387,7 +387,7 @@ describe('organic-ui-handlers', () => {
             messageId: 'msg-6',
             from: '2',
             fromRole: 'builder',
-            to: '5',
+            to: '3',
             toRole: 'oracle',
             phase: 'failed',
             error: 'Timeout exceeded',
@@ -467,9 +467,9 @@ describe('organic-ui-handlers', () => {
           call => call[0] === 'organic:set-agent-state'
         )[1];
 
-        handler(null, '5', 'thinking');
+        handler(null, '3', 'thinking');
 
-        expect(organicUI.getAgentState('5')).toBe('thinking');
+        expect(organicUI.getAgentState('3')).toBe('thinking');
       });
     });
 
@@ -483,7 +483,7 @@ describe('organic-ui-handlers', () => {
 
         // Create routes with unique IDs for this test
         organicUI.messageQueued('unique-route-1', '1', '2');
-        organicUI.messageQueued('unique-route-2', '2', '5');
+        organicUI.messageQueued('unique-route-2', '2', '3');
 
         const result = handler();
 
@@ -502,7 +502,7 @@ describe('organic-ui-handlers', () => {
           expect.objectContaining({
             messageId: 'unique-route-2',
             from: '2',
-            to: '5',
+            to: '3',
             phase: 'queued',
           })
         );

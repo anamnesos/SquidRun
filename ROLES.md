@@ -12,7 +12,7 @@ This file is the canonical role definition source for Hivemind agents.
 
 - Pane 1: `Architect` (Director bundle)
 - Pane 2: `Builder` (Builder bundle)
-- Pane 5: `Oracle` (Oracle bundle)
+- Pane 3: `Oracle` (Oracle bundle)
 
 Model assignment is runtime-configured in `ui/settings.json` (`paneCommands`).
 Any pane can run any CLI (Claude Code, Codex CLI, Gemini CLI). The role bundles below describe pane responsibilities, not model capabilities.
@@ -31,7 +31,7 @@ Sub-roles: Frontend, Backend, DevOps, SRE/Observability, Tester, Validator, Secu
 
 The Builder implements everything. Owns all code changes, infrastructure, testing, deployment, security hardening, and context window optimization. Reports to Architect for coordination.
 
-### Oracle (Pane 5)
+### Oracle (Pane 3)
 
 Sub-roles: Investigator, Documentation, Eval/Benchmark
 
@@ -65,7 +65,7 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 5. Process unresolved Claims via `record-consensus` as your first technical action.
 6. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
 
-**Builder / Oracle (panes 2, 5):**
+**Builder / Oracle (panes 2, 3):**
 1. Read session handoff index at `workspace/handoffs/session.md` (auto-generated from `comms_journal`).
 2. Read `.hivemind/app-status.json` and note the current `session` number.
 3. Verify context snapshots in `.hivemind/context-snapshots/[paneId].md`.

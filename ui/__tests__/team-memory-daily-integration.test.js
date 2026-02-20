@@ -144,7 +144,7 @@ describe('team-memory daily integration helpers', () => {
     }));
 
     const intentEvent = buildIntentUpdatePatternEvent({
-      paneId: '5',
+      paneId: '3',
       role: 'oracle',
       session: 129,
       intent: 'Investigating runtime bridge',
@@ -154,7 +154,7 @@ describe('team-memory daily integration helpers', () => {
     });
     expect(intentEvent).toEqual(expect.objectContaining({
       eventType: 'intent.updated',
-      paneId: '5',
+      paneId: '3',
       actor: 'oracle',
       intent: 'Investigating runtime bridge',
       previousIntent: 'Idle',

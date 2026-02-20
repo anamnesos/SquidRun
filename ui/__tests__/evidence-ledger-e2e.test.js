@@ -53,7 +53,7 @@ maybeDescribe('evidence-ledger e2e lifecycle', () => {
       mode: 'PTY',
       startedAtMs: 1700000000000,
       stats: { test_suites: 117, tests_passed: 3347 },
-      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
+      team: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
     });
     expect(sessionOneStart.ok).toBe(true);
 
@@ -131,7 +131,7 @@ maybeDescribe('evidence-ledger e2e lifecycle', () => {
       endedAtMs: 1700000000300,
       summary: 'Completed Phase C implementation',
       stats: { test_suites: 117, tests_passed: 3347 },
-      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
+      team: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
     });
     expect(sessionOneEnd.ok).toBe(true);
 
@@ -141,7 +141,7 @@ maybeDescribe('evidence-ledger e2e lifecycle', () => {
       mode: 'PTY',
       startedAtMs: 1700001000000,
       stats: { test_suites: 117, tests_passed: 3347 },
-      team: { '1': 'Architect', '2': 'Builder', '5': 'Oracle' },
+      team: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
     });
     expect(sessionTwoStart.ok).toBe(true);
 

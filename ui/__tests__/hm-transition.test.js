@@ -52,13 +52,13 @@ describe('hm-transition CLI helpers', () => {
   test('buildPayload creates get payload for correlation query', () => {
     const options = new Map([
       ['correlation', 'corr-abc'],
-      ['pane', '5'],
+      ['pane', '3'],
       ['include-closed', 'false'],
     ]);
 
     expect(hmTransition.buildPayload('get', options)).toEqual({
       correlationId: 'corr-abc',
-      paneId: '5',
+      paneId: '3',
       includeClosed: false,
     });
   });
