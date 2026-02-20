@@ -17,6 +17,8 @@ const bridge = require('./tabs/bridge');
 let panelOpen = false;
 let onConnectionStatusUpdate = null;
 let storedResizeFn = null;
+let pendingResizeTimer = null;
+const PANEL_RESIZE_DELAY_MS = 350;
 
 // Track panel-level DOM listener cleanup
 let panelCleanupFns = [];
@@ -31,6 +33,17 @@ function updateConnectionStatus(status) {
   }
 }
 
+function schedulePanelResize(handleResizeFn) {
+  if (typeof handleResizeFn !== 'function') return;
+  if (pendingResizeTimer) {
+    clearTimeout(pendingResizeTimer);
+  }
+  pendingResizeTimer = setTimeout(() => {
+    pendingResizeTimer = null;
+    handleResizeFn();
+  }, PANEL_RESIZE_DELAY_MS);
+}
+
 // Toggle right panel
 function togglePanel(handleResizeFn) {
   const panel = document.getElementById('rightPanel');
@@ -43,9 +56,7 @@ function togglePanel(handleResizeFn) {
   if (terminalsSection) terminalsSection.classList.toggle('panel-open', panelOpen);
   if (panelBtn) panelBtn.classList.toggle('active', panelOpen);
 
-  if (handleResizeFn) {
-    setTimeout(handleResizeFn, 350);
-  }
+  schedulePanelResize(handleResizeFn);
 }
 
 function isPanelOpen() {
@@ -62,15 +73,18 @@ function switchTab(tabId) {
   });
 
   // Trigger resize when switching tabs (panel size may differ by content)
-  if (storedResizeFn) {
-    setTimeout(storedResizeFn, 350);
-  }
+  schedulePanelResize(storedResizeFn);
 }
 
 /**
  * Destroy all tab modules — call before re-initialization to prevent listener leaks.
  */
 function destroyAllTabs() {
+  if (pendingResizeTimer) {
+    clearTimeout(pendingResizeTimer);
+    pendingResizeTimer = null;
+  }
+
   // Destroy panel-level DOM listeners
   for (const fn of panelCleanupFns) {
     try { fn(); } catch (_) {}

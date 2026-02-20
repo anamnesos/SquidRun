@@ -100,6 +100,41 @@ const APP_STATUS_FALLBACK_PATHS = Object.freeze([
 let mainPaneId = '1';
 const RESIZE_DEBOUNCE_MS = 175;
 let resizeDebounceTimer = null;
+let setupEventListenersBound = false;
+let autonomyOnboardingHandlersBound = false;
+let lifecycleUnloadHookBound = false;
+let rendererLifecycleCleanupFns = [];
+
+function registerRendererLifecycleCleanup(fn) {
+  if (typeof fn === 'function') {
+    rendererLifecycleCleanupFns.push(fn);
+  }
+}
+
+function clearRendererLifecycleBindings() {
+  if (resizeDebounceTimer) {
+    clearTimeout(resizeDebounceTimer);
+    resizeDebounceTimer = null;
+  }
+
+  const cleanupFns = rendererLifecycleCleanupFns;
+  rendererLifecycleCleanupFns = [];
+  for (const cleanup of cleanupFns) {
+    try {
+      cleanup();
+    } catch (_) {}
+  }
+}
+
+function ensureLifecycleUnloadHook() {
+  if (lifecycleUnloadHookBound || typeof window?.addEventListener !== 'function') return;
+  const unloadHandler = () => {
+    clearRendererIpcListeners();
+    clearRendererLifecycleBindings();
+  };
+  window.addEventListener('beforeunload', unloadHandler);
+  lifecycleUnloadHookBound = true;
+}
 
 function asPositiveInt(value) {
   const numeric = Number(value);
@@ -305,6 +340,9 @@ async function handleAutonomyOnboardingChoice(enabled) {
 }
 
 function setupAutonomyOnboardingHandlers() {
+  if (autonomyOnboardingHandlersBound) return;
+  autonomyOnboardingHandlersBound = true;
+
   const { enableButton, declineButton } = getAutonomyOnboardingElements();
   if (enableButton) {
     enableButton.addEventListener('click', () => {
@@ -569,6 +607,9 @@ daemonHandlers.setStatusCallbacks(updateConnectionStatus);
 
 // Setup event listeners
 function setupEventListeners() {
+  if (setupEventListenersBound) return;
+  setupEventListenersBound = true;
+
   // Window resize handled by ResizeObserver in terminal.js (observes .pane-terminal containers)
 
   // Keyboard shortcuts (consolidated — Ctrl+N focus + ESC collapse)
@@ -1152,6 +1193,8 @@ function setupEventListeners() {
 
 // Initialize on DOM load
 document.addEventListener('DOMContentLoaded', async () => {
+  ensureLifecycleUnloadHook();
+  clearRendererLifecycleBindings();
   clearRendererIpcListeners();
   if (typeof daemonHandlers.teardownDaemonListeners === 'function') {
     daemonHandlers.teardownDaemonListeners();
@@ -1477,6 +1520,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
     overlayObserver.observe(settingsPanel, { attributes: true, attributeFilter: ['class'] });
+    registerRendererLifecycleCleanup(() => overlayObserver.disconnect());
   }
 
   if (cmdPaletteOverlay) {
@@ -1490,6 +1534,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
     paletteObserver.observe(cmdPaletteOverlay, { attributes: true, attributeFilter: ['class'] });
+    registerRendererLifecycleCleanup(() => paletteObserver.disconnect());
   }
   if (paneRoleModalOverlay) {
     const roleModalObserver = new MutationObserver((mutations) => {
@@ -1502,32 +1547,37 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
     roleModalObserver.observe(paneRoleModalOverlay, { attributes: true, attributeFilter: ['class'] });
+    registerRendererLifecycleCleanup(() => roleModalObserver.disconnect());
   }
 
   // 2. resize.requested — window resize events
-  window.addEventListener('resize', () => {
+  const onWindowResizeRequested = () => {
     bus.emit('resize.requested', {
       paneId: 'system',
       payload: { trigger: 'window_resize' },
       source: 'renderer.js',
     });
-  });
+  };
+  window.addEventListener('resize', onWindowResizeRequested);
+  registerRendererLifecycleCleanup(() => window.removeEventListener('resize', onWindowResizeRequested));
 
   // 3. resize.requested — panel toggle (right panel)
   const panelBtn = document.getElementById('panelBtn');
   if (panelBtn) {
-    panelBtn.addEventListener('click', () => {
+    const onPanelToggleResizeRequested = () => {
       bus.emit('resize.requested', {
         paneId: 'system',
         payload: { trigger: 'panel_toggle' },
         source: 'renderer.js',
       });
-    });
+    };
+    panelBtn.addEventListener('click', onPanelToggleResizeRequested);
+    registerRendererLifecycleCleanup(() => panelBtn.removeEventListener('click', onPanelToggleResizeRequested));
   }
 
   // 4. pane.visibility.changed — pane expand/collapse
   document.querySelectorAll('.expand-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    const onPaneVisibilityChanged = () => {
       const paneId = btn.dataset.paneId;
       if (paneId) {
         const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
@@ -1538,7 +1588,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           source: 'renderer.js',
         });
       }
-    });
+    };
+    btn.addEventListener('click', onPaneVisibilityChanged);
+    registerRendererLifecycleCleanup(() => btn.removeEventListener('click', onPaneVisibilityChanged));
   });
 
   // 5. ui.longtask.detected — PerformanceObserver for long tasks
@@ -1554,6 +1606,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       });
       longTaskObserver.observe({ entryTypes: ['longtask'] });
+      registerRendererLifecycleCleanup(() => {
+        if (typeof longTaskObserver.takeRecords === 'function') {
+          longTaskObserver.takeRecords();
+        }
+        if (typeof longTaskObserver.disconnect === 'function') {
+          longTaskObserver.disconnect();
+        }
+      });
     } catch (e) {
       // PerformanceObserver for longtask not supported — skip gracefully
     }
