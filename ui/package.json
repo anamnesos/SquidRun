@@ -58,7 +58,7 @@
       "!out/**"
     ],
     "mac": {
-      "icon": "assets/hivemind-icon.icns",
+      "icon": "assets/squidrun-logo.png",
       "category": "public.app-category.developer-tools",
       "target": ["dmg", "zip"]
     },
@@ -67,7 +67,7 @@
       "target": ["nsis"]
     },
     "linux": {
-      "icon": "assets/squidrun-favicon-256.png",
+      "icon": "assets/squidrun-logo.png",
       "target": ["AppImage", "deb"],
       "category": "Development"
     }

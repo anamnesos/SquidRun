@@ -404,7 +404,7 @@ function registerPtyHandlers(ctx, deps = {}) {
         agentCmd = `${agentCmd} --dangerously-skip-permissions`;
       }
       if (agentCmd.startsWith('codex')) {
-        if (!agentCmd.includes('--dangerously-bypass-approvals-and-sandbox') && !agentCmd.includes('--yolo')) {
+        if (!agentCmd.includes('--dangerously-bypass-approvals-and-sandbox') && !agentCmd.includes('-s danger-full-access') && !agentCmd.includes('--yolo')) {
           agentCmd = `${agentCmd} --yolo`;
         }
       }
