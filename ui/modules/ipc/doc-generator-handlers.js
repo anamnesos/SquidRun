@@ -42,6 +42,7 @@ function registerDocGeneratorHandlers(ctx) {
   // Documentation config storage
   const CONFIG_PATH = path.join(WORKSPACE_PATH, 'memory', '_docs-config.json');
   const CACHE_PATH = path.join(WORKSPACE_PATH, 'memory', '_docs-cache');
+  const PROJECT_ROOT = path.resolve(WORKSPACE_PATH, '..');
 
   // Default config
   let docsConfig = {
@@ -87,6 +88,26 @@ function registerDocGeneratorHandlers(ctx) {
     }
   }
 
+  function isWithinProjectRoot(candidatePath) {
+    const relative = path.relative(PROJECT_ROOT, candidatePath);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  }
+
+  function resolveProjectPath(inputPath, fallbackPath, label) {
+    const raw = typeof inputPath === 'string' ? inputPath.trim() : '';
+    const basePath = raw
+      ? (path.isAbsolute(raw) ? raw : path.join(PROJECT_ROOT, raw))
+      : fallbackPath;
+    const resolved = path.resolve(basePath);
+    if (!isWithinProjectRoot(resolved)) {
+      return {
+        success: false,
+        error: `${label} must be inside project root`,
+      };
+    }
+    return { success: true, path: resolved };
+  }
+
   // Initialize
   loadConfig();
 
@@ -100,9 +121,11 @@ function registerDocGeneratorHandlers(ctx) {
       return { success: false, error: 'File path required' };
     }
 
-    const fullPath = path.isAbsolute(filePath)
-      ? filePath
-      : path.join(WORKSPACE_PATH, '..', filePath);
+    const resolvedPath = resolveProjectPath(filePath, PROJECT_ROOT, 'File path');
+    if (!resolvedPath.success) {
+      return resolvedPath;
+    }
+    const fullPath = resolvedPath.path;
 
     try {
       const generator = getGenerator({ format });
@@ -132,9 +155,11 @@ function registerDocGeneratorHandlers(ctx) {
   ipcMain.handle('docs-generate-directory', async (event, payload = {}) => {
     const { dirPath, recursive = docsConfig.recursive, format = docsConfig.format } = payload;
 
-    const fullPath = dirPath
-      ? (path.isAbsolute(dirPath) ? dirPath : path.join(WORKSPACE_PATH, '..', dirPath))
-      : path.join(WORKSPACE_PATH, '..');
+    const resolvedPath = resolveProjectPath(dirPath, PROJECT_ROOT, 'Directory path');
+    if (!resolvedPath.success) {
+      return resolvedPath;
+    }
+    const fullPath = resolvedPath.path;
 
     try {
       const generator = getGenerator({ format });
@@ -159,7 +184,7 @@ function registerDocGeneratorHandlers(ctx) {
    */
   ipcMain.handle('docs-generate-project', async (event, payload = {}) => {
     const { outputDir, format = docsConfig.format } = payload;
-    const projectPath = path.join(WORKSPACE_PATH, '..');
+    const projectPath = PROJECT_ROOT;
 
     try {
       const generator = getGenerator({
@@ -179,9 +204,11 @@ function registerDocGeneratorHandlers(ctx) {
 
       // Write to output directory if specified
       if (outputDir && result.success) {
-        const outPath = path.isAbsolute(outputDir)
-          ? outputDir
-          : path.join(projectPath, outputDir);
+        const resolvedOutput = resolveProjectPath(outputDir, projectPath, 'Output directory');
+        if (!resolvedOutput.success) {
+          return resolvedOutput;
+        }
+        const outPath = resolvedOutput.path;
 
         await generator.writeDocumentation(result, outPath);
         result.outputDir = outPath;
@@ -204,9 +231,11 @@ function registerDocGeneratorHandlers(ctx) {
       return { success: false, error: 'File path required' };
     }
 
-    const fullPath = path.isAbsolute(filePath)
-      ? filePath
-      : path.join(WORKSPACE_PATH, '..', filePath);
+    const resolvedPath = resolveProjectPath(filePath, PROJECT_ROOT, 'File path');
+    if (!resolvedPath.success) {
+      return resolvedPath;
+    }
+    const fullPath = resolvedPath.path;
 
     try {
       const generator = getGenerator({ format });
@@ -235,13 +264,18 @@ function registerDocGeneratorHandlers(ctx) {
   ipcMain.handle('docs-export', async (event, payload = {}) => {
     const { dirPath, outputDir, format = docsConfig.format } = payload;
 
-    const sourcePath = dirPath
-      ? (path.isAbsolute(dirPath) ? dirPath : path.join(WORKSPACE_PATH, '..', dirPath))
-      : path.join(WORKSPACE_PATH, '..');
+    const resolvedSource = resolveProjectPath(dirPath, PROJECT_ROOT, 'Source directory');
+    if (!resolvedSource.success) {
+      return resolvedSource;
+    }
+    const sourcePath = resolvedSource.path;
 
-    const outPath = outputDir
-      ? (path.isAbsolute(outputDir) ? outputDir : path.join(WORKSPACE_PATH, '..', outputDir))
-      : path.join(WORKSPACE_PATH, '..', docsConfig.outputDir);
+    const defaultOutput = path.resolve(PROJECT_ROOT, docsConfig.outputDir || './docs/api');
+    const resolvedOutput = resolveProjectPath(outputDir, defaultOutput, 'Output directory');
+    if (!resolvedOutput.success) {
+      return resolvedOutput;
+    }
+    const outPath = resolvedOutput.path;
 
     try {
       const generator = getGenerator({ format });
@@ -304,9 +338,11 @@ function registerDocGeneratorHandlers(ctx) {
   ipcMain.handle('docs-get-coverage', async (event, payload = {}) => {
     const { dirPath } = payload;
 
-    const fullPath = dirPath
-      ? (path.isAbsolute(dirPath) ? dirPath : path.join(WORKSPACE_PATH, '..', dirPath))
-      : path.join(WORKSPACE_PATH, '..');
+    const resolvedPath = resolveProjectPath(dirPath, PROJECT_ROOT, 'Directory path');
+    if (!resolvedPath.success) {
+      return resolvedPath;
+    }
+    const fullPath = resolvedPath.path;
 
     try {
       const generator = getGenerator();
@@ -348,9 +384,11 @@ function registerDocGeneratorHandlers(ctx) {
   ipcMain.handle('docs-get-undocumented', async (event, payload = {}) => {
     const { dirPath } = payload;
 
-    const fullPath = dirPath
-      ? (path.isAbsolute(dirPath) ? dirPath : path.join(WORKSPACE_PATH, '..', dirPath))
-      : path.join(WORKSPACE_PATH, '..');
+    const resolvedPath = resolveProjectPath(dirPath, PROJECT_ROOT, 'Directory path');
+    if (!resolvedPath.success) {
+      return resolvedPath;
+    }
+    const fullPath = resolvedPath.path;
 
     try {
       const generator = getGenerator();
