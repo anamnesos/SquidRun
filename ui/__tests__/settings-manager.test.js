@@ -110,13 +110,13 @@ describe('SettingsManager CLI auto-detection', () => {
     // Only pane 1 (blank) gets rewritten — Pane 3 (gemini, user-chosen) is preserved
     expect(result.updatedPanes).toEqual(['1']);
     expect(ctx.currentSettings.paneCommands).toEqual({
-      '1': 'claude',
+      '1': 'claude --permission-mode acceptEdits',
       '2': 'codex --yolo',
       '3': 'gemini --yolo --include-directories "<project-root>"',
     });
     expect(manager.saveSettings).toHaveBeenCalledWith({
       paneCommands: {
-        '1': 'claude',
+        '1': 'claude --permission-mode acceptEdits',
         '2': 'codex --yolo',
         '3': 'gemini --yolo --include-directories "<project-root>"',
       },

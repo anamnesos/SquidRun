@@ -32,7 +32,7 @@ function buildGeminiCommand() {
 function buildCommandForCli(cli) {
   if (cli === 'codex') return 'codex';
   if (cli === 'gemini') return buildGeminiCommand();
-  return 'claude';
+  return 'claude --permission-mode acceptEdits';
 }
 
 function extractCliFromCommand(command) {

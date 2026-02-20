@@ -13,6 +13,7 @@ This is the Claude-specific shim.
 - Prefer direct file operations and explicit shell commands with absolute paths.
 - Keep agent-to-agent communication on `hm-send.js`; terminal output is user-facing.
 - Reply quickly for `[ACK REQUIRED]` and `[URGENT]`; stay silent on `[FYI]` unless adding new information.
+- Do NOT use `EnterPlanMode`. Plan mode requires interactive approval which disrupts automated agent workflow. Just do the work directly.
 
 ## Startup (First Action)
 
