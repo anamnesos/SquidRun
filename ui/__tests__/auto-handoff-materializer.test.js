@@ -196,7 +196,7 @@ describe('auto-handoff-materializer', () => {
     expect(pendingSection).not.toContain('m-inbound-recorded');
   });
 
-  test('materializeSessionHandoff writes once and skips rewrite when unchanged', () => {
+  test('materializeSessionHandoff writes once and skips rewrite when unchanged', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const rows = [
       {
@@ -212,14 +212,14 @@ describe('auto-handoff-materializer', () => {
       },
     ];
 
-    const first = materializeSessionHandoff({
+    const first = await materializeSessionHandoff({
       rows,
       outputPath,
       legacyMirrorPath: false,
       sessionId: 'session-a',
       nowMs: 5000,
     });
-    const second = materializeSessionHandoff({
+    const second = await materializeSessionHandoff({
       rows,
       outputPath,
       legacyMirrorPath: false,
@@ -236,7 +236,7 @@ describe('auto-handoff-materializer', () => {
     expect(content).toContain('TASK');
   });
 
-  test('materializeSessionHandoff includes concise unresolved claims section', () => {
+  test('materializeSessionHandoff includes concise unresolved claims section', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const longStatement = 'A very long contested claim statement '.repeat(6);
     const proposedClaims = Array.from({ length: 12 }, (_, index) => ({
@@ -264,7 +264,7 @@ describe('auto-handoff-materializer', () => {
       confidence: 0.94,
     });
 
-    const result = materializeSessionHandoff({
+    const result = await materializeSessionHandoff({
       rows: [],
       outputPath,
       legacyMirrorPath: false,
@@ -319,10 +319,10 @@ describe('auto-handoff-materializer', () => {
     expect(contestedRow).toContain('...');
   });
 
-  test('materializeSessionHandoff carries cross-session tagged decisions/tasks/findings/blockers', () => {
+  test('materializeSessionHandoff carries cross-session tagged decisions/tasks/findings/blockers', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const queryCalls = [];
-    const result = materializeSessionHandoff({
+    const result = await materializeSessionHandoff({
       sessionId: 'session-current',
       outputPath,
       legacyMirrorPath: false,
@@ -407,7 +407,7 @@ describe('auto-handoff-materializer', () => {
     expect(crossSessionSection).not.toContain('ACTION');
   });
 
-  test('Decision Digest is grouped by session and capped to last 10 sessions', () => {
+  test('Decision Digest is grouped by session and capped to last 10 sessions', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const crossRows = Array.from({ length: 12 }, (_, index) => ({
       messageId: `m-${index}`,
@@ -432,7 +432,7 @@ describe('auto-handoff-materializer', () => {
       brokeredAtMs: 3000,
     });
 
-    const result = materializeSessionHandoff({
+    const result = await materializeSessionHandoff({
       rows: [],
       crossSessionRows: crossRows,
       queryClaims: () => ({ ok: true, claims: [] }),

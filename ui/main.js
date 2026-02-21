@@ -73,8 +73,12 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('window-all-closed', () => {
-  squidrunApp.shutdown();
+app.on('window-all-closed', async () => {
+  try {
+    await squidrunApp.shutdown();
+  } catch (err) {
+    log.error('[Main] App shutdown failed:', err?.message || err);
+  }
   if (process.platform !== 'darwin') {
     app.quit();
   }

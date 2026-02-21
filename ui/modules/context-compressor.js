@@ -24,7 +24,6 @@ const {
 const log = require('./logger');
 const { estimateTokens, truncateToTokenBudget } = require('./token-utils');
 const {
-  materializeSessionHandoff,
   buildSessionHandoffMarkdown,
 } = require('./main/auto-handoff-materializer');
 const { queryCommsJournalEntries } = require('./main/comms-journal');
@@ -191,7 +190,7 @@ function readSnapshotProgress(paneId = '1') {
 
 /**
  * Read the auto-generated session handoff index.
- * If missing, attempt to materialize from comms_journal first.
+ * If missing, render directly from comms_journal as a best-effort fallback.
  * @param {string} paneId - retained for API compatibility (ignored).
  * @returns {string} Content or empty string
  */
@@ -199,19 +198,6 @@ function readHandoffFile(_paneId) {
   const filePath = getSessionHandoffPath();
   const fromFile = readTextFile(filePath);
   if (fromFile) return fromFile;
-
-  try {
-    const materialized = materializeSessionHandoff({
-      outputPath: getSessionHandoffPath({ forWrite: true }),
-      legacyMirrorPath: false,
-    });
-    if (materialized?.ok) {
-      const retry = readTextFile(filePath);
-      if (retry) return retry;
-    }
-  } catch {
-    // Fall through to direct journal render.
-  }
 
   try {
     const rows = queryCommsJournalEntries({
