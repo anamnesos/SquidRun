@@ -35,12 +35,12 @@ const SYNC_DEBOUNCE_MS = 3000;
 const SYNC_COALESCE_WINDOW_MS = 5000;
 const STAGGER_BASE_DELAY_MS = 150;
 const STAGGER_RANDOM_MS = 100;
-const DELIVERY_VERIFY_TIMEOUT_MS = Number.parseInt(process.env.HIVEMIND_DELIVERY_VERIFY_TIMEOUT_MS || '7000', 10);
+const DELIVERY_VERIFY_TIMEOUT_MS = Number.parseInt(process.env.SQUIDRUN_DELIVERY_VERIFY_TIMEOUT_MS || '7000', 10);
 const PRIORITY_KEYWORDS = ['STOP', 'URGENT', 'BLOCKING', 'ERROR'];
 const TRIGGER_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 const TRIGGER_MESSAGE_ID_REGEX = /^\[HM-MESSAGE-ID:([^\]\r\n]+)\]\r?\n?/;
-const RECENT_TRIGGER_ID_TTL_MS = Number.parseInt(process.env.HIVEMIND_TRIGGER_DEDUPE_TTL_MS || String(5 * 60 * 1000), 10);
-const RECENT_TRIGGER_ID_LIMIT = Number.parseInt(process.env.HIVEMIND_TRIGGER_DEDUPE_MAX || '2000', 10);
+const RECENT_TRIGGER_ID_TTL_MS = Number.parseInt(process.env.SQUIDRUN_TRIGGER_DEDUPE_TTL_MS || String(5 * 60 * 1000), 10);
+const RECENT_TRIGGER_ID_LIMIT = Number.parseInt(process.env.SQUIDRUN_TRIGGER_DEDUPE_MAX || '2000', 10);
 
 // Local state
 const lastSyncTime = new Map();
@@ -141,7 +141,7 @@ function dispatchInjectMessage(payload) {
   }
 
   if (mainWindow && !mainWindow.isDestroyed()) {
-    // Tag payload so the send-interceptor in squidrun-app (hivemind-app.js)
+    // Tag payload so the send-interceptor in squidrun-app (squidrun-app.js)
     // knows routeInjectMessage was already attempted and skips re-routing.
     mainWindow.webContents.send('inject-message', { ...payload, _routerAttempted: true });
     return true;

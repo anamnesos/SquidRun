@@ -6,8 +6,8 @@
 const runtime = require('./websocket-runtime');
 const workerClient = require('./comms-worker-client');
 
-const FORCE_IN_PROCESS = process.env.HIVEMIND_COMMS_FORCE_IN_PROCESS === '1';
-const USE_WORKER_MODE = process.env.HIVEMIND_COMMS_USE_WORKER === '1';
+const FORCE_IN_PROCESS = process.env.SQUIDRUN_COMMS_FORCE_IN_PROCESS === '1';
+const USE_WORKER_MODE = process.env.SQUIDRUN_COMMS_USE_WORKER === '1';
 
 async function start(options = {}) {
   if (FORCE_IN_PROCESS || !USE_WORKER_MODE) {

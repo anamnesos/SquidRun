@@ -78,7 +78,7 @@ function ensureWorkerProcess() {
   const worker = fork(WORKER_PATH, [], {
     env: {
       ...process.env,
-      HIVEMIND_EXPERIMENT_WORKER: '1',
+      SQUIDRUN_EXPERIMENT_WORKER: '1',
     },
   });
   attachWorkerListeners(worker);

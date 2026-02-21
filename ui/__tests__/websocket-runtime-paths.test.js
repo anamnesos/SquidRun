@@ -25,17 +25,17 @@ describe('websocket runtime queue path resolution', () => {
   beforeEach(() => {
     projectA = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-ws-path-a-'));
     projectB = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-ws-path-b-'));
-    previousQueueEnvPath = process.env.HIVEMIND_COMMS_QUEUE_FILE;
-    delete process.env.HIVEMIND_COMMS_QUEUE_FILE;
+    previousQueueEnvPath = process.env.SQUIDRUN_COMMS_QUEUE_FILE;
+    delete process.env.SQUIDRUN_COMMS_QUEUE_FILE;
   });
 
   afterEach(async () => {
     await websocketRuntime.stop();
     resetProjectRoot();
     if (typeof previousQueueEnvPath === 'string') {
-      process.env.HIVEMIND_COMMS_QUEUE_FILE = previousQueueEnvPath;
+      process.env.SQUIDRUN_COMMS_QUEUE_FILE = previousQueueEnvPath;
     } else {
-      delete process.env.HIVEMIND_COMMS_QUEUE_FILE;
+      delete process.env.SQUIDRUN_COMMS_QUEUE_FILE;
     }
     if (projectA) fs.rmSync(projectA, { recursive: true, force: true });
     if (projectB) fs.rmSync(projectB, { recursive: true, force: true });

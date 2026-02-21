@@ -123,7 +123,6 @@ function writeProjectBootstrapFiles(projectPath, deps = {}) {
 
   const linkPayload = {
     squidrun_root: normalizeToPosix(squidrunRoot),
-    hivemind_root: normalizeToPosix(squidrunRoot), // Legacy field for compatibility.
     comms: {
       hm_send: hmSendRelative,
     },

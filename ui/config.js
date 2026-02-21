@@ -403,7 +403,7 @@ const PROTOCOL_EVENTS = ['data', 'exit', 'spawned', 'list', 'attached', 'killed'
 
 // Slice 1 evidence ledger gate.
 // Default enabled across dev/prod; runtime degrades if DB open fails.
-const evidenceLedgerEnabled = envFlagEnabled('HIVEMIND_EVIDENCE_LEDGER_ENABLED', true);
+const evidenceLedgerEnabled = envFlagEnabled('SQUIDRUN_EVIDENCE_LEDGER_ENABLED', true);
 
 module.exports = {
   PIPE_PATH,

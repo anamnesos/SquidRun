@@ -423,13 +423,13 @@ class DaemonClient extends EventEmitter {
   spawn(paneId, cwd, dryRun = false, mode = null, env = null, spawnOptions = null) {
     const id = String(paneId);
     const incomingEnv = (env && typeof env === 'object') ? env : {};
-    const explicitRole = typeof incomingEnv.HIVEMIND_ROLE === 'string'
-      ? incomingEnv.HIVEMIND_ROLE.trim()
+    const explicitRole = typeof incomingEnv.SQUIDRUN_ROLE === 'string'
+      ? incomingEnv.SQUIDRUN_ROLE.trim()
       : '';
     const role = explicitRole || String(PANE_ROLES?.[id] || '').trim();
     const spawnEnv = {
-      HIVEMIND_ROLE: role,
-      HIVEMIND_PANE_ID: id,
+      SQUIDRUN_ROLE: role,
+      SQUIDRUN_PANE_ID: id,
       ...incomingEnv,
     };
     const payload = {

@@ -111,7 +111,7 @@ maybeDescribe('team-memory patterns module', () => {
   });
 
   test('keeps hook path append-only and mines only in worker/runtime operation', async () => {
-    process.env.HIVEMIND_TEAM_MEMORY_FORCE_IN_PROCESS = '1';
+    process.env.SQUIDRUN_TEAM_MEMORY_FORCE_IN_PROCESS = '1';
     await teamMemory.resetForTests();
 
     const init = await teamMemory.initializeTeamMemoryRuntime({
@@ -165,6 +165,6 @@ maybeDescribe('team-memory patterns module', () => {
     expect(after.ok).toBe(true);
     expect(after.total).toBeGreaterThanOrEqual(1);
 
-    delete process.env.HIVEMIND_TEAM_MEMORY_FORCE_IN_PROCESS;
+    delete process.env.SQUIDRUN_TEAM_MEMORY_FORCE_IN_PROCESS;
   });
 });

@@ -387,7 +387,7 @@ describe('watcher module', () => {
       [],
       expect.objectContaining({
         env: expect.objectContaining({
-          HIVEMIND_WATCHER_NAME: 'workspace',
+          SQUIDRUN_WATCHER_NAME: 'workspace',
         }),
       })
     );
@@ -467,7 +467,7 @@ describe('watcher module', () => {
       [],
       expect.objectContaining({
         env: expect.objectContaining({
-          HIVEMIND_WATCHER_NAME: 'trigger',
+          SQUIDRUN_WATCHER_NAME: 'trigger',
         }),
       })
     );
@@ -488,7 +488,7 @@ describe('watcher module', () => {
       [],
       expect.objectContaining({
         env: expect.objectContaining({
-          HIVEMIND_WATCHER_NAME: 'message',
+          SQUIDRUN_WATCHER_NAME: 'message',
         }),
       })
     );

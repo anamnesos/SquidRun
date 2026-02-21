@@ -220,8 +220,8 @@ describe('DaemonClient', () => {
       expect(parsed.paneId).toBe('1');
       expect(parsed.cwd).toBe('/tmp');
       expect(parsed.env).toEqual(expect.objectContaining({
-        HIVEMIND_ROLE: 'Architect',
-        HIVEMIND_PANE_ID: '1',
+        SQUIDRUN_ROLE: 'Architect',
+        SQUIDRUN_PANE_ID: '1',
       }));
     });
 

@@ -35,7 +35,7 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
 const DEFAULT_HEALTH_TIMEOUT_MS = 500;
 const TARGET_HEARTBEAT_STALE_MS = 60000;
 const DEFAULT_TRIGGER_VERIFY_TIMEOUT_MS = Number.parseInt(
-  process.env.HIVEMIND_DELIVERY_VERIFY_TIMEOUT_MS || '7000',
+  process.env.SQUIDRUN_DELIVERY_VERIFY_TIMEOUT_MS || '7000',
   10
 );
 const DEFAULT_ACK_TIMEOUT_BUFFER_MS = Number.parseInt(
@@ -196,8 +196,6 @@ function resolveProjectContextFromLink(startDir = process.cwd()) {
   const squidrunRoot = (
     (typeof payload.squidrun_root === 'string' ? payload.squidrun_root.trim() : '')
     || (typeof payload.squidrunRoot === 'string' ? payload.squidrunRoot.trim() : '')
-    || (typeof payload.hivemind_root === 'string' ? payload.hivemind_root.trim() : '')
-    || (typeof payload.hivemindRoot === 'string' ? payload.hivemindRoot.trim() : '')
   );
 
   if (!projectPath) return null;

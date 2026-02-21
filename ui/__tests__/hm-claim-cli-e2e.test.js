@@ -4,7 +4,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 
-process.env.HIVEMIND_COMMS_QUEUE_FILE = process.env.HIVEMIND_COMMS_QUEUE_FILE
+process.env.SQUIDRUN_COMMS_QUEUE_FILE = process.env.SQUIDRUN_COMMS_QUEUE_FILE
   || path.join(os.tmpdir(), `squidrun-comms-queue-${process.pid}-${Date.now()}.json`);
 
 const websocketRuntime = require('../modules/websocket-runtime');

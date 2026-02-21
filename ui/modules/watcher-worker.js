@@ -79,7 +79,7 @@ function buildWatcherConfigs() {
 }
 
 const watcherConfigs = buildWatcherConfigs();
-const requestedWatcherName = String(process.env.HIVEMIND_WATCHER_NAME || 'all').toLowerCase();
+const requestedWatcherName = String(process.env.SQUIDRUN_WATCHER_NAME || 'all').toLowerCase();
 const watcherNames = requestedWatcherName === 'all'
   ? Object.keys(watcherConfigs)
   : [requestedWatcherName].filter((name) => watcherConfigs[name]);

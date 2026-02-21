@@ -12,7 +12,7 @@ const DEFAULT_DIM = 384;
 
 function createLocalEmbedder(options = {}) {
   const model = options.model || DEFAULT_MODEL;
-  const pythonCmd = options.python || process.env.HIVEMIND_PYTHON || 'python';
+  const pythonCmd = options.python || process.env.SQUIDRUN_PYTHON || 'python';
   const scriptPath = options.scriptPath || path.join(__dirname, '..', 'scripts', 'local_embedder.py');
   let dim = options.dim || DEFAULT_DIM;
 

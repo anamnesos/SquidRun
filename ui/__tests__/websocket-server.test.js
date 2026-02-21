@@ -39,8 +39,8 @@ describe('WebSocket Server Facade', () => {
     let server;
 
     beforeAll(() => {
-      delete process.env.HIVEMIND_COMMS_FORCE_IN_PROCESS;
-      delete process.env.HIVEMIND_COMMS_USE_WORKER;
+      delete process.env.SQUIDRUN_COMMS_FORCE_IN_PROCESS;
+      delete process.env.SQUIDRUN_COMMS_USE_WORKER;
       jest.resetModules();
       jest.mock('../modules/websocket-runtime', () => mockRuntime);
       jest.mock('../modules/comms-worker-client', () => mockWorkerClient);
@@ -97,12 +97,12 @@ describe('WebSocket Server Facade', () => {
   });
 
   // Worker mode (explicit opt-in)
-  describe('worker mode (HIVEMIND_COMMS_USE_WORKER=1)', () => {
+  describe('worker mode (SQUIDRUN_COMMS_USE_WORKER=1)', () => {
     let server;
 
     beforeAll(() => {
-      delete process.env.HIVEMIND_COMMS_FORCE_IN_PROCESS;
-      process.env.HIVEMIND_COMMS_USE_WORKER = '1';
+      delete process.env.SQUIDRUN_COMMS_FORCE_IN_PROCESS;
+      process.env.SQUIDRUN_COMMS_USE_WORKER = '1';
       jest.resetModules();
       jest.mock('../modules/websocket-runtime', () => mockRuntime);
       jest.mock('../modules/comms-worker-client', () => mockWorkerClient);
@@ -110,7 +110,7 @@ describe('WebSocket Server Facade', () => {
     });
 
     afterAll(() => {
-      delete process.env.HIVEMIND_COMMS_USE_WORKER;
+      delete process.env.SQUIDRUN_COMMS_USE_WORKER;
     });
 
     test('start delegates to workerClient', async () => {
@@ -166,8 +166,8 @@ describe('WebSocket Server Facade', () => {
     let server;
 
     beforeAll(() => {
-      process.env.HIVEMIND_COMMS_FORCE_IN_PROCESS = '1';
-      process.env.HIVEMIND_COMMS_USE_WORKER = '1';
+      process.env.SQUIDRUN_COMMS_FORCE_IN_PROCESS = '1';
+      process.env.SQUIDRUN_COMMS_USE_WORKER = '1';
       jest.resetModules();
       jest.mock('../modules/websocket-runtime', () => mockRuntime);
       jest.mock('../modules/comms-worker-client', () => mockWorkerClient);
@@ -175,8 +175,8 @@ describe('WebSocket Server Facade', () => {
     });
 
     afterAll(() => {
-      delete process.env.HIVEMIND_COMMS_FORCE_IN_PROCESS;
-      delete process.env.HIVEMIND_COMMS_USE_WORKER;
+      delete process.env.SQUIDRUN_COMMS_FORCE_IN_PROCESS;
+      delete process.env.SQUIDRUN_COMMS_USE_WORKER;
     });
 
     test('FORCE_IN_PROCESS overrides worker mode', async () => {

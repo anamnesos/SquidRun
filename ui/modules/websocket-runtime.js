@@ -23,10 +23,10 @@ const ROUTING_STALE_MS = 60000;
 const RATE_LIMIT_WINDOW_MS = 1000;  // 1-second sliding window
 const RATE_LIMIT_MAX_MESSAGES = 50; // max messages per window per client
 const MAX_MESSAGE_SIZE = 256 * 1024; // 256KB max message size
-const CONTENT_DEDUPE_TTL_MS = Number.parseInt(process.env.HIVEMIND_COMMS_CONTENT_DEDUPE_TTL_MS || '15000', 10);
-const OUTBOUND_QUEUE_MAX_ENTRIES = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_ENTRIES || '500', 10);
-const OUTBOUND_QUEUE_MAX_AGE_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_MAX_AGE_MS || String(30 * 60 * 1000), 10);
-const OUTBOUND_QUEUE_FLUSH_INTERVAL_MS = Number.parseInt(process.env.HIVEMIND_COMMS_QUEUE_FLUSH_INTERVAL_MS || '30000', 10);
+const CONTENT_DEDUPE_TTL_MS = Number.parseInt(process.env.SQUIDRUN_COMMS_CONTENT_DEDUPE_TTL_MS || '15000', 10);
+const OUTBOUND_QUEUE_MAX_ENTRIES = Number.parseInt(process.env.SQUIDRUN_COMMS_QUEUE_MAX_ENTRIES || '500', 10);
+const OUTBOUND_QUEUE_MAX_AGE_MS = Number.parseInt(process.env.SQUIDRUN_COMMS_QUEUE_MAX_AGE_MS || String(30 * 60 * 1000), 10);
+const OUTBOUND_QUEUE_FLUSH_INTERVAL_MS = Number.parseInt(process.env.SQUIDRUN_COMMS_QUEUE_FLUSH_INTERVAL_MS || '30000', 10);
 const DEFAULT_QUEUE_SESSION_SCOPE = 'default';
 const CANONICAL_ROLE_IDS = ['architect', 'builder', 'oracle'];
 const CANONICAL_ROLE_TO_PANE = new Map(
@@ -73,7 +73,7 @@ function getDefaultOutboundQueuePath() {
 }
 
 function getOutboundQueuePath() {
-  const envPath = toNonEmptyString(process.env.HIVEMIND_COMMS_QUEUE_FILE);
+  const envPath = toNonEmptyString(process.env.SQUIDRUN_COMMS_QUEUE_FILE);
   if (envPath) {
     return path.resolve(envPath);
   }

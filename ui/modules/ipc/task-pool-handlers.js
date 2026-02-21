@@ -63,7 +63,7 @@ function registerTaskPoolHandlers(ctx) {
   const TASK_POOL_FILE = resolveCoordFile('task-pool.json');
   const TASK_POOL_WRITE_FILE = resolveCoordFile('task-pool.json', { forWrite: true });
   const TASK_POOL_WATCH_FILES = Array.from(new Set(getCoordWatchFiles('task-pool.json')));
-  const READ_BEFORE_WORK_LIMIT = Number.parseInt(process.env.HIVEMIND_TEAM_MEMORY_READ_BEFORE_WORK_LIMIT || '3', 10);
+  const READ_BEFORE_WORK_LIMIT = Number.parseInt(process.env.SQUIDRUN_TEAM_MEMORY_READ_BEFORE_WORK_LIMIT || '3', 10);
 
   async function executeTeamMemory(action, payload) {
     try {

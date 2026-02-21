@@ -199,7 +199,7 @@ jest.mock('../modules/experiment', () => ({
 }));
 
 // Now require the module under test
-const SquidRunApp = require('../modules/main/hivemind-app');
+const SquidRunApp = require('../modules/main/squidrun-app');
 
 describe('SquidRunApp', () => {
   let mockAppContext;

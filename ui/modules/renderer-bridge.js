@@ -13,8 +13,6 @@ function resolveBridgeApi() {
   const candidates = [
     host.squidrunAPI,
     host.squidrun,
-    host.hivemind,
-    host.api,
   ];
 
   for (const candidate of candidates) {
