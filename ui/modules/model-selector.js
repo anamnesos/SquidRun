@@ -3,7 +3,7 @@
  * Extracted from renderer.js for modularization
  */
 
-const { ipcRenderer } = require('electron');
+const { invokeBridge } = require('./renderer-bridge');
 const log = require('./logger');
 const terminal = require('./terminal');
 const settings = require('./settings');
@@ -37,7 +37,7 @@ function setPaneCliAttribute(paneId, model) {
  */
 async function initModelSelectors() {
   try {
-    const paneCommands = await ipcRenderer.invoke('get-pane-commands');
+    const paneCommands = await invokeBridge('get-pane-commands');
 
     document.querySelectorAll('.model-selector').forEach(select => {
       const paneId = select.dataset.paneId;
@@ -74,7 +74,7 @@ function setupModelSelectorListeners() {
       showStatusNotice(`Switching pane ${paneId} to ${model} - session will restart...`);
 
       try {
-        const result = await ipcRenderer.invoke('switch-pane-model', { paneId, model });
+        const result = await invokeBridge('switch-pane-model', { paneId, model });
 
         if (!result.success) {
           throw new Error(result.error);

@@ -21,6 +21,14 @@ const WINDOWS_COMMAND_MAP = Object.freeze({
   tsc: 'tsc.cmd',
   prettier: 'prettier.cmd',
 });
+const DEFAULT_THROTTLE_QUEUE_MAX_ITEMS = 200;
+const DEFAULT_THROTTLE_QUEUE_MAX_BYTES = 512 * 1024;
+
+function toPositiveInt(value, fallback) {
+  const numeric = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  return numeric;
+}
 
 function registerProcessHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
@@ -169,6 +177,34 @@ function registerProcessHandlers(ctx) {
     }
     return { success: true, output: entry.info.output.join('\n') };
   });
+
+  ipcMain.handle('daemon-is-process-running', (event, pid) => {
+    const numericPid = Number(pid);
+    if (!Number.isInteger(numericPid) || numericPid <= 0) {
+      return { running: false };
+    }
+
+    try {
+      process.kill(numericPid, 0);
+      return { running: true };
+    } catch (err) {
+      if (err && (err.code === 'EPERM' || err.code === 'EACCES')) {
+        return { running: true };
+      }
+      return { running: false };
+    }
+  });
+
+  ipcMain.handle('get-daemon-runtime-config', () => ({
+    throttleQueueMaxItems: toPositiveInt(
+      process.env.HIVEMIND_THROTTLE_QUEUE_MAX_ITEMS,
+      DEFAULT_THROTTLE_QUEUE_MAX_ITEMS
+    ),
+    throttleQueueMaxBytes: toPositiveInt(
+      process.env.HIVEMIND_THROTTLE_QUEUE_MAX_BYTES,
+      DEFAULT_THROTTLE_QUEUE_MAX_BYTES
+    ),
+  }));
 }
 
 
@@ -179,6 +215,8 @@ function unregisterProcessHandlers(ctx) {
     ipcMain.removeHandler('list-processes');
     ipcMain.removeHandler('kill-process');
     ipcMain.removeHandler('get-process-output');
+    ipcMain.removeHandler('daemon-is-process-running');
+    ipcMain.removeHandler('get-daemon-runtime-config');
 }
 
 registerProcessHandlers.unregister = unregisterProcessHandlers;

@@ -3,7 +3,7 @@
  * Handles application settings panel and configuration
  */
 
-const { ipcRenderer } = require('electron');
+const { invokeBridge } = require('./renderer-bridge');
 const log = require('./logger');
 
 // Current settings state
@@ -32,7 +32,7 @@ function updateConnectionStatus(status) {
 // Load and apply settings
 async function loadSettings() {
   try {
-    currentSettings = await ipcRenderer.invoke('get-settings');
+    currentSettings = await invokeBridge('get-settings');
     applySettingsToUI();
     // Notify that settings are loaded (for init sequencing)
     if (onSettingsLoaded) {
@@ -114,7 +114,7 @@ function applySettingsToUI() {
 async function toggleSetting(key) {
   try {
     const newValue = !currentSettings[key];
-    currentSettings = await ipcRenderer.invoke('set-setting', key, newValue);
+    currentSettings = await invokeBridge('set-setting', key, newValue);
     applySettingsToUI();
     log.info('Settings', `${key} = ${newValue}`);
   } catch (err) {
@@ -133,7 +133,7 @@ function requiresAutonomyConsent() {
 
 async function setAutonomyConsentChoice(enabled) {
   try {
-    currentSettings = await ipcRenderer.invoke('set-setting', 'allowAllPermissions', Boolean(enabled));
+    currentSettings = await invokeBridge('set-setting', 'allowAllPermissions', Boolean(enabled));
     applySettingsToUI();
     return { success: true, settings: currentSettings };
   } catch (err) {
@@ -144,7 +144,7 @@ async function setAutonomyConsentChoice(enabled) {
 
 async function refreshSettingsFromMain({ applyUi = false } = {}) {
   try {
-    currentSettings = await ipcRenderer.invoke('get-settings');
+    currentSettings = await invokeBridge('get-settings');
     if (applyUi) {
       applySettingsToUI();
     }
@@ -199,7 +199,7 @@ function setupSettings() {
     thresholdInput.addEventListener('change', async () => {
       const value = parseFloat(thresholdInput.value);
       if (!isNaN(value) && value > 0) {
-        await ipcRenderer.invoke('set-setting', 'costAlertThreshold', value);
+        await invokeBridge('set-setting', 'costAlertThreshold', value);
         log.info('Settings', 'Cost alert threshold set to $' + value.toFixed(2));
       }
     });
@@ -221,7 +221,7 @@ function setupSettings() {
       }
 
       try {
-        currentSettings = await ipcRenderer.invoke('set-setting', key, value);
+        currentSettings = await invokeBridge('set-setting', key, value);
         const safeValue = key.toLowerCase().includes('pass') ? '[hidden]' : value;
         log.info('Settings', `${key} updated: ${safeValue}`);
       } catch (err) {
@@ -236,7 +236,7 @@ function setupSettings() {
       const key = select.dataset.setting;
       if (!key) return;
       try {
-        currentSettings = await ipcRenderer.invoke('set-setting', key, select.value);
+        currentSettings = await invokeBridge('set-setting', key, select.value);
         log.info('Settings', `${key} updated: ${select.value}`);
       } catch (err) {
         log.error('Settings', `Error updating ${key}`, err);
@@ -248,7 +248,7 @@ function setupSettings() {
   if (testExternalBtn) {
     testExternalBtn.addEventListener('click', async () => {
       try {
-        const result = await ipcRenderer.invoke('notify-external-test', {});
+        const result = await invokeBridge('notify-external-test', {});
         if (result && result.success) {
           log.info('Settings', 'External notification test sent');
         } else {

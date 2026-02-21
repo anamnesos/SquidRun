@@ -187,12 +187,40 @@ jest.mock('../modules/model-selector', () => ({
   setupModelChangeListener: jest.fn(),
 }));
 
+// Mock renderer-ipc-registry
+jest.mock('../modules/renderer-ipc-registry', () => ({
+  clearScopedIpcListeners: jest.fn(),
+  registerScopedIpcListener: jest.fn(),
+}));
+
 describe('renderer.js smoke tests', () => {
   // Load the module once before all tests
   // This tests that the module can be required without throwing
   beforeAll(() => {
-    // Reset window.squidrun before loading
-    global.window.squidrun = {};
+    const rendererModules = {
+      log: require('../modules/logger'),
+      terminal: require('../modules/terminal'),
+      tabs: require('../modules/tabs'),
+      settings: require('../modules/settings'),
+      daemonHandlers: require('../modules/daemon-handlers'),
+      notifications: require('../modules/notifications'),
+      utils: require('../modules/utils'),
+      commandPalette: require('../modules/command-palette'),
+      statusStrip: require('../modules/status-strip'),
+      modelSelector: require('../modules/model-selector'),
+      config: require('../config'),
+      bus: require('../modules/event-bus'),
+      ipcRegistry: require('../modules/renderer-ipc-registry'),
+    };
+
+    global.window.squidrun = {
+      invoke: jest.fn().mockResolvedValue({}),
+      send: jest.fn(),
+      on: jest.fn(() => jest.fn()),
+      removeListener: jest.fn(),
+      rendererModules,
+    };
+
     require('../renderer');
   });
 

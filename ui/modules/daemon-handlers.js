@@ -14,8 +14,7 @@
  *    - Handles: Focus management, idle detection, Enter verification
  */
 
-const { ipcRenderer } = require('electron');
-const path = require('path');
+const { invokeBridge, sendBridge, onBridge } = require('./renderer-bridge');
 const { PANE_IDS, resolvePaneCwd } = require('../config');
 const log = require('./logger');
 const bus = require('./event-bus');
@@ -40,8 +39,12 @@ function getTerminal() {
 const throttleQueues = new Map(); // paneId -> array of messages
 const throttlingPanes = new Set(); // panes currently being processed
 const MESSAGE_DELAY = 100; // ms between messages per pane (reduced from 150ms — 3 panes = less contention)
-const THROTTLE_QUEUE_MAX_ITEMS = Number.parseInt(process.env.HIVEMIND_THROTTLE_QUEUE_MAX_ITEMS || '200', 10);
-const THROTTLE_QUEUE_MAX_BYTES = Number.parseInt(process.env.HIVEMIND_THROTTLE_QUEUE_MAX_BYTES || String(512 * 1024), 10);
+const DEFAULT_THROTTLE_QUEUE_MAX_ITEMS = 200;
+const DEFAULT_THROTTLE_QUEUE_MAX_BYTES = 512 * 1024;
+let throttleQueueMaxItems = DEFAULT_THROTTLE_QUEUE_MAX_ITEMS;
+let throttleQueueMaxBytes = DEFAULT_THROTTLE_QUEUE_MAX_BYTES;
+let daemonRuntimeConfigPromise = null;
+let daemonRuntimeConfigLoaded = false;
 
 function toNonEmptyString(value) {
   if (typeof value !== 'string') return null;
@@ -89,22 +92,52 @@ function isHmSendTraceContext(traceContext = null) {
   );
 }
 
+function toPositiveInt(value, fallback) {
+  const numeric = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  return numeric;
+}
+
+function applyDaemonRuntimeConfig(config = {}) {
+  throttleQueueMaxItems = toPositiveInt(
+    config?.throttleQueueMaxItems,
+    DEFAULT_THROTTLE_QUEUE_MAX_ITEMS
+  );
+  throttleQueueMaxBytes = toPositiveInt(
+    config?.throttleQueueMaxBytes,
+    DEFAULT_THROTTLE_QUEUE_MAX_BYTES
+  );
+}
+
+function ensureDaemonRuntimeConfigLoaded() {
+  if (daemonRuntimeConfigLoaded) return daemonRuntimeConfigPromise || Promise.resolve();
+  if (!daemonRuntimeConfigPromise) {
+    daemonRuntimeConfigPromise = invokeBridge('get-daemon-runtime-config')
+      .then((config) => {
+        applyDaemonRuntimeConfig(config);
+      })
+      .catch((err) => {
+        log.warn('Daemon', `Failed to load runtime config, using defaults: ${err.message}`);
+      })
+      .finally(() => {
+        daemonRuntimeConfigLoaded = true;
+      });
+  }
+  return daemonRuntimeConfigPromise;
+}
+
 function getThrottleQueueMaxItems() {
-  return Number.isFinite(THROTTLE_QUEUE_MAX_ITEMS) && THROTTLE_QUEUE_MAX_ITEMS > 0
-    ? THROTTLE_QUEUE_MAX_ITEMS
-    : 200;
+  return toPositiveInt(throttleQueueMaxItems, DEFAULT_THROTTLE_QUEUE_MAX_ITEMS);
 }
 
 function getThrottleQueueMaxBytes() {
-  return Number.isFinite(THROTTLE_QUEUE_MAX_BYTES) && THROTTLE_QUEUE_MAX_BYTES > 0
-    ? THROTTLE_QUEUE_MAX_BYTES
-    : (512 * 1024);
+  return toPositiveInt(throttleQueueMaxBytes, DEFAULT_THROTTLE_QUEUE_MAX_BYTES);
 }
 
 function getQueueItemBytes(item) {
   const msg = (item && typeof item === 'object') ? item.message : item;
   if (typeof msg !== 'string') return 0;
-  return Buffer.byteLength(msg, 'utf8');
+  return new TextEncoder().encode(msg).length;
 }
 
 function getThrottleQueueBytes(queue = []) {
@@ -127,31 +160,25 @@ function setStatusCallbacks(connectionCb) {
   onConnectionStatusUpdate = connectionCb;
 }
 
-function removeIpcListener(channel, handler) {
-  if (!channel || typeof handler !== 'function') return;
-  if (typeof ipcRenderer.off === 'function') {
-    ipcRenderer.off(channel, handler);
-    return;
-  }
-  if (typeof ipcRenderer.removeListener === 'function') {
-    ipcRenderer.removeListener(channel, handler);
-  }
+function removeIpcListener(entry) {
+  if (!entry || typeof entry.dispose !== 'function') return;
+  entry.dispose();
 }
 
 function registerScopedIpcListener(scope, channel, handler) {
   const key = `${scope}:${channel}`;
   const existing = ipcListenerRegistry.get(key);
   if (existing) {
-    removeIpcListener(existing.channel, existing.handler);
+    removeIpcListener(existing);
   }
-  ipcRenderer.on(channel, handler);
-  ipcListenerRegistry.set(key, { channel, handler });
+  const dispose = onBridge(channel, handler);
+  ipcListenerRegistry.set(key, { channel, handler, dispose });
 }
 
 function clearScopedIpcListeners(scope = null) {
   for (const [key, entry] of ipcListenerRegistry.entries()) {
     if (scope && !key.startsWith(`${scope}:`)) continue;
-    removeIpcListener(entry.channel, entry.handler);
+    removeIpcListener(entry);
     ipcListenerRegistry.delete(key);
   }
 }
@@ -164,20 +191,30 @@ function updateConnectionStatus(status) {
 
 function normalizePath(value) {
   if (!value) return '';
-  return path.normalize(String(value)).replace(/\\/g, '/').toLowerCase();
+  return String(value)
+    .replace(/\\/g, '/')
+    .replace(/\/{2,}/g, '/')
+    .toLowerCase();
 }
 
-function isProcessRunning(pid) {
+function basenameFromPath(value) {
+  const normalized = String(value || '').trim().replace(/\\/g, '/');
+  if (!normalized) return '';
+  const parts = normalized.split('/');
+  return parts[parts.length - 1] || '';
+}
+
+async function isProcessRunning(pid) {
   const numericPid = Number(pid);
   if (!Number.isInteger(numericPid) || numericPid <= 0) return false;
   try {
-    process.kill(numericPid, 0);
-    return true;
-  } catch (err) {
-    // EPERM/EACCES means the process exists but we can't signal it.
-    if (err && (err.code === 'EPERM' || err.code === 'EACCES')) {
-      return true;
+    const result = await invokeBridge('daemon-is-process-running', numericPid);
+    if (result && typeof result === 'object') {
+      return result.running === true;
     }
+    return result === true;
+  } catch (err) {
+    log.debug('Daemon', `Process liveness probe failed for pid ${numericPid}: ${err.message}`);
     return false;
   }
 }
@@ -218,7 +255,7 @@ function tailMatches(regexes, text) {
   return regexes.some((regex) => regex.test(text));
 }
 
-function hasCliContent(scrollback = '', meta = {}) {
+async function hasCliContent(scrollback = '', meta = {}) {
   const alive = Boolean(meta?.alive);
   const mode = String(meta?.mode || '').toLowerCase();
 
@@ -307,6 +344,7 @@ function setupSyncIndicator() {
 
 function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnectedFn, onTerminalsReadyFn) {       
   clearScopedIpcListeners('daemon-core');
+  ensureDaemonRuntimeConfigLoaded();
 
   registerScopedIpcListener('daemon-core', 'kernel:bridge-event', (event, envelope) => {
     if (!envelope || typeof envelope !== 'object' || !envelope.event) return;
@@ -339,7 +377,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
       for (const term of existingTerminals) {
         if (!term || !term.alive) continue;
         const paneId = String(term.paneId);
-        if (hasCliContent(term.scrollback, term)) {
+        if (await hasCliContent(term.scrollback, term)) {
           panesWithCli.add(paneId);
         } else {
           panesNeedingSpawn.add(paneId);
@@ -390,7 +428,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
       if (panesNeedingSpawn.size > 0) {
         let autoSpawnEnabled = true;
         try {
-          const settings = await ipcRenderer.invoke('get-settings');
+          const settings = await invokeBridge('get-settings');
           if (settings && settings.autoSpawn === false) {
             autoSpawnEnabled = false;
           }
@@ -492,7 +530,7 @@ function setupRollbackListener() {
   registerScopedIpcListener('rollback', 'rollback-available', (event, data) => {
     uiView.showRollbackUI(data, async (checkpointId, files) => {
       try {
-        const result = await (typeof ipcRenderer.invoke === 'function' ? ipcRenderer.invoke('apply-rollback', checkpointId) : Promise.resolve({success:true, filesRestored:1}));
+        const result = await invokeBridge('apply-rollback', checkpointId);
         if (result && result.success) {
           showToast(`Rolled back ${result.filesRestored} file(s)`, 'info');
           uiView.hideRollbackUI();
@@ -541,12 +579,12 @@ function setupAutoTriggerListener() {
     showToast(`${uiView.PANE_ROLES[paneId] || `Pane ${paneId}`} completed task`, 'info');
 
     try {
-      const claims = await ipcRenderer.invoke('get-claims');
+      const claims = await invokeBridge('get-claims');
       const claimEntry = (claims && typeof claims === 'object') ? claims[String(paneId)] : null;
       const taskId = typeof claimEntry === 'string' ? claimEntry : claimEntry?.taskId;
       if (!taskId) return;
 
-      await ipcRenderer.invoke('update-task-status', {
+      await invokeBridge('update-task-status', {
         taskId,
         status: 'completed',
         metadata: {
@@ -555,7 +593,7 @@ function setupAutoTriggerListener() {
           pattern: pattern || null,
         },
       });
-      await ipcRenderer.invoke('release-agent', String(paneId));
+      await invokeBridge('release-agent', String(paneId));
     } catch (err) {
       log.warn('Completion', `Failed to resolve task lifecycle for pane ${paneId}: ${err.message}`);
     }
@@ -566,7 +604,8 @@ function setupProjectListener() {
   registerScopedIpcListener('project', 'project-changed', (event, projectPath) => {
     log.info('Project', 'Changed to:', projectPath);
     uiView.updateProjectDisplay(projectPath);
-    showToast(`Project changed to ${projectPath ? require('path').basename(projectPath) : 'none'} — restart agents to apply`, 'warning');
+    const projectName = projectPath ? basenameFromPath(projectPath) : 'none';
+    showToast(`Project changed to ${projectName || 'none'} — restart agents to apply`, 'warning');
   });
   registerScopedIpcListener('project', 'project-warning', (event, message) => {
     log.warn('Project', message);
@@ -623,7 +662,7 @@ function setupPaneProjectClicks() {
       el.addEventListener('click', async (e) => {
         e.stopPropagation();
         try {
-          const result = await ipcRenderer.invoke('select-pane-project', paneId);
+          const result = await invokeBridge('select-pane-project', paneId);
           if (result && result.success) {
             uiView.updatePaneProject(paneId, result.path);
           }
@@ -637,7 +676,7 @@ function setupPaneProjectClicks() {
 
 async function loadInitialAgentTasks() {
   try {
-    const state = await ipcRenderer.invoke('get-state');
+    const state = await invokeBridge('get-state');
     if (state) {
       uiView.updateAgentTasks(state.agent_claims || {});
     }
@@ -648,7 +687,7 @@ async function loadInitialAgentTasks() {
 
 async function loadPaneProjects() {
   try {
-    const result = await ipcRenderer.invoke('get-all-pane-projects');
+    const result = await invokeBridge('get-all-pane-projects');
     if (result && result.success) {
       for (const [paneId, projectPath] of Object.entries(result.paneProjects || {})) {
         uiView.updatePaneProject(paneId, projectPath);
@@ -787,7 +826,7 @@ function processThrottleQueue(paneId) {
         log.warn('Daemon', `Trigger delivery failed for pane ${paneId}: ${result.reason || 'unknown'}`);
         uiView.showDeliveryFailed(paneId, result.reason || 'Delivery failed');
         if (deliveryId) {
-          ipcRenderer.send('trigger-delivery-outcome', {
+          sendBridge('trigger-delivery-outcome', {
             deliveryId,
             paneId,
             accepted: false,
@@ -806,7 +845,7 @@ function processThrottleQueue(paneId) {
         uiView.showDeliveryIndicator(paneId, 'delivered');
         if (deliveryId) {
           if (!verified) {
-            ipcRenderer.send('trigger-delivery-outcome', {
+            sendBridge('trigger-delivery-outcome', {
               deliveryId,
               paneId,
               accepted: true,
@@ -815,7 +854,7 @@ function processThrottleQueue(paneId) {
               reason: result?.reason || (result?.status || 'delivery_unverified'),
             });
           } else {
-            ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
+            sendBridge('trigger-delivery-ack', { deliveryId, paneId });
           }
         }
       }
@@ -950,5 +989,9 @@ module.exports = {
   _resetThrottleQueueForTesting() {
     throttleQueues.clear();
     throttlingPanes.clear();
+    throttleQueueMaxItems = DEFAULT_THROTTLE_QUEUE_MAX_ITEMS;
+    throttleQueueMaxBytes = DEFAULT_THROTTLE_QUEUE_MAX_BYTES;
+    daemonRuntimeConfigLoaded = false;
+    daemonRuntimeConfigPromise = null;
   },
 };

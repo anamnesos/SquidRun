@@ -3,7 +3,7 @@
  * Chat-style feed for agent activity, messages, and events
  */
 
-const { ipcRenderer } = require('electron');
+const { invokeBridge } = require('../renderer-bridge');
 const log = require('../logger');
 const { PANE_ROLES } = require('../../config');
 const { registerScopedIpcListener } = require('../renderer-ipc-registry');
@@ -157,7 +157,7 @@ function renderActivityLog() {
 
 async function loadActivityLog() {
   try {
-    const result = await ipcRenderer.invoke('get-activity-log');
+    const result = await invokeBridge('get-activity-log');
     if (result && result.success) {
       activityLog = (result.entries || []).filter(e => !NOISE_TYPES.has(e.type));
       renderActivityLog();
@@ -171,7 +171,7 @@ function clearActivityLog() {
   if (!confirm('Clear all activity entries?')) return;
   activityLog = [];
   renderActivityLog();
-  ipcRenderer.invoke('clear-activity-log').catch(() => {});
+  invokeBridge('clear-activity-log').catch(() => {});
 }
 
 function exportActivityLog() {

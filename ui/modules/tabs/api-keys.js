@@ -3,12 +3,12 @@
  * Manages API key configuration for AI services
  */
 
-const { ipcRenderer } = require('electron');
+const { invokeBridge } = require('../renderer-bridge');
 const log = require('../logger');
 
 async function loadApiKeys() {
   try {
-    const keys = await ipcRenderer.invoke('get-api-keys');
+    const keys = await invokeBridge('get-api-keys');
 
     const maskAnth = document.getElementById('apiKeyAnthropicMask');
     const maskOai = document.getElementById('apiKeyOpenaiMask');
@@ -87,7 +87,7 @@ async function saveApiKeys() {
   }
 
   try {
-    const result = await ipcRenderer.invoke('set-api-keys', updates);
+    const result = await invokeBridge('set-api-keys', updates);
 
     if (result.success) {
       if (statusEl) {

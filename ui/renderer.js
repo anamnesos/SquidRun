@@ -3,24 +3,209 @@
  * Orchestrates terminal, tabs, settings, and daemon handler modules
  */
 
-const { ipcRenderer } = require('electron');
-const fs = require('fs');
-const path = require('path');
-const log = require('./modules/logger');
+function resolveBridgeApi() {
+  if (typeof window === 'undefined' || !window || typeof window !== 'object') {
+    return null;
+  }
 
-// Import modules
-const terminal = require('./modules/terminal');
-const tabs = require('./modules/tabs');
-const settings = require('./modules/settings');
-const daemonHandlers = require('./modules/daemon-handlers');
-const { showStatusNotice } = require('./modules/notifications');
-const { debounceButton, applyShortcutTooltips } = require('./modules/utils');
-const { initCommandPalette } = require('./modules/command-palette');
-const { initStatusStrip } = require('./modules/status-strip');
-const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = require('./modules/model-selector');
-const { PANE_ROLES, PANE_ROLE_BUNDLES } = require('./config');
-const bus = require('./modules/event-bus');
-const { clearScopedIpcListeners, registerScopedIpcListener } = require('./modules/renderer-ipc-registry');
+  const candidates = [
+    window.squidrunAPI,
+    window.squidrun,
+    window.hivemind,
+    window.api,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue;
+
+    if (
+      typeof candidate.invoke === 'function'
+      && typeof candidate.send === 'function'
+      && typeof candidate.on === 'function'
+    ) {
+      return candidate;
+    }
+
+    const nested = candidate.ipc;
+    if (
+      nested
+      && typeof nested === 'object'
+      && typeof nested.invoke === 'function'
+      && typeof nested.send === 'function'
+      && typeof nested.on === 'function'
+    ) {
+      return {
+        ...candidate,
+        invoke: nested.invoke.bind(nested),
+        send: nested.send.bind(nested),
+        on: nested.on.bind(nested),
+        removeListener: typeof nested.removeListener === 'function'
+          ? nested.removeListener.bind(nested)
+          : null,
+        once: typeof nested.once === 'function' ? nested.once.bind(nested) : null,
+      };
+    }
+  }
+
+  return null;
+}
+
+function makeMissingBridgeError(method) {
+  return new Error(`[renderer bridge] Missing preload bridge for ${method}()`);
+}
+
+const bridgeApi = resolveBridgeApi();
+if (!bridgeApi) {
+  throw makeMissingBridgeError('bootstrap');
+}
+
+const rendererModules = bridgeApi.rendererModules;
+if (!rendererModules || typeof rendererModules !== 'object') {
+  throw new Error('[renderer bridge] Missing rendererModules preload export');
+}
+
+function invokeBridge(channel, ...args) {
+  if (typeof bridgeApi.invoke !== 'function') {
+    return Promise.reject(makeMissingBridgeError('invoke'));
+  }
+  return bridgeApi.invoke(channel, ...args);
+}
+
+function onBridge(channel, listener) {
+  if (typeof listener !== 'function') return () => {};
+  if (typeof bridgeApi.on !== 'function') return () => {};
+
+  const wrapped = (...payloadArgs) => listener(undefined, ...payloadArgs);
+  const disposer = bridgeApi.on(channel, wrapped);
+
+  if (typeof disposer === 'function') {
+    return disposer;
+  }
+
+  const removeListener = (typeof bridgeApi.removeListener === 'function')
+    ? bridgeApi.removeListener.bind(bridgeApi)
+    : null;
+  if (!removeListener) return () => {};
+  return () => removeListener(channel, wrapped);
+}
+
+function onceBridge(channel, listener) {
+  if (typeof listener !== 'function') return () => {};
+  if (typeof bridgeApi.once === 'function') {
+    const wrapped = (...payloadArgs) => listener(undefined, ...payloadArgs);
+    const disposer = bridgeApi.once(channel, wrapped);
+    if (typeof disposer === 'function') return disposer;
+    const removeListener = (typeof bridgeApi.removeListener === 'function')
+      ? bridgeApi.removeListener.bind(bridgeApi)
+      : null;
+    if (!removeListener) return () => {};
+    return () => removeListener(channel, wrapped);
+  }
+
+  let disposed = false;
+  let off = () => {};
+  off = onBridge(channel, (...args) => {
+    if (disposed) return;
+    disposed = true;
+    off();
+    listener(...args);
+  });
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    off();
+  };
+}
+
+const log = rendererModules.log;
+const terminal = rendererModules.terminal;
+const tabs = rendererModules.tabs;
+const settings = rendererModules.settings;
+const daemonHandlers = rendererModules.daemonHandlers;
+const { showStatusNotice } = rendererModules.notifications;
+const { debounceButton, applyShortcutTooltips } = rendererModules.utils;
+const { initCommandPalette } = rendererModules.commandPalette;
+const { initStatusStrip } = rendererModules.statusStrip;
+const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = rendererModules.modelSelector;
+const { PANE_ROLES, PANE_ROLE_BUNDLES } = rendererModules.config;
+const bus = rendererModules.bus;
+const { clearScopedIpcListeners, registerScopedIpcListener } = rendererModules.ipcRegistry;
+
+const ipcListenerRegistry = new Map();
+
+function trackIpcListener(channel, listener, dispose) {
+  const key = String(channel || '');
+  if (!key || typeof listener !== 'function' || typeof dispose !== 'function') return;
+  let entries = ipcListenerRegistry.get(key);
+  if (!entries) {
+    entries = new Set();
+    ipcListenerRegistry.set(key, entries);
+  }
+  entries.add({ listener, dispose });
+}
+
+function untrackIpcListener(channel, listener) {
+  const key = String(channel || '');
+  const entries = ipcListenerRegistry.get(key);
+  if (!entries || entries.size === 0) return;
+  for (const entry of Array.from(entries)) {
+    if (entry.listener !== listener) continue;
+    try {
+      entry.dispose();
+    } catch (_) {}
+    entries.delete(entry);
+    break;
+  }
+  if (entries.size === 0) {
+    ipcListenerRegistry.delete(key);
+  }
+}
+
+const ipcRenderer = {
+  invoke: (channel, ...args) => invokeBridge(channel, ...args),
+  on: (channel, listener) => {
+    const dispose = onBridge(channel, listener);
+    trackIpcListener(channel, listener, dispose);
+    return dispose;
+  },
+  once: (channel, listener) => {
+    const dispose = onceBridge(channel, listener);
+    trackIpcListener(channel, listener, dispose);
+    return dispose;
+  },
+  off: (channel, listener) => {
+    untrackIpcListener(channel, listener);
+  },
+  removeListener: (channel, listener) => {
+    untrackIpcListener(channel, listener);
+  },
+  removeAllListeners: (channel) => {
+    if (typeof channel !== 'string' || !channel) {
+      for (const [trackedChannel, entries] of ipcListenerRegistry.entries()) {
+        for (const entry of Array.from(entries)) {
+          try {
+            entry.dispose();
+          } catch (_) {}
+        }
+        ipcListenerRegistry.delete(trackedChannel);
+      }
+      return;
+    }
+    const entries = ipcListenerRegistry.get(channel);
+    if (!entries || entries.size === 0) return;
+    for (const entry of Array.from(entries)) {
+      try {
+        entry.dispose();
+      } catch (_) {}
+    }
+    ipcListenerRegistry.delete(channel);
+  },
+  listenerCount: (channel) => {
+    const entries = ipcListenerRegistry.get(String(channel || ''));
+    return entries ? entries.size : 0;
+  },
+  eventNames: () => Array.from(ipcListenerRegistry.keys()),
+};
 
 const dynamicPtyIpcChannels = new Set();
 const RENDERER_IPC_CHANNELS = Object.freeze([
@@ -86,17 +271,6 @@ function clearRendererIpcListeners() {
 
 const MAIN_PANE_CONTAINER_SELECTOR = '.main-pane-container';
 const SIDE_PANES_CONTAINER_SELECTOR = '.side-panes-container';
-const APP_STATUS_FALLBACK_PATHS = Object.freeze([
-  (() => {
-    const os = require('os');
-    const root = os.platform() === 'win32'
-      ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'squidrun')
-      : path.join(os.homedir(), '.config', 'squidrun');
-    return path.join(root, 'app-status.json');
-  })(),
-  path.resolve(__dirname, '..', '.squidrun', 'app-status.json'),
-  path.resolve(__dirname, '..', 'workspace', 'app-status.json'),
-]);
 let mainPaneId = '1';
 const RESIZE_DEBOUNCE_MS = 175;
 let resizeDebounceTimer = null;
@@ -170,17 +344,8 @@ function updateHeaderSessionBadge(sessionNumber) {
 }
 
 function readSessionFromAppStatusFallback() {
-  for (const statusPath of APP_STATUS_FALLBACK_PATHS) {
-    try {
-      if (!fs.existsSync(statusPath)) continue;
-      const raw = fs.readFileSync(statusPath, 'utf8');
-      const parsed = JSON.parse(raw);
-      const session = extractSessionNumberFromStatus(parsed);
-      if (session) return session;
-    } catch (err) {
-      log.debug('HeaderSession', `Failed to read session from ${statusPath}: ${err.message}`);
-    }
-  }
+  // Node fs/path are intentionally unavailable in renderer when nodeIntegration is off.
+  // Keep badge resilient by falling back to unknown session when no explicit status channel is present.
   return null;
 }
 
@@ -402,124 +567,111 @@ function dismissStartupLoadingOverlay() {
   }, STARTUP_OVERLAY_FADE_MS + 40);
 }
 
-// Create SquidRun API (merges with preload bridge to preserve workflow/graph/memory APIs)
-window.squidrun = window.squidrun || {};
-Object.assign(window.squidrun, {
-  pty: {
-    create: (paneId, workingDir) => ipcRenderer.invoke('pty-create', paneId, workingDir),
-    write: (paneId, data, kernelMeta = null) => ipcRenderer.invoke('pty-write', paneId, data, kernelMeta),
-    writeChunked: (paneId, fullText, options = {}, kernelMeta = null) =>
-      ipcRenderer.invoke('pty-write-chunked', paneId, fullText, options, kernelMeta),
-    sendTrustedEnter: () => ipcRenderer.invoke('send-trusted-enter'),
-    clipboardPasteText: (text) => ipcRenderer.invoke('clipboard-paste-text', text),
-    resize: (paneId, cols, rows, kernelMeta = null) => ipcRenderer.invoke('pty-resize', paneId, cols, rows, kernelMeta),
-    kill: (paneId) => ipcRenderer.invoke('pty-kill', paneId),
-    pause: (paneId) => ipcRenderer.invoke('pty-pause', paneId),
-    resume: (paneId) => ipcRenderer.invoke('pty-resume', paneId),
-    onData: (paneId, callback) => {
-      const channel = `pty-data-${paneId}`;
-      const listener = (event, data) => callback(data);
-      trackDynamicPtyIpcChannel(channel);
-      ipcRenderer.on(channel, listener);
-      return () => {
-        if (typeof ipcRenderer.off === 'function') {
-          ipcRenderer.off(channel, listener);
-        } else if (typeof ipcRenderer.removeListener === 'function') {
-          ipcRenderer.removeListener(channel, listener);
-        }
-        untrackDynamicPtyIpcChannel(channel);
-      };
-    },
-    removeAllDataListeners: (paneId) => {
-      const channel = `pty-data-${paneId}`;
-      if (typeof ipcRenderer.removeAllListeners === 'function') {
+function createFallbackRendererApi() {
+  return {
+    pty: {
+      create: (paneId, workingDir) => ipcRenderer.invoke('pty-create', paneId, workingDir),
+      write: (paneId, data, kernelMeta = null) => ipcRenderer.invoke('pty-write', paneId, data, kernelMeta),
+      writeChunked: (paneId, fullText, options = {}, kernelMeta = null) =>
+        ipcRenderer.invoke('pty-write-chunked', paneId, fullText, options, kernelMeta),
+      sendTrustedEnter: () => ipcRenderer.invoke('send-trusted-enter'),
+      clipboardPasteText: (text) => ipcRenderer.invoke('clipboard-paste-text', text),
+      resize: (paneId, cols, rows, kernelMeta = null) => ipcRenderer.invoke('pty-resize', paneId, cols, rows, kernelMeta),
+      kill: (paneId) => ipcRenderer.invoke('pty-kill', paneId),
+      pause: (paneId) => ipcRenderer.invoke('pty-pause', paneId),
+      resume: (paneId) => ipcRenderer.invoke('pty-resume', paneId),
+      onData: (paneId, callback) => {
+        const channel = `pty-data-${paneId}`;
+        const listener = (_event, data) => callback(data);
+        trackDynamicPtyIpcChannel(channel);
+        const off = ipcRenderer.on(channel, listener);
+        return () => {
+          if (typeof off === 'function') {
+            off();
+          } else {
+            ipcRenderer.removeListener(channel, listener);
+          }
+          untrackDynamicPtyIpcChannel(channel);
+        };
+      },
+      removeAllDataListeners: (paneId) => {
+        const channel = `pty-data-${paneId}`;
         ipcRenderer.removeAllListeners(channel);
-      }
-      untrackDynamicPtyIpcChannel(channel);
-    },
-    onExit: (paneId, callback) => {
-      const channel = `pty-exit-${paneId}`;
-      const listener = (event, code) => callback(code);
-      trackDynamicPtyIpcChannel(channel);
-      ipcRenderer.on(channel, listener);
-      return () => {
-        if (typeof ipcRenderer.off === 'function') {
-          ipcRenderer.off(channel, listener);
-        } else if (typeof ipcRenderer.removeListener === 'function') {
-          ipcRenderer.removeListener(channel, listener);
-        }
         untrackDynamicPtyIpcChannel(channel);
-      };
-    },
-    removeAllExitListeners: (paneId) => {
-      const channel = `pty-exit-${paneId}`;
-      if (typeof ipcRenderer.removeAllListeners === 'function') {
+      },
+      onExit: (paneId, callback) => {
+        const channel = `pty-exit-${paneId}`;
+        const listener = (_event, code) => callback(code);
+        trackDynamicPtyIpcChannel(channel);
+        const off = ipcRenderer.on(channel, listener);
+        return () => {
+          if (typeof off === 'function') {
+            off();
+          } else {
+            ipcRenderer.removeListener(channel, listener);
+          }
+          untrackDynamicPtyIpcChannel(channel);
+        };
+      },
+      removeAllExitListeners: (paneId) => {
+        const channel = `pty-exit-${paneId}`;
         ipcRenderer.removeAllListeners(channel);
-      }
-      untrackDynamicPtyIpcChannel(channel);
+        untrackDynamicPtyIpcChannel(channel);
+      },
+      onKernelBridgeEvent: (callback) => ipcRenderer.on('kernel:bridge-event', (_event, data) => callback(data)),
+      onKernelBridgeStats: (callback) => ipcRenderer.on('kernel:bridge-stats', (_event, data) => callback(data)),
     },
-    onKernelBridgeEvent: (callback) => {
-      const channel = 'kernel:bridge-event';
-      const listener = (event, data) => callback(data);
-      ipcRenderer.on(channel, listener);
-      return () => {
-        if (typeof ipcRenderer.off === 'function') {
-          ipcRenderer.off(channel, listener);
-        } else if (typeof ipcRenderer.removeListener === 'function') {
-          ipcRenderer.removeListener(channel, listener);
-        }
-      };
+    claude: {
+      spawn: (paneId, workingDir) => ipcRenderer.invoke('spawn-claude', paneId, workingDir),
     },
-    onKernelBridgeStats: (callback) => {
-      const channel = 'kernel:bridge-stats';
-      const listener = (event, data) => callback(data);
-      ipcRenderer.on(channel, listener);
-      return () => {
-        if (typeof ipcRenderer.off === 'function') {
-          ipcRenderer.off(channel, listener);
-        } else if (typeof ipcRenderer.removeListener === 'function') {
-          ipcRenderer.removeListener(channel, listener);
-        }
-      };
+    paneHost: {
+      inject: (paneId, payload = {}) => ipcRenderer.invoke('pane-host-inject', paneId, payload),
     },
-  },
-  claude: {
-    spawn: (paneId, workingDir) => ipcRenderer.invoke('spawn-claude', paneId, workingDir),
-  },
-  context: {
-    read: () => ipcRenderer.invoke('read-shared-context'),
-    write: (content) => ipcRenderer.invoke('write-shared-context', content),
-    getPath: () => ipcRenderer.invoke('get-shared-context-path'),
-  },
-  project: {
-    select: () => ipcRenderer.invoke('select-project'),
-    get: () => ipcRenderer.invoke('get-project'),
-  },
-  friction: {
-    list: () => ipcRenderer.invoke('list-friction'),
-    read: (filename) => ipcRenderer.invoke('read-friction', filename),
-    delete: (filename) => ipcRenderer.invoke('delete-friction', filename),
-    clear: () => ipcRenderer.invoke('clear-friction'),
-  },
-  screenshot: {
-    save: (base64Data, originalName) => ipcRenderer.invoke('save-screenshot', base64Data, originalName),
-    list: () => ipcRenderer.invoke('list-screenshots'),
-    delete: (filename) => ipcRenderer.invoke('delete-screenshot', filename),
-    getPath: (filename) => ipcRenderer.invoke('get-screenshot-path', filename),
-  },
-  process: {
-    spawn: (command, args, cwd) => ipcRenderer.invoke('spawn-process', command, args, cwd),
-    list: () => ipcRenderer.invoke('list-processes'),
-    kill: (processId) => ipcRenderer.invoke('kill-process', processId),
-    getOutput: (processId) => ipcRenderer.invoke('get-process-output', processId),
-  },
-  // Settings API - expose settings module for debugMode check etc.
+    context: {
+      read: () => ipcRenderer.invoke('read-shared-context'),
+      write: (content) => ipcRenderer.invoke('write-shared-context', content),
+      getPath: () => ipcRenderer.invoke('get-shared-context-path'),
+    },
+    project: {
+      select: () => ipcRenderer.invoke('select-project'),
+      get: () => ipcRenderer.invoke('get-project'),
+    },
+    friction: {
+      list: () => ipcRenderer.invoke('list-friction'),
+      read: (filename) => ipcRenderer.invoke('read-friction', filename),
+      delete: (filename) => ipcRenderer.invoke('delete-friction', filename),
+      clear: () => ipcRenderer.invoke('clear-friction'),
+    },
+    screenshot: {
+      save: (base64Data, originalName) => ipcRenderer.invoke('save-screenshot', base64Data, originalName),
+      list: (options = null) => ipcRenderer.invoke('list-screenshots', options),
+      delete: (filename) => ipcRenderer.invoke('delete-screenshot', filename),
+      getPath: (filename) => ipcRenderer.invoke('get-screenshot-path', filename),
+    },
+    process: {
+      spawn: (command, args, cwd) => ipcRenderer.invoke('spawn-process', command, args, cwd),
+      list: () => ipcRenderer.invoke('list-processes'),
+      kill: (processId) => ipcRenderer.invoke('kill-process', processId),
+      getOutput: (processId) => ipcRenderer.invoke('get-process-output', processId),
+    },
+    voice: {
+      transcribe: (audioBuffer) => ipcRenderer.invoke('voice:transcribe', audioBuffer),
+    },
+  };
+}
+
+// Merge renderer-local helpers into preload bridge API.
+const fallbackApi = createFallbackRendererApi();
+const squidrunApi = Object.assign({}, fallbackApi, bridgeApi, {
   settings: {
     get: () => settings.getSettings(),
     isDebugMode: () => settings.getSettings()?.debugMode || false,
   },
 });
-window.hivemind = window.squidrun; // Legacy alias
+window.squidrun = squidrunApi;
+window.hivemind = squidrunApi;
+window.squidrunAPI = squidrunApi;
+window.api = squidrunApi;
 
 function updateConnectionStatus(status) {
   const statusEl = document.getElementById('connectionStatus');
@@ -706,7 +858,7 @@ function setupEventListeners() {
 
         try {
           const arrayBuf = await audioBlob.arrayBuffer();
-          const result = await window.squidrun.voice.transcribe(Buffer.from(arrayBuf));
+          const result = await window.squidrun.voice.transcribe(new Uint8Array(arrayBuf));
           if (result.success && result.text) {
             const trimmed = result.text.trim();
             // Filter known Whisper silence hallucinations
@@ -1331,8 +1483,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   ipcRenderer.on('pane-enter', async (event, data) => {
     const paneId = String(data?.paneId || '');
     if (!paneId) return;
-    const hiddenPaneHostMode = process.env.HIVEMIND_HIDDEN_PANE_HOSTS === '1'
-      || settings.getSettings()?.hiddenPaneHostsEnabled === true;
+    const hiddenPaneHostMode = settings.getSettings()?.hiddenPaneHostsEnabled === true;
     if (hiddenPaneHostMode && window.squidrun?.paneHost?.inject) {
       try {
         await window.squidrun.paneHost.inject(paneId, { message: '' });

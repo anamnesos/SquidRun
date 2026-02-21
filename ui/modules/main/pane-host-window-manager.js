@@ -4,6 +4,26 @@ const log = require('../logger');
 const IS_DARWIN = process.platform === 'darwin';
 const HIDDEN_PANE_HOST_WIDTH = IS_DARWIN ? 1400 : 1200;
 const HIDDEN_PANE_HOST_HEIGHT = IS_DARWIN ? 600 : 500;
+const PANE_HOST_QUERY_ENV_MAP = Object.freeze({
+  verifyTimeoutMs: 'HIVEMIND_PANE_HOST_VERIFY_TIMEOUT_MS',
+  activeOutputWindowMs: 'HIVEMIND_PANE_HOST_ACTIVE_OUTPUT_WINDOW_MS',
+  submitDeferMaxWaitMs: 'HIVEMIND_PANE_HOST_SUBMIT_DEFER_MAX_WAIT_MS',
+  submitDeferMaxWaitLongMs: 'HIVEMIND_PANE_HOST_SUBMIT_DEFER_MAX_WAIT_LONG_MS',
+  submitDeferPollMs: 'HIVEMIND_PANE_HOST_SUBMIT_DEFER_POLL_MS',
+  longPayloadBytes: 'HIVEMIND_PANE_HOST_LONG_PAYLOAD_BYTES',
+  hmSendVerifyTimeoutMs: 'HIVEMIND_PANE_HOST_HM_SEND_VERIFY_TIMEOUT_MS',
+  minEnterDelayMs: 'HIVEMIND_PANE_HOST_MIN_ENTER_DELAY_MS',
+  chunkThresholdBytes: 'HIVEMIND_PANE_HOST_CHUNK_THRESHOLD_BYTES',
+  chunkSizeBytes: 'HIVEMIND_PANE_HOST_CHUNK_SIZE_BYTES',
+  writeTimeoutMs: 'HIVEMIND_PANE_HOST_WRITE_TIMEOUT_MS',
+  enterTimeoutMs: 'HIVEMIND_PANE_HOST_ENTER_TIMEOUT_MS',
+});
+
+function toNonEmptyString(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
 
 function createPaneHostWindowManager(options = {}) {
   const {
@@ -18,6 +38,17 @@ function createPaneHostWindowManager(options = {}) {
 
   function getPreloadPath() {
     return path.join(__dirname, '..', '..', 'preload.js');
+  }
+
+  function buildPaneHostQuery(paneId) {
+    const query = { paneId: String(paneId) };
+    for (const [queryKey, envKey] of Object.entries(PANE_HOST_QUERY_ENV_MAP)) {
+      const value = toNonEmptyString(process.env[envKey]);
+      if (value) {
+        query[queryKey] = value;
+      }
+    }
+    return query;
   }
 
   function getPaneWindow(paneId) {
@@ -41,8 +72,8 @@ function createPaneHostWindowManager(options = {}) {
       show: false,
       backgroundColor: '#0a0a0f',
       webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false,
+        nodeIntegration: false,
+        contextIsolation: true,
         backgroundThrottling: false,
         preload: getPreloadPath(),
       },
@@ -54,9 +85,7 @@ function createPaneHostWindowManager(options = {}) {
       paneWindows.delete(id);
     });
 
-    await win.loadFile(getPaneHostHtmlPath(), {
-      query: { paneId: id },
-    });
+    await win.loadFile(getPaneHostHtmlPath(), { query: buildPaneHostQuery(id) });
 
     const settings = getCurrentSettings() || {};
     if (settings.devTools && process.env.HIVEMIND_PANE_HOST_DEVTOOLS === '1') {

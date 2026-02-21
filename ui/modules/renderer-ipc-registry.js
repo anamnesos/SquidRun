@@ -3,19 +3,13 @@
  * Ensures repeated init/reload paths replace listeners instead of accumulating them.
  */
 
-const { ipcRenderer } = require('electron');
+const { onBridge } = require('./renderer-bridge');
 
 const ipcListenerRegistry = new Map();
 
-function removeIpcListener(channel, handler) {
-  if (!channel || typeof handler !== 'function') return;
-  if (typeof ipcRenderer.off === 'function') {
-    ipcRenderer.off(channel, handler);
-    return;
-  }
-  if (typeof ipcRenderer.removeListener === 'function') {
-    ipcRenderer.removeListener(channel, handler);
-  }
+function removeIpcListener(entry) {
+  if (!entry || typeof entry.dispose !== 'function') return;
+  entry.dispose();
 }
 
 function registerScopedIpcListener(scope, channel, handler) {
@@ -26,27 +20,29 @@ function registerScopedIpcListener(scope, channel, handler) {
   const key = `${scope}:${channel}`;
   const existing = ipcListenerRegistry.get(key);
   if (existing) {
-    removeIpcListener(existing.channel, existing.handler);
+    removeIpcListener(existing);
   }
 
-  ipcRenderer.on(channel, handler);
-  ipcListenerRegistry.set(key, { channel, handler });
+  const dispose = onBridge(channel, handler);
+  ipcListenerRegistry.set(key, { channel, handler, dispose });
 
   return () => {
     const current = ipcListenerRegistry.get(key);
     if (current && current.handler === handler) {
-      removeIpcListener(channel, handler);
+      removeIpcListener(current);
       ipcListenerRegistry.delete(key);
       return;
     }
-    removeIpcListener(channel, handler);
+    if (current && current.channel === channel) {
+      removeIpcListener(current);
+    }
   };
 }
 
 function clearScopedIpcListeners(scope = null) {
   for (const [key, entry] of ipcListenerRegistry.entries()) {
     if (scope && !key.startsWith(`${scope}:`)) continue;
-    removeIpcListener(entry.channel, entry.handler);
+    removeIpcListener(entry);
     ipcListenerRegistry.delete(key);
   }
 }
