@@ -29,6 +29,11 @@ This is the Gemini-specific shim.
 - For journal/database checks, use `.squidrun/runtime/evidence-ledger.db`.
 - Then follow the full startup baseline in `ROLES.md`.
 
+## User Profile
+
+- Read workspace/user-profile.json on startup. Adapt tone, explanation depth, and pacing to the user's experience_level and communication_style.
+- This file is user-edited. Do not modify it. Do not delete it in cleanups.
+
 ## Reference
 
 - Read `ROLES.md` for role boundaries and shared operating rules.

@@ -60,14 +60,16 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 2. Read `.squidrun/app-status.json`.
 3. Check `.squidrun/build/blockers.md` and `.squidrun/build/errors.md`.
 4. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-5. Process unresolved Claims via `record-consensus` as your first technical action.
-6. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
+5. Read `workspace/user-profile.json`.
+6. Process unresolved Claims via `record-consensus` as your first technical action.
+7. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
 
 **Builder / Oracle (panes 2, 3):**
 1. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-2. Read `.squidrun/app-status.json` and note the current `session` number.
-3. Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
-4. Check in to Architect via `hm-send` — one line, no extras.
+2. Read `workspace/user-profile.json`.
+3. Read `.squidrun/app-status.json` and note the current `session` number.
+4. Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
+5. Check in to Architect via `hm-send` — one line, no extras.
 
 ## ARCHITECT
 
