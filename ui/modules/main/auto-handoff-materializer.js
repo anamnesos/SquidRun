@@ -228,7 +228,7 @@ function normalizeUnresolvedClaims(claims = [], maxClaims = UNRESOLVED_CLAIMS_MA
     .slice(0, limit);
 }
 
-function queryUnresolvedClaims(options = {}) {
+async function queryUnresolvedClaims(options = {}) {
   const unresolvedLimit = Math.max(1, Number(options.unresolvedLimitPerStatus) || UNRESOLVED_CLAIMS_MAX);
   const queryFn = typeof options.queryClaims === 'function'
     ? options.queryClaims
@@ -245,10 +245,10 @@ function queryUnresolvedClaims(options = {}) {
   const claims = [];
   for (const status of UNRESOLVED_STATUS_ORDER) {
     try {
-      const result = queryFn({
+      const result = await Promise.resolve(queryFn({
         status,
         limit: unresolvedLimit,
-      }, queryOptions);
+      }, queryOptions));
       const rows = Array.isArray(result?.claims) ? result.claims : [];
       claims.push(...rows);
     } catch {
@@ -661,62 +661,70 @@ function resolveLegacyWorkspaceSessionHandoffPath() {
   return path.join(WORKSPACE_PATH, HANDOFFS_RELATIVE_DIR, SESSION_HANDOFF_FILE);
 }
 
-function ensureParentDir(targetPath) {
-  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+async function ensureParentDir(targetPath) {
+  await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
 }
 
-function writeTextIfChanged(filePath, content) {
+async function writeTextIfChanged(filePath, content) {
   const next = String(content || '');
   try {
-    if (fs.existsSync(filePath)) {
-      const current = fs.readFileSync(filePath, 'utf8');
+    try {
+      const current = await fs.promises.readFile(filePath, 'utf8');
       if (current === next) {
         return { changed: false };
       }
+    } catch (err) {
+      if (err?.code !== 'ENOENT') {
+        throw err;
+      }
     }
-    ensureParentDir(filePath);
-    fs.writeFileSync(filePath, next, 'utf8');
+
+    await ensureParentDir(filePath);
+    await fs.promises.writeFile(filePath, next, 'utf8');
     return { changed: true };
   } catch (err) {
     return { changed: false, error: err.message };
   }
 }
 
-function materializeSessionHandoff(options = {}) {
+async function materializeSessionHandoff(options = {}) {
   const sessionId = toOptionalString(options.sessionId, null);
   const queryLimit = Math.max(1, Number(options.queryLimit) || DEFAULT_QUERY_LIMIT);
   const queryFn = typeof options.queryCommsJournal === 'function'
     ? options.queryCommsJournal
     : queryCommsJournalEntries;
 
-  const rows = Array.isArray(options.rows)
+  const queriedRows = Array.isArray(options.rows)
     ? options.rows
-    : queryFn({
+    : await Promise.resolve(queryFn({
       sessionId: sessionId || undefined,
       order: 'asc',
       limit: queryLimit,
     }, {
       dbPath: options.dbPath || null,
-    });
-  const crossSessionRows = Array.isArray(options.crossSessionRows)
+    }));
+  const rows = Array.isArray(queriedRows) ? queriedRows : [];
+
+  const queriedCrossSessionRows = Array.isArray(options.crossSessionRows)
     ? options.crossSessionRows
     : (
       Array.isArray(options.rows)
         ? options.rows
         : (
           sessionId
-            ? queryFn({
+            ? await Promise.resolve(queryFn({
               order: 'asc',
               limit: queryLimit,
             }, {
               dbPath: options.dbPath || null,
-            })
+            }))
             : rows
         )
     );
+  const crossSessionRows = Array.isArray(queriedCrossSessionRows) ? queriedCrossSessionRows : [];
   const unresolvedClaims = Array.isArray(options.unresolvedClaims)
     ? normalizeUnresolvedClaims(options.unresolvedClaims, options.unresolvedClaimsMax)
-    : queryUnresolvedClaims({
+    : await queryUnresolvedClaims({
       queryClaims: options.queryClaims,
       teamMemoryDbPath: options.teamMemoryDbPath,
       unresolvedLimitPerStatus: options.unresolvedLimitPerStatus,
@@ -744,7 +752,7 @@ function materializeSessionHandoff(options = {}) {
     : (toOptionalString(options.legacyMirrorPath, null) || resolveLegacyWorkspaceSessionHandoffPath());
 
   const writes = [];
-  const primaryWrite = writeTextIfChanged(primaryPath, markdown);
+  const primaryWrite = await writeTextIfChanged(primaryPath, markdown);
   if (primaryWrite.error) {
     return {
       ok: false,
@@ -757,7 +765,7 @@ function materializeSessionHandoff(options = {}) {
   writes.push({ path: primaryPath, changed: primaryWrite.changed });
 
   if (legacyMirrorPath && path.resolve(legacyMirrorPath) !== path.resolve(primaryPath)) {
-    const mirrorWrite = writeTextIfChanged(legacyMirrorPath, markdown);
+    const mirrorWrite = await writeTextIfChanged(legacyMirrorPath, markdown);
     if (mirrorWrite.error) {
       return {
         ok: false,

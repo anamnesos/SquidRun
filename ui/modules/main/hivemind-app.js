@@ -192,6 +192,7 @@ class SquidRunApp {
     this.wakeRecoveryInFlight = false;
     this.autoHandoffTimer = null;
     this.autoHandoffWriteInFlight = false;
+    this.autoHandoffWritePromise = null;
     this.autoHandoffEnabled = AUTO_HANDOFF_ENABLED && process.env.NODE_ENV !== 'test';
     this.paneHostReady = new Set();
     this.paneHostMissingPanes = new Set();
@@ -1446,41 +1447,46 @@ class SquidRunApp {
     log.info('App', 'Initialization complete');
   }
 
-  runAutoHandoffMaterializer(reason = 'timer') {
+  async runAutoHandoffMaterializer(reason = 'timer') {
     if (!this.autoHandoffEnabled) {
       return { ok: false, reason: 'disabled' };
     }
     if (this.autoHandoffWriteInFlight) {
-      return { ok: false, reason: 'in_flight' };
+      return this.autoHandoffWritePromise || { ok: false, reason: 'in_flight' };
     }
 
     this.autoHandoffWriteInFlight = true;
-    try {
-      const result = materializeSessionHandoff({
-        sessionId: this.commsSessionScopeId || null,
-      });
-      if (result?.ok === false) {
-        log.warn('AutoHandoff', `Materialize failed (${reason}): ${result.reason || result.error || 'unknown'}`);
-      } else if (result?.written) {
-        log.info(
-          'AutoHandoff',
-          `Materialized session handoff (${reason}): ${result.outputPath} rows=${result.rowsScanned || 0}`
-        );
+    this.autoHandoffWritePromise = (async () => {
+      try {
+        const result = await materializeSessionHandoff({
+          sessionId: this.commsSessionScopeId || null,
+        });
+        if (result?.ok === false) {
+          log.warn('AutoHandoff', `Materialize failed (${reason}): ${result.reason || result.error || 'unknown'}`);
+        } else if (result?.written) {
+          log.info(
+            'AutoHandoff',
+            `Materialized session handoff (${reason}): ${result.outputPath} rows=${result.rowsScanned || 0}`
+          );
+        }
+        return result;
+      } catch (err) {
+        log.warn('AutoHandoff', `Materialize error (${reason}): ${err.message}`);
+        return { ok: false, reason: 'materialize_error', error: err.message };
+      } finally {
+        this.autoHandoffWriteInFlight = false;
+        this.autoHandoffWritePromise = null;
       }
-      return result;
-    } catch (err) {
-      log.warn('AutoHandoff', `Materialize error (${reason}): ${err.message}`);
-      return { ok: false, reason: 'materialize_error', error: err.message };
-    } finally {
-      this.autoHandoffWriteInFlight = false;
-    }
+    })();
+
+    return this.autoHandoffWritePromise;
   }
 
   startAutoHandoffMaterializer() {
     if (!this.autoHandoffEnabled) {
       return;
     }
-    this.stopAutoHandoffMaterializer({ flush: false });
+    void this.stopAutoHandoffMaterializer({ flush: false });
 
     const cleanup = removeLegacyPaneHandoffFiles({ ignoreErrors: true });
     if (cleanup?.removed?.length > 0) {
@@ -1492,22 +1498,27 @@ class SquidRunApp {
       }
     }
 
-    this.runAutoHandoffMaterializer('startup');
+    void this.runAutoHandoffMaterializer('startup');
     const intervalMs = Math.max(5000, Number.isFinite(AUTO_HANDOFF_INTERVAL_MS) ? AUTO_HANDOFF_INTERVAL_MS : 30000);
     this.autoHandoffTimer = setInterval(() => {
-      this.runAutoHandoffMaterializer('timer');
+      void this.runAutoHandoffMaterializer('timer');
     }, intervalMs);
   }
 
-  stopAutoHandoffMaterializer(options = {}) {
+  async stopAutoHandoffMaterializer(options = {}) {
     if (this.autoHandoffTimer) {
       clearInterval(this.autoHandoffTimer);
       this.autoHandoffTimer = null;
     }
 
     if (options.flush === true && this.autoHandoffEnabled) {
-      this.runAutoHandoffMaterializer('shutdown');
+      if (this.autoHandoffWritePromise) {
+        await this.autoHandoffWritePromise;
+      }
+      return this.runAutoHandoffMaterializer('shutdown');
     }
+
+    return { ok: true, reason: 'stopped' };
   }
 
   /**
@@ -3113,7 +3124,7 @@ class SquidRunApp {
     };
   }
 
-  shutdown() {
+  async shutdown() {
     log.info('App', 'Shutting down SquidRun Application');
     this.shuttingDown = true;
     this.clearWebSocketStartRetry();
@@ -3145,7 +3156,7 @@ class SquidRunApp {
     this.mainWindowSendRaw = null;
     this.mainWindowSendInterceptInstalled = false;
     this.paneHostWindowManager.closeAllPaneWindows();
-    this.stopAutoHandoffMaterializer({ flush: true });
+    await this.stopAutoHandoffMaterializer({ flush: true });
     contextCompressor.shutdown();
     teamMemory.stopIntegritySweep();
     teamMemory.stopBeliefSnapshotSweep();

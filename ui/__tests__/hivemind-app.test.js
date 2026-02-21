@@ -571,10 +571,8 @@ describe('SquidRunApp', () => {
       app = new SquidRunApp(mockAppContext, mockManagers);
     });
 
-    it('should not throw when called', () => {
-      expect(() => {
-        app.shutdown();
-      }).not.toThrow();
+    it('should not throw when called', async () => {
+      await expect(app.shutdown()).resolves.toBeUndefined();
     });
 
     it('should call cleanup functions', async () => {
@@ -586,8 +584,7 @@ describe('SquidRunApp', () => {
       const teamMemory = require('../modules/team-memory');
       const experiment = require('../modules/experiment');
 
-      app.shutdown();
-      await new Promise((resolve) => setImmediate(resolve));
+      await app.shutdown();
 
       expect(closeSharedRuntime).toHaveBeenCalled();
       expect(experiment.closeExperimentRuntime).toHaveBeenCalled();
@@ -603,18 +600,18 @@ describe('SquidRunApp', () => {
       expect(watcher.stopMessageWatcher).toHaveBeenCalled();
     });
 
-    it('should disconnect daemon client if present', () => {
+    it('should disconnect daemon client if present', async () => {
       const mockDaemonClient = { disconnect: jest.fn() };
       mockAppContext.daemonClient = mockDaemonClient;
       app = new SquidRunApp(mockAppContext, mockManagers);
 
-      app.shutdown();
+      await app.shutdown();
 
       expect(mockDaemonClient.disconnect).toHaveBeenCalled();
     });
 
-    it('shuts down cleanly in PTY mode', () => {
-      expect(() => app.shutdown()).not.toThrow();
+    it('shuts down cleanly in PTY mode', async () => {
+      await expect(app.shutdown()).resolves.toBeUndefined();
     });
   });
 
