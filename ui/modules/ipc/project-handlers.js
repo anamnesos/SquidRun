@@ -233,7 +233,7 @@ function registerProjectHandlers(ctx, deps) {
     return outcome;
   };
 
-  const syncProjectRoot = (projectPath, reason = 'sync-project-root') => {
+  const syncProjectRoot = (projectPath, syncDeps = deps, reason = 'sync-project-root') => {
     const sequenceId = ++runtimeLifecycleSequence;
     const transitionReason = `${reason}#${sequenceId}`;
     if (!transitionRuntimeLifecycle(PROJECT_RUNTIME_LIFECYCLE_STATE.STARTING, transitionReason)) {
@@ -245,6 +245,14 @@ function registerProjectHandlers(ctx, deps) {
     if (typeof setProjectRoot === 'function') {
       setProjectRoot(projectPath || null);
     }
+    let bootstrap = null;
+    if (typeof projectPath === 'string' && projectPath.trim() && fs.existsSync(projectPath)) {
+      try {
+        bootstrap = writeProjectBootstrapFiles(projectPath, syncDeps);
+      } catch (err) {
+        log.warn('Project', `Failed bootstrap sync for ${projectPath}: ${err.message}`);
+      }
+    }
     const rebindResult = rebindProjectScopedRuntimes();
     if (!transitionRuntimeLifecycle(PROJECT_RUNTIME_LIFECYCLE_STATE.RUNNING, transitionReason)) {
       return {
@@ -252,7 +260,10 @@ function registerProjectHandlers(ctx, deps) {
         errors: [`illegal_transition:${runtimeLifecycleState}`],
       };
     }
-    return rebindResult;
+    return {
+      ...rebindResult,
+      bootstrap,
+    };
   };
 
   const switchProjectWithLifecycle = (projectPath, reason = 'project-switch') => queueRuntimeLifecycleTask('switch-project', async () => {
@@ -325,9 +336,9 @@ function registerProjectHandlers(ctx, deps) {
       || loadSettings?.()?.operatingMode;
     const initialProject = ctx?.watcher?.readState?.()?.project || null;
     if (operatingMode === 'developer') {
-      syncProjectRoot(null);
+      syncProjectRoot(getSquidrunRoot(), deps);
     } else {
-      syncProjectRoot(initialProject);
+      syncProjectRoot(initialProject, deps);
       if (!initialProject) {
         log.warn('Project', 'Operating in project mode but no project selected — agents will use SquidRun root as CWD');
         if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
