@@ -272,7 +272,7 @@ class DocGenerator {
   /**
    * Parse a JSDoc block and its target
    */
-  parseJSDocBlock(block, lines) {
+  parseJSDocBlock(block, _lines) {
     const doc = this.parseJSDocComment(block.comment);
     const target = block.target.trim();
 

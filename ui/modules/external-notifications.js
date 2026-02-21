@@ -65,7 +65,7 @@ function createExternalNotifier(options = {}) {
       let url;
       try {
         url = new URL(targetUrl);
-      } catch (err) {
+      } catch (_err) {
         resolve({ success: false, error: 'invalid_url' });
         return;
       }
@@ -188,8 +188,8 @@ function createExternalNotifier(options = {}) {
       const hostname = os.hostname() || 'squidrun';
 
       const finalize = (result) => {
-        try { reader.close(); } catch (e) { /* ignore */ }
-        try { socket.end(); } catch (e) { /* ignore */ }
+        try { reader.close(); } catch (_e) { /* ignore */ }
+        try { socket.end(); } catch (_e) { /* ignore */ }
         resolve(result);
       };
 

@@ -140,7 +140,7 @@ function registerOracleHandlers(ctx, deps = {}) {
       }
       results.sort((a, b) => b.mtime - a.mtime);
       return results;
-    } catch (err) {
+    } catch (_err) {
       return [];
     }
   });

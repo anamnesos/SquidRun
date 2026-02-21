@@ -28,7 +28,7 @@ function getTerminal() {
   if (!terminal) {
     try {
       terminal = require('./terminal');
-    } catch (e) {
+    } catch (_e) {
       // Terminal not available yet
     }
   }
@@ -468,12 +468,12 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
     }
   });
 
-  registerScopedIpcListener('daemon-core', 'daemon-reconnected', (event) => {
+  registerScopedIpcListener('daemon-core', 'daemon-reconnected', (_event) => {
     log.info('Daemon', 'Reconnected after disconnect');
     updateConnectionStatus('Daemon reconnected');
   });
 
-  registerScopedIpcListener('daemon-core', 'daemon-disconnected', (event) => {
+  registerScopedIpcListener('daemon-core', 'daemon-disconnected', (_event) => {
     log.info('Daemon', 'Disconnected');
     updateConnectionStatus('Daemon disconnected - terminals may be stale');
   });
@@ -527,8 +527,8 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
 }
 
 function setupRollbackListener() {
-  registerScopedIpcListener('rollback', 'rollback-available', (event, data) => {
-    uiView.showRollbackUI(data, async (checkpointId, files) => {
+  registerScopedIpcListener('rollback', 'rollback-available', (_event, data) => {
+    uiView.showRollbackUI(data, async (checkpointId, _files) => {
       try {
         const result = await invokeBridge('apply-rollback', checkpointId);
         if (result && result.success) {

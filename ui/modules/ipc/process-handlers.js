@@ -130,7 +130,7 @@ function registerProcessHandlers(ctx) {
 
   ipcMain.handle('list-processes', () => {
     const processes = [];
-    for (const [id, { info }] of ctx.backgroundProcesses) {
+    for (const [_id, { info }] of ctx.backgroundProcesses) {
       processes.push({
         id: info.id,
         command: info.command,

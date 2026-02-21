@@ -54,7 +54,7 @@ let startInFlightPromise = null;
 function generateTraceToken(prefix = 'evt') {
   try {
     return `${prefix}-${crypto.randomUUID()}`;
-  } catch (err) {
+  } catch (_err) {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }
 }
@@ -872,7 +872,7 @@ function start(options = {}) {
           });
         });
 
-        ws.on('close', (code, reason) => {
+        ws.on('close', (code, _reason) => {
           const info = clients.get(clientId);
           const roleInfo = info?.role ? ` (${info.role})` : '';
           log.info('WebSocket', `Client ${clientId}${roleInfo} disconnected: ${code}`);
@@ -942,7 +942,7 @@ async function handleMessage(clientId, rawData) {
   try {
     const str = rawData.toString();
     message = JSON.parse(str);
-  } catch (err) {
+  } catch (_err) {
     // Plain text message
     message = { type: 'text', content: rawData.toString() };
   }

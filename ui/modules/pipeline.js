@@ -141,7 +141,7 @@ function detectStage(entry) {
  * Find an active (non-committed) pipeline item that matches context.
  * Uses sender and recent activity to find the best match.
  */
-function findActivePipelineItem(entry) {
+function findActivePipelineItem(_entry) {
   // Find most recent non-committed item (LIFO - latest item is most relevant)
   for (let i = pipelineItems.length - 1; i >= 0; i--) {
     const item = pipelineItems[i];
@@ -212,7 +212,7 @@ function advanceStage(item, newStage, entry) {
 /**
  * Handle automatic notifications on stage transitions
  */
-function handleAutoNotifications(item, newStage, oldStage) {
+function handleAutoNotifications(item, newStage, _oldStage) {
   if (typeof sendDirectMessageFn !== 'function') return;
 
   // implementing -> review_pending: auto-send review request to Architect (pane 1)

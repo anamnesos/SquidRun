@@ -15,7 +15,7 @@ const DEFAULT_DB_PATH = resolveDefaultDbPath();
 
 function loadSqliteDriver() {
   try {
-    // eslint-disable-next-line global-require
+     
     const mod = require('node:sqlite');
     if (mod && typeof mod.DatabaseSync === 'function') {
       return {
@@ -28,7 +28,7 @@ function loadSqliteDriver() {
   }
 
   try {
-    // eslint-disable-next-line global-require
+     
     const BetterSqlite3 = require('better-sqlite3');
     return {
       name: 'better-sqlite3',

@@ -34,7 +34,7 @@ function ensureLogDir() {
   try {
     fs.mkdirSync(LOG_DIR, { recursive: true });
     logDirReady = true;
-  } catch (err) {
+  } catch (_err) {
     // If file logging fails, keep console logging working
   }
 }
@@ -89,7 +89,7 @@ function write(level, subsystem, message, extra) {
       })
       .join(' ');
     bufferedWriter.write(`${line}\n`);
-  } catch (err) {
+  } catch (_err) {
     // Ignore file logging errors to avoid breaking runtime
   }
 }

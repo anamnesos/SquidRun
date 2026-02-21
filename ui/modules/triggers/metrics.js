@@ -204,7 +204,7 @@ function getReliabilityStats() {
   }
 
   // Calculate success rate
-  const { sent, delivered, failed, timedOut, skipped } = reliabilityStats.aggregate;
+  const { sent, delivered } = reliabilityStats.aggregate;
   const successRate = sent > 0 ? Math.round((delivered / sent) * 100) : 100;
 
   return {

@@ -19,7 +19,7 @@ function ensureDir() {
   try {
     fs.mkdirSync(LOG_DIR, { recursive: true });
     dirReady = true;
-  } catch (err) {
+  } catch (_err) {
     // Ignore file logging errors to avoid breaking runtime
   }
 }
@@ -54,7 +54,7 @@ function write(subsystem, message, extra) {
   if (!LOG_PATH) return; // Skip in test environment
   try {
     bufferedWriter.write(`${formatLine(subsystem, message, extra)}\n`);
-  } catch (err) {
+  } catch (_err) {
     // Ignore to keep runtime stable
   }
 }

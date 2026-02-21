@@ -63,7 +63,7 @@ function createIpcRegistry() {
     unsetup(ctx, deps) {
       for (const registerFn of modules) {
         // Many handlers have companion unregister functions
-        const unregisterName = registerFn.name.replace('register', 'unregister');
+        const _unregisterName = registerFn.name.replace('register', 'unregister');
         // This requires the module to export the unregister function
         // or for it to be reachable via the registerFn object if assigned
         if (registerFn.unregister) {

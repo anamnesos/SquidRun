@@ -580,9 +580,9 @@ const aggressiveNudgeState = new Map();
  * Check if any terminal has recent activity
  * Returns true if agents are actively working (don't need nudge)
  */
-function hasRecentActivity() {
+function _hasRecentActivity() {
   const now = Date.now();
-  for (const [paneId, terminal] of terminals) {
+  for (const [_paneId, terminal] of terminals) {
     if (terminal.alive && terminal.lastActivity) {
       const idleTime = now - terminal.lastActivity;
       if (idleTime < ACTIVITY_THRESHOLD) {
@@ -667,9 +667,9 @@ function getHeartbeatState() {
  * Get heartbeat interval based on current state
  * Returns interval in milliseconds
  */
-function getHeartbeatInterval() {
-  const state = getHeartbeatState();
-  return HEARTBEAT_INTERVALS[state] || HEARTBEAT_INTERVALS.active;
+function _getHeartbeatInterval() {
+  const _state = getHeartbeatState();
+  return HEARTBEAT_INTERVALS[_state] || HEARTBEAT_INTERVALS.active;
 }
 
 /**
@@ -831,7 +831,7 @@ function checkAndNudgeStuckAgents() {
   const stuckTerminals = getStuckTerminals(STUCK_CHECK_THRESHOLD);
 
   // First: Clear nudge state for agents that have responded
-  for (const [paneId, state] of aggressiveNudgeState) {
+  for (const [paneId, _state] of aggressiveNudgeState) {
     if (hasAgentResponded(paneId)) {
       logInfo(`[AutoNudge] Pane ${paneId} responded - clearing nudge state`);
       aggressiveNudgeState.delete(paneId);
@@ -916,7 +916,7 @@ function updateHeartbeatTimer() {
  */
 function sendHeartbeatToLead() {
   const leadPaneId = '1';
-  const leadTerminal = terminals.get(leadPaneId);
+  const _leadTerminal = terminals.get(leadPaneId);
 
   // ESC sending removed - PTY ESC breaks agents (keyboard ESC works, PTY does not)
   // Just send the trigger file message, let user manually ESC if needed.
@@ -996,7 +996,7 @@ function checkLeadResponse() {
         return true;
       }
     }
-  } catch (err) {
+  } catch (_err) {
     // Ignore
   }
 
@@ -1015,7 +1015,7 @@ function checkLeadResponse() {
     if (content.length === 0) {
       return true;
     }
-  } catch (err) {
+  } catch (_err) {
     // Ignore read errors
   }
 
@@ -1082,7 +1082,7 @@ function heartbeatTick() {
                 exitRecoveryMode();  // Exit recovery after user alert
               }
             }
-          } catch (err) {
+          } catch (_err) {
             // Ignore
           }
         }, LEAD_RESPONSE_TIMEOUT);
@@ -1129,7 +1129,7 @@ function initHeartbeatTimer() {
 // ============================================================
 
 // Mock responses for dry-run mode (simulates an agent)
-const DRY_RUN_RESPONSES = [
+const _DRY_RUN_RESPONSES = [
   '[DRY-RUN] Agent simulated. Ready for input.\r\n',
   '[DRY-RUN] Processing your request...\r\n',
   '[DRY-RUN] Analyzing codebase structure...\r\n',
@@ -1240,7 +1240,7 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     if (existing.pty && existing.alive && !existing.dryRun) {
       try {
         existing.pty.kill();
-      } catch (e) { /* ignore */ }
+      } catch (_e) { /* ignore */ }
     }
     // Clear any dry-run timers
     if (existing.dryRunTimer) {
@@ -1458,7 +1458,7 @@ function killTerminal(paneId) {
   if (terminal.pty && !terminal.dryRun) {
     try {
       terminal.pty.kill();
-    } catch (e) { /* ignore */ }
+    } catch (_e) { /* ignore */ }
   }
 
   terminal.alive = false;
@@ -2051,7 +2051,7 @@ function cleanupSocket() {
       if (fs.existsSync(PIPE_PATH)) {
         fs.unlinkSync(PIPE_PATH);
       }
-    } catch (e) { /* ignore */ }
+    } catch (_e) { /* ignore */ }
   }
 }
 

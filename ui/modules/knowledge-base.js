@@ -327,7 +327,7 @@ class KnowledgeBase {
 
     for (const filePath of filePaths) {
       try {
-        // eslint-disable-next-line no-await-in-loop
+         
         const result = await this._ingestFile(filePath);
         results.push(result);
       } catch (err) {

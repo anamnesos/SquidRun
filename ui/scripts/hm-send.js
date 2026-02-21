@@ -146,7 +146,7 @@ if (role === 'cli') {
 function parseJSON(raw) {
   try {
     return JSON.parse(raw.toString());
-  } catch (err) {
+  } catch (_err) {
     return null;
   }
 }
@@ -399,7 +399,7 @@ function closeSocket(ws) {
     const timeout = setTimeout(() => {
       try {
         ws.terminate();
-      } catch (err) {
+      } catch (_err) {
         // no-op
       }
       resolve();
@@ -412,7 +412,7 @@ function closeSocket(ws) {
 
     try {
       ws.close();
-    } catch (err) {
+    } catch (_err) {
       clearTimeout(timeout);
       resolve();
     }
@@ -491,8 +491,8 @@ async function sendSpecialTargetFallback(targetInput, request = null) {
       statusCode: result.statusCode || null,
       messageId: result.messageId || null,
     };
-  } catch (err) {
-    return { ok: false, error: err?.message || 'telegram_fallback_exception' };
+  } catch (_err) {
+    return { ok: false, error: _err?.message || 'telegram_fallback_exception' };
   }
 }
 
@@ -687,7 +687,7 @@ async function queryTargetHealthBestEffort(ws) {
       'Health check timeout'
     );
     return health;
-  } catch (err) {
+  } catch (_err) {
     return null;
   }
 }
@@ -720,7 +720,7 @@ async function queryDeliveryCheckBestEffort(ws, messageId, options = {}) {
       }
 
       return result;
-    } catch (err) {
+    } catch (_err) {
       return null;
     }
   }
@@ -760,7 +760,7 @@ async function emitCommsEventBestEffort(eventType, payload = {}) {
     await sleep(25);
     await closeSocket(ws);
     return true;
-  } catch (err) {
+  } catch (_err) {
     if (ws) {
       try {
         await closeSocket(ws);

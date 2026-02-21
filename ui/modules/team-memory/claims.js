@@ -1234,7 +1234,7 @@ class TeamMemoryClaims {
     }
   }
 
-  recordOutcome(decisionId, outcome, notes = null, options = {}) {
+  recordOutcome(decisionId, outcome, notes = null, _options = {}) {
     if (!this.isAvailable()) return { ok: false, reason: 'unavailable' };
     const id = asString(decisionId, '');
     if (!id) return { ok: false, reason: 'decision_id_required' };

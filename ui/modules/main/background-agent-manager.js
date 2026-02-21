@@ -1,5 +1,9 @@
 const log = require('../logger');
 const {
+  hasCodexDangerouslyBypassFlag,
+  hasCodexAskForApprovalFlag,
+} = require('../codex-utils');
+const {
   BACKGROUND_BUILDER_OWNER_PANE_ID,
   BACKGROUND_BUILDER_MAX_AGENTS,
   BACKGROUND_BUILDER_ALIAS_TO_PANE,
@@ -58,15 +62,6 @@ function detectRuntime(command) {
   if (normalized.startsWith('codex') || normalized.includes(' codex')) return 'codex';
   if (normalized.startsWith('gemini') || normalized.includes(' gemini')) return 'gemini';
   return 'claude';
-}
-
-function hasCodexDangerouslyBypassFlag(command) {
-  return /(?:^|\s)--dangerously-bypass(?:\s|=|$)/i.test(String(command || ''));
-}
-
-function hasCodexAskForApprovalFlag(command) {
-  const value = String(command || '');
-  return /(?:^|\s)--ask-for-approval(?:\s|=|$)/i.test(value) || /(?:^|\s)-a(?:\s|=|$)/.test(value);
 }
 
 function withAutonomyFlags(command, settings = {}) {
@@ -409,7 +404,6 @@ class BackgroundAgentManager {
     const reason = toTrimmedString(options.reason) || 'kill_all';
     const results = [];
     for (const paneId of Array.from(this.agents.keys())) {
-      // eslint-disable-next-line no-await-in-loop
       const result = await this.killAgent(paneId, { reason });
       results.push(result);
     }
