@@ -82,7 +82,7 @@ Hivemind uses a dual-path delivery system to ensure no message is lost.
 - **Reliability:** High. Supports instant ACKs and delivery verification.
 
 ### 3.2 Path B: Trigger Files (Fallback)
-- **Mechanism:** Writing to `.hivemind/triggers/[target].txt`.
+- **Mechanism:** Writing to `.squidrun/triggers/[target].txt`.
 - **Latency:** 500ms - 2000ms (dependent on file watchers).
 - **Use Case:** Automatically used by `hm-send.js` if the WebSocket connection fails or times out.
 - **Stage 1-3 Caveat:** Trigger fallback remains role/pane based; `builder-bg-*` aliases are WebSocket-route targets.
@@ -122,11 +122,11 @@ Example: `(ARCH #5): [URGENT] Build is failing on main. Oracle, investigate.`
 ### 5.1 The Check-in Procedure
 On startup, every agent must follow this sequence:
 1. **Identify Role:** Determine role and pane from environment variables (`HIVEMIND_ROLE`, `HIVEMIND_PANE_ID`).
-2. **Read Runtime Truth:** Read `.hivemind/app-status.json` for active session number and treat it as canonical.
-3. **Use Canonical Journal Path:** For memory/comms checks, use `.hivemind/runtime/evidence-ledger.db`.
+2. **Read Runtime Truth:** Read `.squidrun/app-status.json` for active session number and treat it as canonical.
+3. **Use Canonical Journal Path:** For memory/comms checks, use `.squidrun/runtime/evidence-ledger.db`.
 4. **Role-Specific Baseline:**
    - **Architect only:** Await the automated **Startup Briefing** (summarizing `comms_journal`, unresolved claims, and failed deliveries).
-   - **Builder/Oracle:** Read the **Session Handoff Index** at `workspace/handoffs/session.md` (auto-materialized from `comms_journal`).
+   - **Builder/Oracle:** Read the **Session Handoff Index** at `.squidrun/handoffs/session.md` (auto-materialized from `comms_journal`).
 5. **Signal Readiness:** Message the Architect to check in with a one-line status:
    `node ui/scripts/hm-send.js architect "(ROLE #1): [Role] online. Standing by."`
 

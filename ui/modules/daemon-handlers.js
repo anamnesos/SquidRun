@@ -648,8 +648,8 @@ function setupRefreshButtons(sendToPaneFn) {
       e.stopPropagation();
       const paneId = btn.dataset.paneId;
       const refreshPrompt =
-        `Refresh startup context: read ROLES.md, runtime memory snapshot (Evidence Ledger + Team Memory), .hivemind/build/blockers.md, ` +
-        `.hivemind/build/errors.md, workspace/handoffs/session.md, and workspace/context-snapshots/${paneId}.md. Then report status.`;
+        `Refresh startup context: read ROLES.md, runtime memory snapshot (Evidence Ledger + Team Memory), .squidrun/build/blockers.md, ` +
+        `.squidrun/build/errors.md, .squidrun/handoffs/session.md, and .squidrun/context-snapshots/${paneId}.md. Then report status.`;
       sendToPaneFn(paneId, `${refreshPrompt}\r`);
     });
   });

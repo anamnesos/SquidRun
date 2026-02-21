@@ -210,7 +210,7 @@ class BackgroundAgentManager {
 
     return sanitizeMultilineForPty(
       `You are ${alias} (${paneId}), a headless Background Builder Agent. `
-      + `Read ROLES.md, ${modelShim}, workspace/handoffs/session.md, and .hivemind/app-status.json before work. `
+      + `Read ROLES.md, ${modelShim}, .squidrun/handoffs/session.md, and .squidrun/app-status.json before work. `
       + `Owner binding is strict: report only to Builder (pane 2) via `
       + `node ui/scripts/hm-send.js builder \"(${alias.toUpperCase()} #1): online and ready\" --role ${alias}. `
       + `Never message Architect directly. `

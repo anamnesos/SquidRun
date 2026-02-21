@@ -9,10 +9,10 @@
 ## Runtime Addendum (2026-02-17)
 
 - Layer 0 is now implemented as `comms_journal` in the Evidence Ledger database.
-- Deterministic session continuity is generated to `.hivemind/handoffs/session.md` and mirrored to `workspace/handoffs/session.md`.
+- Deterministic session continuity is generated to `.squidrun/handoffs/session.md`.
 - Layer 2 extraction is live for explicit tags (`DECISION:`, `TASK:`, `FINDING:`, `BLOCKER:`).
 - Startup continuity is split: Architect receives an automated startup brief; Builder/Oracle read the session handoff index.
-- Runtime coordination paths write to `.hivemind/*`; runtime DB paths must not fall back to `workspace/*`.
+- Runtime coordination paths write to `.squidrun/*`.
 
 ---
 
@@ -57,10 +57,10 @@ Layer 0: COMMUNICATION JOURNAL     — append-only comms history in Evidence Led
 
 ### 4.1 Location & Ownership
 
-- **Path:** `.hivemind/runtime/team-memory.sqlite` (persistent across sessions, co-located with Evidence Ledger)
+- **Path:** `.squidrun/runtime/team-memory.sqlite` (persistent across sessions, co-located with Evidence Ledger)
 - **Single writer:** Dedicated fork worker process (like Evidence Ledger). All writes go through the worker.
 - **Read access:** Any agent can query via IPC (`team-memory:query`)
-- **Failure mode:** If worker is down, reads continue (SQLite WAL allows concurrent reads). Writes spool to a **durable append-only file** at `.hivemind/runtime/team-memory-spool.jsonl` (same pattern as outbound WS queue). On worker recovery, spool is replayed and truncated. No silent drops — if app crashes while worker is down, spooled writes survive on disk.
+- **Failure mode:** If worker is down, reads continue (SQLite WAL allows concurrent reads). Writes spool to a **durable append-only file** at `.squidrun/runtime/team-memory-spool.jsonl` (same pattern as outbound WS queue). On worker recovery, spool is replayed and truncated. No silent drops — if app crashes while worker is down, spooled writes survive on disk.
 - **Write ack semantics:** When worker is healthy, API returns `{accepted: true, committed: true}`. When worker is down and write is spooled, API returns `{accepted: true, queued: true}`. Callers must NOT treat queued writes as committed. A `team-memory:flushed` IPC event fires when spooled writes are committed after worker recovery.
 - **Agent identity:** Canonical agent identifiers are `architect`, `builder`, `oracle`. Alias normalization maps legacy variants (`devops`/`infra`/`backend`→`builder`, `analyst`/`ana`→`oracle`, `arch`→`architect`) at the API boundary before any write. Consensus and claim tables store only canonical IDs.
 
@@ -318,7 +318,7 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 - [ ] Define boot/backfill process: on first run, scan Evidence Ledger for historical events that should seed initial claims. **Backfill idempotency contract:** idempotency_key for backfilled claims is derived deterministically from source event data (`backfill:{event_type}:{event_id}`). Re-running backfill on the same ledger produces identical keys → no duplicates via UNIQUE constraint on idempotency_key.
 - [ ] Scaffold `ui/modules/team-memory/` directory + worker process skeleton
 - [ ] Schema migration runner + version 1 migration script
-- [ ] Cross-DB evidence_ref integrity checker: periodic scan (SessionStart + nightly TTL sweep) that verifies all `claim_evidence.evidence_ref` TEXT pointers resolve to actual Evidence Ledger entries. Orphans logged to `workspace/build/errors.md` with claim ID and stale ref. Non-blocking — reports only, does not auto-delete.
+- [ ] Cross-DB evidence_ref integrity checker: periodic scan (SessionStart + nightly TTL sweep) that verifies all `claim_evidence.evidence_ref` TEXT pointers resolve to actual Evidence Ledger entries. Orphans logged to `.squidrun/build/errors.md` with claim ID and stale ref. Non-blocking — reports only, does not auto-delete.
 
 ### Phase 1: Claim Graph (Layer 1)
 
@@ -425,7 +425,7 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 
 ### What's New
 
-- `.hivemind/runtime/team-memory.sqlite` — single database for Layers 1-5
+- `.squidrun/runtime/team-memory.sqlite` — single database for Layers 1-5
 - `ui/modules/team-memory/` — module directory
   - `worker.js` — fork worker (single writer)
   - `claims.js` — CRUD for claims + evidence bindings + decisions
@@ -453,7 +453,7 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 
 | Question | Resolution |
 |----------|-----------|
-| Where does team-memory.sqlite live? | `.hivemind/runtime/` — persistent, co-located with Evidence Ledger |
+| Where does team-memory.sqlite live? | `.squidrun/runtime/` — persistent, co-located with Evidence Ledger |
 | Single writer or multi-writer? | Single writer (fork worker) — consistent with Evidence Ledger pattern |
 | Claims survive across sessions? | Yes — that's the whole point |
 | Pattern engine: worker or hook? | HYBRID — hooks for cheap ingestion/immediate checks, worker for heavy mining/scoring |
@@ -521,7 +521,7 @@ Experiments do NOT attach raw file paths to claims. Evidence flows through the L
 1. Agent calls run_experiment(profile, claimId)
 2. Fork worker spawns isolated PTY (no UI binding)
 3. Captures stdout, stderr, exit code, duration
-4. Artifacts saved to `.hivemind/runtime/experiments/<runId>/`
+4. Artifacts saved to `.squidrun/runtime/experiments/<runId>/`
    ├── stdout.log
    ├── stderr.log
    └── meta.json (git SHA, cwd, env fingerprint, timestamps, hashes)
@@ -566,7 +566,7 @@ CREATE INDEX idx_experiments_session ON experiments(session);
 Experiments run **named profiles**, not arbitrary commands. This prevents command injection from claim text.
 
 ```json
-// .hivemind/runtime/experiment-profiles.json
+// .squidrun/runtime/experiment-profiles.json
 {
   "jest-suite": {
     "command": "cd /d/projects/hivemind/ui && npx jest --no-coverage",
@@ -676,11 +676,11 @@ Integrity rule: attach always goes through Evidence Ledger event_id. Ledger even
 ### 12.9 Build Phases
 
 #### Phase 6a: Foundation
-- [ ] Experiment profiles schema + loader (`.hivemind/runtime/experiment-profiles.json`)
+- [ ] Experiment profiles schema + loader (`.squidrun/runtime/experiment-profiles.json`)
 - [ ] `experiments` table via migration v6
 - [ ] Worker pair: `ui/modules/experiment/worker.js` + `worker-client.js`
 - [ ] PTY spawn + capture + timeout + kill tree
-- [ ] Artifact storage: `.hivemind/runtime/experiments/<runId>/`
+- [ ] Artifact storage: `.squidrun/runtime/experiments/<runId>/`
 
 #### Phase 6b: Evidence Chain
 - [ ] Evidence Ledger integration: `experiment.completed` event with hashes

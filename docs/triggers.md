@@ -38,16 +38,15 @@ node ui/scripts/hm-bg.js <command>
 **Always use ABSOLUTE paths to avoid ghost folder bugs.**
 
 `hm-send.js` writes fallback trigger files to global state (`resolveGlobalPath('triggers')` from `ui/config.js`).
-Compatibility watchers still monitor coordination-root trigger paths.
+Compatibility watchers still monitor the coordination-root trigger path.
 
 Stage 1-3 note: trigger-file fallback is role/pane-file based and does not map `builder-bg-*` aliases directly.
 Background Builder messaging is expected to use the WebSocket route.
 
 Coordination-root trigger path:
 ```
-.hivemind/triggers/
+.squidrun/triggers/
 ```
-Legacy compatibility path: `workspace/triggers/`
 
 ### Canonical trigger files
 
@@ -111,12 +110,12 @@ node ui/scripts/hm-bg.js spawn --slot 2
 
 **PowerShell trigger file:**
 ```powershell
-"(BUILDER #1): message" | Set-Content -Path ".hivemind/triggers/architect.txt"
+"(BUILDER #1): message" | Set-Content -Path ".squidrun/triggers/architect.txt"
 ```
 
 **Bash trigger file:**
 ```bash
-echo "(ORACLE #1): message" > ".hivemind/triggers/architect.txt"
+echo "(ORACLE #1): message" > ".squidrun/triggers/architect.txt"
 ```
 
 ## Notes

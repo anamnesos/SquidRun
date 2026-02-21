@@ -89,8 +89,8 @@ Spawn sequencing:
 - Required files/context loaded by prompt:
   - `ROLES.md`
   - runtime model shim (`CLAUDE.md` / `CODEX.md` / `GEMINI.md`)
-  - `workspace/handoffs/session.md`
-  - `.hivemind/app-status.json`
+  - `.squidrun/handoffs/session.md`
+  - `.squidrun/app-status.json`
 - Required first check-in behavior from prompt:
   - message Builder only via `hm-send` using `--role <builder-bg-N>`
   - do not message Architect directly

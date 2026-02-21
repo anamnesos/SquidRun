@@ -33,8 +33,8 @@ node -e "const Database=require('node:sqlite').DatabaseSync;const db=new Databas
 
 ## Project Discovery
 
-1. Read `.squidrun/link.json` for workspace path and session info (fallback: legacy `.hivemind/link.json`)
-2. Read `.squidrun/handoffs/session.md` for current session context (legacy mirrors: `.hivemind/` and `workspace/`)
+1. Read `.squidrun/link.json` for workspace path and session info
+2. Read `.squidrun/handoffs/session.md` for current session context
 3. Read `.squidrun/app-status.json` for active session number
 4. Read `ROLES.md` for role boundaries and operating rules
 
