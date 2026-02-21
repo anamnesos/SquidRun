@@ -20,13 +20,13 @@ Historical note: this investigation was captured during a naming migration. Path
 *   **Mechanism:** `ui/scripts/hm-preflight.js` correctly identifies conflict patterns (role assignments, sign-ins) in project-local `CLAUDE.md`.
 *   **Failure Point:** In `ui/modules/main/firmware-manager.js`, the `ensureStartupFirmwareIfEnabled()` function (called at boot) runs the preflight scan but **passes an empty array `[]`** to `ensureFirmwareFiles()` if no options are provided.
 *   **Consequence:** Even if `hm-preflight.js` finds conflicts, the suppression lines are never generated in the actual firmware files (`director.md`, `builder.md`, `oracle.md`).
-*   **Stakeholder Concern:** Confirmed. Agents currently receive Hivemind protocols via firmware and Project protocols via `CLAUDE.md`, with no active suppression of the latter.
+*   **Stakeholder Concern:** Confirmed. Agents currently receive SquidRun protocols via firmware and Project protocols via `CLAUDE.md`, with no active suppression of the latter.
 
 ## 3. `operatingMode` Lifecycle Trace
 *   **Switching Logic:** In `settings-handlers.js`, switching `operatingMode` to `project` simply sets `firmwareInjectionEnabled = true`.
 *   **Startup Bug (High Impact):** Finding #3 in the previous draft was incorrect. The investigation now confirms that at startup, `project-handlers.js` (line 132) reads the `project` field from `state.json` and calls `syncProjectRoot()` **unconditionally**.
 *   **Operating Mode Ignored:** The system does **not** check if `operatingMode` is 'developer' before syncing the project root.
-*   **CWD Resolution:** Because `activeProjectRoot` is set at startup from the stale `state.json`, `resolvePaneCwd()` in `config.js` returns the external project path (e.g., [private-project]) even when the user intended to be in Hivemind 'developer' mode. This causes agents to spawn in the wrong directory.
+*   **CWD Resolution:** Because `activeProjectRoot` is set at startup from the stale `state.json`, `resolvePaneCwd()` in `config.js` returns the external project path (e.g., [private-project]) even when the user intended to be in SquidRun 'developer' mode. This causes agents to spawn in the wrong directory.
 
 ## 4. Decoupling Session Assessment
 *   **Evidence:** Context snapshots from Session 120 (Feb 12) show work on "Process Isolation Phase 2" (Evidence Ledger to storage worker).

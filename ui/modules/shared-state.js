@@ -7,7 +7,7 @@
  * - IPC events for renderer integration
  * - Rolling changelog (max 100 entries) with human-readable diffs
  * - Per-pane "last seen" tracking for targeted changelog queries
- * - Atomic persistence to workspace/state-changelog.json
+ * - Atomic persistence to .squidrun/state-changelog.json
  */
 
 const fs = require('fs');
@@ -30,7 +30,7 @@ function resolveCoordFile(relPath, options = {}) {
 
 function getCoordWatchPaths(relPath) {
   if (typeof getCoordRoots === 'function') {
-    return getCoordRoots({ includeLegacy: true, includeMissing: false })
+    return getCoordRoots({ includeLegacy: false, includeMissing: false })
       .map((root) => path.join(root, relPath));
   }
   return [path.join(WORKSPACE_PATH, relPath)];

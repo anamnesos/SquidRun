@@ -5,14 +5,14 @@
 **Investigator:** ORACLE
 
 ## Executive Summary
-Investigation into Hivemind's #1 bug: intermittent failure of `sendTrustedEnter` after PTY writes. The symptom is text appearing in a pane's input area without the Enter key firing, requiring manual intervention.
+Investigation into SquidRun's #1 bug: intermittent failure of `sendTrustedEnter` after PTY writes. The symptom is text appearing in a pane's input area without the Enter key firing, requiring manual intervention.
 
 The investigation identified a primary race condition in the bypass mechanism used to allow programmatic Enter events through xterm's input lock, combined with potential focus-loss issues during the native event dispatch.
 
 ## Core Findings
 
-### 1. `_hivemindBypass` Race Condition (High Certainty)
-The system uses a `_hivemindBypass` flag on the terminal instance to allow synthetic Enter events to bypass the input lock in `attachCustomKeyEventHandler` (in `ui/modules/terminal.js`).
+### 1. `_squidrunBypass` Race Condition (High Certainty)
+The system uses a `_squidrunBypass` flag on the terminal instance to allow synthetic Enter events to bypass the input lock in `attachCustomKeyEventHandler` (in `ui/modules/terminal.js`).
 
 *   **Failure Mode:** The flag is cleared too early.
 *   **Location A (`ui/modules/terminal/injection.js`):** `sendEnterToPane` clears the flag in a `finally` block or via a 50ms `setTimeout`. If the IPC call to `send-trusted-enter` takes longer than the timeout or if the event processing in the renderer is delayed, the flag is `false` by the time the event arrives.
@@ -31,7 +31,7 @@ The `send-trusted-enter` handler in `ui/modules/ipc/pty-handlers.js` uses Electr
 
 ## Proposed Fixes
 
-1.  **Synchronize Bypass State:** Modify `sendEnterToPane` to only clear `_hivemindBypass` *after* the `sendTrustedEnter` promise resolves, with a slightly longer safety buffer (e.g., 500ms).
+1.  **Synchronize Bypass State:** Modify `sendEnterToPane` to only clear `_squidrunBypass` *after* the `sendTrustedEnter` promise resolves, with a slightly longer safety buffer (e.g., 500ms).
 2.  **Increase Recovery Delays:** Increase the `aggressiveNudge` bypass window from 250ms to **500ms** or **1000ms**.
 3.  **Strengthen Focus Guard:** In `pty-handlers.js`, ensure `webContents.focus()` is called and add a small delay (10ms) before `sendInputEvent` to ensure the OS has registered the focus shift.
 4.  **Refine Verification:** Update `isMeaningfulActivity` to better distinguish between "Enter-induced command output" and "CLI idle animations/spinners".

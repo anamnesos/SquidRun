@@ -29,7 +29,7 @@ The Architect coordinates the team, owns architecture decisions, reviews code qu
 
 Sub-roles: Frontend, Backend, DevOps, SRE/Observability, Tester, Validator, Security, Context Optimizer
 
-The Builder implements everything. Owns all code changes, infrastructure, testing, deployment, security hardening, and context window optimization. Reports to Architect for coordination.
+The Builder implements everything as a working lead: it takes one active workstream directly and, when needed, spawns up to `3` Background Builder agents for parallel work (`4` concurrent workstreams max including Builder). Reports to Architect for coordination.
 
 ### Oracle (Pane 3)
 
@@ -107,7 +107,8 @@ Primary workflow:
 
 Responsibilities:
 - `ui/modules/main/*`, `ui/modules/ipc/*`, daemon/watcher/process lifecycle.
-- Operate and supervise Background Builder agents (owner pane `2`, max `3`), including task decomposition, delegation, and result integration.
+- Builder is a working lead: it always owns one hands-on workstream and may spawn up to `3` Background Builder agents (`builder-bg-1..3`) for parallel execution.
+- Max parallel capacity is `4` concurrent workstreams total (`1` Builder + up to `3` background builders). Builder is not a hands-off orchestrator.
 - Background delegation is MANDATORY for large changes, not optional. Builder decides autonomously when to spawn and when to shut down.
 - Build/test/deployment reliability and developer tooling.
 - Frontend UI implementation and styling.

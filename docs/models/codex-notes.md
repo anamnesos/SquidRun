@@ -1,6 +1,6 @@
 # Codex Model Notes
 
-These notes apply when running OpenAI Codex CLI in a Hivemind pane.
+These notes apply when running OpenAI Codex CLI in a SquidRun pane.
 
 ## Execution Mode
 

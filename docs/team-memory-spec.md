@@ -18,7 +18,7 @@
 
 ## 1. Vision
 
-Every multi-agent memory system today is a library — store, search, retrieve. Hivemind's Team Memory Runtime treats memory as an **operating system for team intelligence**: memory that understands causality, tracks beliefs, preserves disagreement, learns from failures, detects coordination patterns, and actively shapes agent behavior in real-time.
+Every multi-agent memory system today is a library — store, search, retrieve. SquidRun's Team Memory Runtime treats memory as an **operating system for team intelligence**: memory that understands causality, tracks beliefs, preserves disagreement, learns from failures, detects coordination patterns, and actively shapes agent behavior in real-time.
 
 **Core thesis:** The unit of memory is not a "fact" or a "document chunk" — it's a **CLAIM** with ownership, evidence, confidence, lifecycle, and consensus state.
 
@@ -569,18 +569,18 @@ Experiments run **named profiles**, not arbitrary commands. This prevents comman
 // .squidrun/runtime/experiment-profiles.json
 {
   "jest-suite": {
-    "command": "cd /d/projects/hivemind/ui && npx jest --no-coverage",
+    "command": "cd <repo-root>/ui && npx jest --no-coverage",
     "timeout_ms": 120000,
     "description": "Full test suite"
   },
   "jest-file": {
-    "command": "cd /d/projects/hivemind/ui && npx jest --no-coverage -- {file}",
+    "command": "cd <repo-root>/ui && npx jest --no-coverage -- {file}",
     "timeout_ms": 30000,
     "params": ["file"],
     "description": "Single test file"
   },
   "lint": {
-    "command": "cd /d/projects/hivemind/ui && npx eslint {file}",
+    "command": "cd <repo-root>/ui && npx eslint {file}",
     "timeout_ms": 15000,
     "params": ["file"],
     "description": "Lint a specific file"
@@ -691,7 +691,7 @@ Integrity rule: attach always goes through Evidence Ledger event_id. Ledger even
 #### Phase 6c: CLI + IPC
 - [ ] `hm-experiment.js` CLI (create, get, list)
 - [ ] IPC handlers: `team-memory:run-experiment`, `team-memory:get-experiment`, `team-memory:list-experiments`
-- [ ] App wiring: init/shutdown worker in hivemind-app.js
+- [ ] App wiring: init/shutdown worker in squidrun-app.js
 
 #### Phase 6d: Tests
 - [ ] Worker isolation tests (spawn, capture, timeout, kill)

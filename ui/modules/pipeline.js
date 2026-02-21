@@ -5,7 +5,7 @@
  *
  * Observes cross-pane messages and drives state transitions.
  * Uses hybrid detection: structured tags (preferred) + keyword fallback.
- * Persists state to workspace/pipeline.json (atomic writes).
+ * Persists state to .squidrun/pipeline.json (atomic writes).
  * Emits IPC events for UI observability.
  */
 

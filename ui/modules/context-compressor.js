@@ -69,7 +69,7 @@ function resolveCoordFile(relPath, options = {}) {
 
 function getCoordWatchPaths(relPath) {
   if (typeof getCoordRoots === 'function') {
-    return getCoordRoots({ includeLegacy: true, includeMissing: false })
+    return getCoordRoots({ includeLegacy: false, includeMissing: false })
       .map((root) => path.join(root, relPath));
   }
   return [path.join(WORKSPACE_PATH, relPath)];

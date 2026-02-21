@@ -1,6 +1,6 @@
 # Agent Templates Library
 
-Hivemind ships a built-in library of agent configuration templates. Templates
+SquidRun ships a built-in library of agent configuration templates. Templates
 are meant to capture common operational setups (hybrid, research sprint, review
 focus) and can be imported/exported for sharing.
 

@@ -1,6 +1,6 @@
 # Gemini Model Notes
 
-These notes apply when running Gemini CLI in a Hivemind pane.
+These notes apply when running Gemini CLI in a SquidRun pane.
 
 ## CLI Behavior
 
@@ -13,7 +13,7 @@ Gemini CLI is readline-based (not Ink TUI like Claude Code).
 
 Gemini CLI has `bufferFastReturn` protection:
 - If Enter arrives within 30ms of previous keystroke, it becomes a newline
-- Hivemind uses 500ms delay between text and Enter
+- SquidRun uses 500ms delay between text and Enter
 - This ensures reliable submission
 
 ## Tool Access

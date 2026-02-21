@@ -657,10 +657,6 @@ function resolvePrimarySessionHandoffPath() {
   return path.join(WORKSPACE_PATH, HANDOFFS_RELATIVE_DIR, SESSION_HANDOFF_FILE);
 }
 
-function resolveLegacyWorkspaceSessionHandoffPath() {
-  return path.join(WORKSPACE_PATH, HANDOFFS_RELATIVE_DIR, SESSION_HANDOFF_FILE);
-}
-
 async function ensureParentDir(targetPath) {
   await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
 }
@@ -749,7 +745,7 @@ async function materializeSessionHandoff(options = {}) {
   const primaryPath = toOptionalString(options.outputPath, null) || resolvePrimarySessionHandoffPath();
   const legacyMirrorPath = options.legacyMirrorPath === false
     ? null
-    : (toOptionalString(options.legacyMirrorPath, null) || resolveLegacyWorkspaceSessionHandoffPath());
+    : toOptionalString(options.legacyMirrorPath, null);
 
   const writes = [];
   const primaryWrite = await writeTextIfChanged(primaryPath, markdown);
@@ -847,7 +843,6 @@ module.exports = {
     toEventTsMs,
     toIso,
     resolvePrimarySessionHandoffPath,
-    resolveLegacyWorkspaceSessionHandoffPath,
     LEGACY_PANE_HANDOFFS,
   },
 };

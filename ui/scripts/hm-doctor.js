@@ -165,8 +165,6 @@ function checkFilePermissions() {
   const targets = [
     path.join(ROOT_DIR, '.squidrun'),
     path.join(ROOT_DIR, '.squidrun', 'triggers'),
-    path.join(ROOT_DIR, 'workspace'),
-    path.join(ROOT_DIR, 'workspace', 'triggers'),
   ];
 
   const failures = [];

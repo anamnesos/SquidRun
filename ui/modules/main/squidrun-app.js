@@ -3,9 +3,10 @@
  * Main process application controller
  */
 
-const { BrowserWindow, ipcMain, session, powerMonitor } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, session, powerMonitor, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { spawn } = require('child_process');
 const log = require('../logger');
 const { getDaemonClient } = require('../../daemon-client');
 const {
@@ -104,6 +105,8 @@ const WEBSOCKET_START_RETRY_MAX_MS = Number.parseInt(
   process.env.SQUIDRUN_WEBSOCKET_START_RETRY_MAX_MS || '10000',
   10
 );
+const DAEMON_PID_FILE = path.join(__dirname, '..', '..', 'daemon.pid');
+const SHUTDOWN_CONFIRM_MESSAGE = 'All active agent sessions will be terminated.\n\nContinue?';
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
@@ -207,6 +210,7 @@ class SquidRunApp {
     this.websocketStartRetryTimer = null;
     this.websocketStartRetryAttempt = 0;
     this.shuttingDown = false;
+    this.fullShutdownPromise = null;
     this.runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
     this.runtimeLifecycleQueue = Promise.resolve();
   }
@@ -1665,6 +1669,7 @@ class SquidRunApp {
       height: 800,
       icon: path.join(__dirname, '..', '..', 'assets', process.platform === 'win32' ? 'squidrun-favicon.ico' : 'squidrun-favicon-256.png'),
       backgroundColor: '#0a0a0f',
+      autoHideMenuBar: true,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -1673,6 +1678,7 @@ class SquidRunApp {
       },
       title: 'SquidRun',
     });
+    this.enforceMenuSuppression(this.ctx.mainWindow);
 
     this.installMainWindowSendInterceptor();
     this.ensurePaneHostReadyForwarder();
@@ -1691,6 +1697,33 @@ class SquidRunApp {
     const devToolsAllowedByEnv = process.env.SQUIDRUN_DEBUG === '1' || process.env.NODE_ENV === 'development';
     if (this.ctx.currentSettings.devTools && devToolsAllowedByEnv) {
       this.ctx.mainWindow.webContents.openDevTools();
+    }
+  }
+
+  enforceMenuSuppression(windowRef) {
+    if (Menu && typeof Menu.setApplicationMenu === 'function') {
+      try {
+        Menu.setApplicationMenu(null);
+      } catch (err) {
+        log.warn('App', `Failed to clear application menu: ${err.message}`);
+      }
+    }
+
+    if (!windowRef || (typeof windowRef.isDestroyed === 'function' && windowRef.isDestroyed())) {
+      return;
+    }
+
+    if (typeof windowRef.removeMenu === 'function') {
+      windowRef.removeMenu();
+    } else if (typeof windowRef.setMenu === 'function') {
+      windowRef.setMenu(null);
+    }
+
+    if (typeof windowRef.setAutoHideMenuBar === 'function') {
+      windowRef.setAutoHideMenuBar(true);
+    }
+    if (typeof windowRef.setMenuBarVisibility === 'function') {
+      windowRef.setMenuBarVisibility(false);
     }
   }
 
@@ -2041,6 +2074,20 @@ class SquidRunApp {
   setupWindowListeners() {
     const window = this.ctx.mainWindow;
 
+    window.on('close', (event) => {
+      if (this.shuttingDown || this.fullShutdownPromise) return;
+      event.preventDefault();
+      void (async () => {
+        try {
+          const confirmed = await this.confirmFullShutdown(window);
+          if (!confirmed) return;
+          await this.performFullShutdown('window-close');
+        } catch (err) {
+          log.error('Shutdown', `Window-close shutdown flow failed: ${err.message}`);
+        }
+      })();
+    });
+
     window.webContents.on('did-finish-load', async () => {
       await this.initPostLoad();
     });
@@ -2056,6 +2103,95 @@ class SquidRunApp {
       const entry = `[${new Date().toISOString()}] [${levelNames[level] || level}] ${message}\n`;
       this.consoleLogWriter.write(entry);
     });
+  }
+
+  async confirmFullShutdown(window = this.ctx.mainWindow) {
+    if (!window || window.isDestroyed()) return true;
+    const result = await dialog.showMessageBox(window, {
+      type: 'warning',
+      buttons: ['Cancel', 'Shutdown'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+      title: 'Shutdown SquidRun',
+      message: 'Shutdown SquidRun?',
+      detail: SHUTDOWN_CONFIRM_MESSAGE,
+    });
+    return result.response === 1;
+  }
+
+  forceKillDaemonFromPidFile() {
+    if (!fs.existsSync(DAEMON_PID_FILE)) {
+      return false;
+    }
+
+    const pidRaw = String(fs.readFileSync(DAEMON_PID_FILE, 'utf-8') || '').trim();
+    if (!pidRaw) {
+      return false;
+    }
+
+    try {
+      if (process.platform === 'win32') {
+        const child = spawn('taskkill', ['/pid', pidRaw, '/f', '/t'], {
+          shell: true,
+          detached: true,
+          stdio: 'ignore',
+        });
+        if (child && typeof child.unref === 'function') {
+          child.unref();
+        }
+      } else {
+        const pid = Number.parseInt(pidRaw, 10);
+        if (Number.isInteger(pid) && pid > 0) {
+          process.kill(pid, 'SIGTERM');
+        }
+      }
+    } catch (err) {
+      log.warn('Shutdown', `Failed to kill daemon from pid file: ${err.message}`);
+    }
+
+    try {
+      fs.unlinkSync(DAEMON_PID_FILE);
+    } catch (err) {
+      log.warn('Shutdown', `Failed to remove daemon pid file: ${err.message}`);
+    }
+    return true;
+  }
+
+  async performFullShutdown(reason = 'user-request') {
+    if (this.fullShutdownPromise) {
+      return this.fullShutdownPromise;
+    }
+
+    this.fullShutdownPromise = (async () => {
+      log.info('Shutdown', `Initiating full shutdown (${reason})`);
+
+      if (this.ctx.daemonClient) {
+        try {
+          this.ctx.daemonClient.shutdown();
+          log.info('Shutdown', 'Sent shutdown to daemon');
+        } catch (err) {
+          log.warn('Shutdown', `Failed requesting daemon shutdown: ${err.message}`);
+        }
+      }
+
+      this.forceKillDaemonFromPidFile();
+
+      try {
+        await this.shutdown();
+      } catch (err) {
+        log.warn('Shutdown', `App cleanup reported an error: ${err.message}`);
+      }
+
+      app.exit(0);
+      return { success: true };
+    })();
+
+    try {
+      return await this.fullShutdownPromise;
+    } finally {
+      this.fullShutdownPromise = null;
+    }
   }
 
   transitionRuntimeLifecycle(nextState, reason = 'unspecified') {

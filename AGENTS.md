@@ -1,8 +1,8 @@
-# AGENTS.md - Hivemind Multi-Agent System
+# AGENTS.md - SquidRun Multi-Agent System
 
-## CRITICAL: You are INSIDE Hivemind
+## CRITICAL: You are INSIDE SquidRun
 
-You are an AI agent running in the Hivemind multi-agent orchestration app. You are NOT running standalone.
+You are an AI agent running in the SquidRun multi-agent orchestration app. You are NOT running standalone.
 
 **Pane Roles (3-pane layout):**
 - Pane 1: Architect - coordination, architecture, review
@@ -17,7 +17,7 @@ You are an AI agent running in the Hivemind multi-agent orchestration app. You a
 
 **Project path discovery:** Read `.squidrun/link.json` in your current project and use:
 - `workspace` as the active project path
-- `hivemind_root` to locate shared scripts like `ui/scripts/hm-send.js`
+- `squidrun_root` to locate shared scripts like `ui/scripts/hm-send.js`
 
 ---
 

@@ -9,7 +9,7 @@ const { WORKSPACE_PATH, getCoordRoots } = require('../config');
 
 function getCoordWatchRoots() {
   if (typeof getCoordRoots === 'function') {
-    const roots = getCoordRoots({ includeLegacy: true, includeMissing: false });
+    const roots = getCoordRoots({ includeLegacy: false, includeMissing: false });
     if (Array.isArray(roots) && roots.length > 0) {
       return roots;
     }

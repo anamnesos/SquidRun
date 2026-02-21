@@ -1,6 +1,6 @@
 # Trigger Files Reference
 
-This is the canonical reference for trigger file messaging in Hivemind.
+This is the canonical reference for trigger file messaging in SquidRun.
 
 ## Preferred: WebSocket Messaging
 

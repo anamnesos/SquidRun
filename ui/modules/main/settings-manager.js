@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const log = require('../logger');
-const { WORKSPACE_PATH, PROJECT_ROOT, resolvePaneCwd, resolveGlobalPath } = require('../../config');
+const { WORKSPACE_PATH, PROJECT_ROOT, resolvePaneCwd, resolveCoordPath } = require('../../config');
 
 const CLI_NAMES = ['claude', 'codex', 'gemini'];
 const CLI_PREFERENCES = {
@@ -90,9 +90,9 @@ class SettingsManager {
   constructor(appContext) {
     this.ctx = appContext;
     this.settingsPath = path.join(__dirname, '..', '..', 'settings.json');
-    this.appStatusPath = typeof resolveGlobalPath === 'function'
-      ? resolveGlobalPath('app-status.json', { forWrite: true })
-      : path.join(WORKSPACE_PATH, 'app-status.json');
+    this.appStatusPath = typeof resolveCoordPath === 'function'
+      ? resolveCoordPath('app-status.json', { forWrite: true })
+      : path.join(PROJECT_ROOT || path.resolve(path.join(WORKSPACE_PATH, '..')), '.squidrun', 'app-status.json');
 
     // Deep clone defaults to prevent reference sharing
     this.ctx.currentSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
@@ -167,17 +167,6 @@ class SettingsManager {
 
       let existingSession = asPositiveInt(existing.session ?? existing.sessionNumber, null);
 
-      // Seed from legacy workspace path if new global/coord paths have no session yet
-      if (existingSession === null) {
-        try {
-          const legacyPath = path.join(WORKSPACE_PATH, 'app-status.json');
-          if (fs.existsSync(legacyPath)) {
-            const legacy = JSON.parse(fs.readFileSync(legacyPath, 'utf-8'));
-            existingSession = asPositiveInt(legacy.session ?? legacy.sessionNumber, null);
-          }
-        } catch (_) { /* non-fatal */ }
-      }
-
       const overrideSession = asPositiveInt(opts.session, null);
       let session = overrideSession !== null ? overrideSession : existingSession;
       if (opts.incrementSession === true) {
@@ -230,7 +219,7 @@ class SettingsManager {
 
       const serialized = JSON.stringify(status, null, 2);
 
-      // Primary write: GLOBAL_STATE_ROOT
+      // Primary write: coordination root (.squidrun)
       fs.mkdirSync(path.dirname(this.appStatusPath), { recursive: true });
       const tempPath = this.appStatusPath + '.tmp';
       fs.writeFileSync(tempPath, serialized, 'utf-8');

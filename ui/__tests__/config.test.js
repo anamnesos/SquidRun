@@ -86,9 +86,8 @@ describe('config.js', () => {
       expect(resolvePaneCwd('2', { instanceDirs: override })).toBe(PROJECT_ROOT);
     });
 
-    test('resolveCoordRoot should return .squidrun when present, else workspace', () => {
-      const expected = fs.existsSync(COORD_ROOT) ? COORD_ROOT : WORKSPACE_PATH;
-      expect(resolveCoordRoot()).toBe(expected);
+    test('resolveCoordRoot should always resolve to project .squidrun root', () => {
+      expect(path.resolve(resolveCoordRoot())).toBe(path.resolve(COORD_ROOT));
     });
 
     test('resolveGlobalPath should resolve under GLOBAL_STATE_ROOT and ensure directory exists', () => {
