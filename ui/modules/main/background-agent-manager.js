@@ -60,6 +60,15 @@ function detectRuntime(command) {
   return 'claude';
 }
 
+function hasCodexDangerouslyBypassFlag(command) {
+  return /(?:^|\s)--dangerously-bypass(?:\s|=|$)/i.test(String(command || ''));
+}
+
+function hasCodexAskForApprovalFlag(command) {
+  const value = String(command || '');
+  return /(?:^|\s)--ask-for-approval(?:\s|=|$)/i.test(value) || /(?:^|\s)-a(?:\s|=|$)/.test(value);
+}
+
 function withAutonomyFlags(command, settings = {}) {
   let cmd = String(command || '').trim() || 'codex';
   const autonomyEnabled = settings.autonomyConsentGiven === true && settings.allowAllPermissions === true;
@@ -68,8 +77,15 @@ function withAutonomyFlags(command, settings = {}) {
   const lower = cmd.toLowerCase();
   if (lower.startsWith('claude') && !cmd.includes('--dangerously-skip-permissions')) {
     cmd = `${cmd} --dangerously-skip-permissions`;
-  } else if (lower.startsWith('codex') && !cmd.includes('--yolo') && !cmd.includes('--dangerously-bypass-approvals-and-sandbox') && !cmd.includes('-s danger-full-access')) {
-    cmd = `${cmd} --yolo`;
+  } else if (lower.startsWith('codex')) {
+    const hasDangerouslyBypass = hasCodexDangerouslyBypassFlag(cmd);
+    const hasAskForApproval = hasCodexAskForApprovalFlag(cmd);
+    if (!hasDangerouslyBypass && !hasAskForApproval) {
+      cmd = `${cmd} -a never`;
+    }
+    if (!cmd.includes('--yolo') && !cmd.includes('--dangerously-bypass-approvals-and-sandbox') && !cmd.includes('-s danger-full-access')) {
+      cmd = `${cmd} --yolo`;
+    }
   }
   return cmd;
 }
