@@ -49,6 +49,15 @@ function hasClaudeSystemPromptFlag(command) {
   return /--system-prompt-file(?:\s|=)/i.test(String(command || ''));
 }
 
+function hasCodexDangerouslyBypassFlag(command) {
+  return /(?:^|\s)--dangerously-bypass(?:\s|=|$)/i.test(String(command || ''));
+}
+
+function hasCodexAskForApprovalFlag(command) {
+  const value = String(command || '');
+  return /(?:^|\s)--ask-for-approval(?:\s|=|$)/i.test(value) || /(?:^|\s)-a(?:\s|=|$)/.test(value);
+}
+
 function getPaneCommandForRuntime(ctx, paneId) {
   const id = String(paneId);
   const paneCommands = ctx?.currentSettings?.paneCommands || {};
@@ -404,6 +413,11 @@ function registerPtyHandlers(ctx, deps = {}) {
         agentCmd = `${agentCmd} --dangerously-skip-permissions`;
       }
       if (agentCmd.startsWith('codex')) {
+        const hasDangerouslyBypass = hasCodexDangerouslyBypassFlag(agentCmd);
+        const hasAskForApproval = hasCodexAskForApprovalFlag(agentCmd);
+        if (!hasDangerouslyBypass && !hasAskForApproval) {
+          agentCmd = `${agentCmd} -a never`;
+        }
         if (!agentCmd.includes('--dangerously-bypass-approvals-and-sandbox') && !agentCmd.includes('-s danger-full-access') && !agentCmd.includes('--yolo')) {
           agentCmd = `${agentCmd} --yolo`;
         }
