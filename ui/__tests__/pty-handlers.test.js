@@ -359,6 +359,28 @@ describe('PTY Handlers', () => {
     });
   });
 
+  describe('input-edit-action', () => {
+    test('invokes mapped webContents edit method', async () => {
+      ctx.mainWindow.webContents.copy = jest.fn();
+
+      const result = await harness.invoke('input-edit-action', 'copy');
+
+      expect(ctx.mainWindow.webContents.copy).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ success: true });
+    });
+
+    test('returns unsupported_action for invalid action', async () => {
+      const result = await harness.invoke('input-edit-action', 'redo');
+      expect(result).toEqual({ success: false, error: 'unsupported_action' });
+    });
+
+    test('returns error when mainWindow is unavailable', async () => {
+      ctx.mainWindow = null;
+      const result = await harness.invoke('input-edit-action', 'paste');
+      expect(result).toEqual({ success: false, error: 'mainWindow not available' });
+    });
+  });
+
   describe('pty-resize', () => {
     test('blocks resize requests from hidden pane-host windows', async () => {
       ctx.daemonClient.connected = true;

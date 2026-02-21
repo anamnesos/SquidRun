@@ -619,6 +619,9 @@ function createFallbackRendererApi() {
       onKernelBridgeEvent: (callback) => ipcRenderer.on('kernel:bridge-event', (_event, data) => callback(data)),
       onKernelBridgeStats: (callback) => ipcRenderer.on('kernel:bridge-stats', (_event, data) => callback(data)),
     },
+    input: {
+      editAction: (action) => ipcRenderer.invoke('input-edit-action', action),
+    },
     claude: {
       spawn: (paneId, workingDir) => ipcRenderer.invoke('spawn-claude', paneId, workingDir),
     },
@@ -993,6 +996,182 @@ function setupEventListeners() {
     }
   }
 
+  let activeBroadcastContextMenu = null;
+  let activeBroadcastContextMenuCleanup = null;
+
+  function dismissBroadcastContextMenu() {
+    if (typeof activeBroadcastContextMenuCleanup === 'function') {
+      try {
+        activeBroadcastContextMenuCleanup();
+      } catch (_) {}
+    }
+    activeBroadcastContextMenuCleanup = null;
+    if (activeBroadcastContextMenu?.parentNode) {
+      activeBroadcastContextMenu.parentNode.removeChild(activeBroadcastContextMenu);
+    }
+    activeBroadcastContextMenu = null;
+  }
+
+  function createBroadcastContextMenuItem(label, shortcut, disabled, onClick) {
+    const item = document.createElement('div');
+    item.className = `context-menu-item${disabled ? ' disabled' : ''}`;
+    item.setAttribute('role', 'menuitem');
+    item.setAttribute('tabindex', disabled ? '-1' : '0');
+
+    const icon = document.createElement('span');
+    icon.className = 'icon';
+    icon.textContent = '';
+    item.appendChild(icon);
+
+    const text = document.createElement('span');
+    text.textContent = label;
+    item.appendChild(text);
+
+    if (shortcut) {
+      const badge = document.createElement('span');
+      badge.className = 'shortcut';
+      badge.textContent = shortcut;
+      item.appendChild(badge);
+    }
+
+    if (!disabled && typeof onClick === 'function') {
+      item.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      });
+    }
+
+    return item;
+  }
+
+  async function runBroadcastInputFallbackAction(input, action) {
+    if (!input) return false;
+    switch (action) {
+      case 'selectAll':
+        input.select();
+        return true;
+      case 'paste': {
+        const clipboardApi = (typeof navigator !== 'undefined' && navigator && navigator.clipboard)
+          ? navigator.clipboard
+          : null;
+        if (!clipboardApi || typeof clipboardApi.readText !== 'function') return false;
+        try {
+          const clipboardText = await clipboardApi.readText();
+          if (typeof input.setRangeText === 'function') {
+            const start = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
+            const end = typeof input.selectionEnd === 'number' ? input.selectionEnd : input.value.length;
+            input.setRangeText(clipboardText, start, end, 'end');
+          } else {
+            input.value += clipboardText;
+          }
+          input.dispatchEvent(new Event('input'));
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      case 'undo':
+      case 'cut':
+      case 'copy':
+        if (typeof document?.execCommand !== 'function') return false;
+        return document.execCommand(action);
+      default:
+        return false;
+    }
+  }
+
+  async function runBroadcastInputAction(input, action) {
+    if (!input) return false;
+    input.focus();
+
+    const editAction = window.squidrun?.input?.editAction;
+    if (typeof editAction === 'function') {
+      try {
+        const result = await editAction(action);
+        if (result?.success === true) {
+          return true;
+        }
+      } catch (_) {}
+    }
+
+    return runBroadcastInputFallbackAction(input, action);
+  }
+
+  function openBroadcastContextMenu(event, input) {
+    if (!input) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dismissBroadcastContextMenu();
+    input.focus();
+
+    const hasSelection = typeof input.selectionStart === 'number'
+      && typeof input.selectionEnd === 'number'
+      && input.selectionStart !== input.selectionEnd;
+    const hasText = String(input.value || '').length > 0;
+    const isEditable = !(input.disabled || input.readOnly);
+
+    const menu = document.createElement('div');
+    menu.className = 'context-menu';
+    menu.setAttribute('role', 'menu');
+
+    menu.appendChild(createBroadcastContextMenuItem('Copy', 'Ctrl+C', !hasSelection, () => {
+      void runBroadcastInputAction(input, 'copy');
+      dismissBroadcastContextMenu();
+    }));
+    menu.appendChild(createBroadcastContextMenuItem('Paste', 'Ctrl+V', !isEditable, () => {
+      void runBroadcastInputAction(input, 'paste');
+      dismissBroadcastContextMenu();
+    }));
+    menu.appendChild(createBroadcastContextMenuItem('Cut', 'Ctrl+X', !isEditable || !hasSelection, () => {
+      void runBroadcastInputAction(input, 'cut');
+      dismissBroadcastContextMenu();
+    }));
+    menu.appendChild(createBroadcastContextMenuItem('Select All', 'Ctrl+A', !hasText, () => {
+      void runBroadcastInputAction(input, 'selectAll');
+      dismissBroadcastContextMenu();
+    }));
+    menu.appendChild(createBroadcastContextMenuItem('Undo', 'Ctrl+Z', !isEditable, () => {
+      void runBroadcastInputAction(input, 'undo');
+      dismissBroadcastContextMenu();
+    }));
+
+    document.body.appendChild(menu);
+    activeBroadcastContextMenu = menu;
+
+    const rect = menu.getBoundingClientRect();
+    const maxLeft = Math.max(0, window.innerWidth - rect.width - 8);
+    const maxTop = Math.max(0, window.innerHeight - rect.height - 8);
+    const left = Math.max(8, Math.min(event.clientX, maxLeft));
+    const top = Math.max(8, Math.min(event.clientY, maxTop));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+
+    const onPointerDown = (pointerEvent) => {
+      if (!menu.contains(pointerEvent.target)) {
+        dismissBroadcastContextMenu();
+      }
+    };
+    const onKeyDown = (keyEvent) => {
+      if (keyEvent.key === 'Escape') {
+        dismissBroadcastContextMenu();
+      }
+    };
+    const onWindowBlur = () => dismissBroadcastContextMenu();
+
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('contextmenu', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('blur', onWindowBlur, true);
+
+    activeBroadcastContextMenuCleanup = () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('contextmenu', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('blur', onWindowBlur, true);
+    };
+  }
+
   updateCommandPlaceholder();
 
   // Helper function to send user text through PTY delivery path.
@@ -1045,6 +1224,9 @@ function setupEventListeners() {
       broadcastInput.style.height = Math.min(broadcastInput.scrollHeight, 120) + 'px';
     };
     broadcastInput.addEventListener('input', autoGrow);
+    broadcastInput.addEventListener('contextmenu', (event) => {
+      openBroadcastContextMenu(event, broadcastInput);
+    });
 
     broadcastInput.addEventListener('keydown', async (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {

@@ -1,7 +1,7 @@
 /**
  * PTY IPC Handlers (via Daemon)
  * Channels: pty-create, pty-write, pty-write-chunked, send-trusted-enter,
- *           clipboard-paste-text, pty-resize, pty-kill, intent-update, spawn-claude,
+ *           clipboard-paste-text, input-edit-action, pty-resize, pty-kill, intent-update, spawn-claude,
  *           get-claude-state, get-daemon-terminals
  */
 
@@ -15,6 +15,13 @@ const DEFAULT_CHUNK_SIZE = 2048;
 const MIN_CHUNK_SIZE = 1024;
 const MAX_CHUNK_SIZE = 8192;
 const WRITE_ACK_TIMEOUT_MS = 2500;
+const INPUT_EDIT_ACTIONS = Object.freeze({
+  undo: 'undo',
+  cut: 'cut',
+  copy: 'copy',
+  paste: 'paste',
+  selectAll: 'selectAll',
+});
 
 function clampChunkSize(value) {
   const numeric = Number(value);
@@ -318,6 +325,27 @@ function registerPtyHandlers(ctx, deps = {}) {
     }
   });
 
+  ipcMain.handle('input-edit-action', async (event, action) => {
+    const webContents = ctx.mainWindow?.webContents;
+    if (!webContents) {
+      return { success: false, error: 'mainWindow not available' };
+    }
+
+    const normalizedAction = String(action || '').trim();
+    const method = INPUT_EDIT_ACTIONS[normalizedAction];
+    if (!method || typeof webContents[method] !== 'function') {
+      return { success: false, error: 'unsupported_action' };
+    }
+
+    try {
+      webContents[method]();
+      return { success: true };
+    } catch (err) {
+      log.error('PTY', `input-edit-action failed (${normalizedAction}):`, err);
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('pty-resize', (event, paneId, cols, rows, kernelMeta = null) => {
     // Hidden pane hosts are mirror windows and must not own PTY geometry.
     // Only the visible renderer should drive resize to avoid cursor/wrap drift.
@@ -445,6 +473,7 @@ function unregisterPtyHandlers(ctx) {
     ipcMain.removeHandler('interrupt-pane');
     ipcMain.removeHandler('send-trusted-enter');
     ipcMain.removeHandler('clipboard-paste-text');
+    ipcMain.removeHandler('input-edit-action');
     ipcMain.removeHandler('pty-resize');
     ipcMain.removeHandler('pty-kill');
     ipcMain.removeHandler('intent-update');

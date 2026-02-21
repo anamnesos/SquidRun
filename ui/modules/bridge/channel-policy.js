@@ -35,6 +35,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'graph-save',
   'graph-stats',
   'graph-visualize',
+  'input-edit-action',
   'intent-update',
   'interrupt-pane',
   'kill-process',

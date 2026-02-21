@@ -40,11 +40,75 @@ const TRANSPORT_ARTIFACT_CLAIM_PATTERNS = [
   /\binitializing session\b/i,
   /\bsession started\b/i,
 ];
+const LEGACY_BOOTSTRAP_SESSION_ID_PATTERN = /^app-\d+-\d+$/i;
 
 function toOptionalString(value, fallback = null) {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
   return text ? text : fallback;
+}
+
+function readJsonFileSafe(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return null;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAppSessionScopeId(value) {
+  const text = toOptionalString(value, null);
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  const appSessionMatch = normalized.match(/^app-session-(\d+)/);
+  if (appSessionMatch) {
+    const sessionNumber = Number.parseInt(appSessionMatch[1], 10);
+    if (Number.isInteger(sessionNumber) && sessionNumber > 0) {
+      return `app-session-${sessionNumber}`;
+    }
+    return null;
+  }
+  if (/^\d+$/.test(normalized)) {
+    const sessionNumber = Number.parseInt(normalized, 10);
+    if (Number.isInteger(sessionNumber) && sessionNumber > 0) {
+      return `app-session-${sessionNumber}`;
+    }
+  }
+  return null;
+}
+
+function isLegacyBootstrapSessionId(value) {
+  return LEGACY_BOOTSTRAP_SESSION_ID_PATTERN.test(String(value || '').trim());
+}
+
+function resolveCurrentSessionScopeIdFromAppStatus() {
+  if (typeof resolveCoordPath !== 'function') return null;
+  const appStatusPath = resolveCoordPath('app-status.json');
+  const appStatus = readJsonFileSafe(appStatusPath);
+  if (!appStatus || typeof appStatus !== 'object') return null;
+  const fromNumber = normalizeAppSessionScopeId(appStatus.session ?? appStatus.sessionNumber);
+  if (fromNumber) return fromNumber;
+  return normalizeAppSessionScopeId(appStatus.session_id ?? appStatus.sessionId);
+}
+
+function resolveEffectiveSessionScopeId(requestedSessionId, options = {}) {
+  const requested = toOptionalString(requestedSessionId, null);
+  const normalizedRequestedScope = normalizeAppSessionScopeId(requested);
+  if (normalizedRequestedScope) return normalizedRequestedScope;
+
+  if (requested && !isLegacyBootstrapSessionId(requested)) {
+    return requested;
+  }
+
+  const currentScopeRaw = typeof options.resolveCurrentSessionScopeId === 'function'
+    ? options.resolveCurrentSessionScopeId()
+    : resolveCurrentSessionScopeIdFromAppStatus();
+  const currentScope = normalizeAppSessionScopeId(currentScopeRaw);
+  if (currentScope) return currentScope;
+
+  return requested;
 }
 
 function toEventTsMs(row) {
@@ -684,7 +748,7 @@ async function writeTextIfChanged(filePath, content) {
 }
 
 async function materializeSessionHandoff(options = {}) {
-  const sessionId = toOptionalString(options.sessionId, null);
+  const sessionId = resolveEffectiveSessionScopeId(options.sessionId, options);
   const queryLimit = Math.max(1, Number(options.queryLimit) || DEFAULT_QUERY_LIMIT);
   const queryFn = typeof options.queryCommsJournal === 'function'
     ? options.queryCommsJournal
@@ -842,6 +906,9 @@ module.exports = {
     queryUnresolvedClaims,
     toEventTsMs,
     toIso,
+    normalizeAppSessionScopeId,
+    resolveCurrentSessionScopeIdFromAppStatus,
+    resolveEffectiveSessionScopeId,
     resolvePrimarySessionHandoffPath,
     LEGACY_PANE_HANDOFFS,
   },

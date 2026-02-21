@@ -794,6 +794,86 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('refreshes legacy bootstrap app link metadata from current app-status session', async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-session-refresh-legacy-'));
+    const externalProjectPath = path.join(tempRoot, 'external-project');
+    const externalCoordPath = path.join(externalProjectPath, '.squidrun');
+    const fakeSquidRunRoot = path.join(tempRoot, 'squidrun-root');
+    const fakeSquidRunCoord = path.join(fakeSquidRunRoot, '.squidrun');
+    fs.mkdirSync(externalCoordPath, { recursive: true });
+    fs.mkdirSync(fakeSquidRunCoord, { recursive: true });
+    fs.writeFileSync(path.join(externalCoordPath, 'link.json'), JSON.stringify({
+      workspace: externalProjectPath,
+      squidrun_root: fakeSquidRunRoot,
+      session_id: 'app-7736-1771709282380',
+      version: 1,
+    }, null, 2));
+    fs.writeFileSync(path.join(fakeSquidRunCoord, 'app-status.json'), JSON.stringify({
+      session: 186,
+    }, null, 2));
+
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            status: 'routed',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['builder', '(TEST #3d): refresh legacy session id', '--timeout', '80', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port) },
+        { cwd: externalProjectPath }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0]?.metadata?.project?.session_id).toBe('app-session-186');
+      expect(sendAttempts[0]?.metadata?.envelope?.session_id).toBe('app-session-186');
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('falls back to trigger file with complete message after websocket retries exhaust', async () => {
     const sendAttempts = [];
     let server;

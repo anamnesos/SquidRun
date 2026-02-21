@@ -139,6 +139,8 @@ Responsibilities:
 - Avoid content-free acknowledgments.
 - Always commit before declaring "ready for restart." Uncommitted work is lost on restart.
 - Do not manually maintain per-pane handoff files. `.squidrun/handoffs/session.md` is materialized automatically from the comms journal.
+- When adding, removing, or renaming modules or files, update `ARCHITECTURE.md` in the same commit. Stale architecture docs are a defect.
+- Before deleting files in cleanup passes, check .squidrun/protected-files.json — never delete listed files.
 
 ## Pre-Restart Gate (Mandatory)
 
