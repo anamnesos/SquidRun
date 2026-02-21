@@ -11,8 +11,6 @@ function resolveBridgeApi() {
   const candidates = [
     window.squidrunAPI,
     window.squidrun,
-    window.hivemind,
-    window.api,
   ];
 
   for (const candidate of candidates) {
@@ -669,9 +667,7 @@ const squidrunApi = Object.assign({}, fallbackApi, bridgeApi, {
   },
 });
 window.squidrun = squidrunApi;
-window.hivemind = squidrunApi;
 window.squidrunAPI = squidrunApi;
-window.api = squidrunApi;
 
 function updateConnectionStatus(status) {
   const statusEl = document.getElementById('connectionStatus');

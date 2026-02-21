@@ -11,7 +11,7 @@ function shouldUseWorker(options = {}) {
   const opts = asObject(options);
   const deps = asObject(opts.deps);
 
-  if (process.env.HIVEMIND_EXPERIMENT_FORCE_IN_PROCESS === '1') {
+  if (process.env.SQUIDRUN_EXPERIMENT_FORCE_IN_PROCESS === '1') {
     return false;
   }
   if (opts.useWorker === false || deps.useWorker === false) {

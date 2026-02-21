@@ -428,8 +428,8 @@ describe('Local Embedder', () => {
       process.env = originalEnv;
     });
 
-    test('uses HIVEMIND_PYTHON env var', async () => {
-      process.env.HIVEMIND_PYTHON = '/custom/python3.11';
+    test('uses SQUIDRUN_PYTHON env var', async () => {
+      process.env.SQUIDRUN_PYTHON = '/custom/python3.11';
 
       const embedder = createLocalEmbedder();
       const embedPromise = embedder.embed('test');

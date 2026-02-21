@@ -89,10 +89,10 @@ function waitForMessage(ws, predicate, timeoutMs = 2000) {
 
 function loadRuntime({ queuePath, maxEntries = 500, maxAgeMs = 1800000 }) {
   jest.resetModules();
-  process.env.HIVEMIND_COMMS_QUEUE_FILE = queuePath;
-  process.env.HIVEMIND_COMMS_QUEUE_MAX_ENTRIES = String(maxEntries);
-  process.env.HIVEMIND_COMMS_QUEUE_MAX_AGE_MS = String(maxAgeMs);
-  process.env.HIVEMIND_COMMS_QUEUE_FLUSH_INTERVAL_MS = '30000';
+  process.env.SQUIDRUN_COMMS_QUEUE_FILE = queuePath;
+  process.env.SQUIDRUN_COMMS_QUEUE_MAX_ENTRIES = String(maxEntries);
+  process.env.SQUIDRUN_COMMS_QUEUE_MAX_AGE_MS = String(maxAgeMs);
+  process.env.SQUIDRUN_COMMS_QUEUE_FLUSH_INTERVAL_MS = '30000';
   return require('../modules/websocket-runtime');
 }
 
@@ -104,10 +104,10 @@ describe('websocket-runtime outbound queue', () => {
   });
 
   afterEach(() => {
-    delete process.env.HIVEMIND_COMMS_QUEUE_FILE;
-    delete process.env.HIVEMIND_COMMS_QUEUE_MAX_ENTRIES;
-    delete process.env.HIVEMIND_COMMS_QUEUE_MAX_AGE_MS;
-    delete process.env.HIVEMIND_COMMS_QUEUE_FLUSH_INTERVAL_MS;
+    delete process.env.SQUIDRUN_COMMS_QUEUE_FILE;
+    delete process.env.SQUIDRUN_COMMS_QUEUE_MAX_ENTRIES;
+    delete process.env.SQUIDRUN_COMMS_QUEUE_MAX_AGE_MS;
+    delete process.env.SQUIDRUN_COMMS_QUEUE_FLUSH_INTERVAL_MS;
     if (queuePath && fs.existsSync(queuePath)) {
       fs.unlinkSync(queuePath);
     }

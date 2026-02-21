@@ -14,23 +14,23 @@ const {
 } = require('../../config');
 
 const DEFAULT_BG_IDLE_TTL_MS = Number.parseInt(
-  process.env.HIVEMIND_BG_IDLE_TTL_MS || String(20 * 60 * 1000),
+  process.env.SQUIDRUN_BG_IDLE_TTL_MS || String(20 * 60 * 1000),
   10
 );
 const DEFAULT_BG_WATCHDOG_INTERVAL_MS = Number.parseInt(
-  process.env.HIVEMIND_BG_WATCHDOG_INTERVAL_MS || '15000',
+  process.env.SQUIDRUN_BG_WATCHDOG_INTERVAL_MS || '15000',
   10
 );
 const DEFAULT_BG_SCROLLBACK_MAX_SIZE = Number.parseInt(
-  process.env.HIVEMIND_BG_SCROLLBACK_MAX_SIZE || '12000',
+  process.env.SQUIDRUN_BG_SCROLLBACK_MAX_SIZE || '12000',
   10
 );
 const DEFAULT_BG_STARTUP_DELAY_MS = Number.parseInt(
-  process.env.HIVEMIND_BG_STARTUP_DELAY_MS || '3500',
+  process.env.SQUIDRUN_BG_STARTUP_DELAY_MS || '3500',
   10
 );
 const DEFAULT_BG_STARTUP_RETRY_MS = Number.parseInt(
-  process.env.HIVEMIND_BG_STARTUP_RETRY_MS || '6500',
+  process.env.SQUIDRUN_BG_STARTUP_RETRY_MS || '6500',
   10
 );
 const PRIMARY_BG_COMPLETION_SENTINEL = '__HM_BG_DONE__';
@@ -317,10 +317,10 @@ class BackgroundAgentManager {
       false,
       null,
       {
-        HIVEMIND_ROLE: alias,
-        HIVEMIND_PANE_ID: paneId,
-        HIVEMIND_PARENT_PANE_ID: ownerPaneId,
-        HIVEMIND_BG_ALIAS: alias,
+        SQUIDRUN_ROLE: alias,
+        SQUIDRUN_PANE_ID: paneId,
+        SQUIDRUN_PARENT_PANE_ID: ownerPaneId,
+        SQUIDRUN_BG_ALIAS: alias,
       },
       {
         backgroundAgent: true,

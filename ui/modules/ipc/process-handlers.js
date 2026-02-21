@@ -197,11 +197,11 @@ function registerProcessHandlers(ctx) {
 
   ipcMain.handle('get-daemon-runtime-config', () => ({
     throttleQueueMaxItems: toPositiveInt(
-      process.env.HIVEMIND_THROTTLE_QUEUE_MAX_ITEMS,
+      process.env.SQUIDRUN_THROTTLE_QUEUE_MAX_ITEMS,
       DEFAULT_THROTTLE_QUEUE_MAX_ITEMS
     ),
     throttleQueueMaxBytes: toPositiveInt(
-      process.env.HIVEMIND_THROTTLE_QUEUE_MAX_BYTES,
+      process.env.SQUIDRUN_THROTTLE_QUEUE_MAX_BYTES,
       DEFAULT_THROTTLE_QUEUE_MAX_BYTES
     ),
   }));

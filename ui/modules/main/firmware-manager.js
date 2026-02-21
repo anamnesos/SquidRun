@@ -16,7 +16,7 @@ const FIRMWARE_SUBDIR = 'firmware';
 const CODEX_OVERRIDE_FILENAME = 'AGENTS.override.md';
 const PREFLIGHT_SCRIPT_PATH = path.join(__dirname, '..', '..', 'scripts', 'hm-preflight.js');
 const TEMPLATE_PLACEHOLDERS = Object.freeze({
-  HIVEMIND_ROOT: '{HIVEMIND_ROOT}',
+  SQUIDRUN_ROOT: '{SQUIDRUN_ROOT}',
 });
 
 const PANE_ROLE_FILE = {
@@ -87,7 +87,6 @@ class FirmwareManager {
     this.projectRoot = path.resolve(options.projectRoot || PROJECT_ROOT);
     this.squidrunRoot = path.resolve(
       options.squidrunRoot
-      || options.hivemindRoot
       || (typeof getSquidrunRoot === 'function'
         ? getSquidrunRoot()
         : PROJECT_ROOT)
@@ -243,7 +242,6 @@ class FirmwareManager {
 
   getFirmwareTemplateValues() {
     return {
-      HIVEMIND_ROOT: String(this.squidrunRoot || '').replace(/\\/g, '/'),
       SQUIDRUN_ROOT: String(this.squidrunRoot || '').replace(/\\/g, '/'),
     };
   }
@@ -258,11 +256,10 @@ class FirmwareManager {
   }
 
   assertNoUnresolvedFirmwareTemplate(body) {
-    const unresolved = Object.values(TEMPLATE_PLACEHOLDERS).filter((placeholder) =>
-      String(body || '').includes(placeholder)
-    );
-    if (unresolved.length > 0) {
-      throw new Error(`Firmware template placeholder not resolved: ${unresolved.join(', ')}`);
+    const unresolved = String(body || '').match(/\{[A-Z][A-Z0-9_]*\}/g) || [];
+    const uniqueUnresolved = [...new Set(unresolved)];
+    if (uniqueUnresolved.length > 0) {
+      throw new Error(`Firmware template placeholder not resolved: ${uniqueUnresolved.join(', ')}`);
     }
   }
 

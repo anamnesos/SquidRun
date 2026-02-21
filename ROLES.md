@@ -4,7 +4,7 @@
 
 This file is the canonical role definition source for SquidRun agents.
 
-- Role identity comes from runtime env: `HIVEMIND_ROLE`, `HIVEMIND_PANE_ID`.
+- Role identity comes from runtime env: `SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`.
 - Model files (`CLAUDE.md`, `GEMINI.md`, `CODEX.md`) contain model quirks only.
 - If model guidance conflicts with this file on role behavior, follow this file.
 
@@ -43,30 +43,28 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 - App source: `./ui/`
 - Tests: `./ui/__tests__/`
 - Agent messaging: `node ui/scripts/hm-send.js <target> "(ROLE #N): message"`
-- Coordination state root: `.squidrun/` (legacy mirrors: `.hivemind/` and `workspace/`, for compatibility only)
+- Coordination state root: `.squidrun/`
 - Terminal output is user-facing; agent-to-agent communication uses `hm-send.js`
 
 ### Runtime Truths (Must Verify Before Diagnosis)
 
 - Live comms journal DB: `.squidrun/runtime/evidence-ledger.db` (canonical)
-- Do not treat `.hivemind/*/evidence-ledger.db` or `workspace/*/evidence-ledger.db` as runtime truth; those paths may be stale artifacts.
 - Current session truth: `.squidrun/app-status.json` (`session` field).
-- `.squidrun/link.json` is project bootstrap metadata; `session_id` can lag and must not override app-status during diagnosis. If `.squidrun/link.json` is absent, use legacy `.hivemind/link.json`.
-- `.hivemind/handoffs/session.md` and `workspace/handoffs/session.md` are mirrors of `.squidrun/handoffs/session.md`, not independent sources.
+- `.squidrun/link.json` is project bootstrap metadata; `session_id` can lag and must not override app-status during diagnosis.
 - `session.md` fields are mixed-scope: `rows_scanned` is current-session scoped, while cross-session tables can still be populated from broader history.
 
 ### Startup Baseline
 
 **Architect (pane 1):**
 1. Read the **Startup Briefing** delivered to your terminal (summarizes Comm Journal, open Tasks, and unresolved Claims).
-2. Read `.squidrun/app-status.json` (fallback mirror: `.hivemind/app-status.json`).
-3. Check `.squidrun/build/blockers.md` and `.squidrun/build/errors.md` (legacy mirrors may exist under `.hivemind/build/` or `workspace/build/`).
-4. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`; mirrored to `.hivemind/` and `workspace/`).
+2. Read `.squidrun/app-status.json`.
+3. Check `.squidrun/build/blockers.md` and `.squidrun/build/errors.md`.
+4. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
 5. Process unresolved Claims via `record-consensus` as your first technical action.
 6. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
 
 **Builder / Oracle (panes 2, 3):**
-1. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`; mirrored to `.hivemind/` and `workspace/`).
+1. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
 2. Read `.squidrun/app-status.json` and note the current `session` number.
 3. Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
 4. Check in to Architect via `hm-send` — one line, no extras.
@@ -137,7 +135,7 @@ Responsibilities:
 - Report command/tool failures promptly to Architect via `hm-send.js`.
 - Avoid content-free acknowledgments.
 - Always commit before declaring "ready for restart." Uncommitted work is lost on restart.
-- Do not manually maintain per-pane handoff files. `.squidrun/handoffs/session.md` is materialized automatically from the comms journal, with legacy mirrors in `.hivemind/` and `workspace/`.
+- Do not manually maintain per-pane handoff files. `.squidrun/handoffs/session.md` is materialized automatically from the comms journal.
 
 ## Pre-Restart Gate (Mandatory)
 
@@ -146,6 +144,6 @@ Use this order before any restart approval:
 1. Builder completes fixes and validation tests.
 2. Architect performs independent verification.
 3. Oracle performs restart-risk review (startup/state/artifact risks).
-4. Oracle performs documentation pass for session learnings and changed behavior (paths, session semantics, fallback behavior, operational workflow).
+4. Oracle performs documentation pass for session learnings and changed behavior (paths, session semantics, operational workflow).
 
 Restart is blocked until all four steps are complete.

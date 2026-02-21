@@ -85,7 +85,7 @@ const HIDDEN_PANE_HOSTS_ENV_FLAG = (
   typeof process !== 'undefined'
   && process
   && process.env
-  && process.env.HIVEMIND_HIDDEN_PANE_HOSTS === '1'
+  && process.env.SQUIDRUN_HIDDEN_PANE_HOSTS === '1'
 );
 
 // Per-pane typing idle timers for event bus typing.idle emission

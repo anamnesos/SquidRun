@@ -12,7 +12,7 @@ const log = require('../logger');
 const MESSAGE_STATE_PATH = typeof resolveGlobalPath === 'function'
   ? resolveGlobalPath('message-state.json', { forWrite: true })
   : path.join(WORKSPACE_PATH, 'message-state.json');
-// Matches the prefix added by squidrun-app (hivemind-app.js) for WebSocket agent messages
+// Matches the prefix added by squidrun-app (squidrun-app.js) for WebSocket agent messages
 const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
 const DELIVERY_ACK_TIMEOUT_MS = 65000;
 const pendingDeliveries = new Map();
@@ -75,7 +75,7 @@ function saveMessageState() {
  * Format: "(ROLE #SEQ): message" per Reviewer spec
  */
 function parseMessageSequence(message) {
-  // Strip WebSocket agent prefix before parsing (see hivemind-app.js)
+  // Strip WebSocket agent prefix before parsing (see squidrun-app.js)
   let cleanMessage = message;
   if (message.startsWith(AGENT_MESSAGE_PREFIX)) {
     cleanMessage = message.substring(AGENT_MESSAGE_PREFIX.length);

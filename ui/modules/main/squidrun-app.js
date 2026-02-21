@@ -72,36 +72,36 @@ const PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS = IS_DARWIN ? 900 : 1500;
 const APP_IDLE_THRESHOLD_MS = 30000;
 const CONSOLE_LOG_FLUSH_INTERVAL_MS = 500;
 const TELEGRAM_REPLY_WINDOW_MS = Number.parseInt(
-  process.env.HIVEMIND_TELEGRAM_REPLY_WINDOW_MS || String(5 * 60 * 1000),
+  process.env.SQUIDRUN_TELEGRAM_REPLY_WINDOW_MS || String(5 * 60 * 1000),
   10
 );
-const TEAM_MEMORY_BACKFILL_LIMIT = Number.parseInt(process.env.HIVEMIND_TEAM_MEMORY_BACKFILL_LIMIT || '5000', 10);
+const TEAM_MEMORY_BACKFILL_LIMIT = Number.parseInt(process.env.SQUIDRUN_TEAM_MEMORY_BACKFILL_LIMIT || '5000', 10);
 const TEAM_MEMORY_INTEGRITY_SWEEP_INTERVAL_MS = Number.parseInt(
-  process.env.HIVEMIND_TEAM_MEMORY_INTEGRITY_SWEEP_MS || String(24 * 60 * 60 * 1000),
+  process.env.SQUIDRUN_TEAM_MEMORY_INTEGRITY_SWEEP_MS || String(24 * 60 * 60 * 1000),
   10
 );
 const TEAM_MEMORY_BELIEF_SNAPSHOT_INTERVAL_MS = Number.parseInt(
-  process.env.HIVEMIND_TEAM_MEMORY_BELIEF_SWEEP_MS || String(5 * 60 * 1000),
+  process.env.SQUIDRUN_TEAM_MEMORY_BELIEF_SWEEP_MS || String(5 * 60 * 1000),
   10
 );
 const TEAM_MEMORY_PATTERN_MINING_INTERVAL_MS = Number.parseInt(
-  process.env.HIVEMIND_TEAM_MEMORY_PATTERN_SWEEP_MS || String(60 * 1000),
+  process.env.SQUIDRUN_TEAM_MEMORY_PATTERN_SWEEP_MS || String(60 * 1000),
   10
 );
-const TEAM_MEMORY_BLOCK_GUARD_PROFILE = String(process.env.HIVEMIND_TEAM_MEMORY_BLOCK_GUARD_PROFILE || 'jest-suite').trim() || 'jest-suite';
+const TEAM_MEMORY_BLOCK_GUARD_PROFILE = String(process.env.SQUIDRUN_TEAM_MEMORY_BLOCK_GUARD_PROFILE || 'jest-suite').trim() || 'jest-suite';
 const APP_STARTUP_SESSION_RETRY_LIMIT = 3;
-const AUTO_HANDOFF_INTERVAL_MS = Number.parseInt(process.env.HIVEMIND_AUTO_HANDOFF_INTERVAL_MS || '30000', 10);
-const AUTO_HANDOFF_ENABLED = process.env.HIVEMIND_AUTO_HANDOFF_ENABLED !== '0';
+const AUTO_HANDOFF_INTERVAL_MS = Number.parseInt(process.env.SQUIDRUN_AUTO_HANDOFF_INTERVAL_MS || '30000', 10);
+const AUTO_HANDOFF_ENABLED = process.env.SQUIDRUN_AUTO_HANDOFF_ENABLED !== '0';
 const TEAM_MEMORY_TAGGED_CLAIM_SWEEP_INTERVAL_MS = Number.parseInt(
-  process.env.HIVEMIND_TEAM_MEMORY_TAGGED_CLAIM_SWEEP_MS || '30000',
+  process.env.SQUIDRUN_TEAM_MEMORY_TAGGED_CLAIM_SWEEP_MS || '30000',
   10
 );
 const WEBSOCKET_START_RETRY_BASE_MS = Number.parseInt(
-  process.env.HIVEMIND_WEBSOCKET_START_RETRY_BASE_MS || '500',
+  process.env.SQUIDRUN_WEBSOCKET_START_RETRY_BASE_MS || '500',
   10
 );
 const WEBSOCKET_START_RETRY_MAX_MS = Number.parseInt(
-  process.env.HIVEMIND_WEBSOCKET_START_RETRY_MAX_MS || '10000',
+  process.env.SQUIDRUN_WEBSOCKET_START_RETRY_MAX_MS || '10000',
   10
 );
 
@@ -339,7 +339,7 @@ class SquidRunApp {
   }
 
   isHiddenPaneHostModeEnabled() {
-    if (process.env.HIVEMIND_HIDDEN_PANE_HOSTS === '1') return true;
+    if (process.env.SQUIDRUN_HIDDEN_PANE_HOSTS === '1') return true;
     return this.ctx?.currentSettings?.hiddenPaneHostsEnabled === true;
   }
 
@@ -1688,7 +1688,7 @@ class SquidRunApp {
     // main-window listeners/post-load init always install first.
     this.schedulePaneHostBootstrap();
 
-    const devToolsAllowedByEnv = process.env.HIVEMIND_DEBUG === '1' || process.env.NODE_ENV === 'development';
+    const devToolsAllowedByEnv = process.env.SQUIDRUN_DEBUG === '1' || process.env.NODE_ENV === 'development';
     if (this.ctx.currentSettings.devTools && devToolsAllowedByEnv) {
       this.ctx.mainWindow.webContents.openDevTools();
     }

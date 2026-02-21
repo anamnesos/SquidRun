@@ -89,7 +89,7 @@ function getUtf8ByteLength(value) {
   const params = new URLSearchParams(window.location.search || '');
   const paneId = readPaneIdFromQuery(params);
   const isDarwin = detectDarwin();
-  const api = window.squidrun || window.hivemind;
+  const api = window.squidrun;
   const TerminalCtor = window.Terminal;
   const FitAddonCtor = window.FitAddon && window.FitAddon.FitAddon;
 

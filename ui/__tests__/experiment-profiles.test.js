@@ -99,9 +99,9 @@ describe('experiment profiles', () => {
   });
 
   test('builds deterministic env fingerprint for allowlisted vars', () => {
-    process.env.HIVEMIND_TEST_ENV_ALLOW = '1';
-    const env = buildExperimentEnv(['HIVEMIND_TEST_ENV_ALLOW']);
-    expect(env.HIVEMIND_TEST_ENV_ALLOW).toBe('1');
+    process.env.SQUIDRUN_TEST_ENV_ALLOW = '1';
+    const env = buildExperimentEnv(['SQUIDRUN_TEST_ENV_ALLOW']);
+    expect(env.SQUIDRUN_TEST_ENV_ALLOW).toBe('1');
 
     const fpA = fingerprintEnv(env);
     const fpB = fingerprintEnv({ ...env });

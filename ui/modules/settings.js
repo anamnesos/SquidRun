@@ -105,9 +105,6 @@ function applySettingsToUI() {
   window.dispatchEvent(new CustomEvent('squidrun-settings-updated', {
     detail: { ...currentSettings }
   }));
-  window.dispatchEvent(new CustomEvent('hivemind-settings-updated', {
-    detail: { ...currentSettings }
-  }));
 }
 
 // Handle setting toggle

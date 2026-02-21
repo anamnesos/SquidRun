@@ -8,7 +8,7 @@ const { app } = require('electron');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 // Enforce single-instance ownership to prevent duplicate watcher/process
-// trees from racing on .hivemind trigger files.
+// trees from racing on .squidrun trigger files.
 const singleInstanceLock = app.requestSingleInstanceLock();
 if (!singleInstanceLock) {
   app.quit();
@@ -36,7 +36,7 @@ const ActivityManager = require('./modules/main/activity-manager');
 const UsageManager = require('./modules/main/usage-manager');
 const CliIdentityManager = require('./modules/main/cli-identity');
 const FirmwareManager = require('./modules/main/firmware-manager');
-const SquidRunApp = require('./modules/main/hivemind-app');
+const SquidRunApp = require('./modules/main/squidrun-app');
 
 // 1. Initialize managers with shared context
 const settings = new SettingsManager(appContext);

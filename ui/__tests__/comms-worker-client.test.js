@@ -78,8 +78,8 @@ describe('comms-worker-client', () => {
 
   beforeEach(() => {
     jest.resetModules();
-    process.env.HIVEMIND_COMMS_WORKER_RESTART_BASE_MS = '20';
-    process.env.HIVEMIND_COMMS_WORKER_RESTART_MAX_MS = '80';
+    process.env.SQUIDRUN_COMMS_WORKER_RESTART_BASE_MS = '20';
+    process.env.SQUIDRUN_COMMS_WORKER_RESTART_MAX_MS = '80';
 
     workers = [];
     forkMock = jest.fn(() => {
@@ -101,8 +101,8 @@ describe('comms-worker-client', () => {
 
   afterEach(async () => {
     await client.resetForTests();
-    delete process.env.HIVEMIND_COMMS_WORKER_RESTART_BASE_MS;
-    delete process.env.HIVEMIND_COMMS_WORKER_RESTART_MAX_MS;
+    delete process.env.SQUIDRUN_COMMS_WORKER_RESTART_BASE_MS;
+    delete process.env.SQUIDRUN_COMMS_WORKER_RESTART_MAX_MS;
   });
 
   test('start initializes worker and caches running state/port', async () => {

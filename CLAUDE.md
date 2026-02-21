@@ -5,7 +5,7 @@
 This is the Claude-specific shim.
 
 - Canonical role definitions live in `ROLES.md`.
-- Determine behavior from runtime env (`HIVEMIND_ROLE`, `HIVEMIND_PANE_ID`) + `ROLES.md`.
+- Determine behavior from runtime env (`SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`) + `ROLES.md`.
 - Do not duplicate role instructions in this file.
 
 ## Claude Quirks
@@ -23,10 +23,10 @@ This is the Claude-specific shim.
 
 ## Startup (First Action)
 
-- If `.squidrun/link.json` exists, read it first for project discovery (`workspace`) and shared script root (`hivemind_root`). If absent, fall back to legacy `.hivemind/link.json`.
-- Read the session handoff index: `.squidrun/handoffs/session.md` — contains previous session context, decisions, and pending work; legacy mirrors exist under `.hivemind/` and `workspace/`.
+- Read `.squidrun/link.json` first for project discovery (`workspace`) and shared script root (`squidrun_root`).
+- Read the session handoff index: `.squidrun/handoffs/session.md` — contains previous session context, decisions, and pending work.
 - Treat `.squidrun/app-status.json` as source of truth for the active session number; `link.json.session_id` is bootstrap metadata and may be stale.
-- For journal/database checks, use `.squidrun/runtime/evidence-ledger.db` (legacy `.hivemind/` and `workspace/` copies may be stale).
+- For journal/database checks, use `.squidrun/runtime/evidence-ledger.db`.
 - Then follow the full startup baseline in `ROLES.md`.
 
 ## Reference

@@ -1179,7 +1179,7 @@ function generateMockResponse(input) {
     return '';
   }
 
-  if (trimmed.includes('sync') || trimmed.includes('squidrun') || trimmed.includes('hivemind')) {
+  if (trimmed.includes('sync') || trimmed.includes('squidrun')) {
     return '\r\n[DRY-RUN] Sync received. Reviewing ROLES.md and coordination state...\r\n[DRY-RUN] Worker acknowledged. Standing by for tasks.\r\n\r\n> ';
   }
 

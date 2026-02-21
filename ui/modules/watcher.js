@@ -28,7 +28,7 @@ function resolveCoordFile(relPath, options = {}) {
 
 function getCoordWatchPaths(relPath) {
   if (typeof getCoordRoots === 'function') {
-    return getCoordRoots({ includeLegacy: true, includeMissing: false })
+    return getCoordRoots({ includeLegacy: false, includeMissing: false })
       .map((root) => path.join(root, relPath));
   }
   return [path.join(WORKSPACE_PATH, relPath)];
@@ -361,11 +361,10 @@ function writeState(state) {
 
     // Ensure squidrun_root is always present so agents in external projects
     // can locate SquidRun scripts (hm-send.js etc.) regardless of their cwd.
-    if (!state.squidrun_root && !state.hivemind_root && typeof getSquidrunRoot === 'function') {
+    if (!state.squidrun_root && typeof getSquidrunRoot === 'function') {
       try {
         const root = getSquidrunRoot();
         state.squidrun_root = root;
-        state.hivemind_root = root; // Legacy field for compatibility.
       } catch (_) {
         // Tolerate missing config in test environments.
       }
@@ -640,7 +639,7 @@ function startWatcherWorker(watcherName, onEvent, restartFn) {
   const worker = fork(WATCHER_WORKER_PATH, [], {
     env: {
       ...process.env,
-      HIVEMIND_WATCHER_NAME: watcherName,
+      SQUIDRUN_WATCHER_NAME: watcherName,
     },
   });
 
@@ -799,7 +798,7 @@ function handleTriggerFileWithRetry(filePath, filename, attempt = 0, lastKnownSi
  * Uses aggressive polling for sub-50ms message delivery
  */
 function startTriggerWatcher() {
-  // Ensure trigger directories exist (primary + legacy fallback during transition)
+  // Ensure trigger directories exist.
   for (const triggerPath of TRIGGER_PATHS) {
     try {
       if (!fs.existsSync(triggerPath)) {

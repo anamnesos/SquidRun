@@ -5,7 +5,7 @@
 This is the Gemini-specific shim.
 
 - Canonical role definitions live in `ROLES.md`.
-- Determine behavior from runtime env (`HIVEMIND_ROLE`, `HIVEMIND_PANE_ID`) + `ROLES.md`.
+- Determine behavior from runtime env (`SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`) + `ROLES.md`.
 - Do not duplicate role instructions in this file.
 
 ## Gemini Quirks
@@ -23,7 +23,7 @@ This is the Gemini-specific shim.
 
 ## Startup (First Action)
 
-- Read `.squidrun/link.json` first for project discovery (`workspace`) and shared script root (`hivemind_root`).
+- Read `.squidrun/link.json` first for project discovery (`workspace`) and shared script root (`squidrun_root`).
 - Read the session handoff index: `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
 - Treat `.squidrun/app-status.json` as source of truth for the active session number; `link.json.session_id` is bootstrap metadata and may be stale.
 - For journal/database checks, use `.squidrun/runtime/evidence-ledger.db`.

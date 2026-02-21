@@ -5,8 +5,8 @@ const log = require('./logger');
 const WORKER_PATH = path.join(__dirname, 'comms-worker.js');
 const REQUEST_TIMEOUT_MS = 15000;
 const STOP_TIMEOUT_MS = 2000;
-const RESTART_BASE_DELAY_MS = Number.parseInt(process.env.HIVEMIND_COMMS_WORKER_RESTART_BASE_MS || '500', 10);
-const RESTART_MAX_DELAY_MS = Number.parseInt(process.env.HIVEMIND_COMMS_WORKER_RESTART_MAX_MS || '10000', 10);
+const RESTART_BASE_DELAY_MS = Number.parseInt(process.env.SQUIDRUN_COMMS_WORKER_RESTART_BASE_MS || '500', 10);
+const RESTART_MAX_DELAY_MS = Number.parseInt(process.env.SQUIDRUN_COMMS_WORKER_RESTART_MAX_MS || '10000', 10);
 
 let workerProcess = null;
 let requestCounter = 0;
@@ -148,7 +148,7 @@ function ensureWorker() {
   const worker = fork(WORKER_PATH, [], {
     env: {
       ...process.env,
-      HIVEMIND_COMMS_WORKER: '1',
+      SQUIDRUN_COMMS_WORKER: '1',
     },
   });
 
