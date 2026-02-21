@@ -44,7 +44,7 @@ const SECTION_PRIORITIES = {
   sessionProgress: 70,
 };
 
-// Files to watch for auto-refresh (relative to workspace/coord roots).
+// Files to watch for auto-refresh (relative to .squidrun/coord roots).
 // Session handoff + app-status trigger immediate refresh.
 const WATCHED_FILES = [
   APP_STATUS_RELATIVE_PATH,
@@ -269,7 +269,7 @@ function buildHandoffSection(paneId) {
 }
 
 /**
- * Build the App Status section from workspace/app-status.json.
+ * Build the App Status section from .squidrun/app-status.json.
  * Provides session number and the session note (human-written summary).
  */
 function buildAppStatusSection() {

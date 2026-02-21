@@ -678,7 +678,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         type: 'text',
         text: JSON.stringify({
           error: error.message,
-          fallback: 'Use file-based triggers as fallback: write to .hivemind/triggers/<agent>.txt (or workspace/triggers/<agent>.txt during fallback).',
+          fallback: 'Use file-based triggers as fallback: write to .squidrun/triggers/<agent>.txt.',
         }),
       }],
       isError: true,

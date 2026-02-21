@@ -23,10 +23,10 @@ This is the Gemini-specific shim.
 
 ## Startup (First Action)
 
-- If `.squidrun/link.json` exists, read it first for project discovery (`workspace`) and shared script root (`hivemind_root`). If absent, fall back to legacy `.hivemind/link.json`.
-- Read the session handoff index: `.squidrun/handoffs/session.md` — auto-generated from `comms_journal` and mirrored to `.hivemind/` and `workspace/`.
+- Read `.squidrun/link.json` first for project discovery (`workspace`) and shared script root (`hivemind_root`).
+- Read the session handoff index: `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
 - Treat `.squidrun/app-status.json` as source of truth for the active session number; `link.json.session_id` is bootstrap metadata and may be stale.
-- For journal/database checks, use `.squidrun/runtime/evidence-ledger.db` (legacy `.hivemind/` and `workspace/` copies may be stale).
+- For journal/database checks, use `.squidrun/runtime/evidence-ledger.db`.
 - Then follow the full startup baseline in `ROLES.md`.
 
 ## Reference

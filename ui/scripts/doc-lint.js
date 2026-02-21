@@ -9,9 +9,9 @@
  * - stale marker correctness from severity + last-verified timestamp policy
  *
  * Targets:
- * - workspace/build/errors.md
- * - workspace/build/blockers.md
- * - workspace/build/status.md
+ * - .squidrun/build/errors.md
+ * - .squidrun/build/blockers.md
+ * - .squidrun/build/status.md
  */
 
 const fs = require('fs');
@@ -21,7 +21,7 @@ const { execSync } = require('child_process');
 const DOCS = {
   errors: {
     key: 'errors',
-    relPath: path.join('workspace', 'build', 'errors.md'),
+    relPath: path.join('.squidrun', 'build', 'errors.md'),
     sectionPatterns: [
       /^## ACTIVE \(Max (\d+)\)$/m,
     ],
@@ -29,7 +29,7 @@ const DOCS = {
   },
   blockers: {
     key: 'blockers',
-    relPath: path.join('workspace', 'build', 'blockers.md'),
+    relPath: path.join('.squidrun', 'build', 'blockers.md'),
     sectionPatterns: [
       /^## ACTIVE \(Max (\d+)\)$/m,
     ],
@@ -37,7 +37,7 @@ const DOCS = {
   },
   status: {
     key: 'status',
-    relPath: path.join('workspace', 'build', 'status.md'),
+    relPath: path.join('.squidrun', 'build', 'status.md'),
     sectionPatterns: [
       /^## ACTIVE \(Max (\d+)\)$/m,
       /^## Current Priorities \(Max (\d+)\)$/m,

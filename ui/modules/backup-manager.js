@@ -1,13 +1,13 @@
 /**
  * Backup Manager
- * Automated backups of workspace/config/state with restore points and versioning.
+ * Automated backups of .squidrun/config/state with restore points and versioning.
  */
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const log = require('./logger');
-const { resolveCoordPath, resolveGlobalPath } = require('../config');
+const { resolveCoordPath, resolveGlobalPath, getSquidrunRoot } = require('../config');
 
 // Files backed up from project .squidrun/ (coord root)
 const COORD_BACKUP_FILES = [
@@ -31,10 +31,10 @@ const DEFAULT_CONFIG = {
   maxAgeDays: 30,
   createRestorePoint: true,
   includePaths: [
-    'workspace/build',
-    'workspace/memory',
-    'workspace/knowledge',
-    'workspace/history',
+    '.squidrun/build',
+    '.squidrun/memory',
+    '.squidrun/knowledge',
+    '.squidrun/history',
     'ui/settings.json',
     'ui/session-state.json',
   ],
@@ -43,10 +43,10 @@ const DEFAULT_CONFIG = {
     'coverage',
     'backups',
     '.git',
-    'workspace/logs',
-    'workspace/screenshots',
-    'workspace/messages',
-    'workspace/triggers',
+    '.squidrun/logs',
+    '.squidrun/screenshots',
+    '.squidrun/messages',
+    '.squidrun/triggers',
     '*.tmp',
   ],
 };
@@ -105,6 +105,11 @@ function matchesPattern(relPath, pattern) {
 }
 
 function resolveCoordBackupPath(relPath, repoRoot, workspacePath) {
+  const squidrunRoot = typeof getSquidrunRoot === 'function'
+    ? getSquidrunRoot()
+    : path.resolve(path.join(workspacePath, '..'));
+  const squidrunFallback = path.join(squidrunRoot, '.squidrun', relPath);
+
   let resolved = null;
   if (typeof resolveCoordPath === 'function') {
     try {
@@ -114,12 +119,12 @@ function resolveCoordBackupPath(relPath, repoRoot, workspacePath) {
     }
   }
   if (!resolved) {
-    resolved = path.join(workspacePath, relPath);
+    resolved = squidrunFallback;
   }
 
   let relativePath = normalizePath(path.relative(repoRoot, resolved));
   if (!relativePath || relativePath.startsWith('..')) {
-    relativePath = normalizePath(path.relative(repoRoot, path.join(workspacePath, relPath)));
+    relativePath = normalizePath(path.relative(repoRoot, squidrunFallback));
   }
   return relativePath;
 }

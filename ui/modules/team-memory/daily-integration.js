@@ -1,11 +1,11 @@
 const { ROLE_ID_MAP } = require('../../config');
 
 const DOMAIN_SCOPE_MAP = Object.freeze({
-  architect: ['workspace/'],
+  architect: ['.squidrun/'],
   frontend: ['ui/renderer.js', 'ui/index.html', 'ui/modules/terminal.js', 'ui/modules/daemon-handlers.js'],
   builder: ['ui/modules/main/', 'ui/modules/ipc/', 'ui/modules/triggers.js', 'ui/modules/watcher.js'],
   backend: ['ui/modules/main/', 'ui/modules/ipc/', 'ui/modules/triggers.js', 'ui/modules/watcher.js'],
-  oracle: ['workspace/build/', 'workspace/errors.md', 'ui/modules/diagnostic-log.js'],
+  oracle: ['.squidrun/build/', '.squidrun/build/errors.md', 'ui/modules/diagnostic-log.js'],
 });
 
 function asString(value, fallback = '') {

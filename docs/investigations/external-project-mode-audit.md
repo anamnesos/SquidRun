@@ -7,12 +7,14 @@
 ## Executive Summary
 Audit of the external project mode and state separation architecture. The investigation reveals that while foundational constants for separation exist, the actual implementation is incomplete, leading to "leaky" state where orchestrator data is scattered across project directories, and firmware suppression is currently non-functional.
 
+Historical note: this investigation was captured during a naming migration. Path terminology below is normalized to current `.squidrun/` coordination roots.
+
 ## 1. State Separation Audit (`state-separation-audit.md`) Review
 *   **Accuracy:** The inventory of files in Section 1 is still 100% accurate.
-*   **Path Changes:** `ui/config.js` now defines `GLOBAL_STATE_ROOT` (pointing to `%APPDATA%/hivemind`), but most modules still use `resolveCoordPath()`, which defaults to the project root's `.hivemind/` folder.
+*   **Path Changes:** `ui/config.js` now defines `GLOBAL_STATE_ROOT` (pointing to `%APPDATA%/squidrun`), but most modules still use `resolveCoordPath()`, which defaults to the project root's `.squidrun/` folder.
 *   **Implementation Status:** **PARTIAL / REGRESSED.** 
     *   `resolveGlobalPath()` exists in `config.js` but is rarely used by core managers.
-    *   `SettingsManager` and `UsageManager` are still reading/writing to the project-local `.hivemind/` directory instead of the global root.
+    *   `SettingsManager` and `UsageManager` were still reading/writing to the project-local coordination directory (`.squidrun/`) instead of the global root at the time of this audit.
 
 ## 2. Firmware Preflight & Suppression Investigation
 *   **Mechanism:** `ui/scripts/hm-preflight.js` correctly identifies conflict patterns (role assignments, sign-ins) in project-local `CLAUDE.md`.
@@ -28,7 +30,7 @@ Audit of the external project mode and state separation architecture. The invest
 
 ## 4. Decoupling Session Assessment
 *   **Evidence:** Context snapshots from Session 120 (Feb 12) show work on "Process Isolation Phase 2" (Evidence Ledger to storage worker).
-*   **Progress:** We successfully decoupled the *execution* of the ledger but not its *storage location*. The ledger DB still resides in the project-local `.hivemind/` or `workspace/` folders.
+*   **Progress:** We successfully decoupled the *execution* of the ledger but not its *storage location*. The ledger DB still resides in the project-local `.squidrun/` or legacy `workspace/` folders.
 *   **Remaining:** 
     1.  Redirect `UsageManager` and `SettingsManager` to `GLOBAL_STATE_ROOT`.
     2.  Fix `FirmwareManager` to actually inject suppression lines.
