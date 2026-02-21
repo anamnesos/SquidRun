@@ -96,7 +96,7 @@ function registerTestNotificationHandlers(ctx, deps = {}) {
           };
         }
       }
-    } catch (err) {
+    } catch (_err) {
       // Ignore errors reading results
     }
 

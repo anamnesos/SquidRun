@@ -315,7 +315,7 @@ function asPositiveInt(value) {
   return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
 }
 
-function extractSessionNumberFromStatus(status) {
+function _extractSessionNumberFromStatus(status) {
   if (!status || typeof status !== 'object') return null;
   return (
     asPositiveInt(status.session)
@@ -382,11 +382,11 @@ function updateMainPaneState(paneId) {
   });
 }
 
-function getMainPaneId() {
+function _getMainPaneId() {
   return mainPaneId;
 }
 
-function swapToMainPane(targetPaneId) {
+function _swapToMainPane(targetPaneId) {
   const targetId = String(targetPaneId);
   if (!targetId || targetId === mainPaneId) {
     terminal.focusPane(targetId || mainPaneId);
@@ -1174,7 +1174,7 @@ function setupEventListeners() {
 
   // Pane action buttons: Interrupt (ESC), Enter, Restart
   document.querySelectorAll('.interrupt-btn').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
+    btn.addEventListener('click', async (_e) => {
       const paneId = btn.dataset.paneId;
       if (paneId) {
         log.info('Health', `Sending interrupt (Ctrl+C) to pane ${paneId}`);
@@ -1184,7 +1184,7 @@ function setupEventListeners() {
   });
 
   document.querySelectorAll('.unstick-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', (_e) => {
       const paneId = btn.dataset.paneId;
       if (paneId) {
         log.info('Health', `Sending Enter to pane ${paneId}`);
@@ -1434,7 +1434,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       const audio = new Audio('assets/alert.mp3');
       audio.play().catch(() => log.info('Watchdog', 'Could not play alert sound'));
-    } catch (e) {
+    } catch (_e) {
       log.info('Watchdog', 'Audio not available');
     }
 
@@ -1542,7 +1542,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Track shown alerts to avoid spamming
   const stuckAlertShown = new Set();
   ipcRenderer.on('agent-stuck-detected', (event, data) => {
-    const { paneId, idleTime, message } = data;
+    const { paneId, idleTime, message: _message } = data;
 
     // Only show once per stuck detection (reset after 60 seconds)
     if (stuckAlertShown.has(paneId)) return;
@@ -1765,7 +1765,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           longTaskObserver.disconnect();
         }
       });
-    } catch (e) {
+    } catch (_e) {
       // PerformanceObserver for longtask not supported — skip gracefully
     }
   }

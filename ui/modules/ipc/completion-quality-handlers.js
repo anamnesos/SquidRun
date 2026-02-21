@@ -86,7 +86,7 @@ function registerCompletionQualityHandlers(ctx, deps = {}) {
             files: uncommittedFiles.slice(0, 5),
           });
         }
-      } catch (err) {
+      } catch (_err) {
         // Not a git repo or git not available - skip
       }
     }

@@ -717,12 +717,12 @@ class DaemonClient extends EventEmitter {
           try {
             process.kill(pid, 0); // Signal 0 doesn't kill, just checks
             return true;
-          } catch (e) {
+          } catch (_e) {
             // Process doesn't exist
             return false;
           }
         }
-      } catch (e) {
+      } catch (_e) {
         return false;
       }
     }

@@ -261,7 +261,7 @@ function deliverToListeners(event) {
   const handlers = listeners[event.type];
   if (handlers) {
     for (const handler of handlers) {
-      try { handler(event); } catch (e) { /* Lane A must not crash */ }
+      try { handler(event); } catch (_e) { /* Lane A must not crash */ }
     }
   }
   // Wildcard listeners
@@ -270,7 +270,7 @@ function deliverToListeners(event) {
       const wHandlers = wildcardListeners[pattern];
       if (wHandlers) {
         for (const handler of wHandlers) {
-          try { handler(event); } catch (e) { /* Lane A must not crash */ }
+          try { handler(event); } catch (_e) { /* Lane A must not crash */ }
         }
       }
     }
@@ -290,10 +290,10 @@ function recordToBuffer(event) {
     evictBuffer();
     enforceHardBufferCap();
     stats.bufferSize = ringBuffer.length;
-  } catch (e) {
+  } catch (_e) {
     // Lane B failure must not affect Lane A
     try {
-      emitInternal('bus.error', { paneId: 'system', payload: { error: String(e), lane: 'B' } });
+      emitInternal('bus.error', { paneId: 'system', payload: { error: String(_e), lane: 'B' } });
     } catch { /* truly catastrophic, silently ignore */ }
   }
 }
@@ -571,7 +571,7 @@ function query({ correlationId: corrId, paneId, type, types, since, until, limit
       results = results.slice(0, maxResults);
     }
     return results;
-  } catch (e) {
+  } catch (_e) {
     // Lane B failure
     return [];
   }
@@ -606,7 +606,7 @@ function getBufferStats() {
       droppedCount: stats.totalDropped,
       eventTypeCounts,
     };
-  } catch (e) {
+  } catch (_e) {
     return {
       size: 0,
       maxSize: BUFFER_MAX_SIZE,
@@ -679,7 +679,7 @@ function getCorrelationChain(corrId) {
     }
 
     return result;
-  } catch (e) {
+  } catch (_e) {
     return [];
   }
 }

@@ -208,7 +208,7 @@ function setupListDelegation(updateStatusFn) {
       try {
         await navigator.clipboard.writeText(path);
         if (updateStatusFn) updateStatusFn(`Copied path: ${path}`);
-      } catch (err) {
+      } catch (_err) {
         if (updateStatusFn) updateStatusFn('Failed to copy screenshot path');
       }
       return;

@@ -351,7 +351,7 @@ async function mcpMarkDelivered(sessionId, messageId) {
  * @param {string} sessionId - Agent's MCP session (optional for read)
  * @returns {object} Current state
  */
-function mcpGetState(sessionId = null) {
+function mcpGetState(_sessionId = null) {
   // State read is allowed without session validation
   const state = watcher.readState();
   return { success: true, state };

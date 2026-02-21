@@ -415,7 +415,7 @@ function mapCommsRow(row) {
 function loadSqliteDriver() {
   try {
     // Node 22+ built-in SQLite (experimental but available in this runtime).
-    // eslint-disable-next-line global-require
+     
     const mod = require('node:sqlite');
     if (mod && typeof mod.DatabaseSync === 'function') {
       return {
@@ -428,7 +428,7 @@ function loadSqliteDriver() {
   }
 
   try {
-    // eslint-disable-next-line global-require
+     
     const BetterSqlite3 = require('better-sqlite3');
     return {
       name: 'better-sqlite3',

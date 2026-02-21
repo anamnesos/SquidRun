@@ -304,7 +304,7 @@ function sendMessageToQueue(fromPaneId, toPaneId, content) {
   if (fs.existsSync(queueFile)) {
     try {
       messages = JSON.parse(fs.readFileSync(queueFile, 'utf-8'));
-    } catch (e) {
+    } catch (_e) {
       messages = [];
     }
   }
@@ -377,7 +377,7 @@ function getMessagesFromQueue(targetPaneId, undeliveredOnly = true) {
       return messages.filter(m => !m.delivered);
     }
     return messages;
-  } catch (e) {
+  } catch (_e) {
     return [];
   }
 }
@@ -418,7 +418,7 @@ function readState() {
     if (fs.existsSync(statePath)) {
       return JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     }
-  } catch (e) {
+  } catch (_e) {
     // Ignore parse errors
   }
   return { state: 'idle', active_agents: [], claims: {} };
@@ -458,7 +458,7 @@ function readSharedContext() {
     if (fs.existsSync(sharedContextPath)) {
       return fs.readFileSync(sharedContextPath, 'utf-8');
     }
-  } catch (e) {
+  } catch (_e) {
     // Ignore
   }
   return 'No shared context available.';

@@ -89,7 +89,7 @@ function callWhisperAPI(apiKey, audioBuffer) {
         try {
           const json = JSON.parse(data);
           resolve(json.text || '');
-        } catch (e) {
+        } catch (_e) {
           reject(new Error('Failed to parse Whisper response'));
         }
       });

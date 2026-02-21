@@ -7,6 +7,10 @@
 
 const log = require('../logger');
 const { resolvePaneCwd } = require('../../config');
+const {
+  hasCodexDangerouslyBypassFlag,
+  hasCodexAskForApprovalFlag,
+} = require('../codex-utils');
 const DEFAULT_CHUNK_SIZE = 2048;
 const MIN_CHUNK_SIZE = 1024;
 const MAX_CHUNK_SIZE = 8192;
@@ -47,15 +51,6 @@ function detectCliFromCommand(command) {
 
 function hasClaudeSystemPromptFlag(command) {
   return /--system-prompt-file(?:\s|=)/i.test(String(command || ''));
-}
-
-function hasCodexDangerouslyBypassFlag(command) {
-  return /(?:^|\s)--dangerously-bypass(?:\s|=|$)/i.test(String(command || ''));
-}
-
-function hasCodexAskForApprovalFlag(command) {
-  const value = String(command || '');
-  return /(?:^|\s)--ask-for-approval(?:\s|=|$)/i.test(value) || /(?:^|\s)-a(?:\s|=|$)/.test(value);
 }
 
 function getPaneCommandForRuntime(ctx, paneId) {
@@ -359,7 +354,7 @@ function registerPtyHandlers(ctx, deps = {}) {
     return updateIntentState(payload);
   });
 
-  ipcMain.handle('spawn-claude', async (event, paneId, workingDir) => {
+  ipcMain.handle('spawn-claude', async (event, paneId, _workingDir) => {
     // Dry-run mode - simulate without spawning real agents
     if (ctx.currentSettings.dryRun) {
       ctx.agentRunning.set(paneId, 'running');
