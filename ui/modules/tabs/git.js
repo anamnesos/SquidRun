@@ -3,7 +3,7 @@
  * Task #6: Git Integration
  */
 
-const { ipcRenderer } = require('electron');
+const { invokeBridge } = require('../renderer-bridge');
 const log = require('../logger');
 const { escapeHtml } = require('./utils');
 
@@ -39,8 +39,8 @@ function renderGitStatus() {
 
 async function loadGitStatus() {
   try {
-    const projectPath = await ipcRenderer.invoke('get-project');
-    const result = await ipcRenderer.invoke('git-status', projectPath);
+    const projectPath = await invokeBridge('get-project');
+    const result = await invokeBridge('git-status', projectPath);
     if (result?.success) {
       gitStatus = result.status;
       renderGitStatus();

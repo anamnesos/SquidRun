@@ -13,12 +13,10 @@ jest.mock('../modules/logger', () => ({
 
 jest.mock('../config', () => require('./helpers/real-config').mockDefaultConfig);
 
-jest.mock('electron', () => ({
-  ipcRenderer: {
-    on: jest.fn(),
-    invoke: jest.fn().mockResolvedValue({}),
-    send: jest.fn(),
-  },
+jest.mock('../modules/renderer-bridge', () => ({
+  invokeBridge: jest.fn().mockResolvedValue({}),
+  sendBridge: jest.fn(),
+  onBridge: jest.fn(() => jest.fn()),
 }));
 
 jest.mock('../modules/notifications', () => ({
@@ -66,7 +64,7 @@ jest.mock('../modules/terminal', () => ({
 }));
 
 const WebSocket = require('ws');
-const { ipcRenderer } = require('electron');
+const { onBridge } = require('../modules/renderer-bridge');
 const bus = require('../modules/event-bus');
 const websocketServer = require('../modules/websocket-server');
 const triggers = require('../modules/triggers');
@@ -262,7 +260,7 @@ describe('evidence-ledger integration: trace continuity', () => {
       },
     });
 
-    ipcRenderer.on.mockImplementation((channel, handler) => {
+    onBridge.mockImplementation((channel, handler) => {
       ipcHandlers[channel] = handler;
     });
 

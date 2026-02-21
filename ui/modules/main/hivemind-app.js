@@ -505,6 +505,78 @@ class SquidRunApp {
     });
   }
 
+  sendPaneHostBridgeEvent(paneId, type, payload = {}) {
+    if (!this.isHiddenPaneHostModeEnabled()) return false;
+    const data = (payload && typeof payload === 'object') ? payload : {};
+    return this.sendPaneHostMessage(paneId, 'kernel:bridge-event', {
+      source: 'pane-host',
+      type: String(type || ''),
+      ...data,
+    });
+  }
+
+  isTrustedPaneHostSender(event, paneId) {
+    const id = String(paneId || '').trim();
+    if (!id || !event?.sender) return false;
+    const paneWindow = this.paneHostWindowManager.getPaneWindow(id);
+    if (!paneWindow || paneWindow.isDestroyed() || !paneWindow.webContents) return false;
+    return event.sender.id === paneWindow.webContents.id;
+  }
+
+  handlePaneHostReadySignal(payload = {}) {
+    const paneId = String(payload?.paneId || '').trim();
+    if (!paneId) return;
+    this.paneHostReady.add(paneId);
+    this.clearPaneHostDegraded(paneId);
+    this.updatePaneHostStatus();
+    const terminal = this.ctx.daemonClient?.getTerminal?.(paneId);
+    if (terminal?.scrollback) {
+      this.sendPaneHostBridgeEvent(paneId, 'prime-scrollback', {
+        scrollback: terminal.scrollback,
+      });
+    }
+  }
+
+  dispatchPaneHostEnter(paneId) {
+    const id = String(paneId || '').trim();
+    if (!id) {
+      return { success: false, reason: 'missing_pane_id' };
+    }
+    const dc = this.ctx.daemonClient;
+    if (!dc || !dc.connected) {
+      return { success: false, reason: 'daemon_not_connected', paneId: id };
+    }
+    dc.write(id, '\r');
+    return { success: true, paneId: id };
+  }
+
+  handleTriggerDeliveryAck(data = {}) {
+    if (data?.deliveryId) triggers.handleDeliveryAck(data.deliveryId, data.paneId);
+  }
+
+  handleTriggerDeliveryOutcome(data = {}) {
+    if (data?.deliveryId) triggers.handleDeliveryOutcome(data.deliveryId, data.paneId, data);
+    const statusLower = String(data?.status || '').toLowerCase();
+    const isUnverified = (
+      data?.verified === false
+      || statusLower.includes('unverified')
+      || statusLower === 'delivered.enter_sent'
+    );
+    if (isUnverified) {
+      const paneId = String(data?.paneId || 'unknown');
+      const status = data?.status || 'accepted.unverified';
+      const reason = data?.reason || 'verification_unavailable';
+      const warning = `Delivery remained unverified for pane ${paneId} (${status}${reason ? `: ${reason}` : ''})`;
+      log.warn('Delivery', warning);
+      this.activity.logActivity('warning', paneId, warning, {
+        subsystem: 'delivery-verification',
+        deliveryId: data?.deliveryId || null,
+        status,
+        reason,
+      });
+    }
+  }
+
   sendToVisibleWindow(channel, payload) {
     const window = this.ctx.mainWindow;
     if (!window || window.isDestroyed()) return false;
@@ -548,7 +620,7 @@ class SquidRunApp {
       if (!this.getHiddenPaneHostPaneIds().includes(paneId)) continue;
       const scrollback = typeof term?.scrollback === 'string' ? term.scrollback : '';
       if (!scrollback) continue;
-      this.sendPaneHostMessage(paneId, 'pane-host:prime-scrollback', { paneId, scrollback });
+      this.sendPaneHostBridgeEvent(paneId, 'prime-scrollback', { scrollback });
     }
   }
 
@@ -579,7 +651,7 @@ class SquidRunApp {
       const canRouteToHiddenHost = hostWindowPresent && hostReady && !hostLoading;
 
       if (canRouteToHiddenHost) {
-        const routedToHost = this.sendPaneHostMessage(paneId, 'pane-host:inject-message', {
+        const routedToHost = this.sendPaneHostBridgeEvent(paneId, 'inject-message', {
           message: payload.message,
           deliveryId: payload.deliveryId || null,
           traceContext: payload.traceContext || null,
@@ -644,18 +716,7 @@ class SquidRunApp {
     this.paneHostReadyIpcRegistered = true;
 
     this.paneHostReadyListener = (_event, payload = {}) => {
-      const paneId = String(payload?.paneId || '').trim();
-      if (!paneId) return;
-      this.paneHostReady.add(paneId);
-      this.clearPaneHostDegraded(paneId);
-      this.updatePaneHostStatus();
-      const terminal = this.ctx.daemonClient?.getTerminal?.(paneId);
-      if (terminal?.scrollback) {
-        this.sendPaneHostMessage(paneId, 'pane-host:prime-scrollback', {
-          paneId,
-          scrollback: terminal.scrollback,
-        });
-      }
+      this.handlePaneHostReadySignal(payload);
     };
     ipcMain.on('pane-host-ready', this.paneHostReadyListener);
   }
@@ -1605,8 +1666,8 @@ class SquidRunApp {
       icon: path.join(__dirname, '..', '..', 'assets', process.platform === 'win32' ? 'squidrun-favicon.ico' : 'squidrun-favicon-256.png'),
       backgroundColor: '#0a0a0f',
       webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false,
+        nodeIntegration: false,
+        contextIsolation: true,
         preload: path.join(__dirname, '..', '..', 'preload.js'),
       },
       title: 'SquidRun',
@@ -1664,15 +1725,55 @@ class SquidRunApp {
     }
 
     ipcMain.removeHandler('pane-host-inject');
-    ipcMain.handle('pane-host-inject', async (_event, paneId, payload = {}) => {
+    ipcMain.handle('pane-host-inject', async (event, paneId, payload = {}) => {
       const id = String(paneId || '').trim();
       if (!id) {
         return { success: false, reason: 'missing_pane_id' };
       }
+      const action = String(payload?.action || '').trim().toLowerCase();
+      if (action) {
+        if (!this.isTrustedPaneHostSender(event, id)) {
+          return { success: false, reason: 'unauthorized_sender', paneId: id, action };
+        }
+
+        if (action === 'ready') {
+          this.handlePaneHostReadySignal({ paneId: id });
+          return { success: true, paneId: id, action };
+        }
+
+        if (action === 'dispatch-enter') {
+          const result = this.dispatchPaneHostEnter(id);
+          return {
+            ...result,
+            action,
+          };
+        }
+
+        if (action === 'delivery-ack') {
+          this.handleTriggerDeliveryAck({
+            deliveryId: payload?.deliveryId || null,
+            paneId: id,
+          });
+          return { success: true, paneId: id, action };
+        }
+
+        if (action === 'delivery-outcome') {
+          const outcome = (payload?.outcome && typeof payload.outcome === 'object')
+            ? { ...payload.outcome }
+            : {};
+          Object.assign(outcome, payload, { paneId: id });
+          delete outcome.action;
+          this.handleTriggerDeliveryOutcome(outcome);
+          return { success: true, paneId: id, action };
+        }
+
+        return { success: false, reason: 'unsupported_action', paneId: id, action };
+      }
+
       if (!this.isHiddenPaneHostModeEnabled()) {
         return { success: false, reason: 'hidden_hosts_disabled' };
       }
-      const sent = this.sendPaneHostMessage(id, 'pane-host:inject-message', {
+      const sent = this.sendPaneHostBridgeEvent(id, 'inject-message', {
         message: payload?.message || '',
         deliveryId: payload?.deliveryId || null,
         traceContext: payload?.traceContext || null,
@@ -1686,18 +1787,7 @@ class SquidRunApp {
     // Direct Enter dispatch for hidden pane hosts — bypasses pty-write IPC handler
     // to use the same direct daemonClient.write path as the working Enter button.
     ipcMain.removeHandler('pane-host-dispatch-enter');
-    ipcMain.handle('pane-host-dispatch-enter', (_event, paneId) => {
-      const id = String(paneId || '').trim();
-      if (!id) {
-        return { success: false, reason: 'missing_pane_id' };
-      }
-      const dc = this.ctx.daemonClient;
-      if (!dc || !dc.connected) {
-        return { success: false, reason: 'daemon_not_connected', paneId: id };
-      }
-      dc.write(id, '\r');
-      return { success: true, paneId: id };
-    });
+    ipcMain.handle('pane-host-dispatch-enter', (_event, paneId) => this.dispatchPaneHostEnter(paneId));
 
     // Recovery
     this.ctx.setRecoveryManager(this.initRecoveryManager());
@@ -2238,7 +2328,9 @@ class SquidRunApp {
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send(`pty-exit-${paneId}`, code);
       }
-      this.sendPaneHostMessage(paneId, 'pane-host:pty-exit', { paneId, code });
+      if (this.isHiddenPaneHostModeEnabled()) {
+        this.paneHostWindowManager.sendToPaneWindow(String(paneId), `pty-exit-${paneId}`, code);
+      }
     };
 
     this.attachDaemonClientListener('data', (paneId, data) => {
@@ -2265,7 +2357,9 @@ class SquidRunApp {
       if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
         this.ctx.mainWindow.webContents.send(`pty-data-${paneId}`, data);
       }
-      this.sendPaneHostMessage(paneId, 'pane-host:pty-data', { paneId, data });
+      if (this.isHiddenPaneHostModeEnabled()) {
+        this.paneHostWindowManager.sendToPaneWindow(String(paneId), `pty-data-${paneId}`, data);
+      }
 
       if (data.includes('Error') || data.includes('error:') || data.includes('FAILED')) {
         this.activity.logActivity('error', paneId, 'Terminal error detected', { snippet: data.substring(0, 200) }
@@ -2473,29 +2567,10 @@ class SquidRunApp {
     if (this.triggerAckForwarderRegistered) return;
     this.triggerAckForwarderRegistered = true;
     ipcMain.on('trigger-delivery-ack', (event, data) => {
-      if (data?.deliveryId) triggers.handleDeliveryAck(data.deliveryId, data.paneId);
+      this.handleTriggerDeliveryAck(data);
     });
     ipcMain.on('trigger-delivery-outcome', (event, data) => {
-      if (data?.deliveryId) triggers.handleDeliveryOutcome(data.deliveryId, data.paneId, data);
-      const statusLower = String(data?.status || '').toLowerCase();
-      const isUnverified = (
-        data?.verified === false
-        || statusLower.includes('unverified')
-        || statusLower === 'delivered.enter_sent'
-      );
-      if (isUnverified) {
-        const paneId = String(data?.paneId || 'unknown');
-        const status = data?.status || 'accepted.unverified';
-        const reason = data?.reason || 'verification_unavailable';
-        const warning = `Delivery remained unverified for pane ${paneId} (${status}${reason ? `: ${reason}` : ''})`;
-        log.warn('Delivery', warning);
-        this.activity.logActivity('warning', paneId, warning, {
-          subsystem: 'delivery-verification',
-          deliveryId: data?.deliveryId || null,
-          status,
-          reason,
-        });
-      }
+      this.handleTriggerDeliveryOutcome(data);
     });
   }
 

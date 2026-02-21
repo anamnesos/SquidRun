@@ -3,11 +3,9 @@
  * Target: Full coverage of modules/terminal/recovery.js
  */
 
-// Mock electron
-jest.mock('electron', () => ({
-  ipcRenderer: {
-    invoke: jest.fn().mockResolvedValue(undefined),
-  },
+// Mock renderer bridge
+jest.mock('../modules/renderer-bridge', () => ({
+  invokeBridge: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Mock logger
@@ -17,7 +15,7 @@ jest.mock('../modules/logger', () => ({
   error: jest.fn(),
 }));
 
-const { ipcRenderer } = require('electron');
+const { invokeBridge } = require('../modules/renderer-bridge');
 const log = require('../modules/logger');
 const { createRecoveryController } = require('../modules/terminal/recovery');
 
@@ -48,6 +46,7 @@ describe('Terminal Recovery Controller', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
+    invokeBridge.mockResolvedValue(undefined);
 
     terminals = new Map();
     lastOutputTime = {};
@@ -323,24 +322,22 @@ describe('Terminal Recovery Controller', () => {
       const result = await controller.interruptPane('1');
 
       expect(result).toBe(true);
-      expect(ipcRenderer.invoke).toHaveBeenCalledWith('interrupt-pane', '1');
+      expect(invokeBridge).toHaveBeenCalledWith('interrupt-pane', '1');
       expect(log.info).toHaveBeenCalledWith('Terminal', 'Interrupt sent to pane 1');
     });
 
-    test('falls back to PTY write if no ipcRenderer', async () => {
-      const originalInvoke = ipcRenderer.invoke;
-      ipcRenderer.invoke = undefined;
+    test('falls back to PTY write if bridge invoke fails', async () => {
+      invokeBridge.mockRejectedValueOnce(new Error('No bridge'));
 
       const result = await controller.interruptPane('1');
 
       expect(result).toBe(true);
       expect(mockPty.write).toHaveBeenCalledWith('1', '\x03');
-
-      ipcRenderer.invoke = originalInvoke;
     });
 
     test('handles PTY interrupt failure', async () => {
-      ipcRenderer.invoke.mockRejectedValueOnce(new Error('IPC error'));
+      invokeBridge.mockRejectedValueOnce(new Error('IPC error'));
+      mockPty.write.mockRejectedValueOnce(new Error('PTY error'));
 
       const result = await controller.interruptPane('1');
 
@@ -426,7 +423,7 @@ describe('Terminal Recovery Controller', () => {
       await controller.unstickEscalation('1');
 
       expect(log.info).toHaveBeenCalledWith('Unstick', 'Pane 1: interrupt');
-      expect(ipcRenderer.invoke).toHaveBeenCalledWith('interrupt-pane', '1');
+      expect(invokeBridge).toHaveBeenCalledWith('interrupt-pane', '1');
     });
 
     test('third call restarts', async () => {
@@ -639,7 +636,7 @@ describe('Terminal Recovery Controller', () => {
     test('converts pane ID to string consistently', async () => {
       await controller.interruptPane(1); // numeric
 
-      expect(ipcRenderer.invoke).toHaveBeenCalledWith('interrupt-pane', '1');
+      expect(invokeBridge).toHaveBeenCalledWith('interrupt-pane', '1');
     });
 
     test('handles concurrent stuck panes', async () => {

@@ -4,7 +4,7 @@
  * Gallery view: shows all generated images, newest first
  */
 
-const { ipcRenderer } = require('electron');
+const { invokeBridge } = require('../renderer-bridge');
 const log = require('../logger');
 const { escapeHtml } = require('./utils');
 const { registerScopedIpcListener } = require('../renderer-ipc-registry');
@@ -22,7 +22,7 @@ async function loadGallery() {
   if (!galleryList) return;
 
   try {
-    const images = await ipcRenderer.invoke('oracle:listImages');
+    const images = await invokeBridge('oracle:listImages');
     if (!images || images.length === 0) {
       galleryList.innerHTML = '<div class="oracle-gallery-empty">No images yet</div>';
       return;
@@ -76,7 +76,7 @@ async function loadGallery() {
         const imagePath = item?.dataset.path;
         if (!imagePath) return;
         try {
-          await ipcRenderer.invoke('oracle:deleteImage', imagePath);
+          await invokeBridge('oracle:deleteImage', imagePath);
           item.remove();
           // If gallery is now empty, show placeholder
           if (galleryList.children.length === 0) {
@@ -159,7 +159,7 @@ function setupOracleTab(updateStatusFn) {
   const resultsEl = document.getElementById('oracleResults');
 
   // Fetch initial feature capabilities
-  ipcRenderer.invoke('get-feature-capabilities').then(caps => {
+  invokeBridge('get-feature-capabilities').then(caps => {
     if (caps) applyImageGenCapability(generateBtn, caps);
   }).catch(() => {});
 
@@ -182,7 +182,7 @@ function setupOracleTab(updateStatusFn) {
       if (resultsEl) resultsEl.innerHTML = '<div class="oracle-loading">Generating image...</div>';
 
       try {
-        const result = await ipcRenderer.invoke('oracle:generateImage', {
+        const result = await invokeBridge('oracle:generateImage', {
           prompt,
           style: styleSelect?.value || 'realistic_image',
           size: sizeSelect?.value || '1024x1024',

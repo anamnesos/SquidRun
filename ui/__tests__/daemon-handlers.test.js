@@ -4,12 +4,10 @@
  */
 
 // Mock dependencies before requiring the module
-jest.mock('electron', () => ({
-  ipcRenderer: {
-    on: jest.fn(),
-    invoke: jest.fn().mockResolvedValue({}),
-    send: jest.fn(),
-  },
+jest.mock('../modules/renderer-bridge', () => ({
+  invokeBridge: jest.fn().mockResolvedValue({}),
+  sendBridge: jest.fn(),
+  onBridge: jest.fn(() => jest.fn()),
 }));
 
 // Mock config
@@ -108,7 +106,7 @@ const mockDocument = {
 global.document = mockDocument;
 global.confirm = jest.fn().mockReturnValue(true);
 
-const { ipcRenderer } = require('electron');
+const { invokeBridge, sendBridge, onBridge } = require('../modules/renderer-bridge');
 const daemonHandlers = require('../modules/daemon-handlers');
 const uiView = require('../modules/ui-view');
 const notifications = require('../modules/notifications');
@@ -250,10 +248,10 @@ describe('daemon-handlers.js module', () => {
         onTerminalsReadyFn
       );
 
-      expect(ipcRenderer.on).toHaveBeenCalledWith('daemon-connected', expect.any(Function));
-      expect(ipcRenderer.on).toHaveBeenCalledWith('daemon-reconnected', expect.any(Function));
-      expect(ipcRenderer.on).toHaveBeenCalledWith('daemon-disconnected', expect.any(Function));
-      expect(ipcRenderer.on).toHaveBeenCalledWith('inject-message', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('daemon-connected', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('daemon-reconnected', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('daemon-disconnected', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('inject-message', expect.any(Function));
     });
   });
 
@@ -261,89 +259,89 @@ describe('daemon-handlers.js module', () => {
     test('should register claude-state-changed listener', () => {
       const handleTimerFn = jest.fn();
       daemonHandlers.setupClaudeStateListener(handleTimerFn);
-      expect(ipcRenderer.on).toHaveBeenCalledWith('claude-state-changed', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('claude-state-changed', expect.any(Function));
     });
   });
 
   describe('setupCostAlertListener', () => {
     test('should register cost-alert listener', () => {
       daemonHandlers.setupCostAlertListener();
-      expect(ipcRenderer.on).toHaveBeenCalledWith('cost-alert', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('cost-alert', expect.any(Function));
     });
   });
 
   describe('setupProjectListener', () => {
     test('should register project-changed listener', () => {
       daemonHandlers.setupProjectListener();
-      expect(ipcRenderer.on).toHaveBeenCalledWith('project-changed', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('project-changed', expect.any(Function));
     });
   });
 
   describe('setupAutoTriggerListener', () => {
     test('should register auto-trigger listener', () => {
       daemonHandlers.setupAutoTriggerListener();
-      expect(ipcRenderer.on).toHaveBeenCalledWith('auto-trigger', expect.any(Function));
-      expect(ipcRenderer.on).toHaveBeenCalledWith('completion-detected', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('auto-trigger', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('completion-detected', expect.any(Function));
     });
   });
 
   describe('setupHandoffListener', () => {
     test('should register handoff listeners', () => {
       daemonHandlers.setupHandoffListener();
-      expect(ipcRenderer.on).toHaveBeenCalledWith('task-handoff', expect.any(Function));
-      expect(ipcRenderer.on).toHaveBeenCalledWith('auto-handoff', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('task-handoff', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('auto-handoff', expect.any(Function));
     });
   });
 
   describe('setupConflictResolutionListener', () => {
     test('should register conflict listeners', () => {
       daemonHandlers.setupConflictResolutionListener();
-      expect(ipcRenderer.on).toHaveBeenCalledWith('file-conflict', expect.any(Function));
-      expect(ipcRenderer.on).toHaveBeenCalledWith('conflict-resolved', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('file-conflict', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('conflict-resolved', expect.any(Function));
     });
   });
 
   describe('setupRollbackListener', () => {
     test('should register rollback listeners', () => {
       daemonHandlers.setupRollbackListener();
-      expect(ipcRenderer.on).toHaveBeenCalledWith('rollback-available', expect.any(Function));
-      expect(ipcRenderer.on).toHaveBeenCalledWith('rollback-cleared', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('rollback-available', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('rollback-cleared', expect.any(Function));
     });
   });
 
   describe('loadInitialAgentTasks', () => {
     test('should load state and update tasks', async () => {
-      ipcRenderer.invoke.mockResolvedValueOnce({
+      invokeBridge.mockResolvedValueOnce({
         agent_claims: { '1': 'Test task' },
       });
 
       await daemonHandlers.loadInitialAgentTasks();
 
-      expect(ipcRenderer.invoke).toHaveBeenCalledWith('get-state');
+      expect(invokeBridge).toHaveBeenCalledWith('get-state');
       expect(uiView.updateAgentTasks).toHaveBeenCalledWith({ '1': 'Test task' });
     });
 
     test('should handle errors gracefully', async () => {
-      ipcRenderer.invoke.mockRejectedValueOnce(new Error('Failed'));
+      invokeBridge.mockRejectedValueOnce(new Error('Failed'));
       await expect(daemonHandlers.loadInitialAgentTasks()).resolves.not.toThrow();
     });
   });
 
   describe('loadPaneProjects', () => {
     test('should load and update pane projects', async () => {
-      ipcRenderer.invoke.mockResolvedValueOnce({
+      invokeBridge.mockResolvedValueOnce({
         success: true,
         paneProjects: { '1': '/project1' },
       });
 
       await daemonHandlers.loadPaneProjects();
 
-      expect(ipcRenderer.invoke).toHaveBeenCalledWith('get-all-pane-projects');
+      expect(invokeBridge).toHaveBeenCalledWith('get-all-pane-projects');
       expect(uiView.updatePaneProject).toHaveBeenCalledWith('1', '/project1');
     });
 
     test('should handle errors gracefully', async () => {
-      ipcRenderer.invoke.mockRejectedValueOnce(new Error('Failed'));
+      invokeBridge.mockRejectedValueOnce(new Error('Failed'));
       await expect(daemonHandlers.loadPaneProjects()).resolves.not.toThrow();
     });
   });
@@ -438,8 +436,8 @@ describe('daemon-handlers.js module', () => {
     test('should initialize UI and register listeners', () => {
       daemonHandlers.setupSyncIndicator();
       expect(uiView.init).toHaveBeenCalled();
-      expect(ipcRenderer.on).toHaveBeenCalledWith('sync-file-changed', expect.any(Function));
-      expect(ipcRenderer.on).toHaveBeenCalledWith('sync-triggered', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('sync-file-changed', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('sync-triggered', expect.any(Function));
     });
   });
 
@@ -448,7 +446,7 @@ describe('daemon-handlers.js module', () => {
 
     beforeEach(() => {
       ipcHandlers = {};
-      ipcRenderer.on.mockImplementation((channel, handler) => {
+      onBridge.mockImplementation((channel, handler) => {
         ipcHandlers[channel] = handler;
       });
     });
@@ -471,7 +469,7 @@ describe('daemon-handlers.js module', () => {
           onTerminalsReadyFn
         );
 
-        ipcRenderer.invoke.mockResolvedValueOnce({ autoSpawn: true, autonomyConsentGiven: true });
+        invokeBridge.mockResolvedValueOnce({ autoSpawn: true, autonomyConsentGiven: true });
         const now = Date.now();
 
         const data = {
@@ -503,7 +501,7 @@ describe('daemon-handlers.js module', () => {
           onTerminalsReadyFn
         );
 
-        ipcRenderer.invoke.mockResolvedValueOnce({ autoSpawn: true, autonomyConsentGiven: true });
+        invokeBridge.mockResolvedValueOnce({ autoSpawn: true, autonomyConsentGiven: true });
         const now = Date.now();
 
         const data = {
@@ -567,29 +565,29 @@ describe('daemon-handlers.js module', () => {
 
       test('should update task lifecycle on completion when pane has claim', async () => {
         daemonHandlers.setupAutoTriggerListener();
-        ipcRenderer.invoke
+        invokeBridge
           .mockResolvedValueOnce({ '1': { taskId: 'T-99' } }) // get-claims
           .mockResolvedValueOnce({ success: true }) // update-task-status
           .mockResolvedValueOnce({ success: true }); // release-agent
 
         await ipcHandlers['completion-detected']({}, { paneId: '1', pattern: 'done' });
 
-        expect(ipcRenderer.invoke).toHaveBeenCalledWith('get-claims');
-        expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+        expect(invokeBridge).toHaveBeenCalledWith('get-claims');
+        expect(invokeBridge).toHaveBeenCalledWith(
           'update-task-status',
           expect.objectContaining({
             taskId: 'T-99',
             status: 'completed',
           })
         );
-        expect(ipcRenderer.invoke).toHaveBeenCalledWith('release-agent', '1');
+        expect(invokeBridge).toHaveBeenCalledWith('release-agent', '1');
       });
     });
 
     describe('Throttle Queue UI Side Effects', () => {
       test('should flash pane header via uiView', () => {
         let injectHandler;
-        ipcRenderer.on.mockImplementation((channel, handler) => {
+        onBridge.mockImplementation((channel, handler) => {
           if (channel === 'inject-message') injectHandler = handler;
         });
         daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
@@ -600,7 +598,7 @@ describe('daemon-handlers.js module', () => {
 
       test('should forward traceContext from inject-message to terminal.sendToPane', () => {
         let injectHandler;
-        ipcRenderer.on.mockImplementation((channel, handler) => {
+        onBridge.mockImplementation((channel, handler) => {
           if (channel === 'inject-message') injectHandler = handler;
         });
         daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
@@ -631,7 +629,7 @@ describe('daemon-handlers.js module', () => {
 
       test('enables hm-send fast Enter path when trace context carries hm-send message id', () => {
         let injectHandler;
-        ipcRenderer.on.mockImplementation((channel, handler) => {
+        onBridge.mockImplementation((channel, handler) => {
           if (channel === 'inject-message') injectHandler = handler;
         });
         daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
@@ -658,7 +656,7 @@ describe('daemon-handlers.js module', () => {
 
       test('should emit accepted.unverified outcome when terminal delivery is unverified (success=true)', () => {
         let injectHandler;
-        ipcRenderer.on.mockImplementation((channel, handler) => {
+        onBridge.mockImplementation((channel, handler) => {
           if (channel === 'inject-message') injectHandler = handler;
         });
         terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
@@ -672,7 +670,7 @@ describe('daemon-handlers.js module', () => {
         // Unverified but success=true means message was typed + Enter pressed = delivered.
         // We route as accepted.unverified to avoid inflating to delivered.verified ACK semantics.
         expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'delivered');
-        expect(ipcRenderer.send).toHaveBeenCalledWith(
+        expect(sendBridge).toHaveBeenCalledWith(
           'trigger-delivery-outcome',
           {
             deliveryId: 'delivery-unverified-1',
@@ -683,12 +681,12 @@ describe('daemon-handlers.js module', () => {
             reason: 'timeout',
           }
         );
-        expect(ipcRenderer.send).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-unverified-1', paneId: '3' });
+        expect(sendBridge).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-unverified-1', paneId: '3' });
       });
 
       test('should emit trigger-delivery-ack when terminal delivery is verified', () => {
         let injectHandler;
-        ipcRenderer.on.mockImplementation((channel, handler) => {
+        onBridge.mockImplementation((channel, handler) => {
           if (channel === 'inject-message') injectHandler = handler;
         });
         terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
@@ -700,7 +698,7 @@ describe('daemon-handlers.js module', () => {
         jest.runAllTimers();
 
         expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'delivered');
-        expect(ipcRenderer.send).toHaveBeenCalledWith('trigger-delivery-ack', {
+        expect(sendBridge).toHaveBeenCalledWith('trigger-delivery-ack', {
           deliveryId: 'delivery-verified-1',
           paneId: '3',
         });
@@ -708,7 +706,7 @@ describe('daemon-handlers.js module', () => {
 
       test('should emit accepted.unverified outcome when terminal reports submit_not_accepted', () => {
         let injectHandler;
-        ipcRenderer.on.mockImplementation((channel, handler) => {
+        onBridge.mockImplementation((channel, handler) => {
           if (channel === 'inject-message') injectHandler = handler;
         });
         terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
@@ -725,7 +723,7 @@ describe('daemon-handlers.js module', () => {
         jest.runAllTimers();
 
         expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'delivered');
-        expect(ipcRenderer.send).toHaveBeenCalledWith('trigger-delivery-outcome', {
+        expect(sendBridge).toHaveBeenCalledWith('trigger-delivery-outcome', {
           deliveryId: 'delivery-failed-1',
           paneId: '3',
           accepted: true,
@@ -733,12 +731,12 @@ describe('daemon-handlers.js module', () => {
           status: 'accepted.unverified',
           reason: 'submit_not_accepted',
         });
-        expect(ipcRenderer.send).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-failed-1', paneId: '3' });
+        expect(sendBridge).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-failed-1', paneId: '3' });
       });
 
       test('caps throttle queue depth to prevent unbounded growth', () => {
         let injectHandler;
-        ipcRenderer.on.mockImplementation((channel, handler) => {
+        onBridge.mockImplementation((channel, handler) => {
           if (channel === 'inject-message') injectHandler = handler;
         });
         terminal.sendToPane.mockImplementation(() => {

@@ -3,7 +3,7 @@
  * Extracted from terminal.js to isolate recovery logic.
  */
 
-const { ipcRenderer } = require('electron');
+const { invokeBridge } = require('../renderer-bridge');
 const log = require('../logger');
 const { BYPASS_CLEAR_DELAY_MS } = require('../constants');
 
@@ -183,14 +183,17 @@ function createRecoveryController(options = {}) {
   async function interruptPane(paneId) {
     const id = String(paneId);
     try {
-      if (ipcRenderer?.invoke) {
-        await ipcRenderer.invoke('interrupt-pane', id);
-      } else {
-        await window.squidrun.pty.write(id, '\x03');
-      }
+      await invokeBridge('interrupt-pane', id);
       log.info('Terminal', `Interrupt sent to pane ${id}`);
       return true;
     } catch (err) {
+      try {
+        if (window?.squidrun?.pty?.write) {
+          await window.squidrun.pty.write(id, '\x03');
+          log.info('Terminal', `Interrupt fallback (PTY write) sent to pane ${id}`);
+          return true;
+        }
+      } catch (_) {}
       log.error('Terminal', `Interrupt failed for pane ${id}:`, err);
       return false;
     }

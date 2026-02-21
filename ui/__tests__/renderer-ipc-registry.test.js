@@ -1,32 +1,35 @@
 describe('renderer-ipc-registry', () => {
-  function loadRegistry(ipcOverrides = {}) {
+  function loadRegistry(onBridgeImpl = null) {
     jest.resetModules();
-    const ipcRenderer = {
-      on: jest.fn(),
-      off: jest.fn(),
-      removeListener: jest.fn(),
-      ...ipcOverrides,
-    };
-    jest.doMock('electron', () => ({ ipcRenderer }));
+    const disposers = [];
+    const onBridge = jest.fn((channel, handler) => {
+      if (typeof onBridgeImpl === 'function') {
+        return onBridgeImpl(channel, handler);
+      }
+      const dispose = jest.fn();
+      disposers.push({ channel, handler, dispose });
+      return dispose;
+    });
+    jest.doMock('../modules/renderer-bridge', () => ({ onBridge }));
     const registry = require('../modules/renderer-ipc-registry');
-    return { ipcRenderer, registry };
+    return { onBridge, registry, disposers };
   }
 
   test('replaces existing listener for same scope and channel', () => {
-    const { ipcRenderer, registry } = loadRegistry();
+    const { onBridge, registry, disposers } = loadRegistry();
     const handlerA = jest.fn();
     const handlerB = jest.fn();
 
     registry.registerScopedIpcListener('scope-a', 'channel-a', handlerA);
     registry.registerScopedIpcListener('scope-a', 'channel-a', handlerB);
 
-    expect(ipcRenderer.on).toHaveBeenCalledTimes(2);
-    expect(ipcRenderer.off).toHaveBeenCalledTimes(1);
-    expect(ipcRenderer.off).toHaveBeenCalledWith('channel-a', handlerA);
+    expect(onBridge).toHaveBeenCalledTimes(2);
+    expect(disposers[0].dispose).toHaveBeenCalledTimes(1);
+    expect(disposers[1].dispose).not.toHaveBeenCalled();
   });
 
   test('clears only listeners in the requested scope', () => {
-    const { ipcRenderer, registry } = loadRegistry();
+    const { registry, disposers } = loadRegistry();
     const handlerA = jest.fn();
     const handlerB = jest.fn();
 
@@ -34,12 +37,12 @@ describe('renderer-ipc-registry', () => {
     registry.registerScopedIpcListener('scope-b', 'channel-b', handlerB);
     registry.clearScopedIpcListeners('scope-a');
 
-    expect(ipcRenderer.off).toHaveBeenCalledTimes(1);
-    expect(ipcRenderer.off).toHaveBeenCalledWith('channel-a', handlerA);
+    expect(disposers[0].dispose).toHaveBeenCalledTimes(1);
+    expect(disposers[1].dispose).not.toHaveBeenCalled();
   });
 
   test('clears all listeners when no scope is provided', () => {
-    const { ipcRenderer, registry } = loadRegistry();
+    const { registry, disposers } = loadRegistry();
     const handlerA = jest.fn();
     const handlerB = jest.fn();
 
@@ -47,21 +50,17 @@ describe('renderer-ipc-registry', () => {
     registry.registerScopedIpcListener('scope-b', 'channel-b', handlerB);
     registry.clearScopedIpcListeners();
 
-    expect(ipcRenderer.off).toHaveBeenCalledTimes(2);
-    expect(ipcRenderer.off).toHaveBeenCalledWith('channel-a', handlerA);
-    expect(ipcRenderer.off).toHaveBeenCalledWith('channel-b', handlerB);
+    expect(disposers[0].dispose).toHaveBeenCalledTimes(1);
+    expect(disposers[1].dispose).toHaveBeenCalledTimes(1);
   });
 
-  test('falls back to removeListener when off is unavailable', () => {
-    const removeListener = jest.fn();
-    const { registry } = loadRegistry({ off: undefined, removeListener });
+  test('is resilient when bridge returns non-function disposer', () => {
+    const { registry } = loadRegistry(() => null);
     const handlerA = jest.fn();
     const handlerB = jest.fn();
 
     registry.registerScopedIpcListener('scope-a', 'channel-a', handlerA);
-    registry.registerScopedIpcListener('scope-a', 'channel-a', handlerB);
-
-    expect(removeListener).toHaveBeenCalledTimes(1);
-    expect(removeListener).toHaveBeenCalledWith('channel-a', handlerA);
+    expect(() => registry.registerScopedIpcListener('scope-a', 'channel-a', handlerB)).not.toThrow();
+    expect(() => registry.clearScopedIpcListeners()).not.toThrow();
   });
 });

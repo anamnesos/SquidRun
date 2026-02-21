@@ -3,7 +3,7 @@
  * Live monitor for agent-to-agent and external channel comms.
  */
 
-const { ipcRenderer } = require('electron');
+const { invokeBridge } = require('../renderer-bridge');
 const { PANE_ROLES, SHORT_AGENT_NAMES, ROLE_ID_MAP } = require('../../config');
 const { escapeHtml } = require('./utils');
 
@@ -308,7 +308,7 @@ function normalizeJournalResult(result) {
 
 async function backfillFromJournal() {
   try {
-    const result = await ipcRenderer.invoke('evidence-ledger:query-comms-journal', {
+    const result = await invokeBridge('evidence-ledger:query-comms-journal', {
       limit: MAX_SCROLL_ENTRIES,
       order: 'desc',
     });
@@ -324,7 +324,7 @@ async function backfillFromJournal() {
 async function backfillByMessageId(messageId) {
   if (!messageId) return;
   try {
-    const result = await ipcRenderer.invoke('evidence-ledger:query-comms-journal', {
+    const result = await invokeBridge('evidence-ledger:query-comms-journal', {
       messageId,
       limit: 1,
       order: 'desc',

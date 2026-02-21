@@ -3,7 +3,7 @@
  * Status strip UI was removed; this module now maintains only session timer text.
  */
 
-const { ipcRenderer } = require('electron');
+const { invokeBridge } = require('./renderer-bridge');
 const log = require('./logger');
 
 // Session start time for duration tracking
@@ -52,7 +52,7 @@ function getClaimableTasksForPane(paneId) {
  */
 async function fetchTaskPool() {
   try {
-    const tasks = await ipcRenderer.invoke('get-task-list');
+    const tasks = await invokeBridge('get-task-list');
     if (Array.isArray(tasks)) {
       cachedTaskPool = { tasks };
     }

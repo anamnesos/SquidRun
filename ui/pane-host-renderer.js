@@ -1,15 +1,30 @@
-const { ipcRenderer } = require('electron');
-const { Terminal } = require('@xterm/xterm');
-const { FitAddon } = require('@xterm/addon-fit');
-
-function readPaneIdFromQuery() {
+function readPaneIdFromQuery(params) {
   try {
-    const params = new URLSearchParams(window.location.search || '');
     const paneId = params.get('paneId');
     return paneId ? String(paneId) : '1';
   } catch {
     return '1';
   }
+}
+
+function readPositiveIntFromQuery(params, key, fallback) {
+  try {
+    const raw = params.get(key);
+    const numeric = Number.parseInt(String(raw || ''), 10);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function detectDarwin() {
+  const platform = String(
+    navigator.userAgentData?.platform
+      || navigator.platform
+      || navigator.userAgent
+      || ''
+  ).toLowerCase();
+  return platform.includes('mac');
 }
 
 function toNonEmptyString(value) {
@@ -28,112 +43,6 @@ function isHmSendTraceContext(traceContext = null) {
   );
 }
 
-const paneId = readPaneIdFromQuery();
-const IS_DARWIN = process.platform === 'darwin';
-const DEFAULT_POST_ENTER_VERIFY_TIMEOUT_MS = IS_DARWIN ? 3000 : 4000;
-const DEFAULT_SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS = IS_DARWIN ? 250 : 350;
-const DEFAULT_SUBMIT_DEFER_MAX_WAIT_MS = IS_DARWIN ? 1200 : 2000;
-const DEFAULT_SUBMIT_DEFER_MAX_WAIT_LONG_MS = IS_DARWIN ? 3000 : 5000;
-const DEFAULT_SUBMIT_DEFER_POLL_MS = IS_DARWIN ? 50 : 100;
-const DEFAULT_LONG_PAYLOAD_BYTES = IS_DARWIN ? 2048 : 1024;
-const DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS = IS_DARWIN ? 700 : 800;
-const DEFAULT_MIN_ENTER_DELAY_MS = IS_DARWIN ? 150 : 500;
-const DEFAULT_CHUNK_THRESHOLD_BYTES = IS_DARWIN ? 4096 : 2048;
-const DEFAULT_CHUNK_SIZE_BYTES = IS_DARWIN ? 4096 : 2048;
-const TERMINAL_FONT_FAMILY = IS_DARWIN
-  ? "'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace"
-  : "'Consolas', 'Monaco', 'Courier New', monospace";
-let injectedScrollback = false;
-let injectChain = Promise.resolve();
-let ptyOutputTick = 0;
-let lastPtyOutputAtMs = 0;
-const pendingOutputWaiters = new Set();
-const POST_ENTER_VERIFY_TIMEOUT_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_VERIFY_TIMEOUT_MS || String(DEFAULT_POST_ENTER_VERIFY_TIMEOUT_MS),
-  10
-);
-const SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_ACTIVE_OUTPUT_WINDOW_MS || String(DEFAULT_SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS),
-  10
-);
-const SUBMIT_DEFER_MAX_WAIT_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_SUBMIT_DEFER_MAX_WAIT_MS || String(DEFAULT_SUBMIT_DEFER_MAX_WAIT_MS),
-  10
-);
-const SUBMIT_DEFER_MAX_WAIT_LONG_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_SUBMIT_DEFER_MAX_WAIT_LONG_MS || String(DEFAULT_SUBMIT_DEFER_MAX_WAIT_LONG_MS),
-  10
-);
-const SUBMIT_DEFER_POLL_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_SUBMIT_DEFER_POLL_MS || String(DEFAULT_SUBMIT_DEFER_POLL_MS),
-  10
-);
-const LONG_PAYLOAD_BYTES = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_LONG_PAYLOAD_BYTES || String(DEFAULT_LONG_PAYLOAD_BYTES),
-  10
-);
-const HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_HM_SEND_VERIFY_TIMEOUT_MS
-    || String(DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS),
-  10
-);
-const MIN_ENTER_DELAY_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_MIN_ENTER_DELAY_MS || String(DEFAULT_MIN_ENTER_DELAY_MS),
-  10
-);
-const CHUNK_THRESHOLD_BYTES = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_CHUNK_THRESHOLD_BYTES || String(DEFAULT_CHUNK_THRESHOLD_BYTES),
-  10
-);
-const CHUNK_SIZE_BYTES = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_CHUNK_SIZE_BYTES || String(DEFAULT_CHUNK_SIZE_BYTES),
-  10
-);
-const WRITE_TIMEOUT_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_WRITE_TIMEOUT_MS || '8000',
-  10
-);
-const ENTER_TIMEOUT_MS = Number.parseInt(
-  process.env.HIVEMIND_PANE_HOST_ENTER_TIMEOUT_MS || '5000',
-  10
-);
-
-const terminal = new Terminal({
-  theme: {
-    background: '#0a0a0f',
-    foreground: '#e8eaf0',
-    cursor: '#00f0ff',
-    cursorAccent: '#0a0a0f',
-    selection: 'rgba(0, 240, 255, 0.25)',
-  },
-  fontFamily: TERMINAL_FONT_FAMILY,
-  fontSize: 13,
-  cursorBlink: true,
-  cursorStyle: 'block',
-  scrollback: 3000,
-  rightClickSelectsWord: true,
-  allowProposedApi: true,
-});
-
-const fitAddon = new FitAddon();
-terminal.loadAddon(fitAddon);
-terminal.open(document.getElementById('paneHostTerminal'));
-fitAddon.fit();
-terminal.focus();
-
-window.addEventListener('resize', () => {
-  try {
-    fitAddon.fit();
-  } catch {
-    // Best-effort only.
-  }
-});
-
-// Hidden host must NOT echo xterm responses back to PTY.
-// Both visible + hidden xterms receive the same escape sequences (e.g. DSR \e[6n).
-// If both respond, the PTY gets doubled responses → malformed/doubled output.
-// Injection uses pty.write() and dispatch-enter directly — onData is not needed here.
-
 function stripInternalRoutingWrappers(value) {
   if (typeof value !== 'string') return '';
   let clean = value;
@@ -144,36 +53,6 @@ function stripInternalRoutingWrappers(value) {
     clean = next;
   }
   return clean;
-}
-
-function waitForPtyOutputAfter(baselineTick, timeoutMs = POST_ENTER_VERIFY_TIMEOUT_MS) {
-  if (ptyOutputTick > baselineTick) return Promise.resolve(true);
-  const maxWaitMs = Number.isFinite(timeoutMs) && timeoutMs > 0
-    ? timeoutMs
-    : DEFAULT_POST_ENTER_VERIFY_TIMEOUT_MS;
-
-  return new Promise((resolve) => {
-    const waiter = {
-      baselineTick,
-      resolve,
-      timeoutId: null,
-    };
-    waiter.timeoutId = setTimeout(() => {
-      pendingOutputWaiters.delete(waiter);
-      resolve(false);
-    }, maxWaitMs);
-    pendingOutputWaiters.add(waiter);
-  });
-}
-
-function resolveOutputWaiters() {
-  if (pendingOutputWaiters.size === 0) return;
-  for (const waiter of Array.from(pendingOutputWaiters)) {
-    if (ptyOutputTick <= waiter.baselineTick) continue;
-    pendingOutputWaiters.delete(waiter);
-    clearTimeout(waiter.timeoutId);
-    waiter.resolve(true);
-  }
 }
 
 function sleep(ms) {
@@ -198,188 +77,387 @@ function withTimeout(promise, timeoutMs, label) {
   });
 }
 
-function paneHasRecentOutput(windowMs = SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS) {
-  const activeWindowMs = Number.isFinite(windowMs) && windowMs > 0
-    ? windowMs
-    : DEFAULT_SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS;
-  if (!lastPtyOutputAtMs) return false;
-  return (Date.now() - lastPtyOutputAtMs) <= activeWindowMs;
+function getUtf8ByteLength(value) {
+  const text = typeof value === 'string' ? value : String(value || '');
+  if (typeof TextEncoder === 'function') {
+    return new TextEncoder().encode(text).length;
+  }
+  return text.length;
 }
 
-async function deferSubmitWhilePaneActive(maxWaitMs = SUBMIT_DEFER_MAX_WAIT_MS) {
-  const deferMaxWaitMs = Number.isFinite(maxWaitMs) && maxWaitMs > 0
-    ? maxWaitMs
-    : DEFAULT_SUBMIT_DEFER_MAX_WAIT_MS;
-  const pollMs = Math.max(
-    25,
-    Number.isFinite(SUBMIT_DEFER_POLL_MS) ? SUBMIT_DEFER_POLL_MS : DEFAULT_SUBMIT_DEFER_POLL_MS
-  );
-  const start = Date.now();
+(function bootPaneHost() {
+  const params = new URLSearchParams(window.location.search || '');
+  const paneId = readPaneIdFromQuery(params);
+  const isDarwin = detectDarwin();
+  const api = window.squidrun || window.hivemind;
+  const TerminalCtor = window.Terminal;
+  const FitAddonCtor = window.FitAddon && window.FitAddon.FitAddon;
 
-  while (paneHasRecentOutput() && (Date.now() - start) < deferMaxWaitMs) {
-    await sleep(pollMs);
+  if (!api?.pty || !api?.paneHost?.inject) {
+    console.error(`[PaneHost] Missing preload bridge for pane ${paneId}`);
+    return;
+  }
+  if (!TerminalCtor || !FitAddonCtor) {
+    console.error(`[PaneHost] Missing xterm globals for pane ${paneId}`);
+    return;
   }
 
-  const waitedMs = Math.max(0, Date.now() - start);
-  return {
-    waitedMs,
-    forcedExpire: paneHasRecentOutput(),
-  };
-}
+  const DEFAULT_POST_ENTER_VERIFY_TIMEOUT_MS = isDarwin ? 3000 : 4000;
+  const DEFAULT_SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS = isDarwin ? 250 : 350;
+  const DEFAULT_SUBMIT_DEFER_MAX_WAIT_MS = isDarwin ? 1200 : 2000;
+  const DEFAULT_SUBMIT_DEFER_MAX_WAIT_LONG_MS = isDarwin ? 3000 : 5000;
+  const DEFAULT_SUBMIT_DEFER_POLL_MS = isDarwin ? 50 : 100;
+  const DEFAULT_LONG_PAYLOAD_BYTES = isDarwin ? 2048 : 1024;
+  const DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS = isDarwin ? 700 : 800;
+  const DEFAULT_MIN_ENTER_DELAY_MS = isDarwin ? 150 : 500;
+  const DEFAULT_CHUNK_THRESHOLD_BYTES = isDarwin ? 4096 : 2048;
+  const DEFAULT_CHUNK_SIZE_BYTES = isDarwin ? 4096 : 2048;
 
-async function injectMessage(payload = {}) {
-  const text = stripInternalRoutingWrappers(String(payload.message || ''));
-  const deliveryId = payload.deliveryId || null;
-  const traceContext = payload.traceContext || null;
-  const hmSendTrace = isHmSendTraceContext(traceContext);
+  const POST_ENTER_VERIFY_TIMEOUT_MS = readPositiveIntFromQuery(
+    params,
+    'verifyTimeoutMs',
+    DEFAULT_POST_ENTER_VERIFY_TIMEOUT_MS
+  );
+  const SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS = readPositiveIntFromQuery(
+    params,
+    'activeOutputWindowMs',
+    DEFAULT_SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS
+  );
+  const SUBMIT_DEFER_MAX_WAIT_MS = readPositiveIntFromQuery(
+    params,
+    'submitDeferMaxWaitMs',
+    DEFAULT_SUBMIT_DEFER_MAX_WAIT_MS
+  );
+  const SUBMIT_DEFER_MAX_WAIT_LONG_MS = readPositiveIntFromQuery(
+    params,
+    'submitDeferMaxWaitLongMs',
+    DEFAULT_SUBMIT_DEFER_MAX_WAIT_LONG_MS
+  );
+  const SUBMIT_DEFER_POLL_MS = readPositiveIntFromQuery(
+    params,
+    'submitDeferPollMs',
+    DEFAULT_SUBMIT_DEFER_POLL_MS
+  );
+  const LONG_PAYLOAD_BYTES = readPositiveIntFromQuery(
+    params,
+    'longPayloadBytes',
+    DEFAULT_LONG_PAYLOAD_BYTES
+  );
+  const HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS = readPositiveIntFromQuery(
+    params,
+    'hmSendVerifyTimeoutMs',
+    DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS
+  );
+  const MIN_ENTER_DELAY_MS = readPositiveIntFromQuery(
+    params,
+    'minEnterDelayMs',
+    DEFAULT_MIN_ENTER_DELAY_MS
+  );
+  const CHUNK_THRESHOLD_BYTES = readPositiveIntFromQuery(
+    params,
+    'chunkThresholdBytes',
+    DEFAULT_CHUNK_THRESHOLD_BYTES
+  );
+  const CHUNK_SIZE_BYTES = readPositiveIntFromQuery(
+    params,
+    'chunkSizeBytes',
+    DEFAULT_CHUNK_SIZE_BYTES
+  );
+  const WRITE_TIMEOUT_MS = readPositiveIntFromQuery(params, 'writeTimeoutMs', 8000);
+  const ENTER_TIMEOUT_MS = readPositiveIntFromQuery(params, 'enterTimeoutMs', 5000);
 
-  try {
-    // Use chunked write for large payloads to prevent PTY pipe truncation.
-    const chunkThreshold = Number.isFinite(CHUNK_THRESHOLD_BYTES) && CHUNK_THRESHOLD_BYTES > 0
-      ? CHUNK_THRESHOLD_BYTES
-      : DEFAULT_CHUNK_THRESHOLD_BYTES;
-    const chunkSize = Number.isFinite(CHUNK_SIZE_BYTES) && CHUNK_SIZE_BYTES > 0
-      ? CHUNK_SIZE_BYTES
-      : DEFAULT_CHUNK_SIZE_BYTES;
-    if (text.length > chunkThreshold && window.squidrun.pty.writeChunked) {
-      const chunkedResult = await withTimeout(
-        window.squidrun.pty.writeChunked(paneId, text, { chunkSize }, traceContext || null),
-        WRITE_TIMEOUT_MS,
-        'pane-host writeChunked'
-      );
-      if (chunkedResult && chunkedResult.success === false) {
-        throw new Error(chunkedResult.error || 'writeChunked returned failure');
-      }
-    } else {
-      await withTimeout(
-        window.squidrun.pty.write(paneId, text, traceContext || null),
-        WRITE_TIMEOUT_MS,
-        'pane-host write'
-      );
+  const TERMINAL_FONT_FAMILY = isDarwin
+    ? "'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace"
+    : "'Consolas', 'Monaco', 'Courier New', monospace";
+
+  let injectedScrollback = false;
+  let injectChain = Promise.resolve();
+  let ptyOutputTick = 0;
+  let lastPtyOutputAtMs = 0;
+  const pendingOutputWaiters = new Set();
+
+  const terminal = new TerminalCtor({
+    theme: {
+      background: '#0a0a0f',
+      foreground: '#e8eaf0',
+      cursor: '#00f0ff',
+      cursorAccent: '#0a0a0f',
+      selection: 'rgba(0, 240, 255, 0.25)',
+    },
+    fontFamily: TERMINAL_FONT_FAMILY,
+    fontSize: 13,
+    cursorBlink: true,
+    cursorStyle: 'block',
+    scrollback: 3000,
+    rightClickSelectsWord: true,
+    allowProposedApi: true,
+  });
+
+  const terminalRoot = document.getElementById('paneHostTerminal');
+  if (!terminalRoot) {
+    console.error(`[PaneHost] Missing terminal root for pane ${paneId}`);
+    return;
+  }
+
+  const fitAddon = new FitAddonCtor();
+  terminal.loadAddon(fitAddon);
+  terminal.open(terminalRoot);
+  fitAddon.fit();
+  terminal.focus();
+
+  window.addEventListener('resize', () => {
+    try {
+      fitAddon.fit();
+    } catch {
+      // Best-effort only.
     }
-    // Minimum wait for the PTY to process pasted text before sending Enter.
-    // Without this, Enter fires before text reaches the CLI (ConPTY round-trip latency).
-    const minDelay = Math.max(
-      100,
-      Number.isFinite(MIN_ENTER_DELAY_MS) ? MIN_ENTER_DELAY_MS : DEFAULT_MIN_ENTER_DELAY_MS
-    );
-    await sleep(minDelay);
-    // Then wait for output activity to settle.
-    const payloadBytes = typeof Buffer !== 'undefined'
-      ? Buffer.byteLength(text, 'utf8')
-      : text.length;
-    const isLongPayload = payloadBytes >= Math.max(
-      1,
-      Number.isFinite(LONG_PAYLOAD_BYTES) ? LONG_PAYLOAD_BYTES : DEFAULT_LONG_PAYLOAD_BYTES
-    );
-    const deferMaxWaitMs = isLongPayload
-      ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, SUBMIT_DEFER_MAX_WAIT_LONG_MS)
-      : SUBMIT_DEFER_MAX_WAIT_MS;
-    const deferResult = await deferSubmitWhilePaneActive(deferMaxWaitMs);
-    if (deferResult.forcedExpire) {
-      console.warn(
-        `[PaneHost] Submit defer window expired for pane ${paneId} after ${deferResult.waitedMs}ms; `
-        + 'sending Enter while output is still active'
-      );
-    }
-    // Submit via dedicated main-process Enter dispatch — bypasses pty-write IPC
-    // to use the same direct daemonClient.write('\r') path as the working Enter button.
-    const outputBaseline = ptyOutputTick;
-    const enterResult = await withTimeout(
-      ipcRenderer.invoke('pane-host-dispatch-enter', paneId),
-      ENTER_TIMEOUT_MS,
-      'pane-host dispatch-enter'
-    );
-    if (!enterResult || !enterResult.success) {
-      console.error(
-        `[PaneHost] pane-host-dispatch-enter FAILED for pane ${paneId}:`,
-        enterResult?.reason || 'unknown'
-      );
-    }
-    const postEnterVerifyTimeoutMs = hmSendTrace
-      ? Math.max(
-        200,
-        Number.isFinite(HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS)
-          ? HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS
-          : DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS
-      )
-      : POST_ENTER_VERIFY_TIMEOUT_MS;
-    const outputObserved = await waitForPtyOutputAfter(outputBaseline, postEnterVerifyTimeoutMs);
+  });
 
-    const treatAsDelivered = Boolean(outputObserved || (hmSendTrace && enterResult?.success));
+  function waitForPtyOutputAfter(baselineTick, timeoutMs = POST_ENTER_VERIFY_TIMEOUT_MS) {
+    if (ptyOutputTick > baselineTick) return Promise.resolve(true);
+    const maxWaitMs = Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
+      : DEFAULT_POST_ENTER_VERIFY_TIMEOUT_MS;
 
-    if (deliveryId) {
-      if (treatAsDelivered) {
-        ipcRenderer.send('trigger-delivery-ack', { deliveryId, paneId });
+    return new Promise((resolve) => {
+      const waiter = {
+        baselineTick,
+        resolve,
+        timeoutId: null,
+      };
+      waiter.timeoutId = setTimeout(() => {
+        pendingOutputWaiters.delete(waiter);
+        resolve(false);
+      }, maxWaitMs);
+      pendingOutputWaiters.add(waiter);
+    });
+  }
+
+  function resolveOutputWaiters() {
+    if (pendingOutputWaiters.size === 0) return;
+    for (const waiter of Array.from(pendingOutputWaiters)) {
+      if (ptyOutputTick <= waiter.baselineTick) continue;
+      pendingOutputWaiters.delete(waiter);
+      clearTimeout(waiter.timeoutId);
+      waiter.resolve(true);
+    }
+  }
+
+  function paneHasRecentOutput(windowMs = SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS) {
+    const activeWindowMs = Number.isFinite(windowMs) && windowMs > 0
+      ? windowMs
+      : DEFAULT_SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS;
+    if (!lastPtyOutputAtMs) return false;
+    return (Date.now() - lastPtyOutputAtMs) <= activeWindowMs;
+  }
+
+  async function deferSubmitWhilePaneActive(maxWaitMs = SUBMIT_DEFER_MAX_WAIT_MS) {
+    const deferMaxWaitMs = Number.isFinite(maxWaitMs) && maxWaitMs > 0
+      ? maxWaitMs
+      : DEFAULT_SUBMIT_DEFER_MAX_WAIT_MS;
+    const pollMs = Math.max(
+      25,
+      Number.isFinite(SUBMIT_DEFER_POLL_MS) ? SUBMIT_DEFER_POLL_MS : DEFAULT_SUBMIT_DEFER_POLL_MS
+    );
+    const start = Date.now();
+
+    while (paneHasRecentOutput() && (Date.now() - start) < deferMaxWaitMs) {
+      await sleep(pollMs);
+    }
+
+    const waitedMs = Math.max(0, Date.now() - start);
+    return {
+      waitedMs,
+      forcedExpire: paneHasRecentOutput(),
+    };
+  }
+
+  function sendPaneHostAction(action, payload = {}) {
+    return api.paneHost.inject(paneId, {
+      action,
+      ...payload,
+    });
+  }
+
+  function reportDeliveryAck(deliveryId) {
+    if (!deliveryId) return;
+    sendPaneHostAction('delivery-ack', { deliveryId }).catch((err) => {
+      console.error(`[PaneHost] Failed to report delivery ack for pane ${paneId}:`, err?.message || err);
+    });
+  }
+
+  function reportDeliveryOutcome(payload = {}) {
+    sendPaneHostAction('delivery-outcome', payload).catch((err) => {
+      console.error(`[PaneHost] Failed to report delivery outcome for pane ${paneId}:`, err?.message || err);
+    });
+  }
+
+  async function injectMessage(payload = {}) {
+    const text = stripInternalRoutingWrappers(String(payload.message || ''));
+    const deliveryId = payload.deliveryId || null;
+    const traceContext = payload.traceContext || null;
+    const hmSendTrace = isHmSendTraceContext(traceContext);
+
+    try {
+      // Use chunked write for large payloads to prevent PTY pipe truncation.
+      const chunkThreshold = Number.isFinite(CHUNK_THRESHOLD_BYTES) && CHUNK_THRESHOLD_BYTES > 0
+        ? CHUNK_THRESHOLD_BYTES
+        : DEFAULT_CHUNK_THRESHOLD_BYTES;
+      const chunkSize = Number.isFinite(CHUNK_SIZE_BYTES) && CHUNK_SIZE_BYTES > 0
+        ? CHUNK_SIZE_BYTES
+        : DEFAULT_CHUNK_SIZE_BYTES;
+      if (text.length > chunkThreshold && api.pty.writeChunked) {
+        const chunkedResult = await withTimeout(
+          api.pty.writeChunked(paneId, text, { chunkSize }, traceContext || null),
+          WRITE_TIMEOUT_MS,
+          'pane-host writeChunked'
+        );
+        if (chunkedResult && chunkedResult.success === false) {
+          throw new Error(chunkedResult.error || 'writeChunked returned failure');
+        }
       } else {
-        ipcRenderer.send('trigger-delivery-outcome', {
+        await withTimeout(
+          api.pty.write(paneId, text, traceContext || null),
+          WRITE_TIMEOUT_MS,
+          'pane-host write'
+        );
+      }
+
+      // Minimum wait for the PTY to process pasted text before sending Enter.
+      const minDelay = Math.max(
+        100,
+        Number.isFinite(MIN_ENTER_DELAY_MS) ? MIN_ENTER_DELAY_MS : DEFAULT_MIN_ENTER_DELAY_MS
+      );
+      await sleep(minDelay);
+
+      // Then wait for output activity to settle.
+      const payloadBytes = getUtf8ByteLength(text);
+      const isLongPayload = payloadBytes >= Math.max(
+        1,
+        Number.isFinite(LONG_PAYLOAD_BYTES) ? LONG_PAYLOAD_BYTES : DEFAULT_LONG_PAYLOAD_BYTES
+      );
+      const deferMaxWaitMs = isLongPayload
+        ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, SUBMIT_DEFER_MAX_WAIT_LONG_MS)
+        : SUBMIT_DEFER_MAX_WAIT_MS;
+      const deferResult = await deferSubmitWhilePaneActive(deferMaxWaitMs);
+      if (deferResult.forcedExpire) {
+        console.warn(
+          `[PaneHost] Submit defer window expired for pane ${paneId} after ${deferResult.waitedMs}ms; `
+          + 'sending Enter while output is still active'
+        );
+      }
+
+      const outputBaseline = ptyOutputTick;
+      const enterResult = await withTimeout(
+        sendPaneHostAction('dispatch-enter'),
+        ENTER_TIMEOUT_MS,
+        'pane-host dispatch-enter'
+      );
+      if (!enterResult || !enterResult.success) {
+        console.error(
+          `[PaneHost] pane-host dispatch-enter FAILED for pane ${paneId}:`,
+          enterResult?.reason || 'unknown'
+        );
+      }
+
+      const postEnterVerifyTimeoutMs = hmSendTrace
+        ? Math.max(
+          200,
+          Number.isFinite(HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS)
+            ? HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS
+            : DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS
+        )
+        : POST_ENTER_VERIFY_TIMEOUT_MS;
+      const outputObserved = await waitForPtyOutputAfter(outputBaseline, postEnterVerifyTimeoutMs);
+      const treatAsDelivered = Boolean(outputObserved || (hmSendTrace && enterResult?.success));
+
+      if (deliveryId) {
+        if (treatAsDelivered) {
+          reportDeliveryAck(deliveryId);
+        } else {
+          reportDeliveryOutcome({
+            deliveryId,
+            paneId,
+            accepted: true,
+            verified: false,
+            status: 'accepted.unverified',
+            reason: 'post_enter_output_timeout',
+          });
+        }
+      }
+
+      if (!outputObserved && hmSendTrace && enterResult?.success) {
+        console.warn(
+          `[PaneHost] hm-send trace accepted for pane ${paneId} without immediate PTY output `
+          + `(${postEnterVerifyTimeoutMs}ms window)`
+        );
+      } else if (!outputObserved) {
+        console.warn(
+          `[PaneHost] Delivery remained unverified for pane ${paneId} after Enter `
+          + `(${postEnterVerifyTimeoutMs}ms without PTY output)`
+        );
+      }
+    } catch (err) {
+      console.error(`[PaneHost] injectMessage FAILED for pane ${paneId}:`, err.message);
+      if (deliveryId) {
+        reportDeliveryOutcome({
           deliveryId,
           paneId,
-          accepted: true,
+          accepted: false,
           verified: false,
-          status: 'accepted.unverified',
-          reason: 'post_enter_output_timeout',
+          status: 'delivery_failed',
+          reason: err.message,
         });
       }
     }
+  }
 
-    if (!outputObserved && hmSendTrace && enterResult?.success) {
-      console.warn(
-        `[PaneHost] hm-send trace accepted for pane ${paneId} without immediate PTY output `
-        + `(${postEnterVerifyTimeoutMs}ms window)`
-      );
-    } else if (!outputObserved) {
-      console.warn(
-        `[PaneHost] Delivery remained unverified for pane ${paneId} after Enter `
-        + `(${postEnterVerifyTimeoutMs}ms without PTY output)`
-      );
+  function handlePaneHostEvent(payload = {}) {
+    const source = String(payload?.source || '').trim().toLowerCase();
+    if (source !== 'pane-host') return;
+    if (String(payload?.paneId || '') !== paneId) return;
+    const type = String(payload?.type || '').trim().toLowerCase();
+
+    if (type === 'prime-scrollback') {
+      if (injectedScrollback) return;
+      const scrollback = String(payload?.scrollback || '');
+      if (!scrollback) return;
+      injectedScrollback = true;
+      terminal.write(scrollback);
+      return;
     }
-  } catch (err) {
-    console.error(`[PaneHost] injectMessage FAILED for pane ${paneId}:`, err.message);
-    if (deliveryId) {
-      ipcRenderer.send('trigger-delivery-outcome', {
-        deliveryId,
-        paneId,
-        accepted: false,
-        verified: false,
-        status: 'delivery_failed',
-        reason: err.message,
-      });
+
+    if (type === 'inject-message') {
+      injectChain = injectChain
+        .then(() => injectMessage(payload))
+        .catch((err) => {
+          console.error(`[PaneHost] Inject chain error for pane ${paneId}:`, err?.message || err);
+        });
     }
   }
-}
 
-ipcRenderer.on('pane-host:pty-data', (_event, payload = {}) => {
-  if (String(payload.paneId || '') !== paneId) return;
-  ptyOutputTick += 1;
-  lastPtyOutputAtMs = Date.now();
-  resolveOutputWaiters();
-  terminal.write(String(payload.data || ''));
-});
+  const disposeDataListener = api.pty.onData(paneId, (data) => {
+    ptyOutputTick += 1;
+    lastPtyOutputAtMs = Date.now();
+    resolveOutputWaiters();
+    terminal.write(String(data || ''));
+  });
 
-ipcRenderer.on('pane-host:pty-exit', (_event, payload = {}) => {
-  if (String(payload.paneId || '') !== paneId) return;
-  const code = payload.code ?? '?';
-  terminal.write(`\r\n[Process exited with code ${code}]\r\n`);
-});
+  const disposeExitListener = api.pty.onExit(paneId, (code) => {
+    const exitCode = code ?? '?';
+    terminal.write(`\r\n[Process exited with code ${exitCode}]\r\n`);
+  });
 
-ipcRenderer.on('pane-host:prime-scrollback', (_event, payload = {}) => {
-  if (String(payload.paneId || '') !== paneId) return;
-  if (injectedScrollback) return;
-  const scrollback = String(payload.scrollback || '');
-  if (!scrollback) return;
-  injectedScrollback = true;
-  terminal.write(scrollback);
-});
+  api.pty.onKernelBridgeEvent((payload = {}) => {
+    handlePaneHostEvent(payload);
+  });
 
-ipcRenderer.on('pane-host:inject-message', (_event, payload = {}) => {
-  if (String(payload.paneId || '') !== paneId) return;
-  injectChain = injectChain
-    .then(() => injectMessage(payload))
-    .catch((err) => {
-      console.error(`[PaneHost] Inject chain error for pane ${paneId}:`, err?.message || err);
-    });
-});
+  window.addEventListener('beforeunload', () => {
+    if (typeof disposeDataListener === 'function') disposeDataListener();
+    if (typeof disposeExitListener === 'function') disposeExitListener();
+  });
 
-// Notify main process that the host is ready to receive payloads.
-ipcRenderer.send('pane-host-ready', { paneId });
+  sendPaneHostAction('ready').catch((err) => {
+    console.error(`[PaneHost] Failed to send ready for pane ${paneId}:`, err?.message || err);
+  });
+})();
