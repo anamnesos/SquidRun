@@ -108,10 +108,54 @@ describe('Project Handlers', () => {
       registerProjectHandlers(startupCtx, startupDeps);
 
       expect(path.resolve(getProjectRoot())).toBe(path.resolve(getSquidrunRoot()));
+      const normalizePath = (value) => String(value || '').replace(/\\/g, '/');
+      const expectedProjectRoot = path.resolve(getSquidrunRoot()).replace(/\\/g, '/');
+      const linkWrite = fs.writeFileSync.mock.calls.find(([filePath]) =>
+        normalizePath(filePath).endsWith(`${expectedProjectRoot}/.squidrun/link.json.tmp`)
+      );
+      expect(linkWrite).toBeDefined();
+      expect(JSON.parse(linkWrite[1])).toEqual(expect.objectContaining({
+        workspace: expectedProjectRoot,
+        session_id: 'app-session-159',
+      }));
       expect(startupCtx.mainWindow.webContents.send).not.toHaveBeenCalledWith(
         'project-warning',
         expect.anything()
       );
+    });
+
+    test('writes bootstrap files when startup project path is present', () => {
+      const startupHarness = createIpcHarness();
+      const startupCtx = createDefaultContext({ ipcMain: startupHarness.ipcMain });
+      startupCtx.PANE_IDS = ['1', '2', '3'];
+      startupCtx.currentSettings = {
+        operatingMode: 'project',
+      };
+      startupCtx.watcher.readState = jest.fn(() => ({ project: '/startup/project' }));
+
+      const startupDeps = {
+        loadSettings: jest.fn(() => ({ recentProjects: [], paneProjects: {} })),
+        saveSettings: jest.fn(),
+        readAppStatus: jest.fn(() => ({ session: 186 })),
+        getSessionId: jest.fn(() => 'app-session-186'),
+      };
+
+      registerProjectHandlers(startupCtx, startupDeps);
+
+      const normalizePath = (value) => String(value || '').replace(/\\/g, '/');
+      const linkWrite = fs.writeFileSync.mock.calls.find(([filePath]) =>
+        normalizePath(filePath).endsWith('/startup/project/.squidrun/link.json.tmp')
+      );
+      const readmeWrite = fs.writeFileSync.mock.calls.find(([filePath]) =>
+        normalizePath(filePath).endsWith('/startup/project/.squidrun/README-FIRST.md.tmp')
+      );
+
+      expect(linkWrite).toBeDefined();
+      expect(readmeWrite).toBeDefined();
+      expect(JSON.parse(linkWrite[1])).toEqual(expect.objectContaining({
+        workspace: path.resolve('/startup/project').replace(/\\/g, '/'),
+        session_id: 'app-session-186',
+      }));
     });
   });
 
