@@ -5,7 +5,6 @@
  */
 
 const { PANE_ROLES, PANE_IDS } = require('../config');
-const log = require('./logger');
 const notifications = require('./notifications');
 
 // Sync indicator files
@@ -149,7 +148,7 @@ function updateSyncChip(file, state = {}) {
     if (!ts) return '';
     try {
       return new Date(ts).toLocaleTimeString();
-    } catch (e) {
+    } catch {
       return '';
     }
   };
@@ -225,7 +224,7 @@ function updateAgentStatus(paneId, state) {
  * @param {function} onDismiss - Callback on dismiss
  */
 function showRollbackUI(data, onConfirm, onDismiss) {
-  const { checkpointId, files, timestamp } = data;
+  const { checkpointId, files } = data;
 
   const existing = document.querySelector('.rollback-indicator');
   if (existing) existing.remove();
@@ -473,7 +472,7 @@ function updateAgentTasks(claims = {}) {
  * @param {object} data - Trigger details
  */
 function showAutoTriggerFeedback(data) {
-  const { fromPane, toPane, reason } = data;
+  const { fromPane, toPane } = data;
   const fromRole = PANE_ROLES[fromPane] || `Pane ${fromPane}`;
   const toRole = PANE_ROLES[toPane] || `Pane ${toPane}`;
 

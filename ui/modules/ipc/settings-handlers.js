@@ -365,7 +365,6 @@ function registerSettingsHandlers(ctx, deps) {
 
       // Write .env
       fs.writeFileSync(ENV_PATH, content.trim() + '\n', 'utf-8');
-      console.log('[Settings] API keys updated in .env');
 
       const capabilities = getFeatureCapabilities(process.env);
       const mainWindow = ctx.mainWindow;

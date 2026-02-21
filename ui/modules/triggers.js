@@ -51,7 +51,7 @@ const recentTriggerIds = new Map();
 function generateTraceToken(prefix = 'trc') {
   try {
     return `${prefix}-${crypto.randomUUID()}`;
-  } catch (err) {
+  } catch {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }
 }
@@ -177,12 +177,6 @@ function recordSelfHealingMessage(paneId, message, meta = {}) {
 function applyPluginHookSync(eventName, payload) {
   if (!pluginManager || !pluginManager.hasHook(eventName)) return payload;
   return pluginManager.applyHookSync(eventName, payload);
-}
-
-function dispatchPluginEvent(eventName, payload) {
-  if (pluginManager && pluginManager.hasHook(eventName)) {
-    pluginManager.dispatch(eventName, payload).catch(() => {});
-  }
 }
 
 function isPriorityMessage(message) {
@@ -440,22 +434,6 @@ function emitOrganicMessageRoute(fromRole, targets) {
   });
 }
 
-function stripRolePrefix(message) {
-  if (!message) return '';
-  return String(message).replace(/^\([^)]+\):\s*/i, '');
-}
-
-function getTriggerMessageType(filename, targets) {
-  if (filename === 'all.txt' || (typeof filename === 'string' && filename.startsWith('others-'))) return 'broadcast';
-  if (Array.isArray(targets) && targets.length > 1) return 'broadcast';
-  return 'direct';
-}
-
-function sendAmbientUpdate(paneIds, message) {
-  if (!message || !Array.isArray(paneIds) || paneIds.length === 0) return;
-  // PTY mode: skip ambient updates to avoid noisy terminal injections.
-}
-
 function checkWorkflowGate(targets) {
   const hasWorkerTargets = targets.some(t => WORKER_PANES.includes(t));
   if (!hasWorkerTargets) return { allowed: true };
@@ -613,7 +591,7 @@ function handleTriggerFile(filePath, filename) {
 
   const processingPath = filePath + '.processing';
   try { fs.renameSync(filePath, processingPath); }
-  catch (e) { return { success: false, reason: e.code === 'ENOENT' ? 'already_processing' : 'rename_error' }; }
+  catch (err) { return { success: false, reason: err.code === 'ENOENT' ? 'already_processing' : 'rename_error' }; }
 
   let message;
   try {
@@ -622,7 +600,7 @@ function handleTriggerFile(filePath, filename) {
     else if (raw.length >= 3 && raw[0] === 0xEF && raw[1] === 0xBB && raw[2] === 0xBF) message = raw.slice(3).toString('utf-8').trim();
     else message = raw.toString('utf-8').trim();
     message = message.replace(/\0/g, '').replace(/[\x01-\x08\x0B\x0C\x0E-\x1F]/g, '');
-  } catch (e) { try { fs.unlinkSync(processingPath); } catch (ex) {} return { success: false, reason: 'read_error' }; }
+  } catch { try { fs.unlinkSync(processingPath); } catch {} return { success: false, reason: 'read_error' }; }
 
   const extracted = extractTriggerMessageId(message);
   const fallbackMessageId = extracted.messageId;
@@ -631,13 +609,13 @@ function handleTriggerFile(filePath, filename) {
   if (fallbackMessageId) {
     if (isRecentTriggerId(fallbackMessageId)) {
       log.warn('Trigger', `Skipping duplicate fallback messageId ${fallbackMessageId}`);
-      try { fs.unlinkSync(processingPath); } catch (e) {}
+      try { fs.unlinkSync(processingPath); } catch {}
       return { success: false, reason: 'duplicate_message_id' };
     }
     markRecentTriggerId(fallbackMessageId);
   }
 
-  if (!message) { try { fs.unlinkSync(processingPath); } catch (e) {} return { success: false, reason: 'empty' }; }
+  if (!message) { try { fs.unlinkSync(processingPath); } catch {} return { success: false, reason: 'empty' }; }
 
   let parsed = sequencing.parseMessageSequence(message);
   const recipientRole = resolveRecipientRole(filename);
@@ -654,7 +632,7 @@ function handleTriggerFile(filePath, filename) {
     }
     if (sequencing.isDuplicateMessage(parsed.sender, parsed.seq, recipientRole)) {
       metrics.recordSkipped(parsed.sender, parsed.seq, recipientRole);
-      try { fs.unlinkSync(processingPath); } catch (e) {}
+      try { fs.unlinkSync(processingPath); } catch {}
       return { success: false, reason: 'duplicate' };
     }
   }
@@ -674,7 +652,7 @@ function handleTriggerFile(filePath, filename) {
 
   metrics.recordSent('pty', 'trigger', targets);
   sendStaggered(targets, formatTriggerMessage(message), { deliveryId, traceContext });
-  try { fs.unlinkSync(processingPath); } catch (e) {}
+  try { fs.unlinkSync(processingPath); } catch {}
   logTriggerActivity('Trigger file (PTY)', targets, message, {
     file: filename,
     sender: parsed.sender,

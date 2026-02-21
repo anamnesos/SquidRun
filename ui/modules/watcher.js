@@ -9,13 +9,11 @@ const fsp = fs.promises;
 const { fork } = require('child_process');
 const {
   WORKSPACE_PATH,
-  TRIGGER_TARGETS,
   PANE_IDS,
   PANE_ROLES,
   resolveCoordPath,
   getCoordRoots,
   getSquidrunRoot,
-  getHivemindRoot,
 } = require('../config');
 const log = require('./logger');
 const { TRIGGER_READ_RETRY_MS, WATCHER_DEBOUNCE_MS } = require('./constants');
@@ -196,7 +194,7 @@ function parseWorkerAssignments() {
     if (backend) a['Backend'] = extractFilePaths(backend[0]);
     if (oracle) a['Oracle'] = extractFilePaths(oracle[0]);
     return a;
-  } catch (e) { return {}; }
+  } catch { return {}; }
 }
 
 function checkFileConflicts() {
@@ -363,11 +361,9 @@ function writeState(state) {
 
     // Ensure squidrun_root is always present so agents in external projects
     // can locate SquidRun scripts (hm-send.js etc.) regardless of their cwd.
-    if (!state.squidrun_root && !state.hivemind_root && (typeof getSquidrunRoot === 'function' || typeof getHivemindRoot === 'function')) {
+    if (!state.squidrun_root && !state.hivemind_root && typeof getSquidrunRoot === 'function') {
       try {
-        const root = typeof getSquidrunRoot === 'function'
-          ? getSquidrunRoot()
-          : getHivemindRoot();
+        const root = getSquidrunRoot();
         state.squidrun_root = root;
         state.hivemind_root = root; // Legacy field for compatibility.
       } catch (_) {
@@ -384,7 +380,7 @@ function writeState(state) {
     log.error('State', 'Error writing state', err);
     const tempPath = resolveCoordFile('state.json', { forWrite: true }) + '.tmp';
     if (fs.existsSync(tempPath)) {
-      try { fs.unlinkSync(tempPath); } catch (e) { /* ignore */ }
+      try { fs.unlinkSync(tempPath); } catch { /* ignore */ }
     }
   }
 }

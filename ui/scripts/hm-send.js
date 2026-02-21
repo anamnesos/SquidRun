@@ -12,7 +12,6 @@ const {
   LEGACY_ROLE_ALIASES,
   ROLE_ID_MAP,
   getSquidrunRoot,
-  getHivemindRoot,
   setProjectRoot,
   resolveCoordPath,
   resolveGlobalPath,
@@ -294,11 +293,9 @@ function resolveCurrentSessionId(context = localProjectContext) {
   if (context?.squidrunRoot) {
     addCandidate(path.join(context.squidrunRoot, '.squidrun', 'app-status.json'));
   }
-  if (typeof getSquidrunRoot === 'function' || typeof getHivemindRoot === 'function') {
+  if (typeof getSquidrunRoot === 'function') {
     try {
-      const root = typeof getSquidrunRoot === 'function'
-        ? getSquidrunRoot()
-        : getHivemindRoot();
+      const root = getSquidrunRoot();
       if (root) {
         addCandidate(path.join(root, '.squidrun', 'app-status.json'));
       }

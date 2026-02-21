@@ -35,26 +35,6 @@ function buildCommandForCli(cli) {
   return 'claude --permission-mode acceptEdits';
 }
 
-function extractCliFromCommand(command) {
-  if (typeof command !== 'string') return null;
-  const trimmed = command.trim();
-  if (!trimmed) return null;
-  const lowered = trimmed.toLowerCase();
-  if (lowered.startsWith('claude')) return 'claude';
-  if (lowered.startsWith('codex')) return 'codex';
-  if (lowered.startsWith('gemini')) return 'gemini';
-
-  const tokenMatch = trimmed.match(/^"([^"]+)"|^'([^']+)'|^(\S+)/);
-  const token = tokenMatch ? (tokenMatch[1] || tokenMatch[2] || tokenMatch[3]) : trimmed.split(/\s+/)[0];
-  if (!token) return null;
-
-  const base = path.basename(token).toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
-  if (base.includes('claude')) return 'claude';
-  if (base.includes('codex')) return 'codex';
-  if (base.includes('gemini')) return 'gemini';
-  return null;
-}
-
 const DEFAULT_SETTINGS = {
   autoSpawn: false,
   autoSync: false,
@@ -307,7 +287,7 @@ class SettingsManager {
     return paneCommands;
   }
 
-  commandNeedsRewrite(command, installed) {
+  commandNeedsRewrite(command) {
     // Only rewrite empty/missing commands — never override user's explicit model choice.
     // If a CLI is uninstalled, the pane will show a spawn error (visible feedback).
     if (typeof command !== 'string' || !command.trim()) return true;
@@ -328,7 +308,7 @@ class SettingsManager {
       const updatedPanes = [];
 
       for (const paneId of Object.keys(CLI_PREFERENCES)) {
-        if (this.commandNeedsRewrite(current[paneId], installed)) {
+        if (this.commandNeedsRewrite(current[paneId])) {
           current[paneId] = recommended[paneId];
           updatedPanes.push(paneId);
         }

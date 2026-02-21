@@ -83,11 +83,6 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function tokenize(text) {
-  if (!text) return [];
-  return text.split(/[^a-z0-9#+.-]+/i).filter(Boolean);
-}
-
 function includesPhrase(text, phrase) {
   return text.includes(phrase);
 }

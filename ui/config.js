@@ -210,11 +210,6 @@ function getSquidrunRoot() {
   return DEFAULT_PROJECT_ROOT;
 }
 
-// Legacy alias for compatibility with older modules/scripts.
-function getHivemindRoot() {
-  return getSquidrunRoot();
-}
-
 function setProjectRoot(projectRoot) {
   activeProjectRoot = normalizeProjectPath(projectRoot) || DEFAULT_PROJECT_ROOT;
   return activeProjectRoot;
@@ -444,7 +439,6 @@ module.exports = {
   PROTOCOL_EVENTS,
   getProjectRoot,
   getSquidrunRoot,
-  getHivemindRoot,
   setProjectRoot,
   resetProjectRoot,
   getCoordRoot,

@@ -1,5 +1,4 @@
 const crypto = require('crypto');
-const { normalizeRole } = require('./claims');
 
 const GUARD_ACTIONS = new Set(['warn', 'block', 'suggest', 'escalate']);
 
@@ -331,7 +330,7 @@ class TeamMemoryGuards {
     };
   }
 
-  setGuardActive(guardId, active, changedAt = Date.now()) {
+  setGuardActive(guardId, active, _changedAt = Date.now()) {
     if (!this.isAvailable()) return { ok: false, reason: 'unavailable' };
 
     const id = asString(guardId, '');

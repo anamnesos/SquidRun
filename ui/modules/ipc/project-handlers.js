@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { setProjectRoot, getSquidrunRoot, getHivemindRoot } = require('../../config');
+const { setProjectRoot, getSquidrunRoot } = require('../../config');
 const { initializeEvidenceLedgerRuntime } = require('./evidence-ledger-runtime');
 const { initializeTeamMemoryRuntime } = require('../team-memory/runtime');
 
@@ -112,9 +112,7 @@ function writeProjectBootstrapFiles(projectPath, deps = {}) {
   const squidrunRoot = path.resolve(
     typeof getSquidrunRoot === 'function'
       ? getSquidrunRoot()
-      : (typeof getHivemindRoot === 'function'
-        ? getHivemindRoot()
-        : path.resolve(path.join(__dirname, '..', '..', '..')))
+      : path.resolve(path.join(__dirname, '..', '..', '..'))
   );
   const hmSendAbsolute = path.join(squidrunRoot, 'ui', 'scripts', 'hm-send.js');
   const hmSendRelative = normalizeToPosix(path.relative(projectRoot, hmSendAbsolute));
