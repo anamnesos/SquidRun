@@ -94,7 +94,6 @@ function cleanup() {
 }
 
 const backgroundController = createBackgroundProcessController(ctx);
-const broadcastProcessList = backgroundController.broadcastProcessList;
 const getBackgroundProcesses = backgroundController.getBackgroundProcesses;
 const cleanupProcesses = backgroundController.cleanupProcesses;
 

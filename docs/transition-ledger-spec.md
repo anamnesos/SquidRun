@@ -31,7 +31,7 @@ Every transition object in the ledger MUST conform to this schema:
   
   origin: {
     actorType: string,     // "agent" | "user" | "system"
-    actorRole: string,     // "architect" | "devops" | "analyst" | "system"
+    actorRole: string,     // "architect" | "builder" | "oracle" | "system"
     source: string         // Emitting module (e.g., "injection.js")
   },
   

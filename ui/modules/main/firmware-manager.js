@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const log = require('../logger');
-const { PROJECT_ROOT, COORD_ROOT, getSquidrunRoot, getHivemindRoot, getProjectRoot, resolveGlobalPath } = require('../../config');
+const { PROJECT_ROOT, COORD_ROOT, getSquidrunRoot, getProjectRoot, resolveGlobalPath } = require('../../config');
 const { execFileSync } = require('child_process');
 
 const SPEC_RELATIVE_PATH = path.join('workspace', 'specs', 'firmware-injection-spec.md');
@@ -90,7 +90,7 @@ class FirmwareManager {
       || options.hivemindRoot
       || (typeof getSquidrunRoot === 'function'
         ? getSquidrunRoot()
-        : (typeof getHivemindRoot === 'function' ? getHivemindRoot() : PROJECT_ROOT))
+        : PROJECT_ROOT)
     );
     this.coordRoot = path.resolve(options.coordRoot || COORD_ROOT);
     this.specPath = path.resolve(options.specPath || path.join(this.squidrunRoot, SPEC_RELATIVE_PATH));

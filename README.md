@@ -120,7 +120,7 @@ npm start
     (all messages logged)     (remote access)
           |
           v
-    Auto-handoff (workspace/handoffs/session.md)
+    Auto-handoff (.squidrun/handoffs/session.md)
     Session continuity across restarts
 ```
 
@@ -211,12 +211,12 @@ hivemind/
 - **No telemetry.** SquidRun does not phone home, collect analytics, or transmit usage data.
 - **Credentials stay local.** API keys and bot tokens live in your `.env` file, which is `.gitignore`d by default. SquidRun never stores or transmits your credentials — the CLIs manage their own auth.
 - **Git history audited.** Before open-sourcing, the full 702-commit history was audited for secrets — zero real credentials found. Runtime artifacts (session files, databases) are excluded from version control.
-- **Pre-commit quality gates.** Every commit runs through automated checks: ESLint, Jest tests (3,200+ tests), IPC handler validation, trigger path enforcement, and review sign-off verification.
+- **Pre-commit quality gates.** Standard commit workflows run automated checks including ESLint (targeted `npm run lint` scope plus hook linting), Jest tests (3,200+ tests), IPC handler validation, trigger path enforcement, and review sign-off verification.
 - **Telegram security note.** If you enable Telegram integration, messages from your bot can trigger real local actions (file edits, git operations, shell commands). Use your own private bot token and chat ID — do not share them.
 
 ## Current Status And Scope
 
-SquidRun is actively used for real multi-model coding sessions. The codebase has 3,200+ tests across 163 test suites, with pre-commit quality gates (ESLint, Jest, IPC validation, trigger path enforcement) on every commit. It is still early-stage and evolving rapidly.
+SquidRun is actively used for real multi-model coding sessions. The codebase has 3,200+ tests across 166 test suites (`npx jest --listTests --json`), with quality gates such as ESLint, Jest, IPC validation, and trigger path enforcement in standard commit workflows. It is still early-stage and evolving rapidly.
 
 It is designed for trusted local environments and developer workflows, not hardened multi-tenant production use.
 

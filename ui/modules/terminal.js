@@ -34,7 +34,6 @@ const {
   STARTUP_IDENTITY_VERIFY_DELAY_MS,
   STARTUP_IDENTITY_RETRY_DELAY_MS,
   STARTUP_IDENTITY_MAX_ATTEMPTS,
-  STARTUP_IDENTITY_DELAY_CODEX_MS,
   CODEX_ENTER_DELAY_MS,
   STARTUP_READY_BUFFER_MAX,
   GEMINI_ENTER_DELAY_MS,
@@ -955,36 +954,6 @@ function hasStartupSessionHeader(scrollback, paneId) {
   return /#\s*SQUIDRUN SESSION:/i.test(String(scrollback || ''));
 }
 
-function getStartupScrollbackSnapshot(paneId, maxLines = 400) {
-  const terminal = terminals.get(String(paneId));
-  const buffer = terminal?.buffer?.active;
-  if (!buffer || typeof buffer.getLine !== 'function') {
-    return '';
-  }
-
-  const safeMaxLines = Math.max(1, Number(maxLines) || 400);
-  const length = Number(buffer.length);
-  const lines = [];
-
-  if (Number.isFinite(length) && length > 0) {
-    const start = Math.max(0, length - safeMaxLines);
-    for (let i = start; i < length; i += 1) {
-      const line = buffer.getLine(i);
-      if (line && typeof line.translateToString === 'function') {
-        lines.push(line.translateToString(true));
-      }
-    }
-  } else {
-    const cursorY = Math.max(0, Number(buffer.cursorY) || 0);
-    const line = buffer.getLine(cursorY);
-    if (line && typeof line.translateToString === 'function') {
-      lines.push(line.translateToString(true));
-    }
-  }
-
-  return lines.join('\n');
-}
-
 function clearStartupInjection(paneId) {
   const state = startupInjectionState.get(String(paneId));
   if (!state) return;
@@ -1078,7 +1047,6 @@ async function runStartupIdentityAttempt(paneId, state, reason) {
   const attempt = state.attemptCount;
 
   const maxAttempts = Math.max(1, Number(STARTUP_IDENTITY_MAX_ATTEMPTS) || 3);
-  const verifyDelayMs = Math.max(250, Number(STARTUP_IDENTITY_VERIFY_DELAY_MS) || 1200);
   const retryDelayMs = Math.max(500, Number(STARTUP_IDENTITY_RETRY_DELAY_MS) || 2000);
 
   try {
@@ -1486,10 +1454,6 @@ transitionLedger.init(bus);
 // Initialize compaction detector (subscribes to inject.requested events on the bus)
 compactionDetector.init(bus);
 
-function focusWithRetry(...args) {
-  return injectionController.focusWithRetry(...args);
-}
-
 function sendEnterToPane(...args) {
   return injectionController.sendEnterToPane(...args);
 }
@@ -1498,14 +1462,6 @@ function isPromptReady(...args) {
   return injectionController.isPromptReady(...args);
 }
 
-
-function processIdleQueue(...args) {
-  return injectionController.processIdleQueue(...args);
-}
-
-function doSendToPane(...args) {
-  return injectionController.doSendToPane(...args);
-}
 
 function sendToPane(paneId, message, options = {}) {
   const id = String(paneId);
@@ -1552,19 +1508,11 @@ function sendToPane(paneId, message, options = {}) {
 
 // Setup copy/paste handlers
 function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {}) {
-  // Track selection - clear when empty to fix stale selection bug
-  let lastSelection = '';
-  terminal.onSelectionChange(() => {
-    // FIX: Always update, including clearing when selection is empty
-    lastSelection = terminal.getSelection() || '';
-  });
-
   container.addEventListener('contextmenu', async (e) => {
     e.preventDefault();
     e.stopPropagation();
 
-    // FIX: Check hasSelection() at click time, not stale lastSelection variable
-    // This ensures we detect current selection state, not old cached value
+    // FIX: Check hasSelection() at click time to use current selection state.
     const currentSelection = terminal.hasSelection() ? terminal.getSelection() : '';
 
     if (currentSelection) {
@@ -1581,7 +1529,6 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
       }
       // Clear selection after copy
       terminal.clearSelection();
-      lastSelection = '';
     } else {
       // PASTE: No selection, so paste from clipboard
       if (inputLocked[paneId]) {

@@ -102,10 +102,6 @@ function generateBasename() {
   return `${ts}-${hash}`;
 }
 
-function generateFilename() {
-  return generateBasename() + '.png';
-}
-
 async function fetchWithRetry(url, options) {
   const fetchFn = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : null;
   if (!fetchFn) {

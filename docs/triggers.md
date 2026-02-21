@@ -91,7 +91,8 @@ These are maintained for backward compatibility but should not be used for new w
 | `backend.txt` | `builder.txt` |
 | `investigator.txt` | `oracle.txt` |
 
-**Removed (no longer routed):** `frontend.txt`, `reviewer.txt`, `worker-a.txt`, `worker-b.txt`
+**Removed (no longer routed):** `frontend.txt`, `reviewer.txt`, `worker-a.txt`
+**Legacy-compatible alias:** `worker-b.txt` still routes to Builder (`builder.txt`) for backward compatibility; prefer canonical targets for new work.
 
 ## Examples
 

@@ -57,7 +57,7 @@ echo "Gate 2: JavaScript linting (ESLint)..."
 # Check if eslint is available in ui/node_modules
 if [ -f "ui/node_modules/.bin/eslint" ] || [ -f "ui/node_modules/.bin/eslint.cmd" ]; then
     cd ui
-    npx eslint modules/*.js renderer.js main.js --quiet 2>/dev/null
+    npx eslint "**/*.js" --quiet 2>/dev/null
     if [ $? -ne 0 ]; then
         echo "❌ ESLint found issues"
         FAILED=1

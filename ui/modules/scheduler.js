@@ -22,10 +22,6 @@ function generateId() {
   return crypto.randomBytes(6).toString('hex');
 }
 
-function nowMs() {
-  return Date.now();
-}
-
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -63,7 +59,7 @@ function getDateParts(date, timeZone) {
       minute: parseInt(lookup.minute, 10),
       weekday: weekdayMap[lookup.weekday] ?? 0,
     };
-  } catch (err) {
+  } catch {
     log.warn('Scheduler', `Invalid timezone ${timeZone}, falling back to local`);
     return getDateParts(date, null);
   }
@@ -320,7 +316,7 @@ function createScheduler({ triggers, workspacePath }) {
     return fired;
   }
 
-  function emitEvent(eventName, payload) {
+  function emitEvent(eventName) {
     const now = new Date();
     const matched = scheduleState.schedules.filter(s => s.active && s.type === 'event' && s.eventName === eventName);
     const results = [];

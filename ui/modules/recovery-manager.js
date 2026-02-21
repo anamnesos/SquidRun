@@ -95,7 +95,6 @@ const PLAYBOOKS = {
 function createRecoveryManager(options = {}) {
   const {
     getSettings,
-    getLastActivity,
     getAllActivity,
     getDaemonTerminals,
     isPaneRunning,

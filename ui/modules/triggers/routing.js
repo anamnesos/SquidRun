@@ -3,7 +3,7 @@
  * Extracted from triggers.js
  */
 
-const { WORKSPACE_PATH, PANE_IDS } = require('../../config');
+const { WORKSPACE_PATH } = require('../../config');
 const log = require('../logger');
 const smartRouting = require('../smart-routing');
 

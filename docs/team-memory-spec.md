@@ -28,7 +28,7 @@ Every multi-agent memory system today is a library — store, search, retrieve. 
 
 | Component | Status | Location |
 |-----------|--------|----------|
-| Evidence Ledger (SQLite WAL) | RUNTIME ACTIVE | `ui/modules/evidence-ledger/` |
+| Evidence Ledger (SQLite WAL) | RUNTIME ACTIVE | `ui/modules/main/evidence-ledger-*.js`, `ui/modules/ipc/evidence-ledger-*.js` |
 | TraceId propagation (7 files) | SHIPPED | Across IPC/trigger/daemon pipeline |
 | Intent Board JSON files | REMOVED | Replaced by Team Memory + Evidence Ledger runtime signals |
 | War Room log | DEPRECATED — pending removal | `workspace/war-room.log` |

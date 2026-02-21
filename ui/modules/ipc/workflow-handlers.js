@@ -855,7 +855,6 @@ function registerWorkflowHandlers(ctx = {}) {
     };
   });
 
-  console.log('[WorkflowHandlers] Registered 14 IPC handlers');
 }
 
 
