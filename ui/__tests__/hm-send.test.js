@@ -7,13 +7,40 @@ const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
-const { WORKSPACE_PATH, resolveCoordPath, resolveGlobalPath } = require('../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
 
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 
-function getTriggerPath(filename) {
-  if (typeof resolveGlobalPath === 'function') {
-    return resolveGlobalPath(path.join('triggers', filename), { forWrite: true });
+function findNearestProjectLinkFile(startDir) {
+  let currentDir = path.resolve(startDir);
+  while (true) {
+    const candidate = path.join(currentDir, '.squidrun', 'link.json');
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) return null;
+    currentDir = parentDir;
+  }
+}
+
+function getTriggerPath(filename, options = {}) {
+  const startDir = options.cwd || path.join(__dirname, '..');
+  const linkPath = findNearestProjectLinkFile(startDir);
+  if (linkPath) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(linkPath, 'utf8'));
+      const fallbackProjectPath = path.resolve(path.join(path.dirname(linkPath), '..'));
+      const declaredProjectPath = typeof parsed?.workspace === 'string' && parsed.workspace.trim()
+        ? path.resolve(parsed.workspace.trim())
+        : fallbackProjectPath;
+      const projectPath = fs.existsSync(declaredProjectPath)
+        ? declaredProjectPath
+        : fallbackProjectPath;
+      return path.join(projectPath, '.squidrun', 'triggers', filename);
+    } catch {
+      // Fall through to config-based fallback below.
+    }
   }
   if (typeof resolveCoordPath === 'function') {
     return resolveCoordPath(path.join('triggers', filename), { forWrite: true });
@@ -970,12 +997,12 @@ describe('hm-send retry behavior', () => {
     }
   });
 
-  test('uses global trigger fallback path even when project link.json is present', async () => {
+  test('uses project-scoped trigger fallback path when project link.json is present', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-link-'));
     const externalProjectPath = path.join(tempRoot, 'external-project');
     const externalCoordPath = path.join(externalProjectPath, '.squidrun');
     const linkPath = path.join(externalCoordPath, 'link.json');
-    const expectedTriggerPath = getTriggerPath('builder.txt');
+    const expectedTriggerPath = path.join(externalCoordPath, 'triggers', 'builder.txt');
     const hadOriginal = fs.existsSync(expectedTriggerPath);
     const originalContent = hadOriginal ? fs.readFileSync(expectedTriggerPath, 'utf8') : null;
     fs.mkdirSync(externalCoordPath, { recursive: true });

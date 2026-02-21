@@ -102,9 +102,13 @@ $gfx.Dispose()
 
 # Output path
 if (-not $OutPath) {
-    $OutPath = Join-Path $PSScriptRoot "..\..\workspace\screenshots\latest.png"
+    $OutPath = Join-Path $PSScriptRoot "..\..\.squidrun\screenshots\latest.png"
 }
 $OutPath = [System.IO.Path]::GetFullPath($OutPath)
+$outDir = Split-Path -Parent $OutPath
+if ($outDir -and -not (Test-Path $outDir)) {
+    New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+}
 
 $bmp.Save($OutPath, [System.Drawing.Imaging.ImageFormat]::Png)
 $bmp.Dispose()

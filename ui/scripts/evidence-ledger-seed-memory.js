@@ -6,7 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
+const { resolveCoordPath } = require('../config');
 const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
 const { EvidenceLedgerMemory } = require('../modules/main/evidence-ledger-memory');
 const { seedDecisionMemory } = require('../modules/main/evidence-ledger-memory-seed');
@@ -102,7 +102,7 @@ function main() {
   const options = parseArgs(args);
   const defaultContextPath = typeof resolveCoordPath === 'function'
     ? resolveCoordPath(path.join('context-snapshots', '1.md'))
-    : path.join(WORKSPACE_PATH, 'context-snapshots', '1.md');
+    : path.resolve('.squidrun', 'context-snapshots', '1.md');
   const contextPath = resolvePath(
     options.get('context') || options.get('handoff'),
     defaultContextPath

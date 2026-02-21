@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Hivemind Pre-commit Hook - Automated Quality Gates
+# SquidRun Pre-commit Hook - Automated Quality Gates
 # Runs type checking and linting before allowing commits.
 #
 # To bypass (emergencies only): git commit --no-verify
@@ -20,25 +20,25 @@ echo "Gate 1: Python type checking (mypy)..."
 
 # Check if mypy is available
 if python -m mypy --version > /dev/null 2>&1; then
-    # Check hivemind-sdk-v2.py
-    if [ -f "hivemind-sdk-v2.py" ]; then
-        python -m mypy hivemind-sdk-v2.py --ignore-missing-imports --no-error-summary
+    # Check squidrun-sdk-v2.py
+    if [ -f "squidrun-sdk-v2.py" ]; then
+        python -m mypy squidrun-sdk-v2.py --ignore-missing-imports --no-error-summary
         if [ $? -ne 0 ]; then
-            echo "❌ mypy failed on hivemind-sdk-v2.py"
+            echo "❌ mypy failed on squidrun-sdk-v2.py"
             FAILED=1
         else
-            echo "✅ hivemind-sdk-v2.py passed mypy"
+            echo "✅ squidrun-sdk-v2.py passed mypy"
         fi
     fi
 
-    # Check hivemind-sdk.py (original)
-    if [ -f "hivemind-sdk.py" ]; then
-        python -m mypy hivemind-sdk.py --ignore-missing-imports --no-error-summary
+    # Check squidrun-sdk.py (original)
+    if [ -f "squidrun-sdk.py" ]; then
+        python -m mypy squidrun-sdk.py --ignore-missing-imports --no-error-summary
         if [ $? -ne 0 ]; then
-            echo "❌ mypy failed on hivemind-sdk.py"
+            echo "❌ mypy failed on squidrun-sdk.py"
             FAILED=1
         else
-            echo "✅ hivemind-sdk.py passed mypy"
+            echo "✅ squidrun-sdk.py passed mypy"
         fi
     fi
 else
@@ -129,7 +129,7 @@ echo ""
 echo "Gate 3: Python syntax check..."
 
 SYNTAX_FAILED=0
-for pyfile in hivemind-sdk.py hivemind-sdk-v2.py; do
+for pyfile in squidrun-sdk.py squidrun-sdk-v2.py; do
     if [ -f "$pyfile" ]; then
         python -m py_compile "$pyfile" 2>/dev/null
         if [ $? -ne 0 ]; then

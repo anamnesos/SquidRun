@@ -1,6 +1,6 @@
-# Hivemind Benchmark System
+# SquidRun Benchmark System
 
-Internal benchmark framework for evaluating AI model performance on real engineering tasks. Results here reflect actual Hivemind workflow performance, not synthetic public benchmarks.
+Internal benchmark framework for evaluating AI model performance on real engineering tasks. Results here reflect actual SquidRun workflow performance, not synthetic public benchmarks.
 
 ## Models Under Test
 
@@ -43,7 +43,7 @@ Internal benchmark framework for evaluating AI model performance on real enginee
 | 12 | **Diff Readability** | Clean, maintainable, minimal code changes |
 | 13 | **Handoff / Report Quality** | Clarity of status updates, summaries, inter-agent communication |
 
-### Hivemind-Specific Metrics
+### SquidRun-Specific Metrics
 
 | # | Category | What We Evaluate |
 |---|----------|-----------------|

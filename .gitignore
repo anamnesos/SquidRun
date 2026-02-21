@@ -130,6 +130,9 @@ workspace/handoffs/session.md
 # Runtime app status
 workspace/app-status.json
 
+# Runtime logs
+workspace/logs/
+
 # Generic local caches
 .cache/
 .eslintcache

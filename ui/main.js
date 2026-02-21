@@ -4,7 +4,7 @@
  */
 
 const path = require('path');
-const { app } = require('electron');
+const { app, Menu } = require('electron');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 // Enforce single-instance ownership to prevent duplicate watcher/process
@@ -22,6 +22,30 @@ process.stderr.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 
 // Global error handlers — prevent main process crash on unhandled errors
 const log = require('./modules/logger');
+function enforceMenuSuppression(windowRef = null) {
+  try {
+    Menu.setApplicationMenu(null);
+  } catch (err) {
+    log.warn('[Main] Failed to clear application menu:', err?.message || err);
+  }
+
+  if (!windowRef || (typeof windowRef.isDestroyed === 'function' && windowRef.isDestroyed())) {
+    return;
+  }
+
+  if (typeof windowRef.removeMenu === 'function') {
+    windowRef.removeMenu();
+  } else if (typeof windowRef.setMenu === 'function') {
+    windowRef.setMenu(null);
+  }
+  if (typeof windowRef.setAutoHideMenuBar === 'function') {
+    windowRef.setAutoHideMenuBar(true);
+  }
+  if (typeof windowRef.setMenuBarVisibility === 'function') {
+    windowRef.setMenuBarVisibility(false);
+  }
+}
+
 process.on('uncaughtException', (err) => {
   log.error('[Main] Uncaught exception:', err?.message || err);
   log.error('[Main] Stack:', err?.stack);
@@ -58,15 +82,33 @@ const squidrunApp = new SquidRunApp(appContext, {
 
 app.on('second-instance', () => {
   const win = appContext.mainWindow;
-  if (!win || win.isDestroyed()) return;
+  if (!win || win.isDestroyed()) {
+    if (app.isReady()) {
+      squidrunApp.createWindow().catch((err) => {
+        log.error('[Main] Failed to restore window on second-instance:', err?.message || err);
+      });
+    }
+    return;
+  }
+
   if (win.isMinimized()) {
     win.restore();
   }
+  if (!win.isVisible()) {
+    win.show();
+  }
+  if (typeof win.moveTop === 'function') {
+    win.moveTop();
+  }
   win.focus();
+});
+app.on('browser-window-created', (_event, windowRef) => {
+  enforceMenuSuppression(windowRef);
 });
 
 // 3. Electron Lifecycle Hooks
 app.whenReady().then(() => {
+  enforceMenuSuppression();
   squidrunApp.init().catch((err) => {
     log.error('[Main] App init failed:', err?.message || err);
     log.error('[Main] Stack:', err?.stack);

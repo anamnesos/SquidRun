@@ -25,10 +25,6 @@ jest.mock('../modules/logger', () => ({
 jest.mock('../config', () => ({
   WORKSPACE_PATH: 'workspace',
   resolvePaneCwd: () => '<project-root>',
-  resolveGlobalPath: (relPath, opts) => {
-    const p = require('path');
-    return p.join('<global-state-root>', relPath);
-  },
   resolveCoordPath: (relPath, opts) => {
     const p = require('path');
     return p.join('<project-root>\\.squidrun', relPath);
@@ -148,6 +144,7 @@ describe('SettingsManager CLI auto-detection', () => {
 
     const statusWriteCall = fs.writeFileSync.mock.calls.find((call) => String(call[0]).endsWith('app-status.json.tmp'));
     expect(statusWriteCall).toBeDefined();
+    expect(String(statusWriteCall[0])).toContain('.squidrun');
     const serialized = statusWriteCall[1];
     const status = JSON.parse(serialized);
     expect(status.mode).toBe('pty');

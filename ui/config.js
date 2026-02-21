@@ -255,16 +255,12 @@ function resolvePaneCwd(paneId, options = {}) {
 }
 
 function resolveCoordRoot() {
-  const coordRoot = getCoordRoot();
-  if (fs.existsSync(coordRoot)) {
-    return coordRoot;
-  }
-  return WORKSPACE_PATH;
+  return getCoordRoot();
 }
 
 function getCoordRoots(options = {}) {
   const includeMissing = options.includeMissing === true;
-  const includeLegacy = options.includeLegacy !== false;
+  const includeLegacy = options.includeLegacy === true;
   const roots = [];
   const coordRoot = getCoordRoot();
 
@@ -301,7 +297,7 @@ function resolveCoordPath(relPath, options = {}) {
 
   const forWrite = options.forWrite === true;
   const blockLegacyWorkspaceFallback = shouldBlockLegacyWorkspaceFallback(normalizedRelPath);
-  const roots = getCoordRoots({ includeMissing: true, includeLegacy: options.includeLegacy !== false });
+  const roots = getCoordRoots({ includeMissing: true, includeLegacy: options.includeLegacy === true });
   const coordRoot = getCoordRoot();
 
   if (!forWrite) {

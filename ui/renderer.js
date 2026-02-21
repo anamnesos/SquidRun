@@ -1152,22 +1152,6 @@ function setupEventListeners() {
     spawnAllBtn.addEventListener('click', debounceButton('spawnAll', terminal.spawnAllAgents));
   }
 
-  // Kill all button (debounced, with confirmation)
-  const killAllBtn = document.getElementById('killAllBtn');
-  if (killAllBtn) {
-    killAllBtn.addEventListener('click', debounceButton('killAll', () => {
-      if (confirm('Kill all agent sessions?\n\nThis will terminate all running agents immediately.')) {
-        terminal.killAllTerminals();
-      }
-    }));
-  }
-
-  // Nudge all button - unstick churning agents (uses aggressive ESC+Enter) (debounced)
-  const nudgeAllBtn = document.getElementById('nudgeAllBtn');
-  if (nudgeAllBtn) {
-    nudgeAllBtn.addEventListener('click', debounceButton('nudgeAll', terminal.aggressiveNudgeAll));
-  }
-
   // Pane action buttons: Interrupt (ESC), Enter, Restart
   document.querySelectorAll('.interrupt-btn').forEach(btn => {
     btn.addEventListener('click', async (_e) => {
@@ -1207,27 +1191,17 @@ function setupEventListeners() {
 
   // ESC collapse handler consolidated into setupEventListeners keyboard shortcuts listener
 
-  // Fresh start button - kill all and start new sessions (debounced)
-  const freshStartBtn = document.getElementById('freshStartBtn');
-  if (freshStartBtn) {
-    freshStartBtn.addEventListener('click', debounceButton('freshStart', () => {
-      if (confirm('Start fresh with all agents?\n\nThis will kill all sessions and restart agents without injecting previous context.')) {
-        terminal.freshStartAll();
-      }
-    }));
-  }
-
-  // Full restart button - kill daemon and reload app with fresh code
+  // Shutdown button - kill daemon and exit app cleanly
   const fullRestartBtn = document.getElementById('fullRestartBtn');
   if (fullRestartBtn) {
     fullRestartBtn.addEventListener('click', async () => {
-      if (confirm('This will kill the daemon and restart the app.\n\nAll agent conversations will be lost, but code changes will be loaded.\n\nContinue?')) {
-        updateConnectionStatus('Restarting...');
+      if (confirm('Shutdown SquidRun and stop the daemon?\n\nAll active agent sessions will be terminated.\n\nContinue?')) {
+        updateConnectionStatus('Shutting down...');
         try {
           await ipcRenderer.invoke('full-restart');
         } catch (err) {
-          log.error('Restart', 'Full restart failed:', err);
-          updateConnectionStatus('Restart failed - try manually');
+          log.error('Shutdown', 'Full shutdown failed:', err);
+          updateConnectionStatus('Shutdown failed - try manually');
         }
       }
     });
@@ -1237,28 +1211,6 @@ function setupEventListeners() {
   const selectProjectBtn = document.getElementById('selectProjectBtn');
   if (selectProjectBtn) {
     selectProjectBtn.addEventListener('click', daemonHandlers.selectProject);
-  }
-
-  // Actions dropdown toggle
-  const actionsBtn = document.getElementById('actionsBtn');
-  const actionsMenu = document.getElementById('actionsMenu');
-  if (actionsBtn && actionsMenu) {
-    actionsBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      actionsMenu.classList.toggle('show');
-    });
-    // Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
-      if (!e.target.closest('#actionsDropdown')) {
-        actionsMenu.classList.remove('show');
-      }
-    });
-    // Close dropdown when clicking a menu item
-    actionsMenu.querySelectorAll('.dropdown-item').forEach(item => {
-      item.addEventListener('click', () => {
-        actionsMenu.classList.remove('show');
-      });
-    });
   }
 
   // Pane click: focus the pane (pane positions are fixed)

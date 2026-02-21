@@ -1,6 +1,6 @@
-# Contributing to Hivemind
+# Contributing to SquidRun
 
-Thanks for your interest in improving Hivemind.
+Thanks for your interest in improving SquidRun.
 
 ## Setup
 
@@ -12,12 +12,12 @@ Install:
 
 ```bash
 git clone <repo-url>
-cd hivemind/ui
+cd <repo-name>/ui
 npm install
 ```
 
 Run:
-- Windows (from repo root): `start-hivemind.bat`
+- Windows (from repo root): `start-squidrun.bat`
 - Any platform (from `ui/`): `npm start`
 
 ## Pull Request Process

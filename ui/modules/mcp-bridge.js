@@ -17,7 +17,7 @@ const fs = require('fs');
 const watcher = require('./watcher');
 const triggers = require('./triggers');
 const { getTaskPoolBridge } = require('./ipc/task-pool-handlers');
-const { WORKSPACE_PATH, PANE_IDS, PANE_ROLES, resolveCoordPath } = require('../config');
+const { PANE_IDS, PANE_ROLES, resolveCoordPath } = require('../config');
 const log = require('./logger');
 
 // Track connected MCP agents
@@ -32,7 +32,7 @@ function getTriggerDir() {
   if (typeof resolveCoordPath === 'function') {
     return resolveCoordPath('triggers', { forWrite: true });
   }
-  return path.join(WORKSPACE_PATH, 'triggers');
+  return path.join(process.cwd(), '.squidrun', 'triggers');
 }
 
 const TRIGGER_FILES = {

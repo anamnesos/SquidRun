@@ -76,8 +76,8 @@ This turns SquidRun into an always-available development team you can manage fro
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/anamnesos/hivemind.git
-cd hivemind/ui && npm install
+git clone https://github.com/anamnesos/squidrun.git
+cd <repo-name>/ui && npm install
 
 # 2. Make sure your CLIs are authenticated (run whichever you have)
 claude --version    # Sign in if prompted
@@ -141,8 +141,8 @@ Core implementation lives in `ui/modules/`, `ui/modules/main/`, and `ui/scripts/
 ### Install
 
 ```bash
-git clone https://github.com/anamnesos/hivemind.git
-cd hivemind/ui
+git clone https://github.com/anamnesos/squidrun.git
+cd <repo-name>/ui
 npm install
 ```
 
@@ -151,7 +151,7 @@ npm install
 From repo root on Windows:
 
 ```bat
-start-hivemind.bat
+start-squidrun.bat
 ```
 
 Or cross-platform from `ui/`:
@@ -196,7 +196,7 @@ Useful commands:
 ## Project Layout
 
 ```text
-hivemind/
+<repo-root>/
 ├── ui/          # Electron app + runtime orchestration
 ├── docs/        # Specifications and operational docs
 ├── scripts/     # Project-level utility scripts

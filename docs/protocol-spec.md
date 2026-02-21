@@ -1,8 +1,8 @@
-# Hivemind Agent Protocol Specification (v1.0)
+# SquidRun Agent Protocol Specification (v1.0)
 
 **Status:** Canonical | **Target Audience:** Agents & Developers
 
-This document formalizes the communication and coordination protocols for the Hivemind multi-agent system. It transforms the "tribal knowledge" of the system into a practical specification for message formats, routing, reliability, and lifecycle management.
+This document formalizes the communication and coordination protocols for the SquidRun multi-agent system. It transforms the "tribal knowledge" of the system into a practical specification for message formats, routing, reliability, and lifecycle management.
 
 ---
 
@@ -74,7 +74,7 @@ The system maintains aliases for backward compatibility:
 
 ## 3. Delivery & Reliability
 
-Hivemind uses a dual-path delivery system to ensure no message is lost.
+SquidRun uses a dual-path delivery system to ensure no message is lost.
 
 ### 3.1 Path A: WebSocket (Primary)
 - **Mechanism:** Direct connection to the internal message bus (Port 9900).
@@ -121,7 +121,7 @@ Example: `(ARCH #5): [URGENT] Build is failing on main. Oracle, investigate.`
 
 ### 5.1 The Check-in Procedure
 On startup, every agent must follow this sequence:
-1. **Identify Role:** Determine role and pane from environment variables (`HIVEMIND_ROLE`, `HIVEMIND_PANE_ID`).
+1. **Identify Role:** Determine role and pane from environment variables (`SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`).
 2. **Read Runtime Truth:** Read `.squidrun/app-status.json` for active session number and treat it as canonical.
 3. **Use Canonical Journal Path:** For memory/comms checks, use `.squidrun/runtime/evidence-ledger.db`.
 4. **Role-Specific Baseline:**
@@ -140,7 +140,7 @@ If an agent encounters a tool failure or a system blocker:
 
 ## 6. Extending the System (Adding a New Agent)
 
-To add a new agent (e.g., `Reviewer` or `SRE`) to the Hivemind:
+To add a new agent (e.g., `Reviewer` or `SRE`) to SquidRun:
 
 1. **Update Config:** Add the role and Pane ID to `ui/config.js`.
 2. **Define Role:** Add responsibilities and sub-roles to `ROLES.md`.

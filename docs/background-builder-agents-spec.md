@@ -25,8 +25,8 @@ This document captures landed behavior only.
 |-----------|---------|----------------|--------|
 | Background Agent Manager | `ui/modules/main/background-agent-manager.js` | Alias/slot allocation, spawn, direct daemon writes, owner binding, watchdog, cleanup orchestration | Implemented (Stage 1) |
 | Terminal Daemon Integration | `ui/terminal-daemon.js` | Per-terminal `scrollbackMaxSize` option used for headless background agents | Implemented (Stage 1) |
-| Daemon Client Integration | `ui/daemon-client.js` | `spawn(..., spawnOptions)` support and explicit `HIVEMIND_ROLE` override from provided env | Implemented (Stage 1) |
-| App/WebSocket Routing | `ui/modules/main/hivemind-app.js` | Target resolution for `builder-bg-*`/`bg-2-*`, WS broker routing, owner-binding guard for background senders, builder-only `background-agent` control actions | Implemented (Stage 1 + 2/3) |
+| Daemon Client Integration | `ui/daemon-client.js` | `spawn(..., spawnOptions)` support and explicit `SQUIDRUN_ROLE` override from provided env | Implemented (Stage 1) |
+| App/WebSocket Routing | `ui/modules/main/squidrun-app.js` | Target resolution for `builder-bg-*`/`bg-2-*`, WS broker routing, owner-binding guard for background senders, builder-only `background-agent` control actions | Implemented (Stage 1 + 2/3) |
 | WebSocket Runtime Health | `ui/modules/websocket-runtime.js` | Health identity resolution for `builder-bg-*` / `bg-2-*` targets (`no_route`/`stale`/`healthy`) | Implemented (Stage 2/3) |
 | Builder Control CLI | `ui/scripts/hm-bg.js` | Builder CLI control path for spawn/list/kill/kill-all/map over WS `background-agent` requests | Implemented (Stage 2/3) |
 | Target/Alias Source of Truth | `ui/config.js` | Canonical maps, constants, and resolver helpers for background alias <-> synthetic pane IDs | Implemented (Stage 1) |
@@ -36,7 +36,7 @@ This document captures landed behavior only.
 1. Spawn request reaches `BackgroundAgentManager.spawnAgent()` (owner pane is validated as `2`).
 2. Manager allocates available alias slot (`builder-bg-1..3`) and tracks state (`starting`).
 3. Manager calls daemon client `spawn()` with env:
-`HIVEMIND_ROLE=<builder-bg-N>`, `HIVEMIND_PANE_ID=<bg-2-N>`, `HIVEMIND_PARENT_PANE_ID=2`, `HIVEMIND_BG_ALIAS=<builder-bg-N>`, plus `scrollbackMaxSize`.
+`SQUIDRUN_ROLE=<builder-bg-N>`, `SQUIDRUN_PANE_ID=<bg-2-N>`, `SQUIDRUN_PARENT_PANE_ID=2`, `SQUIDRUN_BG_ALIAS=<builder-bg-N>`, plus `scrollbackMaxSize`.
 4. Manager launches pane-2 CLI command in the spawned PTY and injects startup contract prompt, then retries startup prompt once.
 5. WS `send` path resolves target via `resolveTargetToPane()`; background targets route through direct daemon write via manager.
 6. Builder control path (`hm-bg`) issues WS `background-agent` action requests (`spawn`, `list`, `kill`, `kill-all`, `target-map`) and app handler enforces builder-only owner binding.

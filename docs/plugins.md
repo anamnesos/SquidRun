@@ -1,6 +1,6 @@
-# Hivemind Plugin System
+# SquidRun Plugin System
 
-Hivemind supports a lightweight plugin system in the main process. Plugins are
+SquidRun supports a lightweight plugin system in the main process. Plugins are
 loaded from `workspace/plugins` and can register hooks, commands, and lifecycle
 callbacks to extend core behavior.
 
@@ -41,7 +41,7 @@ storage and `workspace/plugins/plugins.json` for enable/disable state.
 {
   "name": "my-plugin",
   "version": "1.0.0",
-  "hivemind": {
+  "squidrun": {
     "id": "my-plugin",
     "name": "My Plugin",
     "main": "index.js",

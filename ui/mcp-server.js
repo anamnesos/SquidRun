@@ -32,7 +32,7 @@ function coordPath(relPath, options = {}) {
   if (typeof resolveCoordPath === 'function') {
     return resolveCoordPath(relPath, options);
   }
-  return path.join(WORKSPACE_PATH, relPath);
+  return path.join(process.cwd(), '.squidrun', relPath);
 }
 
 function getStateFilePath(options = {}) {

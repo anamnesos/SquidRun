@@ -8,13 +8,11 @@ const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
 const {
-  WORKSPACE_PATH,
   LEGACY_ROLE_ALIASES,
   ROLE_ID_MAP,
   getSquidrunRoot,
   setProjectRoot,
   resolveCoordPath,
-  resolveGlobalPath,
 } = require('../config');
 const {
   appendCommsJournalEntry,
@@ -187,9 +185,12 @@ function resolveProjectContextFromLink(startDir = process.cwd()) {
   const workspaceValue = typeof payload.workspace === 'string'
     ? payload.workspace.trim()
     : '';
-  const projectPath = workspaceValue
+  const declaredProjectPath = workspaceValue
     ? path.resolve(workspaceValue)
     : fallbackProjectPath;
+  const projectPath = (workspaceValue && !fs.existsSync(declaredProjectPath))
+    ? fallbackProjectPath
+    : declaredProjectPath;
   const sessionId = typeof payload.session_id === 'string'
     ? payload.session_id.trim()
     : (typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '');
@@ -215,7 +216,6 @@ function readProjectContextFromState() {
   if (typeof resolveCoordPath === 'function') {
     candidates.push(resolveCoordPath('state.json'));
   }
-  candidates.push(path.join(WORKSPACE_PATH, 'state.json'));
 
   for (const candidate of candidates) {
     const parsed = readJsonFileSafe(candidate);
@@ -304,7 +304,6 @@ function resolveCurrentSessionId(context = localProjectContext) {
   if (typeof resolveCoordPath === 'function') {
     addCandidate(resolveCoordPath('app-status.json'));
   }
-  addCandidate(path.join(WORKSPACE_PATH, 'app-status.json'));
 
   for (const candidate of candidates) {
     const parsed = readJsonFileSafe(candidate);
@@ -557,13 +556,12 @@ function writeTriggerFallback(targetInput, descriptorOrContent, options = {}) {
         }),
     };
 
-  const triggersDir = typeof resolveGlobalPath === 'function'
-    ? resolveGlobalPath('triggers', { forWrite: true })
-    : (
-      typeof resolveCoordPath === 'function'
-        ? resolveCoordPath('triggers', { forWrite: true })
-        : path.join(WORKSPACE_PATH, 'triggers')
-    );
+  const fallbackCoordRoot = localProjectContext?.projectPath
+    ? path.join(localProjectContext.projectPath, '.squidrun')
+    : path.join(process.cwd(), '.squidrun');
+  const triggersDir = typeof resolveCoordPath === 'function'
+    ? resolveCoordPath('triggers', { forWrite: true })
+    : path.join(fallbackCoordRoot, 'triggers');
   const triggerPath = path.join(triggersDir, `${roleName}.txt`);
   const tempPath = path.join(
     triggersDir,

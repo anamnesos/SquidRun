@@ -489,6 +489,11 @@ select:focus-visible {
   font-size: var(--text-sm);
 }
 
+.context-menu-item.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .context-menu-item:hover {
   background: linear-gradient(
     90deg,
@@ -496,6 +501,11 @@ select:focus-visible {
     rgba(0, 240, 255, 0.05) 100%
   );
   color: var(--color-primary);
+}
+
+.context-menu-item.disabled:hover {
+  background: transparent;
+  color: var(--color-text);
 }
 
 .context-menu-item:active {

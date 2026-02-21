@@ -7,7 +7,7 @@
 
 ## 1. Overview
 
-The Event Kernel is a two-lane system at the core of Hivemind that replaces implicit side-effect coordination with explicit, typed, traceable events.
+The Event Kernel is a two-lane system at the core of SquidRun that replaces implicit side-effect coordination with explicit, typed, traceable events.
 
 - **Lane A (Interaction Kernel):** Always-on control path. Enforces ownership, sequencing, and contracts. Cannot be disabled.
 - **Lane B (Timeline / Telemetry):** Optional observability path. Event logging, health strip, replay. Controlled at runtime through Event Bus API controls (`setTelemetryEnabled`), not persisted settings toggles.

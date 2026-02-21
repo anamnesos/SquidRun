@@ -390,7 +390,7 @@ const TERMINAL_OPTIONS = {
   cursorBlink: true,
   cursorStyle: 'block',
   scrollback: 2000,
-  rightClickSelectsWord: true,
+  rightClickSelectsWord: false,
   allowProposedApi: true,
 };
 
@@ -1506,93 +1506,189 @@ function sendToPane(paneId, message, options = {}) {
   startStuckMessageSweeper();
 }
 
+let activeTerminalContextMenu = null;
+let activeTerminalContextMenuCleanup = null;
+
+function dismissTerminalContextMenu() {
+  if (typeof activeTerminalContextMenuCleanup === 'function') {
+    try {
+      activeTerminalContextMenuCleanup();
+    } catch (_) {}
+  }
+  activeTerminalContextMenuCleanup = null;
+  if (activeTerminalContextMenu && activeTerminalContextMenu.parentNode) {
+    activeTerminalContextMenu.parentNode.removeChild(activeTerminalContextMenu);
+  }
+  activeTerminalContextMenu = null;
+}
+
+function isCopyShortcut(event) {
+  const key = String(event?.key || '').toLowerCase();
+  return (event?.ctrlKey || event?.metaKey) && !event?.altKey && key === 'c';
+}
+
+function isPasteShortcut(event) {
+  const key = String(event?.key || '').toLowerCase();
+  return (event?.ctrlKey || event?.metaKey) && !event?.altKey && key === 'v';
+}
+
+function showTerminalStatusTemporary(paneId, statusMsg, message) {
+  updatePaneStatus(paneId, message);
+  setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
+}
+
+async function copyTerminalSelection(terminal, paneId, statusMsg) {
+  const selection = terminal?.hasSelection?.() ? terminal.getSelection() : '';
+  if (!selection) return false;
+  try {
+    await navigator.clipboard.writeText(selection);
+    showTerminalStatusTemporary(paneId, statusMsg, 'Copied!');
+    log.info('Clipboard', `Copied ${selection.length} chars from pane ${paneId}`);
+    return true;
+  } catch (err) {
+    log.error('Clipboard', `Copy failed for pane ${paneId}:`, err);
+    showTerminalStatusTemporary(paneId, statusMsg, 'Copy failed');
+    return false;
+  }
+}
+
+async function pasteClipboardToPane(paneId, statusMsg) {
+  // Keep read-only panes truly read-only for keyboard/mouse input.
+  if (inputLocked[paneId]) return false;
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) return false;
+    await window.squidrun.pty.write(paneId, text);
+    showTerminalStatusTemporary(paneId, statusMsg, 'Pasted!');
+    log.info('Clipboard', `Pasted ${text.length} chars to pane ${paneId}`);
+    return true;
+  } catch (err) {
+    log.error('Paste', `Paste failed for pane ${paneId}:`, err);
+    showTerminalStatusTemporary(paneId, statusMsg, 'Paste failed');
+    return false;
+  }
+}
+
+function createContextMenuItem(label, shortcut, disabled, onClick) {
+  const item = document.createElement('div');
+  item.className = `context-menu-item${disabled ? ' disabled' : ''}`;
+  item.setAttribute('role', 'menuitem');
+  item.setAttribute('tabindex', disabled ? '-1' : '0');
+
+  const icon = document.createElement('span');
+  icon.className = 'icon';
+  icon.textContent = '';
+  item.appendChild(icon);
+
+  const text = document.createElement('span');
+  text.textContent = label;
+  item.appendChild(text);
+
+  if (shortcut) {
+    const badge = document.createElement('span');
+    badge.className = 'shortcut';
+    badge.textContent = shortcut;
+    item.appendChild(badge);
+  }
+
+  if (!disabled && typeof onClick === 'function') {
+    item.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onClick();
+    });
+  }
+
+  return item;
+}
+
+function openTerminalContextMenu(event, terminal, paneId, statusMsg, signal) {
+  dismissTerminalContextMenu();
+
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.setAttribute('role', 'menu');
+
+  const hasSelection = Boolean(terminal?.hasSelection?.() && terminal.getSelection());
+  const allowPaste = !inputLocked[paneId];
+
+  menu.appendChild(createContextMenuItem('Copy', 'Ctrl+C', !hasSelection, () => {
+    void copyTerminalSelection(terminal, paneId, statusMsg);
+    dismissTerminalContextMenu();
+  }));
+  menu.appendChild(createContextMenuItem('Paste', 'Ctrl+V', !allowPaste, () => {
+    void pasteClipboardToPane(paneId, statusMsg);
+    dismissTerminalContextMenu();
+  }));
+  menu.appendChild(createContextMenuItem('Select All', 'Ctrl+A', false, () => {
+    if (typeof terminal?.selectAll === 'function') {
+      terminal.selectAll();
+    }
+    dismissTerminalContextMenu();
+  }));
+
+  document.body.appendChild(menu);
+  activeTerminalContextMenu = menu;
+
+  const rect = menu.getBoundingClientRect();
+  const maxLeft = Math.max(0, window.innerWidth - rect.width - 8);
+  const maxTop = Math.max(0, window.innerHeight - rect.height - 8);
+  const left = Math.max(8, Math.min(event.clientX, maxLeft));
+  const top = Math.max(8, Math.min(event.clientY, maxTop));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+
+  const onPointerDown = (pointerEvent) => {
+    if (!menu.contains(pointerEvent.target)) {
+      dismissTerminalContextMenu();
+    }
+  };
+  const onKeyDown = (keyEvent) => {
+    if (keyEvent.key === 'Escape') {
+      dismissTerminalContextMenu();
+    }
+  };
+  const onWindowBlur = () => dismissTerminalContextMenu();
+
+  document.addEventListener('pointerdown', onPointerDown, true);
+  document.addEventListener('contextmenu', onPointerDown, true);
+  document.addEventListener('keydown', onKeyDown, true);
+  window.addEventListener('blur', onWindowBlur, true);
+
+  activeTerminalContextMenuCleanup = () => {
+    document.removeEventListener('pointerdown', onPointerDown, true);
+    document.removeEventListener('contextmenu', onPointerDown, true);
+    document.removeEventListener('keydown', onKeyDown, true);
+    window.removeEventListener('blur', onWindowBlur, true);
+  };
+
+  if (signal && typeof signal.addEventListener === 'function') {
+    signal.addEventListener('abort', dismissTerminalContextMenu, { once: true });
+  }
+}
+
 // Setup copy/paste handlers
 function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {}) {
-  container.addEventListener('contextmenu', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    // FIX: Check hasSelection() at click time to use current selection state.
-    const currentSelection = terminal.hasSelection() ? terminal.getSelection() : '';
-
-    if (currentSelection) {
-      // COPY: There's an active selection
-      try {
-        await navigator.clipboard.writeText(currentSelection);
-        updatePaneStatus(paneId, 'Copied!');
-        log.info('Clipboard', `Copied ${currentSelection.length} chars from pane ${paneId}`);
-        setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
-      } catch (err) {
-        log.error('Clipboard', 'Copy failed (permission denied?):', err);
-        updatePaneStatus(paneId, 'Copy failed');
-        setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
-      }
-      // Clear selection after copy
-      terminal.clearSelection();
-    } else {
-      // PASTE: No selection, so paste from clipboard
-      if (inputLocked[paneId]) {
-        updatePaneStatus(paneId, 'Input locked');
-        setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
-        return;
-      }
-      try {
-        const text = await navigator.clipboard.readText();
-        if (text) {
-          await window.squidrun.pty.write(paneId, text);
-          updatePaneStatus(paneId, 'Pasted!');
-          log.info('Clipboard', `Pasted ${text.length} chars to pane ${paneId}`);
-          setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
-        } else {
-          updatePaneStatus(paneId, 'Clipboard empty');
-          setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
-        }
-      } catch (err) {
-        log.error('Paste', 'Paste failed:', err);
-        updatePaneStatus(paneId, 'Paste failed');
-        setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
-      }
-    }
+  container.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openTerminalContextMenu(event, terminal, paneId, statusMsg, signal);
   }, { signal });
 
-  // Ctrl+C: Copy selection (if any)
-  container.addEventListener('keydown', async (e) => {
-    if (e.ctrlKey && e.key === 'c' && terminal.hasSelection()) {
-      // Don't prevent default - let xterm handle Ctrl+C for interrupt when no selection
-      const selection = terminal.getSelection();
-      if (selection) {
-        try {
-          await navigator.clipboard.writeText(selection);
-          updatePaneStatus(paneId, 'Copied!');
-          setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
-        } catch (err) {
-          log.error('Clipboard', 'Ctrl+C copy failed:', err);
-        }
-      }
+  container.addEventListener('keydown', (event) => {
+    if (isCopyShortcut(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      void copyTerminalSelection(terminal, paneId, statusMsg);
+      return;
     }
 
-    // Ctrl+V: Paste
-    if (e.ctrlKey && e.key === 'v') {
-      e.preventDefault();
-      if (inputLocked[paneId]) {
-        updatePaneStatus(paneId, 'Input locked');
-        setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
-        return;
-      }
-      try {
-        const text = await navigator.clipboard.readText();
-        if (text) {
-          await window.squidrun.pty.write(paneId, text);
-          updatePaneStatus(paneId, 'Pasted!');
-          setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
-        }
-      } catch (err) {
-        log.error('Paste', 'Ctrl+V paste failed:', err);
-        updatePaneStatus(paneId, 'Paste failed');
-        setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
-      }
+    if (isPasteShortcut(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      void pasteClipboardToPane(paneId, statusMsg);
     }
-  }, { signal });
+  }, { signal, capture: true });
 }
 
   // Initialize a single terminal
@@ -1658,6 +1754,10 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
 
     // Check if this is an Enter key (browsers use 'Enter', some use 'Return', keyCode 13)
     const isEnterKey = event.key === 'Enter' || event.key === 'Return' || event.keyCode === 13;
+    if (isCopyShortcut(event) || isPasteShortcut(event)) {
+      // Always keep Ctrl/Cmd+C and Ctrl/Cmd+V as OS copy/paste, never terminal input/SIGINT.
+      return false;
+    }
 
     if (isPaneReadOnlyMirrorMode(paneId)) {
       if (event.ctrlKey && event.key.toLowerCase() === 'f') {
@@ -1853,6 +1953,10 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
 
     // Check if this is an Enter key (browsers use 'Enter', some use 'Return', keyCode 13)
     const isEnterKey = event.key === 'Enter' || event.key === 'Return' || event.keyCode === 13;
+    if (isCopyShortcut(event) || isPasteShortcut(event)) {
+      // Keep Ctrl/Cmd+C and Ctrl/Cmd+V as clipboard actions, never terminal input/SIGINT.
+      return false;
+    }
 
     if (isPaneReadOnlyMirrorMode(paneId)) {
       if (event.ctrlKey && event.key.toLowerCase() === 'f') {

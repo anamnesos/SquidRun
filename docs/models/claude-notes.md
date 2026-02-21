@@ -1,6 +1,6 @@
 # Claude Model Notes
 
-These notes apply when running Claude Code CLI in a Hivemind pane.
+These notes apply when running Claude Code CLI in a SquidRun pane.
 
 ## Known Issues
 

@@ -3,7 +3,7 @@
  * Channels: get-task-list, claim-task, task-list-updated
  *
  * Provides task pool management for agent self-claim workflow.
- * Tasks are stored in workspace/task-pool.json with domain metadata.
+ * Tasks are stored in .squidrun/task-pool.json with domain metadata.
  */
 
 const fs = require('fs');
@@ -54,7 +54,7 @@ function registerTaskPoolHandlers(ctx) {
       return [path.join(workspacePath, relPath)];
     }
     if (typeof getCoordRoots === 'function') {
-      return getCoordRoots({ includeLegacy: true, includeMissing: false })
+      return getCoordRoots({ includeLegacy: false, includeMissing: false })
         .map((root) => path.join(root, relPath));
     }
     const base = workspacePath || WORKSPACE_PATH;
