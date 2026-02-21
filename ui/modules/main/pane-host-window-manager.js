@@ -74,6 +74,7 @@ function createPaneHostWindowManager(options = {}) {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        sandbox: false,
         backgroundThrottling: false,
         preload: getPreloadPath(),
       },
