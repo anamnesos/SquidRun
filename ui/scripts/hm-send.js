@@ -277,6 +277,10 @@ function looksLikeAppSessionId(value) {
   return /^app-session-/i.test(String(value || '').trim());
 }
 
+function looksLikeLegacyBootstrapSessionId(value) {
+  return /^app-\d+-\d+$/i.test(String(value || '').trim());
+}
+
 function resolveCurrentSessionId(context = localProjectContext) {
   const candidates = [];
   const seen = new Set();
@@ -320,6 +324,12 @@ function chooseSessionId(linkSessionId, runtimeSessionId) {
   const normalizedRuntimeSessionId = normalizeSessionId(runtimeSessionId);
   if (!normalizedLinkSessionId) return normalizedRuntimeSessionId;
   if (!normalizedRuntimeSessionId) return normalizedLinkSessionId;
+  if (
+    looksLikeAppSessionId(normalizedRuntimeSessionId)
+    && looksLikeLegacyBootstrapSessionId(normalizedLinkSessionId)
+  ) {
+    return normalizedRuntimeSessionId;
+  }
   if (
     looksLikeAppSessionId(normalizedLinkSessionId)
     && looksLikeAppSessionId(normalizedRuntimeSessionId)

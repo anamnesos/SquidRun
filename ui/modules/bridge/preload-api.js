@@ -63,6 +63,10 @@ function createPreloadApi(ipcRenderer) {
       onKernelBridgeStats: (callback) => ipc.on('kernel:bridge-stats', callback),
     },
 
+    input: {
+      editAction: (action) => ipc.invoke('input-edit-action', action),
+    },
+
     claude: {
       spawn: (paneId, workingDir) => ipc.invoke('spawn-claude', paneId, workingDir),
     },

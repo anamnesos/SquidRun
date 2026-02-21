@@ -80,6 +80,18 @@ describe('auto-handoff-materializer', () => {
     expect(_internals.extractTag('(ARCHITECT #1): NOTE: not an allowed tag')).toBeNull();
   });
 
+  test('resolveEffectiveSessionScopeId prefers current app-session scope for legacy app bootstrap ids', () => {
+    expect(_internals.resolveEffectiveSessionScopeId('app-7736-1771709282380', {
+      resolveCurrentSessionScopeId: () => 'app-session-42',
+    })).toBe('app-session-42');
+    expect(_internals.resolveEffectiveSessionScopeId(null, {
+      resolveCurrentSessionScopeId: () => 7,
+    })).toBe('app-session-7');
+    expect(_internals.resolveEffectiveSessionScopeId('session-current', {
+      resolveCurrentSessionScopeId: () => 'app-session-99',
+    })).toBe('session-current');
+  });
+
   test('pending deliveries exclude failed rows and resolved brokered rows', () => {
     const rows = [
       {
