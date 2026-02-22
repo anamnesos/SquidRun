@@ -87,7 +87,7 @@ describe('triggers.js module', () => {
     fs.writeFileSync.mockImplementation(() => {});
     if (!fs.appendFileSync) fs.appendFileSync = jest.fn();
     fs.appendFileSync.mockImplementation(() => {});
-    fs.existsSync.mockReturnValue(true);
+    fs.existsSync.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -125,6 +125,33 @@ describe('triggers.js module', () => {
       
       expect(result.success).toBe(false);
       expect(result.reason).toBe('already_processing');
+    });
+
+    test('removes stale processing file before rename', () => {
+      fs.existsSync.mockImplementation((filePath) => filePath.endsWith('.processing'));
+      fs.statSync.mockReturnValue({ mtimeMs: Date.now() - 120000 });
+      fs.readFileSync.mockReturnValue('test message');
+
+      const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+
+      expect(result.success).toBe(true);
+      expect(fs.unlinkSync).toHaveBeenCalledWith('/path/architect.txt.processing');
+      expect(fs.renameSync).toHaveBeenCalledWith('/path/architect.txt', '/path/architect.txt.processing');
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        'Trigger',
+        expect.stringContaining('Removed stale processing file /path/architect.txt.processing')
+      );
+    });
+
+    test('returns already_processing when processing file is fresh', () => {
+      fs.existsSync.mockImplementation((filePath) => filePath.endsWith('.processing'));
+      fs.statSync.mockReturnValue({ mtimeMs: Date.now() - 5000 });
+
+      const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('already_processing');
+      expect(fs.renameSync).not.toHaveBeenCalled();
     });
 
     test('should handle read error', () => {

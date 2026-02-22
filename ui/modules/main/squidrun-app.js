@@ -2250,6 +2250,21 @@ class SquidRunApp {
         this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.RUNNING, reason);
         return { ok: true, state: this.runtimeLifecycleState };
       } catch (err) {
+        try {
+          watcher.stopMessageWatcher();
+        } catch (stopErr) {
+          log.warn('RuntimeLifecycle', `Failed stopping message watcher after start error: ${stopErr.message}`);
+        }
+        try {
+          watcher.stopTriggerWatcher();
+        } catch (stopErr) {
+          log.warn('RuntimeLifecycle', `Failed stopping trigger watcher after start error: ${stopErr.message}`);
+        }
+        try {
+          watcher.stopWatcher();
+        } catch (stopErr) {
+          log.warn('RuntimeLifecycle', `Failed stopping workspace watcher after start error: ${stopErr.message}`);
+        }
         this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPED, `${reason}:start-error`);
         return { ok: false, state: this.runtimeLifecycleState, error: err.message };
       }

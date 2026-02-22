@@ -218,6 +218,25 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
+  test('queue mutation chain entries are cleaned up after send operations complete', async () => {
+    const { watcher, tempDir } = setupWatcher();
+    await watcher.initMessageQueue();
+
+    expect(watcher._internals.getQueueMutationChainSize()).toBe(0);
+
+    await Promise.all([
+      watcher.sendMessage('1', '1', 'm1'),
+      watcher.sendMessage('1', '2', 'm2'),
+      watcher.sendMessage('2', '1', 'm3'),
+      watcher.sendMessage('2', '2', 'm4'),
+    ]);
+
+    expect(watcher._internals.getQueueMutationChainSize()).toBe(0);
+
+    watcher._internals.clearQueueMutationChains();
+    cleanupDir(tempDir);
+  });
+
   test('getMessages recovers from corrupted queue JSON and resets queue file', async () => {
     const { watcher, tempDir, logMock } = setupWatcher();
     await watcher.initMessageQueue();

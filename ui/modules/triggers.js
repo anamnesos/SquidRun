@@ -41,6 +41,7 @@ const TRIGGER_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 const TRIGGER_MESSAGE_ID_REGEX = /^\[HM-MESSAGE-ID:([^\]\r\n]+)\]\r?\n?/;
 const RECENT_TRIGGER_ID_TTL_MS = Number.parseInt(process.env.SQUIDRUN_TRIGGER_DEDUPE_TTL_MS || String(5 * 60 * 1000), 10);
 const RECENT_TRIGGER_ID_LIMIT = Number.parseInt(process.env.SQUIDRUN_TRIGGER_DEDUPE_MAX || '2000', 10);
+const STALE_PROCESSING_MAX_AGE_MS = Number.parseInt(process.env.SQUIDRUN_STALE_PROCESSING_MAX_AGE_MS || '60000', 10);
 
 // Local state
 const lastSyncTime = new Map();
@@ -598,8 +599,26 @@ function handleTriggerFile(filePath, filename) {
   }
 
   const processingPath = filePath + '.processing';
+  try {
+    if (fs.existsSync(processingPath)) {
+      const processingStats = fs.statSync(processingPath);
+      const ageMs = Date.now() - Number(processingStats?.mtimeMs || 0);
+      if (Number.isFinite(ageMs) && ageMs >= STALE_PROCESSING_MAX_AGE_MS) {
+        fs.unlinkSync(processingPath);
+        log.warn('Trigger', `Removed stale processing file ${processingPath} (age ${Math.round(ageMs)}ms)`);
+      } else {
+        return { success: false, reason: 'already_processing' };
+      }
+    }
+  } catch (err) {
+    log.warn('Trigger', `Failed stale processing recovery for ${processingPath}: ${err.message}`);
+    return { success: false, reason: 'rename_error' };
+  }
   try { fs.renameSync(filePath, processingPath); }
-  catch (err) { return { success: false, reason: err.code === 'ENOENT' ? 'already_processing' : 'rename_error' }; }
+  catch (err) {
+    const reason = err.code === 'ENOENT' || err.code === 'EEXIST' ? 'already_processing' : 'rename_error';
+    return { success: false, reason };
+  }
 
   const cleanupProcessingFile = (stage) => {
     try {
