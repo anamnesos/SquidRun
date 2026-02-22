@@ -297,15 +297,34 @@ async function mcpBroadcastMessage(sessionId, content) {
 
   const fromPaneId = validation.paneId;
   const results = [];
+  const failedTargets = [];
 
   for (const toPaneId of PANE_IDS) {
     if (toPaneId !== fromPaneId) {
-      const result = await watcher.sendMessage(fromPaneId, toPaneId, content, 'broadcast');
-      results.push({ toPaneId, ...result });
+      try {
+        const sendResult = await watcher.sendMessage(fromPaneId, toPaneId, content, 'broadcast');
+        const resultPayload = (sendResult && typeof sendResult === 'object') ? sendResult : {};
+        const success = resultPayload.success === true;
+        results.push({ toPaneId, ...resultPayload, success });
+        if (!success) {
+          failedTargets.push(toPaneId);
+        }
+      } catch (err) {
+        failedTargets.push(toPaneId);
+        results.push({
+          toPaneId,
+          success: false,
+          error: err?.message || String(err),
+        });
+      }
     }
   }
 
-  return { success: true, results };
+  return {
+    success: failedTargets.length === 0,
+    results,
+    failedTargets,
+  };
 }
 
 /**

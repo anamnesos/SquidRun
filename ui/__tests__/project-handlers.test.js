@@ -34,6 +34,7 @@ jest.mock('../modules/team-memory/runtime', () => ({
 }));
 
 const fs = require('fs');
+const log = require('../modules/logger');
 const { initializeEvidenceLedgerRuntime } = require('../modules/ipc/evidence-ledger-runtime');
 const { initializeTeamMemoryRuntime } = require('../modules/team-memory/runtime');
 const { registerProjectHandlers } = require('../modules/ipc/project-handlers');
@@ -134,6 +135,9 @@ describe('Project Handlers', () => {
         operatingMode: 'project',
       };
       startupCtx.watcher.readState = jest.fn(() => ({ project: '/startup/project' }));
+      startupCtx.watcher.writeState = jest.fn();
+      startupCtx.watcher.transition = jest.fn();
+      startupCtx.watcher.States = { PROJECT_SELECTED: 'project_selected' };
 
       const startupDeps = {
         loadSettings: jest.fn(() => ({ recentProjects: [], paneProjects: {} })),
@@ -158,6 +162,47 @@ describe('Project Handlers', () => {
         workspace: path.resolve('/startup/project').replace(/\\/g, '/'),
         session_id: 'app-session-186',
       }));
+    });
+
+    test('surfaces startup rebind failure and keeps runtime lifecycle recoverable', async () => {
+      log.warn.mockClear();
+      initializeEvidenceLedgerRuntime.mockImplementationOnce(() => {
+        throw new Error('ledger unavailable');
+      });
+
+      const startupHarness = createIpcHarness();
+      const startupCtx = createDefaultContext({ ipcMain: startupHarness.ipcMain });
+      startupCtx.PANE_IDS = ['1', '2', '3'];
+      startupCtx.currentSettings = {
+        operatingMode: 'project',
+      };
+      startupCtx.watcher.readState = jest.fn(() => ({ project: '/startup/project' }));
+      startupCtx.watcher.writeState = jest.fn();
+      startupCtx.watcher.transition = jest.fn();
+      startupCtx.watcher.States = { PROJECT_SELECTED: 'project_selected' };
+
+      const startupDeps = {
+        loadSettings: jest.fn(() => ({ recentProjects: [], paneProjects: {} })),
+        saveSettings: jest.fn(),
+        readAppStatus: jest.fn(() => ({ session: 211 })),
+        getSessionId: jest.fn(() => 'app-session-211'),
+        startRuntimeLifecycle: jest.fn(async () => ({ ok: true })),
+        stopRuntimeLifecycle: jest.fn(async () => ({ ok: true })),
+      };
+
+      registerProjectHandlers(startupCtx, startupDeps);
+
+      expect(log.warn).toHaveBeenCalledWith(
+        'ProjectLifecycle',
+        expect.stringContaining('Runtime rebind failed during startup sync')
+      );
+      expect(log.warn).toHaveBeenCalledWith(
+        'ProjectLifecycle',
+        expect.stringContaining('Startup runtime sync failed')
+      );
+
+      const switchResult = await startupHarness.invoke('switch-project', '/project-after-failure');
+      expect(switchResult.success).toBe(true);
     });
   });
 

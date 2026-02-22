@@ -264,6 +264,24 @@ describe('triggers.js module', () => {
       }));
     });
 
+    test('sendDirectMessage returns queued false when main window is unavailable', () => {
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
+      global.window.isDestroyed.mockReturnValue(true);
+
+      const result = triggers.sendDirectMessage(['2'], 'Direct msg', 'architect');
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'window_unavailable',
+        notified: [],
+        mode: 'pty',
+      }));
+      expect(global.window.webContents.send).not.toHaveBeenCalled();
+    });
+
     test('sendDirectMessage tolerates window send race without throwing', () => {
       triggers.init(global.window, new Map([['1', 'running']]), null);
       global.window.webContents.send.mockImplementationOnce(() => {

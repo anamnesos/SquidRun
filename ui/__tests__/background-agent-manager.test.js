@@ -241,4 +241,59 @@ describe('background-agent-manager completion lifecycle', () => {
       alias: 'builder-bg-1',
     });
   });
+
+  test('runWatchdogTick queues idle kills after scanning agents', () => {
+    const events = [];
+    const daemonClient = {
+      connected: true,
+      getTerminals: jest.fn(() => [
+        { paneId: 'bg-2-1', alive: true },
+        { paneId: 'bg-2-2', alive: true },
+      ]),
+      getLastActivity: jest.fn((paneId) => {
+        events.push(`activity:${paneId}`);
+        return 0;
+      }),
+      spawn: jest.fn(),
+      write: jest.fn(),
+      kill: jest.fn(),
+    };
+
+    const manager = new BackgroundAgentManager({
+      getDaemonClient: () => daemonClient,
+      getSettings: () => ({}),
+      getSessionScopeId: () => null,
+      resolveBuilderCwd: () => '/repo',
+    });
+    manager.idleTtlMs = 1;
+
+    const nowMs = Date.now();
+    manager.agents.set('bg-2-1', {
+      alias: 'builder-bg-1',
+      paneId: 'bg-2-1',
+      ownerPaneId: '2',
+      status: 'running',
+      createdAtMs: nowMs - 10_000,
+      lastActivityAtMs: nowMs - 10_000,
+    });
+    manager.agents.set('bg-2-2', {
+      alias: 'builder-bg-2',
+      paneId: 'bg-2-2',
+      ownerPaneId: '2',
+      status: 'running',
+      createdAtMs: nowMs - 10_000,
+      lastActivityAtMs: nowMs - 10_000,
+    });
+
+    jest.spyOn(manager, 'killAgent').mockImplementation(async (paneId) => {
+      events.push(`kill:${paneId}`);
+      return { ok: true };
+    });
+
+    manager.runWatchdogTick(nowMs);
+
+    expect(events.slice(0, 2)).toEqual(['activity:bg-2-1', 'activity:bg-2-2']);
+    expect(events).toEqual(expect.arrayContaining(['kill:bg-2-1', 'kill:bg-2-2']));
+    expect(events.findIndex((entry) => entry.startsWith('kill:'))).toBeGreaterThan(1);
+  });
 });
