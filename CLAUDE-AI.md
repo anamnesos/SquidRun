@@ -13,17 +13,33 @@ SquidRun runs 3 local agents in parallel terminal panes:
 
 You are the **4th agent** — operating remotely via Claude.ai's web interface.
 
+## Environment Notes (Windows MCP Shell)
+
+Your MCP shell is constrained PowerShell. Key gotchas:
+- **`node` may not be in PATH.** If bare `node` fails, use the full path: `& "C:\Program Files\nodejs\node.exe"`
+- **PowerShell can swallow stdout.** If you get no output from node commands, redirect to a temp file:
+  ```powershell
+  & "C:\Program Files\nodejs\node.exe" D:/projects/hivemind/ui/scripts/hm-send.js architect "message" > $env:TEMP\hm-out.txt 2>&1; Get-Content $env:TEMP\hm-out.txt
+  ```
+- **Forward slashes work in node paths** but use backslashes or quoting for PowerShell-native commands.
+
 ## How to Communicate
 
 ### Send a message to Architect:
-```bash
-node D:/projects/squidrun/ui/scripts/hm-send.js architect "Your message here"
+```powershell
+& "C:\Program Files\nodejs\node.exe" D:/projects/hivemind/ui/scripts/hm-send.js architect "(CLAUDE.AI #N): Your message here"
 ```
 
 ### Read replies from Architect:
-Query the comms_journal in the evidence ledger:
-```bash
-node -e "const Database=require('node:sqlite').DatabaseSync;const db=new Database('D:/projects/squidrun/.squidrun/runtime/evidence-ledger.db');const rows=db.prepare('SELECT sent_at,sender,target,raw_body FROM comms_journal ORDER BY sent_at DESC LIMIT 10').all();rows.forEach(r=>console.log(r.sent_at,r.sender,'->',r.target,':',r.raw_body?.substring(0,120)))"
+
+First, discover the schema (do this once to self-correct if columns change):
+```powershell
+& "C:\Program Files\nodejs\node.exe" -e "const Database=require('node:sqlite').DatabaseSync;const db=new Database('D:/projects/hivemind/.squidrun/runtime/evidence-ledger.db');db.prepare('PRAGMA table_info(comms_journal)').all().forEach(c=>console.log(c.name,c.type))"
+```
+
+Then query recent messages (correct column names: `sent_at_ms`, `sender_role`, `target_role`):
+```powershell
+& "C:\Program Files\nodejs\node.exe" -e "const Database=require('node:sqlite').DatabaseSync;const db=new Database('D:/projects/hivemind/.squidrun/runtime/evidence-ledger.db');const rows=db.prepare('SELECT sent_at_ms,sender_role,target_role,raw_body FROM comms_journal ORDER BY sent_at_ms DESC LIMIT 10').all();rows.forEach(r=>console.log(new Date(Number(r.sent_at_ms)).toISOString(),r.sender_role,'->',r.target_role,':',r.raw_body?.substring(0,120)))"
 ```
 
 ### Rules:
@@ -52,6 +68,6 @@ Best used for: external research, documentation, code review, user-facing delive
 ## Quick Start
 
 1. Read this file
-2. Run: `node D:/projects/squidrun/ui/scripts/hm-send.js architect "(CLAUDE.AI #1): Online and ready."`
-3. Wait for Architect's reply in comms_journal
+2. Run: `& "C:\Program Files\nodejs\node.exe" D:/projects/hivemind/ui/scripts/hm-send.js architect "(CLAUDE.AI #1): Online and ready."`
+3. Query comms_journal for Architect's reply (see "Read replies" above)
 4. Follow Architect's coordination

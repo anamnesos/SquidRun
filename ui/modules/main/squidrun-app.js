@@ -1885,12 +1885,15 @@ class SquidRunApp {
       sendDirectMessage: (targets, message, fromRole) => triggers.sendDirectMessage(targets, message, fromRole),
     });
     // Pipeline IPC handlers
+    ipcMain.removeHandler('pipeline-get-items');
     ipcMain.handle('pipeline-get-items', (event, stageFilter) => {
       return pipeline.getItems(stageFilter || null);
     });
+    ipcMain.removeHandler('pipeline-get-active');
     ipcMain.handle('pipeline-get-active', () => {
       return pipeline.getActiveItems();
     });
+    ipcMain.removeHandler('pipeline-mark-committed');
     ipcMain.handle('pipeline-mark-committed', (event, itemId) => {
       return pipeline.markCommitted(itemId);
     });
@@ -1902,13 +1905,16 @@ class SquidRunApp {
     });
 
     // Shared State IPC handlers
+    ipcMain.removeHandler('shared-state-get');
     ipcMain.handle('shared-state-get', () => {
       return sharedState.getState();
     });
+    ipcMain.removeHandler('shared-state-changelog');
     ipcMain.handle('shared-state-changelog', (event, { paneId, since } = {}) => {
       if (paneId) return sharedState.getChangelogForPane(paneId);
       return sharedState.getChangesSince(since || 0);
     });
+    ipcMain.removeHandler('shared-state-mark-seen');
     ipcMain.handle('shared-state-mark-seen', (event, paneId) => {
       sharedState.markPaneSeen(paneId);
     });
@@ -1921,6 +1927,7 @@ class SquidRunApp {
       isIdle: () => (Date.now() - this.lastDaemonOutputAtMs) > APP_IDLE_THRESHOLD_MS,
     });
 
+    ipcMain.removeHandler('context-snapshot-refresh');
     ipcMain.handle('context-snapshot-refresh', (event, paneId) => {
       if (paneId) return contextCompressor.refresh(paneId);
       return contextCompressor.refreshAll();
@@ -3355,6 +3362,17 @@ class SquidRunApp {
     }
     try {
       ipcMain.removeHandler('pane-host-inject');
+    } catch (_) {
+      // no-op
+    }
+    try {
+      ipcMain.removeHandler('pipeline-get-items');
+      ipcMain.removeHandler('pipeline-get-active');
+      ipcMain.removeHandler('pipeline-mark-committed');
+      ipcMain.removeHandler('shared-state-get');
+      ipcMain.removeHandler('shared-state-changelog');
+      ipcMain.removeHandler('shared-state-mark-seen');
+      ipcMain.removeHandler('context-snapshot-refresh');
     } catch (_) {
       // no-op
     }

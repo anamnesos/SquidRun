@@ -13,6 +13,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'delete-screenshot',
   'daemon-is-process-running',
   'evidence-ledger:query-comms-journal',
+  'evidence-ledger:upsert-comms-journal',
   'full-restart',
   'get-activity-log',
   'get-all-pane-projects',
