@@ -61,7 +61,14 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
       if (!isDaemonAvailable(daemonClient)) {
         return { success: false, reason: 'daemon_not_connected', paneId, action: normalizedAction };
       }
-      daemonClient.write(paneId, '\r');
+      try {
+        const writeAccepted = daemonClient.write(paneId, '\r');
+        if (writeAccepted === false) {
+          return { success: false, reason: 'daemon_write_failed', paneId, action: normalizedAction };
+        }
+      } catch (_err) {
+        return { success: false, reason: 'daemon_write_failed', paneId, action: normalizedAction };
+      }
       return {
         success: true,
         paneId,
@@ -93,7 +100,14 @@ function executePaneControlAction(ctx = {}, action, payload = {}) {
     if (!isDaemonAvailable(daemonClient)) {
       return { success: false, reason: 'daemon_not_connected', paneId, action: normalizedAction };
     }
-    daemonClient.write(paneId, '\x03');
+    try {
+      const writeAccepted = daemonClient.write(paneId, '\x03');
+      if (writeAccepted === false) {
+        return { success: false, reason: 'daemon_write_failed', paneId, action: normalizedAction };
+      }
+    } catch (_err) {
+      return { success: false, reason: 'daemon_write_failed', paneId, action: normalizedAction };
+    }
     return {
       success: true,
       paneId,

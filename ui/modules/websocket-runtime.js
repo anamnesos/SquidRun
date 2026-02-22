@@ -428,7 +428,11 @@ function queueOutboundMessage(target, content, meta = {}, queuedBy = 'runtime', 
   pruneOutboundQueue(now);
   const maxEntries = getQueueMaxEntries();
   if (outboundQueue.length >= maxEntries) {
-    outboundQueue.shift();
+    const dropped = outboundQueue.shift();
+    log.warn(
+      'WebSocket',
+      `Outbound queue at capacity (${maxEntries}). Dropped oldest queued message for target ${String(dropped?.target || 'unknown')}.`
+    );
   }
   outboundQueue.push(makeQueueEntry(target, content, meta, queuedBy, now));
   persistOutboundQueue();

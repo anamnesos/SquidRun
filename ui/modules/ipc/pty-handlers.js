@@ -310,7 +310,14 @@ function registerPtyHandlers(ctx, deps = {}) {
     if (!paneId) {
       return { success: false, error: 'paneId required' };
     }
-    ctx.daemonClient.write(paneId, '\x03');
+    try {
+      const writeAccepted = ctx.daemonClient.write(paneId, '\x03');
+      if (writeAccepted === false) {
+        return { success: false, error: 'daemon_write_failed' };
+      }
+    } catch (err) {
+      return { success: false, error: err?.message || 'daemon_write_failed' };
+    }
     log.info('PTY', `Interrupt sent to pane ${paneId}`);
     return { success: true };
   });

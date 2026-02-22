@@ -324,6 +324,16 @@ describe('PTY Handlers', () => {
       expect(ctx.daemonClient.write).toHaveBeenCalledWith('3', '\x03');
       expect(result).toEqual({ success: true });
     });
+
+    test('returns error when daemon rejects interrupt write', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.write.mockReturnValue(false);
+
+      const result = await harness.invoke('interrupt-pane', '3');
+
+      expect(ctx.daemonClient.write).toHaveBeenCalledWith('3', '\x03');
+      expect(result).toEqual({ success: false, error: 'daemon_write_failed' });
+    });
   });
 
   describe('send-trusted-enter', () => {
