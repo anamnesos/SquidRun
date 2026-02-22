@@ -27,7 +27,7 @@ describe('Message Queue Handlers', () => {
       markMessageDelivered: jest.fn(() => ({ success: true })),
       clearMessages: jest.fn(() => ({ success: true, cleared: 5 })),
       getMessageQueueStatus: jest.fn(() => ({ pending: 0, delivered: 10 })),
-      startMessageWatcher: jest.fn(),
+      startMessageWatcher: jest.fn(async () => ({ success: true })),
     };
 
     registerMessageQueueHandlers(ctx);
@@ -208,6 +208,41 @@ describe('Message Queue Handlers', () => {
 
       expect(ctx.watcher.startMessageWatcher).toHaveBeenCalled();
       expect(result).toEqual({ success: true });
+    });
+
+    test('waits for watcher startup resolution before reporting success', async () => {
+      let resolveStart;
+      const startPromise = new Promise((resolve) => {
+        resolveStart = resolve;
+      });
+      ctx.watcher.startMessageWatcher.mockReturnValueOnce(startPromise);
+
+      const pendingResult = harness.invoke('start-message-watcher');
+      resolveStart({ success: true, path: '/test/queue' });
+
+      await expect(pendingResult).resolves.toEqual({ success: true, path: '/test/queue' });
+    });
+
+    test('returns failure if watcher startup throws', async () => {
+      ctx.watcher.startMessageWatcher.mockRejectedValueOnce(new Error('watcher failed'));
+
+      const result = await harness.invoke('start-message-watcher');
+
+      expect(result).toEqual({
+        success: false,
+        error: 'watcher failed',
+      });
+    });
+
+    test('returns failure if watcher startup resolves unsuccessful', async () => {
+      ctx.watcher.startMessageWatcher.mockResolvedValueOnce({ success: false, reason: 'stopped' });
+
+      const result = await harness.invoke('start-message-watcher');
+
+      expect(result).toEqual({
+        success: false,
+        error: 'stopped',
+      });
     });
   });
 });

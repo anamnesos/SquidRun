@@ -69,6 +69,7 @@ const watcherRestartTimers = new Map();
 const MESSAGE_DELIVERY_ACK_TIMEOUT_MS = 4000;
 const MESSAGE_DELIVERY_RETRY_BASE_MS = 500;
 const MESSAGE_DELIVERY_RETRY_MAX_MS = 10000;
+const MESSAGE_DELIVERY_MAX_ATTEMPTS = 10;
 const MESSAGE_MARK_DELIVERED_RETRY_BASE_MS = 250;
 const MESSAGE_MARK_DELIVERED_RETRY_MAX_MS = 5000;
 const pendingMessageDeliveries = new Map(); // key -> delivery state
@@ -1138,6 +1139,16 @@ function clearPendingMessageDelivery(entry) {
   pendingMessageDeliveries.delete(entry.key);
 }
 
+function dropPendingMessageDelivery(entry, reason) {
+  if (!entry || !pendingMessageDeliveries.has(entry.key)) return;
+  const attemptCount = Number(entry.attempt) || 0;
+  clearPendingMessageDelivery(entry);
+  log.warn(
+    'MessageQueue',
+    `Dropping pending delivery ${entry.messageId} (pane ${entry.paneId}) after ${attemptCount} attempt(s): ${reason || 'max_retries_exhausted'}`
+  );
+}
+
 function scheduleMessageDeliveryRetry(entry, reason) {
   if (!entry || !pendingMessageDeliveries.has(entry.key)) return;
 
@@ -1148,6 +1159,11 @@ function scheduleMessageDeliveryRetry(entry, reason) {
   if (entry.deliveryId) {
     pendingMessageDeliveryById.delete(entry.deliveryId);
     entry.deliveryId = null;
+  }
+
+  if ((Number(entry.attempt) || 0) >= MESSAGE_DELIVERY_MAX_ATTEMPTS) {
+    dropPendingMessageDelivery(entry, `max_retries_exhausted (${reason || 'retry'})`);
+    return;
   }
 
   const previousDelay = Number(entry.retryDelayMs) || 0;
@@ -1241,12 +1257,18 @@ function handleTriggerDeliveryAck(deliveryId, paneId) {
 
 function attemptQueueMessageDelivery(entry) {
   if (!entry || !pendingMessageDeliveries.has(entry.key)) return;
+  entry.attempt += 1;
+
+  if (entry.attempt > MESSAGE_DELIVERY_MAX_ATTEMPTS) {
+    dropPendingMessageDelivery(entry, 'max_retries_exhausted (attempt_limit)');
+    return;
+  }
+
   if (!triggers || typeof triggers.notifyAgents !== 'function') {
     scheduleMessageDeliveryRetry(entry, 'triggers_unavailable');
     return;
   }
 
-  entry.attempt += 1;
   const deliveryId = createMessageDeliveryId(entry.paneId, entry.messageId, entry.attempt);
   entry.deliveryId = deliveryId;
   pendingMessageDeliveryById.set(deliveryId, entry.key);

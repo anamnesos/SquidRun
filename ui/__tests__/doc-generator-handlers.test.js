@@ -563,6 +563,29 @@ describe('Documentation Generator IPC Handlers', () => {
       expect(result.coverage).toBe(50);
     });
 
+    test('aligns documented count to function/class subset when stats include extra documented elements', async () => {
+      mockGeneratorInstance.generateForDirectory.mockResolvedValue({
+        success: true,
+        results: [{
+          elements: [
+            { type: 'function', description: 'Documented function' },
+            { type: 'function', description: '' },
+            { type: 'class', description: 'Documented class' },
+            { type: 'constant', description: 'Documented constant' },
+            { type: 'module', description: 'Documented module' },
+          ],
+        }],
+        stats: { functions: 2, classes: 1, documented: 4, undocumented: 1 },
+      });
+
+      const result = await handlers['docs-get-coverage']({}, {});
+
+      expect(result.total).toBe(3);
+      expect(result.documented).toBe(2);
+      expect(result.undocumented).toBe(1);
+      expect(result.coverage).toBe(67);
+    });
+
     test('handles zero elements', async () => {
       mockGeneratorInstance.generateForDirectory.mockResolvedValue({
         success: true,

@@ -403,6 +403,46 @@ describe('SquidRunApp', () => {
     });
   });
 
+  describe('runtime lifecycle startup', () => {
+    let app;
+    let watcher;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      watcher = require('../modules/watcher');
+    });
+
+    it('awaits successful message watcher startup before reporting running', async () => {
+      watcher.startMessageWatcher.mockResolvedValueOnce({ success: true, path: '/test/queue' });
+
+      const result = await app.startRuntimeServices('test-start');
+
+      expect(watcher.startWatcher).toHaveBeenCalledTimes(1);
+      expect(watcher.startTriggerWatcher).toHaveBeenCalledTimes(1);
+      expect(watcher.startMessageWatcher).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ ok: true, state: 'running' });
+      expect(app.runtimeLifecycleState).toBe('running');
+    });
+
+    it('returns failure when message watcher startup resolves unsuccessful', async () => {
+      watcher.startMessageWatcher.mockResolvedValueOnce({ success: false, reason: 'stopped' });
+
+      const result = await app.startRuntimeServices('test-start');
+
+      expect(result).toEqual({ ok: false, state: 'stopped', error: 'stopped' });
+      expect(app.runtimeLifecycleState).toBe('stopped');
+    });
+
+    it('returns failure when message watcher startup throws', async () => {
+      watcher.startMessageWatcher.mockRejectedValueOnce(new Error('watcher crashed'));
+
+      const result = await app.startRuntimeServices('test-start');
+
+      expect(result).toEqual({ ok: false, state: 'stopped', error: 'watcher crashed' });
+      expect(app.runtimeLifecycleState).toBe('stopped');
+    });
+  });
+
   describe('initializeStartupSessionScope', () => {
     let app;
 
