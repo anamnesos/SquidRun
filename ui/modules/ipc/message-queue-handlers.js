@@ -60,9 +60,22 @@
     return ctx.watcher.getMessageQueueStatus();
   });
 
-  ipcMain.handle('start-message-watcher', () => {
-    ctx.watcher.startMessageWatcher();
-    return { success: true };
+  ipcMain.handle('start-message-watcher', async () => {
+    try {
+      const result = await ctx.watcher.startMessageWatcher();
+      if (!result || result.success !== true) {
+        return {
+          success: false,
+          error: result?.error || result?.reason || 'message_watcher_start_failed',
+        };
+      }
+      return result;
+    } catch (err) {
+      return {
+        success: false,
+        error: err?.message || String(err),
+      };
+    }
   });
 }
 

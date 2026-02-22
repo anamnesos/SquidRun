@@ -2241,7 +2241,12 @@ class SquidRunApp {
       try {
         watcher.startWatcher();
         watcher.startTriggerWatcher();
-        watcher.startMessageWatcher();
+        const messageWatcherStart = await watcher.startMessageWatcher();
+        if (!messageWatcherStart || messageWatcherStart.success !== true) {
+          throw new Error(
+            messageWatcherStart?.error || messageWatcherStart?.reason || 'message_watcher_start_failed'
+          );
+        }
         this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.RUNNING, reason);
         return { ok: true, state: this.runtimeLifecycleState };
       } catch (err) {

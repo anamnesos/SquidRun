@@ -593,6 +593,14 @@ function handleTriggerFile(filePath, filename) {
   try { fs.renameSync(filePath, processingPath); }
   catch (err) { return { success: false, reason: err.code === 'ENOENT' ? 'already_processing' : 'rename_error' }; }
 
+  const cleanupProcessingFile = (stage) => {
+    try {
+      fs.unlinkSync(processingPath);
+    } catch (err) {
+      log.warn('Trigger', `Failed to clean up processing file ${processingPath} during ${stage}: ${err.message}`);
+    }
+  };
+
   let message;
   try {
     const raw = fs.readFileSync(processingPath);
@@ -600,66 +608,70 @@ function handleTriggerFile(filePath, filename) {
     else if (raw.length >= 3 && raw[0] === 0xEF && raw[1] === 0xBB && raw[2] === 0xBF) message = raw.slice(3).toString('utf-8').trim();
     else message = raw.toString('utf-8').trim();
     message = message.replace(/\0/g, '').replace(/[\x01-\x08\x0B\x0C\x0E-\x1F]/g, '');
-  } catch { try { fs.unlinkSync(processingPath); } catch {} return { success: false, reason: 'read_error' }; }
-
-  const extracted = extractTriggerMessageId(message);
-  const fallbackMessageId = extracted.messageId;
-  message = extracted.content;
-
-  if (fallbackMessageId) {
-    if (isRecentTriggerId(fallbackMessageId)) {
-      log.warn('Trigger', `Skipping duplicate fallback messageId ${fallbackMessageId}`);
-      try { fs.unlinkSync(processingPath); } catch {}
-      return { success: false, reason: 'duplicate_message_id' };
-    }
-    markRecentTriggerId(fallbackMessageId);
+  } catch {
+    cleanupProcessingFile('read_error');
+    return { success: false, reason: 'read_error' };
   }
 
-  if (!message) { try { fs.unlinkSync(processingPath); } catch {} return { success: false, reason: 'empty' }; }
+  try {
+    const extracted = extractTriggerMessageId(message);
+    const fallbackMessageId = extracted.messageId;
+    message = extracted.content;
 
-  let parsed = sequencing.parseMessageSequence(message);
-  const recipientRole = resolveRecipientRole(filename);
-  if (parsed.seq !== null && parsed.sender) {
-    if (!sequencing.messageState.sequences[recipientRole]) {
-      sequencing.messageState.sequences[recipientRole] = { outbound: 0, lastSeen: {} };
-    }
-    if (parsed.seq === 1 && message.includes('# SQUIDRUN SESSION:')) {
-      if (!sequencing.messageState.sequences[recipientRole].lastSeen) {
-        sequencing.messageState.sequences[recipientRole].lastSeen = {};
+    if (fallbackMessageId) {
+      if (isRecentTriggerId(fallbackMessageId)) {
+        log.warn('Trigger', `Skipping duplicate fallback messageId ${fallbackMessageId}`);
+        return { success: false, reason: 'duplicate_message_id' };
       }
-      sequencing.messageState.sequences[recipientRole].lastSeen[parsed.sender] = 0;
-      log.info('Trigger', `Reset lastSeen for ${parsed.sender} -> ${recipientRole} (Session Reset)`);
+      markRecentTriggerId(fallbackMessageId);
     }
-    if (sequencing.isDuplicateMessage(parsed.sender, parsed.seq, recipientRole)) {
-      metrics.recordSkipped(parsed.sender, parsed.seq, recipientRole);
-      try { fs.unlinkSync(processingPath); } catch {}
-      return { success: false, reason: 'duplicate' };
+
+    if (!message) return { success: false, reason: 'empty' };
+
+    let parsed = sequencing.parseMessageSequence(message);
+    const recipientRole = resolveRecipientRole(filename);
+    if (parsed.seq !== null && parsed.sender) {
+      if (!sequencing.messageState.sequences[recipientRole]) {
+        sequencing.messageState.sequences[recipientRole] = { outbound: 0, lastSeen: {} };
+      }
+      if (parsed.seq === 1 && message.includes('# SQUIDRUN SESSION:')) {
+        if (!sequencing.messageState.sequences[recipientRole].lastSeen) {
+          sequencing.messageState.sequences[recipientRole].lastSeen = {};
+        }
+        sequencing.messageState.sequences[recipientRole].lastSeen[parsed.sender] = 0;
+        log.info('Trigger', `Reset lastSeen for ${parsed.sender} -> ${recipientRole} (Session Reset)`);
+      }
+      if (sequencing.isDuplicateMessage(parsed.sender, parsed.seq, recipientRole)) {
+        metrics.recordSkipped(parsed.sender, parsed.seq, recipientRole);
+        return { success: false, reason: 'duplicate' };
+      }
     }
-  }
 
-  if (filename === 'all.txt' && parsed.sender) {
-    const senderPaneId = ROLE_TO_PANE[parsed.sender];
-    if (senderPaneId) targets = targets.filter(t => t !== senderPaneId);
-  }
+    if (filename === 'all.txt' && parsed.sender) {
+      const senderPaneId = ROLE_TO_PANE[parsed.sender];
+      if (senderPaneId) targets = targets.filter(t => t !== senderPaneId);
+    }
 
-  let deliveryId = null;
-  if (parsed.seq !== null && parsed.sender) {
-    deliveryId = sequencing.createDeliveryId(parsed.sender, parsed.seq, recipientRole);
-    sequencing.startDeliveryTracking(deliveryId, parsed.sender, parsed.seq, recipientRole, targets, 'trigger', 'pty');
-  }
-  const traceContext = normalizeTraceContext(null, { traceId: deliveryId || fallbackMessageId || null });
-  emitOrganicMessageRoute(parsed.sender, targets);
+    let deliveryId = null;
+    if (parsed.seq !== null && parsed.sender) {
+      deliveryId = sequencing.createDeliveryId(parsed.sender, parsed.seq, recipientRole);
+      sequencing.startDeliveryTracking(deliveryId, parsed.sender, parsed.seq, recipientRole, targets, 'trigger', 'pty');
+    }
+    const traceContext = normalizeTraceContext(null, { traceId: deliveryId || fallbackMessageId || null });
+    emitOrganicMessageRoute(parsed.sender, targets);
 
-  metrics.recordSent('pty', 'trigger', targets);
-  sendStaggered(targets, formatTriggerMessage(message), { deliveryId, traceContext });
-  try { fs.unlinkSync(processingPath); } catch {}
-  logTriggerActivity('Trigger file (PTY)', targets, message, {
-    file: filename,
-    sender: parsed.sender,
-    mode: 'pty',
-    messageId: fallbackMessageId || null,
-  });
-  return { success: true, notified: targets, mode: 'pty', deliveryId };
+    metrics.recordSent('pty', 'trigger', targets);
+    sendStaggered(targets, formatTriggerMessage(message), { deliveryId, traceContext });
+    logTriggerActivity('Trigger file (PTY)', targets, message, {
+      file: filename,
+      sender: parsed.sender,
+      mode: 'pty',
+      messageId: fallbackMessageId || null,
+    });
+    return { success: true, notified: targets, mode: 'pty', deliveryId };
+  } finally {
+    cleanupProcessingFile('post_read_processing');
+  }
 }
 
 function broadcastToAllAgents(message, fromRole = 'user', options = {}) {

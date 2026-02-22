@@ -67,6 +67,7 @@ jest.mock('fs');
 
 // Import the module under test
 const triggers = require('../modules/triggers');
+const organicUI = require('../modules/ipc/organic-ui-handlers');
 
 describe('triggers.js module', () => {
   beforeEach(() => {
@@ -146,6 +147,33 @@ describe('triggers.js module', () => {
       expect(result.success).toBe(false);
       expect(result.reason).toBe('empty');
       expect(fs.unlinkSync).toHaveBeenCalled();
+    });
+
+    test('cleans up processing file when post-read hook throws', () => {
+      fs.readFileSync.mockReturnValue('(ORACLE #7): downstream throw');
+      const messageQueuedSpy = jest.spyOn(organicUI, 'messageQueued').mockImplementation(() => {
+        throw new Error('organic hook failed');
+      });
+
+      try {
+        expect(() => triggers.handleTriggerFile('/path/architect.txt', 'architect.txt')).toThrow('organic hook failed');
+        expect(fs.unlinkSync).toHaveBeenCalledWith('/path/architect.txt.processing');
+      } finally {
+        messageQueuedSpy.mockRestore();
+      }
+    });
+
+    test('logs cleanup failure when processing file removal fails', () => {
+      fs.readFileSync.mockReturnValue('test message');
+      fs.unlinkSync.mockImplementation(() => { throw new Error('cleanup failed'); });
+
+      const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+
+      expect(result.success).toBe(true);
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        'Trigger',
+        expect.stringContaining('Failed to clean up processing file /path/architect.txt.processing')
+      );
     });
 
     test('should decode UTF-16LE BOM', () => {

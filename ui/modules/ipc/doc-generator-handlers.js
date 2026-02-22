@@ -108,6 +108,31 @@ function registerDocGeneratorHandlers(ctx) {
     return { success: true, path: resolved };
   }
 
+  function hasDocumentation(element) {
+    return typeof element?.description === 'string' && element.description.trim().length > 0;
+  }
+
+  function countDocumentedFunctionsAndClasses(result, fallbackTotal) {
+    let documentedCount = 0;
+    if (Array.isArray(result?.results) && result.results.length > 0) {
+      for (const fileResult of result.results) {
+        if (!Array.isArray(fileResult?.elements)) continue;
+        for (const element of fileResult.elements) {
+          if ((element?.type === 'function' || element?.type === 'class') && hasDocumentation(element)) {
+            documentedCount += 1;
+          }
+        }
+      }
+      return Math.min(fallbackTotal, documentedCount);
+    }
+
+    const rawDocumented = Number(result?.stats?.documented);
+    if (!Number.isFinite(rawDocumented)) {
+      return 0;
+    }
+    return Math.min(fallbackTotal, Math.max(0, rawDocumented));
+  }
+
   // Initialize
   loadConfig();
 
@@ -359,15 +384,16 @@ function registerDocGeneratorHandlers(ctx) {
         return result;
       }
 
-      const documented = result.stats.documented;
-      const total = result.stats.functions + result.stats.classes;
+      const total = Number(result?.stats?.functions || 0) + Number(result?.stats?.classes || 0);
+      const documented = countDocumentedFunctionsAndClasses(result, total);
+      const undocumented = Math.max(0, total - documented);
       const coverage = total > 0 ? Math.round((documented / total) * 100) : 100;
 
       return {
         success: true,
         coverage,
         documented,
-        undocumented: result.stats.undocumented,
+        undocumented,
         total,
         files: result.files,
         stats: result.stats,

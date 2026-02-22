@@ -549,6 +549,43 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
+  test('message queue drops pending delivery after max retry attempts', async () => {
+    const realSetTimeout = global.setTimeout;
+    const setTimeoutSpy = jest.spyOn(global, 'setTimeout').mockImplementation((fn, delay, ...args) => (
+      realSetTimeout(fn, Math.min(Number(delay) || 0, 1), ...args)
+    ));
+
+    try {
+      const { watcher, tempDir, triggers, getWorker, logMock } = setupWatcher();
+      await watcher.initMessageQueue();
+      await watcher.sendMessage('1', '2', 'Retry exhaustion');
+      triggers.notifyAgents.mockReturnValue([]);
+
+      await watcher.startMessageWatcher();
+      const worker = getWorker(0);
+      const queuePath = path.join(watcher.MESSAGE_QUEUE_DIR, 'queue-2.json');
+      worker.emit('message', { watcherName: 'message', type: 'change', path: queuePath });
+
+      await new Promise((resolve) => realSetTimeout(resolve, 300));
+      expect(triggers.notifyAgents).toHaveBeenCalledTimes(10);
+      expect(await watcher.getMessages('2', true)).toHaveLength(1);
+
+      const dropLogs = logMock.warn.mock.calls.filter(
+        ([scope, message]) =>
+          scope === 'MessageQueue' && String(message).includes('Dropping pending delivery')
+      );
+      expect(dropLogs.length).toBeGreaterThan(0);
+
+      await new Promise((resolve) => realSetTimeout(resolve, 50));
+      expect(triggers.notifyAgents).toHaveBeenCalledTimes(10);
+
+      watcher.stopMessageWatcher();
+      cleanupDir(tempDir);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
   test('markMessageDelivered returns error for missing queue', async () => {
     const { watcher, tempDir } = setupWatcher();
 
