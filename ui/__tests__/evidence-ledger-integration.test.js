@@ -352,9 +352,10 @@ describe('evidence-ledger integration: trace continuity', () => {
       .map((call) => call.kernelMeta?.traceId || call.kernelMeta?.correlationId)
       .filter(Boolean);
 
-    expect(ack.ok).toBe(false);
+    expect(ack.ok).toBe(true);
     expect(ack.accepted).toBe(true);
     expect(ack.verified).toBe(false);
+    expect(['accepted.unverified', 'routed_unverified']).toContain(ack.status);
     expect(ack.traceId).toBe(traceId);
 
     expect(messageHandlerCalls.length).toBeGreaterThan(0);

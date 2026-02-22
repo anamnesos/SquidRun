@@ -38,6 +38,8 @@ jest.mock('../modules/logger', () => ({
 }));
 
 jest.mock('fs', () => ({
+  appendFileSync: jest.fn(),
+  mkdirSync: jest.fn(),
   writeFileSync: jest.fn(),
   existsSync: jest.fn(() => true),
 }));
@@ -234,7 +236,7 @@ describe('MCP Bridge', () => {
 
         expect(result.fallback).toBe(true);
         expect(result.warning).toContain('file trigger');
-        expect(fs.writeFileSync).toHaveBeenCalled();
+        expect(fs.appendFileSync).toHaveBeenCalled();
         expect(log.warn).toHaveBeenCalledWith('MCP Bridge', expect.stringContaining('FALLBACK'));
       });
 
@@ -492,7 +494,7 @@ describe('MCP Bridge', () => {
         const result = mcpBridge.mcpTriggerAgent('state-session', '2', 'Hello');
 
         expect(result.fallback).toBe(true);
-        expect(fs.writeFileSync).toHaveBeenCalled();
+        expect(fs.appendFileSync).toHaveBeenCalled();
       });
 
       test('falls back on exception', () => {
@@ -539,9 +541,9 @@ describe('MCP Bridge', () => {
         const result = mcpBridge.writeFallbackTrigger('1', 'Test message');
 
         expect(result).toBe(true);
-        expect(fs.writeFileSync).toHaveBeenCalledWith(
+        expect(fs.appendFileSync).toHaveBeenCalledWith(
           expect.stringContaining('architect.txt'),
-          'Test message',
+          'Test message\n',
           'utf-8'
         );
       });
@@ -554,18 +556,36 @@ describe('MCP Bridge', () => {
         };
 
         for (const [paneId, expectedFile] of Object.entries(paneFiles)) {
-          fs.writeFileSync.mockClear();
+          fs.appendFileSync.mockClear();
           mcpBridge.writeFallbackTrigger(paneId, 'msg');
-          expect(fs.writeFileSync).toHaveBeenCalledWith(
+          expect(fs.appendFileSync).toHaveBeenCalledWith(
             expect.stringContaining(expectedFile),
-            'msg',
+            'msg\n',
             'utf-8'
           );
         }
       });
 
+      test('appends sequential fallback payloads to preserve burst messages', () => {
+        mcpBridge.writeFallbackTrigger('2', 'first');
+        mcpBridge.writeFallbackTrigger('2', 'second');
+
+        expect(fs.appendFileSync).toHaveBeenNthCalledWith(
+          1,
+          expect.stringContaining('builder.txt'),
+          'first\n',
+          'utf-8'
+        );
+        expect(fs.appendFileSync).toHaveBeenNthCalledWith(
+          2,
+          expect.stringContaining('builder.txt'),
+          'second\n',
+          'utf-8'
+        );
+      });
+
       test('handles write error', () => {
-        fs.writeFileSync.mockImplementation(() => {
+        fs.appendFileSync.mockImplementation(() => {
           throw new Error('Write failed');
         });
 

@@ -1274,7 +1274,7 @@ async function handleMessage(clientId, rawData) {
     const accepted = websocketDelivered || Boolean(handlerAck?.accepted || handlerAck?.ok);
     const queued = websocketDelivered || Boolean(handlerAck?.queued || handlerAck?.accepted || handlerAck?.ok);
     const verified = websocketDelivered || Boolean(handlerAck?.verified);
-    const ok = verified;
+    const ok = accepted || verified;
 
     let status = verified
       ? (websocketDelivered ? 'delivered.websocket' : 'delivered.verified')
