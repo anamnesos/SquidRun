@@ -111,6 +111,16 @@ describe('websocket-runtime outbound queue', () => {
     if (queuePath && fs.existsSync(queuePath)) {
       fs.unlinkSync(queuePath);
     }
+    if (queuePath) {
+      const queueDir = path.dirname(queuePath);
+      const queueFile = path.basename(queuePath);
+      const corruptFiles = fs.existsSync(queueDir)
+        ? fs.readdirSync(queueDir).filter((name) => name.startsWith(`${queueFile}.corrupt-`))
+        : [];
+      for (const fileName of corruptFiles) {
+        fs.unlinkSync(path.join(queueDir, fileName));
+      }
+    }
   });
 
   test('queues undeliverable target message and flushes on target register', async () => {
@@ -262,6 +272,25 @@ describe('websocket-runtime outbound queue', () => {
       expect(runtimeLog.warn.mock.calls.some((call) => String(call[1] || '').includes('retained in memory for retry'))).toBe(true);
     } finally {
       renameSpy.mockRestore();
+      await runtime.stop();
+    }
+  });
+
+  test('backs up corrupted persisted queue before resetting', async () => {
+    const badPayload = '{"entries": ';
+    fs.writeFileSync(queuePath, badPayload, 'utf-8');
+
+    const runtime = loadRuntime({ queuePath });
+    try {
+      await runtime.start({ port: 0, sessionScopeId: 'scope-a', onMessage: jest.fn() });
+      expect(readQueue(queuePath)).toHaveLength(0);
+
+      const queueDir = path.dirname(queuePath);
+      const queueFile = path.basename(queuePath);
+      const corruptFile = fs.readdirSync(queueDir).find((name) => name.startsWith(`${queueFile}.corrupt-`));
+      expect(corruptFile).toBeDefined();
+      expect(fs.readFileSync(path.join(queueDir, corruptFile), 'utf-8')).toBe(badPayload);
+    } finally {
       await runtime.stop();
     }
   });
