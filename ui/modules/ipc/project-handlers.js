@@ -2,6 +2,7 @@
  * Project IPC Handlers
  * Channels: select-project, get-project, get-recent-projects, add-recent-project,
  *           remove-recent-project, clear-recent-projects, switch-project,
+ *           set-project-context, clear-project-context,
  *           set-pane-project, select-pane-project, get-pane-project, get-all-pane-projects, clear-pane-projects
  */
 
@@ -349,6 +350,135 @@ function registerProjectHandlers(ctx, deps) {
     // Keep startup resilient if watcher state is not available yet.
   }
 
+  function upsertRecentProject(projectPath, projectName) {
+    const settings = loadSettings();
+    const projects = settings.recentProjects || [];
+    const filtered = projects.filter((entry) => entry.path !== projectPath);
+    filtered.unshift({
+      name: projectName || path.basename(projectPath),
+      path: projectPath,
+      lastOpened: new Date().toISOString(),
+    });
+    settings.recentProjects = filtered.slice(0, 10);
+    saveSettings(settings);
+  }
+
+  function emitProjectChanged(projectPath) {
+    if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
+      ctx.mainWindow.webContents.send('project-changed', projectPath || null);
+    }
+  }
+
+  function normalizeProjectContextPayload(payload) {
+    if (typeof payload === 'string') {
+      return {
+        path: payload,
+      };
+    }
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      return payload;
+    }
+    return {};
+  }
+
+  function isExistingDirectory(projectPath) {
+    if (!projectPath || !fs.existsSync(projectPath)) return false;
+    try {
+      return fs.statSync(projectPath).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+
+  async function setProjectContextInternal(rawProjectPath, options = {}) {
+    const projectPath = path.resolve(String(rawProjectPath || '').trim());
+    const requestedName = typeof options.projectName === 'string'
+      ? options.projectName.trim()
+      : '';
+    const reason = typeof options.reason === 'string' && options.reason.trim()
+      ? options.reason.trim()
+      : 'set-project-context';
+
+    if (!isExistingDirectory(projectPath)) {
+      return { success: false, error: 'Project path does not exist' };
+    }
+
+    let bootstrap = null;
+    try {
+      bootstrap = writeProjectBootstrapFiles(projectPath, deps);
+    } catch (err) {
+      log.error('Project', `Failed to write bootstrap files for ${projectPath}: ${err.message}`);
+      return {
+        success: false,
+        error: `Failed to initialize .squidrun bootstrap: ${err.message}`,
+      };
+    }
+
+    const state = ctx.watcher.readState();
+    state.project = projectPath;
+    ctx.watcher.writeState(state);
+
+    const switchResult = await switchProjectWithLifecycle(projectPath, reason);
+    if (switchResult?.success === false) {
+      const switchError = switchResult.detail
+        ? `${switchResult.error || switchResult.state || 'unknown'} (${switchResult.detail})`
+        : (switchResult.error || switchResult.state || 'unknown');
+      return {
+        success: false,
+        error: `Failed switching project runtime: ${switchError}`,
+      };
+    }
+
+    const projectName = requestedName || path.basename(projectPath);
+    upsertRecentProject(projectPath, projectName);
+
+    if (ctx.watcher?.States?.PROJECT_SELECTED) {
+      ctx.watcher.transition(ctx.watcher.States.PROJECT_SELECTED);
+    }
+    emitProjectChanged(projectPath);
+
+    return {
+      success: true,
+      mode: 'project',
+      path: projectPath,
+      name: projectName,
+      bootstrap: {
+        link: bootstrap.linkFilePath,
+        readme: bootstrap.readmePath,
+        session_id: bootstrap.sessionId,
+      },
+    };
+  }
+
+  async function clearProjectContextInternal(reason = 'clear-project-context') {
+    const state = ctx.watcher.readState();
+    state.project = null;
+    ctx.watcher.writeState(state);
+
+    const switchResult = await switchProjectWithLifecycle(null, reason);
+    if (switchResult?.success === false) {
+      const switchError = switchResult.detail
+        ? `${switchResult.error || switchResult.state || 'unknown'} (${switchResult.detail})`
+        : (switchResult.error || switchResult.state || 'unknown');
+      return {
+        success: false,
+        error: `Failed clearing project runtime: ${switchError}`,
+      };
+    }
+
+    if (ctx.watcher?.States?.IDLE) {
+      ctx.watcher.transition(ctx.watcher.States.IDLE);
+    }
+    emitProjectChanged(null);
+
+    return {
+      success: true,
+      mode: 'developer',
+      path: null,
+      name: 'Developer Mode',
+    };
+  }
+
   // === PROJECT/FOLDER PICKER ===
 
   ipcMain.handle('select-project', async () => {
@@ -420,6 +550,38 @@ function registerProjectHandlers(ctx, deps) {
   ipcMain.handle('get-project', () => {
     const state = ctx.watcher.readState();
     return state.project || null;
+  });
+
+  ipcMain.handle('set-project-context', async (event, payload = null) => {
+    const normalizedPayload = normalizeProjectContextPayload(payload);
+    const requestedPath = typeof normalizedPayload.path === 'string'
+      ? normalizedPayload.path.trim()
+      : '';
+    const requestedMode = typeof normalizedPayload.mode === 'string'
+      ? normalizedPayload.mode.trim().toLowerCase()
+      : '';
+    const clearRequested = (
+      payload === null
+      || payload === undefined
+      || normalizedPayload.clear === true
+      || requestedMode === 'developer'
+      || requestedMode === 'clear'
+      || requestedMode === 'none'
+      || (!requestedPath && !normalizedPayload.path)
+    );
+
+    if (clearRequested) {
+      return clearProjectContextInternal('set-project-context:clear');
+    }
+
+    return setProjectContextInternal(requestedPath, {
+      projectName: normalizedPayload.name,
+      reason: 'set-project-context',
+    });
+  });
+
+  ipcMain.handle('clear-project-context', async () => {
+    return clearProjectContextInternal('clear-project-context');
   });
 
   // === RECENT PROJECTS ===
@@ -629,6 +791,8 @@ function unregisterProjectHandlers(ctx) {
   if (ipcMain) {
     ipcMain.removeHandler('select-project');
     ipcMain.removeHandler('get-project');
+    ipcMain.removeHandler('set-project-context');
+    ipcMain.removeHandler('clear-project-context');
     ipcMain.removeHandler('get-recent-projects');
     ipcMain.removeHandler('add-recent-project');
     ipcMain.removeHandler('remove-recent-project');

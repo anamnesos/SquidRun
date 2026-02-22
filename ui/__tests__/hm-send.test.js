@@ -52,7 +52,12 @@ function runHmSend(args, env = {}, options = {}) {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(__dirname, '..', 'scripts', 'hm-send.js');
     const child = spawn(process.execPath, [scriptPath, ...args], {
-      env: { ...process.env, ...env },
+      env: {
+        ...process.env,
+        SQUIDRUN_ROLE: '',
+        SQUIDRUN_PANE_ID: '',
+        ...env,
+      },
       cwd: options.cwd || path.join(__dirname, '..'),
       stdio: ['ignore', 'pipe', 'pipe'],
     });

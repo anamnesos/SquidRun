@@ -9,6 +9,10 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const {
+  setProjectRoot,
+  resolveCoordPath,
+} = require('../config');
+const {
   appendCommsJournalEntry,
   closeCommsJournalStores,
 } = require('../modules/main/comms-journal');
@@ -24,6 +28,127 @@ function asRole(value, fallback = 'system') {
   const normalized = value.trim().toLowerCase();
   return normalized || fallback;
 }
+
+function parseJsonFileSafe(filePath) {
+  if (typeof filePath !== 'string' || !filePath.trim()) return null;
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function findNearestProjectLinkFile(startDir = process.cwd()) {
+  let currentDir = path.resolve(startDir);
+  while (true) {
+    const candidate = path.join(currentDir, '.squidrun', 'link.json');
+    if (fs.existsSync(candidate)) return candidate;
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) return null;
+    currentDir = parentDir;
+  }
+}
+
+function resolveProjectContextFromLink(startDir = process.cwd()) {
+  const linkPath = findNearestProjectLinkFile(startDir);
+  if (!linkPath) return null;
+  const payload = parseJsonFileSafe(linkPath);
+  if (!payload || typeof payload !== 'object') return null;
+
+  const fallbackProjectPath = path.resolve(path.join(path.dirname(linkPath), '..'));
+  const workspaceValue = typeof payload.workspace === 'string'
+    ? payload.workspace.trim()
+    : '';
+  const declaredProjectPath = workspaceValue
+    ? path.resolve(workspaceValue)
+    : fallbackProjectPath;
+  const projectPath = (workspaceValue && !fs.existsSync(declaredProjectPath))
+    ? fallbackProjectPath
+    : declaredProjectPath;
+  const sessionId = typeof payload.session_id === 'string'
+    ? payload.session_id.trim()
+    : (typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '');
+
+  return {
+    source: 'link.json',
+    projectPath,
+    sessionId: sessionId || null,
+  };
+}
+
+function resolveProjectContextFromState() {
+  if (typeof resolveCoordPath !== 'function') return null;
+  const state = parseJsonFileSafe(resolveCoordPath('state.json'));
+  const projectValue = typeof state?.project === 'string'
+    ? state.project.trim()
+    : '';
+  if (!projectValue) return null;
+  return {
+    source: 'state.json',
+    projectPath: path.resolve(projectValue),
+    sessionId: null,
+  };
+}
+
+function resolveLocalProjectContext(startDir = process.cwd()) {
+  const fromLink = resolveProjectContextFromLink(startDir);
+  if (fromLink?.projectPath) return fromLink;
+
+  const fromState = resolveProjectContextFromState();
+  if (fromState?.projectPath) return fromState;
+
+  return {
+    source: 'cwd',
+    projectPath: path.resolve(startDir),
+    sessionId: null,
+  };
+}
+
+function applyProjectContext(projectContext = null) {
+  if (!projectContext?.projectPath || typeof setProjectRoot !== 'function') return projectContext;
+  try {
+    setProjectRoot(projectContext.projectPath);
+  } catch (_) {
+    // Best-effort only.
+  }
+  return projectContext;
+}
+
+function normalizeSessionId(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  if (/^app-session-/i.test(text)) return text;
+  if (/^\d+$/.test(text)) return `app-session-${text}`;
+  return text;
+}
+
+function looksLikeLegacyBootstrapSessionId(value) {
+  return /^app-\d+-\d+/i.test(String(value || '').trim());
+}
+
+function resolveSessionIdFromAppStatus() {
+  if (typeof resolveCoordPath !== 'function') return null;
+  const appStatus = parseJsonFileSafe(resolveCoordPath('app-status.json'));
+  if (!appStatus || typeof appStatus !== 'object') return null;
+  const rawSession = appStatus.session_id ?? appStatus.sessionId ?? appStatus.session ?? appStatus.sessionNumber;
+  return normalizeSessionId(rawSession);
+}
+
+function resolvePreferredSessionId(explicitSessionId = null, fallbackSessionId = null) {
+  const explicit = normalizeSessionId(explicitSessionId);
+  if (explicit) return explicit;
+
+  const appStatusSession = resolveSessionIdFromAppStatus();
+  if (appStatusSession) return appStatusSession;
+
+  const fallback = normalizeSessionId(fallbackSessionId);
+  if (fallback && !looksLikeLegacyBootstrapSessionId(fallback)) return fallback;
+  return null;
+}
+
+const localProjectContext = applyProjectContext(resolveLocalProjectContext(process.cwd()));
 
 function buildJournalMessageId(prefix = 'tg') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -157,13 +282,13 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
     ? opts.messageId.trim()
     : buildJournalMessageId('tg-photo');
   const nowMs = Date.now();
-  const senderRole = asRole(opts.senderRole || opts.fromRole || 'system', 'system');
-  const sessionId = typeof opts.sessionId === 'string' ? opts.sessionId.trim() : '';
-  const targetRole = 'telegram';
+  const senderRole = asRole(opts.senderRole || opts.fromRole || 'architect', 'architect');
+  const targetRole = asRole(opts.targetRole || opts.toRole || 'user', 'user');
+  const sessionId = resolvePreferredSessionId(opts.sessionId, localProjectContext?.sessionId || null);
 
   upsertTelegramJournal({
     messageId,
-    sessionId: sessionId || null,
+    sessionId,
     senderRole,
     targetRole,
     sentAtMs: nowMs,
@@ -182,7 +307,7 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
   if (missing.length > 0) {
     upsertTelegramJournal({
       messageId,
-      sessionId: sessionId || null,
+      sessionId,
       senderRole,
       targetRole,
       status: 'failed',
@@ -198,7 +323,7 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
   if (!fs.existsSync(resolvedPath)) {
     upsertTelegramJournal({
       messageId,
-      sessionId: sessionId || null,
+      sessionId,
       senderRole,
       targetRole,
       status: 'failed',
@@ -222,7 +347,7 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
   if (response.statusCode >= 200 && response.statusCode < 300 && payload?.ok !== false) {
     upsertTelegramJournal({
       messageId,
-      sessionId: sessionId || null,
+      sessionId,
       senderRole,
       targetRole,
       status: 'acked',
@@ -242,7 +367,7 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
 
   upsertTelegramJournal({
     messageId,
-    sessionId: sessionId || null,
+    sessionId,
     senderRole,
     targetRole,
     status: 'failed',
@@ -265,13 +390,13 @@ async function sendTelegram(message, env = process.env, options = {}) {
     ? opts.messageId.trim()
     : buildJournalMessageId('tg');
   const nowMs = Date.now();
-  const senderRole = asRole(opts.senderRole || opts.fromRole || 'system', 'system');
-  const sessionId = typeof opts.sessionId === 'string' ? opts.sessionId.trim() : '';
-  const targetRole = 'telegram';
+  const senderRole = asRole(opts.senderRole || opts.fromRole || 'architect', 'architect');
+  const targetRole = asRole(opts.targetRole || opts.toRole || 'user', 'user');
+  const sessionId = resolvePreferredSessionId(opts.sessionId, localProjectContext?.sessionId || null);
 
   upsertTelegramJournal({
     messageId,
-    sessionId: sessionId || null,
+    sessionId,
     senderRole,
     targetRole,
     sentAtMs: nowMs,
@@ -289,7 +414,7 @@ async function sendTelegram(message, env = process.env, options = {}) {
   if (missing.length > 0) {
     upsertTelegramJournal({
       messageId,
-      sessionId: sessionId || null,
+      sessionId,
       senderRole,
       targetRole,
       status: 'failed',
@@ -321,7 +446,7 @@ async function sendTelegram(message, env = process.env, options = {}) {
   if (response.statusCode >= 200 && response.statusCode < 300 && payload?.ok !== false) {
     upsertTelegramJournal({
       messageId,
-      sessionId: sessionId || null,
+      sessionId,
       senderRole,
       targetRole,
       status: 'acked',
@@ -341,7 +466,7 @@ async function sendTelegram(message, env = process.env, options = {}) {
 
   upsertTelegramJournal({
     messageId,
-    sessionId: sessionId || null,
+    sessionId,
     senderRole,
     targetRole,
     status: 'failed',

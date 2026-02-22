@@ -166,11 +166,13 @@ class SettingsManager {
         : (this.ctx.currentSettings.dryRun ? 'dry-run' : 'pty');
 
       let existingSession = asPositiveInt(existing.session ?? existing.sessionNumber, null);
+      const sessionFloor = asPositiveInt(opts.sessionFloor ?? opts.sessionSeed, null);
 
       const overrideSession = asPositiveInt(opts.session, null);
       let session = overrideSession !== null ? overrideSession : existingSession;
       if (opts.incrementSession === true) {
-        session = (existingSession || 0) + 1;
+        const baseline = Math.max(existingSession || 0, sessionFloor || 0);
+        session = baseline + 1;
       }
 
       const status = {

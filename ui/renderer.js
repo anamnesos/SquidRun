@@ -341,18 +341,21 @@ function updateHeaderSessionBadge(sessionNumber) {
   badge.title = 'Current app session unavailable';
 }
 
-function readSessionFromAppStatusFallback() {
-  // Node fs/path are intentionally unavailable in renderer when nodeIntegration is off.
-  // Keep badge resilient by falling back to unknown session when no explicit status channel is present.
-  return null;
+async function readSessionFromAppStatusFallback() {
+  try {
+    const status = await ipcRenderer.invoke('get-app-status');
+    return _extractSessionNumberFromStatus(status);
+  } catch (_) {
+    return null;
+  }
 }
 
-function resolveCurrentSessionNumber() {
+async function resolveCurrentSessionNumber() {
   return readSessionFromAppStatusFallback();
 }
 
-function refreshHeaderSessionBadge() {
-  const sessionNumber = resolveCurrentSessionNumber();
+async function refreshHeaderSessionBadge() {
+  const sessionNumber = await resolveCurrentSessionNumber();
   updateHeaderSessionBadge(sessionNumber);
 }
 
@@ -636,6 +639,8 @@ function createFallbackRendererApi() {
     project: {
       select: () => ipcRenderer.invoke('select-project'),
       get: () => ipcRenderer.invoke('get-project'),
+      setContext: (payload = null) => ipcRenderer.invoke('set-project-context', payload),
+      clearContext: () => ipcRenderer.invoke('clear-project-context'),
     },
     friction: {
       list: () => ipcRenderer.invoke('list-friction'),
@@ -1483,6 +1488,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   ipcRenderer.once('daemon-connected', () => {
     dismissStartupLoadingOverlay();
+    void refreshHeaderSessionBadge();
   });
 
   // Setup all event handlers
@@ -1498,7 +1504,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Status Strip - task counts at a glance
   initStatusStrip();
-  refreshHeaderSessionBadge();
+  await refreshHeaderSessionBadge();
 
   // Model Selector - per-pane model switching
   setupModelSelectorListeners();

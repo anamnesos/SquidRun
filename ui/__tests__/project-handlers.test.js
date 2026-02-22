@@ -13,6 +13,7 @@ const { getProjectRoot, getSquidrunRoot, setProjectRoot, resetProjectRoot } = re
 // Mock fs
 jest.mock('fs', () => ({
   existsSync: jest.fn(),
+  statSync: jest.fn(),
   mkdirSync: jest.fn(),
   writeFileSync: jest.fn(),
   renameSync: jest.fn(),
@@ -74,6 +75,7 @@ describe('Project Handlers', () => {
     };
 
     fs.existsSync.mockReturnValue(true);
+    fs.statSync.mockReturnValue({ isDirectory: () => true });
 
     registerProjectHandlers(ctx, deps);
     initializeEvidenceLedgerRuntime.mockClear();
@@ -279,6 +281,60 @@ describe('Project Handlers', () => {
       const result = await harness.invoke('get-project');
 
       expect(result).toBeNull();
+    });
+  });
+
+  describe('set-project-context', () => {
+    test('sets active project context from payload path', async () => {
+      const result = await harness.invoke('set-project-context', {
+        path: '/context/project',
+        name: 'Context Project',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.mode).toBe('project');
+      expect(result.path).toBe(path.resolve('/context/project'));
+      expect(result.name).toBe('Context Project');
+      expect(ctx.watcher.writeState).toHaveBeenCalled();
+      expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('project-changed', path.resolve('/context/project'));
+    });
+
+    test('accepts string payload path', async () => {
+      const result = await harness.invoke('set-project-context', '/another/project');
+
+      expect(result.success).toBe(true);
+      expect(result.path).toBe(path.resolve('/another/project'));
+      expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('project-changed', path.resolve('/another/project'));
+    });
+
+    test('returns error for missing project path', async () => {
+      fs.existsSync.mockReturnValue(false);
+
+      const result = await harness.invoke('set-project-context', { path: '/missing/project' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('does not exist');
+    });
+  });
+
+  describe('clear-project-context', () => {
+    test('clears active project context and returns developer mode', async () => {
+      const result = await harness.invoke('clear-project-context');
+
+      expect(result.success).toBe(true);
+      expect(result.mode).toBe('developer');
+      expect(result.path).toBeNull();
+      expect(result.name).toBe('Developer Mode');
+      expect(ctx.watcher.writeState).toHaveBeenCalled();
+      expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('project-changed', null);
+    });
+
+    test('set-project-context clears when payload is null', async () => {
+      const result = await harness.invoke('set-project-context', null);
+
+      expect(result.success).toBe(true);
+      expect(result.mode).toBe('developer');
+      expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('project-changed', null);
     });
   });
 

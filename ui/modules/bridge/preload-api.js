@@ -127,6 +127,8 @@ function createPreloadApi(ipcRenderer) {
     project: {
       select: () => ipc.invoke('select-project'),
       get: () => ipc.invoke('get-project'),
+      setContext: (payload = null) => ipc.invoke('set-project-context', payload),
+      clearContext: () => ipc.invoke('clear-project-context'),
     },
 
     friction: {

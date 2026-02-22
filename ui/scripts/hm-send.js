@@ -63,6 +63,11 @@ const MAX_RETRIES = 5;
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 const SPECIAL_USER_TARGETS = new Set(['user', 'telegram']);
 const args = process.argv.slice(2);
+const DEFAULT_ROLE_BY_PANE = Object.freeze({
+  '1': 'architect',
+  '2': 'builder',
+  '3': 'oracle',
+});
 
 if (args.length < 2) {
   console.log('Usage: node hm-send.js <target> <message> [--role <role>] [--priority urgent]');
@@ -77,7 +82,8 @@ if (args.length < 2) {
 }
 
 const target = args[0];
-let role = 'cli';
+const envPaneId = String(process.env.SQUIDRUN_PANE_ID || '').trim();
+let role = normalizeRole(process.env.SQUIDRUN_ROLE || '') || DEFAULT_ROLE_BY_PANE[envPaneId] || 'cli';
 let priority = 'normal';
 let ackTimeoutMs = DEFAULT_ACK_TIMEOUT_MS;
 let retries = DEFAULT_RETRIES;
@@ -129,7 +135,7 @@ if (!message) {
 
 function inferRoleFromMessage(content) {
   if (typeof content !== 'string') return null;
-  const match = content.match(/\(([A-Za-z-]+)\s+#\d+\):/);
+  const match = content.match(/\(([A-Za-z-]+)(?:\s+#\d+)?\):/i);
   if (!match || !match[1]) return null;
   return normalizeRole(match[1]);
 }

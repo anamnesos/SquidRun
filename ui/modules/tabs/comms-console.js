@@ -7,8 +7,10 @@ const { invokeBridge } = require('../renderer-bridge');
 const { PANE_ROLES, SHORT_AGENT_NAMES, ROLE_ID_MAP } = require('../../config');
 const { escapeHtml } = require('./utils');
 
-const MAX_SCROLL_ENTRIES = 200;
+const MAX_SCROLL_ENTRIES = 5000;
 const BODY_PREVIEW_LIMIT = 180;
+const HISTORY_PAGE_SIZE = 50;
+const TOP_LOAD_THRESHOLD_PX = 24;
 
 const CHANNEL_LABELS = {
   ws: 'WS',
@@ -22,6 +24,9 @@ let domCleanupFns = [];
 let entries = [];
 let keySet = new Set();
 let hasLoadedBackfill = false;
+let oldestLoadedTimestamp = null;
+let hasMoreHistory = true;
+let loadingOlderHistory = false;
 
 function formatTimestamp(ts) {
   const d = new Date(Number.isFinite(ts) ? ts : Date.now());
@@ -36,7 +41,10 @@ function normalizeRole(value) {
   const raw = value.trim();
   if (!raw) return null;
   const lower = raw.toLowerCase();
+  if (lower === 'user' || lower === 'telegram') return 'user';
+  if (lower === 'cli') return 'architect';
   if (lower === 'system') return 'system';
+  if (lower === 'external' || lower === 'external-agent' || lower.includes('claude')) return 'external';
   if (lower === 'architect' || lower === 'builder' || lower === 'oracle') return lower;
   if (lower === 'arch') return 'architect';
   if (lower === 'ana' || lower === 'analyst') return 'oracle';
@@ -46,16 +54,11 @@ function normalizeRole(value) {
   return lower;
 }
 
-function roleFromPaneId(paneId) {
-  if (paneId === '1' || paneId === 1) return 'architect';
-  if (paneId === '2' || paneId === 2) return 'builder';
-  if (paneId === '3' || paneId === 3) return 'oracle';
-  return null;
-}
-
 function displayRole(role) {
   const normalized = normalizeRole(role);
   if (!normalized) return 'Unknown';
+  if (normalized === 'user') return 'User';
+  if (normalized === 'external') return 'External';
   if (normalized === 'system') return SHORT_AGENT_NAMES.system || 'Sys';
   if (normalized === 'architect') return SHORT_AGENT_NAMES['1'] || PANE_ROLES['1'] || 'Architect';
   if (normalized === 'builder') return SHORT_AGENT_NAMES['2'] || PANE_ROLES['2'] || 'Builder';
@@ -66,7 +69,14 @@ function displayRole(role) {
 function roleClassName(role) {
   const normalized = normalizeRole(role);
   if (!normalized) return 'role-unknown';
-  if (normalized === 'architect' || normalized === 'builder' || normalized === 'oracle' || normalized === 'system') {
+  if (
+    normalized === 'architect'
+    || normalized === 'builder'
+    || normalized === 'oracle'
+    || normalized === 'system'
+    || normalized === 'user'
+    || normalized === 'external'
+  ) {
     return `role-${normalized}`;
   }
   return 'role-unknown';
@@ -120,7 +130,7 @@ function normalizeJournalRow(row) {
     targetRole,
     channel,
     body,
-    sessionId: row.sessionId || null,
+    sessionId: row.sessionId || row.session_id || null,
   };
 }
 
@@ -131,12 +141,20 @@ function normalizeBusEvent(event) {
   const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
   const senderRole = normalizeRole(
     payload.senderRole
+      || payload.sender_role
       || payload.fromRole
-      || payload.role
-      || roleFromPaneId(payload.paneId)
-      || roleFromPaneId(event.paneId)
+      || payload.from_role
+      || payload.sender?.role
   );
-  const targetRaw = payload.targetRole || payload.target || payload.targetRaw || null;
+  const targetRaw = payload.targetRole
+    || payload.target_role
+    || payload.toRole
+    || payload.to_role
+    || payload.target?.role
+    || payload.targetRaw
+    || payload.target_raw
+    || payload.target
+    || null;
   const targetRole = normalizeRole(targetRaw);
   const channel = detectChannel(payload.channel, targetRaw);
   const body = extractBody(payload.rawBody || payload.content || payload.message || payload.body || payload.text || payload.summary);
@@ -153,7 +171,7 @@ function normalizeBusEvent(event) {
     targetRole,
     channel,
     body,
-    sessionId: payload.sessionId || null,
+    sessionId: payload.sessionId || payload.session_id || null,
   };
 }
 
@@ -182,9 +200,13 @@ function createEntryNode(entry) {
   const senderClass = roleClassName(entry.senderRole);
   const targetClass = roleClassName(entry.targetRole);
   const ch = detectChannel(entry.channel);
+  const senderNormalized = normalizeRole(entry.senderRole) || 'unknown';
+  div.classList.add(`sender-${senderNormalized}`);
   const fullBody = extractBody(entry.body);
   const preview = bodyPreview(fullBody);
   const truncated = preview.length < fullBody.length;
+  const sessionText = entry.sessionId ? String(entry.sessionId) : 'session:-';
+  const sessionClass = entry.sessionId ? '' : ' is-missing';
 
   div.innerHTML = `
     <div class="comms-console-entry-head">
@@ -193,6 +215,7 @@ function createEntryNode(entry) {
       <span class="comms-console-route-arrow">&rarr;</span>
       <span class="comms-console-role ${targetClass}">${escapeHtml(targetText)}</span>
       <span class="comms-console-channel ch-${escapeHtml(ch)}">${escapeHtml(channelLabel(ch))}</span>
+      <span class="comms-console-session-id${sessionClass}" title="Session ID">${escapeHtml(sessionText)}</span>
     </div>
     <div class="comms-console-entry-body${truncated ? ' is-truncated' : ''}">${escapeHtml(preview)}</div>
     ${truncated ? '<button class="comms-console-expand" data-action="toggle-body" type="button">Expand</button>' : ''}
@@ -249,6 +272,70 @@ function resetListPlaceholder() {
   list.innerHTML = '<div class="comms-console-empty">Waiting for comms traffic...</div>';
 }
 
+function showHistoryLoadingIndicator() {
+  const list = document.getElementById('commsConsoleList');
+  if (!list) return null;
+  let indicator = list.querySelector('.comms-console-history-loading');
+  if (indicator) return indicator;
+  indicator = document.createElement('div');
+  indicator.className = 'comms-console-history-loading';
+  indicator.innerHTML = '<span class="comms-console-history-spinner"></span><span>Loading older messages...</span>';
+  list.prepend(indicator);
+  return indicator;
+}
+
+function hideHistoryLoadingIndicator(indicator = null) {
+  const node = indicator
+    || document.querySelector('#commsConsoleList .comms-console-history-loading');
+  if (node && node.parentElement) {
+    node.remove();
+  }
+}
+
+function renderEntriesFromState(options = {}) {
+  const opts = options && typeof options === 'object' ? options : {};
+  const preserveTopScroll = opts.preserveTopScroll && typeof opts.preserveTopScroll === 'object'
+    ? opts.preserveTopScroll
+    : null;
+  const shouldScrollBottom = opts.scrollToBottom === true;
+
+  const list = document.getElementById('commsConsoleList');
+  if (!list) return;
+  list.innerHTML = '';
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    list.innerHTML = '<div class="comms-console-empty">Waiting for comms traffic...</div>';
+    return;
+  }
+
+  let previousEntry = null;
+  for (const entry of entries) {
+    if (
+      previousEntry
+      && previousEntry.sessionId
+      && entry.sessionId
+      && previousEntry.sessionId !== entry.sessionId
+    ) {
+      const sepNode = createSessionSeparatorNode(entry.sessionId);
+      if (sepNode) list.appendChild(sepNode);
+    }
+    list.appendChild(createEntryNode(entry));
+    previousEntry = entry;
+  }
+
+  if (preserveTopScroll) {
+    const previousHeight = Number(preserveTopScroll.previousHeight) || 0;
+    const previousTop = Number(preserveTopScroll.previousTop) || 0;
+    const delta = Math.max(0, list.scrollHeight - previousHeight);
+    list.scrollTop = previousTop + delta;
+    return;
+  }
+
+  if (shouldScrollBottom) {
+    scrollToBottom();
+  }
+}
+
 function addEntry(entry, options = {}) {
   if (!entry || typeof entry !== 'object') return;
   if (!entry.body || !String(entry.body).trim()) return;
@@ -299,6 +386,30 @@ function appendRows(rows, { animate = false } = {}) {
   }
 }
 
+function prependRows(rows, { preserveTopScroll = null } = {}) {
+  if (!Array.isArray(rows) || rows.length === 0) return 0;
+  const toPrepend = [];
+  for (const row of rows) {
+    const entry = normalizeJournalRow(row);
+    if (!entry) continue;
+    if (entry.key && keySet.has(entry.key)) continue;
+    if (entry.key) keySet.add(entry.key);
+    toPrepend.push(entry);
+  }
+  if (toPrepend.length === 0) return 0;
+
+  entries = [...toPrepend, ...entries];
+  oldestLoadedTimestamp = Number(entries[0]?.timestamp || oldestLoadedTimestamp || Date.now());
+
+  while (entries.length > MAX_SCROLL_ENTRIES) {
+    const removed = entries.pop();
+    if (removed?.key) keySet.delete(removed.key);
+  }
+
+  renderEntriesFromState({ preserveTopScroll });
+  return toPrepend.length;
+}
+
 function normalizeJournalResult(result) {
   if (Array.isArray(result)) return result;
   if (Array.isArray(result?.rows)) return result.rows;
@@ -306,18 +417,56 @@ function normalizeJournalResult(result) {
   return [];
 }
 
-async function backfillFromJournal() {
+async function backfillFromJournal(force = false) {
+  if (hasLoadedBackfill && force !== true) return;
   try {
     const result = await invokeBridge('evidence-ledger:query-comms-journal', {
-      limit: MAX_SCROLL_ENTRIES,
+      limit: HISTORY_PAGE_SIZE,
       order: 'desc',
     });
     const rows = normalizeJournalResult(result).slice().reverse();
     appendRows(rows, { animate: false });
+    oldestLoadedTimestamp = rows.length > 0
+      ? Number(rows[0].brokeredAtMs || rows[0].sentAtMs || rows[0].updatedAtMs || Date.now())
+      : null;
+    hasMoreHistory = rows.length >= HISTORY_PAGE_SIZE;
     scrollToBottom();
     hasLoadedBackfill = true;
   } catch (_) {
     hasLoadedBackfill = true;
+  }
+}
+
+async function loadOlderHistory() {
+  if (!hasLoadedBackfill || loadingOlderHistory || !hasMoreHistory) return;
+  if (!Number.isFinite(oldestLoadedTimestamp) || oldestLoadedTimestamp <= 0) return;
+  const list = document.getElementById('commsConsoleList');
+  if (!list) return;
+
+  loadingOlderHistory = true;
+  const indicator = showHistoryLoadingIndicator();
+  const previousHeight = list.scrollHeight;
+  const previousTop = list.scrollTop;
+
+  try {
+    const result = await invokeBridge('evidence-ledger:query-comms-journal', {
+      limit: HISTORY_PAGE_SIZE,
+      order: 'desc',
+      untilMs: Math.max(0, oldestLoadedTimestamp - 1),
+    });
+    const rows = normalizeJournalResult(result).slice().reverse();
+    const inserted = prependRows(rows, {
+      preserveTopScroll: {
+        previousHeight,
+        previousTop,
+      },
+    });
+    hasMoreHistory = rows.length >= HISTORY_PAGE_SIZE && inserted > 0;
+  } catch (_) {
+    // Keep console resilient if backfill fails.
+  } finally {
+    hideHistoryLoadingIndicator(indicator);
+    loadingOlderHistory = false;
   }
 }
 
@@ -367,15 +516,38 @@ function bindEntryToggleDelegation() {
   domCleanupFns.push(() => list.removeEventListener('click', clickHandler));
 }
 
+function bindInfiniteHistoryScroll() {
+  const list = document.getElementById('commsConsoleList');
+  if (!list) return;
+
+  let scheduled = false;
+  const onScroll = () => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      if (list.scrollTop > TOP_LOAD_THRESHOLD_PX) return;
+      void loadOlderHistory();
+    });
+  };
+
+  list.addEventListener('scroll', onScroll);
+  domCleanupFns.push(() => list.removeEventListener('scroll', onScroll));
+}
+
 function setupCommsConsoleTab(bus) {
   destroy();
   busRef = bus || null;
   entries = [];
   keySet = new Set();
   hasLoadedBackfill = false;
+  oldestLoadedTimestamp = null;
+  hasMoreHistory = true;
+  loadingOlderHistory = false;
   resetListPlaceholder();
   bindOpenBackfill();
   bindEntryToggleDelegation();
+  bindInfiniteHistoryScroll();
 
   const pane = document.getElementById('tab-comms');
   if (pane && pane.classList.contains('active')) {
@@ -386,7 +558,7 @@ function setupCommsConsoleTab(bus) {
     const commsHandler = (event) => {
       const entry = normalizeBusEvent(event);
       if (!entry) return;
-      if (!entry.body && entry.messageId) {
+      if (entry.messageId) {
         void backfillByMessageId(entry.messageId);
         return;
       }
@@ -418,6 +590,9 @@ function destroy() {
   entries = [];
   keySet = new Set();
   hasLoadedBackfill = false;
+  oldestLoadedTimestamp = null;
+  hasMoreHistory = true;
+  loadingOlderHistory = false;
   resetListPlaceholder();
 }
 

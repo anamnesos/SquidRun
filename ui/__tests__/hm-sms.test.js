@@ -3,8 +3,13 @@ const { EventEmitter } = require('events');
 jest.mock('https', () => ({
   request: jest.fn(),
 }));
+jest.mock('../modules/main/comms-journal', () => ({
+  appendCommsJournalEntry: jest.fn(() => ({ ok: true })),
+  closeCommsJournalStores: jest.fn(),
+}));
 
 const https = require('https');
+const { appendCommsJournalEntry } = require('../modules/main/comms-journal');
 const hmSms = require('../scripts/hm-sms');
 
 function mockTwilioResponse(statusCode, payload) {
@@ -28,6 +33,7 @@ function mockTwilioResponse(statusCode, payload) {
 describe('hm-sms', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    appendCommsJournalEntry.mockReturnValue({ ok: true });
   });
 
   test('parseMessage joins argument tokens', () => {
@@ -82,5 +88,32 @@ describe('hm-sms', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain('invalid');
+  });
+
+  test('sendSms journals architect -> user with session id', async () => {
+    mockTwilioResponse(201, {
+      sid: 'SM999',
+      to: '+15551234567',
+    });
+
+    const result = await hmSms.sendSms('journal me', {
+      TWILIO_ACCOUNT_SID: 'AC123',
+      TWILIO_AUTH_TOKEN: 'token123',
+      TWILIO_PHONE_NUMBER: '+15550001111',
+      SMS_RECIPIENT: '+15551234567',
+    }, {
+      sessionId: 'app-session-2',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(appendCommsJournalEntry).toHaveBeenCalled();
+    expect(appendCommsJournalEntry.mock.calls[0][0]).toEqual(expect.objectContaining({
+      channel: 'sms',
+      direction: 'outbound',
+      senderRole: 'architect',
+      targetRole: 'user',
+      sessionId: 'app-session-2',
+      status: 'recorded',
+    }));
   });
 });
