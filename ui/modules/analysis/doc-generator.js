@@ -126,7 +126,13 @@ class DocGenerator {
     const files = [];
 
     const scan = (dir) => {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      let entries = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch (_err) {
+        // Skip unreadable or transient directories instead of aborting the whole run.
+        return;
+      }
 
       for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);

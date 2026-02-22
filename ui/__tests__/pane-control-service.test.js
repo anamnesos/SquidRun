@@ -73,10 +73,34 @@ describe('pane-control-service', () => {
     expect(ctx.daemonClient.write).toHaveBeenCalledWith('3', '\r');
   });
 
+  test('enter returns daemon_write_failed when daemon rejects write', () => {
+    ctx.daemonClient.write.mockReturnValue(false);
+    const result = executePaneControlAction(ctx, 'enter', { paneId: '2' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'daemon_write_failed',
+      paneId: '2',
+      action: 'enter',
+    }));
+  });
+
   test('interrupt sends SIGINT via daemon write', () => {
     const result = executePaneControlAction(ctx, 'interrupt', { paneId: '2' });
     expect(result).toEqual(expect.objectContaining({ success: true, method: 'sigint', paneId: '2' }));
     expect(ctx.daemonClient.write).toHaveBeenCalledWith('2', '\x03');
+  });
+
+  test('interrupt returns daemon_write_failed when daemon rejects write', () => {
+    ctx.daemonClient.write.mockReturnValue(false);
+    const result = executePaneControlAction(ctx, 'interrupt', { paneId: '2' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'daemon_write_failed',
+      paneId: '2',
+      action: 'interrupt',
+    }));
   });
 
   test('restart marks expected exit and sends restart-pane event', () => {

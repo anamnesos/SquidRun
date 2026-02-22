@@ -24,6 +24,12 @@ function createExternalNotifier(options = {}) {
 
   function isDuplicate(key) {
     const now = Date.now();
+    const oldestAllowed = now - dedupeWindowMs;
+    for (const [existingKey, timestamp] of recentNotifications.entries()) {
+      if (!Number.isFinite(timestamp) || timestamp <= oldestAllowed) {
+        recentNotifications.delete(existingKey);
+      }
+    }
     const last = recentNotifications.get(key);
     if (last && (now - last) < dedupeWindowMs) {
       return true;

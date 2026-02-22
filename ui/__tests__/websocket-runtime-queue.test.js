@@ -227,6 +227,8 @@ describe('websocket-runtime outbound queue', () => {
     const queue = readQueue(queuePath);
     expect(queue).toHaveLength(2);
     expect(queue.map((entry) => entry.content)).toEqual(['second', 'third']);
+    const runtimeLog = require('../modules/logger');
+    expect(runtimeLog.warn.mock.calls.some((call) => String(call[1] || '').includes('Outbound queue at capacity'))).toBe(true);
 
     await runtime.stop();
   });
