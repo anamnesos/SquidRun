@@ -21,6 +21,17 @@ jest.mock('fs', () => ({
 // Mock crypto
 jest.mock('crypto', () => ({
   randomBytes: jest.fn(() => ({ toString: () => 'abc123' })),
+  createHash: jest.fn(() => {
+    let payload = '';
+    const chain = {
+      update: jest.fn((value) => {
+        payload += String(value ?? '');
+        return chain;
+      }),
+      digest: jest.fn(() => (payload || 'hash').padEnd(40, '0').slice(0, 40)),
+    };
+    return chain;
+  }),
 }));
 
 // Mock logger
@@ -32,6 +43,7 @@ jest.mock('../modules/logger', () => ({
 
 const fs = require('fs');
 const log = require('../modules/logger');
+const { GLOBAL_STATE_ROOT } = require('../config');
 const { createBackupManager } = require('../modules/backup-manager');
 
 describe('Backup Manager', () => {
@@ -258,6 +270,34 @@ describe('Backup Manager', () => {
 
       expect(fs.copyFileSync).toHaveBeenCalled();
     });
+
+    test('allows backing up files under GLOBAL_STATE_ROOT', () => {
+      const globalFile = path.join(GLOBAL_STATE_ROOT, 'app-status.json');
+      fs.existsSync.mockImplementation((targetPath) => {
+        const normalized = String(targetPath);
+        if (normalized === globalFile) return true;
+        if (normalized.includes('backups')) return true;
+        return false;
+      });
+      fs.readFileSync.mockReturnValue(JSON.stringify({ backups: [] }));
+      fs.statSync.mockReturnValue({
+        isDirectory: () => false,
+        isFile: () => true,
+        size: 24,
+        mtime: new Date(),
+      });
+      fs.readdirSync.mockReturnValue([]);
+
+      const result = manager.createBackup({ includePaths: [globalFile] });
+
+      expect(result.success).toBe(true);
+      expect(fs.copyFileSync).toHaveBeenCalled();
+      const metadataWrite = fs.writeFileSync.mock.calls.find((call) => String(call[0]).includes('backup.json.tmp'));
+      expect(metadataWrite).toBeDefined();
+      const metadata = JSON.parse(metadataWrite[1]);
+      expect(metadata.records[0].relativePath).toContain('__global__/');
+      expect(metadata.records[0].sourcePath).toBe(path.resolve(globalFile));
+    });
   });
 
   describe('restoreBackup', () => {
@@ -281,6 +321,32 @@ describe('Backup Manager', () => {
       expect(result.success).toBe(true);
       expect(result.filesRestored).toBe(2);
       expect(fs.copyFileSync).toHaveBeenCalled();
+    });
+
+    test('restores global-state backup records to original absolute path', () => {
+      const globalFile = path.join(GLOBAL_STATE_ROOT, 'app-status.json');
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockImplementation((targetPath) => {
+        if (String(targetPath).includes('backup.json')) {
+          return JSON.stringify({
+            id: 'backup-1',
+            records: [
+              { relativePath: '__global__/abc/app-status.json', sourcePath: globalFile },
+            ],
+          });
+        }
+        return JSON.stringify({ backups: [] });
+      });
+
+      const result = manager.restoreBackup('backup-1', { skipRestorePoint: true });
+
+      expect(result.success).toBe(true);
+      expect(result.filesRestored).toBe(1);
+      expect(result.restored[0]).toBe(path.resolve(globalFile));
+      expect(fs.copyFileSync).toHaveBeenCalledWith(
+        expect.stringContaining(path.join('__global__', 'abc', 'app-status.json')),
+        path.resolve(globalFile)
+      );
     });
 
     test('returns error for non-existent backup', () => {

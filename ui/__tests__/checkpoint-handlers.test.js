@@ -18,6 +18,14 @@ jest.mock('fs', () => ({
   rmSync: jest.fn(),
 }));
 
+jest.mock('crypto', () => {
+  const actual = jest.requireActual('crypto');
+  return {
+    ...actual,
+    createHash: jest.fn((algorithm) => actual.createHash(algorithm)),
+  };
+});
+
 // Mock logger
 jest.mock('../modules/logger', () => ({
   info: jest.fn(),
@@ -42,6 +50,10 @@ describe('Checkpoint Handlers', () => {
     // Default: rollback dir exists
     fs.existsSync.mockReturnValue(true);
     fs.readdirSync.mockReturnValue([]);
+    fs.mkdirSync.mockImplementation(() => {});
+    fs.readFileSync.mockReturnValue('');
+    fs.writeFileSync.mockImplementation(() => {});
+    fs.rmSync.mockImplementation(() => {});
 
     registerCheckpointHandlers(ctx);
   });
@@ -130,6 +142,21 @@ describe('Checkpoint Handlers', () => {
       const result = await harness.invoke('create-checkpoint', ['/test/file.js']);
 
       expect(result.success).toBe(false);
+    });
+
+    test('stores unique backup paths for same basenames from different directories', async () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockReturnValue('file content');
+      fs.readdirSync.mockReturnValue([]);
+
+      const result = await harness.invoke('create-checkpoint', ['/test/a/config.json', '/test/b/config.json']);
+
+      expect(result.success).toBe(true);
+      const manifestWrite = fs.writeFileSync.mock.calls.find(([filePath]) => String(filePath).includes('manifest.json'));
+      expect(manifestWrite).toBeDefined();
+      const manifest = JSON.parse(manifestWrite[1]);
+      expect(manifest.files).toHaveLength(2);
+      expect(new Set(manifest.files.map((file) => file.backup)).size).toBe(2);
     });
   });
 
@@ -231,10 +258,16 @@ describe('Checkpoint Handlers', () => {
         return true;
       });
 
-      const result = await harness.invoke('get-checkpoint-diff', 'unknown');
+      const result = await harness.invoke('get-checkpoint-diff', 'cp-unknown');
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('not found');
+    });
+
+    test('rejects invalid checkpoint IDs', async () => {
+      const result = await harness.invoke('get-checkpoint-diff', '../bad');
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Invalid checkpoint ID');
     });
 
     test('handles missing backup file', async () => {
@@ -325,10 +358,16 @@ describe('Checkpoint Handlers', () => {
         return true;
       });
 
-      const result = await harness.invoke('rollback-checkpoint', 'unknown');
+      const result = await harness.invoke('rollback-checkpoint', 'cp-unknown');
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('not found');
+    });
+
+    test('rejects invalid checkpoint ID for rollback', async () => {
+      const result = await harness.invoke('rollback-checkpoint', '../bad');
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Invalid checkpoint ID');
     });
 
     test('handles destroyed mainWindow', async () => {
@@ -367,6 +406,12 @@ describe('Checkpoint Handlers', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('not found');
+    });
+
+    test('rejects invalid checkpoint ID for delete', async () => {
+      const result = await harness.invoke('delete-checkpoint', '..\\bad');
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Invalid checkpoint ID');
     });
 
     test('handles delete error', async () => {

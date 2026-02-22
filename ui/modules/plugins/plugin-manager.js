@@ -278,6 +278,14 @@ function createPluginManager(options = {}) {
   function loadAll() {
     ensureDir(pluginsDir);
     ensureDir(pluginDataDir);
+
+    if (registry.size > 0) {
+      for (const record of registry.values()) {
+        unloadPlugin(record);
+      }
+      registry.clear();
+    }
+
     loadState();
 
     const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });

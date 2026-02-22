@@ -225,8 +225,7 @@ describe('Test Execution Handlers', () => {
 
       const result = await harness.invoke('run-tests', '/project');
 
-      // Still returns success because results were parsed
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
       expect(result.results.error).toBe('Test failed');
       expect(fs.writeFileSync).toHaveBeenCalled();
     });

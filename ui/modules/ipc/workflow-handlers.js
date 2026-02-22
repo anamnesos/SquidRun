@@ -11,6 +11,7 @@
 const { dialog, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const MAX_WORKFLOW_FILE_BYTES = 1024 * 1024;
 
 // Workflow storage directory
 let workflowsDir = null;
@@ -130,6 +131,21 @@ function initWorkflowsDir(baseDir) {
 function getWorkflowPath(name) {
   const safeName = name.replace(/[^a-zA-Z0-9_-]/g, '_');
   return path.join(workflowsDir, `${safeName}.workflow.json`);
+}
+
+function readWorkflowJsonWithSizeGuard(filePath, label = 'Workflow file') {
+  const stats = fs.statSync(filePath);
+  if (!stats.isFile()) {
+    throw new Error(`${label} is not a file`);
+  }
+  if (stats.size > MAX_WORKFLOW_FILE_BYTES) {
+    throw new Error(`${label} exceeds ${MAX_WORKFLOW_FILE_BYTES} bytes`);
+  }
+  const content = fs.readFileSync(filePath, 'utf8');
+  return {
+    data: JSON.parse(content),
+    stats,
+  };
 }
 
 /**
@@ -423,9 +439,7 @@ function registerWorkflowHandlers(ctx = {}) {
       const workflows = files.map(file => {
         const filePath = path.join(workflowsDir, file);
         try {
-          const content = fs.readFileSync(filePath, 'utf8');
-          const data = JSON.parse(content);
-          const stats = fs.statSync(filePath);
+          const { data, stats } = readWorkflowJsonWithSizeGuard(filePath, `Workflow ${file}`);
 
           return {
             name: data.name || file.replace('.workflow.json', ''),
@@ -498,8 +512,7 @@ function registerWorkflowHandlers(ctx = {}) {
         return { success: false, error: 'Workflow not found' };
       }
 
-      const content = fs.readFileSync(filePath, 'utf8');
-      const workflow = JSON.parse(content);
+      const { data: workflow } = readWorkflowJsonWithSizeGuard(filePath, `Workflow ${name}`);
 
       return {
         success: true,
@@ -542,8 +555,7 @@ function registerWorkflowHandlers(ctx = {}) {
         return { success: false, error: 'Destination workflow already exists' };
       }
 
-      const content = fs.readFileSync(srcPath, 'utf8');
-      const workflow = JSON.parse(content);
+      const { data: workflow } = readWorkflowJsonWithSizeGuard(srcPath, `Workflow ${name}`);
 
       workflow.name = newName;
       workflow.created = new Date().toISOString();
@@ -630,8 +642,7 @@ function registerWorkflowHandlers(ctx = {}) {
       }
 
       const filePath = filePaths[0];
-      const content = fs.readFileSync(filePath, 'utf8');
-      const workflow = JSON.parse(content);
+      const { data: workflow } = readWorkflowJsonWithSizeGuard(filePath, 'Imported workflow file');
 
       // Validate structure
       if (!Array.isArray(workflow.nodes)) {

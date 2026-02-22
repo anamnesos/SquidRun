@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const log = require('./logger');
-const { resolveCoordPath, resolveGlobalPath, getSquidrunRoot } = require('../config');
+const { resolveCoordPath, resolveGlobalPath, getSquidrunRoot, GLOBAL_STATE_ROOT } = require('../config');
 
 // Files backed up from project .squidrun/ (coord root)
 const COORD_BACKUP_FILES = [
@@ -83,6 +83,32 @@ function safeWriteJson(filePath, data) {
 
 function normalizePath(value) {
   return String(value || '').replace(/\\/g, '/');
+}
+
+function isWithinRoot(targetPath, rootPath) {
+  const resolvedTarget = path.resolve(targetPath);
+  const resolvedRoot = path.resolve(rootPath);
+  if (resolvedTarget === resolvedRoot) return true;
+  return resolvedTarget.startsWith(`${resolvedRoot}${path.sep}`);
+}
+
+function toBackupRelativePath(absolutePath, repoRoot, globalStateRoot) {
+  const resolvedAbsolute = path.resolve(absolutePath);
+  const resolvedRepoRoot = path.resolve(repoRoot);
+  if (isWithinRoot(resolvedAbsolute, resolvedRepoRoot)) {
+    const relPath = path.relative(resolvedRepoRoot, resolvedAbsolute);
+    if (relPath && !relPath.startsWith('..')) {
+      return normalizePath(relPath);
+    }
+  }
+
+  if (isWithinRoot(resolvedAbsolute, globalStateRoot)) {
+    const globalRel = normalizePath(path.relative(globalStateRoot, resolvedAbsolute));
+    const digest = crypto.createHash('sha1').update(resolvedAbsolute).digest('hex').slice(0, 12);
+    return normalizePath(path.join('__global__', digest, globalRel || path.basename(resolvedAbsolute)));
+  }
+
+  return null;
 }
 
 function wildcardToRegex(pattern) {
@@ -163,6 +189,7 @@ function buildDefaultIncludePaths(repoRoot, workspacePath) {
 function createBackupManager(options = {}) {
   const workspacePath = options.workspacePath;
   const repoRoot = options.repoRoot || path.join(workspacePath, '..');
+  const globalStateRoot = path.resolve(GLOBAL_STATE_ROOT || resolveGlobalPath(''));
   const logActivity = options.logActivity || null;
 
   const backupRoot = path.join(workspacePath, 'backups');
@@ -268,6 +295,7 @@ function createBackupManager(options = {}) {
     fs.copyFileSync(sourcePath, destPath);
     records.push({
       relativePath: normalizePath(relPath),
+      sourcePath: path.resolve(sourcePath),
       size: stat.size,
       modifiedAt: stat.mtime.toISOString(),
     });
@@ -293,11 +321,9 @@ function createBackupManager(options = {}) {
         log.warn('Backup', `Include path missing: ${item.full}`);
         return;
       }
-      const relPath = path.isAbsolute(item.full)
-        ? path.relative(repoRoot, item.full)
-        : item.entry;
-      if (relPath.startsWith('..')) {
-        log.warn('Backup', `Skipping path outside repo root: ${item.full}`);
+      const relPath = toBackupRelativePath(item.full, repoRoot, globalStateRoot);
+      if (!relPath) {
+        log.warn('Backup', `Skipping path outside backup roots: ${item.full}`);
         return;
       }
       copyEntry(item.full, relPath, dataDir, records);
@@ -368,9 +394,15 @@ function createBackupManager(options = {}) {
     metadata.records.forEach(record => {
       const relPath = record.relativePath;
       const sourcePath = path.join(backupDir, relPath);
-      const destPath = path.join(repoRoot, relPath);
-      if (normalizePath(relPath).startsWith('..')) return;
-      if (!path.resolve(destPath).startsWith(path.resolve(repoRoot))) return;
+      const normalizedRelPath = normalizePath(relPath);
+      if (normalizedRelPath.startsWith('..')) return;
+
+      let destPath = path.join(repoRoot, relPath);
+      if (normalizedRelPath.startsWith('__global__/')) {
+        if (typeof record.sourcePath !== 'string' || !path.isAbsolute(record.sourcePath)) return;
+        destPath = path.resolve(record.sourcePath);
+      }
+      if (!isWithinRoot(destPath, repoRoot) && !isWithinRoot(destPath, globalStateRoot)) return;
       if (!fs.existsSync(sourcePath)) return;
       if (dryRun) {
         restored.push(destPath);

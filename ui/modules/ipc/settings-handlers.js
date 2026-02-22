@@ -10,6 +10,53 @@ const { getFeatureCapabilities } = require('../feature-capabilities');
 
 // Path to .env file (project root)
 const ENV_PATH = path.join(__dirname, '..', '..', '..', '.env');
+const SETTING_KEY_ALLOWLIST = new Set([
+  'agentNotify',
+  'allowAllPermissions',
+  'autoNudge',
+  'autoSpawn',
+  'autoSync',
+  'autonomyConsentChoice',
+  'autonomyConsentGiven',
+  'autonomyConsentUpdatedAt',
+  'costAlertEnabled',
+  'costAlertThreshold',
+  'devTools',
+  'discordWebhookUrl',
+  'dryRun',
+  'emailNotificationsEnabled',
+  'externalNotificationsEnabled',
+  'firmwareInjectionEnabled',
+  'hiddenPaneHostsEnabled',
+  'mcpAutoConfig',
+  'notifications',
+  'notifyOnAlerts',
+  'notifyOnCompletions',
+  'operatingMode',
+  'paneCommands',
+  'paneProjects',
+  'ptyStuckDetection',
+  'ptyStuckThreshold',
+  'recentProjects',
+  'slackWebhookUrl',
+  'smtpFrom',
+  'smtpHost',
+  'smtpPass',
+  'smtpPort',
+  'smtpRejectUnauthorized',
+  'smtpSecure',
+  'smtpTo',
+  'smtpUser',
+  'stuckThreshold',
+  'templates',
+  'userExperienceLevel',
+  'userName',
+  'userPreferredStyle',
+  'voiceAutoSend',
+  'voiceInputEnabled',
+  'voiceLanguage',
+  'watcherEnabled',
+]);
 
 function normalizeDirectoryPath(value) {
   if (typeof value !== 'string') return null;
@@ -203,6 +250,17 @@ function runManualPreflightScan(ctx, deps, settings, targetDir) {
   };
 }
 
+function sanitizeApiKeyValue(key, value) {
+  const normalized = value === null || value === undefined ? '' : String(value);
+  if (/[\r\n=]/.test(normalized)) {
+    return {
+      ok: false,
+      error: `Invalid characters for ${key}. Newlines and '=' are not allowed.`,
+    };
+  }
+  return { ok: true, value: normalized };
+}
+
 function registerSettingsHandlers(ctx, deps) {
   const { ipcMain } = ctx;
   const { loadSettings, saveSettings } = deps;
@@ -219,31 +277,39 @@ function registerSettingsHandlers(ctx, deps) {
   });
 
   ipcMain.handle('set-setting', (event, key, value) => {
+    const normalizedKey = typeof key === 'string' ? key.trim() : '';
+    if (!normalizedKey) {
+      return { success: false, error: 'Setting key is required' };
+    }
+    if (!SETTING_KEY_ALLOWLIST.has(normalizedKey)) {
+      return { success: false, error: `Unknown setting key: ${normalizedKey}` };
+    }
+
     const settings = loadSettings();
-    const previousPaneProjects = key === 'paneProjects'
+    const previousPaneProjects = normalizedKey === 'paneProjects'
       ? { ...asPaneProjects(settings.paneProjects) }
       : null;
 
-    settings[key] = value;
+    settings[normalizedKey] = value;
 
-    if (key === 'allowAllPermissions') {
+    if (normalizedKey === 'allowAllPermissions') {
       settings.autonomyConsentGiven = true;
       settings.autonomyConsentChoice = value ? 'enabled' : 'declined';
       settings.autonomyConsentUpdatedAt = new Date().toISOString();
     }
-    if (key === 'autonomyConsentGiven' && value !== true) {
+    if (normalizedKey === 'autonomyConsentGiven' && value !== true) {
       settings.autonomyConsentChoice = 'pending';
       settings.autonomyConsentUpdatedAt = null;
     }
 
     // Operating mode drives firmware injection
-    if (key === 'operatingMode') {
+    if (normalizedKey === 'operatingMode') {
       settings.firmwareInjectionEnabled = value === 'project';
     }
 
     saveSettings(settings);
 
-    if (key === 'paneProjects') {
+    if (normalizedKey === 'paneProjects') {
       runPreflightForPaneProjectChanges(
         ctx,
         deps,
@@ -253,7 +319,7 @@ function registerSettingsHandlers(ctx, deps) {
       );
     }
 
-    if (key === 'watcherEnabled') {
+    if (normalizedKey === 'watcherEnabled') {
       if (value) {
         ctx.watcher.startWatcher();
       } else {
@@ -339,13 +405,22 @@ function registerSettingsHandlers(ctx, deps) {
       TELEGRAM_CHAT_ID: v => !v || /^-?\d+$/.test(v)
     };
 
+    const sanitizedUpdates = {};
     for (const [key, value] of Object.entries(updates)) {
       if (!validators[key]) {
         return { success: false, error: `Unknown key: ${key}` };
       }
-      if (value && !validators[key](value)) {
+
+      const sanitized = sanitizeApiKeyValue(key, value);
+      if (!sanitized.ok) {
+        return { success: false, error: sanitized.error };
+      }
+
+      if (sanitized.value && !validators[key](sanitized.value)) {
         return { success: false, error: `Invalid format for ${key.replace('_API_KEY', '')}` };
       }
+
+      sanitizedUpdates[key] = sanitized.value;
     }
 
     try {
@@ -356,8 +431,7 @@ function registerSettingsHandlers(ctx, deps) {
       }
 
       // Update or add each key
-      for (const [key, value] of Object.entries(updates)) {
-        const normalizedValue = value === null || value === undefined ? '' : String(value);
+      for (const [key, normalizedValue] of Object.entries(sanitizedUpdates)) {
         const regex = new RegExp(`^${key}=.*$`, 'm');
         if (normalizedValue.length === 0) {
           content = content.replace(new RegExp(`^${key}=.*\\r?\\n?`, 'gm'), '');

@@ -176,7 +176,7 @@ function registerTestExecutionHandlers(ctx) {
       }
 
       activeTestRun = null;
-      return { success: true, results };
+      return { success: false, results };
     }
   }
 

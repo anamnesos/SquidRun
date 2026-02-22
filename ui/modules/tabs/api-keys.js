@@ -5,6 +5,31 @@
 
 const { invokeBridge } = require('../renderer-bridge');
 const log = require('../logger');
+const API_KEY_FIELDS = Object.freeze([
+  { inputId: 'apiKeyAnthropic', settingKey: 'ANTHROPIC_API_KEY' },
+  { inputId: 'apiKeyOpenai', settingKey: 'OPENAI_API_KEY' },
+  { inputId: 'apiKeyGoogle', settingKey: 'GOOGLE_API_KEY' },
+  { inputId: 'apiKeyRecraft', settingKey: 'RECRAFT_API_KEY' },
+  { inputId: 'apiKeyGodaddyApiKey', settingKey: 'GODADDY_API_KEY' },
+  { inputId: 'apiKeyGodaddyApiSecret', settingKey: 'GODADDY_API_SECRET' },
+  { inputId: 'apiKeyGithubToken', settingKey: 'GITHUB_TOKEN' },
+  { inputId: 'apiKeyVercelToken', settingKey: 'VERCEL_TOKEN' },
+  { inputId: 'apiKeyTwilioSid', settingKey: 'TWILIO_ACCOUNT_SID' },
+  { inputId: 'apiKeyTwilioAuth', settingKey: 'TWILIO_AUTH_TOKEN' },
+  { inputId: 'apiKeyTwilioPhone', settingKey: 'TWILIO_PHONE_NUMBER' },
+  { inputId: 'apiKeySmsRecipient', settingKey: 'SMS_RECIPIENT' },
+  { inputId: 'apiKeyTelegramToken', settingKey: 'TELEGRAM_BOT_TOKEN' },
+  { inputId: 'apiKeyTelegramChatId', settingKey: 'TELEGRAM_CHAT_ID' },
+]);
+
+function resetApiKeyFieldDirtyState() {
+  API_KEY_FIELDS.forEach(({ inputId }) => {
+    const input = document.getElementById(inputId);
+    if (input) {
+      input.dataset.dirty = 'false';
+    }
+  });
+}
 
 async function loadApiKeys() {
   try {
@@ -48,39 +73,18 @@ async function saveApiKeys() {
   const updates = {};
   const statusEl = document.getElementById('apiKeyStatus');
 
-  const anthInput = document.getElementById('apiKeyAnthropic');
-  const oaiInput = document.getElementById('apiKeyOpenai');
-  const googleInput = document.getElementById('apiKeyGoogle');
-  const recraftInput = document.getElementById('apiKeyRecraft');
-  const godaddyApiKeyInput = document.getElementById('apiKeyGodaddyApiKey');
-  const godaddyApiSecretInput = document.getElementById('apiKeyGodaddyApiSecret');
-  const githubTokenInput = document.getElementById('apiKeyGithubToken');
-  const vercelTokenInput = document.getElementById('apiKeyVercelToken');
-  const twilioSidInput = document.getElementById('apiKeyTwilioSid');
-  const twilioAuthInput = document.getElementById('apiKeyTwilioAuth');
-  const twilioPhoneInput = document.getElementById('apiKeyTwilioPhone');
-  const smsRecipientInput = document.getElementById('apiKeySmsRecipient');
-  const telegramTokenInput = document.getElementById('apiKeyTelegramToken');
-  const telegramChatIdInput = document.getElementById('apiKeyTelegramChatId');
-
-  if (anthInput?.value) updates.ANTHROPIC_API_KEY = anthInput.value;
-  if (oaiInput?.value) updates.OPENAI_API_KEY = oaiInput.value;
-  if (googleInput?.value) updates.GOOGLE_API_KEY = googleInput.value;
-  if (recraftInput?.value) updates.RECRAFT_API_KEY = recraftInput.value;
-  if (godaddyApiKeyInput?.value) updates.GODADDY_API_KEY = godaddyApiKeyInput.value;
-  if (godaddyApiSecretInput?.value) updates.GODADDY_API_SECRET = godaddyApiSecretInput.value;
-  if (githubTokenInput?.value) updates.GITHUB_TOKEN = githubTokenInput.value;
-  if (vercelTokenInput?.value) updates.VERCEL_TOKEN = vercelTokenInput.value;
-  if (twilioSidInput?.value) updates.TWILIO_ACCOUNT_SID = twilioSidInput.value;
-  if (twilioAuthInput?.value) updates.TWILIO_AUTH_TOKEN = twilioAuthInput.value;
-  if (twilioPhoneInput?.value) updates.TWILIO_PHONE_NUMBER = twilioPhoneInput.value;
-  if (smsRecipientInput?.value) updates.SMS_RECIPIENT = smsRecipientInput.value;
-  if (telegramTokenInput?.value) updates.TELEGRAM_BOT_TOKEN = telegramTokenInput.value;
-  if (telegramChatIdInput?.value) updates.TELEGRAM_CHAT_ID = telegramChatIdInput.value;
+  API_KEY_FIELDS.forEach(({ inputId, settingKey }) => {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    const value = String(input.value || '');
+    const dirty = input.dataset.dirty === 'true';
+    if (!dirty && !value) return;
+    updates[settingKey] = value;
+  });
 
   if (Object.keys(updates).length === 0) {
     if (statusEl) {
-      statusEl.textContent = 'Enter at least one key';
+      statusEl.textContent = 'Enter a key or clear a field you edited';
       statusEl.className = 'api-keys-status error';
     }
     return;
@@ -94,20 +98,11 @@ async function saveApiKeys() {
         statusEl.textContent = 'Saved! Available immediately.';
         statusEl.className = 'api-keys-status success';
       }
-      if (anthInput) anthInput.value = '';
-      if (oaiInput) oaiInput.value = '';
-      if (googleInput) googleInput.value = '';
-      if (recraftInput) recraftInput.value = '';
-      if (godaddyApiKeyInput) godaddyApiKeyInput.value = '';
-      if (godaddyApiSecretInput) godaddyApiSecretInput.value = '';
-      if (githubTokenInput) githubTokenInput.value = '';
-      if (vercelTokenInput) vercelTokenInput.value = '';
-      if (twilioSidInput) twilioSidInput.value = '';
-      if (twilioAuthInput) twilioAuthInput.value = '';
-      if (twilioPhoneInput) twilioPhoneInput.value = '';
-      if (smsRecipientInput) smsRecipientInput.value = '';
-      if (telegramTokenInput) telegramTokenInput.value = '';
-      if (telegramChatIdInput) telegramChatIdInput.value = '';
+      API_KEY_FIELDS.forEach(({ inputId }) => {
+        const input = document.getElementById(inputId);
+        if (input) input.value = '';
+      });
+      resetApiKeyFieldDirtyState();
       loadApiKeys();
       log.info('ApiKeys', 'API keys saved to .env');
     } else {
@@ -166,6 +161,17 @@ function setupApiKeysTab() {
     telegramToggle.addEventListener('click', toggleHandler);
     domCleanupFns.push(() => telegramToggle.removeEventListener('click', toggleHandler));
   }
+
+  API_KEY_FIELDS.forEach(({ inputId }) => {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    input.dataset.dirty = 'false';
+    const onInput = () => {
+      input.dataset.dirty = 'true';
+    };
+    input.addEventListener('input', onInput);
+    domCleanupFns.push(() => input.removeEventListener('input', onInput));
+  });
 
   loadApiKeys();
 }

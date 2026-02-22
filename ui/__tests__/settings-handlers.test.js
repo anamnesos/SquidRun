@@ -83,13 +83,23 @@ describe('Settings Handlers', () => {
 
   describe('set-setting', () => {
     test('updates setting and saves', async () => {
-      deps.loadSettings.mockReturnValue({ existing: true });
+      deps.loadSettings.mockReturnValue({ notifications: false });
+
+      const result = await harness.invoke('set-setting', 'notifications', true);
+
+      expect(deps.loadSettings).toHaveBeenCalled();
+      expect(deps.saveSettings).toHaveBeenCalledWith({ notifications: true });
+      expect(result).toEqual({ notifications: true });
+    });
+
+    test('rejects unknown setting key', async () => {
+      deps.loadSettings.mockReturnValue({ notifications: false });
 
       const result = await harness.invoke('set-setting', 'newKey', 'newValue');
 
-      expect(deps.loadSettings).toHaveBeenCalled();
-      expect(deps.saveSettings).toHaveBeenCalledWith({ existing: true, newKey: 'newValue' });
-      expect(result).toEqual({ existing: true, newKey: 'newValue' });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Unknown setting key');
+      expect(deps.saveSettings).not.toHaveBeenCalled();
     });
 
     test('starts watcher when watcherEnabled set to true', async () => {
@@ -111,19 +121,19 @@ describe('Settings Handlers', () => {
     test('does not affect watcher for other settings', async () => {
       deps.loadSettings.mockReturnValue({});
 
-      await harness.invoke('set-setting', 'someOtherKey', true);
+      await harness.invoke('set-setting', 'costAlertEnabled', true);
 
       expect(ctx.watcher.startWatcher).not.toHaveBeenCalled();
       expect(ctx.watcher.stopWatcher).not.toHaveBeenCalled();
     });
 
     test('overwrites existing setting', async () => {
-      deps.loadSettings.mockReturnValue({ existing: 'old' });
+      deps.loadSettings.mockReturnValue({ notifications: false });
 
-      const result = await harness.invoke('set-setting', 'existing', 'new');
+      const result = await harness.invoke('set-setting', 'notifications', true);
 
-      expect(deps.saveSettings).toHaveBeenCalledWith({ existing: 'new' });
-      expect(result.existing).toBe('new');
+      expect(deps.saveSettings).toHaveBeenCalledWith({ notifications: true });
+      expect(result.notifications).toBe(true);
     });
 
     test('runs preflight scan when paneProjects paths change', async () => {
@@ -366,6 +376,16 @@ describe('Settings Handlers', () => {
     test('rejects invalid TELEGRAM_CHAT_ID format', async () => {
       const result = await harness.invoke('set-api-keys', { TELEGRAM_CHAT_ID: 'not-a-number' });
       expect(result.success).toBe(false);
+    });
+
+    test('rejects newline and equals characters in API key values', async () => {
+      const newlineResult = await harness.invoke('set-api-keys', { GITHUB_TOKEN: 'abc\nDEF' });
+      expect(newlineResult.success).toBe(false);
+      expect(newlineResult.error).toContain('Invalid characters');
+
+      const equalsResult = await harness.invoke('set-api-keys', { GITHUB_TOKEN: 'abc=DEF' });
+      expect(equalsResult.success).toBe(false);
+      expect(equalsResult.error).toContain('Invalid characters');
     });
 
     test('accepts valid keys and writes .env', async () => {

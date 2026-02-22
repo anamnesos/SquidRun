@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const log = require('../logger');
 
 function registerCheckpointHandlers(ctx) {
@@ -15,6 +16,7 @@ function registerCheckpointHandlers(ctx) {
   const { ipcMain, WORKSPACE_PATH } = ctx;
   const ROLLBACK_DIR = path.join(WORKSPACE_PATH, 'rollbacks');
   const MAX_CHECKPOINTS = 10;
+  const CHECKPOINT_ID_PATTERN = /^cp-[A-Za-z0-9._-]+$/;
 
   function ensureRollbackDir() {
     try {
@@ -26,6 +28,22 @@ function registerCheckpointHandlers(ctx) {
       log.error('Rollback', 'Failed to initialize rollback directory', err);
       return false;
     }
+  }
+
+  function normalizeCheckpointId(rawId) {
+    if (typeof rawId !== 'string') return null;
+    const trimmed = rawId.trim();
+    if (!trimmed || trimmed.length > 120) return null;
+    if (trimmed.includes('/') || trimmed.includes('\\')) return null;
+    if (!CHECKPOINT_ID_PATTERN.test(trimmed)) return null;
+    return trimmed;
+  }
+
+  function buildBackupFileName(filePath, index) {
+    const resolved = path.resolve(filePath);
+    const safeBase = path.basename(resolved).replace(/[^A-Za-z0-9._-]/g, '_');
+    const digest = crypto.createHash('sha1').update(resolved).digest('hex').slice(0, 12);
+    return `${String(index).padStart(3, '0')}-${digest}-${safeBase}`;
   }
 
   ipcMain.handle('create-checkpoint', (event, files, label = '') => {
@@ -46,13 +64,13 @@ function registerCheckpointHandlers(ctx) {
 
       for (const filePath of files) {
         if (fs.existsSync(filePath)) {
-          const content = fs.readFileSync(filePath, 'utf-8');
-          const fileName = path.basename(filePath);
-          const backupPath = path.join(checkpointDir, fileName);
+          const normalizedOriginal = path.resolve(filePath);
+          const content = fs.readFileSync(normalizedOriginal, 'utf-8');
+          const backupPath = path.join(checkpointDir, buildBackupFileName(normalizedOriginal, manifest.files.length));
 
           fs.writeFileSync(backupPath, content, 'utf-8');
           manifest.files.push({
-            original: filePath,
+            original: normalizedOriginal,
             backup: backupPath,
             size: content.length,
           });
@@ -123,7 +141,11 @@ function registerCheckpointHandlers(ctx) {
       if (!ensureRollbackDir()) {
         return { success: false, error: 'Rollback directory unavailable' };
       }
-      const checkpointDir = path.join(ROLLBACK_DIR, checkpointId);
+      const normalizedCheckpointId = normalizeCheckpointId(checkpointId);
+      if (!normalizedCheckpointId) {
+        return { success: false, error: 'Invalid checkpoint ID' };
+      }
+      const checkpointDir = path.join(ROLLBACK_DIR, normalizedCheckpointId);
       const manifestPath = path.join(checkpointDir, 'manifest.json');
 
       if (!fs.existsSync(manifestPath)) {
@@ -149,7 +171,7 @@ function registerCheckpointHandlers(ctx) {
         });
       }
 
-      return { success: true, checkpointId, diffs };
+      return { success: true, checkpointId: normalizedCheckpointId, diffs };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -160,7 +182,11 @@ function registerCheckpointHandlers(ctx) {
       if (!ensureRollbackDir()) {
         return { success: false, error: 'Rollback directory unavailable' };
       }
-      const checkpointDir = path.join(ROLLBACK_DIR, checkpointId);
+      const normalizedCheckpointId = normalizeCheckpointId(checkpointId);
+      if (!normalizedCheckpointId) {
+        return { success: false, error: 'Invalid checkpoint ID' };
+      }
+      const checkpointDir = path.join(ROLLBACK_DIR, normalizedCheckpointId);
       const manifestPath = path.join(checkpointDir, 'manifest.json');
 
       if (!fs.existsSync(manifestPath)) {
@@ -178,16 +204,16 @@ function registerCheckpointHandlers(ctx) {
         }
       }
 
-      log.info('Rollback', `Restored ${restored.length} files from ${checkpointId}`);
+      log.info('Rollback', `Restored ${restored.length} files from ${normalizedCheckpointId}`);
 
       if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
         ctx.mainWindow.webContents.send('rollback-complete', {
-          checkpointId,
+          checkpointId: normalizedCheckpointId,
           restoredFiles: restored,
         });
       }
 
-      return { success: true, checkpointId, restored, filesRestored: restored.length };
+      return { success: true, checkpointId: normalizedCheckpointId, restored, filesRestored: restored.length };
     } catch (err) {
       return { success: false, error: err.message };
     }
@@ -201,14 +227,18 @@ function registerCheckpointHandlers(ctx) {
       if (!ensureRollbackDir()) {
         return { success: false, error: 'Rollback directory unavailable' };
       }
-      const checkpointDir = path.join(ROLLBACK_DIR, checkpointId);
+      const normalizedCheckpointId = normalizeCheckpointId(checkpointId);
+      if (!normalizedCheckpointId) {
+        return { success: false, error: 'Invalid checkpoint ID' };
+      }
+      const checkpointDir = path.join(ROLLBACK_DIR, normalizedCheckpointId);
 
       if (!fs.existsSync(checkpointDir)) {
         return { success: false, error: 'Checkpoint not found' };
       }
 
       fs.rmSync(checkpointDir, { recursive: true, force: true });
-      log.info('Rollback', `Deleted checkpoint: ${checkpointId}`);
+      log.info('Rollback', `Deleted checkpoint: ${normalizedCheckpointId}`);
 
       return { success: true };
     } catch (err) {
