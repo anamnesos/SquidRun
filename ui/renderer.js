@@ -441,6 +441,12 @@ let initState = {
 };
 const STARTUP_OVERLAY_FADE_MS = 280;
 let autonomyOnboardingBusy = false;
+const profileOnboardingState = {
+  checkComplete: false,
+  checking: false,
+  required: false,
+  completed: false,
+};
 
 function isAutonomyConsentRequired() {
   if (typeof settings.requiresAutonomyConsent !== 'function') return false;
@@ -524,6 +530,17 @@ function setupAutonomyOnboardingHandlers() {
 
 function checkInitComplete() {
   if (initState.settingsLoaded && initState.terminalsReady && !initState.autoSpawnChecked) {
+    if (!profileOnboardingState.checkComplete) {
+      log.info('Init', 'Waiting for profile onboarding check before auto-spawn');
+      return;
+    }
+
+    if (profileOnboardingState.required && !profileOnboardingState.completed) {
+      log.info('Init', 'Profile setup required before autonomy/auto-spawn');
+      void openProfileModal({ enforceName: true, reload: false });
+      return;
+    }
+
     if (isAutonomyConsentRequired()) {
       log.info('Init', 'Autonomy consent required before auto-spawn');
       showAutonomyOnboarding();
@@ -542,10 +559,7 @@ function checkInitComplete() {
 function markSettingsLoaded() {
   initState.settingsLoaded = true;
   log.info('Init', 'Settings loaded');
-  if (isAutonomyConsentRequired()) {
-    showAutonomyOnboarding();
-  }
-
+  void evaluateProfileOnboardingRequirement();
   checkInitComplete();
 }
 
@@ -755,6 +769,7 @@ const PROFILE_FALLBACK_SCHEMA = Object.freeze({
 
 let profileModalBusy = false;
 let profileModalSchema = null;
+let profileOnboardingEnforced = false;
 
 function cloneJsonValue(value) {
   try {
@@ -781,6 +796,7 @@ function getProfileModalElements() {
     cancelBtn: document.getElementById('profileModalCancel'),
     saveBtn: document.getElementById('profileModalSave'),
     nameInput: document.getElementById('profileNameInput'),
+    nameRequiredIndicator: document.getElementById('profileNameRequiredIndicator'),
     experienceSelect: document.getElementById('profileExperienceSelect'),
     communicationSelect: document.getElementById('profileCommunicationStyleSelect'),
     domainTextarea: document.getElementById('profileDomainExpertiseInput'),
@@ -790,11 +806,43 @@ function getProfileModalElements() {
   };
 }
 
-function closeProfileModal() {
+function setProfileOnboardingMode(enforced) {
+  profileOnboardingEnforced = Boolean(enforced);
+  const {
+    overlay,
+    closeBtn,
+    cancelBtn,
+    nameInput,
+    nameRequiredIndicator,
+  } = getProfileModalElements();
+
+  if (overlay) {
+    overlay.classList.toggle('profile-modal-enforced', profileOnboardingEnforced);
+  }
+  if (closeBtn) {
+    closeBtn.style.display = profileOnboardingEnforced ? 'none' : '';
+  }
+  if (cancelBtn) {
+    cancelBtn.style.display = profileOnboardingEnforced ? 'none' : '';
+  }
+  if (nameInput) {
+    nameInput.required = profileOnboardingEnforced;
+    nameInput.classList.toggle('profile-onboarding-required', profileOnboardingEnforced);
+    nameInput.setAttribute('aria-required', profileOnboardingEnforced ? 'true' : 'false');
+  }
+  if (nameRequiredIndicator) {
+    nameRequiredIndicator.hidden = !profileOnboardingEnforced;
+  }
+}
+
+function closeProfileModal(options = {}) {
+  const force = options.force === true;
+  if (profileOnboardingEnforced && !force) return false;
   const { overlay } = getProfileModalElements();
   if (!overlay || !overlay.classList.contains('open')) return false;
   overlay.classList.remove('open');
   overlay.setAttribute('aria-hidden', 'true');
+  setProfileOnboardingMode(false);
   return true;
 }
 
@@ -975,12 +1023,23 @@ function applyProfileToModal(profile) {
   );
 }
 
-async function openProfileModal() {
+async function openProfileModal(options = {}) {
+  const enforceName = options.enforceName === true
+    || (profileOnboardingState.required && !profileOnboardingState.completed);
+  const reload = options.reload !== false;
   const { overlay, form } = getProfileModalElements();
   if (!overlay || !form) return;
 
+  const alreadyOpen = overlay.classList.contains('open');
+  setProfileOnboardingMode(enforceName);
   overlay.classList.add('open');
   overlay.setAttribute('aria-hidden', 'false');
+
+  if (alreadyOpen && !reload) {
+    return;
+  }
+
+  if (profileModalBusy) return;
   setProfileModalBusyState(true);
 
   try {
@@ -1025,6 +1084,14 @@ async function saveProfileFromModal() {
 
   try {
     const payload = buildProfileSavePayload();
+    if (profileOnboardingEnforced && !String(payload.name || '').trim()) {
+      const { nameInput } = getProfileModalElements();
+      showStatusNotice('Name is required to continue setup.', 'warning', 2800);
+      if (nameInput && typeof nameInput.focus === 'function') {
+        nameInput.focus();
+      }
+      return;
+    }
     const result = await ipcRenderer.invoke('save-user-profile', payload);
     if (!result?.success) {
       showStatusNotice(result?.error || 'Failed to save user profile.', 'warning', 3200);
@@ -1035,13 +1102,53 @@ async function saveProfileFromModal() {
       ? result.profile.schema
       : payload.schema;
     profileModalSchema = cloneJsonValue(savedSchema) || getProfileFallbackSchema();
-    closeProfileModal();
+    const completedOnboarding = profileOnboardingEnforced && String(result.profile?.name || payload.name || '').trim().length > 0;
+    if (completedOnboarding) {
+      profileOnboardingState.required = false;
+      profileOnboardingState.completed = true;
+      closeProfileModal({ force: true });
+      if (initState.settingsLoaded && isAutonomyConsentRequired()) {
+        showAutonomyOnboarding();
+      }
+      checkInitComplete();
+    } else {
+      closeProfileModal({ force: true });
+    }
     showStatusNotice('User profile saved.', 'info', 2200);
   } catch (err) {
     log.error('ProfileModal', `Failed to save profile: ${err?.message || err}`);
     showStatusNotice('Failed to save user profile.', 'warning', 3200);
   } finally {
     setProfileModalBusyState(false);
+  }
+}
+
+async function evaluateProfileOnboardingRequirement() {
+  if (profileOnboardingState.checkComplete || profileOnboardingState.checking) return;
+  profileOnboardingState.checking = true;
+
+  try {
+    const result = await ipcRenderer.invoke('get-user-profile');
+    const existingName = String(result?.profile?.name || '').trim();
+    const requiresProfile = existingName.length === 0;
+    profileOnboardingState.required = requiresProfile;
+    profileOnboardingState.completed = !requiresProfile;
+
+    if (requiresProfile) {
+      log.info('Init', 'First-run profile setup required');
+      void openProfileModal({ enforceName: true, reload: true });
+    } else if (initState.settingsLoaded && isAutonomyConsentRequired()) {
+      showAutonomyOnboarding();
+    }
+  } catch (err) {
+    log.error('Init', `Failed profile onboarding check: ${err?.message || err}`);
+    profileOnboardingState.required = true;
+    profileOnboardingState.completed = false;
+    void openProfileModal({ enforceName: true, reload: true });
+  } finally {
+    profileOnboardingState.checking = false;
+    profileOnboardingState.checkComplete = true;
+    checkInitComplete();
   }
 }
 
