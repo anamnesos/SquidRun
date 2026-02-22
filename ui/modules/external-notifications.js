@@ -171,6 +171,7 @@ function createExternalNotifier(options = {}) {
 
     const port = Number(settings.smtpPort) || (settings.smtpSecure ? 465 : 587);
     const secure = Boolean(settings.smtpSecure);
+    const rejectUnauthorized = settings.smtpRejectUnauthorized !== false;
     const user = settings.smtpUser;
     const pass = settings.smtpPass;
 
@@ -181,7 +182,7 @@ function createExternalNotifier(options = {}) {
 
     return new Promise((resolve) => {
       const socket = secure
-        ? tls.connect(port, host, { rejectUnauthorized: false })
+        ? tls.connect(port, host, { rejectUnauthorized })
         : net.connect(port, host);
 
       const reader = readline.createInterface({ input: socket });

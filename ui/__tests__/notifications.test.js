@@ -89,6 +89,7 @@ describe('notifications.js module', () => {
   });
 
   afterEach(() => {
+    notifications.clearNotificationTimers();
     jest.useRealTimers();
   });
 
@@ -229,6 +230,10 @@ describe('notifications.js module', () => {
   });
 
   describe('exported constants', () => {
+    it('should export clearNotificationTimers helper', () => {
+      expect(typeof notifications.clearNotificationTimers).toBe('function');
+    });
+
     it('should export DEFAULT_TOAST_TIMEOUT', () => {
       expect(notifications.DEFAULT_TOAST_TIMEOUT).toBe(5000);
     });
