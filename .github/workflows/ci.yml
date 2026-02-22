@@ -15,6 +15,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Install ripgrep
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
       - name: Run compat debt gate (baseline-safe)
         run: node ui/scripts/hm-compat-count.js
       - name: Run surface audit gate (baseline-safe)
