@@ -27,6 +27,7 @@ const { PANE_IDS, PANE_ROLES, WORKSPACE_PATH, resolveCoordPath } = require('./co
 // ============================================================
 
 const MESSAGE_QUEUE_DIR = path.join(WORKSPACE_PATH, 'messages');
+const queueMutationChains = new Map();
 
 function coordPath(relPath, options = {}) {
   if (typeof resolveCoordPath === 'function') {
@@ -290,7 +291,64 @@ function getQueueFilePath(targetPaneId) {
   return path.join(MESSAGE_QUEUE_DIR, `queue-${targetPaneId}.json`);
 }
 
-function sendMessageToQueue(fromPaneId, toPaneId, content) {
+function buildQueueTempPath(queueFile) {
+  return `${queueFile}.${process.pid}.${Date.now()}-${Math.random().toString(36).slice(2, 8)}.tmp`;
+}
+
+function writeQueueMessagesAtomic(queueFile, messages) {
+  const tempPath = buildQueueTempPath(queueFile);
+  fs.writeFileSync(tempPath, JSON.stringify(messages, null, 2), 'utf-8');
+  fs.renameSync(tempPath, queueFile);
+}
+
+function serializeQueueMutation(queueFile, operation) {
+  const previous = queueMutationChains.get(queueFile) || Promise.resolve();
+  const next = previous.then(() => operation(), () => operation());
+  const serialized = next.finally(() => {
+    if (queueMutationChains.get(queueFile) === serialized) {
+      queueMutationChains.delete(queueFile);
+    }
+  });
+  queueMutationChains.set(queueFile, serialized);
+  return serialized;
+}
+
+function recoverCorruptedQueueFile(queueFile, rawContent, err) {
+  log.error('MCP', `Corrupted queue file ${queueFile}: ${err.message}`);
+  const corruptPath = `${queueFile}.corrupt-${Date.now()}`;
+  try {
+    fs.writeFileSync(corruptPath, rawContent, 'utf-8');
+  } catch (saveErr) {
+    log.warn('MCP', `Failed to preserve corrupted queue file ${queueFile}: ${saveErr.message}`);
+  }
+  try {
+    writeQueueMessagesAtomic(queueFile, []);
+    log.warn('MCP', `Reset corrupted queue file ${queueFile}`);
+    return true;
+  } catch (resetErr) {
+    log.error('MCP', `Failed to reset corrupted queue file ${queueFile}: ${resetErr.message}`);
+    return false;
+  }
+}
+
+function readQueueMessagesWithRecovery(queueFile) {
+  if (!fs.existsSync(queueFile)) {
+    return [];
+  }
+  const rawContent = fs.readFileSync(queueFile, 'utf-8');
+  try {
+    const parsed = JSON.parse(rawContent);
+    if (!Array.isArray(parsed)) {
+      throw new Error('queue_payload_not_array');
+    }
+    return parsed;
+  } catch (err) {
+    recoverCorruptedQueueFile(queueFile, rawContent, err);
+    return [];
+  }
+}
+
+async function sendMessageToQueue(fromPaneId, toPaneId, content) {
   if (!ensureMessageQueueDir()) {
     return {
       success: false,
@@ -299,42 +357,33 @@ function sendMessageToQueue(fromPaneId, toPaneId, content) {
     };
   }
   const queueFile = getQueueFilePath(toPaneId);
-
-  let messages = [];
-  if (fs.existsSync(queueFile)) {
-    try {
-      messages = JSON.parse(fs.readFileSync(queueFile, 'utf-8'));
-    } catch (_e) {
-      messages = [];
-    }
-  }
-
-  const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-  const message = {
-    id: messageId,
-    from: fromPaneId,
-    fromRole: PANE_ROLES[fromPaneId],
-    to: toPaneId,
-    toRole: PANE_ROLES[toPaneId],
-    content,
-    type: 'mcp',
-    timestamp: new Date().toISOString(),
-    delivered: false,
-    deliveredAt: null,
-  };
-
-  messages.push(message);
-
-  // Keep only last 100 messages
-  if (messages.length > 100) {
-    messages = messages.slice(-100);
-  }
-
-  // Atomic write
-  const tempPath = queueFile + '.tmp';
+  let messageId = null;
   try {
-    fs.writeFileSync(tempPath, JSON.stringify(messages, null, 2), 'utf-8');
-    fs.renameSync(tempPath, queueFile);
+    await serializeQueueMutation(queueFile, async () => {
+      let messages = readQueueMessagesWithRecovery(queueFile);
+      messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+      const message = {
+        id: messageId,
+        from: fromPaneId,
+        fromRole: PANE_ROLES[fromPaneId],
+        to: toPaneId,
+        toRole: PANE_ROLES[toPaneId],
+        content,
+        type: 'mcp',
+        timestamp: new Date().toISOString(),
+        delivered: false,
+        deliveredAt: null,
+      };
+
+      messages.push(message);
+
+      // Keep only last 100 messages
+      if (messages.length > 100) {
+        messages = messages.slice(-100);
+      }
+
+      writeQueueMessagesAtomic(queueFile, messages);
+    });
   } catch (err) {
     log.error('MCP', 'Failed to write message queue', err);
     return {
@@ -361,25 +410,17 @@ function sendMessageToQueue(fromPaneId, toPaneId, content) {
   return { success: true, messageId, to: PANE_ROLES[toPaneId] };
 }
 
-function getMessagesFromQueue(targetPaneId, undeliveredOnly = true) {
+async function getMessagesFromQueue(targetPaneId, undeliveredOnly = true) {
   if (!ensureMessageQueueDir()) {
     return [];
   }
   const queueFile = getQueueFilePath(targetPaneId);
 
-  if (!fs.existsSync(queueFile)) {
-    return [];
+  const messages = await serializeQueueMutation(queueFile, async () => readQueueMessagesWithRecovery(queueFile));
+  if (undeliveredOnly) {
+    return messages.filter(m => !m.delivered);
   }
-
-  try {
-    const messages = JSON.parse(fs.readFileSync(queueFile, 'utf-8'));
-    if (undeliveredOnly) {
-      return messages.filter(m => !m.delivered);
-    }
-    return messages;
-  } catch (_e) {
-    return [];
-  }
+  return messages;
 }
 
 function resolvePaneIds(target) {
@@ -502,23 +543,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (name) {
       // MC2: Messaging Tools
       case 'send_message': {
-        const targetPaneIds = resolvePaneIds(args.to);
+        const targetPaneIds = resolvePaneIds(args.to).filter(id => id !== paneId);
+        if (targetPaneIds.length === 0) {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: 'no_valid_targets',
+                sent_to: [],
+                message_ids: [],
+              }),
+            }],
+          };
+        }
         const results = [];
 
         for (const targetPaneId of targetPaneIds) {
-          if (targetPaneId !== paneId) { // Don't send to self
-            const result = sendMessageToQueue(paneId, targetPaneId, args.content);
-            results.push(result);
-          }
+          const result = await sendMessageToQueue(paneId, targetPaneId, args.content);
+          results.push(result);
         }
+        const failed = results.filter(result => !result.success);
+        const sentTo = results.filter(result => result.success).map(result => result.to);
+        const messageIds = results.filter(result => result.success).map(result => result.messageId);
 
         return {
           content: [{
             type: 'text',
             text: JSON.stringify({
-              success: true,
-              sent_to: results.map(r => r.to),
-              message_ids: results.map(r => r.messageId),
+              success: failed.length === 0 && sentTo.length > 0,
+              sent_to: sentTo,
+              message_ids: messageIds,
+              failed: failed.map(result => ({ to: result.to, error: result.error })),
             }),
           }],
         };
@@ -526,7 +582,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'get_messages': {
         const undeliveredOnly = args.undelivered_only !== false;
-        const messages = getMessagesFromQueue(paneId, undeliveredOnly);
+        const messages = await getMessagesFromQueue(paneId, undeliveredOnly);
 
         return {
           content: [{
