@@ -81,7 +81,7 @@ if (args.length < 2) {
   process.exit(1);
 }
 
-const target = args[0];
+let target = args[0];
 const envPaneId = String(process.env.SQUIDRUN_PANE_ID || '').trim();
 let role = normalizeRole(process.env.SQUIDRUN_ROLE || '') || DEFAULT_ROLE_BY_PANE[envPaneId] || 'cli';
 let priority = 'normal';
@@ -145,6 +145,16 @@ if (role === 'cli') {
   if (inferred) {
     role = inferred;
   }
+}
+
+const backgroundRoutingOverride = enforceBackgroundBuilderTargetRouting(role, target);
+if (backgroundRoutingOverride.redirected) {
+  console.warn(
+    `Background-builder owner binding override: rerouted target `
+    + `'${backgroundRoutingOverride.originalTarget}' to '${backgroundRoutingOverride.reroutedTarget}' `
+    + `for sender role '${backgroundRoutingOverride.senderRole}'.`
+  );
+  target = backgroundRoutingOverride.reroutedTarget;
 }
 
 function parseJSON(raw) {
@@ -441,6 +451,10 @@ function normalizeRole(targetInput) {
 
   const targetValue = String(targetInput || '').trim().toLowerCase();
   if (!targetValue) return null;
+
+  const backgroundRole = normalizeBackgroundBuilderRole(targetValue);
+  if (backgroundRole) return backgroundRole;
+
   if (paneToRole[targetValue]) return paneToRole[targetValue];
 
   if (targetValue === 'architect' || targetValue === 'builder' || targetValue === 'oracle') {
@@ -464,7 +478,42 @@ function resolvePaneIdForRole(roleName) {
   if (normalized === 'architect') return '1';
   if (normalized === 'builder') return '2';
   if (normalized === 'oracle') return '3';
+  const backgroundMatch = normalized.match(/^builder-bg-(\d+)$/);
+  if (backgroundMatch && backgroundMatch[1]) {
+    return `bg-2-${backgroundMatch[1]}`;
+  }
   return null;
+}
+
+function normalizeBackgroundBuilderRole(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (/^builder-bg-\d+$/.test(normalized)) return normalized;
+  const paneMatch = normalized.match(/^bg-2-(\d+)$/);
+  if (paneMatch && paneMatch[1]) return `builder-bg-${paneMatch[1]}`;
+  return null;
+}
+
+function enforceBackgroundBuilderTargetRouting(senderRole, targetInput) {
+  const normalizedSenderRole = normalizeBackgroundBuilderRole(senderRole);
+  if (!normalizedSenderRole) {
+    return { redirected: false, senderRole: null, originalTarget: targetInput, reroutedTarget: targetInput };
+  }
+  const normalizedTargetRole = normalizeRole(targetInput);
+  if (normalizedTargetRole === 'architect') {
+    return {
+      redirected: true,
+      senderRole: normalizedSenderRole,
+      originalTarget: targetInput,
+      reroutedTarget: 'builder',
+    };
+  }
+  return {
+    redirected: false,
+    senderRole: normalizedSenderRole,
+    originalTarget: targetInput,
+    reroutedTarget: targetInput,
+  };
 }
 
 function isSpecialTarget(targetInput) {
