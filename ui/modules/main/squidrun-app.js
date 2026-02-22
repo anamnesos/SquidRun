@@ -1734,7 +1734,7 @@ class SquidRunApp {
 
   setupPermissions() {
     session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {   
-      const allowedPermissions = ['media', 'audioCapture', 'clipboard-read', 'clipboard-sanitized-write'];       
+      const allowedPermissions = ['media', 'audioCapture', 'clipboard-read', 'clipboard-write', 'clipboard-sanitized-write'];       
       const mediaTypes = details?.mediaTypes || [];
       if (allowedPermissions.includes(permission) || mediaTypes.includes('audio')) {
         return true;
@@ -1743,7 +1743,7 @@ class SquidRunApp {
     });
 
     session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-      const allowedPermissions = ['media', 'audioCapture', 'clipboard-read', 'clipboard-sanitized-write'];       
+      const allowedPermissions = ['media', 'audioCapture', 'clipboard-read', 'clipboard-write', 'clipboard-sanitized-write'];       
       if (allowedPermissions.includes(permission)) {
         callback(true);
       } else {

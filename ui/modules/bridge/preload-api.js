@@ -38,6 +38,7 @@ function createPreloadApi(ipcRenderer) {
       writeChunked: (paneId, fullText, options = {}, kernelMeta = null) =>
         ipc.invoke('pty-write-chunked', paneId, fullText, options, kernelMeta),
       sendTrustedEnter: () => ipc.invoke('send-trusted-enter'),
+      clipboardWriteText: (text) => ipc.invoke('clipboard-write', text),
       clipboardPasteText: (text) => ipc.invoke('clipboard-paste-text', text),
       pause: (paneId) => ipc.invoke('pty-pause', paneId),
       resume: (paneId) => ipc.invoke('pty-resume', paneId),
