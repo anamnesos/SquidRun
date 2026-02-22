@@ -23,6 +23,7 @@ describe('plugin-handlers', () => {
       enablePlugin: jest.fn(() => ({ success: true })),
       disablePlugin: jest.fn(() => ({ success: true })),
       reloadPlugin: jest.fn(() => ({ success: true })),
+      shutdown: jest.fn(),
       loadAll: jest.fn(() => [{ id: 'plugin-1' }, { id: 'plugin-2' }]),
       runCommand: jest.fn(() => ({ success: true, result: 'command output' })),
     };
@@ -197,6 +198,7 @@ describe('plugin-handlers', () => {
         success: true,
         plugins: [{ id: 'plugin-1' }, { id: 'plugin-2' }],
       });
+      expect(mockPluginManager.shutdown).toHaveBeenCalled();
       expect(mockPluginManager.loadAll).toHaveBeenCalled();
     });
 

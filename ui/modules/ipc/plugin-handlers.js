@@ -42,6 +42,9 @@ function registerPluginHandlers(ctx, deps) {
   ipcMain.handle('reload-plugins', () => {
     const manager = getManager();
     if (!manager) return { success: false, error: 'Plugin manager unavailable' };
+    if (typeof manager.shutdown === 'function') {
+      manager.shutdown();
+    }
     const plugins = manager.loadAll();
     return { success: true, plugins };
   });

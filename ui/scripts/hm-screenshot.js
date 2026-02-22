@@ -7,7 +7,7 @@
  */
 
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFile } = require('child_process');
 const WebSocket = require('ws');
 
 const DEFAULT_PORT = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
@@ -76,6 +76,20 @@ function parseJsonOption(raw, label) {
   } catch (err) {
     throw new Error(`Invalid ${label}: ${err.message}`);
   }
+}
+
+function execFileAsync(file, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, options, (err, stdout, stderr) => {
+      if (err) {
+        if (err.stdout == null) err.stdout = stdout;
+        if (err.stderr == null) err.stderr = stderr;
+        reject(err);
+        return;
+      }
+      resolve(stdout || '');
+    });
+  });
 }
 
 function normalizeCommand(command) {
@@ -236,9 +250,10 @@ async function main() {
     const telegramScript = path.join(__dirname, 'hm-telegram.js');
     try {
       console.log('[hm-screenshot] Sending to Telegram...');
-      const output = execSync(
-        `node "${telegramScript}" --photo "${result.path}" "${caption}"`,
-        { encoding: 'utf8', timeout: 30000 }
+      const output = await execFileAsync(
+        process.execPath,
+        [telegramScript, '--photo', result.path, caption],
+        { encoding: 'utf8', timeout: 30000, windowsHide: true }
       );
       if (output.trim()) console.log(output.trim());
     } catch (err) {
