@@ -1,6 +1,6 @@
 # SquidRun
 
-**SquidRun is not a code editor, IDE plugin, or cloud service.** It is a standalone, local-first Electron app that gives a **solo developer** a full AI coding team — running **Claude, Codex, and Gemini simultaneously** on your own machine, powered by your existing subscriptions.
+**SquidRun is not a code editor, IDE plugin, or cloud service.** It is a standalone, local-first Electron app that gives a **solo developer** a full AI coding team — running **Claude Code, Codex CLI, and Gemini CLI simultaneously** on your own machine, powered by your existing subscriptions.
 
 One person. Three different AI models. Three specialized roles. All running in parallel, talking to each other, and working on your codebase at the same time:
 
@@ -8,7 +8,7 @@ One person. Three different AI models. Three specialized roles. All running in p
 - `Builder` (pane 2): implementation, testing, infrastructure
 - `Oracle` (Pane 3): investigation, documentation, benchmarking
 
-For example, Claude architects the solution, Codex builds it, and Gemini cross-checks it. Each model brings its own reasoning style and blind spots — when they collaborate, they catch things a single model misses. They communicate through a structured message protocol, not copy-paste.
+For example, Claude Code architects the solution, Codex CLI builds it, and Gemini CLI cross-checks it. Each model brings its own reasoning style and blind spots — when they collaborate, they catch things a single model misses. They communicate through a structured message protocol, not copy-paste.
 
 You can run it with a single model, but it's designed — and recommended — to run **different models from different companies** in each role.
 
@@ -24,7 +24,7 @@ You can run it with a single model, but it's designed — and recommended — to
 
 ### Multi-Model, Not Just Multi-Agent
 
-Other multi-agent tools run multiple instances of the same model. SquidRun can run **different models from different providers** as a single team — and that's the recommended setup. Each model has different strengths, and cross-model collaboration catches errors that any single model would miss. You assign any model to any role through a single settings panel, or run one model across all panes if you prefer.
+Other multi-agent tools run multiple instances of the same model. SquidRun runs **different CLI tools from different providers** as a single team — and that's the recommended setup. Each model has different strengths, and cross-model collaboration catches errors that any single model would miss. You assign any model to any role through a single settings panel, or run one model across all panes if you prefer.
 
 ### Subscription-First, Not API-First
 
@@ -61,7 +61,7 @@ This turns SquidRun into an always-available development team you can manage fro
 
 ## Key Features
 
-- **Multi-model orchestration** — run Claude, Codex, and Gemini as one team, not three copies of the same model
+- **Multi-model orchestration** — run Claude Code, Codex CLI, and Gemini CLI as one team, not three copies of the same model
 - **Subscription-powered** — uses your existing CLI plans, not pay-per-token API calls
 - **Telegram integration** — manage your agent team from your phone, anywhere
 - Persistent 3-pane runtime with role boundaries
@@ -107,7 +107,7 @@ npm start
     |  3-pane multi-model runtime                               |
     |                                                           |
     |  Pane 1: Architect    Pane 2: Builder    Pane 3: Oracle   |
-    |  (e.g. Claude)        (e.g. Codex)       (e.g. Gemini)   |
+    |  (e.g. Claude Code)   (e.g. Codex CLI)   (e.g. Gemini CLI)|
     +-----------------------------------------------------------+
                        |
                        v
@@ -133,9 +133,9 @@ Core implementation lives in `ui/modules/`, `ui/modules/main/`, and `ui/scripts/
 - Node.js 18+
 - npm
 - At least one coding CLI installed and authenticated:
-  - `claude` — requires [Claude Pro or Max](https://claude.ai/upgrade) subscription → run `claude` and sign in
-  - `codex` — requires [ChatGPT Plus, Pro, Business, or Enterprise](https://chatgpt.com/) subscription → run `codex` and sign in
-  - `gemini` — free with any [Google account](https://ai.google.dev/) (1,000 requests/day) → run `gemini` and sign in with Google
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — requires [Claude Pro or Max](https://claude.ai/upgrade) subscription → run `claude` and sign in
+  - [Codex CLI](https://github.com/openai/codex) — requires [ChatGPT Plus, Pro, Business, or Enterprise](https://chatgpt.com/) subscription → run `codex` and sign in
+  - [Gemini CLI](https://github.com/google-gemini/gemini-cli) — free with any [Google account](https://ai.google.dev/) (1,000 requests/day) → run `gemini` and sign in with Google
 - For the full multi-model experience, install all three (each runs in its own pane)
 
 ### Install
