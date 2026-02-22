@@ -93,9 +93,10 @@ function buildQueueTempPath(queueFile) {
 function serializeQueueMutation(queueFile, operation) {
   const previous = queueMutationChains.get(queueFile) || Promise.resolve();
   const next = previous.then(operation, operation);
-  queueMutationChains.set(queueFile, next.catch(() => {}));
+  const serialized = next.catch(() => {});
+  queueMutationChains.set(queueFile, serialized);
   return next.finally(() => {
-    if (queueMutationChains.get(queueFile) === next) {
+    if (queueMutationChains.get(queueFile) === serialized) {
       queueMutationChains.delete(queueFile);
     }
   });
@@ -1556,4 +1557,8 @@ module.exports = {
   stopTriggerWatcher,
   TRIGGER_PATH,
   setExternalNotifier,
+  _internals: {
+    getQueueMutationChainSize: () => queueMutationChains.size,
+    clearQueueMutationChains: () => queueMutationChains.clear(),
+  },
 };

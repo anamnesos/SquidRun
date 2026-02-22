@@ -431,6 +431,9 @@ describe('SquidRunApp', () => {
 
       expect(result).toEqual({ ok: false, state: 'stopped', error: 'stopped' });
       expect(app.runtimeLifecycleState).toBe('stopped');
+      expect(watcher.stopMessageWatcher).toHaveBeenCalledTimes(1);
+      expect(watcher.stopTriggerWatcher).toHaveBeenCalledTimes(1);
+      expect(watcher.stopWatcher).toHaveBeenCalledTimes(1);
     });
 
     it('returns failure when message watcher startup throws', async () => {
@@ -440,6 +443,9 @@ describe('SquidRunApp', () => {
 
       expect(result).toEqual({ ok: false, state: 'stopped', error: 'watcher crashed' });
       expect(app.runtimeLifecycleState).toBe('stopped');
+      expect(watcher.stopMessageWatcher).toHaveBeenCalledTimes(1);
+      expect(watcher.stopTriggerWatcher).toHaveBeenCalledTimes(1);
+      expect(watcher.stopWatcher).toHaveBeenCalledTimes(1);
     });
   });
 
