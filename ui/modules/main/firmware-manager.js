@@ -15,9 +15,6 @@ const SPEC_RELATIVE_PATH = path.join('workspace', 'specs', 'firmware-injection-s
 const FIRMWARE_SUBDIR = 'firmware';
 const CODEX_OVERRIDE_FILENAME = 'AGENTS.override.md';
 const PREFLIGHT_SCRIPT_PATH = path.join(__dirname, '..', '..', 'scripts', 'hm-preflight.js');
-const TEMPLATE_PLACEHOLDERS = Object.freeze({
-  SQUIDRUN_ROOT: '{SQUIDRUN_ROOT}',
-});
 
 const PANE_ROLE_FILE = {
   '1': 'architect',

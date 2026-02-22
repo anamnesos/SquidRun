@@ -87,19 +87,13 @@ describe('Git IPC Handlers', () => {
       registerGitHandlers({ ipcMain: mockIpcMain, WORKSPACE_PATH });
     });
 
-    test('returns status with empty repository', async () => {
-      execSync
-        .mockReturnValueOnce('') // status --porcelain
-        .mockReturnValueOnce('main\n') // branch --show-current
-        .mockReturnValueOnce('0\t0\n'); // rev-list
+    test('returns error when status output is empty', async () => {
+      execSync.mockReturnValueOnce(''); // status --porcelain
 
       const result = await handlers['git-status']({}, {});
 
-      expect(result.success).toBe(true);
-      expect(result.status.branch).toBe('main');
-      expect(result.status.files.staged).toEqual([]);
-      expect(result.status.files.unstaged).toEqual([]);
-      expect(result.status.files.untracked).toEqual([]);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('no output');
     });
 
     test('parses staged files', async () => {
@@ -184,7 +178,7 @@ describe('Git IPC Handlers', () => {
 
     test('calculates ahead/behind correctly', async () => {
       execSync
-        .mockReturnValueOnce('')
+        .mockReturnValueOnce('M  tracked.js\n')
         .mockReturnValueOnce('feature\n')
         .mockReturnValueOnce('5\t3\n');
 
@@ -196,7 +190,7 @@ describe('Git IPC Handlers', () => {
 
     test('handles branch with no upstream', async () => {
       execSync
-        .mockReturnValueOnce('')
+        .mockReturnValueOnce('M  tracked.js\n')
         .mockReturnValueOnce('new-branch\n')
         .mockImplementationOnce(() => {
           const err = new Error('no upstream');
@@ -212,7 +206,7 @@ describe('Git IPC Handlers', () => {
 
     test('uses custom projectPath', async () => {
       execSync
-        .mockReturnValueOnce('')
+        .mockReturnValueOnce('M  tracked.js\n')
         .mockReturnValueOnce('main\n')
         .mockReturnValueOnce('0\t0\n');
 
@@ -734,6 +728,15 @@ hash3|h3|Author3|a3@test.com|3000000|Msg3
       expect(result.branch).toBe('feature-branch');
     });
 
+    test('returns no output when branch output is null', async () => {
+      execSync.mockReturnValue(null);
+
+      const result = await handlers['git-branch']({}, {});
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('no output');
+    });
+
     test('uses custom projectPath', async () => {
       execSync.mockReturnValue('main\n');
 
@@ -846,6 +849,17 @@ hash3|h3|Author3|a3@test.com|3000000|Msg3
       expect(result.success).toBe(true);
       expect(result.stat).toBe('stat output');
       expect(result.files).toEqual([]);
+    });
+
+    test('returns no output when numstat output is null', async () => {
+      execSync
+        .mockReturnValueOnce(' file.js | 1 +\n 1 file changed')
+        .mockReturnValueOnce(null);
+
+      const result = await handlers['git-files-changed']({}, {});
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('no output');
     });
 
     test('uses custom projectPath', async () => {
@@ -1111,7 +1125,7 @@ index abc..def
     // unexpected errors during parsing (not exec errors)
 
     test('git-status handles null lines after successful exec', async () => {
-      // First call returns null which will cause issues later
+      // First call returns null and should be handled as no output
       execSync
         .mockReturnValueOnce(null) // status --porcelain returns null
         .mockReturnValueOnce('main\n')
@@ -1119,10 +1133,10 @@ index abc..def
 
       registerGitHandlers({ ipcMain: mockIpcMain, WORKSPACE_PATH });
 
-      // The parsing of null.trim() will throw
       const result = await handlers['git-status']({}, {});
 
       expect(result.success).toBe(false);
+      expect(result.error).toBe('no output');
     });
 
     test('git-diff handles error thrown during parsing', async () => {
@@ -1192,6 +1206,7 @@ index abc..def
       const result = await handlers['git-branch']({}, {});
 
       expect(result.success).toBe(false);
+      expect(result.error).toBe('no output');
     });
 
     test('git-files-changed handles parsing error', async () => {
@@ -1202,6 +1217,7 @@ index abc..def
       const result = await handlers['git-files-changed']({}, {});
 
       expect(result.success).toBe(false);
+      expect(result.error).toBe('no output');
     });
 
     test('git-show handles parsing error', async () => {

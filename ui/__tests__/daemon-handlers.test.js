@@ -755,6 +755,59 @@ describe('daemon-handlers.js module', () => {
         expect(sendBridge).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-failed-1', paneId: '3' });
       });
 
+      test('releases pane throttle when terminal.sendToPane throws synchronously', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+
+        terminal.sendToPane.mockImplementationOnce(() => {
+          throw new Error('sync throw');
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        expect(() => injectHandler({}, { panes: ['1'], message: 'first' })).toThrow('sync throw');
+        injectHandler({}, { panes: ['1'], message: 'second' });
+
+        expect(terminal.sendToPane).toHaveBeenCalledTimes(2);
+        expect(terminal.sendToPane).toHaveBeenNthCalledWith(
+          2,
+          '1',
+          'second',
+          expect.objectContaining({ onComplete: expect.any(Function) })
+        );
+      });
+
+      test('continues queued pane work when terminal.sendToPane throws synchronously', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+
+        terminal.sendToPane.mockImplementationOnce(() => {
+          // Queue another message while pane is still marked throttled.
+          injectHandler({}, { panes: ['1'], message: 'queued-follow-up' });
+          throw new Error('sync throw');
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        expect(() => injectHandler({}, { panes: ['1'], message: 'first' })).toThrow('sync throw');
+        expect(daemonHandlers._getThrottleQueueDepthForTesting('1')).toBe(1);
+
+        jest.runAllTimers();
+
+        expect(terminal.sendToPane).toHaveBeenCalledTimes(2);
+        expect(terminal.sendToPane).toHaveBeenNthCalledWith(
+          2,
+          '1',
+          'queued-follow-up',
+          expect.objectContaining({ onComplete: expect.any(Function) })
+        );
+        expect(daemonHandlers._getThrottleQueueDepthForTesting('1')).toBe(0);
+      });
+
       test('caps throttle queue depth to prevent unbounded growth', () => {
         let injectHandler;
         onBridge.mockImplementation((channel, handler) => {

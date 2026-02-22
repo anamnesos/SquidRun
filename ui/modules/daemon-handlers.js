@@ -814,10 +814,25 @@ function processThrottleQueue(paneId) {
     source: 'daemon-handlers.js',
   });
 
-  terminal.sendToPane(paneId, routedMessage, {
-    traceContext: traceContext || undefined,
-    hmSendFastEnter,
-    onComplete: (result) => {
+  let queueFinalized = false;
+  const finalizeQueueProcessing = () => {
+    if (queueFinalized) return;
+    queueFinalized = true;
+
+    throttlingPanes.delete(paneId);
+    if (queue.length > 0) {
+      setTimeout(() => processThrottleQueue(paneId), MESSAGE_DELAY);
+    } else {
+      throttleQueues.delete(paneId);
+    }
+  };
+
+  let sendScheduled = false;
+  try {
+    terminal.sendToPane(paneId, routedMessage, {
+      traceContext: traceContext || undefined,
+      hmSendFastEnter,
+      onComplete: (result) => {
       const status = typeof result?.status === 'string' ? result.status : '';
       const reason = typeof result?.reason === 'string' ? result.reason : '';
       const statusLower = status.toLowerCase();
@@ -866,14 +881,15 @@ function processThrottleQueue(paneId) {
         }
       }
 
-      throttlingPanes.delete(paneId);
-      if (queue.length > 0) {
-        setTimeout(() => processThrottleQueue(paneId), MESSAGE_DELAY);
-      } else {
-        throttleQueues.delete(paneId);
+        finalizeQueueProcessing();
       }
+    });
+    sendScheduled = true;
+  } finally {
+    if (!sendScheduled) {
+      finalizeQueueProcessing();
     }
-  });
+  }
 }
 
 // ============================================================

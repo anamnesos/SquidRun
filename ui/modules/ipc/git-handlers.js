@@ -82,7 +82,11 @@ function registerGitHandlers(ctx) {
         return { success: false, error: statusResult.error };
       }
 
-      const lines = statusResult.output.trim().split('\n').filter(l => l);
+      const statusText = String(statusResult.output ?? '');
+      if (!statusText.trim()) {
+        return { success: false, error: 'no output' };
+      }
+      const lines = statusText.trim().split('\n').filter(l => l);
       const files = {
         staged: [],
         unstaged: [],
@@ -294,7 +298,12 @@ function registerGitHandlers(ctx) {
         return { success: false, error: result.error };
       }
 
-      return { success: true, branch: result.output.trim() };
+      const text = String(result.output ?? '');
+      if (!text.trim()) {
+        return { success: false, error: 'no output' };
+      }
+
+      return { success: true, branch: text.trim() };
     } catch (err) {
       console.error('[Git] Branch error:', err);
       return { success: false, error: err.message };
@@ -335,7 +344,12 @@ function registerGitHandlers(ctx) {
       const files = [];
 
       if (numResult.success) {
-        const lines = numResult.output.trim().split('\n').filter(l => l);
+        const text = String(numResult.output ?? '');
+        if (!text.trim()) {
+          return { success: false, error: 'no output' };
+        }
+
+        const lines = text.trim().split('\n').filter(l => l);
         for (const line of lines) {
           const [added, deleted, filePath] = line.split('\t');
           files.push({

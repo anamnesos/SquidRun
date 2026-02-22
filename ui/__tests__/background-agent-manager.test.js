@@ -63,6 +63,35 @@ describe('background-agent-manager completion lifecycle', () => {
     jest.useRealTimers();
   });
 
+  test('spawnAgent cleans up state when daemon spawn is rejected', async () => {
+    const daemonClient = {
+      connected: true,
+      spawn: jest.fn().mockReturnValue(false),
+      write: jest.fn(),
+      kill: jest.fn(),
+    };
+
+    const manager = new BackgroundAgentManager({
+      getDaemonClient: () => daemonClient,
+      getSettings: () => ({
+        paneCommands: { '2': 'codex --yolo' },
+      }),
+      getSessionScopeId: () => 'app-session-1',
+      resolveBuilderCwd: () => '/repo',
+    });
+
+    const result = await manager.spawnAgent({ ownerPaneId: '2', alias: 'builder-bg-1' });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('spawn_rejected');
+    expect(String(result.error || '')).toContain('Daemon rejected spawn request');
+    expect(result.alias).toBe('builder-bg-1');
+    expect(result.paneId).toBe('bg-2-1');
+    expect(manager.listAgents()).toHaveLength(0);
+    expect(manager.getAgentState('builder-bg-1')).toBeNull();
+    expect(daemonClient.write).not.toHaveBeenCalled();
+  });
+
   test('sendMessageToAgent appends completion directive and completion signal triggers kill', async () => {
     const daemonClient = {
       connected: true,
