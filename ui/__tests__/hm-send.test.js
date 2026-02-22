@@ -79,6 +79,11 @@ function runHmSend(args, env = {}, options = {}) {
   });
 }
 
+function extractFallbackPath(stderr) {
+  const match = String(stderr || '').match(/Wrote trigger fallback:\s*([^\r\n]+)/i);
+  return match && match[1] ? match[1].trim() : null;
+}
+
 describe('hm-send retry behavior', () => {
   test('applies exponential backoff between retries before succeeding', async () => {
     const attempts = [];
@@ -890,9 +895,16 @@ describe('hm-send retry behavior', () => {
     });
 
     const port = server.address().port;
-    const triggerPath = getTriggerPath('builder.txt');
-    const hadOriginal = fs.existsSync(triggerPath);
-    const originalContent = hadOriginal ? fs.readFileSync(triggerPath, 'utf8') : null;
+    const triggerPath = path.resolve(getTriggerPath('builder.txt'));
+    const cwdTriggerPath = path.resolve(path.join(path.join(__dirname, '..'), '.squidrun', 'triggers', 'builder.txt'));
+    const trackedPaths = Array.from(new Set([triggerPath, cwdTriggerPath]));
+    const originalContentByPath = new Map();
+    for (const candidatePath of trackedPaths) {
+      if (fs.existsSync(candidatePath)) {
+        originalContentByPath.set(candidatePath, fs.readFileSync(candidatePath, 'utf8'));
+      }
+    }
+    let actualTriggerPath = null;
     const uniqueSuffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const message = `(TEST #4): fallback-integrity ${uniqueSuffix} ${'A'.repeat(1200)}`;
 
@@ -944,17 +956,27 @@ describe('hm-send retry behavior', () => {
       expect(sendAttempts).toHaveLength(2);
       expect(sendAttempts[0].target).toBe('builder');
       expect(result.stderr).toContain('Wrote trigger fallback');
-      expect(fs.existsSync(triggerPath)).toBe(true);
-      const fallbackContent = fs.readFileSync(triggerPath, 'utf8');
+      const reportedFallbackPath = extractFallbackPath(result.stderr);
+      expect(reportedFallbackPath).toBeTruthy();
+      actualTriggerPath = path.resolve(reportedFallbackPath);
+      expect(path.basename(actualTriggerPath).toLowerCase()).toBe('builder.txt');
+      expect(fs.existsSync(actualTriggerPath)).toBe(true);
+      const fallbackContent = fs.readFileSync(actualTriggerPath, 'utf8');
       expect(fallbackContent).toContain(`\n${message}`);
       expect(fallbackContent.startsWith(`${FALLBACK_MESSAGE_ID_PREFIX}${sendAttempts[0].messageId}]`)).toBe(true);
       expect(fallbackContent).toContain('[PROJECT CONTEXT] name=');
       expect(fallbackContent).toContain('path=');
     } finally {
-      if (hadOriginal) {
-        fs.writeFileSync(triggerPath, originalContent, 'utf8');
-      } else if (fs.existsSync(triggerPath)) {
-        fs.unlinkSync(triggerPath);
+      const cleanupPaths = new Set(trackedPaths);
+      if (actualTriggerPath) {
+        cleanupPaths.add(actualTriggerPath);
+      }
+      for (const cleanupPath of cleanupPaths) {
+        if (originalContentByPath.has(cleanupPath)) {
+          fs.writeFileSync(cleanupPath, originalContentByPath.get(cleanupPath), 'utf8');
+        } else if (fs.existsSync(cleanupPath)) {
+          fs.unlinkSync(cleanupPath);
+        }
       }
       await new Promise((resolve) => server.close(resolve));
     }
@@ -1057,9 +1079,16 @@ describe('hm-send retry behavior', () => {
   });
 
   test('routes director target alias to architect fallback path when using --role director', async () => {
-    const triggerPath = getTriggerPath('architect.txt');
-    const hadOriginal = fs.existsSync(triggerPath);
-    const originalContent = hadOriginal ? fs.readFileSync(triggerPath, 'utf8') : null;
+    const triggerPath = path.resolve(getTriggerPath('architect.txt'));
+    const cwdTriggerPath = path.resolve(path.join(path.join(__dirname, '..'), '.squidrun', 'triggers', 'architect.txt'));
+    const trackedPaths = Array.from(new Set([triggerPath, cwdTriggerPath]));
+    const originalContentByPath = new Map();
+    for (const candidatePath of trackedPaths) {
+      if (fs.existsSync(candidatePath)) {
+        originalContentByPath.set(candidatePath, fs.readFileSync(candidatePath, 'utf8'));
+      }
+    }
+    let actualTriggerPath = null;
     const uniqueSuffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const message = `(TEST #6): director-alias ${uniqueSuffix}`;
 
@@ -1072,14 +1101,24 @@ describe('hm-send retry behavior', () => {
       expect(result.code).toBe(0);
       expect(result.stderr).not.toContain("rerouted target 'director' to 'builder'");
       expect(result.stderr.toLowerCase()).toContain('architect.txt');
-      expect(fs.existsSync(triggerPath)).toBe(true);
-      const fallbackContent = fs.readFileSync(triggerPath, 'utf8');
+      const reportedFallbackPath = extractFallbackPath(result.stderr);
+      expect(reportedFallbackPath).toBeTruthy();
+      actualTriggerPath = path.resolve(reportedFallbackPath);
+      expect(path.basename(actualTriggerPath).toLowerCase()).toBe('architect.txt');
+      expect(fs.existsSync(actualTriggerPath)).toBe(true);
+      const fallbackContent = fs.readFileSync(actualTriggerPath, 'utf8');
       expect(fallbackContent).toContain(message);
     } finally {
-      if (hadOriginal) {
-        fs.writeFileSync(triggerPath, originalContent, 'utf8');
-      } else if (fs.existsSync(triggerPath)) {
-        fs.unlinkSync(triggerPath);
+      const cleanupPaths = new Set(trackedPaths);
+      if (actualTriggerPath) {
+        cleanupPaths.add(actualTriggerPath);
+      }
+      for (const cleanupPath of cleanupPaths) {
+        if (originalContentByPath.has(cleanupPath)) {
+          fs.writeFileSync(cleanupPath, originalContentByPath.get(cleanupPath), 'utf8');
+        } else if (fs.existsSync(cleanupPath)) {
+          fs.unlinkSync(cleanupPath);
+        }
       }
     }
   });
