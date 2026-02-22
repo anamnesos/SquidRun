@@ -8,6 +8,20 @@ on:
   workflow_dispatch:
 
 jobs:
+  audit-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run compat debt gate (baseline-safe)
+        run: node ui/scripts/hm-compat-count.js
+      - name: Run surface audit gate (baseline-safe)
+        run: node ui/scripts/hm-surface-audit.js
+      - name: Run path audit gate (baseline-safe)
+        run: node ui/scripts/hm-path-audit.js
+
   test:
     runs-on: ubuntu-latest
     steps:
