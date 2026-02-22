@@ -375,6 +375,10 @@ function persistOutboundQueue() {
   }
 }
 
+function buildCorruptedQueueBackupPath(queuePath) {
+  return `${queuePath}.corrupt-${Date.now()}`;
+}
+
 function loadOutboundQueue() {
   try {
     const queuePath = getOutboundQueuePath();
@@ -383,7 +387,26 @@ function loadOutboundQueue() {
       return;
     }
     const raw = fs.readFileSync(queuePath, 'utf-8');
-    const parsed = JSON.parse(raw);
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (parseErr) {
+      const corruptedPath = buildCorruptedQueueBackupPath(queuePath);
+      try {
+        fs.writeFileSync(corruptedPath, raw, 'utf-8');
+        log.warn('WebSocket', `Corrupted outbound queue moved to ${corruptedPath}`);
+      } catch (backupErr) {
+        log.error('WebSocket', `Failed to preserve corrupted outbound queue ${queuePath}: ${backupErr.message}`);
+      }
+
+      outboundQueue = [];
+      const persistResult = persistOutboundQueue();
+      if (!persistResult?.ok) {
+        log.error('WebSocket', `Failed to reset outbound queue after corruption: ${persistResult?.error || 'unknown_error'}`);
+      }
+      log.warn('WebSocket', `Failed to parse outbound queue. Resetting queue: ${parseErr.message}`);
+      return;
+    }
 
     // Legacy v1 format: raw array. Discard on startup to avoid cross-session ghost replays.
     if (Array.isArray(parsed)) {
@@ -442,9 +465,10 @@ function queueOutboundMessage(target, content, meta = {}, queuedBy = 'runtime', 
   }
   outboundQueue.push(makeQueueEntry(target, content, meta, queuedBy, now));
   const persistResult = persistOutboundQueue();
+  const persisted = persistResult?.ok === true;
   return {
-    queued: true,
-    persisted: persistResult?.ok === true,
+    queued: persisted,
+    persisted,
     error: persistResult?.error || null,
   };
 }

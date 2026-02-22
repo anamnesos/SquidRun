@@ -1028,40 +1028,77 @@ ${this.markdownToHTML(markdown)}
    */
   async writeDocumentation(result, outputDir) {
     const dir = outputDir || this.outputDir;
+    const targetDir = path.resolve(dir);
+    const parentDir = path.dirname(targetDir);
+    const tempDir = path.join(
+      parentDir,
+      `.${path.basename(targetDir)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    );
+    let backupDir = null;
 
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    const cleanupTempDir = () => {
+      try {
+        if (fs.existsSync(tempDir)) {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+      } catch (_) {
+        // Best-effort cleanup only.
+      }
+    };
 
-    if (result.results) {
-      // Directory documentation
-      const sourceDir = typeof result.sourceDir === 'string' ? result.sourceDir : null;
-      for (const fileResult of result.results) {
-        const relativePath = sourceDir
-          ? path.relative(sourceDir, fileResult.filePath)
-          : path.basename(fileResult.filePath, path.extname(fileResult.filePath));
-        const safeRelativePath = relativePath && !relativePath.startsWith('..')
-          ? relativePath
-          : path.basename(fileResult.filePath, path.extname(fileResult.filePath));
-        const fileName = safeRelativePath.replace(path.extname(safeRelativePath), '');
+    try {
+      fs.mkdirSync(parentDir, { recursive: true });
+      fs.mkdirSync(tempDir, { recursive: true });
+
+      if (result.results) {
+        // Directory documentation
+        const sourceDir = typeof result.sourceDir === 'string' ? result.sourceDir : null;
+        for (const fileResult of result.results) {
+          const relativePath = sourceDir
+            ? path.relative(sourceDir, fileResult.filePath)
+            : path.basename(fileResult.filePath, path.extname(fileResult.filePath));
+          const safeRelativePath = relativePath && !relativePath.startsWith('..')
+            ? relativePath
+            : path.basename(fileResult.filePath, path.extname(fileResult.filePath));
+          const fileName = safeRelativePath.replace(path.extname(safeRelativePath), '');
+          const ext = this.format === 'html' ? 'html' : 'md';
+          const outPath = path.join(tempDir, `${fileName}.${ext}`);
+          fs.mkdirSync(path.dirname(outPath), { recursive: true });
+          fs.writeFileSync(outPath, fileResult.documentation);
+        }
+
+        // Write index
+        const indexPath = path.join(tempDir, this.format === 'html' ? 'index.html' : 'README.md');
+        fs.writeFileSync(indexPath, result.index);
+      } else {
+        // Single file documentation
+        const fileName = path.basename(result.filePath, path.extname(result.filePath));
         const ext = this.format === 'html' ? 'html' : 'md';
-        const outPath = path.join(dir, `${fileName}.${ext}`);
+        const outPath = path.join(tempDir, `${fileName}.${ext}`);
         fs.mkdirSync(path.dirname(outPath), { recursive: true });
-        fs.writeFileSync(outPath, fileResult.documentation);
+        fs.writeFileSync(outPath, result.documentation);
       }
 
-      // Write index
-      const indexPath = path.join(dir, this.format === 'html' ? 'index.html' : 'README.md');
-      fs.writeFileSync(indexPath, result.index);
-    } else {
-      // Single file documentation
-      const fileName = path.basename(result.filePath, path.extname(result.filePath));
-      const ext = this.format === 'html' ? 'html' : 'md';
-      const outPath = path.join(dir, `${fileName}.${ext}`);
-      fs.writeFileSync(outPath, result.documentation);
+      if (fs.existsSync(targetDir)) {
+        backupDir = `${targetDir}.bak-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        fs.renameSync(targetDir, backupDir);
+      }
+      fs.renameSync(tempDir, targetDir);
+      if (backupDir && fs.existsSync(backupDir)) {
+        fs.rmSync(backupDir, { recursive: true, force: true });
+      }
+      return { success: true, outputDir: dir };
+    } catch (err) {
+      cleanupTempDir();
+      if (backupDir && fs.existsSync(backupDir) && !fs.existsSync(targetDir)) {
+        try {
+          fs.renameSync(backupDir, targetDir);
+        } catch (_) {
+          // Best-effort restore only.
+        }
+      }
+      throw err;
     }
-
-    return { success: true, outputDir: dir };
   }
 }
 
