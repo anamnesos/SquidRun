@@ -61,6 +61,7 @@ const mockSquidRun = {
   pty: {
     create: jest.fn().mockResolvedValue(),
     write: jest.fn().mockResolvedValue(),
+    clipboardWriteText: jest.fn().mockResolvedValue({ success: true }),
     kill: jest.fn().mockResolvedValue(),
     resize: jest.fn().mockResolvedValue(),
     onData: jest.fn(),

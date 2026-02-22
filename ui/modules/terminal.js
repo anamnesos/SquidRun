@@ -1537,11 +1537,19 @@ function showTerminalStatusTemporary(paneId, statusMsg, message) {
   setTimeout(() => updatePaneStatus(paneId, statusMsg), 1000);
 }
 
-async function copyTerminalSelection(terminal, paneId, statusMsg) {
-  const selection = terminal?.hasSelection?.() ? terminal.getSelection() : '';
+async function copyTerminalSelection(terminal, paneId, statusMsg, selectionOverride = null) {
+  const selection = typeof selectionOverride === 'string'
+    ? selectionOverride
+    : getTerminalSelectionSnapshot(terminal);
   if (!selection) return false;
   try {
-    await navigator.clipboard.writeText(selection);
+    if (typeof window?.squidrun?.pty?.clipboardWriteText !== 'function') {
+      throw new Error('IPC clipboard-write channel unavailable');
+    }
+    const result = await window.squidrun.pty.clipboardWriteText(selection);
+    if (result && result.success === false) {
+      throw new Error(result.error || 'clipboard-write failed');
+    }
     showTerminalStatusTemporary(paneId, statusMsg, 'Copied!');
     log.info('Clipboard', `Copied ${selection.length} chars from pane ${paneId}`);
     return true;
@@ -1550,6 +1558,12 @@ async function copyTerminalSelection(terminal, paneId, statusMsg) {
     showTerminalStatusTemporary(paneId, statusMsg, 'Copy failed');
     return false;
   }
+}
+
+function getTerminalSelectionSnapshot(terminal) {
+  if (!terminal?.hasSelection?.()) return '';
+  const selection = terminal.getSelection();
+  return typeof selection === 'string' ? selection : String(selection ?? '');
 }
 
 async function pasteClipboardToPane(paneId, statusMsg) {
@@ -1602,18 +1616,21 @@ function createContextMenuItem(label, shortcut, disabled, onClick) {
   return item;
 }
 
-function openTerminalContextMenu(event, terminal, paneId, statusMsg, signal) {
+function openTerminalContextMenu(event, terminal, paneId, statusMsg, signal, capturedSelection = '') {
   dismissTerminalContextMenu();
 
   const menu = document.createElement('div');
   menu.className = 'context-menu';
   menu.setAttribute('role', 'menu');
 
-  const hasSelection = Boolean(terminal?.hasSelection?.() && terminal.getSelection());
+  const selection = typeof capturedSelection === 'string'
+    ? capturedSelection
+    : getTerminalSelectionSnapshot(terminal);
+  const hasSelection = Boolean(selection);
   const allowPaste = !inputLocked[paneId];
 
   menu.appendChild(createContextMenuItem('Copy', 'Ctrl+C', !hasSelection, () => {
-    void copyTerminalSelection(terminal, paneId, statusMsg);
+    void copyTerminalSelection(terminal, paneId, statusMsg, selection);
     dismissTerminalContextMenu();
   }));
   menu.appendChild(createContextMenuItem('Paste', 'Ctrl+V', !allowPaste, () => {
@@ -1669,10 +1686,19 @@ function openTerminalContextMenu(event, terminal, paneId, statusMsg, signal) {
 
 // Setup copy/paste handlers
 function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {}) {
+  let contextMenuSelection = '';
+
+  container.addEventListener('pointerdown', (event) => {
+    if (event?.button !== 2) return;
+    contextMenuSelection = getTerminalSelectionSnapshot(terminal);
+  }, { signal, capture: true });
+
   container.addEventListener('contextmenu', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    openTerminalContextMenu(event, terminal, paneId, statusMsg, signal);
+    const capturedSelection = contextMenuSelection || getTerminalSelectionSnapshot(terminal);
+    contextMenuSelection = '';
+    openTerminalContextMenu(event, terminal, paneId, statusMsg, signal, capturedSelection);
   }, { signal });
 
   container.addEventListener('keydown', (event) => {

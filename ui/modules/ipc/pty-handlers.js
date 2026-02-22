@@ -1,7 +1,7 @@
 /**
  * PTY IPC Handlers (via Daemon)
  * Channels: pty-create, pty-write, pty-write-chunked, send-trusted-enter,
- *           clipboard-paste-text, input-edit-action, pty-resize, pty-kill, intent-update, spawn-claude,
+ *           clipboard-paste-text, clipboard-write, input-edit-action, pty-resize, pty-kill, intent-update, spawn-claude,
  *           get-claude-state, get-daemon-terminals
  */
 
@@ -325,6 +325,18 @@ function registerPtyHandlers(ctx, deps = {}) {
     }
   });
 
+  ipcMain.handle('clipboard-write', async (event, text) => {
+    const { clipboard } = require('electron');
+    try {
+      const safeText = typeof text === 'string' ? text : String(text ?? '');
+      clipboard.writeText(safeText);
+      return { success: true };
+    } catch (err) {
+      log.error('PTY', 'clipboard-write failed:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('input-edit-action', async (event, action) => {
     const webContents = ctx.mainWindow?.webContents;
     if (!webContents) {
@@ -473,6 +485,7 @@ function unregisterPtyHandlers(ctx) {
     ipcMain.removeHandler('interrupt-pane');
     ipcMain.removeHandler('send-trusted-enter');
     ipcMain.removeHandler('clipboard-paste-text');
+    ipcMain.removeHandler('clipboard-write');
     ipcMain.removeHandler('input-edit-action');
     ipcMain.removeHandler('pty-resize');
     ipcMain.removeHandler('pty-kill');

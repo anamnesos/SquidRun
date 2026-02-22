@@ -5,6 +5,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'clear-activity-log',
   'clear-friction',
   'clipboard-paste-text',
+  'clipboard-write',
   'contract-promotion:approve',
   'contract-promotion:list',
   'contract-promotion:reject',

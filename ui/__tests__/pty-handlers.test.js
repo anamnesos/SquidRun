@@ -359,6 +359,28 @@ describe('PTY Handlers', () => {
     });
   });
 
+  describe('clipboard-write', () => {
+    test('writes provided text into the native clipboard', async () => {
+      const { clipboard } = require('electron');
+
+      const result = await harness.invoke('clipboard-write', 'selected text');
+
+      expect(result).toEqual({ success: true });
+      expect(clipboard.writeText).toHaveBeenCalledWith('selected text');
+    });
+
+    test('returns error when clipboard write throws', async () => {
+      const { clipboard } = require('electron');
+      clipboard.writeText.mockImplementationOnce(() => {
+        throw new Error('write failed');
+      });
+
+      const result = await harness.invoke('clipboard-write', 'text');
+
+      expect(result).toEqual({ success: false, error: 'write failed' });
+    });
+  });
+
   describe('input-edit-action', () => {
     test('invokes mapped webContents edit method', async () => {
       ctx.mainWindow.webContents.copy = jest.fn();

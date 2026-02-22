@@ -186,6 +186,7 @@ describe('Terminal Events', () => {
         pty: {
           create: jest.fn().mockResolvedValue(undefined),
           write: jest.fn().mockResolvedValue(undefined),
+          clipboardWriteText: jest.fn().mockResolvedValue({ success: true }),
           resize: jest.fn(),
           kill: jest.fn().mockResolvedValue(undefined),
           onData: jest.fn(),

@@ -576,6 +576,7 @@ function createFallbackRendererApi() {
       writeChunked: (paneId, fullText, options = {}, kernelMeta = null) =>
         ipcRenderer.invoke('pty-write-chunked', paneId, fullText, options, kernelMeta),
       sendTrustedEnter: () => ipcRenderer.invoke('send-trusted-enter'),
+      clipboardWriteText: (text) => ipcRenderer.invoke('clipboard-write', text),
       clipboardPasteText: (text) => ipcRenderer.invoke('clipboard-paste-text', text),
       resize: (paneId, cols, rows, kernelMeta = null) => ipcRenderer.invoke('pty-resize', paneId, cols, rows, kernelMeta),
       kill: (paneId) => ipcRenderer.invoke('pty-kill', paneId),
