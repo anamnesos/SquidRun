@@ -513,7 +513,7 @@ function updateProjectDisplay(projectPath) {
       projectPathEl.textContent = projectPath;
       projectPathEl.classList.remove('no-project');
     } else {
-      projectPathEl.textContent = 'No project selected';
+      projectPathEl.textContent = 'Developer Mode';
       projectPathEl.classList.add('no-project');
     }
   }

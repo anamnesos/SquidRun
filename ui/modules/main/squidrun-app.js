@@ -91,6 +91,10 @@ const TEAM_MEMORY_PATTERN_MINING_INTERVAL_MS = Number.parseInt(
 );
 const TEAM_MEMORY_BLOCK_GUARD_PROFILE = String(process.env.SQUIDRUN_TEAM_MEMORY_BLOCK_GUARD_PROFILE || 'jest-suite').trim() || 'jest-suite';
 const APP_STARTUP_SESSION_RETRY_LIMIT = 3;
+const APP_SESSION_COUNTER_FLOOR = Math.max(
+  1,
+  Number.parseInt(process.env.SQUIDRUN_SESSION_COUNTER_FLOOR || '170', 10) || 170
+);
 const AUTO_HANDOFF_INTERVAL_MS = Number.parseInt(process.env.SQUIDRUN_AUTO_HANDOFF_INTERVAL_MS || '30000', 10);
 const AUTO_HANDOFF_ENABLED = process.env.SQUIDRUN_AUTO_HANDOFF_ENABLED !== '0';
 const TEAM_MEMORY_TAGGED_CLAIM_SWEEP_INTERVAL_MS = Number.parseInt(
@@ -834,6 +838,7 @@ class SquidRunApp {
     this.backgroundAgentManager.start();
     this.settings.writeAppStatus({
       incrementSession: true,
+      sessionFloor: APP_SESSION_COUNTER_FLOOR,
     });
     await this.initializeStartupSessionScope({
       sessionNumber: this.getCurrentAppStatusSessionNumber(),

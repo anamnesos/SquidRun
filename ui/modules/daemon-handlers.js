@@ -604,8 +604,8 @@ function setupProjectListener() {
   registerScopedIpcListener('project', 'project-changed', (event, projectPath) => {
     log.info('Project', 'Changed to:', projectPath);
     uiView.updateProjectDisplay(projectPath);
-    const projectName = projectPath ? basenameFromPath(projectPath) : 'none';
-    showToast(`Project changed to ${projectName || 'none'} — restart agents to apply`, 'warning');
+    const projectName = projectPath ? basenameFromPath(projectPath) : 'Developer Mode';
+    showToast(`Project changed to ${projectName || 'Developer Mode'} — restart agents to apply`, 'warning');
   });
   registerScopedIpcListener('project', 'project-warning', (event, message) => {
     log.warn('Project', message);
@@ -928,9 +928,7 @@ async function selectProject() {
 async function loadInitialProject() {
   try {
     const projectPath = await window.squidrun.project.get();
-    if (projectPath) {
-      uiView.updateProjectDisplay(projectPath);
-    }
+    uiView.updateProjectDisplay(projectPath || null);
   } catch (err) {
     log.error('Daemon', 'Error loading initial project:', err);
   }

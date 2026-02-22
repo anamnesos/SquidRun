@@ -29,6 +29,9 @@ describe('Settings Handlers', () => {
   beforeEach(() => {
     harness = createIpcHarness();
     ctx = createDefaultContext({ ipcMain: harness.ipcMain });
+    ctx.settings = {
+      readAppStatus: jest.fn(() => ({ session: 2 })),
+    };
     deps = createDepsMock();
     registerSettingsHandlers(ctx, deps);
   });
@@ -55,6 +58,26 @@ describe('Settings Handlers', () => {
       const result = await harness.invoke('get-settings');
 
       expect(result).toEqual({});
+    });
+  });
+
+  describe('get-app-status', () => {
+    test('returns app status from settings manager when available', async () => {
+      ctx.settings.readAppStatus.mockReturnValue({ session: 147, mode: 'pty' });
+
+      const result = await harness.invoke('get-app-status');
+
+      expect(ctx.settings.readAppStatus).toHaveBeenCalled();
+      expect(result).toEqual({ session: 147, mode: 'pty' });
+    });
+
+    test('returns null when settings manager is unavailable', async () => {
+      delete ctx.settings;
+      registerSettingsHandlers(ctx, deps);
+
+      const result = await harness.invoke('get-app-status');
+
+      expect(result).toBeNull();
     });
   });
 
@@ -423,6 +446,7 @@ describe('Settings Handlers', () => {
     test('removes all settings handlers', () => {
       registerSettingsHandlers.unregister({ ipcMain: harness.ipcMain });
       expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-settings');
+      expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-app-status');
       expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('set-setting');
       expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-all-settings');
       expect(harness.ipcMain.removeHandler).toHaveBeenCalledWith('get-api-keys');

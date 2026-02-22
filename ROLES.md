@@ -52,6 +52,7 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 - Current session truth: `.squidrun/app-status.json` (`session` field).
 - `.squidrun/link.json` is project bootstrap metadata; `session_id` can lag and must not override app-status during diagnosis.
 - `session.md` fields are mixed-scope: `rows_scanned` is current-session scoped, while cross-session tables can still be populated from broader history.
+- Historical comms_journal rows have inconsistent session IDs (`null`, `app-39888-*`, `app-session-1`, `app-session-170`, etc.) due to a session-ID drift bug fixed in S170 (commit 3ce061c). Sessions from S170 onward use consistent `app-session-N` format. Do not assume older rows have clean session IDs.
 
 ### Startup Baseline
 
@@ -88,6 +89,7 @@ Responsibilities:
 - User-facing status and tradeoff communication.
 - Blocker resolution and dependency management.
 - Code review and release gating.
+- Project context switching: when the user says "work on X project" or names an external project, call `set-project-context` IPC with the project path to update the UI badge and rewire agent paths. When the user says "back to dev mode" or finishes with the external project, call `clear-project-context`. Inform the user that agents need a restart to pick up the new working directory.
 - Team Memory stewardship.
 
 ## BUILDER

@@ -1,7 +1,7 @@
 /**
  * Settings IPC Handlers
  * Channels: get-settings, set-setting, get-all-settings, get-api-keys,
- *           set-api-keys, get-feature-capabilities
+ *           set-api-keys, get-feature-capabilities, get-app-status
  */
 
 const fs = require('fs');
@@ -211,6 +211,13 @@ function registerSettingsHandlers(ctx, deps) {
     return loadSettings();
   });
 
+  ipcMain.handle('get-app-status', () => {
+    if (!ctx?.settings || typeof ctx.settings.readAppStatus !== 'function') {
+      return null;
+    }
+    return ctx.settings.readAppStatus() || null;
+  });
+
   ipcMain.handle('set-setting', (event, key, value) => {
     const settings = loadSettings();
     const previousPaneProjects = key === 'paneProjects'
@@ -384,6 +391,7 @@ function unregisterSettingsHandlers(ctx) {
   const { ipcMain } = ctx;
   if (ipcMain) {
     ipcMain.removeHandler('get-settings');
+    ipcMain.removeHandler('get-app-status');
     ipcMain.removeHandler('set-setting');
     ipcMain.removeHandler('get-all-settings');
     ipcMain.removeHandler('get-api-keys');

@@ -218,6 +218,30 @@ describe('SettingsManager CLI auto-detection', () => {
     expect(status.started).not.toBe('2026-02-15T00:00:00.000Z');
   });
 
+  test('writeAppStatus honors sessionFloor when incrementing startup session', () => {
+    fs.existsSync.mockImplementation((targetPath) => String(targetPath).endsWith('app-status.json'));
+    fs.readFileSync.mockImplementation((targetPath) => {
+      if (String(targetPath).endsWith('app-status.json')) {
+        return JSON.stringify({
+          started: '2026-02-15T00:00:00.000Z',
+          session: 2,
+          mode: 'pty',
+        });
+      }
+      return '';
+    });
+
+    ctx.currentSettings = { dryRun: false, sdkMode: false, autoSpawn: true };
+    manager.writeAppStatus({ incrementSession: true, sessionFloor: 170 });
+
+    const statusWriteCall = fs.writeFileSync.mock.calls
+      .filter((call) => String(call[0]).endsWith('app-status.json.tmp'))
+      .pop();
+    const status = JSON.parse(statusWriteCall[1]);
+
+    expect(status.session).toBe(171);
+  });
+
   test('writeAppStatus merges statusPatch fields into app status payload', () => {
     ctx.currentSettings = { dryRun: false, sdkMode: false, autoSpawn: true };
     manager.writeAppStatus({

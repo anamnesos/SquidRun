@@ -379,6 +379,12 @@ describe('daemon-handlers.js module', () => {
       expect(uiView.updateProjectDisplay).toHaveBeenCalledWith('/initial/project');
     });
 
+    test('should show developer mode when no project is active', async () => {
+      window.squidrun.project.get.mockResolvedValueOnce(null);
+      await daemonHandlers.loadInitialProject();
+      expect(uiView.updateProjectDisplay).toHaveBeenCalledWith(null);
+    });
+
     test('should handle errors gracefully', async () => {
       window.squidrun.project.get.mockRejectedValueOnce(new Error('Failed'));
       await expect(daemonHandlers.loadInitialProject()).resolves.not.toThrow();
