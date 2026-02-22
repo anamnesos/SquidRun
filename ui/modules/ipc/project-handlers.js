@@ -254,6 +254,19 @@ function registerProjectHandlers(ctx, deps) {
       }
     }
     const rebindResult = rebindProjectScopedRuntimes();
+    if (!rebindResult.ok) {
+      log.warn(
+        'ProjectLifecycle',
+        `Runtime rebind failed during startup sync: ${(rebindResult.errors || []).join(', ')}`
+      );
+      if (!transitionRuntimeLifecycle(PROJECT_RUNTIME_LIFECYCLE_STATE.STOPPED, transitionReason)) {
+        runtimeLifecycleState = PROJECT_RUNTIME_LIFECYCLE_STATE.STOPPED;
+      }
+      return {
+        ...rebindResult,
+        bootstrap,
+      };
+    }
     if (!transitionRuntimeLifecycle(PROJECT_RUNTIME_LIFECYCLE_STATE.RUNNING, transitionReason)) {
       return {
         ok: false,
@@ -335,16 +348,23 @@ function registerProjectHandlers(ctx, deps) {
     const operatingMode = ctx?.currentSettings?.operatingMode
       || loadSettings?.()?.operatingMode;
     const initialProject = ctx?.watcher?.readState?.()?.project || null;
+    let syncResult = null;
     if (operatingMode === 'developer') {
-      syncProjectRoot(getSquidrunRoot(), deps);
+      syncResult = syncProjectRoot(getSquidrunRoot(), deps);
     } else {
-      syncProjectRoot(initialProject, deps);
+      syncResult = syncProjectRoot(initialProject, deps);
       if (!initialProject) {
         log.warn('Project', 'Operating in project mode but no project selected — agents will use SquidRun root as CWD');
         if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
           ctx.mainWindow.webContents.send('project-warning', 'No project selected');
         }
       }
+    }
+    if (syncResult?.ok === false) {
+      log.warn(
+        'ProjectLifecycle',
+        `Startup runtime sync failed: ${(syncResult?.errors || []).join(', ') || 'unknown_error'}`
+      );
     }
   } catch (_) {
     // Keep startup resilient if watcher state is not available yet.

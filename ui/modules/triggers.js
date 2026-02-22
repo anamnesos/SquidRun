@@ -553,7 +553,7 @@ function sendStaggered(panes, message, meta = {}) {
     traceId: meta?.deliveryId || null,
     parentEventId: meta?.parentEventId || null,
   });
-  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
   const deliveryId = meta?.deliveryId;
   panes.forEach((paneId, index) => {
     const delay = panes.length === 1 || isPriority ? 0 : (index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS);
@@ -568,6 +568,7 @@ function sendStaggered(panes, message, meta = {}) {
       });
     }, delay);
   });
+  return true;
 }
 
 function resolveRecipientRole(filename) {
@@ -786,15 +787,38 @@ function sendDirectMessage(targetPanes, message, fromRole = null, options = {}) 
     });
   }
 
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return buildDeliveryResult({
+      accepted: false,
+      queued: false,
+      verified: false,
+      status: 'window_unavailable',
+      notified: [],
+      mode: 'pty',
+      details: { error: 'main_window_unavailable' },
+    });
+  }
+
   const recipientRole = (notified.length === 1)
     ? (resolveRoleFromPaneId(notified[0]) || String(notified[0]))
     : 'direct_multi';
   const senderRole = parsed.sender || (typeof fromRole === 'string' ? fromRole.toLowerCase() : null);
   const deliveryId = sequencing.createDeliveryId(senderRole || 'unknown', parsed.seq, recipientRole);
+  const queued = sendStaggered(notified, fullMessage, { traceContext, deliveryId });
+  if (!queued) {
+    return buildDeliveryResult({
+      accepted: false,
+      queued: false,
+      verified: false,
+      status: 'window_unavailable',
+      notified: [],
+      mode: 'pty',
+      deliveryId,
+      details: { error: 'main_window_unavailable' },
+    });
+  }
   sequencing.startDeliveryTracking(deliveryId, senderRole, parsed.seq, recipientRole, notified, 'direct', 'pty');
-
   metrics.recordSent('pty', 'direct', notified);
-  sendStaggered(notified, fullMessage, { traceContext, deliveryId });
 
   if (options?.awaitDelivery) {
     return waitForDeliveryVerification(

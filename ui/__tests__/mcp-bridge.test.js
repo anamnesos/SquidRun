@@ -264,6 +264,42 @@ describe('MCP Bridge', () => {
         }
       });
 
+      test('returns success false with failedTargets when a target send fails', async () => {
+        mockWatcher.sendMessage.mockImplementation((fromPaneId, toPaneId) => {
+          if (fromPaneId === '1' && toPaneId === '3') {
+            return { success: false, error: 'queue full' };
+          }
+          return { success: true };
+        });
+
+        const result = await mcpBridge.mcpBroadcastMessage('test-session', 'Broadcast partial fail');
+
+        expect(result.success).toBe(false);
+        expect(result.failedTargets).toEqual(['3']);
+        expect(result.results).toEqual(expect.arrayContaining([
+          expect.objectContaining({ toPaneId: '2', success: true }),
+          expect.objectContaining({ toPaneId: '3', success: false, error: 'queue full' }),
+        ]));
+      });
+
+      test('returns success false when a target send throws', async () => {
+        mockWatcher.sendMessage.mockImplementation((fromPaneId, toPaneId) => {
+          if (fromPaneId === '1' && toPaneId === '2') {
+            throw new Error('watcher crashed');
+          }
+          return { success: true };
+        });
+
+        const result = await mcpBridge.mcpBroadcastMessage('test-session', 'Broadcast throw');
+
+        expect(result.success).toBe(false);
+        expect(result.failedTargets).toEqual(['2']);
+        expect(result.results).toEqual(expect.arrayContaining([
+          expect.objectContaining({ toPaneId: '2', success: false, error: 'watcher crashed' }),
+          expect.objectContaining({ toPaneId: '3', success: true }),
+        ]));
+      });
+
       test('returns error for invalid session', async () => {
         const result = await mcpBridge.mcpBroadcastMessage('invalid-session', 'Broadcast');
 

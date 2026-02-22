@@ -658,6 +658,7 @@ class BackgroundAgentManager {
         .filter((term) => term && term.alive)
         .map((term) => String(term.paneId))
     );
+    const idlePaneIdsToKill = [];
 
     for (const paneId of Array.from(this.agents.keys())) {
       const state = this.agents.get(paneId);
@@ -680,8 +681,12 @@ class BackgroundAgentManager {
 
       const idleMs = nowMs - Number(state.lastActivityAtMs || state.createdAtMs || nowMs);
       if (idleMs > this.idleTtlMs) {
-        void this.killAgent(paneId, { reason: 'idle_ttl_expired' });
+        idlePaneIdsToKill.push(paneId);
       }
+    }
+
+    for (const paneId of idlePaneIdsToKill) {
+      void this.killAgent(paneId, { reason: 'idle_ttl_expired' });
     }
     this.notifyStateChange();
   }
