@@ -449,6 +449,34 @@ describe('SquidRunApp', () => {
     });
   });
 
+  describe('dispatchPaneHostEnter', () => {
+    it('returns success when daemon accepts enter write', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = app.dispatchPaneHostEnter('2');
+
+      expect(app.ctx.daemonClient.write).toHaveBeenCalledWith('2', '\r');
+      expect(result).toEqual({ success: true, paneId: '2' });
+    });
+
+    it('returns daemon_write_failed when daemon rejects enter write', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => false),
+      };
+
+      const result = app.dispatchPaneHostEnter('2');
+
+      expect(app.ctx.daemonClient.write).toHaveBeenCalledWith('2', '\r');
+      expect(result).toEqual({ success: false, reason: 'daemon_write_failed', paneId: '2' });
+    });
+  });
+
   describe('initializeStartupSessionScope', () => {
     let app;
 

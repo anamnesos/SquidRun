@@ -277,6 +277,35 @@ describe('WebSocket Delivery Audit', () => {
     expect(ack.status).toBe('unrouted');
   });
 
+  test('treats accepted.unverified as successful send-ack (ok=true)', async () => {
+    const sender = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(sender);
+    onMessageSpy.mockImplementation(() => ({
+      accepted: true,
+      queued: true,
+      verified: false,
+      status: 'accepted.unverified',
+    }));
+
+    const messageId = 'ack-accepted-unverified-1';
+    const ackPromise = waitForMessage(sender, (msg) => msg.type === 'send-ack' && msg.messageId === messageId);
+
+    sender.send(JSON.stringify({
+      type: 'send',
+      target: 'missing-role',
+      content: 'accepted-unverified',
+      messageId,
+      ackRequired: true,
+    }));
+
+    const ack = await ackPromise;
+    expect(ack.ok).toBe(true);
+    expect(ack.accepted).toBe(true);
+    expect(ack.queued).toBe(true);
+    expect(ack.verified).toBe(false);
+    expect(ack.status).toBe('accepted.unverified');
+  });
+
   test('deduplicates ackRequired send by messageId and reuses prior ack', async () => {
     const receiver = await connectAndRegister({ port, role: 'builder', paneId: '2' });
     activeClients.add(receiver);

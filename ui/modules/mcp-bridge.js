@@ -129,8 +129,9 @@ function writeFallbackTrigger(paneId, message) {
       if (typeof fs.mkdirSync === 'function') {
         fs.mkdirSync(path.dirname(triggerFile), { recursive: true });
       }
-      fs.writeFileSync(triggerFile, message, 'utf-8');
-      log.info('MCP Bridge', `Fallback trigger written to ${TRIGGER_FILES[paneId]}`);
+      const payload = `${String(message || '').trimEnd()}\n`;
+      fs.appendFileSync(triggerFile, payload, 'utf-8');
+      log.info('MCP Bridge', `Fallback trigger appended to ${TRIGGER_FILES[paneId]}`);
       return true;
     }
   } catch (err) {

@@ -163,29 +163,43 @@ describe('PTY Handlers', () => {
   describe('pty-write', () => {
     test('writes data when daemon connected', async () => {
       ctx.daemonClient.connected = true;
-      await harness.invoke('pty-write', '1', 'test data');
+      ctx.daemonClient.write.mockReturnValue(true);
+      const result = await harness.invoke('pty-write', '1', 'test data');
 
       expect(ctx.daemonClient.write).toHaveBeenCalledWith('1', 'test data');
+      expect(result).toEqual({ success: true });
     });
 
-    test('does nothing when daemon not connected', async () => {
+    test('returns daemon_not_connected when daemon not connected', async () => {
       ctx.daemonClient.connected = false;
-      await harness.invoke('pty-write', '1', 'test data');
+      const result = await harness.invoke('pty-write', '1', 'test data');
 
       expect(ctx.daemonClient.write).not.toHaveBeenCalled();
+      expect(result).toEqual({ success: false, error: 'daemon_not_connected' });
     });
 
-    test('does nothing when daemonClient is null', async () => {
+    test('returns daemon_not_connected when daemonClient is null', async () => {
       ctx.daemonClient = null;
-      await harness.invoke('pty-write', '1', 'test data');
-      // Should not throw
+      const result = await harness.invoke('pty-write', '1', 'test data');
+      expect(result).toEqual({ success: false, error: 'daemon_not_connected' });
+    });
+
+    test('returns daemon_write_failed when daemon rejects write', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.write.mockReturnValue(false);
+
+      const result = await harness.invoke('pty-write', '1', 'test data');
+
+      expect(ctx.daemonClient.write).toHaveBeenCalledWith('1', 'test data');
+      expect(result).toEqual({ success: false, error: 'daemon_write_failed' });
     });
 
     test('passes optional kernelMeta to daemon client', async () => {
       ctx.daemonClient.connected = true;
+      ctx.daemonClient.write.mockReturnValue(true);
       const kernelMeta = { eventId: 'evt-1', correlationId: 'corr-1', source: 'injection.js' };
 
-      await harness.invoke('pty-write', '1', 'test data', kernelMeta);
+      const result = await harness.invoke('pty-write', '1', 'test data', kernelMeta);
 
       expect(ctx.daemonClient.write).toHaveBeenCalledWith(
         '1',
@@ -197,6 +211,7 @@ describe('PTY Handlers', () => {
           source: 'injection.js',
         })
       );
+      expect(result).toEqual({ success: true });
     });
   });
 

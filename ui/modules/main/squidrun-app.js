@@ -554,8 +554,20 @@ class SquidRunApp {
     if (!dc || !dc.connected) {
       return { success: false, reason: 'daemon_not_connected', paneId: id };
     }
-    dc.write(id, '\r');
-    return { success: true, paneId: id };
+    try {
+      const accepted = dc.write(id, '\r');
+      if (!accepted) {
+        return { success: false, reason: 'daemon_write_failed', paneId: id };
+      }
+      return { success: true, paneId: id };
+    } catch (err) {
+      return {
+        success: false,
+        reason: 'daemon_write_failed',
+        paneId: id,
+        error: err?.message || 'daemon_write_failed',
+      };
+    }
   }
 
   handleTriggerDeliveryAck(data = {}) {

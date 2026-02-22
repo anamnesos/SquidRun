@@ -223,13 +223,20 @@ function registerPtyHandlers(ctx, deps = {}) {
   });
 
   ipcMain.handle('pty-write', (event, paneId, data, kernelMeta = null) => {
-    if (ctx.daemonClient && ctx.daemonClient.connected) {
+    if (!ctx.daemonClient || !ctx.daemonClient.connected) {
+      return { success: false, error: 'daemon_not_connected' };
+    }
+    try {
       const normalizedKernelMeta = normalizeKernelMetaForTrace(kernelMeta);
-      if (kernelMeta) {
-        ctx.daemonClient.write(paneId, data, normalizedKernelMeta || kernelMeta);
-      } else {
-        ctx.daemonClient.write(paneId, data);
+      const accepted = kernelMeta
+        ? ctx.daemonClient.write(paneId, data, normalizedKernelMeta || kernelMeta)
+        : ctx.daemonClient.write(paneId, data);
+      if (!accepted) {
+        return { success: false, error: 'daemon_write_failed' };
       }
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err?.message || 'daemon_write_failed' };
     }
   });
 
