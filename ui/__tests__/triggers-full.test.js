@@ -264,6 +264,23 @@ describe('triggers.js module', () => {
       }));
     });
 
+    test('sendDirectMessage tolerates window send race without throwing', () => {
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+      global.window.webContents.send.mockImplementationOnce(() => {
+        throw new Error('Object has been destroyed');
+      });
+
+      expect(() => {
+        triggers.sendDirectMessage(['1'], 'Race test', 'architect');
+        jest.runOnlyPendingTimers();
+      }).not.toThrow();
+
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        'Trigger',
+        expect.stringContaining('Inject message dispatch failed: Object has been destroyed')
+      );
+    });
+
     test('sendDirectMessage awaitDelivery returns explicit failure when delivery outcome reports submit_not_accepted', async () => {
       triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
 

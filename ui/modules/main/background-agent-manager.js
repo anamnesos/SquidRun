@@ -439,6 +439,7 @@ class BackgroundAgentManager {
     const paneId = this.resolvePaneId(target);
     if (!paneId) {
       return {
+        success: false,
         ok: false,
         accepted: false,
         queued: false,
@@ -450,6 +451,7 @@ class BackgroundAgentManager {
     const state = this.agents.get(paneId);
     if (!state) {
       return {
+        success: false,
         ok: false,
         accepted: false,
         queued: false,
@@ -462,6 +464,7 @@ class BackgroundAgentManager {
     const senderRole = normalizeRole(options.fromRole);
     if (senderRole !== 'builder') {
       return {
+        success: false,
         ok: false,
         accepted: false,
         queued: false,
@@ -475,6 +478,7 @@ class BackgroundAgentManager {
     const daemonClient = this.getDaemonClient();
     if (!daemonClient?.connected) {
       return {
+        success: false,
         ok: false,
         accepted: false,
         queued: false,
@@ -486,12 +490,25 @@ class BackgroundAgentManager {
 
     const payloadContent = appendCompletionDirective(content);
     const payload = `${payloadContent}\r`;
-    daemonClient.write(paneId, payload, options.traceContext || null);
+    const writeAccepted = daemonClient.write(paneId, payload, options.traceContext || null);
+    if (writeAccepted === false) {
+      return {
+        success: false,
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'daemon_write_failed',
+        paneId,
+        alias: state.alias,
+      };
+    }
     state.status = 'running';
     state.lastActivityAtMs = Date.now();
     this.notifyStateChange();
 
     return {
+      success: true,
       ok: true,
       accepted: true,
       queued: true,

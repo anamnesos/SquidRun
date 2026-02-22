@@ -82,10 +82,11 @@ function registerGitHandlers(ctx) {
         return { success: false, error: statusResult.error };
       }
 
-      const statusText = String(statusResult.output ?? '');
-      if (!statusText.trim()) {
+      if (statusResult.output == null) {
         return { success: false, error: 'no output' };
       }
+
+      const statusText = String(statusResult.output);
       const lines = statusText.trim().split('\n').filter(l => l);
       const files = {
         staged: [],
@@ -110,14 +111,17 @@ function registerGitHandlers(ctx) {
 
       // Get branch info
       const branchResult = await execGit(['branch', '--show-current'], cwd);
-      const branch = branchResult.success ? branchResult.output.trim() : 'unknown';
+      const branch = branchResult.success && branchResult.output != null
+        ? String(branchResult.output).trim()
+        : 'unknown';
 
       // Get ahead/behind counts
       let ahead = 0;
       let behind = 0;
       const trackResult = await execGit(['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], cwd);
       if (trackResult.success) {
-        const parts = trackResult.output.trim().split(/\s+/);
+        const trackText = trackResult.output == null ? '' : String(trackResult.output);
+        const parts = trackText.trim().split(/\s+/);
         ahead = parseInt(parts[0]) || 0;
         behind = parseInt(parts[1]) || 0;
       }
@@ -298,11 +302,11 @@ function registerGitHandlers(ctx) {
         return { success: false, error: result.error };
       }
 
-      const text = String(result.output ?? '');
-      if (!text.trim()) {
+      if (result.output == null) {
         return { success: false, error: 'no output' };
       }
 
+      const text = String(result.output);
       return { success: true, branch: text.trim() };
     } catch (err) {
       console.error('[Git] Branch error:', err);
@@ -344,11 +348,11 @@ function registerGitHandlers(ctx) {
       const files = [];
 
       if (numResult.success) {
-        const text = String(numResult.output ?? '');
-        if (!text.trim()) {
+        if (numResult.output == null) {
           return { success: false, error: 'no output' };
         }
 
+        const text = String(numResult.output);
         const lines = text.trim().split('\n').filter(l => l);
         for (const line of lines) {
           const [added, deleted, filePath] = line.split('\t');

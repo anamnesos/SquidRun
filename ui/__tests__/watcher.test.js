@@ -218,6 +218,28 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 
+  test('getMessages recovers from corrupted queue JSON and resets queue file', async () => {
+    const { watcher, tempDir, logMock } = setupWatcher();
+    await watcher.initMessageQueue();
+    const queueFile = path.join(watcher.MESSAGE_QUEUE_DIR, 'queue-1.json');
+    fs.writeFileSync(queueFile, '{invalid-json', 'utf-8');
+
+    const messages = await watcher.getMessages('1');
+
+    expect(messages).toEqual([]);
+    expect(logMock.error).toHaveBeenCalledWith(
+      'MessageQueue',
+      expect.stringContaining(`Corrupted queue file ${queueFile}; resetting queue`),
+      expect.any(Error)
+    );
+    expect(fs.readFileSync(queueFile, 'utf-8').trim()).toBe('[]');
+
+    const sendResult = await watcher.sendMessage('1', '1', 'Recovered queue');
+    expect(sendResult.success).toBe(true);
+
+    cleanupDir(tempDir);
+  });
+
   test('handleFileChangeDebounced triggers transitions and auto-sync', () => {
     jest.useFakeTimers();
     const { watcher, tempDir, triggers } = setupWatcher();

@@ -43,11 +43,15 @@ let ipcMain = null;
  * Emit event to renderer if window is available
  */
 function emit(channel, data) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(channel, {
+  const targetWindow = mainWindow;
+  if (!targetWindow || targetWindow.isDestroyed()) return;
+  try {
+    targetWindow.webContents.send(channel, {
       ...data,
       timestamp: Date.now(),
     });
+  } catch (err) {
+    log.warn('OrganicUI', `Renderer send failed (${channel}): ${err.message}`);
   }
 }
 

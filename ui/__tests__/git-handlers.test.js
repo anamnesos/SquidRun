@@ -87,8 +87,20 @@ describe('Git IPC Handlers', () => {
       registerGitHandlers({ ipcMain: mockIpcMain, WORKSPACE_PATH });
     });
 
-    test('returns error when status output is empty', async () => {
+    test('returns empty status when status output is empty', async () => {
       execSync.mockReturnValueOnce(''); // status --porcelain
+
+      const result = await handlers['git-status']({}, {});
+
+      expect(result.success).toBe(true);
+      expect(result.status.files.staged).toEqual([]);
+      expect(result.status.files.unstaged).toEqual([]);
+      expect(result.status.files.untracked).toEqual([]);
+      expect(result.status.totalChanges).toBe(0);
+    });
+
+    test('returns no output when status output is null', async () => {
+      execSync.mockReturnValueOnce(null); // status --porcelain
 
       const result = await handlers['git-status']({}, {});
 
@@ -728,6 +740,15 @@ hash3|h3|Author3|a3@test.com|3000000|Msg3
       expect(result.branch).toBe('feature-branch');
     });
 
+    test('returns empty branch when output is empty', async () => {
+      execSync.mockReturnValue('');
+
+      const result = await handlers['git-branch']({}, {});
+
+      expect(result.success).toBe(true);
+      expect(result.branch).toBe('');
+    });
+
     test('returns no output when branch output is null', async () => {
       execSync.mockReturnValue(null);
 
@@ -860,6 +881,20 @@ hash3|h3|Author3|a3@test.com|3000000|Msg3
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('no output');
+    });
+
+    test('returns empty files when numstat output is empty', async () => {
+      execSync
+        .mockReturnValueOnce(' file.js | 1 +\n 1 file changed')
+        .mockReturnValueOnce('');
+
+      const result = await handlers['git-files-changed']({}, {});
+
+      expect(result.success).toBe(true);
+      expect(result.files).toEqual([]);
+      expect(result.totalFiles).toBe(0);
+      expect(result.totalAdded).toBe(0);
+      expect(result.totalDeleted).toBe(0);
     });
 
     test('uses custom projectPath', async () => {

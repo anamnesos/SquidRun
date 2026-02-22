@@ -96,7 +96,7 @@ describe('background-agent-manager completion lifecycle', () => {
     const daemonClient = {
       connected: true,
       spawn: jest.fn(),
-      write: jest.fn(),
+      write: jest.fn().mockReturnValue(true),
       kill: jest.fn(),
     };
 
@@ -120,6 +120,11 @@ describe('background-agent-manager completion lifecycle', () => {
       fromRole: 'builder',
     });
     expect(sendResult.ok).toBe(true);
+    expect(sendResult.success).toBe(true);
+    expect(sendResult.accepted).toBe(true);
+    expect(sendResult.queued).toBe(true);
+    expect(sendResult.verified).toBe(true);
+    expect(sendResult.status).toBe('delivered.daemon_write');
     expect(daemonClient.write).toHaveBeenCalled();
     const sentPayload = String(daemonClient.write.mock.calls[0][1] || '');
     expect(sentPayload).toContain('__HM_BG_DONE__');
@@ -131,5 +136,46 @@ describe('background-agent-manager completion lifecycle', () => {
 
     manager.handleDaemonData('bg-2-1', '__HM_BG_DONE__\n');
     expect(killSpy).toHaveBeenCalledWith('bg-2-1', { reason: 'task_completed' });
+  });
+
+  test('sendMessageToAgent returns failure when daemon write is rejected', async () => {
+    const daemonClient = {
+      connected: true,
+      spawn: jest.fn(),
+      write: jest.fn().mockReturnValue(false),
+      kill: jest.fn(),
+    };
+
+    const manager = new BackgroundAgentManager({
+      getDaemonClient: () => daemonClient,
+      getSettings: () => ({}),
+      getSessionScopeId: () => null,
+      resolveBuilderCwd: () => '/repo',
+    });
+
+    manager.agents.set('bg-2-1', {
+      alias: 'builder-bg-1',
+      paneId: 'bg-2-1',
+      ownerPaneId: '2',
+      status: 'running',
+      createdAtMs: Date.now(),
+      lastActivityAtMs: Date.now(),
+    });
+
+    const sendResult = await manager.sendMessageToAgent('builder-bg-1', 'Take ownership of test task', {
+      fromRole: 'builder',
+    });
+
+    expect(daemonClient.write).toHaveBeenCalled();
+    expect(sendResult).toMatchObject({
+      success: false,
+      ok: false,
+      accepted: false,
+      queued: false,
+      verified: false,
+      status: 'daemon_write_failed',
+      paneId: 'bg-2-1',
+      alias: 'builder-bg-1',
+    });
   });
 });

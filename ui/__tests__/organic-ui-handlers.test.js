@@ -14,6 +14,7 @@ jest.mock('../config', () => require('./helpers/mock-config').mockDefaultConfig)
 
 // Import module under test
 const organicUI = require('../modules/ipc/organic-ui-handlers');
+const log = require('../modules/logger');
 
 describe('organic-ui-handlers', () => {
   let mockMainWindow;
@@ -555,6 +556,23 @@ describe('organic-ui-handlers', () => {
 
       // 2 queued + 2 sending + 1 delivered + 1 failed = 6 calls
       expect(routingCalls.length).toBe(6);
+    });
+
+    it('should catch and log renderer send errors instead of throwing', () => {
+      mockMainWindow.webContents.send.mockImplementation(() => {
+        throw new Error('Object has been destroyed');
+      });
+      organicUI.registerOrganicUIHandlers({ ipcMain: mockIpcMain, mainWindow: mockMainWindow });
+
+      expect(() => {
+        organicUI.setAgentState('1', 'idle');
+        organicUI.setAgentState('1', 'thinking');
+      }).not.toThrow();
+
+      expect(log.warn).toHaveBeenCalledWith(
+        'OrganicUI',
+        expect.stringContaining('Renderer send failed (agent-state-changed): Object has been destroyed')
+      );
     });
   });
 });
