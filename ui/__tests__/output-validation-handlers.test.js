@@ -7,12 +7,18 @@ const {
   createIpcHarness,
   createDefaultContext,
 } = require('./helpers/ipc-harness');
+const path = require('path');
 
 // Mock fs
-jest.mock('fs', () => ({
-  existsSync: jest.fn(),
-  readFileSync: jest.fn(),
-}));
+jest.mock('fs', () => {
+  const realpathSync = jest.fn((targetPath) => targetPath);
+  realpathSync.native = jest.fn((targetPath) => targetPath);
+  return {
+    existsSync: jest.fn(),
+    readFileSync: jest.fn(),
+    realpathSync,
+  };
+});
 
 // Mock logger
 jest.mock('../modules/logger', () => ({
@@ -33,6 +39,8 @@ describe('Output Validation Handlers', () => {
     harness = createIpcHarness();
     ctx = createDefaultContext({ ipcMain: harness.ipcMain });
     ctx.WORKSPACE_PATH = '/test/workspace';
+    fs.realpathSync.mockImplementation((targetPath) => targetPath);
+    fs.realpathSync.native.mockImplementation((targetPath) => targetPath);
 
     registerOutputValidationHandlers(ctx);
   });
@@ -180,7 +188,7 @@ describe('Output Validation Handlers', () => {
     test('returns error when file not found', async () => {
       fs.existsSync.mockReturnValue(false);
 
-      const result = await harness.invoke('validate-file', '/test/missing.js');
+      const result = await harness.invoke('validate-file', 'missing.js');
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('File not found');
@@ -190,7 +198,7 @@ describe('Output Validation Handlers', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockReturnValue('const x = 1;');
 
-      const result = await harness.invoke('validate-file', '/test/file.js');
+      const result = await harness.invoke('validate-file', 'file.js');
 
       expect(result.success).toBe(true);
       expect(result.extension).toBe('.js');
@@ -200,7 +208,7 @@ describe('Output Validation Handlers', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockReturnValue('const x: number = 1;');
 
-      const result = await harness.invoke('validate-file', '/test/file.ts');
+      const result = await harness.invoke('validate-file', 'file.ts');
 
       expect(result.extension).toBe('.ts');
     });
@@ -209,7 +217,7 @@ describe('Output Validation Handlers', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockReturnValue('{"key": "value"}');
 
-      const result = await harness.invoke('validate-file', '/test/file.json');
+      const result = await harness.invoke('validate-file', 'file.json');
 
       expect(result.success).toBe(true);
       expect(result.valid).toBe(true);
@@ -221,7 +229,7 @@ describe('Output Validation Handlers', () => {
         throw new Error('Read error');
       });
 
-      const result = await harness.invoke('validate-file', '/test/file.js');
+      const result = await harness.invoke('validate-file', 'file.js');
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Read error');
@@ -231,9 +239,46 @@ describe('Output Validation Handlers', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockReturnValue('valid code');
 
-      const result = await harness.invoke('validate-file', '/test/myfile.js');
+      const result = await harness.invoke('validate-file', 'myfile.js');
 
-      expect(result.filePath).toBe('/test/myfile.js');
+      expect(result.filePath).toBe(path.resolve('/test/workspace', 'myfile.js'));
+    });
+
+    test('rejects absolute paths outside workspace boundary', async () => {
+      fs.existsSync.mockReturnValue(true);
+
+      const result = await harness.invoke('validate-file', '/test/other/file.js');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Path outside project boundary');
+    });
+
+    test('rejects relative traversal outside workspace boundary', async () => {
+      fs.existsSync.mockReturnValue(true);
+
+      const result = await harness.invoke('validate-file', '../outside.js');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Path outside project boundary');
+    });
+
+    test('canonicalizes path before reading file', async () => {
+      fs.existsSync.mockReturnValue(true);
+      const resolvedWorkspace = path.resolve('/test/workspace');
+      const resolvedLinkPath = path.resolve('/test/workspace', 'link.js');
+      const canonicalWorkspace = path.resolve('/canonical/workspace');
+      const canonicalRealFile = path.resolve('/canonical/workspace', 'real.js');
+      fs.realpathSync.native.mockImplementation((targetPath) => {
+        if (targetPath === resolvedWorkspace) return canonicalWorkspace;
+        if (targetPath === resolvedLinkPath) return canonicalRealFile;
+        return targetPath;
+      });
+      fs.readFileSync.mockReturnValue('const x = 1;');
+
+      const result = await harness.invoke('validate-file', 'link.js');
+
+      expect(fs.readFileSync).toHaveBeenCalledWith(canonicalRealFile, 'utf-8');
+      expect(result.filePath).toBe(canonicalRealFile);
     });
   });
 
