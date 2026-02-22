@@ -120,6 +120,106 @@
   min-height: 32px;
 }
 
+.profile-btn {
+  border-color: rgba(0, 240, 255, 0.3);
+  color: var(--color-primary);
+}
+
+.profile-btn:hover {
+  border-color: rgba(0, 240, 255, 0.55);
+}
+
+.profile-modal-overlay {
+  z-index: 10021;
+}
+
+.profile-modal {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.profile-modal-form {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.profile-modal .setting-field {
+  margin: 0;
+}
+
+.profile-modal .settings-input,
+.profile-modal .settings-select {
+  font-size: 13px;
+  background: rgba(6, 9, 15, 0.92);
+}
+
+.profile-modal-textarea {
+  resize: vertical;
+  min-height: 84px;
+  line-height: 1.45;
+}
+
+.profile-modal-helper {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px dashed rgba(0, 240, 255, 0.24);
+  background: rgba(0, 240, 255, 0.06);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.profile-modal-helper-list {
+  display: grid;
+  gap: 6px;
+}
+
+.profile-modal-helper-item {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(121, 143, 170, 0.22);
+  background: rgba(8, 12, 20, 0.58);
+}
+
+.profile-modal-helper-item.selected {
+  border-color: rgba(0, 240, 255, 0.55);
+  background: rgba(0, 240, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(0, 240, 255, 0.2);
+}
+
+.profile-modal-helper-key {
+  color: var(--color-primary);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.profile-modal-helper-text {
+  color: var(--color-text-muted);
+}
+
+.profile-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid rgba(121, 143, 170, 0.26);
+}
+
+.profile-modal-save {
+  background: rgba(0, 240, 255, 0.14);
+  border-color: rgba(0, 240, 255, 0.45);
+  color: var(--color-primary);
+}
+
+.profile-modal-save:hover {
+  background: rgba(0, 240, 255, 0.22);
+  border-color: rgba(0, 240, 255, 0.65);
+  color: var(--color-primary);
+}
+
 /* Button icons - SVG styling */
 .btn-icon {
   width: 14px;
@@ -1245,6 +1345,20 @@
   .status-bar {
     padding: var(--space-1) var(--space-3);
     gap: var(--space-2);
+  }
+
+  .profile-modal {
+    width: calc(100vw - 20px);
+    padding: var(--space-3);
+  }
+
+  .profile-modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .profile-modal-actions .btn {
+    width: 100%;
+    justify-content: center;
   }
 }
 

@@ -7,6 +7,7 @@ const { registerMessageQueueHandlers } = require('./message-queue-handlers');
 const { registerPerfAuditHandlers } = require('./perf-audit-handlers');
 const { registerErrorHandlers } = require('./error-handlers');
 const { registerStateHandlers } = require('./state-handlers');
+const { registerUserProfileHandlers } = require('./user-profile-handlers');
 const { registerSharedContextHandlers } = require('./shared-context-handlers');
 const { registerFrictionHandlers } = require('./friction-handlers');
 const { registerScreenshotHandlers } = require('./screenshot-handlers');
@@ -62,6 +63,7 @@ const DEFAULT_HANDLERS = [
   registerPerfAuditHandlers,
   registerErrorHandlers,
   registerStateHandlers,
+  registerUserProfileHandlers,
   registerSharedContextHandlers,
   registerFrictionHandlers,
   registerScreenshotHandlers,
