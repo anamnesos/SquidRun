@@ -312,7 +312,7 @@ class BackgroundAgentManager {
     this.agents.set(paneId, state);
     this.notifyStateChange();
 
-    daemonClient.spawn(
+    const spawnAccepted = daemonClient.spawn(
       paneId,
       cwd,
       false,
@@ -329,6 +329,24 @@ class BackgroundAgentManager {
         scrollbackMaxSize: this.scrollbackMaxSize,
       }
     );
+    if (spawnAccepted === false) {
+      this.agents.delete(paneId);
+      this.notifyStateChange();
+      const error = `Daemon rejected spawn request for background builder ${alias} (${paneId})`;
+      this.logEvent('warning', paneId, error, {
+        alias,
+        paneId,
+        ownerPaneId,
+      });
+      return {
+        ok: false,
+        reason: 'spawn_rejected',
+        alias,
+        paneId,
+        ownerPaneId,
+        error,
+      };
+    }
 
     this.logEvent('spawn', paneId, `Spawned background builder ${alias}`, {
       alias,
