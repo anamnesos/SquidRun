@@ -58,6 +58,10 @@ jest.mock('../modules/contract-promotion', () => mockContractPromotion);
 
 // Mock window.squidrun
 const mockSquidRun = {
+  invoke: jest.fn().mockResolvedValue({ ok: true }),
+  send: jest.fn(),
+  on: jest.fn(),
+  removeListener: jest.fn(),
   pty: {
     create: jest.fn().mockResolvedValue(),
     write: jest.fn().mockResolvedValue(),
@@ -147,6 +151,7 @@ describe('terminal.js module', () => {
     }
 
     // Reset mocks
+    mockSquidRun.invoke.mockResolvedValue({ ok: true });
     mockSquidRun.pty.write.mockResolvedValue();
     mockSquidRun.claude.spawn.mockResolvedValue({ success: true, command: 'claude' });
     delete mockSquidRun.paneHost;
@@ -479,7 +484,7 @@ describe('terminal.js module', () => {
   });
 
   describe('broadcast', () => {
-    test('should send message to pane 1 (Architect)', () => {
+    test('should send message to pane 1 (Architect)', async () => {
       jest.useRealTimers();
       terminal.lastOutputTime['1'] = Date.now(); // Keep pane busy
       const statusCb = jest.fn();
@@ -487,6 +492,7 @@ describe('terminal.js module', () => {
       terminal.setStatusCallbacks(statusCb, connectionCb);
 
       terminal.broadcast('test broadcast');
+      await Promise.resolve();
 
       // broadcast routes to pane 1 with priority + immediate
       // Immediate messages are processed instantly (bypass idle checks),
@@ -494,7 +500,29 @@ describe('terminal.js module', () => {
       // to pane 1 via the connection status callback.
       expect(terminal.messageQueue['1']).toBeDefined();
       expect(connectionCb).toHaveBeenCalledWith('Message sent to Architect');
+      expect(mockSquidRun.invoke).toHaveBeenCalledWith(
+        'evidence-ledger:upsert-comms-journal',
+        expect.objectContaining({
+          senderRole: 'user',
+          targetRole: 'architect',
+          channel: 'user',
+          direction: 'outbound',
+          rawBody: 'test broadcast',
+          status: 'recorded',
+          attempt: 1,
+          metadata: { source: 'ui.broadcast' },
+        }),
+      );
       jest.useFakeTimers();
+    });
+
+    test('should not fail hard when journal IPC is unavailable', () => {
+      mockSquidRun.invoke.mockRejectedValueOnce(new Error('bridge down'));
+      const connectionCb = jest.fn();
+      terminal.setStatusCallbacks(null, connectionCb);
+
+      expect(() => terminal.broadcast('best effort')).not.toThrow();
+      expect(connectionCb).toHaveBeenCalledWith('Message sent to Architect');
     });
   });
 

@@ -17,9 +17,9 @@ const compactionDetector = require('./compaction-detector');
 const contracts = require('./contracts');
 const contractPromotion = require('./contract-promotion');
 const transitionLedger = require('./transition-ledger');
+const { invokeBridge } = require('./renderer-bridge');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
-const { appendCommsJournalEntry } = require('./main/comms-journal');
 
 const TERMINAL_EVENT_SOURCE = 'terminal.js';
 const { attachAgentColors } = require('./terminal/agent-colors');
@@ -2167,23 +2167,32 @@ function broadcast(message, options = {}) {
   const messageText = typeof message === 'string' ? message.trim() : String(message ?? '').trim();
   if (messageText) {
     const userMessageId = `user-ui-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const journalResult = appendCommsJournalEntry({
-      messageId: userMessageId,
-      sessionId: null,
-      senderRole: 'user',
-      targetRole: 'architect',
-      channel: 'user',
-      direction: 'outbound',
-      sentAtMs: Date.now(),
-      rawBody: messageText,
-      status: 'recorded',
-      attempt: 1,
-      metadata: {
-        source: 'ui.broadcast',
-      },
-    });
-    if (journalResult?.ok !== true) {
-      log.warn('Terminal', `User message journal write unavailable: ${journalResult?.reason || 'unknown'}`);
+    try {
+      Promise.resolve(invokeBridge('evidence-ledger:upsert-comms-journal', {
+        messageId: userMessageId,
+        sessionId: null,
+        senderRole: 'user',
+        targetRole: 'architect',
+        channel: 'user',
+        direction: 'outbound',
+        sentAtMs: Date.now(),
+        rawBody: messageText,
+        status: 'recorded',
+        attempt: 1,
+        metadata: {
+          source: 'ui.broadcast',
+        },
+      }))
+        .then((journalResult) => {
+          if (journalResult?.ok !== true) {
+            log.warn('Terminal', `User message journal write unavailable: ${journalResult?.reason || 'unknown'}`);
+          }
+        })
+        .catch((err) => {
+          log.warn('Terminal', `User message journal write unavailable: ${err?.message || 'unknown'}`);
+        });
+    } catch (err) {
+      log.warn('Terminal', `User message journal write unavailable: ${err?.message || 'unknown'}`);
     }
   }
 
