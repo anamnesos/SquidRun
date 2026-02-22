@@ -128,7 +128,21 @@ Core implementation lives in `ui/modules/`, `ui/modules/main/`, and `ui/scripts/
 
 ## Detailed Setup
 
-### Prerequisites
+### macOS Installation (Packaged App)
+
+If you downloaded the packaged application from the releases page:
+
+1. **Download the right version:** Choose `arm64` for Apple Silicon (M-series) Macs, or `x64` for Intel Macs.
+2. **Bypass Gatekeeper:** Because this is an open-source, unsigned application, macOS will block it by default. 
+   - To open it, **Right-click (or Control-click)** the SquidRun app and select **Open**. You will see a warning, but you can now click **Open** to bypass it.
+   - Alternatively, go to **System Settings > Privacy & Security**, scroll down, and click **Open Anyway** next to SquidRun.
+3. **Host Requirements:** The packaged app orchestrates tools on your local machine. You must have the following installed on your system:
+   - **Node.js 18+**
+   - **At least one coding CLI** (Claude Code, Codex CLI, or Gemini CLI) installed globally and available in your `PATH`. Make sure you run it once in your terminal to authenticate before launching SquidRun.
+
+### Run from Source
+
+#### Prerequisites
 
 - Node.js 18+
 - npm
