@@ -351,8 +351,18 @@ describe('full-restart handler', () => {
     expect(mockSpawn).toHaveBeenCalledWith(
       'taskkill',
       ['/pid', '12345', '/f', '/t'],
-      { shell: true, detached: true }
+      { shell: false, detached: true }
     );
+    expect(mockFs.unlinkSync).toHaveBeenCalled();
+  });
+
+  test('skips daemon kill when PID value is non-numeric', async () => {
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.readFileSync.mockReturnValue('12345 && calc');
+
+    await harness.invoke('full-restart');
+
+    expect(mockSpawn).not.toHaveBeenCalled();
     expect(mockFs.unlinkSync).toHaveBeenCalled();
   });
 

@@ -59,6 +59,18 @@ function registerOutputValidationHandlers(ctx) {
   ctx.calculateConfidence = calculateConfidence;
   ctx.VALIDATION_FILE_PATH = VALIDATION_FILE_PATH;
 
+  function getCanonicalPath(targetPath) {
+    if (fs.realpathSync && typeof fs.realpathSync.native === 'function') {
+      return fs.realpathSync.native(targetPath);
+    }
+    return fs.realpathSync(targetPath);
+  }
+
+  function isPathWithinBoundary(targetPath, boundaryRoot) {
+    const relativePath = path.relative(boundaryRoot, targetPath);
+    return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+  }
+
   function runValidation(text, options = {}) {
     const issues = [];
     const warnings = [];
@@ -125,17 +137,24 @@ function registerOutputValidationHandlers(ctx) {
 
   ipcMain.handle('validate-file', async (event, filePath, options = {}) => {
     try {
-      const projectRoot = path.resolve(WORKSPACE_PATH, '..');
-      const resolved = path.resolve(filePath);
-      if (!resolved.startsWith(projectRoot + path.sep) && resolved !== projectRoot) {
-        return { success: false, error: 'Path outside project boundary' };
-      }
-      if (!fs.existsSync(filePath)) {
+      const workspaceRoot = path.resolve(WORKSPACE_PATH);
+      const absolutePath = path.isAbsolute(filePath)
+        ? path.resolve(filePath)
+        : path.resolve(workspaceRoot, filePath);
+
+      if (!fs.existsSync(absolutePath)) {
         return { success: false, error: 'File not found' };
       }
 
-      const content = fs.readFileSync(filePath, 'utf-8');
-      const ext = path.extname(filePath).toLowerCase();
+      const canonicalWorkspaceRoot = getCanonicalPath(workspaceRoot);
+      const canonicalFilePath = getCanonicalPath(absolutePath);
+
+      if (!isPathWithinBoundary(canonicalFilePath, canonicalWorkspaceRoot)) {
+        return { success: false, error: 'Path outside project boundary' };
+      }
+
+      const content = fs.readFileSync(canonicalFilePath, 'utf-8');
+      const ext = path.extname(canonicalFilePath).toLowerCase();
 
       if (ext === '.js' || ext === '.ts') {
         options.checkSyntax = true;
@@ -145,7 +164,7 @@ function registerOutputValidationHandlers(ctx) {
       }
 
       const result = runValidation(content, options);
-      return { ...result, filePath, extension: ext };
+      return { ...result, filePath: canonicalFilePath, extension: ext };
     } catch (err) {
       return { success: false, error: err.message };
     }

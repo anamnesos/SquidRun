@@ -153,10 +153,15 @@ function registerErrorHandlers(ctx, deps = {}) {
       try {
         const daemonPidPath = path.join(__dirname, '..', '..', 'daemon.pid');
         if (fs.existsSync(daemonPidPath)) {
-          const pid = fs.readFileSync(daemonPidPath, 'utf-8').trim();
-          spawn('taskkill', ['/pid', pid, '/f', '/t'], { shell: true, detached: true });
+          const pidRaw = fs.readFileSync(daemonPidPath, 'utf-8').trim();
+          if (/^\d+$/.test(pidRaw)) {
+            const pid = String(Number.parseInt(pidRaw, 10));
+            spawn('taskkill', ['/pid', pid, '/f', '/t'], { shell: false, detached: true });
+            log.info('Full Restart', 'Killed daemon PID:', pid);
+          } else {
+            log.warn('Full Restart', `Skipping daemon kill due to invalid pid value: ${pidRaw}`);
+          }
           fs.unlinkSync(daemonPidPath);
-          log.info('Full Restart', 'Killed daemon PID:', pid);
         }
       } catch (err) {
         log.info('Full Restart', 'Error killing daemon:', err.message);
