@@ -75,7 +75,48 @@ function checkNodePtyHealth() {
   }
 }
 
-function checkBetterSqliteHealth() {
+function checkNodeSqliteHealth() {
+  try {
+    const sqlite = require('node:sqlite');
+    if (!sqlite || typeof sqlite.DatabaseSync !== 'function') {
+      return {
+        ok: true,
+        warn: true,
+        detail: 'node:sqlite loaded but DatabaseSync is unavailable (optional runtime path)',
+      };
+    }
+
+    const db = new sqlite.DatabaseSync(':memory:');
+    const row = db.prepare('SELECT 1 AS ok').get();
+    db.close();
+
+    if (!row || row.ok !== 1) {
+      return {
+        ok: true,
+        warn: true,
+        detail: 'node:sqlite loaded but query smoke test failed (optional runtime path)',
+      };
+    }
+
+    return { ok: true, detail: 'node:sqlite loaded and in-memory query succeeded' };
+  } catch (err) {
+    return {
+      ok: true,
+      warn: true,
+      detail: `node:sqlite unavailable in this runtime (${err.message}); falling back to better-sqlite3`,
+    };
+  }
+}
+
+function isBetterSqliteAbiMismatch(err) {
+  const message = typeof err?.message === 'string' ? err.message : '';
+  if (!message) return false;
+  return message.includes('compiled against a different Node.js version')
+    || message.includes('NODE_MODULE_VERSION');
+}
+
+function checkBetterSqliteHealth(options = {}) {
+  const nodeSqliteHealthy = options.nodeSqliteHealthy === true;
   try {
     const BetterSqlite3 = require('better-sqlite3');
     const db = new BetterSqlite3(':memory:');
@@ -88,6 +129,14 @@ function checkBetterSqliteHealth() {
 
     return { ok: true, detail: 'better-sqlite3 loaded and in-memory query succeeded' };
   } catch (err) {
+    if (nodeSqliteHealthy && isBetterSqliteAbiMismatch(err)) {
+      return {
+        ok: true,
+        warn: true,
+        detail: `better-sqlite3 ABI mismatch: ${err.message}. node:sqlite is healthy, so this is non-blocking for CLI`,
+      };
+    }
+
     return {
       ok: false,
       detail: `better-sqlite3 failed health check: ${err.message}. Try: npm run rebuild`,
@@ -194,11 +243,23 @@ async function main() {
   console.log(`Project root: ${ROOT_DIR}`);
   console.log('');
 
+  let nodeSqliteHealthy = false;
   const checks = [
     { title: 'Node version', run: () => compareNodeMajor(18) },
     { title: 'Dependencies installed', run: () => checkDependenciesInstalled() },
     { title: 'Native module: node-pty', run: () => checkNodePtyHealth() },
-    { title: 'Native module: better-sqlite3', run: () => checkBetterSqliteHealth() },
+    {
+      title: 'Native module: node:sqlite',
+      run: () => {
+        const result = checkNodeSqliteHealth();
+        nodeSqliteHealthy = result.ok && result.warn !== true;
+        return result;
+      },
+    },
+    {
+      title: 'Native module: better-sqlite3',
+      run: () => checkBetterSqliteHealth({ nodeSqliteHealthy }),
+    },
     { title: `Port ${DEFAULT_PORT} availability`, run: () => checkPortAvailable(DEFAULT_PORT) },
     { title: 'Shell defaults', run: () => checkShellDefaults() },
     { title: 'File permissions', run: () => checkFilePermissions() },
