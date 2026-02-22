@@ -21,6 +21,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 const TELEGRAM_RATE_LIMIT_MAX_MESSAGES = 10;
 const TELEGRAM_RATE_LIMIT_WINDOW_MS = 60_000;
 const TELEGRAM_MESSAGE_MAX_CHARS = 4_000;
+const TELEGRAM_CAPTION_MAX_CHARS = 1_000;
 const TELEGRAM_TRUNCATED_SUFFIX = '[message truncated]';
 
 let telegramRateLimiterQueue = Promise.resolve();
@@ -237,9 +238,10 @@ function getMissingConfigKeys(config, options = {}) {
   return missing;
 }
 
-function maybeTruncateTelegramMessage(message) {
-  const text = typeof message === 'string' ? message : String(message ?? '');
-  if (text.length <= TELEGRAM_MESSAGE_MAX_CHARS) {
+function maybeTruncateTelegramContent(content, maxChars = TELEGRAM_MESSAGE_MAX_CHARS) {
+  const text = typeof content === 'string' ? content : String(content ?? '');
+  const resolvedMaxChars = Number.isFinite(maxChars) ? Math.max(1, Number(maxChars)) : TELEGRAM_MESSAGE_MAX_CHARS;
+  if (text.length <= resolvedMaxChars) {
     return {
       text,
       truncated: false,
@@ -247,12 +249,20 @@ function maybeTruncateTelegramMessage(message) {
     };
   }
 
-  const preservedChars = Math.max(0, TELEGRAM_MESSAGE_MAX_CHARS - TELEGRAM_TRUNCATED_SUFFIX.length);
+  const preservedChars = Math.max(0, resolvedMaxChars - TELEGRAM_TRUNCATED_SUFFIX.length);
   return {
     text: `${text.slice(0, preservedChars)}${TELEGRAM_TRUNCATED_SUFFIX}`,
     truncated: true,
     originalLength: text.length,
   };
+}
+
+function maybeTruncateTelegramMessage(message) {
+  return maybeTruncateTelegramContent(message, TELEGRAM_MESSAGE_MAX_CHARS);
+}
+
+function maybeTruncateTelegramCaption(caption) {
+  return maybeTruncateTelegramContent(caption, TELEGRAM_CAPTION_MAX_CHARS);
 }
 
 function sleep(ms) {
@@ -389,6 +399,7 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
   const senderRole = asRole(opts.senderRole || opts.fromRole || 'architect', 'architect');
   const targetRole = asRole(opts.targetRole || opts.toRole || 'user', 'user');
   const sessionId = resolvePreferredSessionId(opts.sessionId, localProjectContext?.sessionId || null);
+  const preparedCaption = maybeTruncateTelegramCaption(caption);
 
   upsertTelegramJournal({
     messageId,
@@ -396,13 +407,15 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
     senderRole,
     targetRole,
     sentAtMs: nowMs,
-    rawBody: caption ? `[photo] ${caption}` : '[photo]',
+    rawBody: preparedCaption.text ? `[photo] ${preparedCaption.text}` : '[photo]',
     status: 'recorded',
     attempt: 1,
     metadata: {
       source: 'hm-telegram',
       mode: 'photo',
       photoPath: path.resolve(photoPath),
+      captionTruncated: preparedCaption.truncated,
+      captionOriginalLength: preparedCaption.originalLength,
     },
   });
 
@@ -459,7 +472,7 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
   }
 
   const fields = { chat_id: String(outboundChatId) };
-  if (caption) fields.caption = caption;
+  if (preparedCaption.text) fields.caption = preparedCaption.text;
 
   const apiPath = `/bot${config.botToken}/sendPhoto`;
   const response = await enqueueRateLimitedSend(
@@ -698,6 +711,7 @@ module.exports = {
   resolveOutboundChatId,
   isChatAllowed,
   maybeTruncateTelegramMessage,
+  maybeTruncateTelegramCaption,
   resetRateLimiterStateForTests,
   main,
 };

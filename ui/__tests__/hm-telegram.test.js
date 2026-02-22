@@ -1,4 +1,7 @@
 const { EventEmitter } = require('events');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 jest.mock('https', () => ({
   request: jest.fn(),
@@ -211,5 +214,39 @@ describe('hm-telegram', () => {
     expect(https.request).toHaveBeenCalledTimes(11);
     expect(eleventhResolved).toBe(true);
     expect(advancedMs).toBeGreaterThanOrEqual(60_000);
+  });
+
+  test('sendTelegramPhoto truncates long captions to 1000 chars with suffix', async () => {
+    mockTelegramResponse(200, {
+      ok: true,
+      result: {
+        message_id: 777,
+        chat: { id: 123456 },
+      },
+    });
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-telegram-photo-'));
+    const photoPath = path.join(tempDir, 'photo.png');
+    fs.writeFileSync(photoPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+    try {
+      const longCaption = `${'C'.repeat(1100)} tail`;
+      const result = await hmTelegram.sendTelegramPhoto(photoPath, longCaption, {
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+        TELEGRAM_CHAT_ID: '123456',
+      });
+
+      expect(result.ok).toBe(true);
+      const firstRequest = https.request.mock.results[0].value;
+      const multipartHead = Buffer.from(firstRequest.write.mock.calls[0][0]).toString('utf8');
+      const captionMatch = multipartHead.match(/name=\"caption\"\r\n\r\n([\s\S]*?)\r\n--/);
+
+      expect(captionMatch).toBeTruthy();
+      const submittedCaption = captionMatch[1];
+      expect(submittedCaption.length).toBe(1000);
+      expect(submittedCaption.endsWith('[message truncated]')).toBe(true);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
