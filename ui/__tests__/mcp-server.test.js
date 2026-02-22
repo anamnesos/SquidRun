@@ -7,6 +7,12 @@ const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
 
 let serverInstance;
 
+const mockLog = {
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+};
+
 function getTriggerPath(filename) {
   if (typeof resolveCoordPath === 'function') {
     return resolveCoordPath(path.join('triggers', filename), { forWrite: true });
@@ -41,6 +47,8 @@ jest.mock('@modelcontextprotocol/sdk/types.js', () => ({
   ListToolsRequestSchema: 'list',
 }));
 
+jest.mock('../modules/logger', () => mockLog);
+
 jest.mock('fs', () => ({
   existsSync: jest.fn((p) => mockFileStore.has(p) || mockDirStore.has(p)),
   readFileSync: jest.fn((p) => {
@@ -63,6 +71,9 @@ jest.mock('fs', () => ({
   mkdirSync: jest.fn((p) => {
     mockDirStore.add(p);
   }),
+  unlinkSync: jest.fn((p) => {
+    mockFileStore.delete(p);
+  }),
 }));
 
 describe('mcp-server tool handlers', () => {
@@ -72,6 +83,7 @@ describe('mcp-server tool handlers', () => {
   beforeEach(() => {
     mockFileStore.clear();
     mockDirStore.clear();
+    jest.clearAllMocks();
     serverInstance = null;
     process.argv = ['node', 'mcp-server.js', '--agent', 'builder'];
     process.exit = jest.fn();
@@ -155,5 +167,50 @@ describe('mcp-server tool handlers', () => {
     const triggerPath = getTriggerPath('oracle.txt');
     expect(mockFileStore.has(triggerPath)).toBe(true);
     expect(mockFileStore.get(triggerPath)).toMatch(/BUILDER/);
+  });
+
+  test('send_message returns failure when target resolves to empty set', async () => {
+    const callHandler = serverInstance.handlers.get('call');
+    const result = await callHandler({
+      params: {
+        name: 'send_message',
+        arguments: { to: 'not-a-target', content: 'Hello' },
+      },
+    });
+
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload).toEqual(expect.objectContaining({
+      success: false,
+      error: 'no_valid_targets',
+      sent_to: [],
+      message_ids: [],
+    }));
+  });
+
+  test('get_messages recovers from corrupted queue JSON and resets file', async () => {
+    const queuePath = path.join(WORKSPACE_PATH, 'messages', 'queue-2.json');
+    mockFileStore.set(queuePath, '{"broken":');
+
+    const callHandler = serverInstance.handlers.get('call');
+    const result = await callHandler({
+      params: {
+        name: 'get_messages',
+        arguments: { undelivered_only: true },
+      },
+    });
+
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.success).toBe(true);
+    expect(payload.count).toBe(0);
+
+    const preservedCorrupt = Array.from(mockFileStore.keys()).find(
+      candidate => candidate.startsWith(`${queuePath}.corrupt-`)
+    );
+    expect(preservedCorrupt).toBeDefined();
+    expect(mockFileStore.get(queuePath)).toBe('[]');
+    expect(mockLog.error).toHaveBeenCalledWith(
+      'MCP',
+      expect.stringContaining('Corrupted queue file')
+    );
   });
 });

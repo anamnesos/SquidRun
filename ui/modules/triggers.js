@@ -473,7 +473,11 @@ function notifyAgents(agents, message, options = {}) {
     const payload = { panes: notified, message: formatTriggerMessage(message) };
     if (deliveryId) payload.deliveryId = deliveryId;
     if (traceContext) payload.traceContext = traceContext;
-    dispatchInjectMessage(payload);
+    const dispatched = dispatchInjectMessage(payload);
+    if (!dispatched) {
+      log.warn('Trigger', `notifyAgents dispatch failed for panes: ${notified.join(',')}`);
+      return [];
+    }
     logTriggerActivity('Sent (PTY)', notified, message, { mode: 'pty' });
   }
   return notified;
@@ -556,19 +560,42 @@ function sendStaggered(panes, message, meta = {}) {
   });
   if (!mainWindow || mainWindow.isDestroyed()) return false;
   const deliveryId = meta?.deliveryId;
+  let immediateDispatchCount = 0;
   panes.forEach((paneId, index) => {
     const delay = panes.length === 1 || isPriority ? 0 : (index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS);
-    setTimeout(() => {
+    if (delay === 0) {
       const targetWindow = mainWindow;
       if (!targetWindow || targetWindow.isDestroyed()) return;
-      dispatchInjectMessage({
+      const dispatched = dispatchInjectMessage({
         panes: [paneId],
         message,
         deliveryId,
         traceContext,
       });
+      if (dispatched) {
+        immediateDispatchCount += 1;
+      } else {
+        log.warn('Trigger', `sendStaggered immediate dispatch failed for pane ${paneId}`);
+      }
+      return;
+    }
+    setTimeout(() => {
+      const targetWindow = mainWindow;
+      if (!targetWindow || targetWindow.isDestroyed()) return;
+      const dispatched = dispatchInjectMessage({
+        panes: [paneId],
+        message,
+        deliveryId,
+        traceContext,
+      });
+      if (!dispatched) {
+        log.warn('Trigger', `sendStaggered delayed dispatch failed for pane ${paneId}`);
+      }
     }, delay);
   });
+  if (panes.length === 1 || isPriority) {
+    return immediateDispatchCount > 0;
+  }
   return true;
 }
 

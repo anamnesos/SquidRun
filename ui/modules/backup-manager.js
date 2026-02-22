@@ -76,8 +76,10 @@ function safeWriteJson(filePath, data) {
     const tempPath = `${filePath}.tmp`;
     fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
     fs.renameSync(tempPath, filePath);
+    return true;
   } catch (err) {
     log.error('Backup', `Failed to write JSON ${filePath}: ${err.message}`);
+    return false;
   }
 }
 
@@ -345,7 +347,12 @@ function createBackupManager(options = {}) {
       records,
     };
 
-    safeWriteJson(path.join(backupDir, META_FILE), metadata);
+    const metadataPath = path.join(backupDir, META_FILE);
+    const metadataWritten = safeWriteJson(metadataPath, metadata);
+    if (!metadataWritten) {
+      log.warn('Backup', `Aborting backup ${id}: failed to write metadata ${metadataPath}`);
+      return { success: false, error: 'backup_metadata_write_failed' };
+    }
 
     index.backups.unshift({
       id,

@@ -268,6 +268,20 @@ describe('triggers.js module', () => {
       // Pane 2 skipped because stopped
     });
 
+    test('notifyAgents returns empty when dispatchInjectMessage fails', () => {
+      const claudeState = new Map([['1', 'running']]);
+      triggers.init(global.window, claudeState, null);
+      global.window.isDestroyed.mockReturnValue(true);
+
+      const notified = triggers.notifyAgents(['1'], 'hello');
+
+      expect(notified).toEqual([]);
+      expect(global.window.webContents.send).not.toHaveBeenCalledWith(
+        'inject-message',
+        expect.anything()
+      );
+    });
+
     test('sendDirectMessage delivers even when target is not running', () => {
       triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
 

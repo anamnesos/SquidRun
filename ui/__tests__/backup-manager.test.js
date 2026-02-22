@@ -58,6 +58,8 @@ describe('Backup Manager', () => {
     // Default mock implementations
     fs.existsSync.mockReturnValue(false);
     fs.readFileSync.mockReturnValue('{}');
+    fs.writeFileSync.mockImplementation(() => {});
+    fs.renameSync.mockImplementation(() => {});
     fs.statSync.mockReturnValue({
       isDirectory: () => false,
       isFile: () => true,
@@ -297,6 +299,37 @@ describe('Backup Manager', () => {
       const metadata = JSON.parse(metadataWrite[1]);
       expect(metadata.records[0].relativePath).toContain('__global__/');
       expect(metadata.records[0].sourcePath).toBe(path.resolve(globalFile));
+    });
+
+    test('returns failure and skips index update when metadata write fails', () => {
+      fs.existsSync.mockImplementation((targetPath) => {
+        if (String(targetPath).includes('app-status.json')) return true;
+        return false;
+      });
+      fs.readFileSync.mockReturnValue(JSON.stringify({ backups: [] }));
+      fs.statSync.mockReturnValue({
+        isDirectory: () => false,
+        isFile: () => true,
+        size: 50,
+        mtime: new Date(),
+      });
+      fs.renameSync.mockImplementationOnce((fromPath, toPath) => {
+        if (String(toPath).includes('backup.json')) {
+          throw new Error('disk full');
+        }
+      });
+
+      const result = manager.createBackup({ name: 'Fails metadata write' });
+
+      expect(result).toEqual({
+        success: false,
+        error: 'backup_metadata_write_failed',
+      });
+      const indexWrites = fs.writeFileSync.mock.calls.filter(([targetPath]) =>
+        String(targetPath).includes('backup-index.json.tmp')
+      );
+      expect(indexWrites.length).toBe(0);
+      expect(log.warn).toHaveBeenCalledWith('Backup', expect.stringContaining('Aborting backup'));
     });
   });
 
