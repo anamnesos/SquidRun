@@ -140,11 +140,16 @@ function dispatchInjectMessage(payload) {
     }
   }
 
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    // Tag payload so the send-interceptor in squidrun-app (squidrun-app.js)
-    // knows routeInjectMessage was already attempted and skips re-routing.
-    mainWindow.webContents.send('inject-message', { ...payload, _routerAttempted: true });
-    return true;
+  const targetWindow = mainWindow;
+  if (targetWindow && !targetWindow.isDestroyed()) {
+    try {
+      // Tag payload so the send-interceptor in squidrun-app (squidrun-app.js)
+      // knows routeInjectMessage was already attempted and skips re-routing.
+      targetWindow.webContents.send('inject-message', { ...payload, _routerAttempted: true });
+      return true;
+    } catch (err) {
+      log.warn('Trigger', `Inject message dispatch failed: ${err.message}`);
+    }
   }
 
   return false;
@@ -553,6 +558,8 @@ function sendStaggered(panes, message, meta = {}) {
   panes.forEach((paneId, index) => {
     const delay = panes.length === 1 || isPriority ? 0 : (index * STAGGER_BASE_DELAY_MS + Math.random() * STAGGER_RANDOM_MS);
     setTimeout(() => {
+      const targetWindow = mainWindow;
+      if (!targetWindow || targetWindow.isDestroyed()) return;
       dispatchInjectMessage({
         panes: [paneId],
         message,

@@ -106,8 +106,27 @@ async function readQueueMessages(queueFile) {
     return [];
   }
   const content = await fsp.readFile(queueFile, 'utf-8');
-  const parsed = JSON.parse(content);
-  return Array.isArray(parsed) ? parsed : [];
+  if (!content || !content.trim()) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(content);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    log.error('MessageQueue', `Corrupted queue file ${queueFile}; resetting queue`, err);
+    try {
+      await writeQueueMessagesAtomic(queueFile, []);
+    } catch (resetErr) {
+      log.error('MessageQueue', `Failed to reset corrupted queue file ${queueFile}; deleting`, resetErr);
+      try {
+        await fsp.unlink(queueFile);
+      } catch (deleteErr) {
+        log.error('MessageQueue', `Failed to delete corrupted queue file ${queueFile}`, deleteErr);
+      }
+    }
+    return [];
+  }
 }
 
 async function writeQueueMessagesAtomic(queueFile, messages) {
