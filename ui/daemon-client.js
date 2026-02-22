@@ -221,7 +221,11 @@ class DaemonClient extends EventEmitter {
 
         case 'data':
           this.lastActivity.set(msg.paneId, Date.now()); // Track activity
-          this.emit('data', msg.paneId, msg.data);
+          try {
+            this.emit('data', msg.paneId, msg.data);
+          } catch (err) {
+            log.warn('DaemonClient', `Data listener error for pane ${msg.paneId}: ${err.message}`);
+          }
           break;
 
         case 'exit':

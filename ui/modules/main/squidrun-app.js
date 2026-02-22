@@ -599,34 +599,65 @@ class SquidRunApp {
 
   sendToVisibleWindow(channel, payload) {
     const window = this.ctx.mainWindow;
-    if (!window || window.isDestroyed()) return false;
+    if (!this.canSendToWindow(window)) return false;
     const sender = typeof this.mainWindowSendRaw === 'function'
       ? this.mainWindowSendRaw
       : window.webContents.send.bind(window.webContents);
-    sender(channel, payload);
-    return true;
+    try {
+      sender(channel, payload);
+      return true;
+    } catch (err) {
+      log.warn('RendererIPC', `Skipped send for ${channel}: ${err.message}`);
+      return false;
+    }
+  }
+
+  canSendToWindow(windowRef) {
+    if (!windowRef) return false;
+    if (typeof windowRef.isDestroyed === 'function' && windowRef.isDestroyed()) {
+      return false;
+    }
+    const webContents = windowRef.webContents;
+    if (!webContents) return false;
+    if (typeof webContents.isDestroyed === 'function' && webContents.isDestroyed()) {
+      return false;
+    }
+    return typeof webContents.send === 'function';
   }
 
   installMainWindowSendInterceptor() {
     const window = this.ctx.mainWindow;
-    if (!window || window.isDestroyed() || !window.webContents) return;
+    if (!this.canSendToWindow(window)) return;
     if (this.mainWindowSendInterceptInstalled) return;
 
     const originalSend = window.webContents.send.bind(window.webContents);
     this.mainWindowSendRaw = originalSend;
     window.webContents.send = (channel, payload, ...rest) => {
+      if (!this.canSendToWindow(window)) {
+        return false;
+      }
       if (channel === 'inject-message' && this.isHiddenPaneHostModeEnabled()) {
         // If triggers.js already tried routeInjectMessage and it failed,
         // don't re-attempt — just deliver to visible renderer directly.
         if (payload?._routerAttempted) {
           const clean = { ...payload };
           delete clean._routerAttempted;
-          return originalSend(channel, clean, ...rest);
+          try {
+            return originalSend(channel, clean, ...rest);
+          } catch (err) {
+            log.warn('RendererIPC', `Skipped send for ${channel}: ${err.message}`);
+            return false;
+          }
         }
         const handled = this.routeInjectMessage(payload || {});
         if (handled) return;
       }
-      return originalSend(channel, payload, ...rest);
+      try {
+        return originalSend(channel, payload, ...rest);
+      } catch (err) {
+        log.warn('RendererIPC', `Skipped send for ${channel}: ${err.message}`);
+        return false;
+      }
     };
     this.mainWindowSendInterceptInstalled = true;
   }
@@ -2506,7 +2537,7 @@ class SquidRunApp {
         .catch(err => log.error('Plugins', `Error in agent:stateChanged hook: ${err.message}`));
       this.broadcastClaudeState();
       this.activity.logActivity('state', paneId, `Session ended (exit code: ${code})`, { exitCode: code });
-      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+      if (this.canSendToWindow(this.ctx.mainWindow)) {
         this.ctx.mainWindow.webContents.send(`pty-exit-${paneId}`, code);
       }
       if (this.isHiddenPaneHostModeEnabled()) {
@@ -2535,7 +2566,7 @@ class SquidRunApp {
           .catch(err => log.error('Plugins', `Error in daemon:data hook: ${err.message}`));
       }
 
-      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+      if (this.canSendToWindow(this.ctx.mainWindow)) {
         this.ctx.mainWindow.webContents.send(`pty-data-${paneId}`, data);
       }
       if (this.isHiddenPaneHostModeEnabled()) {
