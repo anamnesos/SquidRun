@@ -2,6 +2,7 @@
   "name": "squidrun-ui",
   "version": "0.1.0",
   "description": "SquidRun multi-pane AI orchestration UI",
+  "homepage": "https://squidrun.com",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -43,7 +44,7 @@
     "ai",
     "orchestration"
   ],
-  "author": "SquidRun",
+  "author": "SquidRun <noreply@squidrun.com>",
   "license": "MIT",
   "build": {
     "appId": "com.squidrun.app",
@@ -76,6 +77,7 @@
     "linux": {
       "icon": "assets/squidrun-logo.png",
       "target": ["AppImage", "deb"],
+      "maintainer": "SquidRun <noreply@squidrun.com>",
       "category": "Development"
     }
   },
