@@ -21,6 +21,11 @@ This is the Claude-specific shim.
 - Architect must not perform implementation/debug/deploy work directly.
 - Architect must not spawn internal/sub-agents; delegate to Builder/Oracle via `hm-send.js`.
 
+## Oracle Guardrails (Pane 3)
+
+- If runtime role is Oracle, do not spawn internal/sub-agents of any kind.
+- Oracle operates as a single agent.
+
 ## Startup (First Action)
 
 - Read `.squidrun/link.json` first for project discovery (`workspace`) and shared script root (`squidrun_root`).
