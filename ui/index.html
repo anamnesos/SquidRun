@@ -67,6 +67,58 @@
     </div>
   </div>
 
+  <div class="pane-role-modal-overlay profile-modal-overlay" id="profileModalOverlay" aria-hidden="true">
+    <div class="pane-role-modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profileModalTitle">
+      <div class="pane-role-modal-header">
+        <h2 class="pane-role-modal-title" id="profileModalTitle">User Profile</h2>
+        <button type="button" class="pane-role-modal-close" id="profileModalClose" aria-label="Close user profile">
+          <svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="pane-role-modal-subtitle" id="profileModalSubtitle">Set your preferences so agents can tune responses to your style and experience.</div>
+      <form class="profile-modal-form" id="profileModalForm" novalidate>
+        <label class="setting-field" for="profileNameInput">
+          <span class="setting-label">Name</span>
+          <input type="text" class="settings-input" id="profileNameInput" name="name" placeholder="How should agents address you?">
+          <span class="setting-description">Shown to agents during startup context restoration.</span>
+        </label>
+
+        <label class="setting-field" for="profileExperienceSelect">
+          <span class="setting-label">Experience Level</span>
+          <select class="settings-select" id="profileExperienceSelect" name="experience_level">
+            <option value="">Select experience level</option>
+          </select>
+          <div class="profile-modal-helper" id="profileExperienceHelper" data-schema-key="experience_level" aria-live="polite">Experience-level guidance appears here from profile schema.</div>
+        </label>
+
+        <label class="setting-field" for="profileCommunicationStyleSelect">
+          <span class="setting-label">Communication Style</span>
+          <select class="settings-select" id="profileCommunicationStyleSelect" name="communication_style">
+            <option value="">Select communication style</option>
+          </select>
+          <div class="profile-modal-helper" id="profileCommunicationHelper" data-schema-key="communication_style" aria-live="polite">Communication-style guidance appears here from profile schema.</div>
+        </label>
+
+        <label class="setting-field" for="profileDomainExpertiseInput">
+          <span class="setting-label">Domain Expertise</span>
+          <textarea class="settings-input profile-modal-textarea" id="profileDomainExpertiseInput" name="domain_expertise" rows="3" placeholder="Summarize your technical strengths and project context."></textarea>
+          <span class="setting-description">Freeform context used to calibrate implementation depth and assumptions.</span>
+        </label>
+
+        <label class="setting-field" for="profileNotesInput">
+          <span class="setting-label">Notes</span>
+          <textarea class="settings-input profile-modal-textarea" id="profileNotesInput" name="notes" rows="4" placeholder="Any special instructions for agent behavior or collaboration style."></textarea>
+          <span class="setting-description">Optional reminders that should persist with your profile.</span>
+        </label>
+
+        <div class="profile-modal-actions">
+          <button type="button" class="btn profile-modal-cancel" id="profileModalCancel">Cancel</button>
+          <button type="button" class="btn profile-modal-save" id="profileModalSave">Save Profile</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="header">
     <h1>SquidRun <span class="header-session-badge pending" id="headerSessionBadge" title="Current app session">Session --</span></h1>
     <span class="dry-run-indicator" id="dryRunIndicator" style="display: none;">DRY RUN</span>
@@ -77,6 +129,7 @@
     <div class="header-actions">
       <button class="btn btn-folder" id="selectProjectBtn" title="Choose project folder for all agents"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Project</button>
       <button class="btn btn-restart" id="fullRestartBtn" title="Shutdown cleanly (run 'npm start' to restart)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> Shutdown</button>
+      <button class="btn profile-btn" id="profileBtn" title="View or edit your user profile"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg> Profile</button>
       <button class="btn settings-btn" id="settingsBtn" title="Configure SquidRun settings and permissions"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Settings</button>
       <button class="btn btn-panel" id="panelBtn" title="Toggle right panel (Screenshots, Tests, Activity, etc.)"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg> Panel</button>
     </div>

@@ -728,6 +728,323 @@ function openPaneRoleModal(paneId) {
   overlay.setAttribute('aria-hidden', 'false');
 }
 
+const PROFILE_EDITABLE_FIELDS = Object.freeze([
+  'name',
+  'experience_level',
+  'communication_style',
+  'domain_expertise',
+  'notes',
+]);
+
+const PROFILE_EXPERIENCE_ORDER = Object.freeze(['beginner', 'tinkerer', 'developer', 'expert']);
+const PROFILE_COMMUNICATION_ORDER = Object.freeze(['detailed', 'balanced', 'terse']);
+
+const PROFILE_FALLBACK_SCHEMA = Object.freeze({
+  experience_level: Object.freeze({
+    beginner: 'Learning to code - explain concepts, avoid jargon, confirm before destructive actions',
+    tinkerer: 'Builds real things but not formally trained - explain architecture decisions, skip basics, use plain language',
+    developer: 'Junior dev, knows fundamentals - use technical terms freely, explain only non-obvious tradeoffs',
+    expert: 'Pro dev - be terse, skip explanations unless asked, assume deep knowledge',
+  }),
+  communication_style: Object.freeze({
+    detailed: 'Explain what you are doing and why',
+    balanced: 'Brief context, focus on action',
+    terse: 'Just do it, minimal commentary',
+  }),
+});
+
+let profileModalBusy = false;
+let profileModalSchema = null;
+
+function cloneJsonValue(value) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_) {
+    return null;
+  }
+}
+
+function getProfileFallbackSchema() {
+  const cloned = cloneJsonValue(PROFILE_FALLBACK_SCHEMA);
+  return cloned && typeof cloned === 'object' ? cloned : {};
+}
+
+function isObjectRecord(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function getProfileModalElements() {
+  return {
+    overlay: document.getElementById('profileModalOverlay'),
+    form: document.getElementById('profileModalForm'),
+    closeBtn: document.getElementById('profileModalClose'),
+    cancelBtn: document.getElementById('profileModalCancel'),
+    saveBtn: document.getElementById('profileModalSave'),
+    nameInput: document.getElementById('profileNameInput'),
+    experienceSelect: document.getElementById('profileExperienceSelect'),
+    communicationSelect: document.getElementById('profileCommunicationStyleSelect'),
+    domainTextarea: document.getElementById('profileDomainExpertiseInput'),
+    notesTextarea: document.getElementById('profileNotesInput'),
+    experienceHelper: document.getElementById('profileExperienceHelper'),
+    communicationHelper: document.getElementById('profileCommunicationHelper'),
+  };
+}
+
+function closeProfileModal() {
+  const { overlay } = getProfileModalElements();
+  if (!overlay || !overlay.classList.contains('open')) return false;
+  overlay.classList.remove('open');
+  overlay.setAttribute('aria-hidden', 'true');
+  return true;
+}
+
+function setProfileModalBusyState(isBusy) {
+  profileModalBusy = Boolean(isBusy);
+  const { saveBtn, cancelBtn, closeBtn } = getProfileModalElements();
+  if (saveBtn) saveBtn.disabled = profileModalBusy;
+  if (cancelBtn) cancelBtn.disabled = profileModalBusy;
+  if (closeBtn) closeBtn.disabled = profileModalBusy;
+}
+
+function toDisplayLabel(value) {
+  const raw = String(value || '');
+  if (!raw) return '';
+  return raw
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function normalizeProfileSchemaSection(schema, key, fallback) {
+  const candidate = isObjectRecord(schema) && isObjectRecord(schema[key]) ? schema[key] : null;
+  if (candidate) return candidate;
+  return fallback;
+}
+
+function buildOptionOrder(schemaSection, fallbackOrder = []) {
+  const seen = new Set();
+  const ordered = [];
+  for (const key of fallbackOrder) {
+    if (!schemaSection || !Object.prototype.hasOwnProperty.call(schemaSection, key)) continue;
+    ordered.push(key);
+    seen.add(key);
+  }
+  for (const key of Object.keys(schemaSection || {})) {
+    if (seen.has(key)) continue;
+    ordered.push(key);
+  }
+  return ordered;
+}
+
+function renderProfileHelper(container, schemaSection, optionOrder, selectedValue) {
+  if (!container) return;
+  container.innerHTML = '';
+
+  const list = document.createElement('div');
+  list.className = 'profile-modal-helper-list';
+
+  optionOrder.forEach((optionKey) => {
+    const item = document.createElement('div');
+    item.className = 'profile-modal-helper-item';
+    item.dataset.optionKey = optionKey;
+    if (optionKey === selectedValue) {
+      item.classList.add('selected');
+    }
+
+    const keyEl = document.createElement('span');
+    keyEl.className = 'profile-modal-helper-key';
+    keyEl.textContent = toDisplayLabel(optionKey);
+
+    const textEl = document.createElement('span');
+    textEl.className = 'profile-modal-helper-text';
+    textEl.textContent = String(schemaSection?.[optionKey] || '');
+
+    item.appendChild(keyEl);
+    item.appendChild(textEl);
+    list.appendChild(item);
+  });
+
+  container.appendChild(list);
+}
+
+function highlightProfileHelperSelection(container, selectedValue) {
+  if (!container) return;
+  const items = container.querySelectorAll('.profile-modal-helper-item');
+  items.forEach((item) => {
+    item.classList.toggle('selected', item.dataset.optionKey === String(selectedValue || ''));
+  });
+}
+
+function populateProfileSelect(selectEl, schemaSection, fallbackOrder, selectedValue) {
+  if (!selectEl) return '';
+
+  const current = typeof selectedValue === 'string' ? selectedValue : '';
+  const firstOption = selectEl.querySelector('option[value=""]');
+  const placeholderLabel = firstOption ? firstOption.textContent : 'Select option';
+
+  selectEl.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = placeholderLabel;
+  selectEl.appendChild(placeholder);
+
+  const optionOrder = buildOptionOrder(schemaSection, fallbackOrder);
+  optionOrder.forEach((optionKey) => {
+    const option = document.createElement('option');
+    option.value = optionKey;
+    option.textContent = toDisplayLabel(optionKey);
+    selectEl.appendChild(option);
+  });
+
+  if (current && !optionOrder.includes(current)) {
+    const custom = document.createElement('option');
+    custom.value = current;
+    custom.textContent = toDisplayLabel(current);
+    selectEl.appendChild(custom);
+    optionOrder.push(current);
+  }
+
+  selectEl.value = current;
+  return current;
+}
+
+function normalizeProfilePayload(profile) {
+  const payload = isObjectRecord(profile) ? profile : {};
+  const normalized = {};
+  PROFILE_EDITABLE_FIELDS.forEach((field) => {
+    normalized[field] = typeof payload[field] === 'string' ? payload[field] : '';
+  });
+  return normalized;
+}
+
+function applyProfileToModal(profile) {
+  const {
+    nameInput,
+    experienceSelect,
+    communicationSelect,
+    domainTextarea,
+    notesTextarea,
+    experienceHelper,
+    communicationHelper,
+  } = getProfileModalElements();
+
+  const normalized = normalizeProfilePayload(profile);
+  const schemaSource = isObjectRecord(profile?.schema) ? profile.schema : getProfileFallbackSchema();
+  profileModalSchema = cloneJsonValue(schemaSource) || getProfileFallbackSchema();
+
+  const experienceSchema = normalizeProfileSchemaSection(
+    schemaSource,
+    'experience_level',
+    PROFILE_FALLBACK_SCHEMA.experience_level
+  );
+  const communicationSchema = normalizeProfileSchemaSection(
+    schemaSource,
+    'communication_style',
+    PROFILE_FALLBACK_SCHEMA.communication_style
+  );
+
+  if (nameInput) nameInput.value = normalized.name;
+  if (domainTextarea) domainTextarea.value = normalized.domain_expertise;
+  if (notesTextarea) notesTextarea.value = normalized.notes;
+
+  const selectedExperience = populateProfileSelect(
+    experienceSelect,
+    experienceSchema,
+    PROFILE_EXPERIENCE_ORDER,
+    normalized.experience_level
+  );
+  const selectedCommunication = populateProfileSelect(
+    communicationSelect,
+    communicationSchema,
+    PROFILE_COMMUNICATION_ORDER,
+    normalized.communication_style
+  );
+
+  renderProfileHelper(
+    experienceHelper,
+    experienceSchema,
+    buildOptionOrder(experienceSchema, PROFILE_EXPERIENCE_ORDER),
+    selectedExperience
+  );
+  renderProfileHelper(
+    communicationHelper,
+    communicationSchema,
+    buildOptionOrder(communicationSchema, PROFILE_COMMUNICATION_ORDER),
+    selectedCommunication
+  );
+}
+
+async function openProfileModal() {
+  const { overlay, form } = getProfileModalElements();
+  if (!overlay || !form) return;
+
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden', 'false');
+  setProfileModalBusyState(true);
+
+  try {
+    const result = await ipcRenderer.invoke('get-user-profile');
+    if (!result?.success) {
+      applyProfileToModal({});
+      showStatusNotice(result?.error || 'Failed to load user profile. You can still save a new one.', 'warning', 3200);
+      return;
+    }
+    applyProfileToModal(result.profile || {});
+  } catch (err) {
+    log.error('ProfileModal', `Failed to load profile: ${err?.message || err}`);
+    applyProfileToModal({});
+    showStatusNotice('Failed to load user profile. You can still save a new one.', 'warning', 3200);
+  } finally {
+    setProfileModalBusyState(false);
+  }
+}
+
+function buildProfileSavePayload() {
+  const {
+    nameInput,
+    experienceSelect,
+    communicationSelect,
+    domainTextarea,
+    notesTextarea,
+  } = getProfileModalElements();
+
+  return {
+    name: nameInput?.value || '',
+    experience_level: experienceSelect?.value || '',
+    communication_style: communicationSelect?.value || '',
+    domain_expertise: domainTextarea?.value || '',
+    notes: notesTextarea?.value || '',
+    schema: cloneJsonValue(profileModalSchema) || getProfileFallbackSchema(),
+  };
+}
+
+async function saveProfileFromModal() {
+  if (profileModalBusy) return;
+  setProfileModalBusyState(true);
+
+  try {
+    const payload = buildProfileSavePayload();
+    const result = await ipcRenderer.invoke('save-user-profile', payload);
+    if (!result?.success) {
+      showStatusNotice(result?.error || 'Failed to save user profile.', 'warning', 3200);
+      return;
+    }
+
+    const savedSchema = isObjectRecord(result.profile?.schema)
+      ? result.profile.schema
+      : payload.schema;
+    profileModalSchema = cloneJsonValue(savedSchema) || getProfileFallbackSchema();
+    closeProfileModal();
+    showStatusNotice('User profile saved.', 'info', 2200);
+  } catch (err) {
+    log.error('ProfileModal', `Failed to save profile: ${err?.message || err}`);
+    showStatusNotice('Failed to save user profile.', 'warning', 3200);
+  } finally {
+    setProfileModalBusyState(false);
+  }
+}
+
 function toggleExpandPane(paneId) {
   const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
   const paneLayout = document.querySelector('.pane-layout');
@@ -771,6 +1088,10 @@ function setupEventListeners() {
 
   // Keyboard shortcuts (consolidated — Ctrl+N focus + ESC collapse)
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && closeProfileModal()) {
+      e.preventDefault();
+      return;
+    }
     if (e.key === 'Escape' && closePaneRoleModal()) {
       e.preventDefault();
       return;
@@ -1446,6 +1767,62 @@ function setupEventListeners() {
     });
   }
 
+  // User profile modal controls
+  const profileBtn = document.getElementById('profileBtn');
+  const profileModalOverlay = document.getElementById('profileModalOverlay');
+  const profileModalClose = document.getElementById('profileModalClose');
+  const profileModalCancel = document.getElementById('profileModalCancel');
+  const profileModalSave = document.getElementById('profileModalSave');
+  const profileModalForm = document.getElementById('profileModalForm');
+  const profileExperienceSelect = document.getElementById('profileExperienceSelect');
+  const profileCommunicationSelect = document.getElementById('profileCommunicationStyleSelect');
+  const profileExperienceHelper = document.getElementById('profileExperienceHelper');
+  const profileCommunicationHelper = document.getElementById('profileCommunicationHelper');
+
+  if (profileBtn) {
+    profileBtn.addEventListener('click', () => {
+      void openProfileModal();
+    });
+  }
+  if (profileModalClose) {
+    profileModalClose.addEventListener('click', () => {
+      closeProfileModal();
+    });
+  }
+  if (profileModalCancel) {
+    profileModalCancel.addEventListener('click', () => {
+      closeProfileModal();
+    });
+  }
+  if (profileModalSave) {
+    profileModalSave.addEventListener('click', () => {
+      void saveProfileFromModal();
+    });
+  }
+  if (profileModalForm) {
+    profileModalForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      void saveProfileFromModal();
+    });
+  }
+  if (profileModalOverlay) {
+    profileModalOverlay.addEventListener('click', (event) => {
+      if (event.target === profileModalOverlay) {
+        closeProfileModal();
+      }
+    });
+  }
+  if (profileExperienceSelect) {
+    profileExperienceSelect.addEventListener('change', () => {
+      highlightProfileHelperSelection(profileExperienceHelper, profileExperienceSelect.value);
+    });
+  }
+  if (profileCommunicationSelect) {
+    profileCommunicationSelect.addEventListener('change', () => {
+      highlightProfileHelperSelection(profileCommunicationHelper, profileCommunicationSelect.value);
+    });
+  }
+
   // Lock icon click handler - toggle input lock for pane
   document.querySelectorAll('.lock-icon').forEach(icon => {
     icon.addEventListener('click', (e) => {
@@ -1788,13 +2165,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   const settingsPanel = document.getElementById('settingsPanel');
   const cmdPaletteOverlay = document.getElementById('commandPaletteOverlay');
   const paneRoleModalOverlay = document.getElementById('paneRoleModalOverlay');
+  const profileModalOverlay = document.getElementById('profileModalOverlay');
 
   // Aggregate overlay state: open if ANY overlay is open
   function updateOverlayState() {
     const settingsOpen = settingsPanel && settingsPanel.classList.contains('open');
     const paletteOpen = cmdPaletteOverlay && cmdPaletteOverlay.classList.contains('open');
     const roleModalOpen = paneRoleModalOverlay && paneRoleModalOverlay.classList.contains('open');
-    bus.updateState('system', { overlay: { open: !!(settingsOpen || paletteOpen || roleModalOpen) } });
+    const profileModalOpen = profileModalOverlay && profileModalOverlay.classList.contains('open');
+    bus.updateState('system', { overlay: { open: !!(settingsOpen || paletteOpen || roleModalOpen || profileModalOpen) } });
   }
 
   if (settingsPanel) {
@@ -1836,6 +2215,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     roleModalObserver.observe(paneRoleModalOverlay, { attributes: true, attributeFilter: ['class'] });
     registerRendererLifecycleCleanup(() => roleModalObserver.disconnect());
+  }
+  if (profileModalOverlay) {
+    const profileModalObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.attributeName === 'class') {
+          const isOpen = profileModalOverlay.classList.contains('open');
+          bus.emit(isOpen ? 'overlay.opened' : 'overlay.closed', { paneId: 'system', payload: { overlay: 'profile-modal' }, source: 'renderer.js' });
+          updateOverlayState();
+        }
+      }
+    });
+    profileModalObserver.observe(profileModalOverlay, { attributes: true, attributeFilter: ['class'] });
+    registerRendererLifecycleCleanup(() => profileModalObserver.disconnect());
   }
 
   // 2. resize.requested — window resize events

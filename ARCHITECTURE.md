@@ -112,6 +112,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/ipc/test-execution-handlers.js: Registers IPC channels (detect-test-framework, run-tests, get-test-results, ...).
 - ui/modules/ipc/test-notification-handlers.js: Registers IPC channels (notify-test-failure, get-test-notification-settings, set-test-notification-settings, ...).
 - ui/modules/ipc/transition-ledger-handlers.js: Exports TRANSITION_LEDGER_CHANNEL_ACTIONS, executeTransitionLedgerOperation, registerTransitionLedgerHandlers, unregisterTransitionLedgerHandlers, ....
+- ui/modules/ipc/user-profile-handlers.js: Registers IPC channels (get-user-profile, save-user-profile).
 - ui/modules/ipc/whisper-handlers.js: Registers IPC channels (voice:transcribe).
 - ui/modules/ipc/workflow-handlers.js: Registers IPC channels (workflow-list, workflow-save, workflow-load, ...).
 - ui/modules/knowledge-base.js: Exports KnowledgeBase.
