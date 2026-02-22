@@ -9,6 +9,45 @@
 const DEFAULT_TOAST_TIMEOUT = 5000;
 const DEFAULT_STATUSBAR_TIMEOUT = 6000;
 const FADE_DURATION = 500;
+const activeTimers = new Set();
+const elementTimers = new WeakMap();
+
+function trackTimer(element, callback, timeoutMs) {
+  const handle = setTimeout(() => {
+    activeTimers.delete(handle);
+    if (element && elementTimers.get(element) === handle) {
+      elementTimers.delete(element);
+    }
+    callback();
+  }, timeoutMs);
+
+  // Avoid keeping Node's event loop alive in Jest/CLI contexts.
+  if (handle && typeof handle.unref === 'function') {
+    handle.unref();
+  }
+
+  activeTimers.add(handle);
+  if (element) {
+    elementTimers.set(element, handle);
+  }
+  return handle;
+}
+
+function clearElementTimer(element) {
+  if (!element) return;
+  const handle = elementTimers.get(element);
+  if (!handle) return;
+  clearTimeout(handle);
+  activeTimers.delete(handle);
+  elementTimers.delete(element);
+}
+
+function clearNotificationTimers() {
+  for (const handle of [...activeTimers]) {
+    clearTimeout(handle);
+    activeTimers.delete(handle);
+  }
+}
 
 /**
  * Show a notification to the user.
@@ -39,16 +78,22 @@ function showNotification(message, options = {}) {
  */
 function showToastNotification(message, type, timeout) {
   const existing = document.querySelector('.toast-notification');
-  if (existing) existing.remove();
+  if (existing) {
+    clearElementTimer(existing);
+    existing.remove();
+  }
 
   const toast = document.createElement('div');
   toast.className = `toast-notification toast-${type}`;
   toast.textContent = message;
   document.body.appendChild(toast);
 
-  setTimeout(() => {
+  trackTimer(toast, () => {
     toast.classList.add('toast-fade');
-    setTimeout(() => toast.remove(), FADE_DURATION);
+    trackTimer(toast, () => {
+      clearElementTimer(toast);
+      toast.remove();
+    }, FADE_DURATION);
   }, timeout);
 }
 
@@ -66,7 +111,10 @@ function showStatusbarNotification(message, timeout) {
   notice.style.cssText = 'color: #8fd3ff; margin-left: 8px;';
   statusBar.appendChild(notice);
 
-  setTimeout(() => notice.remove(), timeout);
+  trackTimer(notice, () => {
+    clearElementTimer(notice);
+    notice.remove();
+  }, timeout);
 }
 
 // Legacy API aliases for backward compatibility
@@ -82,6 +130,7 @@ module.exports = {
   showNotification,
   showToast,
   showStatusNotice,
+  clearNotificationTimers,
   // Export constants for testing
   DEFAULT_TOAST_TIMEOUT,
   DEFAULT_STATUSBAR_TIMEOUT,

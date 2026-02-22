@@ -421,12 +421,21 @@ function registerProjectHandlers(ctx, deps) {
       };
     }
 
-    const state = ctx.watcher.readState();
-    state.project = projectPath;
-    ctx.watcher.writeState(state);
+    const previousState = ctx.watcher.readState() || {};
+    const previousProject = Object.prototype.hasOwnProperty.call(previousState, 'project')
+      ? previousState.project
+      : null;
+    ctx.watcher.writeState({
+      ...previousState,
+      project: projectPath,
+    });
 
     const switchResult = await switchProjectWithLifecycle(projectPath, reason);
     if (switchResult?.success === false) {
+      ctx.watcher.writeState({
+        ...previousState,
+        project: previousProject,
+      });
       const switchError = switchResult.detail
         ? `${switchResult.error || switchResult.state || 'unknown'} (${switchResult.detail})`
         : (switchResult.error || switchResult.state || 'unknown');
@@ -458,12 +467,21 @@ function registerProjectHandlers(ctx, deps) {
   }
 
   async function clearProjectContextInternal(reason = 'clear-project-context') {
-    const state = ctx.watcher.readState();
-    state.project = null;
-    ctx.watcher.writeState(state);
+    const previousState = ctx.watcher.readState() || {};
+    const previousProject = Object.prototype.hasOwnProperty.call(previousState, 'project')
+      ? previousState.project
+      : null;
+    ctx.watcher.writeState({
+      ...previousState,
+      project: null,
+    });
 
     const switchResult = await switchProjectWithLifecycle(null, reason);
     if (switchResult?.success === false) {
+      ctx.watcher.writeState({
+        ...previousState,
+        project: previousProject,
+      });
       const switchError = switchResult.detail
         ? `${switchResult.error || switchResult.state || 'unknown'} (${switchResult.detail})`
         : (switchResult.error || switchResult.state || 'unknown');

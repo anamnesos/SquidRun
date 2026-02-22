@@ -5,6 +5,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const os = require('os');
 const { spawnSync } = require('child_process');
 const log = require('../logger');
 const { WORKSPACE_PATH, PROJECT_ROOT, resolvePaneCwd, resolveCoordPath } = require('../../config');
@@ -17,11 +19,53 @@ const CLI_PREFERENCES = {
 };
 const CLI_DISCOVERY_TIMEOUT_MS = 2000;
 const CLI_VERSION_TIMEOUT_MS = 2500;
+const SMTP_PASS_OBFUSCATION_PREFIX = 'obf:v1:';
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric <= 0) return fallback;
   return numeric;
+}
+
+function getSmtpObfuscationKey() {
+  let username = '';
+  try {
+    username = os.userInfo().username || '';
+  } catch {
+    username = process.env.USERNAME || process.env.USER || '';
+  }
+  const seed = `${os.hostname()}|${username}|${process.platform}|${process.arch}`;
+  return crypto.createHash('sha256').update(`squidrun.smtp-password|${seed}`).digest();
+}
+
+function xorWithKey(buffer, key) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) return Buffer.alloc(0);
+  const output = Buffer.alloc(buffer.length);
+  for (let i = 0; i < buffer.length; i += 1) {
+    output[i] = buffer[i] ^ key[i % key.length];
+  }
+  return output;
+}
+
+function obfuscateSmtpPassword(value) {
+  if (typeof value !== 'string' || value.length === 0) return '';
+  if (value.startsWith(SMTP_PASS_OBFUSCATION_PREFIX)) return value;
+  const raw = Buffer.from(value, 'utf-8');
+  const obfuscated = xorWithKey(raw, getSmtpObfuscationKey());
+  return `${SMTP_PASS_OBFUSCATION_PREFIX}${obfuscated.toString('base64')}`;
+}
+
+function deobfuscateSmtpPassword(value) {
+  if (typeof value !== 'string' || value.length === 0) return '';
+  if (!value.startsWith(SMTP_PASS_OBFUSCATION_PREFIX)) return value;
+  const payload = value.slice(SMTP_PASS_OBFUSCATION_PREFIX.length);
+  if (!payload) return '';
+  try {
+    const encoded = Buffer.from(payload, 'base64');
+    return xorWithKey(encoded, getSmtpObfuscationKey()).toString('utf-8');
+  } catch {
+    return '';
+  }
 }
 
 function buildGeminiCommand() {
@@ -48,6 +92,7 @@ const DEFAULT_SETTINGS = {
   smtpHost: '',
   smtpPort: 587,
   smtpSecure: false,
+  smtpRejectUnauthorized: true,
   smtpUser: '',
   smtpPass: '',
   smtpFrom: '',
@@ -103,6 +148,7 @@ class SettingsManager {
       if (fs.existsSync(this.settingsPath)) {
         const content = fs.readFileSync(this.settingsPath, 'utf-8');
         const loaded = JSON.parse(content);
+        loaded.smtpPass = deobfuscateSmtpPassword(loaded.smtpPass);
 
         // Migration: pre-consent builds had no autonomy consent fields.
         // Preserve prior behavior for existing users by marking consent as resolved.
@@ -131,9 +177,12 @@ class SettingsManager {
   saveSettings(settings) {
     try {
       Object.assign(this.ctx.currentSettings, settings);
-      
+
+      const persistedSettings = JSON.parse(JSON.stringify(this.ctx.currentSettings));
+      persistedSettings.smtpPass = obfuscateSmtpPassword(persistedSettings.smtpPass);
+
       const tempPath = this.settingsPath + '.tmp';
-      fs.writeFileSync(tempPath, JSON.stringify(this.ctx.currentSettings, null, 2), 'utf-8');
+      fs.writeFileSync(tempPath, JSON.stringify(persistedSettings, null, 2), 'utf-8');
       fs.renameSync(tempPath, this.settingsPath);
 
       this.writeAppStatus();

@@ -315,6 +315,24 @@ describe('Project Handlers', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('does not exist');
     });
+
+    test('rolls back watcher project state when runtime switch fails', async () => {
+      const watcherState = { project: '/before/project' };
+      ctx.watcher.readState.mockImplementation(() => ({ ...watcherState }));
+      ctx.watcher.writeState.mockImplementation((nextState) => {
+        watcherState.project = nextState.project;
+      });
+      deps.startRuntimeLifecycle.mockImplementationOnce(async () => ({ ok: false, reason: 'boom' }));
+
+      const result = await harness.invoke('set-project-context', { path: '/after/project' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Failed switching project runtime');
+      expect(ctx.watcher.writeState).toHaveBeenCalledTimes(2);
+      expect(ctx.watcher.writeState.mock.calls[0][0].project).toBe(path.resolve('/after/project'));
+      expect(ctx.watcher.writeState.mock.calls[1][0].project).toBe('/before/project');
+      expect(watcherState.project).toBe('/before/project');
+    });
   });
 
   describe('clear-project-context', () => {
@@ -335,6 +353,24 @@ describe('Project Handlers', () => {
       expect(result.success).toBe(true);
       expect(result.mode).toBe('developer');
       expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('project-changed', null);
+    });
+
+    test('restores previous watcher project state when clear lifecycle fails', async () => {
+      const watcherState = { project: '/before/project' };
+      ctx.watcher.readState.mockImplementation(() => ({ ...watcherState }));
+      ctx.watcher.writeState.mockImplementation((nextState) => {
+        watcherState.project = nextState.project;
+      });
+      deps.startRuntimeLifecycle.mockImplementationOnce(async () => ({ ok: false, reason: 'boom' }));
+
+      const result = await harness.invoke('clear-project-context');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Failed clearing project runtime');
+      expect(ctx.watcher.writeState).toHaveBeenCalledTimes(2);
+      expect(ctx.watcher.writeState.mock.calls[0][0].project).toBeNull();
+      expect(ctx.watcher.writeState.mock.calls[1][0].project).toBe('/before/project');
+      expect(watcherState.project).toBe('/before/project');
     });
   });
 

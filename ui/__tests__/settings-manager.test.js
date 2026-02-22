@@ -267,3 +267,47 @@ describe('SettingsManager CLI auto-detection', () => {
     );
   });
 });
+
+describe('SettingsManager SMTP credential persistence', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('obfuscates smtpPass at rest while keeping plaintext in memory', () => {
+    const ctx = {};
+    const manager = new SettingsManager(ctx);
+
+    manager.saveSettings({ smtpPass: 'super-secret' });
+
+    const settingsWrite = fs.writeFileSync.mock.calls.find((call) => String(call[0]).endsWith('settings.json.tmp'));
+    expect(settingsWrite).toBeDefined();
+    const persisted = JSON.parse(settingsWrite[1]);
+    expect(persisted.smtpPass).toMatch(/^obf:v1:/);
+    expect(persisted.smtpPass).not.toBe('super-secret');
+    expect(ctx.currentSettings.smtpPass).toBe('super-secret');
+  });
+
+  test('decodes obfuscated smtpPass on load and keeps TLS verify enabled by default', () => {
+    const firstCtx = {};
+    const firstManager = new SettingsManager(firstCtx);
+    firstManager.saveSettings({ smtpPass: 'mail-pass-123' });
+    const firstWrite = fs.writeFileSync.mock.calls.find((call) => String(call[0]).endsWith('settings.json.tmp'));
+    const encodedPass = JSON.parse(firstWrite[1]).smtpPass;
+
+    jest.clearAllMocks();
+    fs.existsSync.mockImplementation((targetPath) => String(targetPath).endsWith('settings.json'));
+    fs.readFileSync.mockImplementation((targetPath) => {
+      if (String(targetPath).endsWith('settings.json')) {
+        return JSON.stringify({ smtpPass: encodedPass });
+      }
+      return '';
+    });
+
+    const secondCtx = {};
+    const secondManager = new SettingsManager(secondCtx);
+    const loaded = secondManager.loadSettings();
+
+    expect(loaded.smtpPass).toBe('mail-pass-123');
+    expect(loaded.smtpRejectUnauthorized).toBe(true);
+  });
+});

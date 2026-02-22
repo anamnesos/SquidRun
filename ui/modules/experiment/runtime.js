@@ -236,9 +236,14 @@ function getGitFingerprint(cwd) {
   const target = asString(cwd, path.join(WORKSPACE_PATH, '..'));
   const fallback = { sha: null, branch: null, dirty: null };
   try {
-    const sha = asString(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: target, encoding: 'utf-8' }), '');
-    const branch = asString(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: target, encoding: 'utf-8' }), '');
-    const porcelain = asString(execFileSync('git', ['status', '--porcelain'], { cwd: target, encoding: 'utf-8' }), '');
+    const execOptions = {
+      cwd: target,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    };
+    const sha = asString(execFileSync('git', ['rev-parse', 'HEAD'], execOptions), '');
+    const branch = asString(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], execOptions), '');
+    const porcelain = asString(execFileSync('git', ['status', '--porcelain'], execOptions), '');
     return {
       sha: sha || null,
       branch: branch || null,

@@ -357,21 +357,29 @@ function registerSettingsHandlers(ctx, deps) {
 
       // Update or add each key
       for (const [key, value] of Object.entries(updates)) {
-        if (!value) continue; // Skip empty values
-
+        const normalizedValue = value === null || value === undefined ? '' : String(value);
         const regex = new RegExp(`^${key}=.*$`, 'm');
+        if (normalizedValue.length === 0) {
+          content = content.replace(new RegExp(`^${key}=.*\\r?\\n?`, 'gm'), '');
+          delete process.env[key];
+          continue;
+        }
+
         if (regex.test(content)) {
-          content = content.replace(regex, `${key}=${value}`);
+          content = content.replace(regex, `${key}=${normalizedValue}`);
         } else {
-          content = content.trim() + `\n${key}=${value}`;
+          content = content.trim().length > 0
+            ? `${content.trim()}\n${key}=${normalizedValue}`
+            : `${key}=${normalizedValue}`;
         }
 
         // Update process.env for immediate use
-        process.env[key] = value;
+        process.env[key] = normalizedValue;
       }
 
       // Write .env
-      fs.writeFileSync(ENV_PATH, content.trim() + '\n', 'utf-8');
+      const normalizedContent = content.trim();
+      fs.writeFileSync(ENV_PATH, normalizedContent ? `${normalizedContent}\n` : '', 'utf-8');
 
       const capabilities = getFeatureCapabilities(process.env);
       const mainWindow = ctx.mainWindow;

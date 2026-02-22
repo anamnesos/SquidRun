@@ -408,16 +408,30 @@ describe('Settings Handlers', () => {
       expect(writtenContent).toContain('RECRAFT_API_KEY=rk-new');
     });
 
-    test('skips empty values', async () => {
+    test('clears existing key when value is empty string', async () => {
+      process.env.OPENAI_API_KEY = 'sk-existing';
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockReturnValue('OPENAI_API_KEY=sk-existing\nOTHER=val\n');
+
       const result = await harness.invoke('set-api-keys', { OPENAI_API_KEY: '' });
       expect(result.success).toBe(true);
-      // Should not have written anything meaningful
+
+      const writtenContent = fs.writeFileSync.mock.calls[0][1];
+      expect(writtenContent).not.toContain('OPENAI_API_KEY=');
+      expect(writtenContent).toContain('OTHER=val');
+      expect(process.env.OPENAI_API_KEY).toBeUndefined();
     });
 
     test('allows empty value (clears key)', async () => {
-      // Empty string passes validator since validators check !v first
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockReturnValue('ANTHROPIC_API_KEY=sk-ant-test\n');
+
       const result = await harness.invoke('set-api-keys', { ANTHROPIC_API_KEY: '' });
       expect(result.success).toBe(true);
+      const writtenContent = fs.writeFileSync.mock.calls[0][1];
+      expect(writtenContent).toBe('');
+      expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
     });
 
     test('sends feature-capabilities-updated to renderer', async () => {
