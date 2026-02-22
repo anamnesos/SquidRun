@@ -936,12 +936,13 @@ describe('hm-send retry behavior', () => {
 
     try {
       const result = await runHmSend(
-        ['builder', message, '--timeout', '80', '--retries', '1'],
+        ['builder', message, '--role', 'builder', '--timeout', '80', '--retries', '1'],
         { HM_SEND_PORT: String(port) }
       );
 
       expect(result.code).toBe(0);
       expect(sendAttempts).toHaveLength(2);
+      expect(sendAttempts[0].target).toBe('builder');
       expect(result.stderr).toContain('Wrote trigger fallback');
       expect(fs.existsSync(triggerPath)).toBe(true);
       const fallbackContent = fs.readFileSync(triggerPath, 'utf8');
@@ -1069,6 +1070,7 @@ describe('hm-send retry behavior', () => {
       );
 
       expect(result.code).toBe(0);
+      expect(result.stderr).not.toContain("rerouted target 'director' to 'builder'");
       expect(result.stderr.toLowerCase()).toContain('architect.txt');
       expect(fs.existsSync(triggerPath)).toBe(true);
       const fallbackContent = fs.readFileSync(triggerPath, 'utf8');
