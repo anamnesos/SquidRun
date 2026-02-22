@@ -4,6 +4,12 @@ const log = require('../logger');
 const { resolveCoordPath } = require('../../config');
 const { runMigrations } = require('./migrations');
 
+/**
+ * SQLite Driver Matrix:
+ * - Electron runtime (Node 18 in this app): use better-sqlite3.
+ * - CLI scripts (system Node 22+): use node:sqlite.
+ * Why: node:sqlite is not available in Electron's current bundled Node runtime.
+ */
 function resolveDefaultDbPath() {
   if (typeof resolveCoordPath !== 'function') {
     throw new Error('resolveCoordPath unavailable; cannot resolve runtime/team-memory.sqlite');
@@ -15,7 +21,7 @@ const DEFAULT_DB_PATH = resolveDefaultDbPath();
 
 function loadSqliteDriver() {
   try {
-     
+    // CLI path (Node 22+): prefer built-in sqlite.
     const mod = require('node:sqlite');
     if (mod && typeof mod.DatabaseSync === 'function') {
       return {
@@ -28,7 +34,7 @@ function loadSqliteDriver() {
   }
 
   try {
-     
+    // Electron runtime fallback (Node 18): native addon driver.
     const BetterSqlite3 = require('better-sqlite3');
     return {
       name: 'better-sqlite3',
@@ -75,6 +81,7 @@ class TeamMemoryStore {
     try {
       this.db = driver.create(this.dbPath);
       this.driverName = driver.name;
+      log.info('TeamMemory', `SQLite driver selected: ${this.driverName} (Node ${process.versions.node})`);
       this._applyPragmas();
 
       const migrationResult = runMigrations(this.db, { nowMs: options.nowMs });

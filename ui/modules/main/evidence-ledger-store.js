@@ -1,6 +1,11 @@
 /**
  * Evidence Ledger Store
  * Durable append/query store for canonical event envelopes.
+ *
+ * SQLite Driver Matrix:
+ * - Electron runtime (Node 18 in this app): use better-sqlite3.
+ * - CLI scripts (system Node 22+): use node:sqlite.
+ * Why: node:sqlite is not available in Electron's current bundled Node runtime.
  */
 
 const fs = require('fs');
@@ -414,7 +419,7 @@ function mapCommsRow(row) {
 
 function loadSqliteDriver() {
   try {
-    // Node 22+ built-in SQLite (experimental but available in this runtime).
+    // CLI path (Node 22+): prefer built-in sqlite.
      
     const mod = require('node:sqlite');
     if (mod && typeof mod.DatabaseSync === 'function') {
@@ -428,6 +433,7 @@ function loadSqliteDriver() {
   }
 
   try {
+    // Electron runtime fallback (Node 18): native addon driver.
      
     const BetterSqlite3 = require('better-sqlite3');
     return {
@@ -480,6 +486,7 @@ class EvidenceLedgerStore {
     try {
       this.db = driver.create(this.dbPath);
       this.driverName = driver.name;
+      log.info('EvidenceLedger', `SQLite driver selected: ${this.driverName} (Node ${process.versions.node})`);
       this._applyPragmas();
       this._migrate();
       this.available = true;
