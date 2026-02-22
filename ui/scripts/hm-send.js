@@ -71,8 +71,10 @@ const DEFAULT_ROLE_BY_PANE = Object.freeze({
 
 if (args.length < 2) {
   console.log('Usage: node hm-send.js <target> <message> [--role <role>] [--priority urgent]');
+  console.log('   or: node hm-send.js <target> --file <message-file> [--role <role>] [--priority urgent]');
   console.log('  target: paneId (1,2,3), role name (architect, builder, oracle), or user/telegram');
   console.log('  message: text to send');
+  console.log('  --file: read full message body from a UTF-8 text file');
   console.log('  --role: your role (for identification)');
   console.log('  --priority: normal or urgent');
   console.log(`  --timeout: ack timeout in ms (default: ${DEFAULT_ACK_TIMEOUT_MS})`);
@@ -88,6 +90,7 @@ let priority = 'normal';
 let ackTimeoutMs = DEFAULT_ACK_TIMEOUT_MS;
 let retries = DEFAULT_RETRIES;
 let enableFallback = true;
+let messageFilePath = null;
 
 // Collect message from all args between target and first --flag
 // This handles PowerShell splitting quoted strings into multiple args
@@ -103,6 +106,15 @@ for (; i < args.length; i++) {
   if (args[i] === '--role' && args[i+1]) {
     role = args[i+1];
     i++;
+  }
+  if (args[i] === '--file') {
+    if (args[i + 1]) {
+      messageFilePath = args[i + 1];
+      i++;
+    } else {
+      console.error('--file requires a file path.');
+      process.exit(1);
+    }
   }
   if (args[i] === '--priority' && args[i+1]) {
     priority = args[i+1];
@@ -127,7 +139,16 @@ for (; i < args.length; i++) {
   }
 }
 
-const message = messageParts.join(' ');
+let message = messageParts.join(' ');
+if (messageFilePath) {
+  const resolvedMessageFilePath = path.resolve(messageFilePath);
+  try {
+    message = fs.readFileSync(resolvedMessageFilePath, 'utf8');
+  } catch (err) {
+    console.error(`Failed to read message file '${resolvedMessageFilePath}': ${err.message}`);
+    process.exit(1);
+  }
+}
 if (!message) {
   console.error('Message cannot be empty.');
   process.exit(1);

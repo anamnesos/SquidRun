@@ -884,6 +884,72 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('loads outbound message content from --file when provided', async () => {
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-file-'));
+    const messageFilePath = path.join(tempDir, 'payload.txt');
+    const uniqueSuffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const messageFromFile = `(TEST #3e): file payload ${uniqueSuffix}\nline two\nline three`;
+    fs.writeFileSync(messageFilePath, messageFromFile, 'utf8');
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            status: 'routed',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['builder', '--file', messageFilePath, '--timeout', '80', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port) }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0].content).toBe(messageFromFile);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   test('falls back to trigger file with complete message after websocket retries exhaust', async () => {
     const sendAttempts = [];
     let server;
