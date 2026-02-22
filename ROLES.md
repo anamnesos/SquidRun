@@ -43,6 +43,7 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 - App source: `./ui/`
 - Tests: `./ui/__tests__/`
 - Agent messaging: `node ui/scripts/hm-send.js <target> "(ROLE #N): message"`
+- Comms history: `node ui/scripts/hm-comms.js history --last N` (also `--session N`, `--between <sender> <target>`, `--json`)
 - Coordination state root: `.squidrun/`
 - Terminal output is user-facing; agent-to-agent communication uses `hm-send.js`
 

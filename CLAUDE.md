@@ -26,7 +26,7 @@ This is the Claude-specific shim.
 - Read `.squidrun/link.json` first for project discovery (`workspace`) and shared script root (`squidrun_root`).
 - Read the session handoff index: `.squidrun/handoffs/session.md` — contains previous session context, decisions, and pending work.
 - Treat `.squidrun/app-status.json` as source of truth for the active session number; `link.json.session_id` is bootstrap metadata and may be stale.
-- For journal/database checks, use `.squidrun/runtime/evidence-ledger.db`.
+- For comms history, use: `node ui/scripts/hm-comms.js history --last N` (do NOT query the DB directly).
 - Then follow the full startup baseline in `ROLES.md`.
 
 ## User Profile
