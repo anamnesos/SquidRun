@@ -33,7 +33,7 @@ describe('whisper handlers', () => {
   });
 
   test('returns INVALID_AUDIO_DATA when payload is not a buffer', async () => {
-    process.env.OPENAI_API_KEY = 'sk-test-key';
+    process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
     registerWhisperHandlers(ctx);
     const result = await harness.invoke('voice:transcribe', 'not-a-buffer');
     expect(result.success).toBe(false);
@@ -41,7 +41,7 @@ describe('whisper handlers', () => {
   });
 
   test('returns INVALID_AUDIO_DATA for null payload', async () => {
-    process.env.OPENAI_API_KEY = 'sk-test-key';
+    process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
     registerWhisperHandlers(ctx);
     const result = await harness.invoke('voice:transcribe', null);
     expect(result.success).toBe(false);
@@ -49,7 +49,7 @@ describe('whisper handlers', () => {
   });
 
   test('successful transcription with Buffer', async () => {
-    process.env.OPENAI_API_KEY = 'sk-test-key';
+    process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
     const mockTranscribe = jest.fn().mockResolvedValue('hello world');
     registerWhisperHandlers(ctx, { callWhisperApi: mockTranscribe });
 
@@ -57,11 +57,11 @@ describe('whisper handlers', () => {
     const result = await harness.invoke('voice:transcribe', buf);
     expect(result.success).toBe(true);
     expect(result.text).toBe('hello world');
-    expect(mockTranscribe).toHaveBeenCalledWith('sk-test-key', buf);
+    expect(mockTranscribe).toHaveBeenCalledWith('sk-test-fake-key-do-not-use', buf);
   });
 
   test('accepts Uint8Array and converts to Buffer', async () => {
-    process.env.OPENAI_API_KEY = 'sk-test-key';
+    process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
     const mockTranscribe = jest.fn().mockResolvedValue('typed array text');
     registerWhisperHandlers(ctx, { callWhisperApi: mockTranscribe });
 
@@ -73,7 +73,7 @@ describe('whisper handlers', () => {
   });
 
   test('maps timeout error to WHISPER_TIMEOUT', async () => {
-    process.env.OPENAI_API_KEY = 'sk-test-key';
+    process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
     registerWhisperHandlers(ctx, {
       callWhisperApi: jest.fn().mockRejectedValue(new Error('Whisper API timeout (30s)')),
     });
@@ -83,7 +83,7 @@ describe('whisper handlers', () => {
   });
 
   test('maps 401 error to OPENAI_AUTH_ERROR', async () => {
-    process.env.OPENAI_API_KEY = 'sk-test-key';
+    process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
     registerWhisperHandlers(ctx, {
       callWhisperApi: jest.fn().mockRejectedValue(new Error('Whisper API 401: unauthorized')),
     });
@@ -93,7 +93,7 @@ describe('whisper handlers', () => {
   });
 
   test('maps 403 error to OPENAI_AUTH_ERROR', async () => {
-    process.env.OPENAI_API_KEY = 'sk-test-key';
+    process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
     registerWhisperHandlers(ctx, {
       callWhisperApi: jest.fn().mockRejectedValue(new Error('Whisper API 403: forbidden')),
     });
@@ -103,7 +103,7 @@ describe('whisper handlers', () => {
   });
 
   test('maps parse error to WHISPER_RESPONSE_INVALID', async () => {
-    process.env.OPENAI_API_KEY = 'sk-test-key';
+    process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
     registerWhisperHandlers(ctx, {
       callWhisperApi: jest.fn().mockRejectedValue(new Error('Failed to parse Whisper response')),
     });
@@ -113,7 +113,7 @@ describe('whisper handlers', () => {
   });
 
   test('maps generic error to WHISPER_TRANSCRIPTION_FAILED', async () => {
-    process.env.OPENAI_API_KEY = 'sk-test-key';
+    process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
     registerWhisperHandlers(ctx, {
       callWhisperApi: jest.fn().mockRejectedValue(new Error('Something unexpected')),
     });
@@ -124,7 +124,7 @@ describe('whisper handlers', () => {
   });
 
   test('maps error with no message property', async () => {
-    process.env.OPENAI_API_KEY = 'sk-test-key';
+    process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
     registerWhisperHandlers(ctx, {
       callWhisperApi: jest.fn().mockRejectedValue({}),
     });

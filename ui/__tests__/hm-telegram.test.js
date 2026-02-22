@@ -58,7 +58,7 @@ describe('hm-telegram', () => {
     });
 
     const result = await hmTelegram.sendTelegram('test message', {
-      TELEGRAM_BOT_TOKEN: 'bot-token',
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
       TELEGRAM_CHAT_ID: '123456',
     });
 
@@ -67,7 +67,7 @@ describe('hm-telegram', () => {
     expect(https.request).toHaveBeenCalledWith(
       expect.objectContaining({
         method: 'POST',
-        path: '/botbot-token/sendMessage',
+        path: '/bot123456789:fake_telegram_bot_token_do_not_use/sendMessage',
       }),
       expect.any(Function)
     );
@@ -80,7 +80,7 @@ describe('hm-telegram', () => {
     });
 
     const result = await hmTelegram.sendTelegram('test message', {
-      TELEGRAM_BOT_TOKEN: 'bot-token',
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
       TELEGRAM_CHAT_ID: '123456',
     });
 
@@ -98,7 +98,7 @@ describe('hm-telegram', () => {
     });
 
     const result = await hmTelegram.sendTelegram('journal me', {
-      TELEGRAM_BOT_TOKEN: 'bot-token',
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
       TELEGRAM_CHAT_ID: '654321',
     }, {
       sessionId: 'app-session-2',

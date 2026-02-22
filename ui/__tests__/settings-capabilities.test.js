@@ -44,7 +44,7 @@ describe('settings feature capabilities', () => {
   });
 
   test('get-feature-capabilities reflects process.env key availability', async () => {
-    process.env.RECRAFT_API_KEY = 'recraft-test-key';
+    process.env.RECRAFT_API_KEY = 'rk-test-fake-key-do-not-use';
 
     const result = await harness.invoke('get-feature-capabilities');
 
@@ -58,7 +58,7 @@ describe('settings feature capabilities', () => {
 
   test('set-api-keys emits feature-capabilities-updated and returns capabilities', async () => {
     const result = await harness.invoke('set-api-keys', {
-      OPENAI_API_KEY: 'sk-test-key',
+      OPENAI_API_KEY: 'sk-test-fake-key-do-not-use',
     });
 
     expect(result.success).toBe(true);
@@ -68,7 +68,7 @@ describe('settings feature capabilities', () => {
       recraftAvailable: false,
       openaiAvailable: true,
     });
-    expect(process.env.OPENAI_API_KEY).toBe('sk-test-key');
+    expect(process.env.OPENAI_API_KEY).toBe('sk-test-fake-key-do-not-use');
     expect(fs.writeFileSync).toHaveBeenCalled();
     expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith(
       'feature-capabilities-updated',

@@ -57,8 +57,8 @@ describe('hm-sms', () => {
     });
 
     const result = await hmSms.sendSms('test message', {
-      TWILIO_ACCOUNT_SID: 'AC123',
-      TWILIO_AUTH_TOKEN: 'token123',
+      TWILIO_ACCOUNT_SID: 'AC_TEST_FAKE_ACCOUNT_SID_DO_NOT_USE',
+      TWILIO_AUTH_TOKEN: 'twilio_auth_token_fake_do_not_use',
       TWILIO_PHONE_NUMBER: '+15550001111',
       SMS_RECIPIENT: '+15551234567',
     });
@@ -68,7 +68,7 @@ describe('hm-sms', () => {
     expect(https.request).toHaveBeenCalledWith(
       expect.objectContaining({
         method: 'POST',
-        path: '/2010-04-01/Accounts/AC123/Messages.json',
+        path: '/2010-04-01/Accounts/AC_TEST_FAKE_ACCOUNT_SID_DO_NOT_USE/Messages.json',
       }),
       expect.any(Function)
     );
@@ -80,8 +80,8 @@ describe('hm-sms', () => {
     });
 
     const result = await hmSms.sendSms('test message', {
-      TWILIO_ACCOUNT_SID: 'AC123',
-      TWILIO_AUTH_TOKEN: 'token123',
+      TWILIO_ACCOUNT_SID: 'AC_TEST_FAKE_ACCOUNT_SID_DO_NOT_USE',
+      TWILIO_AUTH_TOKEN: 'twilio_auth_token_fake_do_not_use',
       TWILIO_PHONE_NUMBER: '+15550001111',
       SMS_RECIPIENT: '+15551234567',
     });
@@ -97,8 +97,8 @@ describe('hm-sms', () => {
     });
 
     const result = await hmSms.sendSms('journal me', {
-      TWILIO_ACCOUNT_SID: 'AC123',
-      TWILIO_AUTH_TOKEN: 'token123',
+      TWILIO_ACCOUNT_SID: 'AC_TEST_FAKE_ACCOUNT_SID_DO_NOT_USE',
+      TWILIO_AUTH_TOKEN: 'twilio_auth_token_fake_do_not_use',
       TWILIO_PHONE_NUMBER: '+15550001111',
       SMS_RECIPIENT: '+15551234567',
     }, {

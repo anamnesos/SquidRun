@@ -36,7 +36,6 @@ const createResponse = ({ ok = true, status = 200, payload = {} } = {}) => ({
   status,
   json: jest.fn().mockResolvedValue(payload),
 });
-
 const createImageDownloadResponse = ({ ok = true, status = 200, data = Buffer.from('fake-png') } = {}) => ({
   ok,
   status,
@@ -69,29 +68,29 @@ describe('Image Generation Module', () => {
     });
 
     test('returns recraft when RECRAFT_API_KEY is set', () => {
-      process.env.RECRAFT_API_KEY = 'test-recraft-key';
+      process.env.RECRAFT_API_KEY = 'rk-test-fake-key-do-not-use';
       expect(resolveProvider()).toBe('recraft');
     });
 
     test('returns openai when only OPENAI_API_KEY is set', () => {
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
       expect(resolveProvider()).toBe('openai');
     });
 
     test('prefers recraft when both keys set', () => {
-      process.env.RECRAFT_API_KEY = 'test-recraft-key';
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.RECRAFT_API_KEY = 'rk-test-fake-key-do-not-use';
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
       expect(resolveProvider()).toBe('recraft');
     });
 
     test('respects preferred provider when key available', () => {
-      process.env.RECRAFT_API_KEY = 'test-recraft-key';
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.RECRAFT_API_KEY = 'rk-test-fake-key-do-not-use';
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
       expect(resolveProvider('openai')).toBe('openai');
     });
 
     test('falls back when preferred provider key missing', () => {
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
       expect(resolveProvider('recraft')).toBe('openai');
     });
   });
@@ -110,7 +109,7 @@ describe('Image Generation Module', () => {
     });
 
     test('generates via Recraft when key is set', async () => {
-      process.env.RECRAFT_API_KEY = 'test-recraft-key';
+      process.env.RECRAFT_API_KEY = 'rk-test-fake-key-do-not-use';
 
       const recraftPayload = { data: [{ url: 'https://recraft.ai/image.png' }] };
       const imageData = Buffer.from('fake-png-data');
@@ -132,11 +131,11 @@ describe('Image Generation Module', () => {
       expect(body.prompt).toBe('a cat');
       expect(body.model).toBe('recraftv3');
       expect(body.style).toBe('realistic_image');
-      expect(recraftOpts.headers['Authorization']).toBe('Bearer test-recraft-key');
+      expect(recraftOpts.headers['Authorization']).toBe('Bearer rk-test-fake-key-do-not-use');
     });
 
     test('generates via OpenAI when only OpenAI key is set', async () => {
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
 
       const openaiPayload = { data: [{ b64_json: Buffer.from('fake-png').toString('base64') }] };
       global.fetch.mockResolvedValueOnce(createResponse({ payload: openaiPayload }));
@@ -152,12 +151,12 @@ describe('Image Generation Module', () => {
       expect(body.prompt).toBe('a dog');
       expect(body.model).toBe('gpt-image-1');
       expect(body.quality).toBe('auto');
-      expect(openaiOpts.headers['Authorization']).toBe('Bearer sk-test');
+      expect(openaiOpts.headers['Authorization']).toBe('Bearer sk-test-fake-key-do-not-use');
     });
 
     test('falls back to OpenAI when Recraft fails', async () => {
-      process.env.RECRAFT_API_KEY = 'test-recraft-key';
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.RECRAFT_API_KEY = 'rk-test-fake-key-do-not-use';
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
 
       // Recraft fails
       global.fetch.mockResolvedValueOnce(createResponse({
@@ -177,7 +176,7 @@ describe('Image Generation Module', () => {
     });
 
     test('throws when Recraft fails and no OpenAI fallback key', async () => {
-      process.env.RECRAFT_API_KEY = 'test-recraft-key';
+      process.env.RECRAFT_API_KEY = 'rk-test-fake-key-do-not-use';
 
       global.fetch.mockResolvedValueOnce(createResponse({
         ok: false,
@@ -190,7 +189,7 @@ describe('Image Generation Module', () => {
     });
 
     test('throws when Recraft returns no image URL', async () => {
-      process.env.RECRAFT_API_KEY = 'test-recraft-key';
+      process.env.RECRAFT_API_KEY = 'rk-test-fake-key-do-not-use';
 
       global.fetch.mockResolvedValueOnce(createResponse({ payload: { data: [] } }));
 
@@ -198,7 +197,7 @@ describe('Image Generation Module', () => {
     });
 
     test('throws when OpenAI returns no b64_json', async () => {
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
 
       global.fetch.mockResolvedValueOnce(createResponse({ payload: { data: [] } }));
 
@@ -206,7 +205,7 @@ describe('Image Generation Module', () => {
     });
 
     test('saves image to generated-images directory', async () => {
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
 
       const imageB64 = Buffer.from('test-image-data').toString('base64');
       global.fetch.mockResolvedValueOnce(createResponse({
@@ -223,7 +222,7 @@ describe('Image Generation Module', () => {
     });
 
     test('writes history entry after generation', async () => {
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
 
       const imageB64 = Buffer.from('hist-test').toString('base64');
       global.fetch.mockResolvedValueOnce(createResponse({
@@ -242,7 +241,7 @@ describe('Image Generation Module', () => {
     });
 
     test('defaults style and size for invalid values', async () => {
-      process.env.RECRAFT_API_KEY = 'test-recraft-key';
+      process.env.RECRAFT_API_KEY = 'rk-test-fake-key-do-not-use';
 
       const recraftPayload = { data: [{ url: 'https://recraft.ai/img.png' }] };
       global.fetch
@@ -260,7 +259,7 @@ describe('Image Generation Module', () => {
   describe('retry logic', () => {
     test('retries on 429 and succeeds', async () => {
       jest.useFakeTimers();
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
 
       const rateLimited = createResponse({
         ok: false,
@@ -284,7 +283,7 @@ describe('Image Generation Module', () => {
 
     test('throws after exhausting 429 retries', async () => {
       jest.useFakeTimers();
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
 
       const rateLimited = createResponse({
         ok: false,
@@ -331,7 +330,7 @@ describe('Image Generation Module', () => {
   describe('fetch unavailable', () => {
     test('throws when fetch is not available', async () => {
       delete global.fetch;
-      process.env.OPENAI_API_KEY = 'sk-test';
+      process.env.OPENAI_API_KEY = 'sk-test-fake-key-do-not-use';
       await expect(generateImage({ prompt: 'no fetch' })).rejects.toThrow('global fetch is unavailable');
     });
   });
@@ -344,3 +343,4 @@ describe('Image Generation Module', () => {
     });
   });
 });
+
