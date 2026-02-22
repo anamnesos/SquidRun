@@ -49,7 +49,7 @@ describe('telegram-poller', () => {
   test('start and stop manage running state', () => {
     const started = telegramPoller.start({
       env: {
-        TELEGRAM_BOT_TOKEN: 'token123',
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
         TELEGRAM_CHAT_ID: '123456',
       },
       pollIntervalMs: 2000,
@@ -68,7 +68,7 @@ describe('telegram-poller', () => {
 
     telegramPoller.start({
       env: {
-        TELEGRAM_BOT_TOKEN: 'token123',
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
         TELEGRAM_CHAT_ID: '123456',
       },
       onMessage,
@@ -104,7 +104,7 @@ describe('telegram-poller', () => {
 
     telegramPoller.start({
       env: {
-        TELEGRAM_BOT_TOKEN: 'token123',
+        TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
         TELEGRAM_CHAT_ID: '123456',
       },
       onMessage,

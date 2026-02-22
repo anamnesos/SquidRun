@@ -49,8 +49,8 @@ describe('sms-poller', () => {
   test('start and stop manage running state', () => {
     const started = smsPoller.start({
       env: {
-        TWILIO_ACCOUNT_SID: 'AC123',
-        TWILIO_AUTH_TOKEN: 'token123',
+        TWILIO_ACCOUNT_SID: 'AC_TEST_FAKE_ACCOUNT_SID_DO_NOT_USE',
+        TWILIO_AUTH_TOKEN: 'twilio_auth_token_fake_do_not_use',
         TWILIO_PHONE_NUMBER: '+15550001111',
         SMS_RECIPIENT: '+15551234567',
       },
@@ -72,8 +72,8 @@ describe('sms-poller', () => {
 
     smsPoller.start({
       env: {
-        TWILIO_ACCOUNT_SID: 'AC123',
-        TWILIO_AUTH_TOKEN: 'token123',
+        TWILIO_ACCOUNT_SID: 'AC_TEST_FAKE_ACCOUNT_SID_DO_NOT_USE',
+        TWILIO_AUTH_TOKEN: 'twilio_auth_token_fake_do_not_use',
         TWILIO_PHONE_NUMBER: '+15550001111',
         SMS_RECIPIENT: '+15551234567',
       },

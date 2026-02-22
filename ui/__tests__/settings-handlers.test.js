@@ -278,14 +278,14 @@ describe('Settings Handlers', () => {
     test('returns masked keys from .env file', async () => {
       jest.spyOn(fs, 'existsSync').mockReturnValue(true);
       jest.spyOn(fs, 'readFileSync').mockReturnValue(
-        'ANTHROPIC_API_KEY=sk-ant-1234567890abcdef\nOPENAI_API_KEY=sk-proj-xyz123\nGITHUB_TOKEN=ghp_test_abcdef\nTELEGRAM_CHAT_ID=12345'
+        'ANTHROPIC_API_KEY=sk-ant-test-fake-key-do-not-use\nOPENAI_API_KEY=sk-test-fake-key-do-not-use\nGITHUB_TOKEN=ghp_fake_test_token_do_not_use\nTELEGRAM_CHAT_ID=12345'
       );
 
       const result = await harness.invoke('get-api-keys');
 
-      expect(result.ANTHROPIC_API_KEY).toBe('***cdef');
-      expect(result.OPENAI_API_KEY).toBe('***z123');
-      expect(result.GITHUB_TOKEN).toBe('***cdef');
+      expect(result.ANTHROPIC_API_KEY).toBe('***-use');
+      expect(result.OPENAI_API_KEY).toBe('***-use');
+      expect(result.GITHUB_TOKEN).toBe('***_use');
       expect(result.TELEGRAM_CHAT_ID).toBe('***2345');
       expect(result.RECRAFT_API_KEY).toBeNull(); // not in .env
     });
@@ -310,22 +310,22 @@ describe('Settings Handlers', () => {
 
     test('ignores non-whitelisted env vars', async () => {
       jest.spyOn(fs, 'existsSync').mockReturnValue(true);
-      jest.spyOn(fs, 'readFileSync').mockReturnValue('SECRET_STUFF=should_not_appear\nOPENAI_API_KEY=sk-test1234');
+      jest.spyOn(fs, 'readFileSync').mockReturnValue('SECRET_STUFF=should_not_appear\nOPENAI_API_KEY=sk-test-fake-key-do-not-use');
 
       const result = await harness.invoke('get-api-keys');
 
       expect(result).not.toHaveProperty('SECRET_STUFF');
-      expect(result.OPENAI_API_KEY).toBe('***1234');
+      expect(result.OPENAI_API_KEY).toBe('***-use');
     });
 
     test('handles \\r in .env file', async () => {
       jest.spyOn(fs, 'existsSync').mockReturnValue(true);
-      jest.spyOn(fs, 'readFileSync').mockReturnValue('OPENAI_API_KEY=sk-test5678\r\nRECRAFT_API_KEY=rk-abcdefgh\r\n');
+      jest.spyOn(fs, 'readFileSync').mockReturnValue('OPENAI_API_KEY=sk-test-fake-key-do-not-use\r\nRECRAFT_API_KEY=rk-test-fake-key-do-not-use\r\n');
 
       const result = await harness.invoke('get-api-keys');
 
-      expect(result.OPENAI_API_KEY).toBe('***5678');
-      expect(result.RECRAFT_API_KEY).toBe('***efgh');
+      expect(result.OPENAI_API_KEY).toBe('***-use');
+      expect(result.RECRAFT_API_KEY).toBe('***-use');
     });
   });
 
@@ -390,36 +390,36 @@ describe('Settings Handlers', () => {
 
     test('accepts valid keys and writes .env', async () => {
       const result = await harness.invoke('set-api-keys', {
-        OPENAI_API_KEY: 'sk-testkey12345'
+        OPENAI_API_KEY: 'sk-test-fake-key-do-not-use'
       });
       expect(result.success).toBe(true);
       expect(fs.writeFileSync).toHaveBeenCalled();
-      expect(process.env.OPENAI_API_KEY).toBe('sk-testkey12345');
+      expect(process.env.OPENAI_API_KEY).toBe('sk-test-fake-key-do-not-use');
       expect(result.capabilities).toBeDefined();
     });
 
     test('accepts valid GITHUB_TOKEN format', async () => {
-      const result = await harness.invoke('set-api-keys', { GITHUB_TOKEN: 'ghp_example_token' });
+      const result = await harness.invoke('set-api-keys', { GITHUB_TOKEN: 'ghp_fake_test_token_do_not_use' });
       expect(result.success).toBe(true);
-      expect(process.env.GITHUB_TOKEN).toBe('ghp_example_token');
+      expect(process.env.GITHUB_TOKEN).toBe('ghp_fake_test_token_do_not_use');
     });
 
     test('updates existing key in .env', async () => {
       fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockReturnValue('OPENAI_API_KEY=sk-old-key\nOTHER=val');
+      fs.readFileSync.mockReturnValue('OPENAI_API_KEY=sk-old-fake-key-do-not-use\nOTHER=val');
 
-      const result = await harness.invoke('set-api-keys', { OPENAI_API_KEY: 'sk-new-key' });
+      const result = await harness.invoke('set-api-keys', { OPENAI_API_KEY: 'sk-new-fake-key-do-not-use' });
       expect(result.success).toBe(true);
 
       const writtenContent = fs.writeFileSync.mock.calls[0][1];
-      expect(writtenContent).toContain('OPENAI_API_KEY=sk-new-key');
+      expect(writtenContent).toContain('OPENAI_API_KEY=sk-new-fake-key-do-not-use');
       expect(writtenContent).toContain('OTHER=val');
     });
 
     test('preserves literal $ sequences when updating an existing key', async () => {
       fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockReturnValue('OPENAI_API_KEY=sk-old-key\nOTHER=val\n');
-      const literalValue = 'sk-test-$1-$2-literal';
+      fs.readFileSync.mockReturnValue('OPENAI_API_KEY=sk-old-fake-key-do-not-use\nOTHER=val\n');
+      const literalValue = 'sk-test-fake-$1-$2-literal-do-not-use';
 
       const result = await harness.invoke('set-api-keys', { OPENAI_API_KEY: literalValue });
       expect(result.success).toBe(true);
@@ -432,20 +432,20 @@ describe('Settings Handlers', () => {
 
     test('appends new key to .env', async () => {
       fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockReturnValue('OPENAI_API_KEY=sk-existing');
+      fs.readFileSync.mockReturnValue('OPENAI_API_KEY=sk-existing-fake-key-do-not-use');
 
-      const result = await harness.invoke('set-api-keys', { RECRAFT_API_KEY: 'rk-new' });
+      const result = await harness.invoke('set-api-keys', { RECRAFT_API_KEY: 'rk-new-fake-key-do-not-use' });
       expect(result.success).toBe(true);
 
       const writtenContent = fs.writeFileSync.mock.calls[0][1];
-      expect(writtenContent).toContain('OPENAI_API_KEY=sk-existing');
-      expect(writtenContent).toContain('RECRAFT_API_KEY=rk-new');
+      expect(writtenContent).toContain('OPENAI_API_KEY=sk-existing-fake-key-do-not-use');
+      expect(writtenContent).toContain('RECRAFT_API_KEY=rk-new-fake-key-do-not-use');
     });
 
     test('clears existing key when value is empty string', async () => {
-      process.env.OPENAI_API_KEY = 'sk-existing';
+      process.env.OPENAI_API_KEY = 'sk-existing-fake-key-do-not-use';
       fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockReturnValue('OPENAI_API_KEY=sk-existing\nOTHER=val\n');
+      fs.readFileSync.mockReturnValue('OPENAI_API_KEY=sk-existing-fake-key-do-not-use\nOTHER=val\n');
 
       const result = await harness.invoke('set-api-keys', { OPENAI_API_KEY: '' });
       expect(result.success).toBe(true);
@@ -457,9 +457,9 @@ describe('Settings Handlers', () => {
     });
 
     test('allows empty value (clears key)', async () => {
-      process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-existing-fake-key-do-not-use';
       fs.existsSync.mockReturnValue(true);
-      fs.readFileSync.mockReturnValue('ANTHROPIC_API_KEY=sk-ant-test\n');
+      fs.readFileSync.mockReturnValue('ANTHROPIC_API_KEY=sk-ant-existing-fake-key-do-not-use\n');
 
       const result = await harness.invoke('set-api-keys', { ANTHROPIC_API_KEY: '' });
       expect(result.success).toBe(true);
@@ -469,7 +469,7 @@ describe('Settings Handlers', () => {
     });
 
     test('sends feature-capabilities-updated to renderer', async () => {
-      const result = await harness.invoke('set-api-keys', { RECRAFT_API_KEY: 'rk-test' });
+      const result = await harness.invoke('set-api-keys', { RECRAFT_API_KEY: 'rk-test-fake-key-do-not-use' });
       expect(result.success).toBe(true);
       expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith(
         'feature-capabilities-updated',
@@ -479,7 +479,7 @@ describe('Settings Handlers', () => {
 
     test('handles write error gracefully', async () => {
       fs.writeFileSync.mockImplementation(() => { throw new Error('disk full'); });
-      const result = await harness.invoke('set-api-keys', { RECRAFT_API_KEY: 'rk-test' });
+      const result = await harness.invoke('set-api-keys', { RECRAFT_API_KEY: 'rk-test-fake-key-do-not-use' });
       expect(result.success).toBe(false);
       expect(result.error).toBe('disk full');
     });
