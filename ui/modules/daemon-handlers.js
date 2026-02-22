@@ -560,7 +560,14 @@ function setupHandoffListener() {
 
 function setupConflictResolutionListener() {
   registerScopedIpcListener('conflict', 'file-conflict', (event, data) => {
-    uiView.showConflictNotification(data);
+    const conflicts = Array.isArray(data) ? data : [data];
+    for (const conflict of conflicts) {
+      if (!conflict || typeof conflict !== 'object') continue;
+      const agents = Array.isArray(conflict.agents)
+        ? conflict.agents
+        : (Array.isArray(conflict.workers) ? conflict.workers : []);
+      uiView.showConflictNotification({ ...conflict, agents });
+    }
   });
 
   registerScopedIpcListener('conflict', 'conflict-resolved', (event, data) => {

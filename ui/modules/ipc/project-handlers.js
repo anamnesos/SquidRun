@@ -391,7 +391,14 @@ function registerProjectHandlers(ctx, deps) {
   }
 
   async function setProjectContextInternal(rawProjectPath, options = {}) {
-    const projectPath = path.resolve(String(rawProjectPath || '').trim());
+    const normalizedProjectPath = String(rawProjectPath || '').trim();
+    if (!normalizedProjectPath) {
+      return { success: false, error: 'Project path does not exist' };
+    }
+    const resolvePath = options.resolvePath !== false;
+    const projectPath = resolvePath
+      ? path.resolve(normalizedProjectPath)
+      : normalizedProjectPath;
     const requestedName = typeof options.projectName === 'string'
       ? options.projectName.trim()
       : '';
@@ -479,6 +486,16 @@ function registerProjectHandlers(ctx, deps) {
     };
   }
 
+  function toProjectSelectionResponse(result) {
+    if (!result || result.success === false) return result;
+    return {
+      success: true,
+      path: result.path,
+      name: result.name,
+      bootstrap: result.bootstrap,
+    };
+  }
+
   // === PROJECT/FOLDER PICKER ===
 
   ipcMain.handle('select-project', async () => {
@@ -493,58 +510,12 @@ function registerProjectHandlers(ctx, deps) {
 
     const projectPath = result.filePaths[0];
     const projectName = path.basename(projectPath);
-    let bootstrap = null;
-    try {
-      bootstrap = writeProjectBootstrapFiles(projectPath, deps);
-    } catch (err) {
-      log.error('Project', `Failed to write bootstrap files for ${projectPath}: ${err.message}`);
-      return {
-        success: false,
-        error: `Failed to initialize .squidrun bootstrap: ${err.message}`,
-      };
-    }
-
-    const state = ctx.watcher.readState();
-    state.project = projectPath;
-    ctx.watcher.writeState(state);
-    const switchResult = await switchProjectWithLifecycle(projectPath, 'select-project');
-    if (switchResult?.success === false) {
-      const switchError = switchResult.detail
-        ? `${switchResult.error || switchResult.state || 'unknown'} (${switchResult.detail})`
-        : (switchResult.error || switchResult.state || 'unknown');
-      return {
-        success: false,
-        error: `Failed switching project runtime: ${switchError}`,
-      };
-    }
-
-    const settings = loadSettings();
-    const projects = settings.recentProjects || [];
-    const filtered = projects.filter(p => p.path !== projectPath);
-    filtered.unshift({
-      name: projectName,
-      path: projectPath,
-      lastOpened: new Date().toISOString(),
+    const projectResult = await setProjectContextInternal(projectPath, {
+      projectName,
+      reason: 'select-project',
+      resolvePath: false,
     });
-    settings.recentProjects = filtered.slice(0, 10);
-    saveSettings(settings);
-
-    ctx.watcher.transition(ctx.watcher.States.PROJECT_SELECTED);
-
-    if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
-      ctx.mainWindow.webContents.send('project-changed', projectPath);
-    }
-
-    return {
-      success: true,
-      path: projectPath,
-      name: projectName,
-      bootstrap: {
-        link: bootstrap.linkFilePath,
-        readme: bootstrap.readmePath,
-        session_id: bootstrap.sessionId,
-      },
-    };
+    return toProjectSelectionResponse(projectResult);
   });
 
   ipcMain.handle('get-project', () => {
@@ -647,63 +618,11 @@ function registerProjectHandlers(ctx, deps) {
   });
 
   ipcMain.handle('switch-project', async (event, projectPath) => {
-    if (!projectPath || !fs.existsSync(projectPath)) {
-      return { success: false, error: 'Project path does not exist' };
-    }
-    let bootstrap = null;
-    try {
-      bootstrap = writeProjectBootstrapFiles(projectPath, deps);
-    } catch (err) {
-      log.error('Project', `Failed to write bootstrap files for ${projectPath}: ${err.message}`);
-      return {
-        success: false,
-        error: `Failed to initialize .squidrun bootstrap: ${err.message}`,
-      };
-    }
-
-    const state = ctx.watcher.readState();
-    state.project = projectPath;
-    ctx.watcher.writeState(state);
-    const switchResult = await switchProjectWithLifecycle(projectPath, 'switch-project');
-    if (switchResult?.success === false) {
-      const switchError = switchResult.detail
-        ? `${switchResult.error || switchResult.state || 'unknown'} (${switchResult.detail})`
-        : (switchResult.error || switchResult.state || 'unknown');
-      return {
-        success: false,
-        error: `Failed switching project runtime: ${switchError}`,
-      };
-    }
-
-    const settings = loadSettings();
-    const projects = settings.recentProjects || [];
-    const projectName = path.basename(projectPath);
-
-    const filtered = projects.filter(p => p.path !== projectPath);
-    filtered.unshift({
-      name: projectName,
-      path: projectPath,
-      lastOpened: new Date().toISOString(),
+    const projectResult = await setProjectContextInternal(projectPath, {
+      reason: 'switch-project',
+      resolvePath: false,
     });
-    settings.recentProjects = filtered.slice(0, 10);
-    saveSettings(settings);
-
-    if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
-      ctx.mainWindow.webContents.send('project-changed', projectPath);
-    }
-
-    ctx.watcher.transition(ctx.watcher.States.PROJECT_SELECTED);
-
-    return {
-      success: true,
-      path: projectPath,
-      name: projectName,
-      bootstrap: {
-        link: bootstrap.linkFilePath,
-        readme: bootstrap.readmePath,
-        session_id: bootstrap.sessionId,
-      },
-    };
+    return toProjectSelectionResponse(projectResult);
   });
 
   // === PER-PANE PROJECT ASSIGNMENT ===

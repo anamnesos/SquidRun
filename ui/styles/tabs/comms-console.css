@@ -149,6 +149,10 @@
   color: #50f2b1;
 }
 
+.comms-console-role.role-builder-bg {
+  color: #7ac8ff;
+}
+
 .comms-console-role.role-oracle {
   color: #ffd677;
 }
@@ -261,6 +265,42 @@
 
 .comms-console-entry.sender-builder .comms-console-entry-body {
   color: #d9f6ff;
+}
+
+.comms-console-entry.sender-builder-bg {
+  border-color: rgba(122, 200, 255, 0.52);
+  background: linear-gradient(180deg, rgba(22, 38, 59, 0.92), rgba(12, 23, 39, 0.97));
+}
+
+.comms-console-entry.sender-builder-bg .comms-console-entry-body {
+  color: #e0f2ff;
+}
+
+.comms-console-entry.sender-builder-bg-1 {
+  border-color: rgba(96, 188, 255, 0.56);
+  background: linear-gradient(180deg, rgba(17, 46, 67, 0.92), rgba(10, 27, 43, 0.97));
+}
+
+.comms-console-entry.sender-builder-bg-1 .comms-console-entry-body {
+  color: #d8f5ff;
+}
+
+.comms-console-entry.sender-builder-bg-2 {
+  border-color: rgba(143, 167, 255, 0.56);
+  background: linear-gradient(180deg, rgba(25, 35, 72, 0.92), rgba(15, 22, 48, 0.97));
+}
+
+.comms-console-entry.sender-builder-bg-2 .comms-console-entry-body {
+  color: #e1e6ff;
+}
+
+.comms-console-entry.sender-builder-bg-3 {
+  border-color: rgba(145, 214, 255, 0.56);
+  background: linear-gradient(180deg, rgba(18, 46, 59, 0.92), rgba(9, 28, 40, 0.97));
+}
+
+.comms-console-entry.sender-builder-bg-3 .comms-console-entry-body {
+  color: #ddf8ff;
 }
 
 .comms-console-entry.sender-oracle {

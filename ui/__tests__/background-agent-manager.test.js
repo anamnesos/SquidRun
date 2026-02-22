@@ -47,9 +47,17 @@ describe('background-agent-manager completion lifecycle', () => {
 
     const writes = daemonClient.write.mock.calls.map((call) => String(call[1] || ''));
     expect(writes.length).toBeGreaterThanOrEqual(3);
+    const startupContracts = writes.filter((payload) => payload.includes('headless Background Builder Agent'));
+    expect(startupContracts.length).toBeGreaterThanOrEqual(2);
     for (const payload of writes) {
       expect(payload).not.toContain('__HM_BG_DONE__');
       expect(payload).not.toContain('[BG_TASK_COMPLETE]');
+    }
+    for (const contract of startupContracts) {
+      expect(contract).toContain('Background-agent override');
+      expect(contract).toContain('hm-send.js builder');
+      expect(contract).not.toMatch(/hm-send\.js\s+architect/i);
+      expect(contract).toContain('Never send startup or status check-ins to Architect');
     }
 
     jest.useRealTimers();

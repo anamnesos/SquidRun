@@ -55,7 +55,14 @@
       "**/*",
       "!dist/**",
       "!coverage/**",
-      "!out/**"
+      "!out/**",
+      "!coverage-output.txt",
+      "!daemon.log",
+      "!daemon.pid",
+      "!session-state.json",
+      "!usage-stats.json",
+      "!*.pid",
+      "!*.log"
     ],
     "mac": {
       "icon": "assets/squidrun-logo.png",

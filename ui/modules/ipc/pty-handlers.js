@@ -23,6 +23,27 @@ const INPUT_EDIT_ACTIONS = Object.freeze({
   selectAll: 'selectAll',
 });
 
+function sendReturnInputEvent(webContents) {
+  webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+  webContents.sendInputEvent({ type: 'char', keyCode: 'Return' });
+  webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+}
+
+function injectTextViaInputEvents(webContents, text) {
+  const safeText = typeof text === 'string' ? text : String(text ?? '');
+  for (let i = 0; i < safeText.length; i += 1) {
+    const ch = safeText[i];
+    if (ch === '\r' || ch === '\n') {
+      if (ch === '\r' && safeText[i + 1] === '\n') {
+        i += 1;
+      }
+      sendReturnInputEvent(webContents);
+      continue;
+    }
+    webContents.sendInputEvent({ type: 'char', keyCode: ch });
+  }
+}
+
 function clampChunkSize(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) {
@@ -299,9 +320,7 @@ function registerPtyHandlers(ctx, deps = {}) {
       if (typeof ctx.mainWindow.webContents.focus === 'function') {
         ctx.mainWindow.webContents.focus();
       }
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'char', keyCode: 'Return' });
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+      sendReturnInputEvent(ctx.mainWindow.webContents);
       return { success: true };
     } catch (err) {
       log.error('PTY', 'send-trusted-enter failed:', err);
@@ -309,19 +328,43 @@ function registerPtyHandlers(ctx, deps = {}) {
     }
   });
 
-  // Clipboard paste approach for Codex panes
-  ipcMain.handle('clipboard-paste-text', async (event, text) => {
-    const { clipboard } = require('electron');
-    if (ctx.mainWindow && ctx.mainWindow.webContents) {
-      const savedClipboard = clipboard.readText();
-      clipboard.writeText(text);
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Control' });
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'V', modifiers: ['control'] });
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'V', modifiers: ['control'] });
-      ctx.mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Control' });
-      setTimeout(() => {
-        clipboard.writeText(savedClipboard);
-      }, 200);
+  // Compatibility path for legacy callers.
+  // Uses direct input insertion to avoid mutating global clipboard state.
+  ipcMain.handle('clipboard-paste-text', async (_event, text) => {
+    const webContents = ctx.mainWindow?.webContents;
+    if (!webContents) {
+      return { success: false, method: null, insertedLength: 0, error: 'mainWindow not available' };
+    }
+
+    const safeText = typeof text === 'string' ? text : String(text ?? '');
+    if (safeText.length === 0) {
+      return { success: true, method: 'noop', insertedLength: 0 };
+    }
+
+    try {
+      if (typeof ctx.mainWindow.focus === 'function') {
+        ctx.mainWindow.focus();
+      }
+      if (typeof webContents.focus === 'function') {
+        webContents.focus();
+      }
+    } catch (_) {}
+
+    try {
+      if (typeof webContents.insertText === 'function') {
+        await Promise.resolve(webContents.insertText(safeText));
+        return { success: true, method: 'insertText', insertedLength: safeText.length };
+      }
+
+      if (typeof webContents.sendInputEvent === 'function') {
+        injectTextViaInputEvents(webContents, safeText);
+        return { success: true, method: 'sendInputEvent', insertedLength: safeText.length, fallback: true };
+      }
+
+      return { success: false, method: null, insertedLength: 0, error: 'No text injection method available' };
+    } catch (err) {
+      log.error('PTY', 'clipboard-paste-text failed:', err);
+      return { success: false, method: null, insertedLength: 0, error: err.message };
     }
   });
 

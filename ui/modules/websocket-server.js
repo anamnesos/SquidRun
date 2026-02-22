@@ -1,6 +1,8 @@
 /**
  * WebSocket server facade.
- * Default mode runs comms in a worker process; optional in-process mode for debugging/tests.
+ * Default mode runs in-process via websocket-runtime.
+ * Set SQUIDRUN_COMMS_USE_WORKER=1 to route through the comms worker process.
+ * Set SQUIDRUN_COMMS_FORCE_IN_PROCESS=1 to override worker mode and force in-process.
  */
 
 const runtime = require('./websocket-runtime');
