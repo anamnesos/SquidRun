@@ -555,6 +555,21 @@ describe('daemon-handlers.js module', () => {
       });
     });
 
+    describe('file-conflict handler', () => {
+      test('normalizes watcher conflict array payloads to agents field', () => {
+        daemonHandlers.setupConflictResolutionListener();
+        ipcHandlers['file-conflict']({}, [
+          { file: 'ui/modules/foo.js', workers: ['Frontend', 'Backend'] },
+        ]);
+        expect(uiView.showConflictNotification).toHaveBeenCalledWith(
+          expect.objectContaining({
+            file: 'ui/modules/foo.js',
+            agents: ['Frontend', 'Backend'],
+          })
+        );
+      });
+    });
+
     describe('auto-trigger handler', () => {
       test('should show feedback via uiView', () => {
         daemonHandlers.setupAutoTriggerListener();

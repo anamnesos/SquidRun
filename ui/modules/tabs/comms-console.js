@@ -4,7 +4,12 @@
  */
 
 const { invokeBridge } = require('../renderer-bridge');
-const { PANE_ROLES, SHORT_AGENT_NAMES, ROLE_ID_MAP } = require('../../config');
+const {
+  PANE_ROLES,
+  SHORT_AGENT_NAMES,
+  ROLE_ID_MAP,
+  resolveBackgroundBuilderAlias,
+} = require('../../config');
 const { escapeHtml } = require('./utils');
 
 const MAX_SCROLL_ENTRIES = 5000;
@@ -17,6 +22,8 @@ const CHANNEL_LABELS = {
   telegram: 'Telegram',
   sms: 'SMS',
 };
+const MESSAGE_ROLE_PATTERN = /\(\s*([A-Z][A-Z0-9-]*)\s*#\d+\s*\):/i;
+const MESSAGE_FROM_PATTERN = /\[MSG from ([^\]]+)\]/i;
 
 let busRef = null;
 let handlers = [];
@@ -36,11 +43,38 @@ function formatTimestamp(ts) {
   return `${h}:${m}:${s}`;
 }
 
+function isBackgroundBuilderRole(role) {
+  return typeof role === 'string' && /^builder-bg-\d+$/i.test(role.trim());
+}
+
+function getBackgroundBuilderSlot(role) {
+  const match = typeof role === 'string' ? role.trim().match(/^builder-bg-(\d+)$/i) : null;
+  return match && match[1] ? match[1] : null;
+}
+
+function inferRoleFromBody(body) {
+  const text = typeof body === 'string' ? body : '';
+  if (!text) return null;
+  const taggedMatch = text.match(MESSAGE_ROLE_PATTERN);
+  if (taggedMatch && taggedMatch[1]) {
+    return normalizeRole(taggedMatch[1]);
+  }
+  const msgFromMatch = text.match(MESSAGE_FROM_PATTERN);
+  if (msgFromMatch && msgFromMatch[1]) {
+    return normalizeRole(msgFromMatch[1]);
+  }
+  return null;
+}
+
 function normalizeRole(value) {
   if (typeof value !== 'string') return null;
   const raw = value.trim();
   if (!raw) return null;
   const lower = raw.toLowerCase();
+  const backgroundAlias = typeof resolveBackgroundBuilderAlias === 'function'
+    ? resolveBackgroundBuilderAlias(lower)
+    : null;
+  if (backgroundAlias) return backgroundAlias;
   if (lower === 'user' || lower === 'telegram') return 'user';
   if (lower === 'cli') return 'architect';
   if (lower === 'system') return 'system';
@@ -57,6 +91,10 @@ function normalizeRole(value) {
 function displayRole(role) {
   const normalized = normalizeRole(role);
   if (!normalized) return 'Unknown';
+  if (isBackgroundBuilderRole(normalized)) {
+    const slot = getBackgroundBuilderSlot(normalized);
+    return slot ? `Builder BG-${slot}` : 'Builder BG';
+  }
   if (normalized === 'user') return 'User';
   if (normalized === 'external') return 'External';
   if (normalized === 'system') return SHORT_AGENT_NAMES.system || 'Sys';
@@ -69,6 +107,7 @@ function displayRole(role) {
 function roleClassName(role) {
   const normalized = normalizeRole(role);
   if (!normalized) return 'role-unknown';
+  if (isBackgroundBuilderRole(normalized)) return 'role-builder-bg';
   if (
     normalized === 'architect'
     || normalized === 'builder'
@@ -80,6 +119,17 @@ function roleClassName(role) {
     return `role-${normalized}`;
   }
   return 'role-unknown';
+}
+
+function senderClassNames(role) {
+  const normalized = normalizeRole(role) || 'unknown';
+  if (isBackgroundBuilderRole(normalized)) {
+    const slot = getBackgroundBuilderSlot(normalized);
+    const classes = ['sender-builder-bg'];
+    if (slot) classes.push(`sender-builder-bg-${slot}`);
+    return classes;
+  }
+  return [`sender-${normalized}`];
 }
 
 function detectChannel(rawChannel, targetValue) {
@@ -115,10 +165,10 @@ function bodyPreview(text) {
 function normalizeJournalRow(row) {
   if (!row || typeof row !== 'object') return null;
   const timestamp = Number(row.brokeredAtMs || row.sentAtMs || row.updatedAtMs || Date.now());
-  const senderRole = normalizeRole(row.senderRole);
+  const body = extractBody(row.rawBody);
+  const senderRole = normalizeRole(row.senderRole) || inferRoleFromBody(body);
   const targetRole = normalizeRole(row.targetRole);
   const channel = detectChannel(row.channel, row.metadata?.targetRaw);
-  const body = extractBody(row.rawBody);
   const key = row.messageId
     ? `msg:${row.messageId}`
     : `row:${row.rowId || timestamp}:${row.senderRole || ''}:${row.targetRole || ''}`;
@@ -139,13 +189,6 @@ function normalizeBusEvent(event) {
   if (!event.type.startsWith('comms.')) return null;
 
   const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
-  const senderRole = normalizeRole(
-    payload.senderRole
-      || payload.sender_role
-      || payload.fromRole
-      || payload.from_role
-      || payload.sender?.role
-  );
   const targetRaw = payload.targetRole
     || payload.target_role
     || payload.toRole
@@ -158,6 +201,13 @@ function normalizeBusEvent(event) {
   const targetRole = normalizeRole(targetRaw);
   const channel = detectChannel(payload.channel, targetRaw);
   const body = extractBody(payload.rawBody || payload.content || payload.message || payload.body || payload.text || payload.summary);
+  const senderRole = normalizeRole(
+    payload.senderRole
+      || payload.sender_role
+      || payload.fromRole
+      || payload.from_role
+      || payload.sender?.role
+  ) || inferRoleFromBody(body);
   const timestamp = Number(event.ts || Date.now());
   const key = payload.messageId
     ? `msg:${payload.messageId}`
@@ -200,8 +250,10 @@ function createEntryNode(entry) {
   const senderClass = roleClassName(entry.senderRole);
   const targetClass = roleClassName(entry.targetRole);
   const ch = detectChannel(entry.channel);
-  const senderNormalized = normalizeRole(entry.senderRole) || 'unknown';
-  div.classList.add(`sender-${senderNormalized}`);
+  const classes = senderClassNames(entry.senderRole);
+  for (const className of classes) {
+    div.classList.add(className);
+  }
   const fullBody = extractBody(entry.body);
   const preview = bodyPreview(fullBody);
   const truncated = preview.length < fullBody.length;

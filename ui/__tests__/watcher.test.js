@@ -182,7 +182,7 @@ describe('watcher module', () => {
 
     expect(conflicts.length).toBe(1);
     expect(conflicts[0].file).toBe('ui/modules/foo.js');
-    expect(mainWindow.webContents.send).toHaveBeenCalledWith('file-conflicts-detected', conflicts);
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith('file-conflict', conflicts);
 
     cleanupDir(tempDir);
   });

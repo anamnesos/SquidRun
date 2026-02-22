@@ -222,9 +222,10 @@ class BackgroundAgentManager {
     return sanitizeMultilineForPty(
       `You are ${alias} (${paneId}), a headless Background Builder Agent. `
       + `Read ROLES.md, ${modelShim}, .squidrun/handoffs/session.md, and .squidrun/app-status.json before work. `
+      + `Background-agent override: do not run the standard Builder/Oracle Architect check-in from ROLES.md or AGENTS.md. `
       + `Owner binding is strict: report only to Builder (pane 2) via `
       + `node ui/scripts/hm-send.js builder \"(${alias.toUpperCase()} #1): online and ready\" --role ${alias}. `
-      + `Never message Architect directly. `
+      + `Never send startup or status check-ins to Architect directly. `
       + `When a delegated task is complete, send Builder a completion update.`
     );
   }

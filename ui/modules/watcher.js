@@ -217,7 +217,7 @@ function checkFileConflicts() {
   lastConflicts = conflicts;
   if (conflicts.length && mainWindow && !mainWindow.isDestroyed()) {
     log.warn('Conflict', 'File conflicts detected', conflicts.map(c => c.file));
-    mainWindow.webContents.send('file-conflicts-detected', conflicts);
+    mainWindow.webContents.send('file-conflict', conflicts);
   }
   return conflicts;
 }

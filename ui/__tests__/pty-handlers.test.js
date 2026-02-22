@@ -335,27 +335,53 @@ describe('PTY Handlers', () => {
   });
 
   describe('clipboard-paste-text', () => {
-    test('pastes text via clipboard and restores original', async () => {
+    test('injects text via webContents.insertText without touching clipboard', async () => {
       const { clipboard } = require('electron');
+      ctx.mainWindow.webContents.insertText = jest.fn().mockResolvedValue(undefined);
 
-      await harness.invoke('clipboard-paste-text', 'pasted text');
+      const result = await harness.invoke('clipboard-paste-text', 'pasted text');
 
-      expect(clipboard.readText).toHaveBeenCalled();
-      expect(clipboard.writeText).toHaveBeenCalledWith('pasted text');
-      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenCalledWith({ type: 'keyDown', keyCode: 'Control' });
-
-      // Fast-forward timer to restore clipboard
-      jest.advanceTimersByTime(250);
-      expect(clipboard.writeText).toHaveBeenCalledWith('original-clipboard');
+      expect(result).toEqual({ success: true, method: 'insertText', insertedLength: 11 });
+      expect(ctx.mainWindow.webContents.insertText).toHaveBeenCalledWith('pasted text');
+      expect(ctx.mainWindow.webContents.sendInputEvent).not.toHaveBeenCalled();
+      expect(clipboard.readText).not.toHaveBeenCalled();
+      expect(clipboard.writeText).not.toHaveBeenCalled();
     });
 
-    test('does nothing when mainWindow is null', async () => {
+    test('falls back to sendInputEvent when insertText is unavailable', async () => {
+      delete ctx.mainWindow.webContents.insertText;
+
+      const result = await harness.invoke('clipboard-paste-text', 'a\r\nb');
+
+      expect(result).toEqual({ success: true, method: 'sendInputEvent', insertedLength: 4, fallback: true });
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenCalledTimes(5);
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenNthCalledWith(1, { type: 'char', keyCode: 'a' });
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenNthCalledWith(2, { type: 'keyDown', keyCode: 'Return' });
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenNthCalledWith(3, { type: 'char', keyCode: 'Return' });
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenNthCalledWith(4, { type: 'keyUp', keyCode: 'Return' });
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenNthCalledWith(5, { type: 'char', keyCode: 'b' });
+    });
+
+    test('returns noop when text is empty', async () => {
+      ctx.mainWindow.webContents.insertText = jest.fn().mockResolvedValue(undefined);
+
+      const result = await harness.invoke('clipboard-paste-text', '');
+
+      expect(result).toEqual({ success: true, method: 'noop', insertedLength: 0 });
+      expect(ctx.mainWindow.webContents.insertText).not.toHaveBeenCalled();
+      expect(ctx.mainWindow.webContents.sendInputEvent).not.toHaveBeenCalled();
+    });
+
+    test('returns structured error when mainWindow is null', async () => {
       ctx.mainWindow = null;
-      const { clipboard } = require('electron');
+      const result = await harness.invoke('clipboard-paste-text', 'text');
 
-      await harness.invoke('clipboard-paste-text', 'text');
-
-      expect(clipboard.readText).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        success: false,
+        method: null,
+        insertedLength: 0,
+        error: 'mainWindow not available',
+      });
     });
   });
 
