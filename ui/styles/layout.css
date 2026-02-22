@@ -152,6 +152,18 @@
   background: rgba(6, 9, 15, 0.92);
 }
 
+.profile-onboarding-required {
+  border-color: rgba(255, 112, 128, 0.62) !important;
+  box-shadow: 0 0 0 2px rgba(255, 112, 128, 0.16);
+}
+
+.profile-required-indicator {
+  color: #ff9eaa;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
 .profile-modal-textarea {
   resize: vertical;
   min-height: 84px;
