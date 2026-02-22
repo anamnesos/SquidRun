@@ -12,6 +12,13 @@ const https = require('https');
 const { appendCommsJournalEntry } = require('../modules/main/comms-journal');
 const hmTelegram = require('../scripts/hm-telegram');
 
+async function flushMicrotasks(iterations = 8) {
+  for (let i = 0; i < iterations; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.resolve();
+  }
+}
+
 function mockTelegramResponse(statusCode, payload) {
   https.request.mockImplementation((options, onResponse) => {
     const response = new EventEmitter();
@@ -34,6 +41,8 @@ describe('hm-telegram', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     appendCommsJournalEntry.mockReturnValue({ ok: true });
+    hmTelegram.resetRateLimiterStateForTests();
+    jest.useRealTimers();
   });
 
   test('parseMessage joins argument tokens', () => {
@@ -114,5 +123,93 @@ describe('hm-telegram', () => {
       sessionId: 'app-session-2',
       status: 'recorded',
     }));
+  });
+
+  test('sendTelegram truncates outbound message to 4000 chars with suffix', async () => {
+    mockTelegramResponse(200, {
+      ok: true,
+      result: {
+        message_id: 999,
+        chat: { id: 123456 },
+      },
+    });
+
+    const longMessage = `${'A'.repeat(4105)} tail`;
+    const result = await hmTelegram.sendTelegram(longMessage, {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '123456',
+    });
+
+    expect(result.ok).toBe(true);
+    const firstRequest = https.request.mock.results[0].value;
+    const postedBody = JSON.parse(firstRequest.write.mock.calls[0][0]);
+    expect(postedBody.text.length).toBe(4000);
+    expect(postedBody.text.endsWith('[message truncated]')).toBe(true);
+  });
+
+  test('sendTelegram rejects chat ids not in TELEGRAM_CHAT_ALLOWLIST', async () => {
+    mockTelegramResponse(200, {
+      ok: true,
+      result: {
+        message_id: 321,
+        chat: { id: 333333 },
+      },
+    });
+
+    const result = await hmTelegram.sendTelegram('blocked target', {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '333333',
+      TELEGRAM_CHAT_ALLOWLIST: '111111,222222',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('not allowlisted');
+    expect(https.request).not.toHaveBeenCalled();
+  });
+
+  test('sendTelegram queues and paces messages beyond 10 per minute', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-02-22T00:00:00.000Z'));
+
+    mockTelegramResponse(200, {
+      ok: true,
+      result: {
+        message_id: 111,
+        chat: { id: 123456 },
+      },
+    });
+
+    const env = {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '123456',
+    };
+    const sends = Array.from(
+      { length: 11 },
+      (_, index) => hmTelegram.sendTelegram(`msg ${index + 1}`, env)
+    );
+
+    let eleventhResolved = false;
+    sends[10].then(() => {
+      eleventhResolved = true;
+    });
+
+    await flushMicrotasks();
+
+    expect(https.request.mock.calls.length).toBeLessThan(11);
+    expect(eleventhResolved).toBe(false);
+
+    let advancedMs = 0;
+    while (https.request.mock.calls.length < 11 && advancedMs <= 70_000) {
+      jest.advanceTimersByTime(1_000);
+      advancedMs += 1_000;
+      // eslint-disable-next-line no-await-in-loop
+      await flushMicrotasks(6);
+    }
+
+    await Promise.all(sends);
+
+    expect(https.request).toHaveBeenCalledTimes(11);
+    expect(eleventhResolved).toBe(true);
+    expect(advancedMs).toBeGreaterThanOrEqual(60_000);
   });
 });

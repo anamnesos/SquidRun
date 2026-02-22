@@ -18,6 +18,14 @@ const {
 } = require('../modules/main/comms-journal');
 require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
 
+const TELEGRAM_RATE_LIMIT_MAX_MESSAGES = 10;
+const TELEGRAM_RATE_LIMIT_WINDOW_MS = 60_000;
+const TELEGRAM_MESSAGE_MAX_CHARS = 4_000;
+const TELEGRAM_TRUNCATED_SUFFIX = '[message truncated]';
+
+let telegramRateLimiterQueue = Promise.resolve();
+let telegramRateLimiterTimestamps = [];
+
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value;
@@ -170,27 +178,123 @@ function usage() {
   console.log('Usage: node hm-telegram.js <message>');
   console.log('       node hm-telegram.js --photo <image-path> [caption]');
   console.log('Env required: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID');
+  console.log('Optional: TELEGRAM_CHAT_ALLOWLIST (comma-separated chat ids)');
 }
 
 function parseMessage(args = []) {
   return args.join(' ').trim();
 }
 
+function normalizeChatId(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  if (!/^-?\d+$/.test(text)) return null;
+  return text;
+}
+
+function parseChatAllowlist(value) {
+  if (typeof value !== 'string' || !value.trim()) return [];
+  const parsed = value
+    .split(',')
+    .map((entry) => normalizeChatId(entry))
+    .filter(Boolean);
+  return Array.from(new Set(parsed));
+}
+
+function resolveOutboundChatId(config, options = {}) {
+  const opts = asObject(options);
+  return (
+    normalizeChatId(opts.chatId)
+    || normalizeChatId(opts.telegramChatId)
+    || normalizeChatId(config?.chatId)
+    || null
+  );
+}
+
+function isChatAllowed(chatId, allowlist = []) {
+  const normalizedChatId = normalizeChatId(chatId);
+  if (!normalizedChatId) return false;
+  if (!Array.isArray(allowlist) || allowlist.length < 1) return true;
+  return allowlist.includes(normalizedChatId);
+}
+
 function getTelegramConfig(env = process.env) {
   const botToken = (env.TELEGRAM_BOT_TOKEN || '').trim();
-  const chatIdRaw = (env.TELEGRAM_CHAT_ID || '').trim();
-  const chatId = Number.parseInt(chatIdRaw, 10);
+  const chatId = normalizeChatId(env.TELEGRAM_CHAT_ID || '');
+  const chatAllowlist = parseChatAllowlist(env.TELEGRAM_CHAT_ALLOWLIST || '');
   return {
     botToken,
     chatId,
+    chatAllowlist,
   };
 }
 
-function getMissingConfigKeys(config) {
+function getMissingConfigKeys(config, options = {}) {
   const missing = [];
   if (!config.botToken) missing.push('TELEGRAM_BOT_TOKEN');
-  if (!Number.isFinite(config.chatId)) missing.push('TELEGRAM_CHAT_ID');
+  if (!resolveOutboundChatId(config, options)) missing.push('TELEGRAM_CHAT_ID');
   return missing;
+}
+
+function maybeTruncateTelegramMessage(message) {
+  const text = typeof message === 'string' ? message : String(message ?? '');
+  if (text.length <= TELEGRAM_MESSAGE_MAX_CHARS) {
+    return {
+      text,
+      truncated: false,
+      originalLength: text.length,
+    };
+  }
+
+  const preservedChars = Math.max(0, TELEGRAM_MESSAGE_MAX_CHARS - TELEGRAM_TRUNCATED_SUFFIX.length);
+  return {
+    text: `${text.slice(0, preservedChars)}${TELEGRAM_TRUNCATED_SUFFIX}`,
+    truncated: true,
+    originalLength: text.length,
+  };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pruneRateLimitTimestamps(nowMs = Date.now()) {
+  telegramRateLimiterTimestamps = telegramRateLimiterTimestamps.filter(
+    (timestamp) => (nowMs - timestamp) < TELEGRAM_RATE_LIMIT_WINDOW_MS
+  );
+}
+
+async function reserveRateLimitSlot() {
+  while (true) {
+    const nowMs = Date.now();
+    pruneRateLimitTimestamps(nowMs);
+    if (telegramRateLimiterTimestamps.length < TELEGRAM_RATE_LIMIT_MAX_MESSAGES) {
+      telegramRateLimiterTimestamps.push(nowMs);
+      return 0;
+    }
+    const oldest = telegramRateLimiterTimestamps[0];
+    const waitMs = Math.max(1, TELEGRAM_RATE_LIMIT_WINDOW_MS - (nowMs - oldest));
+    await sleep(waitMs);
+  }
+}
+
+function enqueueRateLimitedSend(sendFn) {
+  const run = async () => {
+    await reserveRateLimitSlot();
+    return sendFn();
+  };
+  const queued = telegramRateLimiterQueue.then(run, run);
+  telegramRateLimiterQueue = queued.then(
+    () => undefined,
+    () => undefined
+  );
+  return queued;
+}
+
+function resetRateLimiterStateForTests() {
+  telegramRateLimiterQueue = Promise.resolve();
+  telegramRateLimiterTimestamps = [];
 }
 
 function requestTelegram(path, body) {
@@ -303,7 +407,8 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
   });
 
   const config = getTelegramConfig(env);
-  const missing = getMissingConfigKeys(config);
+  const outboundChatId = resolveOutboundChatId(config, opts);
+  const missing = getMissingConfigKeys(config, { chatId: outboundChatId });
   if (missing.length > 0) {
     upsertTelegramJournal({
       messageId,
@@ -317,6 +422,24 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
       },
     });
     return { ok: false, error: `Missing required env vars: ${missing.join(', ')}` };
+  }
+  if (!isChatAllowed(outboundChatId, config.chatAllowlist)) {
+    upsertTelegramJournal({
+      messageId,
+      sessionId,
+      senderRole,
+      targetRole,
+      status: 'failed',
+      errorCode: 'telegram_chat_not_allowlisted',
+      metadata: {
+        chatId: outboundChatId,
+        allowlistSize: config.chatAllowlist.length,
+      },
+    });
+    return {
+      ok: false,
+      error: `Chat ID ${outboundChatId} is not allowlisted`,
+    };
   }
 
   const resolvedPath = path.resolve(photoPath);
@@ -335,11 +458,13 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
     return { ok: false, error: `Photo not found: ${resolvedPath}` };
   }
 
-  const fields = { chat_id: String(config.chatId) };
+  const fields = { chat_id: String(outboundChatId) };
   if (caption) fields.caption = caption;
 
   const apiPath = `/bot${config.botToken}/sendPhoto`;
-  const response = await requestTelegramMultipart(apiPath, fields, { name: 'photo', path: resolvedPath });
+  const response = await enqueueRateLimitedSend(
+    () => requestTelegramMultipart(apiPath, fields, { name: 'photo', path: resolvedPath })
+  );
 
   let payload = null;
   try { payload = JSON.parse(response.body || '{}'); } catch { payload = null; }
@@ -354,14 +479,14 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
       ackStatus: 'telegram_delivered',
       metadata: {
         telegramMessageId: payload?.result?.message_id || null,
-        chatId: payload?.result?.chat?.id || config.chatId,
+        chatId: payload?.result?.chat?.id || outboundChatId,
       },
     });
     return {
       ok: true,
       statusCode: response.statusCode,
       messageId: payload?.result?.message_id || null,
-      chatId: payload?.result?.chat?.id || config.chatId,
+      chatId: payload?.result?.chat?.id || outboundChatId,
     };
   }
 
@@ -393,6 +518,9 @@ async function sendTelegram(message, env = process.env, options = {}) {
   const senderRole = asRole(opts.senderRole || opts.fromRole || 'architect', 'architect');
   const targetRole = asRole(opts.targetRole || opts.toRole || 'user', 'user');
   const sessionId = resolvePreferredSessionId(opts.sessionId, localProjectContext?.sessionId || null);
+  const preparedMessage = maybeTruncateTelegramMessage(message);
+  const config = getTelegramConfig(env);
+  const outboundChatId = resolveOutboundChatId(config, opts);
 
   upsertTelegramJournal({
     messageId,
@@ -400,17 +528,18 @@ async function sendTelegram(message, env = process.env, options = {}) {
     senderRole,
     targetRole,
     sentAtMs: nowMs,
-    rawBody: message,
+    rawBody: preparedMessage.text,
     status: 'recorded',
     attempt: 1,
     metadata: {
       source: 'hm-telegram',
       mode: 'message',
+      messageTruncated: preparedMessage.truncated,
+      originalLength: preparedMessage.originalLength,
     },
   });
 
-  const config = getTelegramConfig(env);
-  const missing = getMissingConfigKeys(config);
+  const missing = getMissingConfigKeys(config, { chatId: outboundChatId });
   if (missing.length > 0) {
     upsertTelegramJournal({
       messageId,
@@ -428,14 +557,32 @@ async function sendTelegram(message, env = process.env, options = {}) {
       error: `Missing required env vars: ${missing.join(', ')}`,
     };
   }
+  if (!isChatAllowed(outboundChatId, config.chatAllowlist)) {
+    upsertTelegramJournal({
+      messageId,
+      sessionId,
+      senderRole,
+      targetRole,
+      status: 'failed',
+      errorCode: 'telegram_chat_not_allowlisted',
+      metadata: {
+        chatId: outboundChatId,
+        allowlistSize: config.chatAllowlist.length,
+      },
+    });
+    return {
+      ok: false,
+      error: `Chat ID ${outboundChatId} is not allowlisted`,
+    };
+  }
 
   const body = JSON.stringify({
-    chat_id: config.chatId,
-    text: message,
+    chat_id: outboundChatId,
+    text: preparedMessage.text,
   });
-  const path = `/bot${config.botToken}/sendMessage`;
+  const apiPath = `/bot${config.botToken}/sendMessage`;
 
-  const response = await requestTelegram(path, body);
+  const response = await enqueueRateLimitedSend(() => requestTelegram(apiPath, body));
   let payload = null;
   try {
     payload = JSON.parse(response.body || '{}');
@@ -453,14 +600,14 @@ async function sendTelegram(message, env = process.env, options = {}) {
       ackStatus: 'telegram_delivered',
       metadata: {
         telegramMessageId: payload?.result?.message_id || null,
-        chatId: payload?.result?.chat?.id || config.chatId,
+        chatId: payload?.result?.chat?.id || outboundChatId,
       },
     });
     return {
       ok: true,
       statusCode: response.statusCode,
       messageId: payload?.result?.message_id || null,
-      chatId: payload?.result?.chat?.id || config.chatId,
+      chatId: payload?.result?.chat?.id || outboundChatId,
     };
   }
 
@@ -546,5 +693,11 @@ module.exports = {
   requestTelegramMultipart,
   sendTelegram,
   sendTelegramPhoto,
+  normalizeChatId,
+  parseChatAllowlist,
+  resolveOutboundChatId,
+  isChatAllowed,
+  maybeTruncateTelegramMessage,
+  resetRateLimiterStateForTests,
   main,
 };
