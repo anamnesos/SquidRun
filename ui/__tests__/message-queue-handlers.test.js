@@ -95,6 +95,38 @@ describe('Message Queue Handlers', () => {
         expect(r.success).toBe(true);
       });
     });
+
+    test('returns failure with failedTargets when some broadcasts fail', async () => {
+      const recipients = ctx.PANE_IDS.filter((paneId) => paneId !== '1');
+      const failedPaneId = recipients[0];
+      ctx.watcher.sendMessage.mockImplementation((fromPaneId, toPaneId) => {
+        if (toPaneId === failedPaneId) {
+          return { success: false, error: 'send_failed' };
+        }
+        return { success: true, messageId: `msg-${toPaneId}` };
+      });
+
+      const result = await harness.invoke('send-broadcast-message', '1', 'Broadcast partial fail');
+
+      expect(ctx.watcher.sendMessage).toHaveBeenCalledTimes(recipients.length);
+      expect(result.success).toBe(false);
+      expect(result.failedTargets).toEqual([failedPaneId]);
+      expect(result.results).toEqual(expect.arrayContaining([
+        expect.objectContaining({ toPaneId: failedPaneId, success: false, error: 'send_failed' }),
+      ]));
+    });
+
+    test('returns failure with all failedTargets when all broadcasts fail', async () => {
+      const recipients = ctx.PANE_IDS.filter((paneId) => paneId !== '1');
+      ctx.watcher.sendMessage.mockReturnValue({ success: false, error: 'offline' });
+
+      const result = await harness.invoke('send-broadcast-message', '1', 'Broadcast all fail');
+
+      expect(ctx.watcher.sendMessage).toHaveBeenCalledTimes(recipients.length);
+      expect(result.success).toBe(false);
+      expect(result.failedTargets).toEqual(recipients);
+      expect(result.results.every((entry) => entry.success === false)).toBe(true);
+    });
   });
 
   describe('send-group-message', () => {
@@ -115,6 +147,38 @@ describe('Message Queue Handlers', () => {
       // Should only send to 2 and 3, not 1
       expect(ctx.watcher.sendMessage).toHaveBeenCalledTimes(2);
       expect(result.results.length).toBe(2);
+    });
+
+    test('returns failure with failedTargets when some group sends fail', async () => {
+      const groupTargets = ctx.PANE_IDS.filter((paneId) => paneId !== '1');
+      const failedPaneId = groupTargets[0];
+      ctx.watcher.sendMessage.mockImplementation((fromPaneId, toPaneId) => {
+        if (toPaneId === failedPaneId) {
+          return { success: false, error: 'not_available' };
+        }
+        return { success: true, messageId: `msg-${toPaneId}` };
+      });
+
+      const result = await harness.invoke('send-group-message', '1', groupTargets, 'Group partial fail');
+
+      expect(ctx.watcher.sendMessage).toHaveBeenCalledTimes(groupTargets.length);
+      expect(result.success).toBe(false);
+      expect(result.failedTargets).toEqual([failedPaneId]);
+      expect(result.results).toEqual(expect.arrayContaining([
+        expect.objectContaining({ toPaneId: failedPaneId, success: false, error: 'not_available' }),
+      ]));
+    });
+
+    test('returns failure with all failedTargets when all group sends fail', async () => {
+      const groupTargets = ctx.PANE_IDS.filter((paneId) => paneId !== '1');
+      ctx.watcher.sendMessage.mockReturnValue({ success: false, error: 'down' });
+
+      const result = await harness.invoke('send-group-message', '1', groupTargets, 'Group all fail');
+
+      expect(ctx.watcher.sendMessage).toHaveBeenCalledTimes(groupTargets.length);
+      expect(result.success).toBe(false);
+      expect(result.failedTargets).toEqual(groupTargets);
+      expect(result.results.every((entry) => entry.success === false)).toBe(true);
     });
   });
 

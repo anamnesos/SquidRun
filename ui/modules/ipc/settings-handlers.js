@@ -440,7 +440,7 @@ function registerSettingsHandlers(ctx, deps) {
         }
 
         if (regex.test(content)) {
-          content = content.replace(regex, `${key}=${normalizedValue}`);
+          content = content.replace(regex, () => `${key}=${normalizedValue}`);
         } else {
           content = content.trim().length > 0
             ? `${content.trim()}\n${key}=${normalizedValue}`
