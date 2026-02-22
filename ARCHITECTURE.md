@@ -209,6 +209,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/evidence-ledger-seed-memory.js: Seeds Evidence Ledger decision memory from context snapshot markdown/JSON with deterministic IDs.
 - ui/scripts/hm-bg.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-claim.js: CLI utility that sends/queries runtime actions via WebSocket.
+- ui/scripts/hm-comms.js: CLI utility that reads comms history from `.squidrun/runtime/evidence-ledger.db` via `node:sqlite`.
 - ui/scripts/hm-doctor.js: Preflight health-check CLI for dependencies, native modules, transport port, shell defaults, and `.squidrun` permissions.
 - ui/scripts/hm-experiment.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-github.js: CLI utility that sends/queries runtime actions via WebSocket.
