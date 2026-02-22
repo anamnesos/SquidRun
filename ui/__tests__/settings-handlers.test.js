@@ -416,6 +416,20 @@ describe('Settings Handlers', () => {
       expect(writtenContent).toContain('OTHER=val');
     });
 
+    test('preserves literal $ sequences when updating an existing key', async () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockReturnValue('OPENAI_API_KEY=sk-old-key\nOTHER=val\n');
+      const literalValue = 'sk-test-$1-$2-literal';
+
+      const result = await harness.invoke('set-api-keys', { OPENAI_API_KEY: literalValue });
+      expect(result.success).toBe(true);
+
+      const writtenContent = fs.writeFileSync.mock.calls[0][1];
+      const openAiLine = writtenContent.split('\n').find(line => line.startsWith('OPENAI_API_KEY='));
+      expect(openAiLine).toBe(`OPENAI_API_KEY=${literalValue}`);
+      expect(process.env.OPENAI_API_KEY).toBe(literalValue);
+    });
+
     test('appends new key to .env', async () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockReturnValue('OPENAI_API_KEY=sk-existing');

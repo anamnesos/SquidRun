@@ -4,6 +4,39 @@
   }
 
   const { ipcMain } = ctx;
+  const sendMessageToTargets = async (fromPaneId, targetPaneIds, content, type) => {
+    const results = [];
+    const failedTargets = [];
+
+    for (const toPaneId of targetPaneIds) {
+      if (toPaneId === fromPaneId) {
+        continue;
+      }
+
+      try {
+        const sendResult = await ctx.watcher.sendMessage(fromPaneId, toPaneId, content, type);
+        const resultPayload = (sendResult && typeof sendResult === 'object') ? sendResult : {};
+        const success = resultPayload.success === true;
+        results.push({ toPaneId, ...resultPayload, success });
+        if (!success) {
+          failedTargets.push(toPaneId);
+        }
+      } catch (err) {
+        failedTargets.push(toPaneId);
+        results.push({
+          toPaneId,
+          success: false,
+          error: err?.message || String(err),
+        });
+      }
+    }
+
+    return {
+      success: failedTargets.length === 0,
+      results,
+      failedTargets,
+    };
+  };
 
   ipcMain.handle('init-message-queue', async () => {
     return ctx.watcher.initMessageQueue();
@@ -14,25 +47,11 @@
   });
 
   ipcMain.handle('send-broadcast-message', async (event, fromPaneId, content) => {
-    const results = [];
-    for (const toPaneId of ctx.PANE_IDS) {
-      if (toPaneId !== fromPaneId) {
-        const result = await ctx.watcher.sendMessage(fromPaneId, toPaneId, content, 'broadcast');
-        results.push({ toPaneId, ...result });
-      }
-    }
-    return { success: true, results };
+    return sendMessageToTargets(fromPaneId, ctx.PANE_IDS, content, 'broadcast');
   });
 
   ipcMain.handle('send-group-message', async (event, fromPaneId, toPaneIds, content) => {
-    const results = [];
-    for (const toPaneId of toPaneIds) {
-      if (toPaneId !== fromPaneId) {
-        const result = await ctx.watcher.sendMessage(fromPaneId, toPaneId, content, 'direct');
-        results.push({ toPaneId, ...result });
-      }
-    }
-    return { success: true, results };
+    return sendMessageToTargets(fromPaneId, toPaneIds, content, 'direct');
   });
 
   ipcMain.handle('get-messages', async (event, paneId, undeliveredOnly = false) => {

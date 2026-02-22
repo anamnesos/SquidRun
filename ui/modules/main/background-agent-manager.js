@@ -357,23 +357,56 @@ class BackgroundAgentManager {
       sessionScopeId: sessionScopeId || null,
     });
 
-    // Launch CLI and inject startup contract after the shell is ready.
-    setTimeout(() => {
+    const failStartupWrite = (phase, errorMessage = null) => {
       const tracked = this.agents.get(paneId);
       if (!tracked) return;
-      daemonClient.write(paneId, `${command}\r`);
+
+      tracked.status = 'failed';
+      tracked.completionReason = 'startup_write_failed';
+
+      const message = `Background builder ${alias} startup ${phase} write failed`;
+      log.warn('BackgroundAgent', errorMessage ? `${message}: ${errorMessage}` : message);
+      this.logEvent('warning', paneId, message, {
+        alias,
+        paneId,
+        ownerPaneId,
+        runtime,
+        phase,
+        error: errorMessage || null,
+      });
+
+      if (daemonClient?.connected) {
+        daemonClient.kill(paneId);
+      }
+      this.agents.delete(paneId);
+      this.notifyStateChange();
+    };
+
+    const writeStartupPayload = (phase, payload) => {
+      if (!this.agents.has(paneId)) return;
+      try {
+        const accepted = daemonClient.write(paneId, `${payload}\r`);
+        if (accepted === false) {
+          failStartupWrite(phase);
+        }
+      } catch (err) {
+        failStartupWrite(phase, err.message);
+      }
+    };
+
+    // Launch CLI and inject startup contract after the shell is ready.
+    setTimeout(() => {
+      writeStartupPayload('command', command);
     }, 150);
 
     const startupContract = this.buildStartupContract({ alias, paneId, runtime });
     setTimeout(() => {
-      if (!this.agents.has(paneId)) return;
-      daemonClient.write(paneId, `${startupContract}\r`);
+      writeStartupPayload('contract_primary', startupContract);
     }, this.startupDelayMs);
 
     // A second send improves reliability if the CLI was still booting.
     setTimeout(() => {
-      if (!this.agents.has(paneId)) return;
-      daemonClient.write(paneId, `${startupContract}\r`);
+      writeStartupPayload('contract_retry', startupContract);
     }, this.startupRetryMs);
 
     return {

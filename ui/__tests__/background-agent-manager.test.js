@@ -92,6 +92,69 @@ describe('background-agent-manager completion lifecycle', () => {
     expect(daemonClient.write).not.toHaveBeenCalled();
   });
 
+  test('spawnAgent cleans up state when startup command write is rejected', async () => {
+    jest.useFakeTimers();
+    const daemonClient = {
+      connected: true,
+      spawn: jest.fn(),
+      write: jest.fn().mockReturnValueOnce(false),
+      kill: jest.fn(),
+    };
+
+    const manager = new BackgroundAgentManager({
+      getDaemonClient: () => daemonClient,
+      getSettings: () => ({
+        paneCommands: { '2': 'codex --yolo' },
+      }),
+      getSessionScopeId: () => 'app-session-1',
+      resolveBuilderCwd: () => '/repo',
+    });
+
+    const result = await manager.spawnAgent({ ownerPaneId: '2', alias: 'builder-bg-1' });
+    expect(result.ok).toBe(true);
+
+    jest.advanceTimersByTime(200);
+
+    expect(daemonClient.write).toHaveBeenCalledTimes(1);
+    expect(daemonClient.kill).toHaveBeenCalledWith('bg-2-1');
+    expect(manager.listAgents()).toHaveLength(0);
+    expect(manager.getAgentState('builder-bg-1')).toBeNull();
+    jest.useRealTimers();
+  });
+
+  test('spawnAgent cleans up state when startup contract write is rejected', async () => {
+    jest.useFakeTimers();
+    const daemonClient = {
+      connected: true,
+      spawn: jest.fn(),
+      write: jest
+        .fn()
+        .mockReturnValueOnce(true)
+        .mockReturnValueOnce(false),
+      kill: jest.fn(),
+    };
+
+    const manager = new BackgroundAgentManager({
+      getDaemonClient: () => daemonClient,
+      getSettings: () => ({
+        paneCommands: { '2': 'codex --yolo' },
+      }),
+      getSessionScopeId: () => 'app-session-1',
+      resolveBuilderCwd: () => '/repo',
+    });
+
+    const result = await manager.spawnAgent({ ownerPaneId: '2', alias: 'builder-bg-1' });
+    expect(result.ok).toBe(true);
+
+    jest.advanceTimersByTime(7000);
+
+    expect(daemonClient.write).toHaveBeenCalledTimes(2);
+    expect(daemonClient.kill).toHaveBeenCalledWith('bg-2-1');
+    expect(manager.listAgents()).toHaveLength(0);
+    expect(manager.getAgentState('builder-bg-1')).toBeNull();
+    jest.useRealTimers();
+  });
+
   test('sendMessageToAgent appends completion directive and completion signal triggers kill', async () => {
     const daemonClient = {
       connected: true,
