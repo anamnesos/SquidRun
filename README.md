@@ -77,7 +77,7 @@ This turns SquidRun into an always-available development team you can manage fro
 ```bash
 # 1. Clone and install
 git clone https://github.com/anamnesos/squidrun.git
-cd <repo-name>/ui && npm install
+cd squidrun/ui && npm install
 
 # 2. Make sure your CLIs are authenticated (run whichever you have)
 claude --version    # Sign in if prompted
@@ -142,7 +142,7 @@ Core implementation lives in `ui/modules/`, `ui/modules/main/`, and `ui/scripts/
 
 ```bash
 git clone https://github.com/anamnesos/squidrun.git
-cd <repo-name>/ui
+cd squidrun/ui
 npm install
 ```
 
