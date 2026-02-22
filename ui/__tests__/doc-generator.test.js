@@ -1,4 +1,5 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { createDocGenerator } = require('../modules/analysis/doc-generator');
 
@@ -44,5 +45,45 @@ describe('doc-generator findFiles', () => {
       path.join(rootDir, 'module.js'),
       path.join(nestedDir, 'inner.ts'),
     ]);
+  });
+
+  test('writeDocumentation preserves relative paths to avoid basename collisions', async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-generator-collision-'));
+    const sourceDir = path.join(tempRoot, 'source');
+    const outputDir = path.join(tempRoot, 'docs');
+    const firstFile = path.join(sourceDir, 'src', 'index.js');
+    const secondFile = path.join(sourceDir, 'plugins', 'index.js');
+
+    try {
+      fs.mkdirSync(path.dirname(firstFile), { recursive: true });
+      fs.mkdirSync(path.dirname(secondFile), { recursive: true });
+
+      const generator = createDocGenerator({ format: 'markdown' });
+      await generator.writeDocumentation({
+        sourceDir,
+        index: '# Test Index',
+        results: [
+          {
+            filePath: firstFile,
+            documentation: '# SRC INDEX',
+            stats: { functions: 1, classes: 0, exports: 1 },
+          },
+          {
+            filePath: secondFile,
+            documentation: '# PLUGIN INDEX',
+            stats: { functions: 2, classes: 0, exports: 1 },
+          },
+        ],
+      }, outputDir);
+
+      const firstOutPath = path.join(outputDir, 'src', 'index.md');
+      const secondOutPath = path.join(outputDir, 'plugins', 'index.md');
+      expect(fs.existsSync(firstOutPath)).toBe(true);
+      expect(fs.existsSync(secondOutPath)).toBe(true);
+      expect(fs.readFileSync(firstOutPath, 'utf-8')).toContain('SRC INDEX');
+      expect(fs.readFileSync(secondOutPath, 'utf-8')).toContain('PLUGIN INDEX');
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });

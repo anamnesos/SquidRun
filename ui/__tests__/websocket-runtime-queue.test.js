@@ -232,4 +232,37 @@ describe('websocket-runtime outbound queue', () => {
 
     await runtime.stop();
   });
+
+  test('retains queued messages in memory when queue persist fails and retries on next persist', async () => {
+    const runtime = loadRuntime({ queuePath });
+    await runtime.start({ port: 0, sessionScopeId: 'scope-a', onMessage: jest.fn() });
+    const realRename = fs.renameSync;
+    const renameSpy = jest.spyOn(fs, 'renameSync');
+    try {
+      let failNextRename = true;
+      renameSpy.mockImplementation((sourcePath, targetPath) => {
+        if (failNextRename) {
+          failNextRename = false;
+          throw new Error('rename blocked');
+        }
+        return realRename(sourcePath, targetPath);
+      });
+
+      const firstSend = runtime.sendToTarget('builder', 'persist-fail-first', { from: 'architect' });
+      expect(firstSend).toBe(false);
+      expect(readQueue(queuePath)).toHaveLength(0);
+
+      const secondSend = runtime.sendToTarget('builder', 'persist-success-second', { from: 'architect' });
+      expect(secondSend).toBe(false);
+
+      const queue = readQueue(queuePath);
+      expect(queue.map((entry) => entry.content)).toEqual(['persist-fail-first', 'persist-success-second']);
+
+      const runtimeLog = require('../modules/logger');
+      expect(runtimeLog.warn.mock.calls.some((call) => String(call[1] || '').includes('retained in memory for retry'))).toBe(true);
+    } finally {
+      renameSpy.mockRestore();
+      await runtime.stop();
+    }
+  });
 });

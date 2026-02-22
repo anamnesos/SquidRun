@@ -107,7 +107,7 @@ class DocGenerator {
     }
 
     // Generate index/table of contents
-    const index = this.buildIndex(results);
+    const index = this.buildIndex(results, dirPath);
 
     return {
       success: true,
@@ -115,6 +115,7 @@ class DocGenerator {
       totalElements: allElements.length,
       results,
       index,
+      sourceDir: dirPath,
       stats: this.calculateStats(allElements),
     };
   }
@@ -976,7 +977,7 @@ ${this.markdownToHTML(markdown)}
   /**
    * Build index for directory documentation
    */
-  buildIndex(results) {
+  buildIndex(results, sourceDir = null) {
     const lines = [];
 
     lines.push(`# ${this.projectName}`);
@@ -989,8 +990,13 @@ ${this.markdownToHTML(markdown)}
     lines.push('');
 
     for (const result of results) {
-      const fileName = path.basename(result.filePath);
-      lines.push(`### [${fileName}](./${fileName}.md)`);
+      const filePath = String(result.filePath || '');
+      const relativePath = sourceDir
+        ? path.relative(sourceDir, filePath)
+        : path.basename(filePath);
+      const normalizedPath = String(relativePath || path.basename(filePath)).split(path.sep).join('/');
+      const linkPath = normalizedPath.replace(/\.[^./\\]+$/, '');
+      lines.push(`### [${normalizedPath}](./${linkPath}.md)`);
       lines.push('');
       lines.push(`- ${result.stats.functions} functions`);
       lines.push(`- ${result.stats.classes} classes`);
@@ -1029,10 +1035,18 @@ ${this.markdownToHTML(markdown)}
 
     if (result.results) {
       // Directory documentation
+      const sourceDir = typeof result.sourceDir === 'string' ? result.sourceDir : null;
       for (const fileResult of result.results) {
-        const fileName = path.basename(fileResult.filePath, path.extname(fileResult.filePath));
+        const relativePath = sourceDir
+          ? path.relative(sourceDir, fileResult.filePath)
+          : path.basename(fileResult.filePath, path.extname(fileResult.filePath));
+        const safeRelativePath = relativePath && !relativePath.startsWith('..')
+          ? relativePath
+          : path.basename(fileResult.filePath, path.extname(fileResult.filePath));
+        const fileName = safeRelativePath.replace(path.extname(safeRelativePath), '');
         const ext = this.format === 'html' ? 'html' : 'md';
         const outPath = path.join(dir, `${fileName}.${ext}`);
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
         fs.writeFileSync(outPath, fileResult.documentation);
       }
 

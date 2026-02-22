@@ -23,6 +23,10 @@ const ROUTING_STALE_MS = 60000;
 const RATE_LIMIT_WINDOW_MS = 1000;  // 1-second sliding window
 const RATE_LIMIT_MAX_MESSAGES = 50; // max messages per window per client
 const MAX_MESSAGE_SIZE = 256 * 1024; // 256KB max message size
+const PENDING_MESSAGE_ACK_TTL_MS = Number.parseInt(
+  process.env.SQUIDRUN_COMMS_PENDING_ACK_TTL_MS || String(2 * 60 * 1000),
+  10
+);
 const CONTENT_DEDUPE_TTL_MS = Number.parseInt(process.env.SQUIDRUN_COMMS_CONTENT_DEDUPE_TTL_MS || '15000', 10);
 const OUTBOUND_QUEUE_MAX_ENTRIES = Number.parseInt(process.env.SQUIDRUN_COMMS_QUEUE_MAX_ENTRIES || '500', 10);
 const OUTBOUND_QUEUE_MAX_AGE_MS = Number.parseInt(process.env.SQUIDRUN_COMMS_QUEUE_MAX_AGE_MS || String(30 * 60 * 1000), 10);
@@ -42,7 +46,7 @@ let clients = new Map(); // clientId -> { ws, paneId, role }
 let clientIdCounter = 0;
 let messageHandler = null; // External handler for incoming messages
 let recentMessageAcks = new Map(); // messageId -> { ackPayload, expiresAt }
-let pendingMessageAcks = new Map(); // messageId -> Promise<ackPayload>
+let pendingMessageAcks = new Map(); // messageId -> { promise, createdAt, clientId, resolve, reject }
 let recentDispatchAcks = new Map(); // dedupeKey -> { ackPayload, expiresAt }
 let pendingDispatchAcks = new Map(); // dedupeKey -> Promise<ackPayload>
 let outboundQueue = []; // [{ id, target, content, meta, createdAt, attempts, lastAttemptAt, queuedBy }]
@@ -364,8 +368,10 @@ function persistOutboundQueue() {
     const tmpPath = `${queuePath}.tmp`;
     fs.writeFileSync(tmpPath, payload, 'utf-8');
     fs.renameSync(tmpPath, queuePath);
+    return { ok: true };
   } catch (err) {
     log.error('WebSocket', `Failed to persist outbound queue: ${err.message}`);
+    return { ok: false, error: err.message };
   }
 }
 
@@ -435,7 +441,12 @@ function queueOutboundMessage(target, content, meta = {}, queuedBy = 'runtime', 
     );
   }
   outboundQueue.push(makeQueueEntry(target, content, meta, queuedBy, now));
-  persistOutboundQueue();
+  const persistResult = persistOutboundQueue();
+  return {
+    queued: true,
+    persisted: persistResult?.ok === true,
+    error: persistResult?.error || null,
+  };
 }
 
 function buildOutboundPayload(content, meta = {}) {
@@ -680,6 +691,67 @@ function cacheMessageAck(messageId, ackPayload, now = Date.now()) {
   });
 }
 
+function getPendingMessageAckTtlMs() {
+  return Number.isFinite(PENDING_MESSAGE_ACK_TTL_MS) && PENDING_MESSAGE_ACK_TTL_MS > 0
+    ? PENDING_MESSAGE_ACK_TTL_MS
+    : (2 * 60 * 1000);
+}
+
+function buildPendingAckFailure(messageId, status, message = null) {
+  return {
+    type: 'send-ack',
+    messageId: messageId || null,
+    ok: false,
+    accepted: false,
+    queued: false,
+    verified: false,
+    status,
+    error: message || status,
+    timestamp: Date.now(),
+  };
+}
+
+function resolvePendingMessageAck(messageId, ackPayload) {
+  const pendingEntry = pendingMessageAcks.get(messageId);
+  if (!pendingEntry) return false;
+  pendingMessageAcks.delete(messageId);
+  if (typeof pendingEntry.resolve === 'function') {
+    pendingEntry.resolve(ackPayload);
+  }
+  return true;
+}
+
+function rejectPendingMessageAck(messageId, error) {
+  const pendingEntry = pendingMessageAcks.get(messageId);
+  if (!pendingEntry) return false;
+  pendingMessageAcks.delete(messageId);
+  if (typeof pendingEntry.reject === 'function') {
+    pendingEntry.reject(error instanceof Error ? error : new Error(String(error || 'pending_ack_failed')));
+  }
+  return true;
+}
+
+function pruneStalePendingMessageAcks(now = Date.now()) {
+  const ttlMs = getPendingMessageAckTtlMs();
+  for (const [messageId, pendingEntry] of pendingMessageAcks.entries()) {
+    if (!pendingEntry || typeof pendingEntry !== 'object') {
+      pendingMessageAcks.delete(messageId);
+      continue;
+    }
+    const createdAt = Number.isFinite(pendingEntry.createdAt) ? pendingEntry.createdAt : now;
+    if ((createdAt + ttlMs) > now) continue;
+    rejectPendingMessageAck(messageId, new Error(`pending ack timed out after ${ttlMs}ms`));
+  }
+}
+
+function evictPendingMessageAcksForClient(clientId) {
+  for (const [messageId, pendingEntry] of pendingMessageAcks.entries()) {
+    if (!pendingEntry || pendingEntry.clientId !== clientId) continue;
+    const fallbackAck = buildPendingAckFailure(messageId, 'client_disconnected', 'Sender disconnected before ACK was produced');
+    resolvePendingMessageAck(messageId, fallbackAck);
+  }
+}
+
 function getContentDedupeTtlMs() {
   return Number.isFinite(CONTENT_DEDUPE_TTL_MS) && CONTENT_DEDUPE_TTL_MS > 0
     ? CONTENT_DEDUPE_TTL_MS
@@ -754,6 +826,7 @@ function getDeliveryCheckResult(messageId) {
     };
   }
 
+  pruneStalePendingMessageAcks();
   pruneExpiredMessageAcks();
   const cached = recentMessageAcks.get(normalizedMessageId);
   if (cached?.ackPayload) {
@@ -880,6 +953,7 @@ function start(options = {}) {
           const info = clients.get(clientId);
           const roleInfo = info?.role ? ` (${info.role})` : '';
           log.info('WebSocket', `Client ${clientId}${roleInfo} disconnected: ${code}`);
+          evictPendingMessageAcksForClient(clientId);
           clients.delete(clientId);
         });
 
@@ -1006,6 +1080,7 @@ async function handleMessage(clientId, rawData) {
     : null;
 
   if (ackEligible && messageId) {
+    pruneStalePendingMessageAcks();
     pruneExpiredMessageAcks();
 
     const cached = recentMessageAcks.get(messageId);
@@ -1020,15 +1095,15 @@ async function handleMessage(clientId, rawData) {
       return;
     }
 
-    const pending = pendingMessageAcks.get(messageId);
-    if (pending) {
+    const pendingEntry = pendingMessageAcks.get(messageId);
+    if (pendingEntry?.promise) {
       void emitCommsMetric(clientId, clientInfo, 'comms.dedupe.hit', {
         mode: 'pending',
         messageId,
         target: message?.target || null,
       });
       try {
-        const pendingAck = await pending;
+        const pendingAck = await pendingEntry.promise;
         if (pendingAck) {
           sendJson(clientInfo.ws, pendingAck);
         }
@@ -1134,11 +1209,22 @@ async function handleMessage(clientId, rawData) {
   let resolvePendingAck = null;
   let rejectPendingAck = null;
   if (ackEligible && messageId) {
-    const pending = new Promise((resolve, reject) => {
-      resolvePendingAck = resolve;
-      rejectPendingAck = reject;
+    const pendingEntry = {
+      promise: null,
+      createdAt: Date.now(),
+      clientId,
+      resolve: null,
+      reject: null,
+    };
+    pendingEntry.promise = new Promise((resolve, reject) => {
+      pendingEntry.resolve = resolve;
+      pendingEntry.reject = reject;
     });
-    pendingMessageAcks.set(messageId, pending);
+    // Avoid unhandled-rejection noise when a sender disconnects before consumers await.
+    pendingEntry.promise.catch(() => {});
+    resolvePendingAck = pendingEntry.resolve;
+    rejectPendingAck = pendingEntry.reject;
+    pendingMessageAcks.set(messageId, pendingEntry);
   }
 
   let resolvePendingDispatchAck = null;
@@ -1325,8 +1411,15 @@ function sendToTarget(target, content, meta = {}) {
 
   const shouldPersistOffline = meta?.persistIfOffline !== false;
   if (shouldPersistOffline) {
-    queueOutboundMessage(target, content, meta, 'sendToTarget');
-    log.warn('WebSocket', `No connected client for target: ${target}. Queued for reconnect delivery.`);
+    const queueResult = queueOutboundMessage(target, content, meta, 'sendToTarget');
+    if (queueResult?.persisted) {
+      log.warn('WebSocket', `No connected client for target: ${target}. Queued for reconnect delivery.`);
+    } else {
+      log.warn(
+        'WebSocket',
+        `No connected client for target: ${target}. Queue persisted failed; retained in memory for retry (${queueResult?.error || 'unknown_error'}).`
+      );
+    }
   } else {
     log.warn('WebSocket', `No connected client for target: ${target}`);
   }

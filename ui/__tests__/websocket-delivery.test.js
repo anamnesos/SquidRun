@@ -629,4 +629,60 @@ describe('WebSocket Delivery Audit', () => {
 
     onMessageSpy.mockImplementation(() => undefined);
   });
+
+  test('evicts pending ACK state when sender disconnects so reused messageId can proceed', async () => {
+    const senderA = await connectAndRegister({ port, role: 'architect', paneId: '1' });
+    activeClients.add(senderA);
+
+    let firstDispatch = true;
+    onMessageSpy.mockImplementation((payload) => {
+      if (payload?.message?.type === 'send' && payload?.message?.messageId === 'pending-disconnect-ack-1') {
+        if (firstDispatch) {
+          firstDispatch = false;
+          return new Promise(() => {});
+        }
+        return {
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'unrouted',
+        };
+      }
+      return undefined;
+    });
+
+    senderA.send(JSON.stringify({
+      type: 'send',
+      target: 'missing-role',
+      content: 'stuck-first-dispatch',
+      messageId: 'pending-disconnect-ack-1',
+      ackRequired: true,
+    }));
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await closeClient(senderA);
+    activeClients.delete(senderA);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const senderB = await connectAndRegister({ port, role: 'oracle', paneId: '3' });
+    activeClients.add(senderB);
+
+    const ackPromise = waitForMessage(
+      senderB,
+      (msg) => msg.type === 'send-ack' && msg.messageId === 'pending-disconnect-ack-1'
+    );
+    senderB.send(JSON.stringify({
+      type: 'send',
+      target: 'missing-role',
+      content: 'reused-id-after-disconnect',
+      messageId: 'pending-disconnect-ack-1',
+      ackRequired: true,
+    }));
+
+    const ack = await ackPromise;
+    expect(ack.status).toBe('unrouted');
+    expect(ack.ok).toBe(false);
+
+    onMessageSpy.mockImplementation(() => undefined);
+  });
 });
