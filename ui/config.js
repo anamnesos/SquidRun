@@ -27,6 +27,19 @@ const PIPE_PATH = os.platform() === 'win32'
 const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
 const PROJECT_ROOT_FALLBACK = path.resolve(path.join(WORKSPACE_PATH, '..'));
 const PROJECT_ROOT_DISCOVERY_CWD = path.resolve(path.join(__dirname, '..'));
+const EXTERNAL_WORKSPACE_DIRNAME = 'SquidRun';
+
+function isPackagedRuntimePath(targetPath = '') {
+  const normalized = String(targetPath || '')
+    .replace(/\\/g, '/')
+    .toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized.includes('/resources/app.asar')
+    || normalized.includes('/resources/app.asar.unpacked')
+    || normalized.includes('.app/contents/')
+  );
+}
 
 function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
   try {
@@ -39,6 +52,9 @@ function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
     if (resolved) return path.resolve(resolved);
   } catch (_) {
     // Fall back when git is unavailable or cwd is not in a git worktree.
+  }
+  if (isPackagedRuntimePath(startDir)) {
+    return path.join(os.homedir(), EXTERNAL_WORKSPACE_DIRNAME);
   }
   return PROJECT_ROOT_FALLBACK;
 }

@@ -1238,6 +1238,16 @@ function getShell() {
   return os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash';
 }
 
+function getPackagedWorkspaceFallbackDir() {
+  const preferred = path.join(os.homedir(), 'SquidRun');
+  try {
+    fs.mkdirSync(preferred, { recursive: true });
+    return preferred;
+  } catch (_) {
+    return os.homedir();
+  }
+}
+
 // Send JSON message to a client
 function sendToClient(client, message) {
   try {
@@ -1273,11 +1283,12 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   }
 
   // Use cwd from Electron (already resolved with paneProjects), else daemon fallback.
-  // Avoid cwd inside the app bundle (e.g. /Applications/SquidRun.app/...) as
-  // posix_spawnp fails when the working directory is inside a macOS .app bundle.
+  // Avoid cwd inside the app bundle (e.g. /Applications/SquidRun.app/... or app.asar*)
+  // because child process spawning from bundled runtime paths is brittle.
   let workDir = cwd || resolvePaneCwd(paneId) || process.cwd();
-  if (workDir.includes('.app/Contents/')) {
-    workDir = os.homedir();
+  const normalizedWorkDir = String(workDir || '').replace(/\\/g, '/').toLowerCase();
+  if (normalizedWorkDir.includes('.app/contents/') || normalizedWorkDir.includes('app.asar')) {
+    workDir = getPackagedWorkspaceFallbackDir();
   }
   // macOS apps launched from Finder get a minimal PATH. Ensure common bin dirs
   // are included so shells can find CLIs like claude, codex, gemini.
