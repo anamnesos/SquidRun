@@ -113,7 +113,8 @@ const DAEMON_CONNECT_TIMEOUT_MS = Math.max(
   1000,
   Number.parseInt(process.env.SQUIDRUN_DAEMON_CONNECT_TIMEOUT_MS || '15000', 10) || 15000
 );
-const DAEMON_PID_FILE = path.join(__dirname, '..', '..', 'daemon.pid');
+const UI_RUNTIME_DIR = path.resolve(__dirname, '..', '..').replace('app.asar', 'app.asar.unpacked');
+const DAEMON_PID_FILE = path.join(UI_RUNTIME_DIR, 'daemon.pid');
 const RENDERER_ENTRY_HTML = path.join(__dirname, '..', '..', 'index.html');
 const SHUTDOWN_CONFIRM_MESSAGE = 'All active agent sessions will be terminated.\n\nContinue?';
 
