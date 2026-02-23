@@ -1248,10 +1248,25 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
     }
   }
 
-  // Use cwd from Electron (already resolved with paneProjects), else daemon fallback
-  const workDir = cwd || resolvePaneCwd(paneId) || process.cwd();
+  // Use cwd from Electron (already resolved with paneProjects), else daemon fallback.
+  // Avoid cwd inside the app bundle (e.g. /Applications/SquidRun.app/...) as
+  // posix_spawnp fails when the working directory is inside a macOS .app bundle.
+  let workDir = cwd || resolvePaneCwd(paneId) || process.cwd();
+  if (workDir.includes('.app/Contents/')) {
+    workDir = os.homedir();
+  }
+  // macOS apps launched from Finder get a minimal PATH. Ensure common bin dirs
+  // are included so shells can find CLIs like claude, codex, gemini.
+  const extraPaths = process.platform === 'darwin'
+    ? ['/opt/homebrew/bin', '/usr/local/bin', path.join(os.homedir(), '.local', 'bin')]
+    : [];
+  const basePath = process.env.PATH || '';
+  const augmentedPath = extraPaths.length
+    ? [...extraPaths, basePath].join(':')
+    : basePath;
   const runtimeEnv = {
     ...process.env,
+    PATH: augmentedPath,
     ...(options.env && typeof options.env === 'object' ? options.env : {}),
   };
 
