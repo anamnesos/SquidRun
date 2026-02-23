@@ -507,11 +507,16 @@ function registerPtyHandlers(ctx, deps = {}) {
       if (agentCmd.startsWith('codex')) {
         const hasDangerouslyBypass = hasCodexDangerouslyBypassFlag(agentCmd);
         const hasAskForApproval = hasCodexAskForApprovalFlag(agentCmd);
-        if (!hasDangerouslyBypass && !hasAskForApproval) {
-          agentCmd = `${agentCmd} -a never`;
-        }
-        if (!agentCmd.includes('--dangerously-bypass-approvals-and-sandbox') && !agentCmd.includes('-s danger-full-access') && !agentCmd.includes('--yolo')) {
+        const hasYolo = agentCmd.includes('--yolo');
+        // --yolo (alias for --dangerously-bypass-approvals-and-sandbox) conflicts
+        // with -a / --ask-for-approval.  Prefer --yolo when autonomy is enabled.
+        if (!hasDangerouslyBypass && !hasYolo) {
           agentCmd = `${agentCmd} --yolo`;
+        }
+        // Only add -a if --yolo / --dangerously-bypass wasn't added (they conflict)
+        if (!agentCmd.includes('--yolo') && !hasCodexDangerouslyBypassFlag(agentCmd)
+            && !hasDangerouslyBypass && !hasAskForApproval) {
+          agentCmd = `${agentCmd} -a never`;
         }
       }
     }
