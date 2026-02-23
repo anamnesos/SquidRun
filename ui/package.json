@@ -72,7 +72,7 @@
         { "target": "dmg", "arch": ["universal"] },
         { "target": "zip", "arch": ["universal"] }
       ],
-      "x64ArchFiles": "**/node_modules/node-pty/prebuilds/**/*.node"
+      "x64ArchFiles": "**/node_modules/node-pty/prebuilds/**/*"
     },
     "win": {
       "icon": "assets/squidrun-favicon.ico",
