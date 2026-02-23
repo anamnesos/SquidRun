@@ -214,10 +214,11 @@ function registerPtyHandlers(ctx, deps = {}) {
       }
     }
 
+    const spawnOptions = { paneCommand };
     if (spawnEnv) {
-      ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, spawnEnv);
+      ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, spawnEnv, spawnOptions);
     } else {
-      ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null);
+      ctx.daemonClient.spawn(paneId, cwd, ctx.currentSettings.dryRun, null, null, spawnOptions);
     }
     return { paneId, cwd, dryRun: ctx.currentSettings.dryRun };
   });

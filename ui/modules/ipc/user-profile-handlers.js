@@ -67,7 +67,50 @@ function resolveProjectRoot(ctx) {
 }
 
 function resolveUserProfilePath(ctx) {
-  return path.join(resolveProjectRoot(ctx), 'workspace', 'user-profile.json');
+  const projectRoot = resolveProjectRoot(ctx);
+  const packagedPath = path.join(projectRoot, 'user-profile.json');
+  const legacyPath = path.join(projectRoot, 'workspace', 'user-profile.json');
+  if (fs.existsSync(packagedPath)) return packagedPath;
+  if (fs.existsSync(legacyPath)) return legacyPath;
+  return packagedPath;
+}
+
+function resolveOnboardingStatePath(ctx) {
+  return path.join(resolveProjectRoot(ctx), '.squidrun', 'onboarding-state.json');
+}
+
+function deriveConfiguredFeatures(ctx) {
+  const settings = ctx?.currentSettings && typeof ctx.currentSettings === 'object'
+    ? ctx.currentSettings
+    : {};
+  const features = [];
+  if (settings.autoSpawn !== false) features.push('auto-spawn');
+  if (settings.autonomyConsentGiven === true) features.push('autonomy-consent');
+  if (settings.allowAllPermissions === true) features.push('autonomy-enabled');
+  if (settings.externalNotificationsEnabled === true) features.push('external-notifications');
+  if (settings.mcpAutoConfig === true) features.push('mcp-autoconfig');
+  if (settings.firmwareInjectionEnabled === true) features.push('firmware-injection');
+  return features;
+}
+
+function writeOnboardingStateIfMissing(ctx, profile = {}) {
+  const name = String(profile?.name || '').trim();
+  if (!name) return;
+
+  const onboardingPath = resolveOnboardingStatePath(ctx);
+  if (fs.existsSync(onboardingPath)) return;
+
+  const projectRoot = resolveProjectRoot(ctx);
+  const payload = {
+    onboarding_complete: true,
+    completed_at: new Date().toISOString(),
+    user_name: name,
+    workspace_path: projectRoot,
+    configured_features: deriveConfiguredFeatures(ctx),
+  };
+
+  fs.mkdirSync(path.dirname(onboardingPath), { recursive: true });
+  fs.writeFileSync(onboardingPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
 }
 
 function readProfileFile(profilePath) {
@@ -190,6 +233,7 @@ function registerUserProfileHandlers(ctx) {
     const nextProfile = buildSavedProfile(readResult.data, payload);
     try {
       saveProfileFile(profilePath, nextProfile);
+      writeOnboardingStateIfMissing(ctx, nextProfile);
     } catch (err) {
       return {
         success: false,

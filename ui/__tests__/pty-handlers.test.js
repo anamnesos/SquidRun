@@ -63,7 +63,14 @@ describe('PTY Handlers', () => {
       const expectedCwd = path.resolve('/assigned/project');
 
       expect(result.cwd).toBe(expectedCwd);
-      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith('1', expectedCwd, false, null);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '1',
+        expectedCwd,
+        false,
+        null,
+        null,
+        { paneCommand: '' }
+      );
     });
 
     test('uses active state.project when pane has no explicit assignment', async () => {
@@ -75,7 +82,14 @@ describe('PTY Handlers', () => {
       const expectedCwd = path.resolve('/active/project');
 
       expect(result.cwd).toBe(expectedCwd);
-      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith('2', expectedCwd, false, null);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '2',
+        expectedCwd,
+        false,
+        null,
+        null,
+        { paneCommand: '' }
+      );
     });
 
     test('does not read or use state.project when operatingMode is developer', async () => {
@@ -89,14 +103,28 @@ describe('PTY Handlers', () => {
 
       expect(ctx.watcher.readState).not.toHaveBeenCalled();
       expect(result.cwd).not.toBe(stateProjectCwd);
-      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith('2', result.cwd, false, null);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '2',
+        result.cwd,
+        false,
+        null,
+        null,
+        { paneCommand: '' }
+      );
     });
 
     test('uses workingDir when pane cwd resolver has no mapping', async () => {
       ctx.daemonClient.connected = true;
       const result = await harness.invoke('pty-create', '99', '/custom/dir');
 
-      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith('99', '/custom/dir', false, null);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '99',
+        '/custom/dir',
+        false,
+        null,
+        null,
+        { paneCommand: '' }
+      );
     });
 
     test('spawns codex panes with null mode (interactive PTY, not codex-exec)', async () => {
@@ -110,7 +138,9 @@ describe('PTY Handlers', () => {
         '2',
         expect.any(String),
         false,
-        null
+        null,
+        null,
+        { paneCommand: 'codex --mode exec' }
       );
     });
 
@@ -124,7 +154,9 @@ describe('PTY Handlers', () => {
         '1',
         expect.any(String),
         false,
-        null
+        null,
+        null,
+        { paneCommand: 'claude' }
       );
     });
 
@@ -135,7 +167,14 @@ describe('PTY Handlers', () => {
       const result = await harness.invoke('pty-create', '1', '/test');
 
       expect(result.dryRun).toBe(true);
-      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith('1', expect.any(String), true, null);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '1',
+        expect.any(String),
+        true,
+        null,
+        null,
+        { paneCommand: '' }
+      );
     });
 
     test('sets GEMINI_SYSTEM_MD env for gemini panes when firmware injection is enabled', async () => {
@@ -155,7 +194,8 @@ describe('PTY Handlers', () => {
         expect.any(String),
         false,
         null,
-        { GEMINI_SYSTEM_MD: '/tmp/fw/oracle.md' }
+        { GEMINI_SYSTEM_MD: '/tmp/fw/oracle.md' },
+        { paneCommand: 'gemini --yolo' }
       );
     });
   });
