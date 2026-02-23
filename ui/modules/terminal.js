@@ -1050,17 +1050,17 @@ async function runStartupIdentityAttempt(paneId, state, reason) {
   const retryDelayMs = Math.max(500, Number(STARTUP_IDENTITY_RETRY_DELAY_MS) || 2000);
 
   try {
-    let deliveryMethod = 'raw-write';
-    if (!state.isGemini) {
-      const sendResult = await sendStartupIdentityViaInjection(id, identityMsg);
-      if (!sendResult?.success) {
+    let deliveryMethod = 'send-to-pane';
+    const sendResult = await sendStartupIdentityViaInjection(id, identityMsg);
+    if (!sendResult?.success) {
+      if (!state.isGemini) {
         throw new Error(sendResult?.reason || 'startup_identity_send_failed');
       }
-      deliveryMethod = 'send-to-pane';
-    } else {
+      // Gemini fallback: send direct PTY writes if injection queue rejects startup delivery.
       await window.squidrun.pty.write(id, identityMsg);
       await new Promise(resolve => setTimeout(resolve, 200));
       await window.squidrun.pty.write(id, '\r');
+      deliveryMethod = 'gemini-raw-write-fallback';
     }
 
     // PTY write succeeded — trust the delivery. Scrollback verification is unreliable

@@ -317,5 +317,36 @@ describe('Terminal Events', () => {
         onComplete: expect.any(Function),
       }));
     });
+
+    test('spawn startup identity routes Gemini pane through injection controller before fallback paths', async () => {
+      const runtimeSettings = require('../modules/settings');
+      runtimeSettings.getSettings.mockReturnValue({
+        paneCommands: {
+          '3': 'gemini --yolo --include-directories "/tmp/workspace"',
+        },
+      });
+
+      terminal.terminals.set('3', { write: jest.fn() });
+      const spawnPromise = terminal.spawnAgent('3');
+      await jest.advanceTimersByTimeAsync(150);
+      await spawnPromise;
+
+      // spawn Enter delay (100ms) + Gemini startup timeout (15000ms) + identity delay (1000ms)
+      await jest.advanceTimersByTimeAsync(16200);
+
+      const startupCall = mockInjectionController.sendToPane.mock.calls.find((args) => (
+        args[0] === '3'
+        && typeof args[1] === 'string'
+        && args[1].includes('# SQUIDRUN SESSION: Oracle - Started')
+      ));
+      expect(startupCall).toBeDefined();
+      expect(startupCall[2]).toEqual(expect.objectContaining({
+        priority: true,
+        immediate: true,
+        startupInjection: true,
+        verifySubmitAccepted: false,
+        onComplete: expect.any(Function),
+      }));
+    });
   });
 });

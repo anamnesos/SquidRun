@@ -6,6 +6,7 @@
 const { app, BrowserWindow, dialog, ipcMain, session, powerMonitor, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { spawn } = require('child_process');
 const log = require('../logger');
 const { getDaemonClient } = require('../../daemon-client');
@@ -16,6 +17,7 @@ const {
   BACKGROUND_BUILDER_OWNER_PANE_ID,
   resolveBackgroundBuilderAlias,
   resolveBackgroundBuilderPaneId,
+  setProjectRoot,
 } = require('../../config');
 const { createPluginManager } = require('../plugins');
 const { createBackupManager } = require('../backup-manager');
@@ -117,6 +119,7 @@ const UI_RUNTIME_DIR = path.resolve(__dirname, '..', '..').replace('app.asar', '
 const DAEMON_PID_FILE = path.join(UI_RUNTIME_DIR, 'daemon.pid');
 const RENDERER_ENTRY_HTML = path.join(__dirname, '..', '..', 'index.html');
 const SHUTDOWN_CONFIRM_MESSAGE = 'All active agent sessions will be terminated.\n\nContinue?';
+const EXTERNAL_WORKSPACE_DIRNAME = 'SquidRun';
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
@@ -227,6 +230,113 @@ class SquidRunApp {
     this.fullShutdownPromise = null;
     this.runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
     this.runtimeLifecycleQueue = Promise.resolve();
+  }
+
+  isBundledRuntimePath(targetPath = '') {
+    const normalized = String(targetPath || '')
+      .replace(/\\/g, '/')
+      .toLowerCase();
+    if (!normalized) return false;
+    return normalized.includes('.app/contents/') || normalized.includes('app.asar');
+  }
+
+  getDefaultExternalWorkspacePath() {
+    const homePath = (app && typeof app.getPath === 'function')
+      ? app.getPath('home')
+      : os.homedir();
+    return path.join(homePath, EXTERNAL_WORKSPACE_DIRNAME);
+  }
+
+  resolveWorkspaceTemplateRoot() {
+    const candidates = [
+      path.resolve(path.join(__dirname, '..', '..', 'workspace-template')),
+      path.resolve(path.join(process.resourcesPath || '', 'app.asar', 'ui', 'workspace-template')),
+      path.resolve(path.join(process.resourcesPath || '', 'app.asar.unpacked', 'ui', 'workspace-template')),
+    ];
+    for (const candidate of candidates) {
+      if (candidate && fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  copyFileIfMissing(sourcePath, destinationPath) {
+    if (!sourcePath || !destinationPath) return false;
+    if (!fs.existsSync(sourcePath)) return false;
+    if (fs.existsSync(destinationPath)) return false;
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.copyFileSync(sourcePath, destinationPath);
+    return true;
+  }
+
+  copyDirectoryIfMissing(sourceDir, destinationDir) {
+    if (!sourceDir || !destinationDir || !fs.existsSync(sourceDir)) return 0;
+    let copied = 0;
+    fs.mkdirSync(destinationDir, { recursive: true });
+    const entries = fs.readdirSync(sourceDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const sourcePath = path.join(sourceDir, entry.name);
+      const destinationPath = path.join(destinationDir, entry.name);
+      if (entry.isDirectory()) {
+        copied += this.copyDirectoryIfMissing(sourcePath, destinationPath);
+        continue;
+      }
+      if (entry.isFile() && this.copyFileIfMissing(sourcePath, destinationPath)) {
+        copied += 1;
+      }
+    }
+    return copied;
+  }
+
+  ensurePackagedWorkspaceBootstrap() {
+    if (!app || app.isPackaged !== true) {
+      return null;
+    }
+
+    const workspacePath = this.getDefaultExternalWorkspacePath();
+    fs.mkdirSync(workspacePath, { recursive: true });
+    fs.mkdirSync(path.join(workspacePath, '.squidrun'), { recursive: true });
+
+    const templateRoot = this.resolveWorkspaceTemplateRoot();
+    if (templateRoot) {
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'CLAUDE.md'),
+        path.join(workspacePath, 'CLAUDE.md')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'ROLES.md'),
+        path.join(workspacePath, 'ROLES.md')
+      );
+      this.copyDirectoryIfMissing(
+        path.join(templateRoot, '.squidrun'),
+        path.join(workspacePath, '.squidrun')
+      );
+    } else {
+      log.warn('ProjectLifecycle', 'Workspace template bundle missing; skipping seed file copy');
+    }
+
+    if (typeof setProjectRoot === 'function') {
+      setProjectRoot(workspacePath);
+    }
+
+    try {
+      const currentState = (typeof watcher.readState === 'function' ? watcher.readState() : {}) || {};
+      const currentProject = typeof currentState.project === 'string' ? currentState.project.trim() : '';
+      if (
+        typeof watcher.writeState === 'function'
+        && (!currentProject || this.isBundledRuntimePath(currentProject))
+      ) {
+        watcher.writeState({
+          ...currentState,
+          project: workspacePath,
+        });
+      }
+    } catch (err) {
+      log.warn('ProjectLifecycle', `Failed writing packaged workspace state: ${err.message}`);
+    }
+
+    return workspacePath;
   }
 
   async initializeStartupSessionScope(options = {}) {
@@ -876,6 +986,12 @@ class SquidRunApp {
 
     // 1. Load settings
     this.settings.loadSettings();
+
+    // 1.1 Packaged app bootstrap: ensure a writable external workspace exists.
+    const packagedWorkspacePath = this.ensurePackagedWorkspaceBootstrap();
+    if (packagedWorkspacePath) {
+      log.info('ProjectLifecycle', `Using packaged external workspace: ${packagedWorkspacePath}`);
+    }
 
     // 2. Create main window as early as possible so users see immediate startup feedback.
     await this.createWindow();
