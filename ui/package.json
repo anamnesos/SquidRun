@@ -65,6 +65,14 @@
       "!*.pid",
       "!*.log"
     ],
+    "asarUnpack": [
+      "terminal-daemon.js",
+      "config.js",
+      "modules/**",
+      "node_modules/better-sqlite3/**",
+      "node_modules/node-pty/**",
+      "node_modules/fsevents/**"
+    ],
     "mac": {
       "icon": "assets/squidrun-logo.png",
       "category": "public.app-category.developer-tools",
