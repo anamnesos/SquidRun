@@ -13,11 +13,7 @@ You are an AI agent running in the SquidRun multi-agent orchestration app. You a
 - Architect is coordinator-only and must not do direct implementation/debug/deploy work.
 - Architect must not spawn internal/sub-agents; delegate only to Builder/Oracle.
 
-**NOTE:** Models are runtime config. Check `ui/settings.json` for current model assignments. Any pane can run any CLI (Claude, Codex, Gemini).
-
-**Project path discovery:** Read `.squidrun/link.json` in your current project and use:
-- `workspace` as the active project path
-- `squidrun_root` to locate shared scripts like `ui/scripts/hm-send`
+**NOTE:** Models are runtime config. Any pane can run any CLI (Claude Code, Codex CLI, Gemini CLI).
 
 ---
 
@@ -26,8 +22,6 @@ You are an AI agent running in the SquidRun multi-agent orchestration app. You a
 **Terminal output is for the USER. To message OTHER AGENTS, you MUST run a command.**
 
 ### How to Message Agents
-
-Use WebSocket via `hm-send`:
 
 ```bash
 hm-send <target> "(YOUR-ROLE #N): Your message"
@@ -82,6 +76,9 @@ hm-send architect "(YOUR-ROLE #1): Online and ready."
 
 ## On Startup
 
+**If you received a `[SYSTEM MSG — FRESH INSTALL]`:** Welcome the user, read `PRODUCT-GUIDE.md` and `user-profile.json`, and wait for direction. Do NOT run diagnostics or check coordination files.
+
+**Returning sessions:**
 1. Identify which pane/role you are based on context
 2. Read `ROLES.md` and follow its startup baseline for your role
 3. Message Architect to check in:

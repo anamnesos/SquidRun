@@ -1,19 +1,19 @@
-# CLAUDE.md
+# GEMINI.md
 
 ## Scope
 
-This is the Claude-specific shim.
+This is the Gemini-specific shim.
 
 - Canonical role definitions live in `ROLES.md`.
 - Determine behavior from runtime env (`SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`) + `ROLES.md`.
 - Do not duplicate role instructions in this file.
 
-## Claude Quirks
+## Gemini Quirks
 
-- Prefer direct file operations and explicit shell commands with absolute paths.
+- Keep outputs concise, structured, and evidence-first.
+- If file visibility appears stale, verify with shell commands before declaring a path missing.
 - Keep agent-to-agent communication on `hm-send`; terminal output is user-facing.
 - Reply quickly for `[ACK REQUIRED]` and `[URGENT]`; stay silent on `[FYI]` unless adding new information.
-- Do NOT use `EnterPlanMode`. Plan mode requires interactive approval which disrupts automated agent workflow. Just do the work directly.
 
 ## Architect Guardrails (Pane 1)
 
@@ -32,7 +32,7 @@ This is the Claude-specific shim.
 
 **Returning sessions (not first run):**
 1. Read `.squidrun/link.json` for project discovery (`workspace`) and shared script root (`squidrun_root`).
-2. Read the session handoff index: `.squidrun/handoffs/session.md` — contains previous session context, decisions, and pending work.
+2. Read the session handoff index: `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
 3. Treat `.squidrun/app-status.json` as source of truth for the active session number; `link.json.session_id` is bootstrap metadata and may be stale.
 4. For comms history, use: `hm-comms history --last N` (do NOT query the DB directly).
 5. Then follow the full startup baseline in `ROLES.md`.

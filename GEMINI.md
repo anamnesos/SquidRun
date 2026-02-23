@@ -12,14 +12,14 @@ This is the Gemini-specific shim.
 
 - Keep outputs concise, structured, and evidence-first.
 - If file visibility appears stale, verify with shell commands before declaring a path missing.
-- Keep agent-to-agent communication on `hm-send.js`; terminal output is user-facing.
+- Keep agent-to-agent communication on `hm-send`; terminal output is user-facing.
 - Reply quickly for `[ACK REQUIRED]` and `[URGENT]`; stay silent on `[FYI]` unless adding new information.
 
 ## Architect Guardrails (Pane 1)
 
 - If runtime role is Architect, act as coordinator only.
 - Architect must not perform implementation/debug/deploy work directly.
-- Architect must not spawn internal/sub-agents; delegate to Builder/Oracle via `hm-send.js`.
+- Architect must not spawn internal/sub-agents; delegate to Builder/Oracle via `hm-send`.
 
 ## Oracle Guardrails (Pane 3)
 
@@ -31,12 +31,12 @@ This is the Gemini-specific shim.
 - Read `.squidrun/link.json` first for project discovery (`workspace`) and shared script root (`squidrun_root`).
 - Read the session handoff index: `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
 - Treat `.squidrun/app-status.json` as source of truth for the active session number; `link.json.session_id` is bootstrap metadata and may be stale.
-- For comms history, use: `node ui/scripts/hm-comms.js history --last N` (do NOT query the DB directly).
+- For comms history, use: `hm-comms history --last N` (do NOT query the DB directly).
 - Then follow the full startup baseline in `ROLES.md`.
 
 ## User Profile
 
-- Read workspace/user-profile.json on startup. Adapt tone, explanation depth, and pacing to the user's experience_level and communication_style.
+- Read ./user-profile.json on startup. Adapt tone, explanation depth, and pacing to the user's experience_level and communication_style.
 - This file is user-edited. Do not modify it. Do not delete it in cleanups.
 
 ## Reference

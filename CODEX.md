@@ -12,7 +12,7 @@ This is the Codex-specific shim.
 
 - Prefer concise, implementation-first responses with explicit file references.
 - Use non-interactive shell workflows and avoid destructive git operations by default.
-- Keep agent-to-agent communication on `hm-send.js`; terminal output is user-facing.
+- Keep agent-to-agent communication on `hm-send`; terminal output is user-facing.
 
 ## Builder: Autonomous Background Agent Spawning (MANDATORY)
 
@@ -27,7 +27,7 @@ This is the Codex-specific shim.
 
 - If runtime role is Architect, act as coordinator only.
 - Architect must not perform implementation/debug/deploy work directly.
-- Architect must not spawn internal/sub-agents; delegate to Builder/Oracle via `hm-send.js`.
+- Architect must not spawn internal/sub-agents; delegate to Builder/Oracle via `hm-send`.
 
 ## Oracle Guardrails (Pane 3)
 
@@ -39,12 +39,12 @@ This is the Codex-specific shim.
 - Read `.squidrun/link.json` first for project discovery (`workspace`) and shared script root (`squidrun_root`).
 - Read the session handoff index: `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
 - Treat `.squidrun/app-status.json` as source of truth for the active session number; `link.json.session_id` is bootstrap metadata and may be stale.
-- For comms history, use: `node ui/scripts/hm-comms.js history --last N` (do NOT query the DB directly).
+- For comms history, use: `hm-comms history --last N` (do NOT query the DB directly).
 - Then follow the full startup baseline in `ROLES.md`.
 
 ## User Profile
 
-- Read workspace/user-profile.json on startup. Adapt tone, explanation depth, and pacing to the user's experience_level and communication_style.
+- Read ./user-profile.json on startup. Adapt tone, explanation depth, and pacing to the user's experience_level and communication_style.
 - This file is user-edited. Do not modify it. Do not delete it in cleanups.
 
 ## Reference
