@@ -1,19 +1,27 @@
-# CLAUDE.md
+# CODEX.md
 
 ## Scope
 
-This is the Claude-specific shim.
+This is the Codex-specific shim.
 
 - Canonical role definitions live in `ROLES.md`.
 - Determine behavior from runtime env (`SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`) + `ROLES.md`.
 - Do not duplicate role instructions in this file.
 
-## Claude Quirks
+## Codex Quirks
 
-- Prefer direct file operations and explicit shell commands with absolute paths.
+- Prefer concise, implementation-first responses with explicit file references.
+- Use non-interactive shell workflows and avoid destructive git operations by default.
 - Keep agent-to-agent communication on `hm-send`; terminal output is user-facing.
-- Reply quickly for `[ACK REQUIRED]` and `[URGENT]`; stay silent on `[FYI]` unless adding new information.
-- Do NOT use `EnterPlanMode`. Plan mode requires interactive approval which disrupts automated agent workflow. Just do the work directly.
+
+## Builder: Autonomous Background Agent Spawning (MANDATORY)
+
+- On EVERY incoming task, assess whether it is heavy enough to parallelize.
+- Heavy = 3+ files, multiple subsystems, refactors, audits, large features, codebase-wide changes.
+- If heavy: AUTOMATICALLY spawn background builder agents (`builder-bg-1..3`) to parallelize the work. Do NOT wait for Architect to tell you.
+- Coordinate sub-workers, integrate their results, shut them down when done.
+- This is YOUR judgment call. If the task is clearly heavy and you don't spawn, that is a defect.
+- Light tasks (single file fix, config tweak): just do it yourself, no spawn needed.
 
 ## Architect Guardrails (Pane 1)
 
@@ -32,7 +40,7 @@ This is the Claude-specific shim.
 
 **Returning sessions (not first run):**
 1. Read `.squidrun/link.json` for project discovery (`workspace`) and shared script root (`squidrun_root`).
-2. Read the session handoff index: `.squidrun/handoffs/session.md` — contains previous session context, decisions, and pending work.
+2. Read the session handoff index: `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
 3. Treat `.squidrun/app-status.json` as source of truth for the active session number; `link.json.session_id` is bootstrap metadata and may be stale.
 4. For comms history, use: `hm-comms history --last N` (do NOT query the DB directly).
 5. Then follow the full startup baseline in `ROLES.md`.
