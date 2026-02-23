@@ -1,5 +1,6 @@
 function hasCodexDangerouslyBypassFlag(command) {
-  return /(?:^|\s)--dangerously-bypass(?:\s|=|$)/i.test(String(command || ''));
+  const cmd = String(command || '');
+  return cmd.includes('--dangerously-bypass-approvals-and-sandbox') || cmd.includes('-s danger-full-access');
 }
 
 function hasCodexAskForApprovalFlag(command) {
