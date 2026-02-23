@@ -54,6 +54,9 @@
     },
     "files": [
       "**/*",
+      "workspace-template/CLAUDE.md",
+      "workspace-template/ROLES.md",
+      "workspace-template/.squidrun/**",
       "!dist/**",
       "!coverage/**",
       "!out/**",
