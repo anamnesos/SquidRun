@@ -378,15 +378,49 @@ class DaemonClient extends EventEmitter {
     this.emit('reconnect-failed');
   }
 
+  _resolveNodeBinary() {
+    if (os.platform() !== 'darwin') return 'node';
+
+    const candidates = [
+      '/opt/homebrew/bin/node',
+      '/usr/local/bin/node',
+      '/opt/local/bin/node',
+    ];
+
+    try {
+      const home = os.homedir();
+      // NVM default
+      const nvmDefaultAlias = path.join(home, '.nvm', 'alias', 'default');
+      if (fs.existsSync(nvmDefaultAlias)) {
+        const version = fs.readFileSync(nvmDefaultAlias, 'utf8').trim();
+        if (version) {
+          candidates.unshift(path.join(home, '.nvm', 'versions', 'node', version, 'bin', 'node'));
+        }
+      }
+      // N/Volta/fnm
+      candidates.unshift(path.join(home, '.volta', 'bin', 'node'));
+      candidates.unshift(path.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin', 'node'));
+    } catch (err) {
+      // Ignore homedir access errors
+    }
+
+    for (const p of candidates) {
+      if (fs.existsSync(p)) return p;
+    }
+
+    return 'node';
+  }
+
   /**
    * Spawn the daemon process (detached)
    */
   async _spawnDaemon() {
     return new Promise((resolve) => {
-      log.info('DaemonClient', 'Spawning daemon', DAEMON_SCRIPT);
+      const nodeBin = this._resolveNodeBinary();
+      log.info('DaemonClient', `Spawning daemon with ${nodeBin}`, DAEMON_SCRIPT);
 
       // Spawn as detached process so it survives parent exit
-      const daemon = spawn('node', [DAEMON_SCRIPT], {
+      const daemon = spawn(nodeBin, [DAEMON_SCRIPT], {
         detached: true,
         stdio: 'ignore', // Don't inherit stdio - daemon runs independently
         cwd: __dirname,
