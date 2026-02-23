@@ -33,7 +33,7 @@ jobs:
           - os: macos-latest
             platform_id: macos
             platform_name: macOS
-            build_args: --mac dmg zip --x64 --arm64
+            build_args: --mac dmg zip --universal
           - os: ubuntu-latest
             platform_id: linux
             platform_name: Linux
@@ -52,9 +52,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Rebuild native dependencies for Electron
-        run: npx @electron/rebuild -f -w node-pty,better-sqlite3
 
       - name: Build installers
         env:
