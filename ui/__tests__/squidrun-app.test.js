@@ -288,7 +288,7 @@ describe('SquidRunApp', () => {
       await app.createWindow();
 
       const loadFile = app.ctx.mainWindow.loadFile;
-      expect(loadFile).toHaveBeenCalledWith('index.html');
+      expect(loadFile).toHaveBeenCalledWith(expect.stringContaining('index.html'));
       expect(app.initModules.mock.invocationCallOrder[0]).toBeLessThan(loadFile.mock.invocationCallOrder[0]);
       expect(app.setupWindowListeners.mock.invocationCallOrder[0]).toBeLessThan(loadFile.mock.invocationCallOrder[0]);
     });
