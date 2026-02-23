@@ -1238,6 +1238,14 @@ function getShell() {
   return os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash';
 }
 
+function detectCliRuntimeFromCommand(command = '') {
+  const normalized = String(command || '').trim().toLowerCase();
+  if (!normalized) return 'claude';
+  if (normalized.startsWith('codex') || normalized.includes(' codex')) return 'codex';
+  if (normalized.startsWith('gemini') || normalized.includes(' gemini')) return 'gemini';
+  return 'claude';
+}
+
 function getPackagedWorkspaceFallbackDir() {
   const preferred = path.join(os.homedir(), 'SquidRun');
   try {
@@ -1290,20 +1298,34 @@ function spawnTerminal(paneId, cwd, dryRun = false, options = {}) {
   if (normalizedWorkDir.includes('.app/contents/') || normalizedWorkDir.includes('app.asar')) {
     workDir = getPackagedWorkspaceFallbackDir();
   }
+  const paneCommand = typeof options.paneCommand === 'string'
+    ? options.paneCommand
+    : '';
+  const paneRuntime = detectCliRuntimeFromCommand(paneCommand);
+  const packagedWorkspaceBin = path.join(os.homedir(), 'SquidRun', '.squidrun', 'bin');
+  const projectWorkspaceBin = path.join(workDir, '.squidrun', 'bin');
+
   // macOS apps launched from Finder get a minimal PATH. Ensure common bin dirs
   // are included so shells can find CLIs like claude, codex, gemini.
   const extraPaths = process.platform === 'darwin'
     ? ['/opt/homebrew/bin', '/usr/local/bin', path.join(os.homedir(), '.local', 'bin')]
     : [];
   const basePath = process.env.PATH || '';
-  const augmentedPath = extraPaths.length
-    ? [...extraPaths, basePath].join(':')
-    : basePath;
+  const pathEntries = [
+    packagedWorkspaceBin,
+    projectWorkspaceBin,
+    ...extraPaths,
+    basePath,
+  ].filter(Boolean);
+  const augmentedPath = Array.from(new Set(pathEntries)).join(path.delimiter);
   const runtimeEnv = {
     ...process.env,
     PATH: augmentedPath,
     ...(options.env && typeof options.env === 'object' ? options.env : {}),
   };
+  if (paneRuntime === 'claude') {
+    runtimeEnv.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = 'false';
+  }
 
   // DRY-RUN MODE: Create mock terminal instead of real PTY
   if (dryRun) {

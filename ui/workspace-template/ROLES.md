@@ -40,12 +40,12 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 ## Shared Operating Baseline
 
 - Project root: `./`
-- App source: `./ui/`
-- Tests: `./ui/__tests__/`
-- Agent messaging: `node ui/scripts/hm-send.js <target> "(ROLE #N): message"`
-- Comms history: `node ui/scripts/hm-comms.js history --last N` (also `--session N`, `--between <sender> <target>`, `--json`)
+- App source: user project files in the current workspace root (`./`)
+- Tests: use the active project's own test commands and layout
+- Agent messaging: `hm-send <target> "(ROLE #N): message"`
+- Comms history: `hm-comms history --last N` (also `--session N`, `--between <sender> <target>`, `--json`)
 - Coordination state root: `.squidrun/`
-- Terminal output is user-facing; agent-to-agent communication uses `hm-send.js`
+- Terminal output is user-facing; agent-to-agent communication uses `hm-send`
 
 ### Runtime Truths (Must Verify Before Diagnosis)
 
@@ -62,13 +62,13 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 2. Read `.squidrun/app-status.json`.
 3. Check `.squidrun/build/blockers.md` and `.squidrun/build/errors.md`.
 4. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-5. Read `workspace/user-profile.json`.
+5. Read `./user-profile.json`.
 6. Process unresolved Claims via `record-consensus` as your first technical action.
-7. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
+7. Discover external comms channels from runtime notices/status messages. If an external channel is active (e.g. `[Telegram from ...]`), reply on that same channel.
 
 **Builder / Oracle (panes 2, 3):**
 1. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-2. Read `workspace/user-profile.json`.
+2. Read `./user-profile.json`.
 3. Read `.squidrun/app-status.json` and note the current `session` number.
 4. Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
 5. Check in to Architect via `hm-send` — one line, no extras.
@@ -83,7 +83,7 @@ Primary workflow:
 
 Hard boundaries:
 - Architect is coordinator-only. Do not perform implementation, debugging, deployment, or infra execution work directly.
-- Do not spawn internal/sub-agents from pane 1. Delegate work only to Builder and Oracle via `hm-send.js`.
+- Do not spawn internal/sub-agents from pane 1. Delegate work only to Builder and Oracle via `hm-send`.
 
 Responsibilities:
 - Task decomposition and cross-agent routing.
@@ -141,7 +141,7 @@ Responsibilities:
 - Prefer simple, reliable solutions over clever complexity.
 - Validate behavior before claiming completion.
 - Verify that an existing system is truly broken (against live runtime paths/data) before proposing replacements or major redesign.
-- Report command/tool failures promptly to Architect via `hm-send.js`.
+- Report command/tool failures promptly to Architect via `hm-send`.
 - Avoid content-free acknowledgments.
 - Always commit before declaring "ready for restart." Uncommitted work is lost on restart.
 - Do not manually maintain per-pane handoff files. `.squidrun/handoffs/session.md` is materialized automatically from the comms journal.
