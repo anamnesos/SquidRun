@@ -240,15 +240,15 @@ describe('Project Handlers', () => {
         session_id: 'app-session-321',
         version: 1,
       }));
-      expect(linkPayload.comms.hm_send).toContain('ui/scripts/hm-send.js');
+      expect(linkPayload.comms.hm_send).toBe('hm-send');
+      expect(linkPayload.comms.hm_comms).toBe('hm-comms');
       expect(linkPayload.role_targets).toEqual({
         architect: 'architect',
         builder: 'builder',
         oracle: 'oracle',
       });
       expect(readmeWrite[1]).toContain('Connectivity Test');
-      expect(readmeWrite[1]).toContain('node ');
-      expect(readmeWrite[1]).toContain('hm-send.js architect');
+      expect(readmeWrite[1]).toContain('hm-send architect');
     });
 
     test('returns error when bootstrap write fails', async () => {

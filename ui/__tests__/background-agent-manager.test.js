@@ -55,8 +55,8 @@ describe('background-agent-manager completion lifecycle', () => {
     }
     for (const contract of startupContracts) {
       expect(contract).toContain('Background-agent override');
-      expect(contract).toContain('hm-send.js builder');
-      expect(contract).not.toMatch(/hm-send\.js\s+architect/i);
+      expect(contract).toContain('hm-send builder');
+      expect(contract).not.toMatch(/hm-send\s+architect/i);
       expect(contract).toContain('Never send startup or status check-ins to Architect');
     }
 

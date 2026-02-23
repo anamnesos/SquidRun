@@ -75,11 +75,16 @@ function withAutonomyFlags(command, settings = {}) {
   } else if (lower.startsWith('codex')) {
     const hasDangerouslyBypass = hasCodexDangerouslyBypassFlag(cmd);
     const hasAskForApproval = hasCodexAskForApprovalFlag(cmd);
-    if (!hasDangerouslyBypass && !hasAskForApproval) {
-      cmd = `${cmd} -a never`;
-    }
-    if (!cmd.includes('--yolo') && !cmd.includes('--dangerously-bypass-approvals-and-sandbox') && !cmd.includes('-s danger-full-access')) {
+    const hasYolo = cmd.includes('--yolo');
+    // --yolo (alias for --dangerously-bypass-approvals-and-sandbox) conflicts
+    // with -a / --ask-for-approval.  Prefer --yolo when autonomy is enabled.
+    if (!hasDangerouslyBypass && !hasYolo) {
       cmd = `${cmd} --yolo`;
+    }
+    // Only add -a if --yolo / --dangerously-bypass wasn't added (they conflict)
+    if (!cmd.includes('--yolo') && !hasCodexDangerouslyBypassFlag(cmd)
+        && !hasDangerouslyBypass && !hasAskForApproval) {
+      cmd = `${cmd} -a never`;
     }
   }
   return cmd;
@@ -224,7 +229,7 @@ class BackgroundAgentManager {
       + `Read ROLES.md, ${modelShim}, .squidrun/handoffs/session.md, and .squidrun/app-status.json before work. `
       + `Background-agent override: do not run the standard Builder/Oracle Architect check-in from ROLES.md or AGENTS.md. `
       + `Owner binding is strict: report only to Builder (pane 2) via `
-      + `node ui/scripts/hm-send.js builder \"(${alias.toUpperCase()} #1): online and ready\" --role ${alias}. `
+      + `hm-send builder \"(${alias.toUpperCase()} #1): online and ready\" --role ${alias}. `
       + `Never send startup or status check-ins to Architect directly. `
       + `When a delegated task is complete, send Builder a completion update.`
     );

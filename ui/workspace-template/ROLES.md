@@ -14,7 +14,7 @@ This file is the canonical role definition source for SquidRun agents.
 - Pane 2: `Builder` (Builder bundle)
 - Pane 3: `Oracle` (Oracle bundle)
 
-Model assignment is runtime-configured in `ui/settings.json` (`paneCommands`).
+Model assignment is runtime-configured by the SquidRun app.
 Any pane can run any CLI (Claude Code, Codex CLI, Gemini CLI). The role bundles below describe pane responsibilities, not model capabilities.
 
 ## Role Bundles
@@ -53,7 +53,6 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 - Current session truth: `.squidrun/app-status.json` (`session` field).
 - `.squidrun/link.json` is project bootstrap metadata; `session_id` can lag and must not override app-status during diagnosis.
 - `session.md` fields are mixed-scope: `rows_scanned` is current-session scoped, while cross-session tables can still be populated from broader history.
-- Historical comms_journal rows have inconsistent session IDs (`null`, `app-39888-*`, `app-session-1`, `app-session-170`, etc.) due to a session-ID drift bug fixed in S170 (commit 3ce061c). Sessions from S170 onward use consistent `app-session-N` format. Do not assume older rows have clean session IDs.
 
 ### Startup Baseline
 
@@ -113,7 +112,6 @@ Primary workflow:
 - Failure to auto-spawn on clearly heavy work is a behavioral defect.
 
 Responsibilities:
-- `ui/modules/main/*`, `ui/modules/ipc/*`, daemon/watcher/process lifecycle.
 - Builder is a working lead: it always owns one hands-on workstream and may spawn up to `3` Background Builder agents (`builder-bg-1..3`) for parallel execution.
 - Max parallel capacity is `4` concurrent workstreams total (`1` Builder + up to `3` background builders). Builder is not a hands-off orchestrator.
 - Background delegation is MANDATORY for large changes, not optional. Builder decides autonomously when to spawn and when to shut down.
