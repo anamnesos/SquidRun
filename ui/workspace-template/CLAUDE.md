@@ -28,11 +28,14 @@ This is the Claude-specific shim.
 
 ## Startup (First Action)
 
-- Read `.squidrun/link.json` first for project discovery (`workspace`) and shared script root (`squidrun_root`).
-- Read the session handoff index: `.squidrun/handoffs/session.md` — contains previous session context, decisions, and pending work.
-- Treat `.squidrun/app-status.json` as source of truth for the active session number; `link.json.session_id` is bootstrap metadata and may be stale.
-- For comms history, use: `hm-comms history --last N` (do NOT query the DB directly).
-- Then follow the full startup baseline in `ROLES.md`.
+**If you received a `[SYSTEM MSG — FRESH INSTALL]`:** Skip the numbered steps below entirely. Follow the fresh-install instructions instead — read `user-profile.json` and `PRODUCT-GUIDE.md`, welcome the user, and wait for direction. Do NOT attempt to read coordination files that won't exist yet.
+
+**Returning sessions (not first run):**
+1. Read `.squidrun/link.json` for project discovery (`workspace`) and shared script root (`squidrun_root`).
+2. Read the session handoff index: `.squidrun/handoffs/session.md` — contains previous session context, decisions, and pending work.
+3. Treat `.squidrun/app-status.json` as source of truth for the active session number; `link.json.session_id` is bootstrap metadata and may be stale.
+4. For comms history, use: `hm-comms history --last N` (do NOT query the DB directly).
+5. Then follow the full startup baseline in `ROLES.md`.
 
 ## User Profile
 

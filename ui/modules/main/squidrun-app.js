@@ -131,9 +131,9 @@ const FRESH_INSTALL_SYSTEM_MESSAGE = [
   '3. DO NOT use jargon — explain everything simply.',
   '4. Welcome the user warmly. Introduce yourself and your role briefly.',
   '5. Read PRODUCT-GUIDE.md to understand what SquidRun is, then explain the basics to the user.',
-  '6. Read user-profile.json and adapt your tone to their experience_level.',
+  '6. Read user-profile.json and adapt your tone to their experience_level. If the name field is empty, do NOT guess — just say "Welcome" without a name.',
   '7. Ask the user what they would like to work on. Wait for their direction before doing anything.',
-  '8. This is a FRESH workspace — an empty workspace is NORMAL, not a bug.',
+  '8. This is a FRESH workspace — an empty workspace is NORMAL, not a bug. Do NOT treat missing files as errors to investigate.',
   '',
   'You are here to help the user, not to audit the system.',
 ].join('\n');
@@ -488,7 +488,10 @@ class SquidRunApp {
     };
     this.writeFileAtomic(onboardingPath, `${JSON.stringify(state, null, 2)}\n`);
     this.packagedOnboardingState = state;
-    this.pendingArchitectStartupSystemMessage = null;
+    // Do NOT clear pendingArchitectStartupSystemMessage here.
+    // It must survive until maybeInjectArchitectStartupSystemMessage() successfully
+    // delivers it to the Architect pane. Clearing it here kills the message before
+    // the Architect pane even spawns (onboarding completes before agent spawn).
     return {
       state,
       path: onboardingPath,
@@ -543,6 +546,22 @@ class SquidRunApp {
       this.copyFileIfMissing(
         path.join(templateRoot, 'PRODUCT-GUIDE.md'),
         path.join(workspacePath, 'PRODUCT-GUIDE.md')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'user-profile.json'),
+        path.join(workspacePath, 'user-profile.json')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'GEMINI.md'),
+        path.join(workspacePath, 'GEMINI.md')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'CODEX.md'),
+        path.join(workspacePath, 'CODEX.md')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'AGENTS.md'),
+        path.join(workspacePath, 'AGENTS.md')
       );
       this.copyDirectoryIfMissing(
         path.join(templateRoot, '.squidrun'),

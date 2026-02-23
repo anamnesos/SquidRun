@@ -17,7 +17,7 @@ You are an AI agent running in the SquidRun multi-agent orchestration app. You a
 
 **Project path discovery:** Read `.squidrun/link.json` in your current project and use:
 - `workspace` as the active project path
-- `squidrun_root` to locate shared scripts like `ui/scripts/hm-send.js`
+- `squidrun_root` to locate shared scripts like `ui/scripts/hm-send`
 
 ---
 
@@ -27,10 +27,10 @@ You are an AI agent running in the SquidRun multi-agent orchestration app. You a
 
 ### How to Message Agents
 
-Use WebSocket via `hm-send.js`:
+Use WebSocket via `hm-send`:
 
 ```bash
-node ui/scripts/hm-send.js <target> "(YOUR-ROLE #N): Your message"
+hm-send <target> "(YOUR-ROLE #N): Your message"
 ```
 
 | To reach... | Target |
@@ -45,12 +45,12 @@ Legacy targets `devops` and `analyst` still work and route to Builder/Oracle res
 
 If you are **Builder** and need to message Architect:
 ```bash
-node ui/scripts/hm-send.js architect "(BUILDER #1): Task complete. Ready for review."
+hm-send architect "(BUILDER #1): Task complete. Ready for review."
 ```
 
 If you are **Oracle** and received a roll call:
 ```bash
-node ui/scripts/hm-send.js architect "(ORACLE #1): Oracle online. Standing by."
+hm-send architect "(ORACLE #1): Oracle online. Standing by."
 ```
 
 ### Message Format
@@ -65,7 +65,7 @@ Start from `#1` each session. Never reuse a number.
 When you receive a message like `(ARCH #1): Roll call - report status`:
 
 1. **DO NOT just respond in your terminal** - the agent cannot see your terminal
-2. **RUN the hm-send.js command** to reply to them
+2. **RUN the hm-send command** to reply to them
 3. Your terminal output goes to the USER only
 
 **WRONG:**
@@ -75,7 +75,7 @@ I received the roll call. Standing by.
 
 **RIGHT:**
 ```bash
-node ui/scripts/hm-send.js architect "(YOUR-ROLE #1): Online and ready."
+hm-send architect "(YOUR-ROLE #1): Online and ready."
 ```
 
 ---
@@ -86,12 +86,12 @@ node ui/scripts/hm-send.js architect "(YOUR-ROLE #1): Online and ready."
 2. Read `ROLES.md` and follow its startup baseline for your role
 3. Message Architect to check in:
    ```bash
-   node ui/scripts/hm-send.js architect "(YOUR-ROLE #1): [Role] online. Standing by."
+   hm-send architect "(YOUR-ROLE #1): [Role] online. Standing by."
    ```
 
 ---
 
-## Why WebSocket (hm-send.js)?
+## Why WebSocket (hm-send)?
 
 - File triggers lose 40%+ of messages under rapid communication
 - WebSocket has zero message loss
