@@ -90,7 +90,7 @@ function writeFileAtomic(filePath, content) {
   }
 }
 
-function buildReadmeFirstContent({ hmSendRelative }) {
+function buildReadmeFirstContent() {
   return [
     '# README-FIRST',
     '',
@@ -100,7 +100,7 @@ function buildReadmeFirstContent({ hmSendRelative }) {
     'Run this from the project root to verify agent messaging:',
     '',
     '```bash',
-    `node ${hmSendRelative} architect "(BUILDER #1): Connectivity test"`,
+    'hm-send architect "(BUILDER #1): Connectivity test"',
     '```',
     '',
     'If this fails, re-run project selection in SquidRun.',
@@ -115,8 +115,6 @@ function writeProjectBootstrapFiles(projectPath, deps = {}) {
       ? getSquidrunRoot()
       : path.resolve(path.join(__dirname, '..', '..', '..'))
   );
-  const hmSendAbsolute = path.join(squidrunRoot, 'ui', 'scripts', 'hm-send.js');
-  const hmSendRelative = normalizeToPosix(path.relative(projectRoot, hmSendAbsolute));
   const sessionId = buildSessionId(deps);
   const coordDir = path.join(projectRoot, '.squidrun');
   const linkFilePath = path.join(coordDir, 'link.json');
@@ -125,7 +123,8 @@ function writeProjectBootstrapFiles(projectPath, deps = {}) {
   const linkPayload = {
     squidrun_root: normalizeToPosix(squidrunRoot),
     comms: {
-      hm_send: hmSendRelative,
+      hm_send: 'hm-send',
+      hm_comms: 'hm-comms',
     },
     workspace: normalizeToPosix(projectRoot),
     session_id: sessionId,
@@ -134,12 +133,11 @@ function writeProjectBootstrapFiles(projectPath, deps = {}) {
   };
 
   writeFileAtomic(linkFilePath, `${JSON.stringify(linkPayload, null, 2)}\n`);
-  writeFileAtomic(readmePath, buildReadmeFirstContent({ hmSendRelative }));
+  writeFileAtomic(readmePath, buildReadmeFirstContent());
 
   return {
     linkFilePath,
     readmePath,
-    hmSendRelative,
     sessionId,
   };
 }
