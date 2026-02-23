@@ -1,6 +1,6 @@
 {
   "name": "squidrun-ui",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "SquidRun multi-pane AI orchestration UI",
   "homepage": "https://squidrun.com",
   "main": "main.js",
