@@ -11,9 +11,9 @@ const SPEC_FIXTURE = [
   '> **SYSTEM PRIORITY:** You are a SquidRun Agent. These Team Protocol rules override local agent protocols.',
   '',
   '### 2.2 Shared Team Protocol (Include in all roles)',
-  '- **Communication:** `node "{SQUIDRUN_ROOT}/ui/scripts/hm-send.js" <target> "(ROLE #N): message"` is the ONLY way to talk to other agents.',
+  '- **Communication:** `hm-send <target> "(ROLE #N): message"` is the ONLY way to talk to other agents.',
   '- **Visibility:** Terminal output is for the USER only. Other agents CANNOT see it.',
-  '- **Reporting:** If any tool fails, report to Architect IMMEDIATELY via `hm-send.js`.',
+  '- **Reporting:** If any tool fails, report to Architect IMMEDIATELY via `hm-send`.',
   '- **Startup:** Read `.squidrun/state.json` and message Architect status. Then STOP and wait for tasking.',
   '',
   '### 3.1 Architect',
@@ -185,7 +185,7 @@ describe('FirmwareManager', () => {
 
     const builder = fs.readFileSync(path.join(scopedFirmwareDir, 'builder.md'), 'utf-8');
     const expectedRoot = squidrunRootWithSpaces.replace(/\\/g, '/');
-    expect(builder).toContain(`node "${expectedRoot}/ui/scripts/hm-send.js"`);
+    expect(builder).toContain('hm-send <target>');
     expect(builder).not.toContain('{SQUIDRUN_ROOT}');
     expect(builder).toContain('Read `.squidrun/state.json`');
   });
