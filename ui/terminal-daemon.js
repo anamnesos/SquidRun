@@ -15,6 +15,30 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+
+// node-pty's unixTerminal.js does helperPath.replace('app.asar', 'app.asar.unpacked')
+// to find its spawn-helper binary.  When the daemon already runs from app.asar.unpacked
+// (which it does — electron-builder's asarUnpack extracts it there), that replace turns
+// the path into app.asar.unpacked.unpacked, which doesn't exist, causing every
+// pty.spawn() to fail with "posix_spawnp failed".
+// Fix: intercept the module load and make the replace a no-op when already unpacked.
+if (__dirname.includes('app.asar.unpacked')) {
+  const _origJsHandler = require.extensions['.js'];
+  require.extensions['.js'] = function (mod, filename) {
+    if (filename.endsWith('node-pty/lib/unixTerminal.js') ||
+        filename.endsWith('node-pty\\lib\\unixTerminal.js')) {
+      let src = fs.readFileSync(filename, 'utf8');
+      src = src.replace(
+        "helperPath = helperPath.replace('app.asar', 'app.asar.unpacked');",
+        "helperPath = helperPath.includes('app.asar.unpacked') ? helperPath : helperPath.replace('app.asar', 'app.asar.unpacked');"
+      );
+      mod._compile(src, filename);
+      require.extensions['.js'] = _origJsHandler; // restore after patching
+      return;
+    }
+    _origJsHandler(mod, filename);
+  };
+}
 const pty = require('node-pty');
 const {
   PIPE_PATH,
