@@ -72,6 +72,7 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 3. Read `.squidrun/app-status.json` and note the current `session` number.
 4. Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
 5. Check in to Architect via `hm-send` — one line, no extras.
+6. **Do NOT autonomously act on prior-session comms history.** Comms history from previous sessions is read-only context. Only initiate work on: (a) explicit delegation received in the current session via `hm-send`, or (b) items listed as unresolved in the Cross-Session Decisions table of `session.md`. Treating old history as a live work queue is a behavioral defect.
 
 ## ARCHITECT
 
