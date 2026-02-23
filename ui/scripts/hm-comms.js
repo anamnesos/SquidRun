@@ -93,6 +93,24 @@ function normalizeSessionId(value) {
 }
 
 function resolveDefaultDbPath() {
+  // When running from the extracted .squidrun/bin/ layout, __dirname-based resolution
+  // produces a double-nested path. Use SQUIDRUN_PROJECT_ROOT if the launcher set it.
+  const envRoot = process.env.SQUIDRUN_PROJECT_ROOT;
+  if (envRoot && fs.existsSync(envRoot)) {
+    return path.join(envRoot, '.squidrun', 'runtime', 'evidence-ledger.db');
+  }
+  // Walk up from cwd to find .squidrun/link.json (same pattern as hm-send.js).
+  let dir = path.resolve(process.cwd());
+  while (true) {
+    const candidate = path.join(dir, '.squidrun', 'runtime', 'evidence-ledger.db');
+    if (fs.existsSync(path.join(dir, '.squidrun', 'link.json')) || fs.existsSync(candidate)) {
+      return candidate;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Final fallback: original __dirname-based resolution (works in dev layout).
   return path.resolve(__dirname, '..', '..', '.squidrun', 'runtime', 'evidence-ledger.db');
 }
 

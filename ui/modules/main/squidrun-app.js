@@ -122,7 +122,21 @@ const SHUTDOWN_CONFIRM_MESSAGE = 'All active agent sessions will be terminated.\
 const EXTERNAL_WORKSPACE_DIRNAME = 'SquidRun';
 const ONBOARDING_STATE_FILENAME = 'onboarding-state.json';
 const PACKAGED_BIN_RUNTIME_RELATIVE = path.join('.squidrun', 'bin', 'runtime', 'ui');
-const FRESH_INSTALL_SYSTEM_MESSAGE = '[SYSTEM MSG] Fresh install detected. Guide the user through setup. Read PRODUCT-GUIDE.md for full product knowledge.';
+const FRESH_INSTALL_SYSTEM_MESSAGE = [
+  '[SYSTEM MSG — FRESH INSTALL] This is a brand new SquidRun installation. No prior sessions exist.',
+  '',
+  'MANDATORY FIRST-RUN BEHAVIOR:',
+  '1. DO NOT run diagnostics, file infrastructure checks, or bug reports.',
+  '2. DO NOT modify any files unless the user explicitly asks you to.',
+  '3. DO NOT use jargon — explain everything simply.',
+  '4. Welcome the user warmly. Introduce yourself and your role briefly.',
+  '5. Read PRODUCT-GUIDE.md to understand what SquidRun is, then explain the basics to the user.',
+  '6. Read user-profile.json and adapt your tone to their experience_level.',
+  '7. Ask the user what they would like to work on. Wait for their direction before doing anything.',
+  '8. This is a FRESH workspace — an empty workspace is NORMAL, not a bug.',
+  '',
+  'You are here to help the user, not to audit the system.',
+].join('\n');
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
@@ -385,6 +399,12 @@ class SquidRunApp {
       const launcherScript = [
         '#!/usr/bin/env sh',
         'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
+        '# Resolve workspace root (2 levels up from .squidrun/bin/)',
+        'SQUIDRUN_PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"',
+        'export SQUIDRUN_PROJECT_ROOT',
+        '# Suppress node:sqlite ExperimentalWarning noise',
+        'NODE_NO_WARNINGS=1',
+        'export NODE_NO_WARNINGS',
         `node "$SCRIPT_DIR/runtime/ui/scripts/${scriptName}" "$@"`,
         '',
       ].join('\n');
@@ -399,6 +419,10 @@ class SquidRunApp {
       const windowsLauncher = [
         '@echo off',
         'set "SCRIPT_DIR=%~dp0"',
+        ':: Resolve workspace root (2 levels up from .squidrun\\bin\\)',
+        'for %%I in ("%SCRIPT_DIR%..\\..") do set "SQUIDRUN_PROJECT_ROOT=%%~fI"',
+        ':: Suppress node:sqlite ExperimentalWarning noise',
+        'set "NODE_NO_WARNINGS=1"',
         `node "%SCRIPT_DIR%runtime\\ui\\scripts\\${scriptName}" %*`,
         '',
       ].join('\r\n');
@@ -533,6 +557,27 @@ class SquidRunApp {
     }
 
     this.ensurePackagedCommsBin(workspacePath);
+
+    // A3 fix: Create app-status.json on first run so agents have a session source of truth.
+    const appStatusPath = path.join(workspacePath, '.squidrun', 'app-status.json');
+    if (!fs.existsSync(appStatusPath)) {
+      try {
+        let appVersion = 'unknown';
+        try { appVersion = require('../../package.json').version || appVersion; } catch (_) {}
+        const initialStatus = {
+          session: 1,
+          session_id: 'app-session-1',
+          session_number: 1,
+          started_at: new Date().toISOString(),
+          status: 'running',
+          version: appVersion,
+        };
+        fs.writeFileSync(appStatusPath, JSON.stringify(initialStatus, null, 2) + '\n', 'utf-8');
+        log.info('ProjectLifecycle', 'Created initial app-status.json for first run');
+      } catch (err) {
+        log.warn('ProjectLifecycle', `Failed creating app-status.json: ${err.message}`);
+      }
+    }
 
     const onboardingState = this.readOnboardingState(workspacePath);
     this.packagedOnboardingState = onboardingState;
