@@ -423,7 +423,7 @@ function registerWorkflowHandlers(ctx = {}) {
   }
 
   const { ipcMain } = ctx;
-  const baseDir = ctx.workspaceDir || process.cwd();
+  const baseDir = ctx.workspaceDir || ctx.WORKSPACE_PATH || process.cwd();
   initWorkflowsDir(baseDir);
 
   // List saved workflows

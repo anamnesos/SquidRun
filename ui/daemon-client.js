@@ -19,8 +19,11 @@ const PIPE_PATH = os.platform() === 'win32'
   ? '\\\\.\\pipe\\squidrun-terminal'
   : '/tmp/squidrun-terminal.sock';
 
-const DAEMON_SCRIPT = path.join(__dirname, 'terminal-daemon.js');
-const DAEMON_PID_FILE = path.join(__dirname, 'daemon.pid');
+// In packaged builds, __dirname points inside app.asar which can't be spawned.
+// Resolve to the unpacked copy so child_process.spawn works.
+const ASAR_UNPACKED_DIR = __dirname.replace('app.asar', 'app.asar.unpacked');
+const DAEMON_SCRIPT = path.join(ASAR_UNPACKED_DIR, 'terminal-daemon.js');
+const DAEMON_PID_FILE = path.join(ASAR_UNPACKED_DIR, 'daemon.pid');
 
 class DaemonClient extends EventEmitter {
   constructor() {
@@ -423,7 +426,7 @@ class DaemonClient extends EventEmitter {
       const daemon = spawn(nodeBin, [DAEMON_SCRIPT], {
         detached: true,
         stdio: 'ignore', // Don't inherit stdio - daemon runs independently
-        cwd: __dirname,
+        cwd: ASAR_UNPACKED_DIR,
       });
 
       // Unref so parent can exit without waiting
