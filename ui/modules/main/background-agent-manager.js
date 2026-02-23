@@ -327,6 +327,7 @@ class BackgroundAgentManager {
         backgroundAgent: true,
         ownerPaneId,
         scrollbackMaxSize: this.scrollbackMaxSize,
+        paneCommand: command,
       }
     );
     if (spawnAccepted === false) {

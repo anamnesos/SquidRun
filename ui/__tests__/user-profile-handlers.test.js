@@ -39,7 +39,7 @@ describe('User Profile IPC Handlers', () => {
     expect(result.profile.domain_expertise).toBe('');
     expect(result.profile.notes).toBe('');
     expect(result.profile.schema).toBeTruthy();
-    expect(result.path).toBe(path.join(tempRoot, 'workspace', 'user-profile.json'));
+    expect(result.path).toBe(path.join(tempRoot, 'user-profile.json'));
   });
 
   test('save-user-profile creates file and writes editable fields', async () => {
@@ -60,8 +60,10 @@ describe('User Profile IPC Handlers', () => {
     };
 
     const result = await harness.invoke('save-user-profile', payload);
-    const profilePath = path.join(tempRoot, 'workspace', 'user-profile.json');
+    const profilePath = path.join(tempRoot, 'user-profile.json');
     const saved = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+    const onboardingStatePath = path.join(tempRoot, '.squidrun', 'onboarding-state.json');
+    const onboardingState = JSON.parse(fs.readFileSync(onboardingStatePath, 'utf8'));
 
     expect(result.success).toBe(true);
     expect(saved.name).toBe('James');
@@ -70,6 +72,9 @@ describe('User Profile IPC Handlers', () => {
     expect(saved.domain_expertise).toBe('Strong JS/Electron');
     expect(saved.notes).toBe('Keep answers concise.');
     expect(saved.schema).toEqual(payload.schema);
+    expect(onboardingState.onboarding_complete).toBe(true);
+    expect(onboardingState.user_name).toBe('James');
+    expect(onboardingState.workspace_path).toBe(tempRoot);
   });
 
   test('save-user-profile preserves existing schema as-is', async () => {

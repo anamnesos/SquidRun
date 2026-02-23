@@ -120,6 +120,9 @@ const DAEMON_PID_FILE = path.join(UI_RUNTIME_DIR, 'daemon.pid');
 const RENDERER_ENTRY_HTML = path.join(__dirname, '..', '..', 'index.html');
 const SHUTDOWN_CONFIRM_MESSAGE = 'All active agent sessions will be terminated.\n\nContinue?';
 const EXTERNAL_WORKSPACE_DIRNAME = 'SquidRun';
+const ONBOARDING_STATE_FILENAME = 'onboarding-state.json';
+const PACKAGED_BIN_RUNTIME_RELATIVE = path.join('.squidrun', 'bin', 'runtime', 'ui');
+const FRESH_INSTALL_SYSTEM_MESSAGE = '[SYSTEM MSG] Fresh install detected. Guide the user through setup. Read PRODUCT-GUIDE.md for full product knowledge.';
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
@@ -226,6 +229,8 @@ class SquidRunApp {
     this.daemonConnectedForStartup = false;
     this.daemonTimeoutTriggered = false;
     this.daemonTimeoutNotified = false;
+    this.pendingArchitectStartupSystemMessage = null;
+    this.packagedOnboardingState = null;
     this.shuttingDown = false;
     this.fullShutdownPromise = null;
     this.runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
@@ -289,6 +294,209 @@ class SquidRunApp {
     return copied;
   }
 
+  writeFileAtomic(destinationPath, content, mode = undefined) {
+    if (!destinationPath) return false;
+    const resolved = path.resolve(destinationPath);
+    const tempPath = `${resolved}.tmp`;
+    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+    fs.writeFileSync(tempPath, content, mode !== undefined ? { encoding: 'utf8', mode } : 'utf8');
+    fs.renameSync(tempPath, resolved);
+    return true;
+  }
+
+  copyPathRecursive(sourcePath, destinationPath) {
+    if (!sourcePath || !destinationPath || !fs.existsSync(sourcePath)) return false;
+    const stat = fs.statSync(sourcePath);
+    if (stat.isDirectory()) {
+      fs.mkdirSync(destinationPath, { recursive: true });
+      const entries = fs.readdirSync(sourcePath, { withFileTypes: true });
+      for (const entry of entries) {
+        this.copyPathRecursive(
+          path.join(sourcePath, entry.name),
+          path.join(destinationPath, entry.name)
+        );
+      }
+      return true;
+    }
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.copyFileSync(sourcePath, destinationPath);
+    return true;
+  }
+
+  resolvePackagedUiRoot() {
+    const candidates = [
+      path.resolve(path.join(__dirname, '..', '..')),
+      path.resolve(path.join(process.resourcesPath || '', 'app.asar', 'ui')),
+      path.resolve(path.join(process.resourcesPath || '', 'app.asar.unpacked', 'ui')),
+    ];
+    for (const candidate of candidates) {
+      if (candidate && fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  ensurePackagedCommsBin(workspacePath) {
+    if (!workspacePath) return null;
+    const uiRoot = this.resolvePackagedUiRoot();
+    if (!uiRoot) {
+      log.warn('ProjectLifecycle', 'Unable to resolve packaged UI root for hm-send/hm-comms bootstrap');
+      return null;
+    }
+
+    const runtimeRoot = path.join(workspacePath, PACKAGED_BIN_RUNTIME_RELATIVE);
+    const binRoot = path.join(workspacePath, '.squidrun', 'bin');
+    fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    fs.mkdirSync(runtimeRoot, { recursive: true });
+
+    const requiredFiles = [
+      'config.js',
+      path.join('scripts', 'hm-send.js'),
+      path.join('scripts', 'hm-comms.js'),
+      path.join('scripts', 'hm-telegram.js'),
+      path.join('modules', 'logger.js'),
+      path.join('modules', 'buffered-file-writer.js'),
+      path.join('modules', 'comms', 'message-envelope.js'),
+      path.join('modules', 'main', 'comms-journal.js'),
+      path.join('modules', 'main', 'evidence-ledger-store.js'),
+      path.join('modules', 'main', 'evidence-ledger-ingest.js'),
+    ];
+    for (const relPath of requiredFiles) {
+      const sourcePath = path.join(uiRoot, relPath);
+      const destinationPath = path.join(runtimeRoot, relPath);
+      this.copyPathRecursive(sourcePath, destinationPath);
+    }
+
+    const moduleDeps = ['ws', 'dotenv'];
+    for (const depName of moduleDeps) {
+      this.copyPathRecursive(
+        path.join(uiRoot, 'node_modules', depName),
+        path.join(runtimeRoot, 'node_modules', depName)
+      );
+    }
+
+    const unixLaunchers = {
+      'hm-send': 'hm-send.js',
+      'hm-comms': 'hm-comms.js',
+    };
+    for (const [commandName, scriptName] of Object.entries(unixLaunchers)) {
+      const launcherPath = path.join(binRoot, commandName);
+      const launcherScript = [
+        '#!/usr/bin/env sh',
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
+        `node "$SCRIPT_DIR/runtime/ui/scripts/${scriptName}" "$@"`,
+        '',
+      ].join('\n');
+      this.writeFileAtomic(launcherPath, launcherScript, 0o755);
+      try {
+        fs.chmodSync(launcherPath, 0o755);
+      } catch (_) {
+        // Best-effort chmod for non-POSIX hosts.
+      }
+
+      const windowsLauncherPath = path.join(binRoot, `${commandName}.cmd`);
+      const windowsLauncher = [
+        '@echo off',
+        'set "SCRIPT_DIR=%~dp0"',
+        `node "%SCRIPT_DIR%runtime\\ui\\scripts\\${scriptName}" %*`,
+        '',
+      ].join('\r\n');
+      this.writeFileAtomic(windowsLauncherPath, windowsLauncher);
+    }
+
+    return binRoot;
+  }
+
+  getOnboardingStatePath(workspacePath = null) {
+    const baseWorkspace = workspacePath || this.getDefaultExternalWorkspacePath();
+    return path.join(baseWorkspace, '.squidrun', ONBOARDING_STATE_FILENAME);
+  }
+
+  readOnboardingState(workspacePath = null) {
+    const onboardingPath = this.getOnboardingStatePath(workspacePath);
+    if (!fs.existsSync(onboardingPath)) return null;
+    try {
+      const raw = fs.readFileSync(onboardingPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      return parsed;
+    } catch (err) {
+      log.warn('ProjectLifecycle', `Failed to parse onboarding state: ${err.message}`);
+      return null;
+    }
+  }
+
+  deriveConfiguredFeatures(payload = {}) {
+    const explicit = Array.isArray(payload?.configured_features)
+      ? payload.configured_features
+      : null;
+    if (explicit) {
+      return Array.from(new Set(explicit.map((value) => String(value || '').trim()).filter(Boolean)));
+    }
+
+    const settings = this.ctx?.currentSettings || {};
+    const features = [];
+    if (settings.autoSpawn !== false) features.push('auto-spawn');
+    if (settings.autonomyConsentGiven === true) features.push('autonomy-consent');
+    if (settings.allowAllPermissions === true) features.push('autonomy-enabled');
+    if (settings.externalNotificationsEnabled === true) features.push('external-notifications');
+    if (settings.mcpAutoConfig === true) features.push('mcp-autoconfig');
+    if (settings.firmwareInjectionEnabled === true) features.push('firmware-injection');
+    return features;
+  }
+
+  writeOnboardingState(payload = {}, workspacePath = null) {
+    const effectiveWorkspacePath = workspacePath || this.getDefaultExternalWorkspacePath();
+    const onboardingPath = this.getOnboardingStatePath(effectiveWorkspacePath);
+    const userName = String(
+      payload.user_name
+      || payload.userName
+      || this.ctx?.currentSettings?.userName
+      || ''
+    ).trim();
+    const state = {
+      onboarding_complete: true,
+      completed_at: new Date().toISOString(),
+      user_name: userName,
+      workspace_path: path.resolve(effectiveWorkspacePath),
+      configured_features: this.deriveConfiguredFeatures(payload),
+    };
+    this.writeFileAtomic(onboardingPath, `${JSON.stringify(state, null, 2)}\n`);
+    this.packagedOnboardingState = state;
+    this.pendingArchitectStartupSystemMessage = null;
+    return {
+      state,
+      path: onboardingPath,
+    };
+  }
+
+  maybeInjectArchitectStartupSystemMessage(reason = 'startup') {
+    if (!this.pendingArchitectStartupSystemMessage) return false;
+    if (!this.ctx?.daemonClient || this.ctx.daemonClient.connected !== true) return false;
+    const terminals = typeof this.ctx.daemonClient.getTerminals === 'function'
+      ? this.ctx.daemonClient.getTerminals()
+      : [];
+    const architectAlive = Array.isArray(terminals)
+      && terminals.some((term) => String(term?.paneId || '') === '1' && term?.alive !== false);
+    if (!architectAlive) return false;
+
+    const routed = this.routeInjectMessage({
+      panes: ['1'],
+      message: `${this.pendingArchitectStartupSystemMessage}\n`,
+      meta: {
+        source: 'packaged-first-run-bootstrap',
+        reason,
+      },
+    });
+    if (routed) {
+      log.info('ProjectLifecycle', `Injected fresh-install startup system message (${reason})`);
+      this.pendingArchitectStartupSystemMessage = null;
+      return true;
+    }
+    return false;
+  }
+
   ensurePackagedWorkspaceBootstrap() {
     if (!app || app.isPackaged !== true) {
       return null;
@@ -308,6 +516,10 @@ class SquidRunApp {
         path.join(templateRoot, 'ROLES.md'),
         path.join(workspacePath, 'ROLES.md')
       );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'PRODUCT-GUIDE.md'),
+        path.join(workspacePath, 'PRODUCT-GUIDE.md')
+      );
       this.copyDirectoryIfMissing(
         path.join(templateRoot, '.squidrun'),
         path.join(workspacePath, '.squidrun')
@@ -318,6 +530,16 @@ class SquidRunApp {
 
     if (typeof setProjectRoot === 'function') {
       setProjectRoot(workspacePath);
+    }
+
+    this.ensurePackagedCommsBin(workspacePath);
+
+    const onboardingState = this.readOnboardingState(workspacePath);
+    this.packagedOnboardingState = onboardingState;
+    if (onboardingState?.onboarding_complete === true) {
+      this.pendingArchitectStartupSystemMessage = null;
+    } else {
+      this.pendingArchitectStartupSystemMessage = FRESH_INSTALL_SYSTEM_MESSAGE;
     }
 
     try {
@@ -2095,6 +2317,36 @@ class SquidRunApp {
       getRuntimeLifecycleState: () => this.runtimeLifecycleState,
     });
 
+    ipcMain.removeHandler('get-onboarding-state');
+    ipcMain.handle('get-onboarding-state', () => {
+      const workspacePath = this.getDefaultExternalWorkspacePath();
+      const onboardingPath = this.getOnboardingStatePath(workspacePath);
+      const state = this.readOnboardingState(workspacePath);
+      return {
+        success: true,
+        path: onboardingPath,
+        state,
+      };
+    });
+
+    ipcMain.removeHandler('complete-onboarding');
+    ipcMain.handle('complete-onboarding', (_event, payload = {}) => {
+      try {
+        const workspacePath = this.getDefaultExternalWorkspacePath();
+        const result = this.writeOnboardingState(payload, workspacePath);
+        return {
+          success: true,
+          state: result.state,
+          path: result.path,
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: err.message,
+        };
+      }
+    });
+
     // Pipeline
     pipeline.init({
       mainWindow: window,
@@ -2592,6 +2844,7 @@ class SquidRunApp {
               terminals
             });
             this.primePaneHostFromTerminalSnapshot(terminals);
+            this.maybeInjectArchitectStartupSystemMessage('post_load_replay');
             this.kernelBridge.emitBridgeEvent('bridge.connected', {
               transport: 'daemon-client',
               terminalCount: terminals.length,
@@ -2842,6 +3095,9 @@ class SquidRunApp {
       const command = this.cliIdentity.getPaneCommandForIdentity(String(paneId));
       this.cliIdentity.inferAndEmitCliIdentity(paneId, command);
       this.ctx.recoveryManager?.recordActivity(paneId);
+      if (String(paneId) === '1') {
+        this.maybeInjectArchitectStartupSystemMessage('architect_spawned');
+      }
     });
 
     this.attachDaemonClientListener('connected', (terminals) => {
@@ -2889,6 +3145,7 @@ class SquidRunApp {
       }
       this.sendToVisibleWindow('daemon-connected', { terminals });
       this.primePaneHostFromTerminalSnapshot(terminals);
+      this.maybeInjectArchitectStartupSystemMessage('daemon_connected');
 
       this.kernelBridge.emitBridgeEvent('bridge.connected', {
         transport: 'daemon-client',

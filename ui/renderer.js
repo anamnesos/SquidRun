@@ -1145,6 +1145,13 @@ async function saveProfileFromModal() {
     profileModalSchema = cloneJsonValue(savedSchema) || getProfileFallbackSchema();
     const completedOnboarding = profileOnboardingEnforced && String(result.profile?.name || payload.name || '').trim().length > 0;
     if (completedOnboarding) {
+      try {
+        await ipcRenderer.invoke('complete-onboarding', {
+          user_name: String(result.profile?.name || payload.name || '').trim(),
+        });
+      } catch (err) {
+        log.warn('Init', `Unable to persist onboarding completion state: ${err?.message || err}`);
+      }
       profileOnboardingState.required = false;
       profileOnboardingState.completed = true;
       closeProfileModal({ force: true });
@@ -1169,6 +1176,14 @@ async function evaluateProfileOnboardingRequirement() {
   profileOnboardingState.checking = true;
 
   try {
+    const onboardingStateResult = await ipcRenderer.invoke('get-onboarding-state');
+    const onboardingComplete = onboardingStateResult?.state?.onboarding_complete === true;
+    if (onboardingComplete) {
+      profileOnboardingState.required = false;
+      profileOnboardingState.completed = true;
+      return;
+    }
+
     const result = await ipcRenderer.invoke('get-user-profile');
     const existingName = String(result?.profile?.name || '').trim();
     const requiresProfile = existingName.length === 0;
