@@ -109,7 +109,12 @@ const WEBSOCKET_START_RETRY_MAX_MS = Number.parseInt(
   process.env.SQUIDRUN_WEBSOCKET_START_RETRY_MAX_MS || '10000',
   10
 );
+const DAEMON_CONNECT_TIMEOUT_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.SQUIDRUN_DAEMON_CONNECT_TIMEOUT_MS || '15000', 10) || 15000
+);
 const DAEMON_PID_FILE = path.join(__dirname, '..', '..', 'daemon.pid');
+const RENDERER_ENTRY_HTML = path.join(__dirname, '..', '..', 'index.html');
 const SHUTDOWN_CONFIRM_MESSAGE = 'All active agent sessions will be terminated.\n\nContinue?';
 
 function asPositiveInt(value, fallback = null) {
@@ -213,6 +218,10 @@ class SquidRunApp {
     this.mainWindowSendInterceptInstalled = false;
     this.websocketStartRetryTimer = null;
     this.websocketStartRetryAttempt = 0;
+    this.daemonConnectTimeoutTimer = null;
+    this.daemonConnectedForStartup = false;
+    this.daemonTimeoutTriggered = false;
+    this.daemonTimeoutNotified = false;
     this.shuttingDown = false;
     this.fullShutdownPromise = null;
     this.runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
@@ -625,6 +634,42 @@ class SquidRunApp {
     return typeof webContents.send === 'function';
   }
 
+  clearDaemonConnectTimeout() {
+    if (this.daemonConnectTimeoutTimer) {
+      clearTimeout(this.daemonConnectTimeoutTimer);
+      this.daemonConnectTimeoutTimer = null;
+    }
+  }
+
+  notifyRendererDaemonTimeout(reason = 'daemon_connect_timeout') {
+    if (this.daemonConnectedForStartup) return;
+    const delivered = this.sendToVisibleWindow('daemon-timeout', {
+      timeoutMs: DAEMON_CONNECT_TIMEOUT_MS,
+      reason,
+      message: "SquidRun couldn't start the background daemon.",
+    });
+    if (delivered) {
+      this.daemonTimeoutNotified = true;
+    }
+  }
+
+  scheduleDaemonConnectTimeout() {
+    this.clearDaemonConnectTimeout();
+    if (this.daemonConnectedForStartup) return;
+
+    this.daemonConnectTimeoutTimer = setTimeout(() => {
+      this.daemonConnectTimeoutTimer = null;
+      if (this.daemonConnectedForStartup) return;
+      this.daemonTimeoutTriggered = true;
+      log.warn('Daemon', `No daemon connection within ${DAEMON_CONNECT_TIMEOUT_MS}ms`);
+      this.notifyRendererDaemonTimeout('daemon_connect_timeout');
+    }, DAEMON_CONNECT_TIMEOUT_MS);
+
+    if (this.daemonConnectTimeoutTimer && typeof this.daemonConnectTimeoutTimer.unref === 'function') {
+      this.daemonConnectTimeoutTimer.unref();
+    }
+  }
+
   installMainWindowSendInterceptor() {
     const window = this.ctx.mainWindow;
     if (!this.canSendToWindow(window)) return;
@@ -877,7 +922,11 @@ class SquidRunApp {
     this.usage.loadUsageStats();
 
     // 9. Initialize PTY daemon connection (heavy startup work begins after window is shown).
-    await this.initDaemonClient();
+    const daemonConnected = await this.initDaemonClient();
+    if (!daemonConnected) {
+      log.warn('Daemon', 'Initial daemon connect attempt failed; waiting for reconnect/timeout fallback');
+    }
+    this.scheduleDaemonConnectTimeout();
     this.backgroundAgentManager.start();
     this.settings.writeAppStatus({
       incrementSession: true,
@@ -1716,7 +1765,7 @@ class SquidRunApp {
       width: 1400,
       height: 800,
       icon: path.join(__dirname, '..', '..', 'assets', process.platform === 'win32' ? 'squidrun-favicon.ico' : 'squidrun-favicon-256.png'),
-      backgroundColor: '#0a0a0f',
+      backgroundColor: '#101523',
       autoHideMenuBar: true,
       webPreferences: {
         nodeIntegration: false,
@@ -1736,7 +1785,14 @@ class SquidRunApp {
     this.initModules();
     this.setupWindowListeners();
 
-    this.ctx.mainWindow.loadFile('index.html');
+    this.ctx.mainWindow.loadFile(RENDERER_ENTRY_HTML).catch((err) => {
+      log.error('Window', `Failed to load renderer entry ${RENDERER_ENTRY_HTML}: ${err.message}`);
+      this.activity.logActivity('error', 'system', 'Renderer failed to load', {
+        reason: 'load_file_failed',
+        filePath: RENDERER_ENTRY_HTML,
+        error: err.message,
+      });
+    });
 
     // Hidden pane host windows are non-critical; defer to a separate task so
     // main-window listeners/post-load init always install first.
@@ -2143,8 +2199,50 @@ class SquidRunApp {
       })();
     });
 
+    window.webContents.on('did-start-loading', () => {
+      log.info('Window', 'did-start-loading');
+    });
+
+    window.webContents.on('dom-ready', () => {
+      log.info('Window', 'dom-ready');
+    });
+
     window.webContents.on('did-finish-load', async () => {
+      log.info('Window', 'did-finish-load');
       await this.initPostLoad();
+    });
+
+    window.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) return;
+      log.error(
+        'Window',
+        `did-fail-load code=${errorCode} description=${errorDescription} url=${validatedURL || 'unknown'}`
+      );
+      this.activity.logActivity('error', 'system', 'Renderer did-fail-load', {
+        errorCode,
+        errorDescription,
+        validatedURL: validatedURL || null,
+      });
+    });
+
+    window.webContents.on('preload-error', (event, preloadPath, error) => {
+      const errorMessage = error?.message || String(error || 'unknown_preload_error');
+      log.error('Window', `preload-error path=${preloadPath} message=${errorMessage}`);
+      this.activity.logActivity('error', 'system', 'Renderer preload failed', {
+        preloadPath,
+        error: errorMessage,
+      });
+    });
+
+    window.webContents.on('render-process-gone', (event, details) => {
+      log.error(
+        'Window',
+        `render-process-gone reason=${details?.reason || 'unknown'} exitCode=${details?.exitCode ?? 'unknown'}`
+      );
+      this.activity.logActivity('error', 'system', 'Renderer process terminated', {
+        reason: details?.reason || 'unknown',
+        exitCode: details?.exitCode ?? null,
+      });
     });
 
     window.webContents.on('before-input-event', (event, input) => {
@@ -2359,6 +2457,10 @@ class SquidRunApp {
           window.webContents.send('state-changed', state);
         }
 
+        if (this.daemonTimeoutTriggered && !this.daemonConnectedForStartup) {
+          this.notifyRendererDaemonTimeout('daemon_connect_timeout_replay');
+        }
+
         // Connect if not already connected, or resend state if already connected
         if (this.ctx.daemonClient) {
           if (!this.ctx.daemonClient.connected) {
@@ -2367,7 +2469,9 @@ class SquidRunApp {
             // Daemon already connected before renderer loaded - resend the event
             log.info('App', 'Resending daemon-connected to renderer (was connected before load)');
             const terminals = this.ctx.daemonClient.getTerminals?.() || [];
-            window.webContents.send('daemon-connected', {
+            this.daemonConnectedForStartup = true;
+            this.clearDaemonConnectTimeout();
+            this.sendToVisibleWindow('daemon-connected', {
               terminals
             });
             this.primePaneHostFromTerminalSnapshot(terminals);
@@ -2510,6 +2614,11 @@ class SquidRunApp {
   }
 
   async initDaemonClient() {
+    this.clearDaemonConnectTimeout();
+    this.daemonConnectedForStartup = false;
+    this.daemonTimeoutTriggered = false;
+    this.daemonTimeoutNotified = false;
+
     // Re-inits happen on reload; clear previously attached singleton listeners first.
     this.clearDaemonClientListeners(this.ctx.daemonClient);
     this.ctx.daemonClient = getDaemonClient();
@@ -2620,6 +2729,8 @@ class SquidRunApp {
 
     this.attachDaemonClientListener('connected', (terminals) => {
       log.info('Daemon', `Connected. Existing terminals: ${terminals.length}`);
+      this.daemonConnectedForStartup = true;
+      this.clearDaemonConnectTimeout();
       this.backgroundAgentManager.syncWithDaemonTerminals(terminals);
 
       if (terminals && terminals.length > 0) {
@@ -2659,11 +2770,7 @@ class SquidRunApp {
           handlePaneExit(paneId, -1);
         }
       }
-      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
-        this.ctx.mainWindow.webContents.send('daemon-connected', {
-          terminals
-        });
-      }
+      this.sendToVisibleWindow('daemon-connected', { terminals });
       this.primePaneHostFromTerminalSnapshot(terminals);
 
       this.kernelBridge.emitBridgeEvent('bridge.connected', {
@@ -2760,7 +2867,12 @@ class SquidRunApp {
       }
     });
 
-    return this.ctx.daemonClient.connect();
+    const connected = await this.ctx.daemonClient.connect();
+    if (connected) {
+      this.daemonConnectedForStartup = true;
+      this.clearDaemonConnectTimeout();
+    }
+    return connected;
   }
 
   broadcastClaudeState() {
@@ -3414,6 +3526,7 @@ class SquidRunApp {
   async shutdown() {
     log.info('App', 'Shutting down SquidRun Application');
     this.shuttingDown = true;
+    this.clearDaemonConnectTimeout();
     this.clearWebSocketStartRetry();
     if (this.paneHostBootstrapTimer) {
       clearTimeout(this.paneHostBootstrapTimer);

@@ -220,6 +220,7 @@ const RENDERER_IPC_CHANNELS = Object.freeze([
   'agent-stuck-detected',
   'pane-cli-identity',
   'daemon-connected',
+  'daemon-timeout',
   // Channels registered in submodules — must be cleaned up here too
   'activity-logged',         // tabs/activity.js
   'oracle:image-generated',  // tabs/oracle.js
@@ -440,6 +441,9 @@ let initState = {
   autoSpawnChecked: false
 };
 const STARTUP_OVERLAY_FADE_MS = 280;
+const DAEMON_TIMEOUT_FALLBACK_MESSAGE = "SquidRun couldn't start the background daemon. Make sure Node.js 18+ is installed and try restarting the app.";
+const STARTUP_LOADING_DEFAULT_MESSAGE = 'Starting SquidRun...';
+const STARTUP_OVERLAY_ERROR_DISMISS_MS = 12000;
 let autonomyOnboardingBusy = false;
 const profileOnboardingState = {
   checkComplete: false,
@@ -580,6 +584,43 @@ function dismissStartupLoadingOverlay() {
       overlay.parentNode.removeChild(overlay);
     }
   }, STARTUP_OVERLAY_FADE_MS + 40);
+}
+
+function setStartupLoadingOverlayState({ message = null, error = false, hideSpinner = false } = {}) {
+  const overlay = document.getElementById('startupLoadingOverlay');
+  if (!overlay || overlay.dataset.dismissed === 'true') return;
+
+  const textElement = document.getElementById('startupLoadingText');
+  const spinner = overlay.querySelector('.startup-loading-spinner');
+
+  if (textElement && typeof message === 'string' && message.trim()) {
+    textElement.textContent = message.trim();
+  }
+
+  overlay.classList.toggle('error', Boolean(error));
+
+  if (spinner) {
+    spinner.classList.toggle('hidden', Boolean(hideSpinner));
+  }
+}
+
+function handleDaemonStartupTimeout(payload = null) {
+  setStartupLoadingOverlayState({
+    message: DAEMON_TIMEOUT_FALLBACK_MESSAGE,
+    error: true,
+    hideSpinner: true,
+  });
+  setTimeout(() => {
+    dismissStartupLoadingOverlay();
+  }, STARTUP_OVERLAY_ERROR_DISMISS_MS);
+  updateConnectionStatus('Daemon unavailable. Open Settings or restart after installing Node.js 18+.');
+  showStatusNotice(DAEMON_TIMEOUT_FALLBACK_MESSAGE, 12000);
+  const timeoutMs = Number(payload?.timeoutMs) || 0;
+  if (timeoutMs > 0) {
+    log.warn('Init', `Daemon startup timeout after ${timeoutMs}ms`);
+  } else {
+    log.warn('Init', 'Daemon startup timeout received');
+  }
 }
 
 function createFallbackRendererApi() {
@@ -1971,9 +2012,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (typeof daemonHandlers.teardownDaemonListeners === 'function') {
     daemonHandlers.teardownDaemonListeners();
   }
-  ipcRenderer.once('daemon-connected', () => {
-    dismissStartupLoadingOverlay();
+  let startupOverlayResolved = false;
+  setStartupLoadingOverlayState({
+    message: STARTUP_LOADING_DEFAULT_MESSAGE,
+    error: false,
+    hideSpinner: false,
+  });
+  const resolveStartupOverlay = (reason, payload = null) => {
+    if (startupOverlayResolved) return;
+    startupOverlayResolved = true;
+    if (reason === 'daemon-timeout') {
+      handleDaemonStartupTimeout(payload);
+    } else {
+      dismissStartupLoadingOverlay();
+    }
     void refreshHeaderSessionBadge();
+  };
+
+  ipcRenderer.once('daemon-connected', () => {
+    resolveStartupOverlay('daemon-connected');
+  });
+
+  ipcRenderer.once('daemon-timeout', (_event, payload) => {
+    resolveStartupOverlay('daemon-timeout', payload);
   });
 
   // Setup all event handlers
