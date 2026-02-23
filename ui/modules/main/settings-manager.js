@@ -286,6 +286,16 @@ class SettingsManager {
     const installed = { claude: false, codex: false, gemini: false };
     const locator = process.platform === 'win32' ? 'where.exe' : 'which';
 
+    // macOS apps launched from Finder get a minimal PATH that excludes
+    // Homebrew and user-local bin dirs. Ensure common paths are included.
+    const extraPaths = process.platform === 'darwin'
+      ? ['/opt/homebrew/bin', '/usr/local/bin', path.join(os.homedir(), '.local', 'bin'), path.join(os.homedir(), '.nvm', 'versions', 'node', 'current', 'bin')]
+      : [];
+    const spawnEnv = { ...process.env };
+    if (extraPaths.length) {
+      spawnEnv.PATH = [...extraPaths, spawnEnv.PATH || ''].join(':');
+    }
+
     for (const cli of CLI_NAMES) {
       let found = false;
       try {
@@ -294,6 +304,7 @@ class SettingsManager {
           timeout: CLI_DISCOVERY_TIMEOUT_MS,
           encoding: 'utf-8',
           stdio: 'pipe',
+          env: spawnEnv,
         });
         found = Boolean(locate && locate.status === 0 && String(locate.stdout || '').trim());
       } catch (_) {
@@ -307,6 +318,7 @@ class SettingsManager {
           timeout: CLI_VERSION_TIMEOUT_MS,
           encoding: 'utf-8',
           stdio: 'pipe',
+          env: spawnEnv,
         });
         installed[cli] = Boolean(version && version.status === 0);
       } catch (_) {
