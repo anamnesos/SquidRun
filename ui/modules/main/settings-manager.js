@@ -80,7 +80,7 @@ function buildCommandForCli(cli) {
 }
 
 const DEFAULT_SETTINGS = {
-  autoSpawn: false,
+  autoSpawn: true,
   autoSync: false,
   notifications: false,
   externalNotificationsEnabled: false,
