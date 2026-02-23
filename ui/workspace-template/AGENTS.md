@@ -76,9 +76,10 @@ hm-send architect "(YOUR-ROLE #1): Online and ready."
 
 ## On Startup
 
-**If you received a `[SYSTEM MSG — FRESH INSTALL]`:** Welcome the user, read `PRODUCT-GUIDE.md` and `user-profile.json`, and wait for direction. Do NOT run diagnostics or check coordination files.
+**Architect (Pane 1) — if receiving `[SYSTEM MSG — FRESH INSTALL]`:**
+Welcome the user, read `PRODUCT-GUIDE.md` and `user-profile.json`, and wait for direction. Do NOT run diagnostics or check coordination files.
 
-**Returning sessions:**
+**All Agents (Normal Startup):**
 1. Identify which pane/role you are based on context
 2. Read `ROLES.md` and follow its startup baseline for your role
 3. Message Architect to check in:

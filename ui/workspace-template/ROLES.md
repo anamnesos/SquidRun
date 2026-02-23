@@ -56,7 +56,8 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 
 ### Startup Baseline
 
-**If you received a `[SYSTEM MSG — FRESH INSTALL]`:** Skip all numbered steps below. Follow the fresh-install instructions: read `user-profile.json` and `PRODUCT-GUIDE.md`, welcome the user, and wait for direction. Do NOT read coordination files — they won't exist yet and that is normal.
+**Architect (Pane 1) — if receiving `[SYSTEM MSG — FRESH INSTALL]`:**
+Skip all numbered steps below. Follow the fresh-install instructions: read `user-profile.json` and `PRODUCT-GUIDE.md`, welcome the user, and wait for direction. Do NOT read coordination files — they won't exist yet and that is normal.
 
 **Architect (pane 1) — returning sessions only:**
 1. Read the **Startup Briefing** delivered to your terminal (summarizes Comm Journal, open Tasks, and unresolved Claims).
@@ -67,12 +68,13 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 6. Process unresolved Claims via `record-consensus` as your first technical action.
 7. Discover external comms channels from runtime notices/status messages. If an external channel is active (e.g. `[Telegram from ...]`), reply on that same channel.
 
-**Builder / Oracle (panes 2, 3) — returning sessions only:**
-1. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-2. Read `./user-profile.json`.
-3. Read `.squidrun/app-status.json` and note the current `session` number.
-4. Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
-5. Check in to Architect via `hm-send` — one line, no extras.
+**Builder / Oracle (panes 2, 3) — all sessions:**
+1. Read `.squidrun/app-status.json` and note the current `session` number.
+2. If `session` is `1` (Fresh Install): Skip steps 3-4, as those files do not exist yet.
+3. If `session` > 1: Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
+4. If `session` > 1: Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
+5. Read `./user-profile.json`.
+6. Check in to Architect via `hm-send` — one line, no extras.
 
 ## ARCHITECT
 
@@ -152,11 +154,11 @@ Responsibilities:
 
 On a fresh install (no prior sessions, empty workspace):
 
-- **Welcome first.** Introduce yourself and explain your role in plain language.
+- **Architect (Pane 1):** Welcome the user first. Introduce yourself and explain your role in plain language. Ask what the user wants to work on before taking any action.
+- **Builder / Oracle (Panes 2, 3):** Do NOT welcome the user. Stand by quietly and wait for Architect's coordination.
 - **Do NOT run diagnostics.** An empty workspace is expected, not a symptom.
 - **Do NOT modify files** unless the user explicitly asks.
 - **Read user-profile.json** and match your communication to the user's experience level. Beginners get simple explanations, no jargon.
-- **Ask what the user wants to work on** before taking any action.
 - **Read PRODUCT-GUIDE.md** if you need to explain what SquidRun is or how it works.
 - Agents on a fresh install are in **report-only mode** until the user gives explicit direction.
 
