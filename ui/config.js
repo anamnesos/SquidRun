@@ -42,6 +42,12 @@ function isPackagedRuntimePath(targetPath = '') {
 }
 
 function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
+  // Explicit env var takes priority — set by .squidrun/bin/ shell launchers.
+  const envRoot = process.env.SQUIDRUN_PROJECT_ROOT;
+  if (envRoot) {
+    const resolved = path.resolve(envRoot);
+    if (fs.existsSync(resolved)) return resolved;
+  }
   try {
     const output = execFileSync('git', ['rev-parse', '--show-toplevel'], {
       cwd: startDir,
@@ -55,6 +61,15 @@ function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
   }
   if (isPackagedRuntimePath(startDir)) {
     return path.join(os.homedir(), EXTERNAL_WORKSPACE_DIRNAME);
+  }
+  // Check if __dirname is inside .squidrun/bin/runtime — packaged bin layout.
+  const normalizedDir = startDir.replace(/\\/g, '/');
+  if (normalizedDir.includes('.squidrun/bin/runtime')) {
+    const idx = normalizedDir.indexOf('.squidrun/bin/runtime');
+    const candidate = path.resolve(normalizedDir.slice(0, idx));
+    if (fs.existsSync(path.join(candidate, '.squidrun', 'link.json'))) {
+      return candidate;
+    }
   }
   return PROJECT_ROOT_FALLBACK;
 }

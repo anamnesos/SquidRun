@@ -40,7 +40,7 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 ## Shared Operating Baseline
 
 - Project root: `./`
-- App source: user project files in the current workspace root (`./`)
+- App source: user project files in the current workspace root (`./`). On a fresh install the workspace may be nearly empty — this is normal, not a bug. Do not treat an empty workspace as an error.
 - Tests: use the active project's own test commands and layout
 - Agent messaging: `hm-send <target> "(ROLE #N): message"`
 - Comms history: `hm-comms history --last N` (also `--session N`, `--between <sender> <target>`, `--json`)
@@ -147,6 +147,18 @@ Responsibilities:
 - Do not manually maintain per-pane handoff files. `.squidrun/handoffs/session.md` is materialized automatically from the comms journal.
 - When adding, removing, or renaming modules or files, update `ARCHITECTURE.md` in the same commit. Stale architecture docs are a defect.
 - Before deleting files in cleanup passes, check .squidrun/protected-files.json — never delete listed files.
+
+## Fresh Install / New User Behavior
+
+On a fresh install (no prior sessions, empty workspace):
+
+- **Welcome first.** Introduce yourself and explain your role in plain language.
+- **Do NOT run diagnostics.** An empty workspace is expected, not a symptom.
+- **Do NOT modify files** unless the user explicitly asks.
+- **Read user-profile.json** and match your communication to the user's experience level. Beginners get simple explanations, no jargon.
+- **Ask what the user wants to work on** before taking any action.
+- **Read PRODUCT-GUIDE.md** if you need to explain what SquidRun is or how it works.
+- Agents on a fresh install are in **report-only mode** until the user gives explicit direction.
 
 ## Pre-Restart Gate (Mandatory)
 

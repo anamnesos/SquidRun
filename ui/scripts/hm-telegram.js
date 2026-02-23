@@ -16,7 +16,7 @@ const {
   appendCommsJournalEntry,
   closeCommsJournalStores,
 } = require('../modules/main/comms-journal');
-require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
+require('dotenv').config({ path: path.join(process.env.SQUIDRUN_PROJECT_ROOT || path.resolve(__dirname, '..', '..'), '.env') });
 
 const TELEGRAM_RATE_LIMIT_MAX_MESSAGES = 10;
 const TELEGRAM_RATE_LIMIT_WINDOW_MS = 60_000;
