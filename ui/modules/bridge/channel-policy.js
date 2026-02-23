@@ -110,6 +110,7 @@ const ON_CHANNELS = Object.freeze([
   'daemon-connected',
   'daemon-disconnected',
   'daemon-reconnected',
+  'daemon-timeout',
   'feature-capabilities-updated',
   'file-conflict',
   'global-escape-pressed',
