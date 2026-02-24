@@ -63,7 +63,15 @@ function resolveProjectRoot(ctx) {
     ? ctx.WORKSPACE_PATH
     : config.WORKSPACE_PATH;
 
-  return path.resolve(path.join(workspacePath || process.cwd(), '..'));
+  if (workspacePath) {
+    return path.resolve(path.join(workspacePath, '..'));
+  }
+
+  // Last resort: use ~/SquidRun when packaged, process.cwd() parent when dev
+  const homePath = require('os').homedir();
+  const isPackaged = typeof __dirname === 'string'
+    && (__dirname.includes('app.asar') || __dirname.includes('app.asar.unpacked'));
+  return isPackaged ? path.join(homePath, 'SquidRun') : path.resolve(path.join(process.cwd(), '..'));
 }
 
 function resolveUserProfilePath(ctx) {
