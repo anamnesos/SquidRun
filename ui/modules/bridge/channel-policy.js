@@ -122,6 +122,7 @@ const ON_CHANNELS = Object.freeze([
   'oracle:image-generated',
   'pane-cli-identity',
   'pane-enter',
+  'session-updated',
   'pane-host:inject-message',
   'pane-host:prime-scrollback',
   'pane-host:pty-data',

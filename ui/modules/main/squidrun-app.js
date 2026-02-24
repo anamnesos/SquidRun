@@ -17,6 +17,7 @@ const {
   BACKGROUND_BUILDER_OWNER_PANE_ID,
   resolveBackgroundBuilderAlias,
   resolveBackgroundBuilderPaneId,
+  getProjectRoot,
   setProjectRoot,
 } = require('../../config');
 const { createPluginManager } = require('../plugins');
@@ -40,6 +41,12 @@ const contextCompressor = require('../context-compressor');
 const smsPoller = require('../sms-poller');
 const telegramPoller = require('../telegram-poller');
 const { sendTelegram } = require('../../scripts/hm-telegram');
+const { createBridgeClient } = require('../bridge-client');
+const {
+  parseCrossDeviceTarget,
+  getLocalDeviceId,
+  isCrossDeviceEnabled,
+} = require('../cross-device-target');
 const {
   buildOutboundMessageEnvelope,
   buildCanonicalEnvelopeMetadata,
@@ -219,6 +226,9 @@ class SquidRunApp {
       lastInboundAtMs: 0,
       sender: null,
     };
+    this.bridgeClient = null;
+    this.bridgeEnabled = isCrossDeviceEnabled(process.env);
+    this.bridgeDeviceId = getLocalDeviceId(process.env) || null;
     this.powerMonitorListeners = [];
     this.lastSystemSuspendAtMs = null;
     this.lastSystemResumeAtMs = null;
@@ -511,9 +521,11 @@ class SquidRunApp {
     const routed = this.routeInjectMessage({
       panes: ['1'],
       message: `${this.pendingArchitectStartupSystemMessage}\n`,
+      startupInjection: true,
       meta: {
         source: 'packaged-first-run-bootstrap',
         reason,
+        startupInjection: true,
       },
     });
     if (routed) {
@@ -577,30 +589,42 @@ class SquidRunApp {
 
     this.ensurePackagedCommsBin(workspacePath);
 
-    // A3 fix: Create app-status.json on first run so agents have a session source of truth.
+    const onboardingSnapshot = this.readPersistedOnboardingState();
+    const onboardingState = onboardingSnapshot?.state || null;
+    const onboardingComplete = this.isOnboardingComplete(onboardingState);
+
+    // Packaged-first-run guard: always reset app-status when onboarding is incomplete.
+    // This prevents stale packaged app-status payloads from leaking prior dev sessions.
     const appStatusPath = path.join(workspacePath, '.squidrun', 'app-status.json');
-    if (!fs.existsSync(appStatusPath)) {
+    if (!onboardingComplete || !fs.existsSync(appStatusPath)) {
       try {
         let appVersion = 'unknown';
         try { appVersion = require('../../package.json').version || appVersion; } catch (_) {}
         const initialStatus = {
-          session: 1,
-          session_id: 'app-session-1',
-          session_number: 1,
-          started_at: new Date().toISOString(),
-          status: 'running',
+          started: new Date().toISOString(),
+          mode: this.ctx.currentSettings?.dryRun ? 'dry-run' : 'pty',
+          dryRun: this.ctx.currentSettings?.dryRun === true,
+          autoSpawn: this.ctx.currentSettings?.autoSpawn !== false,
           version: appVersion,
+          platform: process.platform,
+          nodeVersion: process.version,
+          session: 1,
+          lastUpdated: new Date().toISOString(),
         };
-        fs.writeFileSync(appStatusPath, JSON.stringify(initialStatus, null, 2) + '\n', 'utf-8');
-        log.info('ProjectLifecycle', 'Created initial app-status.json for first run');
+        this.writeFileAtomic(appStatusPath, `${JSON.stringify(initialStatus, null, 2)}\n`);
+        log.info(
+          'ProjectLifecycle',
+          onboardingComplete
+            ? 'Created missing app-status.json for packaged workspace'
+            : 'Reset app-status.json for packaged fresh-install bootstrap'
+        );
       } catch (err) {
         log.warn('ProjectLifecycle', `Failed creating app-status.json: ${err.message}`);
       }
     }
 
-    const onboardingState = this.readOnboardingState(workspacePath);
     this.packagedOnboardingState = onboardingState;
-    if (onboardingState?.onboarding_complete === true) {
+    if (onboardingComplete) {
       this.pendingArchitectStartupSystemMessage = null;
     } else {
       this.pendingArchitectStartupSystemMessage = FRESH_INSTALL_SYSTEM_MESSAGE;
@@ -750,6 +774,66 @@ class SquidRunApp {
     } catch {
       return null;
     }
+  }
+
+  getStartupSessionFloor() {
+    if (app && app.isPackaged === true) {
+      return 0;
+    }
+    return APP_SESSION_COUNTER_FLOOR;
+  }
+
+  isOnboardingComplete(state = null) {
+    if (!state || typeof state !== 'object') return false;
+    return state.onboarding_complete === true || state.onboardingComplete === true;
+  }
+
+  resolveOnboardingWorkspaceCandidates() {
+    const candidates = [];
+    const defaultWorkspace = this.getDefaultExternalWorkspacePath();
+    if (defaultWorkspace) {
+      candidates.push(path.resolve(defaultWorkspace));
+    }
+
+    try {
+      if (typeof getProjectRoot === 'function') {
+        const activeRoot = getProjectRoot();
+        if (typeof activeRoot === 'string' && activeRoot.trim()) {
+          candidates.push(path.resolve(activeRoot));
+        }
+      }
+    } catch (_) {
+      // Best-effort only.
+    }
+
+    if (this.packagedOnboardingState?.workspace_path) {
+      candidates.push(path.resolve(String(this.packagedOnboardingState.workspace_path)));
+    }
+
+    return Array.from(new Set(candidates));
+  }
+
+  readPersistedOnboardingState() {
+    const candidates = this.resolveOnboardingWorkspaceCandidates();
+    let fallback = null;
+    for (const workspacePath of candidates) {
+      const state = this.readOnboardingState(workspacePath);
+      if (!state) continue;
+      const payload = {
+        state,
+        path: this.getOnboardingStatePath(workspacePath),
+        workspacePath,
+      };
+      if (this.isOnboardingComplete(state)) {
+        return payload;
+      }
+      if (!fallback) fallback = payload;
+    }
+    return fallback || {
+      state: null,
+      path: this.getOnboardingStatePath(this.getDefaultExternalWorkspacePath()),
+      workspacePath: this.getDefaultExternalWorkspacePath(),
+    };
   }
 
   isHiddenPaneHostModeEnabled() {
@@ -1123,9 +1207,20 @@ class SquidRunApp {
       ? payload.panes.map((paneId) => String(paneId))
       : [];
     if (panes.length === 0) return false;
+    const startupInjection = payload.startupInjection === true
+      || payload?.meta?.startupInjection === true;
 
     if (!this.isHiddenPaneHostModeEnabled()) {
       return this.sendToVisibleWindow('inject-message', payload);
+    }
+
+    // Startup-injection payloads must flow through the renderer injection controller
+    // (not raw hidden-pane PTY writes) so they wait for CLI readiness.
+    if (startupInjection) {
+      return this.sendToVisibleWindow('inject-message', {
+        ...payload,
+        startupInjection: true,
+      });
     }
 
     let routed = false;
@@ -1148,6 +1243,7 @@ class SquidRunApp {
           message: payload.message,
           deliveryId: payload.deliveryId || null,
           traceContext: payload.traceContext || null,
+          startupInjection,
           meta: payload.meta || null,
         });
         if (routedToHost) {
@@ -1333,7 +1429,11 @@ class SquidRunApp {
     this.backgroundAgentManager.start();
     this.settings.writeAppStatus({
       incrementSession: true,
-      sessionFloor: APP_SESSION_COUNTER_FLOOR,
+      sessionFloor: this.getStartupSessionFloor(),
+    });
+    // Notify renderer to refresh session badge after session number is written.
+    this.sendToVisibleWindow('session-updated', {
+      session: this.getCurrentAppStatusSessionNumber(),
     });
     await this.initializeStartupSessionScope({
       sessionNumber: this.getCurrentAppStatusSessionNumber(),
@@ -1632,6 +1732,8 @@ class SquidRunApp {
           // Route WebSocket messages via triggers module (handles delivery)
           if (data.message.type === 'send') {
             const { target, content } = data.message;
+            const bridgeTarget = parseCrossDeviceTarget(target);
+            const routeKind = bridgeTarget ? 'bridge' : 'local';
             const attempt = Number(data.message.attempt || 1);
             const maxAttempts = Number(data.message.maxAttempts || 1);
             const messageId = data.message.messageId || null;
@@ -1640,6 +1742,7 @@ class SquidRunApp {
             const sentAtMs = Number(data.message.sentAtMs || data.message.timestamp || nowMs);
             const targetPaneIdForJournal = this.resolveTargetToPane(target);
             const targetRoleForJournal = (() => {
+              if (bridgeTarget) return 'architect';
               if (targetPaneIdForJournal === '1') return 'architect';
               if (targetPaneIdForJournal === '2') return 'builder';
               if (targetPaneIdForJournal === '3') return 'oracle';
@@ -1684,6 +1787,7 @@ class SquidRunApp {
                   metadata: {
                     source: 'websocket-broker',
                     ...canonicalMetadata,
+                    routeKind,
                     targetRaw: canonicalEnvelope.target?.raw || target || null,
                     traceId: traceContext?.traceId || traceContext?.correlationId || null,
                     maxAttempts,
@@ -1746,6 +1850,56 @@ class SquidRunApp {
                 });
                 return blocked;
               }
+            }
+
+            if (bridgeTarget) {
+              const senderRole = String(canonicalEnvelope.sender?.role || data.role || '').trim().toLowerCase();
+              if (senderRole !== 'architect') {
+                const blocked = {
+                  ok: false,
+                  accepted: false,
+                  queued: false,
+                  verified: false,
+                  status: 'bridge_architect_only',
+                  target: bridgeTarget.raw,
+                  toDevice: bridgeTarget.toDevice,
+                };
+                await this.recordDeliveryOutcomePattern({
+                  channel: 'send',
+                  target: bridgeTarget.raw,
+                  fromRole: data.role || 'unknown',
+                  result: blocked,
+                  traceContext,
+                });
+                return blocked;
+              }
+
+              const bridgeResult = await this.routeBridgeMessage({
+                targetDevice: bridgeTarget.toDevice,
+                content: canonicalEnvelope.content,
+                fromRole: senderRole,
+                messageId: canonicalEnvelope.message_id,
+                traceContext,
+              });
+              await this.recordDeliveryOutcomePattern({
+                channel: 'send',
+                target: bridgeTarget.raw,
+                fromRole: data.role || 'unknown',
+                result: bridgeResult,
+                traceContext,
+              });
+              return {
+                ok: Boolean(bridgeResult?.ok),
+                accepted: Boolean(bridgeResult?.accepted),
+                queued: Boolean(bridgeResult?.queued),
+                verified: Boolean(bridgeResult?.verified),
+                status: bridgeResult?.status || 'bridge_unhandled',
+                mode: 'bridge',
+                routeKind: 'bridge',
+                toDevice: bridgeTarget.toDevice,
+                error: bridgeResult?.error || null,
+                traceId: traceContext?.traceId || traceContext?.correlationId || null,
+              };
             }
 
             const telegramReplyTarget = this.isTelegramReplyTarget(target);
@@ -2007,6 +2161,7 @@ class SquidRunApp {
 
     this.startSmsPoller();
     this.startTelegramPoller();
+    this.startBridgeClient();
     this.startAutoHandoffMaterializer();
 
     log.info('App', 'Initialization complete');
@@ -2383,12 +2538,14 @@ class SquidRunApp {
 
     ipcMain.removeHandler('get-onboarding-state');
     ipcMain.handle('get-onboarding-state', () => {
-      const workspacePath = this.getDefaultExternalWorkspacePath();
-      const onboardingPath = this.getOnboardingStatePath(workspacePath);
-      const state = this.readOnboardingState(workspacePath);
+      const snapshot = this.readPersistedOnboardingState();
+      const onboardingPath = snapshot?.path || this.getOnboardingStatePath(this.getDefaultExternalWorkspacePath());
+      const state = snapshot?.state || null;
       return {
         success: true,
         path: onboardingPath,
+        workspacePath: snapshot?.workspacePath || this.getDefaultExternalWorkspacePath(),
+        onboardingComplete: this.isOnboardingComplete(state),
         state,
       };
     });
@@ -2396,7 +2553,13 @@ class SquidRunApp {
     ipcMain.removeHandler('complete-onboarding');
     ipcMain.handle('complete-onboarding', (_event, payload = {}) => {
       try {
-        const workspacePath = this.getDefaultExternalWorkspacePath();
+        const snapshot = this.readPersistedOnboardingState();
+        const snapshotWorkspace = typeof snapshot?.workspacePath === 'string'
+          ? snapshot.workspacePath.trim()
+          : '';
+        const workspacePath = snapshotWorkspace && !this.isBundledRuntimePath(snapshotWorkspace)
+          ? snapshotWorkspace
+          : this.getDefaultExternalWorkspacePath();
         const result = this.writeOnboardingState(payload, workspacePath);
         return {
           success: true,
@@ -3753,6 +3916,179 @@ class SquidRunApp {
     }
   }
 
+  isBridgeConfigured() {
+    if (this.bridgeEnabled !== true) return false;
+    const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim();
+    const relaySecret = String(process.env.SQUIDRUN_RELAY_SECRET || '').trim();
+    const deviceId = getLocalDeviceId(process.env);
+    return Boolean(relayUrl && relaySecret && deviceId);
+  }
+
+  startBridgeClient() {
+    if (!this.bridgeEnabled) return false;
+    if (!this.isBridgeConfigured()) {
+      log.warn('Bridge', 'Cross-device bridge enabled but missing SQUIDRUN_DEVICE_ID / SQUIDRUN_RELAY_URL / SQUIDRUN_RELAY_SECRET');
+      return false;
+    }
+    if (this.bridgeClient) return true;
+
+    const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim();
+    const relaySecret = String(process.env.SQUIDRUN_RELAY_SECRET || '').trim();
+    const deviceId = getLocalDeviceId(process.env);
+    this.bridgeDeviceId = deviceId || null;
+    this.bridgeClient = createBridgeClient({
+      relayUrl,
+      deviceId,
+      sharedSecret: relaySecret,
+      onMessage: (payload = {}) => this.handleBridgeInboundMessage(payload),
+    });
+    const started = this.bridgeClient.start();
+    if (started) {
+      log.info('Bridge', `Cross-device relay bridge enabled (device=${deviceId})`);
+    }
+    return started;
+  }
+
+  async routeBridgeMessage({ targetDevice, content, fromRole = 'architect', messageId = null, traceContext = null } = {}) {
+    const toDevice = String(targetDevice || '').trim().toUpperCase();
+    const body = typeof content === 'string' ? content.trim() : '';
+    if (!toDevice) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'bridge_invalid_target',
+        error: 'targetDevice is required',
+        routeKind: 'bridge',
+      };
+    }
+    if (!body) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'bridge_empty_content',
+        routeKind: 'bridge',
+      };
+    }
+    if (!this.bridgeEnabled) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'bridge_disabled',
+        routeKind: 'bridge',
+      };
+    }
+    if (!this.bridgeClient) {
+      this.startBridgeClient();
+    }
+    if (!this.bridgeClient || !this.bridgeClient.isReady()) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'bridge_unavailable',
+        error: 'Relay unavailable',
+        routeKind: 'bridge',
+      };
+    }
+
+    const bridgeResult = await this.bridgeClient.sendToDevice({
+      messageId: messageId || `bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      toDevice,
+      content: body,
+      fromRole,
+      metadata: {
+        traceId: traceContext?.traceId || traceContext?.correlationId || null,
+        sessionId: this.commsSessionScopeId || null,
+      },
+    });
+    return {
+      ...bridgeResult,
+      routeKind: 'bridge',
+    };
+  }
+
+  async handleBridgeInboundMessage(payload = {}) {
+    const fromDevice = String(payload?.fromDevice || 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN';
+    const messageId = String(payload?.messageId || '').trim();
+    const body = typeof payload?.content === 'string' ? payload.content.trim() : '';
+    if (!body) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'bridge_empty_content',
+        error: 'Inbound bridge message was empty',
+      };
+    }
+
+    const inboundMessageId = messageId || `bridge-in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const sentAtMs = Date.now();
+    void Promise.resolve(executeEvidenceLedgerOperation(
+      'upsert-comms-journal',
+      {
+        messageId: inboundMessageId,
+        sessionId: this.commsSessionScopeId || null,
+        senderRole: 'architect',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'inbound',
+        sentAtMs,
+        brokeredAtMs: sentAtMs,
+        rawBody: body,
+        status: 'brokered',
+        attempt: 1,
+        metadata: {
+          source: 'bridge-client',
+          routeKind: 'bridge',
+          fromDevice,
+          bridgeMessageId: messageId || null,
+        },
+      },
+      {
+        source: {
+          via: 'bridge-client',
+          role: 'system',
+          paneId: 'system',
+        },
+      }
+    )).then((result) => {
+      if (result?.ok === false) {
+        log.warn('EvidenceLedger', `Bridge inbound journal upsert failed: ${result.reason || 'unknown'}`);
+      }
+    }).catch((err) => {
+      log.warn('EvidenceLedger', `Bridge inbound journal upsert error: ${err.message}`);
+    });
+
+    const formatted = `[Bridge from ${fromDevice}]: ${body}`;
+    const injection = triggers.sendDirectMessage(['1'], formatted, null);
+    if (!injection?.success) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'bridge_inject_failed',
+        error: injection?.error || 'Failed to inject bridge message into Architect pane',
+      };
+    }
+
+    return {
+      ok: true,
+      accepted: true,
+      queued: true,
+      verified: true,
+      status: 'bridge_delivered',
+    };
+  }
+
   startSmsPoller() {
     const started = smsPoller.start({
       onMessage: (text, from, metadata = {}) => {
@@ -4023,6 +4359,10 @@ class SquidRunApp {
       log.warn('TeamMemory', `Failed to close team memory runtime during shutdown: ${err.message}`);
     });
     websocketServer.stop();
+    if (this.bridgeClient) {
+      this.bridgeClient.stop();
+      this.bridgeClient = null;
+    }
     this.backgroundAgentManager.stop();
     this.backgroundAgentManager.killAll({ reason: 'app_shutdown' }).catch((err) => {
       log.warn('BackgroundAgent', `Failed to kill background agents during shutdown: ${err.message}`);

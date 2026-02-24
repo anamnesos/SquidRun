@@ -1178,7 +1178,9 @@ async function evaluateProfileOnboardingRequirement() {
 
   try {
     const onboardingStateResult = await ipcRenderer.invoke('get-onboarding-state');
-    const onboardingComplete = onboardingStateResult?.state?.onboarding_complete === true;
+    const onboardingComplete = onboardingStateResult?.onboardingComplete === true
+      || onboardingStateResult?.state?.onboarding_complete === true
+      || onboardingStateResult?.state?.onboardingComplete === true;
     if (onboardingComplete) {
       profileOnboardingState.required = false;
       profileOnboardingState.completed = true;
@@ -2051,6 +2053,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   ipcRenderer.once('daemon-timeout', (_event, payload) => {
     resolveStartupOverlay('daemon-timeout', payload);
+  });
+
+  // Refresh session badge when main process writes the session number.
+  ipcRenderer.on('session-updated', (_event, data) => {
+    if (data?.session) {
+      updateHeaderSessionBadge(data.session);
+    } else {
+      void refreshHeaderSessionBadge();
+    }
   });
 
   // Setup all event handlers
