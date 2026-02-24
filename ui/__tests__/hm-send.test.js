@@ -1283,4 +1283,122 @@ describe('hm-send retry behavior', () => {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });
+
+  test('routes @device-arch target through bridge path and skips health-check', async () => {
+    const healthChecks = [];
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          healthChecks.push(msg);
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            status: 'bridge_delivered',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    const result = await runHmSend(
+      ['@peer-arch', '(ARCHITECT #100): bridge route test', '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
+      { HM_SEND_PORT: String(port), SQUIDRUN_CROSS_DEVICE: '1' }
+    );
+
+    await new Promise((resolve) => server.close(resolve));
+
+    expect(result.code).toBe(0);
+    expect(healthChecks).toHaveLength(0);
+    expect(sendAttempts).toHaveLength(1);
+    expect(sendAttempts[0].target).toBe('@peer-arch');
+    expect(sendAttempts[0]?.metadata?.envelope?.target?.role).toBe('architect');
+    expect(result.stdout).toContain('Delivered to @peer-arch');
+  });
+
+  test('rejects non-arch @device target via invalid_target health preflight', async () => {
+    const healthChecks = [];
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          healthChecks.push(msg);
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: false,
+            status: 'invalid_target',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+        }
+      });
+    });
+
+    const result = await runHmSend(
+      ['@peer-builder', '(ARCHITECT #101): should reject', '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
+      { HM_SEND_PORT: String(port) }
+    );
+
+    await new Promise((resolve) => server.close(resolve));
+
+    expect(result.code).toBe(1);
+    expect(healthChecks).toHaveLength(1);
+    expect(healthChecks[0].target).toBe('@peer-builder');
+    expect(sendAttempts).toHaveLength(0);
+    expect(result.stderr.toLowerCase()).toContain('invalid_target');
+  });
 });
