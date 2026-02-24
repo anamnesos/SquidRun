@@ -479,7 +479,16 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
   });
 
   registerScopedIpcListener('daemon-core', 'inject-message', (event, data) => {
-    const { panes, message, deliveryId, traceContext, traceCtx } = data || {};
+    const {
+      panes,
+      message,
+      deliveryId,
+      traceContext,
+      traceCtx,
+      startupInjection,
+      meta,
+    } = data || {};
+    const isStartupInjection = startupInjection === true || meta?.startupInjection === true;
     const normalizedTraceContext = normalizeTraceContext(traceContext || traceCtx, {
       traceId: deliveryId || null,
     });
@@ -495,7 +504,13 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
         causationId,
         source: 'daemon-handlers.js',
       });
-      enqueueForThrottle(String(paneId), message, deliveryId, normalizedTraceContext);
+      enqueueForThrottle(
+        String(paneId),
+        message,
+        deliveryId,
+        normalizedTraceContext,
+        isStartupInjection
+      );
     }
   });
 
@@ -709,7 +724,13 @@ async function loadPaneProjects() {
 // THROTTLE QUEUE
 // ============================================================
 
-function enqueueForThrottle(paneId, message, deliveryId, traceContext = null) {
+function enqueueForThrottle(
+  paneId,
+  message,
+  deliveryId,
+  traceContext = null,
+  startupInjection = false
+) {
   if (!throttleQueues.has(paneId)) {
     throttleQueues.set(paneId, []);
   }
@@ -718,6 +739,7 @@ function enqueueForThrottle(paneId, message, deliveryId, traceContext = null) {
     message,
     deliveryId: deliveryId || null,
     traceContext: traceContext || null,
+    startupInjection: startupInjection === true,
   };
   const maxItems = getThrottleQueueMaxItems();
   const maxBytes = getThrottleQueueMaxBytes();
@@ -765,6 +787,20 @@ function processThrottleQueue(paneId) {
 
   const queue = throttleQueues.get(paneId);
   if (!queue || queue.length === 0) return;
+  const terminal = require('./terminal');
+  const queuedItem = queue[0];
+  const startupInjection = queuedItem
+    && typeof queuedItem === 'object'
+    && queuedItem.startupInjection === true;
+
+  if (
+    startupInjection
+    && typeof terminal?.hasPendingStartupInjection === 'function'
+    && terminal.hasPendingStartupInjection(paneId)
+  ) {
+    setTimeout(() => processThrottleQueue(paneId), MESSAGE_DELAY);
+    return;
+  }
 
   throttlingPanes.add(paneId);
 
@@ -774,10 +810,9 @@ function processThrottleQueue(paneId) {
   const deliveryId = item && typeof item === 'object' ? item.deliveryId : null;
   const traceContext = item && typeof item === 'object' ? (item.traceContext || null) : null;
   const hmSendFastEnter = isHmSendTraceContext(traceContext);
+  const isStartupInjection = item && typeof item === 'object' && item.startupInjection === true;
   const corrId = traceContext?.traceId || traceContext?.correlationId || undefined;
   const causationId = traceContext?.parentEventId || traceContext?.causationId || undefined;
-
-  const terminal = require('./terminal');
 
   if (message.trim() === '(UNSTICK)') {
     log.info('Daemon', `Sending UNSTICK (ESC) to pane ${paneId}`);
@@ -832,6 +867,7 @@ function processThrottleQueue(paneId) {
     terminal.sendToPane(paneId, routedMessage, {
       traceContext: traceContext || undefined,
       hmSendFastEnter,
+      startupInjection: isStartupInjection,
       onComplete: (result) => {
       const status = typeof result?.status === 'string' ? result.status : '';
       const reason = typeof result?.reason === 'string' ? result.reason : '';

@@ -228,6 +228,9 @@ describe('SettingsManager CLI auto-detection', () => {
     const status = JSON.parse(statusWriteCall[1]);
 
     expect(status.session).toBe(212);
+    expect(status.session_number).toBeUndefined();
+    expect(status.sessionNumber).toBeUndefined();
+    expect(status.currentSession).toBeUndefined();
   });
 
   test('writeAppStatus increments session only when daemon start is requested', () => {

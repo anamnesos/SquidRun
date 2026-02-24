@@ -70,6 +70,7 @@
       "!daemon.pid",
       "!session-state.json",
       "!usage-stats.json",
+      "!**/.squidrun/app-status.json",
       "!*.pid",
       "!*.log"
     ],

@@ -428,6 +428,28 @@ describe('terminal.js module', () => {
       }));
     });
 
+    test('bypasses pane host injection for startupInjection payloads', async () => {
+      mockSettings.getSettings.mockReturnValue({
+        hiddenPaneHostsEnabled: true,
+        paneCommands: { '1': 'claude --dangerously-skip-permissions' },
+      });
+      mockSquidRun.paneHost = {
+        inject: jest.fn().mockResolvedValue({ success: true }),
+      };
+      terminal.setInputLocked('1', false);
+
+      terminal.sendToPane('1', 'startup gated payload', { startupInjection: true });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockSquidRun.paneHost.inject).not.toHaveBeenCalled();
+      expect(
+        mockSquidRun.pty.write.mock.calls.some(
+          ([paneId, text]) => paneId === '1' && text === 'startup gated payload'
+        )
+      ).toBe(true);
+    });
+
     test('should queue message when injection in flight', () => {
       // Block immediate processing with injection lock
       terminal.setInjectionInFlight(true);

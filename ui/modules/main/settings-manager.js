@@ -376,6 +376,9 @@ class SettingsManager {
       } else {
         delete status.session;
       }
+      delete status.session_number;
+      delete status.sessionNumber;
+      delete status.currentSession;
 
       const statusPatch = (opts.statusPatch && typeof opts.statusPatch === 'object' && !Array.isArray(opts.statusPatch))
         ? opts.statusPatch

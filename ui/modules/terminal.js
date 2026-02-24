@@ -1465,7 +1465,12 @@ function isPromptReady(...args) {
 
 function sendToPane(paneId, message, options = {}) {
   const id = String(paneId);
-  if (isHiddenPaneHostPane(id) && window?.squidrun?.paneHost?.inject) {
+  const useHiddenPaneHostRoute = (
+    isHiddenPaneHostPane(id)
+    && window?.squidrun?.paneHost?.inject
+    && options?.startupInjection !== true
+  );
+  if (useHiddenPaneHostRoute) {
     Promise.resolve(window.squidrun.paneHost.inject(id, {
       message: String(message || ''),
       traceContext: options?.traceContext || null,
@@ -2642,6 +2647,7 @@ module.exports = {
   registerCodexPane,   // CLI Identity: mark pane as Codex
   unregisterCodexPane, // CLI Identity: unmark pane as Codex
   isCodexPane,         // CLI Identity: query Codex status
+  hasPendingStartupInjection,
   getPaneInjectionCapabilities, // Runtime capability profile for injection paths
   messageQueue,   // Message queue for busy panes
   getInjectionInFlight, // Check injection lock state
