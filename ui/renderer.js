@@ -1184,8 +1184,7 @@ async function saveProfileFromModal() {
         log.warn('Init', `Unable to persist onboarding completion state: ${err?.message || err}`);
       }
       if (!onboardingPersisted) {
-        showStatusNotice('Profile saved, but onboarding state could not be persisted. Please retry.', 'warning', 3600);
-        return;
+        log.warn('Init', 'complete-onboarding IPC did not return success; closing modal anyway (onboarding state already written by save-user-profile)');
       }
       profileOnboardingState.required = false;
       profileOnboardingState.completed = true;
