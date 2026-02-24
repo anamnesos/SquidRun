@@ -29,6 +29,7 @@ jest.mock('../modules/terminal', () => ({
   restartPane: jest.fn(),
   freshStartAll: jest.fn(),
   nudgePane: jest.fn(),
+  hasPendingStartupInjection: jest.fn(() => false),
 }));
 
 // Mock notifications module
@@ -644,6 +645,56 @@ describe('daemon-handlers.js module', () => {
               parentEventId: 'evt-parent-1',
               causationId: 'evt-parent-1',
             }),
+          })
+        );
+      });
+
+      test('forwards startupInjection flag to terminal.sendToPane options', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['2'],
+          message: 'startup msg',
+          startupInjection: true,
+        });
+
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          'startup msg',
+          expect.objectContaining({
+            startupInjection: true,
+          })
+        );
+      });
+
+      test('defers startupInjection delivery until startup readiness gate clears', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.hasPendingStartupInjection
+          .mockReturnValueOnce(true)
+          .mockReturnValue(false);
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['1'],
+          message: 'startup gated',
+          startupInjection: true,
+        });
+
+        expect(terminal.sendToPane).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(100);
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '1',
+          'startup gated',
+          expect.objectContaining({
+            startupInjection: true,
           })
         );
       });

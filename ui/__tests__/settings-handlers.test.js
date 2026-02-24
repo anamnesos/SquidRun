@@ -33,6 +33,7 @@ describe('Settings Handlers', () => {
       readAppStatus: jest.fn(() => ({ session: 2 })),
     };
     deps = createDepsMock();
+    deps.readAppStatus.mockReturnValue({ session: 2 });
     registerSettingsHandlers(ctx, deps);
   });
 
@@ -62,16 +63,28 @@ describe('Settings Handlers', () => {
   });
 
   describe('get-app-status', () => {
-    test('returns app status from settings manager when available', async () => {
-      ctx.settings.readAppStatus.mockReturnValue({ session: 147, mode: 'pty' });
+    test('returns app status from injected dependency when available', async () => {
+      deps.readAppStatus.mockReturnValue({ session: 147, mode: 'pty' });
+
+      const result = await harness.invoke('get-app-status');
+
+      expect(deps.readAppStatus).toHaveBeenCalled();
+      expect(result).toEqual({ session: 147, mode: 'pty' });
+    });
+
+    test('falls back to ctx.settings reader when injected dependency is unavailable', async () => {
+      deps.readAppStatus = undefined;
+      ctx.settings.readAppStatus.mockReturnValue({ session: 51, mode: 'pty' });
+      registerSettingsHandlers(ctx, deps);
 
       const result = await harness.invoke('get-app-status');
 
       expect(ctx.settings.readAppStatus).toHaveBeenCalled();
-      expect(result).toEqual({ session: 147, mode: 'pty' });
+      expect(result).toEqual({ session: 51, mode: 'pty' });
     });
 
-    test('returns null when settings manager is unavailable', async () => {
+    test('returns null when app status readers are unavailable', async () => {
+      deps.readAppStatus = undefined;
       delete ctx.settings;
       registerSettingsHandlers(ctx, deps);
 
