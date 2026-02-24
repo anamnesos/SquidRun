@@ -26,10 +26,19 @@ const {
   buildTriggerFallbackDescriptor,
   buildSpecialTargetRequest,
 } = require('../modules/comms/message-envelope');
-const {
-  parseCrossDeviceTarget,
-  isCrossDeviceEnabled,
-} = require('../modules/cross-device-target');
+let parseCrossDeviceTarget = () => null;
+let isCrossDeviceEnabled = () => false;
+try {
+  const cdt = require('../modules/cross-device-target');
+  parseCrossDeviceTarget = cdt.parseCrossDeviceTarget;
+  isCrossDeviceEnabled = cdt.isCrossDeviceEnabled;
+} catch (e) {
+  const missingCrossDeviceModule = e?.code === 'MODULE_NOT_FOUND'
+    && String(e?.message || '').includes('cross-device-target');
+  if (!missingCrossDeviceModule) {
+    throw e;
+  }
+}
 
 const parsedPort = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
 const PORT = Number.isFinite(parsedPort) ? parsedPort : 9900;
