@@ -193,6 +193,30 @@ describe('SettingsManager CLI auto-detection', () => {
     expect(status.started).toBe('2026-02-15T00:00:00.000Z');
   });
 
+  test('writeAppStatus accepts legacy snake_case session_number field', () => {
+    fs.existsSync.mockImplementation((targetPath) => String(targetPath).endsWith('app-status.json'));
+    fs.readFileSync.mockImplementation((targetPath) => {
+      if (String(targetPath).endsWith('app-status.json')) {
+        return JSON.stringify({
+          started: '2026-02-15T00:00:00.000Z',
+          session_number: 212,
+          mode: 'pty',
+        });
+      }
+      return '';
+    });
+
+    ctx.currentSettings = { dryRun: false, sdkMode: false, autoSpawn: true };
+    manager.writeAppStatus();
+
+    const statusWriteCall = fs.writeFileSync.mock.calls
+      .filter((call) => String(call[0]).endsWith('app-status.json.tmp'))
+      .pop();
+    const status = JSON.parse(statusWriteCall[1]);
+
+    expect(status.session).toBe(212);
+  });
+
   test('writeAppStatus increments session only when daemon start is requested', () => {
     fs.existsSync.mockImplementation((targetPath) => String(targetPath).endsWith('app-status.json'));
     fs.readFileSync.mockImplementation((targetPath) => {

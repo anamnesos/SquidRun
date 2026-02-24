@@ -272,6 +272,20 @@ describe('SquidRunApp', () => {
     });
   });
 
+  describe('getCurrentAppStatusSessionNumber', () => {
+    it('reads session from canonical session field', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      mockManagers.settings.readAppStatus.mockReturnValue({ session: 147 });
+      expect(app.getCurrentAppStatusSessionNumber()).toBe(147);
+    });
+
+    it('accepts legacy snake_case session_number field', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      mockManagers.settings.readAppStatus.mockReturnValue({ session_number: 148 });
+      expect(app.getCurrentAppStatusSessionNumber()).toBe(148);
+    });
+  });
+
   describe('createWindow startup ordering', () => {
     let app;
 
