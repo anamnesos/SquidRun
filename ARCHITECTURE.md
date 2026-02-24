@@ -271,6 +271,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - `.squidrun/triggers/`: fallback trigger files consumed by watcher for agent delivery.
 - `.squidrun/build/`: build blockers/errors/status artifacts used by restart gates.
 - `.squidrun/app-status.json` + `.squidrun/link.json`: runtime truth + bootstrap metadata.
+- `.squidrun/fresh-install.json`: marker file indicating a new installation before onboarding completion.
 
 ## 8) TEST INFRASTRUCTURE
 - Test suite root: `ui/__tests__/` (Jest, Node environment) with shared setup in `ui/__tests__/setup.js`.

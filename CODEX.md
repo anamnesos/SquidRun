@@ -36,11 +36,16 @@ This is the Codex-specific shim.
 
 ## Startup (First Action)
 
-- Read `.squidrun/link.json` first for project discovery (`workspace`) and shared script root (`squidrun_root`).
-- Read the session handoff index: `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-- Treat `.squidrun/app-status.json` as source of truth for the active session number; `link.json.session_id` is bootstrap metadata and may be stale.
-- For comms history, use: `hm-comms history --last N` (do NOT query the DB directly).
-- Then follow the full startup baseline in `ROLES.md`.
+**Architect (Pane 1) — fresh install detection:**
+If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `session: 1`), skip the numbered steps below entirely. Follow the fresh-install instructions instead — read `user-profile.json` and `PRODUCT-GUIDE.md`, welcome the user, and wait for direction. Do NOT attempt to read coordination files that won't exist yet.
+
+**All Panes (Builder/Oracle, and Architect on returning sessions):**
+1. Read `.squidrun/app-status.json` to determine the active `session` number. 
+2. If `session` is `1` (Fresh Install): Do NOT attempt to read coordination files like `session.md` or `.squidrun/link.json` as they may not be fully initialized. Skip to step 5.
+3. If `session` > 1: Read `.squidrun/link.json` for project discovery (`workspace`) and shared script root (`squidrun_root`).
+4. If `session` > 1: Read the session handoff index: `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
+5. For comms history, use: `node ui/scripts/hm-comms.js history --last N` (do NOT query the DB directly).
+6. Then follow the full startup baseline in `ROLES.md`.
 
 ## User Profile
 
