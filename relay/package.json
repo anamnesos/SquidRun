@@ -1,0 +1,13 @@
+{
+  "name": "squidrun-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SquidRun cross-device WebSocket relay (Phase 1 MVP)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
