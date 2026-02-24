@@ -1136,4 +1136,146 @@ describe('SquidRunApp', () => {
       );
     });
   });
+
+  describe('bridge structured message types', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      app.bridgeEnabled = true;
+    });
+
+    it('normalizes outbound structured type and keeps plain content fallback', async () => {
+      app.bridgeClient = {
+        isReady: jest.fn(() => true),
+        sendToDevice: jest.fn(async () => ({
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'bridge_delivered',
+        })),
+      };
+
+      await app.routeBridgeMessage({
+        targetDevice: 'peer_a',
+        content: 'Approval result: approved by architect.',
+        fromRole: 'architect',
+        messageId: 'bridge-structured-1',
+        traceContext: { traceId: 'trace-structured-1' },
+        structuredMessage: {
+          type: 'approvalresult',
+          payload: {
+            requestMessageId: 'bridge-approval-1',
+            approved: true,
+            approverRole: 'architect',
+          },
+        },
+      });
+
+      expect(app.bridgeClient.sendToDevice).toHaveBeenCalledWith(expect.objectContaining({
+        content: 'Approval result: approved by architect.',
+        metadata: expect.objectContaining({
+          traceId: 'trace-structured-1',
+          structured: {
+            type: 'ApprovalResult',
+            payload: {
+              requestMessageId: 'bridge-approval-1',
+              approved: true,
+              approverRole: 'architect',
+            },
+          },
+        }),
+      }));
+    });
+
+    it('downgrades unknown outbound structured type to FYI', async () => {
+      app.bridgeClient = {
+        isReady: jest.fn(() => true),
+        sendToDevice: jest.fn(async () => ({
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'bridge_delivered',
+        })),
+      };
+
+      await app.routeBridgeMessage({
+        targetDevice: 'peer_a',
+        content: 'Unknown structured message fallback',
+        fromRole: 'architect',
+        messageId: 'bridge-structured-2',
+        structuredMessage: {
+          type: 'customType',
+          payload: {
+            detail: 'non-standard structured payload',
+          },
+        },
+      });
+
+      expect(app.bridgeClient.sendToDevice).toHaveBeenCalledWith(expect.objectContaining({
+        metadata: expect.objectContaining({
+          structured: {
+            type: 'FYI',
+            payload: {
+              category: 'status',
+              detail: 'non-standard structured payload',
+              impact: 'context-only',
+              originalType: 'customType',
+            },
+          },
+        }),
+      }));
+    });
+
+    it('journals and injects inbound structured type with bridge prefix', async () => {
+      const triggers = require('../modules/triggers');
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValue({ ok: true });
+
+      const result = await app.handleBridgeInboundMessage({
+        messageId: 'bridge-in-1',
+        fromDevice: 'peer_a',
+        content: 'Potential auth file conflict.',
+        metadata: {
+          structured: {
+            type: 'ConflictCheck',
+            payload: {
+              resource: 'ui/modules/auth.js',
+              action: 'write',
+              reason: 'updating auth handshake',
+            },
+          },
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'bridge_delivered',
+      }));
+      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
+        ['1'],
+        '[Bridge ConflictCheck from PEER_A]: Potential auth file conflict.',
+        null
+      );
+      expect(evidenceLedger.executeEvidenceLedgerOperation).toHaveBeenCalledWith(
+        'upsert-comms-journal',
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            structuredType: 'ConflictCheck',
+            structured: {
+              type: 'ConflictCheck',
+              payload: {
+                resource: 'ui/modules/auth.js',
+                action: 'write',
+                reason: 'updating auth handshake',
+              },
+            },
+          }),
+        }),
+        expect.any(Object)
+      );
+    });
+  });
 });
