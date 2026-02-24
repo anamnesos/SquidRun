@@ -86,6 +86,11 @@ describe('SettingsManager CLI auto-detection', () => {
     });
   });
 
+  test('defaults include explicit gemini model in pane command', () => {
+    expect(manager.defaultSettings.geminiModel).toBeTruthy();
+    expect(manager.defaultSettings.paneCommands['3']).toMatch(/^gemini --yolo --model /);
+  });
+
   test('does not clobber valid manual paneCommands when referenced CLIs are available', () => {
     mockCliAvailability({ claude: true, codex: true, gemini: true });
     ctx.currentSettings.paneCommands = {
@@ -130,6 +135,45 @@ describe('SettingsManager CLI auto-detection', () => {
         '3': 'gemini --yolo --include-directories "<project-root>"',
       },
     });
+  });
+
+  test('loadSettings infers geminiModel from existing paneCommands when field missing', () => {
+    fs.existsSync.mockImplementation((targetPath) => String(targetPath).endsWith('settings.json'));
+    fs.readFileSync.mockImplementation((targetPath) => {
+      if (String(targetPath).endsWith('settings.json')) {
+        return JSON.stringify({
+          paneCommands: {
+            '1': 'claude',
+            '2': 'codex',
+            '3': 'gemini --yolo --model gemini-3-pro-preview --include-directories "<project-root>"',
+          },
+        });
+      }
+      return '';
+    });
+
+    const loaded = manager.loadSettings();
+    expect(loaded.geminiModel).toBe('gemini-3-pro-preview');
+  });
+
+  test('loadSettings upgrades legacy gemini pane command to include explicit model', () => {
+    fs.existsSync.mockImplementation((targetPath) => String(targetPath).endsWith('settings.json'));
+    fs.readFileSync.mockImplementation((targetPath) => {
+      if (String(targetPath).endsWith('settings.json')) {
+        return JSON.stringify({
+          paneCommands: {
+            '1': 'claude',
+            '2': 'codex',
+            '3': 'gemini --yolo --include-directories "<project-root>"',
+          },
+          geminiModel: 'gemini-3-pro-preview',
+        });
+      }
+      return '';
+    });
+
+    const loaded = manager.loadSettings();
+    expect(loaded.paneCommands['3']).toBe('gemini --yolo --include-directories "<project-root>" --model gemini-3-pro-preview');
   });
 
   test('uses short spawnSync timeouts and Windows locator on Windows', () => {
