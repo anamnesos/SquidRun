@@ -20,6 +20,7 @@ const CLI_PREFERENCES = {
 const CLI_DISCOVERY_TIMEOUT_MS = 2000;
 const CLI_VERSION_TIMEOUT_MS = 2500;
 const SMTP_PASS_OBFUSCATION_PREFIX = 'obf:v1:';
+const SETTINGS_FILE_NAME = 'settings.json';
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
@@ -136,10 +137,12 @@ function createDefaultSettings({ isPackaged = false } = {}) {
 class SettingsManager {
   constructor(appContext) {
     this.ctx = appContext;
-    this.electronApp = this.resolveElectronApp();
-    this.isPackaged = Boolean(this.electronApp && this.electronApp.isPackaged);
-    this.defaultSettings = createDefaultSettings({ isPackaged: this.isPackaged });
-    this.settingsPath = this.resolveSettingsPath();
+    this.electronApp = null;
+    this.isPackaged = false;
+    this.defaultSettings = createDefaultSettings();
+    this.settingsPath = null;
+    this.settingsContextLogged = false;
+    this.refreshRuntimeSettingsContext('constructor');
     this.appStatusPath = typeof resolveCoordPath === 'function'
       ? resolveCoordPath('app-status.json', { forWrite: true })
       : path.join(PROJECT_ROOT || path.resolve(path.join(WORKSPACE_PATH, '..')), '.squidrun', 'app-status.json');
@@ -162,13 +165,71 @@ class SettingsManager {
   }
 
   resolveSettingsPath() {
-    if (this.isPackaged && this.electronApp && typeof this.electronApp.getPath === 'function') {
-      const userDataPath = this.electronApp.getPath('userData');
+    if (this.isPackaged) {
+      const { value: userDataPath } = this.tryGetElectronPath('userData');
       if (typeof userDataPath === 'string' && userDataPath.trim()) {
-        return path.join(userDataPath, 'settings.json');
+        return path.join(userDataPath, SETTINGS_FILE_NAME);
       }
     }
-    return path.join(__dirname, '..', '..', 'settings.json');
+    return path.join(__dirname, '..', '..', SETTINGS_FILE_NAME);
+  }
+
+  tryGetElectronPath(pathName) {
+    if (!this.electronApp || typeof this.electronApp.getPath !== 'function') {
+      return { value: null, error: 'electron_app_getPath_unavailable' };
+    }
+    try {
+      return { value: this.electronApp.getPath(pathName), error: null };
+    } catch (err) {
+      return { value: null, error: err?.message || String(err) };
+    }
+  }
+
+  buildSettingsPersistenceDiagnostics() {
+    const userDataPathResult = this.tryGetElectronPath('userData');
+    const appDataPathResult = this.tryGetElectronPath('appData');
+    const homePathResult = this.tryGetElectronPath('home');
+    let appName = null;
+    try {
+      if (this.electronApp && typeof this.electronApp.getName === 'function') {
+        appName = this.electronApp.getName();
+      } else if (this.electronApp && typeof this.electronApp.name === 'string') {
+        appName = this.electronApp.name;
+      }
+    } catch {
+      appName = null;
+    }
+    return {
+      appName,
+      isPackaged: this.isPackaged,
+      settingsPath: this.settingsPath || null,
+      userDataPath: userDataPathResult.value || null,
+      userDataPathError: userDataPathResult.error || null,
+      appDataPath: appDataPathResult.value || null,
+      appDataPathError: appDataPathResult.error || null,
+      homePath: homePathResult.value || null,
+      homePathError: homePathResult.error || null,
+      cwd: process.cwd(),
+      resourcesPath: process.resourcesPath || null,
+      platform: process.platform,
+      nodeVersion: process.version,
+    };
+  }
+
+  refreshRuntimeSettingsContext(reason = 'runtime-refresh') {
+    this.electronApp = this.resolveElectronApp();
+    this.isPackaged = Boolean(this.electronApp && this.electronApp.isPackaged);
+    this.defaultSettings = createDefaultSettings({ isPackaged: this.isPackaged });
+
+    const nextSettingsPath = this.resolveSettingsPath();
+    const hadPath = typeof this.settingsPath === 'string' && this.settingsPath.trim().length > 0;
+    const pathChanged = !hadPath || path.resolve(this.settingsPath) !== path.resolve(nextSettingsPath);
+    this.settingsPath = nextSettingsPath;
+
+    if (!this.settingsContextLogged || pathChanged) {
+      this.settingsContextLogged = true;
+      log.info('Settings', `Persistence context resolved (${reason})`, this.buildSettingsPersistenceDiagnostics());
+    }
   }
 
   writeSettingsFile(payload) {
@@ -189,6 +250,7 @@ class SettingsManager {
 
   loadSettings() {
     try {
+      this.refreshRuntimeSettingsContext('load-settings');
       this.createDefaultSettingsFileIfMissing();
       if (fs.existsSync(this.settingsPath)) {
         const content = fs.readFileSync(this.settingsPath, 'utf-8');
@@ -221,15 +283,44 @@ class SettingsManager {
 
   saveSettings(settings) {
     try {
+      this.refreshRuntimeSettingsContext('save-settings');
       Object.assign(this.ctx.currentSettings, settings);
 
       const persistedSettings = JSON.parse(JSON.stringify(this.ctx.currentSettings));
       persistedSettings.smtpPass = obfuscateSmtpPassword(persistedSettings.smtpPass);
       this.writeSettingsFile(persistedSettings);
 
-      this.writeAppStatus();
+      const diagnostics = this.buildSettingsPersistenceDiagnostics();
+      this.writeAppStatus({
+        statusPatch: {
+          settingsPersistence: {
+            ...diagnostics,
+            saveOk: true,
+            lastSavedAt: new Date().toISOString(),
+            lastError: null,
+            lastErrorCode: null,
+            lastErrorAt: null,
+          },
+        },
+      });
     } catch (err) {
-      log.error('Settings', 'Error saving settings', err);
+      const diagnostics = this.buildSettingsPersistenceDiagnostics();
+      log.error('Settings', 'Error saving settings', {
+        error: err?.message || String(err),
+        code: err?.code || null,
+        ...diagnostics,
+      });
+      this.writeAppStatus({
+        statusPatch: {
+          settingsPersistence: {
+            ...diagnostics,
+            saveOk: false,
+            lastError: err?.message || String(err),
+            lastErrorCode: err?.code || null,
+            lastErrorAt: new Date().toISOString(),
+          },
+        },
+      });
     }
     return this.ctx.currentSettings;
   }
