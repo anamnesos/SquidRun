@@ -318,6 +318,7 @@ function _extractSessionNumberFromStatus(status) {
   if (!status || typeof status !== 'object') return null;
   return (
     asPositiveInt(status.session)
+    || asPositiveInt(status.session_number)
     || asPositiveInt(status.sessionNumber)
     || asPositiveInt(status.currentSession)
     || null

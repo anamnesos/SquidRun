@@ -746,7 +746,7 @@ class SquidRunApp {
     try {
       if (!this.settings || typeof this.settings.readAppStatus !== 'function') return null;
       const status = this.settings.readAppStatus();
-      return asPositiveInt(status?.session ?? status?.sessionNumber, null);
+      return asPositiveInt(status?.session ?? status?.session_number ?? status?.sessionNumber, null);
     } catch {
       return null;
     }

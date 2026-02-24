@@ -214,7 +214,7 @@ class SettingsManager {
         ? 'sdk'
         : (this.ctx.currentSettings.dryRun ? 'dry-run' : 'pty');
 
-      let existingSession = asPositiveInt(existing.session ?? existing.sessionNumber, null);
+      let existingSession = asPositiveInt(existing.session ?? existing.session_number ?? existing.sessionNumber, null);
       const sessionFloor = asPositiveInt(opts.sessionFloor ?? opts.sessionSeed, null);
 
       const overrideSession = asPositiveInt(opts.session, null);
