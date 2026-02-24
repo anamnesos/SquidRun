@@ -33,7 +33,7 @@ Skip the numbered steps below entirely. Follow the fresh-install instructions in
 
 **All Panes (Builder/Oracle, and Architect on returning sessions):**
 1. Read `.squidrun/app-status.json` to determine the active `session` number. 
-2. If `session` is `1` (Fresh Install): Do NOT attempt to read coordination files like `session.md` or `.squidrun/link.json` as they may not be fully initialized. Skip to step 5.
+2. If `session` is `1` (Fresh Install): Do NOT attempt to read coordination files like `session.md` or `.squidrun/link.json` as they may not be fully initialized. Skip to step 5. For Builder/Oracle specifically, suppress startup check-in until Architect has delivered the onboarding welcome.
 3. If `session` > 1: Read `.squidrun/link.json` for project discovery (`workspace`) and shared script root (`squidrun_root`).
 4. If `session` > 1: Read the session handoff index: `.squidrun/handoffs/session.md` — contains previous session context, decisions, and pending work.
 5. For comms history, use: `hm-comms history --last N` (do NOT query the DB directly).
