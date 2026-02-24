@@ -74,7 +74,8 @@ Skip all numbered steps below. Follow the fresh-install instructions: read `user
 3. If `session` > 1: Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
 4. If `session` > 1: Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
 5. Read `./user-profile.json`.
-6. Check in to Architect via `hm-send` — one line, no extras.
+6. If `session` is `1` (Fresh Install): Do **NOT** send startup check-in yet. Stay silent and wait for Architect to deliver onboarding welcome first.
+7. If `session` > 1: Check in to Architect via `hm-send` — one line, no extras.
 
 ## ARCHITECT
 

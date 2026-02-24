@@ -45,6 +45,7 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
+const log = require('../modules/logger');
 const SettingsManager = require('../modules/main/settings-manager');
 
 function mockCliAvailability(availability) {
@@ -308,6 +309,12 @@ describe('SettingsManager packaged persistence defaults', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     app.isPackaged = false;
+    app.getPath.mockImplementation((name) => {
+      if (name === 'userData') return '/tmp/squidrun-userdata';
+      if (name === 'appData') return '/tmp';
+      if (name === 'home') return '/tmp';
+      return '/tmp';
+    });
   });
 
   test('uses userData settings path and project operating mode for packaged builds', () => {
@@ -335,6 +342,31 @@ describe('SettingsManager packaged persistence defaults', () => {
 
     const persisted = JSON.parse(settingsWrite[1]);
     expect(persisted.operatingMode).toBe('project');
+  });
+
+  test('saveSettings logs detailed diagnostics when packaged write fails', () => {
+    app.isPackaged = true;
+    fs.writeFileSync.mockImplementationOnce(() => {
+      const err = new Error('permission denied');
+      err.code = 'EACCES';
+      throw err;
+    });
+
+    const ctx = {};
+    const manager = new SettingsManager(ctx);
+    manager.saveSettings({ operatingMode: 'project' });
+
+    expect(log.error).toHaveBeenCalledWith(
+      'Settings',
+      'Error saving settings',
+      expect.objectContaining({
+        error: 'permission denied',
+        code: 'EACCES',
+        isPackaged: true,
+        settingsPath: path.join('/tmp/squidrun-userdata', 'settings.json'),
+        userDataPath: '/tmp/squidrun-userdata',
+      })
+    );
   });
 });
 
