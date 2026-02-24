@@ -6,6 +6,10 @@
 const log = require('../logger');
 const bus = require('../event-bus');
 const { BYPASS_CLEAR_DELAY_MS: DEFAULT_BYPASS_CLEAR_DELAY_MS } = require('../constants');
+const {
+  getRuntimeInjectionCapabilityDefault,
+  resolveInjectionRuntimeKey,
+} = require('./injection-capabilities');
 
 const EVENT_SOURCE = 'injection.js';
 const IS_DARWIN = process.platform === 'darwin';
@@ -508,81 +512,18 @@ function createInjectionController(options = {}) {
   }
 
   function resolveLegacyCapabilities(paneId) {
-    const id = String(paneId);
-    const isCodex = typeof isCodexPane === 'function' ? isCodexPane(id) : false;
-    if (isCodex) {
-      return {
-        mode: 'pty',
-        modeLabel: 'codex-pty',
-        appliedMethod: 'codex-pty',
-        submitMethod: 'codex-pty-enter',
-        bypassGlobalLock: false,
-        applyCompactionGate: true,
-        requiresFocusForEnter: false,
-        enterMethod: 'pty',
-        enterDelayMs: CODEX_ENTER_DELAY_MS,
-        sanitizeMultiline: true,
-        clearLineBeforeWrite: true,
-        useChunkedWrite: false,
-        homeResetBeforeWrite: false,
-        verifySubmitAccepted: !IS_DARWIN,
-        deferSubmitWhilePaneActive: false,
-        scaleEnterDelayByPayload: true,
-        typingGuardWhenBypassing: false,
-        sanitizeTransform: 'none',
-        enterFailureReason: 'pty_enter_failed',
-        displayName: 'Codex',
-      };
-    }
-
-    const isGemini = typeof isGeminiPane === 'function' ? isGeminiPane(id) : false;
-    if (isGemini) {
-      return {
-        mode: 'pty',
-        modeLabel: 'gemini-pty',
-        appliedMethod: 'gemini-pty',
-        submitMethod: 'gemini-pty-enter',
-        bypassGlobalLock: true,
-        applyCompactionGate: false,
-        requiresFocusForEnter: false,
-        enterMethod: 'pty',
-        enterDelayMs: GEMINI_ENTER_DELAY_MS,
-        sanitizeMultiline: true,
-        clearLineBeforeWrite: true,
-        useChunkedWrite: false,
-        homeResetBeforeWrite: false,
-        verifySubmitAccepted: false,
-        deferSubmitWhilePaneActive: false,
-        scaleEnterDelayByPayload: false,
-        typingGuardWhenBypassing: true,
-        sanitizeTransform: 'gemini-sanitize',
-        enterFailureReason: 'pty_enter_failed',
-        displayName: 'Gemini',
-      };
-    }
-
-    return {
-      mode: 'pty',
-      modeLabel: 'claude-pty',
-      appliedMethod: 'claude-pty',
-      submitMethod: 'sendTrustedEnter',
-      bypassGlobalLock: false,
-      applyCompactionGate: true,
-      requiresFocusForEnter: !IS_DARWIN,
-      enterMethod: IS_DARWIN ? 'pty' : 'trusted',
-      enterDelayMs: CLAUDE_ENTER_DELAY_MS,
-      sanitizeMultiline: false,
-      clearLineBeforeWrite: true,
-      useChunkedWrite: true,
-      homeResetBeforeWrite: true,
-      verifySubmitAccepted: !IS_DARWIN,
-      deferSubmitWhilePaneActive: !IS_DARWIN,
-      scaleEnterDelayByPayload: true,
-      typingGuardWhenBypassing: false,
-      sanitizeTransform: 'none',
-      enterFailureReason: 'enter_failed',
-      displayName: 'Claude',
-    };
+    const runtimeKey = resolveInjectionRuntimeKey(paneId, {
+      isCodexPane,
+      isGeminiPane,
+      fallback: 'claude',
+    });
+    return getRuntimeInjectionCapabilityDefault(runtimeKey, {
+      isDarwin: IS_DARWIN,
+      codexEnterDelayMs: CODEX_ENTER_DELAY_MS,
+      codexVerifySubmitAccepted: !IS_DARWIN,
+      geminiEnterDelayMs: GEMINI_ENTER_DELAY_MS,
+      claudeEnterDelayMs: CLAUDE_ENTER_DELAY_MS,
+    });
   }
 
   function normalizeCapabilities(raw, fallbackCaps, paneId) {

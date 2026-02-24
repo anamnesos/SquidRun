@@ -42,9 +42,10 @@ describe('registerModelSwitchHandlers', () => {
     mockCtx = {
       ipcMain: require('electron').ipcMain,
       currentSettings: {
+        geminiModel: 'gemini-3-pro-preview',
         paneCommands: {
           '1': 'claude',
-          '3': 'gemini --yolo --include-directories "<project-root>"',
+          '3': 'gemini --yolo --model gemini-3-pro-preview',
         },
         paneProjects: {
           '1': null,
@@ -191,10 +192,13 @@ describe('registerModelSwitchHandlers', () => {
       // Wait for the handler promise to resolve
       const result = await switchPromise;
 
-      // Verify settings were updated and saved (using string check to bypass path resolution issues in mock)
-      expect(mockCtx.currentSettings.paneCommands['1']).toMatch(/gemini --yolo --include-directories ".+"/);
-      expect(mockCtx.currentSettings.paneCommands['1']).not.toMatch(/workspace/i);
-      expect(mockDeps.saveSettings).toHaveBeenCalledWith({ paneCommands: mockCtx.currentSettings.paneCommands });
+      // Verify settings were updated and saved
+      expect(mockCtx.currentSettings.paneCommands['1']).toBe('gemini --yolo --model gemini-3-pro-preview');
+      expect(mockCtx.currentSettings.geminiModel).toBe('gemini-3-pro-preview');
+      expect(mockDeps.saveSettings).toHaveBeenCalledWith({
+        paneCommands: mockCtx.currentSettings.paneCommands,
+        geminiModel: 'gemini-3-pro-preview',
+      });
 
       // Verify renderer was signaled
       expect(mockCtx.mainWindow.webContents.send).toHaveBeenCalledWith('pane-model-changed', { paneId: '1', model: 'gemini' });
@@ -232,22 +236,21 @@ describe('registerModelSwitchHandlers', () => {
       expect(result).toEqual({ success: true, paneId: '3', model: 'claude' });
     });
 
-    it('should construct the gemini command with the project-root include path', async () => {
+    it('should construct the gemini command with explicit model', async () => {
       const switchPromise = switchHandler({}, { paneId: '1', model: 'gemini' });
       mockCtx.daemonClient._killedHandler('1');
       await switchPromise;
 
-      expect(mockCtx.currentSettings.paneCommands['1']).toMatch(/gemini --yolo --include-directories ".+"/);
-      expect(mockCtx.currentSettings.paneCommands['1']).not.toMatch(/workspace/i);
+      expect(mockCtx.currentSettings.paneCommands['1']).toBe('gemini --yolo --model gemini-3-pro-preview');
     });
 
-    it('should use paneProjects cwd for gemini include directory when assigned', async () => {
+    it('ignores include-directory defaults even when paneProjects is assigned', async () => {
       mockCtx.currentSettings.paneProjects['1'] = '<external-project-root>';
       const switchPromise = switchHandler({}, { paneId: '1', model: 'gemini' });
       mockCtx.daemonClient._killedHandler('1');
       await switchPromise;
 
-      expect(mockCtx.currentSettings.paneCommands['1']).toBe('gemini --yolo --include-directories "<external-project-root>"');
+      expect(mockCtx.currentSettings.paneCommands['1']).toBe('gemini --yolo --model gemini-3-pro-preview');
     });
 
     it('should handle missing daemonClient gracefully', async () => {

@@ -3,16 +3,14 @@
  * Provides curated configurations for common team setups.
  */
 
-const path = require('path');
+const { buildGeminiCommand } = require('./gemini-command');
 
 const BUILTIN_CREATED_AT = '2026-01-30T00:00:00.000Z';
-const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
-const GEMINI_INCLUDE_DIR = PROJECT_ROOT.replace(/\\/g, '/');
 
 const DEFAULT_PANE_COMMANDS = {
   '1': 'claude',
   '2': 'codex',
-  '3': `gemini --yolo --include-directories "${GEMINI_INCLUDE_DIR}"`,
+  '3': buildGeminiCommand(),
 };
 
 const ALL_CLAUDE = {

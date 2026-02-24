@@ -9,7 +9,14 @@ const crypto = require('crypto');
 const os = require('os');
 const { spawnSync } = require('child_process');
 const log = require('../logger');
-const { WORKSPACE_PATH, PROJECT_ROOT, resolvePaneCwd, resolveCoordPath } = require('../../config');
+const { WORKSPACE_PATH, PROJECT_ROOT, resolveCoordPath } = require('../../config');
+const {
+  buildGeminiCommand: buildGeminiCliCommand,
+  resolveGeminiModelId,
+  hasGeminiCommand,
+  ensureGeminiModelFlag,
+  parseGeminiModelFromCommand,
+} = require('../gemini-command');
 
 const CLI_NAMES = ['claude', 'codex', 'gemini'];
 const CLI_PREFERENCES = {
@@ -69,18 +76,27 @@ function deobfuscateSmtpPassword(value) {
   }
 }
 
-function buildGeminiCommand() {
-  const includeDir = resolvePaneCwd('1') || PROJECT_ROOT || path.resolve(path.join(WORKSPACE_PATH, '..'));
-  return `gemini --yolo --include-directories "${includeDir}"`;
+function buildGeminiCommand(options = {}) {
+  return buildGeminiCliCommand({
+    preferredModel: options.preferredModel,
+    existingCommand: options.existingCommand,
+    fallbackModel: options.fallbackModel,
+  });
 }
 
-function buildCommandForCli(cli) {
+function buildCommandForCli(cli, options = {}) {
   if (cli === 'codex') return 'codex';
-  if (cli === 'gemini') return buildGeminiCommand();
+  if (cli === 'gemini') {
+    return buildGeminiCliCommand({
+      preferredModel: options.geminiModel,
+      existingCommand: options.existingGeminiCommand,
+    });
+  }
   return 'claude --permission-mode acceptEdits';
 }
 
 function createDefaultSettings({ isPackaged = false } = {}) {
+  const geminiModel = resolveGeminiModelId();
   return {
     autoSpawn: true,
     autoSync: false,
@@ -118,11 +134,12 @@ function createDefaultSettings({ isPackaged = false } = {}) {
     hiddenPaneHostsEnabled: process.platform === 'win32',
     operatingMode: isPackaged ? 'project' : 'developer',
     firmwareInjectionEnabled: false,
+    geminiModel,
     paneProjects: { '1': null, '2': null, '3': null },
     paneCommands: {
       '1': 'claude',
       '2': 'codex',
-      '3': buildGeminiCommand(),
+      '3': buildGeminiCommand({ preferredModel: geminiModel }),
     },
     templates: [],
     voiceInputEnabled: false,
@@ -282,8 +299,27 @@ class SettingsManager {
         // Deep merge paneCommands and paneProjects to preserve defaults for missing keys
         const paneCommands = { ...this.defaultSettings.paneCommands, ...(loaded.paneCommands || {}) };
         const paneProjects = { ...this.defaultSettings.paneProjects, ...(loaded.paneProjects || {}) };
+        const existingGeminiCommand = Object.values(paneCommands).find(hasGeminiCommand) || '';
+        const geminiModel = resolveGeminiModelId({
+          preferredModel: loaded.geminiModel,
+          existingCommand: existingGeminiCommand,
+        });
+        for (const paneId of Object.keys(paneCommands)) {
+          const command = String(paneCommands[paneId] || '').trim();
+          if (!hasGeminiCommand(command)) continue;
+          if (parseGeminiModelFromCommand(command)) continue;
+
+          paneCommands[paneId] = ensureGeminiModelFlag(command, {
+            preferredModel: geminiModel,
+            fallbackModel: geminiModel,
+          });
+        }
         
-        Object.assign(this.ctx.currentSettings, this.defaultSettings, loaded, { paneCommands, paneProjects });
+        Object.assign(this.ctx.currentSettings, this.defaultSettings, loaded, {
+          paneCommands,
+          paneProjects,
+          geminiModel,
+        });
       }
     } catch (err) {
       log.error('Settings', 'Error loading settings', err);
@@ -480,10 +516,18 @@ class SettingsManager {
 
   resolvePaneCommandsFromAvailability(installed) {
     const paneCommands = {};
+    const existingGeminiCommand = Object.values(this.ctx?.currentSettings?.paneCommands || {}).find(hasGeminiCommand) || '';
+    const geminiModel = resolveGeminiModelId({
+      preferredModel: this.ctx?.currentSettings?.geminiModel,
+      existingCommand: existingGeminiCommand,
+    });
     for (const paneId of Object.keys(CLI_PREFERENCES)) {
       const preferred = CLI_PREFERENCES[paneId];
       const selectedCli = preferred.find(cli => installed[cli]) || preferred[0];
-      paneCommands[paneId] = buildCommandForCli(selectedCli);
+      paneCommands[paneId] = buildCommandForCli(selectedCli, {
+        geminiModel,
+        existingGeminiCommand,
+      });
     }
     return paneCommands;
   }
