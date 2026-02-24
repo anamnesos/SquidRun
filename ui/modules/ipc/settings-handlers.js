@@ -263,13 +263,16 @@ function sanitizeApiKeyValue(key, value) {
 
 function registerSettingsHandlers(ctx, deps) {
   const { ipcMain } = ctx;
-  const { loadSettings, saveSettings } = deps;
+  const { loadSettings, saveSettings, readAppStatus } = deps;
 
   ipcMain.handle('get-settings', () => {
     return loadSettings();
   });
 
   ipcMain.handle('get-app-status', () => {
+    if (typeof readAppStatus === 'function') {
+      return readAppStatus() || null;
+    }
     if (!ctx?.settings || typeof ctx.settings.readAppStatus !== 'function') {
       return null;
     }
