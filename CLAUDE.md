@@ -39,6 +39,14 @@ This is the Claude-specific shim.
 - Read `workspace/user-profile.json` on startup. Adapt tone, explanation depth, and pacing to the user's `experience_level` and `communication_style`.
 - This file is user-edited. Do not modify it. Do not delete it in cleanups.
 
+## Compaction-Proof Rules
+
+These rules MUST survive context compaction. Re-read after every compaction event.
+
+- **Telegram replies:** When user messages via `[Telegram from ...]`, reply on Telegram: `node ui/scripts/hm-send.js telegram "(ARCHITECT #N): reply"`. The user is NOT at their PC. Terminal output is invisible to them.
+- **Screenshots:** When user says they uploaded a screenshot, read `workspace/screenshots/latest.png`.
+- **Long hm-send messages (>500 chars):** Write to temp file first, then `--file`. See ROLES.md for syntax.
+
 ## Reference
 
 - Read `ROLES.md` for role boundaries and shared operating rules.
