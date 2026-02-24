@@ -592,7 +592,7 @@ class SquidRunApp {
           version: appVersion,
           platform: process.platform,
           nodeVersion: process.version,
-          session: 1,
+          session: 0,
           lastUpdated: new Date().toISOString(),
         };
         this.writeFileAtomic(appStatusPath, `${JSON.stringify(initialStatus, null, 2)}\n`);
