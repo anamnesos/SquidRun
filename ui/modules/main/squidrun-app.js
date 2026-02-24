@@ -128,22 +128,8 @@ const RENDERER_ENTRY_HTML = path.join(__dirname, '..', '..', 'index.html');
 const SHUTDOWN_CONFIRM_MESSAGE = 'All active agent sessions will be terminated.\n\nContinue?';
 const EXTERNAL_WORKSPACE_DIRNAME = 'SquidRun';
 const ONBOARDING_STATE_FILENAME = 'onboarding-state.json';
+const FRESH_INSTALL_MARKER_FILENAME = 'fresh-install.json';
 const PACKAGED_BIN_RUNTIME_RELATIVE = path.join('.squidrun', 'bin', 'runtime', 'ui');
-const FRESH_INSTALL_SYSTEM_MESSAGE = [
-  '[SYSTEM MSG — FRESH INSTALL] This is a brand new SquidRun installation. No prior sessions exist.',
-  '',
-  'MANDATORY FIRST-RUN BEHAVIOR:',
-  '1. DO NOT run diagnostics, file infrastructure checks, or bug reports.',
-  '2. DO NOT modify any files unless the user explicitly asks you to.',
-  '3. DO NOT use jargon — explain everything simply.',
-  '4. Welcome the user warmly. Introduce yourself and your role briefly.',
-  '5. Read PRODUCT-GUIDE.md to understand what SquidRun is, then explain the basics to the user.',
-  '6. Read user-profile.json and adapt your tone to their experience_level. If the name field is empty, do NOT guess — just say "Welcome" without a name.',
-  '7. Ask the user what they would like to work on. Wait for their direction before doing anything.',
-  '8. This is a FRESH workspace — an empty workspace is NORMAL, not a bug. Do NOT treat missing files as errors to investigate.',
-  '',
-  'You are here to help the user, not to audit the system.',
-].join('\n');
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
@@ -253,7 +239,6 @@ class SquidRunApp {
     this.daemonConnectedForStartup = false;
     this.daemonTimeoutTriggered = false;
     this.daemonTimeoutNotified = false;
-    this.pendingArchitectStartupSystemMessage = null;
     this.packagedOnboardingState = null;
     this.shuttingDown = false;
     this.fullShutdownPromise = null;
@@ -447,6 +432,11 @@ class SquidRunApp {
     return path.join(baseWorkspace, '.squidrun', ONBOARDING_STATE_FILENAME);
   }
 
+  getFreshInstallMarkerPath(workspacePath = null) {
+    const baseWorkspace = workspacePath || this.getDefaultExternalWorkspacePath();
+    return path.join(baseWorkspace, '.squidrun', FRESH_INSTALL_MARKER_FILENAME);
+  }
+
   readOnboardingState(workspacePath = null) {
     const onboardingPath = this.getOnboardingStatePath(workspacePath);
     if (!fs.existsSync(onboardingPath)) return null;
@@ -498,42 +488,36 @@ class SquidRunApp {
     };
     this.writeFileAtomic(onboardingPath, `${JSON.stringify(state, null, 2)}\n`);
     this.packagedOnboardingState = state;
-    // Do NOT clear pendingArchitectStartupSystemMessage here.
-    // It must survive until maybeInjectArchitectStartupSystemMessage() successfully
-    // delivers it to the Architect pane. Clearing it here kills the message before
-    // the Architect pane even spawns (onboarding completes before agent spawn).
+    this.clearFreshInstallMarker(effectiveWorkspacePath);
     return {
       state,
       path: onboardingPath,
     };
   }
 
-  maybeInjectArchitectStartupSystemMessage(reason = 'startup') {
-    if (!this.pendingArchitectStartupSystemMessage) return false;
-    if (!this.ctx?.daemonClient || this.ctx.daemonClient.connected !== true) return false;
-    const terminals = typeof this.ctx.daemonClient.getTerminals === 'function'
-      ? this.ctx.daemonClient.getTerminals()
-      : [];
-    const architectAlive = Array.isArray(terminals)
-      && terminals.some((term) => String(term?.paneId || '') === '1' && term?.alive !== false);
-    if (!architectAlive) return false;
+  writeFreshInstallMarker(workspacePath = null) {
+    const effectiveWorkspacePath = workspacePath || this.getDefaultExternalWorkspacePath();
+    const markerPath = this.getFreshInstallMarkerPath(effectiveWorkspacePath);
+    const payload = {
+      fresh_install: true,
+      created_at: new Date().toISOString(),
+      workspace_path: path.resolve(effectiveWorkspacePath),
+      source: 'packaged-bootstrap',
+    };
+    this.writeFileAtomic(markerPath, `${JSON.stringify(payload, null, 2)}\n`);
+    return markerPath;
+  }
 
-    const routed = this.routeInjectMessage({
-      panes: ['1'],
-      message: `${this.pendingArchitectStartupSystemMessage}\n`,
-      startupInjection: true,
-      meta: {
-        source: 'packaged-first-run-bootstrap',
-        reason,
-        startupInjection: true,
-      },
-    });
-    if (routed) {
-      log.info('ProjectLifecycle', `Injected fresh-install startup system message (${reason})`);
-      this.pendingArchitectStartupSystemMessage = null;
-      return true;
+  clearFreshInstallMarker(workspacePath = null) {
+    const effectiveWorkspacePath = workspacePath || this.getDefaultExternalWorkspacePath();
+    const markerPath = this.getFreshInstallMarkerPath(effectiveWorkspacePath);
+    try {
+      if (fs.existsSync(markerPath)) {
+        fs.rmSync(markerPath, { force: true });
+      }
+    } catch (err) {
+      log.warn('ProjectLifecycle', `Failed clearing fresh-install marker: ${err.message}`);
     }
-    return false;
   }
 
   ensurePackagedWorkspaceBootstrap() {
@@ -625,9 +609,9 @@ class SquidRunApp {
 
     this.packagedOnboardingState = onboardingState;
     if (onboardingComplete) {
-      this.pendingArchitectStartupSystemMessage = null;
+      this.clearFreshInstallMarker(workspacePath);
     } else {
-      this.pendingArchitectStartupSystemMessage = FRESH_INSTALL_SYSTEM_MESSAGE;
+      this.writeFreshInstallMarker(workspacePath);
     }
 
     try {
@@ -808,6 +792,16 @@ class SquidRunApp {
 
     if (this.packagedOnboardingState?.workspace_path) {
       candidates.push(path.resolve(String(this.packagedOnboardingState.workspace_path)));
+    }
+
+    try {
+      const state = (typeof watcher.readState === 'function' ? watcher.readState() : null) || null;
+      const stateProject = typeof state?.project === 'string' ? state.project.trim() : '';
+      if (stateProject && !this.isBundledRuntimePath(stateProject)) {
+        candidates.push(path.resolve(stateProject));
+      }
+    } catch (_) {
+      // Best-effort only.
     }
 
     return Array.from(new Set(candidates));
@@ -3071,7 +3065,6 @@ class SquidRunApp {
               terminals
             });
             this.primePaneHostFromTerminalSnapshot(terminals);
-            this.maybeInjectArchitectStartupSystemMessage('post_load_replay');
             this.kernelBridge.emitBridgeEvent('bridge.connected', {
               transport: 'daemon-client',
               terminalCount: terminals.length,
@@ -3322,9 +3315,6 @@ class SquidRunApp {
       const command = this.cliIdentity.getPaneCommandForIdentity(String(paneId));
       this.cliIdentity.inferAndEmitCliIdentity(paneId, command);
       this.ctx.recoveryManager?.recordActivity(paneId);
-      if (String(paneId) === '1') {
-        this.maybeInjectArchitectStartupSystemMessage('architect_spawned');
-      }
     });
 
     this.attachDaemonClientListener('connected', (terminals) => {
@@ -3372,7 +3362,6 @@ class SquidRunApp {
       }
       this.sendToVisibleWindow('daemon-connected', { terminals });
       this.primePaneHostFromTerminalSnapshot(terminals);
-      this.maybeInjectArchitectStartupSystemMessage('daemon_connected');
 
       this.kernelBridge.emitBridgeEvent('bridge.connected', {
         transport: 'daemon-client',

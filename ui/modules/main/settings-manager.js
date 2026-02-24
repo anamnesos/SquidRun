@@ -141,11 +141,9 @@ class SettingsManager {
     this.isPackaged = false;
     this.defaultSettings = createDefaultSettings();
     this.settingsPath = null;
+    this.appStatusPath = null;
     this.settingsContextLogged = false;
     this.refreshRuntimeSettingsContext('constructor');
-    this.appStatusPath = typeof resolveCoordPath === 'function'
-      ? resolveCoordPath('app-status.json', { forWrite: true })
-      : path.join(PROJECT_ROOT || path.resolve(path.join(WORKSPACE_PATH, '..')), '.squidrun', 'app-status.json');
 
     // Deep clone defaults to prevent reference sharing
     this.ctx.currentSettings = JSON.parse(JSON.stringify(this.defaultSettings));
@@ -211,15 +209,28 @@ class SettingsManager {
       homePathError: homePathResult.error || null,
       cwd: process.cwd(),
       resourcesPath: process.resourcesPath || null,
+      appStatusPath: this.appStatusPath || null,
       platform: process.platform,
       nodeVersion: process.version,
     };
+  }
+
+  resolveAppStatusPath() {
+    if (typeof resolveCoordPath === 'function') {
+      return resolveCoordPath('app-status.json', { forWrite: true });
+    }
+    return path.join(PROJECT_ROOT || path.resolve(path.join(WORKSPACE_PATH, '..')), '.squidrun', 'app-status.json');
+  }
+
+  refreshAppStatusPath() {
+    this.appStatusPath = this.resolveAppStatusPath();
   }
 
   refreshRuntimeSettingsContext(reason = 'runtime-refresh') {
     this.electronApp = this.resolveElectronApp();
     this.isPackaged = Boolean(this.electronApp && this.electronApp.isPackaged);
     this.defaultSettings = createDefaultSettings({ isPackaged: this.isPackaged });
+    this.refreshAppStatusPath();
 
     const nextSettingsPath = this.resolveSettingsPath();
     const hadPath = typeof this.settingsPath === 'string' && this.settingsPath.trim().length > 0;
@@ -327,6 +338,7 @@ class SettingsManager {
 
   readAppStatus() {
     try {
+      this.refreshAppStatusPath();
       if (!fs.existsSync(this.appStatusPath)) return {};
       const raw = fs.readFileSync(this.appStatusPath, 'utf-8');
       const parsed = JSON.parse(raw);
@@ -339,6 +351,7 @@ class SettingsManager {
 
   writeAppStatus(options = {}) {
     try {
+      this.refreshAppStatusPath();
       const opts = options && typeof options === 'object' ? options : {};
       const nowIso = new Date().toISOString();
       const existing = this.readAppStatus();

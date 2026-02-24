@@ -28,8 +28,8 @@ This is the Claude-specific shim.
 
 ## Startup (First Action)
 
-**Architect (Pane 1) — if receiving `[SYSTEM MSG — FRESH INSTALL]`:**
-Skip the numbered steps below entirely. Follow the fresh-install instructions instead — read `user-profile.json` and `PRODUCT-GUIDE.md`, welcome the user, and wait for direction. Do NOT attempt to read coordination files that won't exist yet.
+**Architect (Pane 1) — fresh install detection:**
+If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `session: 1`), skip the numbered steps below entirely. Follow the fresh-install instructions instead — read `user-profile.json` and `PRODUCT-GUIDE.md`, welcome the user, and wait for direction. Do NOT attempt to read coordination files that won't exist yet.
 
 **All Panes (Builder/Oracle, and Architect on returning sessions):**
 1. Read `.squidrun/app-status.json` to determine the active `session` number. 
