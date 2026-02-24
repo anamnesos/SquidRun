@@ -326,6 +326,37 @@ describe('terminal.js module', () => {
       expect(caps.enterMethod).toBe('trusted');
       expect(caps.submitMethod).toBe('sendTrustedEnter');
       expect(caps.requiresFocusForEnter).toBe(true);
+      expect(caps.verifySubmitAccepted).toBe(true);
+      expect(caps.deferSubmitWhilePaneActive).toBe(true);
+    });
+
+    test('disables submit verification/defer for Claude on macOS hidden-host-off path', () => {
+      const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+
+      try {
+        Object.defineProperty(process, 'platform', {
+          configurable: true,
+          value: 'darwin',
+        });
+        jest.resetModules();
+
+        const macSettings = require('../modules/settings');
+        macSettings.getSettings.mockReturnValue({
+          hiddenPaneHostsEnabled: false,
+          paneCommands: { '1': 'claude --dangerously-skip-permissions' },
+        });
+
+        const macTerminal = require('../modules/terminal');
+        const caps = macTerminal.getPaneInjectionCapabilities('1');
+        expect(caps.enterMethod).toBe('pty');
+        expect(caps.verifySubmitAccepted).toBe(false);
+        expect(caps.deferSubmitWhilePaneActive).toBe(false);
+      } finally {
+        if (originalPlatform) {
+          Object.defineProperty(process, 'platform', originalPlatform);
+        }
+        jest.resetModules();
+      }
     });
 
     test('uses PTY Enter path for Claude panes when hidden host mode is on', () => {
