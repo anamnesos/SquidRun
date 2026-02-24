@@ -1,6 +1,6 @@
 {
   "name": "squidrun-ui",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "SquidRun multi-pane AI orchestration UI",
   "homepage": "https://squidrun.com",
   "main": "main.js",
@@ -85,18 +85,33 @@
       "icon": "assets/squidrun-logo.png",
       "category": "public.app-category.developer-tools",
       "target": [
-        { "target": "dmg", "arch": ["universal"] },
-        { "target": "zip", "arch": ["universal"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
       ],
       "x64ArchFiles": "**/node_modules/node-pty/prebuilds/**/*"
     },
     "win": {
       "icon": "assets/squidrun-favicon.ico",
-      "target": ["nsis"]
+      "target": [
+        "nsis"
+      ]
     },
     "linux": {
       "icon": "assets/squidrun-logo.png",
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "maintainer": "SquidRun <noreply@squidrun.com>",
       "category": "Development"
     }
