@@ -79,72 +79,117 @@ function buildCommandForCli(cli) {
   return 'claude --permission-mode acceptEdits';
 }
 
-const DEFAULT_SETTINGS = {
-  autoSpawn: true,
-  autoSync: false,
-  notifications: false,
-  externalNotificationsEnabled: false,
-  notifyOnAlerts: true,
-  notifyOnCompletions: true,
-  slackWebhookUrl: '',
-  discordWebhookUrl: '',
-  emailNotificationsEnabled: false,
-  smtpHost: '',
-  smtpPort: 587,
-  smtpSecure: false,
-  smtpRejectUnauthorized: true,
-  smtpUser: '',
-  smtpPass: '',
-  smtpFrom: '',
-  smtpTo: '',
-  devTools: false,
-  agentNotify: true,
-  watcherEnabled: true,
-  allowAllPermissions: false,
-  autonomyConsentGiven: false,
-  autonomyConsentChoice: 'pending',
-  autonomyConsentUpdatedAt: null,
-  costAlertEnabled: true,
-  costAlertThreshold: 5.00,
-  dryRun: false,
-  mcpAutoConfig: false,
-  recentProjects: [],
-  stuckThreshold: 120000,
-  autoNudge: true,
-  ptyStuckDetection: false,
-  ptyStuckThreshold: 15000,
-  hiddenPaneHostsEnabled: process.platform === 'win32',
-  operatingMode: 'developer',
-  firmwareInjectionEnabled: false,
-  paneProjects: { '1': null, '2': null, '3': null },
-  paneCommands: {
-    '1': 'claude',
-    '2': 'codex',
-    '3': buildGeminiCommand(),
-  },
-  templates: [],
-  voiceInputEnabled: false,
-  voiceAutoSend: false,
-  voiceLanguage: 'en-US',
-  userName: '',
-  userExperienceLevel: 'intermediate',
-  userPreferredStyle: 'balanced',
-};
+function createDefaultSettings({ isPackaged = false } = {}) {
+  return {
+    autoSpawn: true,
+    autoSync: false,
+    notifications: false,
+    externalNotificationsEnabled: false,
+    notifyOnAlerts: true,
+    notifyOnCompletions: true,
+    slackWebhookUrl: '',
+    discordWebhookUrl: '',
+    emailNotificationsEnabled: false,
+    smtpHost: '',
+    smtpPort: 587,
+    smtpSecure: false,
+    smtpRejectUnauthorized: true,
+    smtpUser: '',
+    smtpPass: '',
+    smtpFrom: '',
+    smtpTo: '',
+    devTools: false,
+    agentNotify: true,
+    watcherEnabled: true,
+    allowAllPermissions: false,
+    autonomyConsentGiven: false,
+    autonomyConsentChoice: 'pending',
+    autonomyConsentUpdatedAt: null,
+    costAlertEnabled: true,
+    costAlertThreshold: 5.00,
+    dryRun: false,
+    mcpAutoConfig: false,
+    recentProjects: [],
+    stuckThreshold: 120000,
+    autoNudge: true,
+    ptyStuckDetection: false,
+    ptyStuckThreshold: 15000,
+    hiddenPaneHostsEnabled: process.platform === 'win32',
+    operatingMode: isPackaged ? 'project' : 'developer',
+    firmwareInjectionEnabled: false,
+    paneProjects: { '1': null, '2': null, '3': null },
+    paneCommands: {
+      '1': 'claude',
+      '2': 'codex',
+      '3': buildGeminiCommand(),
+    },
+    templates: [],
+    voiceInputEnabled: false,
+    voiceAutoSend: false,
+    voiceLanguage: 'en-US',
+    userName: '',
+    userExperienceLevel: 'intermediate',
+    userPreferredStyle: 'balanced',
+  };
+}
 
 class SettingsManager {
   constructor(appContext) {
     this.ctx = appContext;
-    this.settingsPath = path.join(__dirname, '..', '..', 'settings.json');
+    this.electronApp = this.resolveElectronApp();
+    this.isPackaged = Boolean(this.electronApp && this.electronApp.isPackaged);
+    this.defaultSettings = createDefaultSettings({ isPackaged: this.isPackaged });
+    this.settingsPath = this.resolveSettingsPath();
     this.appStatusPath = typeof resolveCoordPath === 'function'
       ? resolveCoordPath('app-status.json', { forWrite: true })
       : path.join(PROJECT_ROOT || path.resolve(path.join(WORKSPACE_PATH, '..')), '.squidrun', 'app-status.json');
 
     // Deep clone defaults to prevent reference sharing
-    this.ctx.currentSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+    this.ctx.currentSettings = JSON.parse(JSON.stringify(this.defaultSettings));
+  }
+
+  resolveElectronApp() {
+    if (this.ctx && this.ctx.electronApp && typeof this.ctx.electronApp === 'object') {
+      return this.ctx.electronApp;
+    }
+    try {
+      // Keep constructor usable in non-Electron contexts (tests/scripts).
+      const { app } = require('electron');
+      return app;
+    } catch {
+      return null;
+    }
+  }
+
+  resolveSettingsPath() {
+    if (this.isPackaged && this.electronApp && typeof this.electronApp.getPath === 'function') {
+      const userDataPath = this.electronApp.getPath('userData');
+      if (typeof userDataPath === 'string' && userDataPath.trim()) {
+        return path.join(userDataPath, 'settings.json');
+      }
+    }
+    return path.join(__dirname, '..', '..', 'settings.json');
+  }
+
+  writeSettingsFile(payload) {
+    const serialized = JSON.stringify(payload, null, 2);
+    const tempPath = this.settingsPath + '.tmp';
+    fs.mkdirSync(path.dirname(this.settingsPath), { recursive: true });
+    fs.writeFileSync(tempPath, serialized, 'utf-8');
+    fs.renameSync(tempPath, this.settingsPath);
+  }
+
+  createDefaultSettingsFileIfMissing() {
+    if (!this.isPackaged) return;
+    if (fs.existsSync(this.settingsPath)) return;
+    const persistedDefaults = JSON.parse(JSON.stringify(this.defaultSettings));
+    persistedDefaults.smtpPass = obfuscateSmtpPassword(persistedDefaults.smtpPass);
+    this.writeSettingsFile(persistedDefaults);
   }
 
   loadSettings() {
     try {
+      this.createDefaultSettingsFileIfMissing();
       if (fs.existsSync(this.settingsPath)) {
         const content = fs.readFileSync(this.settingsPath, 'utf-8');
         const loaded = JSON.parse(content);
@@ -162,14 +207,14 @@ class SettingsManager {
         }
         
         // Deep merge paneCommands and paneProjects to preserve defaults for missing keys
-        const paneCommands = { ...DEFAULT_SETTINGS.paneCommands, ...(loaded.paneCommands || {}) };
-        const paneProjects = { ...DEFAULT_SETTINGS.paneProjects, ...(loaded.paneProjects || {}) };
+        const paneCommands = { ...this.defaultSettings.paneCommands, ...(loaded.paneCommands || {}) };
+        const paneProjects = { ...this.defaultSettings.paneProjects, ...(loaded.paneProjects || {}) };
         
-        Object.assign(this.ctx.currentSettings, DEFAULT_SETTINGS, loaded, { paneCommands, paneProjects });
+        Object.assign(this.ctx.currentSettings, this.defaultSettings, loaded, { paneCommands, paneProjects });
       }
     } catch (err) {
       log.error('Settings', 'Error loading settings', err);
-      Object.assign(this.ctx.currentSettings, DEFAULT_SETTINGS);
+      Object.assign(this.ctx.currentSettings, this.defaultSettings);
     }
     return this.ctx.currentSettings;
   }
@@ -180,10 +225,7 @@ class SettingsManager {
 
       const persistedSettings = JSON.parse(JSON.stringify(this.ctx.currentSettings));
       persistedSettings.smtpPass = obfuscateSmtpPassword(persistedSettings.smtpPass);
-
-      const tempPath = this.settingsPath + '.tmp';
-      fs.writeFileSync(tempPath, JSON.stringify(persistedSettings, null, 2), 'utf-8');
-      fs.renameSync(tempPath, this.settingsPath);
+      this.writeSettingsFile(persistedSettings);
 
       this.writeAppStatus();
     } catch (err) {

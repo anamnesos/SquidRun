@@ -31,8 +31,20 @@ jest.mock('../config', () => ({
   },
 }));
 
+jest.mock('electron', () => ({
+  app: {
+    isPackaged: false,
+    getPath: jest.fn((name) => {
+      if (name === 'userData') return '/tmp/squidrun-userdata';
+      return '/tmp';
+    }),
+  },
+}));
+
 const { spawnSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
+const { app } = require('electron');
 const SettingsManager = require('../modules/main/settings-manager');
 
 function mockCliAvailability(availability) {
@@ -289,6 +301,40 @@ describe('SettingsManager CLI auto-detection', () => {
         lastErrorReason: 'inject_hidden_window_unavailable',
       })
     );
+  });
+});
+
+describe('SettingsManager packaged persistence defaults', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    app.isPackaged = false;
+  });
+
+  test('uses userData settings path and project operating mode for packaged builds', () => {
+    app.isPackaged = true;
+    const ctx = {};
+    const manager = new SettingsManager(ctx);
+
+    expect(app.getPath).toHaveBeenCalledWith('userData');
+    expect(manager.settingsPath).toBe(path.join('/tmp/squidrun-userdata', 'settings.json'));
+    expect(ctx.currentSettings.operatingMode).toBe('project');
+  });
+
+  test('bootstraps packaged settings file on first launch with project mode defaults', () => {
+    app.isPackaged = true;
+    fs.existsSync.mockReturnValue(false);
+
+    const ctx = {};
+    const manager = new SettingsManager(ctx);
+    manager.loadSettings();
+
+    const settingsWrite = fs.writeFileSync.mock.calls.find((call) => String(call[0]).endsWith('settings.json.tmp'));
+    expect(settingsWrite).toBeDefined();
+    expect(fs.mkdirSync).toHaveBeenCalledWith(path.dirname(manager.settingsPath), { recursive: true });
+    expect(fs.renameSync).toHaveBeenCalledWith(`${manager.settingsPath}.tmp`, manager.settingsPath);
+
+    const persisted = JSON.parse(settingsWrite[1]);
+    expect(persisted.operatingMode).toBe('project');
   });
 });
 
