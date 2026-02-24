@@ -63,6 +63,7 @@ const FirmwareManager = require('./modules/main/firmware-manager');
 const SquidRunApp = require('./modules/main/squidrun-app');
 
 // 1. Initialize managers with shared context
+appContext.electronApp = app;
 const settings = new SettingsManager(appContext);
 const activity = new ActivityManager(appContext);
 const usage = new UsageManager(appContext);
