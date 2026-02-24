@@ -10,6 +10,14 @@ const RELAY_SHARED_SECRET = String(
   || ''
 ).trim();
 const PENDING_TTL_MS = Number.parseInt(process.env.RELAY_PENDING_TTL_MS || '20000', 10);
+const STRUCTURED_BRIDGE_TYPE_ALIASES = Object.freeze({
+  fyi: 'FYI',
+  conflictcheck: 'ConflictCheck',
+  blocker: 'Blocker',
+  approval: 'Approval',
+  conflictresult: 'ConflictResult',
+  approvalresult: 'ApprovalResult',
+});
 
 if (!RELAY_SHARED_SECRET) {
   console.error('[relay] Missing RELAY_SHARED_SECRET (or SQUIDRUN_RELAY_SECRET).');
@@ -37,6 +45,61 @@ function parseFrame(raw) {
   } catch (_) {
     return null;
   }
+}
+
+function asObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value;
+}
+
+function normalizeStructuredBridgeType(typeInput) {
+  const key = asText(typeInput).toLowerCase();
+  if (!key) return null;
+  return STRUCTURED_BRIDGE_TYPE_ALIASES[key] || null;
+}
+
+function normalizeStructuredBridgeMessage(structuredInput, fallbackContent = '') {
+  const structured = asObject(structuredInput);
+  if (!structured) return null;
+
+  const normalizedType = normalizeStructuredBridgeType(structured.type);
+  const payloadInput = asObject(structured.payload);
+  const payload = payloadInput ? { ...payloadInput } : {};
+  if (normalizedType) {
+    return { type: normalizedType, payload };
+  }
+
+  const originalType = asText(structured.type) || null;
+  return {
+    type: 'FYI',
+    payload: {
+      category: asText(payload.category) || 'status',
+      detail: asText(payload.detail) || asText(fallbackContent) || 'Structured message update',
+      impact: asText(payload.impact) || 'context-only',
+      ...payload,
+      originalType,
+    },
+  };
+}
+
+function normalizeBridgeMetadata(metadataInput, fallbackContent = '', options = {}) {
+  const ensureStructured = options && options.ensureStructured === true;
+  const metadata = asObject(metadataInput);
+  const normalized = metadata ? { ...metadata } : {};
+
+  if (ensureStructured || Object.prototype.hasOwnProperty.call(normalized, 'structured')) {
+    const structured = normalizeStructuredBridgeMessage(normalized.structured, fallbackContent);
+    normalized.structured = structured || {
+      type: 'FYI',
+      payload: {
+        category: 'status',
+        detail: asText(fallbackContent) || 'Structured message update',
+        impact: 'context-only',
+        originalType: null,
+      },
+    };
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
 function sendJson(ws, payload = {}) {
@@ -170,6 +233,9 @@ function handleSend(ws, frame) {
   const fromDevice = normalizeDeviceId(frame.fromDevice) || sender.deviceId;
   const toDevice = normalizeDeviceId(frame.toDevice);
   const content = asText(frame.content);
+  const metadata = normalizeBridgeMetadata(frame.metadata, content, {
+    ensureStructured: true,
+  });
 
   if (!messageId || !toDevice || !content) {
     sendJson(ws, {
@@ -250,9 +316,7 @@ function handleSend(ws, frame) {
     toDevice,
     fromRole: asText(frame.fromRole) || 'architect',
     content,
-    metadata: (frame.metadata && typeof frame.metadata === 'object' && !Array.isArray(frame.metadata))
-      ? frame.metadata
-      : null,
+    metadata,
   });
 
   if (!deliveredToTarget) {

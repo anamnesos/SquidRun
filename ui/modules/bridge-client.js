@@ -7,6 +7,14 @@ const {
 const DEFAULT_ACK_TIMEOUT_MS = 12000;
 const DEFAULT_RECONNECT_BASE_MS = 750;
 const DEFAULT_RECONNECT_MAX_MS = 10000;
+const STRUCTURED_BRIDGE_TYPE_ALIASES = Object.freeze({
+  fyi: 'FYI',
+  conflictcheck: 'ConflictCheck',
+  blocker: 'Blocker',
+  approval: 'Approval',
+  conflictresult: 'ConflictResult',
+  approvalresult: 'ApprovalResult',
+});
 
 function asNonEmptyString(value) {
   if (value === null || value === undefined) return '';
@@ -36,6 +44,61 @@ function buildAckResult(input = {}) {
     fromDevice: asNonEmptyString(input.fromDevice) || null,
     toDevice: asNonEmptyString(input.toDevice) || null,
   };
+}
+
+function asObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value;
+}
+
+function normalizeStructuredBridgeType(typeInput) {
+  const key = asNonEmptyString(typeInput).toLowerCase();
+  if (!key) return null;
+  return STRUCTURED_BRIDGE_TYPE_ALIASES[key] || null;
+}
+
+function normalizeStructuredBridgeMessage(structuredInput, fallbackContent = '') {
+  const structured = asObject(structuredInput);
+  if (!structured) return null;
+
+  const normalizedType = normalizeStructuredBridgeType(structured.type);
+  const payloadInput = asObject(structured.payload);
+  const payload = payloadInput ? { ...payloadInput } : {};
+  if (normalizedType) {
+    return { type: normalizedType, payload };
+  }
+
+  const originalType = asNonEmptyString(structured.type) || null;
+  return {
+    type: 'FYI',
+    payload: {
+      category: asNonEmptyString(payload.category) || 'status',
+      detail: asNonEmptyString(payload.detail) || asNonEmptyString(fallbackContent) || 'Structured message update',
+      impact: asNonEmptyString(payload.impact) || 'context-only',
+      ...payload,
+      originalType,
+    },
+  };
+}
+
+function normalizeBridgeMetadata(metadataInput, fallbackContent = '', options = {}) {
+  const ensureStructured = options && options.ensureStructured === true;
+  const metadata = asObject(metadataInput);
+  const normalized = metadata ? { ...metadata } : {};
+
+  if (ensureStructured || Object.prototype.hasOwnProperty.call(normalized, 'structured')) {
+    const structured = normalizeStructuredBridgeMessage(normalized.structured, fallbackContent);
+    normalized.structured = structured || {
+      type: 'FYI',
+      payload: {
+        category: 'status',
+        detail: asNonEmptyString(fallbackContent) || 'Structured message update',
+        impact: 'context-only',
+        originalType: null,
+      },
+    };
+  }
+  return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
 class BridgeClient {
@@ -231,6 +294,9 @@ class BridgeClient {
     const messageId = asNonEmptyString(message.messageId);
     const fromDevice = normalizeDeviceId(message.fromDevice) || 'UNKNOWN';
     const content = asNonEmptyString(message.content);
+    const normalizedMetadata = normalizeBridgeMetadata(message.metadata, content, {
+      ensureStructured: true,
+    });
     let result = {
       ok: false,
       status: 'bridge_handler_missing',
@@ -245,9 +311,7 @@ class BridgeClient {
           toDevice: this.deviceId,
           content,
           fromRole: asNonEmptyString(message.fromRole) || 'architect',
-          metadata: (message.metadata && typeof message.metadata === 'object' && !Array.isArray(message.metadata))
-            ? message.metadata
-            : null,
+          metadata: normalizedMetadata,
         });
         result = buildAckResult({
           ok: Boolean(inboundResult?.ok),
@@ -290,9 +354,9 @@ class BridgeClient {
     const content = asNonEmptyString(payload.content);
     const fromRole = asNonEmptyString(payload.fromRole) || 'architect';
     const timeoutMs = parsePositiveInt(payload.timeoutMs, DEFAULT_ACK_TIMEOUT_MS);
-    const metadata = (payload.metadata && typeof payload.metadata === 'object' && !Array.isArray(payload.metadata))
-      ? payload.metadata
-      : null;
+    const metadata = normalizeBridgeMetadata(payload.metadata, content, {
+      ensureStructured: true,
+    });
 
     if (!messageId) {
       return Promise.resolve(buildAckResult({
@@ -366,4 +430,7 @@ function createBridgeClient(options = {}) {
 module.exports = {
   BridgeClient,
   createBridgeClient,
+  normalizeStructuredBridgeType,
+  normalizeStructuredBridgeMessage,
+  normalizeBridgeMetadata,
 };

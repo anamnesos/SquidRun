@@ -41,7 +41,10 @@ const contextCompressor = require('../context-compressor');
 const smsPoller = require('../sms-poller');
 const telegramPoller = require('../telegram-poller');
 const { sendTelegram } = require('../../scripts/hm-telegram');
-const { createBridgeClient } = require('../bridge-client');
+const {
+  createBridgeClient,
+  normalizeBridgeMetadata,
+} = require('../bridge-client');
 const {
   parseCrossDeviceTarget,
   getLocalDeviceId,
@@ -1762,6 +1765,15 @@ class SquidRunApp {
             });
             const canonicalMetadata = buildCanonicalEnvelopeMetadata(canonicalEnvelope);
             const contentWithProjectContext = withProjectContext(canonicalEnvelope.content, canonicalMetadata);
+            const bridgeStructured = bridgeTarget
+              ? (
+                normalizeBridgeMetadata(
+                  { structured: data.message?.metadata?.structured || null },
+                  canonicalEnvelope.content,
+                  { ensureStructured: true }
+                )?.structured || null
+              )
+              : null;
 
             if (canonicalEnvelope.message_id) {
               const journalResult = await executeEvidenceLedgerOperation(
@@ -1785,6 +1797,8 @@ class SquidRunApp {
                     targetRaw: canonicalEnvelope.target?.raw || target || null,
                     traceId: traceContext?.traceId || traceContext?.correlationId || null,
                     maxAttempts,
+                    structured: bridgeStructured,
+                    structuredType: bridgeStructured?.type || null,
                   },
                 },
                 {
@@ -1874,6 +1888,7 @@ class SquidRunApp {
                 fromRole: senderRole,
                 messageId: canonicalEnvelope.message_id,
                 traceContext,
+                structuredMessage: bridgeStructured,
               });
               await this.recordDeliveryOutcomePattern({
                 channel: 'send',
@@ -3938,7 +3953,14 @@ class SquidRunApp {
     return started;
   }
 
-  async routeBridgeMessage({ targetDevice, content, fromRole = 'architect', messageId = null, traceContext = null } = {}) {
+  async routeBridgeMessage({
+    targetDevice,
+    content,
+    fromRole = 'architect',
+    messageId = null,
+    traceContext = null,
+    structuredMessage = null,
+  } = {}) {
     const toDevice = String(targetDevice || '').trim().toUpperCase();
     const body = typeof content === 'string' ? content.trim() : '';
     if (!toDevice) {
@@ -3987,15 +4009,20 @@ class SquidRunApp {
       };
     }
 
+    const normalizedBridgeMetadata = normalizeBridgeMetadata(
+      {
+        traceId: traceContext?.traceId || traceContext?.correlationId || null,
+        sessionId: this.commsSessionScopeId || null,
+        structured: structuredMessage,
+      },
+      body
+    );
     const bridgeResult = await this.bridgeClient.sendToDevice({
       messageId: messageId || `bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       toDevice,
       content: body,
       fromRole,
-      metadata: {
-        traceId: traceContext?.traceId || traceContext?.correlationId || null,
-        sessionId: this.commsSessionScopeId || null,
-      },
+      metadata: normalizedBridgeMetadata,
     });
     return {
       ...bridgeResult,
@@ -4007,6 +4034,10 @@ class SquidRunApp {
     const fromDevice = String(payload?.fromDevice || 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN';
     const messageId = String(payload?.messageId || '').trim();
     const body = typeof payload?.content === 'string' ? payload.content.trim() : '';
+    const bridgeMetadata = normalizeBridgeMetadata(payload?.metadata, body, {
+      ensureStructured: true,
+    });
+    const structuredType = bridgeMetadata?.structured?.type || null;
     if (!body) {
       return {
         ok: false,
@@ -4039,6 +4070,9 @@ class SquidRunApp {
           routeKind: 'bridge',
           fromDevice,
           bridgeMessageId: messageId || null,
+          bridgeMetadata,
+          structured: bridgeMetadata?.structured || null,
+          structuredType,
         },
       },
       {
@@ -4056,7 +4090,9 @@ class SquidRunApp {
       log.warn('EvidenceLedger', `Bridge inbound journal upsert error: ${err.message}`);
     });
 
-    const formatted = `[Bridge from ${fromDevice}]: ${body}`;
+    const formatted = structuredType
+      ? `[Bridge ${structuredType} from ${fromDevice}]: ${body}`
+      : `[Bridge from ${fromDevice}]: ${body}`;
     const injection = triggers.sendDirectMessage(['1'], formatted, null);
     if (!injection?.success) {
       return {

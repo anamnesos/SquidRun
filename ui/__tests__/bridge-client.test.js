@@ -88,7 +88,17 @@ describe('bridge-client', () => {
       toDevice: 'peer_2',
       content: 'sync update',
       fromRole: 'architect',
-      metadata: { traceId: 't-1' },
+      metadata: {
+        traceId: 't-1',
+        structured: {
+          type: 'conflictcheck',
+          payload: {
+            resource: 'ui/modules/auth.js',
+            action: 'write',
+            reason: 'sync protocol',
+          },
+        },
+      },
       timeoutMs: 50,
     });
 
@@ -100,7 +110,17 @@ describe('bridge-client', () => {
       toDevice: 'PEER_2',
       fromRole: 'architect',
       content: 'sync update',
-      metadata: { traceId: 't-1' },
+      metadata: {
+        traceId: 't-1',
+        structured: {
+          type: 'ConflictCheck',
+          payload: {
+            resource: 'ui/modules/auth.js',
+            action: 'write',
+            reason: 'sync protocol',
+          },
+        },
+      },
     });
 
     emitJson(socket, {
@@ -143,6 +163,96 @@ describe('bridge-client', () => {
     });
   });
 
+  test('sendToDevice adds default FYI structured metadata when none provided', async () => {
+    const client = createBridgeClient({
+      relayUrl: 'ws://relay',
+      deviceId: 'local_a',
+      sharedSecret: 'secret',
+    });
+
+    expect(client.start()).toBe(true);
+    const socket = instances[0];
+    socket.readyState = MockWebSocket.OPEN;
+    socket.emit('open');
+    emitJson(socket, { type: 'register-ack', ok: true });
+
+    const pending = client.sendToDevice({
+      messageId: 'msg-default-structured',
+      toDevice: 'peer_2',
+      content: 'plain bridge summary',
+    });
+
+    const xsendFrame = JSON.parse(socket.sent[1]);
+    expect(xsendFrame.metadata.structured).toEqual({
+      type: 'FYI',
+      payload: {
+        category: 'status',
+        detail: 'plain bridge summary',
+        impact: 'context-only',
+        originalType: null,
+      },
+    });
+
+    emitJson(socket, {
+      type: 'xack',
+      messageId: 'msg-default-structured',
+      ok: true,
+      status: 'bridge_delivered',
+      fromDevice: 'LOCAL_A',
+      toDevice: 'PEER_2',
+    });
+    await expect(pending).resolves.toMatchObject({ ok: true, status: 'bridge_delivered' });
+  });
+
+  test('sendToDevice downgrades unknown structured type to FYI', async () => {
+    const client = createBridgeClient({
+      relayUrl: 'ws://relay',
+      deviceId: 'local_a',
+      sharedSecret: 'secret',
+    });
+
+    expect(client.start()).toBe(true);
+    const socket = instances[0];
+    socket.readyState = MockWebSocket.OPEN;
+    socket.emit('open');
+    emitJson(socket, { type: 'register-ack', ok: true });
+
+    const pending = client.sendToDevice({
+      messageId: 'msg-structured-unknown',
+      toDevice: 'peer_2',
+      content: 'plain fallback summary',
+      metadata: {
+        structured: {
+          type: 'unexpectedType',
+          payload: {
+            detail: 'unknown type payload',
+          },
+        },
+      },
+    });
+
+    const xsendFrame = JSON.parse(socket.sent[1]);
+    expect(xsendFrame.metadata.structured).toEqual({
+      type: 'FYI',
+      payload: {
+        category: 'status',
+        detail: 'unknown type payload',
+        impact: 'context-only',
+        originalType: 'unexpectedType',
+      },
+    });
+
+    emitJson(socket, {
+      type: 'xack',
+      messageId: 'msg-structured-unknown',
+      ok: true,
+      status: 'bridge_delivered',
+      fromDevice: 'LOCAL_A',
+      toDevice: 'PEER_2',
+    });
+    await expect(pending).resolves.toMatchObject({ ok: true, status: 'bridge_delivered' });
+  });
+
   test('handleInboundDelivery calls onMessage and ACKs normalized payload', async () => {
     const onMessage = jest.fn().mockResolvedValue({
       ok: true,
@@ -168,7 +278,13 @@ describe('bridge-client', () => {
       fromDevice: 'peer-b!@',
       content: 'status update',
       fromRole: 'architect',
-      metadata: { line: 42 },
+      metadata: {
+        line: 42,
+        structured: {
+          type: 'Approval',
+          payload: { requestType: 'schema-change', details: 'Need migration', urgency: 'normal' },
+        },
+      },
     });
 
     expect(onMessage).toHaveBeenCalledWith({
@@ -177,7 +293,13 @@ describe('bridge-client', () => {
       toDevice: 'LOCAL_A',
       content: 'status update',
       fromRole: 'architect',
-      metadata: { line: 42 },
+      metadata: {
+        line: 42,
+        structured: {
+          type: 'Approval',
+          payload: { requestType: 'schema-change', details: 'Need migration', urgency: 'normal' },
+        },
+      },
     });
 
     const ackFrame = JSON.parse(socket.sent[0]);
@@ -222,6 +344,94 @@ describe('bridge-client', () => {
       status: 'bridge_handler_error',
       error: 'boom',
     });
+  });
+
+  test('handleInboundDelivery downgrades unknown structured type to FYI before callback', async () => {
+    const onMessage = jest.fn().mockResolvedValue({
+      ok: true,
+      accepted: true,
+      queued: true,
+      verified: true,
+      status: 'bridge_delivered',
+    });
+
+    const client = createBridgeClient({
+      relayUrl: 'ws://relay',
+      deviceId: 'local_a',
+      sharedSecret: 'secret',
+      onMessage,
+    });
+
+    const socket = new MockWebSocket('ws://relay');
+    socket.readyState = MockWebSocket.OPEN;
+    client.socket = socket;
+
+    await client.handleInboundDelivery({
+      messageId: 'in-structured-unknown',
+      fromDevice: 'peer-b',
+      content: 'fallback summary',
+      metadata: {
+        structured: {
+          type: 'mysteryType',
+          payload: { detail: 'mystery payload detail' },
+        },
+      },
+    });
+
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: {
+        structured: {
+          type: 'FYI',
+          payload: {
+            category: 'status',
+            detail: 'mystery payload detail',
+            impact: 'context-only',
+            originalType: 'mysteryType',
+          },
+        },
+      },
+    }));
+  });
+
+  test('handleInboundDelivery adds default FYI structured metadata when inbound metadata missing', async () => {
+    const onMessage = jest.fn().mockResolvedValue({
+      ok: true,
+      accepted: true,
+      queued: true,
+      verified: true,
+      status: 'bridge_delivered',
+    });
+
+    const client = createBridgeClient({
+      relayUrl: 'ws://relay',
+      deviceId: 'local_a',
+      sharedSecret: 'secret',
+      onMessage,
+    });
+
+    const socket = new MockWebSocket('ws://relay');
+    socket.readyState = MockWebSocket.OPEN;
+    client.socket = socket;
+
+    await client.handleInboundDelivery({
+      messageId: 'in-no-metadata',
+      fromDevice: 'peer-b',
+      content: 'plain inbound summary',
+    });
+
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: {
+        structured: {
+          type: 'FYI',
+          payload: {
+            category: 'status',
+            detail: 'plain inbound summary',
+            impact: 'context-only',
+            originalType: null,
+          },
+        },
+      },
+    }));
   });
 
   test('reconnects after close with exponential backoff timer', () => {
