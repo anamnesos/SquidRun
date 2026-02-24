@@ -76,9 +76,11 @@ const DEFAULT_ROLE_BY_PANE = Object.freeze({
 if (args.length < 2) {
   console.log('Usage: node hm-send.js <target> <message> [--role <role>] [--priority urgent]');
   console.log('   or: node hm-send.js <target> --file <message-file> [--role <role>] [--priority urgent]');
+  console.log('   or: node hm-send.js <target> --stdin [--role <role>] [--priority urgent]');
   console.log('  target: paneId (1,2,3), role name (architect, builder, oracle), user/telegram, or @<device>-arch');
   console.log('  message: text to send');
   console.log('  --file: read full message body from a UTF-8 text file');
+  console.log('  --stdin: read full message body from stdin (pipe or heredoc)');
   console.log('  --role: your role (for identification)');
   console.log('  --priority: normal or urgent');
   console.log(`  --timeout: ack timeout in ms (default: ${DEFAULT_ACK_TIMEOUT_MS})`);
@@ -95,13 +97,21 @@ let ackTimeoutMs = DEFAULT_ACK_TIMEOUT_MS;
 let retries = DEFAULT_RETRIES;
 let enableFallback = true;
 let messageFilePath = null;
+let useStdin = false;
 
-// Collect message from all args between target and first --flag
+// Known flags that signal end of inline message content.
+// Words starting with "--" that are NOT in this set are treated as message text,
+// which prevents accidental truncation when message content contains "--something".
+const KNOWN_FLAGS = new Set([
+  '--role', '--file', '--stdin', '--priority', '--timeout', '--retries', '--no-fallback',
+]);
+
+// Collect message from all args between target and first known --flag
 // This handles PowerShell splitting quoted strings into multiple args
 const messageParts = [];
 let i = 1;
 for (; i < args.length; i++) {
-  if (args[i].startsWith('--')) break;
+  if (KNOWN_FLAGS.has(args[i])) break;
   messageParts.push(args[i]);
 }
 
@@ -119,6 +129,9 @@ for (; i < args.length; i++) {
       console.error('--file requires a file path.');
       process.exit(1);
     }
+  }
+  if (args[i] === '--stdin') {
+    useStdin = true;
   }
   if (args[i] === '--priority' && args[i+1]) {
     priority = args[i+1];
@@ -144,6 +157,19 @@ for (; i < args.length; i++) {
 }
 
 let message = messageParts.join(' ');
+if (useStdin) {
+  try {
+    message = fs.readFileSync('/dev/stdin', 'utf8');
+  } catch (err) {
+    // Fallback for Windows where /dev/stdin may not exist
+    try {
+      message = fs.readFileSync(0, 'utf8');
+    } catch (err2) {
+      console.error(`Failed to read from stdin: ${err2.message}`);
+      process.exit(1);
+    }
+  }
+}
 if (messageFilePath) {
   const resolvedMessageFilePath = path.resolve(messageFilePath);
   try {
