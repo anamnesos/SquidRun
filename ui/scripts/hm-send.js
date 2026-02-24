@@ -26,6 +26,10 @@ const {
   buildTriggerFallbackDescriptor,
   buildSpecialTargetRequest,
 } = require('../modules/comms/message-envelope');
+const {
+  parseCrossDeviceTarget,
+  isCrossDeviceEnabled,
+} = require('../modules/cross-device-target');
 
 const parsedPort = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
 const PORT = Number.isFinite(parsedPort) ? parsedPort : 9900;
@@ -72,7 +76,7 @@ const DEFAULT_ROLE_BY_PANE = Object.freeze({
 if (args.length < 2) {
   console.log('Usage: node hm-send.js <target> <message> [--role <role>] [--priority urgent]');
   console.log('   or: node hm-send.js <target> --file <message-file> [--role <role>] [--priority urgent]');
-  console.log('  target: paneId (1,2,3), role name (architect, builder, oracle), or user/telegram');
+  console.log('  target: paneId (1,2,3), role name (architect, builder, oracle), user/telegram, or @<device>-arch');
   console.log('  message: text to send');
   console.log('  --file: read full message body from a UTF-8 text file');
   console.log('  --role: your role (for identification)');
@@ -176,6 +180,10 @@ if (backgroundRoutingOverride.redirected) {
     + `for sender role '${backgroundRoutingOverride.senderRole}'.`
   );
   target = backgroundRoutingOverride.reroutedTarget;
+}
+const bridgeTarget = parseCrossDeviceTarget(target);
+if (bridgeTarget) {
+  enableFallback = false;
 }
 
 function parseJSON(raw) {
@@ -854,7 +862,9 @@ async function emitCommsEventBestEffort(eventType, payload = {}) {
   }
 }
 
-async function sendViaWebSocketWithAck(envelope) {
+async function sendViaWebSocketWithAck(envelope, options = {}) {
+  const opts = (options && typeof options === 'object' && !Array.isArray(options)) ? options : {};
+  const skipHealthCheck = opts.skipHealthCheck === true;
   const socketUrl = `ws://127.0.0.1:${PORT}`;
   const ws = new WebSocket(socketUrl);
 
@@ -863,16 +873,18 @@ async function sendViaWebSocketWithAck(envelope) {
   ws.send(JSON.stringify({ type: 'register', role }));
   await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
 
-  const health = await queryTargetHealthBestEffort(ws);
-  if (isTargetHealthBlocking(health, target)) {
-    await closeSocket(ws);
-    return {
-      ok: false,
-      skippedByHealth: true,
-      health,
-      attemptsUsed: 0,
-      messageId: envelope.message_id,
-    };
+  if (!skipHealthCheck) {
+    const health = await queryTargetHealthBestEffort(ws);
+    if (isTargetHealthBlocking(health, target)) {
+      await closeSocket(ws);
+      return {
+        ok: false,
+        skippedByHealth: true,
+        health,
+        attemptsUsed: 0,
+        messageId: envelope.message_id,
+      };
+    }
   }
 
   const attempts = retries + 1;
@@ -968,9 +980,11 @@ async function sendViaWebSocketWithAck(envelope) {
 }
 
 async function main() {
+  const bridgeMode = Boolean(bridgeTarget);
   const messageId = `hm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const targetRole = normalizeRole(target)
-    || (isSpecialTarget(target) ? String(target).trim().toLowerCase() : null);
+    || (isSpecialTarget(target) ? String(target).trim().toLowerCase() : null)
+    || (bridgeTarget ? bridgeTarget.targetRole : null);
   const envelope = buildOutboundMessageEnvelope({
     message_id: messageId,
     session_id: projectMetadata?.session_id || null,
@@ -1002,6 +1016,9 @@ async function main() {
     metadata: {
       source: 'hm-send',
       maxAttempts: retries + 1,
+      routeKind: bridgeMode ? 'bridge' : 'local',
+      bridgeTarget: bridgeMode ? bridgeTarget.toDevice : null,
+      bridgeEnabled: bridgeMode ? isCrossDeviceEnabled(process.env) : null,
       ...envelopeMetadata,
     },
   });
@@ -1014,7 +1031,9 @@ async function main() {
   let wsError = null;
 
   try {
-    sendResult = await sendViaWebSocketWithAck(envelope);
+    sendResult = await sendViaWebSocketWithAck(envelope, {
+      skipHealthCheck: bridgeMode,
+    });
   } catch (err) {
     wsError = err;
   }
