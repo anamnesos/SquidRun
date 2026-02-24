@@ -43,9 +43,19 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 - App source: `./ui/`
 - Tests: `./ui/__tests__/`
 - Agent messaging: `node ui/scripts/hm-send.js <target> "(ROLE #N): message"`
+- **Long messages (>500 chars):** Write to a temp file first, then use `--file`:
+  ```
+  cat > /tmp/hm-msg-$$.txt << 'HMEOF'
+  (ROLE #N): your full message here...
+  HMEOF
+  node ui/scripts/hm-send.js <target> --file /tmp/hm-msg-$$.txt && rm -f /tmp/hm-msg-$$.txt
+  ```
+  This prevents shell truncation and model output limits from cutting off messages.
 - Comms history: `node ui/scripts/hm-comms.js history --last N` (also `--session N`, `--between <sender> <target>`, `--json`)
 - Coordination state root: `.squidrun/`
 - Terminal output is user-facing; agent-to-agent communication uses `hm-send.js`
+- **Screenshots:** When the user says "I uploaded a screenshot," it is at `workspace/screenshots/latest.png`. Always read that file to view it.
+- **Telegram auto-reply (CRITICAL — survives compaction):** When the user messages via `[Telegram from ...]`, you MUST reply on Telegram using `node ui/scripts/hm-send.js telegram "(ARCHITECT #N): your reply"`. Do NOT reply only in terminal output — the user is not at their PC and cannot see terminal output. This rule applies even after context compaction.
 
 ### Runtime Truths (Must Verify Before Diagnosis)
 

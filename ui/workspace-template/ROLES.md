@@ -43,9 +43,18 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 - App source: user project files in the current workspace root (`./`). On a fresh install the workspace may be nearly empty — this is normal, not a bug. Do not treat an empty workspace as an error.
 - Tests: use the active project's own test commands and layout
 - Agent messaging: `hm-send <target> "(ROLE #N): message"`
+- **Long messages (>500 chars):** Write to a temp file first, then use `--file`:
+  ```
+  cat > /tmp/hm-msg-$$.txt << 'HMEOF'
+  (ROLE #N): your full message here...
+  HMEOF
+  hm-send <target> --file /tmp/hm-msg-$$.txt && rm -f /tmp/hm-msg-$$.txt
+  ```
+  This prevents shell truncation and model output limits from cutting off messages.
 - Comms history: `hm-comms history --last N` (also `--session N`, `--between <sender> <target>`, `--json`)
 - Coordination state root: `.squidrun/`
 - Terminal output is user-facing; agent-to-agent communication uses `hm-send`
+- **Screenshots:** When the user says they uploaded a screenshot, it is at `workspace/screenshots/latest.png`. Always read that file to view it.
 
 ### Runtime Truths (Must Verify Before Diagnosis)
 
