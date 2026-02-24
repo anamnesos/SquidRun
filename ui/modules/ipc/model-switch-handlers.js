@@ -8,7 +8,12 @@
 const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
-const { PANE_IDS, PANE_ROLES, resolvePaneCwd, resolveCoordPath } = require('../../config');
+const { PANE_IDS, PANE_ROLES, resolveCoordPath } = require('../../config');
+const {
+  buildGeminiCommand,
+  hasGeminiCommand,
+  resolveGeminiModelId,
+} = require('../gemini-command');
 const TRIGGERS_PATH = typeof resolveCoordPath === 'function'
   ? resolveCoordPath('triggers', { forWrite: true })
   : path.join(__dirname, '..', '..', '..', 'workspace', 'triggers');
@@ -34,15 +39,28 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
       return { success: false, error: 'Invalid paneId' };
     }
 
-    // Build command based on model - use pane project cwd when assigned.
-    const paneProjects = (ctx.currentSettings && typeof ctx.currentSettings.paneProjects === 'object')
-      ? ctx.currentSettings.paneProjects
-      : {};
-    const includeDir = resolvePaneCwd(id, { paneProjects }) || path.resolve(path.join(__dirname, '..', '..', '..'));
+    // Build command based on model.
+    if (!ctx.currentSettings || typeof ctx.currentSettings !== 'object') {
+      ctx.currentSettings = {};
+    }
+    if (!ctx.currentSettings.paneCommands || typeof ctx.currentSettings.paneCommands !== 'object') {
+      ctx.currentSettings.paneCommands = {};
+    }
+    const paneCommands = ctx.currentSettings.paneCommands;
+    const existingGeminiCommand = paneCommands[id]
+      || Object.values(paneCommands).find(hasGeminiCommand)
+      || '';
+    const geminiModel = resolveGeminiModelId({
+      preferredModel: ctx.currentSettings.geminiModel,
+      existingCommand: existingGeminiCommand,
+    });
     const commands = {
       'claude': 'claude',
       'codex': 'codex',
-      'gemini': `gemini --yolo --include-directories "${includeDir}"`
+      'gemini': buildGeminiCommand({
+        preferredModel: geminiModel,
+        existingCommand: existingGeminiCommand,
+      }),
     };
 
     if (!commands[model]) {
@@ -91,10 +109,17 @@ function registerModelSwitchHandlers(ctx, deps = {}) {
 
     // Update settings AFTER kill confirmed (per design review)
     ctx.currentSettings.paneCommands[id] = commands[model];
+    if (model === 'gemini') {
+      ctx.currentSettings.geminiModel = geminiModel;
+    }
 
     // Persist to settings.json
     if (typeof saveSettings === 'function') {
-      saveSettings({ paneCommands: ctx.currentSettings.paneCommands });
+      const settingsPatch = { paneCommands: ctx.currentSettings.paneCommands };
+      if (model === 'gemini') {
+        settingsPatch.geminiModel = geminiModel;
+      }
+      saveSettings(settingsPatch);
     }
 
     log.info('ModelSwitch', `Pane ${paneId} now set to ${model}`);

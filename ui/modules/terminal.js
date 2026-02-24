@@ -20,6 +20,7 @@ const transitionLedger = require('./transition-ledger');
 const { invokeBridge } = require('./renderer-bridge');
 const { createInjectionController } = require('./terminal/injection');
 const { createRecoveryController } = require('./terminal/recovery');
+const { getRuntimeInjectionCapabilityDefault } = require('./terminal/injection-capabilities');
 
 const TERMINAL_EVENT_SOURCE = 'terminal.js';
 const { attachAgentColors } = require('./terminal/agent-colors');
@@ -587,98 +588,12 @@ function getInjectionCapabilityOverrides(paneId, runtimeKey) {
 
 function getPaneInjectionCapabilities(paneId) {
   const runtimeKey = classifyRuntimeFromIdentity(paneId);
-  const baseByRuntime = {
-    codex: {
-      mode: 'pty',
-      modeLabel: 'codex-pty',
-      appliedMethod: 'codex-pty',
-      submitMethod: 'codex-pty-enter',
-      bypassGlobalLock: false,
-      applyCompactionGate: true,
-      requiresFocusForEnter: false,
-      enterMethod: 'pty',
-      enterDelayMs: CODEX_ENTER_DELAY_MS,
-      sanitizeMultiline: true,
-      clearLineBeforeWrite: true,
-      useChunkedWrite: false,
-      homeResetBeforeWrite: false,
-      verifySubmitAccepted: false,
-      deferSubmitWhilePaneActive: false,
-      scaleEnterDelayByPayload: true,
-      typingGuardWhenBypassing: false,
-      sanitizeTransform: 'none',
-      enterFailureReason: 'pty_enter_failed',
-      displayName: 'Codex',
-    },
-    gemini: {
-      mode: 'pty',
-      modeLabel: 'gemini-pty',
-      appliedMethod: 'gemini-pty',
-      submitMethod: 'gemini-pty-enter',
-      bypassGlobalLock: true,
-      applyCompactionGate: false,
-      requiresFocusForEnter: false,
-      enterMethod: 'pty',
-      enterDelayMs: GEMINI_ENTER_DELAY_MS,
-      sanitizeMultiline: true,
-      clearLineBeforeWrite: true,
-      useChunkedWrite: false,
-      homeResetBeforeWrite: false,
-      verifySubmitAccepted: false,
-      deferSubmitWhilePaneActive: false,
-      scaleEnterDelayByPayload: false,
-      typingGuardWhenBypassing: true,
-      sanitizeTransform: 'gemini-sanitize',
-      enterFailureReason: 'pty_enter_failed',
-      displayName: 'Gemini',
-    },
-    claude: {
-      mode: 'pty',
-      modeLabel: 'claude-pty',
-      appliedMethod: 'claude-pty',
-      submitMethod: 'sendTrustedEnter',
-      bypassGlobalLock: false,
-      applyCompactionGate: true,
-      requiresFocusForEnter: !IS_DARWIN,
-      enterMethod: IS_DARWIN ? 'pty' : 'trusted',
-      enterDelayMs: 50,
-      sanitizeMultiline: false,
-      clearLineBeforeWrite: true,
-      useChunkedWrite: true,
-      homeResetBeforeWrite: true,
-      verifySubmitAccepted: !IS_DARWIN,
-      deferSubmitWhilePaneActive: !IS_DARWIN,
-      scaleEnterDelayByPayload: true,
-      typingGuardWhenBypassing: false,
-      sanitizeTransform: 'none',
-      enterFailureReason: 'enter_failed',
-      displayName: 'Claude',
-    },
-    unknown: {
-      mode: 'pty',
-      modeLabel: 'generic-pty',
-      appliedMethod: 'generic-pty',
-      submitMethod: 'pty-enter',
-      bypassGlobalLock: true,
-      applyCompactionGate: false,
-      requiresFocusForEnter: false,
-      enterMethod: 'pty',
-      enterDelayMs: 50,
-      sanitizeMultiline: false,
-      clearLineBeforeWrite: true,
-      useChunkedWrite: true,
-      homeResetBeforeWrite: true,
-      verifySubmitAccepted: true,
-      deferSubmitWhilePaneActive: true,
-      scaleEnterDelayByPayload: false,
-      typingGuardWhenBypassing: true,
-      sanitizeTransform: 'sanitize-multiline',
-      enterFailureReason: 'enter_failed',
-      displayName: 'Generic',
-    },
-  };
-
-  const base = { ...(baseByRuntime[runtimeKey] || baseByRuntime.unknown) };
+  const base = getRuntimeInjectionCapabilityDefault(runtimeKey, {
+    isDarwin: IS_DARWIN,
+    codexEnterDelayMs: CODEX_ENTER_DELAY_MS,
+    geminiEnterDelayMs: GEMINI_ENTER_DELAY_MS,
+    claudeEnterDelayMs: 50,
+  });
   const overrides = getInjectionCapabilityOverrides(paneId, runtimeKey);
   if (overrides && typeof overrides === 'object') {
     Object.assign(base, overrides);
