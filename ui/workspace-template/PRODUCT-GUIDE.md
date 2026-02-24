@@ -1,16 +1,16 @@
 # SquidRun Product Knowledge Guide
 
 ## What is SquidRun?
-SquidRun is your personal AI Engineering Team. It is a local-first environment that provides a persistent memory layer, structured role boundaries, and autonomous parallelization to help you build software faster and more safely.
+You don't need to be a programmer to build; you just need a trustworthy system. SquidRun is your personal AI Engineering Team. It is a local-first environment that provides a persistent memory layer, structured role boundaries, and autonomous parallelization to help you build software faster and more safely.
 
 Unlike tools that rely on expensive pay-per-token API billing, SquidRun orchestrates the official AI CLI tools you already subscribe to (Claude Code, Codex CLI, Gemini CLI). It multiplies the power of your existing $20/month subscriptions by running multiple frontier models in parallel, allowing them to collaborate, review each other's work, and eliminate the blind spots of any single model.
 
 Whether you are a seasoned expert or just starting your coding journey, SquidRun provides the structural integrity needed to manage complex codebases without losing context or control.
 
 ## Structural Integrity: The 3-Role System
-SquidRun achieves safety and speed through **Structural Integrity**. By enforcing strict role boundaries, the system provides "least-privilege" safety rails that prevent the common failure patterns of unconstrained agents.
+If you don't have the engineering instincts to catch technical 'footguns,' the system catches them for you. SquidRun achieves safety and speed through **Structural Integrity**. By enforcing strict role boundaries, the system provides "least-privilege" safety rails that prevent the common failure patterns of unconstrained agents.
 
-1. **Architect:** The Strategic Firewall. The Architect manages the user interface, decomposes high-level goals into technical tasks, and reviews every line of code before it is finalized. By design, the Architect cannot execute code directly, acting as a human-proxy safety gate.
+1. **Architect:** The Quality Gate. The Architect manages the user interface, decomposes high-level goals into technical tasks, and reviews everything before it runs so mistakes get caught. By design, the Architect cannot execute code directly, acting as a human-proxy safety firewall.
 2. **Builder:** The Implementation Lead. The Builder executes implementation, runs tests, and manages infrastructure. To maximize speed, the Builder autonomously parallelizes work by spawning up to three Background Builder agents for heavy tasks.
 3. **Oracle:** The System Insight Layer. The Oracle provides deep investigation, root-cause analysis, and documentation. It maintains the "vision" of the project through screenshots and benchmarks, operating with read-only access to source code to ensure data integrity.
 
