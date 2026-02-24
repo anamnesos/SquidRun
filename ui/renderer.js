@@ -289,6 +289,7 @@ function clearRendererLifecycleBindings() {
     clearTimeout(resizeDebounceTimer);
     resizeDebounceTimer = null;
   }
+  clearHeaderSessionBadgeRetry();
 
   const cleanupFns = rendererLifecycleCleanupFns;
   rendererLifecycleCleanupFns = [];
@@ -343,6 +344,24 @@ function updateHeaderSessionBadge(sessionNumber) {
   badge.title = 'Current app session unavailable';
 }
 
+function clearHeaderSessionBadgeRetry() {
+  if (headerSessionBadgeRetryTimer) {
+    clearTimeout(headerSessionBadgeRetryTimer);
+    headerSessionBadgeRetryTimer = null;
+  }
+  headerSessionBadgeRetryAttempts = 0;
+}
+
+function scheduleHeaderSessionBadgeRetry() {
+  if (headerSessionBadgeRetryTimer) return;
+  if (headerSessionBadgeRetryAttempts >= HEADER_SESSION_BADGE_MAX_RETRIES) return;
+  headerSessionBadgeRetryAttempts += 1;
+  headerSessionBadgeRetryTimer = setTimeout(() => {
+    headerSessionBadgeRetryTimer = null;
+    void refreshHeaderSessionBadge();
+  }, HEADER_SESSION_BADGE_RETRY_MS);
+}
+
 async function readSessionFromAppStatusFallback() {
   try {
     const status = await ipcRenderer.invoke('get-app-status');
@@ -359,6 +378,11 @@ async function resolveCurrentSessionNumber() {
 async function refreshHeaderSessionBadge() {
   const sessionNumber = await resolveCurrentSessionNumber();
   updateHeaderSessionBadge(sessionNumber);
+  if (asPositiveInt(sessionNumber)) {
+    clearHeaderSessionBadgeRetry();
+  } else {
+    scheduleHeaderSessionBadgeRetry();
+  }
 }
 
 function scheduleTerminalResize(delayMs = RESIZE_DEBOUNCE_MS) {
@@ -445,6 +469,8 @@ const STARTUP_OVERLAY_FADE_MS = 280;
 const DAEMON_TIMEOUT_FALLBACK_MESSAGE = "SquidRun couldn't start the background daemon. Make sure Node.js 18+ is installed and try restarting the app.";
 const STARTUP_LOADING_DEFAULT_MESSAGE = 'Starting SquidRun...';
 const STARTUP_OVERLAY_ERROR_DISMISS_MS = 12000;
+const HEADER_SESSION_BADGE_RETRY_MS = 700;
+const HEADER_SESSION_BADGE_MAX_RETRIES = 8;
 let autonomyOnboardingBusy = false;
 const profileOnboardingState = {
   checkComplete: false,
@@ -452,6 +478,8 @@ const profileOnboardingState = {
   required: false,
   completed: false,
 };
+let headerSessionBadgeRetryTimer = null;
+let headerSessionBadgeRetryAttempts = 0;
 
 function isAutonomyConsentRequired() {
   if (typeof settings.requiresAutonomyConsent !== 'function') return false;
@@ -1146,12 +1174,18 @@ async function saveProfileFromModal() {
     profileModalSchema = cloneJsonValue(savedSchema) || getProfileFallbackSchema();
     const completedOnboarding = profileOnboardingEnforced && String(result.profile?.name || payload.name || '').trim().length > 0;
     if (completedOnboarding) {
+      let onboardingPersisted = false;
       try {
-        await ipcRenderer.invoke('complete-onboarding', {
+        const onboardingResult = await ipcRenderer.invoke('complete-onboarding', {
           user_name: String(result.profile?.name || payload.name || '').trim(),
         });
+        onboardingPersisted = onboardingResult?.success === true;
       } catch (err) {
         log.warn('Init', `Unable to persist onboarding completion state: ${err?.message || err}`);
+      }
+      if (!onboardingPersisted) {
+        showStatusNotice('Profile saved, but onboarding state could not be persisted. Please retry.', 'warning', 3600);
+        return;
       }
       profileOnboardingState.required = false;
       profileOnboardingState.completed = true;
@@ -1201,9 +1235,21 @@ async function evaluateProfileOnboardingRequirement() {
     }
   } catch (err) {
     log.error('Init', `Failed profile onboarding check: ${err?.message || err}`);
-    profileOnboardingState.required = true;
-    profileOnboardingState.completed = false;
-    void openProfileModal({ enforceName: true, reload: true });
+    try {
+      const profileResult = await ipcRenderer.invoke('get-user-profile');
+      const existingName = String(profileResult?.profile?.name || '').trim();
+      const requiresProfile = existingName.length === 0;
+      profileOnboardingState.required = requiresProfile;
+      profileOnboardingState.completed = !requiresProfile;
+      if (requiresProfile) {
+        void openProfileModal({ enforceName: true, reload: true });
+      }
+    } catch (profileErr) {
+      log.error('Init', `Profile fallback check also failed: ${profileErr?.message || profileErr}`);
+      profileOnboardingState.required = true;
+      profileOnboardingState.completed = false;
+      void openProfileModal({ enforceName: true, reload: true });
+    }
   } finally {
     profileOnboardingState.checking = false;
     profileOnboardingState.checkComplete = true;

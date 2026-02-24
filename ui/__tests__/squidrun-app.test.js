@@ -5,6 +5,10 @@
  * Session 72: Added per audit finding - 650 lines of core code had ZERO tests
  */
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
 // Mock electron (main process APIs)
 jest.mock('electron', () => ({
   app: {
@@ -269,6 +273,35 @@ describe('SquidRunApp', () => {
 
       expect(app.cliIdentityForwarderRegistered).toBe(false);
       expect(app.triggerAckForwarderRegistered).toBe(false);
+    });
+  });
+
+  describe('fresh install marker persistence', () => {
+    it('writes fresh-install marker under .squidrun', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-fresh-marker-'));
+
+      const markerPath = app.writeFreshInstallMarker(workspace);
+      expect(markerPath).toBe(path.join(workspace, '.squidrun', 'fresh-install.json'));
+      expect(fs.existsSync(markerPath)).toBe(true);
+
+      const payload = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+      expect(payload).toEqual(expect.objectContaining({
+        fresh_install: true,
+        workspace_path: path.resolve(workspace),
+      }));
+      fs.rmSync(workspace, { recursive: true, force: true });
+    });
+
+    it('clears fresh-install marker when onboarding completes', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-fresh-marker-clear-'));
+      const markerPath = app.writeFreshInstallMarker(workspace);
+
+      expect(fs.existsSync(markerPath)).toBe(true);
+      app.clearFreshInstallMarker(workspace);
+      expect(fs.existsSync(markerPath)).toBe(false);
+      fs.rmSync(workspace, { recursive: true, force: true });
     });
   });
 

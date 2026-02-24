@@ -56,8 +56,8 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 
 ### Startup Baseline
 
-**Architect (Pane 1) — if receiving `[SYSTEM MSG — FRESH INSTALL]`:**
-Skip all numbered steps below. Follow the fresh-install instructions: read `user-profile.json` and `PRODUCT-GUIDE.md`, welcome the user, and wait for direction. Do NOT read coordination files — they won't exist yet and that is normal.
+**Architect (Pane 1) — fresh install detection:**
+If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `session: 1`), skip all numbered steps below. Follow the fresh-install instructions: read `user-profile.json` and `PRODUCT-GUIDE.md`, welcome the user, and wait for direction. Do NOT read coordination files — they won't exist yet and that is normal.
 
 **Architect (pane 1) — returning sessions only:**
 1. Read the **Startup Briefing** delivered to your terminal (summarizes Comm Journal, open Tasks, and unresolved Claims).
