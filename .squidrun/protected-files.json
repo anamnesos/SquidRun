@@ -6,5 +6,13 @@
   "CODEX.md",
   "GEMINI.md",
   "CLAUDE-AI.md",
-  "AGENTS.md"
+  "AGENTS.md",
+  "workspace/knowledge/",
+  "workspace/knowledge/README.md",
+  "workspace/knowledge/workflows.md",
+  "workspace/knowledge/infrastructure.md",
+  "workspace/knowledge/environment.md",
+  "workspace/knowledge/projects.md",
+  "workspace/knowledge/devices.md",
+  "workspace/knowledge/user-context.md"
 ]
