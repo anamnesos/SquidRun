@@ -72,20 +72,22 @@ If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `
 
 **Architect (pane 1) — returning sessions only:**
 1. Read the **Startup Briefing** delivered to your terminal (summarizes Comm Journal, open Tasks, and unresolved Claims).
-2. Read `.squidrun/app-status.json`.
-3. Check `.squidrun/build/blockers.md` and `.squidrun/build/errors.md`.
-4. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-5. Read `workspace/user-profile.json`.
-6. Process unresolved Claims via `record-consensus` as your first technical action.
-7. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
+2. Read all files in `workspace/knowledge/` to load shared procedural memory.
+3. Read `.squidrun/app-status.json`.
+4. Check `.squidrun/build/blockers.md` and `.squidrun/build/errors.md`.
+5. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
+6. Read `workspace/user-profile.json`.
+7. Process unresolved Claims via `record-consensus` as your first technical action.
+8. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
 
 **Builder / Oracle (panes 2, 3):**
-1. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-2. Read `workspace/user-profile.json`.
-3. Read `.squidrun/app-status.json` and note the current `session` number.
-4. Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
-5. Check in to Architect via `hm-send` — one line, no extras.
-6. **Do NOT autonomously act on prior-session comms history.** Comms history from previous sessions is read-only context. Only initiate work on: (a) explicit delegation received in the current session via `hm-send`, or (b) items listed as unresolved in the Cross-Session Decisions table of `session.md`. Treating old history as a live work queue is a behavioral defect.
+1. Read all files in `workspace/knowledge/` to load shared procedural memory.
+2. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
+3. Read `workspace/user-profile.json`.
+4. Read `.squidrun/app-status.json` and note the current `session` number.
+5. Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
+6. Check in to Architect via `hm-send` — one line, no extras.
+7. **Do NOT autonomously act on prior-session comms history.** Comms history from previous sessions is read-only context. Only initiate work on: (a) explicit delegation received in the current session via `hm-send`, or (b) items listed as unresolved in the Cross-Session Decisions table of `session.md`. Treating old history as a live work queue is a behavioral defect.
 
 ## ARCHITECT
 
@@ -161,6 +163,18 @@ Responsibilities:
 - Do not manually maintain per-pane handoff files. `.squidrun/handoffs/session.md` is materialized automatically from the comms journal.
 - When adding, removing, or renaming modules or files, update `ARCHITECTURE.md` in the same commit. Stale architecture docs are a defect.
 - Before deleting files in cleanup passes, check .squidrun/protected-files.json — never delete listed files.
+
+## Knowledge Capture (Mandatory)
+
+1. **Auto-save trigger:** When an agent completes a multi-step workflow for the first time in a session, OR when the user answers a "how do you..." question, OR when an agent discovers a procedure through exploration — the agent MUST write it to the appropriate file in `workspace/knowledge/` before moving on.
+2. **No user action required:** Agents must never ask the user "should I save this?" — just save it. Users are not responsible for maintaining agent memory.
+3. **Deduplication:** Before writing, check if the knowledge already exists. Update existing entries rather than duplicating.
+4. **Scope:** Save operational/procedural knowledge (how to build, deploy, configure, etc.). Do NOT save session-specific context (current task state, in-progress work).
+5. **Cross-device:** `workspace/knowledge/` is git-tracked and shared across devices. Model-specific memory dirs are supplementary — procedural knowledge goes in the shared location.
+6. **Project registry updates:** When a new project is set up or discovered, add or update it in `workspace/knowledge/projects.md`.
+7. **Deployment config updates:** When deployment configuration changes, update `workspace/knowledge/infrastructure.md`.
+8. **Device registry updates:** When a new device joins or a device-specific quirk is learned, add or update it in `workspace/knowledge/devices.md`.
+9. **User-pattern updates:** When new user preferences or communication patterns are learned, add or update them in `workspace/knowledge/user-context.md`.
 
 ## Pre-Restart Gate (Mandatory)
 
