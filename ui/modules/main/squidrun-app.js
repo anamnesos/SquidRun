@@ -1738,6 +1738,13 @@ class SquidRunApp {
           }
 
           // Route WebSocket messages via triggers module (handles delivery)
+          if (data.message.type === 'bridge-discovery') {
+            const timeoutMs = Number.parseInt(String(data.message.timeoutMs || ''), 10);
+            return this.discoverBridgeDevices({
+              timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined,
+            });
+          }
+
           if (data.message.type === 'send') {
             const { target, content } = data.message;
             const bridgeTarget = parseCrossDeviceTarget(target);
@@ -4039,6 +4046,53 @@ class SquidRunApp {
       log.info('Bridge', `Cross-device relay bridge enabled (device=${deviceId})`);
     }
     return started;
+  }
+
+  async discoverBridgeDevices({ timeoutMs = 5000 } = {}) {
+    if (!this.bridgeEnabled) {
+      return {
+        ok: false,
+        status: 'bridge_disabled',
+        error: 'Cross-device bridge is disabled',
+        devices: [],
+        fetchedAt: Date.now(),
+      };
+    }
+
+    if (!this.bridgeClient) {
+      this.startBridgeClient();
+    }
+
+    const discoveryTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 5000;
+    const readyDeadline = Date.now() + Math.max(500, discoveryTimeoutMs);
+    while (Date.now() < readyDeadline) {
+      if (this.bridgeClient && this.bridgeClient.isReady()) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    if (!this.bridgeClient || !this.bridgeClient.isReady()) {
+      this.handleBridgeClientStatusUpdate({
+        type: 'relay.disconnected',
+        state: 'disconnected',
+        status: 'bridge_unavailable',
+      });
+      return {
+        ok: false,
+        status: 'bridge_unavailable',
+        error: 'Relay unavailable',
+        devices: [],
+        fetchedAt: Date.now(),
+      };
+    }
+
+    const result = await this.bridgeClient.discoverDevices({ timeoutMs: discoveryTimeoutMs });
+    return {
+      ok: result?.ok === true,
+      status: result?.status || (result?.ok === true ? 'bridge_discovery_ok' : 'bridge_discovery_failed'),
+      error: result?.error || null,
+      devices: Array.isArray(result?.devices) ? result.devices : [],
+      fetchedAt: Number.isFinite(result?.fetchedAt) ? result.fetchedAt : Date.now(),
+    };
   }
 
   async routeBridgeMessage({
