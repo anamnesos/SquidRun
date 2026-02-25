@@ -5,6 +5,8 @@
  *           get-claude-state, get-daemon-terminals
  */
 
+const fs = require('fs');
+const path = require('path');
 const log = require('../logger');
 const { resolvePaneCwd } = require('../../config');
 const {
@@ -75,6 +77,51 @@ function detectCliFromCommand(command) {
   if (normalized.includes('gemini')) return 'gemini';
   if (normalized.includes('codex')) return 'codex';
   return 'claude';
+}
+
+function resolveWindowsClaudeTempDir(cwd, env = process.env) {
+  if (process.platform !== 'win32') return null;
+
+  const winPath = path.win32;
+  const seen = new Set();
+  const candidates = [];
+  const explicitTempRoot = toNonEmptyString(env.SQUIDRUN_WINDOWS_TMP)
+    || toNonEmptyString(env.SQUIDRUN_TEMP_DIR);
+  if (explicitTempRoot) {
+    candidates.push(explicitTempRoot);
+  }
+
+  const cwdValue = toNonEmptyString(cwd);
+  if (cwdValue) {
+    candidates.push(winPath.join(cwdValue, '.squidrun', 'tmp'));
+  }
+
+  const parsedRoot = cwdValue ? toNonEmptyString(winPath.parse(cwdValue).root) : null;
+  const systemDrive = toNonEmptyString(env.SystemDrive) || 'C:';
+  const driveRoot = parsedRoot || `${systemDrive}\\`;
+  candidates.push(winPath.join(driveRoot, 'squidrun-tmp'));
+  candidates.push('C:\\squidrun-tmp');
+
+  for (const candidateRaw of candidates) {
+    const candidate = toNonEmptyString(candidateRaw);
+    if (!candidate) continue;
+
+    const normalized = winPath.normalize(candidate);
+    const dedupeKey = normalized.toLowerCase();
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    if (/\s/.test(normalized)) continue;
+
+    try {
+      fs.mkdirSync(normalized, { recursive: true });
+      return normalized;
+    } catch (_) {
+      // Try next fallback candidate.
+    }
+  }
+
+  return null;
 }
 
 function hasClaudeSystemPromptFlag(command) {
@@ -203,11 +250,33 @@ function registerPtyHandlers(ctx, deps = {}) {
     const runtime = detectCliFromCommand(paneCommand);
 
     let spawnEnv = null;
+
+    if (process.platform === 'win32') {
+      const userProfile = process.env.USERPROFILE || '';
+      if (userProfile && !userProfile.includes('~')) {
+        const longTemp = path.join(userProfile, 'AppData', 'Local', 'Temp');
+        spawnEnv = { TEMP: longTemp, TMP: longTemp };
+      }
+
+      if (runtime === 'claude') {
+        const compatTemp = resolveWindowsClaudeTempDir(cwd);
+        if (compatTemp) {
+          spawnEnv = {
+            ...(spawnEnv || {}),
+            TEMP: compatTemp,
+            TMP: compatTemp,
+            TMPDIR: compatTemp,
+          };
+        }
+      }
+    }
+
     if (runtime === 'gemini') {
       try {
         const firmwarePath = resolveFirmwarePathForPane(paneId);
         if (firmwarePath) {
-          spawnEnv = { GEMINI_SYSTEM_MD: firmwarePath };
+          spawnEnv = spawnEnv || {};
+          spawnEnv.GEMINI_SYSTEM_MD = firmwarePath;
         }
       } catch (err) {
         log.warn('Firmware', `Failed to resolve Gemini firmware for pane ${paneId}: ${err.message}`);
@@ -561,4 +630,9 @@ function unregisterPtyHandlers(ctx) {
 
 registerPtyHandlers.unregister = unregisterPtyHandlers;
 
-module.exports = { registerPtyHandlers };
+module.exports = {
+  registerPtyHandlers,
+  _internals: {
+    resolveWindowsClaudeTempDir,
+  },
+};
