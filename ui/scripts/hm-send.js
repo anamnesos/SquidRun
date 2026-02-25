@@ -582,6 +582,17 @@ function writeDeviceCache(cachePath, devices) {
 
 async function runListDevicesMode() {
   const cachePath = getBridgeKnownDevicesCachePath();
+  const runtimeDiscovery = await runListDevicesViaRuntimeBridge();
+  if (runtimeDiscovery?.ok) {
+    const normalizedDevices = normalizeDiscoveredDevices(runtimeDiscovery.devices);
+    const cachePayload = writeDeviceCache(cachePath, normalizedDevices);
+    printDeviceDiscoveryTable(normalizedDevices, {
+      cached: false,
+      fetchedAt: cachePayload.updated_at,
+    });
+    return { ok: true, cached: false };
+  }
+
   const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim();
   const deviceId = String(process.env.SQUIDRUN_DEVICE_ID || '').trim();
   const sharedSecret = String(process.env.SQUIDRUN_RELAY_SECRET || '').trim();
@@ -644,6 +655,54 @@ async function runListDevicesMode() {
     return { ok: false, error: `Relay discovery failed: ${err.message}` };
   } finally {
     bridgeClient.stop();
+  }
+}
+
+async function runListDevicesViaRuntimeBridge() {
+  const socketUrl = `ws://127.0.0.1:${PORT}`;
+  let ws = null;
+  const requestId = `bridge-discovery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    ws = new WebSocket(socketUrl);
+    await waitForMatch(ws, (msg) => msg.type === 'welcome', DEFAULT_CONNECT_TIMEOUT_MS, 'Connection timeout');
+
+    ws.send(JSON.stringify({ type: 'register', role }));
+    await waitForMatch(ws, (msg) => msg.type === 'registered', DEFAULT_CONNECT_TIMEOUT_MS, 'Registration timeout');
+
+    ws.send(JSON.stringify({
+      type: 'bridge-discovery',
+      requestId,
+      timeoutMs: ackTimeoutMs,
+    }));
+
+    const response = await waitForMatch(
+      ws,
+      (msg) => msg.type === 'response' && msg.requestId === requestId,
+      Math.max(ackTimeoutMs + 500, DEFAULT_CONNECT_TIMEOUT_MS),
+      'Bridge discovery timeout'
+    );
+
+    const result = (response && typeof response.result === 'object') ? response.result : null;
+    if (response?.ok !== true || !result) {
+      return { ok: false };
+    }
+    if (result.ok !== true) {
+      return {
+        ok: false,
+        error: result.error || result.status || 'discovery_failed',
+      };
+    }
+    return {
+      ok: true,
+      devices: result.devices,
+      fetchedAt: result.fetchedAt || Date.now(),
+    };
+  } catch (_err) {
+    return { ok: false };
+  } finally {
+    if (ws) {
+      await closeSocket(ws);
+    }
   }
 }
 
