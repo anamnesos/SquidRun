@@ -1444,6 +1444,52 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('--list-devices reports clear unsupported discovery error when relay lacks xdiscovery', async () => {
+    const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-discovery-unsupported-'));
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'register-ack', ok: true, deviceId: msg.deviceId }));
+          return;
+        }
+        if (msg.type === 'xdiscovery') {
+          ws.send(JSON.stringify({ type: 'error', error: 'unsupported_type:xdiscovery' }));
+        }
+      });
+    });
+
+    try {
+      const relayUrl = `ws://127.0.0.1:${port}`;
+      const result = await runHmSend(
+        ['--list-devices', '--role', 'architect', '--timeout', '250'],
+        {
+          SQUIDRUN_CROSS_DEVICE: '1',
+          SQUIDRUN_RELAY_URL: relayUrl,
+          SQUIDRUN_DEVICE_ID: 'MACBOOK',
+          SQUIDRUN_RELAY_SECRET: 'relay-secret',
+        },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('Device discovery failed: Relay discovery failed: Relay does not support device discovery (xdiscovery)');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      fs.rmSync(tempProject, { recursive: true, force: true });
+    }
+  });
+
   test('prints connected device guidance for unknown @device-arch bridge target', async () => {
     let server;
 

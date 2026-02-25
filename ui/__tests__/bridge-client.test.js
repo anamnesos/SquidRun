@@ -184,6 +184,35 @@ describe('bridge-client', () => {
     });
   });
 
+  test('discoverDevices returns clear unsupported error when relay rejects xdiscovery', async () => {
+    const client = createBridgeClient({
+      relayUrl: 'ws://relay',
+      deviceId: 'local_a',
+      sharedSecret: 'secret',
+    });
+
+    expect(client.start()).toBe(true);
+    expect(instances).toHaveLength(1);
+    const socket = instances[0];
+    socket.readyState = MockWebSocket.OPEN;
+    socket.emit('open');
+    emitJson(socket, { type: 'register-ack', ok: true });
+    expect(client.isReady()).toBe(true);
+
+    const pending = client.discoverDevices({ timeoutMs: 100 });
+    emitJson(socket, {
+      type: 'error',
+      error: 'unsupported_type:xdiscovery',
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      status: 'bridge_discovery_unsupported',
+      error: 'Relay does not support device discovery (xdiscovery)',
+      devices: [],
+    });
+  });
+
   test('sendToDevice preserves unknownDevice and connectedDevices from relay xack', async () => {
     const client = createBridgeClient({
       relayUrl: 'ws://relay',
