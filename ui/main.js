@@ -4,8 +4,19 @@
  */
 
 const path = require('path');
+const os = require('os');
 const { app, Menu } = require('electron');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+const fallbackEnvPath = process.env.SQUIDRUN_PROJECT_ROOT
+  ? path.join(process.env.SQUIDRUN_PROJECT_ROOT, '.env')
+  : (process.platform === 'darwin'
+      && (__dirname.includes('.app/Contents/') || __dirname.includes('app.asar'))
+      ? path.join(os.homedir(), 'SquidRun', '.env')
+      : null);
+// Fill missing env vars from an external path when packaged mac builds cannot persist bundle .env.
+if (fallbackEnvPath) {
+  require('dotenv').config({ path: fallbackEnvPath });
+}
 
 // Enforce single-instance ownership to prevent duplicate watcher/process
 // trees from racing on .squidrun trigger files.
