@@ -534,6 +534,25 @@ class BridgeClient {
       return;
     }
 
+    if (message.type === 'error') {
+      const errorText = asNonEmptyString(message.error) || 'relay_error';
+      if (errorText.toLowerCase() === 'unsupported_type:xdiscovery') {
+        this.rejectPendingDiscoveries({
+          ok: false,
+          status: 'bridge_discovery_unsupported',
+          error: 'Relay does not support device discovery (xdiscovery)',
+          devices: [],
+        });
+      }
+      this.emitStatus({
+        type: 'relay.error',
+        state: 'error',
+        status: 'relay_error',
+        error: errorText,
+      });
+      return;
+    }
+
     if (message.type === 'pong') {
       return;
     }
