@@ -233,6 +233,116 @@
   justify-content: flex-end;
 }
 
+.device-card {
+  padding: 12px;
+  border: 1px solid rgba(0, 240, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(8, 11, 18, 0.58);
+}
+
+.device-pairing-action {
+  align-self: flex-start;
+}
+
+.device-pairing-input {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-family: var(--font-mono);
+}
+
+.device-pairing-code {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 22px;
+  letter-spacing: 0.24em;
+  color: var(--color-primary);
+}
+
+.device-pairing-timer {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.device-pairing-status {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 240, 255, 0.18);
+  background: rgba(8, 11, 18, 0.64);
+  font-size: 12px;
+  color: var(--color-text);
+}
+
+.device-pairing-status.error {
+  border-color: rgba(255, 64, 96, 0.4);
+  color: #ff9cad;
+}
+
+.device-pairing-status.success {
+  border-color: rgba(0, 224, 148, 0.4);
+  color: #7ff6ce;
+}
+
+.device-list-wrap {
+  margin-top: 12px;
+}
+
+.device-list-controls {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.device-list-table-wrap {
+  margin-top: 8px;
+  border: 1px solid rgba(0, 240, 255, 0.16);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.device-list-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.device-list-table thead th {
+  text-align: left;
+  padding: 8px 10px;
+  background: rgba(10, 16, 28, 0.9);
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.device-list-table tbody td {
+  padding: 8px 10px;
+  border-top: 1px solid rgba(122, 138, 158, 0.22);
+  color: var(--color-text);
+}
+
+.device-list-empty {
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.device-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.device-status::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #8b98ab;
+}
+
+.device-status.online::before {
+  background: #12db86;
+}
+
 /* Toggle switch */
 .toggle {
   position: relative;
