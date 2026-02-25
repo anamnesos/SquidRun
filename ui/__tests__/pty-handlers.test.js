@@ -9,6 +9,7 @@ const {
   createDepsMock,
 } = require('./helpers/ipc-harness');
 const path = require('path');
+const fs = require('fs');
 
 // Mock electron clipboard
 jest.mock('electron', () => ({
@@ -18,7 +19,26 @@ jest.mock('electron', () => ({
   },
 }));
 
-const { registerPtyHandlers } = require('../modules/ipc/pty-handlers');
+const { registerPtyHandlers, _internals } = require('../modules/ipc/pty-handlers');
+
+function withPlatform(platformValue, callback) {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  const restore = () => {
+    Object.defineProperty(process, 'platform', descriptor);
+  };
+  Object.defineProperty(process, 'platform', { value: platformValue });
+  try {
+    const result = callback();
+    if (result && typeof result.then === 'function') {
+      return result.finally(restore);
+    }
+    restore();
+    return result;
+  } catch (err) {
+    restore();
+    throw err;
+  }
+}
 
 describe('PTY Handlers', () => {
   let harness;
@@ -37,6 +57,33 @@ describe('PTY Handlers', () => {
     jest.runOnlyPendingTimers();
     jest.useRealTimers();
     jest.clearAllMocks();
+  });
+
+  describe('windows temp compatibility', () => {
+    test('resolves a spaceless workspace temp dir for Claude on Windows', () => {
+      const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+      const cwd = 'D:\\projects\\squidrun';
+      const expected = path.win32.join(cwd, '.squidrun', 'tmp');
+
+      const result = withPlatform('win32', () => _internals.resolveWindowsClaudeTempDir(cwd));
+
+      expect(result).toBe(expected);
+      expect(mkdirSpy).toHaveBeenCalledWith(expected, { recursive: true });
+      mkdirSpy.mockRestore();
+    });
+
+    test('falls back to drive-root temp when cwd contains spaces', () => {
+      const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+      const cwd = 'D:\\Users\\James Kim\\project';
+      const expected = 'D:\\squidrun-tmp';
+
+      const result = withPlatform('win32', () => _internals.resolveWindowsClaudeTempDir(cwd));
+
+      expect(result).toBe(expected);
+      expect(result).not.toMatch(/\s/);
+      expect(mkdirSpy).toHaveBeenCalledWith(expected, { recursive: true });
+      mkdirSpy.mockRestore();
+    });
   });
 
   describe('pty-create', () => {
@@ -61,6 +108,13 @@ describe('PTY Handlers', () => {
 
       const result = await harness.invoke('pty-create', '1', '/fallback/dir');
       const expectedCwd = path.resolve('/assigned/project');
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+          TMPDIR: expect.any(String),
+        })
+        : null;
 
       expect(result.cwd).toBe(expectedCwd);
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
@@ -68,7 +122,7 @@ describe('PTY Handlers', () => {
         expectedCwd,
         false,
         null,
-        null,
+        expectedEnv,
         { paneCommand: '' }
       );
     });
@@ -80,6 +134,13 @@ describe('PTY Handlers', () => {
 
       const result = await harness.invoke('pty-create', '2', '/fallback/dir');
       const expectedCwd = path.resolve('/active/project');
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+          TMPDIR: expect.any(String),
+        })
+        : null;
 
       expect(result.cwd).toBe(expectedCwd);
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
@@ -87,7 +148,7 @@ describe('PTY Handlers', () => {
         expectedCwd,
         false,
         null,
-        null,
+        expectedEnv,
         { paneCommand: '' }
       );
     });
@@ -100,6 +161,13 @@ describe('PTY Handlers', () => {
 
       const result = await harness.invoke('pty-create', '2', '/fallback/dir');
       const stateProjectCwd = path.resolve('/active/project');
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+          TMPDIR: expect.any(String),
+        })
+        : null;
 
       expect(ctx.watcher.readState).not.toHaveBeenCalled();
       expect(result.cwd).not.toBe(stateProjectCwd);
@@ -108,7 +176,7 @@ describe('PTY Handlers', () => {
         result.cwd,
         false,
         null,
-        null,
+        expectedEnv,
         { paneCommand: '' }
       );
     });
@@ -116,13 +184,20 @@ describe('PTY Handlers', () => {
     test('uses workingDir when pane cwd resolver has no mapping', async () => {
       ctx.daemonClient.connected = true;
       const result = await harness.invoke('pty-create', '99', '/custom/dir');
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+          TMPDIR: expect.any(String),
+        })
+        : null;
 
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
         '99',
         '/custom/dir',
         false,
         null,
-        null,
+        expectedEnv,
         { paneCommand: '' }
       );
     });
@@ -130,6 +205,12 @@ describe('PTY Handlers', () => {
     test('spawns codex panes with null mode (interactive PTY, not codex-exec)', async () => {
       ctx.daemonClient.connected = true;
       ctx.currentSettings.paneCommands = { '2': 'codex --mode exec' };
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+        })
+        : null;
 
       await harness.invoke('pty-create', '2', '/test/dir');
 
@@ -139,7 +220,7 @@ describe('PTY Handlers', () => {
         expect.any(String),
         false,
         null,
-        null,
+        expectedEnv,
         { paneCommand: 'codex --mode exec' }
       );
     });
@@ -150,14 +231,46 @@ describe('PTY Handlers', () => {
 
       await harness.invoke('pty-create', '1', '/test/dir');
 
+      const spawnCall = ctx.daemonClient.spawn.mock.calls[0];
+      expect(spawnCall[0]).toBe('1');
+      expect(spawnCall[2]).toBe(false);
+      expect(spawnCall[3]).toBe(null);
+      expect(spawnCall[5]).toEqual({ paneCommand: 'claude' });
+      if (process.platform === 'win32') {
+        expect(spawnCall[4]).toEqual(expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+          TMPDIR: expect.any(String),
+        }));
+      } else {
+        expect(spawnCall[4]).toBe(null);
+      }
+    });
+
+    test('injects spaceless TEMP/TMP/TMPDIR for Claude panes on Windows', async () => {
+      const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '99': 'claude' };
+      const workingDir = 'D:\\projects\\squidrun';
+      const expectedTemp = path.win32.join(workingDir, '.squidrun', 'tmp');
+
+      await withPlatform('win32', async () => {
+        await harness.invoke('pty-create', '99', workingDir);
+      });
+
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
-        '1',
-        expect.any(String),
+        '99',
+        workingDir,
         false,
         null,
-        null,
+        expect.objectContaining({
+          TEMP: expectedTemp,
+          TMP: expectedTemp,
+          TMPDIR: expectedTemp,
+        }),
         { paneCommand: 'claude' }
       );
+      mkdirSpy.mockRestore();
     });
 
     test('respects dryRun setting', async () => {
@@ -165,6 +278,13 @@ describe('PTY Handlers', () => {
       ctx.currentSettings.dryRun = true;
 
       const result = await harness.invoke('pty-create', '1', '/test');
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+          TMPDIR: expect.any(String),
+        })
+        : null;
 
       expect(result.dryRun).toBe(true);
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
@@ -172,7 +292,7 @@ describe('PTY Handlers', () => {
         expect.any(String),
         true,
         null,
-        null,
+        expectedEnv,
         { paneCommand: '' }
       );
     });
@@ -186,6 +306,13 @@ describe('PTY Handlers', () => {
       };
 
       const result = await harness.invoke('pty-create', '3', '/fallback/dir');
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          GEMINI_SYSTEM_MD: '/tmp/fw/oracle.md',
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+        })
+        : { GEMINI_SYSTEM_MD: '/tmp/fw/oracle.md' };
 
       expect(result.paneId).toBe('3');
       expect(deps.firmwareManager.ensureFirmwareForPane).toHaveBeenCalledWith('3');
@@ -194,7 +321,7 @@ describe('PTY Handlers', () => {
         expect.any(String),
         false,
         null,
-        { GEMINI_SYSTEM_MD: '/tmp/fw/oracle.md' },
+        expectedEnv,
         { paneCommand: 'gemini --yolo' }
       );
     });
