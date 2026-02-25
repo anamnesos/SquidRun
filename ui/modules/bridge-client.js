@@ -7,6 +7,7 @@ const {
 const DEFAULT_ACK_TIMEOUT_MS = 12000;
 const DEFAULT_RECONNECT_BASE_MS = 750;
 const DEFAULT_RECONNECT_MAX_MS = 10000;
+const DEFAULT_PING_INTERVAL_MS = 30000;
 const SENSITIVE_ENV_KEYWORDS_RE = /(TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|AUTH|CREDENTIAL|COOKIE|SESSION)/i;
 const SENSITIVE_JSON_KEY_RE = /^(token|secret|password|pass|api[_-]?key|access[_-]?key|private[_-]?key|authorization|credential|cookie|session)$/i;
 const SENSITIVE_PATH_SEGMENT_RE = /(^|[\\/])(\.env(\.[^\\/]+)?|id_rsa|id_dsa|credentials(\.[^\\/]+)?|token|secret|passwords?)([\\/]|$)/i;
@@ -178,6 +179,7 @@ class BridgeClient {
     this.connected = false;
     this.registered = false;
     this.reconnectTimer = null;
+    this.pingTimer = null;
     this.reconnectAttempt = 0;
     this.pendingAcks = new Map();
   }
@@ -214,6 +216,7 @@ class BridgeClient {
   stop() {
     this.shouldRun = false;
     this.clearReconnectTimer();
+    this.clearPingTimer();
     this.rejectPendingAcks({
       ok: false,
       status: 'bridge_stopped',
@@ -240,6 +243,24 @@ class BridgeClient {
     if (!this.reconnectTimer) return;
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+  }
+
+  clearPingTimer() {
+    if (!this.pingTimer) return;
+    clearInterval(this.pingTimer);
+    this.pingTimer = null;
+  }
+
+  startPingLoop() {
+    this.clearPingTimer();
+    const pingIntervalMs = parsePositiveInt(process.env.SQUIDRUN_BRIDGE_PING_INTERVAL_MS, DEFAULT_PING_INTERVAL_MS);
+    this.pingTimer = setInterval(() => {
+      if (!this.isReady()) return;
+      this.sendRaw({
+        type: 'ping',
+        ts: Date.now(),
+      });
+    }, pingIntervalMs);
   }
 
   scheduleReconnect() {
@@ -291,6 +312,7 @@ class BridgeClient {
     ws.on('close', () => {
       this.connected = false;
       this.registered = false;
+      this.clearPingTimer();
       if (this.socket === ws) {
         this.socket = null;
       }
@@ -357,6 +379,7 @@ class BridgeClient {
       if (message.ok) {
         this.registered = true;
         this.reconnectAttempt = 0;
+        this.startPingLoop();
         log.info('Bridge', `Connected to relay as ${this.deviceId}`);
         this.emitStatus({
           type: 'relay.connected',
@@ -365,6 +388,7 @@ class BridgeClient {
         });
       } else {
         this.registered = false;
+        this.clearPingTimer();
         log.warn('Bridge', `Relay registration rejected: ${asNonEmptyString(message.error) || 'unknown_error'}`);
         this.emitStatus({
           type: 'relay.error',
@@ -411,6 +435,10 @@ class BridgeClient {
 
     if (message.type === 'xdeliver') {
       await this.handleInboundDelivery(message);
+      return;
+    }
+
+    if (message.type === 'pong') {
       return;
     }
   }
