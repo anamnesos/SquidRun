@@ -1347,6 +1347,159 @@ describe('hm-send retry behavior', () => {
     expect(result.stdout).toContain('Delivered to @peer-arch');
   });
 
+  test('--list-devices queries discovery, prints table, and writes cache', async () => {
+    const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-discovery-'));
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'register-ack', ok: true, deviceId: msg.deviceId }));
+          return;
+        }
+        if (msg.type === 'xdiscovery') {
+          ws.send(JSON.stringify({
+            type: 'xdiscovery',
+            requestId: msg.requestId,
+            ok: true,
+            devices: [
+              { device_id: 'VIGIL', roles: ['architect'], connected_since: '2026-02-25T21:00:00.000Z' },
+              { device_id: 'MACBOOK', roles: ['builder'], connected_since: '2026-02-25T21:01:00.000Z' },
+            ],
+          }));
+        }
+      });
+    });
+
+    try {
+      const relayUrl = `ws://127.0.0.1:${port}`;
+      const result = await runHmSend(
+        ['--list-devices', '--role', 'architect', '--timeout', '250'],
+        {
+          SQUIDRUN_CROSS_DEVICE: '1',
+          SQUIDRUN_RELAY_URL: relayUrl,
+          SQUIDRUN_DEVICE_ID: 'MACBOOK',
+          SQUIDRUN_RELAY_SECRET: 'relay-secret',
+        },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('Online devices');
+      expect(result.stdout).toContain('DEVICE_ID');
+      expect(result.stdout).toContain('MACBOOK');
+      expect(result.stdout).toContain('VIGIL');
+
+      const cachePath = path.join(tempProject, '.squidrun', 'bridge', 'known-devices.json');
+      expect(fs.existsSync(cachePath)).toBe(true);
+      const cached = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+      expect(Array.isArray(cached.devices)).toBe(true);
+      expect(cached.devices).toHaveLength(2);
+      expect(cached.updated_at).toBeTruthy();
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      fs.rmSync(tempProject, { recursive: true, force: true });
+    }
+  });
+
+  test('--list-devices falls back to cache when relay is unreachable', async () => {
+    const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-discovery-cache-'));
+    const cachePath = path.join(tempProject, '.squidrun', 'bridge', 'known-devices.json');
+    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+    fs.writeFileSync(cachePath, JSON.stringify({
+      updated_at: '2026-02-25T22:22:22.000Z',
+      source: 'relay',
+      devices: [
+        { device_id: 'VIGIL', roles: ['architect'], connected_since: '2026-02-25T21:00:00.000Z' },
+      ],
+    }, null, 2), 'utf8');
+
+    try {
+      const result = await runHmSend(
+        ['--list-devices', '--role', 'architect', '--timeout', '120'],
+        {
+          SQUIDRUN_CROSS_DEVICE: '1',
+          SQUIDRUN_RELAY_URL: 'ws://127.0.0.1:65534',
+          SQUIDRUN_DEVICE_ID: 'MACBOOK',
+          SQUIDRUN_RELAY_SECRET: 'relay-secret',
+        },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('Online devices (cached)');
+      expect(result.stdout).toContain('2026-02-25T22:22:22.000Z');
+      expect(result.stdout).toContain('VIGIL');
+    } finally {
+      fs.rmSync(tempProject, { recursive: true, force: true });
+    }
+  });
+
+  test('prints connected device guidance for unknown @device-arch bridge target', async () => {
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'send') {
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: false,
+            accepted: false,
+            queued: false,
+            verified: false,
+            status: 'target_offline',
+            handlerResult: {
+              ok: false,
+              accepted: false,
+              queued: false,
+              verified: false,
+              status: 'target_offline',
+              toDevice: 'WINDOWS',
+              unknownDevice: 'WINDOWS',
+              connectedDevices: ['VIGIL', 'MACBOOK'],
+            },
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    const result = await runHmSend(
+      ['@windows-arch', '(ARCHITECT #102): bridge unknown target', '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
+      { HM_SEND_PORT: String(port), SQUIDRUN_CROSS_DEVICE: '1' }
+    );
+
+    await new Promise((resolve) => server.close(resolve));
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("Unknown device 'WINDOWS'. Connected devices: MACBOOK, VIGIL");
+  });
+
   test('rejects non-arch @device target via invalid_target health preflight', async () => {
     const healthChecks = [];
     const sendAttempts = [];

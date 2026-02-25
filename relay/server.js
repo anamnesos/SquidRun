@@ -148,6 +148,17 @@ const pendingByMessageId = new Map(); // messageId -> { senderWs, fromDevice, to
 const allowlistedDevices = parseAllowlistedDevices(RELAY_DEVICE_ALLOWLIST_RAW);
 let clientSeq = 0;
 
+function listConnectedDeviceIds() {
+  const connected = [];
+  for (const [deviceId, socket] of socketsByDevice.entries()) {
+    if (!deviceId) continue;
+    if (!socket || socket.readyState !== WebSocket.OPEN) continue;
+    connected.push(deviceId);
+  }
+  connected.sort();
+  return connected;
+}
+
 function clearPending(messageId) {
   const pending = pendingByMessageId.get(messageId);
   if (!pending) return null;
@@ -321,6 +332,13 @@ function handleSend(ws, frame) {
 
   const targetSocket = socketsByDevice.get(toDevice);
   if (!targetSocket || targetSocket.readyState !== WebSocket.OPEN) {
+    const connectedDevices = listConnectedDeviceIds();
+    const isKnownDevice = socketsByDevice.has(toDevice);
+    const connectedList = connectedDevices.length > 0 ? connectedDevices.join(', ') : 'none';
+    const unknownDevice = isKnownDevice ? null : toDevice;
+    const error = unknownDevice
+      ? `Unknown device ${toDevice}. Connected devices: ${connectedList}`
+      : `Target ${toDevice} is offline. Connected devices: ${connectedList}`;
     sendJson(ws, {
       type: 'xack',
       messageId,
@@ -329,9 +347,11 @@ function handleSend(ws, frame) {
       queued: false,
       verified: false,
       status: 'target_offline',
-      error: `No connected target for ${toDevice}`,
+      error,
       fromDevice: sender.deviceId,
       toDevice,
+      unknownDevice,
+      connectedDevices,
     });
     return;
   }
