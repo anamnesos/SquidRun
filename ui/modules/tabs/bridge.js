@@ -42,6 +42,11 @@ let transportState = null;
 function defaultTransportState() {
   return {
     daemonConnected: true,
+    relayState: 'disconnected',
+    relayError: null,
+    lastRemoteDispatchAt: null,
+    lastRemoteDispatchStatus: null,
+    lastRemoteDispatchTarget: null,
     wakeState: 'awake',
     recoveryState: 'idle',
     ackSamples: [],
@@ -136,6 +141,13 @@ function classifyRecoveryState(state) {
   return 'warn';
 }
 
+function classifyRelayState(state) {
+  if (state === 'connected') return 'good';
+  if (state === 'connecting') return 'warn';
+  if (state === 'error' || state === 'disconnected') return 'bad';
+  return 'warn';
+}
+
 function trackTransportEvent(event) {
   if (!transportState || !event || typeof event.type !== 'string') return;
   const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
@@ -146,6 +158,39 @@ function trackTransportEvent(event) {
   }
   if (event.type === 'bridge.disconnected') {
     transportState.daemonConnected = false;
+    return;
+  }
+  if (event.type === 'bridge.relay.connecting') {
+    transportState.relayState = 'connecting';
+    return;
+  }
+  if (event.type === 'bridge.relay.connected') {
+    transportState.relayState = 'connected';
+    transportState.relayError = null;
+    return;
+  }
+  if (event.type === 'bridge.relay.disconnected') {
+    transportState.relayState = 'disconnected';
+    if (typeof payload.error === 'string' && payload.error.trim()) {
+      transportState.relayError = payload.error.trim();
+    }
+    return;
+  }
+  if (event.type === 'bridge.relay.error') {
+    transportState.relayState = 'error';
+    transportState.relayError = (typeof payload.error === 'string' && payload.error.trim())
+      ? payload.error.trim()
+      : (typeof payload.status === 'string' ? payload.status : 'relay_error');
+    return;
+  }
+  if (event.type === 'bridge.relay.dispatch') {
+    if (payload.ok === true) {
+      transportState.lastRemoteDispatchAt = Number.isFinite(event.ts) ? event.ts : Date.now();
+      transportState.lastRemoteDispatchStatus = typeof payload.status === 'string' ? payload.status : null;
+      transportState.lastRemoteDispatchTarget = typeof payload.toDevice === 'string' ? payload.toDevice : null;
+      transportState.relayState = 'connected';
+      transportState.relayError = null;
+    }
     return;
   }
 
@@ -197,9 +242,16 @@ function renderTransportHealth() {
   const wakeClass = state.wakeState === 'sleeping' ? 'warn' : 'good';
   const ackClass = classifyAckLatency(state.ackLastMs);
   const recoveryClass = classifyRecoveryState(state.recoveryState);
+  const relayClass = classifyRelayState(state.relayState);
   const lastResume = Number.isFinite(state.lastResumeAt) ? formatTimestamp(state.lastResumeAt) : '-';
   const ackLast = Number.isFinite(state.ackLastMs) ? `${state.ackLastMs}ms` : '-';
   const ackAvg = Number.isFinite(state.ackAvgMs) ? `${state.ackAvgMs}ms` : '-';
+  const lastRemoteDispatch = Number.isFinite(state.lastRemoteDispatchAt)
+    ? formatTimestamp(state.lastRemoteDispatchAt)
+    : '-';
+  const lastRemoteStatus = state.lastRemoteDispatchStatus || '-';
+  const lastRemoteTarget = state.lastRemoteDispatchTarget || '-';
+  const relayError = state.relayError || '-';
   const sparkline = buildAsciiSparkline(state.ackSamples);
 
   container.innerHTML = `
@@ -219,6 +271,30 @@ function renderTransportHealth() {
       <div class="bridge-transport-kv">
         <span class="bridge-transport-key">Last Resume</span>
         <span class="bridge-transport-value">${lastResume}</span>
+      </div>
+    </div>
+    <div class="bridge-transport-row">
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Relay</span>
+        <span class="bridge-transport-value ${relayClass}">${escapeHtml(state.relayState)}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Last Remote Dispatch</span>
+        <span class="bridge-transport-value">${lastRemoteDispatch}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Dispatch Target</span>
+        <span class="bridge-transport-value">${escapeHtml(lastRemoteTarget)}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Dispatch Status</span>
+        <span class="bridge-transport-value">${escapeHtml(lastRemoteStatus)}</span>
+      </div>
+    </div>
+    <div class="bridge-transport-row">
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Relay Error</span>
+        <span class="bridge-transport-value">${escapeHtml(relayError)}</span>
       </div>
     </div>
     <div class="bridge-transport-row">
