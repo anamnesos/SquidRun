@@ -172,6 +172,9 @@ describe('bridge tab', () => {
     const metricsEl = mockDOM.createElement('div');
     mockDOM.registerElement('bridgeMetrics', metricsEl);
 
+    const transportEl = mockDOM.createElement('div');
+    mockDOM.registerElement('bridgeTransport', transportEl);
+
     const streamEl = mockDOM.createElement('div');
     mockDOM.registerElement('bridgeStream', streamEl);
     // Add initial empty state
@@ -265,6 +268,34 @@ describe('bridge tab', () => {
       // Metrics should have been re-rendered (totalEmitted increased)
       // The exact value depends on internal events too, but it should differ
       expect(metricsEl.innerHTML).toBeTruthy();
+    });
+
+    test('bridge relay status events update transport indicator', () => {
+      bridge.setupBridgeTab(bus);
+
+      bus.emit('bridge.relay.connected', { paneId: 'system', payload: { deviceId: 'LOCAL' } });
+
+      const transportEl = mockDOM.getElementById('bridgeTransport');
+      expect(transportEl.innerHTML).toContain('Relay');
+      expect(transportEl.innerHTML).toContain('connected');
+    });
+
+    test('bridge relay dispatch events show last successful remote dispatch details', () => {
+      bridge.setupBridgeTab(bus);
+
+      bus.emit('bridge.relay.dispatch', {
+        paneId: 'system',
+        payload: {
+          ok: true,
+          status: 'bridge_delivered',
+          toDevice: 'PEER_A',
+        },
+      });
+
+      const transportEl = mockDOM.getElementById('bridgeTransport');
+      expect(transportEl.innerHTML).toContain('Last Remote Dispatch');
+      expect(transportEl.innerHTML).toContain('PEER_A');
+      expect(transportEl.innerHTML).toContain('bridge_delivered');
     });
   });
 

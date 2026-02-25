@@ -109,6 +109,7 @@ describe('bridge-client', () => {
       fromDevice: 'LOCAL_A',
       toDevice: 'PEER_2',
       fromRole: 'architect',
+      targetRole: 'architect',
       content: 'sync update',
       metadata: {
         traceId: 't-1',
@@ -250,6 +251,62 @@ describe('bridge-client', () => {
       fromDevice: 'LOCAL_A',
       toDevice: 'PEER_2',
     });
+    await expect(pending).resolves.toMatchObject({ ok: true, status: 'bridge_delivered' });
+  });
+
+  test('sendToDevice redacts sensitive outbound content and metadata before relay send', async () => {
+    const client = createBridgeClient({
+      relayUrl: 'ws://relay',
+      deviceId: 'local_a',
+      sharedSecret: 'secret',
+    });
+
+    expect(client.start()).toBe(true);
+    const socket = instances[0];
+    socket.readyState = MockWebSocket.OPEN;
+    socket.emit('open');
+    emitJson(socket, { type: 'register-ack', ok: true });
+
+    const pending = client.sendToDevice({
+      messageId: 'msg-redaction-1',
+      toDevice: 'peer_2',
+      content: [
+        'OPENAI_API_KEY=sk-1234567890abcdefghijklmnop',
+        'Authorization: Bearer supersecrettoken123',
+        'read from /Users/jk/.env.production',
+      ].join('\n'),
+      metadata: {
+        structured: {
+          type: 'fyi',
+          payload: {
+            detail: 'token=ghp_1234567890abcdefghijklmnop',
+            secret: 'dont-send-this',
+            sourcePath: 'C:\\Users\\jk\\.env',
+          },
+        },
+      },
+    });
+
+    const xsendFrame = JSON.parse(socket.sent[1]);
+    expect(xsendFrame.content).toContain('OPENAI_API_KEY=[REDACTED]');
+    expect(xsendFrame.content).toContain('Bearer [REDACTED_TOKEN]');
+    expect(xsendFrame.content).toContain('[REDACTED_PATH]');
+    expect(xsendFrame.content).not.toContain('sk-1234567890abcdefghijklmnop');
+    expect(xsendFrame.content).not.toContain('supersecrettoken123');
+
+    expect(xsendFrame.metadata.structured.payload.detail).toContain('[REDACTED]');
+    expect(xsendFrame.metadata.structured.payload.secret).toBe('[REDACTED]');
+    expect(xsendFrame.metadata.structured.payload.sourcePath).toBe('[REDACTED_PATH]');
+
+    emitJson(socket, {
+      type: 'xack',
+      messageId: 'msg-redaction-1',
+      ok: true,
+      status: 'bridge_delivered',
+      fromDevice: 'LOCAL_A',
+      toDevice: 'PEER_2',
+    });
+
     await expect(pending).resolves.toMatchObject({ ok: true, status: 'bridge_delivered' });
   });
 

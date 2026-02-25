@@ -218,6 +218,15 @@ class SquidRunApp {
     this.bridgeClient = null;
     this.bridgeEnabled = isCrossDeviceEnabled(process.env);
     this.bridgeDeviceId = getLocalDeviceId(process.env) || null;
+    this.bridgeRelayStatus = {
+      state: 'disconnected',
+      status: 'relay_not_started',
+      error: null,
+      lastUpdateAt: null,
+      lastDispatchAt: null,
+      lastDispatchStatus: null,
+      lastDispatchTarget: null,
+    };
     this.powerMonitorListeners = [];
     this.lastSystemSuspendAtMs = null;
     this.lastSystemResumeAtMs = null;
@@ -3928,6 +3937,82 @@ class SquidRunApp {
     return Boolean(relayUrl && relaySecret && deviceId);
   }
 
+  handleBridgeClientStatusUpdate(status = {}) {
+    if (!status || typeof status !== 'object') return;
+
+    const nextState = typeof status.state === 'string' ? status.state.trim().toLowerCase() : null;
+    const nextStatus = typeof status.status === 'string' ? status.status.trim() : null;
+    const nextError = typeof status.error === 'string' && status.error.trim()
+      ? status.error.trim()
+      : null;
+    const nowMs = Date.now();
+
+    if (nextState) this.bridgeRelayStatus.state = nextState;
+    if (nextStatus) this.bridgeRelayStatus.status = nextStatus;
+    this.bridgeRelayStatus.error = nextError;
+    this.bridgeRelayStatus.lastUpdateAt = nowMs;
+
+    if (status.type === 'relay.dispatch') {
+      this.bridgeRelayStatus.lastDispatchAt = nowMs;
+      this.bridgeRelayStatus.lastDispatchStatus = nextStatus || null;
+      this.bridgeRelayStatus.lastDispatchTarget = typeof status.toDevice === 'string'
+        ? status.toDevice
+        : null;
+      this.kernelBridge.emitBridgeEvent('bridge.relay.dispatch', {
+        state: this.bridgeRelayStatus.state,
+        status: nextStatus || null,
+        ok: status.ok === true,
+        accepted: status.accepted === true,
+        queued: status.queued === true,
+        verified: status.verified === true,
+        messageId: status.messageId || null,
+        fromDevice: status.fromDevice || null,
+        toDevice: status.toDevice || null,
+        error: nextError,
+        lastDispatchAt: this.bridgeRelayStatus.lastDispatchAt,
+      });
+      return;
+    }
+
+    if (status.type === 'relay.connected') {
+      this.kernelBridge.emitBridgeEvent('bridge.relay.connected', {
+        state: this.bridgeRelayStatus.state,
+        status: nextStatus || 'relay_connected',
+        deviceId: status.deviceId || this.bridgeDeviceId || null,
+      });
+      return;
+    }
+
+    if (status.type === 'relay.disconnected') {
+      this.kernelBridge.emitBridgeEvent('bridge.relay.disconnected', {
+        state: this.bridgeRelayStatus.state,
+        status: nextStatus || 'relay_disconnected',
+        deviceId: status.deviceId || this.bridgeDeviceId || null,
+        reason: status.reason || null,
+        error: nextError,
+      });
+      return;
+    }
+
+    if (status.type === 'relay.error') {
+      this.kernelBridge.emitBridgeEvent('bridge.relay.error', {
+        state: this.bridgeRelayStatus.state,
+        status: nextStatus || 'relay_error',
+        deviceId: status.deviceId || this.bridgeDeviceId || null,
+        error: nextError,
+      });
+      return;
+    }
+
+    if (status.type === 'relay.connecting') {
+      this.kernelBridge.emitBridgeEvent('bridge.relay.connecting', {
+        state: this.bridgeRelayStatus.state,
+        status: nextStatus || 'relay_connecting',
+        deviceId: status.deviceId || this.bridgeDeviceId || null,
+      });
+    }
+  }
+
   startBridgeClient() {
     if (!this.bridgeEnabled) return false;
     if (!this.isBridgeConfigured()) {
@@ -3945,6 +4030,7 @@ class SquidRunApp {
       deviceId,
       sharedSecret: relaySecret,
       onMessage: (payload = {}) => this.handleBridgeInboundMessage(payload),
+      onStatus: (status = {}) => this.handleBridgeClientStatusUpdate(status),
     });
     const started = this.bridgeClient.start();
     if (started) {
@@ -3985,6 +4071,11 @@ class SquidRunApp {
       };
     }
     if (!this.bridgeEnabled) {
+      this.handleBridgeClientStatusUpdate({
+        type: 'relay.disconnected',
+        state: 'disconnected',
+        status: 'bridge_disabled',
+      });
       return {
         ok: false,
         accepted: false,
@@ -3998,6 +4089,11 @@ class SquidRunApp {
       this.startBridgeClient();
     }
     if (!this.bridgeClient || !this.bridgeClient.isReady()) {
+      this.handleBridgeClientStatusUpdate({
+        type: 'relay.disconnected',
+        state: 'disconnected',
+        status: 'bridge_unavailable',
+      });
       return {
         ok: false,
         accepted: false,
@@ -4020,6 +4116,7 @@ class SquidRunApp {
     const bridgeResult = await this.bridgeClient.sendToDevice({
       messageId: messageId || `bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       toDevice,
+      targetRole: 'architect',
       content: body,
       fromRole,
       metadata: normalizedBridgeMetadata,
