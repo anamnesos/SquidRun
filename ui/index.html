@@ -338,6 +338,54 @@
             <button class="btn btn-sm" id="sendExternalTestBtn" title="Send a test external notification">Send Test Notification</button>
           </div>
         </div>
+
+        <div class="settings-section settings-section-wide">
+          <div class="settings-section-title">Devices</div>
+          <p class="settings-section-description">Pair this workspace to another device and monitor cross-device connectivity.</p>
+
+          <div class="settings-subgrid settings-two-col">
+            <div class="setting-field device-card">
+              <span class="setting-label">Generate Code</span>
+              <span class="setting-description">Create a 6-character code valid for 90 seconds.</span>
+              <button class="btn btn-sm device-pairing-action" id="pairingInitBtn" type="button">Generate Pairing Code</button>
+              <div class="device-pairing-code" id="pairingCodeDisplay">------</div>
+              <div class="device-pairing-timer" id="pairingCountdown">Expires in --s</div>
+            </div>
+
+            <div class="setting-field device-card">
+              <label class="setting-label" for="pairingJoinCodeInput">Enter Code</label>
+              <span class="setting-description">Paste the code from the other device and join.</span>
+              <input type="text" id="pairingJoinCodeInput" class="settings-input device-pairing-input" maxlength="6" placeholder="AB3K9X" spellcheck="false" autocomplete="off">
+              <button class="btn btn-sm device-pairing-action" id="pairingJoinBtn" type="button">Join Device</button>
+            </div>
+          </div>
+
+          <div class="device-pairing-status" id="pairingStatus" aria-live="polite">Pairing idle.</div>
+
+          <div class="setting-field device-list-wrap">
+            <span class="setting-label">Connected Devices</span>
+            <span class="setting-description">Online/offline status from relay discovery with pairing metadata.</span>
+            <div class="device-list-controls">
+              <button class="btn btn-sm" id="refreshDevicesBtn" type="button">Refresh Devices</button>
+            </div>
+            <div class="device-list-table-wrap">
+              <table class="device-list-table" id="pairedDevicesTable">
+                <thead>
+                  <tr>
+                    <th>Device</th>
+                    <th>Status</th>
+                    <th>Paired At</th>
+                  </tr>
+                </thead>
+                <tbody id="pairedDevicesTableBody">
+                  <tr>
+                    <td colspan="3" class="device-list-empty">No devices yet.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>

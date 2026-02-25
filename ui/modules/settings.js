@@ -3,7 +3,7 @@
  * Handles application settings panel and configuration
  */
 
-const { invokeBridge } = require('./renderer-bridge');
+const { invokeBridge, onBridge } = require('./renderer-bridge');
 const log = require('./logger');
 
 // Current settings state
@@ -14,6 +14,9 @@ let onConnectionStatusUpdate = null;
 
 // Callback when settings finish loading
 let onSettingsLoaded = null;
+let pairingStateUnsubscribe = null;
+let pairingCountdownTimer = null;
+let pairingStateCache = null;
 
 function setConnectionStatusCallback(cb) {
   onConnectionStatusUpdate = cb;
@@ -27,6 +30,127 @@ function updateConnectionStatus(status) {
   if (onConnectionStatusUpdate) {
     onConnectionStatusUpdate(status);
   }
+}
+
+function stopPairingCountdownTimer() {
+  if (pairingCountdownTimer) {
+    clearInterval(pairingCountdownTimer);
+    pairingCountdownTimer = null;
+  }
+}
+
+function formatIsoDate(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString();
+}
+
+function updatePairingCountdown(expiresAt) {
+  const el = document.getElementById('pairingCountdown');
+  if (!el) return;
+  if (!Number.isFinite(expiresAt)) {
+    el.textContent = 'Expires in --s';
+    return;
+  }
+  const remainingMs = Math.max(0, Math.floor(expiresAt - Date.now()));
+  const remainingSec = Math.floor(remainingMs / 1000);
+  el.textContent = `Expires in ${remainingSec}s`;
+}
+
+function renderPairingState(state = {}) {
+  const statusEl = document.getElementById('pairingStatus');
+  const codeEl = document.getElementById('pairingCodeDisplay');
+  const joinInput = document.getElementById('pairingJoinCodeInput');
+
+  pairingStateCache = state && typeof state === 'object' ? state : {};
+  const statusText = String(pairingStateCache.status || 'idle');
+  const error = pairingStateCache.error || null;
+  const code = String(pairingStateCache.code || '').trim();
+  const expiresAt = Number.isFinite(pairingStateCache.expiresAt) ? pairingStateCache.expiresAt : null;
+
+  if (statusEl) {
+    statusEl.classList.remove('error', 'success');
+    if (error) {
+      statusEl.classList.add('error');
+      statusEl.textContent = `Pairing error: ${error}`;
+    } else if (statusText === 'pairing_complete') {
+      statusEl.classList.add('success');
+      const pairedDevice = pairingStateCache?.paired?.paired_device_id || pairingStateCache?.paired?.device_id || 'device';
+      statusEl.textContent = `Pairing complete with ${pairedDevice}.`;
+    } else if (statusText === 'pairing_init_ok') {
+      statusEl.textContent = 'Code generated. Share it with the other device.';
+    } else if (statusText === 'pairing_join_pending' || statusText === 'pairing_init_pending') {
+      statusEl.textContent = 'Pairing in progress...';
+    } else {
+      statusEl.textContent = 'Pairing idle.';
+    }
+  }
+
+  if (codeEl) {
+    codeEl.textContent = code || '------';
+  }
+
+  if (joinInput && statusText === 'pairing_complete') {
+    joinInput.value = '';
+  }
+
+  stopPairingCountdownTimer();
+  updatePairingCountdown(expiresAt);
+  if (expiresAt && expiresAt > Date.now()) {
+    pairingCountdownTimer = setInterval(() => {
+      updatePairingCountdown(expiresAt);
+      if (Date.now() >= expiresAt) {
+        stopPairingCountdownTimer();
+      }
+    }, 250);
+  }
+}
+
+function renderConnectedDevices(devices = []) {
+  const tbody = document.getElementById('pairedDevicesTableBody');
+  if (!tbody) return;
+  const rows = Array.isArray(devices) ? devices : [];
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" class="device-list-empty">No devices yet.</td></tr>';
+    return;
+  }
+  const html = rows.map((device) => {
+    const id = String(device?.device_id || device?.name || 'UNKNOWN');
+    const online = device?.online === true;
+    const pairedAt = formatIsoDate(device?.paired_at);
+    return `
+      <tr>
+        <td>${id}</td>
+        <td><span class="device-status ${online ? 'online' : 'offline'}">${online ? 'Online' : 'Offline'}</span></td>
+        <td>${pairedAt}</td>
+      </tr>
+    `;
+  }).join('');
+  tbody.innerHTML = html;
+}
+
+async function refreshBridgeDevices({ refresh = true } = {}) {
+  try {
+    const result = await invokeBridge('bridge:get-devices', { refresh });
+    renderConnectedDevices(Array.isArray(result?.devices) ? result.devices : []);
+  } catch (err) {
+    log.warn('Settings', 'Failed to load bridge devices', err?.message || err);
+    renderConnectedDevices([]);
+  }
+}
+
+async function refreshPairingState() {
+  try {
+    const result = await invokeBridge('bridge:get-pairing-state');
+    if (result?.ok && result?.state) {
+      renderPairingState(result.state);
+      return;
+    }
+  } catch (err) {
+    log.warn('Settings', 'Failed to load pairing state', err?.message || err);
+  }
+  renderPairingState({});
 }
 
 // Load and apply settings
@@ -162,6 +286,10 @@ function setupSettings() {
     settingsBtn.addEventListener('click', () => {
       settingsPanel.classList.toggle('open');
       settingsBtn.classList.toggle('active');
+      if (settingsPanel.classList.contains('open')) {
+        refreshPairingState();
+        refreshBridgeDevices({ refresh: true });
+      }
     });
   }
 
@@ -257,8 +385,110 @@ function setupSettings() {
     });
   }
 
+  const pairingInitBtn = document.getElementById('pairingInitBtn');
+  if (pairingInitBtn) {
+    pairingInitBtn.addEventListener('click', async () => {
+      pairingInitBtn.disabled = true;
+      try {
+        const result = await invokeBridge('bridge:pairing-init', { timeoutMs: 12000 });
+        if (result?.ok) {
+          renderPairingState({
+            status: result.status,
+            code: result.code,
+            expiresAt: result.expiresAt,
+            error: null,
+          });
+        } else {
+          renderPairingState({
+            status: result?.status || 'pairing_init_failed',
+            error: result?.error || 'Failed to generate pairing code',
+            reason: result?.reason || null,
+          });
+        }
+      } catch (err) {
+        renderPairingState({
+          status: 'pairing_init_failed',
+          error: err?.message || 'Failed to generate pairing code',
+        });
+      } finally {
+        pairingInitBtn.disabled = false;
+      }
+    });
+  }
+
+  const pairingJoinBtn = document.getElementById('pairingJoinBtn');
+  const pairingJoinCodeInput = document.getElementById('pairingJoinCodeInput');
+  if (pairingJoinBtn && pairingJoinCodeInput) {
+    const runJoin = async () => {
+      const code = String(pairingJoinCodeInput.value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+      pairingJoinCodeInput.value = code;
+      pairingJoinBtn.disabled = true;
+      try {
+        const result = await invokeBridge('bridge:pairing-join', { code, timeoutMs: 12000 });
+        if (result?.ok) {
+          renderPairingState({
+            status: result.status || 'pairing_complete',
+            error: null,
+            paired: result.paired || null,
+          });
+          refreshBridgeDevices({ refresh: true });
+        } else {
+          renderPairingState({
+            status: result?.status || 'pairing_join_failed',
+            error: result?.error || 'Pairing join failed',
+            reason: result?.reason || null,
+          });
+        }
+      } catch (err) {
+        renderPairingState({
+          status: 'pairing_join_failed',
+          error: err?.message || 'Pairing join failed',
+        });
+      } finally {
+        pairingJoinBtn.disabled = false;
+      }
+    };
+
+    pairingJoinBtn.addEventListener('click', runJoin);
+    pairingJoinCodeInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        runJoin();
+      }
+    });
+    pairingJoinCodeInput.addEventListener('input', () => {
+      pairingJoinCodeInput.value = String(pairingJoinCodeInput.value || '')
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '')
+        .slice(0, 6);
+    });
+  }
+
+  const refreshDevicesBtn = document.getElementById('refreshDevicesBtn');
+  if (refreshDevicesBtn) {
+    refreshDevicesBtn.addEventListener('click', async () => {
+      refreshDevicesBtn.disabled = true;
+      try {
+        await refreshBridgeDevices({ refresh: true });
+      } finally {
+        refreshDevicesBtn.disabled = false;
+      }
+    });
+  }
+
+  if (!pairingStateUnsubscribe) {
+    pairingStateUnsubscribe = onBridge('bridge:pairing-state', (_event, state) => {
+      renderPairingState(state || {});
+      if (state?.status === 'pairing_complete') {
+        refreshBridgeDevices({ refresh: true });
+      }
+    });
+  }
+
   // Load settings
   loadSettings();
+  refreshPairingState();
+  refreshBridgeDevices({ refresh: false });
 }
 
 // Check if should auto-spawn agents

@@ -80,6 +80,10 @@ const { executePaneControlAction } = require('./pane-control-service');
 const { captureScreenshot } = require('../ipc/screenshot-handlers');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
 const { createBufferedFileWriter } = require('../buffered-file-writer');
+const {
+  readPairedConfig,
+  writePairedConfig,
+} = require('./device-pairing-store');
 const IS_DARWIN = process.platform === 'darwin';
 const PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS = IS_DARWIN ? 900 : 1500;
 const APP_IDLE_THRESHOLD_MS = 30000;
@@ -216,8 +220,9 @@ class SquidRunApp {
       sender: null,
     };
     this.bridgeClient = null;
-    this.bridgeEnabled = isCrossDeviceEnabled(process.env);
-    this.bridgeDeviceId = getLocalDeviceId(process.env) || null;
+    this.bridgeRuntimeConfig = this.resolveBridgeRuntimeConfig();
+    this.bridgeEnabled = Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env);
+    this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getLocalDeviceId(process.env) || null;
     this.bridgeRelayStatus = {
       state: 'disconnected',
       status: 'relay_not_started',
@@ -226,6 +231,16 @@ class SquidRunApp {
       lastDispatchAt: null,
       lastDispatchStatus: null,
       lastDispatchTarget: null,
+    };
+    this.bridgePairingState = {
+      mode: null,
+      code: null,
+      expiresAt: null,
+      status: 'idle',
+      error: null,
+      reason: null,
+      paired: null,
+      updatedAt: Date.now(),
     };
     this.powerMonitorListeners = [];
     this.lastSystemSuspendAtMs = null;
@@ -2558,6 +2573,10 @@ class SquidRunApp {
       clearActivityLog: () => this.activity.clearActivityLog(),
       saveActivityLog: () => this.activity.saveActivityLog(),
       firmwareManager: this.firmwareManager,
+      getBridgeDevices: (options = {}) => this.getBridgeDevices(options),
+      getBridgePairingState: () => this.getBridgePairingState(),
+      initiateBridgePairing: (options = {}) => this.initiateBridgePairing(options),
+      joinBridgePairing: (payload = {}) => this.joinBridgePairing(payload),
       startRuntimeLifecycle: (reason) => this.startRuntimeServices(reason || 'ipc-start'),
       stopRuntimeLifecycle: (reason) => this.stopRuntimeServices(reason || 'ipc-stop'),
       getRuntimeLifecycleState: () => this.runtimeLifecycleState,
@@ -3938,12 +3957,112 @@ class SquidRunApp {
     }
   }
 
+  resolveEnvBridgeRuntimeConfig() {
+    if (!isCrossDeviceEnabled(process.env)) return null;
+    const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim();
+    const sharedSecret = String(process.env.SQUIDRUN_RELAY_SECRET || '').trim();
+    const deviceId = getLocalDeviceId(process.env);
+    if (!relayUrl || !sharedSecret || !deviceId) return null;
+    return {
+      source: 'env',
+      relayUrl,
+      sharedSecret,
+      deviceId,
+      pairedDeviceId: null,
+      pairedAt: null,
+    };
+  }
+
+  resolveBridgeRuntimeConfig() {
+    const pairedResult = readPairedConfig();
+    if (pairedResult?.ok && pairedResult.config) {
+      return {
+        source: 'devices.json',
+        relayUrl: pairedResult.config.relay_url,
+        sharedSecret: pairedResult.config.shared_secret,
+        deviceId: pairedResult.config.device_id,
+        pairedDeviceId: pairedResult.config.paired_device_id || null,
+        pairedAt: pairedResult.config.paired_at || null,
+      };
+    }
+    if (pairedResult?.ok === false) {
+      log.warn('Bridge', `Failed to read devices.json: ${pairedResult.error || pairedResult.reason || 'unknown'}`);
+    }
+    return this.resolveEnvBridgeRuntimeConfig();
+  }
+
+  refreshBridgeRuntimeConfig() {
+    this.bridgeRuntimeConfig = this.resolveBridgeRuntimeConfig();
+    this.bridgeEnabled = Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env);
+    this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getLocalDeviceId(process.env) || null;
+    return this.bridgeRuntimeConfig;
+  }
+
+  persistBridgePairingConfig(paired = {}) {
+    const writeResult = writePairedConfig({
+      device_id: paired.device_id,
+      shared_secret: paired.shared_secret,
+      relay_url: paired.relay_url,
+      paired_device_id: paired.paired_device_id,
+      paired_at: paired.paired_at || new Date().toISOString(),
+    });
+    if (!writeResult?.ok) {
+      return {
+        ok: false,
+        reason: writeResult?.reason || 'devices_write_failed',
+        error: writeResult?.error || 'Failed writing devices.json',
+      };
+    }
+    this.refreshBridgeRuntimeConfig();
+    return {
+      ok: true,
+      config: this.bridgeRuntimeConfig,
+      path: writeResult.path,
+    };
+  }
+
+  handleBridgePairingUpdate(update = {}) {
+    if (!update || typeof update !== 'object') return;
+    if (update.type === 'pairing-complete' && update.ok === true && update.paired) {
+      const persistResult = this.persistBridgePairingConfig(update.paired);
+      if (!persistResult.ok) {
+        log.warn('Bridge', `Failed persisting pairing config: ${persistResult.error || persistResult.reason || 'unknown'}`);
+      }
+    }
+    this.emitBridgePairingStateUpdate({
+      mode: update.type === 'pairing-init-ack' ? 'generate' : (update.type === 'pairing-complete' ? 'join' : this.bridgePairingState.mode),
+      code: update.code || this.bridgePairingState.code,
+      expiresAt: Number.isFinite(update.expiresAt) ? update.expiresAt : this.bridgePairingState.expiresAt,
+      status: update.status || this.bridgePairingState.status,
+      error: update.error || null,
+      reason: update.reason || null,
+      paired: update.paired || this.bridgePairingState.paired,
+    });
+  }
+
+  getBridgePairingState() {
+    return {
+      ...this.bridgePairingState,
+    };
+  }
+
+  emitBridgePairingStateUpdate(patch = {}) {
+    const next = {
+      ...this.bridgePairingState,
+      ...(patch && typeof patch === 'object' ? patch : {}),
+      updatedAt: Date.now(),
+    };
+    this.bridgePairingState = next;
+    if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+      this.ctx.mainWindow.webContents.send('bridge:pairing-state', next);
+    }
+    return next;
+  }
+
   isBridgeConfigured() {
     if (this.bridgeEnabled !== true) return false;
-    const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim();
-    const relaySecret = String(process.env.SQUIDRUN_RELAY_SECRET || '').trim();
-    const deviceId = getLocalDeviceId(process.env);
-    return Boolean(relayUrl && relaySecret && deviceId);
+    const config = this.bridgeRuntimeConfig || this.refreshBridgeRuntimeConfig();
+    return Boolean(config?.relayUrl && config?.sharedSecret && config?.deviceId);
   }
 
   handleBridgeClientStatusUpdate(status = {}) {
@@ -4023,16 +4142,17 @@ class SquidRunApp {
   }
 
   startBridgeClient() {
+    this.refreshBridgeRuntimeConfig();
     if (!this.bridgeEnabled) return false;
     if (!this.isBridgeConfigured()) {
-      log.warn('Bridge', 'Cross-device bridge enabled but missing SQUIDRUN_DEVICE_ID / SQUIDRUN_RELAY_URL / SQUIDRUN_RELAY_SECRET');
+      log.warn('Bridge', 'Cross-device bridge enabled but missing devices.json pairing config and env fallback (SQUIDRUN_DEVICE_ID / SQUIDRUN_RELAY_URL / SQUIDRUN_RELAY_SECRET)');
       return false;
     }
     if (this.bridgeClient) return true;
 
-    const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim();
-    const relaySecret = String(process.env.SQUIDRUN_RELAY_SECRET || '').trim();
-    const deviceId = getLocalDeviceId(process.env);
+    const relayUrl = String(this.bridgeRuntimeConfig?.relayUrl || '').trim();
+    const relaySecret = String(this.bridgeRuntimeConfig?.sharedSecret || '').trim();
+    const deviceId = String(this.bridgeRuntimeConfig?.deviceId || '').trim();
     this.bridgeDeviceId = deviceId || null;
     this.bridgeClient = createBridgeClient({
       relayUrl,
@@ -4040,6 +4160,7 @@ class SquidRunApp {
       sharedSecret: relaySecret,
       onMessage: (payload = {}) => this.handleBridgeInboundMessage(payload),
       onStatus: (status = {}) => this.handleBridgeClientStatusUpdate(status),
+      onPairing: (update = {}) => this.handleBridgePairingUpdate(update),
     });
     const started = this.bridgeClient.start();
     if (started) {
@@ -4092,6 +4213,142 @@ class SquidRunApp {
       error: result?.error || null,
       devices: Array.isArray(result?.devices) ? result.devices : [],
       fetchedAt: Number.isFinite(result?.fetchedAt) ? result.fetchedAt : Date.now(),
+    };
+  }
+
+  async initiateBridgePairing({ timeoutMs = 12000 } = {}) {
+    this.emitBridgePairingStateUpdate({
+      mode: 'generate',
+      status: 'pairing_init_pending',
+      error: null,
+      reason: null,
+    });
+    if (!this.bridgeEnabled) {
+      return {
+        ok: false,
+        status: 'bridge_disabled',
+        error: 'Cross-device bridge is disabled',
+      };
+    }
+    if (!this.bridgeClient) {
+      this.startBridgeClient();
+    }
+    const pairingTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 12000;
+    const readyDeadline = Date.now() + Math.max(500, pairingTimeoutMs);
+    while (Date.now() < readyDeadline) {
+      if (this.bridgeClient && this.bridgeClient.isReady()) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!this.bridgeClient || !this.bridgeClient.isReady()) {
+      return {
+        ok: false,
+        status: 'bridge_unavailable',
+        error: 'Relay unavailable',
+      };
+    }
+    const result = await this.bridgeClient.initiatePairing({ timeoutMs: pairingTimeoutMs });
+    if (result?.ok !== true) {
+      this.emitBridgePairingStateUpdate({
+        mode: 'generate',
+        status: result?.status || 'pairing_init_failed',
+        error: result?.error || 'pairing_init_failed',
+        reason: result?.reason || null,
+      });
+    }
+    return result;
+  }
+
+  async joinBridgePairing({ code, timeoutMs = 12000 } = {}) {
+    this.emitBridgePairingStateUpdate({
+      mode: 'join',
+      status: 'pairing_join_pending',
+      error: null,
+      reason: null,
+    });
+    if (!this.bridgeEnabled) {
+      return {
+        ok: false,
+        status: 'bridge_disabled',
+        error: 'Cross-device bridge is disabled',
+      };
+    }
+    if (!this.bridgeClient) {
+      this.startBridgeClient();
+    }
+    const pairingTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 12000;
+    const readyDeadline = Date.now() + Math.max(500, pairingTimeoutMs);
+    while (Date.now() < readyDeadline) {
+      if (this.bridgeClient && this.bridgeClient.isReady()) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!this.bridgeClient || !this.bridgeClient.isReady()) {
+      return {
+        ok: false,
+        status: 'bridge_unavailable',
+        error: 'Relay unavailable',
+      };
+    }
+    const result = await this.bridgeClient.joinPairingCode(code, { timeoutMs: pairingTimeoutMs });
+    if (result?.ok === true && result?.paired) {
+      this.persistBridgePairingConfig(result.paired);
+    } else {
+      this.emitBridgePairingStateUpdate({
+        mode: 'join',
+        status: result?.status || 'pairing_join_failed',
+        error: result?.error || 'pairing_join_failed',
+        reason: result?.reason || null,
+      });
+    }
+    return result;
+  }
+
+  async getBridgeDevices({ refresh = true, timeoutMs = 5000 } = {}) {
+    const devices = [];
+    const byId = new Map();
+
+    if (refresh) {
+      const discovery = await this.discoverBridgeDevices({ timeoutMs });
+      for (const entry of (Array.isArray(discovery?.devices) ? discovery.devices : [])) {
+        const deviceId = String(entry?.device_id || '').trim().toUpperCase();
+        if (!deviceId) continue;
+        const normalized = {
+          device_id: deviceId,
+          name: deviceId,
+          online: true,
+          paired_at: null,
+          connected_since: entry?.connected_since || null,
+          roles: Array.isArray(entry?.roles) ? entry.roles : [],
+        };
+        byId.set(deviceId, normalized);
+      }
+    }
+
+    const runtimeConfig = this.bridgeRuntimeConfig || this.refreshBridgeRuntimeConfig();
+    if (runtimeConfig?.pairedDeviceId) {
+      const pairedId = String(runtimeConfig.pairedDeviceId).trim().toUpperCase();
+      const existing = byId.get(pairedId);
+      if (existing) {
+        existing.paired_at = runtimeConfig.pairedAt || null;
+      } else {
+        byId.set(pairedId, {
+          device_id: pairedId,
+          name: pairedId,
+          online: false,
+          paired_at: runtimeConfig.pairedAt || null,
+          connected_since: null,
+          roles: [],
+        });
+      }
+    }
+
+    for (const value of byId.values()) {
+      devices.push(value);
+    }
+    devices.sort((a, b) => String(a.device_id || '').localeCompare(String(b.device_id || '')));
+    return {
+      ok: true,
+      devices,
+      fetchedAt: Date.now(),
     };
   }
 
