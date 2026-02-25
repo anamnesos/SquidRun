@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+const crypto = require('crypto');
 const { WebSocketServer, WebSocket } = require('ws');
 
 const PORT = Number.parseInt(process.env.PORT || '8788', 10);
@@ -16,6 +17,15 @@ const RELAY_DEVICE_ALLOWLIST_RAW = String(
 ).trim();
 const RELAY_ALLOWED_TARGET_ROLE = 'architect';
 const PENDING_TTL_MS = Number.parseInt(process.env.RELAY_PENDING_TTL_MS || '20000', 10);
+const PAIRING_CODE_TTL_MS = 90 * 1000;
+const PAIRING_MAX_FAILED_ATTEMPTS = 5;
+const PAIRING_CODE_LENGTH = 6;
+const PAIRING_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const RELAY_PUBLIC_URL = String(
+  process.env.RELAY_PUBLIC_URL
+  || process.env.SQUIDRUN_RELAY_URL
+  || ''
+).trim();
 const STRUCTURED_BRIDGE_TYPE_ALIASES = Object.freeze({
   fyi: 'FYI',
   conflictcheck: 'ConflictCheck',
@@ -172,12 +182,39 @@ function sendJson(ws, payload = {}) {
   }
 }
 
+function resolveRelayUrl() {
+  if (RELAY_PUBLIC_URL) return RELAY_PUBLIC_URL;
+  const railwayDomain = asText(process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL);
+  if (railwayDomain) {
+    return `wss://${railwayDomain}`;
+  }
+  return `ws://${HOST}:${PORT}`;
+}
+
+function generatePairingCode() {
+  let code = '';
+  const alphabetLength = PAIRING_CODE_ALPHABET.length;
+  for (let i = 0; i < PAIRING_CODE_LENGTH; i += 1) {
+    const byte = crypto.randomBytes(1)[0];
+    code += PAIRING_CODE_ALPHABET[byte % alphabetLength];
+  }
+  return code;
+}
+
+function generatePairingSharedSecret() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
 const wss = new WebSocketServer({ host: HOST, port: PORT });
-const clients = new Map(); // ws -> { id, deviceId, registered, roles, connectedSince }
+const clients = new Map(); // ws -> { id, deviceId, registered, roles, connectedSince, remoteAddress }
 const socketsByDevice = new Map(); // deviceId -> ws
 const connectedDevices = new Map(); // deviceId -> { deviceId, roles, connectedSince, ws }
 const pendingByMessageId = new Map(); // messageId -> { senderWs, fromDevice, toDevice, createdAt, timer }
+const pairingByCode = new Map(); // code -> { code, initiatorWs, initiatorDeviceId, createdAt, expiresAt, failedAttempts, failedAttemptsBySource, timer }
+const pairingCodeByDevice = new Map(); // deviceId -> code
+const pairingFailedBySource = new Map(); // source -> failedCount
 const allowlistedDevices = parseAllowlistedDevices(RELAY_DEVICE_ALLOWLIST_RAW);
+const RELAY_URL_FOR_PAIRING = resolveRelayUrl();
 let clientSeq = 0;
 
 function listConnectedDeviceIds() {
@@ -197,6 +234,58 @@ function clearPending(messageId) {
   pendingByMessageId.delete(messageId);
   if (pending.timer) clearTimeout(pending.timer);
   return pending;
+}
+
+function getSocketSource(ws) {
+  const info = clients.get(ws);
+  const remoteAddress = asText(info?.remoteAddress);
+  if (remoteAddress) return `ip:${remoteAddress}`;
+  return `socket:${Number(info?.id) || 0}`;
+}
+
+function clearPairingCode(code) {
+  const entry = pairingByCode.get(code);
+  if (!entry) return null;
+  pairingByCode.delete(code);
+  if (entry.timer) clearTimeout(entry.timer);
+  if (entry.initiatorDeviceId && pairingCodeByDevice.get(entry.initiatorDeviceId) === code) {
+    pairingCodeByDevice.delete(entry.initiatorDeviceId);
+  }
+  return entry;
+}
+
+function cleanupExpiredPairingCodes() {
+  const now = nowMs();
+  for (const [code, entry] of pairingByCode.entries()) {
+    if (Number(entry?.expiresAt) > now) continue;
+    clearPairingCode(code);
+  }
+}
+
+function sendPairingFailed(ws, reason) {
+  const normalizedReason = (reason === 'expired' || reason === 'rate_limited')
+    ? reason
+    : 'invalid_code';
+  sendJson(ws, {
+    type: 'pairing-failed',
+    reason: normalizedReason,
+  });
+}
+
+function recordPairingFailureForSource(ws) {
+  const source = getSocketSource(ws);
+  pairingFailedBySource.set(source, (pairingFailedBySource.get(source) || 0) + 1);
+}
+
+function recordPairingFailure(entry, ws) {
+  if (!entry || typeof entry !== 'object') return false;
+  const source = getSocketSource(ws);
+  const perSource = entry.failedAttemptsBySource || new Map();
+  entry.failedAttemptsBySource = perSource;
+  perSource.set(source, (perSource.get(source) || 0) + 1);
+  entry.failedAttempts = Number(entry.failedAttempts || 0) + 1;
+  recordPairingFailureForSource(ws);
+  return entry.failedAttempts >= PAIRING_MAX_FAILED_ATTEMPTS;
 }
 
 function createPendingAckTimeout(messageId) {
@@ -222,6 +311,10 @@ function evictClient(ws, reason = 'disconnect') {
   const info = clients.get(ws);
   if (!info) return;
 
+  if (info.deviceId) {
+    const code = pairingCodeByDevice.get(info.deviceId);
+    if (code) clearPairingCode(code);
+  }
   clients.delete(ws);
   if (info.deviceId && socketsByDevice.get(info.deviceId) === ws) {
     socketsByDevice.delete(info.deviceId);
@@ -537,6 +630,139 @@ function handleDiscovery(ws, frame) {
   });
 }
 
+function handlePairingInit(ws) {
+  cleanupExpiredPairingCodes();
+  const sender = clients.get(ws);
+  if (!sender?.registered || !sender.deviceId) {
+    console.log('[relay] pairing-init failed device=unregistered reason=register_first');
+    sendPairingFailed(ws, 'invalid_code');
+    return;
+  }
+
+  const previousCode = pairingCodeByDevice.get(sender.deviceId);
+  if (previousCode) clearPairingCode(previousCode);
+
+  let code = '';
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const candidate = generatePairingCode();
+    if (!pairingByCode.has(candidate)) {
+      code = candidate;
+      break;
+    }
+  }
+  if (!code) {
+    console.log(`[relay] pairing-init failed device=${sender.deviceId} reason=code_generation_failed`);
+    sendPairingFailed(ws, 'rate_limited');
+    return;
+  }
+
+  const createdAt = nowMs();
+  const expiresAt = createdAt + PAIRING_CODE_TTL_MS;
+  const timer = setTimeout(() => {
+    clearPairingCode(code);
+  }, PAIRING_CODE_TTL_MS + 100);
+  const entry = {
+    code,
+    initiatorWs: ws,
+    initiatorDeviceId: sender.deviceId,
+    createdAt,
+    expiresAt,
+    failedAttempts: 0,
+    failedAttemptsBySource: new Map(),
+    timer,
+  };
+  pairingByCode.set(code, entry);
+  pairingCodeByDevice.set(sender.deviceId, code);
+
+  console.log(`[relay] pairing-init ok device=${sender.deviceId} code=${code} expiresAt=${expiresAt}`);
+  sendJson(ws, {
+    type: 'pairing-init-ack',
+    code,
+    expires_at: expiresAt,
+  });
+}
+
+function handlePairingJoin(ws, frame) {
+  cleanupExpiredPairingCodes();
+  const sender = clients.get(ws);
+  if (!sender?.registered || !sender.deviceId) {
+    console.log('[relay] pairing-join failed device=unregistered reason=register_first');
+    sendPairingFailed(ws, 'invalid_code');
+    return;
+  }
+
+  const code = asText(frame.code).toUpperCase();
+  if (!code) {
+    recordPairingFailureForSource(ws);
+    sendPairingFailed(ws, 'invalid_code');
+    return;
+  }
+
+  const entry = pairingByCode.get(code);
+  if (!entry) {
+    recordPairingFailureForSource(ws);
+    console.log(`[relay] pairing-join failed device=${sender.deviceId} code=${code} reason=invalid_code`);
+    sendPairingFailed(ws, 'invalid_code');
+    return;
+  }
+
+  if (Number(entry.expiresAt) <= nowMs()) {
+    clearPairingCode(code);
+    console.log(`[relay] pairing-join failed device=${sender.deviceId} code=${code} reason=expired`);
+    sendPairingFailed(ws, 'expired');
+    return;
+  }
+
+  if (Number(entry.failedAttempts || 0) >= PAIRING_MAX_FAILED_ATTEMPTS) {
+    clearPairingCode(code);
+    console.log(`[relay] pairing-join failed device=${sender.deviceId} code=${code} reason=rate_limited`);
+    sendPairingFailed(ws, 'rate_limited');
+    return;
+  }
+
+  const initiatorInfo = clients.get(entry.initiatorWs);
+  const initiatorSocketOpen = Boolean(entry.initiatorWs && entry.initiatorWs.readyState === WebSocket.OPEN);
+  if (!initiatorInfo?.registered || !initiatorInfo.deviceId || !initiatorSocketOpen) {
+    clearPairingCode(code);
+    console.log(`[relay] pairing-join failed device=${sender.deviceId} code=${code} reason=invalid_initiator`);
+    sendPairingFailed(ws, 'invalid_code');
+    return;
+  }
+
+  if (sender.deviceId === initiatorInfo.deviceId) {
+    const rateLimited = recordPairingFailure(entry, ws);
+    if (rateLimited) clearPairingCode(code);
+    console.log(`[relay] pairing-join failed device=${sender.deviceId} code=${code} reason=${rateLimited ? 'rate_limited' : 'same_device'}`);
+    sendPairingFailed(ws, rateLimited ? 'rate_limited' : 'invalid_code');
+    return;
+  }
+
+  const sharedSecret = generatePairingSharedSecret();
+  const initiatorPayload = {
+    type: 'pairing-complete',
+    device_id: initiatorInfo.deviceId,
+    shared_secret: sharedSecret,
+    relay_url: RELAY_URL_FOR_PAIRING,
+    paired_device_id: sender.deviceId,
+  };
+  const joinerPayload = {
+    type: 'pairing-complete',
+    device_id: sender.deviceId,
+    shared_secret: sharedSecret,
+    relay_url: RELAY_URL_FOR_PAIRING,
+    paired_device_id: initiatorInfo.deviceId,
+  };
+
+  const sentInitiator = sendJson(entry.initiatorWs, initiatorPayload);
+  const sentJoiner = sendJson(ws, joinerPayload);
+  clearPairingCode(code);
+  if (!sentInitiator || !sentJoiner) {
+    console.log(`[relay] pairing-join failed device=${sender.deviceId} code=${code} reason=delivery_failed`);
+    return;
+  }
+  console.log(`[relay] pairing-complete initiator=${initiatorInfo.deviceId} joiner=${sender.deviceId}`);
+}
+
 wss.on('connection', (ws, req) => {
   clientSeq += 1;
   clients.set(ws, {
@@ -545,6 +771,7 @@ wss.on('connection', (ws, req) => {
     registered: false,
     roles: [],
     connectedSince: null,
+    remoteAddress: asText(req.socket.remoteAddress),
   });
   console.log(`[relay] client #${clientSeq} connected from ${req.socket.remoteAddress}`);
 
@@ -569,6 +796,14 @@ wss.on('connection', (ws, req) => {
     }
     if (frame.type === 'xdiscovery') {
       handleDiscovery(ws, frame);
+      return;
+    }
+    if (frame.type === 'pairing-init') {
+      handlePairingInit(ws, frame);
+      return;
+    }
+    if (frame.type === 'pairing-join') {
+      handlePairingJoin(ws, frame);
       return;
     }
     if (frame.type === 'ping') {
