@@ -9,6 +9,12 @@ const RELAY_SHARED_SECRET = String(
   || process.env.SQUIDRUN_RELAY_SECRET
   || ''
 ).trim();
+const RELAY_DEVICE_ALLOWLIST_RAW = String(
+  process.env.RELAY_DEVICE_ALLOWLIST
+  || process.env.SQUIDRUN_RELAY_DEVICE_ALLOWLIST
+  || ''
+).trim();
+const RELAY_ALLOWED_TARGET_ROLE = 'architect';
 const PENDING_TTL_MS = Number.parseInt(process.env.RELAY_PENDING_TTL_MS || '20000', 10);
 const STRUCTURED_BRIDGE_TYPE_ALIASES = Object.freeze({
   fyi: 'FYI',
@@ -102,6 +108,29 @@ function normalizeBridgeMetadata(metadataInput, fallbackContent = '', options = 
   return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
+function parseAllowlistedDevices(raw) {
+  if (!raw) return new Set();
+  const set = new Set();
+  for (const token of String(raw).split(/[,\s]+/)) {
+    const normalized = normalizeDeviceId(token);
+    if (normalized) set.add(normalized);
+  }
+  return set;
+}
+
+function resolveTargetRole(frame = {}) {
+  const direct = asText(frame.targetRole).toLowerCase();
+  if (direct) return direct;
+  const metadata = asObject(frame.metadata);
+  if (!metadata) return '';
+  const metadataTargetRole = asText(
+    metadata.targetRole
+    || metadata.target_role
+    || metadata?.envelope?.target?.role
+  ).toLowerCase();
+  return metadataTargetRole;
+}
+
 function sendJson(ws, payload = {}) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return false;
   try {
@@ -116,6 +145,7 @@ const wss = new WebSocketServer({ host: HOST, port: PORT });
 const clients = new Map(); // ws -> { id, deviceId, registered }
 const socketsByDevice = new Map(); // deviceId -> ws
 const pendingByMessageId = new Map(); // messageId -> { senderWs, fromDevice, toDevice, createdAt, timer }
+const allowlistedDevices = parseAllowlistedDevices(RELAY_DEVICE_ALLOWLIST_RAW);
 let clientSeq = 0;
 
 function clearPending(messageId) {
@@ -193,6 +223,11 @@ function handleRegister(ws, frame) {
     ws.close(1008, 'auth failed');
     return;
   }
+  if (allowlistedDevices.size > 0 && !allowlistedDevices.has(deviceId)) {
+    sendJson(ws, { type: 'register-ack', ok: false, error: `device ${deviceId} is not in allowlist` });
+    ws.close(1008, 'device not allowlisted');
+    return;
+  }
 
   const previousSocket = socketsByDevice.get(deviceId);
   if (previousSocket && previousSocket !== ws) {
@@ -232,6 +267,7 @@ function handleSend(ws, frame) {
   const messageId = asText(frame.messageId);
   const fromDevice = normalizeDeviceId(frame.fromDevice) || sender.deviceId;
   const toDevice = normalizeDeviceId(frame.toDevice);
+  const targetRole = resolveTargetRole(frame);
   const content = asText(frame.content);
   const metadata = normalizeBridgeMetadata(frame.metadata, content, {
     ensureStructured: true,
@@ -262,6 +298,21 @@ function handleSend(ws, frame) {
       verified: false,
       status: 'sender_mismatch',
       error: 'fromDevice must match registered device',
+      fromDevice: sender.deviceId,
+      toDevice,
+    });
+    return;
+  }
+  if (targetRole !== RELAY_ALLOWED_TARGET_ROLE) {
+    sendJson(ws, {
+      type: 'xack',
+      messageId,
+      ok: false,
+      accepted: false,
+      queued: false,
+      verified: false,
+      status: 'target_role_rejected',
+      error: `relay only forwards to ${RELAY_ALLOWED_TARGET_ROLE} targets`,
       fromDevice: sender.deviceId,
       toDevice,
     });
@@ -315,6 +366,7 @@ function handleSend(ws, frame) {
     fromDevice: sender.deviceId,
     toDevice,
     fromRole: asText(frame.fromRole) || 'architect',
+    targetRole: RELAY_ALLOWED_TARGET_ROLE,
     content,
     metadata,
   });

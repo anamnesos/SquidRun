@@ -7,6 +7,9 @@ const {
 const DEFAULT_ACK_TIMEOUT_MS = 12000;
 const DEFAULT_RECONNECT_BASE_MS = 750;
 const DEFAULT_RECONNECT_MAX_MS = 10000;
+const SENSITIVE_ENV_KEYWORDS_RE = /(TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|AUTH|CREDENTIAL|COOKIE|SESSION)/i;
+const SENSITIVE_JSON_KEY_RE = /^(token|secret|password|pass|api[_-]?key|access[_-]?key|private[_-]?key|authorization|credential|cookie|session)$/i;
+const SENSITIVE_PATH_SEGMENT_RE = /(^|[\\/])(\.env(\.[^\\/]+)?|id_rsa|id_dsa|credentials(\.[^\\/]+)?|token|secret|passwords?)([\\/]|$)/i;
 const STRUCTURED_BRIDGE_TYPE_ALIASES = Object.freeze({
   fyi: 'FYI',
   conflictcheck: 'ConflictCheck',
@@ -24,6 +27,68 @@ function asNonEmptyString(value) {
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function redactSensitiveText(input) {
+  if (typeof input !== 'string' || !input) return input;
+  let redacted = input;
+
+  redacted = redacted.replace(
+    /(https?:\/\/)([^/\s:@]+):([^/\s@]+)@/gi,
+    (_match, protocol, user) => `${protocol}${user}:[REDACTED]@`
+  );
+
+  redacted = redacted.replace(
+    /\b(Bearer)\s+[A-Za-z0-9\-._~+/]+=*/gi,
+    '$1 [REDACTED_TOKEN]'
+  );
+
+  redacted = redacted.replace(
+    /\b(sk-[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,})\b/gi,
+    '[REDACTED_TOKEN]'
+  );
+
+  redacted = redacted.replace(
+    /\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*("[^"]*"|'[^']*'|[^\s,;]+)/g,
+    (match, key) => (SENSITIVE_ENV_KEYWORDS_RE.test(String(key)) ? `${key}=[REDACTED]` : match)
+  );
+
+  redacted = redacted.replace(
+    /(["'])([A-Za-z0-9_-]+)\1\s*:\s*(["'])([^"']*)(\3)/g,
+    (match, quoteA, key, quoteB) => (SENSITIVE_JSON_KEY_RE.test(String(key))
+      ? `${quoteA}${key}${quoteA}:${quoteB}[REDACTED]${quoteB}`
+      : match)
+  );
+
+  redacted = redacted.replace(
+    /((?:[A-Za-z]:\\|\/)[^\s"'`]+)/g,
+    (segment) => (SENSITIVE_PATH_SEGMENT_RE.test(segment) ? '[REDACTED_PATH]' : segment)
+  );
+
+  return redacted;
+}
+
+function redactSensitiveValue(input, seen = new WeakSet()) {
+  if (typeof input === 'string') {
+    return redactSensitiveText(input);
+  }
+  if (!input || typeof input !== 'object') return input;
+  if (seen.has(input)) return input;
+  seen.add(input);
+
+  if (Array.isArray(input)) {
+    return input.map((item) => redactSensitiveValue(item, seen));
+  }
+
+  const output = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (typeof value === 'string' && SENSITIVE_JSON_KEY_RE.test(String(key))) {
+      output[key] = '[REDACTED]';
+    } else {
+      output[key] = redactSensitiveValue(value, seen);
+    }
+  }
+  return output;
 }
 
 function getReconnectDelayMs(attempt) {
@@ -107,6 +172,7 @@ class BridgeClient {
     this.deviceId = normalizeDeviceId(options.deviceId);
     this.sharedSecret = asNonEmptyString(options.sharedSecret);
     this.onMessage = typeof options.onMessage === 'function' ? options.onMessage : null;
+    this.onStatus = typeof options.onStatus === 'function' ? options.onStatus : null;
     this.shouldRun = false;
     this.socket = null;
     this.connected = false;
@@ -114,6 +180,20 @@ class BridgeClient {
     this.reconnectTimer = null;
     this.reconnectAttempt = 0;
     this.pendingAcks = new Map();
+  }
+
+  emitStatus(status = {}) {
+    if (typeof this.onStatus !== 'function') return;
+    try {
+      this.onStatus({
+        ts: Date.now(),
+        relayUrl: this.relayUrl,
+        deviceId: this.deviceId,
+        ...(status && typeof status === 'object' ? status : {}),
+      });
+    } catch (err) {
+      log.warn('Bridge', `Failed to emit bridge status: ${err.message}`);
+    }
   }
 
   isConfigured() {
@@ -149,6 +229,11 @@ class BridgeClient {
     }
     this.connected = false;
     this.registered = false;
+    this.emitStatus({
+      type: 'relay.disconnected',
+      state: 'disconnected',
+      status: 'relay_stopped',
+    });
   }
 
   clearReconnectTimer() {
@@ -177,6 +262,11 @@ class BridgeClient {
     }
 
     this.clearReconnectTimer();
+    this.emitStatus({
+      type: 'relay.connecting',
+      state: 'connecting',
+      status: 'relay_connecting',
+    });
     const ws = new WebSocket(this.relayUrl);
     this.socket = ws;
     this.connected = false;
@@ -209,11 +299,22 @@ class BridgeClient {
         status: 'bridge_disconnected',
         error: 'Relay connection closed',
       });
+      this.emitStatus({
+        type: 'relay.disconnected',
+        state: 'disconnected',
+        status: 'relay_disconnected',
+      });
       this.scheduleReconnect();
     });
 
     ws.on('error', (err) => {
       log.warn('Bridge', `Relay connection error: ${err.message}`);
+      this.emitStatus({
+        type: 'relay.error',
+        state: 'error',
+        status: 'relay_error',
+        error: err.message,
+      });
     });
 
     return true;
@@ -257,9 +358,20 @@ class BridgeClient {
         this.registered = true;
         this.reconnectAttempt = 0;
         log.info('Bridge', `Connected to relay as ${this.deviceId}`);
+        this.emitStatus({
+          type: 'relay.connected',
+          state: 'connected',
+          status: 'relay_connected',
+        });
       } else {
         this.registered = false;
         log.warn('Bridge', `Relay registration rejected: ${asNonEmptyString(message.error) || 'unknown_error'}`);
+        this.emitStatus({
+          type: 'relay.error',
+          state: 'error',
+          status: 'relay_registration_rejected',
+          error: asNonEmptyString(message.error) || 'unknown_error',
+        });
       }
       return;
     }
@@ -281,6 +393,19 @@ class BridgeClient {
         fromDevice: asNonEmptyString(message.fromDevice),
         toDevice: asNonEmptyString(message.toDevice),
       }));
+      this.emitStatus({
+        type: 'relay.dispatch',
+        state: message.ok === true ? 'connected' : 'error',
+        status: asNonEmptyString(message.status) || (message.ok ? 'bridge_delivered' : 'bridge_failed'),
+        ok: message.ok === true,
+        accepted: message.accepted === true || message.ok === true,
+        queued: message.queued === true || message.accepted === true || message.ok === true,
+        verified: message.verified === true || message.ok === true,
+        messageId,
+        fromDevice: asNonEmptyString(message.fromDevice),
+        toDevice: asNonEmptyString(message.toDevice),
+        error: asNonEmptyString(message.error) || null,
+      });
       return;
     }
 
@@ -352,11 +477,13 @@ class BridgeClient {
     const messageId = asNonEmptyString(payload.messageId);
     const toDevice = normalizeDeviceId(payload.toDevice);
     const content = asNonEmptyString(payload.content);
+    const redactedContent = redactSensitiveText(content);
     const fromRole = asNonEmptyString(payload.fromRole) || 'architect';
+    const targetRole = (asNonEmptyString(payload.targetRole) || 'architect').toLowerCase();
     const timeoutMs = parsePositiveInt(payload.timeoutMs, DEFAULT_ACK_TIMEOUT_MS);
-    const metadata = normalizeBridgeMetadata(payload.metadata, content, {
+    const metadata = redactSensitiveValue(normalizeBridgeMetadata(payload.metadata, redactedContent, {
       ensureStructured: true,
-    });
+    }));
 
     if (!messageId) {
       return Promise.resolve(buildAckResult({
@@ -405,7 +532,8 @@ class BridgeClient {
         fromDevice: this.deviceId,
         toDevice,
         fromRole,
-        content,
+        targetRole,
+        content: redactedContent,
         metadata,
       });
 
