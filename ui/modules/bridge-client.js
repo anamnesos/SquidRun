@@ -518,7 +518,7 @@ class BridgeClient {
     }
 
     if (message.type === 'xdiscovery') {
-      const requestId = asNonEmptyString(message.requestId);
+      const requestId = asNonEmptyString(message.requestId) || asNonEmptyString(message.request_id);
       if (!requestId) return;
       const pending = this.pendingDiscoveries.get(requestId);
       if (!pending) return;
@@ -528,8 +528,8 @@ class BridgeClient {
         ok: message.ok !== false,
         status: asNonEmptyString(message.status) || (message.ok === false ? 'bridge_discovery_failed' : 'bridge_discovery_ok'),
         error: asNonEmptyString(message.error) || null,
-        devices: normalizeDiscoveryDevices(message.devices),
-        fetchedAt: Date.now(),
+        devices: normalizeDiscoveryDevices(message.devices || message.connected_devices),
+        fetchedAt: Number.isFinite(message.fetchedAt) ? message.fetchedAt : (Number.isFinite(message.fetched_at) ? message.fetched_at : Date.now()),
       });
       return;
     }
