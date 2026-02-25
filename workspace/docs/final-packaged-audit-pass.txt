@@ -1,0 +1,57 @@
+(BUILDER #1): FINAL packaged-audit pass complete. Findings below.
+
+[1] Packaging simulation (asar vs asarUnpack) + bootstrap file inclusion
+PASS with 1 non-blocking risk.
+- Built package layout inspection (local win-unpacked artifact):
+  - app.asar contains: config.js, terminal-daemon.js, scripts/hm-send.js, scripts/hm-comms.js, scripts/hm-telegram.js, modules/main/squidrun-app.js, workspace-template/* (all expected files present).
+  - app.asar.unpacked contains: config.js, terminal-daemon.js, modules/**, native deps.
+- Cross-check vs ensurePackagedWorkspaceBootstrap copy list: all referenced template files are present in app.asar.
+- Cross-check vs ensurePackagedCommsBin requiredFiles: all required source files exist in app.asar.
+
+Risk (not currently observed as a runtime failure):
+- resolvePackagedUiRoot() prefers __dirname/../.. first. If runtime ever resolves squidrun-app.js from app.asar.unpacked path first, uiRoot becomes app.asar.unpacked root (which lacks scripts/ and workspace-template/), so comms-bin/template copy would silently skip missing files. In current package inspection, required files are present in app.asar and expected to work; this is a hardening risk, not a confirmed break.
+
+[2] Exact packaged macOS boot sequence (env/cwd/PATH/system-message)
+PASS.
+1. Main process starts (ui/main.js), app.whenReady -> squidrunApp.init().
+2. init(): settings.loadSettings(); ensurePackagedWorkspaceBootstrap() runs before window load.
+3. ensurePackagedWorkspaceBootstrap():
+   - creates ~/SquidRun and ~/SquidRun/.squidrun
+   - copies workspace-template docs + .squidrun seed files if missing
+   - setProjectRoot(~/SquidRun)
+   - ensurePackagedCommsBin(~/SquidRun): extracts hm-send/hm-comms runtime and writes launchers in ~/.squidrun/bin
+   - seeds .squidrun/app-status.json with numeric session: 1, session_id: app-session-1 if missing
+   - sets pendingArchitectStartupSystemMessage if onboarding not complete
+   - writes watcher state project=~/SquidRun when needed
+4. createWindow() loads renderer and registers IPC/handlers.
+5. IPC project handlers startup sync reads watcher project and writes .squidrun/link.json + README-FIRST.md.
+6. initDaemonClient(): daemon-client connects or spawns daemon from app.asar.unpacked/terminal-daemon.js.
+7. Renderer DOMContentLoaded listens for daemon-connected / daemon-timeout.
+8. On daemon-connected, overlay dismisses; terminals are created/reattached; auto-spawn path runs if enabled.
+9. PTY create -> daemon spawnTerminal() -> shell starts with resolved cwd.
+10. Renderer spawnAgent() writes CLI command + Enter, then identity/startup injection path arms.
+11. Fresh-install system message injection is triggered from main process on architect_spawned and/or daemon_connected (with post-load replay fallback), and pending message is cleared only after successful route.
+
+[3] terminal-daemon PTY spawn env (PATH + SQUIDRUN_PROJECT_ROOT)
+PASS for shim availability; one caveat.
+- PATH injection confirmed in spawnTerminal():
+  - ~/SquidRun/.squidrun/bin
+  - <pane workDir>/.squidrun/bin
+  - mac extra bins: /opt/homebrew/bin, /usr/local/bin, ~/.local/bin
+  - inherited PATH
+- Spawn env includes SQUIDRUN_ROLE/SQUIDRUN_PANE_ID from daemon-client spawn payload; CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false forced for Claude panes.
+- SQUIDRUN_PROJECT_ROOT is NOT explicitly set by daemon spawnTerminal.
+  - This is okay for hm-send/hm-comms shims because the launcher itself exports SQUIDRUN_PROJECT_ROOT.
+  - Caveat: direct node invocation of runtime scripts (bypassing shims) can lose that env unless cwd/link discovery covers it.
+
+[4] Remaining hardcoded ui/scripts references in packaged-copied surface
+FAIL (1 real remaining reference path).
+- ui/modules/ipc/project-handlers.js writeProjectBootstrapFiles() still generates project .squidrun/README-FIRST.md connectivity command as:
+  node <relative-path-to-.../ui/scripts/hm-send.js> ...
+- It also writes link.json comms.hm_send using that ui/scripts path.
+- In packaged installs, that ui/scripts path is not guaranteed in user workspace and contradicts hm-send shim model.
+- Impact: generated README-first instructions for selected projects are stale/misleading; runtime messaging still works via hm-send shim.
+
+Recommendation for release gate:
+- Ship-blocking: item [4] should be fixed now (switch generated bootstrap docs/payload guidance to plain hm-send/hm-comms).
+- Optional hardening: make resolvePackagedUiRoot prefer app.asar root when required scripts/template are missing in first candidate.
