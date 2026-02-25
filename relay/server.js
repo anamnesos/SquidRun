@@ -313,7 +313,12 @@ function evictClient(ws, reason = 'disconnect') {
 
   if (info.deviceId) {
     const code = pairingCodeByDevice.get(info.deviceId);
-    if (code) clearPairingCode(code);
+    if (code) {
+      const pairingEntry = pairingByCode.get(code);
+      if (!pairingEntry || pairingEntry.initiatorWs === ws) {
+        clearPairingCode(code);
+      }
+    }
   }
   clients.delete(ws);
   if (info.deviceId && socketsByDevice.get(info.deviceId) === ws) {
@@ -379,6 +384,14 @@ function handleRegister(ws, frame) {
 
   const previousSocket = socketsByDevice.get(deviceId);
   if (previousSocket && previousSocket !== ws) {
+    const pairingCode = pairingCodeByDevice.get(deviceId);
+    if (pairingCode) {
+      const pairingEntry = pairingByCode.get(pairingCode);
+      if (pairingEntry && pairingEntry.initiatorWs === previousSocket) {
+        pairingEntry.initiatorWs = ws;
+        pairingEntry.initiatorDeviceId = deviceId;
+      }
+    }
     sendJson(previousSocket, { type: 'info', status: 'replaced_by_new_connection', deviceId });
     try {
       previousSocket.close(1000, 'replaced');
