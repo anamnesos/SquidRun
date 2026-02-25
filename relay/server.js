@@ -45,6 +45,37 @@ function normalizeDeviceId(value) {
   return text.replace(/[^A-Z0-9_-]/g, '');
 }
 
+function normalizeRole(value) {
+  const text = asText(value).toLowerCase();
+  if (!text) return '';
+  return text.replace(/[^a-z0-9_-]/g, '');
+}
+
+function normalizeRoles(value) {
+  const normalized = [];
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const role = normalizeRole(entry);
+      if (role) normalized.push(role);
+    }
+  } else if (typeof value === 'string') {
+    for (const token of value.split(/[,\s]+/)) {
+      const role = normalizeRole(token);
+      if (role) normalized.push(role);
+    }
+  }
+  return Array.from(new Set(normalized));
+}
+
+function resolveAvailableRoles(frame = {}) {
+  const rolesInput = frame.availableRoles ?? frame.available_roles ?? frame.roles;
+  const roles = normalizeRoles(rolesInput);
+  if (roles.length > 0) return roles;
+
+  const fallbackRole = normalizeRole(frame.role ?? frame.paneRole);
+  return fallbackRole ? [fallbackRole] : [];
+}
+
 function parseFrame(raw) {
   try {
     return JSON.parse(raw.toString());
@@ -142,8 +173,9 @@ function sendJson(ws, payload = {}) {
 }
 
 const wss = new WebSocketServer({ host: HOST, port: PORT });
-const clients = new Map(); // ws -> { id, deviceId, registered }
+const clients = new Map(); // ws -> { id, deviceId, registered, roles, connectedSince }
 const socketsByDevice = new Map(); // deviceId -> ws
+const connectedDevices = new Map(); // deviceId -> { deviceId, roles, connectedSince, ws }
 const pendingByMessageId = new Map(); // messageId -> { senderWs, fromDevice, toDevice, createdAt, timer }
 const allowlistedDevices = parseAllowlistedDevices(RELAY_DEVICE_ALLOWLIST_RAW);
 let clientSeq = 0;
@@ -194,6 +226,12 @@ function evictClient(ws, reason = 'disconnect') {
   if (info.deviceId && socketsByDevice.get(info.deviceId) === ws) {
     socketsByDevice.delete(info.deviceId);
   }
+  if (info.deviceId) {
+    const entry = connectedDevices.get(info.deviceId);
+    if (entry && entry.ws === ws) {
+      connectedDevices.delete(info.deviceId);
+    }
+  }
 
   for (const [messageId, pending] of pendingByMessageId.entries()) {
     if (!pending) continue;
@@ -223,18 +261,24 @@ function evictClient(ws, reason = 'disconnect') {
 
 function handleRegister(ws, frame) {
   const deviceId = normalizeDeviceId(frame.deviceId);
+  const rawDeviceId = asText(frame.deviceId);
+  const deviceLabel = deviceId || rawDeviceId || 'unknown';
   const sharedSecret = asText(frame.sharedSecret);
+  const roles = resolveAvailableRoles(frame);
   if (!deviceId || !sharedSecret) {
+    console.log(`[relay] register failed device=${deviceLabel} reason=invalid_register_missing_device_or_secret`);
     sendJson(ws, { type: 'register-ack', ok: false, error: 'deviceId and sharedSecret are required' });
     ws.close(1008, 'invalid register');
     return;
   }
   if (sharedSecret !== RELAY_SHARED_SECRET) {
+    console.log(`[relay] register failed device=${deviceLabel} reason=invalid_shared_secret`);
     sendJson(ws, { type: 'register-ack', ok: false, error: 'invalid shared secret' });
     ws.close(1008, 'auth failed');
     return;
   }
   if (allowlistedDevices.size > 0 && !allowlistedDevices.has(deviceId)) {
+    console.log(`[relay] register failed device=${deviceLabel} reason=device_not_allowlisted`);
     sendJson(ws, { type: 'register-ack', ok: false, error: `device ${deviceId} is not in allowlist` });
     ws.close(1008, 'device not allowlisted');
     return;
@@ -250,12 +294,28 @@ function handleRegister(ws, frame) {
     }
   }
 
-  const info = clients.get(ws) || { id: 0, deviceId: null, registered: false };
+  const connectedSince = nowMs();
+  const info = clients.get(ws) || {
+    id: 0,
+    deviceId: null,
+    registered: false,
+    roles: [],
+    connectedSince: null,
+  };
   info.deviceId = deviceId;
   info.registered = true;
+  info.roles = roles;
+  info.connectedSince = connectedSince;
   clients.set(ws, info);
   socketsByDevice.set(deviceId, ws);
+  connectedDevices.set(deviceId, {
+    deviceId,
+    roles,
+    connectedSince,
+    ws,
+  });
 
+  console.log(`[relay] register ok device=${deviceId} roles=${roles.join(',') || 'none'}`);
   sendJson(ws, { type: 'register-ack', ok: true, deviceId });
 }
 
@@ -446,12 +506,45 @@ function handleAck(ws, frame) {
   });
 }
 
+function handleDiscovery(ws, frame) {
+  const sender = clients.get(ws);
+  if (!sender?.registered || !sender.deviceId) {
+    console.log('[relay] xdiscovery rejected device=unregistered reason=register_first');
+    sendJson(ws, {
+      type: 'xdiscovery',
+      ok: false,
+      error: 'Register first',
+      connected_devices: [],
+    });
+    return;
+  }
+
+  const connectedDevicesList = Array.from(connectedDevices.values())
+    .map((entry) => ({
+      device_id: entry.deviceId,
+      roles: Array.isArray(entry.roles) ? [...entry.roles] : [],
+      connected_since: Number(entry.connectedSince) || nowMs(),
+    }))
+    .sort((a, b) => a.device_id.localeCompare(b.device_id));
+
+  const requestId = asText(frame.requestId || frame.messageId) || null;
+  console.log(`[relay] xdiscovery request device=${sender.deviceId} requestId=${requestId || 'none'} devices=${connectedDevicesList.length}`);
+  sendJson(ws, {
+    type: 'xdiscovery',
+    ok: true,
+    request_id: requestId,
+    connected_devices: connectedDevicesList,
+  });
+}
+
 wss.on('connection', (ws, req) => {
   clientSeq += 1;
   clients.set(ws, {
     id: clientSeq,
     deviceId: null,
     registered: false,
+    roles: [],
+    connectedSince: null,
   });
   console.log(`[relay] client #${clientSeq} connected from ${req.socket.remoteAddress}`);
 
@@ -474,6 +567,10 @@ wss.on('connection', (ws, req) => {
       handleAck(ws, frame);
       return;
     }
+    if (frame.type === 'xdiscovery') {
+      handleDiscovery(ws, frame);
+      return;
+    }
     if (frame.type === 'ping') {
       sendJson(ws, { type: 'pong', ts: nowMs() });
       return;
@@ -482,8 +579,11 @@ wss.on('connection', (ws, req) => {
     sendJson(ws, { type: 'error', error: `unsupported_type:${asText(frame.type) || 'unknown'}` });
   });
 
-  ws.on('close', (_code, reasonBuffer) => {
+  ws.on('close', (code, reasonBuffer) => {
     const reasonText = reasonBuffer?.toString?.() || 'closed';
+    const info = clients.get(ws);
+    const deviceLabel = info?.deviceId || 'unregistered';
+    console.log(`[relay] ws close device=${deviceLabel} code=${code} reason=${reasonText}`);
     evictClient(ws, reasonText);
   });
 
