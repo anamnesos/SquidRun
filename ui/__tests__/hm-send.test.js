@@ -1411,6 +1411,64 @@ describe('hm-send retry behavior', () => {
     }
   });
 
+  test('--list-devices prefers runtime bridge discovery over direct relay registration', async () => {
+    const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-runtime-discovery-'));
+    let runtimeServer;
+
+    await new Promise((resolve, reject) => {
+      runtimeServer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      runtimeServer.once('listening', resolve);
+      runtimeServer.once('error', reject);
+    });
+
+    const runtimePort = runtimeServer.address().port;
+
+    runtimeServer.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role || 'architect', paneId: '1' }));
+          return;
+        }
+        if (msg.type === 'bridge-discovery') {
+          ws.send(JSON.stringify({
+            type: 'response',
+            requestId: msg.requestId,
+            ok: true,
+            result: {
+              ok: true,
+              status: 'bridge_discovery_ok',
+              devices: [
+                { device_id: 'VIGIL', roles: ['architect'], connected_since: '2026-02-25T22:00:00.000Z' },
+                { device_id: 'MACBOOK', roles: ['architect'], connected_since: '2026-02-25T22:01:00.000Z' },
+              ],
+            },
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['--list-devices', '--role', 'architect', '--timeout', '250'],
+        {
+          HM_SEND_PORT: String(runtimePort),
+        },
+        { cwd: tempProject }
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('Online devices');
+      expect(result.stdout).toContain('MACBOOK');
+      expect(result.stdout).toContain('VIGIL');
+      expect(result.stderr).not.toContain('Device discovery failed');
+    } finally {
+      await new Promise((resolve) => runtimeServer.close(resolve));
+      fs.rmSync(tempProject, { recursive: true, force: true });
+    }
+  });
+
   test('--list-devices falls back to cache when relay is unreachable', async () => {
     const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-discovery-cache-'));
     const cachePath = path.join(tempProject, '.squidrun', 'bridge', 'known-devices.json');
