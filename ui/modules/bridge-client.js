@@ -6,6 +6,7 @@ const {
 
 const DEFAULT_ACK_TIMEOUT_MS = 12000;
 const DEFAULT_DISCOVERY_TIMEOUT_MS = 5000;
+const DEFAULT_PAIRING_TIMEOUT_MS = 12000;
 const DEFAULT_RECONNECT_BASE_MS = 750;
 const DEFAULT_RECONNECT_MAX_MS = 10000;
 const DEFAULT_PING_INTERVAL_MS = 30000;
@@ -221,6 +222,7 @@ class BridgeClient {
     this.sharedSecret = asNonEmptyString(options.sharedSecret);
     this.onMessage = typeof options.onMessage === 'function' ? options.onMessage : null;
     this.onStatus = typeof options.onStatus === 'function' ? options.onStatus : null;
+    this.onPairing = typeof options.onPairing === 'function' ? options.onPairing : null;
     this.shouldRun = false;
     this.socket = null;
     this.connected = false;
@@ -230,6 +232,8 @@ class BridgeClient {
     this.reconnectAttempt = 0;
     this.pendingAcks = new Map();
     this.pendingDiscoveries = new Map();
+    this.pendingPairingInit = null;
+    this.pendingPairingJoin = null;
   }
 
   emitStatus(status = {}) {
@@ -275,6 +279,11 @@ class BridgeClient {
       status: 'bridge_stopped',
       error: 'Bridge client stopped',
       devices: [],
+    });
+    this.rejectPendingPairing({
+      ok: false,
+      status: 'bridge_stopped',
+      error: 'Bridge client stopped',
     });
     if (this.socket) {
       try {
@@ -381,6 +390,11 @@ class BridgeClient {
         error: 'Relay connection closed',
         devices: [],
       });
+      this.rejectPendingPairing({
+        ok: false,
+        status: 'bridge_disconnected',
+        error: 'Relay connection closed',
+      });
       this.emitStatus({
         type: 'relay.disconnected',
         state: 'disconnected',
@@ -443,6 +457,44 @@ class BridgeClient {
       this.pendingDiscoveries.delete(requestId);
       clearTimeout(entry.timeout);
       entry.resolve(normalized);
+    }
+  }
+
+  rejectPendingPairing(result = {}) {
+    const normalized = {
+      ok: result.ok === true,
+      status: asNonEmptyString(result.status) || (result.ok === true ? 'pairing_ok' : 'pairing_failed'),
+      error: asNonEmptyString(result.error) || null,
+      reason: asNonEmptyString(result.reason) || null,
+      code: asNonEmptyString(result.code) || null,
+      expiresAt: Number.isFinite(result.expiresAt) ? result.expiresAt : null,
+      paired: result.paired && typeof result.paired === 'object' ? result.paired : null,
+    };
+    if (this.pendingPairingInit) {
+      const entry = this.pendingPairingInit;
+      this.pendingPairingInit = null;
+      clearTimeout(entry.timeout);
+      entry.resolve(normalized);
+    }
+    if (this.pendingPairingJoin) {
+      const entry = this.pendingPairingJoin;
+      this.pendingPairingJoin = null;
+      clearTimeout(entry.timeout);
+      entry.resolve(normalized);
+    }
+  }
+
+  emitPairingUpdate(update = {}) {
+    if (typeof this.onPairing !== 'function') return;
+    try {
+      this.onPairing({
+        ts: Date.now(),
+        relayUrl: this.relayUrl,
+        deviceId: this.deviceId,
+        ...(update && typeof update === 'object' ? update : {}),
+      });
+    } catch (err) {
+      log.warn('Bridge', `Failed to emit pairing update: ${err.message}`);
     }
   }
 
@@ -530,6 +582,100 @@ class BridgeClient {
         error: asNonEmptyString(message.error) || null,
         devices: normalizeDiscoveryDevices(message.devices || message.connected_devices),
         fetchedAt: Number.isFinite(message.fetchedAt) ? message.fetchedAt : (Number.isFinite(message.fetched_at) ? message.fetched_at : Date.now()),
+      });
+      return;
+    }
+
+    if (message.type === 'pairing-init-ack') {
+      const code = asNonEmptyString(message.code).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const expiresAt = Number.isFinite(message.expires_at)
+        ? message.expires_at
+        : (Number.isFinite(message.expiresAt) ? message.expiresAt : null);
+      const result = {
+        ok: true,
+        status: 'pairing_init_ok',
+        error: null,
+        reason: null,
+        code: code || null,
+        expiresAt,
+        paired: null,
+      };
+      if (this.pendingPairingInit) {
+        const entry = this.pendingPairingInit;
+        this.pendingPairingInit = null;
+        clearTimeout(entry.timeout);
+        entry.resolve(result);
+      }
+      this.emitPairingUpdate({
+        type: 'pairing-init-ack',
+        ok: true,
+        status: result.status,
+        code: result.code,
+        expiresAt: result.expiresAt,
+      });
+      return;
+    }
+
+    if (message.type === 'pairing-complete') {
+      const paired = {
+        device_id: normalizeDeviceId(message.device_id || message.deviceId || this.deviceId) || null,
+        shared_secret: asNonEmptyString(message.shared_secret || message.sharedSecret) || null,
+        relay_url: asNonEmptyString(message.relay_url || message.relayUrl || this.relayUrl) || null,
+        paired_device_id: normalizeDeviceId(message.paired_device_id || message.pairedDeviceId) || null,
+        paired_at: new Date().toISOString(),
+      };
+      const result = {
+        ok: Boolean(paired.device_id && paired.shared_secret && paired.relay_url),
+        status: 'pairing_complete',
+        error: null,
+        reason: null,
+        code: null,
+        expiresAt: null,
+        paired,
+      };
+      if (this.pendingPairingJoin) {
+        const entry = this.pendingPairingJoin;
+        this.pendingPairingJoin = null;
+        clearTimeout(entry.timeout);
+        entry.resolve(result);
+      }
+      this.emitPairingUpdate({
+        type: 'pairing-complete',
+        ok: result.ok,
+        status: result.status,
+        paired,
+      });
+      return;
+    }
+
+    if (message.type === 'pairing-failed') {
+      const reason = asNonEmptyString(message.reason || message.error || 'unknown');
+      const result = {
+        ok: false,
+        status: `pairing_failed_${reason || 'unknown'}`,
+        error: reason || 'pairing_failed',
+        reason: reason || null,
+        code: null,
+        expiresAt: null,
+        paired: null,
+      };
+      if (this.pendingPairingJoin) {
+        const entry = this.pendingPairingJoin;
+        this.pendingPairingJoin = null;
+        clearTimeout(entry.timeout);
+        entry.resolve(result);
+      } else if (this.pendingPairingInit) {
+        const entry = this.pendingPairingInit;
+        this.pendingPairingInit = null;
+        clearTimeout(entry.timeout);
+        entry.resolve(result);
+      }
+      this.emitPairingUpdate({
+        type: 'pairing-failed',
+        ok: false,
+        status: result.status,
+        reason: result.reason,
+        error: result.error,
       });
       return;
     }
@@ -733,6 +879,133 @@ class BridgeClient {
           error: 'Failed to send discovery request to relay',
           devices: [],
           fetchedAt: Date.now(),
+        });
+      }
+    });
+  }
+
+  initiatePairing(options = {}) {
+    const timeoutMs = parsePositiveInt(options.timeoutMs, DEFAULT_PAIRING_TIMEOUT_MS);
+    if (!this.isReady()) {
+      return Promise.resolve({
+        ok: false,
+        status: 'bridge_unavailable',
+        error: 'Relay is not connected',
+        reason: null,
+        code: null,
+        expiresAt: null,
+        paired: null,
+      });
+    }
+    if (this.pendingPairingInit || this.pendingPairingJoin) {
+      return Promise.resolve({
+        ok: false,
+        status: 'pairing_in_progress',
+        error: 'Another pairing request is already in progress',
+        reason: null,
+        code: null,
+        expiresAt: null,
+        paired: null,
+      });
+    }
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.pendingPairingInit = null;
+        resolve({
+          ok: false,
+          status: 'pairing_init_timeout',
+          error: `No pairing-init response within ${timeoutMs}ms`,
+          reason: null,
+          code: null,
+          expiresAt: null,
+          paired: null,
+        });
+      }, timeoutMs);
+      this.pendingPairingInit = { resolve, timeout };
+      const sent = this.sendRaw({ type: 'pairing-init' });
+      if (!sent) {
+        const entry = this.pendingPairingInit;
+        this.pendingPairingInit = null;
+        if (entry) clearTimeout(entry.timeout);
+        resolve({
+          ok: false,
+          status: 'pairing_init_send_failed',
+          error: 'Failed to send pairing-init request to relay',
+          reason: null,
+          code: null,
+          expiresAt: null,
+          paired: null,
+        });
+      }
+    });
+  }
+
+  joinPairingCode(codeInput, options = {}) {
+    const code = asNonEmptyString(codeInput).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const timeoutMs = parsePositiveInt(options.timeoutMs, DEFAULT_PAIRING_TIMEOUT_MS);
+    if (!code || code.length !== 6) {
+      return Promise.resolve({
+        ok: false,
+        status: 'pairing_invalid_code',
+        error: 'Pairing code must be 6 alphanumeric characters',
+        reason: 'invalid_code',
+        code: null,
+        expiresAt: null,
+        paired: null,
+      });
+    }
+    if (!this.isReady()) {
+      return Promise.resolve({
+        ok: false,
+        status: 'bridge_unavailable',
+        error: 'Relay is not connected',
+        reason: null,
+        code: null,
+        expiresAt: null,
+        paired: null,
+      });
+    }
+    if (this.pendingPairingInit || this.pendingPairingJoin) {
+      return Promise.resolve({
+        ok: false,
+        status: 'pairing_in_progress',
+        error: 'Another pairing request is already in progress',
+        reason: null,
+        code: null,
+        expiresAt: null,
+        paired: null,
+      });
+    }
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.pendingPairingJoin = null;
+        resolve({
+          ok: false,
+          status: 'pairing_join_timeout',
+          error: `No pairing result within ${timeoutMs}ms`,
+          reason: null,
+          code: null,
+          expiresAt: null,
+          paired: null,
+        });
+      }, timeoutMs);
+      this.pendingPairingJoin = { resolve, timeout };
+      const sent = this.sendRaw({
+        type: 'pairing-join',
+        code,
+      });
+      if (!sent) {
+        const entry = this.pendingPairingJoin;
+        this.pendingPairingJoin = null;
+        if (entry) clearTimeout(entry.timeout);
+        resolve({
+          ok: false,
+          status: 'pairing_join_send_failed',
+          error: 'Failed to send pairing-join request to relay',
+          reason: null,
+          code: null,
+          expiresAt: null,
+          paired: null,
         });
       }
     });

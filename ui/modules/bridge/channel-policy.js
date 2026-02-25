@@ -4,6 +4,10 @@ const INVOKE_CHANNELS = Object.freeze([
   'apply-rollback',
   'clear-activity-log',
   'clear-friction',
+  'bridge:get-devices',
+  'bridge:get-pairing-state',
+  'bridge:pairing-init',
+  'bridge:pairing-join',
   'clipboard-paste-text',
   'clipboard-write',
   'contract-promotion:approve',
@@ -140,6 +144,7 @@ const ON_CHANNELS = Object.freeze([
   'task-list-updated',
   'unstick-pane',
   'watchdog-alert',
+  'bridge:pairing-state',
 ]);
 
 const DYNAMIC_ON_CHANNEL_PATTERNS = Object.freeze([
