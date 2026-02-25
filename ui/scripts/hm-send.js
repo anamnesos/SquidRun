@@ -26,6 +26,7 @@ const {
   buildTriggerFallbackDescriptor,
   buildSpecialTargetRequest,
 } = require('../modules/comms/message-envelope');
+const { createBridgeClient } = require('../modules/bridge-client');
 let parseCrossDeviceTarget = () => null;
 let isCrossDeviceEnabled = () => false;
 try {
@@ -76,20 +77,23 @@ const MAX_RETRIES = 5;
 const FALLBACK_MESSAGE_ID_PREFIX = '[HM-MESSAGE-ID:';
 const SPECIAL_USER_TARGETS = new Set(['user', 'telegram']);
 const args = process.argv.slice(2);
+const listDevicesMode = args.includes('--list-devices');
 const DEFAULT_ROLE_BY_PANE = Object.freeze({
   '1': 'architect',
   '2': 'builder',
   '3': 'oracle',
 });
 
-if (args.length < 2) {
+if (!listDevicesMode && args.length < 2) {
   console.log('Usage: node hm-send.js <target> <message> [--role <role>] [--priority urgent]');
   console.log('   or: node hm-send.js <target> --file <message-file> [--role <role>] [--priority urgent]');
   console.log('   or: node hm-send.js <target> --stdin [--role <role>] [--priority urgent]');
+  console.log('   or: node hm-send.js --list-devices [--timeout <ms>] [--role <role>]');
   console.log('  target: paneId (1,2,3), role name (architect, builder, oracle), user/telegram, or @<device>-arch');
   console.log('  message: text to send');
   console.log('  --file: read full message body from a UTF-8 text file');
   console.log('  --stdin: read full message body from stdin (pipe or heredoc)');
+  console.log('  --list-devices: query relay for connected cross-device peers');
   console.log('  --role: your role (for identification)');
   console.log('  --priority: normal or urgent');
   console.log(`  --timeout: ack timeout in ms (default: ${DEFAULT_ACK_TIMEOUT_MS})`);
@@ -98,7 +102,7 @@ if (args.length < 2) {
   process.exit(1);
 }
 
-let target = args[0];
+let target = listDevicesMode ? null : args[0];
 const envPaneId = String(process.env.SQUIDRUN_PANE_ID || '').trim();
 let role = normalizeRole(process.env.SQUIDRUN_ROLE || '') || DEFAULT_ROLE_BY_PANE[envPaneId] || 'cli';
 let priority = 'normal';
@@ -112,13 +116,13 @@ let useStdin = false;
 // Words starting with "--" that are NOT in this set are treated as message text,
 // which prevents accidental truncation when message content contains "--something".
 const KNOWN_FLAGS = new Set([
-  '--role', '--file', '--stdin', '--priority', '--timeout', '--retries', '--no-fallback',
+  '--role', '--file', '--stdin', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices',
 ]);
 
 // Collect message from all args between target and first known --flag
 // This handles PowerShell splitting quoted strings into multiple args
 const messageParts = [];
-let i = 1;
+let i = listDevicesMode ? 0 : 1;
 for (; i < args.length; i++) {
   if (KNOWN_FLAGS.has(args[i])) break;
   messageParts.push(args[i]);
@@ -163,10 +167,14 @@ for (; i < args.length; i++) {
   if (args[i] === '--no-fallback') {
     enableFallback = false;
   }
+  if (args[i] === '--list-devices') {
+    // Flag consumed here so list mode can coexist with other flags.
+    continue;
+  }
 }
 
 let message = messageParts.join(' ');
-if (useStdin) {
+if (!listDevicesMode && useStdin) {
   try {
     message = fs.readFileSync('/dev/stdin', 'utf8');
   } catch (err) {
@@ -179,7 +187,7 @@ if (useStdin) {
     }
   }
 }
-if (messageFilePath) {
+if (!listDevicesMode && messageFilePath) {
   const resolvedMessageFilePath = path.resolve(messageFilePath);
   try {
     message = fs.readFileSync(resolvedMessageFilePath, 'utf8');
@@ -188,7 +196,7 @@ if (messageFilePath) {
     process.exit(1);
   }
 }
-if (!message) {
+if (!listDevicesMode && !message) {
   console.error('Message cannot be empty.');
   process.exit(1);
 }
@@ -200,23 +208,25 @@ function inferRoleFromMessage(content) {
   return normalizeRole(match[1]);
 }
 
-if (role === 'cli') {
+if (!listDevicesMode && role === 'cli') {
   const inferred = inferRoleFromMessage(message);
   if (inferred) {
     role = inferred;
   }
 }
 
-const backgroundRoutingOverride = enforceBackgroundBuilderTargetRouting(role, target);
-if (backgroundRoutingOverride.redirected) {
-  console.warn(
-    `Background-builder owner binding override: rerouted target `
-    + `'${backgroundRoutingOverride.originalTarget}' to '${backgroundRoutingOverride.reroutedTarget}' `
-    + `for sender role '${backgroundRoutingOverride.senderRole}'.`
-  );
-  target = backgroundRoutingOverride.reroutedTarget;
+if (!listDevicesMode) {
+  const backgroundRoutingOverride = enforceBackgroundBuilderTargetRouting(role, target);
+  if (backgroundRoutingOverride.redirected) {
+    console.warn(
+      `Background-builder owner binding override: rerouted target `
+      + `'${backgroundRoutingOverride.originalTarget}' to '${backgroundRoutingOverride.reroutedTarget}' `
+      + `for sender role '${backgroundRoutingOverride.senderRole}'.`
+    );
+    target = backgroundRoutingOverride.reroutedTarget;
+  }
 }
-const bridgeTarget = parseCrossDeviceTarget(target);
+const bridgeTarget = listDevicesMode ? null : parseCrossDeviceTarget(target);
 if (bridgeTarget) {
   enableFallback = false;
 }
@@ -438,6 +448,204 @@ function buildProjectMetadata(context = localProjectContext) {
 }
 
 const projectMetadata = buildProjectMetadata(localProjectContext);
+
+function writeJsonAtomic(filePath, payload) {
+  try {
+    const dirPath = path.dirname(filePath);
+    fs.mkdirSync(dirPath, { recursive: true });
+    const tempPath = path.join(
+      dirPath,
+      `.${path.basename(filePath)}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
+    );
+    fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), 'utf8');
+    fs.renameSync(tempPath, filePath);
+    return { ok: true, path: filePath };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+function getBridgeKnownDevicesCachePath() {
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(path.join('bridge', 'known-devices.json'), { forWrite: true });
+  }
+  const fallbackCoordRoot = localProjectContext?.projectPath
+    ? path.join(localProjectContext.projectPath, '.squidrun')
+    : path.join(process.cwd(), '.squidrun');
+  return path.join(fallbackCoordRoot, 'bridge', 'known-devices.json');
+}
+
+function normalizeDeviceDiscoveryEntry(input = {}) {
+  const entry = (input && typeof input === 'object' && !Array.isArray(input)) ? input : {};
+  const deviceId = String(entry.device_id || entry.deviceId || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+  if (!deviceId) return null;
+  const rolesRaw = Array.isArray(entry.roles) ? entry.roles : [];
+  const roles = Array.from(new Set(
+    rolesRaw
+      .map((value) => String(value || '').trim().toLowerCase())
+      .filter(Boolean)
+  )).sort();
+  const connectedSince = String(entry.connected_since || entry.connectedSince || '').trim() || null;
+  return {
+    device_id: deviceId,
+    roles,
+    connected_since: connectedSince,
+  };
+}
+
+function normalizeDiscoveredDevices(input) {
+  if (!Array.isArray(input)) return [];
+  const deduped = new Map();
+  for (const entry of input) {
+    const normalized = normalizeDeviceDiscoveryEntry(entry);
+    if (!normalized) continue;
+    deduped.set(normalized.device_id, normalized);
+  }
+  return Array.from(deduped.values()).sort((a, b) => a.device_id.localeCompare(b.device_id));
+}
+
+function formatCell(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  return text.trim() || '-';
+}
+
+function printDeviceDiscoveryTable(devices = [], options = {}) {
+  const normalizedDevices = normalizeDiscoveredDevices(devices);
+  const fetchedAt = String(options.fetchedAt || '').trim();
+  const cached = options.cached === true;
+  const headerBits = ['Online devices'];
+  if (cached) headerBits.push('(cached)');
+  if (fetchedAt) headerBits.push(`updated ${fetchedAt}`);
+  console.log(`${headerBits.join(' ')}`);
+
+  const columns = [
+    { key: 'device_id', label: 'DEVICE_ID' },
+    { key: 'roles', label: 'ROLES' },
+    { key: 'connected_since', label: 'CONNECTED_SINCE' },
+  ];
+  const rows = normalizedDevices.map((device) => ({
+    device_id: formatCell(device.device_id),
+    roles: formatCell(Array.isArray(device.roles) ? device.roles.join(', ') : ''),
+    connected_since: formatCell(device.connected_since),
+  }));
+  const widths = columns.map((column) => {
+    const rowMax = rows.reduce((max, row) => Math.max(max, String(row[column.key]).length), 0);
+    return Math.max(column.label.length, rowMax);
+  });
+  const header = columns
+    .map((column, index) => column.label.padEnd(widths[index]))
+    .join('  ');
+  console.log(header);
+  const separator = widths.map((width) => '-'.repeat(width)).join('  ');
+  console.log(separator);
+  for (const row of rows) {
+    console.log(columns.map((column, index) => String(row[column.key]).padEnd(widths[index])).join('  '));
+  }
+  if (rows.length === 0) {
+    console.log('(no devices)');
+  }
+}
+
+async function waitForBridgeReady(client, timeoutMs) {
+  const deadline = Date.now() + Math.max(500, timeoutMs);
+  while (Date.now() < deadline) {
+    if (client.isReady()) return true;
+    await sleep(50);
+  }
+  return false;
+}
+
+function readDeviceCache(cachePath) {
+  const payload = readJsonFileSafe(cachePath);
+  if (!payload || typeof payload !== 'object') return null;
+  const updatedAt = String(payload.updated_at || payload.updatedAt || '').trim();
+  const devices = normalizeDiscoveredDevices(payload.devices);
+  if (!updatedAt && devices.length === 0) return null;
+  return {
+    updatedAt: updatedAt || null,
+    devices,
+  };
+}
+
+function writeDeviceCache(cachePath, devices) {
+  const payload = {
+    updated_at: new Date().toISOString(),
+    source: 'relay',
+    devices: normalizeDiscoveredDevices(devices),
+  };
+  const result = writeJsonAtomic(cachePath, payload);
+  if (!result.ok) {
+    console.warn(`Failed to update device cache: ${result.error}`);
+  }
+  return payload;
+}
+
+async function runListDevicesMode() {
+  const cachePath = getBridgeKnownDevicesCachePath();
+  const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim();
+  const deviceId = String(process.env.SQUIDRUN_DEVICE_ID || '').trim();
+  const sharedSecret = String(process.env.SQUIDRUN_RELAY_SECRET || '').trim();
+
+  if (!relayUrl || !deviceId || !sharedSecret || !isCrossDeviceEnabled(process.env)) {
+    const cached = readDeviceCache(cachePath);
+    if (cached) {
+      printDeviceDiscoveryTable(cached.devices, {
+        cached: true,
+        fetchedAt: cached.updatedAt || 'unknown',
+      });
+      return { ok: true, cached: true };
+    }
+    const missing = [];
+    if (!isCrossDeviceEnabled(process.env)) missing.push('SQUIDRUN_CROSS_DEVICE=1');
+    if (!relayUrl) missing.push('SQUIDRUN_RELAY_URL');
+    if (!deviceId) missing.push('SQUIDRUN_DEVICE_ID');
+    if (!sharedSecret) missing.push('SQUIDRUN_RELAY_SECRET');
+    return {
+      ok: false,
+      error: `Bridge discovery unavailable (${missing.join(', ')})`,
+    };
+  }
+
+  const bridgeClient = createBridgeClient({
+    relayUrl,
+    deviceId,
+    sharedSecret,
+  });
+
+  try {
+    if (!bridgeClient.start()) {
+      throw new Error('Bridge client failed to start');
+    }
+    const ready = await waitForBridgeReady(bridgeClient, ackTimeoutMs);
+    if (!ready) {
+      throw new Error('Relay connection timeout');
+    }
+    const discovery = await bridgeClient.discoverDevices({ timeoutMs: ackTimeoutMs });
+    if (!discovery?.ok) {
+      throw new Error(discovery?.error || discovery?.status || 'discovery_failed');
+    }
+    const normalizedDevices = normalizeDiscoveredDevices(discovery.devices);
+    const cachePayload = writeDeviceCache(cachePath, normalizedDevices);
+    printDeviceDiscoveryTable(normalizedDevices, {
+      cached: false,
+      fetchedAt: cachePayload.updated_at,
+    });
+    return { ok: true, cached: false };
+  } catch (err) {
+    const cached = readDeviceCache(cachePath);
+    if (cached) {
+      printDeviceDiscoveryTable(cached.devices, {
+        cached: true,
+        fetchedAt: cached.updatedAt || 'unknown',
+      });
+      console.warn(`Relay discovery failed (${err.message}). Showing cached results.`);
+      return { ok: true, cached: true };
+    }
+    return { ok: false, error: `Relay discovery failed: ${err.message}` };
+  } finally {
+    bridgeClient.stop();
+  }
+}
 
 function waitForMatch(ws, predicate, timeoutMs, timeoutLabel) {
   return new Promise((resolve, reject) => {
@@ -763,6 +971,35 @@ function shouldFallbackForUnverifiedSend(result, targetInput) {
   );
 }
 
+function normalizeConnectedDevices(input) {
+  if (!Array.isArray(input)) return [];
+  const deduped = new Set();
+  for (const value of input) {
+    const normalized = String(value || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    if (normalized) deduped.add(normalized);
+  }
+  return Array.from(deduped).sort();
+}
+
+function buildBridgeTargetOfflineReason(ack, bridgeInfo = null) {
+  if (!ack || String(ack.status || '').toLowerCase() !== 'target_offline') return null;
+  const details = ack.handlerResult && typeof ack.handlerResult === 'object' ? ack.handlerResult : null;
+  const unknownDevice = String(
+    ack.unknownDevice
+    || details?.unknownDevice
+    || ack.toDevice
+    || details?.toDevice
+    || bridgeInfo?.toDevice
+    || ''
+  ).trim().toUpperCase();
+  const connectedDevices = normalizeConnectedDevices(
+    ack.connectedDevices
+    || details?.connectedDevices
+  );
+  if (!unknownDevice && connectedDevices.length === 0) return null;
+  return `Unknown device '${unknownDevice || 'UNKNOWN'}'. Connected devices: ${connectedDevices.length > 0 ? connectedDevices.join(', ') : 'none'}`;
+}
+
 function getBackoffDelayMs(baseTimeoutMs, attempt) {
   return baseTimeoutMs * Math.pow(2, attempt - 1);
 }
@@ -1015,6 +1252,17 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
 }
 
 async function main() {
+  if (listDevicesMode) {
+    const discoveryResult = await runListDevicesMode();
+    if (discoveryResult?.ok) {
+      closeCommsJournalStores();
+      process.exit(0);
+    }
+    closeCommsJournalStores();
+    console.error(`Device discovery failed: ${discoveryResult?.error || 'unknown error'}`);
+    process.exit(1);
+  }
+
   const bridgeMode = Boolean(bridgeTarget);
   const messageId = `hm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const targetRole = normalizeRole(target)
@@ -1183,13 +1431,14 @@ async function main() {
     process.exit(1);
   }
 
-  const reason = sendResult?.ack
+  const bridgeReason = bridgeMode ? buildBridgeTargetOfflineReason(sendResult?.ack, bridgeTarget) : null;
+  const reason = bridgeReason || (sendResult?.ack
     ? `ACK failed (${sendResult.ack.status})`
     : sendResult?.deliveryCheck
       ? `delivery-check ${sendResult.deliveryCheck.status || 'unknown'}`
     : sendResult?.skippedByHealth
       ? `target health ${sendResult?.health?.status || 'unhealthy'}`
-    : (sendResult?.error || wsError?.message || 'unknown error');
+    : (sendResult?.error || wsError?.message || 'unknown error'));
   console.error(`Send failed: ${reason}`);
   closeCommsJournalStores();
   process.exit(1);

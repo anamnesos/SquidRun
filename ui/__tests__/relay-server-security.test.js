@@ -214,6 +214,41 @@ describe('relay server security controls', () => {
     ).rejects.toThrow(/Timed out/);
   });
 
+  test('returns connected device list when xsend targets unknown device id', async () => {
+    const port = await getFreePort();
+    relay = await startRelayServer({
+      port,
+      sharedSecret: 'relay-secret',
+      allowlist: 'LOCAL,PEER',
+    });
+    const url = `ws://127.0.0.1:${port}`;
+    const sender = await openSocket(url);
+    const receiver = await openSocket(url);
+
+    sender.send(JSON.stringify({ type: 'register', deviceId: 'LOCAL', sharedSecret: 'relay-secret' }));
+    receiver.send(JSON.stringify({ type: 'register', deviceId: 'PEER', sharedSecret: 'relay-secret' }));
+    await waitForMessage(sender, (msg) => msg.type === 'register-ack' && msg.ok === true);
+    await waitForMessage(receiver, (msg) => msg.type === 'register-ack' && msg.ok === true);
+
+    sender.send(JSON.stringify({
+      type: 'xsend',
+      messageId: 'unknown-device-1',
+      fromDevice: 'LOCAL',
+      toDevice: 'WINDOWS',
+      fromRole: 'architect',
+      targetRole: 'architect',
+      content: 'route this',
+      metadata: {},
+    }));
+
+    const senderAck = await waitForMessage(sender, (msg) => msg.type === 'xack' && msg.messageId === 'unknown-device-1');
+    expect(senderAck.ok).toBe(false);
+    expect(senderAck.status).toBe('target_offline');
+    expect(senderAck.unknownDevice).toBe('WINDOWS');
+    expect(senderAck.connectedDevices).toEqual(['LOCAL', 'PEER']);
+    expect(String(senderAck.error || '')).toContain('Connected devices: LOCAL, PEER');
+  });
+
   test('forwards architect-targeted payloads and relays delivery ack', async () => {
     const port = await getFreePort();
     relay = await startRelayServer({

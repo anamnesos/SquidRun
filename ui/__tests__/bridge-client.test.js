@@ -144,6 +144,89 @@ describe('bridge-client', () => {
     });
   });
 
+  test('discoverDevices sends xdiscovery and resolves normalized device list', async () => {
+    const client = createBridgeClient({
+      relayUrl: 'ws://relay',
+      deviceId: 'local_a',
+      sharedSecret: 'secret',
+    });
+
+    expect(client.start()).toBe(true);
+    expect(instances).toHaveLength(1);
+    const socket = instances[0];
+    socket.readyState = MockWebSocket.OPEN;
+    socket.emit('open');
+    emitJson(socket, { type: 'register-ack', ok: true });
+    expect(client.isReady()).toBe(true);
+
+    const pending = client.discoverDevices({ timeoutMs: 100 });
+    const discoveryFrame = JSON.parse(socket.sent[1]);
+    expect(discoveryFrame.type).toBe('xdiscovery');
+    expect(typeof discoveryFrame.requestId).toBe('string');
+    expect(discoveryFrame.requestId).toContain('xdiscovery-');
+
+    emitJson(socket, {
+      type: 'xdiscovery',
+      requestId: discoveryFrame.requestId,
+      ok: true,
+      devices: [
+        { device_id: 'vigil', roles: ['architect', 'architect'], connected_since: '2026-02-25T00:00:00.000Z' },
+        { device_id: 'macbook', roles: ['builder'], connected_since: '2026-02-25T00:01:00.000Z' },
+      ],
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      devices: [
+        { device_id: 'MACBOOK', roles: ['builder'], connected_since: '2026-02-25T00:01:00.000Z' },
+        { device_id: 'VIGIL', roles: ['architect'], connected_since: '2026-02-25T00:00:00.000Z' },
+      ],
+    });
+  });
+
+  test('sendToDevice preserves unknownDevice and connectedDevices from relay xack', async () => {
+    const client = createBridgeClient({
+      relayUrl: 'ws://relay',
+      deviceId: 'local_a',
+      sharedSecret: 'secret',
+    });
+
+    expect(client.start()).toBe(true);
+    const socket = instances[0];
+    socket.readyState = MockWebSocket.OPEN;
+    socket.emit('open');
+    emitJson(socket, { type: 'register-ack', ok: true });
+
+    const pending = client.sendToDevice({
+      messageId: 'msg-unknown-device',
+      toDevice: 'windows',
+      content: 'bridge ping',
+      timeoutMs: 50,
+    });
+
+    emitJson(socket, {
+      type: 'xack',
+      messageId: 'msg-unknown-device',
+      ok: false,
+      accepted: false,
+      queued: false,
+      verified: false,
+      status: 'target_offline',
+      error: 'Unknown device WINDOWS. Connected devices: MACBOOK, VIGIL',
+      fromDevice: 'LOCAL_A',
+      toDevice: 'WINDOWS',
+      unknownDevice: 'windows',
+      connectedDevices: ['vigil', 'macbook'],
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      status: 'target_offline',
+      unknownDevice: 'WINDOWS',
+      connectedDevices: ['MACBOOK', 'VIGIL'],
+    });
+  });
+
   test('sendToDevice returns bridge_unavailable when relay is not ready', async () => {
     const client = createBridgeClient({
       relayUrl: 'ws://relay',

@@ -5,6 +5,7 @@ const {
 } = require('./cross-device-target');
 
 const DEFAULT_ACK_TIMEOUT_MS = 12000;
+const DEFAULT_DISCOVERY_TIMEOUT_MS = 5000;
 const DEFAULT_RECONNECT_BASE_MS = 750;
 const DEFAULT_RECONNECT_MAX_MS = 10000;
 const DEFAULT_PING_INTERVAL_MS = 30000;
@@ -99,7 +100,51 @@ function getReconnectDelayMs(attempt) {
   return Math.min(maxMs, baseMs * Math.pow(2, exponent));
 }
 
+function normalizeConnectedDevices(input) {
+  if (!Array.isArray(input)) return [];
+  const normalized = new Set();
+  for (const value of input) {
+    const deviceId = normalizeDeviceId(value);
+    if (deviceId) normalized.add(deviceId);
+  }
+  return Array.from(normalized).sort();
+}
+
+function normalizeRoleList(input) {
+  if (!Array.isArray(input)) return [];
+  const normalized = new Set();
+  for (const value of input) {
+    const role = asNonEmptyString(value).toLowerCase();
+    if (role) normalized.add(role);
+  }
+  return Array.from(normalized).sort();
+}
+
+function normalizeDiscoveryEntry(input = {}) {
+  const entry = (input && typeof input === 'object' && !Array.isArray(input)) ? input : {};
+  const deviceId = normalizeDeviceId(entry.device_id || entry.deviceId || entry.id);
+  if (!deviceId) return null;
+  return {
+    device_id: deviceId,
+    roles: normalizeRoleList(entry.roles),
+    connected_since: asNonEmptyString(entry.connected_since || entry.connectedSince || entry.connected_at || entry.connectedAt) || null,
+  };
+}
+
+function normalizeDiscoveryDevices(input) {
+  if (!Array.isArray(input)) return [];
+  const normalized = new Map();
+  for (const entry of input) {
+    const device = normalizeDiscoveryEntry(entry);
+    if (!device) continue;
+    normalized.set(device.device_id, device);
+  }
+  return Array.from(normalized.values()).sort((a, b) => a.device_id.localeCompare(b.device_id));
+}
+
 function buildAckResult(input = {}) {
+  const unknownDevice = normalizeDeviceId(input.unknownDevice);
+  const connectedDevices = normalizeConnectedDevices(input.connectedDevices);
   return {
     ok: input.ok === true,
     accepted: input.accepted === true || input.ok === true,
@@ -109,6 +154,8 @@ function buildAckResult(input = {}) {
     error: asNonEmptyString(input.error) || null,
     fromDevice: asNonEmptyString(input.fromDevice) || null,
     toDevice: asNonEmptyString(input.toDevice) || null,
+    unknownDevice: unknownDevice || null,
+    connectedDevices,
   };
 }
 
@@ -182,6 +229,7 @@ class BridgeClient {
     this.pingTimer = null;
     this.reconnectAttempt = 0;
     this.pendingAcks = new Map();
+    this.pendingDiscoveries = new Map();
   }
 
   emitStatus(status = {}) {
@@ -221,6 +269,12 @@ class BridgeClient {
       ok: false,
       status: 'bridge_stopped',
       error: 'Bridge client stopped',
+    });
+    this.rejectPendingDiscoveries({
+      ok: false,
+      status: 'bridge_stopped',
+      error: 'Bridge client stopped',
+      devices: [],
     });
     if (this.socket) {
       try {
@@ -321,6 +375,12 @@ class BridgeClient {
         status: 'bridge_disconnected',
         error: 'Relay connection closed',
       });
+      this.rejectPendingDiscoveries({
+        ok: false,
+        status: 'bridge_disconnected',
+        error: 'Relay connection closed',
+        devices: [],
+      });
       this.emitStatus({
         type: 'relay.disconnected',
         state: 'disconnected',
@@ -371,6 +431,21 @@ class BridgeClient {
     }
   }
 
+  rejectPendingDiscoveries(result = {}) {
+    const normalized = {
+      ok: result.ok === true,
+      status: asNonEmptyString(result.status) || (result.ok === true ? 'bridge_discovery_ok' : 'bridge_discovery_failed'),
+      error: asNonEmptyString(result.error) || null,
+      devices: normalizeDiscoveryDevices(result.devices),
+      fetchedAt: Number.isFinite(result.fetchedAt) ? result.fetchedAt : Date.now(),
+    };
+    for (const [requestId, entry] of this.pendingDiscoveries.entries()) {
+      this.pendingDiscoveries.delete(requestId);
+      clearTimeout(entry.timeout);
+      entry.resolve(normalized);
+    }
+  }
+
   async handleIncoming(raw) {
     const message = this.parseMessage(raw);
     if (!message || typeof message !== 'object') return;
@@ -416,6 +491,8 @@ class BridgeClient {
         error: asNonEmptyString(message.error) || null,
         fromDevice: asNonEmptyString(message.fromDevice),
         toDevice: asNonEmptyString(message.toDevice),
+        unknownDevice: message.unknownDevice,
+        connectedDevices: message.connectedDevices,
       }));
       this.emitStatus({
         type: 'relay.dispatch',
@@ -429,12 +506,31 @@ class BridgeClient {
         fromDevice: asNonEmptyString(message.fromDevice),
         toDevice: asNonEmptyString(message.toDevice),
         error: asNonEmptyString(message.error) || null,
+        unknownDevice: normalizeDeviceId(message.unknownDevice) || null,
+        connectedDevices: normalizeConnectedDevices(message.connectedDevices),
       });
       return;
     }
 
     if (message.type === 'xdeliver') {
       await this.handleInboundDelivery(message);
+      return;
+    }
+
+    if (message.type === 'xdiscovery') {
+      const requestId = asNonEmptyString(message.requestId);
+      if (!requestId) return;
+      const pending = this.pendingDiscoveries.get(requestId);
+      if (!pending) return;
+      this.pendingDiscoveries.delete(requestId);
+      clearTimeout(pending.timeout);
+      pending.resolve({
+        ok: message.ok !== false,
+        status: asNonEmptyString(message.status) || (message.ok === false ? 'bridge_discovery_failed' : 'bridge_discovery_ok'),
+        error: asNonEmptyString(message.error) || null,
+        devices: normalizeDiscoveryDevices(message.devices),
+        fetchedAt: Date.now(),
+      });
       return;
     }
 
@@ -574,6 +670,51 @@ class BridgeClient {
           error: 'Failed to send payload to relay',
           toDevice,
         }));
+      }
+    });
+  }
+
+  discoverDevices(options = {}) {
+    const timeoutMs = parsePositiveInt(options.timeoutMs, DEFAULT_DISCOVERY_TIMEOUT_MS);
+    if (!this.isReady()) {
+      return Promise.resolve({
+        ok: false,
+        status: 'bridge_unavailable',
+        error: 'Relay is not connected',
+        devices: [],
+        fetchedAt: Date.now(),
+      });
+    }
+
+    return new Promise((resolve) => {
+      const requestId = `xdiscovery-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const timeout = setTimeout(() => {
+        this.pendingDiscoveries.delete(requestId);
+        resolve({
+          ok: false,
+          status: 'bridge_discovery_timeout',
+          error: `No relay discovery response within ${timeoutMs}ms`,
+          devices: [],
+          fetchedAt: Date.now(),
+        });
+      }, timeoutMs);
+
+      this.pendingDiscoveries.set(requestId, { resolve, timeout });
+      const sent = this.sendRaw({
+        type: 'xdiscovery',
+        requestId,
+        fromDevice: this.deviceId,
+      });
+      if (!sent) {
+        this.pendingDiscoveries.delete(requestId);
+        clearTimeout(timeout);
+        resolve({
+          ok: false,
+          status: 'bridge_discovery_send_failed',
+          error: 'Failed to send discovery request to relay',
+          devices: [],
+          fetchedAt: Date.now(),
+        });
       }
     });
   }
