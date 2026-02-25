@@ -377,6 +377,7 @@ class SquidRunApp {
       path.join('scripts', 'hm-comms.js'),
       path.join('scripts', 'hm-telegram.js'),
       path.join('modules', 'cross-device-target.js'),
+      path.join('modules', 'bridge-client.js'),
       path.join('modules', 'logger.js'),
       path.join('modules', 'buffered-file-writer.js'),
       path.join('modules', 'comms', 'message-envelope.js'),
