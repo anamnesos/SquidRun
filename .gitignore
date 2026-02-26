@@ -70,7 +70,6 @@ workspace/memory/
 workspace/plugins/
 workspace/backups/
 workspace/rollbacks/
-workspace/knowledge/
 workspace/backup-config.json
 workspace/oracle-history.json
 workspace/perf-profile.json
