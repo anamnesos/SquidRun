@@ -1385,6 +1385,7 @@ describe('hm-send retry behavior', () => {
       const result = await runHmSend(
         ['--list-devices', '--role', 'architect', '--timeout', '250'],
         {
+          SQUIDRUN_PROJECT_ROOT: tempProject,
           HM_SEND_PORT: '65534',
           SQUIDRUN_CROSS_DEVICE: '1',
           SQUIDRUN_RELAY_URL: relayUrl,
@@ -1486,6 +1487,7 @@ describe('hm-send retry behavior', () => {
       const result = await runHmSend(
         ['--list-devices', '--role', 'architect', '--timeout', '120'],
         {
+          SQUIDRUN_PROJECT_ROOT: tempProject,
           HM_SEND_PORT: '65534',
           SQUIDRUN_CROSS_DEVICE: '1',
           SQUIDRUN_RELAY_URL: 'ws://127.0.0.1:65534',
@@ -1534,6 +1536,7 @@ describe('hm-send retry behavior', () => {
       const result = await runHmSend(
         ['--list-devices', '--role', 'architect', '--timeout', '250'],
         {
+          SQUIDRUN_PROJECT_ROOT: tempProject,
           HM_SEND_PORT: '65534',
           SQUIDRUN_CROSS_DEVICE: '1',
           SQUIDRUN_RELAY_URL: relayUrl,
