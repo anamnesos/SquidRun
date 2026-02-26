@@ -232,10 +232,10 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/local_embedder.py: Python helper worker for local embeddings.
 - ui/scripts/test-image-gen.js: Standalone diagnostic for Recraft/OpenAI image APIs with payload logging and variation testing.
 
-## 4) 3-PANE MODEL
-- Pane 1 (`Architect`): coordination, decomposition, review, release gating (no direct implementation).
-- Pane 2 (`Builder`): implementation, infra/runtime/test/security, plus optional background builders.
-- Pane 3 (`Oracle`): investigation, documentation, benchmarks/evals.
+## 4) OUTER-LOOP COORDINATOR MODEL (3-PANE + BACKGROUND)
+- **Architect (Pane 1):** The outer-loop coordinator. Handles decomposition, review, and release gating (no direct implementation). Elevates the AI from individual workers to a management layer over native sub-agents.
+- **Builder (Pane 2):** The working lead. Executes implementation and autonomously spawns up to 3 background agents (`builder-bg-1..3`) for parallel execution.
+- **Oracle (Pane 3):** The high-level system monitor and vision-provider. Shifted from the old per-pane "Analyst" role to provide system-wide investigation, root-cause evidence, documentation, and benchmarks.
 - Primary comms path: `node ui/scripts/hm-send.js <target> "(ROLE #N): ..."` sends WebSocket envelopes into the comms runtime.
 - Fallback comms path: if WebSocket delivery is unverified/fails, `hm-send.js` writes `.squidrun/triggers/<role>.txt` atomically.
 - Trigger/watch path: `ui/modules/watcher.js` watches trigger/message/workspace paths and calls `ui/modules/triggers.js` for routing and delivery tracking.
