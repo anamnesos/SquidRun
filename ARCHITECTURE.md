@@ -242,7 +242,12 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - PTY injection path: `ui/modules/main/squidrun-app.js` routes to hidden pane host first (`pane-host-inject`), with visible renderer fallback.
 - Hidden pane host architecture: one hidden BrowserWindow per pane, with explicit ready/ack/outcome signaling to main process for delivery verification.
 
-## 5) DATA FLOW
+## 5) CROSS-DEVICE RELAY
+- Topology: `Architect (Device A) <-> WebSocket Relay <-> Architect (Device B)`.
+- Architect-only gate: cross-device relay targeting is restricted to `@<DEVICE>-architect`; role gate enforced in `ui/modules/main/squidrun-app.js` (around line 1900).
+- Local routing model: Builder/Oracle never target external devices directly. Inbound cross-device payloads terminate at local Architect, which then routes to local Builder/Oracle via `hm-send.js`.
+
+## 6) DATA FLOW
 1. User types in pane 1 broadcast input (`ui/index.html#broadcastInput`, `ui/renderer.js`).
 2. Renderer forwards through IPC (`send-broadcast-message` / task-parser handlers) into main process routing.
 3. Architect delegates via `hm-send.js` to target role/pane.
@@ -254,7 +259,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 9. Target agent processes and replies via `hm-send.js` back to Architect, repeating the same envelope + verification flow.
 10. Handoff materializer compacts comms journal/evidence into `.squidrun/handoffs/session.md` and context snapshots.
 
-## 6) CONFIG FILES
+## 7) CONFIG FILES
 - `ui/settings.json`: user/runtime settings (pane commands, watcher/autospawn flags, hidden pane-host toggle). **Gitignored** (`.gitignore`).
 - `.squidrun/link.json`: bootstrap metadata (workspace root, comms script path, role targets, legacy session id). **Runtime-generated, gitignored**.
 - `.squidrun/app-status.json`: current runtime status/session/pane-host health. **Runtime-generated, gitignored**.
@@ -262,7 +267,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - `ROLES.md`: canonical role boundaries/startup baseline/operating rules. **Tracked**.
 - `CLAUDE.md`, `CODEX.md`, `GEMINI.md`, `CLAUDE-AI.md`, `AGENTS.md`: model/agent shims and behavior contracts. **Tracked**.
 
-## 7) COORDINATION STATE (`.squidrun/`)
+## 8) COORDINATION STATE (`.squidrun/`)
 - `.squidrun/handoffs/`: materialized session handoff index (`session.md`) from comms journal.
 - `.squidrun/context-snapshots/`: per-pane startup context snapshots (`1.md`, `2.md`, `3.md`, etc.).
 - `.squidrun/runtime/`: live SQLite stores (`evidence-ledger.db*`, `team-memory.sqlite*`).
@@ -273,7 +278,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - `.squidrun/app-status.json` + `.squidrun/link.json`: runtime truth + bootstrap metadata.
 - `.squidrun/fresh-install.json`: marker file indicating a new installation before onboarding completion.
 
-## 8) TEST INFRASTRUCTURE
+## 9) TEST INFRASTRUCTURE
 - Test suite root: `ui/__tests__/` (Jest, Node environment) with shared setup in `ui/__tests__/setup.js`.
 - Core commands (from `ui/package.json`): `npm test`, `npm run test:watch`, `npm run test:coverage`, `npm run lint`.
 - Jest config: `ui/jest.config.js` (coverage thresholds, module mapping, setup files).
@@ -283,4 +288,3 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
   - Config mocking helpers in `ui/__tests__/helpers/mock-config.js` and `ui/__tests__/helpers/real-config.js`.
   - Frequent fake-timer tests for watcher/terminal/runtime behavior.
 - Current suite scale: 160+ test files under `ui/__tests__/` with handler-heavy coverage across main/ipc/runtime modules.
-

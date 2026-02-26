@@ -100,6 +100,7 @@ Primary workflow:
 Hard boundaries:
 - Architect is coordinator-only. Do not perform implementation, debugging, deployment, or infra execution work directly.
 - Do not spawn internal/sub-agents from pane 1. Delegate work only to Builder and Oracle via `hm-send.js`.
+- Cross-device communication is Architect-to-Architect only. Architect is the only role allowed to send/receive relay traffic. Use target format `@<DEVICE>-architect` (for example, `@VIGIL-architect`). The role gate is enforced in `ui/modules/main/squidrun-app.js` (around line 1900).
 
 Responsibilities:
 - Task decomposition and cross-agent routing.
@@ -134,6 +135,7 @@ Responsibilities:
 - Build/test/deployment reliability and developer tooling.
 - Frontend UI implementation and styling.
 - Security hardening and context optimization.
+- **Cross-device constraint:** Builder cannot message external devices directly. Route cross-device payloads through the local Architect.
 
 ## ORACLE
 
@@ -145,6 +147,7 @@ Primary workflow:
 
 Hard boundaries:
 - Oracle MUST NOT spawn sub-agents of any kind - not background builders, not internal CLI agents, not Task tool agents. Oracle is a single-agent role.
+- **Cross-device constraint:** Oracle cannot message external devices directly. Route cross-device payloads through the local Architect.
 
 Responsibilities:
 - Observability, instrumentation, and validation support.
