@@ -106,6 +106,10 @@ function resolveLocalProjectContext(startDir = process.cwd()) {
 
 function applyProjectContext(projectContext = null) {
   if (!projectContext?.projectPath || typeof setProjectRoot !== 'function') return projectContext;
+  const explicitProjectRoot = String(process.env.SQUIDRUN_PROJECT_ROOT || '').trim();
+  if (explicitProjectRoot) {
+    return projectContext;
+  }
   try {
     setProjectRoot(projectContext.projectPath);
   } catch (_) {
