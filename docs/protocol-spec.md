@@ -138,7 +138,23 @@ If an agent encounters a tool failure or a system blocker:
 
 ---
 
-## 6. Extending the System (Adding a New Agent)
+## 6. Cross-Device Relay Protocol
+
+The system supports cross-device pairing to connect two SquidRun instances on different machines.
+
+### 6.1 Topology & Routing
+- **Topology:** `Architect (Device A) <-> WebSocket Relay <-> Architect (Device B)`.
+- **Architect-Only Gate:** Cross-device targeting is strictly limited to the Architect role via `@<DEVICE>-architect` (e.g., `@MACBOOK-architect`).
+- **Local Routing:** Builder and Oracle must never target external devices directly. Inbound cross-device payloads terminate at the local Architect, who then delegates to the local Builder/Oracle via `hm-send.js`.
+
+### 6.2 Pairing Lifecycle
+- **Discovery & Exchange:** Devices pair using a 6-character code exchanged via the UI (Settings > Devices).
+- **Relay URL:** The default public relay is `wss://relay-production-2c27.up.railway.app`, bootstrapped into the client.
+- **State Preservation:** The relay server preserves active pairing codes and shared secrets across socket reconnections to ensure stable links.
+
+---
+
+## 7. Extending the System (Adding a New Agent)
 
 To add a new agent (e.g., `Reviewer` or `SRE`) to SquidRun:
 
@@ -150,14 +166,14 @@ To add a new agent (e.g., `Reviewer` or `SRE`) to SquidRun:
 
 ---
 
-## 7. Operational Safety
+## 8. Operational Safety
 
 - **Terminal vs. Agent:** Terminal output is for the USER. Never assume another agent can see your terminal.
 - **No Content-Free ACKs:** Avoid "Okay" or "Received" unless `[ACK REQUIRED]` was specified. Prefer status-rich updates.
 - **Verify Before Redesign:** Validate that a subsystem is actually failing against live runtime data before proposing replacement architecture.
 - **Commit First:** Always commit work before declaring "Ready for restart." Uncommitted state is lost when a pane restarts.
 
-### 7.1 Pre-Restart Release Gate
+### 8.1 Pre-Restart Release Gate
 1. Builder completes fix + tests.
 2. Architect verifies independently.
 3. Oracle performs restart-risk review.
