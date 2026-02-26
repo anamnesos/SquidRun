@@ -19,7 +19,8 @@ node ui/scripts/hm-send.js <target> "(ROLE #N): message"
 | `builder-bg-2` | Background Builder slot 2 (`bg-2-2`, Builder-owned) |
 | `builder-bg-3` | Background Builder slot 3 (`bg-2-3`, Builder-owned) |
 
-Legacy targets `devops` and `analyst` still work and route to Builder/Oracle respectively.
+Use canonical targets (`architect`, `builder`, `oracle`) for all new work.
+Legacy aliases are still accepted and normalized by the runtime compatibility map.
 
 Background targets also accept synthetic pane IDs directly (`bg-2-1`, `bg-2-2`, `bg-2-3`) through the WebSocket broker.
 

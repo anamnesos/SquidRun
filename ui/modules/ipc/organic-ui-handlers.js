@@ -24,7 +24,7 @@ const agentStates = new Map([
 
 // Short role names for UI
 const SHORT_ROLES = {
-  '1': 'arch',
+  '1': 'architect',
   '2': 'builder',
   '3': 'oracle',
 };

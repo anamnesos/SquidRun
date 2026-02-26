@@ -482,7 +482,7 @@ describe('daemon-handlers.js module', () => {
         const data = {
 
           terminals: [
-            { paneId: '1', alive: true, scrollback: 'Claude Code\n> ', lastActivity: now, cwd: '/project/instances/arch' },
+            { paneId: '1', alive: true, scrollback: 'Claude Code\n> ', lastActivity: now, cwd: '/project/instances/architect' },
             { paneId: '2', alive: true, scrollback: '', cwd: '/project/instances/builder' },
           ],
         };
@@ -519,7 +519,7 @@ describe('daemon-handlers.js module', () => {
               alive: true,
               scrollback: 'Claude Code\nPS <user-home> >',
               lastActivity: now - 10 * 60 * 1000,
-              cwd: '/project/instances/arch'
+              cwd: '/project/instances/architect'
             },
           ],
         };
@@ -879,3 +879,4 @@ describe('daemon-handlers.js module', () => {
     });
   });
 });
+

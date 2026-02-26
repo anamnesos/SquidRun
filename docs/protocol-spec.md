@@ -66,9 +66,8 @@ Messages are routed via the `ui/scripts/hm-send.js` utility.
 - Daemon event handling suppresses non-owner UI/recovery/CLI-identity side effects for background panes.
 
 ### 2.5 Legacy Aliases
-The system maintains aliases for backward compatibility:
-- `devops` → Routes to `builder`
-- `analyst` → Routes to `oracle`
+Backward compatibility aliases are normalized at the config boundary.
+Canonical routing targets remain `architect`, `builder`, and `oracle`.
 
 ---
 

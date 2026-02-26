@@ -33,7 +33,8 @@ hm-send <target> "(YOUR-ROLE #N): Your message"
 | Builder | `builder` |
 | Oracle | `oracle` |
 
-Legacy targets `devops` and `analyst` still work and route to Builder/Oracle respectively.
+Use canonical targets: `architect`, `builder`, `oracle`.
+Backward-compatible aliases are normalized automatically by the runtime.
 
 ### Examples
 

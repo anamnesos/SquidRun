@@ -55,7 +55,7 @@ describe('State Handlers', () => {
 
   describe('get-state', () => {
     test('returns state from watcher', async () => {
-      const mockState = { state: 'building', agent_claims: { '1': 'Lead' } };
+      const mockState = { state: 'building', agent_claims: { '1': 'Architect' } };
       ctx.watcher.readState.mockReturnValue(mockState);
 
       const result = await harness.invoke('get-state');
@@ -223,7 +223,7 @@ describe('State Handlers', () => {
 
   describe('get-message-state', () => {
     test('returns sequence state from triggers', async () => {
-      const mockSequenceState = { 'LEAD': 5, 'WORKER-A': 3 };
+      const mockSequenceState = { 'ARCHITECT': 5, 'BUILDER': 3 };
       ctx.triggers.getSequenceState.mockReturnValue(mockSequenceState);
 
       const result = await harness.invoke('get-message-state');

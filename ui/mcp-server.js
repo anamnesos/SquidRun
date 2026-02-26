@@ -20,7 +20,14 @@ const {
 const fs = require('fs');
 const path = require('path');
 const log = require('./modules/logger');
-const { PANE_IDS, PANE_ROLES, WORKSPACE_PATH, resolveCoordPath } = require('./config');
+const {
+  PANE_IDS,
+  PANE_ROLES,
+  WORKSPACE_PATH,
+  resolveCoordPath,
+  ROLE_ID_MAP,
+  BACKWARD_COMPAT_ROLE_ALIASES,
+} = require('./config');
 
 // ============================================================
 // CONFIGURATION
@@ -52,28 +59,47 @@ function getTriggersPath(options = {}) {
   return coordPath('triggers', options);
 }
 
-// Agent name to pane ID mapping
-const AGENT_TO_PANE = {
-  'architect': '1',
-  'lead': '1',
-  'builder': '2',
-  'infra': '2',
-  'orchestrator': '2',
-  'backend': '2',
-  'implementer-b': '2',
-  'worker-b': '2',
-  'oracle': '3',
-  'investigator': '3',
-  // Legacy aliases
-  'devops': '2',
-  'analyst': '3',
-};
+const CANONICAL_AGENT_NAMES = Object.freeze(['architect', 'builder', 'oracle']);
+const AGENT_TO_PANE = Object.freeze({
+  architect: String(ROLE_ID_MAP?.architect || '1'),
+  builder: String(ROLE_ID_MAP?.builder || '2'),
+  oracle: String(ROLE_ID_MAP?.oracle || '3'),
+});
+const TARGET_COMPAT_ALIASES = Object.freeze({
+  ...(BACKWARD_COMPAT_ROLE_ALIASES || {}),
+  'implementer-a': 'architect',
+  'worker-a': 'architect',
+  reviewer: 'architect',
+});
+const MESSAGE_TARGET_ENUM = Object.freeze(
+  Array.from(new Set([
+    ...CANONICAL_AGENT_NAMES,
+    ...Object.keys(TARGET_COMPAT_ALIASES),
+    'workers',
+    'all',
+  ]))
+);
+const COMPLETE_TASK_TRIGGER_ENUM = Object.freeze(
+  Array.from(new Set([
+    ...CANONICAL_AGENT_NAMES,
+    ...Object.keys(TARGET_COMPAT_ALIASES),
+    'none',
+  ]))
+);
 
 const PANE_TO_AGENT = {
-  '1': 'architect',
-  '2': 'builder',
-  '3': 'oracle',
+  [AGENT_TO_PANE.architect]: 'architect',
+  [AGENT_TO_PANE.builder]: 'builder',
+  [AGENT_TO_PANE.oracle]: 'oracle',
 };
+
+function normalizeAgentRole(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  if (AGENT_TO_PANE[normalized]) return normalized;
+  return TARGET_COMPAT_ALIASES[normalized] || null;
+}
 
 // PANE_ROLES imported from config.js (canonical source)
 
@@ -83,15 +109,16 @@ const PANE_TO_AGENT = {
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  let agentName = null;
+  let rawAgentName = null;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--agent' && args[i + 1]) {
-      agentName = args[i + 1].toLowerCase();
+      rawAgentName = args[i + 1];
       break;
     }
   }
 
+  const agentName = normalizeAgentRole(rawAgentName);
   if (!agentName || !AGENT_TO_PANE[agentName]) {
     log.error('MCP', 'Usage: node mcp-server.js --agent <architect|builder|oracle>');
     process.exit(1);
@@ -135,7 +162,7 @@ const TOOLS = [
       properties: {
         to: {
           type: 'string',
-          enum: ['architect', 'builder', 'oracle', 'lead', 'orchestrator', 'infra', 'backend', 'investigator', 'workers', 'all'],
+          enum: MESSAGE_TARGET_ENUM,
           description: 'Target agent(s). Use "workers" for implementers/investigator, "all" for everyone.',
         },
         content: {
@@ -178,7 +205,7 @@ const TOOLS = [
       properties: {
         agent: {
           type: 'string',
-          enum: ['architect', 'builder', 'oracle', 'lead', 'orchestrator', 'infra', 'backend', 'investigator', 'workers', 'all'],
+          enum: MESSAGE_TARGET_ENUM,
           description: 'Agent(s) to trigger.',
         },
         context: {
@@ -223,7 +250,7 @@ const TOOLS = [
         },
         trigger_next: {
           type: 'string',
-          enum: ['architect', 'lead', 'orchestrator', 'implementer-a', 'worker-a', 'implementer-b', 'worker-b', 'investigator', 'reviewer', 'none'],
+          enum: COMPLETE_TASK_TRIGGER_ENUM,
           description: 'Which agent to trigger next. Default: none.',
         },
       },
@@ -424,29 +451,17 @@ async function getMessagesFromQueue(targetPaneId, undeliveredOnly = true) {
 }
 
 function resolvePaneIds(target) {
-  switch (target) {
-    case 'architect':
-    case 'lead':
-      return ['1'];
-    case 'builder':
-    case 'infra':
-    case 'orchestrator':
-    case 'backend':
-    case 'implementer-b':
-    case 'worker-b':
-    case 'devops':
-      return ['2'];
-    case 'oracle':
-    case 'analyst':
-    case 'investigator':
-      return ['3'];
-    case 'workers':
-      return ['2', '3'];
-    case 'all':
-      return PANE_IDS.filter(id => id !== paneId);
-    default:
-      return [];
+  const normalizedTarget = typeof target === 'string' ? target.trim().toLowerCase() : '';
+  if (!normalizedTarget) return [];
+  if (normalizedTarget === 'workers') {
+    return [AGENT_TO_PANE.builder, AGENT_TO_PANE.oracle];
   }
+  if (normalizedTarget === 'all') {
+    return PANE_IDS.filter(id => id !== paneId);
+  }
+  const role = normalizeAgentRole(normalizedTarget);
+  if (!role) return [];
+  return [AGENT_TO_PANE[role]];
 }
 
 // ============================================================
@@ -481,15 +496,17 @@ function writeState(state) {
 }
 
 function triggerAgentFile(targetAgent, context) {
-  const triggerFile = path.join(getTriggersPath({ forWrite: true }), `${targetAgent}.txt`);
+  const normalizedAgent = normalizeAgentRole(targetAgent)
+    || String(targetAgent || '').trim().toLowerCase();
+  const triggerFile = path.join(getTriggersPath({ forWrite: true }), `${normalizedAgent}.txt`);
   const content = `(${agentName.toUpperCase()}): ${context}`;
   try {
     fs.mkdirSync(path.dirname(triggerFile), { recursive: true });
     fs.writeFileSync(triggerFile, content, 'utf-8');
-    return { success: true, triggered: targetAgent };
+    return { success: true, triggered: normalizedAgent };
   } catch (err) {
-    log.error('MCP', `Failed to trigger agent ${targetAgent}`, err);
-    return { success: false, error: err.message, triggered: targetAgent };
+    log.error('MCP', `Failed to trigger agent ${normalizedAgent}`, err);
+    return { success: false, error: err.message, triggered: normalizedAgent };
   }
 }
 

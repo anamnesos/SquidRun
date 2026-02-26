@@ -81,12 +81,12 @@ const GLOBAL_STATE_ROOT = os.platform() === 'win32'
 const legacyCoordFallbackWarnings = new Set();
 let activeProjectRoot = DEFAULT_PROJECT_ROOT;
 
-// Legacy instance working directories (kept for compatibility during migration)
+// Legacy pane working-directory fallback for unknown pane IDs.
 // Active pane cwd resolution now uses project root via resolvePaneCwd().
 const INSTANCE_DIRS = {
-  '1': path.join(WORKSPACE_PATH, 'instances', 'arch'),    // Architect bundle
-  '2': path.join(WORKSPACE_PATH, 'instances', 'devops'),  // Builder (legacy dir name kept)
-  '3': path.join(WORKSPACE_PATH, 'instances', 'ana'),     // Oracle (legacy dir name kept)
+  '1': path.join(WORKSPACE_PATH, 'instances', 'architect'),
+  '2': path.join(WORKSPACE_PATH, 'instances', 'builder'),
+  '3': path.join(WORKSPACE_PATH, 'instances', 'oracle'),
 };
 
 // Pane roles for display
@@ -144,8 +144,8 @@ const SHORT_AGENT_NAMES = {
 // Canonical role identifiers (lowercase)
 const ROLE_NAMES = ['architect', 'builder', 'oracle'];
 
-// Legacy role aliases -> canonical role id
-const LEGACY_ROLE_ALIASES = {
+// Backward-compatible role aliases -> canonical role id
+const BACKWARD_COMPAT_ROLE_ALIASES = {
   lead: 'architect',
   arch: 'architect',
   director: 'architect',
@@ -169,14 +169,12 @@ const LEGACY_ROLE_ALIASES = {
 // Canonical role id -> pane id
 const ROLE_ID_MAP = {
   architect: '1',
-  director: '1',  // Legacy alias → Architect pane
   builder: '2',
-  backend: '2',    // Legacy alias → Builder pane
-  infra: '2',      // Legacy alias → Builder pane
-  devops: '2',     // Legacy alias → Builder pane
   oracle: '3',
-  analyst: '3',    // Legacy alias → Oracle pane
 };
+
+// Deprecated export alias retained for out-of-scope runtime/tests.
+const LEGACY_ROLE_ALIASES = BACKWARD_COMPAT_ROLE_ALIASES;
 
 const BACKGROUND_BUILDER_OWNER_PANE_ID = '2';
 const BACKGROUND_BUILDER_MAX_AGENTS = 3;
@@ -391,35 +389,14 @@ const TRIGGER_TARGETS = {
   'builder.txt': ['2'],
   'oracle.txt': ['3'],
 
-  // Legacy trigger names (all route to current panes)
-  'lead.txt': ['1'],
-  'devops.txt': ['2'],
-  'analyst.txt': ['3'],
-  'infra.txt': ['2'],
-  'backend.txt': ['2'],
-  'orchestrator.txt': ['2'],
-  'worker-b.txt': ['2'],
-  'investigator.txt': ['3'],
-
   // Broadcast triggers
   'workers.txt': ['2'],                   // Builder only
-  'implementers.txt': ['2'],              // Builder (legacy)
   'all.txt': ['1', '2', '3'],
 
   // "Others" triggers - send to all EXCEPT the sender
   'others-architect.txt': ['2', '3'],
   'others-builder.txt': ['1', '3'],
   'others-oracle.txt': ['1', '2'],
-
-  // Legacy "others" triggers
-  'others-lead.txt': ['2', '3'],
-  'others-devops.txt': ['1', '3'],
-  'others-analyst.txt': ['1', '2'],
-  'others-infra.txt': ['1', '3'],
-  'others-backend.txt': ['1', '3'],
-  'others-orchestrator.txt': ['1', '3'],
-  'others-worker-b.txt': ['1', '3'],
-  'others-investigator.txt': ['1', '2'],
 };
 
 // Protocol actions (client -> daemon)
@@ -447,6 +424,7 @@ module.exports = {
   PANE_ROLE_BUNDLES,
   SHORT_AGENT_NAMES,
   ROLE_NAMES,
+  BACKWARD_COMPAT_ROLE_ALIASES,
   LEGACY_ROLE_ALIASES,
   ROLE_ID_MAP,
   BACKGROUND_BUILDER_OWNER_PANE_ID,

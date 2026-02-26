@@ -64,12 +64,10 @@ describe('Smart Routing Handlers', () => {
       routeTask: jest.fn(() => ({ success: true, routed: '2' })),
       getBestAgent: jest.fn(() => ({ paneId: '1', score: 0.95 })),
       AGENT_ROLES: {
-        '1': 'Lead',
-        '2': 'Worker A',
-        '3': 'Worker B',
+        '1': 'Architect',
+        '2': 'Builder',
+        '3': 'Oracle',
         '4': 'Reviewer',
-        '3': 'Investigator',
-        '6': 'Orchestrator',
       },
     };
 
@@ -190,12 +188,10 @@ describe('Smart Routing Handlers', () => {
       const result = await harness.invoke('get-agent-roles');
 
       expect(result).toEqual({
-        '1': 'Lead',
-        '2': 'Worker A',
-        '3': 'Worker B',
+        '1': 'Architect',
+        '2': 'Builder',
+        '3': 'Oracle',
         '4': 'Reviewer',
-        '3': 'Investigator',
-        '6': 'Orchestrator',
       });
     });
 
