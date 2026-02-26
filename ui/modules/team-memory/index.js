@@ -1,7 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
-const { WORKSPACE_PATH, resolveCoordPath } = require('../../config');
+const {
+  WORKSPACE_PATH,
+  resolveCoordPath,
+  LEGACY_ROLE_ALIASES,
+  ROLE_ID_MAP,
+  ROLE_NAMES,
+} = require('../../config');
 const workerClient = require('./worker-client');
 const runtime = require('./runtime');
 const { EvidenceLedgerStore } = require('../main/evidence-ledger-store');
@@ -43,6 +49,17 @@ const DEFAULT_PATTERN_MINING_INTERVAL_MS = 60 * 1000;
 const DEFAULT_COMMS_TAGGED_CLAIMS_INTERVAL_MS = 30 * 1000;
 const DEFAULT_BELIEF_AGENTS = Object.freeze(['architect', 'builder', 'oracle']);
 const DEFAULT_EVIDENCE_LEDGER_DB_PATH = resolveDefaultEvidenceLedgerDbPath();
+const CANONICAL_ROLE_IDS = new Set(
+  (Array.isArray(ROLE_NAMES) && ROLE_NAMES.length > 0 ? ROLE_NAMES : ['architect', 'builder', 'oracle'])
+    .map((entry) => String(entry).trim().toLowerCase())
+    .filter(Boolean)
+);
+const PANE_ID_TO_CANONICAL_ROLE = new Map(
+  Object.entries(ROLE_ID_MAP || {})
+    .map(([role, paneId]) => [String(role).toLowerCase(), String(paneId)])
+    .filter(([role, paneId]) => CANONICAL_ROLE_IDS.has(role) && paneId)
+    .map(([role, paneId]) => [paneId, role])
+);
 
 let integritySweepTimer = null;
 let beliefSnapshotTimer = null;
@@ -71,10 +88,18 @@ function asFiniteNumber(value, fallback = null) {
 
 function normalizePatternHookRole(entry = {}) {
   const role = asString(entry.actor || entry.owner || entry.by || entry.role || '', '').toLowerCase();
-  if (role === 'infra' || role === 'backend' || role === 'devops') return 'builder';
-  if (role === 'arch') return 'architect';
-  if (role === 'ana' || role === 'analyst') return 'oracle';
-  return role || 'system';
+  if (!role) return 'system';
+  if (role === 'system' || role === 'user' || role === 'external') return role;
+  if (CANONICAL_ROLE_IDS.has(role)) return role;
+  if (LEGACY_ROLE_ALIASES?.[role]) return LEGACY_ROLE_ALIASES[role];
+  const paneRole = PANE_ID_TO_CANONICAL_ROLE.get(role);
+  if (paneRole) return paneRole;
+  const mappedPane = ROLE_ID_MAP?.[role];
+  if (mappedPane) {
+    const mappedRole = PANE_ID_TO_CANONICAL_ROLE.get(String(mappedPane));
+    if (mappedRole) return mappedRole;
+  }
+  return 'system';
 }
 
 function normalizePatternHookPane(entry = {}) {
@@ -82,9 +107,8 @@ function normalizePatternHookPane(entry = {}) {
   if (paneId) return paneId;
 
   const role = normalizePatternHookRole(entry);
-  if (role === 'architect') return '1';
-  if (role === 'builder') return '2';
-  if (role === 'oracle') return '3';
+  const mappedPane = ROLE_ID_MAP?.[role];
+  if (mappedPane) return String(mappedPane);
   return 'system';
 }
 

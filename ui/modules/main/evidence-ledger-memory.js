@@ -4,6 +4,7 @@
  */
 
 const { generateId } = require('./evidence-ledger-ingest');
+const { LEGACY_ROLE_ALIASES, ROLE_ID_MAP, ROLE_NAMES } = require('../../config');
 
 const DECISION_CATEGORIES = new Set([
   'architecture',
@@ -20,15 +21,22 @@ const DECISION_STATUSES = new Set([
   'archived',
 ]);
 
+const CANONICAL_ROLE_IDS = new Set(
+  (Array.isArray(ROLE_NAMES) && ROLE_NAMES.length > 0 ? ROLE_NAMES : ['architect', 'builder', 'oracle'])
+    .map((entry) => String(entry).trim().toLowerCase())
+    .filter(Boolean)
+);
+const SPECIAL_DECISION_AUTHORS = new Set(['user', 'system']);
 const DECISION_AUTHORS = new Set([
-  'architect',
-  'builder',
-  'oracle',
-  'devops',
-  'analyst',
-  'user',
-  'system',
+  ...CANONICAL_ROLE_IDS,
+  ...SPECIAL_DECISION_AUTHORS,
 ]);
+const PANE_ID_TO_CANONICAL_ROLE = new Map(
+  Object.entries(ROLE_ID_MAP || {})
+    .map(([role, paneId]) => [String(role).toLowerCase(), String(paneId)])
+    .filter(([role, paneId]) => CANONICAL_ROLE_IDS.has(role) && paneId)
+    .map(([role, paneId]) => [paneId, role])
+);
 
 const SNAPSHOT_TRIGGERS = new Set([
   'session_start',
@@ -64,6 +72,49 @@ function asObject(value) {
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function normalizeRuntimeRoleId(value, fallback = '') {
+  const raw = asNonEmptyString(value, '').toLowerCase();
+  if (!raw) return fallback;
+  if (CANONICAL_ROLE_IDS.has(raw)) return raw;
+  if (LEGACY_ROLE_ALIASES?.[raw]) return LEGACY_ROLE_ALIASES[raw];
+  const paneRole = PANE_ID_TO_CANONICAL_ROLE.get(raw);
+  if (paneRole) return paneRole;
+  const mappedPane = ROLE_ID_MAP?.[raw];
+  if (mappedPane) {
+    const mappedRole = PANE_ID_TO_CANONICAL_ROLE.get(String(mappedPane));
+    if (mappedRole) return mappedRole;
+  }
+  return fallback;
+}
+
+function normalizeDecisionAuthor(value, options = {}) {
+  const fallback = Object.prototype.hasOwnProperty.call(options, 'fallback')
+    ? options.fallback
+    : 'system';
+  const allowUnknown = options.allowUnknown === true;
+  const raw = asNonEmptyString(value, '').toLowerCase();
+  if (!raw) return fallback;
+  if (SPECIAL_DECISION_AUTHORS.has(raw)) return raw;
+  const canonical = normalizeRuntimeRoleId(raw, '');
+  if (canonical) return canonical;
+  return allowUnknown ? raw : null;
+}
+
+function getDecisionAuthorFilterValues(value) {
+  const raw = asNonEmptyString(value, '').toLowerCase();
+  if (!raw) return [];
+  if (SPECIAL_DECISION_AUTHORS.has(raw)) return [raw];
+  const canonical = normalizeRuntimeRoleId(raw, '');
+  if (!canonical) return [raw];
+  const values = new Set([canonical, raw]);
+  for (const [alias, role] of Object.entries(LEGACY_ROLE_ALIASES || {})) {
+    if (String(role).toLowerCase() === canonical) {
+      values.add(String(alias).toLowerCase());
+    }
+  }
+  return [...values];
 }
 
 function parseJson(value, fallback) {
@@ -162,7 +213,10 @@ class EvidenceLedgerMemory {
       category: row.category,
       title: row.title,
       body: row.body,
-      author: row.author,
+      author: normalizeDecisionAuthor(row.author, {
+        fallback: asNonEmptyString(row.author, 'system').toLowerCase(),
+        allowUnknown: true,
+      }),
       status: row.status,
       supersededBy: row.superseded_by,
       incidentId: row.incident_id,
@@ -205,11 +259,11 @@ class EvidenceLedgerMemory {
 
     const title = asNonEmptyString(opts.title);
     const category = asNonEmptyString(opts.category);
-    const author = asNonEmptyString(opts.author, 'system');
+    const author = normalizeDecisionAuthor(opts.author, { fallback: 'system' });
     const status = asNonEmptyString(opts.status, 'active');
     if (!title) return { ok: false, reason: 'title_required' };
     if (!DECISION_CATEGORIES.has(category)) return { ok: false, reason: 'invalid_category' };
-    if (!DECISION_AUTHORS.has(author)) return { ok: false, reason: 'invalid_author' };
+    if (!author || !DECISION_AUTHORS.has(author)) return { ok: false, reason: 'invalid_author' };
     if (!DECISION_STATUSES.has(status)) return { ok: false, reason: 'invalid_status' };
 
     const now = asMs(opts.nowMs, Date.now());
@@ -286,8 +340,8 @@ class EvidenceLedgerMemory {
       params.push(asNonEmptyString(updates.body, '') || null);
     }
     if (updates.author !== undefined) {
-      const author = asNonEmptyString(updates.author);
-      if (!DECISION_AUTHORS.has(author)) return { ok: false, reason: 'invalid_author' };
+      const author = normalizeDecisionAuthor(updates.author, { fallback: '' });
+      if (!author || !DECISION_AUTHORS.has(author)) return { ok: false, reason: 'invalid_author' };
       setClauses.push('author = ?');
       params.push(author);
     }
@@ -349,10 +403,16 @@ class EvidenceLedgerMemory {
     if (!newTitle) return { ok: false, reason: 'title_required' };
 
     const newCategory = asNonEmptyString(newOpts.category, current.category);
-    const newAuthor = asNonEmptyString(newOpts.author, current.author);
+    const newAuthor = normalizeDecisionAuthor(newOpts.author, {
+      fallback: normalizeDecisionAuthor(current.author, {
+        fallback: asNonEmptyString(current.author, 'system').toLowerCase(),
+        allowUnknown: true,
+      }),
+      allowUnknown: true,
+    });
     const newStatus = asNonEmptyString(newOpts.status, 'active');
     if (!DECISION_CATEGORIES.has(newCategory)) return { ok: false, reason: 'invalid_category' };
-    if (!DECISION_AUTHORS.has(newAuthor)) return { ok: false, reason: 'invalid_author' };
+    if (!newAuthor || !DECISION_AUTHORS.has(newAuthor)) return { ok: false, reason: 'invalid_author' };
     if (!DECISION_STATUSES.has(newStatus)) return { ok: false, reason: 'invalid_status' };
 
     const now = asMs(newOpts.nowMs, Date.now());
@@ -406,8 +466,14 @@ class EvidenceLedgerMemory {
       params.push(String(filters.status));
     }
     if (filters.author !== undefined) {
-      clauses.push('author = ?');
-      params.push(String(filters.author));
+      const authors = getDecisionAuthorFilterValues(filters.author);
+      if (authors.length === 1) {
+        clauses.push('author = ?');
+        params.push(authors[0]);
+      } else if (authors.length > 1) {
+        clauses.push(`author IN (${authors.map(() => '?').join(', ')})`);
+        params.push(...authors);
+      }
     }
     if (filters.sessionId !== undefined) {
       clauses.push('session_id = ?');
@@ -771,8 +837,14 @@ class EvidenceLedgerMemory {
       params.push(String(filters.status));
     }
     if (filters.author) {
-      clauses.push('author = ?');
-      params.push(String(filters.author));
+      const authors = getDecisionAuthorFilterValues(filters.author);
+      if (authors.length === 1) {
+        clauses.push('author = ?');
+        params.push(authors[0]);
+      } else if (authors.length > 1) {
+        clauses.push(`author IN (${authors.map(() => '?').join(', ')})`);
+        params.push(...authors);
+      }
     }
 
     const limit = clampLimit(filters.limit, 100, 1, 1000);

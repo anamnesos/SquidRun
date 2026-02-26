@@ -1,4 +1,4 @@
-const { ROLE_ID_MAP } = require('../../config');
+const { ROLE_ID_MAP, LEGACY_ROLE_ALIASES, ROLE_NAMES } = require('../../config');
 
 const DOMAIN_SCOPE_MAP = Object.freeze({
   architect: ['.squidrun/'],
@@ -7,6 +7,17 @@ const DOMAIN_SCOPE_MAP = Object.freeze({
   backend: ['ui/modules/main/', 'ui/modules/ipc/', 'ui/modules/triggers.js', 'ui/modules/watcher.js'],
   oracle: ['.squidrun/build/', '.squidrun/build/errors.md', 'ui/modules/diagnostic-log.js'],
 });
+const CANONICAL_ROLE_IDS = new Set(
+  (Array.isArray(ROLE_NAMES) && ROLE_NAMES.length > 0 ? ROLE_NAMES : ['architect', 'builder', 'oracle'])
+    .map((entry) => String(entry).trim().toLowerCase())
+    .filter(Boolean)
+);
+const PANE_ID_TO_CANONICAL_ROLE = new Map(
+  Object.entries(ROLE_ID_MAP || {})
+    .map(([role, paneId]) => [String(role).toLowerCase(), String(paneId)])
+    .filter(([role, paneId]) => CANONICAL_ROLE_IDS.has(role) && paneId)
+    .map(([role, paneId]) => [paneId, role])
+);
 
 function asString(value, fallback = '') {
   if (typeof value !== 'string') return fallback;
@@ -22,31 +33,33 @@ function asNumber(value, fallback = null) {
 function normalizeRole(role) {
   const raw = asString(role, '').toLowerCase();
   if (!raw) return 'system';
-  if (raw === 'infra' || raw === 'backend' || raw === 'devops') return 'builder';
-  if (raw === 'arch') return 'architect';
-  if (raw === 'ana' || raw === 'analyst') return 'oracle';
+  if (raw === 'system' || raw === 'user' || raw === 'external') return raw;
+  if (CANONICAL_ROLE_IDS.has(raw)) return raw;
+  if (LEGACY_ROLE_ALIASES?.[raw]) return LEGACY_ROLE_ALIASES[raw];
+  const paneRole = PANE_ID_TO_CANONICAL_ROLE.get(raw);
+  if (paneRole) return paneRole;
+  const mappedPane = ROLE_ID_MAP?.[raw];
+  if (mappedPane) {
+    const mappedRole = PANE_ID_TO_CANONICAL_ROLE.get(String(mappedPane));
+    if (mappedRole) return mappedRole;
+  }
   return raw;
 }
 
 function roleFromPaneId(paneId) {
   const pane = asString(String(paneId || ''), '');
   if (!pane) return 'system';
-  for (const [role, mappedPane] of Object.entries(ROLE_ID_MAP || {})) {
-    if (String(mappedPane) === pane) {
-      return normalizeRole(role);
-    }
-  }
-  if (pane === '1') return 'architect';
-  if (pane === '2') return 'builder';
-  if (pane === '3') return 'oracle';
+  const role = PANE_ID_TO_CANONICAL_ROLE.get(pane);
+  if (role) return role;
   return 'system';
 }
 
 function normalizeDomain(domain) {
   const normalized = asString(domain, '').toLowerCase();
   if (!normalized) return '';
-  if (normalized === 'infra' || normalized === 'devops') return 'builder';
-  if (normalized === 'analyst') return 'oracle';
+  if (normalized === 'backend') return normalized;
+  const alias = LEGACY_ROLE_ALIASES?.[normalized];
+  if (alias === 'builder' || alias === 'oracle') return alias;
   return normalized;
 }
 

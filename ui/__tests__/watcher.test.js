@@ -26,11 +26,11 @@ function setupWatcher(options = {}) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watcher-'));
   const configMock = {
     WORKSPACE_PATH: tempDir,
-    TRIGGER_TARGETS: { 'lead.txt': ['1'] },
+    TRIGGER_TARGETS: { 'architect.txt': ['1'] },
     PANE_IDS: ['1', '2'],
     PANE_ROLES: {
       '1': 'Architect',
-      '2': 'Orchestrator',
+      '2': 'Builder',
     },
     ...options.configOverrides,
   };
@@ -283,13 +283,13 @@ describe('watcher module', () => {
     const { watcher, tempDir, triggers } = setupWatcher();
     const triggerPath = path.join(tempDir, 'triggers');
     fs.mkdirSync(triggerPath, { recursive: true });
-    const triggerFile = path.join(triggerPath, 'lead.txt');
+    const triggerFile = path.join(triggerPath, 'architect.txt');
     fs.writeFileSync(triggerFile, 'Ping', 'utf-8');
 
     watcher.handleFileChange(triggerFile);
     jest.advanceTimersByTime(250);
 
-    expect(triggers.handleTriggerFile).toHaveBeenCalledWith(triggerFile, 'lead.txt');
+    expect(triggers.handleTriggerFile).toHaveBeenCalledWith(triggerFile, 'architect.txt');
 
     cleanupDir(tempDir);
   });
@@ -299,7 +299,7 @@ describe('watcher module', () => {
     const { watcher, tempDir, triggers } = setupWatcher();
     const triggerPath = path.join(tempDir, 'triggers');
     fs.mkdirSync(triggerPath, { recursive: true });
-    const triggerFile = path.join(triggerPath, 'lead.txt');
+    const triggerFile = path.join(triggerPath, 'architect.txt');
     fs.writeFileSync(triggerFile, 'Ping', 'utf-8');
 
     const realStatSync = fs.statSync.bind(fs);
@@ -318,7 +318,7 @@ describe('watcher module', () => {
     watcher.handleFileChange(triggerFile);
     jest.advanceTimersByTime(350); // 200ms debounce + 2x trigger retry (50ms each)
 
-    expect(triggers.handleTriggerFile).toHaveBeenCalledWith(triggerFile, 'lead.txt');
+    expect(triggers.handleTriggerFile).toHaveBeenCalledWith(triggerFile, 'architect.txt');
     expect(observedCount).toBeGreaterThanOrEqual(3);
 
     statSpy.mockRestore();
@@ -822,3 +822,4 @@ describe('watcher module', () => {
     cleanupDir(tempDir);
   });
 });
+

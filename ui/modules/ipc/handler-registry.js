@@ -45,7 +45,6 @@ const { registerTaskPoolHandlers } = require('./task-pool-handlers');
 const { registerOracleHandlers } = require('./oracle-handlers');
 const { registerModelSwitchHandlers } = require('./model-switch-handlers');
 const { registerOrganicUIHandlers } = require('./organic-ui-handlers');
-const { registerDocGeneratorHandlers } = require('./doc-generator-handlers');
 const { registerWhisperHandlers } = require('./whisper-handlers');
 const { registerEvidenceLedgerHandlers } = require('./evidence-ledger-handlers');
 const { registerContractPromotionHandlers } = require('./contract-promotion-handlers');
@@ -102,7 +101,6 @@ const DEFAULT_HANDLERS = [
   registerOracleHandlers,
   registerModelSwitchHandlers,
   registerOrganicUIHandlers,
-  registerDocGeneratorHandlers,
   registerWhisperHandlers,
   registerEvidenceLedgerHandlers,
   registerContractPromotionHandlers,
