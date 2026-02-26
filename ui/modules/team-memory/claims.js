@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { LEGACY_ROLE_ALIASES, ROLE_ID_MAP, ROLE_NAMES } = require('../../config');
 
 const CLAIM_TYPES = new Set(['fact', 'decision', 'hypothesis', 'negative']);
 const CLAIM_STATUS = new Set(['proposed', 'confirmed', 'contested', 'pending_proof', 'deprecated']);
@@ -6,22 +7,18 @@ const EVIDENCE_RELATIONS = new Set(['supports', 'contradicts', 'caused_by']);
 const DECISION_OUTCOMES = new Set(['success', 'partial', 'failure', 'unknown']);
 const CONSENSUS_POSITIONS = new Set(['support', 'challenge', 'abstain']);
 const DEFAULT_ACTIVE_AGENTS = Object.freeze(['architect', 'builder', 'oracle']);
-
-const ROLE_ALIASES = new Map([
-  ['arch', 'architect'],
-  ['architect', 'architect'],
-  ['oracle', 'oracle'],
-  ['ana', 'oracle'],
-  ['analyst', 'oracle'],
-  ['builder', 'builder'],
-  ['infra', 'builder'],
-  ['backend', 'builder'],
-  ['devops', 'builder'],
-  ['frontend', 'frontend'],
-  ['reviewer', 'reviewer'],
-  ['system', 'system'],
-  ['user', 'user'],
-]);
+const CANONICAL_ROLE_IDS = new Set(
+  (Array.isArray(ROLE_NAMES) && ROLE_NAMES.length > 0 ? ROLE_NAMES : ['architect', 'builder', 'oracle'])
+    .map((entry) => String(entry).trim().toLowerCase())
+    .filter(Boolean)
+);
+const SPECIAL_ROLE_IDS = new Set(['system', 'user']);
+const PANE_ID_TO_CANONICAL_ROLE = new Map(
+  Object.entries(ROLE_ID_MAP || {})
+    .map(([role, paneId]) => [String(role).toLowerCase(), String(paneId)])
+    .filter(([role, paneId]) => CANONICAL_ROLE_IDS.has(role) && paneId)
+    .map(([role, paneId]) => [paneId, role])
+);
 
 const ALLOWED_TRANSITIONS = new Map([
   ['proposed', new Set(['confirmed', 'contested', 'deprecated'])],
@@ -64,7 +61,17 @@ function asTimestamp(value, fallback = Date.now()) {
 function normalizeRole(value, fallback = 'system') {
   const raw = asString(value, '').toLowerCase();
   if (!raw) return fallback;
-  return ROLE_ALIASES.get(raw) || raw;
+  if (SPECIAL_ROLE_IDS.has(raw)) return raw;
+  if (CANONICAL_ROLE_IDS.has(raw)) return raw;
+  if (LEGACY_ROLE_ALIASES?.[raw]) return LEGACY_ROLE_ALIASES[raw];
+  const paneRole = PANE_ID_TO_CANONICAL_ROLE.get(raw);
+  if (paneRole) return paneRole;
+  const mappedPane = ROLE_ID_MAP?.[raw];
+  if (mappedPane) {
+    const mappedRole = PANE_ID_TO_CANONICAL_ROLE.get(String(mappedPane));
+    if (mappedRole) return mappedRole;
+  }
+  return fallback;
 }
 
 function normalizeConsensusPosition(value) {
@@ -150,12 +157,13 @@ function parseFtsQuery(raw) {
 
 function mapClaimRow(row, scopes = [], evidence = []) {
   if (!row) return null;
+  const ownerRaw = asString(row.owner, '').toLowerCase();
   return {
     id: row.id,
     idempotencyKey: row.idempotency_key || null,
     statement: row.statement,
     claimType: row.claim_type,
-    owner: row.owner,
+    owner: normalizeRole(ownerRaw, ownerRaw || 'system'),
     confidence: Number(row.confidence),
     status: row.status,
     supersedes: row.supersedes || null,
@@ -170,10 +178,11 @@ function mapClaimRow(row, scopes = [], evidence = []) {
 
 function mapDecisionRow(row, alternatives = []) {
   if (!row) return null;
+  const decidedByRaw = asString(row.decided_by, '').toLowerCase();
   return {
     id: row.id,
     claimId: row.claim_id,
-    decidedBy: row.decided_by,
+    decidedBy: normalizeRole(decidedByRaw, decidedByRaw || 'system'),
     context: row.context || null,
     rationale: row.rationale || null,
     outcome: row.outcome || null,
@@ -215,7 +224,7 @@ class TeamMemoryClaims {
       ORDER BY created_at ASC
     `).all(id).map((entry) => ({
       evidenceRef: entry.evidence_ref,
-      addedBy: entry.added_by,
+      addedBy: normalizeRole(asString(entry.added_by, '').toLowerCase(), asString(entry.added_by, '').toLowerCase() || 'system'),
       relation: entry.relation,
       weight: Number(entry.weight),
       createdAt: Number(entry.created_at),
@@ -337,7 +346,8 @@ class TeamMemoryClaims {
     const scopes = normalizeScopes(Array.isArray(filters.scopes) ? filters.scopes : (scope ? [scope] : []));
     const claimType = asString(filters.claimType || filters.claim_type || filters.type, '').toLowerCase();
     const status = asString(filters.status, '').toLowerCase();
-    const owner = asString(filters.owner, '').toLowerCase();
+    const ownerRaw = asString(filters.owner, '').toLowerCase();
+    const owner = normalizeRole(ownerRaw, ownerRaw);
     const session = asString(filters.session, '');
     const since = asNumber(filters.since ?? filters.sinceMs, null);
     const until = asNumber(filters.until ?? filters.untilMs, null);
@@ -500,7 +510,7 @@ class TeamMemoryClaims {
 
     const consensus = rows.map((row) => ({
       claimId: row.claim_id,
-      agent: row.agent,
+      agent: normalizeRole(asString(row.agent, '').toLowerCase(), asString(row.agent, '').toLowerCase() || 'system'),
       position: toPublicConsensusPosition(row.position),
       rawPosition: row.position,
       reason: row.reason || null,
@@ -935,7 +945,7 @@ class TeamMemoryClaims {
     const rows = this.db.prepare(sql).all(...params, latestOnly ? 1 : limit);
     const snapshots = rows.map((row) => ({
       id: row.id,
-      agent: row.agent,
+      agent: normalizeRole(asString(row.agent, '').toLowerCase(), asString(row.agent, '').toLowerCase() || 'system'),
       session: row.session,
       snapshotAt: Number(row.snapshot_at),
       beliefs: (() => {
@@ -971,7 +981,7 @@ class TeamMemoryClaims {
 
     if (agent) {
       clauses.push('bc.agent = ?');
-      params.push(normalizeRole(agent, agent));
+      params.push(normalizeRole(agent, asString(agent, '').toLowerCase()));
     }
     if (session) {
       clauses.push('bc.session = ?');
@@ -1008,7 +1018,7 @@ class TeamMemoryClaims {
         snapshotId: row.snapshot_id,
         claimA: row.claim_a,
         claimB: row.claim_b,
-        agent: row.agent,
+        agent: normalizeRole(asString(row.agent, '').toLowerCase(), asString(row.agent, '').toLowerCase() || 'system'),
         session: row.session,
         detectedAt: Number(row.detected_at),
         reason: row.reason || null,

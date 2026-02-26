@@ -1,6 +1,11 @@
 const crypto = require('crypto');
 const path = require('path');
-const { resolveCoordPath } = require('../../config');
+const {
+  resolveCoordPath,
+  LEGACY_ROLE_ALIASES,
+  ROLE_ID_MAP,
+  ROLE_NAMES,
+} = require('../../config');
 const { EvidenceLedgerStore } = require('../main/evidence-ledger-store');
 
 const TAG_RULES = Object.freeze({
@@ -33,20 +38,17 @@ const KNOWN_TAG_PREFIX_PATTERNS = [
   /^[-*]\s+/,
 ];
 const DEFAULT_EXTRACT_LIMIT = 5000;
-
-const OWNER_ALIAS_MAP = new Map([
-  ['arch', 'architect'],
-  ['architect', 'architect'],
-  ['builder', 'builder'],
-  ['devops', 'builder'],
-  ['infra', 'builder'],
-  ['backend', 'builder'],
-  ['oracle', 'oracle'],
-  ['ana', 'oracle'],
-  ['analyst', 'oracle'],
-  ['system', 'system'],
-  ['user', 'user'],
-]);
+const CANONICAL_ROLE_IDS = new Set(
+  (Array.isArray(ROLE_NAMES) && ROLE_NAMES.length > 0 ? ROLE_NAMES : ['architect', 'builder', 'oracle'])
+    .map((entry) => String(entry).trim().toLowerCase())
+    .filter(Boolean)
+);
+const PANE_ID_TO_CANONICAL_ROLE = new Map(
+  Object.entries(ROLE_ID_MAP || {})
+    .map(([role, paneId]) => [String(role).toLowerCase(), String(paneId)])
+    .filter(([role, paneId]) => CANONICAL_ROLE_IDS.has(role) && paneId)
+    .map(([role, paneId]) => [paneId, role])
+);
 
 function resolveDefaultEvidenceLedgerDbPath() {
   if (typeof resolveCoordPath !== 'function') {
@@ -64,7 +66,17 @@ function asString(value, fallback = '') {
 function normalizeOwner(rawOwner = '') {
   const normalized = asString(rawOwner, '').toLowerCase();
   if (!normalized) return 'system';
-  return OWNER_ALIAS_MAP.get(normalized) || normalized;
+  if (normalized === 'system' || normalized === 'user') return normalized;
+  if (CANONICAL_ROLE_IDS.has(normalized)) return normalized;
+  if (LEGACY_ROLE_ALIASES?.[normalized]) return LEGACY_ROLE_ALIASES[normalized];
+  const paneRole = PANE_ID_TO_CANONICAL_ROLE.get(normalized);
+  if (paneRole) return paneRole;
+  const mappedPane = ROLE_ID_MAP?.[normalized];
+  if (mappedPane) {
+    const mappedRole = PANE_ID_TO_CANONICAL_ROLE.get(String(mappedPane));
+    if (mappedRole) return mappedRole;
+  }
+  return 'system';
 }
 
 function normalizeDetail(rawDetail = '') {

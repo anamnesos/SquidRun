@@ -10,7 +10,12 @@
 
 const fs = require('fs');
 const crypto = require('crypto');
-const { TRIGGER_TARGETS, PANE_IDS, ROLE_ID_MAP, LEGACY_ROLE_ALIASES } = require('../config');
+const {
+  TRIGGER_TARGETS,
+  PANE_IDS,
+  ROLE_ID_MAP,
+  BACKWARD_COMPAT_ROLE_ALIASES,
+} = require('../config');
 const log = require('./logger');
 const organicUI = require('./ipc/organic-ui-handlers');
 
@@ -255,40 +260,63 @@ function extractTriggerMessageId(message) {
   };
 }
 
-// Role to Pane mapping (duplicate for local use)
-const ROLE_TO_PANE = {
-  'architect': '1', 'arch': '1',
-  'builder': '2', 'infra': '2', 'infrastructure': '2', 'backend': '2', 'back': '2',
-  'oracle': '3',
-  'lead': '1', 'orchestrator': '2', 'worker-b': '2', 'investigator': '3',
-  // Legacy aliases
-  'devops': '2', 'analyst': '3', 'ana': '3',
-};
+const CANONICAL_ROLE_TO_PANE = Object.freeze({
+  architect: String(ROLE_ID_MAP?.architect || '1'),
+  builder: String(ROLE_ID_MAP?.builder || '2'),
+  oracle: String(ROLE_ID_MAP?.oracle || '3'),
+});
+const PANE_TO_CANONICAL_ROLE = Object.freeze(
+  Object.fromEntries(
+    Object.entries(CANONICAL_ROLE_TO_PANE).map(([role, paneId]) => [String(paneId), role])
+  )
+);
+const TRIGGER_FILENAME_ALIASES = Object.freeze({
+  'implementers.txt': 'workers.txt',
+});
+
+function normalizeRoleId(role) {
+  if (!role) return null;
+  const raw = String(role).trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+  if (!raw) return null;
+  if (CANONICAL_ROLE_TO_PANE[raw]) return raw;
+  return BACKWARD_COMPAT_ROLE_ALIASES?.[raw] || null;
+}
+
+function normalizeTriggerFilename(filename) {
+  if (typeof filename !== 'string') return '';
+  const normalized = filename.trim().toLowerCase();
+  if (!normalized) return normalized;
+  if (TRIGGER_TARGETS[normalized]) return normalized;
+  if (TRIGGER_FILENAME_ALIASES[normalized]) return TRIGGER_FILENAME_ALIASES[normalized];
+
+  if (normalized.startsWith('others-') && normalized.endsWith('.txt')) {
+    const roleName = normalized.slice('others-'.length, -4);
+    const canonicalRole = normalizeRoleId(roleName);
+    if (canonicalRole) return `others-${canonicalRole}.txt`;
+  }
+
+  if (normalized.endsWith('.txt')) {
+    const roleName = normalized.slice(0, -4);
+    const canonicalRole = normalizeRoleId(roleName);
+    if (canonicalRole) return `${canonicalRole}.txt`;
+  }
+
+  return normalized;
+}
 
 function resolvePaneIdFromRole(role) {
   if (!role) return null;
-  const raw = String(role).trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+  const raw = String(role).trim().toLowerCase();
   if (/^\d+$/.test(raw)) return raw;
-  return ROLE_TO_PANE[raw] || null;
+  const canonicalRole = normalizeRoleId(raw);
+  if (!canonicalRole) return null;
+  return CANONICAL_ROLE_TO_PANE[canonicalRole] || null;
 }
 
 function resolveRoleFromPaneId(paneId) {
   const targetPane = String(paneId || '').trim();
   if (!targetPane) return null;
-  for (const [role, mappedPaneId] of Object.entries(ROLE_ID_MAP || {})) {
-    if (String(mappedPaneId) === targetPane) {
-      return role;
-    }
-  }
-  for (const [alias, role] of Object.entries(LEGACY_ROLE_ALIASES || {})) {
-    if (String(ROLE_ID_MAP?.[role] || '') === targetPane) {
-      return role;
-    }
-    if (String(ROLE_TO_PANE?.[alias] || '') === targetPane) {
-      return role;
-    }
-  }
-  return null;
+  return PANE_TO_CANONICAL_ROLE[targetPane] || null;
 }
 
 function getDeliveryVerifyTimeoutMs() {
@@ -600,28 +628,27 @@ function sendStaggered(panes, message, meta = {}) {
 }
 
 function resolveRecipientRole(filename) {
-  const role = filename.replace('.txt', '').toLowerCase();
-  // Use localized versions to avoid ReferenceError if called before module-level destructuring
-  const roleMap = {
-    architect: '1', builder: '2', oracle: '3',
-  };
-  const legacyAliases = {
-    lead: 'architect', orchestrator: 'builder', infra: 'builder', backend: 'builder', 'worker-b': 'builder', investigator: 'oracle',
-    devops: 'builder', analyst: 'oracle', ana: 'oracle',
-  };
-  
-  if (roleMap[role]) return role;
-  if (legacyAliases[role]) return legacyAliases[role];
-  return role;
+  const normalizedFilename = normalizeTriggerFilename(filename);
+  const role = normalizedFilename.replace('.txt', '').toLowerCase();
+  if (role.startsWith('others-')) {
+    const aliasRole = role.slice('others-'.length);
+    const canonicalRole = normalizeRoleId(aliasRole);
+    return canonicalRole ? `others-${canonicalRole}` : role;
+  }
+  const canonicalRole = normalizeRoleId(role);
+  return canonicalRole || role;
 }
 
 function handleTriggerFile(filePath, filename) {
-  let targets = TRIGGER_TARGETS[filename];
+  const resolvedFilename = normalizeTriggerFilename(filename);
+  let targets = TRIGGER_TARGETS[resolvedFilename];
   if (!targets) return { success: false, reason: 'unknown' };
 
   const gateCheck = checkWorkflowGate(targets);
   if (!gateCheck.allowed) {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('trigger-blocked', { file: filename, targets, reason: gateCheck.reason });
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('trigger-blocked', { file: filename, resolvedFile: resolvedFilename, targets, reason: gateCheck.reason });
+    }
     return { success: false, reason: 'workflow_gate' };
   }
 
@@ -683,7 +710,7 @@ function handleTriggerFile(filePath, filename) {
     if (!message) return { success: false, reason: 'empty' };
 
     let parsed = sequencing.parseMessageSequence(message);
-    const recipientRole = resolveRecipientRole(filename);
+    const recipientRole = resolveRecipientRole(resolvedFilename);
     if (parsed.seq !== null && parsed.sender) {
       if (!sequencing.messageState.sequences[recipientRole]) {
         sequencing.messageState.sequences[recipientRole] = { outbound: 0, lastSeen: {} };
@@ -701,8 +728,8 @@ function handleTriggerFile(filePath, filename) {
       }
     }
 
-    if (filename === 'all.txt' && parsed.sender) {
-      const senderPaneId = ROLE_TO_PANE[parsed.sender];
+    if (resolvedFilename === 'all.txt' && parsed.sender) {
+      const senderPaneId = resolvePaneIdFromRole(parsed.sender);
       if (senderPaneId) targets = targets.filter(t => t !== senderPaneId);
     }
 
@@ -718,6 +745,7 @@ function handleTriggerFile(filePath, filename) {
     sendStaggered(targets, formatTriggerMessage(message), { deliveryId, traceContext });
     logTriggerActivity('Trigger file (PTY)', targets, message, {
       file: filename,
+      resolvedFile: resolvedFilename,
       sender: parsed.sender,
       mode: 'pty',
       messageId: fallbackMessageId || null,

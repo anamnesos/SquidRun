@@ -15,6 +15,8 @@ Model and role instruction files now live at the project root:
 
 **NOTE:** Models are runtime config. Check `ui/settings.json` → `paneCommands` for current CLI assignments. Any pane can run any CLI.
 
+Runtime fallback pane paths use canonical names (`instances/architect`, `instances/builder`, `instances/oracle`).
+
 ## Legacy Folders (removed, kept for history)
 
 | Folder | Former Role | Removed In |

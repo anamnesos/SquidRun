@@ -1610,7 +1610,7 @@ describe('hm-send retry behavior', () => {
     expect(result.stderr).toContain("Unknown device 'WINDOWS'. Connected devices: MACBOOK, VIGIL");
   });
 
-  test('rejects non-arch @device target via invalid_target health preflight', async () => {
+  test('rejects non-architect @device targets via invalid_target health preflight', async () => {
     const healthChecks = [];
     const sendAttempts = [];
     let server;
@@ -1651,17 +1651,22 @@ describe('hm-send retry behavior', () => {
       });
     });
 
-    const result = await runHmSend(
-      ['@peer-builder', '(ARCHITECT #101): should reject', '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
-      { HM_SEND_PORT: String(port) }
-    );
+    const invalidTargets = ['@peer-builder', '@peer-oracle'];
+    for (const invalidTarget of invalidTargets) {
+      const result = await runHmSend(
+        [invalidTarget, '(ARCHITECT #101): should reject', '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port) }
+      );
+
+      expect(result.code).toBe(1);
+      expect(result.stderr.toLowerCase()).toContain('invalid_target');
+    }
 
     await new Promise((resolve) => server.close(resolve));
 
-    expect(result.code).toBe(1);
-    expect(healthChecks).toHaveLength(1);
+    expect(healthChecks).toHaveLength(2);
     expect(healthChecks[0].target).toBe('@peer-builder');
+    expect(healthChecks[1].target).toBe('@peer-oracle');
     expect(sendAttempts).toHaveLength(0);
-    expect(result.stderr.toLowerCase()).toContain('invalid_target');
   });
 });

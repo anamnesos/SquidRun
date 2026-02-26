@@ -13,6 +13,7 @@ const {
   GLOBAL_STATE_ROOT,
   PANE_ROLES,
   TRIGGER_TARGETS,
+  BACKWARD_COMPAT_ROLE_ALIASES,
   LEGACY_ROLE_ALIASES,
   ROLE_ID_MAP,
   PROTOCOL_ACTIONS,
@@ -117,15 +118,24 @@ describe('config.js', () => {
     });
   });
 
-  describe('LEGACY_ROLE_ALIASES', () => {
+  describe('BACKWARD_COMPAT_ROLE_ALIASES', () => {
     test('maps director alias to architect', () => {
-      expect(LEGACY_ROLE_ALIASES.director).toBe('architect');
+      expect(BACKWARD_COMPAT_ROLE_ALIASES.director).toBe('architect');
     });
   });
 
   describe('ROLE_ID_MAP', () => {
-    test('maps director target to architect pane', () => {
-      expect(ROLE_ID_MAP.director).toBe('1');
+    test('maps canonical roles to pane ids', () => {
+      expect(ROLE_ID_MAP.architect).toBe('1');
+      expect(ROLE_ID_MAP.builder).toBe('2');
+      expect(ROLE_ID_MAP.oracle).toBe('3');
+      expect(ROLE_ID_MAP.director).toBeUndefined();
+    });
+  });
+
+  describe('LEGACY_ROLE_ALIASES', () => {
+    test('remains exported for compatibility and matches canonical alias map', () => {
+      expect(LEGACY_ROLE_ALIASES).toBe(BACKWARD_COMPAT_ROLE_ALIASES);
     });
   });
 
@@ -133,9 +143,8 @@ describe('config.js', () => {
     test('should have expected trigger files', () => {
       const keys = Object.keys(TRIGGER_TARGETS);
       expect(keys).toContain('architect.txt');
-      expect(keys).toContain('infra.txt');
-      expect(keys).toContain('backend.txt');
-      expect(keys).toContain('analyst.txt');
+      expect(keys).toContain('builder.txt');
+      expect(keys).toContain('oracle.txt');
       expect(keys).toContain('workers.txt');
       expect(keys).toContain('all.txt');
     });

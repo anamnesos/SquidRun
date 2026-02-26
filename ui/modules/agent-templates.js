@@ -29,7 +29,7 @@ const BUILTIN_TEMPLATES = [
   {
     id: 'builtin-hybrid-default',
     name: 'Hybrid Default (Claude + Codex)',
-    description: 'Default split: Claude for lead/review, Codex for execution-heavy panes.',
+    description: 'Default split: Claude for architect/review, Codex for execution-heavy panes.',
     tags: ['default', 'hybrid'],
     config: {
       autoSpawn: true,

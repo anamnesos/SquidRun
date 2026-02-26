@@ -14,6 +14,7 @@ const {
   WORKSPACE_PATH,
   PANE_IDS,
   ROLE_ID_MAP,
+  BACKWARD_COMPAT_ROLE_ALIASES,
   BACKGROUND_BUILDER_OWNER_PANE_ID,
   resolveBackgroundBuilderAlias,
   resolveBackgroundBuilderPaneId,
@@ -3847,17 +3848,10 @@ class SquidRunApp {
       return ROLE_ID_MAP[targetLower];
     }
 
-    // Legacy aliases
-    const legacyMap = {
-      lead: '1',
-      orchestrator: '2',
-      'worker-b': '2',
-      devops: '2',
-      backend: '2',
-      investigator: '3',
-    };
-    if (legacyMap[targetLower]) {
-      return legacyMap[targetLower];
+    // Backward-compatible aliases
+    const canonicalRole = BACKWARD_COMPAT_ROLE_ALIASES?.[targetLower];
+    if (canonicalRole && ROLE_ID_MAP[canonicalRole]) {
+      return ROLE_ID_MAP[canonicalRole];
     }
 
     return null;

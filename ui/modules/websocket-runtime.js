@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
 const {
-  LEGACY_ROLE_ALIASES,
+  BACKWARD_COMPAT_ROLE_ALIASES,
   ROLE_ID_MAP,
   WORKSPACE_PATH,
   resolveCoordPath,
@@ -95,8 +95,8 @@ function normalizeRoleId(role) {
   const normalized = role.trim().toLowerCase();
   if (!normalized) return null;
   if (CANONICAL_ROLE_IDS.includes(normalized)) return normalized;
-  if (LEGACY_ROLE_ALIASES?.[normalized]) {
-    return LEGACY_ROLE_ALIASES[normalized];
+  if (BACKWARD_COMPAT_ROLE_ALIASES?.[normalized]) {
+    return BACKWARD_COMPAT_ROLE_ALIASES[normalized];
   }
   const mappedPaneId = ROLE_ID_MAP?.[normalized];
   if (mappedPaneId) {

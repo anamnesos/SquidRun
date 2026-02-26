@@ -577,8 +577,8 @@ const HEARTBEAT_INTERVALS = {
 // Staleness threshold - task is "overdue" if no status.md update in 5 minutes
 const STALENESS_THRESHOLD = 300000; // 5 minutes
 
-const LEAD_RESPONSE_TIMEOUT = 15000;  // HB2: 15 seconds
-const MAX_LEAD_NUDGES = 2;  // HB3: After 2 failed nudges, escalate
+const ARCHITECT_RESPONSE_TIMEOUT = 15000;  // HB2: 15 seconds
+const MAX_ARCHITECT_NUDGES = 2;  // HB3: After 2 failed nudges, escalate
 const ACTIVITY_THRESHOLD = 10000;  // Only nudge if no activity for 10 seconds
 
 // Auto-aggressive-nudge settings
@@ -588,9 +588,9 @@ const STUCK_CHECK_THRESHOLD = 60000;  // Consider stuck after 60s of no activity
 
 // State tracking
 let heartbeatEnabled = false;  // Disabled by default - user can enable via protocol
-let leadNudgeCount = 0;
+let architectNudgeCount = 0;
 let lastHeartbeatTime = 0;
-let awaitingLeadResponse = false;
+let awaitingArchitectResponse = false;
 let currentHeartbeatState = 'idle';  // Track current state
 let heartbeatTimerId = null;  // Dynamic timer reference
 let heartbeatStateCheckTimerId = null;  // Periodic state check reference
@@ -741,8 +741,8 @@ function exitRecoveryMode() {
 // Map paneId to trigger filename
 const PANE_TRIGGER_FILES = {
   '1': 'architect.txt',
-  '2': 'devops.txt',
-  '3': 'analyst.txt',
+  '2': 'builder.txt',
+  '3': 'oracle.txt',
 };
 
 /**
@@ -934,36 +934,36 @@ function updateHeartbeatTimer() {
 }
 
 /**
- * HB1: Write heartbeat message to Lead's trigger file
+ * HB1: Write heartbeat message to Architect's trigger file
  * NOTE: Removed automatic ESC sending - it was interrupting active agents
  * The trigger file watcher will handle delivery; ESC is only sent if truly stuck
  */
-function sendHeartbeatToLead() {
-  const leadPaneId = '1';
-  const _leadTerminal = terminals.get(leadPaneId);
+function sendHeartbeatToArchitect() {
+  const architectPaneId = '1';
+  const _architectTerminal = terminals.get(architectPaneId);
 
   // ESC sending removed - PTY ESC breaks agents (keyboard ESC works, PTY does not)
   // Just send the trigger file message, let user manually ESC if needed.
 
   // Send heartbeat message via trigger file
-  const triggerPath = getTriggerPath('lead.txt');
+  const triggerPath = getTriggerPath('architect.txt');
   const message = '(SYSTEM): Heartbeat - check team status and nudge any stuck workers\n';
   try {
     fs.writeFileSync(triggerPath, message);
-    logInfo('[Heartbeat] Sent heartbeat to Lead');
-    awaitingLeadResponse = true;
+    logInfo('[Heartbeat] Sent heartbeat to Architect');
+    awaitingArchitectResponse = true;
     lastHeartbeatTime = Date.now();
   } catch (err) {
-    logError(`[Heartbeat] Failed to send to Lead: ${err.message}`);
+    logError(`[Heartbeat] Failed to send to Architect: ${err.message}`);
   }
 }
 
 /**
- * HB3: Directly nudge workers when Lead is unresponsive
+ * HB3: Directly nudge workers when Architect is unresponsive
  * NOTE: Only sends ESC to workers that are actually idle (not actively working)
  */
 function directNudgeWorkers() {
-  logWarn('[Heartbeat] Lead unresponsive - directly nudging workers');
+  logWarn('[Heartbeat] Architect unresponsive - directly nudging workers');
 
   // ESC sending removed - PTY ESC breaks agents. Use trigger files instead.
 
@@ -971,7 +971,7 @@ function directNudgeWorkers() {
 
   // Nudge workers directly via trigger file
   const workersTrigger = getTriggerPath('workers.txt');
-  const message = `(SYSTEM): Watchdog alert - Lead unresponsive. ${incompleteTasksMsg}. Reply with your status.\n`;
+  const message = `(SYSTEM): Watchdog alert - Architect unresponsive. ${incompleteTasksMsg}. Reply with your status.\n`;
   try {
     fs.writeFileSync(workersTrigger, message);
     logInfo('[Heartbeat] Directly nudged workers');
@@ -1004,19 +1004,19 @@ function alertUser() {
 }
 
 /**
- * Check if Lead ACTUALLY responded (not just trigger file cleared)
- * Real response = Lead wrote to workers.txt OR had terminal activity
+ * Check if Architect ACTUALLY responded (not just trigger file cleared)
+ * Real response = Architect wrote to workers.txt OR had terminal activity
  */
-function checkLeadResponse() {
-  // Check 1: Did Lead write to workers.txt after heartbeat?
+function checkArchitectResponse() {
+  // Check 1: Did Architect write to workers.txt after heartbeat?
   const workersTrigger = getTriggerPath('workers.txt');
   try {
     if (fs.existsSync(workersTrigger)) {
       const stats = fs.statSync(workersTrigger);
       const content = fs.readFileSync(workersTrigger, 'utf-8').trim();
-      // If workers.txt was modified after heartbeat AND contains Lead message
-      if (stats.mtimeMs > lastHeartbeatTime && content.includes('(LEAD')) {
-        logInfo('[Heartbeat] Lead responded - wrote to workers.txt');
+      // If workers.txt was modified after heartbeat and contains Architect message
+      if (stats.mtimeMs > lastHeartbeatTime && /\((ARCH|ARCHITECT)\s*#/i.test(content)) {
+        logInfo('[Heartbeat] Architect responded - wrote to workers.txt');
         return true;
       }
     }
@@ -1029,7 +1029,7 @@ function checkLeadResponse() {
   // Only actual actions (writing to workers.txt or clearing trigger file) count
 
   // Check 3: Original check - trigger file cleared (fallback)
-  const triggerPath = getTriggerPath('lead.txt');
+  const triggerPath = getTriggerPath('architect.txt');
   try {
     if (!fs.existsSync(triggerPath)) {
       return true; // File deleted
@@ -1065,34 +1065,34 @@ function heartbeatTick() {
   // because PTY output (ANSI codes, cursor updates) counts as "activity" even when
   // agents are stuck at prompts. Heartbeats are non-intrusive, so always fire them.
 
-  logInfo(`[Heartbeat] Tick - state=${currentHeartbeatState}, awaiting=${awaitingLeadResponse}, nudgeCount=${leadNudgeCount}`);
+  logInfo(`[Heartbeat] Tick - state=${currentHeartbeatState}, awaiting=${awaitingArchitectResponse}, nudgeCount=${architectNudgeCount}`);
 
-  // If awaiting Lead response, check if they responded
-  if (awaitingLeadResponse) {
+  // If awaiting Architect response, check if they responded
+  if (awaitingArchitectResponse) {
     const elapsed = Date.now() - lastHeartbeatTime;
 
-    if (checkLeadResponse()) {
-      // Lead responded - reset state
-      logInfo('[Heartbeat] Lead responded');
-      leadNudgeCount = 0;
-      awaitingLeadResponse = false;
+    if (checkArchitectResponse()) {
+      // Architect responded - reset state
+      logInfo('[Heartbeat] Architect responded');
+      architectNudgeCount = 0;
+      awaitingArchitectResponse = false;
       exitRecoveryMode();  // Exit recovery if we were in it
       return;
     }
 
     // HB2: Check timeout
-    if (elapsed > LEAD_RESPONSE_TIMEOUT) {
-      leadNudgeCount++;
-      logWarn(`[Heartbeat] Lead no response after ${elapsed}ms (nudge ${leadNudgeCount}/${MAX_LEAD_NUDGES})`);
+    if (elapsed > ARCHITECT_RESPONSE_TIMEOUT) {
+      architectNudgeCount++;
+      logWarn(`[Heartbeat] Architect no response after ${elapsed}ms (nudge ${architectNudgeCount}/${MAX_ARCHITECT_NUDGES})`);
 
       // Enter recovery mode on first failed nudge
       enterRecoveryMode();
 
-      if (leadNudgeCount >= MAX_LEAD_NUDGES) {
+      if (architectNudgeCount >= MAX_ARCHITECT_NUDGES) {
         // HB3: Escalate to direct worker nudge
         directNudgeWorkers();
-        leadNudgeCount = 0;
-        awaitingLeadResponse = false;
+        architectNudgeCount = 0;
+        awaitingArchitectResponse = false;
 
         // Set timer for HB4 check
         setTimeout(() => {
@@ -1109,17 +1109,17 @@ function heartbeatTick() {
           } catch (_err) {
             // Ignore
           }
-        }, LEAD_RESPONSE_TIMEOUT);
+        }, ARCHITECT_RESPONSE_TIMEOUT);
       } else {
-        // Retry Lead nudge
-        sendHeartbeatToLead();
+        // Retry Architect nudge
+        sendHeartbeatToArchitect();
       }
     }
     return;
   }
 
   // HB1: Send regular heartbeat
-  sendHeartbeatToLead();
+  sendHeartbeatToArchitect();
 }
 
 // Start heartbeat timer with initial adaptive interval
@@ -1880,8 +1880,8 @@ function handleMessage(client, message) {
           state: currentState,
           interval: currentInterval,
           isRecovering: isRecovering,
-          leadNudgeCount,
-          awaitingResponse: awaitingLeadResponse,
+          architectNudgeCount,
+          awaitingResponse: awaitingArchitectResponse,
           lastHeartbeat: lastHeartbeatTime,
         });
         // Also broadcast current state so UI updates

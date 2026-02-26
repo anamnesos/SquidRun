@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('../logger');
+const { LEGACY_ROLE_ALIASES, PANE_ROLES, ROLE_ID_MAP, ROLE_NAMES } = require('../../config');
 
 // Graph storage paths
 let GRAPH_DIR = null;
@@ -49,6 +50,43 @@ const EDGE_TYPES = {
   PART_OF: 'part_of',           // concept part of broader concept
   OCCURRED_IN: 'occurred_in'    // event occurred in session
 };
+const CANONICAL_ROLE_IDS = new Set(
+  (Array.isArray(ROLE_NAMES) && ROLE_NAMES.length > 0 ? ROLE_NAMES : ['architect', 'builder', 'oracle'])
+    .map((entry) => String(entry).trim().toLowerCase())
+    .filter(Boolean)
+);
+const PANE_ID_TO_CANONICAL_ROLE = new Map(
+  Object.entries(ROLE_ID_MAP || {})
+    .map(([role, paneId]) => [String(role).toLowerCase(), String(paneId)])
+    .filter(([role, paneId]) => CANONICAL_ROLE_IDS.has(role) && paneId)
+    .map(([role, paneId]) => [paneId, role])
+);
+const PANE_LABEL_TO_ID = new Map(
+  Object.entries(PANE_ROLES || {})
+    .map(([paneId, label]) => [String(label).toLowerCase(), String(paneId)])
+);
+
+function resolveAgentPaneId(roleOrPaneId) {
+  const normalized = String(roleOrPaneId || '').toLowerCase().trim();
+  if (!normalized) return null;
+  if (PANE_ID_TO_CANONICAL_ROLE.has(normalized)) return normalized;
+  if (/^builder-bg-\d+$/i.test(normalized) || /^bg-2-\d+$/i.test(normalized)) {
+    return String(ROLE_ID_MAP?.builder || '2');
+  }
+  const labelPane = PANE_LABEL_TO_ID.get(normalized);
+  if (labelPane) return labelPane;
+  if (CANONICAL_ROLE_IDS.has(normalized)) {
+    return String(ROLE_ID_MAP?.[normalized] || '');
+  }
+  if (LEGACY_ROLE_ALIASES?.[normalized]) {
+    return String(ROLE_ID_MAP?.[LEGACY_ROLE_ALIASES[normalized]] || '');
+  }
+  const mappedPane = ROLE_ID_MAP?.[normalized];
+  if (mappedPane && PANE_ID_TO_CANONICAL_ROLE.has(String(mappedPane))) {
+    return String(mappedPane);
+  }
+  return null;
+}
 
 /**
  * Initialize the knowledge graph storage
@@ -559,20 +597,7 @@ function linkErrorResolution(errorId, decisionId) {
  * @returns {string} Agent node ID
  */
 function getAgentNodeId(roleOrPaneId) {
-  // Map role names to pane IDs
-  const roleToPane = {
-    'architect': '1',
-    'builder': '2',
-    'orchestrator': '2',
-    'infra': '2',
-    'backend': '2', 'implementer b': '2', 'implementer_b': '2', 'worker b': '2', 'worker_b': '2',
-    'devops': '2',
-    'oracle': '3',
-    'analyst': '3', 'investigator': '3'
-  };
-
-  const normalized = String(roleOrPaneId).toLowerCase().trim();
-  const paneId = roleToPane[normalized] || roleOrPaneId;
+  const paneId = resolveAgentPaneId(roleOrPaneId) || roleOrPaneId;
   return `agent:${paneId}`;
 }
 

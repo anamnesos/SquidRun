@@ -1,7 +1,7 @@
 # Team Memory Runtime — Build Spec v0.3
 
 **Status:** FINAL + Runtime Addendum (updated 2026-02-17)
-**Author:** Architect (with inputs from DevOps #9-#12, Analyst #10-#12)
+**Author:** Architect (with inputs from Builder #9-#12, Oracle #10-#12)
 **Date:** 2026-02-13
 
 ---
@@ -33,7 +33,7 @@ Every multi-agent memory system today is a library — store, search, retrieve. 
 | Intent Board JSON files | REMOVED | Replaced by Team Memory + Evidence Ledger runtime signals |
 | War Room log | DEPRECATED — pending removal | `workspace/war-room.log` |
 | Arch hooks (SessionStart/End, PreCompact) | ACTIVE | `workspace/scripts/arch-hooks.js` |
-| Ana hooks (SessionStart/End, AfterTool) | ACTIVE | `workspace/scripts/ana-hooks.js` |
+| Oracle hooks (SessionStart/End, AfterTool) | ACTIVE | `workspace/scripts/ana-hooks.js` |
 | MEMORY.md (Claude auto-memory) | ACTIVE | Per-instance `.claude/` dirs |
 
 **Key insight:** We have the immutable event store (Evidence Ledger), propagation infrastructure (traceIds), and lifecycle hooks. What's missing are the intelligence layers on top.
@@ -266,7 +266,7 @@ CREATE TABLE guards (
 CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 ```
 
-**Note:** Guards can only `warn` or `escalate` — no `require_review` or `block` in initial cut (deferred per DevOps review). Auto-blocking is too aggressive before we validate contradiction detection precision.
+**Note:** Guards can only `warn` or `escalate` — no `require_review` or `block` in initial cut (deferred per Builder review). Auto-blocking is too aggressive before we validate contradiction detection precision.
 
 ---
 
@@ -305,11 +305,11 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 
 ---
 
-## 6. Build Phases (Revised Order Per DevOps Review)
+## 6. Build Phases (Revised Order Per Builder Review)
 
 ### Phase 0: Foundation & Cleanup
 
-**Owner:** DevOps
+**Owner:** Builder
 **Goal:** Solid base for everything above
 
 - [ ] Audit Evidence Ledger schema — verify traceId/causationId consistency
@@ -322,7 +322,7 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 
 ### Phase 1: Claim Graph (Layer 1)
 
-**Owner:** DevOps (infra) + Architect (schema)
+**Owner:** Builder (infra) + Architect (schema)
 **Goal:** Core CRUD — boring, strict, correct
 
 - [ ] Create `team-memory.sqlite` with all core tables (claims, claim_scopes, claim_evidence, claim_status_history, decisions, decision_alternatives)
@@ -342,7 +342,7 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 
 ### Phase 2: Search & Retrieval (Layer 2)
 
-**Owner:** DevOps
+**Owner:** Builder
 **Goal:** Make claims queryable before building consensus on top
 **Depends on:** Phase 1
 
@@ -358,7 +358,7 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 
 ### Phase 3: Consensus & Belief (Layer 3)
 
-**Owner:** DevOps (infra) + Architect (protocol)
+**Owner:** Builder (infra) + Architect (protocol)
 **Depends on:** Phase 1 + 2
 
 - [ ] Consensus table + edges (support/challenge/abstain)
@@ -370,14 +370,14 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 - [ ] CLI: `hm-claim support <claim-id> --reason "..."`
 - [ ] Tests: consensus resolution, contradiction detection, snapshot creation
 
-**Deferred to later phase (per DevOps review):**
+**Deferred to later phase (per Builder review):**
 - Per-claim `memory_permissions` table — all claims readable by all agents for now
 - Trust-weighted arbitration — defer until contradiction detection precision is proven
 - Auto-policy blocking — warn/escalate only, no hard blocks initially
 
 ### Phase 4: Pattern Engine (Layer 4)
 
-**Owner:** DevOps (mining logic) + Analyst (validation)
+**Owner:** Builder (mining logic) + Oracle (validation)
 **Depends on:** Phase 1 + 2 + 3
 
 - [ ] Patterns table + types
@@ -394,7 +394,7 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 
 ### Phase 5: Active Control Plane (Layer 5)
 
-**Owner:** DevOps (guard execution) + Architect (policy)
+**Owner:** Builder (guard execution) + Architect (policy)
 **Depends on:** Phase 1-4
 **Gate:** Only start after Phase 3 contradiction precision is validated
 
@@ -487,7 +487,7 @@ Research survey (2026-02-13) of LangGraph, CrewAI, AutoGen, OpenClaw, Observatio
 
 ## 12. Experiment Engine (Phase 6)
 
-**Status:** SPEC — DevOps + Architect aligned on architecture + risk controls
+**Status:** SPEC — Builder + Architect aligned on architecture + risk controls
 **Concept:** When a claim is contested, agents don't argue — they run an experiment. An isolated PTY executes a test, captures evidence, and attaches it to the claim as executable proof.
 
 ### 12.1 Core Concept

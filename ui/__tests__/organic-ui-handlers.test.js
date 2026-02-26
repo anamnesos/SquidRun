@@ -50,7 +50,7 @@ describe('organic-ui-handlers', () => {
   describe('SHORT_ROLES constant', () => {
     it('should have correct role mappings', () => {
       expect(organicUI.SHORT_ROLES).toEqual({
-        '1': 'arch',
+        '1': 'architect',
         '2': 'builder',
         '3': 'oracle',
       });
@@ -119,7 +119,7 @@ describe('organic-ui-handlers', () => {
 
       expect(states['1']).toEqual({
         state: 'idle',
-        role: 'arch',
+        role: 'architect',
         fullRole: 'Architect',
       });
       expect(states['2']).toEqual({
@@ -294,7 +294,7 @@ describe('organic-ui-handlers', () => {
           expect.objectContaining({
             messageId: 'msg-1',
             from: '1',
-            fromRole: 'arch',
+            fromRole: 'architect',
             to: '2',
             toRole: 'builder',
             phase: 'queued',
@@ -350,7 +350,7 @@ describe('organic-ui-handlers', () => {
           expect.objectContaining({
             messageId: 'msg-4',
             from: '1',
-            fromRole: 'arch',
+            fromRole: 'architect',
             to: '3',
             toRole: 'oracle',
             phase: 'delivered',
@@ -576,3 +576,4 @@ describe('organic-ui-handlers', () => {
     });
   });
 });
+

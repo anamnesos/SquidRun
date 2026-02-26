@@ -8,6 +8,8 @@ const {
   PANE_ROLES,
   SHORT_AGENT_NAMES,
   ROLE_ID_MAP,
+  LEGACY_ROLE_ALIASES,
+  ROLE_NAMES,
   resolveBackgroundBuilderAlias,
 } = require('../../config');
 const { escapeHtml } = require('./utils');
@@ -24,6 +26,22 @@ const CHANNEL_LABELS = {
 };
 const MESSAGE_ROLE_PATTERN = /\(\s*([A-Z][A-Z0-9-]*)\s*#\d+\s*\):/i;
 const MESSAGE_FROM_PATTERN = /\[MSG from ([^\]]+)\]/i;
+const CANONICAL_ROLE_IDS = new Set(
+  (Array.isArray(ROLE_NAMES) && ROLE_NAMES.length > 0 ? ROLE_NAMES : ['architect', 'builder', 'oracle'])
+    .map((entry) => String(entry).trim().toLowerCase())
+    .filter(Boolean)
+);
+const PANE_ID_TO_CANONICAL_ROLE = new Map(
+  Object.entries(ROLE_ID_MAP || {})
+    .map(([role, paneId]) => [String(role).toLowerCase(), String(paneId)])
+    .filter(([role, paneId]) => CANONICAL_ROLE_IDS.has(role) && paneId)
+    .map(([role, paneId]) => [paneId, role])
+);
+const PANE_LABEL_TO_CANONICAL_ROLE = new Map(
+  Object.entries(PANE_ROLES || {})
+    .map(([paneId, label]) => [String(label).toLowerCase(), PANE_ID_TO_CANONICAL_ROLE.get(String(paneId)) || null])
+    .filter(([, role]) => Boolean(role))
+);
 
 let busRef = null;
 let handlers = [];
@@ -79,12 +97,17 @@ function normalizeRole(value) {
   if (lower === 'cli') return 'architect';
   if (lower === 'system') return 'system';
   if (lower === 'external' || lower === 'external-agent' || lower.includes('claude')) return 'external';
-  if (lower === 'architect' || lower === 'builder' || lower === 'oracle') return lower;
-  if (lower === 'arch') return 'architect';
-  if (lower === 'ana' || lower === 'analyst') return 'oracle';
-  if (lower === 'devops' || lower === 'backend' || lower === 'infra') return 'builder';
-  if (ROLE_ID_MAP[lower]) return normalizeRole(ROLE_ID_MAP[lower]);
-  if (PANE_ROLES[raw]) return normalizeRole(PANE_ROLES[raw]);
+  if (CANONICAL_ROLE_IDS.has(lower)) return lower;
+  if (LEGACY_ROLE_ALIASES?.[lower]) return LEGACY_ROLE_ALIASES[lower];
+  const paneRole = PANE_ID_TO_CANONICAL_ROLE.get(lower);
+  if (paneRole) return paneRole;
+  if (ROLE_ID_MAP?.[lower]) {
+    const mappedRole = PANE_ID_TO_CANONICAL_ROLE.get(String(ROLE_ID_MAP[lower]));
+    if (mappedRole) return mappedRole;
+  }
+  if (PANE_LABEL_TO_CANONICAL_ROLE.has(lower)) {
+    return PANE_LABEL_TO_CANONICAL_ROLE.get(lower);
+  }
   return lower;
 }
 
