@@ -43,9 +43,11 @@ const telegramPoller = require('../telegram-poller');
 const { sendTelegram } = require('../../scripts/hm-telegram');
 const {
   createBridgeClient,
+  DEFAULT_BRIDGE_RELAY_URL,
   normalizeBridgeMetadata,
 } = require('../bridge-client');
 const {
+  normalizeDeviceId,
   parseCrossDeviceTarget,
   getLocalDeviceId,
   isCrossDeviceEnabled,
@@ -3959,10 +3961,12 @@ class SquidRunApp {
 
   resolveEnvBridgeRuntimeConfig() {
     if (!isCrossDeviceEnabled(process.env)) return null;
-    const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim();
+    const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim() || DEFAULT_BRIDGE_RELAY_URL;
     const sharedSecret = String(process.env.SQUIDRUN_RELAY_SECRET || '').trim();
-    const deviceId = getLocalDeviceId(process.env);
-    if (!relayUrl || !sharedSecret || !deviceId) return null;
+    const deviceId = getLocalDeviceId(process.env)
+      || normalizeDeviceId(os.hostname())
+      || normalizeDeviceId(`DEVICE-${process.pid}`);
+    if (!relayUrl || !deviceId) return null;
     return {
       source: 'env',
       relayUrl,
@@ -4029,10 +4033,19 @@ class SquidRunApp {
         log.warn('Bridge', `Failed persisting pairing config: ${persistResult.error || persistResult.reason || 'unknown'}`);
       }
     }
+    const shouldClearActiveCode = update.type === 'pairing-complete' || update.type === 'pairing-failed';
+    const nextCode = shouldClearActiveCode
+      ? null
+      : ((Object.prototype.hasOwnProperty.call(update, 'code')
+        ? String(update.code || '').trim()
+        : this.bridgePairingState.code) || null);
+    const nextExpiresAt = shouldClearActiveCode
+      ? null
+      : (Number.isFinite(update.expiresAt) ? update.expiresAt : this.bridgePairingState.expiresAt);
     this.emitBridgePairingStateUpdate({
       mode: update.type === 'pairing-init-ack' ? 'generate' : (update.type === 'pairing-complete' ? 'join' : this.bridgePairingState.mode),
-      code: update.code || this.bridgePairingState.code,
-      expiresAt: Number.isFinite(update.expiresAt) ? update.expiresAt : this.bridgePairingState.expiresAt,
+      code: nextCode,
+      expiresAt: nextExpiresAt,
       status: update.status || this.bridgePairingState.status,
       error: update.error || null,
       reason: update.reason || null,
@@ -4062,7 +4075,7 @@ class SquidRunApp {
   isBridgeConfigured() {
     if (this.bridgeEnabled !== true) return false;
     const config = this.bridgeRuntimeConfig || this.refreshBridgeRuntimeConfig();
-    return Boolean(config?.relayUrl && config?.sharedSecret && config?.deviceId);
+    return Boolean(config?.relayUrl && config?.deviceId);
   }
 
   handleBridgeClientStatusUpdate(status = {}) {
@@ -4145,7 +4158,7 @@ class SquidRunApp {
     this.refreshBridgeRuntimeConfig();
     if (!this.bridgeEnabled) return false;
     if (!this.isBridgeConfigured()) {
-      log.warn('Bridge', 'Cross-device bridge enabled but missing devices.json pairing config and env fallback (SQUIDRUN_DEVICE_ID / SQUIDRUN_RELAY_URL / SQUIDRUN_RELAY_SECRET)');
+      log.warn('Bridge', 'Cross-device bridge enabled but missing usable runtime bridge config (requires relay URL + device ID).');
       return false;
     }
     if (this.bridgeClient) return true;
@@ -4289,9 +4302,7 @@ class SquidRunApp {
       };
     }
     const result = await this.bridgeClient.joinPairingCode(code, { timeoutMs: pairingTimeoutMs });
-    if (result?.ok === true && result?.paired) {
-      this.persistBridgePairingConfig(result.paired);
-    } else {
+    if (!(result?.ok === true && result?.paired)) {
       this.emitBridgePairingStateUpdate({
         mode: 'join',
         status: result?.status || 'pairing_join_failed',

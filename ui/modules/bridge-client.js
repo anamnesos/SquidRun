@@ -10,6 +10,7 @@ const DEFAULT_PAIRING_TIMEOUT_MS = 12000;
 const DEFAULT_RECONNECT_BASE_MS = 750;
 const DEFAULT_RECONNECT_MAX_MS = 10000;
 const DEFAULT_PING_INTERVAL_MS = 30000;
+const DEFAULT_BRIDGE_RELAY_URL = 'wss://relay-production-2c27.up.railway.app';
 const SENSITIVE_ENV_KEYWORDS_RE = /(TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|AUTH|CREDENTIAL|COOKIE|SESSION)/i;
 const SENSITIVE_JSON_KEY_RE = /^(token|secret|password|pass|api[_-]?key|access[_-]?key|private[_-]?key|authorization|credential|cookie|session)$/i;
 const SENSITIVE_PATH_SEGMENT_RE = /(^|[\\/])(\.env(\.[^\\/]+)?|id_rsa|id_dsa|credentials(\.[^\\/]+)?|token|secret|passwords?)([\\/]|$)/i;
@@ -30,6 +31,11 @@ function asNonEmptyString(value) {
 function parsePositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function resolveRelayUrl(value) {
+  const configured = asNonEmptyString(value);
+  return configured || DEFAULT_BRIDGE_RELAY_URL;
 }
 
 function redactSensitiveText(input) {
@@ -217,7 +223,7 @@ function normalizeBridgeMetadata(metadataInput, fallbackContent = '', options = 
 
 class BridgeClient {
   constructor(options = {}) {
-    this.relayUrl = asNonEmptyString(options.relayUrl);
+    this.relayUrl = resolveRelayUrl(options.relayUrl);
     this.deviceId = normalizeDeviceId(options.deviceId);
     this.sharedSecret = asNonEmptyString(options.sharedSecret);
     this.onMessage = typeof options.onMessage === 'function' ? options.onMessage : null;
@@ -251,7 +257,7 @@ class BridgeClient {
   }
 
   isConfigured() {
-    return Boolean(this.relayUrl && this.deviceId && this.sharedSecret);
+    return Boolean(this.relayUrl && this.deviceId);
   }
 
   isReady() {
@@ -1019,6 +1025,7 @@ function createBridgeClient(options = {}) {
 module.exports = {
   BridgeClient,
   createBridgeClient,
+  DEFAULT_BRIDGE_RELAY_URL,
   normalizeStructuredBridgeType,
   normalizeStructuredBridgeMessage,
   normalizeBridgeMetadata,
