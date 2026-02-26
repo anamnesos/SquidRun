@@ -6,8 +6,8 @@
 - Local path: `D:\projects\squidrun`.
 - GitHub repo: `https://github.com/anamnesos/SquidRun` (current remote URL may still be `https://github.com/anamnesos/hivemind.git`, which redirects).
 - Deploy/release targets: GitHub Releases + packaged installers built from `ui/` with `npx electron-builder`.
-- Current version: `0.1.23` (`ui/package.json`).
-- Last known state: mac packaged `.env` fallback shipped in `v0.1.23`; Windows installer built at `ui/dist/SquidRun Setup 0.1.23.exe`.
+- Current version: `0.1.27` (`ui/package.json`).
+- Last known state: v0.1.27 shipped cross-device discovery, pairing, and error messaging improvements.
 
 ## squidrun-site
 
