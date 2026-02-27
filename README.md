@@ -1,5 +1,7 @@
 # SquidRun
 
+> **Alpha Warning:** This is an early technical preview built for developers and tinkerers. It requires comfort with terminal environments, reading logs, and configuring `.env` variables. Expect sharp edges, network topology quirks, and minor setup friction.
+
 **SquidRun is not a code editor, IDE plugin, or cloud service.** It is a standalone, local-first Electron app that gives a **solo developer** a full AI coding team — running **Claude Code, Codex CLI, and Gemini CLI simultaneously** on your own machine, powered by your existing subscriptions.
 
 One person. Three different AI models. Three specialized roles. All running in parallel, talking to each other, and working on your codebase at the same time:
@@ -99,6 +101,15 @@ npm start
 # 4. In Settings, assign each pane's CLI (e.g. pane 1 = claude, pane 2 = codex, Pane 3 = gemini)
 # 5. You're running a multi-model agent team
 ```
+
+## Documentation
+
+Full documentation is available in the `docs/guide/` directory:
+- [Install & Prerequisites](docs/guide/install.md)
+- [Quickstart](docs/guide/quickstart.md)
+- [Workspace Model](docs/guide/workspace-model.md)
+- [Troubleshooting](docs/guide/troubleshooting.md)
+- [Limitations (Alpha)](docs/guide/limitations.md)
 
 ## Architecture Overview
 
