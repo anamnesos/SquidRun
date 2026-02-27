@@ -12,7 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const { EventEmitter } = require('events');
 const log = require('./modules/logger');
-const { PANE_ROLES } = require('./config');
+const { PANE_ROLES, resolveCoordPath } = require('./config');
 
 // Named pipe path (Windows) or Unix socket
 const PIPE_PATH = os.platform() === 'win32'
@@ -23,7 +23,7 @@ const PIPE_PATH = os.platform() === 'win32'
 // Resolve to the unpacked copy so child_process.spawn works.
 const ASAR_UNPACKED_DIR = __dirname.replace('app.asar', 'app.asar.unpacked');
 const DAEMON_SCRIPT = path.join(ASAR_UNPACKED_DIR, 'terminal-daemon.js');
-const DAEMON_PID_FILE = path.join(ASAR_UNPACKED_DIR, 'daemon.pid');
+const DAEMON_PID_FILE = resolveCoordPath('runtime/daemon.pid', { forWrite: true });
 
 class DaemonClient extends EventEmitter {
   constructor() {

@@ -66,6 +66,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'read-friction',
   'read-shared-context',
   'release-agent',
+  'run-preflight-check',
   'route-task-input',
   'save-screenshot',
   'clear-project-context',

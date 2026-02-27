@@ -51,7 +51,7 @@ const {
 // D1: DAEMON LOGGING TO FILE
 // ============================================================
 
-const LOG_FILE_PATH = path.join(__dirname, 'daemon.log');
+const LOG_FILE_PATH = resolveCoordPath('runtime/daemon.log', { forWrite: true });
 const daemonStartTime = Date.now();
 
 // Log levels
@@ -392,7 +392,7 @@ function checkGhostText(paneId, data) {
 // Session persistence
 // ============================================================
 
-const SESSION_FILE_PATH = path.join(__dirname, 'session-state.json');
+const SESSION_FILE_PATH = resolveCoordPath('runtime/session-state.json', { forWrite: true });
 
 /**
  * Save current session state to disk
@@ -483,7 +483,7 @@ function resolveCoordFile(relPath, options = {}) {
   if (typeof resolveCoordPath === 'function') {
     return resolveCoordPath(relPath, options);
   }
-  return path.join(__dirname, '..', 'workspace', relPath);
+  return path.join(process.cwd(), '.squidrun', relPath);
 }
 
 function getTriggerPath(filename) {
@@ -2193,7 +2193,7 @@ server.listen(PIPE_PATH, () => {
   logInfo(`PID: ${process.pid}`);
 
   // Write PID file for easy process management
-  const pidFile = path.join(__dirname, 'daemon.pid');
+  const pidFile = resolveCoordPath('runtime/daemon.pid', { forWrite: true });
   try {
     fs.writeFileSync(pidFile, process.pid.toString());
     logInfo(`PID written to ${pidFile}`);

@@ -5,12 +5,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const { WORKSPACE_PATH } = require('../config');
+const { resolveCoordPath } = require('../config');
 const { createBufferedFileWriter } = require('./buffered-file-writer');
 
-// Guard against undefined WORKSPACE_PATH in test environment
-const LOG_DIR = WORKSPACE_PATH ? path.join(WORKSPACE_PATH, 'logs') : null;
-const LOG_PATH = LOG_DIR ? path.join(LOG_DIR, 'diagnostic.log') : null;
+const LOG_PATH = resolveCoordPath(path.join('logs', 'diagnostic.log'), { forWrite: true });
+const LOG_DIR = path.dirname(LOG_PATH);
 let dirReady = false;
 const DIAGNOSTIC_FLUSH_INTERVAL_MS = 500;
 
@@ -51,7 +50,6 @@ function formatLine(subsystem, message, extra) {
 }
 
 function write(subsystem, message, extra) {
-  if (!LOG_PATH) return; // Skip in test environment
   try {
     bufferedWriter.write(`${formatLine(subsystem, message, extra)}\n`);
   } catch (_err) {
