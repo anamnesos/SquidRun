@@ -8,6 +8,7 @@
 - Bridge self-replacement flap fix pattern: in `bridge-client.connect()` treat `WebSocket.CLOSING` as an in-flight socket (do not open a new socket), clear `this.socket` before creating a replacement socket, and ignore stale socket events (`open/message/error/close`) when `this.socket !== ws`. For stale `close`, do not mutate connection state or schedule reconnect; only the active socket may trigger reconnect.
 - PTY long-message truncation hardening: for any write path that can carry agent messages, chunk payloads >=1KB instead of single `pty-write` bursts. In hidden pane hosts, force chunking for long `hm-send` traces and pace chunk submission before Enter dispatch. Validate with a live 2000+ char cross-agent send using explicit start/end markers.
 - Diagnostics bundle command: run `node ui/scripts/hm-doctor.js` for a bug-report snapshot that includes platform + Node info, `.squidrun/app-status.json`, redacted `.env` keys, recent `workspace/logs/app.log` tail, local WebSocket health check, daemon pane status from the named pipe, and `comms_journal` row count from `.squidrun/runtime/evidence-ledger.db`.
+- CI Monitoring: Oracle checks CI status on startup using `ui/scripts/hm-ci-check.js`. Builder owns keeping CI green. If CI is red, Oracle escalates to Architect who blocks new work until it's fixed.
 
 ## Task Delegation Template (Architect -> Builder)
 
