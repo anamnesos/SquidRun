@@ -16,21 +16,33 @@
 
 const fs = require('fs');
 const path = require('path');
-const { resolveCoordPath } = require('../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
 const { createBufferedFileWriter } = require('./buffered-file-writer');
 
 const LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
 let minLevel = LEVELS.info;
 
-const LOG_DIR = path.dirname(resolveCoordPath(path.join('logs', 'app.log'), { forWrite: true }));
-const LOG_FILE_PATH = path.join(LOG_DIR, 'app.log');
+function resolveLogFilePath() {
+  if (!WORKSPACE_PATH) return null;
+  if (typeof resolveCoordPath === 'function') {
+    try {
+      return resolveCoordPath(path.join('logs', 'app.log'), { forWrite: true });
+    } catch (_err) {
+      // Fall back to workspace path when coord resolver is unavailable in tests.
+    }
+  }
+  return path.join(WORKSPACE_PATH, 'logs', 'app.log');
+}
+
+const LOG_FILE_PATH = resolveLogFilePath();
+const LOG_DIR = LOG_FILE_PATH ? path.dirname(LOG_FILE_PATH) : null;
 let logDirReady = false;
 const LOG_FLUSH_INTERVAL_MS = 500;
 const LOG_ROTATE_MAX_BYTES = 10 * 1024 * 1024;
 const LOG_ROTATE_MAX_FILES = 3;
 
 function ensureLogDir() {
-  if (logDirReady) return;
+  if (logDirReady || !LOG_DIR) return;
   try {
     fs.mkdirSync(LOG_DIR, { recursive: true });
     logDirReady = true;

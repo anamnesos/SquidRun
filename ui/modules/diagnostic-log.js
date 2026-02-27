@@ -5,11 +5,23 @@
 
 const fs = require('fs');
 const path = require('path');
-const { resolveCoordPath } = require('../config');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
 const { createBufferedFileWriter } = require('./buffered-file-writer');
 
-const LOG_PATH = resolveCoordPath(path.join('logs', 'diagnostic.log'), { forWrite: true });
-const LOG_DIR = path.dirname(LOG_PATH);
+function resolveLogPath() {
+  if (!WORKSPACE_PATH) return null;
+  if (typeof resolveCoordPath === 'function') {
+    try {
+      return resolveCoordPath(path.join('logs', 'diagnostic.log'), { forWrite: true });
+    } catch (_err) {
+      // Fall back to workspace path when coord resolver is unavailable in tests.
+    }
+  }
+  return path.join(WORKSPACE_PATH, 'logs', 'diagnostic.log');
+}
+
+const LOG_PATH = resolveLogPath();
+const LOG_DIR = LOG_PATH ? path.dirname(LOG_PATH) : null;
 let dirReady = false;
 const DIAGNOSTIC_FLUSH_INTERVAL_MS = 500;
 
