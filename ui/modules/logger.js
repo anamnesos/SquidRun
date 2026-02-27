@@ -16,13 +16,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const { WORKSPACE_PATH } = require('../config');
+const { resolveCoordPath } = require('../config');
 const { createBufferedFileWriter } = require('./buffered-file-writer');
 
 const LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
 let minLevel = LEVELS.info;
 
-const LOG_DIR = path.join(WORKSPACE_PATH, 'logs');
+const LOG_DIR = path.dirname(resolveCoordPath(path.join('logs', 'app.log'), { forWrite: true }));
 const LOG_FILE_PATH = path.join(LOG_DIR, 'app.log');
 let logDirReady = false;
 const LOG_FLUSH_INTERVAL_MS = 500;

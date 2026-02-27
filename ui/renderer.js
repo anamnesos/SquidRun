@@ -652,6 +652,39 @@ function handleDaemonStartupTimeout(payload = null) {
   }
 }
 
+function formatPreflightReportForDisplay(report) {
+  if (!report || !Array.isArray(report.checks)) {
+    return 'Preflight failed: invalid report payload.';
+  }
+  return report.checks.map((check) => {
+    const status = check?.ok ? 'PASS' : 'FAIL';
+    const label = String(check?.label || check?.id || 'check');
+    const detail = String(check?.detail || '').trim();
+    return `${status}: ${label}${detail ? `\n  ${detail}` : ''}`;
+  }).join('\n');
+}
+
+async function runStartupPreflightCheck() {
+  try {
+    const report = await ipcRenderer.invoke('run-preflight-check');
+    const summary = report?.summary || {};
+    const total = Number(summary.total) || 0;
+    const passed = Number(summary.passed) || 0;
+    const failed = Number(summary.failed) || Math.max(0, total - passed);
+    showStatusNotice(`Preflight: ${passed}/${total} checks passed`, 6000);
+
+    if (failed > 0) {
+      const details = formatPreflightReportForDisplay(report);
+      window.alert(
+        `SquidRun startup preflight found ${failed} failing check(s).\n\n${details}`
+      );
+    }
+  } catch (err) {
+    log.error('Preflight', 'Startup preflight failed:', err);
+    showStatusNotice('Preflight check failed to run.', 6000);
+  }
+}
+
 function createFallbackRendererApi() {
   return {
     pty: {
@@ -2393,6 +2426,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // MP2: Setup per-pane project indicators
   daemonHandlers.setupPaneProjectClicks();
   await daemonHandlers.loadPaneProjects();
+
+  // Run startup preflight checks and surface pass/fail to user.
+  await runStartupPreflightCheck();
 
   // Auto-spawn now handled by checkInitComplete() when both
   // settings are loaded AND terminals are ready (no more race condition)

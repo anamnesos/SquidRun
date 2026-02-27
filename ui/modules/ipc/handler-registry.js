@@ -51,6 +51,7 @@ const { registerContractPromotionHandlers } = require('./contract-promotion-hand
 const { registerTeamMemoryHandlers } = require('./team-memory-handlers');
 const { registerTransitionLedgerHandlers } = require('./transition-ledger-handlers');
 const { registerDevicePairingHandlers } = require('./device-pairing-handlers');
+const { registerPreflightHandlers } = require('./preflight-handlers');
 const HANDLER_REREGISTER_FLAG = '__squidrunHandlerReregister';
 
 const DEFAULT_HANDLERS = [
@@ -107,6 +108,7 @@ const DEFAULT_HANDLERS = [
   registerTeamMemoryHandlers,
   registerTransitionLedgerHandlers,
   registerDevicePairingHandlers,
+  registerPreflightHandlers,
 ];
 
 function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {
