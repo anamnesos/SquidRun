@@ -380,6 +380,37 @@ describe('PTY Handlers', () => {
       );
       expect(result).toEqual({ success: true });
     });
+
+    test('auto-chunks large payload writes to prevent truncation', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.write.mockReturnValue(true);
+      const payload = 'X'.repeat(2500);
+
+      const result = await harness.invoke('pty-write', '1', payload);
+
+      expect(result).toEqual({
+        success: true,
+        chunked: true,
+        chunks: 2,
+        chunkSize: 2048,
+      });
+      expect(ctx.daemonClient.write).toHaveBeenCalledTimes(2);
+      const sent = ctx.daemonClient.write.mock.calls.map(call => call[1]).join('');
+      expect(sent).toBe(payload);
+    });
+
+    test('returns failure when auto-chunked write fails', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.write
+        .mockReturnValueOnce(true)
+        .mockReturnValueOnce(false);
+      const payload = 'Y'.repeat(2500);
+
+      const result = await harness.invoke('pty-write', '1', payload);
+
+      expect(ctx.daemonClient.write).toHaveBeenCalledTimes(2);
+      expect(result).toEqual({ success: false, error: 'Failed to send write to daemon' });
+    });
   });
 
   describe('pty-write-chunked', () => {
