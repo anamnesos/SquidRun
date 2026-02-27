@@ -12,8 +12,11 @@
 const fs = require('fs');
 const path = require('path');
 const contracts = require('./contracts');
+const { resolveCoordPath } = require('../config');
 
-const STATS_PATH = path.join(__dirname, '..', '..', 'workspace', 'contract-stats.json');
+const STATS_PATH = typeof resolveCoordPath === 'function'
+  ? resolveCoordPath('contract-stats.json', { forWrite: true })
+  : path.join(process.cwd(), '.squidrun', 'contract-stats.json');
 const MIN_SESSIONS = 5;
 const REQUIRED_SIGNOFFS = 2;
 
