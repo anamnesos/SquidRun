@@ -24,8 +24,8 @@ const PIPE_PATH = os.platform() === 'win32'
   : '/tmp/squidrun-terminal.sock';
 
 // Workspace paths
-const WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
-const PROJECT_ROOT_FALLBACK = path.resolve(path.join(WORKSPACE_PATH, '..'));
+const LEGACY_WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
+const PROJECT_ROOT_FALLBACK = path.resolve(path.join(LEGACY_WORKSPACE_PATH, '..'));
 const PROJECT_ROOT_DISCOVERY_CWD = path.resolve(path.join(__dirname, '..'));
 const EXTERNAL_WORKSPACE_DIRNAME = 'SquidRun';
 
@@ -75,6 +75,7 @@ function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
 }
 
 const DEFAULT_PROJECT_ROOT = discoverProjectRoot();
+const WORKSPACE_PATH = path.join(DEFAULT_PROJECT_ROOT, '.squidrun');
 const GLOBAL_STATE_ROOT = os.platform() === 'win32'
   ? path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'squidrun')
   : path.join(os.homedir(), '.config', 'squidrun');
@@ -296,8 +297,8 @@ function getCoordRoots(options = {}) {
   if (includeMissing || fs.existsSync(coordRoot)) {
     roots.push(coordRoot);
   }
-  if (includeLegacy && (includeMissing || fs.existsSync(WORKSPACE_PATH))) {
-    roots.push(WORKSPACE_PATH);
+  if (includeLegacy && (includeMissing || fs.existsSync(LEGACY_WORKSPACE_PATH))) {
+    roots.push(LEGACY_WORKSPACE_PATH);
   }
 
   return Array.from(new Set(roots.map((root) => path.resolve(root))));
@@ -333,7 +334,7 @@ function resolveCoordPath(relPath, options = {}) {
     for (const root of roots) {
       if (
         blockLegacyWorkspaceFallback
-        && path.resolve(root) === path.resolve(WORKSPACE_PATH)
+        && path.resolve(root) === path.resolve(LEGACY_WORKSPACE_PATH)
         && fs.existsSync(coordRoot)
       ) {
         const warningKey = `blocked:${normalizedRelPath}`;
@@ -348,7 +349,7 @@ function resolveCoordPath(relPath, options = {}) {
       const candidate = path.join(root, normalizedRelPath);
       if (fs.existsSync(candidate)) {
         if (
-          path.resolve(root) === path.resolve(WORKSPACE_PATH)
+          path.resolve(root) === path.resolve(LEGACY_WORKSPACE_PATH)
           && fs.existsSync(coordRoot)
           && !legacyCoordFallbackWarnings.has(normalizedRelPath)
         ) {
@@ -412,6 +413,7 @@ const evidenceLedgerEnabled = envFlagEnabled('SQUIDRUN_EVIDENCE_LEDGER_ENABLED',
 module.exports = {
   PIPE_PATH,
   WORKSPACE_PATH,
+  LEGACY_WORKSPACE_PATH,
   get PROJECT_ROOT() {
     return getProjectRoot();
   },

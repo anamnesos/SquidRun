@@ -2183,12 +2183,21 @@ async function spawnAgent(paneId, model = null) {
       // (sandbox_mode = "workspace-write") to skip the first-run sandbox prompt.
       // This PTY \r is a fallback to dismiss any residual prompt if config is missing.
       const isCodexCommand = result.command.startsWith('codex');
+      const isClaudeCommand = result.command.startsWith('claude');
       if (isCodexCommand) {
         setTimeout(() => {
           window.squidrun.pty.write(String(paneId), '\r').catch(err => {
             log.error(`spawnAgent ${paneId}`, 'Codex startup Enter failed:', err);
           });
           log.info('spawnAgent', `Codex pane ${paneId}: PTY \\r to dismiss any startup prompt`);
+        }, 3000);
+      }
+      if (isClaudeCommand) {
+        setTimeout(() => {
+          window.squidrun.pty.write(String(paneId), '\r').catch(err => {
+            log.error(`spawnAgent ${paneId}`, 'Claude startup Enter failed:', err);
+          });
+          log.info('spawnAgent', `Claude pane ${paneId}: PTY \\r startup fallback`);
         }, 3000);
       }
 
@@ -2593,6 +2602,5 @@ module.exports = {
     initPromotionEngine,
   },
 };
-
 
 

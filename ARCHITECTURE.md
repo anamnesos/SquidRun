@@ -89,6 +89,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/ipc/output-validation-handlers.js: Registers IPC channels (validate-output, validate-file, get-validation-patterns, ...).
 - ui/modules/ipc/perf-audit-handlers.js: Registers IPC channels (get-perf-profile, set-perf-enabled, set-slow-threshold, ...).
 - ui/modules/ipc/plugin-handlers.js: Registers IPC channels (list-plugins, enable-plugin, disable-plugin, ...).
+- ui/modules/ipc/preflight-handlers.js: Registers IPC channels (run-preflight-check) and executes startup health checks (env, CLIs, relay reachability, workspace writeability, system Node version).
 - ui/modules/ipc/precommit-handlers.js: Registers IPC channels (run-pre-commit-checks, get-ci-status, set-ci-enabled, ...).
 - ui/modules/ipc/process-handlers.js: Registers IPC channels (spawn-process, list-processes, kill-process, ...).
 - ui/modules/ipc/project-handlers.js: Registers IPC channels (select-project, get-project, get-recent-projects, ...).
