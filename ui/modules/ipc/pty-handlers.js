@@ -16,6 +16,7 @@ const {
 const DEFAULT_CHUNK_SIZE = 2048;
 const MIN_CHUNK_SIZE = 1024;
 const MAX_CHUNK_SIZE = 8192;
+const DEFAULT_AUTO_CHUNK_THRESHOLD_BYTES = 1024;
 const WRITE_ACK_TIMEOUT_MS = 2500;
 const INPUT_EDIT_ACTIONS = Object.freeze({
   undo: 'undo',
@@ -60,6 +61,14 @@ function normalizeYieldEveryChunks(value) {
     return 0;
   }
   return Math.floor(numeric);
+}
+
+function resolveAutoChunkThresholdBytes() {
+  const raw = Number(process.env.SQUIDRUN_PTY_WRITE_AUTO_CHUNK_THRESHOLD_BYTES);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_AUTO_CHUNK_THRESHOLD_BYTES;
+  }
+  return Math.floor(raw);
 }
 
 function toNonEmptyString(value) {
@@ -195,6 +204,53 @@ async function writeWithAckIfAvailable(daemonClient, paneId, data, kernelMeta = 
     : { success: true, status: 'sent_without_ack' };
 }
 
+async function writeChunkedText(daemonClient, paneId, fullText, options = {}, kernelMeta = null) {
+  const text = String(fullText ?? '');
+  const chunkSize = clampChunkSize(options?.chunkSize);
+  const yieldEveryChunks = normalizeYieldEveryChunks(options?.yieldEveryChunks);
+
+  let chunkCount = 0;
+  if (text.length === 0) {
+    const ack = await writeWithAckIfAvailable(
+      daemonClient,
+      paneId,
+      '',
+      normalizeKernelMetaForTrace(kernelMeta)
+    );
+    if (!ack?.success) {
+      return {
+        success: false,
+        chunks: 0,
+        chunkSize,
+        error: ack?.error || ack?.status || 'chunk write failed',
+      };
+    }
+    return { success: true, chunks: 1, chunkSize };
+  }
+
+  for (let offset = 0; offset < text.length; offset += chunkSize) {
+    const chunk = text.slice(offset, offset + chunkSize);
+    const chunkKernelMeta = buildChunkKernelMeta(kernelMeta, chunkCount);
+    const ack = await writeWithAckIfAvailable(daemonClient, paneId, chunk, chunkKernelMeta);
+    if (!ack?.success) {
+      return {
+        success: false,
+        chunks: chunkCount,
+        chunkSize,
+        error: ack?.error || ack?.status || 'chunk write failed',
+      };
+    }
+    chunkCount += 1;
+
+    const hasMore = (offset + chunkSize) < text.length;
+    if (hasMore && yieldEveryChunks > 0 && (chunkCount % yieldEveryChunks) === 0) {
+      await Promise.resolve();
+    }
+  }
+
+  return { success: true, chunks: chunkCount, chunkSize };
+}
+
 function registerPtyHandlers(ctx, deps = {}) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerPtyHandlers requires ctx.ipcMain');
@@ -292,15 +348,40 @@ function registerPtyHandlers(ctx, deps = {}) {
     return { paneId, cwd, dryRun: ctx.currentSettings.dryRun };
   });
 
-  ipcMain.handle('pty-write', (event, paneId, data, kernelMeta = null) => {
+  ipcMain.handle('pty-write', async (event, paneId, data, kernelMeta = null) => {
     if (!ctx.daemonClient || !ctx.daemonClient.connected) {
       return { success: false, error: 'daemon_not_connected' };
     }
     try {
+      const text = String(data ?? '');
+      const autoChunkThresholdBytes = resolveAutoChunkThresholdBytes();
+      const payloadBytes = Buffer.byteLength(text, 'utf8');
+      if (payloadBytes >= autoChunkThresholdBytes && payloadBytes > 0) {
+        const chunkedResult = await writeChunkedText(
+          ctx.daemonClient,
+          paneId,
+          text,
+          { chunkSize: DEFAULT_CHUNK_SIZE, yieldEveryChunks: 1 },
+          kernelMeta
+        );
+        if (!chunkedResult?.success) {
+          return {
+            success: false,
+            error: chunkedResult?.error || 'daemon_write_failed',
+          };
+        }
+        return {
+          success: true,
+          chunked: true,
+          chunks: chunkedResult.chunks,
+          chunkSize: chunkedResult.chunkSize,
+        };
+      }
+
       const normalizedKernelMeta = normalizeKernelMetaForTrace(kernelMeta);
       const accepted = kernelMeta
-        ? ctx.daemonClient.write(paneId, data, normalizedKernelMeta || kernelMeta)
-        : ctx.daemonClient.write(paneId, data);
+        ? ctx.daemonClient.write(paneId, text, normalizedKernelMeta || kernelMeta)
+        : ctx.daemonClient.write(paneId, text);
       if (!accepted) {
         return { success: false, error: 'daemon_write_failed' };
       }
@@ -315,50 +396,7 @@ function registerPtyHandlers(ctx, deps = {}) {
       return;
     }
 
-    const text = String(fullText ?? '');
-    const chunkSize = clampChunkSize(options?.chunkSize);
-    const yieldEveryChunks = normalizeYieldEveryChunks(options?.yieldEveryChunks);
-
-    let chunkCount = 0;
-    if (text.length === 0) {
-      const ack = await writeWithAckIfAvailable(
-        ctx.daemonClient,
-        paneId,
-        '',
-        normalizeKernelMetaForTrace(kernelMeta)
-      );
-      if (!ack?.success) {
-        return {
-          success: false,
-          chunks: 0,
-          chunkSize,
-          error: ack?.error || ack?.status || 'chunk write failed',
-        };
-      }
-      return { success: true, chunks: 1, chunkSize };
-    }
-
-    for (let offset = 0; offset < text.length; offset += chunkSize) {
-      const chunk = text.slice(offset, offset + chunkSize);
-      const chunkKernelMeta = buildChunkKernelMeta(kernelMeta, chunkCount);
-      const ack = await writeWithAckIfAvailable(ctx.daemonClient, paneId, chunk, chunkKernelMeta);
-      if (!ack?.success) {
-        return {
-          success: false,
-          chunks: chunkCount,
-          chunkSize,
-          error: ack?.error || ack?.status || 'chunk write failed',
-        };
-      }
-      chunkCount += 1;
-
-      const hasMore = (offset + chunkSize) < text.length;
-      if (hasMore && yieldEveryChunks > 0 && (chunkCount % yieldEveryChunks) === 0) {
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-    }
-
-    return { success: true, chunks: chunkCount, chunkSize };
+    return writeChunkedText(ctx.daemonClient, paneId, fullText, options, kernelMeta);
   });
 
   ipcMain.handle('pty-pause', (event, paneId) => {

@@ -112,6 +112,8 @@ function getUtf8ByteLength(value) {
   const DEFAULT_MIN_ENTER_DELAY_MS = isDarwin ? 150 : 500;
   const DEFAULT_CHUNK_THRESHOLD_BYTES = isDarwin ? 4096 : 2048;
   const DEFAULT_CHUNK_SIZE_BYTES = isDarwin ? 4096 : 2048;
+  const DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES = isDarwin ? 2048 : 1024;
+  const DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = 1;
 
   const POST_ENTER_VERIFY_TIMEOUT_MS = readPositiveIntFromQuery(
     params,
@@ -162,6 +164,16 @@ function getUtf8ByteLength(value) {
     params,
     'chunkSizeBytes',
     DEFAULT_CHUNK_SIZE_BYTES
+  );
+  const HM_SEND_CHUNK_THRESHOLD_BYTES = readPositiveIntFromQuery(
+    params,
+    'hmSendChunkThresholdBytes',
+    DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES
+  );
+  const HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = readPositiveIntFromQuery(
+    params,
+    'hmSendChunkYieldEveryChunks',
+    DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS
   );
   const WRITE_TIMEOUT_MS = readPositiveIntFromQuery(params, 'writeTimeoutMs', 8000);
   const ENTER_TIMEOUT_MS = readPositiveIntFromQuery(params, 'enterTimeoutMs', 5000);
@@ -297,6 +309,11 @@ function getUtf8ByteLength(value) {
     const deliveryId = payload.deliveryId || null;
     const traceContext = payload.traceContext || null;
     const hmSendTrace = isHmSendTraceContext(traceContext);
+    const payloadBytes = getUtf8ByteLength(text);
+    const isLongPayload = payloadBytes >= Math.max(
+      1,
+      Number.isFinite(LONG_PAYLOAD_BYTES) ? LONG_PAYLOAD_BYTES : DEFAULT_LONG_PAYLOAD_BYTES
+    );
 
     try {
       // Use chunked write for large payloads to prevent PTY pipe truncation.
@@ -306,9 +323,24 @@ function getUtf8ByteLength(value) {
       const chunkSize = Number.isFinite(CHUNK_SIZE_BYTES) && CHUNK_SIZE_BYTES > 0
         ? CHUNK_SIZE_BYTES
         : DEFAULT_CHUNK_SIZE_BYTES;
-      if (text.length > chunkThreshold && api.pty.writeChunked) {
+      const hmSendChunkThreshold = Number.isFinite(HM_SEND_CHUNK_THRESHOLD_BYTES) && HM_SEND_CHUNK_THRESHOLD_BYTES > 0
+        ? HM_SEND_CHUNK_THRESHOLD_BYTES
+        : DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES;
+      const forceChunkForHmSend = hmSendTrace && payloadBytes >= hmSendChunkThreshold;
+      const shouldChunkWrite = Boolean(api.pty.writeChunked)
+        && (payloadBytes > chunkThreshold || forceChunkForHmSend);
+      if (shouldChunkWrite) {
+        const chunkOptions = { chunkSize };
+        if (forceChunkForHmSend) {
+          chunkOptions.yieldEveryChunks = Math.max(
+            1,
+            Number.isFinite(HM_SEND_CHUNK_YIELD_EVERY_CHUNKS)
+              ? HM_SEND_CHUNK_YIELD_EVERY_CHUNKS
+              : DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS
+          );
+        }
         const chunkedResult = await withTimeout(
-          api.pty.writeChunked(paneId, text, { chunkSize }, traceContext || null),
+          api.pty.writeChunked(paneId, text, chunkOptions, traceContext || null),
           WRITE_TIMEOUT_MS,
           'pane-host writeChunked'
         );
@@ -324,18 +356,17 @@ function getUtf8ByteLength(value) {
       }
 
       // Minimum wait for the PTY to process pasted text before sending Enter.
-      const minDelay = Math.max(
+      const baseMinDelay = Math.max(
         100,
         Number.isFinite(MIN_ENTER_DELAY_MS) ? MIN_ENTER_DELAY_MS : DEFAULT_MIN_ENTER_DELAY_MS
       );
+      const hmSendExtraDelayMs = hmSendTrace && isLongPayload
+        ? Math.min(600, Math.ceil(Math.max(0, payloadBytes - LONG_PAYLOAD_BYTES) / 64))
+        : 0;
+      const minDelay = baseMinDelay + hmSendExtraDelayMs;
       await sleep(minDelay);
 
       // Then wait for output activity to settle.
-      const payloadBytes = getUtf8ByteLength(text);
-      const isLongPayload = payloadBytes >= Math.max(
-        1,
-        Number.isFinite(LONG_PAYLOAD_BYTES) ? LONG_PAYLOAD_BYTES : DEFAULT_LONG_PAYLOAD_BYTES
-      );
       const deferMaxWaitMs = isLongPayload
         ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, SUBMIT_DEFER_MAX_WAIT_LONG_MS)
         : SUBMIT_DEFER_MAX_WAIT_MS;
