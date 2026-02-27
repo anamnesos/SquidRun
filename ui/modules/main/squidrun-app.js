@@ -120,6 +120,10 @@ const TEAM_MEMORY_TAGGED_CLAIM_SWEEP_INTERVAL_MS = Number.parseInt(
   process.env.SQUIDRUN_TEAM_MEMORY_TAGGED_CLAIM_SWEEP_MS || '30000',
   10
 );
+const BRIDGE_READY_WAIT_TIMEOUT_MS = Number.parseInt(
+  process.env.SQUIDRUN_BRIDGE_READY_WAIT_TIMEOUT_MS || '5000',
+  10
+);
 const WEBSOCKET_START_RETRY_BASE_MS = Number.parseInt(
   process.env.SQUIDRUN_WEBSOCKET_START_RETRY_BASE_MS || '500',
   10
@@ -4072,6 +4076,20 @@ class SquidRunApp {
     return Boolean(config?.relayUrl && config?.deviceId);
   }
 
+  async waitForBridgeReady(timeoutMs = BRIDGE_READY_WAIT_TIMEOUT_MS) {
+    if (!this.bridgeClient) return false;
+    const parsedTimeoutMs = Number.parseInt(String(timeoutMs), 10);
+    const waitTimeoutMs = Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs > 0
+      ? parsedTimeoutMs
+      : BRIDGE_READY_WAIT_TIMEOUT_MS;
+    const readyDeadline = Date.now() + Math.max(500, waitTimeoutMs);
+    while (Date.now() < readyDeadline) {
+      if (this.bridgeClient && this.bridgeClient.isReady()) return true;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return Boolean(this.bridgeClient && this.bridgeClient.isReady());
+  }
+
   handleBridgeClientStatusUpdate(status = {}) {
     if (!status || typeof status !== 'object') return;
 
@@ -4192,11 +4210,7 @@ class SquidRunApp {
     }
 
     const discoveryTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 5000;
-    const readyDeadline = Date.now() + Math.max(500, discoveryTimeoutMs);
-    while (Date.now() < readyDeadline) {
-      if (this.bridgeClient && this.bridgeClient.isReady()) break;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    await this.waitForBridgeReady(discoveryTimeoutMs);
 
     if (!this.bridgeClient || !this.bridgeClient.isReady()) {
       this.handleBridgeClientStatusUpdate({
@@ -4241,11 +4255,7 @@ class SquidRunApp {
       this.startBridgeClient();
     }
     const pairingTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 12000;
-    const readyDeadline = Date.now() + Math.max(500, pairingTimeoutMs);
-    while (Date.now() < readyDeadline) {
-      if (this.bridgeClient && this.bridgeClient.isReady()) break;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    await this.waitForBridgeReady(pairingTimeoutMs);
     if (!this.bridgeClient || !this.bridgeClient.isReady()) {
       return {
         ok: false,
@@ -4283,11 +4293,7 @@ class SquidRunApp {
       this.startBridgeClient();
     }
     const pairingTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 12000;
-    const readyDeadline = Date.now() + Math.max(500, pairingTimeoutMs);
-    while (Date.now() < readyDeadline) {
-      if (this.bridgeClient && this.bridgeClient.isReady()) break;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    await this.waitForBridgeReady(pairingTimeoutMs);
     if (!this.bridgeClient || !this.bridgeClient.isReady()) {
       return {
         ok: false,
@@ -4406,11 +4412,20 @@ class SquidRunApp {
     if (!this.bridgeClient) {
       this.startBridgeClient();
     }
+    await this.waitForBridgeReady();
     if (!this.bridgeClient || !this.bridgeClient.isReady()) {
+      const relayState = String(this.bridgeRelayStatus?.state || 'unknown').trim().toLowerCase() || 'unknown';
+      const relayStatus = String(this.bridgeRelayStatus?.status || '').trim() || 'relay_unavailable';
+      const relayError = String(this.bridgeRelayStatus?.error || '').trim() || null;
+      log.warn(
+        'Bridge',
+        `routeBridgeMessage unavailable after waiting for relay readiness (state=${relayState}, status=${relayStatus}${relayError ? `, error=${relayError}` : ''})`
+      );
       this.handleBridgeClientStatusUpdate({
         type: 'relay.disconnected',
-        state: 'disconnected',
+        state: relayState,
         status: 'bridge_unavailable',
+        error: relayError,
       });
       return {
         ok: false,
@@ -4418,8 +4433,10 @@ class SquidRunApp {
         queued: false,
         verified: false,
         status: 'bridge_unavailable',
-        error: 'Relay unavailable',
+        error: relayError || 'Relay unavailable',
         routeKind: 'bridge',
+        relayState,
+        relayStatus,
       };
     }
 

@@ -27,6 +27,7 @@ function createWebSocketMock(instances) {
 
   MockWebSocket.CONNECTING = 0;
   MockWebSocket.OPEN = 1;
+  MockWebSocket.CLOSING = 2;
   MockWebSocket.CLOSED = 3;
 
   return MockWebSocket;
@@ -623,5 +624,51 @@ describe('bridge-client', () => {
 
     jest.advanceTimersByTime(5);
     expect(instances).toHaveLength(2);
+  });
+
+  test('connect does not create a new socket while current socket is CLOSING', () => {
+    const client = createBridgeClient({
+      relayUrl: 'ws://relay',
+      deviceId: 'local_a',
+      sharedSecret: 'secret',
+    });
+
+    expect(client.start()).toBe(true);
+    expect(instances).toHaveLength(1);
+    const socket = instances[0];
+    socket.readyState = MockWebSocket.CLOSING;
+
+    expect(client.connect()).toBe(true);
+    expect(instances).toHaveLength(1);
+  });
+
+  test('stale socket close does not schedule reconnect when newer socket exists', () => {
+    jest.useFakeTimers();
+    process.env.SQUIDRUN_BRIDGE_RECONNECT_BASE_MS = '5';
+    process.env.SQUIDRUN_BRIDGE_RECONNECT_MAX_MS = '5';
+
+    const client = createBridgeClient({
+      relayUrl: 'ws://relay',
+      deviceId: 'local_a',
+      sharedSecret: 'secret',
+    });
+
+    expect(client.start()).toBe(true);
+    expect(instances).toHaveLength(1);
+    const firstSocket = instances[0];
+
+    // Simulate a replaced socket path where a new socket is created before
+    // the old one emits its eventual close.
+    firstSocket.readyState = MockWebSocket.CLOSED;
+    expect(client.connect()).toBe(true);
+    expect(instances).toHaveLength(2);
+    const secondSocket = instances[1];
+    expect(client.socket).toBe(secondSocket);
+
+    firstSocket.emit('close', 1000, Buffer.from('replaced'));
+
+    jest.advanceTimersByTime(10);
+    expect(instances).toHaveLength(2);
+    expect(logger.warn).not.toHaveBeenCalledWith('Bridge', expect.stringContaining('Reconnecting in 5ms'));
   });
 });
