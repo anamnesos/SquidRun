@@ -70,6 +70,8 @@ You can connect two SquidRun instances running on different machines (like a des
 2. On your first device, open **Settings > Devices** and generate a pairing code.
 3. On your second device, open **Settings > Devices** and enter the code to connect.
 
+![Cross-device architecture diagram](docs/device-to-device-diagram.svg)
+
 ## Key Features
 
 - **Multi-model orchestration** — run Claude Code, Codex CLI, and Gemini CLI as one team, not three copies of the same model
