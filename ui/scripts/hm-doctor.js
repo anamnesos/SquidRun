@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * hm-doctor: Preflight checks for running SquidRun on a fresh machine.
+ * hm-doctor: one-command diagnostics bundle for SquidRun bug reports.
  * Usage: node ui/scripts/hm-doctor.js
  */
 
@@ -8,302 +8,341 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const net = require('net');
+const WebSocket = require('ws');
 
-const DEFAULT_PORT = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
 const ROOT_DIR = path.resolve(__dirname, '..', '..');
-const UI_DIR = path.resolve(__dirname, '..');
+const DEFAULT_WS_PORT = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
+const DEFAULT_WS_TIMEOUT_MS = 2500;
+const DEFAULT_DAEMON_TIMEOUT_MS = 2500;
+const APP_LOG_TAIL_LINES = 80;
 
-function printStatus(level, title, detail) {
-  const label = level === 'pass' ? 'PASS' : level === 'warn' ? 'WARN' : 'FAIL';
-  console.log(`[${label}] ${title}`);
-  if (detail) {
-    console.log(`       ${detail}`);
-  }
+function asString(value, fallback = '') {
+  if (typeof value !== 'string') return fallback;
+  return value;
 }
 
-function getPackageJson() {
-  const packagePath = path.join(UI_DIR, 'package.json');
-  return JSON.parse(fs.readFileSync(packagePath, 'utf8'));
-}
-
-function compareNodeMajor(minMajor) {
-  const major = Number.parseInt(process.versions.node.split('.')[0], 10);
-  if (!Number.isFinite(major)) {
-    return { ok: false, detail: `Unable to parse Node version: ${process.versions.node}` };
-  }
-  if (major < minMajor) {
-    return { ok: false, detail: `Node ${process.versions.node} detected; requires >= ${minMajor}.x` };
-  }
-  return { ok: true, detail: `Node ${process.versions.node}` };
-}
-
-function checkDependenciesInstalled() {
-  const pkg = getPackageJson();
-  const deps = Object.keys(pkg.dependencies || {});
-
-  const missing = [];
-  deps.forEach((name) => {
-    try {
-      require.resolve(`${name}/package.json`, { paths: [UI_DIR] });
-    } catch {
-      missing.push(name);
-    }
-  });
-
-  if (missing.length > 0) {
-    return {
-      ok: false,
-      detail: `Missing ${missing.length}/${deps.length} dependency packages: ${missing.join(', ')}`,
-    };
-  }
-
-  return { ok: true, detail: `${deps.length} dependencies resolved` };
-}
-
-function checkNodePtyHealth() {
+function readJsonFileSafe(filePath) {
   try {
-    const pty = require('node-pty');
-    if (!pty || typeof pty.spawn !== 'function') {
-      return { ok: false, detail: 'node-pty loaded but spawn() is unavailable' };
+    if (!fs.existsSync(filePath)) {
+      return { ok: false, reason: 'missing', path: filePath };
     }
-    return { ok: true, detail: 'node-pty loaded and spawn() is available' };
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return { ok: true, data: JSON.parse(raw), path: filePath };
   } catch (err) {
-    return {
-      ok: false,
-      detail: `node-pty failed to load: ${err.message}. Try: npm run rebuild`,
-    };
+    return { ok: false, reason: err.message, path: filePath };
   }
 }
 
-function checkNodeSqliteHealth() {
+function parseEnvKeys(envPath) {
+  if (!fs.existsSync(envPath)) {
+    return { ok: false, reason: 'missing', path: envPath, keys: [] };
+  }
+
   try {
-    const sqlite = require('node:sqlite');
-    if (!sqlite || typeof sqlite.DatabaseSync !== 'function') {
-      return {
-        ok: true,
-        warn: true,
-        detail: 'node:sqlite loaded but DatabaseSync is unavailable (optional runtime path)',
-      };
+    const raw = fs.readFileSync(envPath, 'utf8');
+    const keys = [];
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIndex = trimmed.indexOf('=');
+      if (eqIndex <= 0) continue;
+      const key = trimmed.slice(0, eqIndex).trim();
+      if (!key) continue;
+      const rawValue = trimmed.slice(eqIndex + 1);
+      const unquoted = rawValue.replace(/^['"]|['"]$/g, '');
+      keys.push({
+        key,
+        valueRedacted: redactValue(unquoted),
+      });
     }
-
-    const db = new sqlite.DatabaseSync(':memory:');
-    const row = db.prepare('SELECT 1 AS ok').get();
-    db.close();
-
-    if (!row || row.ok !== 1) {
-      return {
-        ok: true,
-        warn: true,
-        detail: 'node:sqlite loaded but query smoke test failed (optional runtime path)',
-      };
-    }
-
-    return { ok: true, detail: 'node:sqlite loaded and in-memory query succeeded' };
+    return { ok: true, path: envPath, keys };
   } catch (err) {
-    return {
-      ok: true,
-      warn: true,
-      detail: `node:sqlite unavailable in this runtime (${err.message}); falling back to better-sqlite3`,
-    };
+    return { ok: false, reason: err.message, path: envPath, keys: [] };
   }
 }
 
-function isBetterSqliteAbiMismatch(err) {
-  const message = typeof err?.message === 'string' ? err.message : '';
-  if (!message) return false;
-  return message.includes('compiled against a different Node.js version')
-    || message.includes('NODE_MODULE_VERSION');
+function redactValue(value) {
+  const normalized = asString(value, '');
+  if (!normalized) return '(empty)';
+  return `<redacted:${normalized.length} chars>`;
 }
 
-function checkBetterSqliteHealth(options = {}) {
-  const nodeSqliteHealthy = options.nodeSqliteHealthy === true;
+function tailFile(filePath, maxLines = APP_LOG_TAIL_LINES) {
+  if (!fs.existsSync(filePath)) {
+    return { ok: false, reason: 'missing', path: filePath, lines: [] };
+  }
   try {
-    const BetterSqlite3 = require('better-sqlite3');
-    const db = new BetterSqlite3(':memory:');
-    const row = db.prepare('SELECT 1 AS ok').get();
-    db.close();
-
-    if (!row || row.ok !== 1) {
-      return { ok: false, detail: 'better-sqlite3 loaded but query smoke test failed' };
-    }
-
-    return { ok: true, detail: 'better-sqlite3 loaded and in-memory query succeeded' };
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const lines = raw.split(/\r?\n/);
+    const tail = lines.slice(Math.max(0, lines.length - maxLines));
+    return { ok: true, path: filePath, lines: tail };
   } catch (err) {
-    if (nodeSqliteHealthy && isBetterSqliteAbiMismatch(err)) {
-      return {
-        ok: true,
-        warn: true,
-        detail: `better-sqlite3 ABI mismatch: ${err.message}. node:sqlite is healthy, so this is non-blocking for CLI`,
-      };
-    }
-
-    return {
-      ok: false,
-      detail: `better-sqlite3 failed health check: ${err.message}. Try: npm run rebuild`,
-    };
+    return { ok: false, reason: err.message, path: filePath, lines: [] };
   }
 }
 
-async function checkPortAvailable(port) {
+function resolveDaemonPipePath() {
+  return process.platform === 'win32'
+    ? '\\\\.\\pipe\\squidrun-terminal'
+    : '/tmp/squidrun-terminal.sock';
+}
+
+function queryPaneStatus(timeoutMs = DEFAULT_DAEMON_TIMEOUT_MS) {
   return new Promise((resolve) => {
-    const server = net.createServer();
+    const pipePath = resolveDaemonPipePath();
+    const socket = net.createConnection(pipePath);
+    let settled = false;
+    let buffer = '';
+    let timeoutId = null;
 
-    server.once('error', (err) => {
-      if (err && err.code === 'EADDRINUSE') {
-        resolve({
-          ok: true,
-          warn: true,
-          detail: `Port ${port} is already in use (SquidRun may already own this port)`,
-        });
-        return;
+    function finish(payload) {
+      if (settled) return;
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      try {
+        socket.destroy();
+      } catch {
+        // Best effort cleanup.
       }
-      resolve({ ok: false, detail: `Port ${port} check failed: ${err.message}` });
+      resolve(payload);
+    }
+
+    timeoutId = setTimeout(() => {
+      finish({
+        ok: false,
+        reason: `timeout after ${timeoutMs}ms`,
+        pipePath,
+      });
+    }, timeoutMs);
+
+    socket.on('connect', () => {
+      socket.write(`${JSON.stringify({ action: 'list' })}\n`);
     });
 
-    server.listen(port, '127.0.0.1', () => {
-      server.close(() => {
-        resolve({ ok: true, detail: `Port ${port} is available` });
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let parsed = null;
+        try {
+          parsed = JSON.parse(trimmed);
+        } catch {
+          continue;
+        }
+        if (parsed && parsed.event === 'list' && Array.isArray(parsed.terminals)) {
+          finish({
+            ok: true,
+            pipePath,
+            panes: parsed.terminals.map((term) => ({
+              paneId: String(term.paneId || ''),
+              alive: term.alive === true,
+              mode: term.mode || null,
+              pid: term.pid || null,
+              cwd: term.cwd || null,
+              lastActivity: term.lastActivity || null,
+            })),
+          });
+          return;
+        }
+      }
+    });
+
+    socket.on('error', (err) => {
+      finish({
+        ok: false,
+        reason: err.message,
+        pipePath,
+      });
+    });
+
+    socket.on('close', () => {
+      if (!settled) {
+        finish({
+          ok: false,
+          reason: 'daemon connection closed before list response',
+          pipePath,
+        });
+      }
+    });
+  });
+}
+
+async function checkWebSocketConnectivity(timeoutMs = DEFAULT_WS_TIMEOUT_MS) {
+  const url = `ws://127.0.0.1:${DEFAULT_WS_PORT}`;
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeoutId = null;
+    const requestId = `doctor-${Date.now()}`;
+    const ws = new WebSocket(url);
+
+    function finish(payload) {
+      if (settled) return;
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      try {
+        ws.close();
+      } catch {
+        // Best effort close.
+      }
+      resolve(payload);
+    }
+
+    timeoutId = setTimeout(() => {
+      finish({
+        ok: false,
+        url,
+        reason: `timeout after ${timeoutMs}ms`,
+      });
+    }, timeoutMs);
+
+    ws.on('open', () => {
+      ws.send(JSON.stringify({
+        type: 'health-check',
+        requestId,
+        target: 'architect',
+        staleAfterMs: 60000,
+      }));
+    });
+
+    ws.on('message', (raw) => {
+      let payload = null;
+      try {
+        payload = JSON.parse(raw.toString());
+      } catch {
+        return;
+      }
+      if (payload?.type === 'health-check-result' && payload?.requestId === requestId) {
+        finish({
+          ok: true,
+          url,
+          result: payload,
+        });
+      }
+    });
+
+    ws.on('error', (err) => {
+      finish({
+        ok: false,
+        url,
+        reason: err.message,
       });
     });
   });
 }
 
-function checkShellDefaults() {
-  if (os.platform() === 'win32') {
-    const shellPath = process.env.COMSPEC;
-    if (!shellPath) {
-      return { ok: false, detail: 'COMSPEC is not set' };
-    }
-    if (!fs.existsSync(shellPath)) {
-      return { ok: false, detail: `COMSPEC points to missing path: ${shellPath}` };
-    }
-    return { ok: true, detail: `COMSPEC=${shellPath}` };
+function countEvidenceLedgerRows(dbPath) {
+  if (!fs.existsSync(dbPath)) {
+    return { ok: false, reason: 'missing', path: dbPath };
   }
 
-  const shellPath = process.env.SHELL;
-  if (!shellPath) {
-    return { ok: false, detail: 'SHELL is not set' };
-  }
-  if (!fs.existsSync(shellPath)) {
-    return { ok: false, detail: `SHELL points to missing path: ${shellPath}` };
-  }
+  const errors = [];
 
+  // Prefer better-sqlite3 if its native binary matches the current runtime.
   try {
-    fs.accessSync(shellPath, fs.constants.X_OK);
-  } catch {
-    return { ok: false, detail: `SHELL is not executable: ${shellPath}` };
-  }
-
-  return { ok: true, detail: `SHELL=${shellPath}` };
-}
-
-function writeProbeFile(targetDir) {
-  try {
-    fs.mkdirSync(targetDir, { recursive: true });
-    fs.accessSync(targetDir, fs.constants.R_OK | fs.constants.W_OK | fs.constants.X_OK);
-    const probe = path.join(targetDir, `.hm-doctor-${process.pid}-${Date.now()}`);
-    fs.writeFileSync(probe, 'ok', 'utf8');
-    fs.unlinkSync(probe);
-    return { ok: true, detail: `${targetDir}` };
+    const BetterSqlite3 = require('better-sqlite3');
+    const db = new BetterSqlite3(dbPath, { readonly: true });
+    try {
+      const row = db.prepare('SELECT COUNT(*) AS count FROM comms_journal').get();
+      return {
+        ok: true,
+        path: dbPath,
+        driver: 'better-sqlite3',
+        commsJournalRows: Number(row?.count || 0),
+      };
+    } finally {
+      db.close();
+    }
   } catch (err) {
-    return { ok: false, detail: `${targetDir} (${err.message})` };
+    errors.push(`better-sqlite3: ${err.message}`);
   }
+
+  // Fallback to node:sqlite while suppressing the experimental warning for cleaner diagnostics output.
+  try {
+    const originalEmitWarning = process.emitWarning;
+    try {
+      process.emitWarning = (warning, ...args) => {
+        const message = typeof warning === 'string'
+          ? warning
+          : (warning && typeof warning.message === 'string' ? warning.message : '');
+        if (message.includes('SQLite is an experimental feature')) return;
+        return originalEmitWarning.call(process, warning, ...args);
+      };
+      const { DatabaseSync } = require('node:sqlite');
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const row = db.prepare('SELECT COUNT(*) AS count FROM comms_journal').get();
+        return {
+          ok: true,
+          path: dbPath,
+          driver: 'node:sqlite',
+          commsJournalRows: Number(row?.count || 0),
+        };
+      } finally {
+        db.close();
+      }
+    } finally {
+      process.emitWarning = originalEmitWarning;
+    }
+  } catch (err) {
+    errors.push(`node:sqlite: ${err.message}`);
+  }
+
+  return { ok: false, reason: errors.join(' | '), path: dbPath };
 }
 
-function checkFilePermissions() {
-  const targets = [
-    path.join(ROOT_DIR, '.squidrun'),
-    path.join(ROOT_DIR, '.squidrun', 'triggers'),
-  ];
-
-  const failures = [];
-  const successes = [];
-
-  targets.forEach((target) => {
-    const result = writeProbeFile(target);
-    if (result.ok) successes.push(result.detail);
-    else failures.push(result.detail);
-  });
-
-  if (failures.length > 0) {
-    return {
-      ok: false,
-      detail: `Permission issues: ${failures.join('; ')}`,
-    };
+function printSection(title, payload) {
+  console.log(`\n=== ${title} ===`);
+  if (typeof payload === 'string') {
+    console.log(payload);
+    return;
   }
-
-  return {
-    ok: true,
-    detail: `Writable paths: ${successes.length}/${targets.length}`,
-  };
+  console.log(JSON.stringify(payload, null, 2));
 }
 
 async function main() {
-  console.log('SquidRun Doctor: preflight checks');
-  console.log(`Project root: ${ROOT_DIR}`);
-  console.log('');
+  const appStatusPath = path.join(ROOT_DIR, '.squidrun', 'app-status.json');
+  const envPath = path.join(ROOT_DIR, '.env');
+  const appLogPath = path.join(ROOT_DIR, 'workspace', 'logs', 'app.log');
+  const evidencePath = path.join(ROOT_DIR, '.squidrun', 'runtime', 'evidence-ledger.db');
 
-  let nodeSqliteHealthy = false;
-  const checks = [
-    { title: 'Node version', run: () => compareNodeMajor(18) },
-    { title: 'Dependencies installed', run: () => checkDependenciesInstalled() },
-    { title: 'Native module: node-pty', run: () => checkNodePtyHealth() },
-    {
-      title: 'Native module: node:sqlite',
-      run: () => {
-        const result = checkNodeSqliteHealth();
-        nodeSqliteHealthy = result.ok && result.warn !== true;
-        return result;
-      },
-    },
-    {
-      title: 'Native module: better-sqlite3',
-      run: () => checkBetterSqliteHealth({ nodeSqliteHealthy }),
-    },
-    { title: `Port ${DEFAULT_PORT} availability`, run: () => checkPortAvailable(DEFAULT_PORT) },
-    { title: 'Shell defaults', run: () => checkShellDefaults() },
-    { title: 'File permissions', run: () => checkFilePermissions() },
-  ];
+  const platformInfo = {
+    platform: process.platform,
+    release: os.release(),
+    arch: process.arch,
+    hostname: os.hostname(),
+    cwd: process.cwd(),
+    rootDir: ROOT_DIR,
+    nowIso: new Date().toISOString(),
+  };
 
-  let passCount = 0;
-  let warnCount = 0;
-  let failCount = 0;
+  const nodeInfo = {
+    nodeVersion: process.version,
+    nodeVersions: process.versions,
+  };
 
-  for (const check of checks) {
-    try {
-      // Support both sync and async checks with one path.
-      const result = await Promise.resolve(check.run());
-      if (result.ok) {
-        if (result.warn) {
-          warnCount += 1;
-          printStatus('warn', check.title, result.detail);
-        } else {
-          passCount += 1;
-          printStatus('pass', check.title, result.detail);
-        }
-      } else {
-        failCount += 1;
-        printStatus('fail', check.title, result.detail);
-      }
-    } catch (err) {
-      failCount += 1;
-      printStatus('fail', check.title, err.message);
-    }
-  }
+  const appStatus = readJsonFileSafe(appStatusPath);
+  const envKeys = parseEnvKeys(envPath);
+  const appLogTail = tailFile(appLogPath, APP_LOG_TAIL_LINES);
+  const [wsTest, paneStatus] = await Promise.all([
+    checkWebSocketConnectivity(),
+    queryPaneStatus(),
+  ]);
+  const evidenceCounts = countEvidenceLedgerRows(evidencePath);
 
-  console.log('');
-  console.log(`Summary: ${passCount} passed, ${warnCount} warned, ${failCount} failed`);
-
-  if (failCount > 0) {
-    process.exitCode = 1;
-    console.log('Doctor result: FAIL');
-    return;
-  }
-
-  console.log('Doctor result: PASS');
+  printSection('Platform', platformInfo);
+  printSection('Node', nodeInfo);
+  printSection('App Status', appStatus);
+  printSection('Env Keys (redacted)', envKeys);
+  printSection('WS Connectivity', wsTest);
+  printSection('Pane Status', paneStatus);
+  printSection('Evidence Ledger Rows', evidenceCounts);
+  printSection('Recent app.log Tail', appLogTail);
 }
 
 main().catch((err) => {
-  console.error(`Doctor execution failed: ${err.message}`);
+  console.error(`hm-doctor failed: ${err.message}`);
   process.exit(1);
 });
