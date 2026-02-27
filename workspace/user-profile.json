@@ -1,9 +1,9 @@
 {
-  "name": "Your Name Here",
+  "name": "James",
   "experience_level": "tinkerer",
   "communication_style": "terse",
-  "domain_expertise": "Describe your strengths, stack, and project context here.",
-  "notes": "Edit this file to customize how agents interact with you.",
+  "domain_expertise": "i created squidrun, dont need to treat me as new user",
+  "notes": "i created squidrun no need to treat me as new user.",
   "schema": {
     "experience_level": {
       "beginner": "Learning to code — explain concepts, avoid jargon, confirm before destructive actions",

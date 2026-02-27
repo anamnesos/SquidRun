@@ -1229,6 +1229,34 @@ describe('SquidRunApp', () => {
       }));
     });
 
+    it('waits for bridge readiness before sending outbound bridge messages', async () => {
+      const readyStates = [false, false, true];
+      app.bridgeClient = {
+        isReady: jest.fn(() => (readyStates.length > 0 ? readyStates.shift() : true)),
+        sendToDevice: jest.fn(async () => ({
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'bridge_delivered',
+        })),
+      };
+
+      const result = await app.routeBridgeMessage({
+        targetDevice: 'peer_a',
+        content: 'Bridge ready-wait test',
+        fromRole: 'architect',
+        messageId: 'bridge-ready-wait-1',
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'bridge_delivered',
+      }));
+      expect(app.bridgeClient.isReady).toHaveBeenCalled();
+      expect(app.bridgeClient.sendToDevice).toHaveBeenCalledTimes(1);
+    });
+
     it('journals and injects inbound structured type with bridge prefix', async () => {
       const triggers = require('../modules/triggers');
       const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');

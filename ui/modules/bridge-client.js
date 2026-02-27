@@ -347,7 +347,11 @@ class BridgeClient {
 
   connect() {
     if (!this.shouldRun || !this.isConfigured()) return false;
-    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+    if (this.socket && (
+      this.socket.readyState === WebSocket.OPEN
+      || this.socket.readyState === WebSocket.CONNECTING
+      || this.socket.readyState === WebSocket.CLOSING
+    )) {
       return true;
     }
 
@@ -357,12 +361,14 @@ class BridgeClient {
       state: 'connecting',
       status: 'relay_connecting',
     });
+    this.socket = null;
     const ws = new WebSocket(this.relayUrl);
     this.socket = ws;
     this.connected = false;
     this.registered = false;
 
     ws.on('open', () => {
+      if (this.socket !== ws) return;
       this.connected = true;
       this.registered = false;
       this.sendRaw({
@@ -373,18 +379,30 @@ class BridgeClient {
     });
 
     ws.on('message', (raw) => {
+      if (this.socket !== ws) return;
       this.handleIncoming(raw).catch((err) => {
         log.warn('Bridge', `Failed handling relay message: ${err.message}`);
       });
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code, reasonBuffer) => {
+      const isCurrentSocket = this.socket === ws;
+      const closeCode = Number.isFinite(Number(code)) ? Number(code) : null;
+      const closeReason = asNonEmptyString(reasonBuffer?.toString?.());
+      if (closeCode !== null || closeReason) {
+        log.warn(
+          'Bridge',
+          `Relay socket closed${closeCode !== null ? ` (code=${closeCode}` : ''}${closeReason ? `${closeCode !== null ? ', ' : ' ('}reason=${closeReason}` : ''}${(closeCode !== null || closeReason) ? ')' : ''}`
+        );
+      }
+      if (!isCurrentSocket) {
+        log.info('Bridge', 'Ignoring close from stale relay socket');
+        return;
+      }
       this.connected = false;
       this.registered = false;
       this.clearPingTimer();
-      if (this.socket === ws) {
-        this.socket = null;
-      }
+      this.socket = null;
       this.rejectPendingAcks({
         ok: false,
         status: 'bridge_disconnected',
@@ -405,11 +423,13 @@ class BridgeClient {
         type: 'relay.disconnected',
         state: 'disconnected',
         status: 'relay_disconnected',
+        reason: closeReason || null,
       });
       this.scheduleReconnect();
     });
 
     ws.on('error', (err) => {
+      if (this.socket !== ws) return;
       log.warn('Bridge', `Relay connection error: ${err.message}`);
       this.emitStatus({
         type: 'relay.error',
