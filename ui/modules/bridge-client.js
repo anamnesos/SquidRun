@@ -9,6 +9,9 @@ const DEFAULT_DISCOVERY_TIMEOUT_MS = 5000;
 const DEFAULT_PAIRING_TIMEOUT_MS = 12000;
 const DEFAULT_RECONNECT_BASE_MS = 750;
 const DEFAULT_RECONNECT_MAX_MS = 10000;
+const DEFAULT_REPLACED_RECONNECT_BASE_MS = 5000;
+const DEFAULT_REPLACED_RECONNECT_MAX_MS = 120000;
+const DEFAULT_REPLACED_RECONNECT_JITTER_MS = 1000;
 const DEFAULT_PING_INTERVAL_MS = 30000;
 const DEFAULT_BRIDGE_RELAY_URL = 'wss://relay-production-2c27.up.railway.app';
 const SENSITIVE_ENV_KEYWORDS_RE = /(TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|AUTH|CREDENTIAL|COOKIE|SESSION)/i;
@@ -105,6 +108,26 @@ function getReconnectDelayMs(attempt) {
   const maxMs = parsePositiveInt(process.env.SQUIDRUN_BRIDGE_RECONNECT_MAX_MS, DEFAULT_RECONNECT_MAX_MS);
   const exponent = Math.max(0, Number(attempt || 1) - 1);
   return Math.min(maxMs, baseMs * Math.pow(2, exponent));
+}
+
+function getReplacedReconnectDelayMs(conflictCount) {
+  const baseMs = parsePositiveInt(
+    process.env.SQUIDRUN_BRIDGE_REPLACED_RECONNECT_BASE_MS,
+    DEFAULT_REPLACED_RECONNECT_BASE_MS
+  );
+  const maxMs = parsePositiveInt(
+    process.env.SQUIDRUN_BRIDGE_REPLACED_RECONNECT_MAX_MS,
+    DEFAULT_REPLACED_RECONNECT_MAX_MS
+  );
+  const jitterMaxMs = parsePositiveInt(
+    process.env.SQUIDRUN_BRIDGE_REPLACED_RECONNECT_JITTER_MS,
+    DEFAULT_REPLACED_RECONNECT_JITTER_MS
+  );
+  const exponent = Math.max(0, Number(conflictCount || 1) - 1);
+  const withoutJitter = Math.min(maxMs, baseMs * Math.pow(2, exponent));
+  if (withoutJitter >= maxMs || jitterMaxMs <= 0) return withoutJitter;
+  const jitter = Math.floor(Math.random() * (jitterMaxMs + 1));
+  return Math.min(maxMs, withoutJitter + jitter);
 }
 
 function normalizeConnectedDevices(input) {
@@ -236,6 +259,7 @@ class BridgeClient {
     this.reconnectTimer = null;
     this.pingTimer = null;
     this.reconnectAttempt = 0;
+    this.replacedConflictCount = 0;
     this.pendingAcks = new Map();
     this.pendingDiscoveries = new Map();
     this.pendingPairingInit = null;
@@ -332,17 +356,32 @@ class BridgeClient {
     }, pingIntervalMs);
   }
 
-  scheduleReconnect() {
+  scheduleReconnect(options = {}) {
     if (!this.shouldRun) return;
     if (!this.isConfigured()) return;
     if (this.reconnectTimer) return;
-    this.reconnectAttempt += 1;
-    const delayMs = getReconnectDelayMs(this.reconnectAttempt);
+    const closeReason = asNonEmptyString(options.reason).toLowerCase();
+    let delayMs = 0;
+    if (closeReason === 'replaced') {
+      this.replacedConflictCount += 1;
+      delayMs = getReplacedReconnectDelayMs(this.replacedConflictCount);
+      log.warn(
+        'Bridge',
+        `Relay disconnected due to device replacement conflict. Reconnecting in ${delayMs}ms (conflict #${this.replacedConflictCount})`
+      );
+    } else {
+      this.reconnectAttempt += 1;
+      delayMs = getReconnectDelayMs(this.reconnectAttempt);
+      if (this.replacedConflictCount !== 0) {
+        this.replacedConflictCount = 0;
+      }
+      log.warn('Bridge', `Relay disconnected. Reconnecting in ${delayMs}ms`);
+    }
+
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
     }, delayMs);
-    log.warn('Bridge', `Relay disconnected. Reconnecting in ${delayMs}ms`);
   }
 
   connect() {
@@ -422,10 +461,10 @@ class BridgeClient {
       this.emitStatus({
         type: 'relay.disconnected',
         state: 'disconnected',
-        status: 'relay_disconnected',
+        status: closeReason.toLowerCase() === 'replaced' ? 'relay_replaced' : 'relay_disconnected',
         reason: closeReason || null,
       });
-      this.scheduleReconnect();
+      this.scheduleReconnect({ reason: closeReason });
     });
 
     ws.on('error', (err) => {
@@ -532,6 +571,7 @@ class BridgeClient {
       if (message.ok) {
         this.registered = true;
         this.reconnectAttempt = 0;
+        this.replacedConflictCount = 0;
         this.startPingLoop();
         log.info('Bridge', `Connected to relay as ${this.deviceId}`);
         this.emitStatus({

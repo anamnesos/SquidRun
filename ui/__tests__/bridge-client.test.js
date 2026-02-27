@@ -58,6 +58,9 @@ describe('bridge-client', () => {
   afterEach(() => {
     delete process.env.SQUIDRUN_BRIDGE_RECONNECT_BASE_MS;
     delete process.env.SQUIDRUN_BRIDGE_RECONNECT_MAX_MS;
+    delete process.env.SQUIDRUN_BRIDGE_REPLACED_RECONNECT_BASE_MS;
+    delete process.env.SQUIDRUN_BRIDGE_REPLACED_RECONNECT_MAX_MS;
+    delete process.env.SQUIDRUN_BRIDGE_REPLACED_RECONNECT_JITTER_MS;
     jest.useRealTimers();
   });
 
@@ -623,6 +626,35 @@ describe('bridge-client', () => {
     expect(logger.warn).toHaveBeenCalledWith('Bridge', expect.stringContaining('Reconnecting in 5ms'));
 
     jest.advanceTimersByTime(5);
+    expect(instances).toHaveLength(2);
+  });
+
+  test('close reason=replaced uses replacement conflict backoff instead of standard reconnect delay', () => {
+    jest.useFakeTimers();
+    process.env.SQUIDRUN_BRIDGE_RECONNECT_BASE_MS = '5';
+    process.env.SQUIDRUN_BRIDGE_RECONNECT_MAX_MS = '5';
+    process.env.SQUIDRUN_BRIDGE_REPLACED_RECONNECT_BASE_MS = '17';
+    process.env.SQUIDRUN_BRIDGE_REPLACED_RECONNECT_MAX_MS = '17';
+    process.env.SQUIDRUN_BRIDGE_REPLACED_RECONNECT_JITTER_MS = '0';
+
+    const client = createBridgeClient({
+      relayUrl: 'ws://relay',
+      deviceId: 'local_a',
+      sharedSecret: 'secret',
+    });
+
+    expect(client.start()).toBe(true);
+    expect(instances).toHaveLength(1);
+    const firstSocket = instances[0];
+    firstSocket.emit('close', 1000, Buffer.from('replaced'));
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Bridge',
+      expect.stringContaining('device replacement conflict')
+    );
+    expect(logger.warn).toHaveBeenCalledWith('Bridge', expect.stringContaining('Reconnecting in 17ms'));
+
+    jest.advanceTimersByTime(17);
     expect(instances).toHaveLength(2);
   });
 
