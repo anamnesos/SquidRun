@@ -40,6 +40,16 @@ function createPaneHostWindowManager(options = {}) {
     return path.join(__dirname, '..', '..', 'preload.js');
   }
 
+  function getAppIconPath() {
+    return path.join(
+      __dirname,
+      '..',
+      '..',
+      'assets',
+      process.platform === 'win32' ? 'squidrun-favicon.ico' : 'squidrun-favicon-256.png'
+    );
+  }
+
   function buildPaneHostQuery(paneId) {
     const query = { paneId: String(paneId) };
     for (const [queryKey, envKey] of Object.entries(PANE_HOST_QUERY_ENV_MAP)) {
@@ -70,6 +80,8 @@ function createPaneHostWindowManager(options = {}) {
       width: HIDDEN_PANE_HOST_WIDTH,
       height: HIDDEN_PANE_HOST_HEIGHT,
       show: false,
+      skipTaskbar: true,
+      icon: getAppIconPath(),
       backgroundColor: '#0a0a0f',
       webPreferences: {
         nodeIntegration: false,
