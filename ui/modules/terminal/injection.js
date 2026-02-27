@@ -978,6 +978,7 @@ function createInjectionController(options = {}) {
       // Without this delay, \r arrives while the CLI is still ingesting the paste
       // and gets swallowed or treated as a literal newline — not a submit.
       const fastPathDelayMs = Math.max(enterDelayMs, 80);
+      const outputTsBeforeEnter = getLastOutputTimestamp(id);
       await sleep(fastPathDelayMs);
 
       bus.emit('inject.submit.requested', {
@@ -1007,6 +1008,32 @@ function createInjectionController(options = {}) {
         correlationId: corrId,
         source: EVENT_SOURCE,
       });
+
+      // macOS Claude fast-path can occasionally swallow the first Enter.
+      // If no output transition is observed, issue one guarded retry Enter.
+      const shouldRetryClaudeFastPath = IS_DARWIN
+        && String(capabilities.displayName || '').toLowerCase() === 'claude';
+      if (shouldRetryClaudeFastPath) {
+        const retryDelayMs = 350;
+        await sleep(retryDelayMs);
+        const outputTsAfterFirstEnter = getLastOutputTimestamp(id);
+        const hasOutputTransition = outputTsAfterFirstEnter > outputTsBeforeEnter;
+        if (!hasOutputTransition) {
+          try {
+            await window.squidrun.pty.write(id, '\r');
+            bus.emit('inject.submit.sent', {
+              paneId: id,
+              payload: { method: 'hm-send-pty-enter-retry', attempt: 2, maxAttempts: 2, fastPath: true },
+              correlationId: corrId,
+              source: EVENT_SOURCE,
+            });
+            log.info(`doSendToPane ${id}`, 'Claude macOS fast-path: retried Enter after no output transition');
+          } catch (err) {
+            log.error(`doSendToPane ${id}`, 'hm-send PTY Enter retry failed:', err);
+          }
+        }
+      }
+
       updatePaneStatus(id, 'Working');
       lastTypedTime[id] = Date.now();
       lastOutputTime[id] = Date.now();
