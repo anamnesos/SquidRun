@@ -89,13 +89,45 @@ function startRelayServer({ port, sharedSecret, allowlist = '' }) {
 function connectWs(url) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
-    ws.once('open', () => resolve(ws));
+    ws.once('open', () => {
+      attachMessageBuffer(ws);
+      resolve(ws);
+    });
     ws.once('error', reject);
   });
 }
 
+function attachMessageBuffer(ws) {
+  if (!ws || ws.__messageBufferAttached) return;
+  ws.__messageBufferAttached = true;
+  ws.__messageBuffer = [];
+  ws.on('message', (raw) => {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw.toString());
+    } catch (_err) {
+      return;
+    }
+    ws.__messageBuffer.push(parsed);
+  });
+}
+
+function takeBufferedMessage(ws, predicate) {
+  const buffer = ws && Array.isArray(ws.__messageBuffer) ? ws.__messageBuffer : null;
+  if (!buffer) return null;
+  const matchIndex = buffer.findIndex((item) => predicate(item));
+  if (matchIndex < 0) return null;
+  return buffer.splice(matchIndex, 1)[0];
+}
+
 function waitForMessage(ws, predicate, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
+    const buffered = takeBufferedMessage(ws, predicate);
+    if (buffered) {
+      resolve(buffered);
+      return;
+    }
+
     const timer = setTimeout(() => {
       ws.off('message', onMessage);
       ws.off('error', onError);

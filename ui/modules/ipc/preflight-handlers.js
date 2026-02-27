@@ -177,6 +177,14 @@ function registerPreflightHandlers(ctx) {
   });
 }
 
+function unregisterPreflightHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain || typeof ipcMain.removeHandler !== 'function') return;
+  ipcMain.removeHandler('run-preflight-check');
+}
+
+registerPreflightHandlers.unregister = unregisterPreflightHandlers;
+
 module.exports = {
   registerPreflightHandlers,
   runPreflightChecks,
