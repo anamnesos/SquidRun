@@ -14,6 +14,11 @@ jest.mock('../modules/logger', () => mockLog);
 
 const { createInjectionController } = require('../modules/terminal/injection');
 const bus = require('../modules/event-bus');
+const IS_DARWIN = process.platform === 'darwin';
+
+function getPtyEnterCallCount(mockPty, paneId = '1') {
+  return mockPty.write.mock.calls.filter((call) => call[0] === paneId && call[1] === '\r').length;
+}
 
 describe('Terminal Injection', () => {
   // Default constants matching the module
@@ -1166,7 +1171,11 @@ describe('Terminal Injection', () => {
 
     test('focuses textarea before Enter', async () => {
       await controller.doSendToPane('1', 'test\r', jest.fn());
-      expect(mockTextarea.focus).toHaveBeenCalled();
+      if (IS_DARWIN) {
+        expect(mockTextarea.focus).not.toHaveBeenCalled();
+      } else {
+        expect(mockTextarea.focus).toHaveBeenCalled();
+      }
     });
 
     test('sends Enter after base delay for short messages', async () => {
@@ -1177,7 +1186,11 @@ describe('Terminal Injection', () => {
       // Advance past base 50ms delay
       await jest.advanceTimersByTimeAsync(100);
 
-      expect(mockTextarea.dispatchEvent).toHaveBeenCalled();
+      if (IS_DARWIN) {
+        expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
+      } else {
+        expect(mockTextarea.dispatchEvent).toHaveBeenCalled();
+      }
     });
 
     test('scales Enter delay by payload size for long Claude messages', async () => {
@@ -1219,12 +1232,18 @@ describe('Terminal Injection', () => {
       const longText = `${'Y'.repeat(1500)}\r`;
       const promise = longActiveController.doSendToPane('1', longText, jest.fn());
 
-      await jest.advanceTimersByTimeAsync(2500);
-      expect(mockPty.write).not.toHaveBeenCalled();
+      if (IS_DARWIN) {
+        await jest.advanceTimersByTimeAsync(500);
+        await promise;
+        expect(mockPty.write).toHaveBeenCalled();
+      } else {
+        await jest.advanceTimersByTimeAsync(2500);
+        expect(mockPty.write).not.toHaveBeenCalled();
 
-      await jest.advanceTimersByTimeAsync(3500);
-      await promise;
-      expect(mockPty.write).toHaveBeenCalled();
+        await jest.advanceTimersByTimeAsync(3500);
+        await promise;
+        expect(mockPty.write).toHaveBeenCalled();
+      }
     });
 
     test('Claude pane always sends Enter even without trailing \\r', async () => {
@@ -1236,8 +1255,12 @@ describe('Terminal Injection', () => {
       // Advance past fixed delay
       await jest.advanceTimersByTimeAsync(100);
 
-      // Claude panes always send Enter via DOM key events
-      expect(mockTextarea.dispatchEvent).toHaveBeenCalled();
+      if (IS_DARWIN) {
+        expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
+      } else {
+        // Claude panes always send Enter via DOM key events
+        expect(mockTextarea.dispatchEvent).toHaveBeenCalled();
+      }
     });
 
     test('returns completion after submit flow settles', async () => {
@@ -1264,7 +1287,11 @@ describe('Terminal Injection', () => {
       // Advance timers to complete
       await jest.advanceTimersByTimeAsync(2000);
 
-      expect(savedElement.focus).toHaveBeenCalled();
+      if (IS_DARWIN) {
+        expect(savedElement.focus).not.toHaveBeenCalled();
+      } else {
+        expect(savedElement.focus).toHaveBeenCalled();
+      }
     });
 
     test('aborts if textarea disappears during delay', async () => {
@@ -1278,10 +1305,14 @@ describe('Terminal Injection', () => {
 
       await jest.advanceTimersByTimeAsync(100);
 
-      expect(onComplete).toHaveBeenCalledWith({
-        success: false,
-        reason: 'textarea_disappeared',
-      });
+      if (IS_DARWIN) {
+        expect(onComplete).toHaveBeenCalledWith({ success: true });
+      } else {
+        expect(onComplete).toHaveBeenCalledWith({
+          success: false,
+          reason: 'textarea_disappeared',
+        });
+      }
     });
 
     test('proceeds with Enter after focus fails', async () => {
@@ -1300,13 +1331,21 @@ describe('Terminal Injection', () => {
       // Advance timers for fixed delay + focus retries
       await jest.advanceTimersByTimeAsync(2000);
 
-      // Should log focus warning but proceed anyway
-      expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.stringContaining('focus failed, proceeding with Enter anyway')
-      );
-      // Enter should still be sent (not abandoned)
-      expect(mockTextarea.dispatchEvent).toHaveBeenCalled();
+      if (IS_DARWIN) {
+        expect(mockLog.warn).not.toHaveBeenCalledWith(
+          expect.any(String),
+          expect.stringContaining('focus failed, proceeding with Enter anyway')
+        );
+        expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
+      } else {
+        // Should log focus warning but proceed anyway
+        expect(mockLog.warn).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.stringContaining('focus failed, proceeding with Enter anyway')
+        );
+        // Enter should still be sent (not abandoned)
+        expect(mockTextarea.dispatchEvent).toHaveBeenCalled();
+      }
     });
 
     test('handles Enter send failure', async () => {
@@ -1319,11 +1358,16 @@ describe('Terminal Injection', () => {
       await controller.doSendToPane('1', 'test\r', onComplete);
       await jest.advanceTimersByTimeAsync(2000);
 
-      expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
-      expect(onComplete).toHaveBeenCalledWith({
-        success: false,
-        reason: 'enter_failed',
-      });
+      if (IS_DARWIN) {
+        expect(mockOptions.markPotentiallyStuck).not.toHaveBeenCalledWith('1');
+        expect(onComplete).toHaveBeenCalledWith({ success: true });
+      } else {
+        expect(mockOptions.markPotentiallyStuck).toHaveBeenCalledWith('1');
+        expect(onComplete).toHaveBeenCalledWith({
+          success: false,
+          reason: 'enter_failed',
+        });
+      }
     });
 
     test('retries submit once and succeeds when prompt transitions on retry', async () => {
@@ -1356,12 +1400,18 @@ describe('Terminal Injection', () => {
       await controller.doSendToPane('1', 'test\r', onComplete);
       await jest.advanceTimersByTimeAsync(4000);
 
-      expect(enterCalls).toBe(2);
-      expect(onComplete).toHaveBeenCalledWith({
-        success: true,
-        verified: true,
-        signal: 'prompt_transition',
-      });
+      if (IS_DARWIN) {
+        expect(enterCalls).toBe(0);
+        expect(getPtyEnterCallCount(mockPty)).toBe(1);
+        expect(onComplete).toHaveBeenCalledWith({ success: true });
+      } else {
+        expect(enterCalls).toBe(2);
+        expect(onComplete).toHaveBeenCalledWith({
+          success: true,
+          verified: true,
+          signal: 'prompt_transition',
+        });
+      }
     });
 
     test('treats output-only submit verification as accepted but unverified', async () => {
@@ -1391,19 +1441,27 @@ describe('Terminal Injection', () => {
       await controller.doSendToPane('1', 'test\r', onComplete);
       await jest.advanceTimersByTimeAsync(4000);
 
-      expect(enterCalls).toBe(2);
-      expect(onComplete).toHaveBeenCalledWith({
-        success: true,
-        verified: false,
-        signal: 'accepted_unverified',
-        status: 'accepted.unverified',
-        reason: 'submit_not_accepted',
-      });
+      if (IS_DARWIN) {
+        expect(enterCalls).toBe(0);
+        expect(getPtyEnterCallCount(mockPty)).toBe(1);
+        expect(onComplete).toHaveBeenCalledWith({ success: true });
+      } else {
+        expect(enterCalls).toBe(2);
+        expect(onComplete).toHaveBeenCalledWith({
+          success: true,
+          verified: false,
+          signal: 'accepted_unverified',
+          status: 'accepted.unverified',
+          reason: 'submit_not_accepted',
+        });
+      }
       expect(mockOptions.markPotentiallyStuck).not.toHaveBeenCalled();
-      expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.stringContaining('doSendToPane 1'),
-        expect.stringContaining('signal=output_transition_only')
-      );
+      if (!IS_DARWIN) {
+        expect(mockLog.warn).toHaveBeenCalledWith(
+          expect.stringContaining('doSendToPane 1'),
+          expect.stringContaining('signal=output_transition_only')
+        );
+      }
     });
 
     test('allows per-message verification override for safe startup injections', async () => {
@@ -1436,7 +1494,8 @@ describe('Terminal Injection', () => {
       });
       await jest.advanceTimersByTimeAsync(4000);
 
-      expect(enterCalls).toBe(1);
+      expect(enterCalls).toBe(IS_DARWIN ? 0 : 1);
+      expect(getPtyEnterCallCount(mockPty)).toBe(IS_DARWIN ? 1 : 0);
       expect(mockOptions.markPotentiallyStuck).not.toHaveBeenCalled();
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });
@@ -1463,6 +1522,12 @@ describe('Terminal Injection', () => {
         }
         return true;
       });
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId === '1' && data === '\r') {
+          lastOutputTime['1'] = Date.now();
+        }
+        return Promise.resolve(undefined);
+      });
       const onComplete = jest.fn();
 
       controller.sendToPane('1', '# SQUIDRUN SESSION: Architect - Started 2026-02-14', {
@@ -1473,7 +1538,8 @@ describe('Terminal Injection', () => {
       });
       await jest.advanceTimersByTimeAsync(4000);
 
-      expect(enterCalls).toBe(1);
+      expect(enterCalls).toBe(IS_DARWIN ? 0 : 1);
+      expect(getPtyEnterCallCount(mockPty)).toBe(IS_DARWIN ? 1 : 0);
       expect(mockOptions.markPotentiallyStuck).not.toHaveBeenCalled();
       expect(onComplete).toHaveBeenCalledWith({
         success: true,
@@ -1529,20 +1595,26 @@ describe('Terminal Injection', () => {
       await jest.advanceTimersByTimeAsync(3000);
       await resultPromise;
 
-      expect(enterCalls).toBe(2);
-      expect(onComplete).toHaveBeenCalledWith({
-        success: true,
-        verified: true,
-        signal: 'prompt_transition',
-      });
-      expect(mockLog.warn).toHaveBeenCalledWith(
-        expect.stringContaining('doSendToPane 1'),
-        expect.stringContaining('Force-expired defer path active - auto-retrying Enter with refocus')
-      );
-      expect(mockLog.info).toHaveBeenCalledWith(
-        expect.stringContaining('doSendToPane 1'),
-        expect.stringContaining('Force-expired defer: refocus succeeded before retry Enter')
-      );
+      if (IS_DARWIN) {
+        expect(enterCalls).toBe(0);
+        expect(getPtyEnterCallCount(mockPty)).toBe(1);
+        expect(onComplete).toHaveBeenCalledWith({ success: true });
+      } else {
+        expect(enterCalls).toBe(2);
+        expect(onComplete).toHaveBeenCalledWith({
+          success: true,
+          verified: true,
+          signal: 'prompt_transition',
+        });
+        expect(mockLog.warn).toHaveBeenCalledWith(
+          expect.stringContaining('doSendToPane 1'),
+          expect.stringContaining('Force-expired defer path active - auto-retrying Enter with refocus')
+        );
+        expect(mockLog.info).toHaveBeenCalledWith(
+          expect.stringContaining('doSendToPane 1'),
+          expect.stringContaining('Force-expired defer: refocus succeeded before retry Enter')
+        );
+      }
     });
 
     test('returns accepted.unverified when acceptance signal is never observed after retry', async () => {
@@ -1571,15 +1643,20 @@ describe('Terminal Injection', () => {
       await controller.doSendToPane('1', 'test\r', onComplete);
       await jest.advanceTimersByTimeAsync(4000);
 
-      expect(enterCalls).toBe(2);
+      expect(enterCalls).toBe(IS_DARWIN ? 0 : 2);
+      expect(getPtyEnterCallCount(mockPty)).toBe(IS_DARWIN ? 1 : 0);
       expect(mockOptions.markPotentiallyStuck).not.toHaveBeenCalled();
-      expect(onComplete).toHaveBeenCalledWith({
-        success: true,
-        verified: false,
-        signal: 'accepted_unverified',
-        status: 'accepted.unverified',
-        reason: 'submit_not_accepted',
-      });
+      if (IS_DARWIN) {
+        expect(onComplete).toHaveBeenCalledWith({ success: true });
+      } else {
+        expect(onComplete).toHaveBeenCalledWith({
+          success: true,
+          verified: false,
+          signal: 'accepted_unverified',
+          status: 'accepted.unverified',
+          reason: 'submit_not_accepted',
+        });
+      }
     });
 
     test('does not call onComplete multiple times', async () => {

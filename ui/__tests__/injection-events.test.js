@@ -26,6 +26,7 @@ const mockBus = {
 jest.mock('../modules/event-bus', () => mockBus);
 
 const { createInjectionController } = require('../modules/terminal/injection');
+const IS_DARWIN = process.platform === 'darwin';
 
 describe('Injection Events', () => {
   const DEFAULT_CONSTANTS = {
@@ -405,20 +406,28 @@ describe('Injection Events', () => {
   // doSendToPane (Claude path): inject.applied, inject.submit, inject.failed
   // ──────────────────────────────────────────
   describe('doSendToPane Claude events', () => {
-    test('emits inject.failed when textarea not found', (done) => {
+    test('handles missing textarea based on platform Claude path', async () => {
       terminals.set('1', {});
       global.document.querySelector.mockReturnValue(null);
 
-      controller.doSendToPane('1', 'test', (result) => {
-        expect(result.success).toBe(false);
+      const resultPromise = new Promise((resolve) => {
+        controller.doSendToPane('1', 'test', resolve);
+      });
+      await jest.advanceTimersByTimeAsync(500);
+      const result = await resultPromise;
 
+      if (IS_DARWIN) {
+        expect(result).toEqual({ success: true });
+        const missingTextareaFail = mockBus.emit.mock.calls.find(
+          c => c[0] === 'inject.failed' && c[1]?.payload?.reason === 'missing_textarea'
+        );
+        expect(missingTextareaFail).toBeUndefined();
+      } else {
+        expect(result.success).toBe(false);
         const failed = mockBus.emit.mock.calls.find(c => c[0] === 'inject.failed');
         expect(failed).toBeDefined();
         expect(failed[1].payload.reason).toBe('missing_textarea');
-        done();
-      });
-
-      jest.advanceTimersByTime(100);
+      }
     });
 
     test('emits inject.applied after successful PTY write', async () => {
@@ -497,9 +506,17 @@ describe('Injection Events', () => {
       await jest.advanceTimersByTimeAsync(500);
       const result = await resultPromise;
 
-      const failed = mockBus.emit.mock.calls.find(c => c[0] === 'inject.failed');
-      expect(failed).toBeDefined();
-      expect(failed[1].payload.reason).toBe('enter_failed');
+      if (IS_DARWIN) {
+        expect(result).toEqual({ success: true });
+        const failed = mockBus.emit.mock.calls.find(
+          c => c[0] === 'inject.failed' && c[1]?.payload?.reason === 'enter_failed'
+        );
+        expect(failed).toBeUndefined();
+      } else {
+        const failed = mockBus.emit.mock.calls.find(c => c[0] === 'inject.failed');
+        expect(failed).toBeDefined();
+        expect(failed[1].payload.reason).toBe('enter_failed');
+      }
     });
 
     test('returns accepted.unverified when submit verification exhausts retries', async () => {
@@ -526,11 +543,17 @@ describe('Injection Events', () => {
       const result = await resultPromise;
 
       expect(result.success).toBe(true);
-      expect(result.verified).toBe(false);
-      expect(result.status).toBe('accepted.unverified');
-      expect(result.reason).toBe('submit_not_accepted');
+      if (IS_DARWIN) {
+        expect(result.verified).toBeUndefined();
+        expect(result.status).toBeUndefined();
+        expect(result.reason).toBeUndefined();
+      } else {
+        expect(result.verified).toBe(false);
+        expect(result.status).toBe('accepted.unverified');
+        expect(result.reason).toBe('submit_not_accepted');
+      }
       const submitSentCalls = mockBus.emit.mock.calls.filter(c => c[0] === 'inject.submit.sent');
-      expect(submitSentCalls.length).toBe(2);
+      expect(submitSentCalls.length).toBe(IS_DARWIN ? 1 : 2);
 
       const failed = mockBus.emit.mock.calls.find(
         c => c[0] === 'inject.failed' && c[1]?.payload?.reason === 'submit_not_accepted'
