@@ -1,6 +1,7 @@
 jest.mock('../scripts/hm-telegram', () => ({
   sendTelegramPhoto: jest.fn(async () => ({ ok: true })),
 }));
+const path = require('path');
 
 jest.mock('../scripts/hm-visual-utils', () => ({
   asString: (value, fallback = '') => {
@@ -155,11 +156,16 @@ describe('hm-smoke-runner option parsing', () => {
   });
 
   test('buildSpecGenerationPaths honors explicit output', () => {
+    const explicitSpecOut = 'D:\\tmp\\generated.spec.ts';
     const paths = smokeRunner.buildSpecGenerationPaths(
-      { runtimeRoot: 'D:\\projects\\squidrun\\.squidrun', specOut: 'D:\\tmp\\generated.spec.ts' },
+      { runtimeRoot: 'D:\\projects\\squidrun\\.squidrun', specOut: explicitSpecOut },
       { route: '/dashboard', url: 'http://127.0.0.1:3000/dashboard' },
     );
-    expect(paths.specPath).toBe('D:\\tmp\\generated.spec.ts');
-    expect(paths.specMetaPath).toBe('D:\\tmp\\generated.spec.ts.meta.json');
+    const expectedSpecPath = process.platform === 'win32'
+      ? explicitSpecOut
+      : path.resolve(explicitSpecOut);
+    expect(paths.specPath).toBe(expectedSpecPath);
+    expect(paths.specMetaPath).toBe(`${expectedSpecPath}.meta.json`);
+    expect(path.isAbsolute(paths.specPath)).toBe(true);
   });
 });
