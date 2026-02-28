@@ -44,6 +44,11 @@ const smsPoller = require('../sms-poller');
 const telegramPoller = require('../telegram-poller');
 const { sendTelegram } = require('../../scripts/hm-telegram');
 const {
+  shouldTriggerAutonomousSmoke,
+  buildSmokeRunnerArgs,
+  formatSmokeResultMessage,
+} = require('./autonomous-smoke');
+const {
   createBridgeClient,
   DEFAULT_BRIDGE_RELAY_URL,
   normalizeBridgeMetadata,
@@ -145,11 +150,45 @@ const ONBOARDING_STATE_FILENAME = 'onboarding-state.json';
 const FRESH_INSTALL_MARKER_FILENAME = 'fresh-install.json';
 const PACKAGED_BIN_RUNTIME_RELATIVE = path.join('.squidrun', 'bin', 'runtime', 'ui');
 const WINDOWS_APP_USER_MODEL_ID = 'com.squidrun.app';
+const AUTONOMOUS_SMOKE_RUNNER_PATH = path.join(__dirname, '..', '..', 'scripts', 'hm-smoke-runner.js');
+const AUTONOMOUS_SMOKE_TIMEOUT_MS = Math.max(
+  15000,
+  Number.parseInt(process.env.SQUIDRUN_AUTONOMOUS_SMOKE_TIMEOUT_MS || '120000', 10) || 120000
+);
+const AUTONOMOUS_SMOKE_COOLDOWN_MS = Math.max(
+  0,
+  Number.parseInt(process.env.SQUIDRUN_AUTONOMOUS_SMOKE_COOLDOWN_MS || '15000', 10) || 15000
+);
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric <= 0) return fallback;
   return numeric;
+}
+
+function parseStructuredJsonOutput(raw = '') {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    // Fall through.
+  }
+
+  for (let idx = text.lastIndexOf('{'); idx >= 0; idx = text.lastIndexOf('{', idx - 1)) {
+    const candidate = text.slice(idx).trim();
+    if (!candidate) continue;
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    } catch (_) {
+      // Keep scanning from right to left.
+    }
+  }
+  return null;
 }
 
 const RUNTIME_LIFECYCLE_STATE = Object.freeze({
@@ -230,6 +269,12 @@ class SquidRunApp {
     this.telegramInboundContext = {
       lastInboundAtMs: 0,
       sender: null,
+    };
+    this.autonomousSmoke = {
+      inFlight: false,
+      queuedRun: null,
+      lastStartedAtMs: 0,
+      sequence: 0,
     };
     this.bridgeClient = null;
     this.bridgeRuntimeConfig = this.resolveBridgeRuntimeConfig();
@@ -1819,6 +1864,14 @@ class SquidRunApp {
                 )?.structured || null
               )
               : null;
+            const maybeTriggerAutonomousSmoke = (deliveryResult) => {
+              this.maybeTriggerAutonomousSmokeFromSend({
+                senderRole: canonicalEnvelope.sender?.role || data.role || null,
+                messageContent: canonicalEnvelope.content,
+                projectMetadata: canonicalMetadata?.project || canonicalEnvelope.project || null,
+                deliveryResult,
+              });
+            };
 
             if (canonicalEnvelope.message_id) {
               const journalResult = await executeEvidenceLedgerOperation(
@@ -1942,7 +1995,7 @@ class SquidRunApp {
                 result: bridgeResult,
                 traceContext,
               });
-              return {
+              const payload = {
                 ok: Boolean(bridgeResult?.ok),
                 accepted: Boolean(bridgeResult?.accepted),
                 queued: Boolean(bridgeResult?.queued),
@@ -1954,6 +2007,8 @@ class SquidRunApp {
                 error: bridgeResult?.error || null,
                 traceId: traceContext?.traceId || traceContext?.correlationId || null,
               };
+              maybeTriggerAutonomousSmoke(payload);
+              return payload;
             }
 
             const telegramReplyTarget = this.isTelegramReplyTarget(target);
@@ -2009,7 +2064,7 @@ class SquidRunApp {
                 result: deliveryResult,
                 traceContext,
               });
-              return {
+              const payload = {
                 ok: Boolean(telegramResult?.ok),
                 accepted: Boolean(telegramResult?.accepted),
                 queued: Boolean(telegramResult?.queued),
@@ -2023,6 +2078,8 @@ class SquidRunApp {
                 guardActions: preflight.actions,
                 traceId: traceContext?.traceId || traceContext?.correlationId || null,
               };
+              maybeTriggerAutonomousSmoke(payload);
+              return payload;
             }
 
             const paneId = this.resolveTargetToPane(target);
@@ -2075,7 +2132,7 @@ class SquidRunApp {
                   result,
                   traceContext,
                 });
-                return {
+                const payload = {
                   ok: Boolean(result?.ok),
                   accepted: Boolean(result?.accepted),
                   queued: Boolean(result?.queued),
@@ -2089,6 +2146,8 @@ class SquidRunApp {
                   guardActions: preflight.actions,
                   traceId: traceContext?.traceId || traceContext?.correlationId || null,
                 };
+                maybeTriggerAutonomousSmoke(payload);
+                return payload;
               }
 
               log.info('WebSocket', `Routing 'send' to pane ${paneId} (via triggers)`);
@@ -2105,7 +2164,7 @@ class SquidRunApp {
                 result,
                 traceContext,
               });
-              return {
+              const payload = {
                 ok: Boolean(result?.verified),
                 accepted: Boolean(result?.accepted),
                 queued: Boolean(result?.queued),
@@ -2119,6 +2178,8 @@ class SquidRunApp {
                 guardActions: preflight.actions,
                 traceId: traceContext?.traceId || traceContext?.correlationId || null,
               };
+              maybeTriggerAutonomousSmoke(payload);
+              return payload;
             } else {
               log.warn('WebSocket', `Unknown target for 'send': ${target}`);
               await this.recordDeliveryOutcomePattern({
@@ -3960,6 +4021,345 @@ class SquidRunApp {
         error: err.message,
       };
     }
+  }
+
+  resolveAutonomousSmokeProjectPath(projectMetadata = null) {
+    const fallback = getProjectRoot()
+      || path.resolve(path.join(WORKSPACE_PATH, '..'));
+    if (!projectMetadata || typeof projectMetadata !== 'object') {
+      return fallback;
+    }
+
+    const directPath = typeof projectMetadata.path === 'string'
+      ? projectMetadata.path.trim()
+      : '';
+    if (directPath) return path.resolve(directPath);
+
+    const envelopeProjectPath = typeof projectMetadata?.envelope?.project?.path === 'string'
+      ? projectMetadata.envelope.project.path.trim()
+      : '';
+    if (envelopeProjectPath) return path.resolve(envelopeProjectPath);
+
+    return fallback;
+  }
+
+  buildAutonomousSmokeRunId() {
+    this.autonomousSmoke.sequence += 1;
+    const sequenceId = String(this.autonomousSmoke.sequence).padStart(4, '0');
+    return `auto-smoke-${Date.now()}-${sequenceId}`;
+  }
+
+  async runAutonomousSmokeSidecar(args = [], { projectPath = null, timeoutMs = AUTONOMOUS_SMOKE_TIMEOUT_MS } = {}) {
+    if (!fs.existsSync(AUTONOMOUS_SMOKE_RUNNER_PATH)) {
+      return {
+        ok: false,
+        status: 'runner_missing',
+        code: null,
+        signal: null,
+        timedOut: false,
+        stdout: '',
+        stderr: `Runner not found: ${AUTONOMOUS_SMOKE_RUNNER_PATH}`,
+      };
+    }
+
+    const cwd = projectPath && fs.existsSync(projectPath)
+      ? projectPath
+      : getProjectRoot();
+    const env = {
+      ...process.env,
+      SQUIDRUN_PROJECT_ROOT: projectPath || getProjectRoot() || process.env.SQUIDRUN_PROJECT_ROOT || process.cwd(),
+    };
+
+    return await new Promise((resolve) => {
+      const child = spawn('node', [AUTONOMOUS_SMOKE_RUNNER_PATH, 'run', ...args], {
+        cwd: cwd || undefined,
+        env,
+        windowsHide: true,
+      });
+
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      let timedOut = false;
+      const timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        try {
+          child.kill();
+        } catch (_) {
+          // Best effort.
+        }
+      }, Math.max(1000, timeoutMs));
+
+      const finalize = (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutHandle);
+        resolve(result);
+      };
+
+      if (child.stdout) {
+        child.stdout.on('data', (chunk) => {
+          stdout += String(chunk || '');
+        });
+      }
+      if (child.stderr) {
+        child.stderr.on('data', (chunk) => {
+          stderr += String(chunk || '');
+        });
+      }
+
+      child.on('error', (err) => {
+        finalize({
+          ok: false,
+          status: 'spawn_failed',
+          code: null,
+          signal: null,
+          timedOut,
+          stdout,
+          stderr: `${stderr}\n${err.message}`.trim(),
+        });
+      });
+
+      child.on('close', (code, signal) => {
+        finalize({
+          ok: Number(code) === 0 && !timedOut,
+          status: Number(code) === 0 ? 'ok' : 'runner_failed',
+          code,
+          signal: signal || null,
+          timedOut,
+          stdout,
+          stderr,
+        });
+      });
+    });
+  }
+
+  buildAutonomousSmokeSummary(summary = {}, context = {}) {
+    const safeSummary = (summary && typeof summary === 'object' && !Array.isArray(summary))
+      ? summary
+      : {};
+    const safeContext = (context && typeof context === 'object' && !Array.isArray(context))
+      ? context
+      : {};
+    const status = formatSmokeResultMessage(safeSummary, {
+      senderRole: safeContext.senderRole || 'builder',
+      triggerReason: safeContext.triggerReason || null,
+      runId: safeContext.runId || safeSummary.runId || null,
+    });
+    const lines = [
+      status,
+      `url=${safeSummary.url || 'unresolved'}`,
+      `artifact_dir=${safeSummary.runDir || 'n/a'}`,
+      `console_errors=${Number(safeSummary.consoleErrorCount || 0)}`,
+      `page_errors=${Number(safeSummary.pageErrorCount || 0)}`,
+      `request_failures=${Number(safeSummary.requestFailureCount || 0)}`,
+      `http_errors=${Number(safeSummary.httpErrorCount || 0)}`,
+      `missing_selectors=${Number(safeSummary.missingSelectorCount || 0)}`,
+      `hard_failures=${Number(safeSummary.hardFailureCount || 0)}`,
+    ];
+    const hardFailures = Array.isArray(safeSummary.hardFailures) ? safeSummary.hardFailures : [];
+    for (const failure of hardFailures.slice(0, 3)) {
+      const code = typeof failure?.code === 'string' ? failure.code : 'hard_failure';
+      const message = typeof failure?.message === 'string' ? failure.message : 'Smoke failure';
+      lines.push(`failure:${code}:${message}`);
+    }
+    return lines.join('\n');
+  }
+
+  async reportAutonomousSmokeSummary(summary = {}, context = {}) {
+    const text = this.buildAutonomousSmokeSummary(summary, context);
+    const architectPayload = `${AGENT_MESSAGE_PREFIX}(BUILDER AUTOSMOKE): ${text}`;
+    let architectResult = null;
+
+    try {
+      architectResult = await triggers.sendDirectMessage(
+        ['1'],
+        architectPayload,
+        'builder',
+        { awaitDelivery: true }
+      );
+    } catch (err) {
+      architectResult = {
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'architect_report_failed',
+        error: err.message,
+      };
+    }
+
+    const architectDelivered = Boolean(architectResult?.verified || architectResult?.accepted);
+    if (architectDelivered) {
+      return {
+        ok: true,
+        architectDelivered: true,
+        architectResult,
+      };
+    }
+
+    const telegramMessage = [
+      '[AUTONOMOUS_SMOKE_FALLBACK]',
+      text,
+      `architect_status=${architectResult?.status || 'delivery_failed'}`,
+      architectResult?.error ? `architect_error=${architectResult.error}` : null,
+    ].filter(Boolean).join('\n');
+
+    const telegramResult = await sendTelegram(telegramMessage, process.env, {
+      senderRole: 'builder',
+      targetRole: 'user',
+      sessionId: this.commsSessionScopeId || null,
+    }).catch((err) => ({ ok: false, error: err.message }));
+
+    return {
+      ok: Boolean(telegramResult?.ok),
+      architectDelivered: false,
+      architectResult,
+      telegramResult,
+    };
+  }
+
+  runAutonomousSmokeInBackground(runContext = {}) {
+    this.autonomousSmoke.inFlight = true;
+    this.autonomousSmoke.lastStartedAtMs = Date.now();
+
+    const context = {
+      ...(runContext && typeof runContext === 'object' ? runContext : {}),
+      runId: (runContext && runContext.runId) || this.buildAutonomousSmokeRunId(),
+    };
+
+    void (async () => {
+      const projectPath = this.resolveAutonomousSmokeProjectPath(context.projectMetadata);
+      const runnerArgs = buildSmokeRunnerArgs({
+        senderRole: context.senderRole || 'builder',
+        triggerReason: context.triggerReason || 'workflow_signal',
+        messageContent: context.messageContent || '',
+        runId: context.runId,
+        sessionId: this.commsSessionScopeId || null,
+        projectPath,
+        headless: true,
+      });
+
+      const runnerResult = await this.runAutonomousSmokeSidecar(runnerArgs, { projectPath });
+      const parsedSummary = parseStructuredJsonOutput(runnerResult.stdout);
+      const summary = (parsedSummary && typeof parsedSummary === 'object' && !Array.isArray(parsedSummary))
+        ? { ...parsedSummary }
+        : {
+          ok: false,
+          runId: context.runId,
+          runDir: null,
+          url: null,
+          hardFailureCount: 1,
+          hardFailures: [{ code: 'invalid_summary', message: 'Smoke runner did not return JSON summary' }],
+        };
+
+      if (summary.runId == null) summary.runId = context.runId;
+      if (summary.projectPath == null) summary.projectPath = projectPath;
+      if (runnerResult.timedOut === true) {
+        summary.ok = false;
+        const hardFailures = Array.isArray(summary.hardFailures) ? summary.hardFailures : [];
+        hardFailures.push({
+          code: 'runner_timeout',
+          message: `Smoke runner timed out after ${AUTONOMOUS_SMOKE_TIMEOUT_MS}ms`,
+        });
+        summary.hardFailures = hardFailures;
+        summary.hardFailureCount = hardFailures.length;
+      } else if (runnerResult.ok === false && summary.ok !== false) {
+        summary.ok = false;
+      }
+
+      summary.runner = {
+        status: runnerResult.status,
+        exitCode: runnerResult.code,
+        signal: runnerResult.signal,
+        timedOut: runnerResult.timedOut,
+        stderr: runnerResult.stderr || '',
+      };
+
+      await this.reportAutonomousSmokeSummary(summary, context);
+    })()
+      .catch((err) => {
+        log.warn('AutonomousSmoke', `Smoke run failed: ${err.message}`);
+      })
+      .finally(() => {
+        this.autonomousSmoke.inFlight = false;
+        const queued = this.autonomousSmoke.queuedRun;
+        this.autonomousSmoke.queuedRun = null;
+        if (queued) {
+          this.runAutonomousSmokeInBackground(queued);
+        }
+      });
+  }
+
+  maybeTriggerAutonomousSmokeFromSend({
+    senderRole,
+    messageContent,
+    projectMetadata = null,
+    deliveryResult = null,
+  } = {}) {
+    const triggerDecision = shouldTriggerAutonomousSmoke({
+      senderRole,
+      messageContent,
+    });
+    if (!triggerDecision.trigger) {
+      return {
+        ok: false,
+        status: 'autonomous_smoke_not_triggered',
+        reason: triggerDecision.reason,
+      };
+    }
+
+    const delivered = Boolean(
+      deliveryResult?.verified
+      || deliveryResult?.accepted
+      || deliveryResult?.queued
+      || deliveryResult?.ok
+    );
+    if (!delivered) {
+      return {
+        ok: false,
+        status: 'autonomous_smoke_skipped_undelivered',
+        reason: triggerDecision.reason,
+      };
+    }
+
+    if (this.autonomousSmoke.inFlight) {
+      this.autonomousSmoke.queuedRun = {
+        senderRole,
+        messageContent,
+        projectMetadata,
+        triggerReason: triggerDecision.reason,
+      };
+      return {
+        ok: true,
+        status: 'autonomous_smoke_queued',
+        reason: triggerDecision.reason,
+      };
+    }
+
+    const nowMs = Date.now();
+    if (
+      AUTONOMOUS_SMOKE_COOLDOWN_MS > 0
+      && this.autonomousSmoke.lastStartedAtMs > 0
+      && (nowMs - this.autonomousSmoke.lastStartedAtMs) < AUTONOMOUS_SMOKE_COOLDOWN_MS
+    ) {
+      return {
+        ok: false,
+        status: 'autonomous_smoke_cooldown',
+        reason: triggerDecision.reason,
+      };
+    }
+
+    this.runAutonomousSmokeInBackground({
+      senderRole,
+      messageContent,
+      projectMetadata,
+      triggerReason: triggerDecision.reason,
+    });
+    return {
+      ok: true,
+      status: 'autonomous_smoke_started',
+      reason: triggerDecision.reason,
+    };
   }
 
   resolveEnvBridgeRuntimeConfig() {
