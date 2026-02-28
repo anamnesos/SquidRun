@@ -27,6 +27,7 @@ const UNRESOLVED_STATUS_SET = new Set(UNRESOLVED_STATUS_ORDER);
 const CROSS_SESSION_TAGS = new Set(['DECISION', 'TASK', 'FINDING', 'BLOCKER']);
 const DIGEST_TAGS = new Set(['DECISION', 'FINDING']);
 const DIGEST_SESSION_LIMIT = 10;
+const CROSS_SESSION_AGE_LIMIT = DIGEST_SESSION_LIMIT;
 const DIGEST_HIGHLIGHT_LIMIT = 4;
 const TAG_PATTERN = /^(DECISION|TASK|FINDING|BLOCKER)\s*:\s*(.+)$/i;
 const KNOWN_TAG_PREFIX_PATTERNS = [
@@ -396,6 +397,26 @@ function buildDecisionDigestGroups(crossSessionTaggedRows = [], options = {}) {
     });
 }
 
+function toAppSessionNumber(value) {
+  const normalized = normalizeAppSessionScopeId(value);
+  if (!normalized) return null;
+  const match = normalized.match(/^app-session-(\d+)$/);
+  if (!match) return null;
+  const sessionNumber = Number.parseInt(match[1], 10);
+  return Number.isInteger(sessionNumber) && sessionNumber > 0 ? sessionNumber : null;
+}
+
+function isWithinCrossSessionAgeLimit(rowSessionId, currentSessionId, ageLimit = CROSS_SESSION_AGE_LIMIT) {
+  const limit = Math.max(1, Number(ageLimit) || CROSS_SESSION_AGE_LIMIT);
+  const currentSessionNumber = toAppSessionNumber(currentSessionId);
+  if (!Number.isInteger(currentSessionNumber)) return true;
+
+  const rowSessionNumber = toAppSessionNumber(rowSessionId);
+  if (!Number.isInteger(rowSessionNumber)) return false;
+  if (rowSessionNumber > currentSessionNumber) return false;
+  return (currentSessionNumber - rowSessionNumber) <= limit;
+}
+
 function buildSessionHandoffMarkdown(rows, options = {}) {
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
   const sessionId = toOptionalString(options.sessionId, '-') || '-';
@@ -408,6 +429,7 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
   const recentLimit = Math.max(1, Number(options.recentLimit) || DEFAULT_RECENT_LIMIT);
   const taggedLimit = Math.max(1, Number(options.taggedLimit) || DEFAULT_TAGGED_LIMIT);
   const crossSessionLimit = Math.max(1, Number(options.crossSessionLimit) || DEFAULT_CROSS_SESSION_LIMIT);
+  const crossSessionAgeLimit = Math.max(1, Number(options.crossSessionAgeLimit) || CROSS_SESSION_AGE_LIMIT);
   const failureLimit = Math.max(1, Number(options.failureLimit) || DEFAULT_FAILURE_LIMIT);
   const pendingLimit = Math.max(1, Number(options.pendingLimit) || DEFAULT_PENDING_LIMIT);
   const recentRows = orderedRows.slice(Math.max(0, orderedRows.length - recentLimit));
@@ -459,6 +481,7 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
   for (const row of crossSessionSourceRows) {
     const tag = extractTag(row?.rawBody || '');
     if (!tag || !CROSS_SESSION_TAGS.has(tag.tag)) continue;
+    if (!isWithinCrossSessionAgeLimit(row?.sessionId, sessionId, crossSessionAgeLimit)) continue;
     crossSessionTaggedRows.push({ row, tag });
   }
   const decisionDigestGroups = buildDecisionDigestGroups(crossSessionTaggedRows, options);
@@ -797,6 +820,7 @@ async function materializeSessionHandoff(options = {}) {
     recentLimit: options.recentLimit,
     taggedLimit: options.taggedLimit,
     crossSessionLimit: options.crossSessionLimit,
+    crossSessionAgeLimit: options.crossSessionAgeLimit,
     digestSessionLimit: options.digestSessionLimit,
     digestHighlightLimit: options.digestHighlightLimit,
     failureLimit: options.failureLimit,
