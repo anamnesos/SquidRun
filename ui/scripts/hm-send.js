@@ -18,7 +18,7 @@ const {
   appendCommsJournalEntry,
   closeCommsJournalStores,
 } = require('../modules/main/comms-journal');
-const { sendTelegram } = require('./hm-telegram');
+const { sendTelegram, sendTelegramPhoto } = require('./hm-telegram');
 const {
   buildOutboundMessageEnvelope,
   buildCanonicalEnvelopeMetadata,
@@ -88,9 +88,11 @@ if (!listDevicesMode && args.length < 2) {
   console.log('Usage: node hm-send.js <target> <message> [--role <role>] [--priority urgent]');
   console.log('   or: node hm-send.js <target> --file <message-file> [--role <role>] [--priority urgent]');
   console.log('   or: node hm-send.js <target> --stdin [--role <role>] [--priority urgent]');
+  console.log('   or: node hm-send.js telegram --photo <image-path> [caption] [--role <role>] [--priority urgent]');
   console.log('   or: node hm-send.js --list-devices [--timeout <ms>] [--role <role>]');
   console.log('  target: paneId (1,2,3), role name (architect, builder, oracle), user/telegram, or @<device>-arch');
   console.log('  message: text to send');
+  console.log('  --photo: send a Telegram photo (telegram/user target only); message is used as caption');
   console.log('  --file: read full message body from a UTF-8 text file');
   console.log('  --stdin: read full message body from stdin (pipe or heredoc)');
   console.log('  --list-devices: query relay for connected cross-device peers');
@@ -111,12 +113,13 @@ let retries = DEFAULT_RETRIES;
 let enableFallback = true;
 let messageFilePath = null;
 let useStdin = false;
+let telegramPhotoPath = null;
 
 // Known flags that signal end of inline message content.
 // Words starting with "--" that are NOT in this set are treated as message text,
 // which prevents accidental truncation when message content contains "--something".
 const KNOWN_FLAGS = new Set([
-  '--role', '--file', '--stdin', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices',
+  '--role', '--file', '--stdin', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices',
 ]);
 
 // Collect message from all args between target and first known --flag
@@ -130,47 +133,64 @@ for (; i < args.length; i++) {
 
 // Parse remaining --flags
 for (; i < args.length; i++) {
-  if (args[i] === '--role' && args[i+1]) {
-    role = args[i+1];
+  const token = args[i];
+  if (token === '--role' && args[i + 1]) {
+    role = args[i + 1];
     i++;
+    continue;
   }
-  if (args[i] === '--file') {
-    if (args[i + 1]) {
-      messageFilePath = args[i + 1];
-      i++;
-    } else {
+  if (token === '--file') {
+    if (!args[i + 1]) {
       console.error('--file requires a file path.');
       process.exit(1);
     }
-  }
-  if (args[i] === '--stdin') {
-    useStdin = true;
-  }
-  if (args[i] === '--priority' && args[i+1]) {
-    priority = args[i+1];
+    messageFilePath = args[i + 1];
     i++;
+    continue;
   }
-  if (args[i] === '--timeout' && args[i+1]) {
+  if (token === '--stdin') {
+    useStdin = true;
+    continue;
+  }
+  if (token === '--photo') {
+    if (!args[i + 1]) {
+      console.error('--photo requires an image path.');
+      process.exit(1);
+    }
+    telegramPhotoPath = args[i + 1];
+    i++;
+    continue;
+  }
+  if (token === '--priority' && args[i + 1]) {
+    priority = args[i + 1];
+    i++;
+    continue;
+  }
+  if (token === '--timeout' && args[i + 1]) {
     const parsed = Number.parseInt(args[i + 1], 10);
     if (Number.isFinite(parsed) && parsed >= 10) {
       ackTimeoutMs = parsed;
     }
     i++;
+    continue;
   }
-  if (args[i] === '--retries' && args[i+1]) {
+  if (token === '--retries' && args[i + 1]) {
     const parsed = Number.parseInt(args[i + 1], 10);
     if (Number.isFinite(parsed) && parsed >= 0) {
       retries = Math.min(parsed, MAX_RETRIES);
     }
     i++;
+    continue;
   }
-  if (args[i] === '--no-fallback') {
+  if (token === '--no-fallback') {
     enableFallback = false;
+    continue;
   }
-  if (args[i] === '--list-devices') {
+  if (token === '--list-devices') {
     // Flag consumed here so list mode can coexist with other flags.
     continue;
   }
+  messageParts.push(token);
 }
 
 let message = messageParts.join(' ');
@@ -196,7 +216,15 @@ if (!listDevicesMode && messageFilePath) {
     process.exit(1);
   }
 }
-if (!listDevicesMode && !message) {
+if (!listDevicesMode && telegramPhotoPath) {
+  const normalizedTarget = String(target || '').trim().toLowerCase();
+  if (!SPECIAL_USER_TARGETS.has(normalizedTarget)) {
+    console.error('--photo is supported only for telegram/user targets.');
+    process.exit(1);
+  }
+  telegramPhotoPath = path.resolve(telegramPhotoPath);
+}
+if (!listDevicesMode && !message && !telegramPhotoPath) {
   console.error('Message cannot be empty.');
   process.exit(1);
 }
@@ -872,18 +900,30 @@ async function sendSpecialTargetFallback(targetInput, request = null) {
     });
 
   try {
-    const result = await sendTelegram(specialRequest.content, process.env, {
-      messageId: specialRequest.messageId || null,
-      senderRole: specialRequest.senderRole || role || 'system',
-      sessionId: specialRequest.sessionId || null,
-      metadata: specialRequest.metadata || null,
-    });
+    const photoPath = typeof specialRequest.photoPath === 'string'
+      ? specialRequest.photoPath.trim()
+      : '';
+    const sendOperation = photoPath
+      ? sendTelegramPhoto(photoPath, specialRequest.content, process.env, {
+        messageId: specialRequest.messageId || null,
+        senderRole: specialRequest.senderRole || role || 'system',
+        sessionId: specialRequest.sessionId || null,
+        metadata: specialRequest.metadata || null,
+      })
+      : sendTelegram(specialRequest.content, process.env, {
+        messageId: specialRequest.messageId || null,
+        senderRole: specialRequest.senderRole || role || 'system',
+        sessionId: specialRequest.sessionId || null,
+        metadata: specialRequest.metadata || null,
+      });
+    const result = await sendOperation;
     if (!result?.ok) {
       return { ok: false, error: result?.error || 'telegram_fallback_failed' };
     }
     return {
       ok: true,
       channel: 'telegram',
+      mode: photoPath ? 'photo' : 'message',
       chatId: result.chatId || null,
       statusCode: result.statusCode || null,
       messageId: result.messageId || null,
@@ -891,6 +931,35 @@ async function sendSpecialTargetFallback(targetInput, request = null) {
   } catch (_err) {
     return { ok: false, error: _err?.message || 'telegram_fallback_exception' };
   }
+}
+
+function buildTelegramPhotoDeliveryRequest(envelope) {
+  const specialRequest = buildSpecialTargetRequest(envelope);
+  return {
+    ...specialRequest,
+    photoPath: telegramPhotoPath,
+  };
+}
+
+async function sendTelegramPhotoDirect(envelope) {
+  const result = await sendSpecialTargetFallback(target, buildTelegramPhotoDeliveryRequest(envelope));
+  if (!result.ok) {
+    console.error(`Telegram photo send failed: ${result.error}`);
+    closeCommsJournalStores();
+    process.exit(1);
+  }
+  const photoLabel = telegramPhotoPath ? path.basename(telegramPhotoPath) : '(unknown)';
+  console.log(
+    `Delivered to ${target}: --photo ${photoLabel}`
+    + `${message ? ` (${previewMessage(message)})` : ''}`
+    + ` (ack: telegram_delivered, attempt 1)`
+  );
+  closeCommsJournalStores();
+  process.exit(0);
+}
+
+function isTelegramPhotoModeActive() {
+  return Boolean(telegramPhotoPath) && isSpecialTarget(target);
 }
 
 function appendProjectContextMarker(content, metadata = null) {
@@ -1347,6 +1416,9 @@ async function main() {
     timestamp_ms: Date.now(),
     project: projectMetadata || null,
   });
+  if (isTelegramPhotoModeActive()) {
+    await sendTelegramPhotoDirect(envelope);
+  }
   const envelopeMetadata = buildCanonicalEnvelopeMetadata(envelope);
   const preSendJournal = appendCommsJournalEntry({
     messageId: envelope.message_id,
