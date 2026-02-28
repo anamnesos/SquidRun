@@ -882,6 +882,13 @@ describe('Terminal Injection', () => {
 
     test('hm-send fast path submits Enter after delay via plain PTY write', async () => {
       const onComplete = jest.fn();
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId === '1' && data === '\r') {
+          // Prevent Darwin's guarded fast-path retry by simulating output transition.
+          lastOutputTime['1'] = Date.now();
+        }
+        return Promise.resolve(undefined);
+      });
 
       const promise = controller.doSendToPane(
         '1',
@@ -892,7 +899,7 @@ describe('Terminal Injection', () => {
       );
 
       // Fast path now waits for CLI to process paste before sending Enter
-      await jest.advanceTimersByTimeAsync(200);
+      await jest.advanceTimersByTimeAsync(800);
       await promise;
 
       expect(mockPty.write).toHaveBeenCalledWith('1', 'hm payload', expect.any(Object));
@@ -990,11 +997,15 @@ describe('Terminal Injection', () => {
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r', expect.any(Object));
       expect(mockPty.codexExec).not.toHaveBeenCalled();
       expect(mockOptions.updatePaneStatus).toHaveBeenCalledWith('1', 'Working');
-      expect(onComplete).toHaveBeenCalledWith({
-        success: true,
-        verified: true,
-        signal: 'prompt_probe_unavailable',
-      });
+      if (IS_DARWIN) {
+        expect(onComplete).toHaveBeenCalledWith({ success: true });
+      } else {
+        expect(onComplete).toHaveBeenCalledWith({
+          success: true,
+          verified: true,
+          signal: 'prompt_probe_unavailable',
+        });
+      }
     });
 
     test('scales Enter delay by payload size for long Codex messages', async () => {
@@ -1159,14 +1170,21 @@ describe('Terminal Injection', () => {
       lastOutputTime['1'] = Date.now();
 
       const promise = controller.doSendToPane('1', 'test\r', jest.fn());
-      expect(mockPty.write).not.toHaveBeenCalled();
+      if (IS_DARWIN) {
+        // Darwin Claude path does not defer submit while pane is active.
+        expect(mockPty.write).toHaveBeenCalled();
+        await jest.advanceTimersByTimeAsync(500);
+        await promise;
+      } else {
+        expect(mockPty.write).not.toHaveBeenCalled();
 
-      await jest.advanceTimersByTimeAsync(200);
-      expect(mockPty.write).not.toHaveBeenCalled();
+        await jest.advanceTimersByTimeAsync(200);
+        expect(mockPty.write).not.toHaveBeenCalled();
 
-      await jest.advanceTimersByTimeAsync(500);
-      await promise;
-      expect(mockPty.write).toHaveBeenCalled();
+        await jest.advanceTimersByTimeAsync(500);
+        await promise;
+        expect(mockPty.write).toHaveBeenCalled();
+      }
     });
 
     test('focuses textarea before Enter', async () => {
