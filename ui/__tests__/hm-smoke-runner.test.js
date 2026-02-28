@@ -41,6 +41,10 @@ describe('hm-smoke-runner option parsing', () => {
     expect(result.diffThreshold).toBe(0.1);
     expect(result.updateBaselineOnPass).toBe(true);
     expect(result.updateBaselineAlways).toBe(false);
+    expect(result.generateSpec).toBe(true);
+    expect(result.specDir).toBe('');
+    expect(result.specOut).toBe('');
+    expect(result.specName).toBe('');
     expect(result.requireTexts).toEqual([]);
   });
 
@@ -66,6 +70,10 @@ describe('hm-smoke-runner option parsing', () => {
       '--no-update-baseline',
       '--update-baseline-always',
       '--baseline-key', 'login-home',
+      '--no-generate-spec',
+      '--spec-dir', 'D:\\specs',
+      '--spec-out', 'D:\\specs\\custom.spec.ts',
+      '--spec-name', 'assistive-login',
     ]);
 
     const result = smokeRunner.collectRunOptions(options);
@@ -87,6 +95,10 @@ describe('hm-smoke-runner option parsing', () => {
     expect(result.updateBaselineOnPass).toBe(false);
     expect(result.updateBaselineAlways).toBe(true);
     expect(result.baselineKey).toBe('login-home');
+    expect(result.generateSpec).toBe(false);
+    expect(result.specDir).toBe('D:\\specs');
+    expect(result.specOut).toBe('D:\\specs\\custom.spec.ts');
+    expect(result.specName).toBe('assistive-login');
   });
 
   test('collectRunOptions rejects missing require-text value', () => {
@@ -119,5 +131,35 @@ describe('hm-smoke-runner option parsing', () => {
     const output = smokeRunner.buildFailureExplanation(summary, {});
     expect(output).toContain('visual_diff_exceeded');
     expect(output).toContain('trace.zip');
+  });
+
+  test('buildAssistivePlaywrightSpecDraft includes human review note and selectors', () => {
+    const draft = smokeRunner.buildAssistivePlaywrightSpecDraft({
+      summary: {
+        runId: 'run-7',
+        url: 'http://127.0.0.1:3000/dashboard',
+        route: '/dashboard',
+        title: 'Dashboard',
+        tracePath: 'trace.zip',
+      },
+      diagnostics: {
+        selectorChecks: [{ selector: '#app', ok: true }],
+        textChecks: [{ text: 'Welcome', ok: true }],
+      },
+      options: {},
+    });
+    expect(draft).toContain('HUMAN REVIEW REQUIRED');
+    expect(draft).toContain('await page.goto("http://127.0.0.1:3000/dashboard")');
+    expect(draft).toContain("#app");
+    expect(draft).toContain('Welcome');
+  });
+
+  test('buildSpecGenerationPaths honors explicit output', () => {
+    const paths = smokeRunner.buildSpecGenerationPaths(
+      { runtimeRoot: 'D:\\projects\\squidrun\\.squidrun', specOut: 'D:\\tmp\\generated.spec.ts' },
+      { route: '/dashboard', url: 'http://127.0.0.1:3000/dashboard' },
+    );
+    expect(paths.specPath).toBe('D:\\tmp\\generated.spec.ts');
+    expect(paths.specMetaPath).toBe('D:\\tmp\\generated.spec.ts.meta.json');
   });
 });

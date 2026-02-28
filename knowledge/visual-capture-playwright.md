@@ -1,4 +1,4 @@
-# Playwright Capture + Smoke Pipelines (P0-P3)
+# Playwright Capture + Smoke Pipelines (P0-P4)
 
 ## Purpose
 
@@ -123,3 +123,19 @@ When hard failures are detected, `hm-smoke-runner` writes:
 - `debug-package/explanation.md` (human-readable failure explanation)
 - `debug-package/network-summary.json` (request failures + HTTP error aggregation)
 - `debug-package/trace.zip` + screenshot copies (`before/after/diff/screenshot`) when available
+
+## P4 Assistive Test Generation
+
+On successful smoke runs, `hm-smoke-runner` now generates a human-review Playwright draft spec and metadata by default:
+
+- default output dir: `workspace/.squidrun/generated-tests/playwright/`
+- output files:
+  - `<slug>.spec.ts` (assistive draft with TODO guidance)
+  - `<slug>.spec.ts.meta.json` (generation metadata/checklist)
+
+Controls:
+
+- Disable generation: `--no-generate-spec`
+- Set target directory: `--spec-dir <path>`
+- Set explicit output file: `--spec-out <path>`
+- Override generated name: `--spec-name <name>`

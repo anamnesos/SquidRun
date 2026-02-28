@@ -4162,6 +4162,8 @@ class SquidRunApp {
       `missing_selectors=${Number(safeSummary.missingSelectorCount || 0)}`,
       `hard_failures=${Number(safeSummary.hardFailureCount || 0)}`,
       `debug_package=${safeSummary.debugPackagePath || 'n/a'}`,
+      `generated_spec=${safeSummary.generatedSpecPath || 'n/a'}`,
+      `spec_generation=${safeSummary.specGenerationStatus || 'n/a'}`,
     ];
     const hardFailures = Array.isArray(safeSummary.hardFailures) ? safeSummary.hardFailures : [];
     for (const failure of hardFailures.slice(0, 3)) {

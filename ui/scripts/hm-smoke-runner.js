@@ -90,6 +90,10 @@ function usage() {
   console.log('  --label <name>                      Run id label (default: smoke)');
   console.log('  --artifact-root <path>              Override artifact root');
   console.log('  --max-candidates <n>                Max URL candidates to probe');
+  console.log('  --no-generate-spec                  Disable draft Playwright spec generation on pass');
+  console.log('  --spec-dir <path>                   Directory for generated spec drafts');
+  console.log('  --spec-out <path>                   Explicit generated spec output file path');
+  console.log('  --spec-name <name>                  Override generated spec filename (without extension)');
   console.log('  --send-telegram [caption]           Send screenshot via Telegram');
   console.log('Examples:');
   console.log('  node hm-smoke-runner.js run --route /dashboard --require-selector "#app" --require-text "Dashboard"');
@@ -702,6 +706,176 @@ function buildFailureExplanation(summary = {}, diagnostics = {}) {
   return `${lines.join('\n')}\n`;
 }
 
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function deriveSpecSlug(summary = {}, options = {}) {
+  const routeToken = sanitizeToken(asString(summary.route || options.route, '/').replace(/\//g, '_'), 'root');
+  const titleToken = sanitizeToken(asString(summary.title, ''), '');
+  const key = summary.baselineKey || `${routeToken}-${shortHash(`${summary.url || ''}|${summary.route || ''}`)}`;
+  if (titleToken) {
+    return `${key}-${titleToken}`;
+  }
+  return key;
+}
+
+function buildSpecGenerationPaths(options = {}, summary = {}) {
+  const slug = deriveSpecSlug(summary, options);
+  const defaultSpecDir = path.join(options.runtimeRoot, 'generated-tests', 'playwright');
+  const specDir = asString(options.specDir, '')
+    ? path.resolve(asString(options.specDir, ''))
+    : defaultSpecDir;
+  const explicitOut = asString(options.specOut, '');
+  const nameOverride = sanitizeToken(asString(options.specName, ''), '');
+  const fileName = nameOverride
+    ? `${nameOverride}.spec.ts`
+    : `${slug}.spec.ts`;
+  const specPath = explicitOut
+    ? path.resolve(explicitOut)
+    : path.join(specDir, fileName);
+  return {
+    slug,
+    specDir,
+    specPath,
+    specMetaPath: `${specPath}.meta.json`,
+  };
+}
+
+function buildAssistivePlaywrightSpecDraft({ summary = {}, diagnostics = {}, options = {}, generatedAt = new Date().toISOString() } = {}) {
+  const selectors = asArray(diagnostics?.selectorChecks)
+    .filter((entry) => entry && entry.ok && asString(entry.selector, ''))
+    .map((entry) => asString(entry.selector, ''))
+    .slice(0, 12);
+  const requiredTexts = asArray(diagnostics?.textChecks)
+    .filter((entry) => entry && entry.ok && asString(entry.text, ''))
+    .map((entry) => asString(entry.text, ''))
+    .slice(0, 12);
+  const title = asString(summary.title, '');
+  const url = asString(summary.url, '');
+  const route = asString(summary.route, '/');
+  const tracePath = asString(summary.tracePath, '');
+  const runId = asString(summary.runId, '');
+  const a11yViolationCount = Number(summary.axeViolationCount || 0);
+  const brokenLinkCount = Number(summary.brokenLinkCount || 0);
+  const lines = [
+    "import { test, expect } from '@playwright/test';",
+    '',
+    '/**',
+    ' * AUTO-GENERATED DRAFT by SquidRun (P4).',
+    ' *',
+    ' * HUMAN REVIEW REQUIRED BEFORE MERGE:',
+    ' * 1. Verify selectors/assertions are stable for this feature.',
+    ' * 2. Add domain-specific assertions for business behavior.',
+    ' * 3. Split into multiple tests if this route has complex flows.',
+    ' */',
+    `const GENERATED_META = Object.freeze(${JSON.stringify({
+      source: 'hm-smoke-runner',
+      generatedAt,
+      runId,
+      route,
+      url,
+      tracePath,
+      a11yViolationCount,
+      brokenLinkCount,
+    }, null, 2)});`,
+    '',
+    `test.describe('${deriveSpecSlug(summary, options)} (assistive draft)', () => {`,
+    "  test('loads route and key UI anchors', async ({ page }) => {",
+  ];
+
+  if (url) {
+    lines.push(`    await page.goto(${JSON.stringify(url)});`);
+    lines.push(`    await expect(page).toHaveURL(${JSON.stringify(url)});`);
+  } else {
+    lines.push("    // TODO: set the correct URL/route for this generated test.");
+    lines.push("    await page.goto('http://127.0.0.1:3000/');");
+  }
+
+  if (title) {
+    const titleRegex = new RegExp(escapeRegExp(title), 'i').toString();
+    lines.push(`    await expect(page).toHaveTitle(${titleRegex});`);
+  } else {
+    lines.push('    // TODO: add expected title assertion if applicable.');
+  }
+
+  if (selectors.length > 0) {
+    lines.push('');
+    lines.push('    // Captured from successful smoke selector checks.');
+    for (const selector of selectors) {
+      lines.push(`    await expect(page.locator(${JSON.stringify(selector)})).toBeVisible();`);
+    }
+  } else {
+    lines.push('');
+    lines.push('    // TODO: add stable selector assertions.');
+  }
+
+  if (requiredTexts.length > 0) {
+    lines.push('');
+    lines.push('    // Captured from successful smoke required-text checks.');
+    for (const text of requiredTexts) {
+      lines.push(`    await expect(page.getByText(${JSON.stringify(text)}, { exact: false })).toBeVisible();`);
+    }
+  } else {
+    lines.push('');
+    lines.push('    // TODO: add user-visible content assertions.');
+  }
+
+  lines.push('');
+  lines.push('    // Assistive hints from smoke diagnostics:');
+  lines.push(`    // a11y violations recorded: ${a11yViolationCount}`);
+  lines.push(`    // broken links recorded: ${brokenLinkCount}`);
+  if (tracePath) {
+    lines.push(`    // trace artifact: ${tracePath}`);
+  }
+  lines.push('  });');
+  lines.push('});');
+  lines.push('');
+
+  return `${lines.join('\n')}`;
+}
+
+function generateAssistivePlaywrightSpec({ summary = {}, diagnostics = {}, options = {} } = {}) {
+  const paths = buildSpecGenerationPaths(options, summary);
+  ensureDir(path.dirname(paths.specPath));
+  ensureDir(path.dirname(paths.specMetaPath));
+  const generatedAt = new Date().toISOString();
+  const content = buildAssistivePlaywrightSpecDraft({
+    summary,
+    diagnostics,
+    options,
+    generatedAt,
+  });
+  fs.writeFileSync(paths.specPath, content, 'utf8');
+
+  const metadata = {
+    ok: true,
+    source: 'hm-smoke-runner',
+    generatedAt,
+    runId: summary.runId || null,
+    slug: paths.slug,
+    specPath: paths.specPath,
+    specMetaPath: paths.specMetaPath,
+    route: summary.route || null,
+    url: summary.url || null,
+    tracePath: summary.tracePath || null,
+    selectorCount: asArray(diagnostics?.selectorChecks).filter((entry) => entry?.ok).length,
+    textAssertionCount: asArray(diagnostics?.textChecks).filter((entry) => entry?.ok).length,
+    humanReviewRequired: true,
+    reviewChecklist: [
+      'Confirm selectors/assertions are stable',
+      'Add business-level assertions',
+      'Split by flow if needed',
+    ],
+  };
+  writeJson(paths.specMetaPath, metadata);
+  return metadata;
+}
+
 function writeJson(filePath, payload) {
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }
@@ -1007,6 +1181,11 @@ function collectRunOptions(options) {
   });
   const updateBaselineOnPass = !options.has('no-update-baseline');
   const updateBaselineAlways = options.has('update-baseline-always');
+  const generateSpec = resolveBooleanFlag(options, {
+    enableKey: 'generate-spec',
+    disableKey: 'no-generate-spec',
+    defaultValue: true,
+  });
 
   return {
     projectPath,
@@ -1041,6 +1220,10 @@ function collectRunOptions(options) {
     enableVisualDiff,
     updateBaselineOnPass,
     updateBaselineAlways,
+    generateSpec,
+    specDir: asString(getOption(options, 'spec-dir', ''), ''),
+    specOut: asString(getOption(options, 'spec-out', ''), ''),
+    specName: asString(getOption(options, 'spec-name', ''), ''),
     collectA11y,
     validateLinks,
     includeExternalLinks: options.has('include-external-links'),
@@ -1076,6 +1259,7 @@ async function runSmoke(options) {
   let linkValidation = null;
   let visualDiff = null;
   let debugPackage = null;
+  let specGeneration = null;
   const runtime = {
     title: null,
     finalUrl: null,
@@ -1088,6 +1272,7 @@ async function runSmoke(options) {
     ariaError: null,
     domSummaryError: null,
     visualDiffError: null,
+    specGenerationError: null,
   };
 
   let resolution = null;
@@ -1408,6 +1593,7 @@ async function runSmoke(options) {
       domSummary,
       linkValidation,
       visualDiff,
+      specGeneration,
     },
     selectorChecks,
     textChecks,
@@ -1467,6 +1653,10 @@ async function runSmoke(options) {
     debugManifestPath: null,
     debugExplanationPath: null,
     debugNetworkSummaryPath: null,
+    generatedSpecPath: null,
+    generatedSpecMetaPath: null,
+    specGenerationStatus: null,
+    specGenerationError: null,
     hardFailureCount: failures.list.length,
     hardFailures: failures.list.slice(),
     readinessChecks: Array.isArray(resolution?.checks) ? resolution.checks : [],
@@ -1522,9 +1712,31 @@ async function runSmoke(options) {
       summary.debugNetworkSummaryPath = debugPackage.networkSummaryPath || null;
     }
   }
+  if (summary.ok && options.generateSpec) {
+    try {
+      specGeneration = generateAssistivePlaywrightSpec({
+        summary,
+        diagnostics,
+        options,
+      });
+      summary.generatedSpecPath = specGeneration.specPath || null;
+      summary.generatedSpecMetaPath = specGeneration.specMetaPath || null;
+      summary.specGenerationStatus = 'generated';
+    } catch (err) {
+      runtime.specGenerationError = err.message;
+      summary.specGenerationStatus = 'generation_failed';
+      summary.specGenerationError = err.message;
+    }
+  } else if (!summary.ok && options.generateSpec) {
+    summary.specGenerationStatus = 'skipped_run_failed';
+  } else if (!options.generateSpec) {
+    summary.specGenerationStatus = 'disabled';
+  }
   diagnostics.runtime = runtime;
   diagnostics.hardFailures = failures.list.slice();
   diagnostics.debugPackage = debugPackage;
+  diagnostics.specGeneration = specGeneration;
+  diagnostics.signals.specGeneration = specGeneration;
 
   writeJson(layout.diagnosticsPath, diagnostics);
   writeJson(layout.summaryPath, summary);
@@ -1547,6 +1759,8 @@ async function runSmoke(options) {
       debugManifest: summary.debugManifestPath,
       debugExplanation: summary.debugExplanationPath,
       debugNetworkSummary: summary.debugNetworkSummaryPath,
+      generatedSpec: summary.generatedSpecPath,
+      generatedSpecMeta: summary.generatedSpecMetaPath,
       diagnostics: layout.diagnosticsPath,
       summary: layout.summaryPath,
       manifest: layout.manifestPath,
@@ -1566,6 +1780,7 @@ async function runSmoke(options) {
       brokenLinks: summary.brokenLinkCount,
       diffPixels: summary.diffPixelCount,
       diffThresholdExceeded: summary.diffThresholdExceeded ? 1 : 0,
+      generatedSpec: summary.generatedSpecPath ? 1 : 0,
       hardFailures: summary.hardFailureCount,
     },
   });
@@ -1614,6 +1829,9 @@ module.exports = {
   buildArtifactLayout,
   buildDiffBaselineKey,
   buildFailureExplanation,
+  buildAssistivePlaywrightSpecDraft,
+  buildSpecGenerationPaths,
+  generateAssistivePlaywrightSpec,
   runVisualDiffPipeline,
   maybeUpdateBaseline,
   runSmoke,
