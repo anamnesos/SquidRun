@@ -54,7 +54,7 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 - Comms history: `hm-comms history --last N` (also `--session N`, `--between <sender> <target>`, `--json`)
 - Coordination state root: `.squidrun/`
 - Terminal output is user-facing; agent-to-agent communication uses `hm-send`
-- **Screenshots:** When the user says they uploaded a screenshot, it is at `workspace/screenshots/latest.png`. Always read that file to view it.
+- **Screenshots:** When the user says they uploaded a screenshot, it is at `.squidrun/screenshots/latest.png`. Always read that file to view it.
 
 ### Runtime Truths (Must Verify Before Diagnosis)
 

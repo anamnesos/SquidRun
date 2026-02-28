@@ -4,12 +4,71 @@ const os = require('os');
 const { spawnSync } = require('child_process');
 const WebSocket = require('ws');
 const log = require('../logger');
-const { resolveCoordPath } = require('../../config');
+const { resolveCoordPath, getProjectRoot } = require('../../config');
 const { getLocalDeviceId, isCrossDeviceEnabled } = require('../cross-device-target');
 
 const RELAY_TIMEOUT_MS = 2500;
 const EXPECTED_NODE_MAJOR = 22;
 const CLI_TIMEOUT_MS = 2000;
+const LOGIN_SHELL_PATH_TIMEOUT_MS = 3000;
+
+function collectPathEntries(...rawValues) {
+  const seen = new Set();
+  const entries = [];
+  for (const value of rawValues) {
+    if (typeof value !== 'string' || value.length === 0) continue;
+    const parts = value.split(path.delimiter);
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      entries.push(trimmed);
+    }
+  }
+  return entries;
+}
+
+function resolveLoginShellPath() {
+  if (process.platform === 'win32') return '';
+  const shellsToTry = process.platform === 'darwin'
+    ? [process.env.SHELL, '/bin/zsh', '/bin/bash']
+    : [process.env.SHELL];
+  for (const shellPath of shellsToTry) {
+    if (typeof shellPath !== 'string' || !shellPath.trim()) continue;
+    const result = spawnSync(shellPath.trim(), ['-ilc', 'printf %s "$PATH"'], {
+      encoding: 'utf8',
+      timeout: LOGIN_SHELL_PATH_TIMEOUT_MS,
+    });
+    const output = String(result?.stdout || '').trim();
+    if (result?.status === 0 && output) return output;
+  }
+  return '';
+}
+
+function resolvePreflightPath() {
+  const projectRoot = typeof getProjectRoot === 'function' ? getProjectRoot() : '';
+  const packagedWorkspaceBin = path.join(os.homedir(), 'SquidRun', '.squidrun', 'bin');
+  const projectWorkspaceBin = projectRoot ? path.join(projectRoot, '.squidrun', 'bin') : '';
+  const extraPaths = process.platform === 'darwin'
+    ? ['/opt/homebrew/bin', '/usr/local/bin', path.join(os.homedir(), '.local', 'bin')]
+    : [];
+  const loginShellPath = resolveLoginShellPath();
+  return collectPathEntries(
+    packagedWorkspaceBin,
+    projectWorkspaceBin,
+    ...extraPaths,
+    loginShellPath,
+    process.env.PATH || ''
+  ).join(path.delimiter);
+}
+
+function resolvePreflightEnv() {
+  const resolvedPath = resolvePreflightPath();
+  return {
+    ...process.env,
+    PATH: resolvedPath || process.env.PATH || '',
+  };
+}
 
 function makeCheck(id, label, ok, detail, extra = {}) {
   return {
@@ -22,12 +81,13 @@ function makeCheck(id, label, ok, detail, extra = {}) {
   };
 }
 
-function detectCliBinary(binaryName) {
+function detectCliBinary(binaryName, env = process.env) {
   const isWindows = process.platform === 'win32';
   const command = isWindows ? 'where' : 'which';
   const result = spawnSync(command, [binaryName], {
     encoding: 'utf8',
     timeout: CLI_TIMEOUT_MS,
+    env,
   });
 
   const foundPath = String(result?.stdout || '').split(/\r?\n/).map(line => line.trim()).find(Boolean) || null;
@@ -40,10 +100,11 @@ function detectCliBinary(binaryName) {
   );
 }
 
-function checkSystemNodeVersion() {
+function checkSystemNodeVersion(env = process.env) {
   const result = spawnSync('node', ['-v'], {
     encoding: 'utf8',
     timeout: CLI_TIMEOUT_MS,
+    env,
   });
   const output = String(result?.stdout || '').trim();
   const match = output.match(/^v(\d+)\./);
@@ -132,14 +193,15 @@ function checkRelayConnectivity() {
 }
 
 async function runPreflightChecks() {
+  const preflightEnv = resolvePreflightEnv();
   const checks = [
     checkEnvVariables(),
-    detectCliBinary('claude'),
-    detectCliBinary('codex'),
-    detectCliBinary('gemini'),
+    detectCliBinary('claude', preflightEnv),
+    detectCliBinary('codex', preflightEnv),
+    detectCliBinary('gemini', preflightEnv),
     await checkRelayConnectivity(),
     checkWorkspaceWritable(),
-    checkSystemNodeVersion(),
+    checkSystemNodeVersion(preflightEnv),
   ];
 
   const passed = checks.filter(check => check.ok).length;
@@ -189,4 +251,3 @@ module.exports = {
   registerPreflightHandlers,
   runPreflightChecks,
 };
-
