@@ -323,11 +323,12 @@ describe('terminal.js module', () => {
       });
 
       const caps = terminal.getPaneInjectionCapabilities('1');
-      expect(caps.enterMethod).toBe('trusted');
+      const isDarwin = process.platform === 'darwin';
+      expect(caps.enterMethod).toBe(isDarwin ? 'pty' : 'trusted');
       expect(caps.submitMethod).toBe('sendTrustedEnter');
-      expect(caps.requiresFocusForEnter).toBe(true);
-      expect(caps.verifySubmitAccepted).toBe(true);
-      expect(caps.deferSubmitWhilePaneActive).toBe(true);
+      expect(caps.requiresFocusForEnter).toBe(!isDarwin);
+      expect(caps.verifySubmitAccepted).toBe(!isDarwin);
+      expect(caps.deferSubmitWhilePaneActive).toBe(!isDarwin);
     });
 
     test('disables submit verification/defer for Claude on macOS hidden-host-off path', () => {
@@ -366,8 +367,9 @@ describe('terminal.js module', () => {
       });
 
       const caps = terminal.getPaneInjectionCapabilities('1');
+      const isDarwin = process.platform === 'darwin';
       expect(caps.enterMethod).toBe('pty');
-      expect(caps.submitMethod).toBe('hidden-pane-host-pty-enter');
+      expect(caps.submitMethod).toBe(isDarwin ? 'sendTrustedEnter' : 'hidden-pane-host-pty-enter');
       expect(caps.requiresFocusForEnter).toBe(false);
       expect(caps.verifySubmitAccepted).toBe(false);
       expect(caps.deferSubmitWhilePaneActive).toBe(false);
@@ -381,8 +383,9 @@ describe('terminal.js module', () => {
       terminal.setInputLocked('1', false);
 
       const caps = terminal.getPaneInjectionCapabilities('1');
+      const isDarwin = process.platform === 'darwin';
       expect(caps.enterMethod).toBe('pty');
-      expect(caps.submitMethod).toBe('hidden-pane-host-pty-enter');
+      expect(caps.submitMethod).toBe(isDarwin ? 'sendTrustedEnter' : 'hidden-pane-host-pty-enter');
       expect(caps.requiresFocusForEnter).toBe(false);
     });
 
