@@ -27,6 +27,7 @@ const {
   asString,
   asPositiveInt,
   ensureDir,
+  applyRouteToUrl,
   resolveProjectPath,
   resolveVisualRuntimeRoot,
   resolveReadyVisualUrl,
@@ -46,6 +47,10 @@ const DEFAULT_MAX_BROKEN_LINKS = 0;
 const DEFAULT_MIN_BODY_TEXT_CHARS = 0;
 const DEFAULT_MAX_DIFF_PIXELS = -1;
 const DEFAULT_PIXEL_DIFF_THRESHOLD = 0.1;
+const DEFAULT_LIGHTHOUSE_TIMEOUT_MS = 45000;
+const DEFAULT_LIGHTHOUSE_MIN_SCORE = -1;
+const DEFAULT_GATE_PROFILE = 'per-cycle';
+const VALID_GATE_PROFILE = new Set(['per-cycle', 'nightly', 'release']);
 const DEFAULT_WAIT_UNTIL = 'domcontentloaded';
 const VALID_WAIT_UNTIL = new Set(['load', 'domcontentloaded', 'networkidle', 'commit']);
 const DEFAULT_VIEWPORT = Object.freeze({ width: 1440, height: 900 });
@@ -53,6 +58,8 @@ const DEFAULT_VIEWPORT = Object.freeze({ width: 1440, height: 900 });
 let playwrightModule = null;
 let axeSourceCache = null;
 let pixelmatchCache = null;
+let lighthouseCache = null;
+let chromeLauncherCache = null;
 
 function usage() {
   console.log('Usage: node hm-smoke-runner.js [run] [options]');
@@ -94,6 +101,15 @@ function usage() {
   console.log('  --spec-dir <path>                   Directory for generated spec drafts');
   console.log('  --spec-out <path>                   Explicit generated spec output file path');
   console.log('  --spec-name <name>                  Override generated spec filename (without extension)');
+  console.log('  --no-perf                           Disable perf capture (web-vitals + lighthouse)');
+  console.log('  --no-web-vitals                     Disable web-vitals capture');
+  console.log('  --no-lighthouse                     Disable Lighthouse capture');
+  console.log('  --perf-route <path>                 Additional key route for perf capture (repeatable)');
+  console.log('  --lighthouse-min-score <0..100>     Fail when Lighthouse perf score drops below threshold');
+  console.log('  --lighthouse-timeout-ms <ms>        Lighthouse run timeout (default: 45000)');
+  console.log('  --gate-profile <profile>            per-cycle|nightly|release (default: per-cycle)');
+  console.log('  --force-firefox-gate                Run Firefox gate even outside nightly/release');
+  console.log('  --no-browser-matrix                 Disable additional browser gate runs');
   console.log('  --send-telegram [caption]           Send screenshot via Telegram');
   console.log('Examples:');
   console.log('  node hm-smoke-runner.js run --route /dashboard --require-selector "#app" --require-text "Dashboard"');
@@ -221,6 +237,33 @@ async function readPixelmatch() {
   }
 }
 
+async function readLighthouse() {
+  if (lighthouseCache) return lighthouseCache;
+  try {
+    const mod = await import('lighthouse');
+    const resolved = (typeof mod?.default === 'function')
+      ? mod.default
+      : (typeof mod?.lighthouse === 'function' ? mod.lighthouse : null);
+    if (typeof resolved !== 'function') {
+      throw new Error('lighthouse_export_invalid');
+    }
+    lighthouseCache = resolved;
+    return resolved;
+  } catch (err) {
+    throw new Error(`lighthouse is not available. Install from ui/: npm install lighthouse --save\nOriginal error: ${err.message}`);
+  }
+}
+
+function readChromeLauncher() {
+  if (chromeLauncherCache) return chromeLauncherCache;
+  try {
+    chromeLauncherCache = require('chrome-launcher');
+    return chromeLauncherCache;
+  } catch (err) {
+    throw new Error(`chrome-launcher is not available. Install from ui/: npm install chrome-launcher --save\nOriginal error: ${err.message}`);
+  }
+}
+
 function resolveBooleanFlag(options, { enableKey, disableKey, defaultValue = false }) {
   if (disableKey && options.has(disableKey)) return false;
   if (enableKey && options.has(enableKey)) return true;
@@ -238,6 +281,48 @@ function asFloatInRange(value, fallback = DEFAULT_PIXEL_DIFF_THRESHOLD, min = 0,
   if (!Number.isFinite(numeric)) return fallback;
   if (numeric < min || numeric > max) return fallback;
   return numeric;
+}
+
+function asNullableFloatInRange(value, fallback = null, min = 0, max = 100) {
+  if (value === null || value === undefined || value === '') return fallback;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  if (numeric < min || numeric > max) return fallback;
+  return numeric;
+}
+
+function normalizeGateProfile(value, fallback = DEFAULT_GATE_PROFILE) {
+  const token = asString(value, fallback).toLowerCase();
+  if (VALID_GATE_PROFILE.has(token)) return token;
+  return fallback;
+}
+
+function normalizeRouteToken(value) {
+  const raw = asString(value, '');
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const parsed = new URL(raw);
+      return parsed.pathname || '/';
+    } catch {
+      return '';
+    }
+  }
+  return raw.startsWith('/') ? raw : `/${raw}`;
+}
+
+function shouldRunFirefoxGate(options = {}) {
+  if (!options || typeof options !== 'object') return false;
+  if (options.enableBrowserMatrix === false) return false;
+  if (options.forceFirefoxGate === true) return true;
+  const profile = normalizeGateProfile(options.gateProfile, DEFAULT_GATE_PROFILE);
+  return profile === 'nightly' || profile === 'release';
+}
+
+function roundMetric(value, places = 3) {
+  if (!Number.isFinite(value)) return null;
+  const factor = 10 ** places;
+  return Math.round(value * factor) / factor;
 }
 
 function sanitizeToken(value, fallback = 'default') {
@@ -560,6 +645,459 @@ async function collectAndValidateLinks(page, baseUrl, options = {}) {
   };
 }
 
+function buildPerformanceTargets(options = {}, targetUrl = '') {
+  const baseUrl = asString(targetUrl, '');
+  if (!baseUrl) return [];
+
+  const targets = [];
+  const seen = new Set();
+  const pushTarget = (route, url, source) => {
+    const normalizedUrl = asString(url, '');
+    if (!normalizedUrl) return;
+    const key = normalizedUrl.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    targets.push({
+      route: normalizeRouteToken(route) || '/',
+      url: normalizedUrl,
+      source: asString(source, 'derived'),
+    });
+  };
+
+  const routeFromOptions = normalizeRouteToken(options.route);
+  let routeFromUrl = '/';
+  try {
+    const parsed = new URL(baseUrl);
+    routeFromUrl = parsed.pathname || '/';
+  } catch {
+    // Fall back to root.
+  }
+
+  pushTarget(routeFromOptions || routeFromUrl, baseUrl, 'primary');
+  const configuredRoutes = Array.isArray(options.perfRoutes) ? options.perfRoutes : [];
+  for (const configuredRoute of configuredRoutes) {
+    const route = normalizeRouteToken(configuredRoute);
+    if (!route) continue;
+    const resolved = applyRouteToUrl(baseUrl, route);
+    pushTarget(route, resolved, 'perf-route');
+  }
+  return targets;
+}
+
+async function collectWebVitalsSnapshot(page) {
+  return await page.evaluate(() => {
+    const toNumber = (value) => (Number.isFinite(value) ? Number(value) : null);
+    const nav = performance.getEntriesByType('navigation')[0];
+    const paintEntries = performance.getEntriesByType('paint');
+    const fcpEntry = paintEntries.find((entry) => entry.name === 'first-contentful-paint');
+    const lcpEntries = performance.getEntriesByType('largest-contentful-paint');
+    const lcpEntry = lcpEntries.length > 0 ? lcpEntries[lcpEntries.length - 1] : null;
+    const clsEntries = performance.getEntriesByType('layout-shift');
+    const cls = clsEntries.reduce((sum, entry) => {
+      if (entry && entry.hadRecentInput === false && Number.isFinite(entry.value)) {
+        return sum + entry.value;
+      }
+      return sum;
+    }, 0);
+
+    return {
+      collectedAt: new Date().toISOString(),
+      metrics: {
+        ttfbMs: nav ? toNumber(nav.responseStart) : null,
+        domContentLoadedMs: nav ? toNumber(nav.domContentLoadedEventEnd) : null,
+        loadEventMs: nav ? toNumber(nav.loadEventEnd) : null,
+        fcpMs: fcpEntry ? toNumber(fcpEntry.startTime) : null,
+        lcpMs: lcpEntry ? toNumber(lcpEntry.startTime) : null,
+        cls: toNumber(cls),
+      },
+    };
+  });
+}
+
+function averageMetric(entries = [], key) {
+  const values = entries
+    .map((entry) => Number(entry?.metrics?.[key]))
+    .filter((value) => Number.isFinite(value));
+  if (values.length === 0) return null;
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return roundMetric(total / values.length, key === 'cls' ? 4 : 2);
+}
+
+async function runWebVitalsCapture({ playwright, options, targets }) {
+  const result = {
+    enabled: options.collectWebVitals === true,
+    status: 'disabled',
+    totalRoutes: targets.length,
+    okRoutes: 0,
+    failedRoutes: 0,
+    runs: [],
+    averages: {
+      ttfbMs: null,
+      domContentLoadedMs: null,
+      loadEventMs: null,
+      fcpMs: null,
+      lcpMs: null,
+      cls: null,
+    },
+    error: null,
+  };
+  if (!result.enabled) return result;
+  if (!Array.isArray(targets) || targets.length < 1) {
+    result.status = 'no_targets';
+    return result;
+  }
+
+  let browser = null;
+  let context = null;
+  try {
+    browser = await playwright.chromium.launch({ headless: true });
+    context = await browser.newContext({ viewport: options.viewport });
+    for (const target of targets) {
+      const runEntry = {
+        route: target.route,
+        url: target.url,
+        source: target.source,
+        ok: false,
+        error: null,
+        finalUrl: null,
+        title: null,
+        metrics: null,
+      };
+      let page = null;
+      try {
+        page = await context.newPage();
+        await page.goto(target.url, {
+          waitUntil: options.waitUntil,
+          timeout: options.timeoutMs,
+        });
+        await page.waitForLoadState('networkidle', {
+          timeout: Math.min(options.timeoutMs, 10000),
+        }).catch(() => {});
+        if (options.settleMs > 0) {
+          await page.waitForTimeout(options.settleMs);
+        }
+        const snapshot = await collectWebVitalsSnapshot(page);
+        runEntry.metrics = snapshot?.metrics || null;
+        runEntry.finalUrl = page.url();
+        runEntry.title = await page.title().catch(() => null);
+        runEntry.ok = true;
+      } catch (err) {
+        runEntry.error = err.message || 'web_vitals_capture_failed';
+      } finally {
+        if (page) await page.close().catch(() => {});
+      }
+      result.runs.push(runEntry);
+    }
+  } catch (err) {
+    result.error = err.message || 'web_vitals_runtime_failed';
+  } finally {
+    if (context) await context.close().catch(() => {});
+    if (browser) await browser.close().catch(() => {});
+  }
+
+  const successful = result.runs.filter((entry) => entry.ok);
+  result.okRoutes = successful.length;
+  result.failedRoutes = Math.max(0, result.runs.length - successful.length);
+  result.averages = {
+    ttfbMs: averageMetric(successful, 'ttfbMs'),
+    domContentLoadedMs: averageMetric(successful, 'domContentLoadedMs'),
+    loadEventMs: averageMetric(successful, 'loadEventMs'),
+    fcpMs: averageMetric(successful, 'fcpMs'),
+    lcpMs: averageMetric(successful, 'lcpMs'),
+    cls: averageMetric(successful, 'cls'),
+  };
+  if (result.error) {
+    result.status = 'error';
+  } else if (result.okRoutes === result.totalRoutes) {
+    result.status = 'ok';
+  } else if (result.okRoutes > 0) {
+    result.status = 'partial';
+  } else {
+    result.status = 'error';
+    if (!result.error) result.error = 'web_vitals_all_routes_failed';
+  }
+  return result;
+}
+
+function extractLighthouseMetrics(lhr = {}) {
+  const audits = lhr && typeof lhr === 'object' ? lhr.audits || {} : {};
+  const read = (id, places = 2) => {
+    const value = Number(audits?.[id]?.numericValue);
+    return Number.isFinite(value) ? roundMetric(value, places) : null;
+  };
+  return {
+    performanceScore: Number.isFinite(Number(lhr?.categories?.performance?.score))
+      ? roundMetric(Number(lhr.categories.performance.score) * 100, 2)
+      : null,
+    firstContentfulPaintMs: read('first-contentful-paint'),
+    largestContentfulPaintMs: read('largest-contentful-paint'),
+    totalBlockingTimeMs: read('total-blocking-time'),
+    cumulativeLayoutShift: read('cumulative-layout-shift', 4),
+    speedIndexMs: read('speed-index'),
+    interactiveMs: read('interactive'),
+  };
+}
+
+function resolveChromiumExecutablePath(playwright) {
+  try {
+    if (playwright?.chromium && typeof playwright.chromium.executablePath === 'function') {
+      const candidate = playwright.chromium.executablePath();
+      if (candidate && fs.existsSync(candidate)) return candidate;
+    }
+  } catch {
+    // Fall through to default chrome-launcher lookup.
+  }
+  return null;
+}
+
+async function runLighthouseCapture({ playwright, options, layout, targets }) {
+  const result = {
+    enabled: options.collectLighthouse === true,
+    status: 'disabled',
+    totalRoutes: targets.length,
+    okRoutes: 0,
+    failedRoutes: 0,
+    lighthouseMinScore: options.lighthouseMinScore,
+    averagePerformanceScore: null,
+    belowThresholdCount: 0,
+    belowThresholdRoutes: [],
+    reports: [],
+    error: null,
+  };
+  if (!result.enabled) return result;
+  if (!Array.isArray(targets) || targets.length < 1) {
+    result.status = 'no_targets';
+    return result;
+  }
+
+  ensureDir(layout.lighthouseDir);
+  let chrome = null;
+  try {
+    const lighthouse = await readLighthouse();
+    const chromeLauncher = readChromeLauncher();
+    const chromePath = resolveChromiumExecutablePath(playwright);
+    const launchOptions = {
+      logLevel: 'error',
+      chromeFlags: [
+        '--headless=new',
+        '--disable-gpu',
+        '--disable-dev-shm-usage',
+        '--no-sandbox',
+      ],
+    };
+    if (chromePath) {
+      launchOptions.chromePath = chromePath;
+    }
+    chrome = await chromeLauncher.launch(launchOptions);
+    for (const target of targets) {
+      const routeToken = sanitizeToken(asString(target.route, '/').replace(/\//g, '_'), 'root');
+      const reportPath = path.join(layout.lighthouseDir, `${routeToken}-${shortHash(target.url)}.lhr.json`);
+      const entry = {
+        route: target.route,
+        url: target.url,
+        source: target.source,
+        ok: false,
+        reportPath,
+        metrics: null,
+        error: null,
+      };
+      try {
+        const runFlags = {
+          port: chrome.port,
+          output: 'json',
+          logLevel: 'error',
+          onlyCategories: ['performance'],
+          disableStorageReset: true,
+          maxWaitForLoad: options.lighthouseTimeoutMs,
+          throttlingMethod: 'provided',
+          emulatedFormFactor: 'desktop',
+          screenEmulation: { disabled: true },
+        };
+        const lhResult = await lighthouse(target.url, runFlags);
+        const lhr = lhResult?.lhr || null;
+        const reportRaw = Array.isArray(lhResult?.report)
+          ? lhResult.report[0]
+          : lhResult?.report;
+        const reportJson = (typeof reportRaw === 'string' && reportRaw.trim().length > 0)
+          ? reportRaw
+          : JSON.stringify(lhr || {}, null, 2);
+        fs.writeFileSync(reportPath, `${reportJson.trim()}\n`, 'utf8');
+        entry.metrics = extractLighthouseMetrics(lhr || {});
+        entry.ok = true;
+      } catch (err) {
+        entry.error = err.message || 'lighthouse_run_failed';
+      }
+      result.reports.push(entry);
+    }
+  } catch (err) {
+    result.error = err.message || 'lighthouse_runtime_failed';
+  } finally {
+    if (chrome && typeof chrome.kill === 'function') {
+      await chrome.kill().catch(() => {});
+    }
+  }
+
+  const successful = result.reports.filter((entry) => entry.ok);
+  result.okRoutes = successful.length;
+  result.failedRoutes = Math.max(0, result.reports.length - successful.length);
+  if (successful.length > 0) {
+    const scoreSum = successful.reduce((sum, entry) => {
+      const score = Number(entry?.metrics?.performanceScore);
+      return Number.isFinite(score) ? sum + score : sum;
+    }, 0);
+    const scoreCount = successful.filter((entry) => Number.isFinite(Number(entry?.metrics?.performanceScore))).length;
+    result.averagePerformanceScore = scoreCount > 0 ? roundMetric(scoreSum / scoreCount, 2) : null;
+  }
+
+  if (options.lighthouseMinScore >= 0) {
+    result.belowThresholdRoutes = successful
+      .filter((entry) => Number(entry?.metrics?.performanceScore) < options.lighthouseMinScore)
+      .map((entry) => ({
+        route: entry.route,
+        url: entry.url,
+        performanceScore: Number(entry?.metrics?.performanceScore),
+        reportPath: entry.reportPath,
+      }));
+    result.belowThresholdCount = result.belowThresholdRoutes.length;
+  }
+
+  if (result.error) {
+    result.status = 'error';
+  } else if (result.okRoutes === result.totalRoutes) {
+    result.status = 'ok';
+  } else if (result.okRoutes > 0) {
+    result.status = 'partial';
+  } else {
+    result.status = 'error';
+    if (!result.error) result.error = 'lighthouse_all_routes_failed';
+  }
+  return result;
+}
+
+async function runFirefoxGateCheck({ playwright, options, targetUrl }) {
+  const result = {
+    required: options.runFirefoxGate === true,
+    attempted: false,
+    status: 'skipped',
+    browser: 'firefox',
+    profile: options.gateProfile,
+    forced: options.forceFirefoxGate === true,
+    url: targetUrl,
+    finalUrl: null,
+    title: null,
+    elapsedMs: 0,
+    selectorChecks: [],
+    textChecks: [],
+    consoleErrorCount: 0,
+    pageErrorCount: 0,
+    requestFailureCount: 0,
+    httpErrorCount: 0,
+    reasons: [],
+    error: null,
+    ok: true,
+  };
+  if (!result.required) return result;
+  if (!targetUrl) {
+    result.attempted = true;
+    result.status = 'failed';
+    result.ok = false;
+    result.reasons.push('target_url_missing');
+    return result;
+  }
+
+  const startedAtMs = Date.now();
+  let browser = null;
+  let context = null;
+  let page = null;
+  const consoleErrors = [];
+  const pageErrors = [];
+  const requestFailures = [];
+  const httpErrors = [];
+  try {
+    result.attempted = true;
+    const headless = options.headed ? false : true;
+    browser = await playwright.firefox.launch({ headless });
+    context = await browser.newContext({ viewport: options.viewport });
+    page = await context.newPage();
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') consoleErrors.push(normalizeConsoleMessage(msg));
+    });
+    page.on('pageerror', (err) => {
+      pageErrors.push(normalizePageError(err));
+    });
+    page.on('requestfailed', (req) => {
+      requestFailures.push(normalizeRequestFailed(req));
+    });
+    page.on('response', (res) => {
+      if (res.status() >= 400) httpErrors.push(normalizeHttpError(res));
+    });
+
+    await page.goto(targetUrl, { waitUntil: options.waitUntil, timeout: options.timeoutMs });
+    await page.waitForLoadState('domcontentloaded', { timeout: options.timeoutMs }).catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: Math.min(options.timeoutMs, 10000) }).catch(() => {});
+    if (options.settleMs > 0) {
+      await page.waitForTimeout(options.settleMs);
+    }
+
+    for (const selector of options.requireSelectors) {
+      const check = {
+        selector,
+        ok: false,
+        error: null,
+      };
+      try {
+        await page.waitForSelector(selector, {
+          state: 'attached',
+          timeout: options.selectorTimeoutMs,
+        });
+        check.ok = true;
+      } catch (err) {
+        check.error = err.message || 'selector_not_found';
+        result.reasons.push(`required_selector_missing:${selector}`);
+      }
+      result.selectorChecks.push(check);
+    }
+
+    if (Array.isArray(options.requireTexts) && options.requireTexts.length > 0) {
+      const bodyText = await page.evaluate(() => (document.body?.innerText || '').trim()).catch(() => '');
+      const checks = buildRequiredTextChecks(bodyText, options.requireTexts, options.contentCaseSensitive === true);
+      result.textChecks.push(...checks);
+      for (const check of checks) {
+        if (!check.ok) {
+          result.reasons.push(`required_text_missing:${check.text}`);
+        }
+      }
+    }
+
+    result.title = await page.title().catch(() => null);
+    result.finalUrl = page.url();
+  } catch (err) {
+    result.error = err.message || 'firefox_gate_runtime_failed';
+    result.reasons.push(`navigation_failed:${result.error}`);
+  } finally {
+    if (page) await page.close().catch(() => {});
+    if (context) await context.close().catch(() => {});
+    if (browser) await browser.close().catch(() => {});
+  }
+
+  result.elapsedMs = Math.max(0, Date.now() - startedAtMs);
+  result.consoleErrorCount = consoleErrors.length;
+  result.pageErrorCount = pageErrors.length;
+  result.requestFailureCount = requestFailures.length;
+  result.httpErrorCount = httpErrors.length;
+  if (consoleErrors.length > 0) result.reasons.push(`console_errors:${consoleErrors.length}`);
+  if (pageErrors.length > 0) result.reasons.push(`page_errors:${pageErrors.length}`);
+  if (requestFailures.length > 0) result.reasons.push(`request_failures:${requestFailures.length}`);
+  if (httpErrors.length > 0) result.reasons.push(`http_errors:${httpErrors.length}`);
+
+  result.ok = result.reasons.length === 0;
+  result.status = result.ok ? 'pass' : 'failed';
+  if (!result.ok && !result.error) {
+    result.error = 'firefox_gate_failed';
+  }
+  return result;
+}
+
 function buildRequiredTextChecks(bodyText, requiredTexts = [], caseSensitive = false) {
   const normalizedBody = normalizeTextForMatch(bodyText, caseSensitive);
   return requiredTexts.map((text) => {
@@ -663,6 +1201,10 @@ const FAILURE_GUIDANCE = Object.freeze({
   request_failures_detected: 'Network requests failed during smoke run.',
   insufficient_body_content: 'Rendered body text was below the configured minimum content threshold.',
   trace_capture_failed: 'Trace generation failed; debug context may be incomplete.',
+  web_vitals_capture_failed: 'Web-vitals capture failed for one or more routes.',
+  lighthouse_run_failed: 'Lighthouse audit did not complete successfully.',
+  lighthouse_score_below_threshold: 'Lighthouse performance score fell below configured threshold.',
+  firefox_gate_failed: 'Firefox browser gate failed for the smoke flow.',
 });
 
 function buildFailureExplanation(summary = {}, diagnostics = {}) {
@@ -890,6 +1432,7 @@ function buildArtifactLayout(options) {
   ensureDir(runDir);
   ensureDir(baselineRoot);
   const debugDir = path.join(runDir, 'debug-package');
+  const lighthouseDir = path.join(runDir, 'lighthouse');
   return {
     artifactRoot,
     baselineRoot,
@@ -905,6 +1448,10 @@ function buildArtifactLayout(options) {
     axePath: path.join(runDir, 'axe-report.json'),
     domSummaryPath: path.join(runDir, 'dom-summary.json'),
     linkCheckPath: path.join(runDir, 'link-checks.json'),
+    webVitalsPath: path.join(runDir, 'web-vitals.json'),
+    lighthouseSummaryPath: path.join(runDir, 'lighthouse-summary.json'),
+    lighthouseDir,
+    browserMatrixPath: path.join(runDir, 'browser-matrix.json'),
     debugDir,
     debugManifestPath: path.join(debugDir, 'package.json'),
     debugExplanationPath: path.join(debugDir, 'explanation.md'),
@@ -942,6 +1489,8 @@ function buildDefaultTelegramCaption(summary) {
     `A11y violations: ${summary.axeViolationCount || 0}`,
     `Broken links: ${summary.brokenLinkCount || 0}`,
     `Diff pixels: ${summary.diffPixelCount || 0}`,
+    `Lighthouse(avg): ${summary.lighthouseAveragePerformanceScore ?? 'n/a'}`,
+    `Firefox gate: ${summary.firefoxGateStatus || 'n/a'}`,
     `Hard failures: ${summary.hardFailureCount}`,
     `Run: ${summary.runId}`,
   ].join('\n');
@@ -1149,6 +1698,15 @@ function collectRunOptions(options) {
       return asString(value, '');
     })
     .filter(Boolean);
+  const perfRouteValues = getOptionList(options, 'perf-route');
+  const perfRoutes = perfRouteValues
+    .map((value) => {
+      if (value === true) {
+        throw new Error('--perf-route expects a route value');
+      }
+      return normalizeRouteToken(value);
+    })
+    .filter(Boolean);
 
   const projectPath = resolveProjectPath({
     projectPath: asString(getOption(options, 'project-path', ''), '')
@@ -1186,6 +1744,39 @@ function collectRunOptions(options) {
     disableKey: 'no-generate-spec',
     defaultValue: true,
   });
+  const perfEnabled = resolveBooleanFlag(options, {
+    enableKey: 'perf',
+    disableKey: 'no-perf',
+    defaultValue: true,
+  });
+  const collectWebVitals = perfEnabled && resolveBooleanFlag(options, {
+    enableKey: 'web-vitals',
+    disableKey: 'no-web-vitals',
+    defaultValue: true,
+  });
+  const collectLighthouse = perfEnabled && resolveBooleanFlag(options, {
+    enableKey: 'lighthouse',
+    disableKey: 'no-lighthouse',
+    defaultValue: true,
+  });
+  const enableBrowserMatrix = !options.has('no-browser-matrix');
+  const gateProfile = normalizeGateProfile(
+    getOption(options, 'gate-profile', process.env.SQUIDRUN_SMOKE_GATE_PROFILE || DEFAULT_GATE_PROFILE),
+    DEFAULT_GATE_PROFILE
+  );
+  const forceFirefoxGate = options.has('force-firefox-gate')
+    || /^(1|true|yes)$/i.test(asString(process.env.SQUIDRUN_FORCE_FIREFOX_GATE, ''));
+  const runFirefoxGate = shouldRunFirefoxGate({
+    enableBrowserMatrix,
+    gateProfile,
+    forceFirefoxGate,
+  });
+  const lighthouseMinScore = options.has('lighthouse-min-score')
+    ? asNullableFloatInRange(getOption(options, 'lighthouse-min-score', ''), null, 0, 100)
+    : DEFAULT_LIGHTHOUSE_MIN_SCORE;
+  const normalizedLighthouseMinScore = lighthouseMinScore === null
+    ? DEFAULT_LIGHTHOUSE_MIN_SCORE
+    : lighthouseMinScore;
 
   return {
     projectPath,
@@ -1224,6 +1815,16 @@ function collectRunOptions(options) {
     specDir: asString(getOption(options, 'spec-dir', ''), ''),
     specOut: asString(getOption(options, 'spec-out', ''), ''),
     specName: asString(getOption(options, 'spec-name', ''), ''),
+    perfEnabled,
+    collectWebVitals,
+    collectLighthouse,
+    perfRoutes,
+    lighthouseMinScore: normalizedLighthouseMinScore,
+    lighthouseTimeoutMs: asPositiveInt(getOption(options, 'lighthouse-timeout-ms', DEFAULT_LIGHTHOUSE_TIMEOUT_MS), DEFAULT_LIGHTHOUSE_TIMEOUT_MS),
+    gateProfile,
+    forceFirefoxGate,
+    enableBrowserMatrix,
+    runFirefoxGate,
     collectA11y,
     validateLinks,
     includeExternalLinks: options.has('include-external-links'),
@@ -1260,6 +1861,9 @@ async function runSmoke(options) {
   let visualDiff = null;
   let debugPackage = null;
   let specGeneration = null;
+  let webVitalsReport = null;
+  let lighthouseReport = null;
+  let browserMatrix = null;
   const runtime = {
     title: null,
     finalUrl: null,
@@ -1273,6 +1877,9 @@ async function runSmoke(options) {
     domSummaryError: null,
     visualDiffError: null,
     specGenerationError: null,
+    webVitalsError: null,
+    lighthouseError: null,
+    firefoxGateError: null,
   };
 
   let resolution = null;
@@ -1466,6 +2073,32 @@ async function runSmoke(options) {
 
         runtime.title = await page.title().catch(() => null);
         runtime.finalUrl = page.url();
+        browserMatrix = {
+          enabled: options.enableBrowserMatrix !== false,
+          gateProfile: options.gateProfile,
+          firefoxGateRequired: options.runFirefoxGate === true,
+          primary: {
+            browser: 'chromium',
+            status: 'pass',
+            url: runtime.finalUrl || targetUrl,
+            title: runtime.title,
+            selectorCount: options.requireSelectors.length,
+            missingSelectorCount: selectorChecks.filter((entry) => !entry.ok).length,
+            requiredTextCount: options.requireTexts.length,
+            missingTextCount: textChecks.filter((entry) => !entry.ok).length,
+            consoleErrorCount: consoleErrors.length,
+            pageErrorCount: pageErrors.length,
+            requestFailureCount: requestFailures.length,
+            httpErrorCount: httpErrors.length,
+          },
+          firefox: {
+            required: options.runFirefoxGate === true,
+            attempted: false,
+            status: options.runFirefoxGate ? 'pending' : 'skipped',
+            ok: options.runFirefoxGate ? false : true,
+            reasons: [],
+          },
+        };
         visualDiff = await runVisualDiffPipeline({
           options,
           layout,
@@ -1526,6 +2159,156 @@ async function runSmoke(options) {
     failures.add('http_errors_detected', `${httpErrors.length} HTTP >= 400 response(s) captured`);
   }
 
+  const activeTargetUrl = runtime.finalUrl || targetUrl;
+  const perfTargets = activeTargetUrl
+    ? buildPerformanceTargets(options, activeTargetUrl)
+    : [];
+
+  if (options.perfEnabled && activeTargetUrl) {
+    let playwright = null;
+    try {
+      playwright = readPlaywright();
+    } catch (err) {
+      runtime.webVitalsError = err.message;
+      runtime.lighthouseError = err.message;
+    }
+
+    if (playwright && options.collectWebVitals) {
+      webVitalsReport = await runWebVitalsCapture({
+        playwright,
+        options,
+        targets: perfTargets,
+      });
+      if (webVitalsReport.status === 'error') {
+        runtime.webVitalsError = webVitalsReport.error || 'web_vitals_capture_failed';
+        failures.add('web_vitals_capture_failed', runtime.webVitalsError, {
+          totalRoutes: webVitalsReport.totalRoutes,
+          failedRoutes: webVitalsReport.failedRoutes,
+        });
+      }
+    } else if (!options.collectWebVitals) {
+      webVitalsReport = {
+        enabled: false,
+        status: options.perfEnabled ? 'disabled' : 'perf_disabled',
+      };
+    }
+
+    if (playwright && options.collectLighthouse) {
+      lighthouseReport = await runLighthouseCapture({
+        playwright,
+        options,
+        layout,
+        targets: perfTargets,
+      });
+      if (lighthouseReport.status === 'error') {
+        runtime.lighthouseError = lighthouseReport.error || 'lighthouse_run_failed';
+        failures.add('lighthouse_run_failed', runtime.lighthouseError, {
+          totalRoutes: lighthouseReport.totalRoutes,
+          failedRoutes: lighthouseReport.failedRoutes,
+        });
+      } else if (options.lighthouseMinScore >= 0 && lighthouseReport.belowThresholdCount > 0) {
+        failures.add(
+          'lighthouse_score_below_threshold',
+          `${lighthouseReport.belowThresholdCount} route(s) below Lighthouse threshold ${options.lighthouseMinScore}`,
+          {
+            lighthouseMinScore: options.lighthouseMinScore,
+            belowThresholdRoutes: lighthouseReport.belowThresholdRoutes,
+          }
+        );
+      }
+    } else if (!options.collectLighthouse) {
+      lighthouseReport = {
+        enabled: false,
+        status: options.perfEnabled ? 'disabled' : 'perf_disabled',
+      };
+    }
+  } else {
+    webVitalsReport = {
+      enabled: false,
+      status: options.perfEnabled ? 'no_target' : 'perf_disabled',
+    };
+    lighthouseReport = {
+      enabled: false,
+      status: options.perfEnabled ? 'no_target' : 'perf_disabled',
+    };
+  }
+
+  if (!browserMatrix) {
+    browserMatrix = {
+      enabled: options.enableBrowserMatrix !== false,
+      gateProfile: options.gateProfile,
+      firefoxGateRequired: options.runFirefoxGate === true,
+      primary: null,
+      firefox: {
+        required: options.runFirefoxGate === true,
+        attempted: false,
+        status: options.runFirefoxGate ? 'pending' : 'skipped',
+        ok: options.runFirefoxGate ? false : true,
+        reasons: [],
+      },
+    };
+  }
+
+  const primaryReasons = [];
+  if (runtime.navigationError) primaryReasons.push('navigation_failed');
+  if (selectorChecks.some((entry) => !entry.ok)) primaryReasons.push('required_selector_missing');
+  if (textChecks.some((entry) => !entry.ok)) primaryReasons.push('required_text_missing');
+  if (consoleErrors.length > 0) primaryReasons.push('console_errors_detected');
+  if (pageErrors.length > 0) primaryReasons.push('page_errors_detected');
+  if (requestFailures.length > 0) primaryReasons.push('request_failures_detected');
+  if (httpErrors.length > 0) primaryReasons.push('http_errors_detected');
+  browserMatrix.primary = {
+    browser: 'chromium',
+    status: primaryReasons.length === 0 ? 'pass' : 'failed',
+    ok: primaryReasons.length === 0,
+    reasons: primaryReasons,
+    url: activeTargetUrl || null,
+    title: runtime.title,
+    selectorCount: options.requireSelectors.length,
+    missingSelectorCount: selectorChecks.filter((entry) => !entry.ok).length,
+    requiredTextCount: options.requireTexts.length,
+    missingTextCount: textChecks.filter((entry) => !entry.ok).length,
+    consoleErrorCount: consoleErrors.length,
+    pageErrorCount: pageErrors.length,
+    requestFailureCount: requestFailures.length,
+    httpErrorCount: httpErrors.length,
+  };
+
+  if (options.runFirefoxGate && activeTargetUrl) {
+    let playwright = null;
+    try {
+      playwright = readPlaywright();
+      const firefoxGate = await runFirefoxGateCheck({
+        playwright,
+        options,
+        targetUrl: activeTargetUrl,
+      });
+      browserMatrix.firefox = firefoxGate;
+      if (!firefoxGate.ok) {
+        runtime.firefoxGateError = firefoxGate.error || 'firefox_gate_failed';
+        failures.add('firefox_gate_failed', 'Firefox gate failed', {
+          reasons: firefoxGate.reasons,
+          error: runtime.firefoxGateError,
+        });
+      }
+    } catch (err) {
+      runtime.firefoxGateError = err.message;
+      browserMatrix.firefox = {
+        required: true,
+        attempted: true,
+        status: 'failed',
+        browser: 'firefox',
+        profile: options.gateProfile,
+        forced: options.forceFirefoxGate === true,
+        url: activeTargetUrl,
+        ok: false,
+        reasons: ['firefox_runtime_failed'],
+        error: err.message,
+      };
+      failures.add('firefox_gate_failed', `Firefox gate runtime failed (${err.message})`);
+    }
+  }
+
   if (visualDiff && visualDiff.enabled === true) {
     visualDiff = maybeUpdateBaseline({
       options,
@@ -1567,6 +2350,15 @@ async function runSmoke(options) {
   if (linkValidation !== null) {
     writeJson(layout.linkCheckPath, linkValidation);
   }
+  if (webVitalsReport !== null) {
+    writeJson(layout.webVitalsPath, webVitalsReport);
+  }
+  if (lighthouseReport !== null) {
+    writeJson(layout.lighthouseSummaryPath, lighthouseReport);
+  }
+  if (browserMatrix !== null) {
+    writeJson(layout.browserMatrixPath, browserMatrix);
+  }
 
   const diagnostics = {
     runId: layout.runId,
@@ -1593,6 +2385,9 @@ async function runSmoke(options) {
       domSummary,
       linkValidation,
       visualDiff,
+      webVitalsReport,
+      lighthouseReport,
+      browserMatrix,
       specGeneration,
     },
     selectorChecks,
@@ -1620,6 +2415,9 @@ async function runSmoke(options) {
     axePath: fileOrNull(layout.axePath),
     domSummaryPath: fileOrNull(layout.domSummaryPath),
     linkCheckPath: fileOrNull(layout.linkCheckPath),
+    webVitalsPath: fileOrNull(layout.webVitalsPath),
+    lighthouseSummaryPath: fileOrNull(layout.lighthouseSummaryPath),
+    browserMatrixPath: fileOrNull(layout.browserMatrixPath),
     diagnosticsPath: layout.diagnosticsPath,
     summaryPath: layout.summaryPath,
     manifestPath: layout.manifestPath,
@@ -1649,6 +2447,24 @@ async function runSmoke(options) {
     baselineUpdated: visualDiff?.baselineUpdated === true,
     baselineUpdateReason: visualDiff?.baselineUpdateReason || null,
     visualDiffError: visualDiff?.error || null,
+    perfEnabled: options.perfEnabled === true,
+    perfRouteCount: perfTargets.length,
+    webVitalsStatus: webVitalsReport?.status || 'not_run',
+    webVitalsOkRoutes: Number(webVitalsReport?.okRoutes || 0),
+    webVitalsFailedRoutes: Number(webVitalsReport?.failedRoutes || 0),
+    webVitalsError: webVitalsReport?.error || null,
+    lighthouseStatus: lighthouseReport?.status || 'not_run',
+    lighthouseAveragePerformanceScore: Number.isFinite(Number(lighthouseReport?.averagePerformanceScore))
+      ? Number(lighthouseReport.averagePerformanceScore)
+      : null,
+    lighthouseMinScore: options.lighthouseMinScore,
+    lighthouseBelowThresholdCount: Number(lighthouseReport?.belowThresholdCount || 0),
+    lighthouseError: lighthouseReport?.error || null,
+    gateProfile: options.gateProfile,
+    firefoxGateRequired: options.runFirefoxGate === true,
+    firefoxGateStatus: browserMatrix?.firefox?.status || 'not_run',
+    firefoxGateOk: browserMatrix?.firefox?.ok === true,
+    firefoxGateError: browserMatrix?.firefox?.error || null,
     debugPackagePath: null,
     debugManifestPath: null,
     debugExplanationPath: null,
@@ -1755,6 +2571,9 @@ async function runSmoke(options) {
       axe: summary.axePath,
       domSummary: summary.domSummaryPath,
       linkChecks: summary.linkCheckPath,
+      webVitals: summary.webVitalsPath,
+      lighthouseSummary: summary.lighthouseSummaryPath,
+      browserMatrix: summary.browserMatrixPath,
       debugPackage: summary.debugPackagePath,
       debugManifest: summary.debugManifestPath,
       debugExplanation: summary.debugExplanationPath,
@@ -1778,6 +2597,10 @@ async function runSmoke(options) {
       axeIncomplete: summary.axeIncompleteCount,
       checkedLinks: summary.checkedLinkCount,
       brokenLinks: summary.brokenLinkCount,
+      webVitalsOkRoutes: summary.webVitalsOkRoutes,
+      webVitalsFailedRoutes: summary.webVitalsFailedRoutes,
+      lighthouseBelowThreshold: summary.lighthouseBelowThresholdCount,
+      firefoxGateFailed: summary.firefoxGateRequired && !summary.firefoxGateOk ? 1 : 0,
       diffPixels: summary.diffPixelCount,
       diffThresholdExceeded: summary.diffThresholdExceeded ? 1 : 0,
       generatedSpec: summary.generatedSpecPath ? 1 : 0,
@@ -1825,9 +2648,12 @@ module.exports = {
   getOptionList,
   parseViewport,
   normalizeWaitUntil,
+  normalizeGateProfile,
+  shouldRunFirefoxGate,
   collectRunOptions,
   buildArtifactLayout,
   buildDiffBaselineKey,
+  buildPerformanceTargets,
   buildFailureExplanation,
   buildAssistivePlaywrightSpecDraft,
   buildSpecGenerationPaths,
