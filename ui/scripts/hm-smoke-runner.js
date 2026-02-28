@@ -933,7 +933,14 @@ async function runLighthouseCapture({ playwright, options, layout, targets }) {
     result.error = err.message || 'lighthouse_runtime_failed';
   } finally {
     if (chrome && typeof chrome.kill === 'function') {
-      await chrome.kill().catch(() => {});
+      try {
+        const killResult = chrome.kill();
+        if (killResult && typeof killResult.catch === 'function') {
+          await killResult.catch(() => {});
+        }
+      } catch {
+        // Best effort shutdown; ignore launcher kill errors.
+      }
     }
   }
 
