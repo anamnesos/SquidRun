@@ -141,7 +141,7 @@ function registerScreenshotHandlers(ctx) {
       fs.writeFileSync(latestPath, buffer);
 
       const indexPath = path.join(SCREENSHOTS_DIR, 'index.md');
-      const entry = `- **${new Date().toISOString()}**: \`${filename}\` → To view: read \`workspace/screenshots/latest.png\`\n`;
+      const entry = `- **${new Date().toISOString()}**: \`${filename}\` → To view: read \`.squidrun/screenshots/latest.png\`\n`;
       fs.appendFileSync(indexPath, entry);
 
       if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
