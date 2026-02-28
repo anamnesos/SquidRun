@@ -81,7 +81,7 @@ describe('Screenshot Handlers', () => {
 
       expect(fs.appendFileSync).toHaveBeenCalledWith(
         expect.stringContaining('index.md'),
-        expect.any(String)
+        expect.stringContaining('.squidrun/screenshots/latest.png')
       );
     });
 

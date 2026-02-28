@@ -54,7 +54,7 @@ The Oracle investigates, documents, and evaluates. Produces root-cause findings 
 - Comms history: `node ui/scripts/hm-comms.js history --last N` (also `--session N`, `--between <sender> <target>`, `--json`)
 - Coordination state root: `.squidrun/`
 - Terminal output is user-facing; agent-to-agent communication uses `hm-send.js`
-- **Screenshots:** When the user says "I uploaded a screenshot," it is at `workspace/screenshots/latest.png`. Always read that file to view it.
+- **Screenshots:** When the user says "I uploaded a screenshot," it is at `.squidrun/screenshots/latest.png`. Always read that file to view it.
 - **Telegram auto-reply (CRITICAL — survives compaction):** When the user messages via `[Telegram from ...]`, you MUST reply on Telegram using `node ui/scripts/hm-send.js telegram "(ARCHITECT #N): your reply"`. Do NOT reply only in terminal output — the user is not at their PC and cannot see terminal output. This rule applies even after context compaction.
 
 ### Runtime Truths (Must Verify Before Diagnosis)
