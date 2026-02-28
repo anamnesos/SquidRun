@@ -197,7 +197,7 @@ async function pollNow() {
       const summary = summarizeMessageForLog(message);
       const timestampMs = parseTimestampMs(message);
       const directionInbound = summary.direction.includes('inbound');
-      const timestampAccepted = timestampMs === null || timestampMs >= lastPollTimeMs;
+      const timestampOlderThanCursor = timestampMs !== null && timestampMs < lastPollTimeMs;
       const hasSid = summary.sid !== 'missing';
       const sidAlreadySeen = hasSid ? recentSidSet.has(summary.sid) : false;
       const sidAccepted = hasSid && !sidAlreadySeen;
@@ -213,8 +213,6 @@ async function pollNow() {
 
       if (!directionInbound) {
         reason = 'direction_not_inbound';
-      } else if (!timestampAccepted) {
-        reason = 'older_than_last_poll';
       } else if (!hasSid) {
         reason = 'missing_sid';
       } else if (sidAlreadySeen) {
@@ -247,7 +245,7 @@ async function pollNow() {
       log.info(
         'SMS',
         `Twilio message eval sid=${summary.sid} from=${summary.from} direction=${summary.direction} `
-          + `checks={inbound:${directionInbound},timestamp:${timestampAccepted},sid:${sidAccepted},body:${hasText},callback:${callbackConfigured}} `
+          + `checks={inbound:${directionInbound},timestampOlderThanCursor:${timestampOlderThanCursor},sid:${sidAccepted},body:${hasText},callback:${callbackConfigured}} `
           + `callbackInvoked=${callbackInvoked} callbackSucceeded=${callbackSucceeded} `
           + `decision=${decision} reason=${reason}`
       );
