@@ -1,8 +1,9 @@
-# Playwright Visual Capture Sidecar (P0)
+# Playwright Capture + Smoke Pipelines (P0-P2)
 
 ## Purpose
 
-`ui/scripts/hm-visual-capture.js` captures a deterministic browser artifact bundle for local web targets and can optionally send the screenshot to Telegram.
+- `ui/scripts/hm-visual-capture.js` captures a deterministic visual artifact bundle for local web targets and can optionally send the screenshot to Telegram.
+- `ui/scripts/hm-smoke-runner.js` runs deterministic autonomous smoke checks and emits structured QA diagnostics for Builder-triggered workflows.
 
 ## Install / Prereqs
 
@@ -10,6 +11,7 @@ From `ui/`:
 
 ```bash
 npm install playwright --save
+npm install axe-core --save
 npx playwright install chromium
 ```
 
@@ -31,6 +33,12 @@ Send screenshot to Telegram:
 
 ```bash
 node ui/scripts/hm-visual-capture.js capture --url http://127.0.0.1:3000 --send-telegram "Visual smoke"
+```
+
+Smoke run with accessibility + link checks:
+
+```bash
+node ui/scripts/hm-smoke-runner.js run --route /dashboard --require-selector "#app" --require-text "Dashboard"
 ```
 
 ## Resolution Order
@@ -60,3 +68,33 @@ Also updates:
 
 - `workspace/.squidrun/screenshots/latest.png`
 
+## Autonomous Smoke Artifact Output (P1/P2)
+
+Per run under:
+
+`workspace/.squidrun/screenshots/smoke-runs/<run-id>/`
+
+Includes:
+
+- `screenshot.png`
+- `trace.zip`
+- `dom.html`
+- `aria-snapshot.json`
+- `axe-report.json`
+- `dom-summary.json`
+- `link-checks.json`
+- `diagnostics.json`
+- `summary.json`
+- `manifest.json`
+
+## P2 Controls
+
+- Disable a11y scan: `--no-axe`
+- Disable link validation: `--no-validate-links`
+- Tune thresholds:
+  - `--axe-max-violations <n>`
+  - `--max-broken-links <n>`
+  - `--min-body-text-chars <n>`
+- Content assertions:
+  - `--require-text <snippet>` (repeatable)
+  - `--content-case-sensitive`
