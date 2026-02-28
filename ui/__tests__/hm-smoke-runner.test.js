@@ -36,6 +36,11 @@ describe('hm-smoke-runner option parsing', () => {
     expect(result.maxLinks).toBe(25);
     expect(result.axeMaxViolations).toBe(0);
     expect(result.maxBrokenLinks).toBe(0);
+    expect(result.enableVisualDiff).toBe(true);
+    expect(result.maxDiffPixels).toBe(-1);
+    expect(result.diffThreshold).toBe(0.1);
+    expect(result.updateBaselineOnPass).toBe(true);
+    expect(result.updateBaselineAlways).toBe(false);
     expect(result.requireTexts).toEqual([]);
   });
 
@@ -55,6 +60,12 @@ describe('hm-smoke-runner option parsing', () => {
       '--axe-max-violations', '3',
       '--min-body-text-chars', '150',
       '--link-timeout-ms', '2300',
+      '--max-diff-pixels', '500',
+      '--diff-threshold', '0.33',
+      '--no-diff',
+      '--no-update-baseline',
+      '--update-baseline-always',
+      '--baseline-key', 'login-home',
     ]);
 
     const result = smokeRunner.collectRunOptions(options);
@@ -70,10 +81,43 @@ describe('hm-smoke-runner option parsing', () => {
     expect(result.axeMaxViolations).toBe(3);
     expect(result.minBodyTextChars).toBe(150);
     expect(result.linkTimeoutMs).toBe(2300);
+    expect(result.maxDiffPixels).toBe(500);
+    expect(result.diffThreshold).toBe(0.33);
+    expect(result.enableVisualDiff).toBe(false);
+    expect(result.updateBaselineOnPass).toBe(false);
+    expect(result.updateBaselineAlways).toBe(true);
+    expect(result.baselineKey).toBe('login-home');
   });
 
   test('collectRunOptions rejects missing require-text value', () => {
     const { options } = smokeRunner.parseArgs(['run', '--require-text']);
     expect(() => smokeRunner.collectRunOptions(options)).toThrow('--require-text expects a text value');
+  });
+
+  test('buildDiffBaselineKey is deterministic for same route/url', () => {
+    const options = {
+      projectPath: 'D:\\projects\\squidrun',
+      route: '/dashboard',
+    };
+    const first = smokeRunner.buildDiffBaselineKey(options, 'http://127.0.0.1:3000/dashboard');
+    const second = smokeRunner.buildDiffBaselineKey(options, 'http://127.0.0.1:3000/dashboard');
+    expect(first).toBe(second);
+    expect(first).toContain('squidrun');
+  });
+
+  test('buildFailureExplanation includes failure codes and artifact lines', () => {
+    const summary = {
+      runId: 'run-1',
+      url: 'http://localhost:3000',
+      tracePath: 'trace.zip',
+      screenshotPath: 'screenshot.png',
+      hardFailureCount: 1,
+      hardFailures: [
+        { code: 'visual_diff_exceeded', message: 'Diff too high' },
+      ],
+    };
+    const output = smokeRunner.buildFailureExplanation(summary, {});
+    expect(output).toContain('visual_diff_exceeded');
+    expect(output).toContain('trace.zip');
   });
 });

@@ -18,6 +18,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const { PNG } = require('pngjs');
 const {
   sendTelegramPhoto,
 } = require('./hm-telegram');
@@ -42,12 +44,15 @@ const DEFAULT_MAX_LINKS = 25;
 const DEFAULT_AXE_MAX_VIOLATIONS = 0;
 const DEFAULT_MAX_BROKEN_LINKS = 0;
 const DEFAULT_MIN_BODY_TEXT_CHARS = 0;
+const DEFAULT_MAX_DIFF_PIXELS = -1;
+const DEFAULT_PIXEL_DIFF_THRESHOLD = 0.1;
 const DEFAULT_WAIT_UNTIL = 'domcontentloaded';
 const VALID_WAIT_UNTIL = new Set(['load', 'domcontentloaded', 'networkidle', 'commit']);
 const DEFAULT_VIEWPORT = Object.freeze({ width: 1440, height: 900 });
 
 let playwrightModule = null;
 let axeSourceCache = null;
+let pixelmatchCache = null;
 
 function usage() {
   console.log('Usage: node hm-smoke-runner.js [run] [options]');
@@ -66,6 +71,12 @@ function usage() {
   console.log('  --max-broken-links <n>              Allowed broken links before failure (default: 0)');
   console.log('  --min-body-text-chars <n>           Minimum body text chars before failure (default: 0)');
   console.log('  --axe-max-violations <n>            Allowed axe violations before failure (default: 0)');
+  console.log('  --max-diff-pixels <n>               Fail when diff pixels exceed threshold (default: disabled)');
+  console.log('  --diff-threshold <0..1>             pixelmatch sensitivity threshold (default: 0.1)');
+  console.log('  --baseline-key <key>                Override baseline key used for before/after diff');
+  console.log('  --no-diff                           Disable before/after pixel diff generation');
+  console.log('  --no-update-baseline                Do not update baseline screenshot on pass');
+  console.log('  --update-baseline-always            Update baseline even when run fails');
   console.log('  --no-axe                            Disable axe-core accessibility scan');
   console.log('  --no-validate-links                 Disable anchor broken-link validation');
   console.log('  --include-external-links            Include off-origin links in validation');
@@ -189,6 +200,23 @@ function readAxeSource() {
   }
 }
 
+async function readPixelmatch() {
+  if (pixelmatchCache) return pixelmatchCache;
+  try {
+    const mod = await import('pixelmatch');
+    const resolved = typeof mod?.default === 'function'
+      ? mod.default
+      : (typeof mod === 'function' ? mod : null);
+    if (typeof resolved !== 'function') {
+      throw new Error('pixelmatch_export_invalid');
+    }
+    pixelmatchCache = resolved;
+    return resolved;
+  } catch (err) {
+    throw new Error(`pixelmatch is not available. Install from ui/: npm install pixelmatch --save\nOriginal error: ${err.message}`);
+  }
+}
+
 function resolveBooleanFlag(options, { enableKey, disableKey, defaultValue = false }) {
   if (disableKey && options.has(disableKey)) return false;
   if (enableKey && options.has(enableKey)) return true;
@@ -199,6 +227,28 @@ function asNonNegativeInt(value, fallback = 0) {
   const numeric = Number.parseInt(String(value), 10);
   if (!Number.isFinite(numeric) || numeric < 0) return fallback;
   return Math.trunc(numeric);
+}
+
+function asFloatInRange(value, fallback = DEFAULT_PIXEL_DIFF_THRESHOLD, min = 0, max = 1) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  if (numeric < min || numeric > max) return fallback;
+  return numeric;
+}
+
+function sanitizeToken(value, fallback = 'default') {
+  const raw = asString(value, '');
+  if (!raw) return fallback;
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return normalized || fallback;
+}
+
+function shortHash(value) {
+  return crypto.createHash('sha1').update(String(value || ''), 'utf8').digest('hex').slice(0, 12);
 }
 
 function normalizeTextForMatch(value, caseSensitive = false) {
@@ -521,6 +571,137 @@ function buildRequiredTextChecks(bodyText, requiredTexts = [], caseSensitive = f
   });
 }
 
+function buildDiffBaselineKey(options = {}, targetUrl = '') {
+  const projectToken = sanitizeToken(path.basename(asString(options.projectPath, 'project')), 'project');
+  const routeToken = sanitizeToken(asString(options.route, '/').replace(/\//g, '_'), 'root');
+  const url = asString(targetUrl, '');
+  const keyRaw = `${asString(options.projectPath, '')}|${asString(options.route, '/')}|${url}`;
+  return `${projectToken}-${routeToken}-${shortHash(keyRaw)}`;
+}
+
+function loadPng(filePath) {
+  const raw = fs.readFileSync(filePath);
+  return PNG.sync.read(raw);
+}
+
+function writePng(filePath, png) {
+  const raw = PNG.sync.write(png);
+  fs.writeFileSync(filePath, raw);
+  return raw.length;
+}
+
+function copyFileIfPresent(sourcePath, destinationPath) {
+  if (!sourcePath || !destinationPath) return null;
+  if (!fs.existsSync(sourcePath)) return null;
+  ensureDir(path.dirname(destinationPath));
+  fs.copyFileSync(sourcePath, destinationPath);
+  return destinationPath;
+}
+
+function buildNetworkSummary(requestFailures = [], httpErrors = []) {
+  const requests = Array.isArray(requestFailures) ? requestFailures : [];
+  const responses = Array.isArray(httpErrors) ? httpErrors : [];
+  const hostMap = new Map();
+
+  const touchHost = (url, mutate) => {
+    let host = 'unknown';
+    try {
+      host = new URL(String(url || '')).host || host;
+    } catch {
+      // Keep default host bucket.
+    }
+    const prev = hostMap.get(host) || {
+      host,
+      requestFailures: 0,
+      httpErrors: 0,
+      statuses: {},
+    };
+    mutate(prev);
+    hostMap.set(host, prev);
+  };
+
+  for (const item of requests) {
+    touchHost(item?.url, (bucket) => {
+      bucket.requestFailures += 1;
+    });
+  }
+  for (const item of responses) {
+    touchHost(item?.url, (bucket) => {
+      bucket.httpErrors += 1;
+      const statusCode = String(item?.status || 'unknown');
+      bucket.statuses[statusCode] = (bucket.statuses[statusCode] || 0) + 1;
+    });
+  }
+
+  return {
+    requestFailureCount: requests.length,
+    httpErrorCount: responses.length,
+    hosts: Array.from(hostMap.values()).sort((a, b) => (
+      (b.requestFailures + b.httpErrors) - (a.requestFailures + a.httpErrors)
+    )),
+    topRequestFailures: requests.slice(0, 20),
+    topHttpErrors: responses.slice(0, 20),
+  };
+}
+
+const FAILURE_GUIDANCE = Object.freeze({
+  url_resolution_failed: 'Dev server URL could not be resolved/reached. Verify local server startup and port.',
+  navigation_failed: 'Playwright navigation failed. Check routing, startup timing, and runtime JS errors.',
+  required_selector_missing: 'Expected selector was missing. UI structure or render timing may have regressed.',
+  required_text_missing: 'Expected user-visible content was missing from the rendered page.',
+  broken_links_detected: 'One or more checked links returned HTTP errors or failed requests.',
+  axe_violations_detected: 'Accessibility violations exceeded the configured threshold.',
+  visual_diff_exceeded: 'Visual delta exceeded allowed diff pixels. Review before/after artifacts and diff image.',
+  visual_diff_failed: 'Visual diff generation failed; verify screenshot dimensions and PNG decode integrity.',
+  console_errors_detected: 'Browser console reported error-level events.',
+  page_errors_detected: 'Unhandled page exceptions were captured.',
+  http_errors_detected: 'HTTP responses >= 400 were observed during smoke run.',
+  request_failures_detected: 'Network requests failed during smoke run.',
+  insufficient_body_content: 'Rendered body text was below the configured minimum content threshold.',
+  trace_capture_failed: 'Trace generation failed; debug context may be incomplete.',
+});
+
+function buildFailureExplanation(summary = {}, diagnostics = {}) {
+  const failures = Array.isArray(summary.hardFailures) ? summary.hardFailures : [];
+  const lines = [
+    '# Smoke Failure Debug Summary',
+    '',
+    `- Run ID: ${summary.runId || 'unknown'}`,
+    `- URL: ${summary.url || diagnostics.url || 'unresolved'}`,
+    `- Hard failures: ${failures.length}`,
+    '',
+    '## Failure Signals',
+  ];
+
+  if (failures.length === 0) {
+    lines.push('- No hard failures were recorded.');
+  } else {
+    for (const entry of failures) {
+      const code = asString(entry?.code, 'hard_failure');
+      const message = asString(entry?.message, 'Smoke failure');
+      const guidance = FAILURE_GUIDANCE[code] || 'Inspect trace, console logs, and network diagnostics for root cause.';
+      lines.push(`- ${code}: ${message}`);
+      lines.push(`  guidance: ${guidance}`);
+    }
+  }
+
+  lines.push('');
+  lines.push('## Key Artifacts');
+  lines.push(`- trace: ${summary.tracePath || 'n/a'}`);
+  lines.push(`- screenshot(after): ${summary.afterImagePath || summary.screenshotPath || 'n/a'}`);
+  lines.push(`- screenshot(before): ${summary.beforeImagePath || 'n/a'}`);
+  lines.push(`- diff: ${summary.diffImagePath || 'n/a'}`);
+  lines.push(`- diagnostics: ${summary.diagnosticsPath || 'n/a'}`);
+  lines.push(`- network summary: ${summary.debugNetworkSummaryPath || 'n/a'}`);
+  lines.push('');
+  lines.push('## Suggested Next Steps');
+  lines.push('1. Open the trace and replay navigation around the failing step.');
+  lines.push('2. Compare before/after screenshots and diff image for visual regressions.');
+  lines.push('3. Check network summary for failed API calls and status clusters.');
+
+  return `${lines.join('\n')}\n`;
+}
+
 function writeJson(filePath, payload) {
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }
@@ -529,20 +710,36 @@ function buildArtifactLayout(options) {
   const artifactRoot = asString(options.artifactRoot, '')
     ? path.resolve(asString(options.artifactRoot, ''))
     : path.join(options.runtimeRoot, 'screenshots', 'smoke-runs');
+  const baselineRoot = path.join(options.runtimeRoot, 'screenshots', 'smoke-baselines');
   const runId = ensureRunId(options.runId, options.label || 'smoke');
   const runDir = path.join(artifactRoot, runId);
   ensureDir(runDir);
+  ensureDir(baselineRoot);
+  const debugDir = path.join(runDir, 'debug-package');
   return {
     artifactRoot,
+    baselineRoot,
     runId,
     runDir,
     screenshotPath: path.join(runDir, 'screenshot.png'),
+    beforePath: path.join(runDir, 'before.png'),
+    afterPath: path.join(runDir, 'after.png'),
+    diffPath: path.join(runDir, 'diff.png'),
     tracePath: path.join(runDir, 'trace.zip'),
     domPath: path.join(runDir, 'dom.html'),
     ariaPath: path.join(runDir, 'aria-snapshot.json'),
     axePath: path.join(runDir, 'axe-report.json'),
     domSummaryPath: path.join(runDir, 'dom-summary.json'),
     linkCheckPath: path.join(runDir, 'link-checks.json'),
+    debugDir,
+    debugManifestPath: path.join(debugDir, 'package.json'),
+    debugExplanationPath: path.join(debugDir, 'explanation.md'),
+    debugNetworkSummaryPath: path.join(debugDir, 'network-summary.json'),
+    debugTracePath: path.join(debugDir, 'trace.zip'),
+    debugBeforePath: path.join(debugDir, 'before.png'),
+    debugAfterPath: path.join(debugDir, 'after.png'),
+    debugDiffPath: path.join(debugDir, 'diff.png'),
+    debugScreenshotPath: path.join(debugDir, 'screenshot.png'),
     diagnosticsPath: path.join(runDir, 'diagnostics.json'),
     summaryPath: path.join(runDir, 'summary.json'),
     manifestPath: path.join(runDir, 'manifest.json'),
@@ -570,9 +767,193 @@ function buildDefaultTelegramCaption(summary) {
     `URL: ${summary.url || 'unresolved'}`,
     `A11y violations: ${summary.axeViolationCount || 0}`,
     `Broken links: ${summary.brokenLinkCount || 0}`,
+    `Diff pixels: ${summary.diffPixelCount || 0}`,
     `Hard failures: ${summary.hardFailureCount}`,
     `Run: ${summary.runId}`,
   ].join('\n');
+}
+
+function resolveBaselinePaths(options, layout, targetUrl) {
+  const configured = sanitizeToken(options.baselineKey || '', '');
+  const key = configured || buildDiffBaselineKey(options, targetUrl);
+  return {
+    baselineKey: key,
+    baselinePath: path.join(layout.baselineRoot, `${key}.png`),
+    baselineMetaPath: path.join(layout.baselineRoot, `${key}.json`),
+  };
+}
+
+async function runVisualDiffPipeline({ options, layout, targetUrl, currentScreenshotPath }) {
+  const enabled = options.enableVisualDiff === true;
+  const baselinePaths = resolveBaselinePaths(options, layout, targetUrl);
+  const result = {
+    enabled,
+    baselineKey: baselinePaths.baselineKey,
+    baselinePath: baselinePaths.baselinePath,
+    baselineMetaPath: baselinePaths.baselineMetaPath,
+    baselineFound: false,
+    beforeImagePath: null,
+    afterImagePath: null,
+    diffImagePath: null,
+    diffGenerated: false,
+    diffPixelCount: 0,
+    diffRatio: null,
+    diffThreshold: options.diffThreshold,
+    diffThresholdExceeded: false,
+    dimensionMismatch: false,
+    baselineUpdated: false,
+    baselineUpdateReason: 'not_attempted',
+    error: null,
+  };
+
+  if (!enabled) {
+    result.baselineUpdateReason = 'diff_disabled';
+    return result;
+  }
+  if (!currentScreenshotPath || !fs.existsSync(currentScreenshotPath)) {
+    result.error = 'current_screenshot_missing';
+    result.baselineUpdateReason = 'current_screenshot_missing';
+    return result;
+  }
+
+  result.afterImagePath = copyFileIfPresent(currentScreenshotPath, layout.afterPath);
+  if (fs.existsSync(baselinePaths.baselinePath)) {
+    result.baselineFound = true;
+    result.beforeImagePath = copyFileIfPresent(baselinePaths.baselinePath, layout.beforePath);
+    try {
+      const pixelmatch = await readPixelmatch();
+      const baselinePng = loadPng(baselinePaths.baselinePath);
+      const currentPng = loadPng(currentScreenshotPath);
+      if (baselinePng.width !== currentPng.width || baselinePng.height !== currentPng.height) {
+        result.dimensionMismatch = true;
+        result.error = `image_dimension_mismatch baseline=${baselinePng.width}x${baselinePng.height} current=${currentPng.width}x${currentPng.height}`;
+      } else {
+        const diffPng = new PNG({ width: currentPng.width, height: currentPng.height });
+        const diffPixels = pixelmatch(
+          baselinePng.data,
+          currentPng.data,
+          diffPng.data,
+          currentPng.width,
+          currentPng.height,
+          { threshold: options.diffThreshold }
+        );
+        writePng(layout.diffPath, diffPng);
+        result.diffGenerated = true;
+        result.diffPixelCount = diffPixels;
+        result.diffRatio = currentPng.width * currentPng.height > 0
+          ? Number((diffPixels / (currentPng.width * currentPng.height)).toFixed(6))
+          : 0;
+        result.diffImagePath = layout.diffPath;
+        if (options.maxDiffPixels >= 0 && diffPixels > options.maxDiffPixels) {
+          result.diffThresholdExceeded = true;
+        }
+      }
+    } catch (err) {
+      result.error = err.message;
+    }
+  }
+
+  result.baselineUpdateReason = 'pending';
+  return result;
+}
+
+function maybeUpdateBaseline({ options, visualDiff, currentScreenshotPath, runId, targetUrl, finalHardFailureCount }) {
+  if (!visualDiff || visualDiff.enabled !== true) return visualDiff;
+  if (!currentScreenshotPath || !fs.existsSync(currentScreenshotPath)) {
+    visualDiff.baselineUpdated = false;
+    visualDiff.baselineUpdateReason = 'current_screenshot_missing';
+    return visualDiff;
+  }
+
+  const shouldUpdateBaseline = options.updateBaselineAlways
+    || (options.updateBaselineOnPass && finalHardFailureCount === 0);
+  if (!shouldUpdateBaseline) {
+    visualDiff.baselineUpdated = false;
+    visualDiff.baselineUpdateReason = finalHardFailureCount > 0 ? 'run_failed' : 'disabled';
+    return visualDiff;
+  }
+
+  try {
+    copyFileIfPresent(currentScreenshotPath, visualDiff.baselinePath);
+    writeJson(visualDiff.baselineMetaPath, {
+      baselineKey: visualDiff.baselineKey,
+      projectPath: options.projectPath,
+      route: options.route,
+      updatedAt: new Date().toISOString(),
+      runId: runId || options.runId || null,
+      url: targetUrl || null,
+      diffPixelCount: visualDiff.diffPixelCount,
+      diffRatio: visualDiff.diffRatio,
+    });
+    visualDiff.baselineUpdated = true;
+    visualDiff.baselineUpdateReason = options.updateBaselineAlways ? 'always' : 'on_pass';
+  } catch (err) {
+    visualDiff.baselineUpdated = false;
+    visualDiff.baselineUpdateReason = 'baseline_write_failed';
+    if (!visualDiff.error) visualDiff.error = err.message;
+  }
+
+  return visualDiff;
+}
+
+function buildFailureDebugPackage({ layout, summary, diagnostics }) {
+  if (!layout || !summary || summary.hardFailureCount < 1) return null;
+
+  ensureDir(layout.debugDir);
+  const networkSummary = buildNetworkSummary(
+    diagnostics?.signals?.requestFailures || [],
+    diagnostics?.signals?.httpErrors || []
+  );
+  writeJson(layout.debugNetworkSummaryPath, networkSummary);
+
+  const beforePath = copyFileIfPresent(summary.beforeImagePath, layout.debugBeforePath);
+  const afterPath = copyFileIfPresent(summary.afterImagePath || summary.screenshotPath, layout.debugAfterPath)
+    || copyFileIfPresent(summary.screenshotPath, layout.debugScreenshotPath);
+  const diffPath = copyFileIfPresent(summary.diffImagePath, layout.debugDiffPath);
+  const tracePath = copyFileIfPresent(summary.tracePath, layout.debugTracePath);
+  const screenshotPath = copyFileIfPresent(summary.screenshotPath, layout.debugScreenshotPath);
+
+  const packageSummary = {
+    runId: summary.runId || null,
+    generatedAt: new Date().toISOString(),
+    url: summary.url || null,
+    status: summary.ok ? 'PASS' : 'FAIL',
+    hardFailureCount: summary.hardFailureCount || 0,
+    hardFailures: Array.isArray(summary.hardFailures) ? summary.hardFailures : [],
+    visualDiff: {
+      diffPixelCount: summary.diffPixelCount || 0,
+      diffRatio: summary.diffRatio || null,
+      diffThresholdExceeded: summary.diffThresholdExceeded === true,
+      baselineKey: summary.baselineKey || null,
+    },
+    files: {
+      trace: tracePath,
+      screenshot: screenshotPath,
+      before: beforePath,
+      after: afterPath,
+      diff: diffPath,
+      networkSummary: layout.debugNetworkSummaryPath,
+      explanation: layout.debugExplanationPath,
+      diagnostics: summary.diagnosticsPath || null,
+    },
+  };
+
+  summary.debugNetworkSummaryPath = layout.debugNetworkSummaryPath;
+  const explanation = buildFailureExplanation(summary, diagnostics);
+  fs.writeFileSync(layout.debugExplanationPath, explanation, 'utf8');
+  writeJson(layout.debugManifestPath, packageSummary);
+
+  return {
+    dir: layout.debugDir,
+    manifestPath: layout.debugManifestPath,
+    explanationPath: layout.debugExplanationPath,
+    networkSummaryPath: layout.debugNetworkSummaryPath,
+    tracePath,
+    beforePath,
+    afterPath,
+    diffPath,
+    screenshotPath,
+  };
 }
 
 function collectRunOptions(options) {
@@ -605,6 +986,7 @@ function collectRunOptions(options) {
   const readyTimeoutRaw = getOptionAlias(options, ['ready-timeout', 'ready-timeout-ms'], DEFAULT_READY_TIMEOUT_MS);
   const selectorTimeoutRaw = getOptionAlias(options, ['selector-timeout', 'selector-timeout-ms'], DEFAULT_SELECTOR_TIMEOUT_MS);
   const linkTimeoutRaw = getOptionAlias(options, ['link-timeout', 'link-timeout-ms'], DEFAULT_LINK_TIMEOUT_MS);
+  const maxDiffPixelsRaw = getOption(options, 'max-diff-pixels', DEFAULT_MAX_DIFF_PIXELS);
   const headed = options.has('headed')
     ? true
     : (options.has('headless') ? false : false);
@@ -618,6 +1000,13 @@ function collectRunOptions(options) {
     disableKey: 'no-validate-links',
     defaultValue: true,
   });
+  const enableVisualDiff = resolveBooleanFlag(options, {
+    enableKey: 'diff',
+    disableKey: 'no-diff',
+    defaultValue: true,
+  });
+  const updateBaselineOnPass = !options.has('no-update-baseline');
+  const updateBaselineAlways = options.has('update-baseline-always');
 
   return {
     projectPath,
@@ -644,6 +1033,14 @@ function collectRunOptions(options) {
     maxBrokenLinks: asNonNegativeInt(getOption(options, 'max-broken-links', DEFAULT_MAX_BROKEN_LINKS), DEFAULT_MAX_BROKEN_LINKS),
     axeMaxViolations: asNonNegativeInt(getOption(options, 'axe-max-violations', DEFAULT_AXE_MAX_VIOLATIONS), DEFAULT_AXE_MAX_VIOLATIONS),
     minBodyTextChars: asNonNegativeInt(getOption(options, 'min-body-text-chars', DEFAULT_MIN_BODY_TEXT_CHARS), DEFAULT_MIN_BODY_TEXT_CHARS),
+    maxDiffPixels: options.has('max-diff-pixels')
+      ? asNonNegativeInt(maxDiffPixelsRaw, 0)
+      : DEFAULT_MAX_DIFF_PIXELS,
+    diffThreshold: asFloatInRange(getOption(options, 'diff-threshold', DEFAULT_PIXEL_DIFF_THRESHOLD), DEFAULT_PIXEL_DIFF_THRESHOLD, 0, 1),
+    baselineKey: asString(getOption(options, 'baseline-key', ''), ''),
+    enableVisualDiff,
+    updateBaselineOnPass,
+    updateBaselineAlways,
     collectA11y,
     validateLinks,
     includeExternalLinks: options.has('include-external-links'),
@@ -677,6 +1074,8 @@ async function runSmoke(options) {
   let axeAudit = null;
   let domSummary = null;
   let linkValidation = null;
+  let visualDiff = null;
+  let debugPackage = null;
   const runtime = {
     title: null,
     finalUrl: null,
@@ -688,6 +1087,7 @@ async function runSmoke(options) {
     linkValidationError: null,
     ariaError: null,
     domSummaryError: null,
+    visualDiffError: null,
   };
 
   let resolution = null;
@@ -881,6 +1281,32 @@ async function runSmoke(options) {
 
         runtime.title = await page.title().catch(() => null);
         runtime.finalUrl = page.url();
+        visualDiff = await runVisualDiffPipeline({
+          options,
+          layout,
+          targetUrl: runtime.finalUrl || targetUrl,
+          currentScreenshotPath: layout.screenshotPath,
+        });
+        if (visualDiff?.error) {
+          runtime.visualDiffError = visualDiff.error;
+          if (visualDiff.baselineFound) {
+            failures.add('visual_diff_failed', `Visual diff failed (${visualDiff.error})`, {
+              baselineKey: visualDiff.baselineKey,
+            });
+          }
+        }
+        if (visualDiff?.diffThresholdExceeded) {
+          failures.add(
+            'visual_diff_exceeded',
+            `Visual diff pixels ${visualDiff.diffPixelCount} exceed allowed ${options.maxDiffPixels}`,
+            {
+              diffPixelCount: visualDiff.diffPixelCount,
+              maxDiffPixels: options.maxDiffPixels,
+              diffRatio: visualDiff.diffRatio,
+              baselineKey: visualDiff.baselineKey,
+            }
+          );
+        }
       } catch (err) {
         runtime.navigationError = err.message;
         failures.add('navigation_failed', err.message, {
@@ -913,6 +1339,20 @@ async function runSmoke(options) {
   }
   if (httpErrors.length > 0) {
     failures.add('http_errors_detected', `${httpErrors.length} HTTP >= 400 response(s) captured`);
+  }
+
+  if (visualDiff && visualDiff.enabled === true) {
+    visualDiff = maybeUpdateBaseline({
+      options,
+      visualDiff,
+      currentScreenshotPath: layout.screenshotPath,
+      runId: layout.runId,
+      targetUrl: runtime.finalUrl || targetUrl,
+      finalHardFailureCount: failures.list.length,
+    });
+    if (visualDiff.error && !runtime.visualDiffError) {
+      runtime.visualDiffError = visualDiff.error;
+    }
   }
 
   if (targetUrl) {
@@ -967,6 +1407,7 @@ async function runSmoke(options) {
       axeAudit,
       domSummary,
       linkValidation,
+      visualDiff,
     },
     selectorChecks,
     textChecks,
@@ -1009,6 +1450,23 @@ async function runSmoke(options) {
     brokenLinkCount: Number(linkValidation?.brokenCount || 0),
     checkedLinkCount: Number(linkValidation?.checkedCount || 0),
     bodyTextChars: Number(domSummary?.bodyTextChars || 0),
+    baselineKey: visualDiff?.baselineKey || null,
+    baselinePath: visualDiff?.baselinePath || null,
+    beforeImagePath: fileOrNull(visualDiff?.beforeImagePath || layout.beforePath),
+    afterImagePath: fileOrNull(visualDiff?.afterImagePath || layout.afterPath),
+    diffImagePath: fileOrNull(visualDiff?.diffImagePath || layout.diffPath),
+    diffPixelCount: Number(visualDiff?.diffPixelCount || 0),
+    diffRatio: typeof visualDiff?.diffRatio === 'number' ? visualDiff.diffRatio : null,
+    diffThreshold: typeof visualDiff?.diffThreshold === 'number' ? visualDiff.diffThreshold : null,
+    diffThresholdExceeded: visualDiff?.diffThresholdExceeded === true,
+    baselineFound: visualDiff?.baselineFound === true,
+    baselineUpdated: visualDiff?.baselineUpdated === true,
+    baselineUpdateReason: visualDiff?.baselineUpdateReason || null,
+    visualDiffError: visualDiff?.error || null,
+    debugPackagePath: null,
+    debugManifestPath: null,
+    debugExplanationPath: null,
+    debugNetworkSummaryPath: null,
     hardFailureCount: failures.list.length,
     hardFailures: failures.list.slice(),
     readinessChecks: Array.isArray(resolution?.checks) ? resolution.checks : [],
@@ -1051,8 +1509,22 @@ async function runSmoke(options) {
   summary.hardFailureCount = failures.list.length;
   summary.hardFailures = failures.list.slice();
   summary.ok = failures.list.length === 0;
+  if (summary.hardFailureCount > 0) {
+    debugPackage = buildFailureDebugPackage({
+      layout,
+      summary,
+      diagnostics,
+    });
+    if (debugPackage) {
+      summary.debugPackagePath = debugPackage.dir || null;
+      summary.debugManifestPath = debugPackage.manifestPath || null;
+      summary.debugExplanationPath = debugPackage.explanationPath || null;
+      summary.debugNetworkSummaryPath = debugPackage.networkSummaryPath || null;
+    }
+  }
   diagnostics.runtime = runtime;
   diagnostics.hardFailures = failures.list.slice();
+  diagnostics.debugPackage = debugPackage;
 
   writeJson(layout.diagnosticsPath, diagnostics);
   writeJson(layout.summaryPath, summary);
@@ -1062,12 +1534,19 @@ async function runSmoke(options) {
     runDir: layout.runDir,
     files: {
       screenshot: summary.screenshotPath,
+      before: summary.beforeImagePath,
+      after: summary.afterImagePath,
+      diff: summary.diffImagePath,
       trace: summary.tracePath,
       dom: summary.domPath,
       aria: summary.ariaPath,
       axe: summary.axePath,
       domSummary: summary.domSummaryPath,
       linkChecks: summary.linkCheckPath,
+      debugPackage: summary.debugPackagePath,
+      debugManifest: summary.debugManifestPath,
+      debugExplanation: summary.debugExplanationPath,
+      debugNetworkSummary: summary.debugNetworkSummaryPath,
       diagnostics: layout.diagnosticsPath,
       summary: layout.summaryPath,
       manifest: layout.manifestPath,
@@ -1085,6 +1564,8 @@ async function runSmoke(options) {
       axeIncomplete: summary.axeIncompleteCount,
       checkedLinks: summary.checkedLinkCount,
       brokenLinks: summary.brokenLinkCount,
+      diffPixels: summary.diffPixelCount,
+      diffThresholdExceeded: summary.diffThresholdExceeded ? 1 : 0,
       hardFailures: summary.hardFailureCount,
     },
   });
@@ -1131,6 +1612,10 @@ module.exports = {
   normalizeWaitUntil,
   collectRunOptions,
   buildArtifactLayout,
+  buildDiffBaselineKey,
+  buildFailureExplanation,
+  runVisualDiffPipeline,
+  maybeUpdateBaseline,
   runSmoke,
   main,
 };
