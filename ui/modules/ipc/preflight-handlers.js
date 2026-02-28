@@ -100,24 +100,51 @@ function detectCliBinary(binaryName, env = process.env) {
   );
 }
 
+function parseNodeVersionOutput(rawOutput) {
+  const text = String(rawOutput || '').trim();
+  if (!text) return null;
+  const match = text.match(/(?:^|\s)v?(\d+)\.(\d+)\.(\d+)\b/);
+  if (!match) return null;
+  return {
+    major: Number.parseInt(match[1], 10),
+    normalized: `v${match[1]}.${match[2]}.${match[3]}`,
+  };
+}
+
 function checkSystemNodeVersion(env = process.env) {
   const result = spawnSync('node', ['-v'], {
     encoding: 'utf8',
     timeout: CLI_TIMEOUT_MS,
     env,
   });
-  const output = String(result?.stdout || '').trim();
-  const match = output.match(/^v(\d+)\./);
-  const major = match ? Number.parseInt(match[1], 10) : NaN;
+  const stdout = String(result?.stdout || '').trim();
+  const stderr = String(result?.stderr || '').trim();
+  const output = [stdout, stderr].filter(Boolean).join('\n').trim();
+  const parsed = parseNodeVersionOutput(output);
+  const major = parsed?.major;
   const ok = result?.status === 0 && Number.isFinite(major) && major >= EXPECTED_NODE_MAJOR;
+  const detectedVersion = parsed?.normalized || null;
+  const outputSummary = output.split(/\r?\n/).find(Boolean) || '';
+  const notFound = result?.error?.code === 'ENOENT';
+  let detail = '';
+  if (ok) {
+    detail = `Detected ${detectedVersion} (meets >= v${EXPECTED_NODE_MAJOR})`;
+  } else if (notFound) {
+    detail = `Detected unknown (node binary not found in PATH; requires >= v${EXPECTED_NODE_MAJOR} for CLI SQLite tooling)`;
+  } else {
+    detail = `Detected ${detectedVersion || outputSummary || 'unknown'} (requires >= v${EXPECTED_NODE_MAJOR} for CLI SQLite tooling)`;
+  }
   return makeCheck(
     'system-node',
     'System Node Version',
     ok,
-    ok
-      ? `Detected ${output} (meets >= v${EXPECTED_NODE_MAJOR})`
-      : `Detected ${output || 'unknown'} (requires >= v${EXPECTED_NODE_MAJOR} for CLI SQLite tooling)`,
-    { detectedVersion: output || null, requiredMajor: EXPECTED_NODE_MAJOR }
+    detail,
+    {
+      detectedVersion,
+      requiredMajor: EXPECTED_NODE_MAJOR,
+      rawOutput: output || null,
+      errorCode: result?.error?.code || null,
+    }
   );
 }
 
