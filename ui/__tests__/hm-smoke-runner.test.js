@@ -14,6 +14,21 @@ jest.mock('../scripts/hm-visual-utils', () => ({
     if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
     return numeric;
   },
+  applyRouteToUrl: (baseUrl, route = '/') => {
+    const safeBase = String(baseUrl || '').trim();
+    if (!safeBase) return null;
+    try {
+      const url = new URL(safeBase);
+      if (route && route !== '/') {
+        url.pathname = route.startsWith('/') ? route : `/${route}`;
+        url.search = '';
+        url.hash = '';
+      }
+      return url.toString();
+    } catch {
+      return null;
+    }
+  },
   ensureDir: jest.fn(),
   resolveProjectPath: ({ projectPath } = {}) => projectPath || 'D:\\projects\\squidrun',
   resolveVisualRuntimeRoot: ({ projectPath } = {}) => `${projectPath || 'D:\\projects\\squidrun'}\\.squidrun`,
@@ -46,6 +61,16 @@ describe('hm-smoke-runner option parsing', () => {
     expect(result.specDir).toBe('');
     expect(result.specOut).toBe('');
     expect(result.specName).toBe('');
+    expect(result.perfEnabled).toBe(true);
+    expect(result.collectWebVitals).toBe(true);
+    expect(result.collectLighthouse).toBe(true);
+    expect(result.perfRoutes).toEqual([]);
+    expect(result.lighthouseMinScore).toBe(-1);
+    expect(result.lighthouseTimeoutMs).toBe(45000);
+    expect(result.gateProfile).toBe('per-cycle');
+    expect(result.enableBrowserMatrix).toBe(true);
+    expect(result.forceFirefoxGate).toBe(false);
+    expect(result.runFirefoxGate).toBe(false);
     expect(result.requireTexts).toEqual([]);
   });
 
@@ -75,6 +100,16 @@ describe('hm-smoke-runner option parsing', () => {
       '--spec-dir', 'D:\\specs',
       '--spec-out', 'D:\\specs\\custom.spec.ts',
       '--spec-name', 'assistive-login',
+      '--no-perf',
+      '--no-web-vitals',
+      '--no-lighthouse',
+      '--perf-route', '/dashboard',
+      '--perf-route', 'settings',
+      '--lighthouse-min-score', '82.5',
+      '--lighthouse-timeout-ms', '61000',
+      '--gate-profile', 'release',
+      '--force-firefox-gate',
+      '--no-browser-matrix',
     ]);
 
     const result = smokeRunner.collectRunOptions(options);
@@ -100,6 +135,16 @@ describe('hm-smoke-runner option parsing', () => {
     expect(result.specDir).toBe('D:\\specs');
     expect(result.specOut).toBe('D:\\specs\\custom.spec.ts');
     expect(result.specName).toBe('assistive-login');
+    expect(result.perfEnabled).toBe(false);
+    expect(result.collectWebVitals).toBe(false);
+    expect(result.collectLighthouse).toBe(false);
+    expect(result.perfRoutes).toEqual(['/dashboard', '/settings']);
+    expect(result.lighthouseMinScore).toBe(82.5);
+    expect(result.lighthouseTimeoutMs).toBe(61000);
+    expect(result.gateProfile).toBe('release');
+    expect(result.forceFirefoxGate).toBe(true);
+    expect(result.enableBrowserMatrix).toBe(false);
+    expect(result.runFirefoxGate).toBe(false);
   });
 
   test('collectRunOptions rejects missing require-text value', () => {
@@ -167,5 +212,18 @@ describe('hm-smoke-runner option parsing', () => {
     expect(paths.specPath).toBe(expectedSpecPath);
     expect(paths.specMetaPath).toBe(`${expectedSpecPath}.meta.json`);
     expect(path.isAbsolute(paths.specPath)).toBe(true);
+  });
+
+  test('normalizeGateProfile and buildPerformanceTargets handle invalid profile and dedupe routes', () => {
+    const gate = smokeRunner.normalizeGateProfile('weekly');
+    expect(gate).toBe('per-cycle');
+
+    const targets = smokeRunner.buildPerformanceTargets({
+      route: '/dashboard',
+      perfRoutes: ['/dashboard', 'settings'],
+    }, 'http://127.0.0.1:3000/dashboard');
+    expect(targets).toHaveLength(2);
+    expect(targets[0].url).toBe('http://127.0.0.1:3000/dashboard');
+    expect(targets[1].url).toBe('http://127.0.0.1:3000/settings');
   });
 });
