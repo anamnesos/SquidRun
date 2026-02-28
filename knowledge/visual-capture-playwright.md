@@ -1,4 +1,4 @@
-# Playwright Capture + Smoke Pipelines (P0-P2)
+# Playwright Capture + Smoke Pipelines (P0-P3)
 
 ## Purpose
 
@@ -12,6 +12,7 @@ From `ui/`:
 ```bash
 npm install playwright --save
 npm install axe-core --save
+npm install pixelmatch pngjs --save
 npx playwright install chromium
 ```
 
@@ -83,9 +84,13 @@ Includes:
 - `axe-report.json`
 - `dom-summary.json`
 - `link-checks.json`
+- `before.png` (baseline snapshot for diff)
+- `after.png` (current snapshot for diff)
+- `diff.png` (pixelmatch output)
 - `diagnostics.json`
 - `summary.json`
 - `manifest.json`
+- `debug-package/` (on failures)
 
 ## P2 Controls
 
@@ -98,3 +103,23 @@ Includes:
 - Content assertions:
   - `--require-text <snippet>` (repeatable)
   - `--content-case-sensitive`
+
+## P3 Controls
+
+- Disable visual diff: `--no-diff`
+- Visual diff thresholds:
+  - `--max-diff-pixels <n>` (fails smoke when exceeded)
+  - `--diff-threshold <0..1>` (pixelmatch sensitivity)
+- Baseline behavior:
+  - `--baseline-key <key>`
+  - `--no-update-baseline`
+  - `--update-baseline-always`
+
+## P3 Failure Debug Package
+
+When hard failures are detected, `hm-smoke-runner` writes:
+
+- `debug-package/package.json` (artifact index + failure summary)
+- `debug-package/explanation.md` (human-readable failure explanation)
+- `debug-package/network-summary.json` (request failures + HTTP error aggregation)
+- `debug-package/trace.zip` + screenshot copies (`before/after/diff/screenshot`) when available

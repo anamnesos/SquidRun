@@ -4156,9 +4156,12 @@ class SquidRunApp {
       `http_errors=${Number(safeSummary.httpErrorCount || 0)}`,
       `axe_violations=${Number(safeSummary.axeViolationCount || 0)}`,
       `broken_links=${Number(safeSummary.brokenLinkCount || 0)}`,
+      `diff_pixels=${Number(safeSummary.diffPixelCount || 0)}`,
+      `diff_ratio=${typeof safeSummary.diffRatio === 'number' ? safeSummary.diffRatio : 'n/a'}`,
       `missing_text=${Number(safeSummary.missingTextCount || 0)}`,
       `missing_selectors=${Number(safeSummary.missingSelectorCount || 0)}`,
       `hard_failures=${Number(safeSummary.hardFailureCount || 0)}`,
+      `debug_package=${safeSummary.debugPackagePath || 'n/a'}`,
     ];
     const hardFailures = Array.isArray(safeSummary.hardFailures) ? safeSummary.hardFailures : [];
     for (const failure of hardFailures.slice(0, 3)) {
