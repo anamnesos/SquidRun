@@ -144,6 +144,7 @@ const EXTERNAL_WORKSPACE_DIRNAME = 'SquidRun';
 const ONBOARDING_STATE_FILENAME = 'onboarding-state.json';
 const FRESH_INSTALL_MARKER_FILENAME = 'fresh-install.json';
 const PACKAGED_BIN_RUNTIME_RELATIVE = path.join('.squidrun', 'bin', 'runtime', 'ui');
+const WINDOWS_APP_USER_MODEL_ID = 'com.squidrun.app';
 
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
@@ -167,6 +168,10 @@ const ALLOWED_RUNTIME_LIFECYCLE_TRANSITIONS = Object.freeze({
 
 class SquidRunApp {
   constructor(appContext, managers) {
+    if (process.platform === 'win32' && typeof app.setAppUserModelId === 'function') {
+      app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
+    }
+
     this.ctx = appContext;
     this.settings = managers.settings;
     this.activity = managers.activity;
