@@ -99,7 +99,7 @@
           ]
         }
       ],
-      "x64ArchFiles": "**/node_modules/node-pty/prebuilds/**/*"
+      "x64ArchFiles": "**/node_modules/{node-pty,better-sqlite3}/**/*"
     },
     "win": {
       "icon": "assets/squidrun-favicon.ico",
