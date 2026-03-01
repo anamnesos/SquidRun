@@ -240,8 +240,12 @@ describe('Project Handlers', () => {
         session_id: 'app-session-321',
         version: 1,
       }));
-      expect(linkPayload.comms.hm_send).toBe('hm-send');
-      expect(linkPayload.comms.hm_comms).toBe('hm-comms');
+      expect(linkPayload.comms.hm_send).toBe(
+        path.resolve(getSquidrunRoot(), 'ui', 'scripts', 'hm-send.js').replace(/\\/g, '/')
+      );
+      expect(linkPayload.comms.hm_comms).toBe(
+        path.resolve(getSquidrunRoot(), 'ui', 'scripts', 'hm-comms.js').replace(/\\/g, '/')
+      );
       expect(linkPayload.role_targets).toEqual({
         architect: 'architect',
         builder: 'builder',
