@@ -123,8 +123,8 @@ function writeProjectBootstrapFiles(projectPath, deps = {}) {
   const linkPayload = {
     squidrun_root: normalizeToPosix(squidrunRoot),
     comms: {
-      hm_send: 'hm-send',
-      hm_comms: 'hm-comms',
+      hm_send: normalizeToPosix(path.join(squidrunRoot, 'ui', 'scripts', 'hm-send.js')),
+      hm_comms: normalizeToPosix(path.join(squidrunRoot, 'ui', 'scripts', 'hm-comms.js')),
     },
     workspace: normalizeToPosix(projectRoot),
     session_id: sessionId,
