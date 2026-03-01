@@ -12,6 +12,7 @@ const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
 const DEFAULT_POLL_INTERVAL_MS = 10000;
 const MIN_POLL_INTERVAL_MS = 1000;
 const SEEN_SID_RETENTION_MS = 48 * 60 * 60 * 1000;
+const CURSOR_SKEW_TOLERANCE_MS = 2 * 60 * 1000;
 
 let running = false;
 let pollTimer = null;
@@ -35,6 +36,16 @@ function normalizeSeenAtMs(value, fallbackMs = Date.now()) {
     return Math.floor(numeric);
   }
   return Math.floor(fallbackMs);
+}
+
+function parseJsonObject(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function loadSqliteDriver() {
@@ -151,9 +162,13 @@ function loadPersistedSeenSids() {
     recentSidSet.add(sid);
     recentSidSeenAtMs.set(sid, seenAtMs);
   }
+  let recoveredFromJournal = 0;
+  if (rows.length < 1) {
+    recoveredFromJournal = loadSeenSidsFromCommsJournal(cutoffMs, nowMs);
+  }
   log.info(
     'SMS',
-    `Loaded persisted seen SMS SIDs (loaded=${rows.length}, pruned=${Number(pruneResult?.changes || 0)}, db=${seenSidDbDriverName || 'unknown'})`
+    `Loaded persisted seen SMS SIDs (loaded=${rows.length}, recovered=${recoveredFromJournal}, pruned=${Number(pruneResult?.changes || 0)}, db=${seenSidDbDriverName || 'unknown'})`
   );
 }
 
@@ -183,6 +198,44 @@ function persistSeenSid(sid, seenAtMs = Date.now()) {
   } catch (err) {
     log.warn('SMS', `Seen SID persistence write failed; falling back to in-memory only: ${err.message}`);
     closeSeenSidDb();
+  }
+}
+
+function loadSeenSidsFromCommsJournal(cutoffMs, nowMs = Date.now()) {
+  if (!seenSidDb) return 0;
+  try {
+    const tableRow = seenSidDb
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='comms_journal'")
+      .get();
+    if (!tableRow) return 0;
+
+    const loadStmt = seenSidDb.prepare(`
+      SELECT metadata_json, sent_at_ms, brokered_at_ms, updated_at_ms
+      FROM comms_journal
+      WHERE channel = 'sms'
+        AND direction = 'inbound'
+        AND COALESCE(sent_at_ms, brokered_at_ms, updated_at_ms, 0) >= ?
+      ORDER BY COALESCE(sent_at_ms, brokered_at_ms, updated_at_ms, 0) ASC
+    `);
+    const rows = loadStmt.all(cutoffMs);
+    let recovered = 0;
+    for (const row of rows) {
+      const metadata = parseJsonObject(row?.metadata_json);
+      const sid = typeof metadata?.sid === 'string' ? metadata.sid.trim() : '';
+      if (!sid || recentSidSet.has(sid)) continue;
+      const seenAtMs = normalizeSeenAtMs(
+        row?.sent_at_ms ?? row?.brokered_at_ms ?? row?.updated_at_ms,
+        nowMs
+      );
+      recentSidSet.add(sid);
+      recentSidSeenAtMs.set(sid, seenAtMs);
+      persistSeenSid(sid, seenAtMs);
+      recovered += 1;
+    }
+    return recovered;
+  } catch (err) {
+    log.warn('SMS', `Failed recovering seen SIDs from comms_journal: ${err.message}`);
+    return 0;
   }
 }
 
@@ -222,8 +275,13 @@ function buildMessagesPath(currentConfig, sinceMs) {
   const query = new URLSearchParams();
   query.append('To', currentConfig.twilioPhoneNumber);
   query.append('Direction', 'inbound');
-  query.append('DateSent>=', new Date(sinceMs).toISOString());
+  query.append('DateSent>=', formatTwilioDateFloor(sinceMs));
   return `/2010-04-01/Accounts/${encodeURIComponent(currentConfig.accountSid)}/Messages.json?${query.toString()}`;
+}
+
+function formatTwilioDateFloor(value) {
+  const safeMs = normalizeSeenAtMs(value, Date.now());
+  return new Date(safeMs).toISOString().slice(0, 10);
 }
 
 function requestTwilio(method, path, authHeader) {
@@ -362,7 +420,8 @@ async function pollNow() {
       const summary = summarizeMessageForLog(message);
       const timestampMs = parseTimestampMs(message);
       const directionInbound = summary.direction.includes('inbound');
-      const timestampOlderThanCursor = timestampMs !== null && timestampMs < lastPollTimeMs;
+      const timestampOlderThanCursor = timestampMs !== null
+        && timestampMs < (lastPollTimeMs - CURSOR_SKEW_TOLERANCE_MS);
       const hasSid = summary.sid !== 'missing';
       const sidAlreadySeen = hasSid ? recentSidSet.has(summary.sid) : false;
       const sidAccepted = hasSid && !sidAlreadySeen;
@@ -382,6 +441,9 @@ async function pollNow() {
         reason = 'missing_sid';
       } else if (sidAlreadySeen) {
         reason = 'duplicate_sid';
+      } else if (timestampOlderThanCursor) {
+        rememberSid(summary.sid);
+        reason = 'timestamp_before_cursor';
       } else {
         // Preserve existing behavior: once SID passes direction/timestamp/dedup checks,
         // remember it even if body is empty or no callback is configured.
@@ -471,8 +533,11 @@ function start(options = {}) {
   onMessage = typeof options.onMessage === 'function' ? options.onMessage : null;
   recentSidSet = new Set();
   recentSidSeenAtMs = new Map();
+  const persistenceEnabled = options.persistSeenSids === true
+    ? true
+    : (options.persistSeenSids !== false && process.env.NODE_ENV !== 'test');
   initSeenSidPersistence({
-    enabled: options.persistSeenSids !== false && process.env.NODE_ENV !== 'test',
+    enabled: persistenceEnabled,
   });
   lastPollTimeMs = Date.now();
   pollInFlight = false;
@@ -514,6 +579,7 @@ const _internals = {
   getMissingTwilioConfigKeys,
   getTwilioConfig,
   buildMessagesPath,
+  formatTwilioDateFloor,
   requestTwilio,
   pollNow,
   parseTimestampMs,
