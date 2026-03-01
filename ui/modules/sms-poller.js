@@ -4,11 +4,14 @@
  */
 
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 const log = require('./logger');
+const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
 
 const DEFAULT_POLL_INTERVAL_MS = 10000;
 const MIN_POLL_INTERVAL_MS = 1000;
-const MAX_RECENT_SIDS = 50;
+const SEEN_SID_RETENTION_MS = 48 * 60 * 60 * 1000;
 
 let running = false;
 let pollTimer = null;
@@ -17,8 +20,171 @@ let pollIntervalMs = DEFAULT_POLL_INTERVAL_MS;
 let lastPollTimeMs = 0;
 let onMessage = null;
 let config = null;
-let recentSidOrder = [];
 let recentSidSet = new Set();
+let recentSidSeenAtMs = new Map();
+let seenSidDb = null;
+let seenSidDbDriverName = null;
+
+function isTruthyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function normalizeSeenAtMs(value, fallbackMs = Date.now()) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric >= 0) {
+    return Math.floor(numeric);
+  }
+  return Math.floor(fallbackMs);
+}
+
+function loadSqliteDriver() {
+  try {
+    const sqlite = require('node:sqlite');
+    if (sqlite && typeof sqlite.DatabaseSync === 'function') {
+      return {
+        name: 'node:sqlite',
+        create: (filename) => new sqlite.DatabaseSync(filename),
+      };
+    }
+  } catch {
+    // Continue to fallback driver.
+  }
+
+  try {
+    const BetterSqlite3 = require('better-sqlite3');
+    return {
+      name: 'better-sqlite3',
+      create: (filename) => new BetterSqlite3(filename),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function resolveSeenSidDbPath() {
+  if (typeof resolveCoordPath === 'function') {
+    try {
+      return resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
+    } catch {
+      // Fall back below.
+    }
+  }
+  if (!isTruthyString(WORKSPACE_PATH)) return null;
+  return path.join(WORKSPACE_PATH, 'runtime', 'evidence-ledger.db');
+}
+
+function closeSeenSidDb() {
+  if (!seenSidDb) return;
+  try {
+    seenSidDb.close();
+  } catch (err) {
+    log.warn('SMS', `Failed to close seen SID DB: ${err.message}`);
+  } finally {
+    seenSidDb = null;
+    seenSidDbDriverName = null;
+  }
+}
+
+function applySeenSidDbPragmas(db) {
+  if (!db) return;
+  db.exec('PRAGMA journal_mode=WAL;');
+  db.exec('PRAGMA synchronous=NORMAL;');
+  db.exec('PRAGMA busy_timeout=5000;');
+}
+
+function ensureSeenSidTable(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sms_seen_sids (
+      sid TEXT PRIMARY KEY,
+      seen_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_sms_seen_sids_seen_at ON sms_seen_sids(seen_at);
+  `);
+}
+
+function openSeenSidDb() {
+  const dbPath = resolveSeenSidDbPath();
+  if (!dbPath) {
+    return null;
+  }
+
+  const driver = loadSqliteDriver();
+  if (!driver) {
+    log.warn('SMS', 'Seen SID persistence unavailable (no SQLite driver)');
+    return null;
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const db = driver.create(dbPath);
+    applySeenSidDbPragmas(db);
+    ensureSeenSidTable(db);
+    seenSidDbDriverName = driver.name;
+    return db;
+  } catch (err) {
+    log.warn('SMS', `Seen SID persistence disabled (db_open_failed: ${err.message})`);
+    return null;
+  }
+}
+
+function pruneSeenSidSet(nowMs = Date.now()) {
+  const cutoffMs = normalizeSeenAtMs(nowMs) - SEEN_SID_RETENTION_MS;
+  for (const [sid, seenAtMs] of recentSidSeenAtMs.entries()) {
+    if (seenAtMs >= cutoffMs) continue;
+    recentSidSeenAtMs.delete(sid);
+    recentSidSet.delete(sid);
+  }
+}
+
+function loadPersistedSeenSids() {
+  if (!seenSidDb) return;
+  const nowMs = Date.now();
+  const cutoffMs = nowMs - SEEN_SID_RETENTION_MS;
+  const deleteOldStmt = seenSidDb.prepare('DELETE FROM sms_seen_sids WHERE seen_at < ?');
+  const loadStmt = seenSidDb.prepare('SELECT sid, seen_at FROM sms_seen_sids WHERE seen_at >= ? ORDER BY seen_at ASC');
+  const pruneResult = deleteOldStmt.run(cutoffMs);
+  const rows = loadStmt.all(cutoffMs);
+  for (const row of rows) {
+    if (!isTruthyString(row?.sid)) continue;
+    const sid = row.sid.trim();
+    const seenAtMs = normalizeSeenAtMs(row?.seen_at, nowMs);
+    recentSidSet.add(sid);
+    recentSidSeenAtMs.set(sid, seenAtMs);
+  }
+  log.info(
+    'SMS',
+    `Loaded persisted seen SMS SIDs (loaded=${rows.length}, pruned=${Number(pruneResult?.changes || 0)}, db=${seenSidDbDriverName || 'unknown'})`
+  );
+}
+
+function initSeenSidPersistence(options = {}) {
+  closeSeenSidDb();
+  if (options.enabled === false) return;
+
+  try {
+    seenSidDb = openSeenSidDb();
+    if (!seenSidDb) return;
+    loadPersistedSeenSids();
+  } catch (err) {
+    log.warn('SMS', `Seen SID persistence initialization failed: ${err.message}`);
+    closeSeenSidDb();
+  }
+}
+
+function persistSeenSid(sid, seenAtMs = Date.now()) {
+  if (!seenSidDb || !isTruthyString(sid)) return;
+  try {
+    const upsert = seenSidDb.prepare(`
+      INSERT INTO sms_seen_sids (sid, seen_at)
+      VALUES (?, ?)
+      ON CONFLICT(sid) DO UPDATE SET seen_at = excluded.seen_at
+    `);
+    upsert.run(sid.trim(), normalizeSeenAtMs(seenAtMs));
+  } catch (err) {
+    log.warn('SMS', `Seen SID persistence write failed; falling back to in-memory only: ${err.message}`);
+    closeSeenSidDb();
+  }
+}
 
 function getMissingTwilioConfigKeys(env = process.env) {
   const missing = [];
@@ -99,15 +265,14 @@ function parseTimestampMs(message) {
 }
 
 function rememberSid(sid) {
-  if (!sid || recentSidSet.has(sid)) return;
-  recentSidSet.add(sid);
-  recentSidOrder.push(sid);
-  while (recentSidOrder.length > MAX_RECENT_SIDS) {
-    const evictedSid = recentSidOrder.shift();
-    if (evictedSid) {
-      recentSidSet.delete(evictedSid);
-    }
-  }
+  if (!isTruthyString(sid)) return;
+  const normalizedSid = sid.trim();
+  if (recentSidSet.has(normalizedSid)) return;
+  const nowMs = Date.now();
+  recentSidSet.add(normalizedSid);
+  recentSidSeenAtMs.set(normalizedSid, nowMs);
+  persistSeenSid(normalizedSid, nowMs);
+  pruneSeenSidSet(nowMs);
 }
 
 function normalizeFrom(rawFrom) {
@@ -304,8 +469,11 @@ function start(options = {}) {
     : DEFAULT_POLL_INTERVAL_MS;
 
   onMessage = typeof options.onMessage === 'function' ? options.onMessage : null;
-  recentSidOrder = [];
   recentSidSet = new Set();
+  recentSidSeenAtMs = new Map();
+  initSeenSidPersistence({
+    enabled: options.persistSeenSids !== false && process.env.NODE_ENV !== 'test',
+  });
   lastPollTimeMs = Date.now();
   pollInFlight = false;
   running = true;
@@ -332,8 +500,9 @@ function stop() {
   pollInFlight = false;
   onMessage = null;
   config = null;
-  recentSidOrder = [];
   recentSidSet = new Set();
+  recentSidSeenAtMs = new Map();
+  closeSeenSidDb();
   lastPollTimeMs = 0;
 }
 
