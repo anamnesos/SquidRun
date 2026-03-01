@@ -49,7 +49,7 @@ If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `
 These rules MUST survive context compaction. Re-read after every compaction event.
 
 - **Telegram replies:** When user messages via `[Telegram from ...]`, reply on Telegram: `node ui/scripts/hm-send.js telegram "(ARCHITECT #N): reply"`. The user is NOT at their PC. Terminal output is invisible to them.
-- **Screenshots:** When user says they uploaded a screenshot, read `workspace/screenshots/latest.png`.
+- **Screenshots:** When user says they uploaded a screenshot, read `.squidrun/screenshots/latest.png`.
 - **Long hm-send messages (>500 chars):** Write to temp file first, then `--file`. See ROLES.md for syntax.
 
 ## Reference
