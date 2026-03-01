@@ -112,6 +112,8 @@ let ackTimeoutMs = DEFAULT_ACK_TIMEOUT_MS;
 let retries = DEFAULT_RETRIES;
 let enableFallback = true;
 let messageFilePath = null;
+let resolvedMessageFilePath = null;
+let cleanupMessageFilePathOnSuccess = null;
 let useStdin = false;
 let telegramPhotoPath = null;
 
@@ -121,6 +123,24 @@ let telegramPhotoPath = null;
 const KNOWN_FLAGS = new Set([
   '--role', '--file', '--stdin', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices',
 ]);
+
+function shouldCleanupMessageFile(filePath) {
+  if (typeof filePath !== 'string' || !filePath.trim()) return false;
+  const baseName = path.basename(filePath).toLowerCase();
+  return /^tmp-.*\.txt$/i.test(baseName) || /^hm-msg-.*\.txt$/i.test(baseName);
+}
+
+process.on('exit', (code) => {
+  if (Number(code) !== 0) return;
+  if (!cleanupMessageFilePathOnSuccess) return;
+  try {
+    if (fs.existsSync(cleanupMessageFilePathOnSuccess)) {
+      fs.unlinkSync(cleanupMessageFilePathOnSuccess);
+    }
+  } catch (_) {
+    // Best-effort cleanup only.
+  }
+});
 
 // Collect message from all args between target and first known --flag
 // This handles PowerShell splitting quoted strings into multiple args
@@ -208,9 +228,12 @@ if (!listDevicesMode && useStdin) {
   }
 }
 if (!listDevicesMode && messageFilePath) {
-  const resolvedMessageFilePath = path.resolve(messageFilePath);
+  resolvedMessageFilePath = path.resolve(messageFilePath);
   try {
     message = fs.readFileSync(resolvedMessageFilePath, 'utf8');
+    if (shouldCleanupMessageFile(resolvedMessageFilePath)) {
+      cleanupMessageFilePathOnSuccess = resolvedMessageFilePath;
+    }
   } catch (err) {
     console.error(`Failed to read message file '${resolvedMessageFilePath}': ${err.message}`);
     process.exit(1);
@@ -354,11 +377,11 @@ function readProjectContextFromState() {
 }
 
 function resolveLocalProjectContext(startDir = process.cwd()) {
-  const fromLink = resolveProjectContextFromLink(startDir);
-  if (fromLink?.projectPath) return fromLink;
-
   const fromState = readProjectContextFromState();
   if (fromState?.projectPath) return fromState;
+
+  const fromLink = resolveProjectContextFromLink(startDir);
+  if (fromLink?.projectPath) return fromLink;
 
   const cwdPath = path.resolve(startDir);
   return {

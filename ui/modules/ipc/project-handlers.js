@@ -305,6 +305,17 @@ function registerProjectHandlers(ctx, deps) {
       if (typeof setProjectRoot === 'function') {
         setProjectRoot(projectPath || null);
       }
+      try {
+        if (ctx?.watcher?.readState && ctx?.watcher?.writeState) {
+          const activeState = ctx.watcher.readState() || {};
+          ctx.watcher.writeState({
+            ...activeState,
+            project: projectPath || null,
+          });
+        }
+      } catch (err) {
+        log.warn('ProjectLifecycle', `Failed to seed active state project during switch: ${err.message}`);
+      }
 
       const rebindResult = rebindProjectScopedRuntimes();
       if (!rebindResult.ok) {

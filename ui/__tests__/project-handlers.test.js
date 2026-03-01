@@ -373,9 +373,10 @@ describe('Project Handlers', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Failed switching project runtime');
-      expect(ctx.watcher.writeState).toHaveBeenCalledTimes(2);
+      expect(ctx.watcher.writeState).toHaveBeenCalledTimes(3);
       expect(ctx.watcher.writeState.mock.calls[0][0].project).toBe(path.resolve('/after/project'));
-      expect(ctx.watcher.writeState.mock.calls[1][0].project).toBe('/before/project');
+      expect(ctx.watcher.writeState.mock.calls[1][0].project).toBe(path.resolve('/after/project'));
+      expect(ctx.watcher.writeState.mock.calls[2][0].project).toBe('/before/project');
       expect(watcherState.project).toBe('/before/project');
     });
   });
@@ -412,9 +413,10 @@ describe('Project Handlers', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Failed clearing project runtime');
-      expect(ctx.watcher.writeState).toHaveBeenCalledTimes(2);
+      expect(ctx.watcher.writeState).toHaveBeenCalledTimes(3);
       expect(ctx.watcher.writeState.mock.calls[0][0].project).toBeNull();
-      expect(ctx.watcher.writeState.mock.calls[1][0].project).toBe('/before/project');
+      expect(ctx.watcher.writeState.mock.calls[1][0].project).toBeNull();
+      expect(ctx.watcher.writeState.mock.calls[2][0].project).toBe('/before/project');
       expect(watcherState.project).toBe('/before/project');
     });
   });
