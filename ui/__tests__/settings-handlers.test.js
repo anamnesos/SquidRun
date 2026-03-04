@@ -205,6 +205,41 @@ describe('Settings Handlers', () => {
       expect(firmwareManager.runPreflight).toHaveBeenCalledWith(path.resolve(nextProject), { cache: true });
       expect(firmwareManager.ensureFirmwareFiles).toHaveBeenCalledWith(conflictResults);
     });
+
+    test('clears watcher state project when switching operating mode away from project', async () => {
+      deps.loadSettings.mockReturnValue({
+        operatingMode: 'project',
+        firmwareInjectionEnabled: true,
+      });
+      ctx.watcher.readState = jest.fn(() => ({
+        project: '/tmp/existing-project',
+        role: 'builder',
+      }));
+      ctx.watcher.writeState = jest.fn();
+
+      const result = await harness.invoke('set-setting', 'operatingMode', 'developer');
+
+      expect(result).toEqual({
+        operatingMode: 'developer',
+        firmwareInjectionEnabled: false,
+      });
+      expect(ctx.watcher.readState).toHaveBeenCalled();
+      expect(ctx.watcher.writeState).toHaveBeenCalledWith({
+        project: null,
+        role: 'builder',
+      });
+    });
+
+    test('emits project-changed null when switching operating mode away from project', async () => {
+      deps.loadSettings.mockReturnValue({
+        operatingMode: 'project',
+        firmwareInjectionEnabled: true,
+      });
+
+      await harness.invoke('set-setting', 'operatingMode', 'developer');
+
+      expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('project-changed', null);
+    });
   });
 
   describe('get-all-settings', () => {
