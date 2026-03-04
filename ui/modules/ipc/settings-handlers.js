@@ -308,6 +308,15 @@ function registerSettingsHandlers(ctx, deps) {
     // Operating mode drives firmware injection
     if (normalizedKey === 'operatingMode') {
       settings.firmwareInjectionEnabled = value === 'project';
+      if (value !== 'project' && ctx.watcher?.writeState && ctx.watcher?.readState) {
+        const currentState = ctx.watcher.readState() || {};
+        if (currentState.project) {
+          ctx.watcher.writeState({ ...currentState, project: null });
+        }
+      }
+      if (value !== 'project' && ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
+        ctx.mainWindow.webContents.send('project-changed', null);
+      }
     }
 
     saveSettings(settings);
