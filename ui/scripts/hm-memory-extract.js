@@ -3,6 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 const { CognitiveMemoryStore } = require('../modules/cognitive-memory-store');
+const DEFAULT_FRAGMENT_CHARS = 900;
+const DEFAULT_FRAGMENT_OVERLAP_CHARS = 140;
 
 function parseArgs(argv) {
   const args = Array.isArray(argv) ? argv.slice() : [];
@@ -32,13 +34,81 @@ function normalizeText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function findFragmentBoundaryBefore(text, index, window = 80) {
+  const target = Math.max(0, Math.min(text.length, Number(index) || 0));
+  const min = Math.max(0, target - Math.max(8, window));
+  for (let cursor = target; cursor > min; cursor -= 1) {
+    if (/\s/.test(text[cursor - 1] || '')) {
+      return cursor;
+    }
+  }
+  return target;
+}
+
+function findFragmentBoundaryAfter(text, index, window = 80) {
+  const target = Math.max(0, Math.min(text.length, Number(index) || 0));
+  const max = Math.min(text.length, target + Math.max(8, window));
+  for (let cursor = target; cursor < max; cursor += 1) {
+    if (/\s/.test(text[cursor] || '')) {
+      return cursor;
+    }
+  }
+  return target;
+}
+
+function chunkFragment(text, options = {}) {
+  const normalized = normalizeText(text);
+  if (!normalized) return [];
+
+  const maxChars = Math.max(200, Number.parseInt(String(options.maxChars || DEFAULT_FRAGMENT_CHARS), 10) || DEFAULT_FRAGMENT_CHARS);
+  const overlapChars = Math.max(
+    0,
+    Math.min(
+      Math.floor(maxChars / 2),
+      Number.parseInt(String(options.overlapChars || DEFAULT_FRAGMENT_OVERLAP_CHARS), 10) || DEFAULT_FRAGMENT_OVERLAP_CHARS
+    )
+  );
+
+  if (normalized.length <= maxChars) {
+    return [normalized];
+  }
+
+  const chunks = [];
+  let start = 0;
+  while (start < normalized.length) {
+    let end = Math.min(normalized.length, start + maxChars);
+    if (end < normalized.length) {
+      const adjustedEnd = findFragmentBoundaryBefore(normalized, end);
+      if (adjustedEnd > start + Math.floor(maxChars * 0.65)) {
+        end = adjustedEnd;
+      }
+    }
+
+    const chunk = normalized.slice(start, end).trim();
+    if (chunk) {
+      chunks.push(chunk);
+    }
+    if (end >= normalized.length) break;
+
+    const overlapStart = Math.max(start + 1, end - overlapChars);
+    const adjustedStart = findFragmentBoundaryAfter(normalized, overlapStart);
+    start = adjustedStart > start ? adjustedStart : end;
+  }
+
+  return chunks;
+}
+
 function collectTextFragments(payload) {
   const fragments = [];
   const pushValue = (value) => {
     if (!value) return;
     if (typeof value === 'string') {
       const normalized = normalizeText(value);
-      if (normalized) fragments.push(normalized);
+      if (!normalized) return;
+      const chunked = chunkFragment(normalized);
+      for (const chunk of chunked) {
+        if (chunk) fragments.push(chunk);
+      }
       return;
     }
     if (Array.isArray(value)) {
@@ -166,5 +236,6 @@ if (require.main === module) {
 
 module.exports = {
   collectTextFragments,
+  chunkFragment,
   extractCandidates,
 };

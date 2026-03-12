@@ -17,6 +17,10 @@ const DEFAULT_POLL_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPE
 const DEFAULT_HEARTBEAT_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_HEARTBEAT_MS || '15000', 10) || 15000);
 const DEFAULT_LEASE_MS = Math.max(DEFAULT_HEARTBEAT_MS + 1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_LEASE_MS || '60000', 10) || 60000);
 const DEFAULT_MAX_WORKERS = Math.max(1, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_MAX_WORKERS || '2', 10) || 2);
+const DEFAULT_PENDING_TASK_TTL_MS = parseOptionalDurationMs(
+  process.env.SQUIDRUN_SUPERVISOR_PENDING_TTL_MS,
+  24 * 60 * 60 * 1000
+);
 const DEFAULT_STDIO_TAIL_BYTES = Math.max(2048, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_STDIO_TAIL_BYTES || '16384', 10) || 16384);
 const DEFAULT_MEMORY_INDEX_DEBOUNCE_MS = Math.max(500, Number.parseInt(process.env.SQUIDRUN_MEMORY_INDEX_DEBOUNCE_MS || '2000', 10) || 2000);
 const DEFAULT_SLEEP_IDLE_MS = DEFAULT_IDLE_THRESHOLD_MS;
@@ -93,6 +97,14 @@ function processExists(pid) {
   }
 }
 
+function parseOptionalDurationMs(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const numeric = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(numeric)) return fallback;
+  if (numeric <= 0) return 0;
+  return Math.max(1000, numeric);
+}
+
 function parseArgs(argv) {
   const args = Array.isArray(argv) ? argv.slice() : [];
   const options = {
@@ -147,6 +159,7 @@ class SupervisorDaemon {
     this.heartbeatMs = Math.max(1000, Number.parseInt(options.heartbeatMs || DEFAULT_HEARTBEAT_MS, 10) || DEFAULT_HEARTBEAT_MS);
     this.leaseMs = Math.max(this.heartbeatMs + 1000, Number.parseInt(options.leaseMs || DEFAULT_LEASE_MS, 10) || DEFAULT_LEASE_MS);
     this.maxWorkers = Math.max(1, Number.parseInt(options.maxWorkers || DEFAULT_MAX_WORKERS, 10) || DEFAULT_MAX_WORKERS);
+    this.pendingTaskTtlMs = parseOptionalDurationMs(options.pendingTaskTtlMs, DEFAULT_PENDING_TASK_TTL_MS);
     this.pidPath = options.pidPath || DEFAULT_PID_PATH;
     this.statusPath = options.statusPath || DEFAULT_STATUS_PATH;
     this.logPath = options.logPath || DEFAULT_LOG_PATH;
@@ -210,12 +223,9 @@ class SupervisorDaemon {
     if (!initResult.ok) {
       return initResult;
     }
-    const requeueResult = this.store.requeueExpiredTasks({ nowMs: Date.now() });
-    if (!requeueResult.ok) {
-      this.logger.warn(`Failed to requeue expired tasks on startup: ${requeueResult.error || requeueResult.reason || 'unknown'}`);
-    }
+    const housekeeping = this.runQueueHousekeeping(Date.now(), 'startup');
     this.writeStatus();
-    return { ok: true, store: this.store.getStatus(), requeueResult };
+    return { ok: true, store: this.store.getStatus(), ...housekeeping };
   }
 
   start() {
@@ -267,10 +277,7 @@ class SupervisorDaemon {
 
   async tick() {
     if (this.stopping) return;
-    const requeueResult = this.store.requeueExpiredTasks({ nowMs: Date.now() });
-    if (!requeueResult.ok) {
-      this.logger.warn(`Expired-task requeue failed: ${requeueResult.error || requeueResult.reason || 'unknown'}`);
-    }
+    this.runQueueHousekeeping(Date.now(), 'tick');
 
     while (!this.stopping && this.activeWorkers.size < this.maxWorkers) {
       const leaseOwner = `${this.workerLeaseOwnerPrefix}-${process.pid}`;
@@ -640,6 +647,60 @@ class SupervisorDaemon {
       } catch {}
     }
   }
+
+  runQueueHousekeeping(nowMs = Date.now(), phase = 'tick') {
+    const requeueResult = this.store.requeueExpiredTasks({ nowMs });
+    if (!requeueResult.ok) {
+      this.logger.warn(`Expired-task requeue failed during ${phase}: ${requeueResult.error || requeueResult.reason || 'unknown'}`);
+    } else {
+      this.cleanupRequeuedWorkers(requeueResult, 'lease_expired_requeue');
+    }
+
+    let pruneResult = { ok: true, pruned: 0, taskIds: [], tasks: [], skipped: true, reason: 'ttl_disabled' };
+    if (this.pendingTaskTtlMs > 0 && typeof this.store.pruneExpiredPendingTasks === 'function') {
+      pruneResult = this.store.pruneExpiredPendingTasks({
+        nowMs,
+        maxAgeMs: this.pendingTaskTtlMs,
+      });
+      if (!pruneResult.ok) {
+        this.logger.warn(`Pending-task TTL prune failed during ${phase}: ${pruneResult.error || pruneResult.reason || 'unknown'}`);
+      } else if (Number(pruneResult.pruned || 0) > 0) {
+        this.logger.warn(`Pruned ${pruneResult.pruned} stale pending supervisor task(s) during ${phase}`);
+      }
+    }
+
+    return { requeueResult, pruneResult };
+  }
+
+  cleanupRequeuedWorkers(requeueResult, reason = 'lease_expired_requeue') {
+    const tasks = Array.isArray(requeueResult?.tasks) ? requeueResult.tasks : [];
+    for (const task of tasks) {
+      const taskId = String(task?.taskId || '').trim();
+      const workerPid = Number(task?.workerPid);
+      if (!taskId || !Number.isFinite(workerPid) || workerPid <= 0) {
+        continue;
+      }
+
+      const activeWorker = this.activeWorkers.get(taskId);
+      if (activeWorker) {
+        this.logger.warn(`Lease expired for active worker ${taskId}; stopping pid ${workerPid} before requeue replacement`);
+        void this.stopWorker(taskId, activeWorker, reason);
+        continue;
+      }
+
+      if (!processExists(workerPid)) {
+        continue;
+      }
+
+      try {
+        process.kill(workerPid);
+        this.logger.warn(`Killed stale worker pid ${workerPid} for requeued task ${taskId}`);
+      } catch (err) {
+        this.logger.warn(`Failed to kill stale worker pid ${workerPid} for ${taskId}: ${err.message}`);
+      }
+    }
+  }
+
   async settleWorker(worker, result) {
     if (!worker || worker.settled) return;
     worker.settled = true;
@@ -704,6 +765,7 @@ class SupervisorDaemon {
       pollMs: this.pollMs,
       heartbeatMs: this.heartbeatMs,
       leaseMs: this.leaseMs,
+      pendingTaskTtlMs: this.pendingTaskTtlMs,
       maxWorkers: this.maxWorkers,
       activeWorkers: Array.from(this.activeWorkers.values()).map((worker) => ({
         taskId: worker.taskId,

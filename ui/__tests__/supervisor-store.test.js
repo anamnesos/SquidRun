@@ -123,15 +123,71 @@ maybeDescribe('supervisor store', () => {
     });
     expect(claim.ok).toBe(true);
     expect(claim.task.status).toBe('running');
+    expect(store.attachWorkerPid(enqueue.taskId, 4242, {
+      leaseOwner: 'supervisor-test',
+      nowMs: 1500,
+    }).ok).toBe(true);
 
     const requeue = store.requeueExpiredTasks({ nowMs: 4000 });
     expect(requeue.ok).toBe(true);
     expect(requeue.requeued).toBe(1);
     expect(requeue.taskIds).toEqual([enqueue.taskId]);
+    expect(requeue.tasks).toEqual([
+      expect.objectContaining({
+        taskId: enqueue.taskId,
+        workerPid: 4242,
+        previousLeaseOwner: 'supervisor-test',
+      }),
+    ]);
 
     const task = store.getTask(enqueue.taskId);
     expect(task.status).toBe('pending');
     expect(task.leaseOwner).toBeNull();
     expect(task.workerPid).toBeNull();
+  });
+
+  test('prunes stale pending tasks when ttl is exceeded', () => {
+    expect(store.init().ok).toBe(true);
+
+    const stale = store.enqueueTask({
+      objective: 'Stale pending task',
+      nowMs: 1000,
+      contextSnapshot: {
+        kind: 'shell',
+        shellCommand: 'echo stale',
+      },
+    });
+    const fresh = store.enqueueTask({
+      objective: 'Fresh pending task',
+      nowMs: 9000,
+      contextSnapshot: {
+        kind: 'shell',
+        shellCommand: 'echo fresh',
+      },
+    });
+
+    const prune = store.pruneExpiredPendingTasks({
+      nowMs: 12000,
+      maxAgeMs: 5000,
+    });
+    expect(prune.ok).toBe(true);
+    expect(prune.pruned).toBe(1);
+    expect(prune.taskIds).toEqual([stale.taskId]);
+
+    expect(store.getTask(stale.taskId)).toEqual(expect.objectContaining({
+      status: 'canceled',
+      completedAtMs: 12000,
+    }));
+    expect(store.getTask(fresh.taskId)).toEqual(expect.objectContaining({
+      status: 'pending',
+    }));
+
+    const events = store.db.prepare(`
+      SELECT event_type
+      FROM supervisor_task_events
+      WHERE task_id = ?
+      ORDER BY created_at_ms ASC
+    `).all(stale.taskId);
+    expect(events.map((row) => row.event_type)).toContain('pruned_pending_ttl');
   });
 });

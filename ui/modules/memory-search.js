@@ -11,6 +11,13 @@ const DEFAULT_EMBEDDING_DIM = 384;
 const DEFAULT_CHUNK_CHARS = 2200;
 const DEFAULT_CHUNK_OVERLAP_CHARS = 250;
 const DEFAULT_RRF_K = 60;
+const DEFAULT_KEYWORD_WEIGHT = 2.1;
+const DEFAULT_SEMANTIC_WEIGHT = 0.9;
+const DEFAULT_TOKEN_COVERAGE_WEIGHT = 0.03;
+const DEFAULT_PHRASE_MATCH_WEIGHT = 0.015;
+const DEFAULT_TITLE_MATCH_WEIGHT = 0.01;
+const DEFAULT_HEADING_MATCH_WEIGHT = 0.008;
+const DEFAULT_SEMANTIC_ONLY_PENALTY = 0.01;
 const SUPPORTED_KNOWLEDGE_EXTENSIONS = new Set(['.md', '.markdown']);
 
 function resolveWorkspacePaths(options = {}) {
@@ -67,28 +74,198 @@ function normalizeWhitespace(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+function findBoundaryBefore(text, index, window = 80) {
+  const target = Math.max(0, Math.min(text.length, Number(index) || 0));
+  const min = Math.max(0, target - Math.max(8, window));
+  for (let cursor = target; cursor > min; cursor -= 1) {
+    if (/\s/.test(text[cursor - 1] || '')) {
+      return cursor;
+    }
+  }
+  return target;
+}
+
+function findPreferredChunkEnd(text, start, maxChars) {
+  const chunkStart = Math.max(0, Number(start) || 0);
+  const hardEnd = Math.min(text.length, chunkStart + maxChars);
+  if (hardEnd >= text.length) return text.length;
+
+  const preferredMin = chunkStart + Math.max(1, Math.floor(maxChars * 0.65));
+  const window = text.slice(chunkStart, hardEnd);
+  const patterns = [
+    /\n\s*\n/g,
+    /\n/g,
+    /[.!?]\s/g,
+    /[;:]\s/g,
+    /,\s/g,
+    /\s/g,
+  ];
+
+  let bestEnd = -1;
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(window)) !== null) {
+      const candidateEnd = chunkStart + match.index + match[0].length;
+      if (candidateEnd >= preferredMin) {
+        bestEnd = Math.max(bestEnd, candidateEnd);
+      }
+    }
+    if (bestEnd >= preferredMin) {
+      return bestEnd;
+    }
+  }
+
+  return hardEnd;
+}
+
+function alignChunkStart(text, proposedStart, previousStart) {
+  const normalizedPreviousStart = Math.max(0, Number(previousStart) || 0);
+  const target = Math.max(normalizedPreviousStart + 1, Math.min(text.length, Number(proposedStart) || 0));
+  return Math.max(normalizedPreviousStart + 1, findBoundaryBefore(text, target));
+}
+
+function buildExcerptWindow(text, start, maxChars) {
+  const safeStart = Math.max(0, Math.min(text.length, Number(start) || 0));
+  const safeEnd = Math.min(text.length, safeStart + maxChars);
+  const prefix = safeStart > 0 ? '...' : '';
+  const suffix = safeEnd < text.length ? '...' : '';
+  return `${prefix}${text.slice(safeStart, safeEnd).trim()}${suffix}`;
+}
+
+function getExcerptTokenWeight(token) {
+  const normalized = String(token || '');
+  if (!normalized) return 0;
+  return 1 + (Math.min(normalized.length, 16) / 12);
+}
+
+function collectExcerptTokenMatches(text, queryTokens) {
+  const lowered = text.toLowerCase();
+  const matches = [];
+
+  for (const token of queryTokens) {
+    let fromIndex = 0;
+    let hits = 0;
+    const weight = getExcerptTokenWeight(token);
+    while (fromIndex < lowered.length && hits < 8) {
+      const index = lowered.indexOf(token, fromIndex);
+      if (index < 0) break;
+      matches.push({
+        token,
+        index,
+        end: index + token.length,
+        weight,
+      });
+      fromIndex = index + token.length;
+      hits += 1;
+    }
+  }
+
+  return matches.sort((left, right) => left.index - right.index || right.weight - left.weight);
+}
+
+function buildExcerptCandidateStarts(text, maxChars, normalizedQuery, tokenMatches) {
+  const candidateStarts = new Set([0]);
+  const clusterWindowChars = Math.max(48, Math.floor(maxChars * 0.65));
+  const leadingAnchorOffset = Math.max(24, Math.floor(maxChars * 0.22));
+
+  if (normalizedQuery) {
+    let fromIndex = 0;
+    let hits = 0;
+    const lowered = text.toLowerCase();
+    while (fromIndex < lowered.length && hits < 4) {
+      const phraseIndex = lowered.indexOf(normalizedQuery, fromIndex);
+      if (phraseIndex < 0) break;
+      candidateStarts.add(Math.max(0, phraseIndex - leadingAnchorOffset));
+      fromIndex = phraseIndex + normalizedQuery.length;
+      hits += 1;
+    }
+  }
+
+  for (const match of tokenMatches.slice(0, 32)) {
+    candidateStarts.add(Math.max(0, match.index - leadingAnchorOffset));
+  }
+
+  for (let left = 0; left < tokenMatches.length; left += 1) {
+    let right = left;
+    while (right + 1 < tokenMatches.length && (tokenMatches[right + 1].index - tokenMatches[left].index) <= clusterWindowChars) {
+      right += 1;
+    }
+
+    const first = tokenMatches[left];
+    const last = tokenMatches[right];
+    const spanStart = first.index;
+    const spanEnd = Math.max(first.end, last.end);
+    const spanCenter = Math.floor((spanStart + spanEnd) / 2);
+    candidateStarts.add(Math.max(0, spanCenter - Math.floor(maxChars / 2)));
+    candidateStarts.add(Math.max(0, spanStart - leadingAnchorOffset));
+  }
+
+  return Array.from(candidateStarts).sort((left, right) => left - right);
+}
+
+function scoreExcerptWindow(text, start, maxChars, normalizedQuery, tokenMatches) {
+  const safeStart = Math.max(0, Math.min(text.length, Number(start) || 0));
+  const safeEnd = Math.min(text.length, safeStart + maxChars);
+  const windowText = text.slice(safeStart, safeEnd).toLowerCase();
+  const matchesInWindow = tokenMatches.filter((match) => match.index < safeEnd && match.end > safeStart);
+
+  if (matchesInWindow.length === 0) {
+    return normalizedQuery && windowText.includes(normalizedQuery) ? 2 : 0;
+  }
+
+  const uniqueTokenWeights = new Map();
+  let occurrenceScore = 0;
+  let earliest = Number.POSITIVE_INFINITY;
+  let latest = -1;
+
+  for (const match of matchesInWindow) {
+    occurrenceScore += match.weight * 0.45;
+    if (!uniqueTokenWeights.has(match.token)) {
+      uniqueTokenWeights.set(match.token, match.weight);
+    }
+    earliest = Math.min(earliest, match.index);
+    latest = Math.max(latest, match.end);
+  }
+
+  const coverageScore = Array.from(uniqueTokenWeights.values()).reduce((sum, value) => sum + (value * 5), 0);
+  const clusterSpan = Math.max(0, latest - earliest);
+  const clusterTightnessBonus = uniqueTokenWeights.size > 1
+    ? Math.max(0, 8 - (clusterSpan / Math.max(24, Math.floor(maxChars * 0.12))))
+    : 0;
+  const phraseBonus = normalizedQuery && windowText.includes(normalizedQuery) ? 10 : 0;
+  const clusterCenter = earliest + Math.floor(clusterSpan / 2);
+  const windowCenter = safeStart + Math.floor((safeEnd - safeStart) / 2);
+  const centerDistance = Math.abs(clusterCenter - windowCenter);
+  const centerBonus = Math.max(0, 3 - (centerDistance / Math.max(20, Math.floor(maxChars * 0.15))));
+
+  return coverageScore + occurrenceScore + clusterTightnessBonus + phraseBonus + centerBonus;
+}
+
 function createExcerpt(content, query = '', maxChars = 220) {
   const text = normalizeWhitespace(content);
   if (!text) return '';
   if (text.length <= maxChars) return text;
 
   const lowered = text.toLowerCase();
-  const tokens = tokenizeSearchQuery(query);
-  let anchor = -1;
-  for (const token of tokens) {
-    anchor = lowered.indexOf(token);
-    if (anchor >= 0) break;
+  const tokens = Array.from(new Set(tokenizeSearchQuery(query))).slice(0, 8);
+  const normalizedQuery = normalizeWhitespace(query).toLowerCase();
+  const tokenMatches = collectExcerptTokenMatches(text, tokens);
+  const candidateStarts = buildExcerptCandidateStarts(text, maxChars, normalizedQuery, tokenMatches);
+
+  let bestExcerpt = buildExcerptWindow(text, 0, maxChars);
+  let bestScore = scoreExcerptWindow(text, 0, maxChars, normalizedQuery, tokenMatches);
+
+  for (const start of candidateStarts) {
+    const candidate = buildExcerptWindow(text, start, maxChars);
+    const score = scoreExcerptWindow(text, start, maxChars, normalizedQuery, tokenMatches);
+    if (score > bestScore) {
+      bestScore = score;
+      bestExcerpt = candidate;
+    }
   }
 
-  if (anchor < 0) {
-    return `${text.slice(0, Math.max(0, maxChars - 3)).trim()}...`;
-  }
-
-  const start = Math.max(0, anchor - Math.floor(maxChars / 3));
-  const end = Math.min(text.length, start + maxChars);
-  const prefix = start > 0 ? '...' : '';
-  const suffix = end < text.length ? '...' : '';
-  return `${prefix}${text.slice(start, end).trim()}${suffix}`;
+  return bestExcerpt;
 }
 
 function listMarkdownFiles(rootDir) {
@@ -164,69 +341,63 @@ function splitMarkdownSections(content, fallbackHeading = '') {
 function chunkText(content, options = {}) {
   const maxChars = toPosInt(options.maxChars, DEFAULT_CHUNK_CHARS);
   const overlapChars = Math.max(0, Math.min(maxChars / 2, toPosInt(options.overlapChars, DEFAULT_CHUNK_OVERLAP_CHARS)));
-  const paragraphs = String(content || '')
-    .split(/\n\s*\n/g)
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (paragraphs.length === 0) {
-    const trimmed = String(content || '').trim();
-    return trimmed ? [trimmed] : [];
-  }
-
+  const text = String(content || '').trim();
+  if (!text) return [];
   const chunks = [];
-  let current = '';
+  let start = 0;
 
-  function flushChunk() {
-    const normalized = current.trim();
-    if (!normalized) return;
-    chunks.push(normalized);
-    if (overlapChars <= 0 || normalized.length <= overlapChars) {
-      current = '';
-      return;
+  while (start < text.length) {
+    const end = findPreferredChunkEnd(text, start, maxChars);
+    const chunk = text.slice(start, end).trim();
+    if (chunk) {
+      chunks.push(chunk);
     }
-    current = normalized.slice(normalized.length - overlapChars);
-  }
+    if (end >= text.length) break;
 
-  for (const paragraph of paragraphs) {
-    if (!current) {
-      current = paragraph;
+    if (overlapChars <= 0) {
+      start = end;
       continue;
     }
 
-    const candidate = `${current}\n\n${paragraph}`;
-    if (candidate.length <= maxChars) {
-      current = candidate;
-      continue;
-    }
-
-    flushChunk();
-    if (!current) {
-      current = paragraph;
-      continue;
-    }
-
-    if (current.length + 2 + paragraph.length <= maxChars) {
-      current = `${current}\n\n${paragraph}`;
-      continue;
-    }
-
-    let remaining = paragraph;
-    while (remaining.length > maxChars) {
-      const slice = remaining.slice(0, maxChars);
-      chunks.push(slice.trim());
-      remaining = overlapChars > 0
-        ? remaining.slice(Math.max(1, maxChars - overlapChars))
-        : remaining.slice(maxChars);
-    }
-    current = remaining;
-  }
-
-  if (current.trim()) {
-    chunks.push(current.trim());
+    const nextStart = alignChunkStart(text, end - overlapChars, start);
+    start = nextStart > start ? nextStart : end;
   }
 
   return chunks;
+}
+
+function computeDocumentMatchSignals(doc, query) {
+  const tokens = Array.from(new Set(tokenizeSearchQuery(query)));
+  const normalizedQuery = normalizeWhitespace(query).toLowerCase();
+  const titleText = normalizeWhitespace(doc?.title || '').toLowerCase();
+  const headingText = normalizeWhitespace(doc?.heading || '').toLowerCase();
+  const contentText = normalizeWhitespace(doc?.content || '').toLowerCase();
+  const corpus = `${titleText} ${headingText} ${contentText}`.trim();
+
+  if (tokens.length === 0 || !corpus) {
+    return {
+      matchedTokenCount: 0,
+      tokenCoverage: 0,
+      phraseMatch: false,
+      titleMatch: false,
+      headingMatch: false,
+    };
+  }
+
+  let matchedTokenCount = 0;
+  for (const token of tokens) {
+    if (corpus.includes(token)) {
+      matchedTokenCount += 1;
+    }
+  }
+
+  return {
+    matchedTokenCount,
+    tokenCoverage: matchedTokenCount / tokens.length,
+    phraseMatch: Boolean(normalizedQuery && corpus.includes(normalizedQuery)),
+    titleMatch: tokens.some((token) => titleText.includes(token)),
+    headingMatch: tokens.some((token) => headingText.includes(token)),
+  };
 }
 
 function parseMarkdownTable(sectionText) {
@@ -761,18 +932,32 @@ class MemorySearchIndex {
 
     keywordRows.forEach((row, index) => {
       const id = Number(row.document_id);
-      const existing = combined.get(id) || { documentId: id, score: 0, keywordRank: null, semanticRank: null };
+      const existing = combined.get(id) || {
+        documentId: id,
+        score: 0,
+        keywordScore: 0,
+        semanticScore: 0,
+        keywordRank: null,
+        semanticRank: null,
+      };
       existing.keywordRank = index + 1;
-      existing.score += 1 / (rrfK + index + 1);
+      existing.keywordScore = 1 / (rrfK + index + 1);
       combined.set(id, existing);
     });
 
     semanticRows.forEach((row, index) => {
       const id = Number(row.document_id);
-      const existing = combined.get(id) || { documentId: id, score: 0, keywordRank: null, semanticRank: null };
+      const existing = combined.get(id) || {
+        documentId: id,
+        score: 0,
+        keywordScore: 0,
+        semanticScore: 0,
+        keywordRank: null,
+        semanticRank: null,
+      };
       existing.semanticRank = index + 1;
       existing.distance = Number(row.distance);
-      existing.score += 1 / (rrfK + index + 1);
+      existing.semanticScore = 1 / (rrfK + index + 1);
       combined.set(id, existing);
     });
 
@@ -783,9 +968,25 @@ class MemorySearchIndex {
       .map((entry) => {
         const doc = docsById.get(entry.documentId);
         if (!doc) return null;
+        const signals = computeDocumentMatchSignals(doc, trimmedQuery);
+        const keywordScore = Number(entry.keywordScore || 0);
+        const semanticScore = Number(entry.semanticScore || 0);
+        const score = (
+          (keywordScore * DEFAULT_KEYWORD_WEIGHT)
+          + (semanticScore * DEFAULT_SEMANTIC_WEIGHT)
+          + (signals.tokenCoverage * DEFAULT_TOKEN_COVERAGE_WEIGHT)
+          + (signals.phraseMatch ? DEFAULT_PHRASE_MATCH_WEIGHT : 0)
+          + (signals.titleMatch ? DEFAULT_TITLE_MATCH_WEIGHT : 0)
+          + (signals.headingMatch ? DEFAULT_HEADING_MATCH_WEIGHT : 0)
+          - ((signals.matchedTokenCount === 0 && keywordScore === 0 && semanticScore > 0)
+            ? DEFAULT_SEMANTIC_ONLY_PENALTY
+            : 0)
+        );
         return {
           documentId: entry.documentId,
-          score: Number(entry.score.toFixed(8)),
+          score: Number(score.toFixed(8)),
+          keywordScore: Number(keywordScore.toFixed(8)),
+          semanticScore: Number(semanticScore.toFixed(8)),
           keywordRank: entry.keywordRank,
           semanticRank: entry.semanticRank,
           distance: entry.distance ?? null,
@@ -799,6 +1000,7 @@ class MemorySearchIndex {
           confidence: Number(doc.confidence || 0),
           accessCount: Number(doc.access_count || 0),
           lastAccessedAtMs: doc.last_accessed_at_ms == null ? null : Number(doc.last_accessed_at_ms),
+          matchSignals: signals,
         };
       })
       .filter(Boolean)
@@ -827,6 +1029,7 @@ module.exports = {
   buildFtsQuery,
   splitMarkdownSections,
   chunkText,
+  createExcerpt,
   parseMarkdownTable,
   buildKnowledgeSources,
   buildSessionHandoffSources,

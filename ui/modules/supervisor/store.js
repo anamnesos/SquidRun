@@ -76,6 +76,13 @@ function normalizeStatus(value, fallback = 'pending') {
   return VALID_STATUSES.has(normalized) ? normalized : fallback;
 }
 
+function toOptionalAgeMs(value) {
+  if (value === undefined || value === null || value === '') return 0;
+  const numeric = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  return numeric;
+}
+
 function normalizeTaskRow(row) {
   if (!row) return null;
   return {
@@ -584,7 +591,7 @@ class SupervisorStore {
     this._assertAvailable();
     const nowMs = toEpochMs(options.nowMs);
     const expiredRows = this.db.prepare(`
-      SELECT task_id, lease_owner, lease_expires_at_ms, attempt_count
+      SELECT task_id, lease_owner, lease_expires_at_ms, attempt_count, worker_pid
       FROM supervisor_tasks
       WHERE status = 'running'
         AND lease_expires_at_ms IS NOT NULL
@@ -593,7 +600,7 @@ class SupervisorStore {
     `).all(nowMs);
 
     if (!expiredRows.length) {
-      return { ok: true, requeued: 0, taskIds: [] };
+      return { ok: true, requeued: 0, taskIds: [], tasks: [] };
     }
 
     this.db.exec('BEGIN IMMEDIATE;');
@@ -624,6 +631,76 @@ class SupervisorStore {
       ok: true,
       requeued: expiredRows.length,
       taskIds: expiredRows.map((row) => row.task_id),
+      tasks: expiredRows.map((row) => ({
+        taskId: row.task_id,
+        previousLeaseOwner: row.lease_owner || null,
+        expiredAtMs: row.lease_expires_at_ms == null ? null : Number(row.lease_expires_at_ms),
+        attemptCount: Number(row.attempt_count || 0),
+        workerPid: row.worker_pid == null ? null : Number(row.worker_pid),
+      })),
+    };
+  }
+
+  pruneExpiredPendingTasks(options = {}) {
+    this._assertAvailable();
+    const nowMs = toEpochMs(options.nowMs);
+    const maxAgeMs = toOptionalAgeMs(options.maxAgeMs);
+    if (!maxAgeMs) {
+      return { ok: true, pruned: 0, taskIds: [], tasks: [], skipped: true, reason: 'ttl_disabled' };
+    }
+
+    const cutoffMs = nowMs - maxAgeMs;
+    const staleRows = this.db.prepare(`
+      SELECT task_id, objective, priority, owner_pane, created_at_ms, updated_at_ms
+      FROM supervisor_tasks
+      WHERE status = 'pending'
+        AND updated_at_ms <= ?
+      ORDER BY updated_at_ms ASC
+    `).all(cutoffMs);
+
+    if (!staleRows.length) {
+      return { ok: true, pruned: 0, taskIds: [], tasks: [] };
+    }
+
+    this.db.exec('BEGIN IMMEDIATE;');
+    try {
+      for (const row of staleRows) {
+        this.db.prepare(`
+          UPDATE supervisor_tasks
+          SET status = 'canceled',
+              lease_owner = NULL,
+              lease_expires_at_ms = NULL,
+              worker_pid = NULL,
+              updated_at_ms = ?,
+              completed_at_ms = ?
+          WHERE task_id = ?
+        `).run(nowMs, nowMs, row.task_id);
+        this._insertEvent(row.task_id, 'pruned_pending_ttl', {
+          maxAgeMs,
+          pendingAgeMs: Math.max(0, nowMs - Number(row.updated_at_ms || row.created_at_ms || nowMs)),
+          objective: row.objective,
+          priority: Number(row.priority || 0),
+          ownerPane: row.owner_pane || null,
+        }, nowMs);
+      }
+      this.db.exec('COMMIT;');
+    } catch (err) {
+      try { this.db.exec('ROLLBACK;'); } catch {}
+      return { ok: false, reason: 'prune_pending_failed', error: err.message };
+    }
+
+    return {
+      ok: true,
+      pruned: staleRows.length,
+      taskIds: staleRows.map((row) => row.task_id),
+      tasks: staleRows.map((row) => ({
+        taskId: row.task_id,
+        objective: row.objective,
+        priority: Number(row.priority || 0),
+        ownerPane: row.owner_pane || null,
+        createdAtMs: Number(row.created_at_ms || 0),
+        updatedAtMs: Number(row.updated_at_ms || 0),
+      })),
     };
   }
 }

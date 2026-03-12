@@ -3,7 +3,7 @@ const os = require('os');
 const path = require('path');
 
 const { CognitiveMemoryStore } = require('../modules/cognitive-memory-store');
-const { extractCandidates } = require('../scripts/hm-memory-extract');
+const { collectTextFragments, extractCandidates } = require('../scripts/hm-memory-extract');
 
 describe('cognitive-memory store and extraction', () => {
   let tempDir;
@@ -90,5 +90,15 @@ describe('cognitive-memory store and extraction', () => {
       proof_count: 2,
     }));
     expect(Number(rows[0].expertise_score)).toBeCloseTo(0.35, 5);
+  });
+
+  test('collectTextFragments chunks long strings with overlap so phrases survive boundaries', () => {
+    const keyPhrase = 'prefers direct execution over lengthy planning';
+    const fragments = collectTextFragments({
+      transcript: `${'filler '.repeat(170)} ${keyPhrase} ${'tail '.repeat(170)}`,
+    });
+
+    expect(fragments.length).toBeGreaterThan(1);
+    expect(fragments.some((fragment) => fragment.includes(keyPhrase))).toBe(true);
   });
 });
