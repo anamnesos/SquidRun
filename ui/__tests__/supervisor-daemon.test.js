@@ -30,6 +30,7 @@ function createMockStore() {
     isAvailable: jest.fn(() => true),
     getTaskCounts: jest.fn(() => ({ pending: 0, running: 0, complete: 0, failed: 0 })),
     requeueExpiredTasks: jest.fn(() => ({ ok: true })),
+    pruneExpiredPendingTasks: jest.fn(() => ({ ok: true, pruned: 0, taskIds: [], tasks: [] })),
     claimNextTask: jest.fn(() => ({ ok: true, task: null })),
     close: jest.fn(),
   };
@@ -162,5 +163,66 @@ describe('supervisor-daemon integrations', () => {
     expect(mockWatcher.close).toHaveBeenCalledTimes(1);
     expect(mockMemorySearchIndex.close).toHaveBeenCalled();
     expect(mockSleepConsolidator.close).toHaveBeenCalled();
+  });
+
+  test('kills expired active workers before launching replacements', async () => {
+    daemon.maxWorkers = 1;
+    daemon.activeWorkers.set('expired-task', {
+      taskId: 'expired-task',
+      child: { pid: 4242, kill: jest.fn() },
+      taskLogPath: '/tmp/supervisor-tasks/expired-task.log',
+    });
+    daemon.store.requeueExpiredTasks.mockReturnValue({
+      ok: true,
+      requeued: 1,
+      taskIds: ['expired-task'],
+      tasks: [{ taskId: 'expired-task', workerPid: 4242 }],
+    });
+    daemon.store.claimNextTask
+      .mockReturnValueOnce({
+        ok: true,
+        task: {
+          taskId: 'replacement-task',
+          objective: 'replacement',
+          contextSnapshot: { kind: 'shell', shellCommand: 'echo replacement' },
+        },
+      })
+      .mockReturnValueOnce({ ok: true, task: null });
+
+    jest.spyOn(daemon, 'stopWorker').mockImplementation(async (taskId) => {
+      daemon.activeWorkers.delete(taskId);
+    });
+    jest.spyOn(daemon, 'launchTask').mockResolvedValue();
+
+    await daemon.tick();
+
+    expect(daemon.stopWorker).toHaveBeenCalledWith(
+      'expired-task',
+      expect.objectContaining({ taskId: 'expired-task' }),
+      'lease_expired_requeue'
+    );
+    expect(daemon.launchTask).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: 'replacement-task' }),
+      expect.objectContaining({ leaseOwner: expect.any(String) })
+    );
+  });
+
+  test('prunes stale pending tasks during housekeeping when ttl is enabled', async () => {
+    daemon.pendingTaskTtlMs = 60000;
+    daemon.store.pruneExpiredPendingTasks.mockReturnValue({
+      ok: true,
+      pruned: 2,
+      taskIds: ['task-1', 'task-2'],
+      tasks: [{ taskId: 'task-1' }, { taskId: 'task-2' }],
+    });
+
+    await daemon.tick();
+
+    expect(daemon.store.pruneExpiredPendingTasks).toHaveBeenCalledWith(
+      expect.objectContaining({
+        maxAgeMs: 60000,
+      })
+    );
+    expect(daemon.logger.warn).toHaveBeenCalledWith('Pruned 2 stale pending supervisor task(s) during tick');
   });
 });

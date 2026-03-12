@@ -1,0 +1,44 @@
+{
+  "hooks": {
+    "PreCompress": [
+      {
+        "hooks": [
+          {
+            "name": "state-capture",
+            "type": "command",
+            "command": "node D:/projects/squidrun/ui/scripts/hm-hook-precompress.js",
+            "description": "Capture state before memory compaction"
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "name": "audit-log",
+            "type": "command",
+            "command": "node D:/projects/squidrun/ui/scripts/hm-hook-afteragent.js",
+            "description": "Audit logging after agent turn"
+          }
+        ]
+      }
+    ]
+  },
+  "mcpServers": {
+    "google-workspace": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@google/mcp-server-google-workspace"
+      ]
+    },
+    "github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ]
+    }
+  }
+}

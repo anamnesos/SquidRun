@@ -6,6 +6,7 @@ const {
   DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
 } = require('../inject-message-ipc');
 const IS_DARWIN = process.platform === 'darwin';
+const DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES = 1024;
 const HIDDEN_PANE_HOST_WIDTH = IS_DARWIN ? 1400 : 1200;
 const HIDDEN_PANE_HOST_HEIGHT = IS_DARWIN ? 600 : 500;
 const PANE_HOST_QUERY_ENV_MAP = Object.freeze({
@@ -19,6 +20,7 @@ const PANE_HOST_QUERY_ENV_MAP = Object.freeze({
   minEnterDelayMs: 'SQUIDRUN_PANE_HOST_MIN_ENTER_DELAY_MS',
   chunkThresholdBytes: 'SQUIDRUN_PANE_HOST_CHUNK_THRESHOLD_BYTES',
   chunkSizeBytes: 'SQUIDRUN_PANE_HOST_CHUNK_SIZE_BYTES',
+  hmSendChunkThresholdBytes: 'SQUIDRUN_PANE_HOST_HM_SEND_CHUNK_THRESHOLD_BYTES',
   writeTimeoutMs: 'SQUIDRUN_PANE_HOST_WRITE_TIMEOUT_MS',
   enterTimeoutMs: 'SQUIDRUN_PANE_HOST_ENTER_TIMEOUT_MS',
 });
@@ -27,6 +29,26 @@ function toNonEmptyString(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function buildPaneHostQueryFromEnv(paneId) {
+  const query = { paneId: String(paneId) };
+  for (const [queryKey, envKey] of Object.entries(PANE_HOST_QUERY_ENV_MAP)) {
+    const value = toNonEmptyString(process.env[envKey]);
+    if (value) {
+      query[queryKey] = value;
+    }
+  }
+  if (!query.chunkThresholdBytes) {
+    query.chunkThresholdBytes = String(DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES);
+  }
+  if (!query.chunkSizeBytes) {
+    query.chunkSizeBytes = String(DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES);
+  }
+  if (!query.hmSendChunkThresholdBytes) {
+    query.hmSendChunkThresholdBytes = String(DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES);
+  }
+  return query;
 }
 
 function createPaneHostWindowManager(options = {}) {
@@ -55,23 +77,7 @@ function createPaneHostWindowManager(options = {}) {
   }
 
   function buildPaneHostQuery(paneId) {
-    const query = { paneId: String(paneId) };
-    for (const [queryKey, envKey] of Object.entries(PANE_HOST_QUERY_ENV_MAP)) {
-      const value = toNonEmptyString(process.env[envKey]);
-      if (value) {
-        query[queryKey] = value;
-      }
-    }
-    if (!query.chunkThresholdBytes) {
-      query.chunkThresholdBytes = String(DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES);
-    }
-    if (!query.chunkSizeBytes) {
-      query.chunkSizeBytes = String(DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES);
-    }
-    if (!query.hmSendChunkThresholdBytes) {
-      query.hmSendChunkThresholdBytes = String(DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES);
-    }
-    return query;
+    return buildPaneHostQueryFromEnv(paneId);
   }
 
   function getPaneWindow(paneId) {
@@ -172,3 +178,7 @@ function createPaneHostWindowManager(options = {}) {
 }
 
 module.exports = { createPaneHostWindowManager };
+module.exports._internals = {
+  buildPaneHostQueryFromEnv,
+  DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES,
+};
