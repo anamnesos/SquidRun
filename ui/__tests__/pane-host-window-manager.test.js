@@ -12,15 +12,16 @@ describe('pane-host-window-manager query defaults', () => {
     process.env = originalEnv;
   });
 
-  test('defaults hm-send chunk threshold to 1024 bytes', () => {
+  test('defaults hm-send chunk threshold to platform-safe value', () => {
     const { _internals } = require('../modules/main/pane-host-window-manager');
+    const expectedThreshold = process.platform === 'darwin' ? '1024' : '256';
 
     const query = _internals.buildPaneHostQueryFromEnv('1');
 
     expect(query).toEqual(expect.objectContaining({
       paneId: '1',
       chunkThresholdBytes: '4096',
-      hmSendChunkThresholdBytes: '1024',
+      hmSendChunkThresholdBytes: expectedThreshold,
     }));
   });
 
