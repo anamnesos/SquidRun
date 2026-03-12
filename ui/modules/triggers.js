@@ -18,6 +18,11 @@ const {
 } = require('../config');
 const log = require('./logger');
 const organicUI = require('./ipc/organic-ui-handlers');
+const {
+  DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+  DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
+  buildInjectMessageIpcPackets,
+} = require('./inject-message-ipc');
 
 // Sub-modules
 const metrics = require('./triggers/metrics');
@@ -149,9 +154,20 @@ function dispatchInjectMessage(payload) {
   const targetWindow = mainWindow;
   if (targetWindow && !targetWindow.isDestroyed()) {
     try {
-      // Tag payload so the send-interceptor in squidrun-app (squidrun-app.js)
-      // knows routeInjectMessage was already attempted and skips re-routing.
-      targetWindow.webContents.send('inject-message', { ...payload, _routerAttempted: true });
+      const packets = buildInjectMessageIpcPackets(payload, {
+        chunkThresholdBytes: DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+        chunkSizeBytes: DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
+      });
+      if (packets.length === 0) return false;
+
+      log.info('InjectIPC', `Fallback dispatch packetized ${packets.length} packet(s)`);
+      for (const packet of packets) {
+        targetWindow.webContents.send('inject-message', {
+          ...packet,
+          _routerAttempted: true,
+          _ipcPacketized: true,
+        });
+      }
       return true;
     } catch (err) {
       log.warn('Trigger', `Inject message dispatch failed: ${err.message}`);
@@ -955,3 +971,5 @@ module.exports = {
   triggerAutoHandoff: routing.triggerAutoHandoff,
   formatAuxEvent: routing.formatAuxEvent,
 };
+
+

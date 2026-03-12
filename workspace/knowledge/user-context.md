@@ -5,6 +5,7 @@
 - Reliable release workflows across Windows and Mac packaging environments.
 - Cross-device orchestration and messaging continuity.
 - Shared agent memory so workflows do not need to be re-explained each session.
+- Exploring a brokerless insurance workflow for his plumbing business (GL/WC shopping, audit prep, policy operations automation).
 
 ## Observed Preferences
 
