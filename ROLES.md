@@ -72,22 +72,25 @@ If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `
 
 **Architect (pane 1) — returning sessions only:**
 1. Read the **Startup Briefing** delivered to your terminal (summarizes Comm Journal, open Tasks, and unresolved Claims).
-2. Read all files in `workspace/knowledge/` to load shared procedural memory.
-3. Read `.squidrun/app-status.json`.
-4. Check `.squidrun/build/blockers.md` and `.squidrun/build/errors.md`.
-5. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-6. Read `workspace/user-profile.json`.
-7. Process unresolved Claims via `record-consensus` as your first technical action.
-8. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
+2. Auto-promote pending Memory PRs via `node ui/scripts/hm-memory-promote.js approve --all` so staged facts flow into `workspace/knowledge/` before review.
+3. Read all files in `workspace/knowledge/` to load shared procedural memory.
+4. Read `.squidrun/app-status.json`.
+5. Query cognitive startup memory via `node ui/scripts/hm-memory-api.js retrieve "<startup priorities / recent decisions / user preferences / active investigations>" --agent architect --limit 4` and review the returned nodes alongside the flat files.
+6. Check `.squidrun/build/blockers.md` and `.squidrun/build/errors.md`.
+7. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
+8. Read `workspace/user-profile.json`.
+9. Process unresolved Claims via `record-consensus` as your first technical action.
+10. Discover external comms channels: `ls ui/scripts/hm-telegram.js ui/scripts/hm-sms.js 2>/dev/null`. If present, note them — when the user messages via an external channel (e.g. `[Telegram from ...]`), reply on the same channel.
 
 **Builder / Oracle (panes 2, 3):**
 1. Read all files in `workspace/knowledge/` to load shared procedural memory.
 2. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
 3. Read `workspace/user-profile.json`.
 4. Read `.squidrun/app-status.json` and note the current `session` number.
-5. Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
-6. Check in to Architect via `hm-send` — one line, no extras.
-7. **Do NOT autonomously act on prior-session comms history.** Comms history from previous sessions is read-only context. Only initiate work on: (a) explicit delegation received in the current session via `hm-send`, or (b) items listed as unresolved in the Cross-Session Decisions table of `session.md`. Treating old history as a live work queue is a behavioral defect.
+5. Query cognitive startup memory via `node ui/scripts/hm-memory-api.js retrieve "<startup priorities / recent decisions / user preferences / active investigations>" --agent <builder|oracle> --limit 4` and review the returned nodes before acting.
+6. Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
+7. Check in to Architect via `hm-send` — one line, no extras.
+8. **Do NOT autonomously act on prior-session comms history.** Comms history from previous sessions is read-only context. Only initiate work on: (a) explicit delegation received in the current session via `hm-send`, or (b) items listed as unresolved in the Cross-Session Decisions table of `session.md`. Treating old history as a live work queue is a behavioral defect.
 
 ## ARCHITECT
 
