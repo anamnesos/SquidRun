@@ -413,6 +413,7 @@ function saveSessionState() {
       dryRun: termInfo.dryRun || false,
       scrollback: termInfo.scrollback || '',
       lastActivity: termInfo.lastActivity,
+      lastInputTime: termInfo.lastInputTime || null,
     });
   }
 

@@ -6,7 +6,9 @@ const {
   DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
 } = require('../inject-message-ipc');
 const IS_DARWIN = process.platform === 'darwin';
-const DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES = 1024;
+// Windows PowerShell/PSReadLine can drop characters when hm-send pastes
+// a few hundred bytes as one instant PTY write, so chunk earlier there.
+const DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES = IS_DARWIN ? 1024 : 256;
 const HIDDEN_PANE_HOST_WIDTH = IS_DARWIN ? 1400 : 1200;
 const HIDDEN_PANE_HOST_HEIGHT = IS_DARWIN ? 600 : 500;
 const PANE_HOST_QUERY_ENV_MAP = Object.freeze({

@@ -10,6 +10,7 @@ const { WebglAddon } = require('@xterm/addon-webgl');
 const { SearchAddon } = require('@xterm/addon-search');
 const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
 const log = require('./logger');
 const bus = require('./event-bus');
 const settings = require('./settings');
@@ -40,6 +41,14 @@ const {
   GEMINI_ENTER_DELAY_MS,
   SUBMIT_ACCEPT_MAX_ATTEMPTS,
 } = require('./constants');
+
+const STARTUP_MEMORY_TIMEOUT_MS = 5000;
+const STARTUP_MEMORY_LIMIT = 4;
+const STARTUP_MEMORY_QUERIES = Object.freeze({
+  architect: 'current session priorities recent decisions user preferences active investigations blockers release validation',
+  builder: 'current session priorities recent decisions user preferences active investigations implementation blockers ci release supervisor runtime',
+  oracle: 'current session priorities recent decisions user preferences active investigations documentation benchmarks ci risks',
+});
 
 // CLI identity tracking (dynamic)
 // Updated by renderer's pane-cli-identity handler (calls register/unregister)
@@ -945,6 +954,80 @@ async function sendStartupIdentityViaInjection(paneId, identityMsg) {
   });
 }
 
+function normalizeStartupMemoryText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function getStartupMemoryQuery(paneId) {
+  const role = String(PANE_ROLES[String(paneId)] || '').trim().toLowerCase();
+  return STARTUP_MEMORY_QUERIES[role] || STARTUP_MEMORY_QUERIES.builder;
+}
+
+function formatStartupMemoryEntry(entry = {}) {
+  const sourceType = normalizeStartupMemoryText(entry.sourceType || 'memory');
+  const label = normalizeStartupMemoryText(entry.heading || entry.title || entry.sourcePath || sourceType);
+  const excerptSource = entry.excerpt || entry.content || '';
+  const excerpt = normalizeStartupMemoryText(excerptSource);
+  if (!excerpt) return null;
+  const clipped = excerpt.length > 180 ? `${excerpt.slice(0, 177).trimEnd()}...` : excerpt;
+  return `- [${sourceType}] ${label}: ${clipped}`;
+}
+
+async function fetchStartupMemorySummary(paneId) {
+  const scriptPath = path.join(WORKSPACE_PATH, 'ui', 'scripts', 'hm-memory-api.js');
+  if (!fs.existsSync(scriptPath)) return '';
+
+  const role = String(PANE_ROLES[String(paneId)] || `pane-${paneId}`).trim().toLowerCase();
+  const query = getStartupMemoryQuery(paneId);
+
+  return new Promise((resolve) => {
+    execFile(
+      'node',
+      [scriptPath, 'retrieve', query, '--agent', role, '--limit', String(STARTUP_MEMORY_LIMIT)],
+      {
+        cwd: WORKSPACE_PATH,
+        windowsHide: true,
+        timeout: STARTUP_MEMORY_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+      },
+      (err, stdout, stderr) => {
+        if (err) {
+          log.warn('spawnAgent', `Startup memory retrieval failed for pane ${paneId}: ${stderr || err.message}`);
+          resolve('');
+          return;
+        }
+
+        try {
+          const parsed = JSON.parse(String(stdout || '{}'));
+          const lines = Array.isArray(parsed.results)
+            ? parsed.results
+                .map((entry) => formatStartupMemoryEntry(entry))
+                .filter(Boolean)
+                .slice(0, STARTUP_MEMORY_LIMIT)
+            : [];
+          if (lines.length === 0) {
+            resolve('');
+            return;
+          }
+          resolve(['', 'STARTUP MEMORY (cognitive):', ...lines].join('\n'));
+        } catch (parseErr) {
+          log.warn('spawnAgent', `Startup memory parse failed for pane ${paneId}: ${parseErr.message}`);
+          resolve('');
+        }
+      }
+    );
+  });
+}
+
+async function buildStartupIdentityMessage(paneId) {
+  const role = PANE_ROLES[String(paneId)] || `Pane ${paneId}`;
+  const d = new Date();
+  const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const header = `# SQUIDRUN SESSION: ${role} - Started ${timestamp}`;
+  const memorySummary = await fetchStartupMemorySummary(paneId);
+  return memorySummary ? `${header}\n${memorySummary}` : header;
+}
+
 async function runStartupIdentityAttempt(paneId, state, reason) {
   const id = String(paneId);
   const current = startupInjectionState.get(id);
@@ -953,10 +1036,17 @@ async function runStartupIdentityAttempt(paneId, state, reason) {
   }
   state.sendTimeoutId = null;
 
-  const role = PANE_ROLES[id] || `Pane ${id}`;
-  const d = new Date();
-  const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const identityMsg = state.identityMsg || `# SQUIDRUN SESSION: ${role} - Started ${timestamp}`;
+  if (!state.identityMsgPromise) {
+    state.identityMsgPromise = buildStartupIdentityMessage(id)
+      .catch((err) => {
+        log.warn('spawnAgent', `Startup identity message build failed for pane ${id}: ${err.message}`);
+        const role = PANE_ROLES[id] || `Pane ${id}`;
+        const d = new Date();
+        const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        return `# SQUIDRUN SESSION: ${role} - Started ${timestamp}`;
+      });
+  }
+  const identityMsg = await state.identityMsgPromise;
   state.identityMsg = identityMsg;
   state.attemptCount = (Number(state.attemptCount) || 0) + 1;
   const attempt = state.attemptCount;
@@ -985,7 +1075,7 @@ async function runStartupIdentityAttempt(paneId, state, reason) {
     startupInjectionState.delete(id);
     log.info(
       'spawnAgent',
-      `Identity injected for ${role} (pane ${id}) [ready:${reason}] [attempt:${attempt}/${maxAttempts}] [${deliveryMethod}]`
+      `Identity injected for ${PANE_ROLES[id] || 'Pane ' + id} (pane ${id}) [ready:${reason}] [attempt:${attempt}/${maxAttempts}] [${deliveryMethod}]`
     );
   } catch (err) {
     log.error('spawnAgent', `Identity injection failed for pane ${id} (attempt ${attempt}/${maxAttempts}):`, err);

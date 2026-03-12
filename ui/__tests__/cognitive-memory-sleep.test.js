@@ -76,7 +76,7 @@ maybeDescribe('cognitive-memory sleep consolidation', () => {
 
     fs.writeFileSync(sessionStatePath, JSON.stringify({
       savedAt: new Date(Date.now() - 3600000).toISOString(),
-      terminals: [{ paneId: '2', lastActivity: Date.now() - 3600000 }],
+      terminals: [{ paneId: '2', lastActivity: Date.now() - 60000, lastInputTime: Date.now() - 3600000 }],
     }, null, 2));
 
     const evidenceDb = new DatabaseSync(evidenceDbPath);
@@ -180,5 +180,24 @@ maybeDescribe('cognitive-memory sleep consolidation', () => {
     const pending = cognitiveStore.listPendingPRs({ limit: 10 });
     expect(pending.length).toBeGreaterThanOrEqual(1);
     expect(pending[0]).toEqual(expect.objectContaining({ proposed_by: 'sleep-cycle' }));
+  });
+
+  test('bases idle detection on lastInputTime instead of savedAt or lastActivity', () => {
+    const nowMs = Date.now();
+    fs.writeFileSync(sessionStatePath, JSON.stringify({
+      savedAt: new Date(nowMs).toISOString(),
+      terminals: [{
+        paneId: '2',
+        lastActivity: nowMs,
+        lastInputTime: nowMs - 3600000,
+      }],
+    }, null, 2));
+
+    const snapshot = consolidator.readActivitySnapshot(nowMs);
+
+    expect(snapshot.lastInputMs).toBe(nowMs - 3600000);
+    expect(snapshot.lastActivityMs).toBe(nowMs - 3600000);
+    expect(snapshot.idleMs).toBe(3600000);
+    expect(snapshot.isIdle).toBe(true);
   });
 });
