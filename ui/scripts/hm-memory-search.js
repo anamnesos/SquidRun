@@ -38,7 +38,12 @@ function printUsage() {
 
 async function main() {
   const { positional, flags } = parseArgs(process.argv.slice(2));
-  const query = positional.join(' ').trim();
+  // First positional arg may be the subcommand 'search' — strip it so it
+  // does not pollute the query (e.g. 'search' matching 'research').
+  const queryArgs = positional.length > 0 && positional[0] === 'search'
+    ? positional.slice(1)
+    : positional;
+  const query = queryArgs.join(' ').trim();
   if (!query || flags.help) {
     printUsage();
     process.exit(query ? 0 : 1);
