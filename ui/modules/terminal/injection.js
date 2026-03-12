@@ -10,6 +10,10 @@ const {
   getRuntimeInjectionCapabilityDefault,
   resolveInjectionRuntimeKey,
 } = require('./injection-capabilities');
+const {
+  DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
+  DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+} = require('../inject-message-ipc');
 
 const EVENT_SOURCE = 'injection.js';
 const IS_DARWIN = process.platform === 'darwin';
@@ -46,10 +50,10 @@ function createInjectionController(options = {}) {
     CODEX_ENTER_DELAY_MS = 200,
     GEMINI_ENTER_DELAY_MS = 75,
     MAX_COMPACTION_DEFER_MS = 8000,
-    CLAUDE_CHUNK_SIZE = 2048,
+    CLAUDE_CHUNK_SIZE = DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
     CLAUDE_CHUNK_MIN_SIZE = 1024,
     CLAUDE_CHUNK_MAX_SIZE = 8192,
-    CLAUDE_CHUNK_THRESHOLD_BYTES = 8 * 1024,
+    CLAUDE_CHUNK_THRESHOLD_BYTES = DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
     CLAUDE_CHUNK_YIELD_MS = 0,
     CLAUDE_ENTER_DELAY_MS = 50,
     CLAUDE_LONG_MESSAGE_BYTES = 1024,

@@ -21,6 +21,10 @@ const bus = require('./event-bus');
 const diagnosticLog = require('./diagnostic-log');
 const { showToast } = require('./notifications');
 const uiView = require('./ui-view');
+const {
+  DEFAULT_INJECT_IPC_REASSEMBLY_TTL_MS,
+  getUtf8ByteLength,
+} = require('./inject-message-ipc');
 
 // Terminal module for health handlers (lazy loaded)
 let terminal = null;
@@ -45,6 +49,7 @@ let throttleQueueMaxItems = DEFAULT_THROTTLE_QUEUE_MAX_ITEMS;
 let throttleQueueMaxBytes = DEFAULT_THROTTLE_QUEUE_MAX_BYTES;
 let daemonRuntimeConfigPromise = null;
 let daemonRuntimeConfigLoaded = false;
+const ipcChunkAssemblies = new Map();
 
 function toNonEmptyString(value) {
   if (typeof value !== 'string') return null;
@@ -138,6 +143,110 @@ function getQueueItemBytes(item) {
   const msg = (item && typeof item === 'object') ? item.message : item;
   if (typeof msg !== 'string') return 0;
   return new TextEncoder().encode(msg).length;
+}
+
+function pruneIpcChunkAssemblies(now = Date.now()) {
+  for (const [key, entry] of ipcChunkAssemblies.entries()) {
+    const updatedAt = Number(entry?.updatedAtMs || 0);
+    if (!Number.isFinite(updatedAt) || (updatedAt + DEFAULT_INJECT_IPC_REASSEMBLY_TTL_MS) <= now) {
+      ipcChunkAssemblies.delete(key);
+    }
+  }
+}
+
+function prepareInjectedPayloadForPane(paneId, rawPayload = {}) {
+  const payload = (rawPayload && typeof rawPayload === 'object') ? rawPayload : {};
+  const message = String(payload.message || '');
+  const actualBytes = getUtf8ByteLength(message);
+  const expectedBytes = Number.isFinite(Number(payload.messageBytes)) ? Number(payload.messageBytes) : null;
+  const chunkMeta = payload.ipcChunk && typeof payload.ipcChunk === 'object' ? payload.ipcChunk : null;
+
+  if (expectedBytes !== null && expectedBytes !== actualBytes) {
+    log.warn('InjectIPC', `IPC byte mismatch for pane ${paneId}: expected ${expectedBytes}, received ${actualBytes}`);
+    diagnosticLog.write('InjectIPC', `Pane ${paneId} byte mismatch expected=${expectedBytes} actual=${actualBytes}`);
+  }
+
+  if (!chunkMeta) {
+    diagnosticLog.write('InjectIPC', `Pane ${paneId} receive bytes=${actualBytes}/${expectedBytes ?? actualBytes}`);
+    return {
+      ready: true,
+      payload: {
+        ...payload,
+        panes: [String(paneId)],
+        message,
+        messageBytes: actualBytes,
+        ipcChunk: null,
+      },
+    };
+  }
+
+  pruneIpcChunkAssemblies();
+  const groupId = toNonEmptyString(chunkMeta.groupId);
+  const chunkIndex = Number.parseInt(String(chunkMeta.index ?? ''), 10);
+  const chunkCount = Number.parseInt(String(chunkMeta.count ?? ''), 10);
+  const totalBytes = Number.isFinite(Number(chunkMeta.totalBytes)) ? Number(chunkMeta.totalBytes) : null;
+  if (!groupId || !Number.isFinite(chunkIndex) || !Number.isFinite(chunkCount) || chunkIndex < 0 || chunkCount <= 0) {
+    log.warn('InjectIPC', `Invalid IPC chunk metadata for pane ${paneId}; delivering chunk directly`);
+    return {
+      ready: true,
+      payload: {
+        ...payload,
+        panes: [String(paneId)],
+        message,
+        messageBytes: actualBytes,
+        ipcChunk: null,
+      },
+    };
+  }
+
+  const key = `${paneId}:${groupId}`;
+  const entry = ipcChunkAssemblies.get(key) || {
+    count: chunkCount,
+    totalBytes,
+    parts: new Array(chunkCount),
+    received: 0,
+    updatedAtMs: Date.now(),
+    payload,
+  };
+
+  if (!entry.parts[chunkIndex]) {
+    entry.parts[chunkIndex] = message;
+    entry.received += 1;
+  }
+  entry.updatedAtMs = Date.now();
+  entry.payload = payload;
+  ipcChunkAssemblies.set(key, entry);
+  diagnosticLog.write('InjectIPC', `Pane ${paneId} chunk ${chunkIndex + 1}/${chunkCount} bytes=${actualBytes}/${expectedBytes ?? actualBytes}`);
+
+  if (entry.received < chunkCount) {
+    return { ready: false, waitingFor: chunkCount - entry.received };
+  }
+
+  ipcChunkAssemblies.delete(key);
+  const fullMessage = entry.parts.join('');
+  const reassembledBytes = getUtf8ByteLength(fullMessage);
+  if (entry.totalBytes !== null && entry.totalBytes !== reassembledBytes) {
+    log.warn('InjectIPC', `IPC reassembly byte mismatch for pane ${paneId}: expected ${entry.totalBytes}, reassembled ${reassembledBytes}`);
+    diagnosticLog.write('InjectIPC', `Pane ${paneId} reassembly mismatch expected=${entry.totalBytes} actual=${reassembledBytes}`);
+  } else {
+    diagnosticLog.write('InjectIPC', `Pane ${paneId} reassembled ${chunkCount} chunk(s) totalBytes=${reassembledBytes}`);
+  }
+
+  return {
+    ready: true,
+    payload: {
+      ...entry.payload,
+      panes: [String(paneId)],
+      message: fullMessage,
+      messageBytes: reassembledBytes,
+      ipcChunk: null,
+      meta: {
+        ...(entry.payload.meta && typeof entry.payload.meta === 'object' ? entry.payload.meta : {}),
+        ipcReassembled: true,
+        ipcChunkCount: chunkCount,
+      },
+    },
+  };
 }
 
 function getThrottleQueueBytes(queue = []) {
@@ -481,7 +590,6 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
   registerScopedIpcListener('daemon-core', 'inject-message', (event, data) => {
     const {
       panes,
-      message,
       deliveryId,
       traceContext,
       traceCtx,
@@ -495,6 +603,10 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
     for (const paneId of panes || []) {
       log.info('Inject', `Received inject-message for pane ${paneId}`);
       diagnosticLog.write('Inject', `Received inject-message for pane ${paneId}`);
+      const prepared = prepareInjectedPayloadForPane(String(paneId), data || {});
+      if (!prepared.ready) {
+        continue;
+      }
       const corrId = normalizedTraceContext?.traceId || normalizedTraceContext?.correlationId || undefined;
       const causationId = normalizedTraceContext?.parentEventId || normalizedTraceContext?.causationId || undefined;
       bus.emit('inject.route.received', {
@@ -506,7 +618,7 @@ function setupDaemonListeners(initTerminalsFn, reattachTerminalFn, setReconnecte
       });
       enqueueForThrottle(
         String(paneId),
-        message,
+        prepared.payload.message,
         deliveryId,
         normalizedTraceContext,
         isStartupInjection
@@ -1046,9 +1158,12 @@ module.exports = {
   _resetThrottleQueueForTesting() {
     throttleQueues.clear();
     throttlingPanes.clear();
+    ipcChunkAssemblies.clear();
     throttleQueueMaxItems = DEFAULT_THROTTLE_QUEUE_MAX_ITEMS;
     throttleQueueMaxBytes = DEFAULT_THROTTLE_QUEUE_MAX_BYTES;
     daemonRuntimeConfigLoaded = false;
     daemonRuntimeConfigPromise = null;
   },
 };
+
+

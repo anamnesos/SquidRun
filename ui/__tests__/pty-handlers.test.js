@@ -381,35 +381,26 @@ describe('PTY Handlers', () => {
       expect(result).toEqual({ success: true });
     });
 
-    test('auto-chunks large payload writes to prevent truncation', async () => {
+    test('writes large payload (chunking now handled pre-IPC)', async () => {
       ctx.daemonClient.connected = true;
       ctx.daemonClient.write.mockReturnValue(true);
       const payload = 'X'.repeat(2500);
 
       const result = await harness.invoke('pty-write', '1', payload);
 
-      expect(result).toEqual({
-        success: true,
-        chunked: true,
-        chunks: 2,
-        chunkSize: 2048,
-      });
-      expect(ctx.daemonClient.write).toHaveBeenCalledTimes(2);
-      const sent = ctx.daemonClient.write.mock.calls.map(call => call[1]).join('');
-      expect(sent).toBe(payload);
+      expect(result).toEqual({ success: true });
+      expect(ctx.daemonClient.write).toHaveBeenCalled();
     });
 
-    test('returns failure when auto-chunked write fails', async () => {
+    test('returns failure when large write fails', async () => {
       ctx.daemonClient.connected = true;
-      ctx.daemonClient.write
-        .mockReturnValueOnce(true)
-        .mockReturnValueOnce(false);
+      ctx.daemonClient.write.mockReturnValue(false);
       const payload = 'Y'.repeat(2500);
 
       const result = await harness.invoke('pty-write', '1', payload);
 
-      expect(ctx.daemonClient.write).toHaveBeenCalledTimes(2);
-      expect(result).toEqual({ success: false, error: 'Failed to send write to daemon' });
+      expect(ctx.daemonClient.write).toHaveBeenCalled();
+      expect(result).toEqual({ success: false, error: 'daemon_write_failed' });
     });
   });
 

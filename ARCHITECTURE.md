@@ -11,7 +11,8 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 5. PTY runtime is managed by daemon client (`ui/daemon-client.js`) connecting to `ui/terminal-daemon.js`; panes attach through renderer/hidden-host bridges.
 6. Watchers (`ui/modules/watcher.js` + `ui/modules/watcher-worker.js`) monitor workspace/trigger/message paths and route payloads through `ui/modules/triggers.js`.
 7. IPC handlers are registered via `ui/modules/ipc-handlers.js` + `ui/modules/ipc/handler-registry.js`; websocket dispatch uses `ui/modules/websocket-server.js` / `ui/modules/websocket-runtime.js`.
-8. Startup and coordination state is continuously materialized into `.squidrun/` (status, handoffs, snapshots, runtime ledgers).
+8. `ui/supervisor-daemon.js` runs a user-session durable background supervisor backed by SQLite for queued async work; it survives UI closure and writes PID/status/task logs under `.squidrun/runtime/`.
+9. Startup and coordination state is continuously materialized into `.squidrun/` (status, handoffs, snapshots, runtime ledgers).
 
 ## 3) KEY FILE MAP
 - ui/config.js: Shared runtime constants and path resolution (project root, coord root, pane cwd, trigger targets, role maps).
@@ -207,7 +208,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/coverage-report.js: Prints coverage-summary breakdown (under 50%, 50-80%, and overall statement/branch/function/line percentages).
 - ui/scripts/doc-lint.js: Lints `.squidrun/build/*.md` docs for active-item caps, required metadata fields, and stale-marker correctness.
 - ui/scripts/evidence-ledger-seed-memory.js: Seeds Evidence Ledger decision memory from context snapshot markdown/JSON with deterministic IDs.
-- ui/scripts/hm-bg.js: CLI utility that sends/queries runtime actions via WebSocket.
+- ui/scripts/hm-bg.js: Background Builder control CLI; uses WebSocket for live PTY agents and the durable supervisor queue CLI for queued work.
 - ui/scripts/hm-claim.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-comms.js: CLI utility that reads comms history from `.squidrun/runtime/evidence-ledger.db` via `node:sqlite`.
 - ui/scripts/hm-doctor.js: Preflight health-check CLI for dependencies, native modules, transport port, shell defaults, and `.squidrun` permissions.
@@ -228,6 +229,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-telegram.js: Exports parseMessage, getTelegramConfig, getMissingConfigKeys, requestTelegram, ....
 - ui/scripts/hm-visual-capture.js: Playwright sidecar CLI for URL resolution/readiness checks and visual artifact bundle capture (screenshot, trace, console/request diagnostics, DOM/ARIA snapshot) with optional Telegram photo send.
 - ui/scripts/hm-smoke-runner.js: Deterministic autonomous QA sidecar used by workflow-triggered smoke runs; captures screenshot/trace/DOM, axe-core a11y report, accessibility snapshot, DOM summary, link validation, before/after pixel diff artifacts (pixelmatch), failure debug packages (trace/screenshots/network summary/explanation), and assistive Playwright draft spec generation from successful runs.
+- ui/scripts/hm-supervisor.js: CLI utility for supervisor queue inspection/enqueue/requeue against `.squidrun/runtime/supervisor.sqlite`.
 - ui/scripts/hm-visual-utils.js: Shared helpers for hm-visual-capture URL candidate resolution (explicit/cache/heuristic), readiness probes, cache persistence, and artifact layout/writers.
 - ui/scripts/hm-transition.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-twitter.js: Exports parseArgs, getTwitterConfig, getMissingConfigKeys, percentEncode, ....

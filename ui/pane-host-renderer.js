@@ -110,9 +110,9 @@ function getUtf8ByteLength(value) {
   const DEFAULT_LONG_PAYLOAD_BYTES = isDarwin ? 2048 : 1024;
   const DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS = isDarwin ? 700 : 800;
   const DEFAULT_MIN_ENTER_DELAY_MS = isDarwin ? 150 : 500;
-  const DEFAULT_CHUNK_THRESHOLD_BYTES = isDarwin ? 4096 : 2048;
-  const DEFAULT_CHUNK_SIZE_BYTES = isDarwin ? 4096 : 2048;
-  const DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES = isDarwin ? 2048 : 1024;
+  const DEFAULT_CHUNK_THRESHOLD_BYTES = 4096;
+  const DEFAULT_CHUNK_SIZE_BYTES = 4096;
+  const DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES = 4096;
   const DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = 1;
 
   const POST_ENTER_VERIFY_TIMEOUT_MS = readPositiveIntFromQuery(
@@ -187,6 +187,7 @@ function getUtf8ByteLength(value) {
   let ptyOutputTick = 0;
   let lastPtyOutputAtMs = 0;
   const pendingOutputWaiters = new Set();
+  const ipcChunkAssemblies = new Map();
 
   const terminal = new TerminalCtor({
     theme: {
@@ -302,6 +303,89 @@ function getUtf8ByteLength(value) {
     sendPaneHostAction('delivery-outcome', payload).catch((err) => {
       console.error(`[PaneHost] Failed to report delivery outcome for pane ${paneId}:`, err?.message || err);
     });
+  }
+
+  function pruneIpcChunkAssemblies(now = Date.now()) {
+    for (const [key, entry] of ipcChunkAssemblies.entries()) {
+      const updatedAt = Number(entry?.updatedAtMs || 0);
+      if (!Number.isFinite(updatedAt) || (updatedAt + 60000) <= now) {
+        ipcChunkAssemblies.delete(key);
+      }
+    }
+  }
+
+  function prepareInjectedPayload(rawPayload = {}) {
+    const payload = (rawPayload && typeof rawPayload === 'object') ? rawPayload : {};
+    const chunkMeta = payload.ipcChunk && typeof payload.ipcChunk === 'object' ? payload.ipcChunk : null;
+    const message = String(payload.message || '');
+    const actualBytes = getUtf8ByteLength(message);
+    const expectedBytes = Number.isFinite(Number(payload.messageBytes)) ? Number(payload.messageBytes) : null;
+
+    if (expectedBytes !== null && expectedBytes !== actualBytes) {
+      console.warn(`[PaneHost] IPC byte mismatch for pane ${paneId}: expected ${expectedBytes}, received ${actualBytes}`);
+    }
+
+    if (!chunkMeta) {
+      console.info(`[PaneHost] inject-message receive pane=${paneId} bytes=${actualBytes}/${expectedBytes ?? actualBytes}`);
+      return { ready: true, payload: { ...payload, message, messageBytes: actualBytes, ipcChunk: null } };
+    }
+
+    pruneIpcChunkAssemblies();
+    const groupId = toNonEmptyString(chunkMeta.groupId);
+    const chunkIndex = Number.parseInt(String(chunkMeta.index ?? ''), 10);
+    const chunkCount = Number.parseInt(String(chunkMeta.count ?? ''), 10);
+    const totalBytes = Number.isFinite(Number(chunkMeta.totalBytes)) ? Number(chunkMeta.totalBytes) : null;
+    if (!groupId || !Number.isFinite(chunkIndex) || !Number.isFinite(chunkCount) || chunkIndex < 0 || chunkCount <= 0) {
+      console.warn(`[PaneHost] Invalid IPC chunk metadata for pane ${paneId}; delivering chunk directly`);
+      return { ready: true, payload: { ...payload, message, messageBytes: actualBytes, ipcChunk: null } };
+    }
+
+    const key = `${paneId}:${groupId}`;
+    const entry = ipcChunkAssemblies.get(key) || {
+      count: chunkCount,
+      totalBytes,
+      parts: new Array(chunkCount),
+      received: 0,
+      updatedAtMs: Date.now(),
+      payload,
+    };
+
+    if (!entry.parts[chunkIndex]) {
+      entry.parts[chunkIndex] = message;
+      entry.received += 1;
+    }
+    entry.updatedAtMs = Date.now();
+    entry.payload = payload;
+    ipcChunkAssemblies.set(key, entry);
+
+    console.info(`[PaneHost] inject-message chunk pane=${paneId} group=${groupId} part=${chunkIndex + 1}/${chunkCount} bytes=${actualBytes}/${expectedBytes ?? actualBytes}`);
+
+    if (entry.received < chunkCount) {
+      return { ready: false, waitingFor: chunkCount - entry.received };
+    }
+
+    ipcChunkAssemblies.delete(key);
+    const fullMessage = entry.parts.join('');
+    const reassembledBytes = getUtf8ByteLength(fullMessage);
+    if (entry.totalBytes !== null && entry.totalBytes !== reassembledBytes) {
+      console.warn(`[PaneHost] IPC reassembly byte mismatch for pane ${paneId}: expected ${entry.totalBytes}, reassembled ${reassembledBytes}`);
+    }
+    console.info(`[PaneHost] inject-message reassembled pane=${paneId} group=${groupId} totalBytes=${reassembledBytes}`);
+
+    return {
+      ready: true,
+      payload: {
+        ...entry.payload,
+        message: fullMessage,
+        messageBytes: reassembledBytes,
+        ipcChunk: null,
+        meta: {
+          ...(entry.payload.meta && typeof entry.payload.meta === 'object' ? entry.payload.meta : {}),
+          ipcReassembled: true,
+          ipcChunkCount: chunkCount,
+        },
+      },
+    };
   }
 
   async function injectMessage(payload = {}) {
@@ -459,8 +543,10 @@ function getUtf8ByteLength(value) {
     }
 
     if (type === 'inject-message') {
+      const prepared = prepareInjectedPayload(payload);
+      if (!prepared.ready) return;
       injectChain = injectChain
-        .then(() => injectMessage(payload))
+        .then(() => injectMessage(prepared.payload))
         .catch((err) => {
           console.error(`[PaneHost] Inject chain error for pane ${paneId}:`, err?.message || err);
         });
@@ -492,3 +578,4 @@ function getUtf8ByteLength(value) {
     console.error(`[PaneHost] Failed to send ready for pane ${paneId}:`, err?.message || err);
   });
 })();
+

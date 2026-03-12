@@ -36,7 +36,16 @@
     "daemon:start": "node terminal-daemon.js",
     "daemon:stop": "node -e \"const fs=require('fs');const p=fs.readFileSync('daemon.pid','utf-8').trim();process.kill(parseInt(p),'SIGTERM');fs.unlinkSync('daemon.pid');console.log('Daemon stopped')\"",
     "daemon:status": "node -e \"const fs=require('fs');try{const p=fs.readFileSync('daemon.pid','utf-8').trim();process.kill(parseInt(p),0);console.log('Daemon running (PID '+p+')')}catch(e){console.log('Daemon not running')}\"",
-    "doctor": "node scripts/hm-doctor.js"
+    "doctor": "node scripts/hm-doctor.js",
+    "supervisor:start": "node supervisor-daemon.js --daemon",
+    "supervisor:once": "node supervisor-daemon.js --once",
+    "supervisor:status": "node scripts/hm-supervisor.js status",
+    "memory:index": "node scripts/hm-memory-index.js",
+    "memory:search": "node scripts/hm-memory-search.js",
+    "memory:extract": "node scripts/hm-memory-extract.js",
+    "memory:registry": "node scripts/hm-memory-registry.js",
+    "memory:promote": "node scripts/hm-memory-promote.js",
+    "memory:api": "node scripts/hm-memory-api.js"
   },
   "keywords": [
     "electron",
@@ -126,6 +135,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.3",
+    "@xenova/transformers": "^2.17.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-web-links": "^0.12.0",
@@ -141,6 +151,7 @@
     "pixelmatch": "^7.1.0",
     "playwright": "^1.58.2",
     "pngjs": "^7.0.0",
+    "sqlite-vec": "^0.1.7-alpha.2",
     "ws": "^8.19.0"
   }
 }
