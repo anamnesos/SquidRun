@@ -13,10 +13,14 @@ const {
   hasCodexDangerouslyBypassFlag,
   hasCodexAskForApprovalFlag,
 } = require('../codex-utils');
-const DEFAULT_CHUNK_SIZE = 2048;
+const {
+  DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
+  DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+} = require('../inject-message-ipc');
+const DEFAULT_CHUNK_SIZE = DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES;
 const MIN_CHUNK_SIZE = 1024;
 const MAX_CHUNK_SIZE = 8192;
-const DEFAULT_AUTO_CHUNK_THRESHOLD_BYTES = 1024;
+const DEFAULT_AUTO_CHUNK_THRESHOLD_BYTES = DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES;
 const WRITE_ACK_TIMEOUT_MS = 2500;
 const INPUT_EDIT_ACTIONS = Object.freeze({
   undo: 'undo',

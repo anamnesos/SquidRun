@@ -1,24 +1,29 @@
 #!/usr/bin/env node
 /**
- * hm-bg: Background Builder Agent control CLI over WebSocket.
+ * hm-bg: Background Builder Agent control CLI.
  *
  * Commands:
  *   spawn [alias|slot]
+ *   enqueue --objective <text> --shell-command <cmd>
  *   list
+ *   queue-status
  *   kill <target>
  *   kill-all
  *   map
  */
 
+const path = require('path');
+const { spawnSync } = require('child_process');
 const WebSocket = require('ws');
 
 const DEFAULT_PORT = Number.parseInt(process.env.HM_SEND_PORT || '9900', 10);
 const DEFAULT_CONNECT_TIMEOUT_MS = 3000;
 const DEFAULT_RESPONSE_TIMEOUT_MS = 5000;
+const SUPERVISOR_SCRIPT_PATH = path.join(__dirname, 'hm-supervisor.js');
 
 function usage() {
   console.log('Usage: node hm-bg.js <command> [args] [options]');
-  console.log('Commands: spawn, list, kill, kill-all, map');
+  console.log('Commands: spawn, enqueue, list, queue-status, kill, kill-all, map');
   console.log('Options:');
   console.log('  --role <role>               Sender role (default: builder)');
   console.log('  --port <port>               WebSocket port (default: 9900)');
@@ -26,10 +31,20 @@ function usage() {
   console.log('  --alias <builder-bg-N>      Explicit alias (spawn/kill)');
   console.log('  --slot <1|2|3>              Slot number (spawn)');
   console.log('  --target <alias|paneId>     Kill target (kill)');
-  console.log('  --payload-json <json>       Raw payload JSON (advanced)');
+  console.log('  --objective <text>          Objective text (enqueue)');
+  console.log('  --shell-command <cmd>       Shell command for durable queue (enqueue)');
+  console.log('  --command <exe>             Executable for durable queue (enqueue)');
+  console.log('  --args-json <json>          JSON array of args (enqueue)');
+  console.log('  --cwd <dir>                 Working directory for durable queue (enqueue)');
+  console.log('  --priority <n>              Queue priority (enqueue)');
+  console.log('  --status <status>           Queue status filter (queue-status)');
+  console.log('  --limit <n>                 Queue list limit (queue-status)');
+  console.log('  --payload-json <json>       Raw payload JSON (advanced websocket commands)');
   console.log('Examples:');
   console.log('  node hm-bg.js spawn');
   console.log('  node hm-bg.js spawn --slot 2');
+  console.log('  node hm-bg.js enqueue --objective "Smoke" --shell-command "echo ok"');
+  console.log('  node hm-bg.js queue-status --limit 10');
   console.log('  node hm-bg.js list');
   console.log('  node hm-bg.js kill builder-bg-1');
   console.log('  node hm-bg.js kill bg-2-1');
@@ -89,6 +104,8 @@ function normalizeCommand(command) {
   if (normalized === 'rm' || normalized === 'stop') return 'kill';
   if (normalized === 'killall') return 'kill-all';
   if (normalized === 'targets' || normalized === 'target-map') return 'map';
+  if (normalized === 'queue' || normalized === 'enqueue-task') return 'enqueue';
+  if (normalized === 'queue-list' || normalized === 'supervisor-status') return 'queue-status';
   return normalized;
 }
 
@@ -105,7 +122,7 @@ function toAction(command) {
     case 'map':
       return 'target-map';
     default:
-      throw new Error(`Unsupported command: ${command}`);
+      throw new Error(`Unsupported websocket command: ${command}`);
   }
 }
 
@@ -121,7 +138,7 @@ function normalizeTarget(value) {
 
 function buildPayload(command, positional, options) {
   const payloadJson = getOption(options, 'payload-json');
-  if (typeof payloadJson === 'string') {
+  if (typeof payloadJson === 'string' && command !== 'enqueue' && command !== 'queue-status') {
     return parseJsonOption(payloadJson, '--payload-json');
   }
 
@@ -146,6 +163,47 @@ function buildPayload(command, positional, options) {
         payload.alias = aliasOrSlot;
       }
     }
+    return payload;
+  }
+
+  if (command === 'enqueue') {
+    const objective = asString(getOption(options, 'objective', positional[1] || ''), '');
+    if (!objective) {
+      throw new Error('objective is required for enqueue');
+    }
+    const payload = { objective };
+    const shellCommand = asString(getOption(options, 'shell-command', ''), '');
+    const commandValue = asString(getOption(options, 'command', ''), '');
+    if (shellCommand) {
+      payload.shellCommand = shellCommand;
+    } else if (commandValue) {
+      payload.command = commandValue;
+      payload.args = parseJsonOption(asString(getOption(options, 'args-json', '[]'), '[]'), '--args-json');
+      payload.shell = getOption(options, 'shell', false) === true;
+    } else {
+      throw new Error('enqueue requires --shell-command or --command');
+    }
+    const cwd = asString(getOption(options, 'cwd', ''), '');
+    if (cwd) payload.cwd = cwd;
+    const priority = asNumber(getOption(options, 'priority', ''), null);
+    if (Number.isFinite(priority)) payload.priority = priority;
+    const timeoutMs = asNumber(getOption(options, 'timeout-ms', ''), null);
+    if (Number.isFinite(timeoutMs)) payload.timeoutMs = timeoutMs;
+    const envJson = asString(getOption(options, 'env-json', ''), '');
+    if (envJson) payload.env = parseJsonOption(envJson, '--env-json');
+    const dbPath = asString(getOption(options, 'db-path', ''), '');
+    if (dbPath) payload.dbPath = dbPath;
+    return payload;
+  }
+
+  if (command === 'queue-status') {
+    const payload = {};
+    const status = asString(getOption(options, 'status', ''), '');
+    if (status) payload.status = status;
+    const limit = asNumber(getOption(options, 'limit', ''), null);
+    if (Number.isFinite(limit)) payload.limit = limit;
+    const dbPath = asString(getOption(options, 'db-path', ''), '');
+    if (dbPath) payload.dbPath = dbPath;
     return payload;
   }
 
@@ -231,7 +289,7 @@ function closeSocket(ws) {
   });
 }
 
-async function run(action, payload, options) {
+async function runWebSocket(action, payload, options) {
   const port = Number.isFinite(options.port) ? options.port : DEFAULT_PORT;
   const role = asString(options.role, 'builder') || 'builder';
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : DEFAULT_RESPONSE_TIMEOUT_MS;
@@ -259,6 +317,47 @@ async function run(action, payload, options) {
   return response;
 }
 
+function runSupervisorCli(command, payload) {
+  const args = [SUPERVISOR_SCRIPT_PATH];
+  if (command === 'enqueue') {
+    args.push('enqueue', '--objective', payload.objective);
+    if (payload.dbPath) args.push('--db-path', payload.dbPath);
+    if (payload.shellCommand) {
+      args.push('--shell-command', payload.shellCommand);
+    } else {
+      args.push('--command', payload.command, '--args-json', JSON.stringify(payload.args || []));
+      if (payload.shell) args.push('--shell');
+    }
+    if (payload.cwd) args.push('--cwd', payload.cwd);
+    if (Number.isFinite(payload.priority)) args.push('--priority', String(payload.priority));
+    if (Number.isFinite(payload.timeoutMs)) args.push('--timeout-ms', String(payload.timeoutMs));
+    if (payload.env && typeof payload.env === 'object') args.push('--env-json', JSON.stringify(payload.env));
+  } else if (command === 'queue-status') {
+    args.push('status');
+    if (payload.dbPath) args.push('--db-path', payload.dbPath);
+  } else {
+    throw new Error(`Unsupported supervisor command: ${command}`);
+  }
+
+  const result = spawnSync(process.execPath, args, {
+    cwd: path.dirname(SUPERVISOR_SCRIPT_PATH),
+    encoding: 'utf8',
+  });
+
+  if (typeof result.stdout === 'string' && result.stdout.trim()) {
+    process.stdout.write(result.stdout.trimEnd() + '\n');
+  }
+  if (typeof result.stderr === 'string' && result.stderr.trim()) {
+    process.stderr.write(result.stderr.trimEnd() + '\n');
+  }
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    process.exit(result.status || 1);
+  }
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv.includes('--help') || argv.includes('-h')) {
@@ -273,7 +372,7 @@ async function main() {
     process.exit(1);
   }
 
-  const allowedCommands = new Set(['spawn', 'list', 'kill', 'kill-all', 'map']);
+  const allowedCommands = new Set(['spawn', 'enqueue', 'list', 'queue-status', 'kill', 'kill-all', 'map']);
   if (!allowedCommands.has(command)) {
     console.error(`Unsupported command: ${command}`);
     usage();
@@ -281,7 +380,13 @@ async function main() {
   }
 
   const payload = buildPayload(command, positional, options);
-  const response = await run(toAction(command), payload, {
+
+  if (command === 'enqueue' || command === 'queue-status') {
+    runSupervisorCli(command, payload);
+    process.exit(0);
+  }
+
+  const response = await runWebSocket(toAction(command), payload, {
     role: asString(getOption(options, 'role', 'builder'), 'builder'),
     port: asNumber(getOption(options, 'port', DEFAULT_PORT), DEFAULT_PORT),
     timeoutMs: asNumber(getOption(options, 'timeout', DEFAULT_RESPONSE_TIMEOUT_MS), DEFAULT_RESPONSE_TIMEOUT_MS),
@@ -313,6 +418,7 @@ module.exports = {
   toAction,
   buildPayload,
   normalizeTarget,
-  run,
+  runWebSocket,
+  runSupervisorCli,
   main,
 };

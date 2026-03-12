@@ -1,6 +1,10 @@
 const { BrowserWindow } = require('electron');
 const path = require('path');
 const log = require('../logger');
+const {
+  DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+  DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
+} = require('../inject-message-ipc');
 const IS_DARWIN = process.platform === 'darwin';
 const HIDDEN_PANE_HOST_WIDTH = IS_DARWIN ? 1400 : 1200;
 const HIDDEN_PANE_HOST_HEIGHT = IS_DARWIN ? 600 : 500;
@@ -57,6 +61,15 @@ function createPaneHostWindowManager(options = {}) {
       if (value) {
         query[queryKey] = value;
       }
+    }
+    if (!query.chunkThresholdBytes) {
+      query.chunkThresholdBytes = String(DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES);
+    }
+    if (!query.chunkSizeBytes) {
+      query.chunkSizeBytes = String(DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES);
+    }
+    if (!query.hmSendChunkThresholdBytes) {
+      query.hmSendChunkThresholdBytes = String(DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES);
     }
     return query;
   }

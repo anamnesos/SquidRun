@@ -112,6 +112,7 @@ const daemonHandlers = require('../modules/daemon-handlers');
 const uiView = require('../modules/ui-view');
 const notifications = require('../modules/notifications');
 const terminal = require('../modules/terminal');
+const { buildInjectMessageIpcPackets } = require('../modules/inject-message-ipc');
 
 describe('daemon-handlers.js module', () => {
   beforeEach(() => {
@@ -726,6 +727,48 @@ describe('daemon-handlers.js module', () => {
         );
       });
 
+      test('reassembles packetized inject-message payloads before sending to terminal', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        const message = 'packetized-🙂-'.repeat(600);
+        const packets = buildInjectMessageIpcPackets(
+          {
+            panes: ['2'],
+            message,
+            deliveryId: 'delivery-chunked-1',
+            traceContext: { traceId: 'trace-chunked-1' },
+          },
+          {
+            chunkThresholdBytes: 256,
+            chunkSizeBytes: 256,
+          }
+        );
+
+        expect(packets.length).toBeGreaterThan(1);
+        for (const packet of packets.slice(0, -1)) {
+          injectHandler({}, packet);
+        }
+        expect(terminal.sendToPane).not.toHaveBeenCalled();
+
+        injectHandler({}, packets[packets.length - 1]);
+
+        expect(terminal.sendToPane).toHaveBeenCalledTimes(1);
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          message,
+          expect.objectContaining({
+            traceContext: expect.objectContaining({
+              traceId: 'trace-chunked-1',
+              correlationId: 'trace-chunked-1',
+            }),
+          })
+        );
+      });
+
       test('should emit accepted.unverified outcome when terminal delivery is unverified (success=true)', () => {
         let injectHandler;
         onBridge.mockImplementation((channel, handler) => {
@@ -879,4 +922,5 @@ describe('daemon-handlers.js module', () => {
     });
   });
 });
+
 

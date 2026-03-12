@@ -93,6 +93,12 @@ const {
   readPairedConfig,
   writePairedConfig,
 } = require('./device-pairing-store');
+const {
+  DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+  DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
+  buildInjectMessageIpcPackets,
+  getUtf8ByteLength,
+} = require('../inject-message-ipc');
 const IS_DARWIN = process.platform === 'darwin';
 const PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS = IS_DARWIN ? 900 : 1500;
 const APP_IDLE_THRESHOLD_MS = 30000;
@@ -1242,19 +1248,7 @@ class SquidRunApp {
       if (!this.canSendToWindow(window)) {
         return false;
       }
-      if (channel === 'inject-message' && this.isHiddenPaneHostModeEnabled()) {
-        // If triggers.js already tried routeInjectMessage and it failed,
-        // don't re-attempt — just deliver to visible renderer directly.
-        if (payload?._routerAttempted) {
-          const clean = { ...payload };
-          delete clean._routerAttempted;
-          try {
-            return originalSend(channel, clean, ...rest);
-          } catch (err) {
-            log.warn('RendererIPC', `Skipped send for ${channel}: ${err.message}`);
-            return false;
-          }
-        }
+      if (channel === 'inject-message' && !payload?._ipcPacketized) {
         const handled = this.routeInjectMessage(payload || {});
         if (handled) return;
       }
@@ -1289,22 +1283,33 @@ class SquidRunApp {
     if (panes.length === 0) return false;
     const startupInjection = payload.startupInjection === true
       || payload?.meta?.startupInjection === true;
-
-    if (!this.isHiddenPaneHostModeEnabled()) {
-      return this.sendToVisibleWindow('inject-message', payload);
-    }
-
-    // Startup-injection payloads must flow through the renderer injection controller
-    // (not raw hidden-pane PTY writes) so they wait for CLI readiness.
-    if (startupInjection) {
-      return this.sendToVisibleWindow('inject-message', {
-        ...payload,
-        startupInjection: true,
-      });
-    }
+    const packets = buildInjectMessageIpcPackets(payload, {
+      chunkThresholdBytes: DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+      chunkSizeBytes: DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
+    });
+    if (packets.length === 0) return false;
 
     let routed = false;
-    for (const paneId of panes) {
+    for (const packet of packets) {
+      const paneId = Array.isArray(packet.panes) && packet.panes.length > 0
+        ? String(packet.panes[0])
+        : null;
+      if (!paneId) continue;
+      const packetBytes = Number(packet.messageBytes || getUtf8ByteLength(packet.message || ''));
+      const totalBytes = Number(packet?.ipcChunk?.totalBytes || packet?.meta?.ipcOriginalBytes || packetBytes);
+      if (!packet.ipcChunk || packet.ipcChunk.index === 0) {
+        log.info('InjectIPC', `Pre-IPC route pane ${paneId}: ${totalBytes} bytes -> ${packet.ipcChunk?.count || 1} packet(s) (startup=${startupInjection})`);
+      }
+
+      if (!this.isHiddenPaneHostModeEnabled() || startupInjection) {
+        const delivered = this.sendToVisibleWindow('inject-message', {
+          ...packet,
+          startupInjection,
+        });
+        if (delivered) routed = true;
+        continue;
+      }
+
       const hostWindow = this.paneHostWindowManager.getPaneWindow(paneId);
       const hostWebContents = hostWindow && !hostWindow.isDestroyed()
         ? hostWindow.webContents
@@ -1320,22 +1325,23 @@ class SquidRunApp {
 
       if (canRouteToHiddenHost) {
         const routedToHost = this.sendPaneHostBridgeEvent(paneId, 'inject-message', {
-          message: payload.message,
-          deliveryId: payload.deliveryId || null,
-          traceContext: payload.traceContext || null,
+          message: packet.message,
+          messageBytes: packet.messageBytes,
+          ipcChunk: packet.ipcChunk || null,
+          deliveryId: packet.deliveryId || null,
+          traceContext: packet.traceContext || null,
           startupInjection,
-          meta: payload.meta || null,
+          meta: packet.meta || null,
         });
         if (routedToHost) {
           routed = true;
           this.clearPaneHostDegraded(paneId);
-          log.info('PaneHost', `Routed inject to hidden window for pane ${paneId}`);
           continue;
         }
       }
 
-      const fallbackMeta = (payload.meta && typeof payload.meta === 'object')
-        ? { ...payload.meta }
+      const fallbackMeta = (packet.meta && typeof packet.meta === 'object')
+        ? { ...packet.meta }
         : {};
       fallbackMeta.deliveryPath = 'visible_fallback';
       fallbackMeta.hiddenHostReady = hostReady;
@@ -1343,7 +1349,7 @@ class SquidRunApp {
       fallbackMeta.hiddenHostLoading = hostLoading;
 
       const routedToVisible = this.sendToVisibleWindow('inject-message', {
-        ...payload,
+        ...packet,
         panes: [paneId],
         meta: fallbackMeta,
       });
@@ -1355,21 +1361,20 @@ class SquidRunApp {
           reason: canRouteToHiddenHost ? 'inject_hidden_send_failed' : 'inject_hidden_not_ready',
           message: `Hidden pane host unavailable/not ready for pane ${paneId}. Routed inject via visible renderer fallback.`,
           details: {
-            deliveryId: payload.deliveryId || null,
+            deliveryId: packet.deliveryId || null,
             hiddenHostReady: hostReady,
             hiddenHostWindowPresent: hostWindowPresent,
             hiddenHostLoading: hostLoading,
             fallback: 'visible_renderer',
           },
         });
-        log.warn('PaneHost', `Hidden-host inject fallback via visible renderer for pane ${paneId}`);
       } else {
         this.reportPaneHostDegraded({
           paneId,
           reason: 'inject_fallback_visible_unavailable',
           message: `Hidden pane host unavailable for pane ${paneId}; visible renderer fallback also unavailable. Delivery FAILED.`,
           details: {
-            deliveryId: payload.deliveryId || null,
+            deliveryId: packet.deliveryId || null,
             hiddenHostReady: hostReady,
             hiddenHostWindowPresent: hostWindowPresent,
             hiddenHostLoading: hostLoading,
@@ -1379,7 +1384,6 @@ class SquidRunApp {
     }
     return routed;
   }
-
   ensurePaneHostReadyForwarder() {
     if (this.paneHostReadyIpcRegistered) return;
     this.paneHostReadyIpcRegistered = true;
@@ -5270,3 +5274,6 @@ class SquidRunApp {
 }
 
 module.exports = SquidRunApp;
+
+
+

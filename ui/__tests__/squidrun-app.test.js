@@ -319,6 +319,48 @@ describe('SquidRunApp', () => {
     });
   });
 
+  describe('routeInjectMessage', () => {
+    it('pre-chunks oversized inject messages before visible-window delivery', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+      const message = 'main-route-🙂-'.repeat(700);
+
+      const routed = app.routeInjectMessage({
+        panes: ['1'],
+        message,
+        deliveryId: 'delivery-route-1',
+      });
+
+      expect(routed).toBe(true);
+      expect(sendToVisibleWindow).toHaveBeenCalled();
+
+      const payloads = sendToVisibleWindow.mock.calls
+        .filter(([channel]) => channel === 'inject-message')
+        .map(([, payload]) => payload);
+
+      expect(payloads.length).toBeGreaterThan(1);
+      const reconstructed = payloads
+        .slice()
+        .sort((left, right) => left.ipcChunk.index - right.ipcChunk.index)
+        .map((payload) => payload.message)
+        .join('');
+
+      expect(reconstructed).toBe(message);
+      for (const payload of payloads) {
+        expect(payload.messageBytes).toBe(Buffer.byteLength(payload.message, 'utf8'));
+        expect(payload.meta).toEqual(expect.objectContaining({
+          ipcChunked: true,
+          ipcOriginalBytes: Buffer.byteLength(message, 'utf8'),
+        }));
+      }
+      expect(payloads[0].ipcChunk).toEqual(expect.objectContaining({
+        index: 0,
+        count: payloads.length,
+        totalBytes: Buffer.byteLength(message, 'utf8'),
+      }));
+    });
+  });
+
   describe('createWindow startup ordering', () => {
     let app;
 
