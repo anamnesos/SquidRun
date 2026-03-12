@@ -269,15 +269,15 @@ class SleepConsolidator {
     const sessionState = readJsonFile(this.sessionStatePath);
     const terminalTimes = Array.isArray(sessionState?.terminals)
       ? sessionState.terminals
-          .map((terminal) => Number(terminal?.lastInputTime || terminal?.lastActivity || 0))
+          .map((terminal) => Number(terminal?.lastInputTime || 0))
           .filter((value) => Number.isFinite(value) && value > 0)
       : [];
-    const savedAtMs = sessionState?.savedAt ? Date.parse(sessionState.savedAt) : 0;
-    const lastActivityMs = Math.max(savedAtMs || 0, ...terminalTimes, 0);
-    const idleMs = lastActivityMs > 0 ? Math.max(0, nowMs - lastActivityMs) : Number.POSITIVE_INFINITY;
+    const lastInputMs = Math.max(...terminalTimes, 0);
+    const idleMs = lastInputMs > 0 ? Math.max(0, nowMs - lastInputMs) : Number.POSITIVE_INFINITY;
     return {
       source: this.sessionStatePath,
-      lastActivityMs,
+      lastActivityMs: lastInputMs,
+      lastInputMs,
       idleMs,
       isIdle: idleMs >= this.idleThresholdMs,
     };

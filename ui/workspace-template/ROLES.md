@@ -70,21 +70,24 @@ If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `
 
 **Architect (pane 1) — returning sessions only:**
 1. Read the **Startup Briefing** delivered to your terminal (summarizes Comm Journal, open Tasks, and unresolved Claims).
-2. Read `.squidrun/app-status.json`.
-3. Check `.squidrun/build/blockers.md` and `.squidrun/build/errors.md`.
-4. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-5. Read `./user-profile.json`.
-6. Process unresolved Claims via `record-consensus` as your first technical action.
-7. Discover external comms channels from runtime notices/status messages. If an external channel is active (e.g. `[Telegram from ...]`), reply on that same channel.
+2. Auto-promote pending Memory PRs via `node ui/scripts/hm-memory-promote.js approve --all` so staged facts flow into `workspace/knowledge/` before review.
+3. Read `.squidrun/app-status.json`.
+4. Query cognitive startup memory via `node ui/scripts/hm-memory-api.js retrieve "<startup priorities / recent decisions / user preferences / active investigations>" --agent architect --limit 4` and review the returned nodes alongside the flat files.
+5. Check `.squidrun/build/blockers.md` and `.squidrun/build/errors.md`.
+6. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
+7. Read `./user-profile.json`.
+8. Process unresolved Claims via `record-consensus` as your first technical action.
+9. Discover external comms channels from runtime notices/status messages. If an external channel is active (e.g. `[Telegram from ...]`), reply on that same channel.
 
 **Builder / Oracle (panes 2, 3) — all sessions:**
 1. Read `.squidrun/app-status.json` and note the current `session` number.
 2. If `session` is `1` (Fresh Install): Skip steps 3-4, as those files do not exist yet.
 3. If `session` > 1: Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-4. If `session` > 1: Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
-5. Read `./user-profile.json`.
-6. If `session` is `1` (Fresh Install): Do **NOT** send startup check-in yet. Stay silent and wait for Architect to deliver onboarding welcome first.
-7. If `session` > 1: Check in to Architect via `hm-send` — one line, no extras.
+4. Query cognitive startup memory via `node ui/scripts/hm-memory-api.js retrieve "<startup priorities / recent decisions / user preferences / active investigations>" --agent <builder|oracle> --limit 4` and review the returned nodes before acting.
+5. If `session` > 1: Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
+6. Read `./user-profile.json`.
+7. If `session` is `1` (Fresh Install): Do **NOT** send startup check-in yet. Stay silent and wait for Architect to deliver onboarding welcome first.
+8. If `session` > 1: Check in to Architect via `hm-send` — one line, no extras.
 
 ## ARCHITECT
 
