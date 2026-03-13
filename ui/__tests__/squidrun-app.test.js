@@ -1067,6 +1067,46 @@ describe('SquidRunApp', () => {
         }),
       }));
     });
+
+    it('does not treat a shell-echoed launch command as prompt-ready', async () => {
+      const { getDaemonClient } = require('../daemon-client');
+      const sharedDaemonClient = {
+        on: jest.fn(),
+        off: jest.fn(),
+        connect: jest.fn().mockResolvedValue(),
+        disconnect: jest.fn(),
+      };
+      getDaemonClient.mockReturnValue(sharedDaemonClient);
+
+      const ctx = {
+        ...mockAppContext,
+        daemonClient: sharedDaemonClient,
+        agentRunning: new Map([['1', 'starting']]),
+        pluginManager: {
+          hasHook: jest.fn().mockReturnValue(false),
+          dispatch: jest.fn().mockResolvedValue(),
+        },
+      };
+      const app = new SquidRunApp(ctx, mockManagers);
+      const triggerProactiveMemoryInjection = jest
+        .spyOn(app, 'triggerProactiveMemoryInjection')
+        .mockResolvedValue({ ok: true, delivered: true });
+
+      await app.initDaemonClient();
+
+      const dataListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'data')?.[1];
+      expect(typeof dataListener).toBe('function');
+
+      dataListener('1', 'PS D:\\projects\\squidrun> claude --model opus --permission-mode acceptEdits');
+
+      expect(ctx.agentRunning.get('1')).toBe('starting');
+      expect(triggerProactiveMemoryInjection).not.toHaveBeenCalled();
+
+      dataListener('1', '\n> ');
+
+      expect(ctx.agentRunning.get('1')).toBe('running');
+      expect(triggerProactiveMemoryInjection).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('smoke test - full module loads', () => {

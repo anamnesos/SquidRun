@@ -912,6 +912,51 @@ describe('Terminal Injection', () => {
       });
     });
 
+    test('hm-send fast path comment-wraps payload when pane is at a PowerShell prompt', async () => {
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => 'PS D:\\projects\\squidrun> ',
+            })),
+          },
+        },
+      });
+      const onComplete = jest.fn();
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId === '1' && data === '\r') {
+          lastOutputTime['1'] = Date.now();
+        }
+        return Promise.resolve(undefined);
+      });
+
+      const promise = controller.doSendToPane(
+        '1',
+        '(BUILDER #1): Builder online. Standing by.\n[PROJECT CONTEXT] name=squidrun\r',
+        onComplete,
+        { messageId: 'hm-ps', traceId: 'hm-ps' },
+        { hmSendFastEnter: true }
+      );
+
+      await jest.advanceTimersByTimeAsync(800);
+      await promise;
+
+      expect(mockPty.write).toHaveBeenCalledWith(
+        '1',
+        '# (BUILDER #1): Builder online. Standing by.\n# [PROJECT CONTEXT] name=squidrun',
+        expect.any(Object)
+      );
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
+      expect(onComplete).toHaveBeenCalledWith({
+        success: true,
+        verified: true,
+        signal: 'hm_send_fast_path',
+      });
+    });
+
     test('hm-send long payloads use chunked PTY write and Enter waits for chunk completion', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
       terminals.set('1', { _squidrunBypass: false });

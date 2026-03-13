@@ -206,6 +206,47 @@ function createInjectionController(options = {}) {
     }
   }
 
+  function getPromptKind(paneId) {
+    const terminal = terminals.get(paneId);
+    if (!terminal || !terminal.buffer || !terminal.buffer.active) return 'unknown';
+
+    try {
+      const buffer = terminal.buffer.active;
+      const cursorY = buffer.cursorY;
+      const line = buffer.getLine(cursorY + buffer.viewportY);
+      if (!line) return 'unknown';
+
+      const lineText = line.translateToString(true).trimEnd();
+      if (!lineText) return 'unknown';
+      if (/^>\s*$/.test(lineText) || /(?:^|[\s>])(?:codex|claude|gemini|cursor)>\s*$/i.test(lineText)) {
+        return 'cli';
+      }
+      if (/(?:^|[\s>])PS\s+[^>\n]*>\s*$/i.test(lineText)) {
+        return 'powershell';
+      }
+      if (/(?:^|[\s>])[A-Za-z]:\\[^>\n]*>\s*$/.test(lineText)) {
+        return 'cmd';
+      }
+      if (/(?:^|[\w./~:-]+)[$#]\s*$/.test(lineText)) {
+        return 'unix';
+      }
+      return 'unknown';
+    } catch (err) {
+      log.warn(`getPromptKind ${paneId}`, 'Buffer read failed:', err.message);
+      return 'unknown';
+    }
+  }
+
+  function formatHmSendForPrompt(text, promptKind) {
+    if (!text || promptKind === 'cli') return text;
+    const prefix = promptKind === 'cmd' ? 'REM ' : (promptKind === 'powershell' || promptKind === 'unix' ? '# ' : '');
+    if (!prefix) return text;
+    return String(text)
+      .split('\n')
+      .map((line) => (line ? `${prefix}${line}` : prefix.trimEnd()))
+      .join('\n');
+  }
+
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -795,7 +836,7 @@ function createInjectionController(options = {}) {
       finish(result || { success: true });
     };
 
-    const text = message.replace(/\r$/, '');
+    const rawText = message.replace(/\r$/, '');
     const id = String(paneId);
     const capabilities = getPaneInjectionCapabilities(id);
     const shouldVerifySubmitAccepted = (typeof behaviorOverrides.verifySubmitAccepted === 'boolean')
@@ -806,6 +847,8 @@ function createInjectionController(options = {}) {
     const normalizedTraceContext = normalizeTraceContext(traceContext);
     const hmSendFastEnter = Boolean(behaviorOverrides.hmSendFastEnter)
       || isHmSendFastTraceContext(normalizedTraceContext);
+    const promptKind = hmSendFastEnter ? getPromptKind(id) : 'unknown';
+    const text = hmSendFastEnter ? formatHmSendForPrompt(rawText, promptKind) : rawText;
     const corrId = normalizedTraceContext?.traceId
       || normalizedTraceContext?.correlationId
       || bus.getCurrentCorrelation()
