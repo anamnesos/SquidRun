@@ -311,4 +311,83 @@ describe('cross-device bridge lifecycle e2e', () => {
       expect.any(Object)
     );
   });
+
+  test('delivers HandoffPacket structured messages over relay', async () => {
+    const relayPort = await getFreePort();
+    const sharedSecret = `bridge-secret-${Date.now()}`;
+    relay = await startRelayServer({
+      port: relayPort,
+      sharedSecret,
+    });
+
+    const senderApp = createAppInstance();
+    const inboundMessages = [];
+    senderApp.bridgeEnabled = true;
+
+    const relayUrl = `ws://127.0.0.1:${relayPort}`;
+    senderBridge = createBridgeClient({
+      relayUrl,
+      deviceId: 'local',
+      sharedSecret,
+    });
+    receiverBridge = createBridgeClient({
+      relayUrl,
+      deviceId: 'peer',
+      sharedSecret,
+      onMessage: async (payload = {}) => {
+        inboundMessages.push(payload);
+        return {
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'bridge_delivered',
+        };
+      },
+    });
+
+    senderBridge.start();
+    receiverBridge.start();
+    await waitFor(() => senderBridge.isReady() && receiverBridge.isReady(), 12000);
+    senderApp.bridgeClient = senderBridge;
+
+    const result = await senderApp.routeBridgeMessage({
+      targetDevice: 'peer',
+      content: 'Cross-device handoff from LOCAL\nWorkstreams: Ship Phase 4',
+      fromRole: 'architect',
+      messageId: 'bridge-handoff-1',
+      structuredMessage: {
+        type: 'handoffpacket',
+        payload: {
+          packet: {
+            packet_id: 'handoff-1',
+            session_id: 'app-session-test',
+            source_device: 'LOCAL',
+            target_device: 'PEER',
+            active_workstreams: ['Ship Phase 4'],
+            unresolved_blockers: [],
+            recent_surfaced_memories: [
+              { memory_id: 'mem-1', memory_class: 'solution_trace' },
+            ],
+            expiry_timestamp: Date.now() + 60000,
+          },
+        },
+      },
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'bridge_delivered',
+    }));
+    await waitFor(() => inboundMessages.length === 1, 5000);
+    expect(inboundMessages[0].fromDevice).toBe('LOCAL');
+    expect(inboundMessages[0].metadata.structured.payload.packet).toEqual(expect.objectContaining({
+      packet_id: 'handoff-1',
+      active_workstreams: ['Ship Phase 4'],
+    }));
+    expect(
+      inboundMessages[0].metadata.structured.type === 'HandoffPacket'
+      || inboundMessages[0].metadata.structured.payload.originalType === 'HandoffPacket'
+    ).toBe(true);
+  });
 });

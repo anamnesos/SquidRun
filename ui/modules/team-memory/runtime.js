@@ -7,6 +7,10 @@ const { runBackfill } = require('./backfill');
 const { extractTaggedClaimsFromComms } = require('./comms-tagged-extractor');
 const { scanOrphanedEvidenceRefs } = require('./integrity-checker');
 const { executeExperimentOperation } = require('../experiment/runtime');
+const { MemoryIngestService } = require('../memory-ingest/service');
+const { MemoryLifecycleService } = require('../memory-ingest/lifecycle');
+const { MemoryPromotionService } = require('../memory-ingest/promotion');
+const { MemoryDeliveryService } = require('../memory-ingest/delivery');
 const log = require('../logger');
 const { resolveCoordPath } = require('../../config');
 
@@ -89,12 +93,52 @@ function createTeamMemoryRuntime(options = {}) {
   const claims = new TeamMemoryClaims(store.db);
   const patterns = new TeamMemoryPatterns(store.db, asObject(options.patternOptions));
   const guards = new TeamMemoryGuards(store.db);
+  const memoryIngestOptions = asObject(options.memoryIngestOptions);
+  const shutdownMarkerOptions = asObject(memoryIngestOptions.shutdownMarkerOptions);
+  const shutdownMarkerFilePath = shutdownMarkerOptions.filePath
+    || path.join(path.dirname(store.dbPath), 'memory-ingest-shutdown.json');
+  const ingestService = new MemoryIngestService({
+    db: store.db,
+    logger: log,
+    shutdownMarkerOptions: {
+      ...shutdownMarkerOptions,
+      filePath: shutdownMarkerFilePath,
+    },
+    replayBatchSize: memoryIngestOptions.replayBatchSize,
+    replayTickMs: memoryIngestOptions.replayTickMs,
+    replayMaxTickMs: memoryIngestOptions.replayMaxTickMs,
+    replayMaxPasses: memoryIngestOptions.replayMaxPasses,
+  });
+  const promotionService = new MemoryPromotionService({
+    db: store.db,
+  });
+  const lifecycleService = new MemoryLifecycleService({
+    db: store.db,
+  });
+  const deliveryService = new MemoryDeliveryService({
+    db: store.db,
+    ingestService,
+    projectRoot: options.projectRoot || options.workspaceRoot,
+  });
+
+  if (initResult?.ok === true) {
+    ingestService.initializeRuntime({
+      nowMs: options.nowMs,
+      sessionId: options.sessionId,
+      deviceId: options.deviceId,
+      reason: 'team-memory-runtime-init',
+    });
+  }
 
   return {
     store,
     claims,
     patterns,
     guards,
+    ingestService,
+    promotionService,
+    lifecycleService,
+    deliveryService,
     initResult,
   };
 }
@@ -154,6 +198,14 @@ function closeSharedRuntime() {
   }
   transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPING, 'close-shared-runtime');
   try {
+    sharedRuntime.ingestService?.shutdown?.({
+      nowMs: Date.now(),
+      reason: 'close-shared-runtime',
+    });
+  } catch (err) {
+    log.warn('TeamMemoryRuntime', `Memory ingest shutdown marker failed: ${err.message}`);
+  }
+  try {
     sharedRuntime.store?.close?.();
   } catch {
     // best effort
@@ -196,6 +248,10 @@ function executeTeamMemoryOperation(action, payload = {}, options = {}) {
   const claims = runtime?.claims;
   const patterns = runtime?.patterns;
   const guards = runtime?.guards;
+  const ingestService = runtime?.ingestService;
+  const promotionService = runtime?.promotionService;
+  const lifecycleService = runtime?.lifecycleService;
+  const deliveryService = runtime?.deliveryService;
 
   if (!store || !store.isAvailable()) {
     return { ok: false, reason: 'unavailable' };
@@ -378,6 +434,97 @@ function executeTeamMemoryOperation(action, payload = {}, options = {}) {
       return executeExperimentOperation('attach-to-claim', opPayload, {
         runtimeOptions: experimentRuntimeOptions,
       });
+
+    case 'ingest-memory':
+    case 'memory-ingest': {
+      return ingestService.ingest(opPayload, {
+        nowMs: opPayload.nowMs,
+        deviceId: opPayload.device_id || opPayload.deviceId,
+        sessionId: opPayload.session_id || opPayload.sessionId,
+      });
+    }
+
+    case 'get-memory-ingest-status':
+      return ingestService.getStatus({
+        nowMs: opPayload.nowMs,
+      });
+
+    case 'replay-memory-ingest':
+      return ingestService.replayPending({
+        nowMs: opPayload.nowMs,
+        reason: opPayload.reason,
+        limit: opPayload.limit,
+      });
+
+    case 'set-memory-ingest-compaction-lock':
+      return ingestService.setCompactionLock(opPayload, {
+        nowMs: opPayload.nowMs,
+      });
+
+    case 'capture-precompact-memory':
+      return ingestService.capturePrecompactState(opPayload, {
+        nowMs: opPayload.nowMs,
+      });
+
+    case 'list-memory-promotions':
+      return promotionService.listCandidates(opPayload);
+
+    case 'approve-memory-promotion':
+      return promotionService.approveCandidate(
+        opPayload.candidateId || opPayload.candidate_id,
+        {
+          nowMs: opPayload.nowMs,
+          reviewer: opPayload.reviewer || opPayload.actor,
+          reviewNotes: opPayload.reviewNotes || opPayload.review_notes,
+          projectRoot: opPayload.projectRoot || opPayload.project_root || opPayload.workspaceRoot || opPayload.workspace_root,
+        }
+      );
+
+    case 'reject-memory-promotion':
+      return promotionService.rejectCandidate(
+        opPayload.candidateId || opPayload.candidate_id,
+        {
+          nowMs: opPayload.nowMs,
+          reviewer: opPayload.reviewer || opPayload.actor,
+          reviewNotes: opPayload.reviewNotes || opPayload.review_notes,
+        }
+      );
+
+    case 'record-memory-access':
+      return lifecycleService.recordAccess(opPayload);
+
+    case 'mark-memory-useful':
+      return lifecycleService.recordAccess({
+        ...opPayload,
+        access_kind: 'useful_mark',
+      });
+
+    case 'advance-memory-lifecycle':
+      return lifecycleService.advanceLifecycle(opPayload);
+
+    case 'review-stale-memories':
+      return lifecycleService.reviewStaleMemories(opPayload);
+
+    case 'trigger-memory-injection':
+      return deliveryService.triggerInjection(opPayload);
+
+    case 'record-memory-injection-feedback':
+      return deliveryService.recordInjectionFeedback(opPayload);
+
+    case 'build-cross-device-handoff':
+      return deliveryService.buildCrossDeviceHandoff(opPayload);
+
+    case 'mark-cross-device-handoff-sent':
+      return deliveryService.markHandoffSent(opPayload);
+
+    case 'receive-cross-device-handoff':
+      return deliveryService.receiveCrossDeviceHandoff(opPayload);
+
+    case 'prepare-compaction-survival':
+      return deliveryService.prepareCompactionSurvival(opPayload);
+
+    case 'resume-compaction-survival':
+      return deliveryService.resumeCompactionSurvival(opPayload);
 
     default:
       return {

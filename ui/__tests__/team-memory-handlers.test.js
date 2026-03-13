@@ -33,7 +33,7 @@ describe('team-memory IPC handlers', () => {
     }
   });
 
-  test('routes create/query/update/deprecate/experiment channels to expected actions', async () => {
+  test('routes create/query/update/deprecate/ingest/experiment channels to expected actions', async () => {
     registerTeamMemoryHandlers(ctx);
 
     const getHandler = (channel) => {
@@ -221,6 +221,19 @@ describe('team-memory IPC handlers', () => {
     expect(mockExecuteTeamMemoryOperation).toHaveBeenLastCalledWith(
       'deprecate-claim',
       expect.objectContaining({ claimId: 'clm_3', reason: 'superseded' }),
+      expect.any(Object)
+    );
+
+    await getHandler('team-memory:ingest')({}, {
+      content: 'Use hm-send for agent messaging',
+      memory_class: 'procedural_rule',
+      provenance: { source: 'builder', kind: 'observed' },
+      confidence: 0.9,
+      source_trace: 'trace-ingest',
+    });
+    expect(mockExecuteTeamMemoryOperation).toHaveBeenLastCalledWith(
+      'ingest-memory',
+      expect.objectContaining({ memory_class: 'procedural_rule', source_trace: 'trace-ingest' }),
       expect.any(Object)
     );
 

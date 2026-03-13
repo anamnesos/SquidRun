@@ -4,7 +4,7 @@ const path = require('path');
 
 const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
 const runtime = require('../modules/team-memory/runtime');
-const { loadSqliteDriver } = require('../modules/team-memory/store');
+const { TeamMemoryStore, loadSqliteDriver } = require('../modules/team-memory/store');
 
 const maybeDescribe = loadSqliteDriver() ? describe : describe.skip;
 
@@ -282,5 +282,106 @@ maybeDescribe('team-memory runtime phase0', () => {
 
     runtime.closeSharedRuntime();
     expect(runtime.getRuntimeLifecycleState()).toBe('stopped');
+  });
+
+  test('routes ingest-memory and persists queued tier1 candidates', () => {
+    const dbPath = path.join(tempDir, 'team-memory.sqlite');
+    const init = runtime.initializeTeamMemoryRuntime({
+      runtimeOptions: {
+        storeOptions: {
+          dbPath,
+        },
+      },
+      forceRuntimeRecreate: true,
+    });
+    expect(init.ok).toBe(true);
+
+    const result = runtime.executeTeamMemoryOperation('ingest-memory', {
+      content: 'Use hm-send for agent messaging',
+      memory_class: 'procedural_rule',
+      provenance: { source: 'builder', kind: 'observed' },
+      confidence: 0.85,
+      source_trace: 'trace-ingest-1',
+      session_id: 'app-session-217',
+      nowMs: 4000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.routed_to_tier).toBe('tier1');
+    expect(result.promotion_required).toBe(true);
+    expect(result.result_refs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'memory_object', tier: 'tier1' }),
+      expect.objectContaining({ kind: 'promotion_candidate' }),
+    ]));
+
+    runtime.closeSharedRuntime();
+
+    const verifyStore = new TeamMemoryStore({ dbPath });
+    expect(verifyStore.init().ok).toBe(true);
+
+    const memoryRows = verifyStore.db.prepare('SELECT COUNT(*) AS count FROM memory_objects').get();
+    const candidateRows = verifyStore.db.prepare('SELECT COUNT(*) AS count FROM memory_promotion_queue').get();
+    expect(memoryRows.count).toBe(1);
+    expect(candidateRows.count).toBe(1);
+
+    const persisted = verifyStore.db.prepare('SELECT result_refs_json FROM memory_objects LIMIT 1').get();
+    expect(JSON.parse(persisted.result_refs_json)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'memory_object', tier: 'tier1' }),
+      expect.objectContaining({ kind: 'promotion_candidate' }),
+    ]));
+
+    verifyStore.close();
+  });
+
+  test('exposes memory-ingest recovery and compaction actions through the runtime', () => {
+    const dbPath = path.join(tempDir, 'team-memory.sqlite');
+    const init = runtime.initializeTeamMemoryRuntime({
+      runtimeOptions: {
+        storeOptions: {
+          dbPath,
+        },
+      },
+      forceRuntimeRecreate: true,
+    });
+    expect(init.ok).toBe(true);
+
+    const lockResult = runtime.executeTeamMemoryOperation('set-memory-ingest-compaction-lock', {
+      locked: true,
+      locked_tiers: ['tier3'],
+      reason: 'test_runtime_lock',
+      nowMs: 5000,
+    });
+    expect(lockResult.ok).toBe(true);
+    expect(lockResult.compaction_lock.locked).toBe(true);
+
+    const queued = runtime.executeTeamMemoryOperation('ingest-memory', {
+      content: 'runtime replay me later',
+      memory_class: 'solution_trace',
+      provenance: { source: 'builder', kind: 'observed' },
+      confidence: 0.86,
+      source_trace: 'trace-runtime-recovery',
+      nowMs: 5010,
+    });
+    expect(queued.ok).toBe(true);
+    expect(queued.queued).toBe(true);
+
+    const status = runtime.executeTeamMemoryOperation('get-memory-ingest-status', {
+      nowMs: 5015,
+    });
+    expect(status.ok).toBe(true);
+    expect(status.compactionLock.locked).toBe(true);
+    expect(status.outstandingEntries).toBeGreaterThanOrEqual(1);
+
+    runtime.executeTeamMemoryOperation('set-memory-ingest-compaction-lock', {
+      locked: false,
+      reason: 'test_runtime_unlock',
+      nowMs: 5100,
+    });
+    const replay = runtime.executeTeamMemoryOperation('replay-memory-ingest', {
+      reason: 'test_runtime_replay',
+      nowMs: 5105,
+    });
+    expect(replay.ok).toBe(true);
+    expect(replay.outstandingEntries).toBe(0);
   });
 });
