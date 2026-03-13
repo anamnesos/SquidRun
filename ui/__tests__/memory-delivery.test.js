@@ -240,6 +240,36 @@ maybeDescribe('memory delivery phase 4', () => {
     store.close();
   });
 
+  test('session rollover can inject startup health state memories', () => {
+    runtime.executeTeamMemoryOperation('ingest-memory', {
+      content: 'Startup health: 194 test files, 195 Jest suites, recovery-manager and scheduler present.',
+      memory_class: 'system_health_state',
+      provenance: { source: 'startup-health', kind: 'observed', actor: 'system' },
+      confidence: 0.58,
+      source_trace: 'startup-health:rollover',
+      session_id: 'sess-startup-health',
+      nowMs: 8000,
+    });
+
+    const result = runtime.executeTeamMemoryOperation('trigger-memory-injection', {
+      trigger_type: 'session_rollover',
+      trigger_event_id: 'startup-health-rollover',
+      pane_id: '2',
+      session_id: 'sess-startup-health',
+      nowMs: 9000,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      injected: true,
+      status: 'delivered',
+      injection: expect.objectContaining({
+        memory_class: 'system_health_state',
+      }),
+    }));
+    expect(result.injection.message).toContain('Startup health');
+  });
+
   test('prepares compaction survival and re-reads tier1 files on resume', () => {
     const prepared = runtime.executeTeamMemoryOperation('prepare-compaction-survival', {
       pane_id: '2',

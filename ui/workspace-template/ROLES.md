@@ -73,7 +73,7 @@ If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `
 2. Auto-promote pending Memory PRs via `node ui/scripts/hm-memory-promote.js approve --all` so staged facts flow into `workspace/knowledge/` before review.
 3. Read `.squidrun/app-status.json`.
 4. Query cognitive startup memory via `node ui/scripts/hm-memory-api.js retrieve "<startup priorities / recent decisions / user preferences / active investigations>" --agent architect --limit 4` and review the returned nodes alongside the flat files.
-5. Check `.squidrun/build/blockers.md` and `.squidrun/build/errors.md`.
+5. Check `.squidrun/build/startup-health.md` for current test/module/runtime health, then review `.squidrun/build/blockers.md` and `.squidrun/build/errors.md` only if they actually exist.
 6. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
 7. Read `./user-profile.json`.
 8. Process unresolved Claims via `record-consensus` as your first technical action.

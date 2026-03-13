@@ -1,7 +1,7 @@
 const { resolveMemoryRoute } = require('../modules/memory-ingest/router');
 
 describe('memory-ingest router', () => {
-  test('routes all eight classes deterministically', () => {
+  test('routes all startup memory classes deterministically', () => {
     const expectations = new Map([
       ['user_preference', 'tier1'],
       ['environment_quirk', 'tier1'],
@@ -11,6 +11,8 @@ describe('memory-ingest router', () => {
       ['historical_outcome', 'tier3'],
       ['active_task_state', 'tier4'],
       ['cross_device_handoff', 'tier4'],
+      ['codebase_inventory', 'tier3'],
+      ['system_health_state', 'tier3'],
     ]);
 
     for (const [memoryClass, tier] of expectations) {

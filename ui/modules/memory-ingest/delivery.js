@@ -314,7 +314,14 @@ class MemoryDeliveryService {
       rows = db.prepare(`
         SELECT *
         FROM memory_objects
-        WHERE memory_class IN ('cross_device_handoff', 'active_task_state', 'solution_trace', 'historical_outcome')
+        WHERE memory_class IN (
+          'cross_device_handoff',
+          'active_task_state',
+          'solution_trace',
+          'historical_outcome',
+          'codebase_inventory',
+          'system_health_state'
+        )
           AND COALESCE(lifecycle_state, 'active') NOT IN ('stale', 'archived', 'rejected')
           AND status NOT IN ('rejected', 'superseded', 'corrected', 'expired')
         ORDER BY updated_at DESC, confidence DESC

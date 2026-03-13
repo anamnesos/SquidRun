@@ -3,6 +3,8 @@
  * Terminal management, PTY injection, idle detection, message queuing
  */
 
+const fs = require('fs');
+
 // Mock dependencies before requiring the module
 jest.mock('@xterm/xterm', () => ({
   Terminal: jest.fn().mockImplementation(() => ({
@@ -536,6 +538,26 @@ describe('terminal.js module', () => {
       expect(terminal.messageQueue['3']).toBeDefined();
       expect(Array.isArray(terminal.messageQueue['3'])).toBe(true);
       jest.useFakeTimers();
+    });
+  });
+
+  describe('startup health briefing', () => {
+    test('reads startup health artifact when present', () => {
+      const existsSpy = jest.spyOn(fs, 'existsSync').mockImplementation((targetPath) => (
+        String(targetPath).includes('startup-health.md')
+      ));
+      const readSpy = jest.spyOn(fs, 'readFileSync').mockImplementation((targetPath) => {
+        if (String(targetPath).includes('startup-health.md')) {
+          return 'STARTUP HEALTH\n- Tests: 194 files, 195 Jest-discoverable suites\n';
+        }
+        return '';
+      });
+
+      expect(terminal._internals.fetchStartupHealthSummary()).toContain('STARTUP HEALTH');
+      expect(terminal._internals.fetchStartupHealthSummary()).toContain('195 Jest-discoverable suites');
+
+      existsSpy.mockRestore();
+      readSpy.mockRestore();
     });
   });
 

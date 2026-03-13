@@ -37,6 +37,14 @@ const ROUTING_TABLE = Object.freeze({
     tier: 'tier4',
     routeType: 'auto_route',
   }),
+  codebase_inventory: Object.freeze({
+    tier: 'tier3',
+    routeType: 'auto_route',
+  }),
+  system_health_state: Object.freeze({
+    tier: 'tier3',
+    routeType: 'auto_route',
+  }),
 });
 
 function asObject(value) {
@@ -88,7 +96,12 @@ function resolveAuthorityLevel(memory = {}) {
   if (memory.memory_class === 'active_task_state' || memory.memory_class === 'cross_device_handoff') {
     return 'delivery';
   }
-  if (memory.memory_class === 'solution_trace' || memory.memory_class === 'historical_outcome') {
+  if (
+    memory.memory_class === 'solution_trace'
+    || memory.memory_class === 'historical_outcome'
+    || memory.memory_class === 'codebase_inventory'
+    || memory.memory_class === 'system_health_state'
+  ) {
     return 'derived';
   }
   return 'candidate';

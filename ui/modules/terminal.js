@@ -973,9 +973,21 @@ function formatStartupMemoryEntry(entry = {}) {
   return `- [${sourceType}] ${label}: ${clipped}`;
 }
 
+function fetchStartupHealthSummary() {
+  const healthPath = resolveCoordPath(path.join('build', 'startup-health.md'));
+  if (!healthPath || typeof fs.existsSync !== 'function' || !fs.existsSync(healthPath)) return '';
+  try {
+    if (typeof fs.readFileSync !== 'function') return '';
+    return String(fs.readFileSync(healthPath, 'utf8') || '').trim();
+  } catch (err) {
+    log.warn('spawnAgent', `Startup health summary read failed: ${err.message}`);
+    return '';
+  }
+}
+
 async function fetchStartupMemorySummary(paneId) {
   const scriptPath = path.join(WORKSPACE_PATH, 'ui', 'scripts', 'hm-memory-api.js');
-  if (!fs.existsSync(scriptPath)) return '';
+  if (typeof fs.existsSync !== 'function' || !fs.existsSync(scriptPath)) return '';
 
   const role = String(PANE_ROLES[String(paneId)] || `pane-${paneId}`).trim().toLowerCase();
   const query = getStartupMemoryQuery(paneId);
@@ -1024,8 +1036,11 @@ async function buildStartupIdentityMessage(paneId) {
   const d = new Date();
   const timestamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const header = `# SQUIDRUN SESSION: ${role} - Started ${timestamp}`;
-  const memorySummary = await fetchStartupMemorySummary(paneId);
-  return memorySummary ? `${header}\n${memorySummary}` : header;
+  const [memorySummary, healthSummary] = await Promise.all([
+    fetchStartupMemorySummary(paneId),
+    Promise.resolve(fetchStartupHealthSummary()),
+  ]);
+  return [header, memorySummary, healthSummary].filter(Boolean).join('\n');
 }
 
 async function runStartupIdentityAttempt(paneId, state, reason) {
@@ -2690,6 +2705,9 @@ module.exports = {
     PROMOTION_CHECK_INTERVAL_MS,
     startPromotionCheckTimer,
     initPromotionEngine,
+    buildStartupIdentityMessage,
+    fetchStartupHealthSummary,
+    fetchStartupMemorySummary,
   },
 };
 

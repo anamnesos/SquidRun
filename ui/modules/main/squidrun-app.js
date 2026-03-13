@@ -90,6 +90,10 @@ const { captureScreenshot } = require('../ipc/screenshot-handlers');
 const { executeContractPromotionAction } = require('../contract-promotion-service');
 const { createBufferedFileWriter } = require('../buffered-file-writer');
 const {
+  createHealthSnapshot,
+  renderStartupHealthMarkdown,
+} = require('../../scripts/hm-health-snapshot');
+const {
   readPairedConfig,
   writePairedConfig,
 } = require('./device-pairing-store');
@@ -213,6 +217,36 @@ function parseStructuredJsonOutput(raw = '') {
     }
   }
   return null;
+}
+
+function normalizeStartupSummaryLine(value, fallback = 'none') {
+  if (typeof value === 'string') {
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    return normalized || fallback;
+  }
+  if (value && typeof value === 'object') {
+    const candidates = [
+      value.summary,
+      value.title,
+      value.body,
+      value.detail,
+      value.message,
+      value.id,
+    ];
+    for (const candidate of candidates) {
+      const normalized = normalizeStartupSummaryLine(candidate, '');
+      if (normalized) return normalized;
+    }
+  }
+  return fallback;
+}
+
+function takeStartupSummaryItems(items, limit = 2) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  return items
+    .map((item) => normalizeStartupSummaryLine(item, ''))
+    .filter(Boolean)
+    .slice(0, limit);
 }
 
 const RUNTIME_LIFECYCLE_STATE = Object.freeze({
@@ -420,6 +454,170 @@ class SquidRunApp {
     fs.writeFileSync(tempPath, content, mode !== undefined ? { encoding: 'utf8', mode } : 'utf8');
     fs.renameSync(tempPath, resolved);
     return true;
+  }
+
+  getStartupHealthPath() {
+    return resolveCoordPath(path.join('build', 'startup-health.md'), { forWrite: true });
+  }
+
+  buildStartupHealthInventoryContent(snapshot = {}, sessionNumber = null) {
+    const tests = Number(snapshot.tests?.testFileCount || 0);
+    const suites = Number(snapshot.tests?.jestList?.count || 0);
+    const modules = Number(snapshot.modules?.moduleFileCount || 0);
+    const presentModules = Object.entries(snapshot.modules?.keyModules || {})
+      .filter(([, value]) => value?.exists === true)
+      .map(([key]) => key.replace(/_/g, '-'));
+    const sessionLabel = Number.isInteger(sessionNumber) ? `Session ${sessionNumber}` : 'Current session';
+    return `${sessionLabel} startup inventory: ${tests} test files, ${suites} Jest-discoverable suites, ${modules} JS modules under ui/modules. Key runtime modules present: ${presentModules.join(', ') || 'none'}.`;
+  }
+
+  buildStartupHealthStateContent(snapshot = {}, ledgerContext = {}, sessionNumber = null) {
+    const level = String(snapshot.status?.level || 'unknown').toUpperCase();
+    const evidenceRows = Number(snapshot.databases?.evidenceLedger?.rowCount || 0);
+    const cognitiveRows = Number(snapshot.databases?.cognitiveMemory?.rowCount || 0);
+    const ledgerSession = Number.isInteger(Number(ledgerContext?.session)) ? Number(ledgerContext.session) : sessionNumber;
+    const ledgerMode = typeof ledgerContext?.mode === 'string' ? ledgerContext.mode : 'unknown';
+    const ledgerStatus = typeof ledgerContext?.status === 'string' ? ledgerContext.status : 'unknown';
+    return `Startup health ${Number.isInteger(sessionNumber) ? `for session ${sessionNumber}` : 'snapshot'}: overall ${level}. Evidence ledger rows=${evidenceRows}, cognitive memory rows=${cognitiveRows}. Ledger context: session ${ledgerSession ?? 'unknown'} ${ledgerStatus} (${ledgerMode}).`;
+  }
+
+  buildStartupHealthReport(snapshot = {}, ledgerContext = {}) {
+    const healthBody = String(renderStartupHealthMarkdown(snapshot) || '').trim();
+    const lines = [healthBody];
+    const ledgerLines = [];
+    const ledgerSession = Number.isInteger(Number(ledgerContext?.session)) ? Number(ledgerContext.session) : null;
+    const ledgerStatus = typeof ledgerContext?.status === 'string' ? ledgerContext.status : null;
+    const ledgerMode = typeof ledgerContext?.mode === 'string' ? ledgerContext.mode : null;
+    if (ledgerSession !== null || ledgerStatus || ledgerMode) {
+      ledgerLines.push(`- Session context: ${ledgerSession !== null ? `session ${ledgerSession}` : 'unknown'}${ledgerStatus ? ` ${ledgerStatus}` : ''}${ledgerMode ? ` (${ledgerMode})` : ''}`);
+    }
+
+    const recentCompletions = takeStartupSummaryItems(ledgerContext?.completed, 2);
+    if (recentCompletions.length > 0) {
+      ledgerLines.push(`- Recent completions: ${recentCompletions.join(' | ')}`);
+    }
+
+    const openWork = takeStartupSummaryItems(ledgerContext?.roadmap || ledgerContext?.not_yet_done, 2);
+    if (openWork.length > 0) {
+      ledgerLines.push(`- Open work: ${openWork.join(' | ')}`);
+    }
+
+    const notes = takeStartupSummaryItems(ledgerContext?.important_notes, 2);
+    if (notes.length > 0) {
+      ledgerLines.push(`- Important notes: ${notes.join(' | ')}`);
+    }
+
+    if (ledgerLines.length > 0) {
+      lines.push('', 'STARTUP LEDGER', ...ledgerLines);
+    }
+    return `${lines.filter(Boolean).join('\n').trim()}\n`;
+  }
+
+  async ingestStartupHealthSnapshot(snapshot = {}, ledgerContext = {}, options = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('startup-health');
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+    const sessionNumber = asPositiveInt(options.sessionNumber ?? this.getCurrentAppStatusSessionNumber(), null);
+    const sessionId = this.ledgerAppSession?.sessionId || this.commsSessionScopeId || null;
+    const provenance = {
+      source: 'startup-health-snapshot',
+      kind: 'observed',
+      actor: 'system',
+    };
+
+    const sharedPayload = {
+      provenance,
+      session_id: sessionId,
+      session_ordinal: sessionNumber,
+      confidence: 0.58,
+      nowMs,
+      scope: {
+        project: 'squidrun',
+        source: 'startup-health',
+        generated_at: snapshot.generatedAt || new Date(nowMs).toISOString(),
+      },
+    };
+
+    const inventoryResult = await teamMemory.executeTeamMemoryOperation('ingest-memory', {
+      ...sharedPayload,
+      confidence: 0.56,
+      memory_class: 'codebase_inventory',
+      source_trace: `startup-health:inventory:${sessionNumber || 'unknown'}:${nowMs}`,
+      content: this.buildStartupHealthInventoryContent(snapshot, sessionNumber),
+    });
+    const healthResult = await teamMemory.executeTeamMemoryOperation('ingest-memory', {
+      ...sharedPayload,
+      confidence: 0.57,
+      memory_class: 'system_health_state',
+      source_trace: `startup-health:state:${sessionNumber || 'unknown'}:${nowMs}`,
+      content: this.buildStartupHealthStateContent(snapshot, ledgerContext, sessionNumber),
+    });
+
+    if (inventoryResult?.ok === false || healthResult?.ok === false) {
+      return {
+        ok: false,
+        reason: 'startup_health_ingest_failed',
+        inventoryResult,
+        healthResult,
+      };
+    }
+
+    return {
+      ok: true,
+      inventoryResult,
+      healthResult,
+    };
+  }
+
+  async refreshStartupHealthArtifacts(options = {}) {
+    const snapshot = createHealthSnapshot({
+      projectRoot: options.projectRoot || WORKSPACE_PATH,
+      jestTimeoutMs: options.jestTimeoutMs,
+    });
+    const ledgerContext = await executeEvidenceLedgerOperation(
+      'get-context',
+      {},
+      {
+        source: {
+          via: 'startup-health',
+          role: 'system',
+          paneId: null,
+        },
+      }
+    );
+    const report = this.buildStartupHealthReport(
+      snapshot,
+      ledgerContext && ledgerContext.ok === false ? {} : (ledgerContext || {})
+    );
+    const outputPath = this.getStartupHealthPath();
+    this.writeFileAtomic(outputPath, report);
+
+    let ingestResult = {
+      ok: false,
+      skipped: true,
+      reason: 'team_memory_not_initialized',
+    };
+    if (options.ingestToMemory === true || this.teamMemoryInitialized) {
+      ingestResult = await this.ingestStartupHealthSnapshot(
+        snapshot,
+        ledgerContext && ledgerContext.ok === false ? {} : (ledgerContext || {}),
+        {
+          nowMs: options.nowMs || Date.now(),
+          sessionNumber: options.sessionNumber,
+        }
+      );
+    }
+
+    return {
+      ok: true,
+      outputPath,
+      snapshot,
+      ledgerContext,
+      ingestResult,
+    };
   }
 
   copyPathRecursive(sourcePath, destinationPath) {
@@ -1541,6 +1739,22 @@ class SquidRunApp {
     await this.initializeStartupSessionScope({
       sessionNumber: this.getCurrentAppStatusSessionNumber(),
     });
+    try {
+      const startupHealthResult = await this.refreshStartupHealthArtifacts({
+        sessionNumber: this.getCurrentAppStatusSessionNumber(),
+      });
+      if (
+        startupHealthResult?.ingestResult?.ok === false
+        && startupHealthResult?.ingestResult?.skipped !== true
+      ) {
+        log.warn(
+          'StartupHealth',
+          `Health artifact created but team-memory ingest degraded: ${startupHealthResult.ingestResult.reason || 'unknown'}`
+        );
+      }
+    } catch (err) {
+      log.warn('StartupHealth', `Startup health generation failed: ${err.message}`);
+    }
 
     // 10. Register sleep/wake listeners for laptop resilience.
     this.setupPowerMonitorListeners();

@@ -42,4 +42,26 @@ describe('memory-ingest schema', () => {
       'confidence must be a number between 0 and 1',
     ]));
   });
+
+  test('accepts startup health memory classes', () => {
+    const inventory = buildCanonicalMemoryObject({
+      content: 'ui/modules contains 312 JS files and recovery-manager is present.',
+      memory_class: 'codebase_inventory',
+      provenance: { source: 'startup-health', kind: 'observed', claim_type: 'objective_fact' },
+      confidence: 0.62,
+      source_trace: 'startup-health:inventory',
+    }, { nowMs: 2000 });
+    const health = buildCanonicalMemoryObject({
+      content: 'Evidence ledger DB present with rows; Jest lists 195 suites.',
+      memory_class: 'system_health_state',
+      provenance: { source: 'startup-health', kind: 'observed', claim_type: 'objective_fact' },
+      confidence: 0.61,
+      source_trace: 'startup-health:health',
+    }, { nowMs: 2001 });
+
+    expect(inventory.ok).toBe(true);
+    expect(inventory.memory.memory_class).toBe('codebase_inventory');
+    expect(health.ok).toBe(true);
+    expect(health.memory.memory_class).toBe('system_health_state');
+  });
 });

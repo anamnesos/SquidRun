@@ -206,6 +206,34 @@ jest.mock('../modules/experiment', () => ({
   closeExperimentRuntime: jest.fn(),
 }));
 
+jest.mock('../scripts/hm-health-snapshot', () => ({
+  createHealthSnapshot: jest.fn(() => ({
+    generatedAt: '2026-03-13T00:00:00.000Z',
+    tests: {
+      testFileCount: 194,
+      jestList: { ok: true, count: 195 },
+    },
+    modules: {
+      moduleFileCount: 300,
+      keyModules: {
+        recovery_manager: { exists: true },
+        background_agent_manager: { exists: true },
+        scheduler: { exists: true },
+      },
+    },
+    databases: {
+      evidenceLedger: { exists: true, rowCount: 100 },
+      cognitiveMemory: { exists: true, rowCount: 4 },
+    },
+    status: { level: 'ok', warnings: [] },
+  })),
+  renderStartupHealthMarkdown: jest.fn(() => [
+    'STARTUP HEALTH',
+    '- Overall: OK',
+    '- Tests: 194 files, 195 Jest-discoverable suites',
+  ].join('\n')),
+}));
+
 // Now require the module under test
 const SquidRunApp = require('../modules/main/squidrun-app');
 
@@ -421,6 +449,38 @@ describe('SquidRunApp', () => {
       expect(teamMemory.initializeTeamMemoryRuntime).not.toHaveBeenCalled();
       expect(experiment.initializeExperimentRuntime).not.toHaveBeenCalled();
       // initializeStartupSessionScope is always called now (session always increments on app launch)
+    });
+
+    it('writes startup health artifacts without forcing team memory init', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const teamMemory = require('../modules/team-memory');
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
+        session: 147,
+        status: 'ACTIVE',
+        mode: 'APP',
+        completed: ['Shipped memory v0.1.31'],
+        roadmap: ['Wire startup truth'],
+        important_notes: ['Regression coverage exists'],
+      });
+      const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      const result = await app.refreshStartupHealthArtifacts({
+        sessionNumber: 147,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        ingestResult: expect.objectContaining({
+          skipped: true,
+          reason: 'team_memory_not_initialized',
+        }),
+      }));
+      expect(writeFileAtomic).toHaveBeenCalledWith(
+        expect.stringContaining('startup-health.md'),
+        expect.stringContaining('STARTUP LEDGER')
+      );
+      expect(teamMemory.initializeTeamMemoryRuntime).not.toHaveBeenCalled();
     });
 
     it('runs firmware startup generation hook during init', async () => {
