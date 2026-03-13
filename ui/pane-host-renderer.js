@@ -55,6 +55,34 @@ function stripInternalRoutingWrappers(value) {
   return clean;
 }
 
+function getPromptKindFromLine(lineText) {
+  const line = String(lineText || '').trimEnd();
+  if (!line) return 'unknown';
+  if (/^>\s*$/.test(line) || /(?:^|[\s>])(?:codex|claude|gemini|cursor)>\s*$/i.test(line)) {
+    return 'cli';
+  }
+  if (/(?:^|[\s>])PS\s+[^>\n]*>\s*$/i.test(line)) {
+    return 'powershell';
+  }
+  if (/(?:^|[\s>])[A-Za-z]:\\[^>\n]*>\s*$/.test(line)) {
+    return 'cmd';
+  }
+  if (/(?:^|[\w./~:-]+)[$#]\s*$/.test(line)) {
+    return 'unix';
+  }
+  return 'unknown';
+}
+
+function formatHmSendForPrompt(text, promptKind) {
+  if (!text || promptKind === 'cli') return text;
+  const prefix = promptKind === 'cmd' ? 'REM ' : (promptKind === 'powershell' || promptKind === 'unix' ? '# ' : '');
+  if (!prefix) return text;
+  return String(text)
+    .split('\n')
+    .map((line) => (line ? `${prefix}${line}` : prefix.trimEnd()))
+    .join('\n');
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -77,12 +105,24 @@ function withTimeout(promise, timeoutMs, label) {
   });
 }
 
-function getUtf8ByteLength(value) {
+  function getUtf8ByteLength(value) {
   const text = typeof value === 'string' ? value : String(value || '');
   if (typeof TextEncoder === 'function') {
     return new TextEncoder().encode(text).length;
   }
   return text.length;
+}
+
+function getCurrentPromptKind(terminal) {
+  try {
+    const buffer = terminal?.buffer?.active;
+    if (!buffer || typeof buffer.getLine !== 'function') return 'unknown';
+    const line = buffer.getLine(buffer.cursorY + buffer.viewportY);
+    if (!line || typeof line.translateToString !== 'function') return 'unknown';
+    return getPromptKindFromLine(line.translateToString(true));
+  } catch {
+    return 'unknown';
+  }
 }
 
 (function bootPaneHost() {
@@ -389,10 +429,12 @@ function getUtf8ByteLength(value) {
   }
 
   async function injectMessage(payload = {}) {
-    const text = stripInternalRoutingWrappers(String(payload.message || ''));
+    const baseText = stripInternalRoutingWrappers(String(payload.message || ''));
     const deliveryId = payload.deliveryId || null;
     const traceContext = payload.traceContext || null;
     const hmSendTrace = isHmSendTraceContext(traceContext);
+    const promptKind = hmSendTrace ? getCurrentPromptKind(terminal) : 'unknown';
+    const text = hmSendTrace ? formatHmSendForPrompt(baseText, promptKind) : baseText;
     const payloadBytes = getUtf8ByteLength(text);
     const isLongPayload = payloadBytes >= Math.max(
       1,
