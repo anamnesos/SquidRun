@@ -24,6 +24,7 @@ const STRUCTURED_BRIDGE_TYPE_ALIASES = Object.freeze({
   approval: 'Approval',
   conflictresult: 'ConflictResult',
   approvalresult: 'ApprovalResult',
+  handoffpacket: 'HandoffPacket',
 });
 
 function asNonEmptyString(value) {

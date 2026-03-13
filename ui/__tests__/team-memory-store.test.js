@@ -28,7 +28,7 @@ maybeDescribe('team-memory store', () => {
     expect(store.isAvailable()).toBe(true);
 
     const migration = store.db.prepare('SELECT version FROM schema_migrations ORDER BY version ASC').all();
-    expect(migration.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(migration.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 
     const claimsTable = store.db.prepare(`
       SELECT name
@@ -51,6 +51,17 @@ maybeDescribe('team-memory store', () => {
       'claim_search',
       'pattern_mining_state',
       'experiments',
+      'memory_ingest_journal',
+      'memory_dedupe_keys',
+      'memory_objects',
+      'memory_promotion_queue',
+      'memory_ingest_runtime_state',
+      'memory_access_log',
+      'memory_conflict_queue',
+      'memory_injection_events',
+      'memory_injection_suppressions',
+      'memory_handoff_packets',
+      'memory_compaction_survival',
     ];
 
     for (const tableName of expectedTables) {
