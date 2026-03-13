@@ -103,6 +103,7 @@ const IS_DARWIN = process.platform === 'darwin';
 const PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS = IS_DARWIN ? 900 : 1500;
 const APP_IDLE_THRESHOLD_MS = 30000;
 const CONSOLE_LOG_FLUSH_INTERVAL_MS = 500;
+const STARTUP_READY_BUFFER_MAX = 4096;
 const TELEGRAM_REPLY_WINDOW_MS = Number.parseInt(
   process.env.SQUIDRUN_TELEGRAM_REPLY_WINDOW_MS || String(5 * 60 * 1000),
   10
@@ -170,6 +171,23 @@ function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric <= 0) return fallback;
   return numeric;
+}
+
+function stripAnsiForStartupReady(value) {
+  return String(value || '')
+    .replace(/\x1B\][^\x07]*(\x07|\x1B\\)/g, '')
+    .replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
+function hasCliStartupReadySignal(buffer = '') {
+  const text = stripAnsiForStartupReady(buffer);
+  if (!text) return false;
+  return (
+    /(^|\n)\s*>\s*(?:\n|$)/m.test(text)
+    || /(^|\n)\s*(?:codex|claude|gemini|cursor)>\s*/im.test(text)
+    || /how can i help/i.test(text)
+    || /gemini cli/i.test(text)
+  );
 }
 
 function parseStructuredJsonOutput(raw = '') {
@@ -262,6 +280,7 @@ class SquidRunApp {
 
     this.cliIdentityForwarderRegistered = false;
     this.triggerAckForwarderRegistered = false;
+    this.startupReadyBuffers = new Map();
     this.teamMemoryInitialized = false;
     this.teamMemoryInitPromise = null;
     this.teamMemoryInitFailed = false;
@@ -3411,9 +3430,11 @@ class SquidRunApp {
 
       const currentState = this.ctx.agentRunning.get(paneId);
       if (currentState === 'starting' || currentState === 'idle') {
-        const lower = data.toLowerCase();
-        if (lower.includes('>') || lower.includes('claude') || lower.includes('codex') || lower.includes('gemini') || lower.includes('cursor')) {
-          const runningPaneId = String(paneId);
+        const runningPaneId = String(paneId);
+        const nextBuffer = `${this.startupReadyBuffers.get(runningPaneId) || ''}${stripAnsiForStartupReady(data)}`.slice(-STARTUP_READY_BUFFER_MAX);
+        this.startupReadyBuffers.set(runningPaneId, nextBuffer);
+        if (hasCliStartupReadySignal(nextBuffer)) {
+          this.startupReadyBuffers.delete(runningPaneId);
           this.ctx.agentRunning.set(paneId, 'running');
           organicUI.agentOnline(paneId);
           this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: runningPaneId, state: 'running' })
@@ -3438,11 +3459,13 @@ class SquidRunApp {
     });
 
     this.attachDaemonClientListener('exit', (paneId, code) => {
+      this.startupReadyBuffers.delete(String(paneId));
       this.backgroundAgentManager.handleDaemonExit(paneId, code);
       handlePaneExit(paneId, code);
     });
 
     this.attachDaemonClientListener('killed', (paneId) => {
+      this.startupReadyBuffers.delete(String(paneId));
       this.backgroundAgentManager.handleDaemonKilled(paneId);
       if (String(paneId) === BACKGROUND_BUILDER_OWNER_PANE_ID) {
         this.ctx.agentRunning.set(String(paneId), 'idle');
