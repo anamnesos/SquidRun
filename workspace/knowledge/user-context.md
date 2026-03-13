@@ -13,9 +13,11 @@
 - Gets frustrated by repeated questions about known setup/workflows.
 - Built SquidRun and does not need beginner onboarding.
 - Prefers concise, action-oriented updates.
+- James definitely prefers tabs and will fight about it
 
 ## Communication Patterns
 
 - Uses Telegram when away from PC.
 - May send voice-transcribed messages.
 - Expects agents to preserve context and continue with minimal friction.
+

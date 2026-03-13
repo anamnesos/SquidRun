@@ -11,6 +11,7 @@
 - CI Monitoring: Oracle checks CI status on startup using `ui/scripts/hm-ci-check.js`. Builder owns keeping CI green. If CI is red, Oracle escalates to Architect who blocks new work until it's fixed.
 - Deep research workflow (AI/dev-tools): run 2-3 web passes with primary sources only (official docs/changelogs/specs/pricing), extract explicit reliability semantics (delivery guarantees, retries, idempotency, resume), then extract economics primitives (token prices, caching/batch discounts, seat limits, supervision metrics). Send Architect a synthesis that separates hard facts from inference and includes source links.
 - Codex self-audit workflow: verify local install first with `codex --version`, `codex --help`, `codex features list`, `codex mcp list`, and `Get-Content $HOME\\.codex\\config.toml`; compare against the official Codex changelog on `developers.openai.com` to distinguish `installed here now` from `available in newer releases`. On Windows, validate actual machine reach with PowerShell probes for services, scheduled tasks, registry, event logs, networking, COM, and a simple P/Invoke call before claiming system-level capability.
+- Cognitive Memory: Agents can manually push new knowledge to the vector store mid-session using `node ui/scripts/hm-memory-api.js ingest "<fact>" --category <category> --agent <agent-id> [--confidence <0..1>]`. This writes directly to the local `cognitive-memory.db` with a default confidence of 0.3 to prevent uncontrolled pollution.
 
 ## Task Delegation Template (Architect -> Builder)
 

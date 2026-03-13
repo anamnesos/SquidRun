@@ -48,7 +48,7 @@ A multi-agent team shouldn't duplicate knowledge; it should route it.
   - Implement `sqlite-vec` index over `workspace/knowledge/`.
   - Add `last_accessed_at` and `access_count` to the schema.
   - Implement the **Time-Decay** penalty in the Reciprocal Rank Fusion (RRF) retrieval query.
-  - Create the decoupled MaaS API layer (`hm-memory-api.js`).
+  - Create the decoupled MaaS API layer (`hm-memory-api.js`) with `retrieve`, `patch`, `salience`, and direct `ingest` commands. `ingest` requires mandatory `--category` and `--agent` provenance with a default `confidence_score` of 0.3 to prevent noise pollution.
 
 ### Phase 2: Transactive Meta-Knowledge & The Memory PR
 *Structuring how agents share and validate facts.*
