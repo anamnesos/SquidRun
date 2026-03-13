@@ -6,8 +6,8 @@
 - Local path: `D:\projects\squidrun`.
 - GitHub repo: `https://github.com/anamnesos/SquidRun` (current remote URL may still be `https://github.com/anamnesos/hivemind.git`, which redirects).
 - Deploy/release targets: GitHub Releases + packaged installers built from `ui/` with `npx electron-builder`.
-- Current version: `0.1.27` (`ui/package.json`).
-- Last known state: v0.1.27 shipped cross-device discovery, pairing, and error messaging improvements.
+- Current version: `0.1.31` (`ui/package.json`).
+- Last known state: v0.1.31 — cognitive memory system (ingest/retrieve/promote), startup injection hardening, session rollover memory delivery.
 
 ## squidrun-site
 
