@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const { CognitiveMemoryApi } = require('../modules/cognitive-memory-api');
+const DEFAULT_INGEST_CONFIDENCE = 0.3;
 
 function parseArgs(argv) {
   const args = Array.isArray(argv) ? argv.slice() : [];
@@ -27,6 +28,7 @@ function parseArgs(argv) {
 function usage() {
   process.stdout.write([
     'Usage:',
+    '  node scripts/hm-memory-api.js ingest <content> --category <name> --agent <id> [--confidence <0..1>]',
     '  node scripts/hm-memory-api.js retrieve <query> [--agent <id>] [--limit <n>] [--lease-ms <ms>]',
     '  node scripts/hm-memory-api.js patch --lease <lease-id> --content <text> [--agent <id>] [--reason <text>]',
     '  node scripts/hm-memory-api.js salience --node <node-id> [--delta <n>] [--decay <n>] [--max-depth <n>]',
@@ -34,11 +36,54 @@ function usage() {
   ].join('\n'));
 }
 
-async function main() {
-  const { positional, flags } = parseArgs(process.argv.slice(2));
+function clampConfidence(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return DEFAULT_INGEST_CONFIDENCE;
+  return Math.max(0, Math.min(1, numeric));
+}
+
+async function main(argv = process.argv.slice(2)) {
+  const { positional, flags } = parseArgs(argv);
   const command = positional[0] || 'retrieve';
   const api = new CognitiveMemoryApi();
   try {
+    if (command === 'ingest') {
+      const content = positional.slice(1).join(' ').trim();
+      const agentId = flags.agent || flags['agent-id'];
+      const category = String(flags.category || '').trim();
+      const confidence = clampConfidence(flags.confidence);
+      if (!content) throw new Error('ingest requires content');
+      if (!category) throw new Error('ingest requires --category');
+      if (!agentId) throw new Error('ingest requires --agent');
+
+      const result = await api.ensureNodeFromSearchResult({
+        category,
+        content,
+        confidence,
+        sourceType: 'agent-ingest',
+        sourcePath: `agent:${agentId}`,
+        title: `Agent ingest (${agentId})`,
+        heading: category,
+        metadata: {
+          agentId,
+          command: 'ingest',
+          ingestedVia: 'hm-memory-api',
+          confidence,
+        },
+      });
+      if (!result) {
+        throw new Error('ingest did not create a node');
+      }
+      process.stdout.write(`${JSON.stringify({
+        ok: true,
+        node: {
+          ...result,
+          confidenceScore: confidence,
+        },
+      }, null, 2)}\n`);
+      return;
+    }
+
     if (command === 'retrieve') {
       const query = positional.slice(1).join(' ').trim();
       if (!query) throw new Error('retrieve requires a query');
@@ -90,3 +135,10 @@ if (require.main === module) {
     process.exit(1);
   });
 }
+
+module.exports = {
+  DEFAULT_INGEST_CONFIDENCE,
+  clampConfidence,
+  main,
+  parseArgs,
+};
