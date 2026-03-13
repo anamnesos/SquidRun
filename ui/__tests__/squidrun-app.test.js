@@ -1179,6 +1179,164 @@ describe('SquidRunApp', () => {
     });
   });
 
+  describe('phase 4 delivery helpers', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      app.teamMemoryInitialized = true;
+    });
+
+    it('routes proactive memory injections into the target pane', async () => {
+      const teamMemory = require('../modules/team-memory');
+      const routeInjectMessage = jest.spyOn(app, 'routeInjectMessage').mockReturnValue(true);
+      teamMemory.executeTeamMemoryOperation.mockResolvedValueOnce({
+        ok: true,
+        injected: true,
+        status: 'delivered',
+        injection: {
+          injection_id: 'inject-1',
+          source_tier: 'tier3',
+          injection_reason: 'error_signature_match:solution_trace',
+          authoritative: false,
+          message: '[MEMORY][assistive] error_signature_match\nreason=error_signature_match tier=tier3 confidence=0.90 freshness=2026-03-12T00:00:00.000Z\nReact error #418',
+        },
+      });
+
+      const result = await app.triggerProactiveMemoryInjection({
+        paneId: '2',
+        triggerType: 'error_signature_match',
+        payload: {
+          error_signature: 'React error #418',
+          trigger_event_id: 'err-1',
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        injected: true,
+        delivered: true,
+      }));
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'trigger-memory-injection',
+        expect.objectContaining({
+          pane_id: '2',
+          trigger_type: 'error_signature_match',
+          trigger_event_id: 'err-1',
+        })
+      );
+      expect(routeInjectMessage).toHaveBeenCalledWith(expect.objectContaining({
+        panes: ['2'],
+        deliveryId: 'inject-1',
+        meta: expect.objectContaining({
+          memoryInjection: true,
+          triggerType: 'error_signature_match',
+          sourceTier: 'tier3',
+        }),
+      }));
+    });
+
+    it('resumes compaction survival by injecting the survival note back into the pane', async () => {
+      const teamMemory = require('../modules/team-memory');
+      const routeInjectMessage = jest.spyOn(app, 'routeInjectMessage').mockReturnValue(true);
+      teamMemory.executeTeamMemoryOperation.mockResolvedValueOnce({
+        ok: true,
+        resumed: true,
+        injection: {
+          message: '[COMPACTION RESUME] Pane 2 context restored\nTier 1 re-read: ARCHITECTURE.md',
+        },
+      });
+
+      const result = await app.resumeCompactionSurvivalForPane({
+        paneId: '2',
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        resumed: true,
+      }));
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'resume-compaction-survival',
+        expect.objectContaining({
+          pane_id: '2',
+        })
+      );
+      expect(routeInjectMessage).toHaveBeenCalledWith(expect.objectContaining({
+        panes: ['2'],
+        meta: expect.objectContaining({
+          triggerType: 'compaction_survival_resume',
+        }),
+      }));
+    });
+
+    it('sends a cross-device handoff packet and marks it sent after relay delivery', async () => {
+      const teamMemory = require('../modules/team-memory');
+      const routeBridgeMessage = jest.spyOn(app, 'routeBridgeMessage').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'bridge_delivered',
+      });
+      teamMemory.executeTeamMemoryOperation.mockImplementation(async (action) => {
+        if (action === 'build-cross-device-handoff') {
+          return {
+            ok: true,
+            packet_id: 'handoff-1',
+            packet: {
+              packet_id: 'handoff-1',
+              session_id: 'app-session-test',
+              source_device: 'LOCAL',
+              target_device: 'PEER',
+              active_workstreams: ['Ship Phase 4'],
+              unresolved_blockers: ['None'],
+            },
+            result_refs: [],
+          };
+        }
+        if (action === 'mark-cross-device-handoff-sent') {
+          return {
+            ok: true,
+            packet_id: 'handoff-1',
+          };
+        }
+        return { ok: true, status: 'updated' };
+      });
+
+      const result = await app.sendCrossDeviceHandoffPacket({
+        targetDevice: 'PEER',
+        paneId: '1',
+        payload: {
+          session_id: 'app-session-test',
+          active_workstreams: ['Ship Phase 4'],
+          unresolved_blockers: ['None'],
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        packet_id: 'handoff-1',
+      }));
+      expect(routeBridgeMessage).toHaveBeenCalledWith(expect.objectContaining({
+        targetDevice: 'PEER',
+        structuredMessage: {
+          type: 'handoffpacket',
+          payload: {
+            packet: expect.objectContaining({
+              packet_id: 'handoff-1',
+            }),
+          },
+        },
+      }));
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'mark-cross-device-handoff-sent',
+        expect.objectContaining({
+          packet_id: 'handoff-1',
+        })
+      );
+    });
+  });
+
   describe('bridge structured message types', () => {
     let app;
 
@@ -1345,6 +1503,52 @@ describe('SquidRunApp', () => {
           }),
         }),
         expect.any(Object)
+      );
+    });
+
+    it('formats HandoffPacket bridge messages using the handoff note when available', async () => {
+      const triggers = require('../modules/triggers');
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValue({ ok: true });
+      app.handleInboundHandoffPacket = jest.fn().mockResolvedValue({
+        ok: true,
+        injection: {
+          message: '[HANDOFF PEER_A] Ship Phase 4\nBlockers: none\nSurfaced memories: 1',
+        },
+      });
+
+      const result = await app.handleBridgeInboundMessage({
+        messageId: 'bridge-in-handoff',
+        fromDevice: 'peer_a',
+        content: 'Cross-device handoff inbound',
+        metadata: {
+          structured: {
+            type: 'HandoffPacket',
+            payload: {
+              packet: {
+                packet_id: 'handoff-1',
+              },
+            },
+          },
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'bridge_delivered',
+      }));
+      expect(app.handleInboundHandoffPacket).toHaveBeenCalledWith(
+        expect.objectContaining({
+          packet_id: 'handoff-1',
+        }),
+        expect.objectContaining({
+          paneId: '1',
+        })
+      );
+      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
+        ['1'],
+        '[Bridge HandoffPacket from PEER_A]\n[HANDOFF PEER_A] Ship Phase 4\nBlockers: none\nSurfaced memories: 1',
+        null
       );
     });
   });

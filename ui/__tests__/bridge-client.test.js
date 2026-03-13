@@ -38,10 +38,12 @@ describe('bridge-client', () => {
   let MockWebSocket;
   let createBridgeClient;
   let logger;
+  let clients;
 
   beforeEach(() => {
     jest.resetModules();
     instances = [];
+    clients = [];
     MockWebSocket = createWebSocketMock(instances);
     logger = {
       info: jest.fn(),
@@ -52,10 +54,22 @@ describe('bridge-client', () => {
 
     jest.doMock('ws', () => MockWebSocket);
     jest.doMock('../modules/logger', () => logger);
-    ({ createBridgeClient } = require('../modules/bridge-client'));
+    const bridgeClientModule = require('../modules/bridge-client');
+    createBridgeClient = (options = {}) => {
+      const client = bridgeClientModule.createBridgeClient(options);
+      clients.push(client);
+      return client;
+    };
   });
 
   afterEach(() => {
+    for (const client of clients) {
+      try {
+        client.stop();
+      } catch (_) {
+        // best effort
+      }
+    }
     delete process.env.SQUIDRUN_BRIDGE_RECONNECT_BASE_MS;
     delete process.env.SQUIDRUN_BRIDGE_RECONNECT_MAX_MS;
     delete process.env.SQUIDRUN_BRIDGE_REPLACED_RECONNECT_BASE_MS;
@@ -362,6 +376,56 @@ describe('bridge-client', () => {
     emitJson(socket, {
       type: 'xack',
       messageId: 'msg-structured-unknown',
+      ok: true,
+      status: 'bridge_delivered',
+      fromDevice: 'LOCAL_A',
+      toDevice: 'PEER_2',
+    });
+    await expect(pending).resolves.toMatchObject({ ok: true, status: 'bridge_delivered' });
+  });
+
+  test('sendToDevice normalizes HandoffPacket structured type alias', async () => {
+    const client = createBridgeClient({
+      relayUrl: 'ws://relay',
+      deviceId: 'local_a',
+      sharedSecret: 'secret',
+    });
+
+    expect(client.start()).toBe(true);
+    const socket = instances[0];
+    socket.readyState = MockWebSocket.OPEN;
+    socket.emit('open');
+    emitJson(socket, { type: 'register-ack', ok: true });
+
+    const pending = client.sendToDevice({
+      messageId: 'msg-handoff',
+      toDevice: 'peer_2',
+      content: 'cross-device handoff',
+      metadata: {
+        structured: {
+          type: 'handoffpacket',
+          payload: {
+            packet: {
+              packet_id: 'handoff-1',
+            },
+          },
+        },
+      },
+    });
+
+    const xsendFrame = JSON.parse(socket.sent[1]);
+    expect(xsendFrame.metadata.structured).toEqual({
+      type: 'HandoffPacket',
+      payload: {
+        packet: {
+          packet_id: 'handoff-1',
+        },
+      },
+    });
+
+    emitJson(socket, {
+      type: 'xack',
+      messageId: 'msg-handoff',
       ok: true,
       status: 'bridge_delivered',
       fromDevice: 'LOCAL_A',

@@ -3784,15 +3784,185 @@ class SquidRunApp {
   async recordSessionLifecyclePattern({ paneId, status, exitCode = null, reason = '' } = {}) {
     const ready = await this.ensureTeamMemoryInitialized('session-lifecycle');
     if (!ready) return;
+    const nowMs = Date.now();
     const event = buildSessionLifecyclePatternEvent({
       paneId,
       status,
       exitCode,
       reason,
-      nowMs: Date.now(),
+      nowMs,
     });
     if (!event) return;
     await this.appendTeamMemoryPatternEvent(event, 'session-lifecycle');
+    if (String(status || '').toLowerCase() === 'started' && paneId) {
+      await this.triggerProactiveMemoryInjection({
+        paneId,
+        triggerType: 'session_rollover',
+        payload: {
+          session_id: this.commsSessionScopeId || null,
+          session_ordinal: this.getCurrentAppStatusSessionNumber(),
+          trigger_event_id: `session-rollover:${paneId}:${this.commsSessionScopeId || 'app'}`,
+          nowMs,
+        },
+      });
+    }
+  }
+
+  async triggerProactiveMemoryInjection({ paneId, triggerType, payload = {}, explicit = false } = {}) {
+    const ready = await this.ensureTeamMemoryInitialized(`memory-injection:${triggerType || 'unknown'}`);
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+
+    const targetPane = String(paneId || payload?.pane_id || payload?.paneId || '1');
+    const nowMs = Date.now();
+    const result = await teamMemory.executeTeamMemoryOperation('trigger-memory-injection', {
+      ...payload,
+      pane_id: targetPane,
+      session_id: payload?.session_id || payload?.sessionId || this.commsSessionScopeId || null,
+      trigger_type: triggerType,
+      explicit,
+      nowMs,
+    });
+    if (!result?.ok || result.injected !== true || !result.injection?.message) {
+      return result;
+    }
+
+    const routed = this.routeInjectMessage({
+      panes: [targetPane],
+      message: `${result.injection.message}\r`,
+      deliveryId: result.injection.injection_id || null,
+      meta: {
+        memoryInjection: true,
+        triggerType,
+        sourceTier: result.injection.source_tier || null,
+        injectionReason: result.injection.injection_reason || null,
+        authoritative: result.injection.authoritative === true,
+      },
+    });
+
+    return {
+      ...result,
+      delivered: routed === true,
+    };
+  }
+
+  async recordMemoryInjectionFeedback(payload = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('memory-injection-feedback');
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+    return teamMemory.executeTeamMemoryOperation('record-memory-injection-feedback', {
+      ...payload,
+      nowMs: payload?.nowMs || Date.now(),
+    });
+  }
+
+  async sendCrossDeviceHandoffPacket({ targetDevice, paneId = '1', payload = {} } = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('cross-device-handoff-send');
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+
+    const buildResult = await teamMemory.executeTeamMemoryOperation('build-cross-device-handoff', {
+      ...payload,
+      pane_id: String(paneId),
+      target_device: targetDevice,
+      source_device: this.bridgeDeviceId || getLocalDeviceId(process.env) || 'LOCAL',
+      session_id: payload?.session_id || payload?.sessionId || this.commsSessionScopeId || null,
+      session_ordinal: payload?.session_ordinal || payload?.sessionOrdinal || this.getCurrentAppStatusSessionNumber(),
+      nowMs: payload?.nowMs || Date.now(),
+    });
+    if (!buildResult?.ok) {
+      return buildResult;
+    }
+
+    const outboundText = [
+      `Cross-device handoff from ${buildResult.packet?.source_device || this.bridgeDeviceId || 'LOCAL'}`,
+      Array.isArray(buildResult.packet?.active_workstreams) && buildResult.packet.active_workstreams.length > 0
+        ? `Workstreams: ${buildResult.packet.active_workstreams.join(' | ')}`
+        : 'Workstreams: none listed',
+    ].join('\n');
+    const relayResult = await this.routeBridgeMessage({
+      targetDevice,
+      content: outboundText,
+      fromRole: 'architect',
+      messageId: `handoff-${buildResult.packet_id}`,
+      structuredMessage: {
+        type: 'handoffpacket',
+        payload: {
+          packet: buildResult.packet,
+        },
+      },
+    });
+    if (relayResult?.ok) {
+      await teamMemory.executeTeamMemoryOperation('mark-cross-device-handoff-sent', {
+        packet_id: buildResult.packet_id,
+        sent_at: Date.now(),
+        packet_json: buildResult.packet,
+      });
+    }
+    return {
+      ...relayResult,
+      packet_id: buildResult.packet_id,
+      packet: buildResult.packet,
+      result_refs: buildResult.result_refs || [],
+    };
+  }
+
+  async handleInboundHandoffPacket(packet = {}, options = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('cross-device-handoff-receive');
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+    return teamMemory.executeTeamMemoryOperation('receive-cross-device-handoff', {
+      packet,
+      pane_id: options?.paneId || '1',
+      nowMs: options?.nowMs || Date.now(),
+    });
+  }
+
+  async prepareCompactionSurvivalForPane({ paneId = '1', payload = {} } = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('compaction-survival-prepare');
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+    return teamMemory.executeTeamMemoryOperation('prepare-compaction-survival', {
+      ...payload,
+      pane_id: String(paneId),
+      session_id: payload?.session_id || payload?.sessionId || this.commsSessionScopeId || null,
+      project_root: typeof getProjectRoot === 'function' ? (getProjectRoot() || undefined) : undefined,
+      nowMs: payload?.nowMs || Date.now(),
+    });
+  }
+
+  async resumeCompactionSurvivalForPane({ paneId = '1', payload = {} } = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('compaction-survival-resume');
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+
+    const result = await teamMemory.executeTeamMemoryOperation('resume-compaction-survival', {
+      ...payload,
+      pane_id: String(paneId),
+      session_id: payload?.session_id || payload?.sessionId || this.commsSessionScopeId || null,
+      project_root: typeof getProjectRoot === 'function' ? (getProjectRoot() || undefined) : undefined,
+      nowMs: payload?.nowMs || Date.now(),
+    });
+    if (result?.ok && result?.resumed === true && result?.injection?.message) {
+      this.routeInjectMessage({
+        panes: [String(paneId)],
+        message: `${result.injection.message}\r`,
+        meta: {
+          memoryInjection: true,
+          triggerType: 'compaction_survival_resume',
+          sourceTier: 'tier4',
+          injectionReason: 'compaction_resume',
+          authoritative: true,
+        },
+      });
+    }
+    return result;
   }
 
   async recordDeliveryOutcomePattern({ channel, target, fromRole, result, traceContext } = {}) {
@@ -4945,9 +5115,18 @@ class SquidRunApp {
       log.warn('EvidenceLedger', `Bridge inbound journal upsert error: ${err.message}`);
     });
 
-    const formatted = structuredType
+    let formatted = structuredType
       ? `[Bridge ${structuredType} from ${fromDevice}]: ${body}`
       : `[Bridge from ${fromDevice}]: ${body}`;
+    if (structuredType === 'HandoffPacket') {
+      const handoffPacket = bridgeMetadata?.structured?.payload?.packet || bridgeMetadata?.structured?.payload || null;
+      const handoffResult = await this.handleInboundHandoffPacket(handoffPacket, {
+        paneId: '1',
+      });
+      if (handoffResult?.ok === true && handoffResult?.injection?.message) {
+        formatted = `[Bridge HandoffPacket from ${fromDevice}]\n${handoffResult.injection.message}`;
+      }
+    }
     const injection = triggers.sendDirectMessage(['1'], formatted, null);
     if (!injection?.success) {
       return {

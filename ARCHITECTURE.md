@@ -138,6 +138,9 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/main/pane-host-window-manager.js: Creates/manages hidden pane-host BrowserWindows and routes bridge messages into pane-host renderers.
 - ui/modules/main/settings-manager.js: Exports SettingsManager.
 - ui/modules/main/squidrun-app.js: Registers IPC channels (pane-host-ready, pane-host-inject, pane-host-dispatch-enter, ...).
+- ui/modules/memory-ingest/delivery.js: Proactive memory delivery engine (trigger matching, injection budgets, handoff packets, and compaction survival persistence).
+- ui/modules/memory-ingest/journal.js: Shared ingest journal / retry queue / dedupe state backing Phases 1-4 of the memory contract.
+- ui/modules/memory-ingest/service.js: Canonical ingest + recovery service handling crash-safe routing, compaction locks, replay, and Tier 4 override notes.
 - ui/modules/main/usage-manager.js: Exports UsageManager.
 - ui/modules/mcp-bridge.js: Exports MC5, registerAgent, unregisterAgent, heartbeat, ....
 - ui/modules/model-selector.js: Exports initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute, ....
@@ -250,6 +253,13 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - Topology: `Architect (Device A) <-> WebSocket Relay <-> Architect (Device B)`.
 - Architect-only gate: cross-device relay targeting is restricted to `@<DEVICE>-architect`; role gate enforced in `ui/modules/main/squidrun-app.js` (around line 1900).
 - Local routing model: Builder/Oracle never target external devices directly. Inbound cross-device payloads terminate at local Architect, which then routes to local Builder/Oracle via `hm-send.js`.
+- Phase 4 handoffs: cross-device work transfer is carried as structured `HandoffPacket` relay metadata, journaled in `team-memory.sqlite`, and surfaced locally as Tier 4 continuation context.
+
+## 5A) MEMORY DELIVERY
+- Canonical memory ingest lands in `team-memory.sqlite` through `ui/modules/memory-ingest/service.js` and `ui/modules/memory-ingest/journal.js`, which guarantee durable envelopes before routing and replay pending writes after crashes or compaction locks.
+- Proactive injection is resolved by `ui/modules/memory-ingest/delivery.js`: triggers (`error_signature_match`, `file_path_affinity`, `task_domain_match`, `session_rollover`, `user_preference_activation`) query routed memory objects, apply budgets/rank-down/suppression, and emit ephemeral Tier 4 assistive or authoritative notes into pane context.
+- Delivery budgets are enforced per pane through `memory_injection_events` / `memory_injection_suppressions` (max 1 per trigger event, max 3 per 10 minutes unless explicit, rank-down after 2 unreferenced injections, dismissal suppression until context changes).
+- Compaction survival persists pre-compact active-task notes plus Tier 3 extracted insights into `memory_compaction_survival`, then re-reads Tier 1 files from disk on resume before reinjecting the survival summary.
 
 ## 6) DATA FLOW
 1. User types in pane 1 broadcast input (`ui/index.html#broadcastInput`, `ui/renderer.js`).
@@ -262,6 +272,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 8. Main routes injection to hidden pane host PTY (or visible fallback), then receives delivery ack/outcome.
 9. Target agent processes and replies via `hm-send.js` back to Architect, repeating the same envelope + verification flow.
 10. Handoff materializer compacts comms journal/evidence into `.squidrun/handoffs/session.md` and context snapshots.
+11. Team-memory delivery can proactively inject Tier 3/Tier 4 memory into a pane, send cross-device handoff packets over relay, and restore compaction survival notes after context compression.
 
 ## 7) CONFIG FILES
 - `ui/settings.json`: user/runtime settings (pane commands, watcher/autospawn flags, hidden pane-host toggle). **Gitignored** (`.gitignore`).
