@@ -52,7 +52,7 @@ maybeDescribe('memory-search', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-memory-search-'));
     workspaceDir = path.join(tempDir, 'workspace');
     fs.mkdirSync(path.join(workspaceDir, 'knowledge'), { recursive: true });
-    fs.mkdirSync(path.join(workspaceDir, 'handoffs'), { recursive: true });
+    fs.mkdirSync(path.join(tempDir, '.squidrun', 'handoffs'), { recursive: true });
 
     fs.writeFileSync(path.join(workspaceDir, 'knowledge', 'user-context.md'), [
       '# User Context',
@@ -67,7 +67,7 @@ maybeDescribe('memory-search', () => {
       '',
     ].join('\n'));
 
-    fs.writeFileSync(path.join(workspaceDir, 'handoffs', 'session.md'), [
+    fs.writeFileSync(path.join(tempDir, '.squidrun', 'handoffs', 'session.md'), [
       '# Session Handoff Index',
       '',
       '## Decision Digest',
@@ -102,7 +102,7 @@ maybeDescribe('memory-search', () => {
   test('extracts decision digest and cross-session sources from handoff markdown', () => {
     const sources = buildSessionHandoffSources({
       workspaceDir,
-      handoffPath: path.join(workspaceDir, 'handoffs', 'session.md'),
+      handoffPath: path.join(tempDir, '.squidrun', 'handoffs', 'session.md'),
     });
 
     expect(sources).toEqual(expect.arrayContaining([
@@ -119,6 +119,7 @@ maybeDescribe('memory-search', () => {
 
   test('indexes workspace sources and returns hybrid search results', async () => {
     const index = new MemorySearchIndex({
+      projectRoot: tempDir,
       workspaceDir,
       embedder: mockEmbedder,
     });

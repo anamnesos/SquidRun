@@ -186,7 +186,9 @@ maybeDescribe('evidence-ledger IPC integration', () => {
       expect(typeof recorded.decisionId).toBe('string');
     }
 
-    const context = await harness.invoke('evidence-ledger:get-context', {});
+    const context = await harness.invoke('evidence-ledger:get-context', {
+      sessionId: 'ses-ipc-memory-1',
+    });
     expect(context.source).toBe('ledger');
     expect(context.session).toBe(222);
     expect(context.mode).toBe('PTY');
