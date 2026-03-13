@@ -3413,13 +3413,26 @@ class SquidRunApp {
       if (currentState === 'starting' || currentState === 'idle') {
         const lower = data.toLowerCase();
         if (lower.includes('>') || lower.includes('claude') || lower.includes('codex') || lower.includes('gemini') || lower.includes('cursor')) {
+          const runningPaneId = String(paneId);
           this.ctx.agentRunning.set(paneId, 'running');
           organicUI.agentOnline(paneId);
-          this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'running' })
+          this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: runningPaneId, state: 'running' })
             .catch(err => log.error('Plugins', `Error in agent:stateChanged hook: ${err.message}`));
           this.broadcastClaudeState();
           this.activity.logActivity('state', paneId, 'Agent started', { status: 'running' });
           log.info('Agent', `Pane ${paneId} now running`);
+          this.triggerProactiveMemoryInjection({
+            paneId: runningPaneId,
+            triggerType: 'session_rollover',
+            payload: {
+              session_id: this.commsSessionScopeId || null,
+              session_ordinal: this.getCurrentAppStatusSessionNumber(),
+              trigger_event_id: `session-rollover:${runningPaneId}:${this.commsSessionScopeId || 'app'}`,
+              nowMs: Date.now(),
+            },
+          }).catch((err) => {
+            log.warn('TeamMemory', `Failed session rollover memory injection for pane ${runningPaneId}: ${err.message}`);
+          });
         }
       }
     });
@@ -3794,18 +3807,6 @@ class SquidRunApp {
     });
     if (!event) return;
     await this.appendTeamMemoryPatternEvent(event, 'session-lifecycle');
-    if (String(status || '').toLowerCase() === 'started' && paneId) {
-      await this.triggerProactiveMemoryInjection({
-        paneId,
-        triggerType: 'session_rollover',
-        payload: {
-          session_id: this.commsSessionScopeId || null,
-          session_ordinal: this.getCurrentAppStatusSessionNumber(),
-          trigger_event_id: `session-rollover:${paneId}:${this.commsSessionScopeId || 'app'}`,
-          nowMs,
-        },
-      });
-    }
   }
 
   async triggerProactiveMemoryInjection({ paneId, triggerType, payload = {}, explicit = false } = {}) {
