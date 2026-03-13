@@ -9,6 +9,8 @@ const MEMORY_CLASSES = Object.freeze([
   'historical_outcome',
   'active_task_state',
   'cross_device_handoff',
+  'codebase_inventory',
+  'system_health_state',
 ]);
 
 const MEMORY_TIERS = Object.freeze(['tier1', 'tier3', 'tier4']);

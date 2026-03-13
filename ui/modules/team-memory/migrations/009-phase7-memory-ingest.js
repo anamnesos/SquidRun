@@ -3,7 +3,7 @@
  * Adds shared memory ingest journal, dedupe keys, routed memory objects, and Tier 1 promotion queue.
  */
 
-const MEMORY_CLASS_CHECK = "'user_preference', 'environment_quirk', 'procedural_rule', 'architecture_decision', 'solution_trace', 'historical_outcome', 'active_task_state', 'cross_device_handoff'";
+const MEMORY_CLASS_CHECK = "'user_preference', 'environment_quirk', 'procedural_rule', 'architecture_decision', 'solution_trace', 'historical_outcome', 'active_task_state', 'cross_device_handoff', 'codebase_inventory', 'system_health_state'";
 const MEMORY_TIER_CHECK = "'tier1', 'tier3', 'tier4'";
 const MEMORY_STATUS_CHECK = "'active', 'pending', 'stale', 'superseded', 'corrected', 'rejected', 'expired'";
 
