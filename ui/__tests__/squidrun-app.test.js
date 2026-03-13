@@ -160,6 +160,10 @@ jest.mock('../scripts/hm-telegram', () => ({
 // Mock organic-ui-handlers
 jest.mock('../modules/ipc/organic-ui-handlers', () => ({
   registerHandlers: jest.fn(),
+  getAgentState: jest.fn(() => 'online'),
+  agentActive: jest.fn(),
+  agentOnline: jest.fn(),
+  agentOffline: jest.fn(),
 }));
 
 // Mock evidence-ledger handlers
@@ -970,8 +974,11 @@ describe('SquidRunApp', () => {
       );
     });
 
-    it('records session lifecycle events', async () => {
+    it('records session lifecycle events without firing rollover injection on started', async () => {
       const teamMemory = require('../modules/team-memory');
+      const triggerProactiveMemoryInjection = jest
+        .spyOn(app, 'triggerProactiveMemoryInjection')
+        .mockResolvedValue({ ok: true });
       await app.recordSessionLifecyclePattern({
         paneId: '2',
         status: 'started',
@@ -985,6 +992,7 @@ describe('SquidRunApp', () => {
           status: 'started',
         })
       );
+      expect(triggerProactiveMemoryInjection).not.toHaveBeenCalled();
     });
   });
 
@@ -1016,6 +1024,48 @@ describe('SquidRunApp', () => {
 
       expect(sharedDaemonClient.off).toHaveBeenCalledTimes(firstAttachCount);
       expect(sharedDaemonClient.on.mock.calls.length).toBe(firstAttachCount * 2);
+    });
+
+    it('fires session rollover injection only after the pane reaches running', async () => {
+      const { getDaemonClient } = require('../daemon-client');
+      const sharedDaemonClient = {
+        on: jest.fn(),
+        off: jest.fn(),
+        connect: jest.fn().mockResolvedValue(),
+        disconnect: jest.fn(),
+      };
+      getDaemonClient.mockReturnValue(sharedDaemonClient);
+
+      const ctx = {
+        ...mockAppContext,
+        daemonClient: sharedDaemonClient,
+        agentRunning: new Map([['2', 'starting']]),
+        pluginManager: {
+          hasHook: jest.fn().mockReturnValue(false),
+          dispatch: jest.fn().mockResolvedValue(),
+        },
+      };
+      const app = new SquidRunApp(ctx, mockManagers);
+      const triggerProactiveMemoryInjection = jest
+        .spyOn(app, 'triggerProactiveMemoryInjection')
+        .mockResolvedValue({ ok: true, delivered: true });
+
+      await app.initDaemonClient();
+
+      const dataListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'data')?.[1];
+      expect(typeof dataListener).toBe('function');
+
+      dataListener('2', 'codex> ready');
+
+      expect(ctx.agentRunning.get('2')).toBe('running');
+      expect(triggerProactiveMemoryInjection).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '2',
+        triggerType: 'session_rollover',
+        payload: expect.objectContaining({
+          session_ordinal: 147,
+          trigger_event_id: expect.stringContaining('session-rollover:2:'),
+        }),
+      }));
     });
   });
 
