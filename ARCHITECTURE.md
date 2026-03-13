@@ -140,7 +140,12 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/main/squidrun-app.js: Registers IPC channels (pane-host-ready, pane-host-inject, pane-host-dispatch-enter, ...).
 - ui/modules/memory-ingest/delivery.js: Proactive memory delivery engine (trigger matching, injection budgets, handoff packets, and compaction survival persistence).
 - ui/modules/memory-ingest/journal.js: Shared ingest journal / retry queue / dedupe state backing Phases 1-4 of the memory contract.
+- ui/modules/memory-ingest/lifecycle.js: Session-based lifecycle advancement for memory objects (stale/archive/reactivation review flows).
+- ui/modules/memory-ingest/promotion.js: Promotion target resolution and canonical knowledge-file patch application helpers.
+- ui/modules/memory-ingest/router.js: Tier-routing logic that classifies incoming memory payloads before ingest/promotion.
+- ui/modules/memory-ingest/schema.js: Shared schema/constants for memory-ingest statuses, tiers, and validation rules.
 - ui/modules/memory-ingest/service.js: Canonical ingest + recovery service handling crash-safe routing, compaction locks, replay, and Tier 4 override notes.
+- ui/modules/memory-ingest/shutdown-marker.js: Crash/restart coordination helper for marking interrupted ingest runtime shutdowns.
 - ui/modules/main/usage-manager.js: Exports UsageManager.
 - ui/modules/mcp-bridge.js: Exports MC5, registerAgent, unregisterAgent, heartbeat, ....
 - ui/modules/model-selector.js: Exports initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute, ....
@@ -212,15 +217,27 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/doc-lint.js: Lints `.squidrun/build/*.md` docs for active-item caps, required metadata fields, and stale-marker correctness.
 - ui/scripts/evidence-ledger-seed-memory.js: Seeds Evidence Ledger decision memory from context snapshot markdown/JSON with deterministic IDs.
 - ui/scripts/hm-bg.js: Background Builder control CLI; uses WebSocket for live PTY agents and the durable supervisor queue CLI for queued work.
+- ui/scripts/hm-ci-check.js: CLI utility for reading the latest CI/pre-commit gate status used by review and release workflows.
 - ui/scripts/hm-claim.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-comms.js: CLI utility that reads comms history from `.squidrun/runtime/evidence-ledger.db` via `node:sqlite`.
+- ui/scripts/hm-compat-count.js: Utility script for compatibility/counting diagnostics used in release and audit workflows.
 - ui/scripts/hm-doctor.js: Preflight health-check CLI for dependencies, native modules, transport port, shell defaults, and `.squidrun` permissions.
 - ui/scripts/hm-experiment.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-github.js: CLI utility that sends/queries runtime actions via WebSocket.
+- ui/scripts/hm-hook-afteragent.js: Post-agent hook script for runtime follow-up after pane activity.
+- ui/scripts/hm-hook-precompress.js: Pre-compaction hook that extracts/stages memory candidates before context compression.
 - ui/scripts/hm-image-gen.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-investigate.js: CLI utility that sends/queries runtime actions via WebSocket.
+- ui/scripts/hm-memory-api.js: Cognitive memory CLI for direct node operations; supports `retrieve`, `ingest`, `patch`, and `salience` over the cognitive-memory store.
+- ui/scripts/hm-memory-extract.js: Extracts memory candidates from runtime/session artifacts for staged promotion review.
+- ui/scripts/hm-memory-index.js: Builds or refreshes the cognitive/vector memory index from workspace knowledge files.
+- ui/scripts/hm-memory-ingest.js: Strict ingest CLI for canonical team-memory objects with promotion/review routing.
+- ui/scripts/hm-memory-promote.js: Reviews pending memory promotion candidates and applies approved updates into tracked knowledge files.
+- ui/scripts/hm-memory-registry.js: CLI for transactive memory registry updates and expertise tracking by domain/agent.
+- ui/scripts/hm-memory-search.js: Queries the cognitive/vector memory index and returns ranked semantic matches.
 - ui/scripts/hm-memory.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-pane.js: CLI utility that sends/queries runtime actions via WebSocket.
+- ui/scripts/hm-path-audit.js: Audits documented/runtime paths and path-safety constraints across the workspace.
 - ui/scripts/hm-preflight.js: Scans protocol docs (`CLAUDE.md`, `GEMINI.md`, `AGENTS.md`, `CODEX.md`) for potential coordination-rule conflicts.
 - ui/scripts/hm-promotion.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-reddit.js: Exports parseArgs, getRedditConfig, getMissingConfigKeys, getAccessToken, ....
@@ -229,6 +246,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-search.js: Safe `rg` wrapper for Windows/PowerShell with optional glob filters and escaped-pattern default behavior.
 - ui/scripts/hm-send.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-sms.js: Exports parseMessage, getTwilioConfig, getMissingConfigKeys, buildAuthHeader, ....
+- ui/scripts/hm-surface-audit.js: UI/documentation surface audit helper used to check exposed commands and runtime-facing features.
 - ui/scripts/hm-telegram.js: Exports parseMessage, getTelegramConfig, getMissingConfigKeys, requestTelegram, ....
 - ui/scripts/hm-visual-capture.js: Playwright sidecar CLI for URL resolution/readiness checks and visual artifact bundle capture (screenshot, trace, console/request diagnostics, DOM/ARIA snapshot) with optional Telegram photo send.
 - ui/scripts/hm-smoke-runner.js: Deterministic autonomous QA sidecar used by workflow-triggered smoke runs; captures screenshot/trace/DOM, axe-core a11y report, accessibility snapshot, DOM summary, link validation, before/after pixel diff artifacts (pixelmatch), failure debug packages (trace/screenshots/network summary/explanation), and assistive Playwright draft spec generation from successful runs.
@@ -236,6 +254,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-visual-utils.js: Shared helpers for hm-visual-capture URL candidate resolution (explicit/cache/heuristic), readiness probes, cache persistence, and artifact layout/writers.
 - ui/scripts/hm-transition.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-twitter.js: Exports parseArgs, getTwitterConfig, getMissingConfigKeys, percentEncode, ....
+- ui/scripts/install-supervisor-task.ps1: PowerShell installer for registering the durable supervisor as a Windows scheduled task.
 - ui/scripts/local_embedder.py: Python helper worker for local embeddings.
 - ui/scripts/test-image-gen.js: Standalone diagnostic for Recraft/OpenAI image APIs with payload logging and variation testing.
 
@@ -302,4 +321,4 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
   - Shared IPC harness helpers in `ui/__tests__/helpers/ipc-harness.js`.
   - Config mocking helpers in `ui/__tests__/helpers/mock-config.js` and `ui/__tests__/helpers/real-config.js`.
   - Frequent fake-timer tests for watcher/terminal/runtime behavior.
-- Current suite scale: 160+ test files under `ui/__tests__/` with handler-heavy coverage across main/ipc/runtime modules.
+- Current suite scale: 193 suites / 3494 tests in the active Jest gate, with handler-heavy coverage across main/ipc/runtime modules.
