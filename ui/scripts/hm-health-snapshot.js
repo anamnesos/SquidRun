@@ -22,8 +22,61 @@ function asPositiveInt(value, fallback) {
   return parsed;
 }
 
+function isProjectRoot(rootPath) {
+  const uiDir = safeStat(path.join(rootPath, 'ui'));
+  const uiPackage = safeStat(path.join(rootPath, 'ui', 'package.json'));
+  return Boolean(uiDir?.isDirectory() && uiPackage?.isFile());
+}
+
+function isUiRoot(rootPath) {
+  const packageJson = safeStat(path.join(rootPath, 'package.json'));
+  const testsDir = safeStat(path.join(rootPath, '__tests__'));
+  const modulesDir = safeStat(path.join(rootPath, 'modules'));
+  return Boolean(
+    packageJson?.isFile()
+    && testsDir?.isDirectory()
+    && modulesDir?.isDirectory()
+  );
+}
+
 function normalizeProjectRoot(projectRoot) {
-  return path.resolve(String(projectRoot || getProjectRoot() || process.cwd()));
+  const resolved = path.resolve(String(projectRoot || getProjectRoot() || process.cwd()));
+  if (isProjectRoot(resolved)) {
+    return resolved;
+  }
+
+  if (path.basename(resolved).toLowerCase() === 'ui' && isUiRoot(resolved)) {
+    const parent = path.dirname(resolved);
+    if (isProjectRoot(parent)) {
+      return parent;
+    }
+  }
+
+  if (path.basename(resolved).toLowerCase() === '.squidrun') {
+    const parent = path.dirname(resolved);
+    if (isProjectRoot(parent)) {
+      return parent;
+    }
+  }
+
+  return resolved;
+}
+
+function resolveWindowsCmdPath(env = process.env) {
+  const candidates = [
+    env.ComSpec,
+    env.COMSPEC,
+    env.SystemRoot ? path.join(env.SystemRoot, 'System32', 'cmd.exe') : null,
+    env.WINDIR ? path.join(env.WINDIR, 'System32', 'cmd.exe') : null,
+    'cmd.exe',
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => {
+    if (candidate.toLowerCase() === 'cmd.exe') {
+      return true;
+    }
+    return safeStat(candidate)?.isFile() === true;
+  }) || 'cmd.exe';
 }
 
 function loadSqliteDriver() {
@@ -91,12 +144,13 @@ function countTestFiles(testRoot) {
 }
 
 function listJestTests(projectRoot, timeoutMs = 30000) {
+  const windowsCmd = resolveWindowsCmdPath();
   const command = process.platform === 'win32'
-    ? 'cmd.exe /d /s /c "npx jest --listTests"'
+    ? `${windowsCmd} /d /s /c "npx jest --listTests"`
     : 'npx jest --listTests';
   try {
     const stdout = process.platform === 'win32'
-      ? execFileSync('cmd.exe', ['/d', '/s', '/c', 'npx jest --listTests'], {
+      ? execFileSync(windowsCmd, ['/d', '/s', '/c', 'npx jest --listTests'], {
           cwd: projectRoot,
           encoding: 'utf8',
           windowsHide: true,
@@ -352,5 +406,7 @@ module.exports = {
   inspectSqliteDb,
   listJestTests,
   loadSqliteDriver,
+  normalizeProjectRoot,
   renderStartupHealthMarkdown,
+  resolveWindowsCmdPath,
 };

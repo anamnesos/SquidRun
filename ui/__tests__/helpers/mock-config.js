@@ -117,6 +117,13 @@ const mockDefaultConfig = {
     return instanceDirs[id] || null;
   },
   resolveCoordRoot: () => mockDefaultConfig.WORKSPACE_PATH,
+  getProjectRoot: () => mockDefaultConfig.PROJECT_ROOT,
+  setProjectRoot: (value) => {
+    mockDefaultConfig.PROJECT_ROOT = typeof value === 'string' && value.trim()
+      ? value.trim()
+      : '/test';
+    return mockDefaultConfig.PROJECT_ROOT;
+  },
   resolveCoordPath: (relPath, _options = {}) => {
     const normalized = String(relPath || '')
       .replace(/^[/\\]+/, '')
