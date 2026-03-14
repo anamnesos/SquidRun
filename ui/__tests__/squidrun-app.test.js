@@ -1263,14 +1263,20 @@ describe('SquidRunApp', () => {
       const result = await app.routeTelegramReply({
         target: 'user',
         content: 'Build passed.',
+        messageId: 'telegram-route-1',
       });
 
       expect(sendTelegram).toHaveBeenCalledWith(
         'Build passed.',
         process.env,
         expect.objectContaining({
+          messageId: 'telegram-route-1',
           senderRole: 'system',
           sessionId: expect.any(String),
+          metadata: expect.objectContaining({
+            routeKind: 'telegram',
+            targetRaw: 'user',
+          }),
         })
       );
       expect(result).toEqual(
@@ -1314,14 +1320,20 @@ describe('SquidRunApp', () => {
       const result = await app.routeTelegramReply({
         target: 'telegram',
         content: 'Direct ping.',
+        messageId: 'telegram-route-2',
       });
 
       expect(sendTelegram).toHaveBeenCalledWith(
         'Direct ping.',
         process.env,
         expect.objectContaining({
+          messageId: 'telegram-route-2',
           senderRole: 'system',
           sessionId: expect.any(String),
+          metadata: expect.objectContaining({
+            routeKind: 'telegram',
+            targetRaw: 'telegram',
+          }),
         })
       );
       expect(result).toEqual(

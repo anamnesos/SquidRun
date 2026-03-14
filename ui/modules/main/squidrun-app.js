@@ -2306,6 +2306,7 @@ class SquidRunApp {
                 target: normalizedTarget,
                 content: canonicalEnvelope.content,
                 fromRole: data.role || 'unknown',
+                messageId: canonicalEnvelope.message_id,
               });
               const deliveryResult = {
                 accepted: Boolean(telegramResult?.accepted),
@@ -2321,6 +2322,27 @@ class SquidRunApp {
                 result: deliveryResult,
                 traceContext,
               });
+              emitKernelCommsEvent(
+                telegramResult?.ok ? 'comms.delivery.acked' : 'comms.delivery.failed',
+                {
+                  messageId: canonicalEnvelope.message_id,
+                  target: normalizedTarget,
+                  channel: 'telegram',
+                  attempt,
+                  maxAttempts,
+                  status: telegramResult?.status || 'telegram_unhandled',
+                  ackStatus: telegramResult?.ok ? (telegramResult?.status || 'telegram_delivered') : null,
+                  errorCode: telegramResult?.ok ? null : (telegramResult?.error || telegramResult?.status || 'telegram_send_failed'),
+                  error: telegramResult?.ok ? null : (telegramResult?.error || null),
+                  chatId: telegramResult?.chatId || null,
+                  telegramMessageId: telegramResult?.messageId || null,
+                  summary: telegramResult?.ok
+                    ? `Telegram delivery acknowledged${telegramResult?.chatId ? ` (chat ${telegramResult.chatId})` : ''}`
+                    : `Telegram delivery failed: ${telegramResult?.error || telegramResult?.status || 'telegram_send_failed'}`,
+                },
+                'system',
+                traceContext
+              );
               const payload = {
                 ok: Boolean(telegramResult?.ok),
                 accepted: Boolean(telegramResult?.accepted),
@@ -4384,7 +4406,7 @@ class SquidRunApp {
     return (nowMs - lastInboundAtMs) <= TELEGRAM_REPLY_WINDOW_MS;
   }
 
-  async routeTelegramReply({ target, content, fromRole = 'system' } = {}) {
+  async routeTelegramReply({ target, content, fromRole = 'system', messageId = null } = {}) {
     const normalizedTarget = this.normalizeOutboundTarget(target);
     if (!this.isTelegramReplyTarget(normalizedTarget)) {
       return {
@@ -4418,8 +4440,13 @@ class SquidRunApp {
 
     try {
       const result = await sendTelegram(message, process.env, {
+        messageId,
         senderRole: fromRole,
         sessionId: this.commsSessionScopeId || null,
+        metadata: {
+          routeKind: 'telegram',
+          targetRaw: normalizedTarget,
+        },
       });
       if (!result?.ok) {
         return {

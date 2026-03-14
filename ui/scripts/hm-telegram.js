@@ -269,6 +269,15 @@ function maybeTruncateTelegramCaption(caption) {
   return maybeTruncateTelegramContent(caption, TELEGRAM_CAPTION_MAX_CHARS);
 }
 
+function mergeJournalMetadata(...sources) {
+  const merged = {};
+  for (const source of sources) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
+    Object.assign(merged, source);
+  }
+  return merged;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -414,13 +423,13 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
     rawBody: preparedCaption.text ? `[photo] ${preparedCaption.text}` : '[photo]',
     status: 'recorded',
     attempt: 1,
-    metadata: {
+    metadata: mergeJournalMetadata(opts.metadata, {
       source: 'hm-telegram',
       mode: 'photo',
       photoPath: path.resolve(photoPath),
       captionTruncated: preparedCaption.truncated,
       captionOriginalLength: preparedCaption.originalLength,
-    },
+    }),
   });
 
   const config = getTelegramConfig(env);
@@ -434,9 +443,7 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
       targetRole,
       status: 'failed',
       errorCode: 'missing_config',
-      metadata: {
-        missing,
-      },
+      metadata: mergeJournalMetadata(opts.metadata, { missing }),
     });
     return { ok: false, error: `Missing required env vars: ${missing.join(', ')}` };
   }
@@ -448,10 +455,10 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
       targetRole,
       status: 'failed',
       errorCode: 'telegram_chat_not_allowlisted',
-      metadata: {
+      metadata: mergeJournalMetadata(opts.metadata, {
         chatId: outboundChatId,
         allowlistSize: config.chatAllowlist.length,
-      },
+      }),
     });
     return {
       ok: false,
@@ -468,9 +475,9 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
       targetRole,
       status: 'failed',
       errorCode: 'photo_not_found',
-      metadata: {
+      metadata: mergeJournalMetadata(opts.metadata, {
         photoPath: resolvedPath,
-      },
+      }),
     });
     return { ok: false, error: `Photo not found: ${resolvedPath}` };
   }
@@ -494,10 +501,10 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
       targetRole,
       status: 'acked',
       ackStatus: 'telegram_delivered',
-      metadata: {
+      metadata: mergeJournalMetadata(opts.metadata, {
         telegramMessageId: payload?.result?.message_id || null,
         chatId: payload?.result?.chat?.id || outboundChatId,
-      },
+      }),
     });
     return {
       ok: true,
@@ -514,10 +521,10 @@ async function sendTelegramPhoto(photoPath, caption, env = process.env, options 
     targetRole,
     status: 'failed',
     errorCode: String(response.statusCode || 'telegram_request_failed'),
-    metadata: {
+    metadata: mergeJournalMetadata(opts.metadata, {
       statusCode: response.statusCode || 0,
       error: payload?.description || null,
-    },
+    }),
   });
   return {
     ok: false,
@@ -548,12 +555,12 @@ async function sendTelegram(message, env = process.env, options = {}) {
     rawBody: preparedMessage.text,
     status: 'recorded',
     attempt: 1,
-    metadata: {
+    metadata: mergeJournalMetadata(opts.metadata, {
       source: 'hm-telegram',
       mode: 'message',
       messageTruncated: preparedMessage.truncated,
       originalLength: preparedMessage.originalLength,
-    },
+    }),
   });
 
   const missing = getMissingConfigKeys(config, { chatId: outboundChatId });
@@ -565,9 +572,7 @@ async function sendTelegram(message, env = process.env, options = {}) {
       targetRole,
       status: 'failed',
       errorCode: 'missing_config',
-      metadata: {
-        missing,
-      },
+      metadata: mergeJournalMetadata(opts.metadata, { missing }),
     });
     return {
       ok: false,
@@ -582,10 +587,10 @@ async function sendTelegram(message, env = process.env, options = {}) {
       targetRole,
       status: 'failed',
       errorCode: 'telegram_chat_not_allowlisted',
-      metadata: {
+      metadata: mergeJournalMetadata(opts.metadata, {
         chatId: outboundChatId,
         allowlistSize: config.chatAllowlist.length,
-      },
+      }),
     });
     return {
       ok: false,
@@ -615,10 +620,10 @@ async function sendTelegram(message, env = process.env, options = {}) {
       targetRole,
       status: 'acked',
       ackStatus: 'telegram_delivered',
-      metadata: {
+      metadata: mergeJournalMetadata(opts.metadata, {
         telegramMessageId: payload?.result?.message_id || null,
         chatId: payload?.result?.chat?.id || outboundChatId,
-      },
+      }),
     });
     return {
       ok: true,
@@ -635,10 +640,10 @@ async function sendTelegram(message, env = process.env, options = {}) {
     targetRole,
     status: 'failed',
     errorCode: String(response.statusCode || 'telegram_request_failed'),
-    metadata: {
+    metadata: mergeJournalMetadata(opts.metadata, {
       statusCode: response.statusCode || 0,
       error: payload?.description || payload?.message || payload?.detail || null,
-    },
+    }),
   });
   return {
     ok: false,
