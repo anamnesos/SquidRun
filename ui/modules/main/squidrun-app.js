@@ -574,7 +574,7 @@ class SquidRunApp {
 
   async refreshStartupHealthArtifacts(options = {}) {
     const snapshot = createHealthSnapshot({
-      projectRoot: options.projectRoot || WORKSPACE_PATH,
+      projectRoot: options.projectRoot || getProjectRoot(),
       jestTimeoutMs: options.jestTimeoutMs,
     });
     const ledgerContext = await executeEvidenceLedgerOperation(

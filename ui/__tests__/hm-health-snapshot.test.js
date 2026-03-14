@@ -31,6 +31,7 @@ describe('hm-health-snapshot', () => {
     fs.mkdirSync(path.join(tempDir, '.squidrun', 'runtime'), { recursive: true });
     fs.mkdirSync(path.join(tempDir, 'workspace', 'memory'), { recursive: true });
 
+    fs.writeFileSync(path.join(tempDir, 'ui', 'package.json'), '{"name":"squidrun-test"}');
     fs.writeFileSync(path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'), 'test("a", () => {});');
     fs.writeFileSync(path.join(tempDir, 'ui', '__tests__', 'beta.test.js'), 'test("b", () => {});');
     fs.writeFileSync(path.join(tempDir, 'ui', 'modules', 'recovery-manager.js'), 'module.exports = {};');
@@ -62,6 +63,9 @@ describe('hm-health-snapshot', () => {
   });
 
   afterEach(() => {
+    jest.resetModules();
+    jest.unmock('node:sqlite');
+    jest.unmock('better-sqlite3');
     if (tempDir) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -103,6 +107,34 @@ describe('hm-health-snapshot', () => {
       primaryTable: 'nodes',
       rowCount: 1,
     }));
+  });
+
+  test('normalizes ui and .squidrun roots back to the project root', () => {
+    const { createHealthSnapshot, normalizeProjectRoot } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    expect(normalizeProjectRoot(path.join(tempDir, 'ui'))).toBe(tempDir);
+    expect(normalizeProjectRoot(path.join(tempDir, '.squidrun'))).toBe(tempDir);
+
+    const uiSnapshot = createHealthSnapshot({
+      projectRoot: path.join(tempDir, 'ui'),
+      jestTimeoutMs: 1000,
+    });
+    const coordSnapshot = createHealthSnapshot({
+      projectRoot: path.join(tempDir, '.squidrun'),
+      jestTimeoutMs: 1000,
+    });
+
+    expect(uiSnapshot.projectRoot).toBe(tempDir);
+    expect(uiSnapshot.tests.testFileCount).toBe(2);
+    expect(uiSnapshot.modules.moduleFileCount).toBeGreaterThan(0);
+    expect(uiSnapshot.databases.evidenceLedger.exists).toBe(true);
+    expect(coordSnapshot.projectRoot).toBe(tempDir);
+    expect(coordSnapshot.tests.testFileCount).toBe(2);
+    expect(coordSnapshot.databases.cognitiveMemory.exists).toBe(true);
   });
 
   test('renders a compact startup health markdown summary', () => {
@@ -155,5 +187,18 @@ describe('hm-health-snapshot', () => {
     expect(BetterSqlite3).toHaveBeenCalledWith('fallback-test.sqlite', { readonly: true });
     db.close();
     expect(fakeDb.close).toHaveBeenCalled();
+  });
+
+  test('resolves an absolute Windows cmd path when ComSpec is unavailable', () => {
+    const { resolveWindowsCmdPath } = require('../scripts/hm-health-snapshot');
+    const systemRoot = path.join(tempDir, 'Windows');
+    const system32 = path.join(systemRoot, 'System32');
+    const cmdPath = path.join(system32, 'cmd.exe');
+    fs.mkdirSync(system32, { recursive: true });
+    fs.writeFileSync(cmdPath, '');
+
+    expect(resolveWindowsCmdPath({
+      SystemRoot: systemRoot,
+    })).toBe(cmdPath);
   });
 });
