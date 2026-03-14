@@ -39,6 +39,15 @@ jest.mock('../modules/tabs/utils', () => ({
   },
 }));
 
+let invokeBridge;
+
+async function flushPromises(iterations = 4) {
+  for (let i = 0; i < iterations; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.resolve();
+  }
+}
+
 function createElement(tag = 'div') {
   const classSet = new Set();
   const listeners = new Map();
@@ -194,6 +203,9 @@ describe('comms-console background builder rendering', () => {
 
   beforeEach(() => {
     jest.resetModules();
+    ({ invokeBridge } = require('../modules/renderer-bridge'));
+    invokeBridge.mockReset();
+    invokeBridge.mockResolvedValue({ rows: [] });
     documentMock = createMockDocument();
 
     const list = createElement('div');
@@ -258,5 +270,69 @@ describe('comms-console background builder rendering', () => {
     expect(entry.classList.contains('sender-builder-bg')).toBe(true);
     expect(entry.classList.contains('sender-builder-bg-1')).toBe(true);
     expect(entry.innerHTML).toContain('Builder BG-1');
+  });
+
+  test('renders comms journal delivery metadata for Telegram rows', async () => {
+    invokeBridge.mockResolvedValueOnce({
+      rows: [
+        {
+          messageId: 'telegram-acked-1',
+          senderRole: 'builder',
+          targetRole: 'user',
+          channel: 'telegram',
+          rawBody: 'Delivery confirmed.',
+          sessionId: 'app-session-224',
+          status: 'acked',
+          ackStatus: 'telegram_delivered',
+          attempt: 1,
+          metadata: {
+            chatId: 123456789,
+            telegramMessageId: 42,
+          },
+          updatedAtMs: Date.now(),
+        },
+      ],
+    });
+
+    commsConsole.setupCommsConsoleTab(bus);
+    await flushPromises();
+
+    const list = global.document.getElementById('commsConsoleList');
+    expect(list.children.length).toBe(1);
+    expect(list.children[0].innerHTML).toContain('ACKED');
+    expect(list.children[0].innerHTML).toContain('Attempt 1');
+    expect(list.children[0].innerHTML).toContain('Chat 123456789');
+    expect(list.children[0].innerHTML).toContain('Telegram msg 42');
+  });
+
+  test('falls back to live event details when journal correlation is unavailable', async () => {
+    invokeBridge
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    commsConsole.setupCommsConsoleTab(bus);
+    await flushPromises();
+
+    bus.emitComms({
+      type: 'comms.delivery.failed',
+      payload: {
+        messageId: 'telegram-failed-1',
+        senderRole: 'builder',
+        target: 'user',
+        channel: 'telegram',
+        status: 'telegram_send_failed',
+        errorCode: 'missing_config',
+        attempt: 1,
+        summary: 'Telegram delivery failed: Missing required env vars',
+      },
+      ts: Date.now(),
+    });
+    await flushPromises();
+
+    const list = global.document.getElementById('commsConsoleList');
+    expect(list.children.length).toBe(1);
+    expect(list.children[0].innerHTML).toContain('FAILED');
+    expect(list.children[0].innerHTML).toContain('Missing required env vars');
+    expect(list.children[0].innerHTML).toContain('Error missing_config');
   });
 });

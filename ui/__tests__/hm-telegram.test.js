@@ -128,6 +128,45 @@ describe('hm-telegram', () => {
     }));
   });
 
+  test('sendTelegram preserves caller message id and metadata in journal entries', async () => {
+    mockTelegramResponse(200, {
+      ok: true,
+      result: {
+        message_id: 654,
+        chat: { id: 7654321 },
+      },
+    });
+
+    const result = await hmTelegram.sendTelegram('correlate me', {
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '7654321',
+    }, {
+      messageId: 'telegram-correlation-1',
+      metadata: {
+        routeKind: 'telegram',
+        targetRaw: 'user',
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(appendCommsJournalEntry.mock.calls[0][0]).toEqual(expect.objectContaining({
+      messageId: 'telegram-correlation-1',
+      metadata: expect.objectContaining({
+        routeKind: 'telegram',
+        targetRaw: 'user',
+        source: 'hm-telegram',
+      }),
+    }));
+    expect(appendCommsJournalEntry.mock.calls[1][0]).toEqual(expect.objectContaining({
+      messageId: 'telegram-correlation-1',
+      metadata: expect.objectContaining({
+        routeKind: 'telegram',
+        targetRaw: 'user',
+        telegramMessageId: 654,
+      }),
+    }));
+  });
+
   test('sendTelegram truncates outbound message to 4000 chars with suffix', async () => {
     mockTelegramResponse(200, {
       ok: true,

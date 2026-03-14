@@ -203,6 +203,32 @@
   color: #ffde8a;
 }
 
+.comms-console-status {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(154, 200, 214, 0.36);
+  color: rgba(213, 236, 247, 0.92);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+
+.comms-console-status.is-acked {
+  border-color: rgba(98, 232, 176, 0.42);
+  color: #9df5cb;
+}
+
+.comms-console-status.is-failed {
+  border-color: rgba(255, 128, 128, 0.46);
+  color: #ffb0b0;
+}
+
+.comms-console-status.is-recorded,
+.comms-console-status.is-brokered,
+.comms-console-status.is-routed {
+  border-color: rgba(255, 223, 128, 0.36);
+  color: #ffe099;
+}
+
 .comms-console-session-id {
   padding: 1px 7px;
   border-radius: 999px;
@@ -232,6 +258,15 @@
 
 .comms-console-entry-body.is-truncated:hover {
   color: #ebfff9;
+}
+
+.comms-console-entry-meta {
+  margin-top: 5px;
+  color: rgba(166, 206, 218, 0.86);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .comms-console-expand {

@@ -185,6 +185,58 @@ function bodyPreview(text) {
   return `${text.slice(0, BODY_PREVIEW_LIMIT)}...`;
 }
 
+function normalizeAttempt(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return Math.floor(numeric);
+}
+
+function normalizeMetadata(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
+function normalizeDeliveryStatus(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function formatStatusLabel(status, ackStatus = null) {
+  const resolved = normalizeDeliveryStatus(ackStatus) || normalizeDeliveryStatus(status);
+  if (!resolved) return null;
+  if (resolved === 'acked' || /delivered$/.test(resolved)) return 'ACKED';
+  if (resolved === 'failed' || /failed$/.test(resolved)) return 'FAILED';
+  if (resolved === 'recorded') return 'RECORDED';
+  if (resolved === 'brokered') return 'BROKERED';
+  if (resolved === 'routed') return 'ROUTED';
+  return resolved.replace(/_/g, ' ').toUpperCase();
+}
+
+function statusToneClass(status, ackStatus = null) {
+  const resolved = normalizeDeliveryStatus(ackStatus) || normalizeDeliveryStatus(status);
+  if (!resolved) return '';
+  if (resolved === 'acked' || /delivered$/.test(resolved)) return ' is-acked';
+  if (resolved === 'failed' || /failed$/.test(resolved)) return ' is-failed';
+  if (resolved === 'recorded') return ' is-recorded';
+  if (resolved === 'brokered') return ' is-brokered';
+  if (resolved === 'routed') return ' is-routed';
+  return '';
+}
+
+function buildEntryMetaParts(entry) {
+  if (!entry || typeof entry !== 'object') return [];
+  const parts = [];
+  const metadata = normalizeMetadata(entry.metadata);
+  if (entry.attempt) parts.push(`Attempt ${entry.attempt}`);
+  if (entry.errorCode) parts.push(`Error ${entry.errorCode}`);
+  if (metadata.error) parts.push(`Reason ${metadata.error}`);
+  if (metadata.statusCode) parts.push(`HTTP ${metadata.statusCode}`);
+  if (metadata.chatId) parts.push(`Chat ${metadata.chatId}`);
+  if (metadata.telegramMessageId) parts.push(`Telegram msg ${metadata.telegramMessageId}`);
+  return parts;
+}
+
 function normalizeJournalRow(row) {
   if (!row || typeof row !== 'object') return null;
   const timestamp = Number(row.brokeredAtMs || row.sentAtMs || row.updatedAtMs || Date.now());
@@ -204,6 +256,11 @@ function normalizeJournalRow(row) {
     channel,
     body,
     sessionId: row.sessionId || row.session_id || null,
+    status: normalizeDeliveryStatus(row.status),
+    ackStatus: normalizeDeliveryStatus(row.ackStatus || row.ack_status),
+    errorCode: typeof row.errorCode === 'string' ? row.errorCode : (typeof row.error_code === 'string' ? row.error_code : null),
+    attempt: normalizeAttempt(row.attempt),
+    metadata: normalizeMetadata(row.metadata),
   };
 }
 
@@ -245,6 +302,19 @@ function normalizeBusEvent(event) {
     channel,
     body,
     sessionId: payload.sessionId || payload.session_id || null,
+    status: normalizeDeliveryStatus(payload.status),
+    ackStatus: normalizeDeliveryStatus(payload.ackStatus || payload.ack_status),
+    errorCode: typeof payload.errorCode === 'string'
+      ? payload.errorCode
+      : (typeof payload.error_code === 'string' ? payload.error_code : null),
+    attempt: normalizeAttempt(payload.attempt),
+    metadata: {
+      ...normalizeMetadata(payload.metadata || payload.meta),
+      ...(payload.chatId !== undefined ? { chatId: payload.chatId } : {}),
+      ...(payload.telegramMessageId !== undefined ? { telegramMessageId: payload.telegramMessageId } : {}),
+      ...(payload.error ? { error: payload.error } : {}),
+      ...(payload.statusCode !== undefined ? { statusCode: payload.statusCode } : {}),
+    },
   };
 }
 
@@ -282,6 +352,9 @@ function createEntryNode(entry) {
   const truncated = preview.length < fullBody.length;
   const sessionText = entry.sessionId ? String(entry.sessionId) : 'session:-';
   const sessionClass = entry.sessionId ? '' : ' is-missing';
+  const statusLabel = formatStatusLabel(entry.status, entry.ackStatus);
+  const statusClass = statusToneClass(entry.status, entry.ackStatus);
+  const metaParts = buildEntryMetaParts(entry);
 
   div.innerHTML = `
     <div class="comms-console-entry-head">
@@ -290,9 +363,11 @@ function createEntryNode(entry) {
       <span class="comms-console-route-arrow">&rarr;</span>
       <span class="comms-console-role ${targetClass}">${escapeHtml(targetText)}</span>
       <span class="comms-console-channel ch-${escapeHtml(ch)}">${escapeHtml(channelLabel(ch))}</span>
+      ${statusLabel ? `<span class="comms-console-status${statusClass}">${escapeHtml(statusLabel)}</span>` : ''}
       <span class="comms-console-session-id${sessionClass}" title="Session ID">${escapeHtml(sessionText)}</span>
     </div>
     <div class="comms-console-entry-body${truncated ? ' is-truncated' : ''}">${escapeHtml(preview)}</div>
+    ${metaParts.length > 0 ? `<div class="comms-console-entry-meta">${escapeHtml(metaParts.join(' | '))}</div>` : ''}
     ${truncated ? '<button class="comms-console-expand" data-action="toggle-body" type="button">Expand</button>' : ''}
   `;
 
@@ -461,6 +536,19 @@ function appendRows(rows, { animate = false } = {}) {
   }
 }
 
+function upsertEntry(entry, { animate = true } = {}) {
+  if (!entry || typeof entry !== 'object') return;
+  if (entry.key && keySet.has(entry.key)) {
+    const index = entries.findIndex((item) => item && item.key === entry.key);
+    if (index >= 0) {
+      entries[index] = entry;
+      renderEntriesFromState({ scrollToBottom: true });
+      return;
+    }
+  }
+  addEntry(entry, { animate });
+}
+
 function prependRows(rows, { preserveTopScroll = null } = {}) {
   if (!Array.isArray(rows) || rows.length === 0) return 0;
   const toPrepend = [];
@@ -545,7 +633,7 @@ async function loadOlderHistory() {
   }
 }
 
-async function backfillByMessageId(messageId) {
+async function backfillByMessageId(messageId, fallbackEntry = null) {
   if (!messageId) return;
   try {
     const result = await invokeBridge('evidence-ledger:query-comms-journal', {
@@ -554,10 +642,15 @@ async function backfillByMessageId(messageId) {
       order: 'desc',
     });
     const rows = normalizeJournalResult(result);
-    if (rows.length === 0) return;
+    if (rows.length === 0) {
+      if (fallbackEntry) upsertEntry(fallbackEntry, { animate: true });
+      return;
+    }
     const entry = normalizeJournalRow(rows[0]);
-    if (entry) addEntry(entry, { animate: true });
-  } catch (_) {}
+    if (entry) upsertEntry(entry, { animate: true });
+  } catch (_) {
+    if (fallbackEntry) upsertEntry(fallbackEntry, { animate: true });
+  }
 }
 
 function bindOpenBackfill() {
@@ -634,7 +727,7 @@ function setupCommsConsoleTab(bus) {
       const entry = normalizeBusEvent(event);
       if (!entry) return;
       if (entry.messageId) {
-        void backfillByMessageId(entry.messageId);
+        void backfillByMessageId(entry.messageId, entry);
         return;
       }
       addEntry(entry, { animate: true });
