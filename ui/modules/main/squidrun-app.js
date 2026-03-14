@@ -596,6 +596,7 @@ class SquidRunApp {
     const snapshot = createHealthSnapshot({
       projectRoot: options.projectRoot || getProjectRoot(),
       jestTimeoutMs: options.jestTimeoutMs,
+      bridgeStatus: this.getBridgeStatus(),
     });
     const ledgerContext = await executeEvidenceLedgerOperation(
       'get-context',

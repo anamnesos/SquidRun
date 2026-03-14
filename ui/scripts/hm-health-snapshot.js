@@ -280,6 +280,34 @@ function inspectSqliteDb(dbPath, tableCandidates = []) {
   }
 }
 
+function normalizeBridgeSnapshot(bridgeStatus = null) {
+  const source = bridgeStatus && typeof bridgeStatus === 'object' && !Array.isArray(bridgeStatus)
+    ? bridgeStatus
+    : {};
+  const relayUrl = typeof source.relayUrl === 'string' && source.relayUrl.trim()
+    ? source.relayUrl.trim()
+    : null;
+  const deviceId = typeof source.deviceId === 'string' && source.deviceId.trim()
+    ? source.deviceId.trim()
+    : null;
+  const state = typeof source.state === 'string' && source.state.trim()
+    ? source.state.trim()
+    : null;
+  const status = typeof source.status === 'string' && source.status.trim()
+    ? source.status.trim()
+    : null;
+
+  return {
+    enabled: source.enabled === true,
+    configured: source.configured === true || Boolean(relayUrl && deviceId),
+    running: source.running === true,
+    relayUrl,
+    deviceId,
+    state,
+    status,
+  };
+}
+
 function buildHealthStatus(snapshot) {
   const warnings = [];
   if (!snapshot.tests.jestList.ok) {
@@ -329,6 +357,7 @@ function createHealthSnapshot(options = {}) {
     evidenceLedger: inspectSqliteDb(evidenceLedgerDbPath, ['comms_journal', 'ledger_sessions', 'ledger_decisions']),
     cognitiveMemory: inspectSqliteDb(cognitiveMemoryDbPath, ['nodes', 'memory_pr_queue', 'edges']),
   };
+  const bridge = normalizeBridgeSnapshot(options.bridgeStatus);
 
   const snapshot = {
     generatedAt: new Date().toISOString(),
@@ -344,6 +373,7 @@ function createHealthSnapshot(options = {}) {
       keyModules,
     },
     databases,
+    bridge,
   };
 
   return {
@@ -372,6 +402,17 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   const cognitiveMemory = snapshot.databases?.cognitiveMemory || {};
   lines.push(`- Evidence ledger DB: ${evidenceLedger.exists ? `present, rows=${Number(evidenceLedger.rowCount || 0)}` : 'missing'}`);
   lines.push(`- Cognitive memory DB: ${cognitiveMemory.exists ? `present, rows=${Number(cognitiveMemory.rowCount || 0)}` : 'missing'}`);
+
+  const bridge = snapshot.bridge && typeof snapshot.bridge === 'object' ? snapshot.bridge : {};
+  const bridgeState = typeof bridge.state === 'string' && bridge.state.trim()
+    ? bridge.state.trim()
+    : (typeof bridge.status === 'string' && bridge.status.trim() ? bridge.status.trim() : 'unknown');
+  lines.push('');
+  lines.push('BRIDGE HEALTH');
+  lines.push(`- Connection: ${bridgeState}`);
+  lines.push(`- Device ID: ${bridge.deviceId ? String(bridge.deviceId) : 'missing'}`);
+  lines.push(`- Relay URL: ${bridge.relayUrl ? String(bridge.relayUrl) : 'unconfigured'}`);
+  lines.push(`- Runtime: enabled=${bridge.enabled === true ? 'yes' : 'no'}, configured=${bridge.configured === true ? 'yes' : 'no'}, running=${bridge.running === true ? 'yes' : 'no'}`);
 
   const warnings = Array.isArray(snapshot.status?.warnings) ? snapshot.status.warnings : [];
   if (warnings.length > 0) {
