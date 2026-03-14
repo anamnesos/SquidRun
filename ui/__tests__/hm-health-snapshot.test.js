@@ -81,6 +81,14 @@ describe('hm-health-snapshot', () => {
     const snapshot = createHealthSnapshot({
       projectRoot: tempDir,
       jestTimeoutMs: 1000,
+      bridgeStatus: {
+        enabled: true,
+        configured: true,
+        running: true,
+        relayUrl: 'wss://relay.example.test',
+        deviceId: 'LOCAL',
+        state: 'connected',
+      },
     });
 
     expect(snapshot.status.level).toBe('ok');
@@ -106,6 +114,14 @@ describe('hm-health-snapshot', () => {
       exists: true,
       primaryTable: 'nodes',
       rowCount: 1,
+    }));
+    expect(snapshot.bridge).toEqual(expect.objectContaining({
+      enabled: true,
+      configured: true,
+      running: true,
+      relayUrl: 'wss://relay.example.test',
+      deviceId: 'LOCAL',
+      state: 'connected',
     }));
   });
 
@@ -156,12 +172,23 @@ describe('hm-health-snapshot', () => {
         evidenceLedger: { exists: true, rowCount: 2 },
         cognitiveMemory: { exists: true, rowCount: 1 },
       },
+      bridge: {
+        enabled: true,
+        configured: true,
+        running: false,
+        relayUrl: 'wss://relay.example.test',
+        deviceId: 'LOCAL',
+        state: 'disconnected',
+      },
     });
 
     expect(markdown).toContain('STARTUP HEALTH');
     expect(markdown).toContain('Tests: 2 files, 2 Jest-discoverable suites');
     expect(markdown).toContain('Modules: 6 JS modules under ui/modules');
     expect(markdown).toContain('Evidence ledger DB: present, rows=2');
+    expect(markdown).toContain('BRIDGE HEALTH');
+    expect(markdown).toContain('Connection: disconnected');
+    expect(markdown).toContain('Device ID: LOCAL');
   });
 
   test('falls back to better-sqlite3 when node:sqlite is unavailable', () => {
