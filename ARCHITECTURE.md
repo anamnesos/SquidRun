@@ -169,7 +169,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/tabs/activity.js: Exports setupActivityTab, destroyActivityTab, addActivityEntry.
 - ui/modules/tabs/api-keys.js: Exports setupApiKeysTab, destroyApiKeysTab, loadApiKeys.
 - ui/modules/tabs/bridge.js: Exports setupBridgeTab. Renders the existing Bridge tab in the right-side panel and hydrates relay health from `bridge:get-status` plus live kernel bridge events.
-- ui/modules/tabs/comms-console.js: Exports setupCommsConsoleTab, destroy.
+- ui/modules/tabs/comms-console.js: Exports setupCommsConsoleTab, destroy. The existing Comms tab backfills `comms_journal`, correlates live `comms.*` events by `messageId`, and surfaces delivery status/attempt/error metadata for external channels.
 - ui/modules/tabs/git.js: Exports setupGitTab, destroyGitTab.
 - ui/modules/tabs/oracle.js: Exports setupOracleTab, destroyOracleTab, applyImageGenCapability.
 - ui/modules/tabs/screenshots.js: Exports setupScreenshots, destroyScreenshots, loadScreenshots.
@@ -248,7 +248,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-send.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-sms.js: Exports parseMessage, getTwilioConfig, getMissingConfigKeys, buildAuthHeader, ....
 - ui/scripts/hm-surface-audit.js: UI/documentation surface audit helper used to check exposed commands and runtime-facing features.
-- ui/scripts/hm-telegram.js: Exports parseMessage, getTelegramConfig, getMissingConfigKeys, requestTelegram, ....
+- ui/scripts/hm-telegram.js: Exports parseMessage, getTelegramConfig, getMissingConfigKeys, requestTelegram, .... Outbound sends reuse caller-provided journal `messageId` when present so live comms events and evidence-ledger rows stay correlated.
 - ui/scripts/hm-visual-capture.js: Playwright sidecar CLI for URL resolution/readiness checks and visual artifact bundle capture (screenshot, trace, console/request diagnostics, DOM/ARIA snapshot) with optional Telegram photo send.
 - ui/scripts/hm-smoke-runner.js: Deterministic autonomous QA sidecar used by workflow-triggered smoke runs; captures screenshot/trace/DOM, axe-core a11y report, accessibility snapshot, DOM summary, link validation, before/after pixel diff artifacts (pixelmatch), failure debug packages (trace/screenshots/network summary/explanation), and assistive Playwright draft spec generation from successful runs.
 - ui/scripts/hm-supervisor.js: CLI utility for supervisor queue inspection/enqueue/requeue against `.squidrun/runtime/supervisor.sqlite`.
