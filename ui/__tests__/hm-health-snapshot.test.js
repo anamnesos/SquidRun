@@ -1,17 +1,22 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { DatabaseSync } = require('node:sqlite');
 
 jest.mock('child_process', () => ({
   execFileSync: jest.fn(),
 }));
 
 const { execFileSync } = require('child_process');
-const {
-  createHealthSnapshot,
-  renderStartupHealthMarkdown,
-} = require('../scripts/hm-health-snapshot');
+
+function createDatabase(filePath) {
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    return new DatabaseSync(filePath);
+  } catch (_) {
+    const BetterSqlite3 = require('better-sqlite3');
+    return new BetterSqlite3(filePath);
+  }
+}
 
 describe('hm-health-snapshot', () => {
   let tempDir;
@@ -35,7 +40,7 @@ describe('hm-health-snapshot', () => {
     fs.writeFileSync(path.join(tempDir, 'ui', 'modules', 'supervisor', 'store.js'), 'module.exports = {};');
     fs.writeFileSync(path.join(tempDir, 'ui', 'supervisor-daemon.js'), 'module.exports = {};');
 
-    const evidenceDb = new DatabaseSync(path.join(tempDir, '.squidrun', 'runtime', 'evidence-ledger.db'));
+    const evidenceDb = createDatabase(path.join(tempDir, '.squidrun', 'runtime', 'evidence-ledger.db'));
     evidenceDb.exec(`
       CREATE TABLE comms_journal (
         id INTEGER PRIMARY KEY,
@@ -45,7 +50,7 @@ describe('hm-health-snapshot', () => {
     `);
     evidenceDb.close();
 
-    const cognitiveDb = new DatabaseSync(path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db'));
+    const cognitiveDb = createDatabase(path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db'));
     cognitiveDb.exec(`
       CREATE TABLE nodes (
         node_id TEXT PRIMARY KEY,
@@ -63,6 +68,7 @@ describe('hm-health-snapshot', () => {
   });
 
   test('builds a structured startup health snapshot', () => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
     execFileSync.mockReturnValue([
       path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
       path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
@@ -100,6 +106,7 @@ describe('hm-health-snapshot', () => {
   });
 
   test('renders a compact startup health markdown summary', () => {
+    const { renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
     const markdown = renderStartupHealthMarkdown({
       status: { level: 'ok', warnings: [] },
       tests: {
@@ -123,5 +130,30 @@ describe('hm-health-snapshot', () => {
     expect(markdown).toContain('Tests: 2 files, 2 Jest-discoverable suites');
     expect(markdown).toContain('Modules: 6 JS modules under ui/modules');
     expect(markdown).toContain('Evidence ledger DB: present, rows=2');
+  });
+
+  test('falls back to better-sqlite3 when node:sqlite is unavailable', () => {
+    jest.resetModules();
+
+    const fakeDb = {
+      close: jest.fn(),
+    };
+    const BetterSqlite3 = jest.fn(() => fakeDb);
+
+    jest.doMock('node:sqlite', () => ({}), { virtual: true });
+    jest.doMock('better-sqlite3', () => BetterSqlite3);
+
+    let loadSqliteDriver;
+    jest.isolateModules(() => {
+      ({ loadSqliteDriver } = require('../scripts/hm-health-snapshot'));
+    });
+
+    const driver = loadSqliteDriver();
+    expect(driver).toEqual(expect.objectContaining({ name: 'better-sqlite3' }));
+
+    const db = driver.create('fallback-test.sqlite', { readonly: true });
+    expect(BetterSqlite3).toHaveBeenCalledWith('fallback-test.sqlite', { readonly: true });
+    db.close();
+    expect(fakeDb.close).toHaveBeenCalled();
   });
 });
