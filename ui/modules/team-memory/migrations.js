@@ -12,6 +12,7 @@ const migrationV11 = require('./migrations/011-phase9-memory-promotion-lifecycle
 const migrationV12 = require('./migrations/012-phase10-memory-delivery');
 
 const MIGRATIONS = [migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7, migrationV8, migrationV9, migrationV10, migrationV11, migrationV12];
+const LATEST_MIGRATION_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version || 0;
 
 function toEpochMs(value = Date.now()) {
   const numeric = Number(value);
@@ -22,6 +23,15 @@ function toEpochMs(value = Date.now()) {
 }
 
 function ensureMigrationsTable(db) {
+  const existing = db.prepare(`
+    SELECT 1 AS present
+    FROM sqlite_master
+    WHERE type = 'table' AND name = 'schema_migrations'
+    LIMIT 1
+  `).get();
+  if (Number(existing?.present || 0) === 1) {
+    return;
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version INTEGER PRIMARY KEY,
@@ -102,11 +112,12 @@ function runMigrations(db, options = {}) {
     ok: true,
     appliedVersions,
     currentVersion,
-    latestVersion: MIGRATIONS[MIGRATIONS.length - 1]?.version || 0,
+    latestVersion: LATEST_MIGRATION_VERSION,
   };
 }
 
 module.exports = {
   MIGRATIONS,
+  LATEST_MIGRATION_VERSION,
   runMigrations,
 };
