@@ -67,6 +67,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/ipc/conflict-detection-handlers.js: Registers IPC channels (get-file-conflicts, check-file-conflicts).
 - ui/modules/ipc/contract-promotion-handlers.js: Exports registerContractPromotionHandlers, unregisterContractPromotionHandlers, CONTRACT_PROMOTION_CHANNEL_ACTIONS.
 - ui/modules/ipc/debug-replay-handlers.js: Registers IPC channels (debug-load-session, debug-load-timerange, debug-step-forward, ...).
+- ui/modules/ipc/device-pairing-handlers.js: Registers IPC channels (bridge:get-devices, bridge:get-status, bridge:get-pairing-state, bridge:pairing-init, bridge:pairing-join).
 - ui/modules/ipc/error-handlers.js: Registers IPC channels (get-error-message, show-error-toast, list-error-codes, ...).
 - ui/modules/ipc/evidence-ledger-handlers.js: Exports registerEvidenceLedgerHandlers, unregisterEvidenceLedgerHandlers, createEvidenceLedgerRuntime, initializeEvidenceLedgerRuntime, ....
 - ui/modules/ipc/evidence-ledger-runtime.js: Exports createEvidenceLedgerRuntime, initializeEvidenceLedgerRuntime, executeEvidenceLedgerOperation, closeSharedRuntime, ....
@@ -164,10 +165,10 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/smart-routing.js: Exports getBestAgent, inferTaskType, scoreAgents.
 - ui/modules/sms-poller.js: Exports start, stop, isRunning, _internals, ....
 - ui/modules/status-strip.js: Exports initStatusStrip, shutdownStatusStrip.
-- ui/modules/tabs.js: Exports setConnectionStatusCallback, togglePanel, isPanelOpen, switchTab, ....
+- ui/modules/tabs.js: Exports setConnectionStatusCallback, togglePanel, isPanelOpen, switchTab, .... Manages the existing right-side tabbed utility panel (bridge, screenshots, comms, oracle, api-keys).
 - ui/modules/tabs/activity.js: Exports setupActivityTab, destroyActivityTab, addActivityEntry.
 - ui/modules/tabs/api-keys.js: Exports setupApiKeysTab, destroyApiKeysTab, loadApiKeys.
-- ui/modules/tabs/bridge.js: Exports setupBridgeTab.
+- ui/modules/tabs/bridge.js: Exports setupBridgeTab. Renders the existing Bridge tab in the right-side panel and hydrates relay health from `bridge:get-status` plus live kernel bridge events.
 - ui/modules/tabs/comms-console.js: Exports setupCommsConsoleTab, destroy.
 - ui/modules/tabs/git.js: Exports setupGitTab, destroyGitTab.
 - ui/modules/tabs/oracle.js: Exports setupOracleTab, destroyOracleTab, applyImageGenCapability.
