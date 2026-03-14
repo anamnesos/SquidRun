@@ -454,6 +454,7 @@ describe('SquidRunApp', () => {
     it('writes startup health artifacts without forcing team memory init', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
       const teamMemory = require('../modules/team-memory');
       evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
         session: 147,
@@ -480,6 +481,10 @@ describe('SquidRunApp', () => {
         expect.stringContaining('startup-health.md'),
         expect.stringContaining('STARTUP LEDGER')
       );
+      expect(createHealthSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+        projectRoot: '/test',
+        jestTimeoutMs: undefined,
+      }));
       expect(teamMemory.initializeTeamMemoryRuntime).not.toHaveBeenCalled();
     });
 
