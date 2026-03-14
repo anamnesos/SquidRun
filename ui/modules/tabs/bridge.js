@@ -5,6 +5,7 @@
 
 const { PANE_IDS, PANE_ROLES, SHORT_AGENT_NAMES } = require('../../config');
 const { escapeHtml } = require('./utils');
+const { invokeBridge } = require('../renderer-bridge');
 
 const MAX_STREAM_ENTRIES = 100;
 const MAX_ACK_LATENCY_SAMPLES = 24;
@@ -42,8 +43,28 @@ let transportState = null;
 function defaultTransportState() {
   return {
     daemonConnected: true,
+    enabled: false,
+    configured: false,
+    running: false,
+    relayUrl: null,
+    deviceId: null,
     relayState: 'disconnected',
+    relayStatus: 'relay_not_started',
     relayError: null,
+    lastConnectedAt: null,
+    connectedSinceAt: null,
+    lastDisconnectedAt: null,
+    lastDisconnectReason: null,
+    lastDisconnectCode: null,
+    lastErrorAt: null,
+    lastStatusChangeAt: null,
+    lastReconnectScheduledAt: null,
+    nextReconnectDelayMs: null,
+    nextReconnectAt: null,
+    reconnectAttempt: 0,
+    disconnectCount: 0,
+    flapCount: 0,
+    replacedConflictCount: 0,
     lastRemoteDispatchAt: null,
     lastRemoteDispatchStatus: null,
     lastRemoteDispatchTarget: null,
@@ -141,9 +162,70 @@ function classifyRecoveryState(state) {
   return 'warn';
 }
 
+function applyBridgeStatusSnapshot(snapshot = {}) {
+  if (!transportState || !snapshot || typeof snapshot !== 'object') return;
+  const numericKeys = [
+    'lastConnectedAt',
+    'connectedSinceAt',
+    'lastDisconnectedAt',
+    'lastErrorAt',
+    'lastStatusChangeAt',
+    'lastReconnectScheduledAt',
+    'nextReconnectDelayMs',
+    'nextReconnectAt',
+    'disconnectCount',
+    'flapCount',
+    'reconnectAttempt',
+    'replacedConflictCount',
+    'lastDispatchAt',
+  ];
+
+  transportState.enabled = snapshot.enabled === true;
+  transportState.configured = snapshot.configured === true;
+  transportState.running = snapshot.running === true;
+  transportState.relayUrl = typeof snapshot.relayUrl === 'string' && snapshot.relayUrl.trim()
+    ? snapshot.relayUrl.trim()
+    : null;
+  transportState.deviceId = typeof snapshot.deviceId === 'string' && snapshot.deviceId.trim()
+    ? snapshot.deviceId.trim()
+    : null;
+  transportState.relayState = typeof snapshot.state === 'string' && snapshot.state.trim()
+    ? snapshot.state.trim()
+    : transportState.relayState;
+  transportState.relayStatus = typeof snapshot.status === 'string' && snapshot.status.trim()
+    ? snapshot.status.trim()
+    : transportState.relayStatus;
+  transportState.relayError = typeof snapshot.error === 'string' && snapshot.error.trim()
+    ? snapshot.error.trim()
+    : null;
+
+  for (const key of numericKeys) {
+    transportState[key] = toFiniteNumber(snapshot[key]);
+  }
+
+  transportState.lastRemoteDispatchStatus = typeof snapshot.lastDispatchStatus === 'string' && snapshot.lastDispatchStatus.trim()
+    ? snapshot.lastDispatchStatus.trim()
+    : transportState.lastRemoteDispatchStatus;
+  transportState.lastRemoteDispatchTarget = typeof snapshot.lastDispatchTarget === 'string' && snapshot.lastDispatchTarget.trim()
+    ? snapshot.lastDispatchTarget.trim()
+    : transportState.lastRemoteDispatchTarget;
+}
+
+async function refreshBridgeTransportStatus() {
+  try {
+    const result = await invokeBridge('bridge:get-status');
+    if (result?.ok && result?.status) {
+      applyBridgeStatusSnapshot(result.status);
+      renderTransportHealth();
+    }
+  } catch (_) {
+    // Best-effort hydration only; live bridge events will still update the tab.
+  }
+}
+
 function classifyRelayState(state) {
   if (state === 'connected') return 'good';
-  if (state === 'connecting') return 'warn';
+  if (state === 'connecting' || state === 'reconnecting') return 'warn';
   if (state === 'error' || state === 'disconnected') return 'bad';
   return 'warn';
 }
@@ -162,6 +244,10 @@ function trackTransportEvent(event) {
   }
   if (event.type === 'bridge.relay.connecting') {
     transportState.relayState = 'connecting';
+    return;
+  }
+  if (event.type === 'bridge.relay.status') {
+    applyBridgeStatusSnapshot(payload);
     return;
   }
   if (event.type === 'bridge.relay.connected') {
@@ -243,7 +329,16 @@ function renderTransportHealth() {
   const ackClass = classifyAckLatency(state.ackLastMs);
   const recoveryClass = classifyRecoveryState(state.recoveryState);
   const relayClass = classifyRelayState(state.relayState);
+  const bridgeMode = state.enabled ? (state.configured ? 'configured' : 'enabled-no-config') : 'disabled';
+  const bridgeModeClass = state.enabled ? (state.configured ? 'good' : 'warn') : 'bad';
   const lastResume = Number.isFinite(state.lastResumeAt) ? formatTimestamp(state.lastResumeAt) : '-';
+  const lastConnected = Number.isFinite(state.lastConnectedAt) ? formatTimestamp(state.lastConnectedAt) : '-';
+  const connectedSince = Number.isFinite(state.connectedSinceAt) ? formatTimestamp(state.connectedSinceAt) : '-';
+  const lastDisconnected = Number.isFinite(state.lastDisconnectedAt) ? formatTimestamp(state.lastDisconnectedAt) : '-';
+  const lastErrorAt = Number.isFinite(state.lastErrorAt) ? formatTimestamp(state.lastErrorAt) : '-';
+  const lastStatusChange = Number.isFinite(state.lastStatusChangeAt) ? formatTimestamp(state.lastStatusChangeAt) : '-';
+  const lastReconnectScheduled = Number.isFinite(state.lastReconnectScheduledAt) ? formatTimestamp(state.lastReconnectScheduledAt) : '-';
+  const nextReconnectAt = Number.isFinite(state.nextReconnectAt) ? formatTimestamp(state.nextReconnectAt) : '-';
   const ackLast = Number.isFinite(state.ackLastMs) ? `${state.ackLastMs}ms` : '-';
   const ackAvg = Number.isFinite(state.ackAvgMs) ? `${state.ackAvgMs}ms` : '-';
   const lastRemoteDispatch = Number.isFinite(state.lastRemoteDispatchAt)
@@ -252,10 +347,20 @@ function renderTransportHealth() {
   const lastRemoteStatus = state.lastRemoteDispatchStatus || '-';
   const lastRemoteTarget = state.lastRemoteDispatchTarget || '-';
   const relayError = state.relayError || '-';
+  const relayStatus = state.relayStatus || '-';
+  const deviceId = state.deviceId || '-';
+  const relayUrl = state.relayUrl || '-';
+  const lastDisconnectReason = state.lastDisconnectReason || '-';
+  const lastDisconnectCode = Number.isFinite(state.lastDisconnectCode) ? String(state.lastDisconnectCode) : '-';
+  const reconnectDelay = Number.isFinite(state.nextReconnectDelayMs) ? `${state.nextReconnectDelayMs}ms` : '-';
   const sparkline = buildAsciiSparkline(state.ackSamples);
 
   container.innerHTML = `
     <div class="bridge-transport-row">
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Bridge</span>
+        <span class="bridge-transport-value ${bridgeModeClass}">${escapeHtml(bridgeMode)}</span>
+      </div>
       <div class="bridge-transport-kv">
         <span class="bridge-transport-key">Daemon</span>
         <span class="bridge-transport-value ${daemonClass}">${state.daemonConnected ? 'connected' : 'disconnected'}</span>
@@ -279,6 +384,92 @@ function renderTransportHealth() {
         <span class="bridge-transport-value ${relayClass}">${escapeHtml(state.relayState)}</span>
       </div>
       <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Relay Status</span>
+        <span class="bridge-transport-value">${escapeHtml(relayStatus)}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Device</span>
+        <span class="bridge-transport-value">${escapeHtml(deviceId)}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Running</span>
+        <span class="bridge-transport-value">${state.running ? 'yes' : 'no'}</span>
+      </div>
+    </div>
+    <div class="bridge-transport-row">
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Relay URL</span>
+        <span class="bridge-transport-value">${escapeHtml(relayUrl)}</span>
+      </div>
+    </div>
+    <div class="bridge-transport-row">
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Last Connected</span>
+        <span class="bridge-transport-value">${lastConnected}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Connected Since</span>
+        <span class="bridge-transport-value">${connectedSince}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Last Disconnected</span>
+        <span class="bridge-transport-value">${lastDisconnected}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Status Change</span>
+        <span class="bridge-transport-value">${lastStatusChange}</span>
+      </div>
+    </div>
+    <div class="bridge-transport-row">
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Disconnect Reason</span>
+        <span class="bridge-transport-value">${escapeHtml(lastDisconnectReason)}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Disconnect Code</span>
+        <span class="bridge-transport-value">${escapeHtml(lastDisconnectCode)}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Last Error</span>
+        <span class="bridge-transport-value">${lastErrorAt}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Relay Error</span>
+        <span class="bridge-transport-value">${escapeHtml(relayError)}</span>
+      </div>
+    </div>
+    <div class="bridge-transport-row">
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Reconnect Attempt</span>
+        <span class="bridge-transport-value">${state.reconnectAttempt}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Next Retry In</span>
+        <span class="bridge-transport-value">${escapeHtml(reconnectDelay)}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Retry At</span>
+        <span class="bridge-transport-value">${nextReconnectAt}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Retry Scheduled</span>
+        <span class="bridge-transport-value">${lastReconnectScheduled}</span>
+      </div>
+    </div>
+    <div class="bridge-transport-row">
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Disconnects</span>
+        <span class="bridge-transport-value">${state.disconnectCount}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Flaps</span>
+        <span class="bridge-transport-value">${state.flapCount}</span>
+      </div>
+      <div class="bridge-transport-kv">
+        <span class="bridge-transport-key">Replacement Conflicts</span>
+        <span class="bridge-transport-value">${state.replacedConflictCount}</span>
+      </div>
+      <div class="bridge-transport-kv">
         <span class="bridge-transport-key">Last Remote Dispatch</span>
         <span class="bridge-transport-value">${lastRemoteDispatch}</span>
       </div>
@@ -289,12 +480,6 @@ function renderTransportHealth() {
       <div class="bridge-transport-kv">
         <span class="bridge-transport-key">Dispatch Status</span>
         <span class="bridge-transport-value">${escapeHtml(lastRemoteStatus)}</span>
-      </div>
-    </div>
-    <div class="bridge-transport-row">
-      <div class="bridge-transport-kv">
-        <span class="bridge-transport-key">Relay Error</span>
-        <span class="bridge-transport-value">${escapeHtml(relayError)}</span>
       </div>
     </div>
     <div class="bridge-transport-row">
@@ -474,6 +659,7 @@ function setupBridgeTab(bus) {
   renderAgentCards(bus);
   renderMetrics(bus);
   renderTransportHealth();
+  void refreshBridgeTransportStatus();
 
   // State change handler
   const stateHandler = (event) => {

@@ -10,6 +10,7 @@
 - **hm-send Fallback (PowerShell):** When `hm-send` is not available on `PATH` in a Windows PowerShell session, use `node ui/scripts/hm-send.js <target> "(ROLE #N): message"`. Example: `node ui/scripts/hm-send.js architect "(BUILDER #1): Builder online. Standing by."`.
 - **Bridge `bridge_unavailable` triage:** test app bridge path first (`node ui/scripts/hm-send.js --list-devices --role architect`). If runtime discovery fails but direct relay connect works, inspect `workspace/logs/app.log` for rapid `Connected to relay`/`Relay disconnected` churn. Restart the Electron app after any main-process bridge code change.
 - **Bridge flap fix pattern:** in `bridge-client.connect()`, treat `WebSocket.CLOSING` as an in-flight socket. Clear `this.socket` before creating a replacement socket. Ignore stale socket events (`open/message/error/close`) when `this.socket !== ws`.
+- **Bridge health triage:** use the Bridge tab first. It now hydrates from `bridge:get-status` and shows relay lifecycle state, device ID, relay URL, last connected/disconnected timestamps, disconnect reason/code, flap count, reconnect schedule, and last remote dispatch details before you dive into logs.
 - **PTY truncation hardening:** chunk payloads >=1KB for long agent messages. Pace chunk submission before Enter dispatch.
 - **Diagnostics bundle command:** run `node ui/scripts/hm-doctor.js` for a bug-report snapshot.
 

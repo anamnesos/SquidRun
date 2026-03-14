@@ -379,6 +379,17 @@ class BridgeClient {
       log.warn('Bridge', `Relay disconnected. Reconnecting in ${delayMs}ms`);
     }
 
+    this.emitStatus({
+      type: 'relay.reconnecting',
+      state: 'connecting',
+      status: 'relay_reconnecting',
+      reason: closeReason || null,
+      reconnectAttempt: this.reconnectAttempt,
+      replacedConflictCount: this.replacedConflictCount,
+      reconnectDelayMs: delayMs,
+      reconnectAt: Date.now() + delayMs,
+    });
+
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
@@ -463,6 +474,7 @@ class BridgeClient {
         type: 'relay.disconnected',
         state: 'disconnected',
         status: closeReason.toLowerCase() === 'replaced' ? 'relay_replaced' : 'relay_disconnected',
+        code: closeCode,
         reason: closeReason || null,
       });
       this.scheduleReconnect({ reason: closeReason });
@@ -579,6 +591,8 @@ class BridgeClient {
           type: 'relay.connected',
           state: 'connected',
           status: 'relay_connected',
+          reconnectAttempt: this.reconnectAttempt,
+          replacedConflictCount: this.replacedConflictCount,
         });
       } else {
         this.registered = false;

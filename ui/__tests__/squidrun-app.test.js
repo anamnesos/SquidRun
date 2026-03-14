@@ -1498,6 +1498,61 @@ describe('SquidRunApp', () => {
     beforeEach(() => {
       app = new SquidRunApp(mockAppContext, mockManagers);
       app.bridgeEnabled = true;
+      app.bridgeRuntimeConfig = {
+        relayUrl: 'wss://relay.example.test',
+        deviceId: 'LOCAL',
+      };
+      app.bridgeDeviceId = 'LOCAL';
+    });
+
+    it('tracks bridge lifecycle status for reconnect visibility', () => {
+      app.kernelBridge.emitBridgeEvent = jest.fn();
+
+      app.handleBridgeClientStatusUpdate({
+        type: 'relay.connected',
+        state: 'connected',
+        status: 'relay_connected',
+      });
+      app.handleBridgeClientStatusUpdate({
+        type: 'relay.reconnecting',
+        state: 'connecting',
+        status: 'relay_reconnecting',
+        reconnectAttempt: 2,
+        reconnectDelayMs: 1500,
+        reconnectAt: 1234567890,
+      });
+      app.handleBridgeClientStatusUpdate({
+        type: 'relay.disconnected',
+        state: 'disconnected',
+        status: 'relay_disconnected',
+        reason: 'network_lost',
+        code: 1006,
+      });
+
+      expect(app.getBridgeStatus()).toEqual(expect.objectContaining({
+        enabled: true,
+        configured: true,
+        running: false,
+        relayUrl: 'wss://relay.example.test',
+        deviceId: 'LOCAL',
+        state: 'disconnected',
+        status: 'relay_disconnected',
+        reconnectAttempt: 2,
+        nextReconnectDelayMs: 1500,
+        nextReconnectAt: 1234567890,
+        disconnectCount: 1,
+        flapCount: 1,
+        lastDisconnectReason: 'network_lost',
+        lastDisconnectCode: 1006,
+      }));
+      expect(app.kernelBridge.emitBridgeEvent).toHaveBeenCalledWith(
+        'bridge.relay.status',
+        expect.objectContaining({
+          flapCount: 1,
+          disconnectCount: 1,
+          reconnectAttempt: 2,
+        })
+      );
     });
 
     it('normalizes outbound structured type and keeps plain content fallback', async () => {

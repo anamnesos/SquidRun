@@ -693,6 +693,35 @@ describe('bridge-client', () => {
     expect(instances).toHaveLength(2);
   });
 
+  test('emits reconnect scheduling status with delay metadata after close', () => {
+    jest.useFakeTimers();
+    process.env.SQUIDRUN_BRIDGE_RECONNECT_BASE_MS = '5';
+    process.env.SQUIDRUN_BRIDGE_RECONNECT_MAX_MS = '5';
+    const statuses = [];
+
+    const client = createBridgeClient({
+      relayUrl: 'ws://relay',
+      deviceId: 'local_a',
+      sharedSecret: 'secret',
+      onStatus: (status) => statuses.push(status),
+    });
+
+    expect(client.start()).toBe(true);
+    const socket = instances[0];
+    socket.emit('close', 1006, Buffer.from('network_lost'));
+
+    expect(statuses).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'relay.reconnecting',
+        status: 'relay_reconnecting',
+        state: 'connecting',
+        reconnectAttempt: 1,
+        reconnectDelayMs: 5,
+        reason: 'network_lost',
+      }),
+    ]));
+  });
+
   test('close reason=replaced uses replacement conflict backoff instead of standard reconnect delay', () => {
     jest.useFakeTimers();
     process.env.SQUIDRUN_BRIDGE_RECONNECT_BASE_MS = '5';
