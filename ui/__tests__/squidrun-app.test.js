@@ -225,12 +225,23 @@ jest.mock('../scripts/hm-health-snapshot', () => ({
       evidenceLedger: { exists: true, rowCount: 100 },
       cognitiveMemory: { exists: true, rowCount: 4 },
     },
+    bridge: {
+      enabled: true,
+      configured: true,
+      running: true,
+      relayUrl: 'wss://relay.example.test',
+      deviceId: 'LOCAL',
+      state: 'connected',
+    },
     status: { level: 'ok', warnings: [] },
   })),
   renderStartupHealthMarkdown: jest.fn(() => [
     'STARTUP HEALTH',
     '- Overall: OK',
     '- Tests: 194 files, 195 Jest-discoverable suites',
+    '',
+    'BRIDGE HEALTH',
+    '- Connection: connected',
   ].join('\n')),
 }));
 
@@ -484,6 +495,10 @@ describe('SquidRunApp', () => {
       expect(createHealthSnapshot).toHaveBeenCalledWith(expect.objectContaining({
         projectRoot: '/test',
         jestTimeoutMs: undefined,
+        bridgeStatus: expect.any(Object),
+      }));
+      expect(createHealthSnapshot.mock.calls[0][0].bridgeStatus).toEqual(expect.objectContaining({
+        state: expect.any(String),
       }));
       expect(teamMemory.initializeTeamMemoryRuntime).not.toHaveBeenCalled();
     });
