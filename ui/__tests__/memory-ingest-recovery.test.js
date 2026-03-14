@@ -51,24 +51,40 @@ function spawnConcurrentIngest({ uiRoot, dbPath, markerPath, payload, nowMs }) {
       const nowMs = Number(process.argv[5]);
       const { TeamMemoryStore } = require(path.join(uiRoot, 'modules', 'team-memory', 'store'));
       const { MemoryIngestService } = require(path.join(uiRoot, 'modules', 'memory-ingest', 'service'));
-      const store = new TeamMemoryStore({ dbPath });
-      const init = store.init();
-      if (!init.ok) {
-        console.error(JSON.stringify(init));
-        process.exit(2);
+      let store = null;
+      let exitCode = 0;
+      try {
+        store = new TeamMemoryStore({ dbPath });
+        const init = store.init();
+        if (!init.ok) {
+          console.error(JSON.stringify(init));
+          exitCode = 2;
+        } else {
+          const service = new MemoryIngestService({
+            db: store.db,
+            logger: console,
+            shutdownMarkerOptions: { filePath: markerPath },
+          });
+          const result = service.ingest(payload, { nowMs });
+          if (result.ok !== true) {
+            console.error(JSON.stringify(result));
+            exitCode = 1;
+          } else {
+            process.stdout.write(JSON.stringify(result));
+          }
+        }
+      } catch (err) {
+        console.error(JSON.stringify({
+          ok: false,
+          reason: err && err.message ? err.message : 'unexpected_concurrent_ingest_error',
+        }));
+        exitCode = 3;
+      } finally {
+        try {
+          store?.close();
+        } catch {}
       }
-      const service = new MemoryIngestService({
-        db: store.db,
-        logger: console,
-        shutdownMarkerOptions: { filePath: markerPath },
-      });
-      const result = service.ingest(payload, { nowMs });
-      store.close();
-      if (result.ok !== true) {
-        console.error(JSON.stringify(result));
-        process.exit(1);
-      }
-      process.stdout.write(JSON.stringify(result));
+      process.exitCode = exitCode;
     `;
 
     const child = spawn(process.execPath, [
@@ -228,7 +244,7 @@ maybeDescribe('memory-ingest failure hardening', () => {
       session_id: 'app-session-217',
     };
 
-    await Promise.all(
+    const results = await Promise.allSettled(
       Array.from({ length: 6 }, (_, index) => spawnConcurrentIngest({
         uiRoot,
         dbPath,
@@ -237,6 +253,10 @@ maybeDescribe('memory-ingest failure hardening', () => {
         nowMs: 2000 + index,
       }))
     );
+    const failures = results
+      .filter((result) => result.status === 'rejected')
+      .map((result) => result.reason?.message || String(result.reason || 'unknown concurrent ingest failure'));
+    expect(failures).toEqual([]);
 
     const store = new TeamMemoryStore({ dbPath });
     expect(store.init().ok).toBe(true);
