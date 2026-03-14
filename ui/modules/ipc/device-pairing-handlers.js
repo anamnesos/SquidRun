@@ -7,6 +7,9 @@ function registerDevicePairingHandlers(ctx, deps = {}) {
   const getBridgeDevices = typeof deps.getBridgeDevices === 'function'
     ? deps.getBridgeDevices
     : null;
+  const getBridgeStatus = typeof deps.getBridgeStatus === 'function'
+    ? deps.getBridgeStatus
+    : null;
   const getBridgePairingState = typeof deps.getBridgePairingState === 'function'
     ? deps.getBridgePairingState
     : null;
@@ -27,6 +30,13 @@ function registerDevicePairingHandlers(ctx, deps = {}) {
       refresh,
       timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined,
     });
+  });
+
+  ipcMain.handle('bridge:get-status', async () => {
+    if (!getBridgeStatus) {
+      return { ok: false, status: 'unsupported', error: 'Bridge status unavailable' };
+    }
+    return { ok: true, status: getBridgeStatus() };
   });
 
   ipcMain.handle('bridge:get-pairing-state', async () => {
@@ -61,6 +71,7 @@ function registerDevicePairingHandlers(ctx, deps = {}) {
 function unregisterDevicePairingHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) return;
   try { ctx.ipcMain.removeHandler('bridge:get-devices'); } catch (_) {}
+  try { ctx.ipcMain.removeHandler('bridge:get-status'); } catch (_) {}
   try { ctx.ipcMain.removeHandler('bridge:get-pairing-state'); } catch (_) {}
   try { ctx.ipcMain.removeHandler('bridge:pairing-init'); } catch (_) {}
   try { ctx.ipcMain.removeHandler('bridge:pairing-join'); } catch (_) {}

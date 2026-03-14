@@ -5,6 +5,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'clear-activity-log',
   'clear-friction',
   'bridge:get-devices',
+  'bridge:get-status',
   'bridge:get-pairing-state',
   'bridge:pairing-init',
   'bridge:pairing-join',

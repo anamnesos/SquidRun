@@ -133,6 +133,7 @@ const APP_SESSION_COUNTER_FLOOR = Math.max(
 );
 const AUTO_HANDOFF_INTERVAL_MS = Number.parseInt(process.env.SQUIDRUN_AUTO_HANDOFF_INTERVAL_MS || '30000', 10);
 const AUTO_HANDOFF_ENABLED = process.env.SQUIDRUN_AUTO_HANDOFF_ENABLED !== '0';
+const BRIDGE_FLAP_WINDOW_MS = Number.parseInt(process.env.SQUIDRUN_BRIDGE_FLAP_WINDOW_MS || '60000', 10);
 const TEAM_MEMORY_TAGGED_CLAIM_SWEEP_INTERVAL_MS = Number.parseInt(
   process.env.SQUIDRUN_TEAM_MEMORY_TAGGED_CLAIM_SWEEP_MS || '30000',
   10
@@ -340,10 +341,29 @@ class SquidRunApp {
     this.bridgeEnabled = Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env);
     this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getLocalDeviceId(process.env) || null;
     this.bridgeRelayStatus = {
+      enabled: this.bridgeEnabled === true,
+      configured: Boolean(this.bridgeRuntimeConfig?.relayUrl && this.bridgeDeviceId),
+      running: false,
+      relayUrl: this.bridgeRuntimeConfig?.relayUrl || null,
+      deviceId: this.bridgeDeviceId,
       state: 'disconnected',
       status: 'relay_not_started',
       error: null,
       lastUpdateAt: null,
+      lastStatusChangeAt: null,
+      lastConnectedAt: null,
+      connectedSinceAt: null,
+      lastDisconnectedAt: null,
+      lastDisconnectReason: null,
+      lastDisconnectCode: null,
+      lastErrorAt: null,
+      lastReconnectScheduledAt: null,
+      nextReconnectDelayMs: null,
+      nextReconnectAt: null,
+      reconnectAttempt: 0,
+      disconnectCount: 0,
+      flapCount: 0,
+      replacedConflictCount: 0,
       lastDispatchAt: null,
       lastDispatchStatus: null,
       lastDispatchTarget: null,
@@ -2884,6 +2904,7 @@ class SquidRunApp {
       saveActivityLog: () => this.activity.saveActivityLog(),
       firmwareManager: this.firmwareManager,
       getBridgeDevices: (options = {}) => this.getBridgeDevices(options),
+      getBridgeStatus: () => this.getBridgeStatus(),
       getBridgePairingState: () => this.getBridgePairingState(),
       initiateBridgePairing: (options = {}) => this.initiateBridgePairing(options),
       joinBridgePairing: (payload = {}) => this.joinBridgePairing(payload),
@@ -4828,7 +4849,35 @@ class SquidRunApp {
     this.bridgeRuntimeConfig = this.resolveBridgeRuntimeConfig();
     this.bridgeEnabled = Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env);
     this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getLocalDeviceId(process.env) || null;
+    this.bridgeRelayStatus.enabled = this.bridgeEnabled === true;
+    this.bridgeRelayStatus.configured = Boolean(this.bridgeRuntimeConfig?.relayUrl && this.bridgeDeviceId);
+    this.bridgeRelayStatus.relayUrl = this.bridgeRuntimeConfig?.relayUrl || null;
+    this.bridgeRelayStatus.deviceId = this.bridgeDeviceId;
+    this.bridgeRelayStatus.running = Boolean(this.bridgeClient);
     return this.bridgeRuntimeConfig;
+  }
+
+  getBridgeStatus() {
+    const snapshot = {
+      ...this.bridgeRelayStatus,
+      running: Boolean(this.bridgeClient),
+      enabled: this.bridgeEnabled === true,
+      configured: Boolean((this.bridgeRuntimeConfig?.relayUrl || null) && this.bridgeDeviceId),
+      relayUrl: this.bridgeRuntimeConfig?.relayUrl || null,
+      deviceId: this.bridgeDeviceId,
+    };
+    if (Number.isFinite(snapshot.connectedSinceAt)) {
+      snapshot.connectedForMs = Math.max(0, Date.now() - snapshot.connectedSinceAt);
+    } else {
+      snapshot.connectedForMs = null;
+    }
+    return snapshot;
+  }
+
+  emitBridgeStatusSnapshot() {
+    const snapshot = this.getBridgeStatus();
+    this.kernelBridge.emitBridgeEvent('bridge.relay.status', snapshot);
+    return snapshot;
   }
 
   persistBridgePairingConfig(paired = {}) {
@@ -4930,11 +4979,26 @@ class SquidRunApp {
       ? status.error.trim()
       : null;
     const nowMs = Date.now();
+    const previousState = this.bridgeRelayStatus.state;
+    const previousStatus = this.bridgeRelayStatus.status;
+    const previousError = this.bridgeRelayStatus.error;
 
+    this.bridgeRelayStatus.enabled = this.bridgeEnabled === true;
+    this.bridgeRelayStatus.configured = Boolean((this.bridgeRuntimeConfig?.relayUrl || null) && this.bridgeDeviceId);
+    this.bridgeRelayStatus.running = Boolean(this.bridgeClient);
+    this.bridgeRelayStatus.relayUrl = this.bridgeRuntimeConfig?.relayUrl || null;
+    this.bridgeRelayStatus.deviceId = this.bridgeDeviceId;
     if (nextState) this.bridgeRelayStatus.state = nextState;
     if (nextStatus) this.bridgeRelayStatus.status = nextStatus;
     this.bridgeRelayStatus.error = nextError;
     this.bridgeRelayStatus.lastUpdateAt = nowMs;
+    if (
+      this.bridgeRelayStatus.state !== previousState
+      || this.bridgeRelayStatus.status !== previousStatus
+      || this.bridgeRelayStatus.error !== previousError
+    ) {
+      this.bridgeRelayStatus.lastStatusChangeAt = nowMs;
+    }
 
     if (status.type === 'relay.dispatch') {
       this.bridgeRelayStatus.lastDispatchAt = nowMs;
@@ -4955,19 +5019,46 @@ class SquidRunApp {
         error: nextError,
         lastDispatchAt: this.bridgeRelayStatus.lastDispatchAt,
       });
+      this.emitBridgeStatusSnapshot();
       return;
     }
 
     if (status.type === 'relay.connected') {
+      this.bridgeRelayStatus.lastConnectedAt = nowMs;
+      this.bridgeRelayStatus.connectedSinceAt = nowMs;
+      this.bridgeRelayStatus.lastReconnectScheduledAt = null;
+      this.bridgeRelayStatus.nextReconnectDelayMs = null;
+      this.bridgeRelayStatus.nextReconnectAt = null;
+      this.bridgeRelayStatus.reconnectAttempt = 0;
+      this.bridgeRelayStatus.replacedConflictCount = Number.isFinite(Number(status.replacedConflictCount))
+        ? Math.max(0, Math.floor(Number(status.replacedConflictCount)))
+        : 0;
       this.kernelBridge.emitBridgeEvent('bridge.relay.connected', {
         state: this.bridgeRelayStatus.state,
         status: nextStatus || 'relay_connected',
         deviceId: status.deviceId || this.bridgeDeviceId || null,
       });
+      this.emitBridgeStatusSnapshot();
       return;
     }
 
     if (status.type === 'relay.disconnected') {
+      const previousConnectedAt = Number.isFinite(this.bridgeRelayStatus.connectedSinceAt)
+        ? this.bridgeRelayStatus.connectedSinceAt
+        : this.bridgeRelayStatus.lastConnectedAt;
+      this.bridgeRelayStatus.lastDisconnectedAt = nowMs;
+      this.bridgeRelayStatus.lastDisconnectReason = status.reason || nextError || null;
+      this.bridgeRelayStatus.lastDisconnectCode = Number.isFinite(Number(status.code))
+        ? Math.floor(Number(status.code))
+        : null;
+      this.bridgeRelayStatus.disconnectCount += 1;
+      if (
+        Number.isFinite(previousConnectedAt)
+        && (nowMs - previousConnectedAt) <= BRIDGE_FLAP_WINDOW_MS
+      ) {
+        this.bridgeRelayStatus.flapCount += 1;
+      }
+      this.bridgeRelayStatus.connectedSinceAt = null;
       this.kernelBridge.emitBridgeEvent('bridge.relay.disconnected', {
         state: this.bridgeRelayStatus.state,
         status: nextStatus || 'relay_disconnected',
@@ -4975,16 +5066,47 @@ class SquidRunApp {
         reason: status.reason || null,
         error: nextError,
       });
+      this.emitBridgeStatusSnapshot();
+      return;
+    }
+
+    if (status.type === 'relay.reconnecting') {
+      this.bridgeRelayStatus.lastReconnectScheduledAt = nowMs;
+      this.bridgeRelayStatus.nextReconnectDelayMs = Number.isFinite(Number(status.reconnectDelayMs))
+        ? Math.max(0, Math.floor(Number(status.reconnectDelayMs)))
+        : null;
+      this.bridgeRelayStatus.nextReconnectAt = Number.isFinite(Number(status.reconnectAt))
+        ? Math.floor(Number(status.reconnectAt))
+        : null;
+      this.bridgeRelayStatus.reconnectAttempt = Number.isFinite(Number(status.reconnectAttempt))
+        ? Math.max(0, Math.floor(Number(status.reconnectAttempt)))
+        : this.bridgeRelayStatus.reconnectAttempt;
+      this.bridgeRelayStatus.replacedConflictCount = Number.isFinite(Number(status.replacedConflictCount))
+        ? Math.max(0, Math.floor(Number(status.replacedConflictCount)))
+        : this.bridgeRelayStatus.replacedConflictCount;
+      this.kernelBridge.emitBridgeEvent('bridge.relay.reconnecting', {
+        state: this.bridgeRelayStatus.state,
+        status: nextStatus || 'relay_reconnecting',
+        deviceId: status.deviceId || this.bridgeDeviceId || null,
+        reconnectAttempt: this.bridgeRelayStatus.reconnectAttempt,
+        replacedConflictCount: this.bridgeRelayStatus.replacedConflictCount,
+        reconnectDelayMs: this.bridgeRelayStatus.nextReconnectDelayMs,
+        reconnectAt: this.bridgeRelayStatus.nextReconnectAt,
+        reason: status.reason || null,
+      });
+      this.emitBridgeStatusSnapshot();
       return;
     }
 
     if (status.type === 'relay.error') {
+      this.bridgeRelayStatus.lastErrorAt = nowMs;
       this.kernelBridge.emitBridgeEvent('bridge.relay.error', {
         state: this.bridgeRelayStatus.state,
         status: nextStatus || 'relay_error',
         deviceId: status.deviceId || this.bridgeDeviceId || null,
         error: nextError,
       });
+      this.emitBridgeStatusSnapshot();
       return;
     }
 
@@ -4994,6 +5116,7 @@ class SquidRunApp {
         status: nextStatus || 'relay_connecting',
         deviceId: status.deviceId || this.bridgeDeviceId || null,
       });
+      this.emitBridgeStatusSnapshot();
     }
   }
 
@@ -5019,6 +5142,8 @@ class SquidRunApp {
       onPairing: (update = {}) => this.handleBridgePairingUpdate(update),
     });
     const started = this.bridgeClient.start();
+    this.bridgeRelayStatus.running = Boolean(started);
+    this.emitBridgeStatusSnapshot();
     if (started) {
       log.info('Bridge', `Cross-device relay bridge enabled (device=${deviceId})`);
     }

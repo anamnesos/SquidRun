@@ -25,6 +25,10 @@ jest.mock('../modules/tabs/utils', () => ({
   },
 }));
 
+jest.mock('../modules/renderer-bridge', () => ({
+  invokeBridge: jest.fn(),
+}));
+
 // Lightweight DOM mock
 function createMockDOM() {
   const elements = [];
@@ -159,9 +163,13 @@ describe('bridge tab', () => {
   let bridge;
   let bus;
   let mockDOM;
+  let invokeBridge;
 
   beforeEach(() => {
     jest.resetModules();
+    ({ invokeBridge } = require('../modules/renderer-bridge'));
+    invokeBridge.mockReset();
+    invokeBridge.mockResolvedValue({ ok: false, status: null });
 
     mockDOM = createMockDOM();
 
@@ -227,6 +235,38 @@ describe('bridge tab', () => {
       expect(cards[0].innerHTML).toContain('Arch');
       expect(cards[1].innerHTML).toContain('Builder');
       expect(cards[2].innerHTML).toContain('Oracle');
+    });
+
+    test('hydrates transport state from bridge:get-status snapshot', async () => {
+      invokeBridge.mockResolvedValueOnce({
+        ok: true,
+        status: {
+          enabled: true,
+          configured: true,
+          running: true,
+          relayUrl: 'wss://relay.example.test',
+          deviceId: 'LOCAL',
+          state: 'connected',
+          status: 'relay_connected',
+          flapCount: 2,
+          disconnectCount: 3,
+          reconnectAttempt: 1,
+          lastDispatchStatus: 'bridge_delivered',
+          lastDispatchTarget: 'PEER_A',
+        },
+      });
+
+      bridge.setupBridgeTab(bus);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const transportEl = mockDOM.getElementById('bridgeTransport');
+      expect(invokeBridge).toHaveBeenCalledWith('bridge:get-status');
+      expect(transportEl.innerHTML).toContain('configured');
+      expect(transportEl.innerHTML).toContain('LOCAL');
+      expect(transportEl.innerHTML).toContain('wss://relay.example.test');
+      expect(transportEl.innerHTML).toContain('Flaps');
+      expect(transportEl.innerHTML).toContain('PEER_A');
     });
   });
 
@@ -296,6 +336,32 @@ describe('bridge tab', () => {
       expect(transportEl.innerHTML).toContain('Last Remote Dispatch');
       expect(transportEl.innerHTML).toContain('PEER_A');
       expect(transportEl.innerHTML).toContain('bridge_delivered');
+    });
+
+    test('bridge relay status events update flap and reconnect counters', () => {
+      bridge.setupBridgeTab(bus);
+
+      bus.emit('bridge.relay.status', {
+        paneId: 'system',
+        payload: {
+          enabled: true,
+          configured: true,
+          running: true,
+          deviceId: 'LOCAL',
+          state: 'reconnecting',
+          status: 'relay_reconnecting',
+          flapCount: 4,
+          disconnectCount: 5,
+          reconnectAttempt: 2,
+          nextReconnectDelayMs: 1500,
+        },
+      });
+
+      const transportEl = mockDOM.getElementById('bridgeTransport');
+      expect(transportEl.innerHTML).toContain('relay_reconnecting');
+      expect(transportEl.innerHTML).toContain('1500ms');
+      expect(transportEl.innerHTML).toContain('Flaps');
+      expect(transportEl.innerHTML).toContain('5');
     });
   });
 
