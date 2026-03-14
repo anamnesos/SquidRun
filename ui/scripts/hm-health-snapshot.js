@@ -3,7 +3,6 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { DatabaseSync } = require('node:sqlite');
 const { getProjectRoot } = require('../config');
 
 const KEY_MODULE_PATHS = Object.freeze({
@@ -15,6 +14,8 @@ const KEY_MODULE_PATHS = Object.freeze({
   supervisor_store: path.join('ui', 'modules', 'supervisor', 'store.js'),
 });
 
+let SQLITE_DRIVER = undefined;
+
 function asPositiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
@@ -23,6 +24,37 @@ function asPositiveInt(value, fallback) {
 
 function normalizeProjectRoot(projectRoot) {
   return path.resolve(String(projectRoot || getProjectRoot() || process.cwd()));
+}
+
+function loadSqliteDriver() {
+  if (SQLITE_DRIVER !== undefined) {
+    return SQLITE_DRIVER;
+  }
+
+  try {
+    const mod = require('node:sqlite');
+    if (mod && typeof mod.DatabaseSync === 'function') {
+      SQLITE_DRIVER = {
+        name: 'node:sqlite',
+        create: (filename, options = {}) => new mod.DatabaseSync(filename, options),
+      };
+      return SQLITE_DRIVER;
+    }
+  } catch {
+    // Fall through to native addon fallback for Electron's Node runtime.
+  }
+
+  try {
+    const BetterSqlite3 = require('better-sqlite3');
+    SQLITE_DRIVER = {
+      name: 'better-sqlite3',
+      create: (filename, options = {}) => new BetterSqlite3(filename, options),
+    };
+    return SQLITE_DRIVER;
+  } catch {
+    SQLITE_DRIVER = null;
+    return SQLITE_DRIVER;
+  }
 }
 
 function safeStat(filePath) {
@@ -141,7 +173,19 @@ function inspectSqliteDb(dbPath, tableCandidates = []) {
 
   let db = null;
   try {
-    db = new DatabaseSync(dbPath, { readonly: true });
+    const driver = loadSqliteDriver();
+    if (!driver) {
+      return {
+        path: dbPath,
+        exists: true,
+        sizeBytes: stat.size,
+        tables: [],
+        primaryTable: null,
+        rowCount: 0,
+        error: 'sqlite_driver_unavailable',
+      };
+    }
+    db = driver.create(dbPath, { readonly: true });
     const tables = db.prepare(`
       SELECT name
       FROM sqlite_master
@@ -307,5 +351,6 @@ module.exports = {
   createHealthSnapshot,
   inspectSqliteDb,
   listJestTests,
+  loadSqliteDriver,
   renderStartupHealthMarkdown,
 };
