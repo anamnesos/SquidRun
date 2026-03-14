@@ -298,6 +298,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - `.squidrun/link.json`: bootstrap metadata (workspace root, comms script path, role targets, legacy session id). **Runtime-generated, gitignored**.
 - `.squidrun/app-status.json`: current runtime status/session/pane-host health. **Runtime-generated, gitignored**.
 - `workspace/user-profile.json`: user-editable profile used by agent startup behavior. **Tracked**.
+- `docs/diagrams-reference.md`: ASCII templates for system topology (Agent Message Flow and Knowledge & Memory System) intended for Excalidraw visualization.
 - `ROLES.md`: canonical role boundaries/startup baseline/operating rules. **Tracked**.
 - `CLAUDE.md`, `CODEX.md`, `GEMINI.md`, `CLAUDE-AI.md`, `AGENTS.md`: model/agent shims and behavior contracts. **Tracked**.
 
