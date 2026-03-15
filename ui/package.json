@@ -108,7 +108,7 @@
           ]
         }
       ],
-      "x64ArchFiles": "**/node_modules/{node-pty,better-sqlite3,onnxruntime-node}/**/*"
+      "x64ArchFiles": "**/node_modules/{node-pty,better-sqlite3,onnxruntime-node,sharp}/**/*"
     },
     "win": {
       "icon": "assets/squidrun-favicon.ico",
