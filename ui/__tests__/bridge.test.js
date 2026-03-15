@@ -243,6 +243,7 @@ describe('bridge tab', () => {
         status: {
           enabled: true,
           configured: true,
+          mode: 'connected',
           running: true,
           relayUrl: 'wss://relay.example.test',
           deviceId: 'LOCAL',
@@ -262,7 +263,8 @@ describe('bridge tab', () => {
 
       const transportEl = mockDOM.getElementById('bridgeTransport');
       expect(invokeBridge).toHaveBeenCalledWith('bridge:get-status');
-      expect(transportEl.innerHTML).toContain('configured');
+      expect(transportEl.innerHTML).toContain('connected');
+      expect(transportEl.innerHTML).toContain('Configured');
       expect(transportEl.innerHTML).toContain('LOCAL');
       expect(transportEl.innerHTML).toContain('wss://relay.example.test');
       expect(transportEl.innerHTML).toContain('Flaps');
@@ -346,6 +348,7 @@ describe('bridge tab', () => {
         payload: {
           enabled: true,
           configured: true,
+          mode: 'connecting',
           running: true,
           deviceId: 'LOCAL',
           state: 'reconnecting',
@@ -358,6 +361,7 @@ describe('bridge tab', () => {
       });
 
       const transportEl = mockDOM.getElementById('bridgeTransport');
+      expect(transportEl.innerHTML).toContain('connecting');
       expect(transportEl.innerHTML).toContain('relay_reconnecting');
       expect(transportEl.innerHTML).toContain('1500ms');
       expect(transportEl.innerHTML).toContain('Flaps');
