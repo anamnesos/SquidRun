@@ -40,7 +40,7 @@ To implement the RLM immunity layer, the `nodes` schema requires a new column:
 ## Integration & Implementation
 
 1. **Trigger Events for Immediate Induction:** 
-   - Hook the extraction logic into `ui/modules/completion-detection-handlers.js` and `ui/supervisor-daemon.js` (when a task status flips to complete/failed). Send outputs to `CognitiveMemoryStore.stageMemoryPRs`.
+   - Hook the extraction logic into `ui/modules/ipc/completion-detection-handlers.js` and `ui/supervisor-daemon.js` (when a task status flips to complete/failed). Send outputs to `CognitiveMemoryStore.stageMemoryPRs`.
 2. **Contrastive Extraction Query Layer (Sleep Consolidator):**
    - Update `ui/modules/cognitive-memory-sleep.js`. Expand its data ingestion beyond `comms_journal` to include `supervisor_tasks` and `supervisor_task_events`. Add logic to specifically correlate a failed task trajectory with a subsequent successful task trajectory before prompting the model for a generalized rule.
 3. **Decay Logic Update (Retrieval Time):**
