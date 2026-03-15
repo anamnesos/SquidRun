@@ -3,6 +3,8 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
+const { buildCanonicalMemoryObject } = require('../modules/memory-ingest/schema');
+const { resolveMemoryRoute } = require('../modules/memory-ingest/router');
 const { TeamMemoryStore, loadSqliteDriver } = require('../modules/team-memory/store');
 const { MemoryIngestService } = require('../modules/memory-ingest/service');
 
@@ -275,6 +277,80 @@ maybeDescribe('memory-ingest failure hardening', () => {
       WHERE status NOT IN ('routed', 'deduped')
     `).get().count;
     expect(badRows).toBe(0);
+
+    store.close();
+  });
+
+  test('reconciles direct-ingest lock races against an existing dedupe winner', () => {
+    const { store, service } = createStoreAndService(dbPath, markerPath);
+    const nowMs = 2100;
+    const buildResult = buildCanonicalMemoryObject({
+      content: 'Concurrent writers should dedupe safely.',
+      memory_class: 'solution_trace',
+      provenance: { source: 'builder', kind: 'observed' },
+      confidence: 0.94,
+      source_trace: 'concurrency-trace-reconcile',
+      session_id: 'app-session-217',
+    }, { nowMs });
+    expect(buildResult.ok).toBe(true);
+
+    const memory = buildResult.memory;
+    const route = resolveMemoryRoute(memory);
+    expect(route.ok).toBe(true);
+
+    memory.tier = route.tier;
+    memory.authority_level = route.authorityLevel;
+    memory.status = route.promotionRequired ? 'pending' : 'active';
+    memory.content_hash = memory.content_hash || buildResult.memory.content_hash;
+    memory.dedupe_key = memory.dedupe_key || `${memory.content_hash}:${memory.memory_class}`;
+
+    expect(service.persistEnvelope(memory, route, nowMs).ok).toBe(true);
+
+    const winningRefs = [{
+      kind: 'memory_object',
+      id: 'memory-existing-winner',
+      tier: route.tier,
+    }];
+    service.journal.insertDedupeRecord({
+      memory_class: memory.memory_class,
+      dedupe_key: memory.dedupe_key,
+      time_bucket: buildResult.memory.time_bucket,
+      ingest_id: 'ingest-existing-winner',
+      memory_id: 'memory-existing-winner',
+      result_refs: winningRefs,
+      created_at: nowMs - 1,
+      updated_at: nowMs - 1,
+    });
+
+    const originalExec = store.db.exec.bind(store.db);
+    let lockInjected = false;
+    store.db.exec = (sql) => {
+      if (!lockInjected && String(sql || '').includes('BEGIN IMMEDIATE')) {
+        lockInjected = true;
+        throw new Error('database is locked');
+      }
+      return originalExec(sql);
+    };
+
+    const result = service.routePersistedEntry(memory.ingest_id, {
+      nowMs,
+      routeHint: route,
+      reason: 'direct_ingest',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.deduped).toBe(true);
+    expect(result.queued).toBe(false);
+    expect(result.result_refs).toEqual(winningRefs);
+
+    const journalRow = store.db.prepare(`
+      SELECT status, queue_reason, result_refs_json
+      FROM memory_ingest_journal
+      WHERE ingest_id = ?
+    `).get(memory.ingest_id);
+    expect(journalRow.status).toBe('deduped');
+    expect(journalRow.queue_reason).toBeNull();
+    expect(JSON.parse(journalRow.result_refs_json)).toEqual(winningRefs);
 
     store.close();
   });
