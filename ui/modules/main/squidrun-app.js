@@ -512,10 +512,14 @@ class SquidRunApp {
     const level = String(snapshot.status?.level || 'unknown').toUpperCase();
     const evidenceRows = Number(snapshot.databases?.evidenceLedger?.rowCount || 0);
     const cognitiveRows = Number(snapshot.databases?.cognitiveMemory?.rowCount || 0);
+    const bridgeMode = typeof snapshot.bridge?.mode === 'string' ? snapshot.bridge.mode : 'unknown';
+    const bridgeState = typeof snapshot.bridge?.state === 'string'
+      ? snapshot.bridge.state
+      : (typeof snapshot.bridge?.status === 'string' ? snapshot.bridge.status : 'unknown');
     const ledgerSession = Number.isInteger(Number(ledgerContext?.session)) ? Number(ledgerContext.session) : sessionNumber;
     const ledgerMode = typeof ledgerContext?.mode === 'string' ? ledgerContext.mode : 'unknown';
     const ledgerStatus = typeof ledgerContext?.status === 'string' ? ledgerContext.status : 'unknown';
-    return `Startup health ${Number.isInteger(sessionNumber) ? `for session ${sessionNumber}` : 'snapshot'}: overall ${level}. Evidence ledger rows=${evidenceRows}, cognitive memory rows=${cognitiveRows}. Ledger context: session ${ledgerSession ?? 'unknown'} ${ledgerStatus} (${ledgerMode}).`;
+    return `Startup health ${Number.isInteger(sessionNumber) ? `for session ${sessionNumber}` : 'snapshot'}: overall ${level}. Evidence ledger rows=${evidenceRows}, cognitive memory rows=${cognitiveRows}. Bridge mode=${bridgeMode}, connection=${bridgeState}. Ledger context: session ${ledgerSession ?? 'unknown'} ${ledgerStatus} (${ledgerMode}).`;
   }
 
   buildStartupHealthReport(snapshot = {}, ledgerContext = {}) {
@@ -5234,6 +5238,11 @@ class SquidRunApp {
       relayUrl: this.bridgeRuntimeConfig?.relayUrl || null,
       deviceId: this.bridgeDeviceId,
     };
+    snapshot.mode = snapshot.enabled !== true
+      ? 'disabled'
+      : ((snapshot.state === 'connected' || snapshot.status === 'relay_connected')
+        ? 'connected'
+        : 'connecting');
     if (Number.isFinite(snapshot.connectedSinceAt)) {
       snapshot.connectedForMs = Math.max(0, Date.now() - snapshot.connectedSinceAt);
     } else {

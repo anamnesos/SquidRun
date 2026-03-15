@@ -141,6 +141,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/main/pane-host-window-manager.js: Creates/manages hidden pane-host BrowserWindows and routes bridge messages into pane-host renderers.
 - ui/modules/main/settings-manager.js: Exports SettingsManager.
 - ui/modules/main/squidrun-app.js: Registers IPC channels (pane-host-ready, pane-host-inject, pane-host-dispatch-enter, ...).
+- ui/modules/memory-consistency-check.js: On-demand drift checker that compares `workspace/knowledge/` chunks against knowledge-backed nodes in `workspace/memory/cognitive-memory.db`.
 - ui/modules/memory-ingest/delivery.js: Proactive memory delivery engine (trigger matching, injection budgets, handoff packets, and compaction survival persistence).
 - ui/modules/memory-ingest/journal.js: Shared ingest journal / retry queue / dedupe state backing Phases 1-4 of the memory contract.
 - ui/modules/memory-ingest/lifecycle.js: Session-based lifecycle advancement for memory objects (stale/archive/reactivation review flows).
@@ -232,6 +233,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-image-gen.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-investigate.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-memory-api.js: Cognitive memory CLI for direct node operations; supports `retrieve`, `ingest`, `patch`, and `salience` over the cognitive-memory store.
+- ui/scripts/hm-memory-consistency.js: On-demand CLI that reports drift between tracked knowledge markdown and knowledge-backed cognitive-memory nodes.
 - ui/scripts/hm-memory-extract.js: Extracts memory candidates from runtime/session artifacts for staged promotion review.
 - ui/scripts/hm-memory-index.js: Builds or refreshes the cognitive/vector memory index from workspace knowledge files.
 - ui/scripts/hm-memory-ingest.js: Strict ingest CLI for canonical team-memory objects with promotion/review routing.
@@ -282,6 +284,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - Architect-only gate: cross-device relay targeting is restricted to `@<DEVICE>-architect`; role gate enforced in `ui/modules/main/squidrun-app.js` (around line 1900).
 - Local routing model: Builder/Oracle never target external devices directly. Inbound cross-device payloads terminate at local Architect, which then routes to local Builder/Oracle via `hm-send.js`.
 - Phase 4 handoffs: cross-device work transfer is carried as structured `HandoffPacket` relay metadata, journaled in `team-memory.sqlite`, and surfaced locally as Tier 4 continuation context.
+- Bridge status is surfaced with an explicit operator mode (`disabled`, `connecting`, `connected`) layered over the lower-level relay state/status. Startup health and the Bridge tab treat `enabled + not connected` as a degraded condition without conflating it with intentional disablement.
 
 ## 5A) MEMORY DELIVERY
 - Canonical memory ingest lands in `team-memory.sqlite` through `ui/modules/memory-ingest/service.js` and `ui/modules/memory-ingest/journal.js`, which guarantee durable envelopes before routing and replay pending writes after crashes or compaction locks.
@@ -300,6 +303,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - Memory expiration is enforced in active delivery paths: `ui/modules/memory-ingest/delivery.js` excludes expired rows from proactive injection, and `ui/modules/memory-ingest/lifecycle.js` advances expired memories to `status='expired'`.
 - Lifecycle maintenance is no longer dead code: successful delivery records access, and session rollover in `ui/modules/main/squidrun-app.js` runs `advance-memory-lifecycle` plus `review-stale-memories` before proactive injection.
 - Promotion corrections now supersede originals: approved correction candidates persist `correction_of` / `supersedes` links and move the original memory to `superseded` instead of leaving both memories active.
+- Knowledge-backed memory can be audited on demand: `ui/modules/memory-consistency-check.js` compares the current `workspace/knowledge/` chunk set against `nodes.source_type='knowledge'` in `cognitive-memory.db`, reporting missing flat-file coverage, orphaned nodes, and duplicate knowledge hashes via `ui/scripts/hm-memory-consistency.js`.
 
 ## 6) DATA FLOW
 1. User types in pane 1 broadcast input (`ui/index.html#broadcastInput`, `ui/renderer.js`).

@@ -118,6 +118,7 @@ describe('hm-health-snapshot', () => {
     expect(snapshot.bridge).toEqual(expect.objectContaining({
       enabled: true,
       configured: true,
+      mode: 'connected',
       running: true,
       relayUrl: 'wss://relay.example.test',
       deviceId: 'LOCAL',
@@ -175,7 +176,7 @@ describe('hm-health-snapshot', () => {
       bridge: {
         enabled: true,
         configured: true,
-        running: false,
+        mode: 'connecting',
         relayUrl: 'wss://relay.example.test',
         deviceId: 'LOCAL',
         state: 'disconnected',
@@ -189,6 +190,33 @@ describe('hm-health-snapshot', () => {
     expect(markdown).toContain('BRIDGE HEALTH');
     expect(markdown).toContain('Connection: disconnected');
     expect(markdown).toContain('Device ID: LOCAL');
+    expect(markdown).toContain('Runtime: mode=connecting, enabled=yes, configured=yes');
+  });
+
+  test('degrades startup health when bridge is enabled but not connected', () => {
+    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      jestTimeoutMs: 1000,
+      bridgeStatus: {
+        enabled: true,
+        configured: true,
+        running: false,
+        relayUrl: 'wss://relay.example.test',
+        deviceId: 'LOCAL',
+        state: 'disconnected',
+        status: 'relay_disconnected',
+      },
+    });
+
+    expect(snapshot.bridge.mode).toBe('connecting');
+    expect(snapshot.status.level).toBe('warn');
+    expect(snapshot.status.warnings).toContain('bridge_enabled_not_connected:disconnected');
   });
 
   test('falls back to better-sqlite3 when node:sqlite is unavailable', () => {

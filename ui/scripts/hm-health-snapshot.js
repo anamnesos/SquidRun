@@ -296,10 +296,18 @@ function normalizeBridgeSnapshot(bridgeStatus = null) {
   const status = typeof source.status === 'string' && source.status.trim()
     ? source.status.trim()
     : null;
+  const enabled = source.enabled === true;
+  const configured = source.configured === true || Boolean(relayUrl && deviceId);
+  const mode = enabled !== true
+    ? 'disabled'
+    : ((state === 'connected' || status === 'relay_connected')
+      ? 'connected'
+      : 'connecting');
 
   return {
-    enabled: source.enabled === true,
-    configured: source.configured === true || Boolean(relayUrl && deviceId),
+    enabled,
+    configured,
+    mode,
     running: source.running === true,
     relayUrl,
     deviceId,
@@ -334,6 +342,12 @@ function buildHealthStatus(snapshot) {
     if (db.rowCount <= 0) {
       warnings.push(`${key}_empty`);
     }
+  }
+  const bridge = snapshot.bridge && typeof snapshot.bridge === 'object' ? snapshot.bridge : {};
+  if (bridge.enabled === true && bridge.configured !== true) {
+    warnings.push('bridge_enabled_unconfigured');
+  } else if (bridge.enabled === true && bridge.mode !== 'connected') {
+    warnings.push(`bridge_enabled_not_connected:${bridge.state || bridge.status || bridge.mode || 'unknown'}`);
   }
   return {
     level: warnings.length > 0 ? 'warn' : 'ok',
@@ -412,7 +426,7 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   lines.push(`- Connection: ${bridgeState}`);
   lines.push(`- Device ID: ${bridge.deviceId ? String(bridge.deviceId) : 'missing'}`);
   lines.push(`- Relay URL: ${bridge.relayUrl ? String(bridge.relayUrl) : 'unconfigured'}`);
-  lines.push(`- Runtime: enabled=${bridge.enabled === true ? 'yes' : 'no'}, configured=${bridge.configured === true ? 'yes' : 'no'}, running=${bridge.running === true ? 'yes' : 'no'}`);
+  lines.push(`- Runtime: mode=${bridge.mode || 'unknown'}, enabled=${bridge.enabled === true ? 'yes' : 'no'}, configured=${bridge.configured === true ? 'yes' : 'no'}`);
 
   const warnings = Array.isArray(snapshot.status?.warnings) ? snapshot.status.warnings : [];
   if (warnings.length > 0) {

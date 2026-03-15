@@ -245,6 +245,7 @@ jest.mock('../scripts/hm-health-snapshot', () => ({
     bridge: {
       enabled: true,
       configured: true,
+      mode: 'connected',
       running: true,
       relayUrl: 'wss://relay.example.test',
       deviceId: 'LOCAL',
@@ -1813,6 +1814,7 @@ describe('SquidRunApp', () => {
       expect(app.getBridgeStatus()).toEqual(expect.objectContaining({
         enabled: true,
         configured: true,
+        mode: 'connecting',
         running: false,
         relayUrl: 'wss://relay.example.test',
         deviceId: 'LOCAL',
