@@ -606,8 +606,8 @@ class MemoryIngestService {
     }
 
     const db = this.journal.requireDb();
-    db.exec('BEGIN IMMEDIATE;');
     try {
+      db.exec('BEGIN IMMEDIATE;');
       const liveEntry = this.journal.getJournalEntry(ingestId);
       if (!liveEntry) {
         throw new Error('journal_entry_missing');
@@ -776,6 +776,10 @@ class MemoryIngestService {
       };
     } catch (err) {
       try { db.exec('ROLLBACK;'); } catch {}
+      const reconciled = this.reconcileConcurrentRouteResult(journalEntry, route, nowMs);
+      if (reconciled) {
+        return reconciled;
+      }
       if (!isRetryableRouteError(err)) {
         this.logger?.warn?.('MemoryIngest', `Non-fatal route error retained for replay: ${err.message}`);
       }
@@ -786,6 +790,78 @@ class MemoryIngestService {
         errorMessage: err.message,
       });
     }
+  }
+
+  reconcileConcurrentRouteResult(journalEntry, route, nowMs) {
+    const liveEntry = this.journal.getJournalEntry(journalEntry.ingest_id);
+    if (!liveEntry) return null;
+    if (liveEntry.status === 'routed' || liveEntry.status === 'deduped') {
+      return this.buildFinalResult(liveEntry, route);
+    }
+
+    const routedObject = this.journal.getMemoryObjectForIngest(journalEntry.ingest_id);
+    if (routedObject) {
+      const storedRefs = this.buildStoredResultRefs(journalEntry.ingest_id, route.tier, routedObject);
+      try {
+        this.journal.updateJournalEntry(journalEntry.ingest_id, {
+          status: 'routed',
+          result_refs: storedRefs,
+          error_code: null,
+          error_message: null,
+          queue_reason: null,
+          next_attempt_at: null,
+          last_attempt_at: nowMs,
+          updated_at: nowMs,
+        });
+      } catch {
+        return null;
+      }
+      return {
+        ok: true,
+        ingest_id: journalEntry.ingest_id,
+        routed_to_tier: route.tier,
+        promotion_required: route.promotionRequired,
+        deduped: false,
+        queued: false,
+        result_refs: storedRefs,
+      };
+    }
+
+    const existingDedupe = this.journal.findRecentDedupe(
+      liveEntry.memory_class,
+      liveEntry.dedupe_key,
+      nowMs,
+      24 * 60 * 60 * 1000,
+      journalEntry.ingest_id
+    );
+    if (!existingDedupe) return null;
+
+    const dedupedRefs = normalizeRefs(safeParseJson(existingDedupe.result_refs_json, []));
+    try {
+      this.journal.updateJournalEntry(journalEntry.ingest_id, {
+        route_tier: route.tier,
+        promotion_required: route.promotionRequired,
+        status: 'deduped',
+        result_refs: dedupedRefs,
+        error_code: null,
+        error_message: null,
+        queue_reason: null,
+        next_attempt_at: null,
+        last_attempt_at: nowMs,
+        updated_at: nowMs,
+      });
+    } catch {
+      return null;
+    }
+    return {
+      ok: true,
+      ingest_id: journalEntry.ingest_id,
+      routed_to_tier: route.tier,
+      promotion_required: route.promotionRequired,
+      deduped: true,
+      queued: false,
+      result_refs: dedupedRefs,
+    };
   }
 
   deferJournalEntry(journalEntry, route, options = {}) {
