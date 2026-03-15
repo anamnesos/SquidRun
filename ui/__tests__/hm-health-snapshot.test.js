@@ -110,6 +110,8 @@ describe('hm-health-snapshot', () => {
     });
 
     expect(snapshot.status.level).toBe('ok');
+    expect(snapshot.status.score).toBe(100);
+    expect(snapshot.status.penalties).toEqual([]);
     expect(snapshot.tests.testFileCount).toBe(2);
     expect(snapshot.tests.jestList).toEqual(expect.objectContaining({
       ok: true,
@@ -225,6 +227,7 @@ describe('hm-health-snapshot', () => {
     });
 
     expect(markdown).toContain('STARTUP HEALTH');
+    expect(markdown).toContain('Overall: OK');
     expect(markdown).toContain('Tests: 2 files, 2 Jest-discoverable suites');
     expect(markdown).toContain('Modules: 6 JS modules under ui/modules');
     expect(markdown).toContain('Evidence ledger DB: present, rows=2');
@@ -238,7 +241,7 @@ describe('hm-health-snapshot', () => {
   });
 
   test('degrades startup health when bridge is enabled but not connected', () => {
-    const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
     execFileSync.mockReturnValue([
       path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
       path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
@@ -260,7 +263,10 @@ describe('hm-health-snapshot', () => {
 
     expect(snapshot.bridge.mode).toBe('connecting');
     expect(snapshot.status.level).toBe('warn');
+    expect(snapshot.status.score).toBe(85);
     expect(snapshot.status.warnings).toContain('bridge_enabled_not_connected:disconnected');
+    expect(snapshot.status.penalties).toContainEqual({ code: 'bridge_enabled_not_connected', points: 15 });
+    expect(renderStartupHealthMarkdown(snapshot)).toContain('Probe: degraded (enabled but disconnected); penalty=15');
   });
 
   test('degrades startup health when memory consistency detects drift', () => {
