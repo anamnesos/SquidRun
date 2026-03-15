@@ -108,7 +108,7 @@
           ]
         }
       ],
-      "x64ArchFiles": "@(better_sqlite3.node|pty.node|spawn-helper|onnxruntime_binding.node|libonnxruntime*.dylib|sharp-darwin-*.node|libvips*.dylib|vec0.dylib)"
+      "x64ArchFiles": "@(better_sqlite3.node|pty.node|spawn-helper|onnxruntime_binding.node|libonnxruntime*.dylib|sharp-darwin-*.node|libvips-cpp.42.dylib|vec0.dylib)"
     },
     "win": {
       "icon": "assets/squidrun-favicon.ico",
