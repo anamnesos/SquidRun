@@ -12,7 +12,7 @@ To achieve true background durability on Windows without requiring the UI to sta
 
 ### 2. Durability Layer (State Machine Pattern)
 We need an immutable ledger of state. If the supervisor or an agent crashes, it must resume exactly where it left off.
-- **Storage:** We will use **SQLite** (leveraging our existing `EvidenceLedger` DB or a new `supervisor.db`).
+- **Storage:** We will use a dedicated **SQLite** database (`.squidrun/runtime/supervisor.sqlite`).
 - **Mechanism:** Before an agent starts a step, the supervisor logs `Task N: State=Running`. When the agent finishes, it logs `Task N: State=Complete, Result=...`.
 - **Recovery:** On startup, the supervisor queries SQLite for any tasks stuck in `Running` or `Pending` and re-queues them. This acts as a "Checkpointer" (similar to LangGraph).
 - **Resume Semantics:** Resuming applies *only* to background jobs (requeuing or continuing async work). The supervisor will not attempt to resurrect interactive terminal UI panes.
@@ -23,18 +23,27 @@ We need an immutable ledger of state. If the supervisor or an agent crashes, it 
 - **Idempotency:** Agents must be designed to safely retry a step if interrupted (e.g., they check if a file exists before writing).
 
 ### 4. Background Task Queue Structure
-The `TaskQueue` table in SQLite will track the lifecycle of all jobs:
-- `task_id` (UUID)
+The `supervisor_tasks` table in SQLite will track the lifecycle of all jobs:
+- `task_id` (Text PRIMARY KEY)
 - `objective` (Text)
-- `status` (Pending | Running | Complete | Failed | Blocked)
-- `owner_pane` (e.g., builder-bg-1)
+- `status` (Text - pending | running | complete | failed | blocked | canceled)
+- `owner_pane` (Text - e.g., builder-bg-1)
 - `priority` (Integer - higher means run first)
 - `attempt_count` (Integer)
-- `lease_expires_at` (Timestamp - used as a heartbeat; if expired while Running, the supervisor considers the worker dead and requeues)
-- `context_snapshot` (JSON string - necessary state to resume)
-- `result_payload` (JSON string - output of success)
-- `error_payload` (JSON string - output of failure)
-- `created_at` / `updated_at`
+- `lease_owner` (Text)
+- `lease_expires_at_ms` (Integer - timestamp used as a heartbeat)
+- `worker_pid` (Integer)
+- `context_snapshot_json` (Text - necessary state to resume)
+- `result_payload_json` (Text - output of success)
+- `error_payload_json` (Text - output of failure)
+- `created_at_ms`, `updated_at_ms`, `started_at_ms`, `completed_at_ms`, `last_heartbeat_at_ms`
+
+A companion `supervisor_task_events` table tracks granular state changes:
+- `event_id` (Text PRIMARY KEY)
+- `task_id` (Text)
+- `event_type` (Text)
+- `payload_json` (Text)
+- `created_at_ms` (Integer)
 
 ## Implementation Steps for Builder
 1. **Schema:** Create the SQLite tables for the Task Queue with the expanded schema.
