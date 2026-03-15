@@ -230,6 +230,24 @@ function classifyRelayState(state) {
   return 'warn';
 }
 
+function deriveBridgeMode(state = {}) {
+  if (!state || typeof state !== 'object') return 'disabled';
+  if (typeof state.mode === 'string' && state.mode.trim()) {
+    return state.mode.trim().toLowerCase();
+  }
+  if (state.enabled !== true) return 'disabled';
+  if (state.relayState === 'connected' || state.relayStatus === 'relay_connected') {
+    return 'connected';
+  }
+  return 'connecting';
+}
+
+function classifyBridgeMode(mode) {
+  if (mode === 'connected') return 'good';
+  if (mode === 'disabled') return 'muted';
+  return 'warn';
+}
+
 function trackTransportEvent(event) {
   if (!transportState || !event || typeof event.type !== 'string') return;
   const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
@@ -329,8 +347,8 @@ function renderTransportHealth() {
   const ackClass = classifyAckLatency(state.ackLastMs);
   const recoveryClass = classifyRecoveryState(state.recoveryState);
   const relayClass = classifyRelayState(state.relayState);
-  const bridgeMode = state.enabled ? (state.configured ? 'configured' : 'enabled-no-config') : 'disabled';
-  const bridgeModeClass = state.enabled ? (state.configured ? 'good' : 'warn') : 'bad';
+  const bridgeMode = deriveBridgeMode(state);
+  const bridgeModeClass = classifyBridgeMode(bridgeMode);
   const lastResume = Number.isFinite(state.lastResumeAt) ? formatTimestamp(state.lastResumeAt) : '-';
   const lastConnected = Number.isFinite(state.lastConnectedAt) ? formatTimestamp(state.lastConnectedAt) : '-';
   const connectedSince = Number.isFinite(state.connectedSinceAt) ? formatTimestamp(state.connectedSinceAt) : '-';
@@ -358,7 +376,7 @@ function renderTransportHealth() {
   container.innerHTML = `
     <div class="bridge-transport-row">
       <div class="bridge-transport-kv">
-        <span class="bridge-transport-key">Bridge</span>
+        <span class="bridge-transport-key">Mode</span>
         <span class="bridge-transport-value ${bridgeModeClass}">${escapeHtml(bridgeMode)}</span>
       </div>
       <div class="bridge-transport-kv">
@@ -392,8 +410,8 @@ function renderTransportHealth() {
         <span class="bridge-transport-value">${escapeHtml(deviceId)}</span>
       </div>
       <div class="bridge-transport-kv">
-        <span class="bridge-transport-key">Running</span>
-        <span class="bridge-transport-value">${state.running ? 'yes' : 'no'}</span>
+        <span class="bridge-transport-key">Configured</span>
+        <span class="bridge-transport-value">${state.configured ? 'yes' : 'no'}</span>
       </div>
     </div>
     <div class="bridge-transport-row">

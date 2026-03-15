@@ -232,6 +232,10 @@
   color: #f44336;
 }
 
+.bridge-transport-value.muted {
+  color: var(--color-text-muted);
+}
+
 .bridge-transport-sparkline {
   font-family: var(--font-mono);
   font-size: 11px;
