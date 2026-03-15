@@ -29,6 +29,7 @@ function createCognitiveSchema(db) {
       content_hash TEXT,
       current_version INTEGER DEFAULT 1,
       salience_score REAL DEFAULT 0,
+      is_immune INTEGER DEFAULT 0,
       embedding_json TEXT DEFAULT '[]',
       metadata_json TEXT DEFAULT '{}',
       created_at_ms INTEGER DEFAULT 0,
@@ -74,8 +75,8 @@ function insertKnowledgeNode(db, input = {}, helpers) {
     INSERT INTO nodes (
       node_id, category, content, confidence_score, access_count, last_accessed_at,
       last_reconsolidated_at, source_type, source_path, title, heading, content_hash,
-      current_version, salience_score, embedding_json, metadata_json, created_at_ms, updated_at_ms
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      current_version, salience_score, is_immune, embedding_json, metadata_json, created_at_ms, updated_at_ms
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.nodeId,
     'knowledge',
@@ -91,6 +92,7 @@ function insertKnowledgeNode(db, input = {}, helpers) {
     contentHash,
     Number(input.currentVersion || 1),
     Number(input.salienceScore || 0),
+    input.isImmune ? 1 : 0,
     input.embeddingJson || '[]',
     JSON.stringify(input.metadata || {}),
     Number(input.createdAtMs || nowMs),
@@ -348,6 +350,43 @@ describe('memory consistency check', () => {
     expect(result.actions.some((action) => action.kind === 'delete_revision_skew_orphan')).toBe(false);
   });
 
+  test('repair blocks auto-deletion of immune revision-skew orphans', () => {
+    const {
+      collectKnowledgeEntries,
+      runMemoryConsistencyRepair,
+    } = helpers;
+    const { resolveWorkspacePaths } = require('../modules/memory-search');
+
+    const paths = resolveWorkspacePaths({ projectRoot: tempDir });
+    const entries = collectKnowledgeEntries(paths);
+    const db = createDatabase(path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db'));
+    createCognitiveSchema(db);
+    insertKnowledgeNode(db, {
+      nodeId: 'immune-orphan',
+      sourcePath: entries[0].sourcePath,
+      title: entries[0].title,
+      heading: entries[0].heading,
+      content: 'Older immune preference statement.',
+      isImmune: true,
+    }, helpers);
+    db.close();
+
+    const result = runMemoryConsistencyRepair({
+      projectRoot: tempDir,
+      evidenceLedgerDbPath: path.join(tempDir, 'runtime', 'evidence-ledger.db'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.skipped).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'immune_protected_orphan',
+        driftType: 'immune_protected',
+        nodeId: 'immune-orphan',
+      }),
+    ]));
+    expect(result.actions.some((action) => action.kind === 'delete_revision_skew_orphan')).toBe(false);
+  });
+
   test('repair consolidates duplicate hashes and preserves traces and edges on the survivor', () => {
     const {
       collectKnowledgeEntries,
@@ -431,5 +470,60 @@ describe('memory consistency check', () => {
     expect(duplicateCount).toBe(1);
     expect(traceCount).toBe(1);
     expect(edgeCount).toBe(1);
+  });
+
+  test('repair preserves immunity when collapsing duplicate hashes', () => {
+    const {
+      collectKnowledgeEntries,
+      runMemoryConsistencyRepair,
+    } = helpers;
+    const { resolveWorkspacePaths } = require('../modules/memory-search');
+
+    const paths = resolveWorkspacePaths({ projectRoot: tempDir });
+    const entries = collectKnowledgeEntries(paths);
+    const dbPath = path.join(tempDir, 'workspace', 'memory', 'cognitive-memory.db');
+    const db = createDatabase(dbPath);
+    createCognitiveSchema(db);
+
+    insertKnowledgeNode(db, {
+      nodeId: 'dup-survivor',
+      sourcePath: entries[0].sourcePath,
+      title: entries[0].title,
+      heading: entries[0].heading,
+      content: entries[0].content,
+      contentHash: entries[0].contentHash,
+      metadata: entries[0].metadata,
+      accessCount: 5,
+      lastAccessedAt: '2026-03-15T10:00:00.000Z',
+    }, helpers);
+    insertKnowledgeNode(db, {
+      nodeId: 'dup-immune-loser',
+      sourcePath: entries[0].sourcePath,
+      title: entries[0].title,
+      heading: entries[0].heading,
+      content: entries[0].content,
+      contentHash: entries[0].contentHash,
+      metadata: entries[0].metadata,
+      isImmune: true,
+    }, helpers);
+    db.close();
+
+    const result = runMemoryConsistencyRepair({
+      projectRoot: tempDir,
+      evidenceLedgerDbPath: path.join(tempDir, 'runtime', 'evidence-ledger.db'),
+    });
+
+    expect(result.ok).toBe(true);
+
+    const verifyDb = createDatabase(dbPath);
+    const row = verifyDb.prepare(`
+      SELECT is_immune
+      FROM nodes
+      WHERE node_id = ?
+      LIMIT 1
+    `).get('dup-survivor');
+    verifyDb.close();
+
+    expect(Number(row.is_immune || 0)).toBe(1);
   });
 });

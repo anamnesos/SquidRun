@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { DatabaseSync } = require('node:sqlite');
+const { getDatabaseSync } = require('./sqlite-compat');
+const DatabaseSync = getDatabaseSync();
 const { resolveCoordPath, getProjectRoot } = require('../config');
 
 function ensureDir(targetPath) {
@@ -35,6 +36,14 @@ function clampConfidence(value, fallback = 0.5) {
   return Math.max(0, Math.min(1, numeric));
 }
 
+function ensureColumn(db, tableName, columnName, definition) {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  const exists = rows.some((row) => String(row.name) === String(columnName));
+  if (!exists) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
 class CognitiveMemoryStore {
   constructor(options = {}) {
     this.paths = resolveWorkspacePaths(options);
@@ -61,7 +70,8 @@ class CognitiveMemoryStore {
         confidence_score REAL DEFAULT 0.5,
         access_count INTEGER DEFAULT 0,
         last_accessed_at TEXT,
-        last_reconsolidated_at TEXT
+        last_reconsolidated_at TEXT,
+        is_immune INTEGER DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS edges (
@@ -108,6 +118,7 @@ class CognitiveMemoryStore {
       CREATE INDEX IF NOT EXISTS idx_memory_pr_status ON memory_pr_queue(status, updated_at_ms DESC);
       CREATE INDEX IF NOT EXISTS idx_memory_pr_domain ON memory_pr_queue(domain, updated_at_ms DESC);
     `);
+    ensureColumn(db, 'nodes', 'is_immune', 'INTEGER DEFAULT 0');
     this.db = db;
     return db;
   }

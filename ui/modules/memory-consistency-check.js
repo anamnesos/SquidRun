@@ -143,6 +143,7 @@ function mapKnowledgeNodeRow(row) {
     lastAccessedAt: row.last_accessed_at || null,
     currentVersion: Number(row.current_version || 1),
     salienceScore: Number(row.salience_score || 0),
+    isImmune: Number(row.is_immune || 0) === 1,
     confidenceScore: Number(row.confidence_score || 0.5),
     lastReconsolidatedAt: row.last_reconsolidated_at || null,
     category: row.category || null,
@@ -168,6 +169,7 @@ function loadKnowledgeNodes(db, availableColumns) {
     availableColumns.includes('last_accessed_at') ? 'last_accessed_at' : 'NULL AS last_accessed_at',
     availableColumns.includes('current_version') ? 'current_version' : '1 AS current_version',
     availableColumns.includes('salience_score') ? 'salience_score' : '0 AS salience_score',
+    availableColumns.includes('is_immune') ? 'is_immune' : '0 AS is_immune',
     availableColumns.includes('confidence_score') ? 'confidence_score' : '0.5 AS confidence_score',
     availableColumns.includes('last_reconsolidated_at') ? 'last_reconsolidated_at' : 'NULL AS last_reconsolidated_at',
   ];
@@ -433,6 +435,7 @@ function buildNodeRelationalProfile(node, edgeCounts, traceRows, leaseCounts) {
     nonRoutineTraces,
     currentVersion: Number(node.currentVersion || 1),
     salienceScore: Number(node.salienceScore || 0),
+    isImmune: Boolean(node.isImmune),
     accessCount: Number(node.accessCount || 0),
     lastAccessedAt: node.lastAccessedAt || null,
   };
@@ -447,6 +450,7 @@ function aggregateProfiles(profiles = []) {
     nonRoutineTraceCount: summary.nonRoutineTraceCount + Number(profile.nonRoutineTraceCount || 0),
     currentVersion: Math.max(summary.currentVersion, Number(profile.currentVersion || 1)),
     salienceScore: Math.max(summary.salienceScore, Number(profile.salienceScore || 0)),
+    isImmune: summary.isImmune || Boolean(profile.isImmune),
     accessCount: summary.accessCount + Number(profile.accessCount || 0),
     lastAccessedAtMs: Math.max(summary.lastAccessedAtMs, parseIsoMs(profile.lastAccessedAt)),
   }), {
@@ -457,6 +461,7 @@ function aggregateProfiles(profiles = []) {
     nonRoutineTraceCount: 0,
     currentVersion: 1,
     salienceScore: 0,
+    isImmune: false,
     accessCount: 0,
     lastAccessedAtMs: 0,
   });
@@ -510,6 +515,18 @@ function classifyOrphanNode(node, paths, relationalProfile, replacementIndex) {
   }
   if (Number(relationalProfile.salienceScore || 0) > 0) {
     blockers.push(`salience=${Number(relationalProfile.salienceScore || 0).toFixed(2)}`);
+  }
+  if (relationalProfile.isImmune) {
+    return {
+      classification: 'immune_protected',
+      repairable: false,
+      reason: 'Orphan is immune-protected; auto-deletion is blocked unless explicitly confirmed.',
+      blockers: ['immune_protected'],
+      sourceExists,
+      sourceAbsolutePath: sourceAbsPath,
+      replacementCandidates,
+      relationalProfile,
+    };
   }
 
   if (!sourceExists) {
@@ -621,6 +638,7 @@ function planMemoryConsistencyRepair(options = {}) {
         contentHash: group.contentHash,
         survivorNodeId: survivor.nodeId,
         loserNodeIds: losers.map((node) => node.nodeId),
+        survivorInheritsImmunity: group.nodes.some((node) => node.isImmune),
         deleteCount: losers.length,
         reason: `Duplicate content hash detected; consolidate ${losers.length} duplicate node(s) into ${survivor.nodeId}.`,
       });
@@ -676,7 +694,9 @@ function planMemoryConsistencyRepair(options = {}) {
 
         const skipReason = classification.classification === 'deleted_source'
           ? 'deleted_source_orphan'
-          : 'relational_migration_required';
+          : (classification.classification === 'immune_protected'
+            ? 'immune_protected_orphan'
+            : 'relational_migration_required');
         plan.skipped.push({
           kind: skipReason,
           driftType: classification.classification,
@@ -764,6 +784,7 @@ function insertKnowledgeNode(db, availableNodeColumns, availableTables, entry, n
     ['content_hash', entry.contentHash],
     ['current_version', 1],
     ['salience_score', 0],
+    ['is_immune', 0],
     ['embedding_json', '[]'],
     ['source_type', 'knowledge'],
     ['source_path', entry.sourcePath],
@@ -884,6 +905,17 @@ function moveDuplicateLeases(db, loserNodeId, survivorNodeId) {
   };
 }
 
+function preserveDuplicateImmunity(db, availableNodeColumns, survivorNodeId, shouldBeImmune) {
+  if (!shouldBeImmune || !availableNodeColumns.includes('is_immune')) {
+    return;
+  }
+  db.prepare(`
+    UPDATE nodes
+    SET is_immune = 1
+    WHERE node_id = ?
+  `).run(survivorNodeId);
+}
+
 function deleteNodeWithRelations(db, availableTables, nodeId) {
   let traceDeletes = 0;
   let edgeDeletes = 0;
@@ -991,6 +1023,7 @@ function runMemoryConsistencyRepair(options = {}) {
       }
 
       if (action.kind === 'collapse_duplicate_hash') {
+        preserveDuplicateImmunity(db, availableNodeColumns, action.survivorNodeId, action.survivorInheritsImmunity);
         for (const loserNodeId of action.loserNodeIds) {
           if (availableTables.has('traces')) {
             moveDuplicateTraces(db, loserNodeId, action.survivorNodeId);

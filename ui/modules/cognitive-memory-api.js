@@ -1,5 +1,6 @@
 const crypto = require('crypto');
-const { DatabaseSync } = require('node:sqlite');
+const { getDatabaseSync } = require('./sqlite-compat');
+const DatabaseSync = getDatabaseSync();
 const { CognitiveMemoryStore } = require('./cognitive-memory-store');
 const { MemorySearchIndex } = require('./memory-search');
 
@@ -145,6 +146,7 @@ class CognitiveMemoryApi {
     ensureColumn(this.db, 'nodes', 'content_hash', "TEXT DEFAULT ''");
     ensureColumn(this.db, 'nodes', 'current_version', 'INTEGER DEFAULT 1');
     ensureColumn(this.db, 'nodes', 'salience_score', 'REAL DEFAULT 0');
+    ensureColumn(this.db, 'nodes', 'is_immune', 'INTEGER DEFAULT 0');
     ensureColumn(this.db, 'nodes', 'embedding_json', "TEXT DEFAULT '[]'");
     ensureColumn(this.db, 'nodes', 'source_type', 'TEXT');
     ensureColumn(this.db, 'nodes', 'source_path', 'TEXT');
@@ -207,6 +209,7 @@ class CognitiveMemoryApi {
       lastReconsolidatedAt: row.last_reconsolidated_at || null,
       currentVersion: Number(row.current_version || 1),
       salienceScore: Number(row.salience_score || 0),
+      isImmune: Number(row.is_immune || 0) === 1,
       embedding: parseJson(row.embedding_json, []),
       sourceType: row.source_type || null,
       sourcePath: row.source_path || null,
@@ -507,6 +510,7 @@ class CognitiveMemoryApi {
         content_hash,
         current_version,
         salience_score,
+        is_immune,
         embedding_json,
         source_type,
         source_path,
@@ -515,7 +519,7 @@ class CognitiveMemoryApi {
         metadata_json,
         created_at_ms,
         updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       nodeId,
       result.category || sourceType || 'fact',
@@ -526,6 +530,7 @@ class CognitiveMemoryApi {
       null,
       contentHash,
       1,
+      0,
       0,
       JSON.stringify(embedding),
       sourceType,
@@ -551,12 +556,21 @@ class CognitiveMemoryApi {
         const baseScore = (1 - distance)
           + (node.salienceScore * 0.1)
           + (node.confidenceScore * 0.05);
-        const recencyMultiplier = computeRecencyMultiplier(
+        const recencyMultiplier = node.isImmune
+          ? 1
+          : computeRecencyMultiplier(
           Math.max(Number(node.updatedAtMs || 0), Number(node.createdAtMs || 0)),
           nowMs
         );
         const score = baseScore * recencyMultiplier;
-        return { node, distance, score, baseScore, recencyMultiplier };
+        return {
+          node,
+          distance,
+          score,
+          baseScore,
+          recencyMultiplier,
+          freshnessPenaltyBypassed: node.isImmune,
+        };
       })
       .filter((entry) => Number.isFinite(entry.distance))
       .sort((left, right) => right.score - left.score || left.distance - right.distance)
