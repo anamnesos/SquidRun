@@ -2,12 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const chokidar = require('chokidar');
 const { spawn } = require('child_process');
-const { DatabaseSync } = require('node:sqlite');
+const { getDatabaseSync } = require('./modules/sqlite-compat');
+const DatabaseSync = getDatabaseSync();
 
-const { resolveCoordPath } = require('./config');
+const { resolveCoordPath, getProjectRoot } = require('./config');
 const { SupervisorStore } = require('./modules/supervisor');
 const { CognitiveMemoryStore } = require('./modules/cognitive-memory-store');
 const { MemorySearchIndex, resolveWorkspacePaths } = require('./modules/memory-search');
+const { runMemoryConsistencyCheck } = require('./modules/memory-consistency-check');
 const {
   SleepConsolidator,
   DEFAULT_IDLE_THRESHOLD_MS,
@@ -25,6 +27,7 @@ const DEFAULT_PENDING_TASK_TTL_MS = parseOptionalDurationMs(
 );
 const DEFAULT_STDIO_TAIL_BYTES = Math.max(2048, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_STDIO_TAIL_BYTES || '16384', 10) || 16384);
 const DEFAULT_MEMORY_INDEX_DEBOUNCE_MS = Math.max(500, Number.parseInt(process.env.SQUIDRUN_MEMORY_INDEX_DEBOUNCE_MS || '2000', 10) || 2000);
+const DEFAULT_MEMORY_CONSISTENCY_POLL_MS = Math.max(60_000, Number.parseInt(process.env.SQUIDRUN_MEMORY_CONSISTENCY_POLL_MS || '300000', 10) || 300000);
 const DEFAULT_SLEEP_IDLE_MS = DEFAULT_IDLE_THRESHOLD_MS;
 const DEFAULT_SLEEP_MIN_INTERVAL_MS = DEFAULT_MIN_INTERVAL_MS;
 
@@ -203,6 +206,7 @@ class MemoryLeaseJanitor {
 
 class SupervisorDaemon {
   constructor(options = {}) {
+    this.projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
     this.store = options.store || new SupervisorStore({ dbPath: options.dbPath });
     this.pollMs = Math.max(1000, Number.parseInt(options.pollMs || DEFAULT_POLL_MS, 10) || DEFAULT_POLL_MS);
     this.heartbeatMs = Math.max(1000, Number.parseInt(options.heartbeatMs || DEFAULT_HEARTBEAT_MS, 10) || DEFAULT_HEARTBEAT_MS);
@@ -229,6 +233,14 @@ class SupervisorDaemon {
       Number.parseInt(options.memoryIndexDebounceMs || DEFAULT_MEMORY_INDEX_DEBOUNCE_MS, 10)
       || DEFAULT_MEMORY_INDEX_DEBOUNCE_MS
     );
+    this.memoryConsistencyEnabled = options.memoryConsistencyEnabled !== false;
+    this.memoryConsistencyPollMs = Math.max(
+      60_000,
+      Number.parseInt(options.memoryConsistencyPollMs || DEFAULT_MEMORY_CONSISTENCY_POLL_MS, 10)
+      || DEFAULT_MEMORY_CONSISTENCY_POLL_MS
+    );
+    this.lastMemoryConsistencySummary = null;
+    this.lastMemoryConsistencyCheckAtMs = 0;
     this.memoryIndexEnabled = options.memoryIndexEnabled !== false
       && process.env.SQUIDRUN_MEMORY_INDEX_WATCHER !== '0';
     this.memorySearchIndex = this.memoryIndexEnabled
@@ -288,8 +300,9 @@ class SupervisorDaemon {
     }
     const leaseHousekeeping = this.runMemoryLeaseHousekeeping(Date.now(), 'startup');
     const housekeeping = this.runQueueHousekeeping(Date.now(), 'startup');
+    const memoryConsistency = this.runMemoryConsistencyAudit('startup', Date.now());
     this.writeStatus();
-    return { ok: true, store: this.store.getStatus(), leaseHousekeeping, ...housekeeping };
+    return { ok: true, store: this.store.getStatus(), leaseHousekeeping, memoryConsistency, ...housekeeping };
   }
 
   start() {
@@ -346,6 +359,7 @@ class SupervisorDaemon {
     if (this.stopping) return;
     this.runQueueHousekeeping(Date.now(), 'tick');
     this.runMemoryLeaseHousekeeping(Date.now(), 'tick');
+    this.maybeRunMemoryConsistencyAudit(Date.now(), 'tick');
 
     while (!this.stopping && this.activeWorkers.size < this.maxWorkers) {
       const leaseOwner = `${this.workerLeaseOwnerPrefix}-${process.pid}`;
@@ -442,6 +456,84 @@ class SupervisorDaemon {
       this.logger.warn(`Memory lease janitor failed during ${phase}: ${err.message}`);
       return { ok: false, error: err.message };
     }
+  }
+
+  buildMemoryConsistencySummary(result = null) {
+    const source = result && typeof result === 'object' && !Array.isArray(result)
+      ? result
+      : {};
+    const summary = source.summary && typeof source.summary === 'object' && !Array.isArray(source.summary)
+      ? source.summary
+      : {};
+    return {
+      enabled: this.memoryConsistencyEnabled,
+      checkedAt: typeof source.checkedAt === 'string' ? source.checkedAt : null,
+      status: typeof source.status === 'string' && source.status.trim() ? source.status.trim() : 'unknown',
+      synced: source.synced === true,
+      error: typeof source.error === 'string' && source.error.trim() ? source.error.trim() : null,
+      summary: {
+        knowledgeEntryCount: Number(summary.knowledgeEntryCount || 0),
+        knowledgeNodeCount: Number(summary.knowledgeNodeCount || 0),
+        missingInCognitiveCount: Number(summary.missingInCognitiveCount || 0),
+        orphanedNodeCount: Number(summary.orphanedNodeCount || 0),
+        duplicateKnowledgeHashCount: Number(summary.duplicateKnowledgeHashCount || 0),
+        issueCount: Number(summary.issueCount || 0),
+      },
+    };
+  }
+
+  runMemoryConsistencyAudit(reason = 'periodic', nowMs = Date.now()) {
+    if (!this.memoryConsistencyEnabled) {
+      return { ok: false, skipped: true, reason: 'memory_consistency_disabled' };
+    }
+
+    try {
+      const result = runMemoryConsistencyCheck({
+        projectRoot: this.projectRoot,
+        sampleLimit: 5,
+      });
+      this.lastMemoryConsistencySummary = this.buildMemoryConsistencySummary(result);
+      this.lastMemoryConsistencyCheckAtMs = nowMs;
+      const counts = this.lastMemoryConsistencySummary.summary;
+      const message = `Memory consistency (${reason}): status=${this.lastMemoryConsistencySummary.status}`
+        + ` entries=${counts.knowledgeEntryCount}`
+        + ` nodes=${counts.knowledgeNodeCount}`
+        + ` missing=${counts.missingInCognitiveCount}`
+        + ` orphans=${counts.orphanedNodeCount}`
+        + ` duplicates=${counts.duplicateKnowledgeHashCount}`;
+      if (this.lastMemoryConsistencySummary.synced) {
+        this.logger.info(message);
+      } else {
+        this.logger.warn(message);
+      }
+      return this.lastMemoryConsistencySummary;
+    } catch (err) {
+      this.lastMemoryConsistencySummary = this.buildMemoryConsistencySummary({
+        checkedAt: new Date(nowMs).toISOString(),
+        status: 'check_failed',
+        synced: false,
+        error: err.message,
+        summary: {},
+      });
+      this.lastMemoryConsistencyCheckAtMs = nowMs;
+      this.logger.warn(`Memory consistency (${reason}) failed: ${err.message}`);
+      return this.lastMemoryConsistencySummary;
+    }
+  }
+
+  maybeRunMemoryConsistencyAudit(nowMs = Date.now(), reason = 'periodic') {
+    if (!this.memoryConsistencyEnabled) {
+      return { ok: false, skipped: true, reason: 'memory_consistency_disabled' };
+    }
+    if (this.lastMemoryConsistencyCheckAtMs > 0 && (nowMs - this.lastMemoryConsistencyCheckAtMs) < this.memoryConsistencyPollMs) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'memory_consistency_poll_interval',
+        checkedAt: this.lastMemoryConsistencySummary?.checkedAt || null,
+      };
+    }
+    return this.runMemoryConsistencyAudit(reason, nowMs);
   }
 
   async launchTask(task, options = {}) {
@@ -868,6 +960,21 @@ class SupervisorDaemon {
         activity: this.getSleepActivitySnapshot(),
         lastSummary: this.lastSleepCycleSummary,
       },
+      memoryConsistency: this.lastMemoryConsistencySummary || {
+        enabled: this.memoryConsistencyEnabled,
+        checkedAt: null,
+        status: 'not_checked',
+        synced: false,
+        error: null,
+        summary: {
+          knowledgeEntryCount: 0,
+          knowledgeNodeCount: 0,
+          missingInCognitiveCount: 0,
+          orphanedNodeCount: 0,
+          duplicateKnowledgeHashCount: 0,
+          issueCount: 0,
+        },
+      },
       ...extra,
     };
     ensureDir(this.statusPath);
@@ -942,4 +1049,3 @@ module.exports = {
   DEFAULT_SLEEP_IDLE_MS,
   DEFAULT_SLEEP_MIN_INTERVAL_MS,
 };
-

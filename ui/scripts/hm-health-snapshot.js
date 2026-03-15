@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { getProjectRoot } = require('../config');
+const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
 
 const KEY_MODULE_PATHS = Object.freeze({
   recovery_manager: path.join('ui', 'modules', 'recovery-manager.js'),
@@ -316,6 +317,51 @@ function normalizeBridgeSnapshot(bridgeStatus = null) {
   };
 }
 
+function summarizeMemoryConsistency(result = null) {
+  const source = result && typeof result === 'object' && !Array.isArray(result)
+    ? result
+    : {};
+  const summary = source.summary && typeof source.summary === 'object' && !Array.isArray(source.summary)
+    ? source.summary
+    : {};
+  return {
+    checkedAt: typeof source.checkedAt === 'string' ? source.checkedAt : null,
+    status: typeof source.status === 'string' && source.status.trim() ? source.status.trim() : 'unknown',
+    synced: source.synced === true,
+    error: typeof source.error === 'string' && source.error.trim() ? source.error.trim() : null,
+    summary: {
+      knowledgeEntryCount: Number(summary.knowledgeEntryCount || 0),
+      knowledgeNodeCount: Number(summary.knowledgeNodeCount || 0),
+      missingInCognitiveCount: Number(summary.missingInCognitiveCount || 0),
+      orphanedNodeCount: Number(summary.orphanedNodeCount || 0),
+      duplicateKnowledgeHashCount: Number(summary.duplicateKnowledgeHashCount || 0),
+      issueCount: Number(summary.issueCount || 0),
+    },
+  };
+}
+
+function inspectMemoryConsistency(projectRoot, options = {}) {
+  if (options.memoryConsistency && typeof options.memoryConsistency === 'object') {
+    return summarizeMemoryConsistency(options.memoryConsistency);
+  }
+
+  try {
+    return summarizeMemoryConsistency(runMemoryConsistencyCheck({
+      projectRoot,
+      sampleLimit: Number.isFinite(Number(options.memoryConsistencySampleLimit))
+        ? Number(options.memoryConsistencySampleLimit)
+        : 5,
+    }));
+  } catch (err) {
+    return summarizeMemoryConsistency({
+      status: 'check_failed',
+      synced: false,
+      error: err.message,
+      summary: {},
+    });
+  }
+}
+
 function buildHealthStatus(snapshot) {
   const warnings = [];
   if (!snapshot.tests.jestList.ok) {
@@ -349,6 +395,19 @@ function buildHealthStatus(snapshot) {
   } else if (bridge.enabled === true && bridge.mode !== 'connected') {
     warnings.push(`bridge_enabled_not_connected:${bridge.state || bridge.status || bridge.mode || 'unknown'}`);
   }
+  const memoryConsistency = snapshot.memoryConsistency && typeof snapshot.memoryConsistency === 'object'
+    ? snapshot.memoryConsistency
+    : {};
+  if (memoryConsistency.status === 'drift_detected') {
+    warnings.push(
+      'memory_consistency_drift:'
+      + `missing=${Number(memoryConsistency.summary?.missingInCognitiveCount || 0)},`
+      + `orphans=${Number(memoryConsistency.summary?.orphanedNodeCount || 0)},`
+      + `duplicates=${Number(memoryConsistency.summary?.duplicateKnowledgeHashCount || 0)}`
+    );
+  } else if (memoryConsistency.synced === false) {
+    warnings.push(`memory_consistency_${memoryConsistency.status || 'unknown'}`);
+  }
   return {
     level: warnings.length > 0 ? 'warn' : 'ok',
     warnings,
@@ -372,6 +431,7 @@ function createHealthSnapshot(options = {}) {
     cognitiveMemory: inspectSqliteDb(cognitiveMemoryDbPath, ['nodes', 'memory_pr_queue', 'edges']),
   };
   const bridge = normalizeBridgeSnapshot(options.bridgeStatus);
+  const memoryConsistency = inspectMemoryConsistency(projectRoot, options);
 
   const snapshot = {
     generatedAt: new Date().toISOString(),
@@ -388,6 +448,7 @@ function createHealthSnapshot(options = {}) {
     },
     databases,
     bridge,
+    memoryConsistency,
   };
 
   return {
@@ -416,6 +477,24 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   const cognitiveMemory = snapshot.databases?.cognitiveMemory || {};
   lines.push(`- Evidence ledger DB: ${evidenceLedger.exists ? `present, rows=${Number(evidenceLedger.rowCount || 0)}` : 'missing'}`);
   lines.push(`- Cognitive memory DB: ${cognitiveMemory.exists ? `present, rows=${Number(cognitiveMemory.rowCount || 0)}` : 'missing'}`);
+
+  const memoryConsistency = snapshot.memoryConsistency && typeof snapshot.memoryConsistency === 'object'
+    ? snapshot.memoryConsistency
+    : {};
+  lines.push('');
+  lines.push('MEMORY CONSISTENCY');
+  lines.push(`- Sync Status: ${memoryConsistency.status || 'unknown'} (${memoryConsistency.synced === true ? 'in sync' : 'attention needed'})`);
+  lines.push(
+    '- Counts: '
+    + `entries=${Number(memoryConsistency.summary?.knowledgeEntryCount || 0)}, `
+    + `nodes=${Number(memoryConsistency.summary?.knowledgeNodeCount || 0)}, `
+    + `missing=${Number(memoryConsistency.summary?.missingInCognitiveCount || 0)}, `
+    + `orphans=${Number(memoryConsistency.summary?.orphanedNodeCount || 0)}, `
+    + `duplicates=${Number(memoryConsistency.summary?.duplicateKnowledgeHashCount || 0)}`
+  );
+  if (memoryConsistency.error) {
+    lines.push(`- Error: ${memoryConsistency.error}`);
+  }
 
   const bridge = snapshot.bridge && typeof snapshot.bridge === 'object' ? snapshot.bridge : {};
   const bridgeState = typeof bridge.state === 'string' && bridge.state.trim()
