@@ -516,10 +516,14 @@ class SquidRunApp {
     const bridgeState = typeof snapshot.bridge?.state === 'string'
       ? snapshot.bridge.state
       : (typeof snapshot.bridge?.status === 'string' ? snapshot.bridge.status : 'unknown');
+    const memoryConsistencyStatus = typeof snapshot.memoryConsistency?.status === 'string'
+      ? snapshot.memoryConsistency.status
+      : 'unknown';
+    const memoryConsistencySummary = snapshot.memoryConsistency?.summary || {};
     const ledgerSession = Number.isInteger(Number(ledgerContext?.session)) ? Number(ledgerContext.session) : sessionNumber;
     const ledgerMode = typeof ledgerContext?.mode === 'string' ? ledgerContext.mode : 'unknown';
     const ledgerStatus = typeof ledgerContext?.status === 'string' ? ledgerContext.status : 'unknown';
-    return `Startup health ${Number.isInteger(sessionNumber) ? `for session ${sessionNumber}` : 'snapshot'}: overall ${level}. Evidence ledger rows=${evidenceRows}, cognitive memory rows=${cognitiveRows}. Bridge mode=${bridgeMode}, connection=${bridgeState}. Ledger context: session ${ledgerSession ?? 'unknown'} ${ledgerStatus} (${ledgerMode}).`;
+    return `Startup health ${Number.isInteger(sessionNumber) ? `for session ${sessionNumber}` : 'snapshot'}: overall ${level}. Evidence ledger rows=${evidenceRows}, cognitive memory rows=${cognitiveRows}. Memory consistency=${memoryConsistencyStatus} (entries=${Number(memoryConsistencySummary.knowledgeEntryCount || 0)}, nodes=${Number(memoryConsistencySummary.knowledgeNodeCount || 0)}, missing=${Number(memoryConsistencySummary.missingInCognitiveCount || 0)}, orphans=${Number(memoryConsistencySummary.orphanedNodeCount || 0)}, duplicates=${Number(memoryConsistencySummary.duplicateKnowledgeHashCount || 0)}). Bridge mode=${bridgeMode}, connection=${bridgeState}. Ledger context: session ${ledgerSession ?? 'unknown'} ${ledgerStatus} (${ledgerMode}).`;
   }
 
   buildStartupHealthReport(snapshot = {}, ledgerContext = {}) {
