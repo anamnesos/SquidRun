@@ -28,6 +28,7 @@ function createMockStore() {
     dbPath: '/tmp/supervisor.sqlite',
     init: jest.fn(() => ({ ok: true })),
     isAvailable: jest.fn(() => true),
+    getStatus: jest.fn(() => ({ ok: true, driver: 'mock' })),
     getTaskCounts: jest.fn(() => ({ pending: 0, running: 0, complete: 0, failed: 0 })),
     requeueExpiredTasks: jest.fn(() => ({ ok: true })),
     pruneExpiredPendingTasks: jest.fn(() => ({ ok: true, pruned: 0, taskIds: [], tasks: [] })),
@@ -47,6 +48,7 @@ function createMockLogger() {
 describe('supervisor-daemon integrations', () => {
   let mockMemorySearchIndex;
   let mockSleepConsolidator;
+  let mockLeaseJanitor;
   let daemon;
 
   beforeEach(() => {
@@ -70,9 +72,15 @@ describe('supervisor-daemon integrations', () => {
     };
 
     mockSleepConsolidator = {
+      init: jest.fn(() => ({ ok: true })),
       shouldRun: jest.fn(() => ({ ok: false, reason: 'not_idle', activity: { idleMs: 1000, isIdle: false } })),
       runOnce: jest.fn().mockResolvedValue({ ok: true, episodeCount: 2, extractedCount: 2, generatedPrCount: 1 }),
       readActivitySnapshot: jest.fn(() => ({ idleMs: 1000, isIdle: false })),
+      close: jest.fn(),
+    };
+
+    mockLeaseJanitor = {
+      pruneExpiredLeases: jest.fn(() => ({ ok: true, pruned: 0 })),
       close: jest.fn(),
     };
 
@@ -82,6 +90,7 @@ describe('supervisor-daemon integrations', () => {
       memoryIndexEnabled: true,
       memoryIndexDebounceMs: 10,
       memorySearchIndex: mockMemorySearchIndex,
+      leaseJanitor: mockLeaseJanitor,
       sleepConsolidator: mockSleepConsolidator,
       pidPath: '/tmp/supervisor.pid',
       statusPath: '/tmp/supervisor-status.json',
@@ -155,6 +164,14 @@ describe('supervisor-daemon integrations', () => {
     expect(mockSleepConsolidator.runOnce).not.toHaveBeenCalled();
   });
 
+  test('primes sleep consolidator state during supervisor init', () => {
+    const result = daemon.init();
+
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
+    expect(mockSleepConsolidator.init).toHaveBeenCalledTimes(1);
+    expect(mockLeaseJanitor.pruneExpiredLeases).toHaveBeenCalledTimes(1);
+  });
+
   test('closes watcher, memory index, and sleep consolidator on stop', async () => {
     daemon.startMemoryIndexWatcher();
     await daemon.stopMemoryIndexWatcher();
@@ -163,6 +180,19 @@ describe('supervisor-daemon integrations', () => {
     expect(mockWatcher.close).toHaveBeenCalledTimes(1);
     expect(mockMemorySearchIndex.close).toHaveBeenCalled();
     expect(mockSleepConsolidator.close).toHaveBeenCalled();
+    expect(mockLeaseJanitor.close).toHaveBeenCalled();
+  });
+
+  test('prunes expired memory leases during tick housekeeping', async () => {
+    mockLeaseJanitor.pruneExpiredLeases.mockReturnValue({
+      ok: true,
+      pruned: 3,
+    });
+
+    await daemon.tick();
+
+    expect(mockLeaseJanitor.pruneExpiredLeases).toHaveBeenCalledTimes(1);
+    expect(daemon.logger.warn).toHaveBeenCalledWith('Pruned 3 expired memory lease(s) during tick');
   });
 
   test('kills expired active workers before launching replacements', async () => {

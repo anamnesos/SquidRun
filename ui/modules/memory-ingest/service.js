@@ -707,6 +707,8 @@ class MemoryIngestService {
           ingest_id: memory.ingest_id,
           memory_class: memory.memory_class,
           claim_type: memory.claim_type || null,
+          correction_of: memory.correction_of || null,
+          supersedes: memory.supersedes || null,
           target_file: artifacts.target_file || route.targetFile || 'workspace/knowledge/workflows.md',
           target_heading: artifacts.target_heading || null,
           base_sha: artifacts.base_sha || null,
