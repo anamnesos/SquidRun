@@ -110,6 +110,7 @@ describe('hm-health-snapshot', () => {
     });
 
     expect(snapshot.status.level).toBe('ok');
+    expect(snapshot.status.label).toBe('OK');
     expect(snapshot.status.score).toBe(100);
     expect(snapshot.status.penalties).toEqual([]);
     expect(snapshot.tests.testFileCount).toBe(2);
@@ -263,6 +264,7 @@ describe('hm-health-snapshot', () => {
 
     expect(snapshot.bridge.mode).toBe('connecting');
     expect(snapshot.status.level).toBe('warn');
+    expect(snapshot.status.label).toBe('WARN');
     expect(snapshot.status.score).toBe(85);
     expect(snapshot.status.warnings).toContain('bridge_enabled_not_connected:disconnected');
     expect(snapshot.status.penalties).toContainEqual({ code: 'bridge_enabled_not_connected', points: 15 });
@@ -297,9 +299,39 @@ describe('hm-health-snapshot', () => {
     const markdown = renderStartupHealthMarkdown(snapshot);
 
     expect(snapshot.status.level).toBe('warn');
+    expect(snapshot.status.label).toBe('WARN');
     expect(snapshot.status.warnings).toContain('memory_consistency_drift:missing=2,orphans=6,duplicates=0');
     expect(markdown).toContain('Sync Status: drift_detected (attention needed)');
     expect(markdown).toContain('Counts: entries=15, nodes=19, missing=2, orphans=6, duplicates=0');
+  });
+
+  test('exports an explicit startup health scoring contract', () => {
+    const {
+      HEALTH_SCORE_PENALTIES,
+      HEALTH_SCORE_THRESHOLDS,
+      getPenaltyPoints,
+      resolveHealthThreshold,
+    } = require('../scripts/hm-health-snapshot');
+
+    expect(HEALTH_SCORE_THRESHOLDS).toEqual([
+      expect.objectContaining({ minScore: 95, level: 'ok', label: 'OK' }),
+      expect.objectContaining({ minScore: 80, level: 'warn', label: 'WARN' }),
+      expect.objectContaining({ minScore: 60, level: 'degraded', label: 'DEGRADED' }),
+      expect.objectContaining({ minScore: 0, level: 'critical', label: 'CRITICAL' }),
+    ]);
+    expect(HEALTH_SCORE_PENALTIES.bridge_enabled_not_connected).toEqual(expect.objectContaining({
+      points: 15,
+      category: 'bridge',
+    }));
+    expect(HEALTH_SCORE_PENALTIES.memory_consistency_drift).toEqual(expect.objectContaining({
+      points: 12,
+      category: 'memory_consistency',
+    }));
+    expect(getPenaltyPoints('missing_key_modules', { count: 2 })).toBe(8);
+    expect(resolveHealthThreshold(100)).toEqual(expect.objectContaining({ label: 'OK' }));
+    expect(resolveHealthThreshold(85)).toEqual(expect.objectContaining({ label: 'WARN' }));
+    expect(resolveHealthThreshold(70)).toEqual(expect.objectContaining({ label: 'DEGRADED' }));
+    expect(resolveHealthThreshold(20)).toEqual(expect.objectContaining({ label: 'CRITICAL' }));
   });
 
   test('falls back to better-sqlite3 when node:sqlite is unavailable', () => {
