@@ -226,6 +226,56 @@ maybeDescribe('cognitive-memory api', () => {
     expect(ranked[0].score).toBeGreaterThan(ranked[1].score);
   });
 
+  test('searchExistingNodes exempts immune nodes from freshness penalties', async () => {
+    const immune = await api.ingest({
+      content: 'ServiceTitan auth endpoint builder token refresh guidance.',
+      category: 'fact',
+      agentId: 'builder',
+      sourceType: 'agent-ingest',
+      sourcePath: 'agent:builder:immune',
+      heading: 'ServiceTitan',
+    });
+    const fresh = await api.ingest({
+      content: 'ServiceTitan auth endpoint builder token refresh guidance.',
+      category: 'fact',
+      agentId: 'builder',
+      sourceType: 'agent-ingest',
+      sourcePath: 'agent:builder:fresh',
+      heading: 'ServiceTitan',
+    });
+
+    const staleMs = Date.now() - (180 * 24 * 60 * 60 * 1000);
+    const freshMs = Date.now();
+    api.init().prepare(`
+      UPDATE nodes
+      SET salience_score = ?,
+          confidence_score = ?,
+          created_at_ms = ?,
+          updated_at_ms = ?,
+          is_immune = ?
+      WHERE node_id = ?
+    `).run(5, 0.9, staleMs, staleMs, 1, immune.node.nodeId);
+    api.init().prepare(`
+      UPDATE nodes
+      SET salience_score = ?,
+          confidence_score = ?,
+          created_at_ms = ?,
+          updated_at_ms = ?,
+          is_immune = ?
+      WHERE node_id = ?
+    `).run(0, 0.5, freshMs, freshMs, 0, fresh.node.nodeId);
+
+    const queryVector = await api.embedText('ServiceTitan auth endpoint builder token refresh guidance');
+    const ranked = api.searchExistingNodes(queryVector, 12)
+      .filter((entry) => entry.node.nodeId === immune.node.nodeId || entry.node.nodeId === fresh.node.nodeId);
+
+    expect(ranked).toHaveLength(2);
+    expect(ranked[0].node.nodeId).toBe(immune.node.nodeId);
+    expect(ranked[0].freshnessPenaltyBypassed).toBe(true);
+    expect(ranked[0].recencyMultiplier).toBe(1);
+    expect(ranked[0].score).toBeGreaterThan(ranked[1].score);
+  });
+
   test('patch enforces OCC and increments version after reconsolidation', async () => {
     const first = await api.retrieve('ServiceTitan auth endpoint', { agentId: 'builder', limit: 1 });
     const second = await api.retrieve('ServiceTitan auth endpoint', { agentId: 'oracle', limit: 1 });
