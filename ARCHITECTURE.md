@@ -260,6 +260,12 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/install-supervisor-task.ps1: PowerShell installer for registering the durable supervisor as a Windows scheduled task.
 - ui/scripts/local_embedder.py: Python helper worker for local embeddings.
 - ui/scripts/test-image-gen.js: Standalone diagnostic for Recraft/OpenAI image APIs with payload logging and variation testing.
+- ui/modules/cognitive-memory-sleep.js: Exports SleepConsolidator, resolves sleep threshold configs, and manages background semantic clustering.
+- ui/modules/cognitive-memory-store.js: Cognitive memory vector and metadata store wrapper over sqlite-vec.
+- ui/modules/memory-search.js: Hybrid FTS and sqlite-vec memory search index and chunking engine.
+- ui/modules/supervisor/index.js: Supervisor module entrypoint.
+- ui/modules/supervisor/store.js: SQLite-backed store for durable background supervisor tasks.
+- ui/scripts/hm-health-snapshot.js: Startup pipeline script that captures codebase and system health for cognitive memory ingest.
 
 ## 4) OUTER-LOOP COORDINATOR MODEL (3-PANE + BACKGROUND)
 - **Architect (Pane 1):** The outer-loop coordinator. Handles decomposition, review, and release gating (no direct implementation). Elevates the AI from individual workers to a management layer over native sub-agents.
@@ -320,7 +326,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 ## 8) COORDINATION STATE (`.squidrun/`)
 - `.squidrun/handoffs/`: materialized session handoff index (`session.md`) from comms journal.
 - `.squidrun/context-snapshots/`: per-pane startup context snapshots (`1.md`, `2.md`, `3.md`, etc.).
-- `.squidrun/runtime/`: live SQLite stores (`evidence-ledger.db*`, `team-memory.sqlite*`).
+- `.squidrun/runtime/`: live SQLite stores (`evidence-ledger.db*`, `team-memory.sqlite*`, `supervisor.sqlite*`).
 - `.squidrun/reports/`: generated audit/review reports.
 - `.squidrun/state/`: runtime queue/state artifacts (e.g., `comms-outbound-queue.json`).
 - `.squidrun/triggers/`: fallback trigger files consumed by watcher for agent delivery.
