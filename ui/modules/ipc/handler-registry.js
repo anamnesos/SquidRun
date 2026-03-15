@@ -47,6 +47,7 @@ const { registerModelSwitchHandlers } = require('./model-switch-handlers');
 const { registerOrganicUIHandlers } = require('./organic-ui-handlers');
 const { registerWhisperHandlers } = require('./whisper-handlers');
 const { registerEvidenceLedgerHandlers } = require('./evidence-ledger-handlers');
+const { registerCognitiveMemoryHandlers } = require('./cognitive-memory-handlers');
 const { registerContractPromotionHandlers } = require('./contract-promotion-handlers');
 const { registerTeamMemoryHandlers } = require('./team-memory-handlers');
 const { registerTransitionLedgerHandlers } = require('./transition-ledger-handlers');
@@ -104,6 +105,7 @@ const DEFAULT_HANDLERS = [
   registerOrganicUIHandlers,
   registerWhisperHandlers,
   registerEvidenceLedgerHandlers,
+  registerCognitiveMemoryHandlers,
   registerContractPromotionHandlers,
   registerTeamMemoryHandlers,
   registerTransitionLedgerHandlers,

@@ -6,8 +6,8 @@
 - Local path: `D:\projects\squidrun`.
 - GitHub repo: `https://github.com/anamnesos/SquidRun`.
 - Deploy/release targets: GitHub Releases + packaged installers built from `ui/` with `npx electron-builder`.
-- Current version: `0.1.31` (`ui/package.json`).
-- Last known state: v0.1.31 — cognitive memory system (ingest/retrieve/promote), startup injection hardening, session rollover memory delivery.
+- Current version: `0.1.32` (`ui/package.json`).
+- Last known state: v0.1.32 — cognitive memory system API runtime integration, supervisor bootstrap (sleep consolidation), time-decay scoring, reactivation thresholds, index syncing on patch, and comprehensive lifecycle wiring.
 
 ## squidrun-site
 

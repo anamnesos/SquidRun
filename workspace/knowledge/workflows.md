@@ -19,11 +19,12 @@
 - **CI Monitoring:** Oracle checks CI status on startup using `ui/scripts/hm-ci-check.js`. Builder owns keeping CI green.
 - **Deep research workflow (AI/dev-tools):** run 2-3 web passes with primary sources only, extract explicit reliability semantics and economics primitives. Send Architect a synthesis that separates hard facts from inference.
 - **Codex self-audit workflow:** verify local install first with `codex --version` and `codex mcp list`. Validate actual machine reach with PowerShell probes.
-- **Cognitive Memory Operations:** 
-  - **Ingest:** Agents can manually push new knowledge to the vector store mid-session using `node ui/scripts/hm-memory-api.js ingest "<fact>" --category <category> --agent <agent-id>`.
-  - **Retrieve:** Query existing memory via `node ui/scripts/hm-memory-api.js retrieve "<query>" --agent <agent-id> --limit N`.
+- **Cognitive Memory Operations:**
+  - **API Integration:** Memory operations (ingest, retrieve, patch, salience) are fully integrated via IPC (`cognitive-memory-handlers.js`) and websocket routing for runtime access.
+  - **Ingest:** Agents can manually push new knowledge to the vector store using `node ui/scripts/hm-memory-api.js ingest "<fact>" --category <category> --agent <agent-id> [--confidence <0..1>]`.
+  - **Retrieve:** Query memory via `node ui/scripts/hm-memory-api.js retrieve "<query>" --agent <agent-id> --limit N`. Retrieval automatically applies time-decay scoring, tracks reactivation thresholds, and consults `transactive_meta` for agent expertise recommendations.
   - **Promote:** Auto-promote pending PRs via `node ui/scripts/hm-memory-promote.js approve --all` so staged facts flow into `workspace/knowledge/`.
-
+  - **Lifecycle & Supervisor:** The Durable Supervisor (`ui/supervisor-daemon.js`) automatically handles background maintenance, including the Sleep Consolidator, memory lease janitor, and index synchronization.
 ## Task Delegation Template (Architect -> Builder)
 Structured envelopes for Builder delegation:
 ```
