@@ -37,6 +37,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/comms-worker.js: Child-process worker entrypoint for async runtime tasks.
 - ui/modules/comms/message-envelope.js: Exports ENVELOPE_VERSION, buildOutboundMessageEnvelope, buildCanonicalEnvelopeMetadata, buildWebSocketDispatchMessage, ....
 - ui/modules/compaction-detector.js: Exports init, processChunk, getState, reset, ....
+- ui/modules/cognitive-memory-api.js: Lease-backed cognitive memory API for ingest, retrieve, patch, salience updates, transactive expertise lookup, and runtime IPC/websocket access over the cognitive memory store/search index.
 - ui/modules/constants.js: Exports BYPASS_CLEAR_DELAY_MS, BUTTON_DEBOUNCE_MS, SPINNER_INTERVAL_MS, UI_IDLE_THRESHOLD_MS, ....
 - ui/modules/context-compressor.js: Exports init, generateSnapshot, refreshAll, refresh, ....
 - ui/modules/contract-promotion-service.js: Exports ACTIONS, normalizeAction, getContractStatsSnapshot, approvePromotion, ....
@@ -66,6 +67,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/ipc/completion-quality-handlers.js: Registers IPC channels (check-completion-quality, validate-state-transition, get-quality-rules, ...).
 - ui/modules/ipc/conflict-detection-handlers.js: Registers IPC channels (get-file-conflicts, check-file-conflicts).
 - ui/modules/ipc/contract-promotion-handlers.js: Exports registerContractPromotionHandlers, unregisterContractPromotionHandlers, CONTRACT_PROMOTION_CHANNEL_ACTIONS.
+- ui/modules/ipc/cognitive-memory-handlers.js: Exports COGNITIVE_MEMORY_CHANNELS, executeCognitiveMemoryOperation, registerCognitiveMemoryHandlers, unregisterCognitiveMemoryHandlers, closeSharedCognitiveMemoryRuntime.
 - ui/modules/ipc/debug-replay-handlers.js: Registers IPC channels (debug-load-session, debug-load-timerange, debug-step-forward, ...).
 - ui/modules/ipc/device-pairing-handlers.js: Registers IPC channels (bridge:get-devices, bridge:get-status, bridge:get-pairing-state, bridge:pairing-init, bridge:pairing-join).
 - ui/modules/ipc/error-handlers.js: Registers IPC channels (get-error-message, show-error-toast, list-error-codes, ...).
@@ -280,6 +282,18 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - Proactive injection is resolved by `ui/modules/memory-ingest/delivery.js`: triggers (`error_signature_match`, `file_path_affinity`, `task_domain_match`, `session_rollover`, `user_preference_activation`) query routed memory objects, apply budgets/rank-down/suppression, and emit ephemeral Tier 4 assistive or authoritative notes into pane context.
 - Delivery budgets are enforced per pane through `memory_injection_events` / `memory_injection_suppressions` (max 1 per trigger event, max 3 per 10 minutes unless explicit, rank-down after 2 unreferenced injections, dismissal suppression until context changes).
 - Compaction survival persists pre-compact active-task notes plus Tier 3 extracted insights into `memory_compaction_survival`, then re-reads Tier 1 files from disk on resume before reinjecting the survival summary.
+
+## 5B) COGNITIVE MEMORY (CURRENT RUNTIME STATE)
+- Runtime access is live, not CLI-only: `ui/modules/ipc/cognitive-memory-handlers.js`, `ui/modules/bridge/preload-api.js`, and `ui/modules/main/squidrun-app.js` expose ingest/retrieve/patch/salience operations over IPC plus structured websocket routing.
+- Retrieval scoring now applies bounded age decay in both `ui/modules/cognitive-memory-api.js` and `ui/modules/memory-search.js`, so older high-salience memories lose rank over time instead of permanently dominating fresh evidence.
+- Retrieval access is tiered: exploratory reads update `last_accessed_at` / `access_count`, while repeated or explicit use reactivates recency. This prevents casual lookups from fully refreshing stale memories.
+- `transactive_meta` is consulted during `retrieve()`. When expertise rows exist, the API returns additive transactive guidance (`matches`, `recommendedAgentId`) alongside normal content results.
+- Patch writes stay in sync with search: `cognitive-memory-api.patch()` updates linked `memory-document:<id>` entries in `search-index.db`, including the FTS and vector-backed rows managed by `ui/modules/memory-search.js`.
+- Supervisor-backed maintenance is live: `ui/supervisor-daemon.js` initializes the sleep consolidator and lease janitor during startup, then reruns housekeeping on each supervisor tick while writing status under `.squidrun/runtime/`.
+- Sleep consolidation is wired through the supervisor, but it is intentionally gated by idle/activity thresholds. Its tables initialize at supervisor startup; full clustering/extraction runs only when the session is idle enough.
+- Memory expiration is enforced in active delivery paths: `ui/modules/memory-ingest/delivery.js` excludes expired rows from proactive injection, and `ui/modules/memory-ingest/lifecycle.js` advances expired memories to `status='expired'`.
+- Lifecycle maintenance is no longer dead code: successful delivery records access, and session rollover in `ui/modules/main/squidrun-app.js` runs `advance-memory-lifecycle` plus `review-stale-memories` before proactive injection.
+- Promotion corrections now supersede originals: approved correction candidates persist `correction_of` / `supersedes` links and move the original memory to `superseded` instead of leaving both memories active.
 
 ## 6) DATA FLOW
 1. User types in pane 1 broadcast input (`ui/index.html#broadcastInput`, `ui/renderer.js`).

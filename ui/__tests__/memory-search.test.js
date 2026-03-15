@@ -214,4 +214,108 @@ maybeDescribe('memory-search', () => {
       index.close();
     }
   });
+
+  test('search downranks stale documents when freshness is the main differentiator', async () => {
+    fs.writeFileSync(path.join(workspaceDir, 'knowledge', 'legacy-memory.md'), [
+      '# Legacy Memory',
+      '',
+      'The durable route planner checksum keeps builder dispatches aligned.',
+      '',
+    ].join('\n'));
+    fs.writeFileSync(path.join(workspaceDir, 'knowledge', 'current-memory.md'), [
+      '# Current Memory',
+      '',
+      'The durable route planner checksum keeps builder dispatches aligned.',
+      '',
+    ].join('\n'));
+
+    const index = new MemorySearchIndex({
+      workspaceDir,
+      embedder: mockEmbedder,
+    });
+
+    try {
+      await index.indexAll({ force: true });
+      const db = index.init();
+      const docs = db.prepare(`
+        SELECT document_id, source_path
+        FROM memory_documents
+        WHERE source_path IN (?, ?)
+        ORDER BY document_id ASC
+      `).all('knowledge/legacy-memory.md', 'knowledge/current-memory.md');
+
+      expect(docs).toHaveLength(2);
+
+      const staleDoc = docs.find((doc) => doc.source_path === 'knowledge/legacy-memory.md');
+      const freshDoc = docs.find((doc) => doc.source_path === 'knowledge/current-memory.md');
+      const staleMs = Date.now() - (180 * 24 * 60 * 60 * 1000);
+      const freshMs = Date.now();
+
+      db.prepare(`
+        UPDATE memory_documents
+        SET last_modified_ms = ?,
+            created_at_ms = ?,
+            updated_at_ms = ?
+        WHERE document_id = ?
+      `).run(staleMs, staleMs, staleMs, staleDoc.document_id);
+      db.prepare(`
+        UPDATE memory_documents
+        SET last_modified_ms = ?,
+            created_at_ms = ?,
+            updated_at_ms = ?
+        WHERE document_id = ?
+      `).run(freshMs, freshMs, freshMs, freshDoc.document_id);
+
+      const result = await index.search('durable route planner checksum', { limit: 6 });
+      const ranked = result.results.filter((entry) => (
+        entry.sourcePath === 'knowledge/legacy-memory.md'
+        || entry.sourcePath === 'knowledge/current-memory.md'
+      ));
+
+      expect(ranked).toHaveLength(2);
+      expect(ranked[0].sourcePath).toBe('knowledge/current-memory.md');
+      expect(ranked[1].sourcePath).toBe('knowledge/legacy-memory.md');
+      expect(ranked[0].score).toBeGreaterThan(ranked[1].score);
+    } finally {
+      index.close();
+    }
+  });
+
+  test('updateDocument refreshes stored content and searchability without a rebuild', async () => {
+    const index = new MemorySearchIndex({
+      workspaceDir,
+      embedder: mockEmbedder,
+    });
+
+    try {
+      await index.indexAll({ force: true });
+      const original = await index.search('plumbing business automation', { limit: 3 });
+      const document = original.results.find((entry) => entry.sourcePath === 'knowledge/user-context.md');
+      expect(document).toBeTruthy();
+
+      const updated = await index.updateDocument(document.documentId, {
+        content: 'the user now wants concise plumbing dispatch automation with milestone checkpoints.',
+        metadata: { syncedFrom: 'test' },
+        nowMs: 5000,
+      });
+
+      expect(updated).toEqual(expect.objectContaining({
+        ok: true,
+        document: expect.objectContaining({
+          document_id: document.documentId,
+          content: expect.stringContaining('milestone checkpoints'),
+        }),
+      }));
+
+      const refreshed = await index.search('milestone checkpoints', { limit: 3 });
+      expect(refreshed.results).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          documentId: document.documentId,
+          content: expect.stringContaining('milestone checkpoints'),
+        }),
+      ]));
+    } finally {
+      index.close();
+    }
+  });
 });

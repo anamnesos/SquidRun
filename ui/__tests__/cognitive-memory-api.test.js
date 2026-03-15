@@ -95,6 +95,13 @@ maybeDescribe('cognitive-memory api', () => {
   });
 
   test('retrieve returns lease-backed results and records access', async () => {
+    store.recordTransactiveUse({
+      domain: 'service titan api',
+      agent_id: 'builder',
+      pane_id: '2',
+      expertise_delta: 0.3,
+    });
+
     const result = await api.retrieve('ServiceTitan auth endpoint', {
       agentId: 'builder',
       limit: 2,
@@ -107,6 +114,16 @@ maybeDescribe('cognitive-memory api', () => {
       leaseId: expect.stringMatching(/^lease-/),
       sourcePath: 'knowledge/infrastructure.md',
     }));
+    expect(result.transactive).toEqual(expect.objectContaining({
+      ok: true,
+      recommendedAgentId: 'builder',
+    }));
+    expect(result.transactive.matches).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        domain: 'service titan api',
+        primaryAgentId: 'builder',
+      }),
+    ]));
 
     const node = api.getNode(result.results[0].nodeId);
     expect(node).toEqual(expect.objectContaining({
@@ -120,6 +137,93 @@ maybeDescribe('cognitive-memory api', () => {
       agent_id: 'builder',
       version_at_lease: 1,
     }));
+  });
+
+  test('retrieve returns empty transactive guidance when no expertise matches the query', async () => {
+    store.recordTransactiveUse({
+      domain: 'relay orchestration',
+      agent_id: 'oracle',
+      pane_id: '3',
+      expertise_delta: 0.25,
+    });
+
+    const result = await api.retrieve('plumbing customer context', {
+      agentId: 'builder',
+      limit: 1,
+    });
+
+    expect(result.transactive).toEqual({
+      ok: true,
+      matches: [],
+      recommendedAgentId: null,
+    });
+  });
+
+  test('ingest creates a node through the first-class runtime API method', async () => {
+    const result = await api.ingest({
+      content: 'Builder verified that ServiceTitan auth now uses /v2/token.',
+      category: 'fact',
+      agentId: 'builder',
+      sourceType: 'agent-ingest',
+      sourcePath: 'agent:builder',
+      heading: 'ServiceTitan',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      node: expect.objectContaining({
+        nodeId: expect.stringMatching(/^node-/),
+        sourcePath: 'agent:builder',
+        heading: 'ServiceTitan',
+      }),
+    }));
+    expect(result.node.content).toContain('/v2/token');
+  });
+
+  test('searchExistingNodes downranks stale nodes even when they carry more salience', async () => {
+    const stale = await api.ingest({
+      content: 'ServiceTitan auth endpoint builder token refresh guidance.',
+      category: 'fact',
+      agentId: 'builder',
+      sourceType: 'agent-ingest',
+      sourcePath: 'agent:builder:stale',
+      heading: 'ServiceTitan',
+    });
+    const fresh = await api.ingest({
+      content: 'ServiceTitan auth endpoint builder token refresh guidance.',
+      category: 'fact',
+      agentId: 'builder',
+      sourceType: 'agent-ingest',
+      sourcePath: 'agent:builder:fresh',
+      heading: 'ServiceTitan',
+    });
+
+    const staleMs = Date.now() - (180 * 24 * 60 * 60 * 1000);
+    const freshMs = Date.now();
+    api.init().prepare(`
+      UPDATE nodes
+      SET salience_score = ?,
+          confidence_score = ?,
+          created_at_ms = ?,
+          updated_at_ms = ?
+      WHERE node_id = ?
+    `).run(5, 0.9, staleMs, staleMs, stale.node.nodeId);
+    api.init().prepare(`
+      UPDATE nodes
+      SET salience_score = ?,
+          confidence_score = ?,
+          created_at_ms = ?,
+          updated_at_ms = ?
+      WHERE node_id = ?
+    `).run(0, 0.5, freshMs, freshMs, fresh.node.nodeId);
+
+    const queryVector = await api.embedText('ServiceTitan auth endpoint builder token refresh guidance');
+    const ranked = api.searchExistingNodes(queryVector, 12)
+      .filter((entry) => entry.node.nodeId === stale.node.nodeId || entry.node.nodeId === fresh.node.nodeId);
+
+    expect(ranked).toHaveLength(2);
+    expect(ranked[0].node.nodeId).toBe(fresh.node.nodeId);
+    expect(ranked[0].score).toBeGreaterThan(ranked[1].score);
   });
 
   test('patch enforces OCC and increments version after reconsolidation', async () => {
@@ -152,6 +256,119 @@ maybeDescribe('cognitive-memory api', () => {
       currentVersion: 2,
       leaseVersion: 1,
     }));
+  });
+
+  test('patch syncs linked search index documents immediately', async () => {
+    const indexedBefore = await index.search('ServiceTitan auth endpoint', { limit: 2 });
+    const linkedDocument = indexedBefore.results.find((entry) => entry.sourcePath === 'knowledge/infrastructure.md');
+    expect(linkedDocument).toBeTruthy();
+
+    const retrieved = await api.retrieve('ServiceTitan auth endpoint', { agentId: 'builder', limit: 1 });
+    const patched = await api.patch(
+      retrieved.results[0].leaseId,
+      'ServiceTitan API auth endpoint is now /v2/token instead of /v1/token.',
+      { agentId: 'builder', reason: 'verified against live auth failure' }
+    );
+
+    expect(patched).toEqual(expect.objectContaining({
+      ok: true,
+      searchIndexSync: expect.objectContaining({
+        ok: true,
+        updated: expect.any(Number),
+      }),
+    }));
+    expect(patched.searchIndexSync.updated).toBeGreaterThanOrEqual(1);
+
+    const row = index.init().prepare(`
+      SELECT content, metadata_json
+      FROM memory_documents
+      WHERE document_id = ?
+      LIMIT 1
+    `).get(linkedDocument.documentId);
+    expect(row.content).toContain('/v2/token');
+    expect(JSON.parse(row.metadata_json)).toEqual(expect.objectContaining({
+      cognitiveNodeId: patched.node.nodeId,
+      cognitiveVersion: patched.node.currentVersion,
+    }));
+
+    const indexedAfter = await index.search('v2 token', { limit: 3 });
+    expect(indexedAfter.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        documentId: linkedDocument.documentId,
+        content: expect.stringContaining('/v2/token'),
+      }),
+    ]));
+  });
+
+  test('single retrieval access updates last_accessed_at without reactivating recency', async () => {
+    const ingested = await api.ingest({
+      content: 'Builder note about stale supervisor retry guidance.',
+      category: 'fact',
+      agentId: 'builder',
+      sourceType: 'agent-ingest',
+      sourcePath: 'agent:builder:reactivation-single',
+      heading: 'Supervisor',
+    });
+    const staleMs = Date.now() - (120 * 24 * 60 * 60 * 1000);
+    api.init().prepare(`
+      UPDATE nodes
+      SET created_at_ms = ?,
+          updated_at_ms = ?,
+          last_accessed_at = NULL
+      WHERE node_id = ?
+    `).run(staleMs, staleMs, ingested.node.nodeId);
+
+    const result = api.markNodesAccessed([ingested.node.nodeId], {
+      accessKind: 'retrieval',
+      nowMs: staleMs + 1000,
+    });
+    const node = api.getNode(ingested.node.nodeId);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      updated: 1,
+      reactivated: 0,
+    }));
+    expect(node.accessCount).toBe(1);
+    expect(node.lastAccessedAt).toBe(new Date(staleMs + 1000).toISOString());
+    expect(node.updatedAtMs).toBe(staleMs);
+  });
+
+  test('repeat retrieval within the reactivation window refreshes recency', async () => {
+    const ingested = await api.ingest({
+      content: 'Builder note about stale supervisor retry guidance.',
+      category: 'fact',
+      agentId: 'builder',
+      sourceType: 'agent-ingest',
+      sourcePath: 'agent:builder:reactivation-repeat',
+      heading: 'Supervisor',
+    });
+    const staleMs = Date.now() - (120 * 24 * 60 * 60 * 1000);
+    api.init().prepare(`
+      UPDATE nodes
+      SET created_at_ms = ?,
+          updated_at_ms = ?,
+          last_accessed_at = NULL
+      WHERE node_id = ?
+    `).run(staleMs, staleMs, ingested.node.nodeId);
+
+    api.markNodesAccessed([ingested.node.nodeId], {
+      accessKind: 'retrieval',
+      nowMs: staleMs + 1000,
+    });
+    const result = api.markNodesAccessed([ingested.node.nodeId], {
+      accessKind: 'retrieval',
+      nowMs: staleMs + 2000,
+    });
+    const node = api.getNode(ingested.node.nodeId);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      updated: 1,
+      reactivated: 1,
+    }));
+    expect(node.accessCount).toBe(2);
+    expect(node.updatedAtMs).toBe(staleMs + 2000);
   });
 
   test('salience field propagates through related nodes and edges', async () => {

@@ -18,6 +18,19 @@ const DEFAULT_PHRASE_MATCH_WEIGHT = 0.015;
 const DEFAULT_TITLE_MATCH_WEIGHT = 0.01;
 const DEFAULT_HEADING_MATCH_WEIGHT = 0.008;
 const DEFAULT_SEMANTIC_ONLY_PENALTY = 0.01;
+const DEFAULT_RECENCY_HALF_LIFE_MS = Math.max(
+  86_400_000,
+  Number.parseInt(process.env.SQUIDRUN_MEMORY_RECENCY_HALF_LIFE_MS || `${30 * 86_400_000}`, 10) || (30 * 86_400_000)
+);
+const DEFAULT_MIN_RECENCY_MULTIPLIER = Math.max(
+  0.1,
+  Math.min(
+    1,
+    Number.isFinite(Number(process.env.SQUIDRUN_MEMORY_MIN_RECENCY_MULTIPLIER))
+      ? Number(process.env.SQUIDRUN_MEMORY_MIN_RECENCY_MULTIPLIER)
+      : 0.55
+  )
+);
 const SUPPORTED_KNOWLEDGE_EXTENSIONS = new Set(['.md', '.markdown']);
 
 function resolveWorkspacePaths(options = {}) {
@@ -398,6 +411,20 @@ function computeDocumentMatchSignals(doc, query) {
     titleMatch: tokens.some((token) => titleText.includes(token)),
     headingMatch: tokens.some((token) => headingText.includes(token)),
   };
+}
+
+function computeRecencyMultiplier(referenceMs, nowMs = Date.now()) {
+  const normalizedReferenceMs = Number(referenceMs || 0);
+  if (!Number.isFinite(normalizedReferenceMs) || normalizedReferenceMs <= 0) {
+    return DEFAULT_MIN_RECENCY_MULTIPLIER;
+  }
+
+  const ageMs = Math.max(0, Number(nowMs || Date.now()) - normalizedReferenceMs);
+  if (ageMs === 0) return 1;
+
+  const freshness = Math.exp((-Math.log(2) * ageMs) / DEFAULT_RECENCY_HALF_LIFE_MS);
+  return DEFAULT_MIN_RECENCY_MULTIPLIER
+    + ((1 - DEFAULT_MIN_RECENCY_MULTIPLIER) * freshness);
 }
 
 function parseMarkdownTable(sectionText) {
@@ -901,6 +928,105 @@ class MemorySearchIndex {
     `).all(...ids);
   }
 
+  getDocumentById(documentId) {
+    const normalizedId = Number(documentId);
+    if (!Number.isFinite(normalizedId) || normalizedId <= 0) return null;
+    return this.init().prepare(`
+      SELECT * FROM memory_documents WHERE document_id = ? LIMIT 1
+    `).get(normalizedId) || null;
+  }
+
+  async updateDocument(documentId, patch = {}) {
+    const normalizedId = Number(documentId);
+    if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
+      return { ok: false, reason: 'document_id_required' };
+    }
+
+    const existing = this.getDocumentById(normalizedId);
+    if (!existing) {
+      return { ok: false, reason: 'document_not_found', documentId: normalizedId };
+    }
+
+    const nextContent = normalizeWhitespace(
+      Object.prototype.hasOwnProperty.call(patch, 'content')
+        ? patch.content
+        : existing.content
+    );
+    if (!nextContent) {
+      return { ok: false, reason: 'content_required', documentId: normalizedId };
+    }
+
+    const nowMs = Number.isFinite(Number(patch.nowMs)) ? Math.floor(Number(patch.nowMs)) : Date.now();
+    const nextMetadata = patch.metadata && typeof patch.metadata === 'object' && !Array.isArray(patch.metadata)
+      ? patch.metadata
+      : (() => { try { return existing.metadata_json ? JSON.parse(existing.metadata_json) : {}; } catch { return {}; } })();
+    const nextTitle = Object.prototype.hasOwnProperty.call(patch, 'title') ? patch.title : existing.title;
+    const nextHeading = Object.prototype.hasOwnProperty.call(patch, 'heading') ? patch.heading : existing.heading;
+    const nextSourceType = Object.prototype.hasOwnProperty.call(patch, 'sourceType') ? patch.sourceType : existing.source_type;
+    const nextSourcePath = Object.prototype.hasOwnProperty.call(patch, 'sourcePath') ? patch.sourcePath : existing.source_path;
+    const nextConfidence = Number.isFinite(Number(patch.confidence)) ? Number(patch.confidence) : Number(existing.confidence || 0.5);
+    const nextAccessCount = Number.isFinite(Number(patch.accessCount)) ? Math.max(0, Math.floor(Number(patch.accessCount))) : Number(existing.access_count || 0);
+    const nextLastAccessedAtMs = Object.prototype.hasOwnProperty.call(patch, 'lastAccessedAtMs')
+      ? (patch.lastAccessedAtMs == null ? null : Math.floor(Number(patch.lastAccessedAtMs)))
+      : (existing.last_accessed_at_ms == null ? null : Number(existing.last_accessed_at_ms));
+    const nextLastModifiedMs = Number.isFinite(Number(patch.lastModifiedMs))
+      ? Math.floor(Number(patch.lastModifiedMs))
+      : nowMs;
+    const vector = await this.getEmbedder().then((embedder) => embedder.embed(nextContent));
+    const db = this.init();
+
+    db.exec('BEGIN IMMEDIATE;');
+    try {
+      db.prepare(`
+        UPDATE memory_documents
+        SET source_type = ?,
+            source_path = ?,
+            title = ?,
+            heading = ?,
+            content = ?,
+            content_hash = ?,
+            last_modified_ms = ?,
+            metadata_json = ?,
+            confidence = ?,
+            access_count = ?,
+            last_accessed_at_ms = ?,
+            updated_at_ms = ?
+        WHERE document_id = ?
+      `).run(
+        nextSourceType,
+        nextSourcePath,
+        nextTitle,
+        nextHeading,
+        nextContent,
+        sha256(nextContent),
+        nextLastModifiedMs,
+        JSON.stringify(nextMetadata),
+        nextConfidence,
+        nextAccessCount,
+        nextLastAccessedAtMs,
+        nowMs,
+        normalizedId
+      );
+      db.prepare('DELETE FROM memory_documents_fts WHERE rowid = ?').run(BigInt(normalizedId));
+      db.prepare(`
+        INSERT INTO memory_documents_fts (rowid, title, heading, content, source_path, source_type)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(BigInt(normalizedId), nextTitle, nextHeading, nextContent, nextSourcePath, nextSourceType);
+      db.prepare('DELETE FROM memory_documents_vec WHERE rowid = ?').run(BigInt(normalizedId));
+      db.prepare(`
+        INSERT INTO memory_documents_vec (rowid, embedding) VALUES (?, ?)
+      `).run(BigInt(normalizedId), JSON.stringify(vector));
+      db.exec('COMMIT;');
+      return {
+        ok: true,
+        document: this.getDocumentById(normalizedId),
+      };
+    } catch (err) {
+      try { db.exec('ROLLBACK;'); } catch {}
+      throw err;
+    }
+  }
+
   markAccessed(documentIds) {
     const ids = Array.from(new Set((documentIds || []).map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)));
     if (ids.length === 0) return;
@@ -921,6 +1047,7 @@ class MemorySearchIndex {
       return { ok: false, reason: 'query_required', results: [] };
     }
 
+    const nowMs = Date.now();
     const limit = toPosInt(options.limit, 8);
     const candidateLimit = Math.max(limit, toPosInt(options.candidateLimit, 20));
     const keywordRows = this.keywordSearch(trimmedQuery, candidateLimit);
@@ -971,7 +1098,7 @@ class MemorySearchIndex {
         const signals = computeDocumentMatchSignals(doc, trimmedQuery);
         const keywordScore = Number(entry.keywordScore || 0);
         const semanticScore = Number(entry.semanticScore || 0);
-        const score = (
+        const baseScore = (
           (keywordScore * DEFAULT_KEYWORD_WEIGHT)
           + (semanticScore * DEFAULT_SEMANTIC_WEIGHT)
           + (signals.tokenCoverage * DEFAULT_TOKEN_COVERAGE_WEIGHT)
@@ -982,6 +1109,11 @@ class MemorySearchIndex {
             ? DEFAULT_SEMANTIC_ONLY_PENALTY
             : 0)
         );
+        const recencyMultiplier = computeRecencyMultiplier(
+          Math.max(Number(doc.last_modified_ms || 0), Number(doc.created_at_ms || 0)),
+          nowMs
+        );
+        const score = baseScore * recencyMultiplier;
         return {
           documentId: entry.documentId,
           score: Number(score.toFixed(8)),

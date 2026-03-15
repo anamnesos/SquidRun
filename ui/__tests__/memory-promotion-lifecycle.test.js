@@ -83,6 +83,101 @@ maybeDescribe('memory promotion and lifecycle phase 3', () => {
     expect(fs.readFileSync(path.join(tempDir, 'workspace', 'knowledge', 'workflows.md'), 'utf8')).toContain('Use hm-send for agent messaging.');
   });
 
+  test('approved correction promotions supersede the original memory', () => {
+    const original = runtime.executeTeamMemoryOperation('ingest-memory', {
+      content: 'Use hm-send for agent messaging.',
+      memory_class: 'procedural_rule',
+      provenance: { source: 'builder', kind: 'observed' },
+      confidence: 0.92,
+      source_trace: 'phase3-correction-original',
+      session_ordinal: 1,
+      project_root: tempDir,
+      nowMs: 1000,
+    });
+    const originalMemoryId = original.result_refs.find((entry) => entry.kind === 'memory_object').id;
+
+    let store = openStore(dbPath);
+    const originalCandidate = store.db.prepare(`
+      SELECT candidate_id
+      FROM memory_promotion_queue
+      WHERE memory_id = ?
+      LIMIT 1
+    `).get(originalMemoryId);
+    store.close();
+
+    const originalApprove = runtime.executeTeamMemoryOperation('approve-memory-promotion', {
+      candidate_id: originalCandidate.candidate_id,
+      reviewer: 'architect',
+      project_root: tempDir,
+      nowMs: 1500,
+    });
+    expect(originalApprove).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'promoted',
+      correctionApplied: false,
+    }));
+
+    const correction = runtime.executeTeamMemoryOperation('ingest-memory', {
+      content: 'Use hm-send for all agent messaging because terminal output is not inter-agent communication.',
+      memory_class: 'procedural_rule',
+      provenance: { source: 'builder', kind: 'observed' },
+      confidence: 0.96,
+      source_trace: 'phase3-correction-updated',
+      correction_of: originalMemoryId,
+      session_ordinal: 2,
+      project_root: tempDir,
+      nowMs: 2000,
+    });
+    const correctionMemoryId = correction.result_refs.find((entry) => entry.kind === 'memory_object').id;
+
+    store = openStore(dbPath);
+    const correctionCandidate = store.db.prepare(`
+      SELECT candidate_id, correction_of, supersedes
+      FROM memory_promotion_queue
+      WHERE memory_id = ?
+      LIMIT 1
+    `).get(correctionMemoryId);
+    expect(correctionCandidate).toEqual(expect.objectContaining({
+      correction_of: originalMemoryId,
+      supersedes: null,
+    }));
+    store.close();
+
+    const correctionApprove = runtime.executeTeamMemoryOperation('approve-memory-promotion', {
+      candidate_id: correctionCandidate.candidate_id,
+      reviewer: 'architect',
+      project_root: tempDir,
+      nowMs: 2500,
+    });
+    expect(correctionApprove).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'promoted',
+      correctionApplied: true,
+      supersededMemoryId: originalMemoryId,
+    }));
+
+    const verify = openStore(dbPath);
+    expect(verify.db.prepare(`
+      SELECT status, lifecycle_state
+      FROM memory_objects
+      WHERE memory_id = ?
+    `).get(originalMemoryId)).toEqual(expect.objectContaining({
+      status: 'superseded',
+      lifecycle_state: 'superseded',
+    }));
+    expect(verify.db.prepare(`
+      SELECT status, lifecycle_state, correction_of, supersedes
+      FROM memory_objects
+      WHERE memory_id = ?
+    `).get(correctionMemoryId)).toEqual(expect.objectContaining({
+      status: 'active',
+      lifecycle_state: 'active',
+      correction_of: originalMemoryId,
+      supersedes: originalMemoryId,
+    }));
+    verify.close();
+  });
+
   test('reject marks promotion candidate and memory as rejected', () => {
     runtime.executeTeamMemoryOperation('ingest-memory', {
       content: 'Always review ws reconnect alerts in devtools.',
@@ -215,6 +310,42 @@ maybeDescribe('memory promotion and lifecycle phase 3', () => {
     `).get(memoryId);
     expect(row.lifecycle_state).toBe('stale');
     expect(row.stale_window_until_session).toBe(17);
+    verify.close();
+  });
+
+  test('advance-memory-lifecycle marks expired memories as expired', () => {
+    const ingest = runtime.executeTeamMemoryOperation('ingest-memory', {
+      content: 'Session-only override that should expire quickly.',
+      memory_class: 'active_task_state',
+      provenance: { source: 'builder', kind: 'observed' },
+      confidence: 0.8,
+      source_trace: 'phase3-expiry-1',
+      session_ordinal: 1,
+      expires_at: 1500,
+      nowMs: 1000,
+    });
+    const memoryId = ingest.result_refs.find((entry) => entry.kind === 'memory_object').id;
+
+    const advanced = runtime.executeTeamMemoryOperation('advance-memory-lifecycle', {
+      session_ordinal: 2,
+      nowMs: 2000,
+    });
+
+    expect(advanced).toEqual(expect.objectContaining({
+      ok: true,
+      expiredCount: 1,
+    }));
+
+    const verify = openStore(dbPath);
+    expect(verify.db.prepare(`
+      SELECT status, lifecycle_state, archived_at
+      FROM memory_objects
+      WHERE memory_id = ?
+    `).get(memoryId)).toEqual(expect.objectContaining({
+      status: 'expired',
+      lifecycle_state: 'archived',
+      archived_at: 2000,
+    }));
     verify.close();
   });
 

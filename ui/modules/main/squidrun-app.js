@@ -83,6 +83,10 @@ const {
   executeEvidenceLedgerOperation,
   closeSharedRuntime,
 } = require('../ipc/evidence-ledger-handlers');
+const {
+  executeCognitiveMemoryOperation,
+  closeSharedCognitiveMemoryRuntime,
+} = require('../ipc/cognitive-memory-handlers');
 const { executeTransitionLedgerOperation } = require('../ipc/transition-ledger-handlers');
 const { executeGitHubOperation } = require('../ipc/github-handlers');
 const { executePaneControlAction } = require('./pane-control-service');
@@ -155,6 +159,18 @@ const DAEMON_CONNECT_TIMEOUT_MS = Math.max(
   Number.parseInt(process.env.SQUIDRUN_DAEMON_CONNECT_TIMEOUT_MS || '15000', 10) || 15000
 );
 const DAEMON_PID_FILE = resolveCoordPath('runtime/daemon.pid', { forWrite: true });
+const SUPERVISOR_DAEMON_SCRIPT = path.join(__dirname, '..', '..', 'supervisor-daemon.js');
+const SUPERVISOR_PID_FILE = resolveCoordPath('runtime/supervisor.pid', { forWrite: true });
+const SUPERVISOR_STATUS_FILE = resolveCoordPath('runtime/supervisor-status.json', { forWrite: true });
+const SUPERVISOR_LOG_FILE = resolveCoordPath('runtime/supervisor.log', { forWrite: true });
+const SUPERVISOR_STATUS_STALE_MULTIPLIER = Math.max(
+  3,
+  Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_STATUS_STALE_MULTIPLIER || '4', 10) || 4
+);
+const SUPERVISOR_STATUS_STALE_MIN_MS = Math.max(
+  15000,
+  Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_STATUS_STALE_MIN_MS || '15000', 10) || 15000
+);
 const RENDERER_ENTRY_HTML = path.join(__dirname, '..', '..', 'index.html');
 const SHUTDOWN_CONFIRM_MESSAGE = 'All active agent sessions will be terminated.\n\nContinue?';
 const EXTERNAL_WORKSPACE_DIRNAME = 'SquidRun';
@@ -398,6 +414,7 @@ class SquidRunApp {
     this.mainWindowSendInterceptInstalled = false;
     this.websocketStartRetryTimer = null;
     this.websocketStartRetryAttempt = 0;
+    this.supervisorBootstrapPromise = null;
     this.daemonConnectTimeoutTimer = null;
     this.daemonConnectedForStartup = false;
     this.daemonTimeoutTriggered = false;
@@ -1747,6 +1764,13 @@ class SquidRunApp {
     if (!daemonConnected) {
       log.warn('Daemon', 'Initial daemon connect attempt failed; waiting for reconnect/timeout fallback');
     }
+    const supervisorResult = await this.ensureSupervisorDaemonRunning('app-init');
+    if (!supervisorResult?.ok) {
+      log.warn(
+        'Supervisor',
+        `Bootstrap failed during init: ${supervisorResult?.error || supervisorResult?.reason || 'unknown'}`
+      );
+    }
     this.scheduleDaemonConnectTimeout();
     this.backgroundAgentManager.start();
     this.settings.writeAppStatus({
@@ -1866,6 +1890,20 @@ class SquidRunApp {
 
           if (data.message.type === 'team-memory') {
             return teamMemory.executeTeamMemoryOperation(
+              data.message.action,
+              data.message.payload || {},
+              {
+                source: {
+                  via: 'websocket',
+                  role: data.role || 'system',
+                  paneId: data.paneId || null,
+                },
+              }
+            );
+          }
+
+          if (data.message.type === 'cognitive-memory') {
+            return executeCognitiveMemoryOperation(
               data.message.action,
               data.message.payload || {},
               {
@@ -3093,6 +3131,14 @@ class SquidRunApp {
     });
 
     try {
+      const supervisorResult = await this.ensureSupervisorDaemonRunning('wake-recovery');
+      if (!supervisorResult?.ok) {
+        log.warn(
+          'Supervisor',
+          `Wake recovery bootstrap failed: ${supervisorResult?.error || supervisorResult?.reason || 'unknown'}`
+        );
+      }
+
       const daemonClient = this.ctx.daemonClient;
       if (!daemonClient) {
         this.emitCommsBridgeEvent('comms.transport.recovery.failed', {
@@ -3267,6 +3313,280 @@ class SquidRunApp {
       detail: SHUTDOWN_CONFIRM_MESSAGE,
     });
     return result.response === 1;
+  }
+
+  getSupervisorRuntimePaths() {
+    return {
+      daemonScriptPath: SUPERVISOR_DAEMON_SCRIPT,
+      pidPath: SUPERVISOR_PID_FILE,
+      statusPath: SUPERVISOR_STATUS_FILE,
+      logPath: SUPERVISOR_LOG_FILE,
+    };
+  }
+
+  readTextFileSafe(filePath, fallback = '') {
+    try {
+      return String(fs.readFileSync(filePath, 'utf8') || '');
+    } catch {
+      return fallback;
+    }
+  }
+
+  readJsonFileSafe(filePath, fallback = null) {
+    try {
+      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch {
+      return fallback;
+    }
+  }
+
+  parseSupervisorPidPayload(rawValue = '') {
+    const raw = String(rawValue || '').trim();
+    if (!raw) {
+      return { pid: null, payload: null };
+    }
+
+    try {
+      const payload = JSON.parse(raw);
+      return {
+        pid: asPositiveInt(payload?.pid, null),
+        payload,
+      };
+    } catch {
+      return {
+        pid: asPositiveInt(raw, null),
+        payload: null,
+      };
+    }
+  }
+
+  isProcessAlive(pid) {
+    const numeric = asPositiveInt(pid, null);
+    if (!numeric) return false;
+    try {
+      process.kill(numeric, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  getSupervisorStatusFreshnessWindowMs(status = {}) {
+    const pollMs = asPositiveInt(
+      status?.pollMs,
+      Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_POLL_MS || '4000', 10) || 4000
+    );
+    return Math.max(SUPERVISOR_STATUS_STALE_MIN_MS, pollMs * SUPERVISOR_STATUS_STALE_MULTIPLIER);
+  }
+
+  readSupervisorRuntimeSnapshot(options = {}) {
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+    const runtimePaths = this.getSupervisorRuntimePaths();
+    const daemonScriptExists = fs.existsSync(runtimePaths.daemonScriptPath);
+    const pidFilePresent = fs.existsSync(runtimePaths.pidPath);
+    const statusFilePresent = fs.existsSync(runtimePaths.statusPath);
+    const pidInfo = this.parseSupervisorPidPayload(this.readTextFileSafe(runtimePaths.pidPath, ''));
+    const status = this.readJsonFileSafe(runtimePaths.statusPath, null);
+    const pid = asPositiveInt(pidInfo.pid, null);
+    const pidAlive = this.isProcessAlive(pid);
+    const heartbeatAtMs = Number.isFinite(Number(status?.heartbeatAtMs))
+      ? Math.floor(Number(status.heartbeatAtMs))
+      : null;
+    const freshnessWindowMs = this.getSupervisorStatusFreshnessWindowMs(status || {});
+    const heartbeatAgeMs = heartbeatAtMs !== null ? Math.max(0, nowMs - heartbeatAtMs) : null;
+    const heartbeatFresh = heartbeatAgeMs !== null ? heartbeatAgeMs <= freshnessWindowMs : false;
+    const state = typeof status?.state === 'string' ? status.state.trim().toLowerCase() : null;
+    const staleReasons = [];
+
+    if (pid && !pidAlive) {
+      staleReasons.push('pid_dead');
+    }
+    if (state === 'stopped') {
+      staleReasons.push('status_stopped');
+    }
+    if (statusFilePresent && heartbeatAtMs !== null && !heartbeatFresh) {
+      staleReasons.push('heartbeat_stale');
+    }
+    if (statusFilePresent && heartbeatAtMs === null) {
+      staleReasons.push('missing_heartbeat');
+    }
+
+    const healthy = pidAlive
+      && (state === null || state !== 'stopped')
+      && (!statusFilePresent || heartbeatFresh);
+
+    return {
+      ...runtimePaths,
+      daemonScriptExists,
+      pidFilePresent,
+      statusFilePresent,
+      pid,
+      pidAlive,
+      status,
+      state,
+      heartbeatAtMs,
+      heartbeatAgeMs,
+      freshnessWindowMs,
+      heartbeatFresh,
+      healthy,
+      stale: staleReasons.length > 0,
+      staleReasons,
+    };
+  }
+
+  removeFileIfPresent(filePath, context = 'runtime file') {
+    if (!filePath || !fs.existsSync(filePath)) return false;
+    try {
+      fs.unlinkSync(filePath);
+      return true;
+    } catch (err) {
+      log.warn('Supervisor', `Failed to remove ${context} ${filePath}: ${err.message}`);
+      return false;
+    }
+  }
+
+  cleanupStaleSupervisorRuntime(snapshot, reason = 'unknown') {
+    const runtimeSnapshot = snapshot || this.readSupervisorRuntimeSnapshot();
+    const cleaned = {
+      pidFileRemoved: false,
+      statusFileRemoved: false,
+      processKilled: false,
+    };
+
+    if (runtimeSnapshot.pidAlive && runtimeSnapshot.pid) {
+      try {
+        process.kill(runtimeSnapshot.pid, 'SIGTERM');
+        cleaned.processKilled = true;
+      } catch (err) {
+        log.warn(
+          'Supervisor',
+          `Failed to terminate stale supervisor pid ${runtimeSnapshot.pid} (${reason}): ${err.message}`
+        );
+      }
+    }
+
+    cleaned.pidFileRemoved = this.removeFileIfPresent(runtimeSnapshot.pidPath, 'supervisor pid file');
+    cleaned.statusFileRemoved = this.removeFileIfPresent(
+      runtimeSnapshot.statusPath,
+      'supervisor status file'
+    );
+    return cleaned;
+  }
+
+  spawnSupervisorDaemon(reason = 'app-init') {
+    const runtimePaths = this.getSupervisorRuntimePaths();
+    if (!fs.existsSync(runtimePaths.daemonScriptPath)) {
+      return { ok: false, reason: 'missing_supervisor_daemon_script' };
+    }
+
+    try {
+      const child = spawn(
+        process.execPath,
+        [
+          runtimePaths.daemonScriptPath,
+          '--pid-path',
+          runtimePaths.pidPath,
+          '--status-path',
+          runtimePaths.statusPath,
+          '--log-path',
+          runtimePaths.logPath,
+        ],
+        {
+          cwd: getProjectRoot(),
+          env: {
+            ...process.env,
+            ELECTRON_RUN_AS_NODE: '1',
+          },
+          detached: true,
+          windowsHide: true,
+          stdio: 'ignore',
+        }
+      );
+      if (child && typeof child.unref === 'function') {
+        child.unref();
+      }
+      log.info(
+        'Supervisor',
+        `Spawned detached supervisor daemon (pid=${child?.pid || 'unknown'}, reason=${reason})`
+      );
+      return {
+        ok: true,
+        spawned: true,
+        pid: asPositiveInt(child?.pid, null),
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: 'spawn_failed',
+        error: err.message,
+      };
+    }
+  }
+
+  async ensureSupervisorDaemonRunning(reason = 'app-init') {
+    if (this.supervisorBootstrapPromise) {
+      return this.supervisorBootstrapPromise;
+    }
+
+    this.supervisorBootstrapPromise = (async () => {
+      let snapshot = this.readSupervisorRuntimeSnapshot();
+      if (!snapshot.daemonScriptExists) {
+        return { ok: false, reason: 'missing_supervisor_daemon_script', snapshot };
+      }
+
+      if (snapshot.healthy) {
+        return {
+          ok: true,
+          alreadyRunning: true,
+          pid: snapshot.pid,
+          snapshot,
+        };
+      }
+
+      if (snapshot.stale) {
+        log.warn(
+          'Supervisor',
+          `Found stale supervisor runtime (${snapshot.staleReasons.join(', ') || 'unknown'}); cleaning up before restart`
+        );
+        const cleaned = this.cleanupStaleSupervisorRuntime(snapshot, reason);
+        snapshot = this.readSupervisorRuntimeSnapshot();
+        if (snapshot.pidAlive) {
+          return {
+            ok: false,
+            reason: 'stale_supervisor_still_running',
+            snapshot,
+            cleaned,
+          };
+        }
+        return {
+          ...this.spawnSupervisorDaemon(reason),
+          cleaned,
+          snapshot,
+        };
+      }
+
+      if (snapshot.pidAlive) {
+        log.warn(
+          'Supervisor',
+          `Supervisor pid ${snapshot.pid} is alive but status is incomplete; leaving existing process in place`
+        );
+        return {
+          ok: true,
+          alreadyRunning: true,
+          partial: true,
+          pid: snapshot.pid,
+          snapshot,
+        };
+      }
+
+      return this.spawnSupervisorDaemon(reason);
+    })();
+
+    try {
+      return await this.supervisorBootstrapPromise;
+    } finally {
+      this.supervisorBootstrapPromise = null;
+    }
   }
 
   forceKillDaemonFromPidFile() {
@@ -4098,16 +4418,34 @@ class SquidRunApp {
 
     const targetPane = String(paneId || payload?.pane_id || payload?.paneId || '1');
     const nowMs = Date.now();
+    const sessionOrdinal = payload?.session_ordinal || payload?.sessionOrdinal || this.getCurrentAppStatusSessionNumber();
+    let lifecycleAdvance = null;
+    let staleReview = null;
+    if (triggerType === 'session_rollover') {
+      lifecycleAdvance = await teamMemory.executeTeamMemoryOperation('advance-memory-lifecycle', {
+        session_ordinal: sessionOrdinal,
+        nowMs,
+      });
+      staleReview = await teamMemory.executeTeamMemoryOperation('review-stale-memories', {
+        limit: 10,
+        nowMs,
+      });
+    }
     const result = await teamMemory.executeTeamMemoryOperation('trigger-memory-injection', {
       ...payload,
       pane_id: targetPane,
       session_id: payload?.session_id || payload?.sessionId || this.commsSessionScopeId || null,
+      session_ordinal: sessionOrdinal,
       trigger_type: triggerType,
       explicit,
       nowMs,
     });
     if (!result?.ok || result.injected !== true || !result.injection?.message) {
-      return result;
+      return {
+        ...result,
+        lifecycleAdvance,
+        staleReview,
+      };
     }
 
     const routed = this.routeInjectMessage({
@@ -4125,6 +4463,8 @@ class SquidRunApp {
 
     return {
       ...result,
+      lifecycleAdvance,
+      staleReview,
       delivered: routed === true,
     };
   }
@@ -5803,6 +6143,11 @@ class SquidRunApp {
       closeSharedRuntime();
     } catch (err) {
       log.warn('EvidenceLedger', `Failed to close shared runtime during shutdown: ${err.message}`);
+    }
+    try {
+      closeSharedCognitiveMemoryRuntime();
+    } catch (err) {
+      log.warn('CognitiveMemory', `Failed to close shared runtime during shutdown: ${err.message}`);
     }
     experiment.closeExperimentRuntime({ killTimeoutMs: 2000 });
     teamMemory.closeTeamMemoryRuntime({ killTimeoutMs: 2000 }).catch((err) => {

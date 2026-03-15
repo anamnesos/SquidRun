@@ -2,9 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const chokidar = require('chokidar');
 const { spawn } = require('child_process');
+const { DatabaseSync } = require('node:sqlite');
 
 const { resolveCoordPath } = require('./config');
 const { SupervisorStore } = require('./modules/supervisor');
+const { CognitiveMemoryStore } = require('./modules/cognitive-memory-store');
 const { MemorySearchIndex, resolveWorkspacePaths } = require('./modules/memory-search');
 const {
   SleepConsolidator,
@@ -152,6 +154,53 @@ function acquirePidFile(pidPath) {
   return { ok: true };
 }
 
+class MemoryLeaseJanitor {
+  constructor(options = {}) {
+    this.cognitiveStore = options.cognitiveStore || new CognitiveMemoryStore(options.cognitiveStoreOptions || {});
+    this.ownsCognitiveStore = !options.cognitiveStore;
+    this.db = null;
+  }
+
+  init() {
+    if (this.db) return this.db;
+    this.cognitiveStore.init();
+    this.db = new DatabaseSync(this.cognitiveStore.dbPath);
+    this.db.exec('PRAGMA journal_mode=WAL;');
+    this.db.exec('PRAGMA synchronous=NORMAL;');
+    this.db.exec('PRAGMA foreign_keys=ON;');
+    this.db.exec('PRAGMA busy_timeout=5000;');
+    return this.db;
+  }
+
+  pruneExpiredLeases(nowMs = Date.now()) {
+    const db = this.init();
+    const leaseTable = db.prepare(`
+      SELECT 1 AS present
+      FROM sqlite_master
+      WHERE type = 'table' AND name = 'memory_leases'
+      LIMIT 1
+    `).get();
+    if (Number(leaseTable?.present || 0) !== 1) {
+      return { ok: true, pruned: 0, skipped: true, reason: 'missing_table' };
+    }
+    const result = db.prepare('DELETE FROM memory_leases WHERE expires_at_ms <= ?').run(nowMs);
+    return {
+      ok: true,
+      pruned: Number(result?.changes || 0),
+    };
+  }
+
+  close() {
+    if (this.db) {
+      try { this.db.close(); } catch {}
+      this.db = null;
+    }
+    if (this.ownsCognitiveStore) {
+      try { this.cognitiveStore.close(); } catch {}
+    }
+  }
+}
+
 class SupervisorDaemon {
   constructor(options = {}) {
     this.store = options.store || new SupervisorStore({ dbPath: options.dbPath });
@@ -185,6 +234,9 @@ class SupervisorDaemon {
     this.memorySearchIndex = this.memoryIndexEnabled
       ? (options.memorySearchIndex || new MemorySearchIndex())
       : null;
+    this.leaseJanitor = options.leaseJanitor || new MemoryLeaseJanitor({
+      cognitiveStoreOptions: options.cognitiveStoreOptions,
+    });
     this.sleepEnabled = options.sleepEnabled !== false
       && process.env.SQUIDRUN_SLEEP_CYCLE !== '0';
     this.sleepIdleMs = Math.max(
@@ -223,9 +275,21 @@ class SupervisorDaemon {
     if (!initResult.ok) {
       return initResult;
     }
+    if (this.sleepConsolidator && typeof this.sleepConsolidator.init === 'function') {
+      try {
+        this.sleepConsolidator.init();
+      } catch (err) {
+        return {
+          ok: false,
+          reason: 'sleep_init_failed',
+          error: err.message,
+        };
+      }
+    }
+    const leaseHousekeeping = this.runMemoryLeaseHousekeeping(Date.now(), 'startup');
     const housekeeping = this.runQueueHousekeeping(Date.now(), 'startup');
     this.writeStatus();
-    return { ok: true, store: this.store.getStatus(), ...housekeeping };
+    return { ok: true, store: this.store.getStatus(), leaseHousekeeping, ...housekeeping };
   }
 
   start() {
@@ -261,6 +325,9 @@ class SupervisorDaemon {
     if (this.sleepConsolidator) {
       try { this.sleepConsolidator.close(); } catch {}
     }
+    if (this.leaseJanitor) {
+      try { this.leaseJanitor.close(); } catch {}
+    }
 
     const workerStops = [];
     for (const [taskId, worker] of this.activeWorkers.entries()) {
@@ -278,6 +345,7 @@ class SupervisorDaemon {
   async tick() {
     if (this.stopping) return;
     this.runQueueHousekeeping(Date.now(), 'tick');
+    this.runMemoryLeaseHousekeeping(Date.now(), 'tick');
 
     while (!this.stopping && this.activeWorkers.size < this.maxWorkers) {
       const leaseOwner = `${this.workerLeaseOwnerPrefix}-${process.pid}`;
@@ -358,6 +426,22 @@ class SupervisorDaemon {
       });
 
     return this.sleepCyclePromise;
+  }
+
+  runMemoryLeaseHousekeeping(nowMs = Date.now(), phase = 'tick') {
+    if (!this.leaseJanitor || typeof this.leaseJanitor.pruneExpiredLeases !== 'function') {
+      return { ok: false, skipped: true, reason: 'lease_janitor_unavailable' };
+    }
+    try {
+      const pruneResult = this.leaseJanitor.pruneExpiredLeases(nowMs);
+      if (Number(pruneResult?.pruned || 0) > 0) {
+        this.logger.warn(`Pruned ${pruneResult.pruned} expired memory lease(s) during ${phase}`);
+      }
+      return pruneResult;
+    } catch (err) {
+      this.logger.warn(`Memory lease janitor failed during ${phase}: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
   }
 
   async launchTask(task, options = {}) {

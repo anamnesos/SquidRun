@@ -109,6 +109,13 @@ function createPreloadApi(ipcRenderer) {
       applyTemplate: (templateId) => ipc.invoke('workflow-apply-template', { templateId }),
     },
 
+    cognitiveMemory: {
+      ingest: (payload = {}) => ipc.invoke('cognitive-memory:ingest', payload),
+      retrieve: (payload = {}) => ipc.invoke('cognitive-memory:retrieve', payload),
+      patch: (payload = {}) => ipc.invoke('cognitive-memory:patch', payload),
+      salience: (payload = {}) => ipc.invoke('cognitive-memory:salience', payload),
+    },
+
     contractPromotion: {
       list: (payload = {}) => ipc.invoke('contract-promotion:list', payload),
       approve: (payload = {}) => ipc.invoke('contract-promotion:approve', payload),
