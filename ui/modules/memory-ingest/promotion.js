@@ -262,6 +262,16 @@ class MemoryPromotionService {
     };
   }
 
+  getMemory(memoryId) {
+    const db = this.requireDb();
+    return db.prepare(`
+      SELECT *
+      FROM memory_objects
+      WHERE memory_id = ?
+      LIMIT 1
+    `).get(String(memoryId || '')) || null;
+  }
+
   updateCandidate(candidateId, patch = {}) {
     const db = this.requireDb();
     const sets = [];
@@ -300,6 +310,8 @@ class MemoryPromotionService {
       stale_window_until_session: 'stale_window_until_session',
       archived_at: 'archived_at',
       useful_marked_at: 'useful_marked_at',
+      correction_of: 'correction_of',
+      supersedes: 'supersedes',
     })) {
       if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
       sets.push(`${column} = ?`);
@@ -417,6 +429,8 @@ class MemoryPromotionService {
 
     const absolutePath = path.join(options.projectRoot || this.projectRoot, targetFile);
     const writeResult = appendBulletToSection(absolutePath, targetHeading, candidate.content);
+    const supersededMemoryId = asString(candidate.correction_of || candidate.supersedes || '', '');
+    const supersededMemory = supersededMemoryId ? this.getMemory(supersededMemoryId) : null;
     this.updateCandidate(candidate.candidate_id, {
       status: 'promoted',
       reviewed_by: reviewer,
@@ -432,8 +446,16 @@ class MemoryPromotionService {
       status: 'active',
       lifecycle_state: 'active',
       promoted_at: nowMs,
+      supersedes: supersededMemoryId || null,
       updated_at: nowMs,
     });
+    if (supersededMemory && supersededMemory.memory_id !== candidate.memory_id) {
+      this.updateMemory(supersededMemory.memory_id, {
+        status: 'superseded',
+        lifecycle_state: 'superseded',
+        updated_at: nowMs,
+      });
+    }
 
     return {
       ok: true,
@@ -444,6 +466,8 @@ class MemoryPromotionService {
       touchedFile: writeResult.filePath,
       alreadyPresent: writeResult.alreadyPresent,
       added: writeResult.added,
+      correctionApplied: Boolean(supersededMemory && supersededMemory.memory_id !== candidate.memory_id),
+      supersededMemoryId: supersededMemory?.memory_id || null,
     };
   }
 

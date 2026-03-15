@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
-const { CognitiveMemoryApi } = require('../modules/cognitive-memory-api');
-const DEFAULT_INGEST_CONFIDENCE = 0.3;
+const {
+  CognitiveMemoryApi,
+  DEFAULT_INGEST_CONFIDENCE,
+} = require('../modules/cognitive-memory-api');
 
 function parseArgs(argv) {
   const args = Array.isArray(argv) ? argv.slice() : [];
@@ -56,7 +58,7 @@ async function main(argv = process.argv.slice(2)) {
       if (!category) throw new Error('ingest requires --category');
       if (!agentId) throw new Error('ingest requires --agent');
 
-      const result = await api.ensureNodeFromSearchResult({
+      const result = await api.ingest({
         category,
         content,
         confidence,
@@ -71,13 +73,13 @@ async function main(argv = process.argv.slice(2)) {
           confidence,
         },
       });
-      if (!result) {
+      if (!result?.ok || !result?.node) {
         throw new Error('ingest did not create a node');
       }
       process.stdout.write(`${JSON.stringify({
         ok: true,
         node: {
-          ...result,
+          ...result.node,
           confidenceScore: confidence,
         },
       }, null, 2)}\n`);

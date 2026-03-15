@@ -315,6 +315,8 @@ class MemoryIngestJournal {
         ingest_id,
         memory_class,
         claim_type,
+        correction_of,
+        supersedes,
         target_file,
         target_heading,
         base_sha,
@@ -327,13 +329,15 @@ class MemoryIngestJournal {
         conflict_artifact_path,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       candidate.candidate_id,
       candidate.memory_id,
       candidate.ingest_id,
       candidate.memory_class,
       candidate.claim_type || null,
+      candidate.correction_of || null,
+      candidate.supersedes || null,
       candidate.target_file,
       candidate.target_heading || null,
       candidate.base_sha || null,

@@ -118,6 +118,7 @@ class MemoryDeliveryService {
   constructor(options = {}) {
     this.db = options.db || null;
     this.ingestService = options.ingestService || null;
+    this.lifecycleService = options.lifecycleService || null;
     this.projectRoot = resolveProjectRoot(options);
   }
 
@@ -298,6 +299,7 @@ class MemoryDeliveryService {
   listEligibleMemories(triggerType, payload = {}) {
     const db = this.requireDb();
     const limit = Number.isFinite(Number(payload.limit)) ? Math.max(1, Math.floor(Number(payload.limit))) : DEFAULT_TRIGGER_LIMIT;
+    const nowMs = asInteger(payload.nowMs, Date.now());
     let rows = [];
     if (triggerType === 'user_preference_activation') {
       rows = db.prepare(`
@@ -307,9 +309,10 @@ class MemoryDeliveryService {
           AND tier = 'tier1'
           AND COALESCE(lifecycle_state, 'active') NOT IN ('stale', 'archived', 'rejected')
           AND status NOT IN ('rejected', 'superseded', 'corrected', 'expired')
+          AND (expires_at IS NULL OR expires_at > ?)
         ORDER BY confidence DESC, freshness_at DESC
         LIMIT ?
-      `).all(limit);
+      `).all(nowMs, limit);
     } else if (triggerType === 'session_rollover') {
       rows = db.prepare(`
         SELECT *
@@ -324,9 +327,10 @@ class MemoryDeliveryService {
         )
           AND COALESCE(lifecycle_state, 'active') NOT IN ('stale', 'archived', 'rejected')
           AND status NOT IN ('rejected', 'superseded', 'corrected', 'expired')
+          AND (expires_at IS NULL OR expires_at > ?)
         ORDER BY updated_at DESC, confidence DESC
         LIMIT ?
-      `).all(limit);
+      `).all(nowMs, limit);
     } else {
       rows = db.prepare(`
         SELECT *
@@ -335,9 +339,10 @@ class MemoryDeliveryService {
           AND memory_class IN ('solution_trace', 'historical_outcome')
           AND COALESCE(lifecycle_state, 'active') NOT IN ('stale', 'archived', 'rejected')
           AND status NOT IN ('rejected', 'superseded', 'corrected', 'expired')
+          AND (expires_at IS NULL OR expires_at > ?)
         ORDER BY confidence DESC, freshness_at DESC
         LIMIT ?
-      `).all(limit);
+      `).all(nowMs, limit);
     }
 
     return rows.map((row) => ({
@@ -528,6 +533,18 @@ class MemoryDeliveryService {
 
     this.insertInjectionEvent(injection);
     this.incrementInjectionCount(memory.memory_id, nowMs);
+    this.lifecycleService?.recordAccess?.({
+      memory_id: memory.memory_id,
+      access_kind: 'retrieval',
+      session_ordinal: input.session_ordinal || input.sessionOrdinal || null,
+      nowMs,
+      detail: {
+        trigger_type: triggerType,
+        pane_id: paneId,
+        injection_id: injectionId,
+        explicit: explicitRequest,
+      },
+    });
 
     return {
       ok: true,

@@ -13,6 +13,22 @@ const DEFAULT_SALIENCE_DELTA = Number.isFinite(Number(process.env.SQUIDRUN_SALIE
 const DEFAULT_SALIENCE_DECAY = Number.isFinite(Number(process.env.SQUIDRUN_SALIENCE_DECAY))
   ? Number(process.env.SQUIDRUN_SALIENCE_DECAY)
   : 0.5;
+const DEFAULT_INGEST_CONFIDENCE = 0.3;
+const DEFAULT_RECENCY_HALF_LIFE_MS = Math.max(
+  86_400_000,
+  Number.parseInt(process.env.SQUIDRUN_MEMORY_RECENCY_HALF_LIFE_MS || `${30 * 86_400_000}`, 10) || (30 * 86_400_000)
+);
+const DEFAULT_MIN_RECENCY_MULTIPLIER = clamp(
+  Number.isFinite(Number(process.env.SQUIDRUN_MEMORY_MIN_RECENCY_MULTIPLIER))
+    ? Number(process.env.SQUIDRUN_MEMORY_MIN_RECENCY_MULTIPLIER)
+    : 0.55,
+  0.1,
+  1
+);
+const DEFAULT_REACTIVATION_WINDOW_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.SQUIDRUN_MEMORY_REACTIVATION_WINDOW_MS || `${6 * 60 * 60 * 1000}`, 10) || (6 * 60 * 60 * 1000)
+);
 
 function generateId(prefix = 'mem') {
   try {
@@ -30,6 +46,18 @@ function clamp(value, min, max) {
 
 function normalizeWhitespace(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function tokenizeNormalized(value) {
+  return normalizeWhitespace(value)
+    .toLowerCase()
+    .match(/[a-z0-9_]+/g) || [];
+}
+
+function collapseNormalized(value) {
+  return normalizeWhitespace(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '');
 }
 
 function normalizeVector(value) {
@@ -68,6 +96,25 @@ function ensureColumn(db, tableName, columnName, definition) {
 
 function isoNow(nowMs = Date.now()) {
   return new Date(nowMs).toISOString();
+}
+
+function computeRecencyMultiplier(referenceMs, nowMs = Date.now()) {
+  const normalizedReferenceMs = Number(referenceMs || 0);
+  if (!Number.isFinite(normalizedReferenceMs) || normalizedReferenceMs <= 0) {
+    return DEFAULT_MIN_RECENCY_MULTIPLIER;
+  }
+
+  const ageMs = Math.max(0, Number(nowMs || Date.now()) - normalizedReferenceMs);
+  if (ageMs === 0) return 1;
+
+  const freshness = Math.exp((-Math.log(2) * ageMs) / DEFAULT_RECENCY_HALF_LIFE_MS);
+  return DEFAULT_MIN_RECENCY_MULTIPLIER
+    + ((1 - DEFAULT_MIN_RECENCY_MULTIPLIER) * freshness);
+}
+
+function parseIsoMs(value) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function hashNodeContent(input = {}) {
@@ -183,19 +230,61 @@ class CognitiveMemoryApi {
     `).all(String(nodeId || ''), String(nodeId || ''));
   }
 
-  markNodesAccessed(nodeIds = []) {
+  markNodesAccessed(nodeIds = [], options = {}) {
     const ids = Array.from(new Set((nodeIds || []).map((value) => String(value || '').trim()).filter(Boolean)));
-    if (ids.length === 0) return;
+    if (ids.length === 0) return { ok: true, updated: 0, reactivated: 0 };
     const db = this.init();
-    const now = isoNow();
+    const accessKind = normalizeWhitespace(options.accessKind || options.access_kind || 'retrieval').toLowerCase();
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
+    const nowIso = isoNow(nowMs);
     const placeholders = ids.map(() => '?').join(', ');
-    db.prepare(`
-      UPDATE nodes
-      SET access_count = access_count + 1,
-          last_accessed_at = ?,
-          updated_at_ms = ?
+    const rows = db.prepare(`
+      SELECT node_id, last_accessed_at, updated_at_ms
+      FROM nodes
       WHERE node_id IN (${placeholders})
-    `).run(now, Date.now(), ...ids);
+    `).all(...ids);
+    const rowById = new Map(rows.map((row) => [String(row.node_id), row]));
+    let reactivated = 0;
+
+    db.exec('BEGIN IMMEDIATE;');
+    try {
+      for (const nodeId of ids) {
+        const row = rowById.get(nodeId);
+        if (!row) continue;
+        const previousAccessMs = parseIsoMs(row.last_accessed_at);
+        const isExplicitUse = (
+          accessKind === 'explicit_use'
+          || accessKind === 'useful_mark'
+          || accessKind === 'reactivate'
+        );
+        const isRepeatRetrieval = (
+          accessKind === 'retrieval'
+          && previousAccessMs > 0
+          && (nowMs - previousAccessMs) <= DEFAULT_REACTIVATION_WINDOW_MS
+        );
+        const shouldReactivate = isExplicitUse || isRepeatRetrieval;
+        const nextUpdatedAtMs = shouldReactivate
+          ? nowMs
+          : Number(row.updated_at_ms || 0);
+
+        if (shouldReactivate) {
+          reactivated += 1;
+        }
+
+        db.prepare(`
+          UPDATE nodes
+          SET access_count = access_count + 1,
+              last_accessed_at = ?,
+              updated_at_ms = ?
+          WHERE node_id = ?
+        `).run(nowIso, nextUpdatedAtMs, nodeId);
+      }
+      db.exec('COMMIT;');
+    } catch (err) {
+      try { db.exec('ROLLBACK;'); } catch {}
+      throw err;
+    }
+    return { ok: true, updated: rows.length, reactivated };
   }
 
   upsertTrace(nodeId, traceId, extractedAt) {
@@ -212,6 +301,148 @@ class CognitiveMemoryApi {
       INSERT INTO traces (node_id, trace_id, extracted_at)
       VALUES (?, ?, ?)
     `).run(nodeId, normalizedTraceId, extractedAt || isoNow());
+  }
+
+  getNodeDocumentIds(nodeId) {
+    if (!nodeId) return [];
+    const rows = this.init().prepare(`
+      SELECT trace_id
+      FROM traces
+      WHERE node_id = ?
+        AND trace_id LIKE 'memory-document:%'
+      ORDER BY extracted_at DESC
+    `).all(String(nodeId || ''));
+    const documentIds = [];
+    const seen = new Set();
+    for (const row of rows) {
+      const match = String(row.trace_id || '').match(/^memory-document:(\d+)$/);
+      if (!match) continue;
+      const documentId = Number(match[1]);
+      if (!Number.isFinite(documentId) || documentId <= 0 || seen.has(documentId)) continue;
+      seen.add(documentId);
+      documentIds.push(documentId);
+    }
+    return documentIds;
+  }
+
+  async syncNodeToSearchIndex(node) {
+    const documentIds = this.getNodeDocumentIds(node?.nodeId);
+    if (documentIds.length === 0) {
+      return {
+        ok: true,
+        attempted: 0,
+        updated: 0,
+      };
+    }
+
+    let updated = 0;
+    const failures = [];
+    for (const documentId of documentIds) {
+      try {
+        const result = await this.memorySearchIndex.updateDocument(documentId, {
+          content: node.content,
+          title: node.title,
+          heading: node.heading,
+          sourceType: node.sourceType,
+          sourcePath: node.sourcePath,
+          metadata: {
+            ...(node.metadata && typeof node.metadata === 'object' && !Array.isArray(node.metadata)
+              ? node.metadata
+              : {}),
+            cognitiveNodeId: node.nodeId,
+            cognitiveVersion: node.currentVersion,
+          },
+          confidence: node.confidenceScore,
+          accessCount: node.accessCount,
+          lastAccessedAtMs: node.lastAccessedAt ? parseIsoMs(node.lastAccessedAt) : null,
+          lastModifiedMs: node.updatedAtMs,
+          nowMs: node.updatedAtMs,
+        });
+        if (result?.ok) {
+          updated += 1;
+        } else {
+          failures.push({
+            documentId,
+            reason: result?.reason || 'update_failed',
+          });
+        }
+      } catch (err) {
+        failures.push({
+          documentId,
+          reason: 'update_failed',
+          error: err.message,
+        });
+      }
+    }
+
+    return {
+      ok: failures.length === 0,
+      attempted: documentIds.length,
+      updated,
+      failures,
+    };
+  }
+
+  findTransactiveExperts(query, options = {}) {
+    const normalizedQuery = normalizeWhitespace(query).toLowerCase();
+    if (!normalizedQuery) {
+      return {
+        ok: true,
+        matches: [],
+        recommendedAgentId: null,
+      };
+    }
+
+    const limit = Math.max(1, Math.min(10, Number.parseInt(options.limit || '3', 10) || 3));
+    const queryTokens = Array.from(new Set(tokenizeNormalized(normalizedQuery)));
+    const queryCollapsed = collapseNormalized(normalizedQuery);
+    const candidates = this.cognitiveStore.listTransactiveMeta({ limit: Math.max(limit * 4, 25) });
+    const matches = candidates
+      .map((row) => {
+        const domain = normalizeWhitespace(row.domain).toLowerCase();
+        if (!domain) return null;
+        const domainTokens = Array.from(new Set(tokenizeNormalized(domain)));
+        const domainCollapsed = collapseNormalized(domain);
+        const sharedTokenCount = domainTokens.filter((token) => queryTokens.includes(token)).length;
+        const collapsedTokenMatches = queryTokens.filter((token) => (
+          token.length >= 4 && domainCollapsed.includes(token)
+        )).length;
+        const hasDirectPhraseMatch = normalizedQuery.includes(domain) || domain.includes(normalizedQuery);
+        const hasCollapsedPhraseMatch = Boolean(
+          queryCollapsed
+          && domainCollapsed
+          && (queryCollapsed.includes(domainCollapsed) || domainCollapsed.includes(queryCollapsed))
+        );
+        const overlapRatio = queryTokens.length > 0
+          ? ((sharedTokenCount + collapsedTokenMatches) / queryTokens.length)
+          : 0;
+        const score = (hasDirectPhraseMatch ? 1.5 : 0)
+          + (hasCollapsedPhraseMatch ? 0.75 : 0)
+          + overlapRatio
+          + (Math.min(1, Number(row.expertise_score || 0)) * 0.6)
+          + (Math.min(5, Number(row.proof_count || 0)) * 0.05);
+        if (!hasDirectPhraseMatch && !hasCollapsedPhraseMatch && sharedTokenCount === 0 && collapsedTokenMatches === 0) return null;
+        return {
+          domain: row.domain,
+          primaryAgentId: row.primary_agent_id || null,
+          expertiseScore: Number(Number(row.expertise_score || 0).toFixed(8)),
+          proofCount: Number(row.proof_count || 0),
+          lastProvenAt: row.last_proven_at || null,
+          lastPaneId: row.last_pane_id || null,
+          matchScore: Number(score.toFixed(8)),
+          sharedTokenCount: sharedTokenCount + collapsedTokenMatches,
+          directMatch: hasDirectPhraseMatch || hasCollapsedPhraseMatch,
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => right.matchScore - left.matchScore || right.expertiseScore - left.expertiseScore)
+      .slice(0, limit);
+
+    return {
+      ok: true,
+      matches,
+      recommendedAgentId: matches[0]?.primaryAgentId || null,
+    };
   }
 
   async ensureNodeFromSearchResult(result) {
@@ -311,15 +542,21 @@ class CognitiveMemoryApi {
 
   searchExistingNodes(queryVector, limit = 5) {
     if (!Array.isArray(queryVector) || queryVector.length === 0) return [];
+    const nowMs = Date.now();
     const rows = this.init().prepare('SELECT * FROM nodes').all();
     return rows
       .map((row) => {
         const node = this.mapNode(row);
         const distance = cosineDistance(queryVector, node.embedding);
-        const score = (1 - distance)
+        const baseScore = (1 - distance)
           + (node.salienceScore * 0.1)
           + (node.confidenceScore * 0.05);
-        return { node, distance, score };
+        const recencyMultiplier = computeRecencyMultiplier(
+          Math.max(Number(node.updatedAtMs || 0), Number(node.createdAtMs || 0)),
+          nowMs
+        );
+        const score = baseScore * recencyMultiplier;
+        return { node, distance, score, baseScore, recencyMultiplier };
       })
       .filter((entry) => Number.isFinite(entry.distance))
       .sort((left, right) => right.score - left.score || left.distance - right.distance)
@@ -396,7 +633,7 @@ class CognitiveMemoryApi {
 
     const nodeIds = deduped.map((entry) => entry.node.nodeId);
     this.linkRelatedNodes(nodeIds);
-    this.markNodesAccessed(nodeIds);
+    this.markNodesAccessed(nodeIds, { accessKind: 'retrieval' });
 
     const refreshedNodes = new Map(nodeIds.map((nodeId) => [nodeId, this.getNode(nodeId)]));
     const results = deduped.map((entry) => {
@@ -415,7 +652,52 @@ class CognitiveMemoryApi {
       ok: true,
       query: trimmedQuery,
       seededNodeCount: seededNodes.length,
+      transactive: this.findTransactiveExperts(trimmedQuery, {
+        limit: options.transactiveLimit || options.transactive_limit,
+      }),
       results,
+    };
+  }
+
+  async ingest(input = {}) {
+    const content = normalizeWhitespace(input.content || input.text || '');
+    if (!content) {
+      return { ok: false, reason: 'content_required' };
+    }
+
+    const category = normalizeWhitespace(input.category || input.sourceType || input.source_type || 'fact');
+    const agentId = normalizeWhitespace(input.agentId || input.agent_id || input.agent || 'runtime');
+    const confidence = clamp(
+      Number.isFinite(Number(input.confidence)) ? Number(input.confidence) : DEFAULT_INGEST_CONFIDENCE,
+      0,
+      1
+    );
+    const result = await this.ensureNodeFromSearchResult({
+      category,
+      content,
+      confidence,
+      sourceType: normalizeWhitespace(input.sourceType || input.source_type || 'agent-ingest'),
+      sourcePath: normalizeWhitespace(input.sourcePath || input.source_path || `agent:${agentId}`),
+      title: normalizeWhitespace(input.title || '') || `Agent ingest (${agentId})`,
+      heading: normalizeWhitespace(input.heading || '') || category,
+      metadata: {
+        ...(input.metadata && typeof input.metadata === 'object' && !Array.isArray(input.metadata)
+          ? input.metadata
+          : {}),
+        agentId,
+        command: input.command || 'ingest',
+        ingestedVia: input.ingestedVia || 'runtime',
+        confidence,
+      },
+    });
+
+    if (!result) {
+      return { ok: false, reason: 'node_not_created' };
+    }
+
+    return {
+      ok: true,
+      node: result,
     };
   }
 
@@ -515,9 +797,12 @@ class CognitiveMemoryApi {
       this.upsertTrace(node.node_id, `reconsolidation:${normalizedLeaseId}`, isoNow(nowMs));
       db.exec('COMMIT;');
 
+      const patchedNode = this.getNode(node.node_id);
+      const searchIndexSync = await this.syncNodeToSearchIndex(patchedNode);
       response = {
         ok: true,
-        node: this.getNode(node.node_id),
+        node: patchedNode,
+        searchIndexSync,
       };
       return response;
     } catch (err) {
@@ -588,6 +873,7 @@ class CognitiveMemoryApi {
 
 module.exports = {
   CognitiveMemoryApi,
+  DEFAULT_INGEST_CONFIDENCE,
   DEFAULT_LEASE_MS,
   DEFAULT_SALIENCE_DECAY,
   DEFAULT_SALIENCE_DELTA,

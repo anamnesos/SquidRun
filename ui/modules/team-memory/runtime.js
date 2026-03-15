@@ -118,6 +118,7 @@ function createTeamMemoryRuntime(options = {}) {
   const deliveryService = new MemoryDeliveryService({
     db: store.db,
     ingestService,
+    lifecycleService,
     projectRoot: options.projectRoot || options.workspaceRoot,
   });
 

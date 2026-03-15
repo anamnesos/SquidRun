@@ -183,7 +183,22 @@ class MemoryLifecycleService {
 
     let staleCount = 0;
     let archivedCount = 0;
+    let expiredCount = 0;
     for (const row of rows) {
+      const expiresAt = row.expires_at === null || row.expires_at === undefined
+        ? null
+        : asInteger(row.expires_at, null);
+      if (expiresAt !== null && expiresAt <= nowMs) {
+        this.updateMemory(row.memory_id, {
+          status: 'expired',
+          lifecycle_state: 'archived',
+          archived_at: nowMs,
+          updated_at: nowMs,
+        });
+        expiredCount += 1;
+        continue;
+      }
+
       const baselineSession = asInteger(row.last_access_session, asInteger(row.session_ordinal, null));
       if (baselineSession === null) continue;
 
@@ -222,6 +237,7 @@ class MemoryLifecycleService {
       session_ordinal: sessionOrdinal,
       staleCount,
       archivedCount,
+      expiredCount,
     };
   }
 

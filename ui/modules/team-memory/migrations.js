@@ -10,8 +10,9 @@ const migrationV9 = require('./migrations/009-phase7-memory-ingest');
 const migrationV10 = require('./migrations/010-phase8-memory-ingest-recovery');
 const migrationV11 = require('./migrations/011-phase9-memory-promotion-lifecycle');
 const migrationV12 = require('./migrations/012-phase10-memory-delivery');
+const migrationV14 = require('./migrations/014-phase10c-promotion-correction-links');
 
-const MIGRATIONS = [migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7, migrationV8, migrationV9, migrationV10, migrationV11, migrationV12];
+const MIGRATIONS = [migrationV1, migrationV2, migrationV3, migrationV4, migrationV5, migrationV6, migrationV7, migrationV8, migrationV9, migrationV10, migrationV11, migrationV12, migrationV14];
 const LATEST_MIGRATION_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version || 0;
 
 function toEpochMs(value = Date.now()) {

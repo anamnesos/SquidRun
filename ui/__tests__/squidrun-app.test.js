@@ -9,6 +9,17 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+jest.mock('child_process', () => {
+  const actual = jest.requireActual('child_process');
+  return {
+    ...actual,
+    spawn: jest.fn(() => ({
+      pid: 4321,
+      unref: jest.fn(),
+    })),
+  };
+});
+
 // Mock electron (main process APIs)
 jest.mock('electron', () => ({
   app: {
@@ -173,6 +184,12 @@ jest.mock('../modules/ipc/evidence-ledger-handlers', () => ({
   closeSharedRuntime: jest.fn(),
 }));
 
+// Mock cognitive-memory handlers
+jest.mock('../modules/ipc/cognitive-memory-handlers', () => ({
+  executeCognitiveMemoryOperation: jest.fn(async () => ({ ok: true, results: [] })),
+  closeSharedCognitiveMemoryRuntime: jest.fn(),
+}));
+
 // Mock transition-ledger handlers
 jest.mock('../modules/ipc/transition-ledger-handlers', () => ({
   executeTransitionLedgerOperation: jest.fn(async () => ({ ok: true, count: 0, items: [] })),
@@ -246,6 +263,7 @@ jest.mock('../scripts/hm-health-snapshot', () => ({
 }));
 
 // Now require the module under test
+const { spawn } = require('child_process');
 const SquidRunApp = require('../modules/main/squidrun-app');
 
 describe('SquidRunApp', () => {
@@ -571,6 +589,172 @@ describe('SquidRunApp', () => {
         'run-experiment',
         expect.objectContaining({
           claimId: 'claim_lazy',
+        })
+      );
+    });
+  });
+
+  describe('supervisor bootstrap', () => {
+    function createSupervisorRuntimeFixture() {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-supervisor-'));
+      const runtimeDir = path.join(tempRoot, 'runtime');
+      fs.mkdirSync(runtimeDir, { recursive: true });
+      const daemonScriptPath = path.join(tempRoot, 'supervisor-daemon.js');
+      fs.writeFileSync(daemonScriptPath, '// supervisor fixture\n');
+      return {
+        tempRoot,
+        daemonScriptPath,
+        pidPath: path.join(runtimeDir, 'supervisor.pid'),
+        statusPath: path.join(runtimeDir, 'supervisor-status.json'),
+        logPath: path.join(runtimeDir, 'supervisor.log'),
+      };
+    }
+
+    it('spawns the detached supervisor during init when none is healthy', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const runtimePaths = createSupervisorRuntimeFixture();
+
+      jest.spyOn(app, 'getSupervisorRuntimePaths').mockReturnValue(runtimePaths);
+      jest.spyOn(app, 'isProcessAlive').mockReturnValue(false);
+      app.initDaemonClient = jest.fn().mockResolvedValue();
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+
+      await app.init();
+
+      expect(spawn).toHaveBeenCalledWith(
+        process.execPath,
+        [
+          runtimePaths.daemonScriptPath,
+          '--pid-path',
+          runtimePaths.pidPath,
+          '--status-path',
+          runtimePaths.statusPath,
+          '--log-path',
+          runtimePaths.logPath,
+        ],
+        expect.objectContaining({
+          cwd: '/test',
+          detached: true,
+          windowsHide: true,
+          stdio: 'ignore',
+          env: expect.objectContaining({
+            ELECTRON_RUN_AS_NODE: '1',
+          }),
+        })
+      );
+
+      fs.rmSync(runtimePaths.tempRoot, { recursive: true, force: true });
+    });
+
+    it('cleans stale supervisor pid and status artifacts before respawn', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const runtimePaths = createSupervisorRuntimeFixture();
+      const stalePid = 9876;
+      const killSpy = jest.spyOn(process, 'kill').mockImplementation(() => true);
+
+      fs.writeFileSync(runtimePaths.pidPath, JSON.stringify({ pid: stalePid }, null, 2));
+      fs.writeFileSync(runtimePaths.statusPath, JSON.stringify({
+        heartbeatAtMs: Date.now() - 120000,
+        pollMs: 4000,
+      }, null, 2));
+
+      jest.spyOn(app, 'getSupervisorRuntimePaths').mockReturnValue(runtimePaths);
+      jest.spyOn(app, 'isProcessAlive').mockImplementation((pid) => Number(pid) === stalePid);
+
+      const result = await app.ensureSupervisorDaemonRunning('test-stale');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        spawned: true,
+        cleaned: expect.objectContaining({
+          processKilled: true,
+          pidFileRemoved: true,
+          statusFileRemoved: true,
+        }),
+      }));
+      expect(killSpy).toHaveBeenCalledWith(stalePid, 'SIGTERM');
+      expect(fs.existsSync(runtimePaths.pidPath)).toBe(false);
+      expect(fs.existsSync(runtimePaths.statusPath)).toBe(false);
+      expect(spawn).toHaveBeenCalledTimes(1);
+
+      killSpy.mockRestore();
+      fs.rmSync(runtimePaths.tempRoot, { recursive: true, force: true });
+    });
+
+    it('does not respawn a healthy supervisor with a fresh heartbeat', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const runtimePaths = createSupervisorRuntimeFixture();
+      const livePid = 2468;
+
+      fs.writeFileSync(runtimePaths.pidPath, JSON.stringify({ pid: livePid }, null, 2));
+      fs.writeFileSync(runtimePaths.statusPath, JSON.stringify({
+        heartbeatAtMs: Date.now() - 1000,
+        pollMs: 4000,
+      }, null, 2));
+
+      jest.spyOn(app, 'getSupervisorRuntimePaths').mockReturnValue(runtimePaths);
+      jest.spyOn(app, 'isProcessAlive').mockImplementation((pid) => Number(pid) === livePid);
+
+      const result = await app.ensureSupervisorDaemonRunning('test-healthy');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        alreadyRunning: true,
+        pid: livePid,
+      }));
+      expect(spawn).not.toHaveBeenCalled();
+
+      fs.rmSync(runtimePaths.tempRoot, { recursive: true, force: true });
+    });
+  });
+
+  describe('cognitive memory runtime integration', () => {
+    it('routes websocket cognitive-memory messages into the runtime handler', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const websocketServer = require('../modules/websocket-server');
+      const { executeCognitiveMemoryOperation } = require('../modules/ipc/cognitive-memory-handlers');
+
+      app.initDaemonClient = jest.fn().mockResolvedValue();
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+      jest.spyOn(app, 'ensureSupervisorDaemonRunning').mockResolvedValue({ ok: true, alreadyRunning: true });
+
+      await app.init();
+
+      const startCall = websocketServer.start.mock.calls[0];
+      expect(startCall).toBeTruthy();
+      const options = startCall[0];
+
+      await options.onMessage({
+        role: 'builder',
+        paneId: '2',
+        message: {
+          type: 'cognitive-memory',
+          action: 'retrieve',
+          payload: {
+            query: 'ServiceTitan auth endpoint',
+            limit: 2,
+          },
+        },
+      });
+
+      expect(executeCognitiveMemoryOperation).toHaveBeenCalledWith(
+        'retrieve',
+        expect.objectContaining({
+          query: 'ServiceTitan auth endpoint',
+          limit: 2,
+        }),
+        expect.objectContaining({
+          source: expect.objectContaining({
+            via: 'websocket',
+            role: 'builder',
+            paneId: '2',
+          }),
         })
       );
     });
@@ -1413,6 +1597,76 @@ describe('SquidRunApp', () => {
         meta: expect.objectContaining({
           memoryInjection: true,
           triggerType: 'error_signature_match',
+          sourceTier: 'tier3',
+        }),
+      }));
+    });
+
+    it('advances lifecycle and reviews stale memories during session rollover injection', async () => {
+      const teamMemory = require('../modules/team-memory');
+      const routeInjectMessage = jest.spyOn(app, 'routeInjectMessage').mockReturnValue(true);
+      teamMemory.executeTeamMemoryOperation
+        .mockResolvedValueOnce({ ok: true, staleCount: 1, archivedCount: 0, expiredCount: 0 })
+        .mockResolvedValueOnce({ ok: true, review_candidates: [] })
+        .mockResolvedValueOnce({
+          ok: true,
+          injected: true,
+          status: 'delivered',
+          injection: {
+            injection_id: 'inject-rollover-1',
+            source_tier: 'tier3',
+            injection_reason: 'session_rollover:solution_trace',
+            authoritative: false,
+            message: '[MEMORY][assistive] session_rollover\nreason=session_rollover tier=tier3 confidence=0.90 freshness=2026-03-12T00:00:00.000Z\nResume relay work.',
+          },
+        });
+
+      const result = await app.triggerProactiveMemoryInjection({
+        paneId: '2',
+        triggerType: 'session_rollover',
+        payload: {
+          trigger_event_id: 'rollover-1',
+          session_ordinal: 147,
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        injected: true,
+        delivered: true,
+        lifecycleAdvance: expect.objectContaining({ ok: true, staleCount: 1 }),
+        staleReview: expect.objectContaining({ ok: true, review_candidates: [] }),
+      }));
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenNthCalledWith(
+        1,
+        'advance-memory-lifecycle',
+        expect.objectContaining({
+          session_ordinal: 147,
+        })
+      );
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenNthCalledWith(
+        2,
+        'review-stale-memories',
+        expect.objectContaining({
+          limit: 10,
+        })
+      );
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenNthCalledWith(
+        3,
+        'trigger-memory-injection',
+        expect.objectContaining({
+          pane_id: '2',
+          trigger_type: 'session_rollover',
+          trigger_event_id: 'rollover-1',
+          session_ordinal: 147,
+        })
+      );
+      expect(routeInjectMessage).toHaveBeenCalledWith(expect.objectContaining({
+        panes: ['2'],
+        deliveryId: 'inject-rollover-1',
+        meta: expect.objectContaining({
+          memoryInjection: true,
+          triggerType: 'session_rollover',
           sourceTier: 'tier3',
         }),
       }));

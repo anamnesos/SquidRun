@@ -72,6 +72,7 @@ maybeDescribe('memory delivery phase 4', () => {
       trigger_event_id: 'err-1',
       pane_id: '2',
       session_id: 'sess-error',
+      session_ordinal: 5,
       nowMs: 2000,
     });
 
@@ -101,6 +102,16 @@ maybeDescribe('memory delivery phase 4', () => {
       memory_class: 'solution_trace',
       source_tier: 'tier3',
       authoritative: 0,
+    }));
+    expect(store.db.prepare(`
+      SELECT access_kind, session_ordinal
+      FROM memory_access_log
+      WHERE memory_id = ? 
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(result.injection.memory_id)).toEqual(expect.objectContaining({
+      access_kind: 'retrieval',
+      session_ordinal: 5,
     }));
     store.close();
   });
@@ -268,6 +279,35 @@ maybeDescribe('memory delivery phase 4', () => {
       }),
     }));
     expect(result.injection.message).toContain('Startup health');
+  });
+
+  test('expired memories are excluded from delivery selection', () => {
+    runtime.executeTeamMemoryOperation('ingest-memory', {
+      content: 'Relay reconnect fix expired before it could help.',
+      memory_class: 'solution_trace',
+      provenance: { source: 'builder', kind: 'observed' },
+      confidence: 0.95,
+      source_trace: 'phase4-expired-delivery',
+      session_id: 'sess-expired-delivery',
+      scope: { domain: 'relay' },
+      expires_at: 1500,
+      nowMs: 1000,
+    });
+
+    const result = runtime.executeTeamMemoryOperation('trigger-memory-injection', {
+      trigger_type: 'task_domain_match',
+      domain: 'relay',
+      trigger_event_id: 'expired-delivery-1',
+      pane_id: '2',
+      session_id: 'sess-expired-delivery',
+      nowMs: 2000,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      injected: false,
+      status: 'no_match',
+    }));
   });
 
   test('prepares compaction survival and re-reads tier1 files on resume', () => {
