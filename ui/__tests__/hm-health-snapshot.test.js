@@ -6,7 +6,25 @@ jest.mock('child_process', () => ({
   execFileSync: jest.fn(),
 }));
 
+jest.mock('../modules/memory-consistency-check', () => ({
+  runMemoryConsistencyCheck: jest.fn(() => ({
+    ok: true,
+    checkedAt: '2026-03-15T00:00:00.000Z',
+    status: 'in_sync',
+    synced: true,
+    summary: {
+      knowledgeEntryCount: 15,
+      knowledgeNodeCount: 15,
+      missingInCognitiveCount: 0,
+      orphanedNodeCount: 0,
+      duplicateKnowledgeHashCount: 0,
+      issueCount: 0,
+    },
+  })),
+}));
+
 const { execFileSync } = require('child_process');
+const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
 
 function createDatabase(filePath) {
   try {
@@ -124,6 +142,18 @@ describe('hm-health-snapshot', () => {
       deviceId: 'LOCAL',
       state: 'connected',
     }));
+    expect(snapshot.memoryConsistency).toEqual(expect.objectContaining({
+      status: 'in_sync',
+      synced: true,
+      summary: expect.objectContaining({
+        knowledgeEntryCount: 15,
+        knowledgeNodeCount: 15,
+      }),
+    }));
+    expect(runMemoryConsistencyCheck).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: tempDir,
+      sampleLimit: 5,
+    }));
   });
 
   test('normalizes ui and .squidrun roots back to the project root', () => {
@@ -173,6 +203,17 @@ describe('hm-health-snapshot', () => {
         evidenceLedger: { exists: true, rowCount: 2 },
         cognitiveMemory: { exists: true, rowCount: 1 },
       },
+      memoryConsistency: {
+        status: 'in_sync',
+        synced: true,
+        summary: {
+          knowledgeEntryCount: 15,
+          knowledgeNodeCount: 15,
+          missingInCognitiveCount: 0,
+          orphanedNodeCount: 0,
+          duplicateKnowledgeHashCount: 0,
+        },
+      },
       bridge: {
         enabled: true,
         configured: true,
@@ -187,6 +228,9 @@ describe('hm-health-snapshot', () => {
     expect(markdown).toContain('Tests: 2 files, 2 Jest-discoverable suites');
     expect(markdown).toContain('Modules: 6 JS modules under ui/modules');
     expect(markdown).toContain('Evidence ledger DB: present, rows=2');
+    expect(markdown).toContain('MEMORY CONSISTENCY');
+    expect(markdown).toContain('Sync Status: in_sync (in sync)');
+    expect(markdown).toContain('Counts: entries=15, nodes=15, missing=0, orphans=0, duplicates=0');
     expect(markdown).toContain('BRIDGE HEALTH');
     expect(markdown).toContain('Connection: disconnected');
     expect(markdown).toContain('Device ID: LOCAL');
@@ -217,6 +261,39 @@ describe('hm-health-snapshot', () => {
     expect(snapshot.bridge.mode).toBe('connecting');
     expect(snapshot.status.level).toBe('warn');
     expect(snapshot.status.warnings).toContain('bridge_enabled_not_connected:disconnected');
+  });
+
+  test('degrades startup health when memory consistency detects drift', () => {
+    const { createHealthSnapshot, renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
+    execFileSync.mockReturnValue([
+      path.join(tempDir, 'ui', '__tests__', 'alpha.test.js'),
+      path.join(tempDir, 'ui', '__tests__', 'beta.test.js'),
+    ].join('\n'));
+
+    const snapshot = createHealthSnapshot({
+      projectRoot: tempDir,
+      jestTimeoutMs: 1000,
+      memoryConsistency: {
+        ok: true,
+        checkedAt: '2026-03-15T00:00:00.000Z',
+        status: 'drift_detected',
+        synced: false,
+        summary: {
+          knowledgeEntryCount: 15,
+          knowledgeNodeCount: 19,
+          missingInCognitiveCount: 2,
+          orphanedNodeCount: 6,
+          duplicateKnowledgeHashCount: 0,
+          issueCount: 0,
+        },
+      },
+    });
+    const markdown = renderStartupHealthMarkdown(snapshot);
+
+    expect(snapshot.status.level).toBe('warn');
+    expect(snapshot.status.warnings).toContain('memory_consistency_drift:missing=2,orphans=6,duplicates=0');
+    expect(markdown).toContain('Sync Status: drift_detected (attention needed)');
+    expect(markdown).toContain('Counts: entries=15, nodes=19, missing=2, orphans=6, duplicates=0');
   });
 
   test('falls back to better-sqlite3 when node:sqlite is unavailable', () => {

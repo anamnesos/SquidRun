@@ -20,7 +20,26 @@ jest.mock('../modules/cognitive-memory-sleep', () => ({
   resolveSessionStatePath: jest.fn(() => '/tmp/session-state.json'),
 }));
 
+jest.mock('../modules/memory-consistency-check', () => ({
+  runMemoryConsistencyCheck: jest.fn(() => ({
+    ok: true,
+    checkedAt: '2026-03-15T00:00:00.000Z',
+    status: 'in_sync',
+    synced: true,
+    summary: {
+      knowledgeEntryCount: 15,
+      knowledgeNodeCount: 15,
+      missingInCognitiveCount: 0,
+      orphanedNodeCount: 0,
+      duplicateKnowledgeHashCount: 0,
+      issueCount: 0,
+    },
+  })),
+}));
+
 const chokidar = require('chokidar');
+const fs = require('fs');
+const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
 const { SupervisorDaemon } = require('../supervisor-daemon');
 
 function createMockStore() {
@@ -167,9 +186,22 @@ describe('supervisor-daemon integrations', () => {
   test('primes sleep consolidator state during supervisor init', () => {
     const result = daemon.init();
 
-    expect(result).toEqual(expect.objectContaining({ ok: true }));
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      memoryConsistency: expect.objectContaining({
+        status: 'in_sync',
+        synced: true,
+      }),
+    }));
     expect(mockSleepConsolidator.init).toHaveBeenCalledTimes(1);
     expect(mockLeaseJanitor.pruneExpiredLeases).toHaveBeenCalledTimes(1);
+    expect(runMemoryConsistencyCheck).toHaveBeenCalledWith(expect.objectContaining({
+      projectRoot: expect.any(String),
+      sampleLimit: 5,
+    }));
+    expect(daemon.logger.info).toHaveBeenCalledWith(
+      'Memory consistency (startup): status=in_sync entries=15 nodes=15 missing=0 orphans=0 duplicates=0'
+    );
   });
 
   test('closes watcher, memory index, and sleep consolidator on stop', async () => {
@@ -254,5 +286,71 @@ describe('supervisor-daemon integrations', () => {
       })
     );
     expect(daemon.logger.warn).toHaveBeenCalledWith('Pruned 2 stale pending supervisor task(s) during tick');
+  });
+
+  test('logs periodic memory consistency drift during tick once the poll interval elapses', async () => {
+    runMemoryConsistencyCheck.mockReturnValueOnce({
+      ok: true,
+      checkedAt: '2026-03-15T00:05:00.000Z',
+      status: 'drift_detected',
+      synced: false,
+      summary: {
+        knowledgeEntryCount: 15,
+        knowledgeNodeCount: 19,
+        missingInCognitiveCount: 2,
+        orphanedNodeCount: 6,
+        duplicateKnowledgeHashCount: 0,
+        issueCount: 0,
+      },
+    });
+    daemon.lastMemoryConsistencyCheckAtMs = Date.now() - daemon.memoryConsistencyPollMs - 1;
+
+    await daemon.tick();
+
+    expect(daemon.lastMemoryConsistencySummary).toEqual(expect.objectContaining({
+      status: 'drift_detected',
+      synced: false,
+      summary: expect.objectContaining({
+        missingInCognitiveCount: 2,
+        orphanedNodeCount: 6,
+      }),
+    }));
+    expect(daemon.logger.warn).toHaveBeenCalledWith(
+      'Memory consistency (tick): status=drift_detected entries=15 nodes=19 missing=2 orphans=6 duplicates=0'
+    );
+  });
+
+  test('writes memory consistency status into supervisor status payload', () => {
+    const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+    daemon.lastMemoryConsistencySummary = {
+      enabled: true,
+      checkedAt: '2026-03-15T00:00:00.000Z',
+      status: 'in_sync',
+      synced: true,
+      error: null,
+      summary: {
+        knowledgeEntryCount: 15,
+        knowledgeNodeCount: 15,
+        missingInCognitiveCount: 0,
+        orphanedNodeCount: 0,
+        duplicateKnowledgeHashCount: 0,
+        issueCount: 0,
+      },
+    };
+
+    daemon.writeStatus();
+
+    const [, payloadText] = writeSpy.mock.calls[writeSpy.mock.calls.length - 1];
+    const payload = JSON.parse(payloadText);
+    expect(payload.memoryConsistency).toEqual(expect.objectContaining({
+      status: 'in_sync',
+      synced: true,
+      summary: expect.objectContaining({
+        knowledgeEntryCount: 15,
+        knowledgeNodeCount: 15,
+      }),
+    }));
+
+    writeSpy.mockRestore();
   });
 });
