@@ -267,7 +267,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/memory-search.js: Hybrid FTS and sqlite-vec memory search index and chunking engine.
 - ui/modules/supervisor/index.js: Supervisor module entrypoint.
 - ui/modules/supervisor/store.js: SQLite-backed store for durable background supervisor tasks.
-- ui/scripts/hm-health-snapshot.js: Startup pipeline script that captures codebase and system health for cognitive memory ingest.
+- ui/scripts/hm-health-snapshot.js: Startup pipeline script that captures codebase and system health for cognitive memory ingest, including the shared startup-health scoring contract (100-point base, threshold mapping, and probe penalties).
 
 ## 4) OUTER-LOOP COORDINATOR MODEL (3-PANE + BACKGROUND)
 - **Architect (Pane 1):** The outer-loop coordinator. Handles decomposition, review, and release gating (no direct implementation). Elevates the AI from individual workers to a management layer over native sub-agents.
@@ -299,6 +299,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - `transactive_meta` is consulted during `retrieve()`. When expertise rows exist, the API returns additive transactive guidance (`matches`, `recommendedAgentId`) alongside normal content results.
 - Patch writes stay in sync with search: `cognitive-memory-api.patch()` updates linked `memory-document:<id>` entries in `search-index.db`, including the FTS and vector-backed rows managed by `ui/modules/memory-search.js`.
 - Supervisor-backed maintenance is live: `ui/supervisor-daemon.js` initializes the sleep consolidator and lease janitor during startup, then reruns housekeeping on each supervisor tick while writing status under `.squidrun/runtime/`.
+- Startup health scoring contract is explicit in `ui/scripts/hm-health-snapshot.js`: score starts at 100, penalties subtract from named findings, thresholds map score bands to `OK`/`WARN`/`DEGRADED`/`CRITICAL`, and new probes are expected to register a stable warning code plus a documented penalty instead of open-coded score math. Current operational probes are bridge connectivity (`bridge_enabled_unconfigured`, `bridge_enabled_not_connected`) and memory consistency (`memory_consistency_drift`, generic unsynced fallback).
 - Sleep consolidation is wired through the supervisor, but it is intentionally gated by idle/activity thresholds. Its tables initialize at supervisor startup; full clustering/extraction runs only when the session is idle enough.
 - Memory expiration is enforced in active delivery paths: `ui/modules/memory-ingest/delivery.js` excludes expired rows from proactive injection, and `ui/modules/memory-ingest/lifecycle.js` advances expired memories to `status='expired'`.
 - Lifecycle maintenance is no longer dead code: successful delivery records access, and session rollover in `ui/modules/main/squidrun-app.js` runs `advance-memory-lifecycle` plus `review-stale-memories` before proactive injection.

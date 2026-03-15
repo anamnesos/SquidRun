@@ -20,12 +20,12 @@ Analysis confirmed this was pure **revision skew** (the flat files advanced ahea
 
 ### 2. Orphaned Nodes (Revision Skew)
 - **Definition:** A node exists in the index pointing to a file path, but the specific chunk text (or its hash) no longer exists in the target flat file (e.g., the user edited a bullet point).
-- **Risk Level:** Medium. Generally safe if it's pure revision skew, but requires checking for attached metadata.
-- **Evidence Required:** The node exists, its `source_type` is `file`, but the hash does not match any current chunk in the source file.
+- **Risk Level:** Medium. Generally safe if it's pure revision skew, but requires checking for attached relational data.
+- **Evidence Required:** The node exists, its `source_type` is `knowledge`, but the hash does not match any current chunk in the source file.
 - **Recommended Action:** **Auto-Repair (Conditional)**.
 - **Implementation:** 
-  - **Condition:** If the node contains NO manual transactive metadata or standalone extracted relationships (i.e., it is purely a semantic index of a file chunk), it is safe to **delete/tombstone** the old node and rely on the "Missing Chunks" policy to index the new text.
-  - **Fallback:** If metadata exists, flag for **Manual Review** to prevent silent loss of agent annotations.
+  - **Condition:** If the node contains NO migration-worthy relational data (i.e., no attached `edges`, `traces`, and its `salience`/`version` metrics indicate it is purely an unmodified semantic index of a file chunk), it is safe to **delete/tombstone** the old node and rely on the "Missing Chunks" policy to index the new text.
+  - **Fallback:** If relational data exists, flag for **Manual Review** to prevent silent loss of agent annotations.
 
 ### 3. Orphaned Nodes (Deleted Source)
 - **Definition:** Nodes exist in the index pointing to a file path that no longer exists on disk.
@@ -39,14 +39,14 @@ Analysis confirmed this was pure **revision skew** (the flat files advanced ahea
 - **Risk Level:** Low. Harmless but wastes vector space and pollutes search results.
 - **Evidence Required:** `SELECT content_hash, COUNT(*) FROM nodes GROUP BY content_hash HAVING COUNT(*) > 1`.
 - **Recommended Action:** **Auto-Repair (Safe)**.
-- **Implementation:** Keep the node with the highest access count or most recent `last_accessed_at` (or simply the oldest ID if tied). Delete the duplicates. Consolidate any edges/metadata to the surviving node before deletion.
+- **Implementation:** Keep the node with the highest access count, most recent `last_accessed_at`, or highest `salience` (or simply the oldest ID if tied). Delete the duplicates. Consolidate any `edges` or `traces` to the surviving node before deletion.
 
-### 5. Transactive Metadata Loss (Edge Case)
-- **Definition:** Transactive metadata (expertise routing, salience scores) is attached to a node that has been marked as an orphan (e.g., due to a file edit).
-- **Risk Level:** High. Deleting the orphan wipes the learned metadata.
-- **Evidence Required:** Node is orphaned AND has entries in `transactive_meta` or inbound/outbound `edges`.
+### 5. Node Relational Data Loss (Edge Case)
+- **Definition:** Relational or transactive data (`edges`, `traces`, elevated `salience`, or bumped `version` state) is attached to a node that has been marked as an orphan (e.g., due to a file edit).
+- **Risk Level:** High. Deleting the orphan wipes the learned relationships and usage metrics.
+- **Evidence Required:** Node is orphaned AND has entries in `edges`, `traces`, or non-default `salience`/`version` values.
 - **Recommended Action:** **Manual Review**.
-- **Implementation:** The system must not auto-delete these nodes. Instead, it should propose a "Metadata Migration" patch, presenting the old node's text, the new file text, and asking if the metadata should be re-attached to the new chunk.
+- **Implementation:** The system must not auto-delete these nodes. Instead, it should propose a "Relational Migration" patch, presenting the old node's text alongside the new file text, and asking if the data should be re-attached to the newly indexed chunk.
 
 ## Tooling Requirements (For Builder)
 When implementing the repair mode (`hm-memory-consistency.js --repair`):
