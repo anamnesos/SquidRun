@@ -9,7 +9,7 @@ const { extractCandidates } = require('../scripts/hm-memory-extract');
 
 const DEFAULT_IDLE_THRESHOLD_MS = Math.max(
   60_000,
-  Number.parseInt(process.env.SQUIDRUN_SLEEP_IDLE_MS || '1800000', 10) || 1800000
+  Number.parseInt(process.env.SQUIDRUN_SLEEP_IDLE_MS || '300000', 10) || 300000
 );
 const DEFAULT_MIN_INTERVAL_MS = Math.max(
   30_000,
@@ -17,7 +17,7 @@ const DEFAULT_MIN_INTERVAL_MS = Math.max(
 );
 const DEFAULT_MAX_EPISODES = Math.max(
   10,
-  Number.parseInt(process.env.SQUIDRUN_SLEEP_MAX_EPISODES || '100', 10) || 100
+  Number.parseInt(process.env.SQUIDRUN_SLEEP_MAX_EPISODES || '500', 10) || 500
 );
 const DEFAULT_CLUSTER_EPSILON = Number.isFinite(Number(process.env.SQUIDRUN_SLEEP_CLUSTER_EPSILON))
   ? Number(process.env.SQUIDRUN_SLEEP_CLUSTER_EPSILON)
