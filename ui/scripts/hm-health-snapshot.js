@@ -15,6 +15,85 @@ const KEY_MODULE_PATHS = Object.freeze({
   supervisor_store: path.join('ui', 'modules', 'supervisor', 'store.js'),
 });
 
+/**
+ * Startup health scoring contract.
+ *
+ * The model is intentionally additive and conservative:
+ * - Start at 100.
+ * - Subtract explicit penalties for independent health findings.
+ * - Map the resulting score through shared thresholds so another probe can be
+ *   added without inventing a new interpretation layer.
+ *
+ * Extension rule for new probes:
+ * 1. Add a penalty entry here with a short rationale.
+ * 2. Reuse an existing severity band when possible:
+ *    5-10 = observability or confidence issue
+ *    10-15 = operator-actionable degradation
+ *    20+ = structural or likely service-breaking problem
+ * 3. Emit a stable warning code and apply the named penalty from
+ *    `buildHealthStatus()` instead of open-coded score math.
+ */
+const HEALTH_SCORE_THRESHOLDS = Object.freeze([
+  Object.freeze({ minScore: 95, level: 'ok', label: 'OK', description: 'Healthy; no material action required.' }),
+  Object.freeze({ minScore: 80, level: 'warn', label: 'WARN', description: 'Attention needed, but the system remains operational.' }),
+  Object.freeze({ minScore: 60, level: 'degraded', label: 'DEGRADED', description: 'Multiple or meaningful issues are affecting trust or operability.' }),
+  Object.freeze({ minScore: 0, level: 'critical', label: 'CRITICAL', description: 'Health contract is materially broken and needs immediate intervention.' }),
+]);
+
+const HEALTH_SCORE_PENALTIES = Object.freeze({
+  jest_list_failed: Object.freeze({
+    points: 8,
+    category: 'foundation',
+    rationale: 'Test discovery failed, reducing confidence in startup inventory.',
+  }),
+  no_test_files_detected: Object.freeze({
+    points: 15,
+    category: 'foundation',
+    rationale: 'No discovered tests means health evidence is materially incomplete.',
+  }),
+  missing_key_modules: Object.freeze({
+    pointsPerItem: 4,
+    maxPoints: 20,
+    category: 'foundation',
+    rationale: 'Missing runtime modules indicate codebase integrity drift.',
+  }),
+  database_missing: Object.freeze({
+    points: 20,
+    category: 'foundation',
+    rationale: 'A missing core database is structural, not cosmetic.',
+  }),
+  database_error: Object.freeze({
+    points: 12,
+    category: 'foundation',
+    rationale: 'A present-but-unreadable database weakens trust in the snapshot.',
+  }),
+  database_empty: Object.freeze({
+    points: 6,
+    category: 'foundation',
+    rationale: 'An empty core database may be expected in edge cases, but should still be visible.',
+  }),
+  bridge_enabled_unconfigured: Object.freeze({
+    points: 20,
+    category: 'bridge',
+    rationale: 'Bridge is expected to run but lacks usable configuration.',
+  }),
+  bridge_enabled_not_connected: Object.freeze({
+    points: 15,
+    category: 'bridge',
+    rationale: 'Bridge is enabled and configured, so a disconnect is an operator-actionable degradation.',
+  }),
+  memory_consistency_drift: Object.freeze({
+    points: 12,
+    category: 'memory_consistency',
+    rationale: 'Confirmed drift reduces retrieval trust and should be corrected promptly.',
+  }),
+  memory_consistency_unsynced: Object.freeze({
+    points: 10,
+    category: 'memory_consistency',
+    rationale: 'If consistency cannot be confirmed, health visibility is degraded even without confirmed drift.',
+  }),
+});
+
 let SQLITE_DRIVER = undefined;
 
 function asPositiveInt(value, fallback) {
@@ -340,6 +419,26 @@ function summarizeMemoryConsistency(result = null) {
   };
 }
 
+function resolveHealthThreshold(score) {
+  const normalizedScore = Math.max(0, Math.min(100, Number(score) || 0));
+  return HEALTH_SCORE_THRESHOLDS.find((entry) => normalizedScore >= entry.minScore) || HEALTH_SCORE_THRESHOLDS[HEALTH_SCORE_THRESHOLDS.length - 1];
+}
+
+function getPenaltyPoints(ruleName, options = {}) {
+  const rule = HEALTH_SCORE_PENALTIES[ruleName];
+  if (!rule) return 0;
+  if (Number.isFinite(Number(rule.points))) {
+    return Math.max(0, Number(rule.points));
+  }
+  if (Number.isFinite(Number(rule.pointsPerItem))) {
+    const count = Math.max(0, Number(options.count) || 0);
+    const raw = count * Number(rule.pointsPerItem);
+    const maxPoints = Number.isFinite(Number(rule.maxPoints)) ? Number(rule.maxPoints) : raw;
+    return Math.max(0, Math.min(raw, maxPoints));
+  }
+  return 0;
+}
+
 function inspectMemoryConsistency(projectRoot, options = {}) {
   if (options.memoryConsistency && typeof options.memoryConsistency === 'object') {
     return summarizeMemoryConsistency(options.memoryConsistency);
@@ -366,49 +465,49 @@ function buildHealthStatus(snapshot) {
   const warnings = [];
   const penalties = [];
   let score = 100;
-  const addPenalty = (code, points) => {
-    const normalizedPoints = Math.max(0, Number(points) || 0);
+  const addPenalty = (code, points = null, options = {}) => {
+    const normalizedPoints = points === null ? getPenaltyPoints(code, options) : Math.max(0, Number(points) || 0);
     penalties.push({ code, points: normalizedPoints });
     score = Math.max(0, score - normalizedPoints);
   };
   if (!snapshot.tests.jestList.ok) {
     warnings.push(`jest_list_failed:${snapshot.tests.jestList.error || 'unknown'}`);
-    addPenalty('jest_list_failed', 8);
+    addPenalty('jest_list_failed');
   }
   if (snapshot.tests.testFileCount <= 0) {
     warnings.push('no_test_files_detected');
-    addPenalty('no_test_files_detected', 15);
+    addPenalty('no_test_files_detected');
   }
   const missingKeyModules = Object.entries(snapshot.modules.keyModules)
     .filter(([, value]) => value.exists !== true)
     .map(([key]) => key);
   if (missingKeyModules.length > 0) {
     warnings.push(`missing_key_modules:${missingKeyModules.join(',')}`);
-    addPenalty('missing_key_modules', Math.min(20, missingKeyModules.length * 4));
+    addPenalty('missing_key_modules', null, { count: missingKeyModules.length });
   }
   for (const [key, db] of Object.entries(snapshot.databases)) {
     if (!db.exists) {
       warnings.push(`${key}_missing`);
-      addPenalty(`${key}_missing`, 20);
+      addPenalty('database_missing');
       continue;
     }
     if (db.error) {
       warnings.push(`${key}_error:${db.error}`);
-      addPenalty(`${key}_error`, 12);
+      addPenalty('database_error');
       continue;
     }
     if (db.rowCount <= 0) {
       warnings.push(`${key}_empty`);
-      addPenalty(`${key}_empty`, 6);
+      addPenalty('database_empty');
     }
   }
   const bridge = snapshot.bridge && typeof snapshot.bridge === 'object' ? snapshot.bridge : {};
   if (bridge.enabled === true && bridge.configured !== true) {
     warnings.push('bridge_enabled_unconfigured');
-    addPenalty('bridge_enabled_unconfigured', 20);
+    addPenalty('bridge_enabled_unconfigured');
   } else if (bridge.enabled === true && bridge.mode !== 'connected') {
     warnings.push(`bridge_enabled_not_connected:${bridge.state || bridge.status || bridge.mode || 'unknown'}`);
-    addPenalty('bridge_enabled_not_connected', 15);
+    addPenalty('bridge_enabled_not_connected');
   }
   const memoryConsistency = snapshot.memoryConsistency && typeof snapshot.memoryConsistency === 'object'
     ? snapshot.memoryConsistency
@@ -420,16 +519,19 @@ function buildHealthStatus(snapshot) {
       + `orphans=${Number(memoryConsistency.summary?.orphanedNodeCount || 0)},`
       + `duplicates=${Number(memoryConsistency.summary?.duplicateKnowledgeHashCount || 0)}`
     );
-    addPenalty('memory_consistency_drift', 12);
+    addPenalty('memory_consistency_drift');
   } else if (memoryConsistency.synced === false) {
     warnings.push(`memory_consistency_${memoryConsistency.status || 'unknown'}`);
-    addPenalty(`memory_consistency_${memoryConsistency.status || 'unknown'}`, 10);
+    addPenalty('memory_consistency_unsynced');
   }
+  const threshold = resolveHealthThreshold(score);
   return {
-    level: warnings.length > 0 ? 'warn' : 'ok',
+    level: threshold.level,
+    label: threshold.label,
     score,
     warnings,
     penalties,
+    threshold,
   };
 }
 
@@ -477,7 +579,7 @@ function createHealthSnapshot(options = {}) {
 }
 
 function renderStartupHealthMarkdown(snapshot = {}) {
-  const overallLevel = String(snapshot.status?.level || 'unknown').toUpperCase();
+  const overallLevel = String(snapshot.status?.label || snapshot.status?.level || 'unknown').toUpperCase();
   const overallScore = Number.isFinite(Number(snapshot.status?.score)) ? Number(snapshot.status.score) : null;
   const lines = [
     'STARTUP HEALTH',
@@ -562,15 +664,19 @@ if (require.main === module) {
 }
 
 module.exports = {
+  HEALTH_SCORE_PENALTIES,
+  HEALTH_SCORE_THRESHOLDS,
   KEY_MODULE_PATHS,
   collectKeyModules,
   countModuleFiles,
   countTestFiles,
   createHealthSnapshot,
+  getPenaltyPoints,
   inspectSqliteDb,
   listJestTests,
   loadSqliteDriver,
   normalizeProjectRoot,
   renderStartupHealthMarkdown,
+  resolveHealthThreshold,
   resolveWindowsCmdPath,
 };
