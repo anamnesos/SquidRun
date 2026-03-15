@@ -510,6 +510,7 @@ class SquidRunApp {
 
   buildStartupHealthStateContent(snapshot = {}, ledgerContext = {}, sessionNumber = null) {
     const level = String(snapshot.status?.level || 'unknown').toUpperCase();
+    const score = Number.isFinite(Number(snapshot.status?.score)) ? Number(snapshot.status.score) : null;
     const evidenceRows = Number(snapshot.databases?.evidenceLedger?.rowCount || 0);
     const cognitiveRows = Number(snapshot.databases?.cognitiveMemory?.rowCount || 0);
     const bridgeMode = typeof snapshot.bridge?.mode === 'string' ? snapshot.bridge.mode : 'unknown';
@@ -523,7 +524,7 @@ class SquidRunApp {
     const ledgerSession = Number.isInteger(Number(ledgerContext?.session)) ? Number(ledgerContext.session) : sessionNumber;
     const ledgerMode = typeof ledgerContext?.mode === 'string' ? ledgerContext.mode : 'unknown';
     const ledgerStatus = typeof ledgerContext?.status === 'string' ? ledgerContext.status : 'unknown';
-    return `Startup health ${Number.isInteger(sessionNumber) ? `for session ${sessionNumber}` : 'snapshot'}: overall ${level}. Evidence ledger rows=${evidenceRows}, cognitive memory rows=${cognitiveRows}. Memory consistency=${memoryConsistencyStatus} (entries=${Number(memoryConsistencySummary.knowledgeEntryCount || 0)}, nodes=${Number(memoryConsistencySummary.knowledgeNodeCount || 0)}, missing=${Number(memoryConsistencySummary.missingInCognitiveCount || 0)}, orphans=${Number(memoryConsistencySummary.orphanedNodeCount || 0)}, duplicates=${Number(memoryConsistencySummary.duplicateKnowledgeHashCount || 0)}). Bridge mode=${bridgeMode}, connection=${bridgeState}. Ledger context: session ${ledgerSession ?? 'unknown'} ${ledgerStatus} (${ledgerMode}).`;
+    return `Startup health ${Number.isInteger(sessionNumber) ? `for session ${sessionNumber}` : 'snapshot'}: overall ${level}${score !== null ? ` score=${score}/100` : ''}. Evidence ledger rows=${evidenceRows}, cognitive memory rows=${cognitiveRows}. Memory consistency=${memoryConsistencyStatus} (entries=${Number(memoryConsistencySummary.knowledgeEntryCount || 0)}, nodes=${Number(memoryConsistencySummary.knowledgeNodeCount || 0)}, missing=${Number(memoryConsistencySummary.missingInCognitiveCount || 0)}, orphans=${Number(memoryConsistencySummary.orphanedNodeCount || 0)}, duplicates=${Number(memoryConsistencySummary.duplicateKnowledgeHashCount || 0)}). Bridge mode=${bridgeMode}, connection=${bridgeState}. Ledger context: session ${ledgerSession ?? 'unknown'} ${ledgerStatus} (${ledgerMode}).`;
   }
 
   buildStartupHealthReport(snapshot = {}, ledgerContext = {}) {

@@ -364,36 +364,51 @@ function inspectMemoryConsistency(projectRoot, options = {}) {
 
 function buildHealthStatus(snapshot) {
   const warnings = [];
+  const penalties = [];
+  let score = 100;
+  const addPenalty = (code, points) => {
+    const normalizedPoints = Math.max(0, Number(points) || 0);
+    penalties.push({ code, points: normalizedPoints });
+    score = Math.max(0, score - normalizedPoints);
+  };
   if (!snapshot.tests.jestList.ok) {
     warnings.push(`jest_list_failed:${snapshot.tests.jestList.error || 'unknown'}`);
+    addPenalty('jest_list_failed', 8);
   }
   if (snapshot.tests.testFileCount <= 0) {
     warnings.push('no_test_files_detected');
+    addPenalty('no_test_files_detected', 15);
   }
   const missingKeyModules = Object.entries(snapshot.modules.keyModules)
     .filter(([, value]) => value.exists !== true)
     .map(([key]) => key);
   if (missingKeyModules.length > 0) {
     warnings.push(`missing_key_modules:${missingKeyModules.join(',')}`);
+    addPenalty('missing_key_modules', Math.min(20, missingKeyModules.length * 4));
   }
   for (const [key, db] of Object.entries(snapshot.databases)) {
     if (!db.exists) {
       warnings.push(`${key}_missing`);
+      addPenalty(`${key}_missing`, 20);
       continue;
     }
     if (db.error) {
       warnings.push(`${key}_error:${db.error}`);
+      addPenalty(`${key}_error`, 12);
       continue;
     }
     if (db.rowCount <= 0) {
       warnings.push(`${key}_empty`);
+      addPenalty(`${key}_empty`, 6);
     }
   }
   const bridge = snapshot.bridge && typeof snapshot.bridge === 'object' ? snapshot.bridge : {};
   if (bridge.enabled === true && bridge.configured !== true) {
     warnings.push('bridge_enabled_unconfigured');
+    addPenalty('bridge_enabled_unconfigured', 20);
   } else if (bridge.enabled === true && bridge.mode !== 'connected') {
     warnings.push(`bridge_enabled_not_connected:${bridge.state || bridge.status || bridge.mode || 'unknown'}`);
+    addPenalty('bridge_enabled_not_connected', 15);
   }
   const memoryConsistency = snapshot.memoryConsistency && typeof snapshot.memoryConsistency === 'object'
     ? snapshot.memoryConsistency
@@ -405,12 +420,16 @@ function buildHealthStatus(snapshot) {
       + `orphans=${Number(memoryConsistency.summary?.orphanedNodeCount || 0)},`
       + `duplicates=${Number(memoryConsistency.summary?.duplicateKnowledgeHashCount || 0)}`
     );
+    addPenalty('memory_consistency_drift', 12);
   } else if (memoryConsistency.synced === false) {
     warnings.push(`memory_consistency_${memoryConsistency.status || 'unknown'}`);
+    addPenalty(`memory_consistency_${memoryConsistency.status || 'unknown'}`, 10);
   }
   return {
     level: warnings.length > 0 ? 'warn' : 'ok',
+    score,
     warnings,
+    penalties,
   };
 }
 
@@ -458,9 +477,11 @@ function createHealthSnapshot(options = {}) {
 }
 
 function renderStartupHealthMarkdown(snapshot = {}) {
+  const overallLevel = String(snapshot.status?.level || 'unknown').toUpperCase();
+  const overallScore = Number.isFinite(Number(snapshot.status?.score)) ? Number(snapshot.status.score) : null;
   const lines = [
     'STARTUP HEALTH',
-    `- Overall: ${String(snapshot.status?.level || 'unknown').toUpperCase()}`,
+    `- Overall: ${overallLevel}${overallScore !== null ? ` (score=${overallScore}/100)` : ''}`,
     `- Tests: ${Number(snapshot.tests?.testFileCount || 0)} files, ${Number(snapshot.tests?.jestList?.count || 0)} Jest-discoverable suites${snapshot.tests?.jestList?.ok === false ? ' (list failed)' : ''}`,
     `- Modules: ${Number(snapshot.modules?.moduleFileCount || 0)} JS modules under ui/modules`,
   ];
@@ -506,6 +527,15 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   lines.push(`- Device ID: ${bridge.deviceId ? String(bridge.deviceId) : 'missing'}`);
   lines.push(`- Relay URL: ${bridge.relayUrl ? String(bridge.relayUrl) : 'unconfigured'}`);
   lines.push(`- Runtime: mode=${bridge.mode || 'unknown'}, enabled=${bridge.enabled === true ? 'yes' : 'no'}, configured=${bridge.configured === true ? 'yes' : 'no'}`);
+  const bridgePenalty = Array.isArray(snapshot.status?.penalties)
+    ? snapshot.status.penalties.find((entry) => String(entry?.code || '').startsWith('bridge_'))
+    : null;
+  if (bridgePenalty) {
+    const bridgeProbeStatus = bridgePenalty.code === 'bridge_enabled_not_connected'
+      ? 'degraded (enabled but disconnected)'
+      : (bridgePenalty.code === 'bridge_enabled_unconfigured' ? 'degraded (enabled but unconfigured)' : `degraded (${bridgePenalty.code})`);
+    lines.push(`- Probe: ${bridgeProbeStatus}; penalty=${Number(bridgePenalty.points || 0)}`);
+  }
 
   const warnings = Array.isArray(snapshot.status?.warnings) ? snapshot.status.warnings : [];
   if (warnings.length > 0) {
