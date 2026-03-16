@@ -1030,7 +1030,7 @@ describe('hm-send retry behavior', () => {
       const fallbackContent = fs.readFileSync(actualTriggerPath, 'utf8');
       expect(fallbackContent).toContain(`\n${message}`);
       expect(fallbackContent.startsWith(`${FALLBACK_MESSAGE_ID_PREFIX}${sendAttempts[0].messageId}]`)).toBe(true);
-      expect(fallbackContent).toContain('[PROJECT CONTEXT] name=');
+      expect(fallbackContent).toContain('[CURRENT PROJECT] name=');
       expect(fallbackContent).toContain('path=');
     } finally {
       const cleanupPaths = new Set(trackedPaths);
@@ -1668,5 +1668,85 @@ describe('hm-send retry behavior', () => {
     expect(healthChecks[0].target).toBe('@peer-builder');
     expect(healthChecks[1].target).toBe('@peer-oracle');
     expect(sendAttempts).toHaveLength(0);
+  });
+
+  test('prefers link.json project metadata over stale state.json project metadata', async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-project-priority-'));
+    const linkedProjectPath = path.join(tempRoot, 'linked-project');
+    const staleProjectPath = path.join(tempRoot, 'stale-project');
+    const coordPath = path.join(linkedProjectPath, '.squidrun');
+    const squidrunRoot = path.join(tempRoot, 'squidrun-root');
+    fs.mkdirSync(coordPath, { recursive: true });
+    fs.mkdirSync(path.join(squidrunRoot, '.squidrun'), { recursive: true });
+    fs.mkdirSync(staleProjectPath, { recursive: true });
+    fs.writeFileSync(path.join(coordPath, 'link.json'), JSON.stringify({
+      workspace: linkedProjectPath,
+      squidrun_root: squidrunRoot,
+      version: 1,
+    }, null, 2));
+    fs.writeFileSync(path.join(coordPath, 'state.json'), JSON.stringify({
+      project: staleProjectPath,
+    }, null, 2));
+
+    const sendAttempts = [];
+    let server;
+
+    await new Promise((resolve, reject) => {
+      server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+
+    const port = server.address().port;
+
+    server.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'welcome', clientId: 1 }));
+
+      ws.on('message', (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg.type === 'register') {
+          ws.send(JSON.stringify({ type: 'registered', role: msg.role }));
+          return;
+        }
+        if (msg.type === 'health-check') {
+          ws.send(JSON.stringify({
+            type: 'health-check-result',
+            requestId: msg.requestId,
+            target: msg.target,
+            healthy: true,
+            status: 'healthy',
+            staleThresholdMs: 60000,
+            timestamp: Date.now(),
+          }));
+          return;
+        }
+        if (msg.type === 'send') {
+          sendAttempts.push(msg);
+          ws.send(JSON.stringify({
+            type: 'send-ack',
+            messageId: msg.messageId,
+            ok: true,
+            status: 'routed',
+            timestamp: Date.now(),
+          }));
+        }
+      });
+    });
+
+    try {
+      const result = await runHmSend(
+        ['builder', '(TEST #9): prefer link metadata', '--timeout', '80', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port) },
+        { cwd: linkedProjectPath }
+      );
+
+      expect(result.code).toBe(0);
+      expect(sendAttempts).toHaveLength(1);
+      expect(sendAttempts[0]?.metadata?.project?.path).toBe(linkedProjectPath);
+      expect(sendAttempts[0]?.metadata?.project?.path).not.toBe(staleProjectPath);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 });

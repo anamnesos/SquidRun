@@ -327,6 +327,44 @@ maybeDescribe('evidence-ledger-memory', () => {
     expect(context.completed.some((item) => String(item).includes('Seed-era completion'))).toBe(false);
   });
 
+  test('getLatestContext accepts an explicit sessionNumber override', () => {
+    expect(memory.recordSessionStart({
+      sessionNumber: 228,
+      sessionId: 'ses-228',
+      mode: 'APP',
+      startedAtMs: 1000,
+    }).ok).toBe(true);
+    expect(memory.recordDecision({
+      category: 'completion',
+      title: 'Session 228 completion',
+      body: 'Older session record',
+      author: 'builder',
+      sessionId: 'ses-228',
+      nowMs: 1010,
+    }).ok).toBe(true);
+
+    expect(memory.recordSessionStart({
+      sessionNumber: 230,
+      sessionId: 'ses-230',
+      mode: 'APP',
+      startedAtMs: 2000,
+    }).ok).toBe(true);
+    expect(memory.recordDecision({
+      category: 'completion',
+      title: 'Session 230 completion',
+      body: 'Current session record',
+      author: 'builder',
+      sessionId: 'ses-230',
+      nowMs: 2010,
+    }).ok).toBe(true);
+
+    const context = memory.getLatestContext({ sessionNumber: 230 });
+
+    expect(context.session).toBe(230);
+    expect(context.completed.some((item) => String(item).includes('Session 230 completion'))).toBe(true);
+    expect(context.completed.some((item) => String(item).includes('Session 228 completion'))).toBe(false);
+  });
+
   test('edge cases: invalid category and invalid session start payload', () => {
     const invalidDecision = memory.recordDecision({
       category: 'not_a_category',

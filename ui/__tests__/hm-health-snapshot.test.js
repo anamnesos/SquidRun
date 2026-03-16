@@ -229,6 +229,7 @@ describe('hm-health-snapshot', () => {
 
     expect(markdown).toContain('STARTUP HEALTH');
     expect(markdown).toContain('Overall: OK');
+    expect(markdown).toContain('App Session: unknown');
     expect(markdown).toContain('Tests: 2 files, 2 Jest-discoverable suites');
     expect(markdown).toContain('Modules: 6 JS modules under ui/modules');
     expect(markdown).toContain('Evidence ledger DB: present, rows=2');

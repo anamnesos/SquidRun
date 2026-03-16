@@ -275,6 +275,45 @@ function countModuleFiles(modulesRoot) {
   };
 }
 
+function readAppStatusSnapshot(projectRoot) {
+  const appStatusPath = path.join(projectRoot, '.squidrun', 'app-status.json');
+  const stat = safeStat(appStatusPath);
+  if (!stat || !stat.isFile()) {
+    return {
+      path: appStatusPath,
+      exists: false,
+      sessionNumber: null,
+      sessionId: null,
+      error: null,
+    };
+  }
+
+  try {
+    const raw = fs.readFileSync(appStatusPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    return {
+      path: appStatusPath,
+      exists: true,
+      sessionNumber: asPositiveInt(
+        parsed?.session ?? parsed?.session_number ?? parsed?.sessionNumber,
+        null
+      ),
+      sessionId: typeof parsed?.session_id === 'string'
+        ? parsed.session_id.trim() || null
+        : (typeof parsed?.sessionId === 'string' ? parsed.sessionId.trim() || null : null),
+      error: null,
+    };
+  } catch (err) {
+    return {
+      path: appStatusPath,
+      exists: true,
+      sessionNumber: null,
+      sessionId: null,
+      error: err.message,
+    };
+  }
+}
+
 function collectKeyModules(projectRoot) {
   const modules = {};
   for (const [key, relPath] of Object.entries(KEY_MODULE_PATHS)) {
@@ -547,6 +586,7 @@ function createHealthSnapshot(options = {}) {
   const jestList = listJestTests(uiRoot, asPositiveInt(options.jestTimeoutMs, 30000));
   const moduleFiles = countModuleFiles(modulesRoot);
   const keyModules = collectKeyModules(projectRoot);
+  const appStatus = readAppStatusSnapshot(projectRoot);
   const databases = {
     evidenceLedger: inspectSqliteDb(evidenceLedgerDbPath, ['comms_journal', 'ledger_sessions', 'ledger_decisions']),
     cognitiveMemory: inspectSqliteDb(cognitiveMemoryDbPath, ['nodes', 'memory_pr_queue', 'edges']),
@@ -562,6 +602,7 @@ function createHealthSnapshot(options = {}) {
       testFileCount: testFiles.count,
       jestList,
     },
+    appStatus,
     modules: {
       modulesRoot,
       moduleFileCount: moduleFiles.count,
@@ -584,6 +625,7 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   const lines = [
     'STARTUP HEALTH',
     `- Overall: ${overallLevel}${overallScore !== null ? ` (score=${overallScore}/100)` : ''}`,
+    `- App Session: ${Number.isInteger(Number(snapshot.appStatus?.sessionNumber)) ? `session ${Number(snapshot.appStatus.sessionNumber)}` : 'unknown'}${snapshot.appStatus?.error ? ` (app-status error: ${snapshot.appStatus.error})` : ''}`,
     `- Tests: ${Number(snapshot.tests?.testFileCount || 0)} files, ${Number(snapshot.tests?.jestList?.count || 0)} Jest-discoverable suites${snapshot.tests?.jestList?.ok === false ? ' (list failed)' : ''}`,
     `- Modules: ${Number(snapshot.modules?.moduleFileCount || 0)} JS modules under ui/modules`,
   ];

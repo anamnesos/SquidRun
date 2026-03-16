@@ -377,11 +377,13 @@ function readProjectContextFromState() {
 }
 
 function resolveLocalProjectContext(startDir = process.cwd()) {
-  const fromState = readProjectContextFromState();
-  if (fromState?.projectPath) return fromState;
-
   const fromLink = resolveProjectContextFromLink(startDir);
   if (fromLink?.projectPath) return fromLink;
+
+  // link.json is the canonical agent workspace bootstrap. state.json tracks
+  // mutable UI project selection and can legitimately lag across sessions.
+  const fromState = readProjectContextFromState();
+  if (fromState?.projectPath) return fromState;
 
   const cwdPath = path.resolve(startDir);
   return {
@@ -408,6 +410,27 @@ function applyProjectContext(projectContext = null) {
 }
 
 const localProjectContext = applyProjectContext(resolveLocalProjectContext(process.cwd()));
+
+function getLocalCoordRoot(context = localProjectContext) {
+  if (context?.projectPath) {
+    return path.join(context.projectPath, '.squidrun');
+  }
+  return path.join(process.cwd(), '.squidrun');
+}
+
+function resolveLocalCoordPath(relativePath, options = {}) {
+  const relPath = String(relativePath || '').trim();
+  if (!relPath) return getLocalCoordRoot();
+  const localCoordRoot = getLocalCoordRoot();
+  const preferLocal = options.preferLocal !== false;
+  if (preferLocal && localCoordRoot) {
+    return path.join(localCoordRoot, relPath);
+  }
+  if (typeof resolveCoordPath === 'function') {
+    return resolveCoordPath(relPath, options);
+  }
+  return path.join(localCoordRoot, relPath);
+}
 
 function normalizeSessionId(value) {
   if (value === null || value === undefined) return null;
@@ -439,6 +462,9 @@ function resolveCurrentSessionId(context = localProjectContext) {
 
   if (context?.squidrunRoot) {
     addCandidate(path.join(context.squidrunRoot, '.squidrun', 'app-status.json'));
+  }
+  if (context?.projectPath) {
+    addCandidate(path.join(context.projectPath, '.squidrun', 'app-status.json'));
   }
   if (typeof getSquidrunRoot === 'function') {
     try {
@@ -521,13 +547,7 @@ function writeJsonAtomic(filePath, payload) {
 }
 
 function getBridgeKnownDevicesCachePath() {
-  if (typeof resolveCoordPath === 'function') {
-    return resolveCoordPath(path.join('bridge', 'known-devices.json'), { forWrite: true });
-  }
-  const fallbackCoordRoot = localProjectContext?.projectPath
-    ? path.join(localProjectContext.projectPath, '.squidrun')
-    : path.join(process.cwd(), '.squidrun');
-  return path.join(fallbackCoordRoot, 'bridge', 'known-devices.json');
+  return resolveLocalCoordPath(path.join('bridge', 'known-devices.json'), { forWrite: true });
 }
 
 function normalizeDeviceDiscoveryEntry(input = {}) {
@@ -998,8 +1018,8 @@ function appendProjectContextMarker(content, metadata = null) {
   const projectPath = typeof project.path === 'string' ? project.path.trim() : '';
   if (!name && !projectPath) return text;
 
-  const marker = '[PROJECT CONTEXT]';
-  if (text.includes(marker)) return text;
+  const marker = '[CURRENT PROJECT]';
+  if (text.includes(marker) || text.includes('[PROJECT CONTEXT SWITCHED]')) return text;
 
   const fields = [];
   if (name) fields.push(`name=${name}`);
@@ -1048,12 +1068,7 @@ function writeTriggerFallback(targetInput, descriptorOrContent, options = {}) {
         }),
     };
 
-  const fallbackCoordRoot = localProjectContext?.projectPath
-    ? path.join(localProjectContext.projectPath, '.squidrun')
-    : path.join(process.cwd(), '.squidrun');
-  const triggersDir = typeof resolveCoordPath === 'function'
-    ? resolveCoordPath('triggers', { forWrite: true })
-    : path.join(fallbackCoordRoot, 'triggers');
+  const triggersDir = resolveLocalCoordPath('triggers', { forWrite: true });
   const triggerPath = path.join(triggersDir, `${roleName}.txt`);
   const tempPath = path.join(
     triggersDir,

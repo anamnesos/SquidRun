@@ -425,6 +425,11 @@ describe('full-restart handler (non-Windows)', () => {
     ctx.mainWindow.isDestroyed = jest.fn(() => false);
 
     registerErrorHandlers(ctx, {});
+    mockFs.existsSync.mockClear();
+    mockFs.readFileSync.mockClear();
+    mockFs.unlinkSync.mockClear();
+    mockSpawn.mockClear();
+    mockApp.exit.mockClear();
   });
 
   afterEach(() => {

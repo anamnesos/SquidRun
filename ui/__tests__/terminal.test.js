@@ -19,30 +19,30 @@ jest.mock('@xterm/xterm', () => ({
     getSelection: jest.fn(),
     attachCustomKeyEventHandler: jest.fn(),
   })),
-}));
+}), { virtual: true });
 
 jest.mock('@xterm/addon-fit', () => ({
   FitAddon: jest.fn().mockImplementation(() => ({
     fit: jest.fn(),
   })),
-}));
+}), { virtual: true });
 
 jest.mock('@xterm/addon-web-links', () => ({
   WebLinksAddon: jest.fn().mockImplementation(() => ({})),
-}));
+}), { virtual: true });
 
 jest.mock('@xterm/addon-webgl', () => ({
   WebglAddon: jest.fn().mockImplementation(() => ({
     onContextLoss: jest.fn(),
   })),
-}));
+}), { virtual: true });
 
 jest.mock('@xterm/addon-search', () => ({
   SearchAddon: jest.fn().mockImplementation(() => ({
     findNext: jest.fn(),
     findPrevious: jest.fn(),
   })),
-}));
+}), { virtual: true });
 
 // Mock settings module (used by isCodexFromSettings)
 const mockSettings = {

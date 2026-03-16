@@ -550,10 +550,14 @@ describe('daemon-handlers.js module', () => {
     });
 
     describe('project-changed handler', () => {
-      test('should update project display via uiView', () => {
+      test('should update project display via uiView and show switched banner toast', () => {
         daemonHandlers.setupProjectListener();
         ipcHandlers['project-changed']({}, '/new/project/path');
         expect(uiView.updateProjectDisplay).toHaveBeenCalledWith('/new/project/path');
+        expect(notifications.showToast).toHaveBeenCalledWith(
+          '[PROJECT CONTEXT SWITCHED] path — restart agents to apply',
+          'warning'
+        );
       });
     });
 
