@@ -3,7 +3,6 @@
  */
 
 const path = require('path');
-const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
 
 let serverInstance;
 
@@ -36,16 +35,16 @@ jest.mock('@modelcontextprotocol/sdk/server/index.js', () => ({
       return Promise.resolve();
     }
   },
-}));
+}), { virtual: true });
 
 jest.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
   StdioServerTransport: class MockTransport {},
-}));
+}), { virtual: true });
 
 jest.mock('@modelcontextprotocol/sdk/types.js', () => ({
   CallToolRequestSchema: 'call',
   ListToolsRequestSchema: 'list',
-}));
+}), { virtual: true });
 
 jest.mock('../modules/logger', () => mockLog);
 
@@ -75,6 +74,8 @@ jest.mock('fs', () => ({
     mockFileStore.delete(p);
   }),
 }));
+
+const { WORKSPACE_PATH, resolveCoordPath } = require('../config');
 
 describe('mcp-server tool handlers', () => {
   const originalArgv = process.argv;

@@ -129,23 +129,23 @@ jest.mock('@xterm/xterm', () => ({
     clear: jest.fn(),
     buffer: { active: {} },
   })),
-}));
+}), { virtual: true });
 
 jest.mock('@xterm/addon-fit', () => ({
   FitAddon: jest.fn().mockImplementation(() => ({
     fit: jest.fn(),
   })),
-}));
+}), { virtual: true });
 
 jest.mock('@xterm/addon-web-links', () => ({
   WebLinksAddon: jest.fn().mockImplementation(() => ({})),
-}));
+}), { virtual: true });
 
 jest.mock('@xterm/addon-webgl', () => ({
   WebglAddon: jest.fn().mockImplementation(() => ({
     onContextLoss: jest.fn(),
   })),
-}));
+}), { virtual: true });
 
 jest.mock('@xterm/addon-search', () => ({
   SearchAddon: jest.fn().mockImplementation(() => ({
@@ -153,7 +153,7 @@ jest.mock('@xterm/addon-search', () => ({
     findPrevious: jest.fn(),
     clearDecorations: jest.fn(),
   })),
-}));
+}), { virtual: true });
 
 describe('Terminal Events', () => {
   let terminal;

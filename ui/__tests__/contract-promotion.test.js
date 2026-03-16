@@ -5,6 +5,7 @@
 
 // Mock fs to avoid actual file I/O
 jest.mock('fs', () => ({
+  existsSync: jest.fn(() => false),
   readFileSync: jest.fn(),
   writeFileSync: jest.fn(),
   mkdirSync: jest.fn(),

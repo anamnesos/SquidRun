@@ -611,6 +611,19 @@ class EvidenceLedgerMemory {
     return this._mapSession(row);
   }
 
+  getSessionByNumber(sessionNumber) {
+    const db = this._db();
+    if (!db) return this._unavailable();
+    const normalized = asFiniteNumber(sessionNumber, null);
+    if (!Number.isInteger(normalized) || normalized <= 0) return null;
+    const row = db.prepare(`
+      SELECT * FROM ledger_sessions
+      WHERE session_number = ?
+      LIMIT 1
+    `).get(normalized);
+    return this._mapSession(row);
+  }
+
   listSessions(filters = {}) {
     const db = this._db();
     if (!db) return this._unavailable();
@@ -861,6 +874,7 @@ class EvidenceLedgerMemory {
     return this._withReadTransaction(() => {
       let requestedSessionId = asNonEmptyString(opts.sessionId, '');
       const explicitSessionId = requestedSessionId.length > 0;
+      const requestedSessionNumber = asFiniteNumber(opts.sessionNumber, null);
       const preferSnapshot = opts.preferSnapshot === true;
 
       // When preferSnapshot is true and no session specified, anchor to the latest
@@ -890,6 +904,14 @@ class EvidenceLedgerMemory {
         if (requestedSession && requestedSession.ok === false) return requestedSession;
         session = requestedSession || null;
         if (session?.sessionId) recentSessionIds = [session.sessionId];
+      } else if (Number.isInteger(requestedSessionNumber) && requestedSessionNumber > 0) {
+        const requestedSession = this.getSessionByNumber(requestedSessionNumber);
+        if (requestedSession && requestedSession.ok === false) return requestedSession;
+        session = requestedSession || null;
+        if (session?.sessionId) {
+          requestedSessionId = session.sessionId;
+          recentSessionIds = [session.sessionId];
+        }
       } else {
         const sessionWindow = clampLimit(opts.sessionWindow, 5, 1, 20);
         const latestSessions = this.listSessions({ limit: sessionWindow, order: 'desc' });
