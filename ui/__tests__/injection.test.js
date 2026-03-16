@@ -35,6 +35,8 @@ describe('Terminal Injection', () => {
     CLAUDE_CHUNK_MAX_SIZE: 8192,
     CLAUDE_CHUNK_THRESHOLD_BYTES: 8 * 1024,
     CLAUDE_CHUNK_YIELD_MS: 0,
+    HM_SEND_FAST_CHUNK_THRESHOLD_BYTES: 256,
+    HM_SEND_FAST_ENTER_DELAY_MS: 500,
   };
 
   // Mock objects
@@ -987,10 +989,110 @@ describe('Terminal Injection', () => {
 
       resolveChunkWrite({ success: true, chunks: 2, chunkSize: 1024 });
       // Fast path now waits for CLI to process paste before sending Enter
-      await jest.advanceTimersByTimeAsync(500);
+      await jest.advanceTimersByTimeAsync(800);
       await promise;
 
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
+      expect(onComplete).toHaveBeenCalledWith({
+        success: true,
+        verified: true,
+        signal: 'hm_send_fast_path',
+      });
+    });
+
+    test('hm-send medium payloads force chunked PTY writes before Enter on fallback path', async () => {
+      const capabilityOptions = {
+        ...mockOptions,
+        getPaneCapabilities: jest.fn().mockReturnValue({
+          mode: 'pty',
+          modeLabel: 'custom-pty',
+          appliedMethod: 'custom-pty',
+          submitMethod: 'custom-pty-enter',
+          bypassGlobalLock: true,
+          applyCompactionGate: false,
+          requiresFocusForEnter: false,
+          enterMethod: 'pty',
+          enterDelayMs: 0,
+          sanitizeMultiline: false,
+          clearLineBeforeWrite: true,
+          useChunkedWrite: false,
+          homeResetBeforeWrite: false,
+          verifySubmitAccepted: false,
+          deferSubmitWhilePaneActive: false,
+          typingGuardWhenBypassing: true,
+          displayName: 'Custom',
+        }),
+      };
+      const fallbackController = createInjectionController(capabilityOptions);
+      const onComplete = jest.fn();
+      const mediumPayload = `${'M'.repeat(300)}\r`;
+
+      const promise = fallbackController.doSendToPane(
+        '1',
+        mediumPayload,
+        onComplete,
+        { messageId: 'hm-medium', traceId: 'hm-medium' },
+        { hmSendFastEnter: true }
+      );
+
+      await jest.advanceTimersByTimeAsync(800);
+      await promise;
+
+      expect(mockPty.writeChunked).toHaveBeenCalledWith(
+        '1',
+        'M'.repeat(300),
+        expect.objectContaining({ waitForWriteAck: true }),
+        expect.any(Object)
+      );
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
+      expect(onComplete).toHaveBeenCalledWith({
+        success: true,
+        verified: true,
+        signal: 'hm_send_fast_path',
+      });
+    });
+
+    test('hm-send fast path enforces a minimum pre-Enter delay on fallback path', async () => {
+      const capabilityOptions = {
+        ...mockOptions,
+        getPaneCapabilities: jest.fn().mockReturnValue({
+          mode: 'pty',
+          modeLabel: 'custom-pty',
+          appliedMethod: 'custom-pty',
+          submitMethod: 'custom-pty-enter',
+          bypassGlobalLock: true,
+          applyCompactionGate: false,
+          requiresFocusForEnter: false,
+          enterMethod: 'pty',
+          enterDelayMs: 0,
+          sanitizeMultiline: false,
+          clearLineBeforeWrite: true,
+          useChunkedWrite: false,
+          homeResetBeforeWrite: false,
+          verifySubmitAccepted: false,
+          deferSubmitWhilePaneActive: false,
+          typingGuardWhenBypassing: true,
+          displayName: 'Custom',
+        }),
+      };
+      const fallbackController = createInjectionController(capabilityOptions);
+      const onComplete = jest.fn();
+
+      const promise = fallbackController.doSendToPane(
+        '1',
+        `${'D'.repeat(300)}\r`,
+        onComplete,
+        { messageId: 'hm-delay', traceId: 'hm-delay' },
+        { hmSendFastEnter: true }
+      );
+
+      await jest.advanceTimersByTimeAsync(499);
+      expect(getPtyEnterCallCount(mockPty)).toBe(0);
+
+      await jest.advanceTimersByTimeAsync(1);
+      await promise;
+
+      expect(getPtyEnterCallCount(mockPty)).toBe(1);
       expect(onComplete).toHaveBeenCalledWith({
         success: true,
         verified: true,

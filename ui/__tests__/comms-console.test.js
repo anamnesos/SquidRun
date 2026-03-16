@@ -335,4 +335,25 @@ describe('comms-console background builder rendering', () => {
     expect(list.children[0].innerHTML).toContain('Missing required env vars');
     expect(list.children[0].innerHTML).toContain('Error missing_config');
   });
+
+  test('renders long comms bodies in full by default', () => {
+    commsConsole.setupCommsConsoleTab(bus);
+
+    const longBody = 'A'.repeat(4205);
+    bus.emitComms({
+      type: 'comms.delivery',
+      payload: {
+        senderRole: 'builder',
+        targetRole: 'architect',
+        message: longBody,
+      },
+      ts: Date.now(),
+    });
+
+    const list = global.document.getElementById('commsConsoleList');
+    expect(list.children.length).toBe(1);
+    expect(list.children[0].innerHTML).toContain(longBody);
+    expect(list.children[0].innerHTML).toContain('Collapse');
+    expect(list.children[0].innerHTML).not.toContain(`${'A'.repeat(4000)}...`);
+  });
 });

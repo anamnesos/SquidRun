@@ -16,6 +16,7 @@ const {
   DEFAULT_MIN_INTERVAL_MS,
   resolveSessionStatePath,
 } = require('./modules/cognitive-memory-sleep');
+const { stageImmediateTaskExtraction } = require('./modules/cognitive-memory-immunity');
 
 const DEFAULT_POLL_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_POLL_MS || '4000', 10) || 4000);
 const DEFAULT_HEARTBEAT_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_HEARTBEAT_MS || '15000', 10) || 15000);
@@ -578,6 +579,7 @@ class SupervisorDaemon {
 
     const worker = {
       taskId: task.taskId,
+      task,
       leaseOwner,
       child,
       taskLogPath,
@@ -907,6 +909,33 @@ class SupervisorDaemon {
         this.logger.warn(`Task ${worker.taskId} failed`);
       }
     }
+
+    Promise.resolve()
+      .then(() => stageImmediateTaskExtraction({
+        task: worker.task,
+        taskId: worker.taskId,
+        status: result.ok ? 'completed' : 'failed',
+        metadata: result.ok
+          ? {
+            resultSummary: result?.resultPayload?.resultSummary || result?.resultPayload?.stdoutTail || '',
+            files: worker?.task?.contextSnapshot?.files || [],
+            scopes: worker?.task?.contextSnapshot?.scopes || [],
+            session: worker?.task?.contextSnapshot?.session || null,
+          }
+          : {
+            error: { message: result?.errorPayload?.message || result?.errorPayload?.stderrTail || 'Task failed' },
+            files: worker?.task?.contextSnapshot?.files || [],
+            scopes: worker?.task?.contextSnapshot?.scopes || [],
+            session: worker?.task?.contextSnapshot?.session || null,
+          },
+        contextSnapshot: worker?.task?.contextSnapshot || {},
+        session: worker?.task?.contextSnapshot?.session || null,
+      }, {
+        store: this.sleepConsolidator?.cognitiveStore || undefined,
+      }))
+      .catch((err) => {
+        this.logger.warn(`Behavioral extraction failed for supervisor task ${worker.taskId}: ${err.message}`);
+      });
 
     this.writeStatus();
   }

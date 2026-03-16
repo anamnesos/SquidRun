@@ -180,6 +180,37 @@ maybeDescribe('cognitive-memory api', () => {
     expect(result.node.content).toContain('/v2/token');
   });
 
+  test('ingest can mint immune nodes and set-immune updates metadata', async () => {
+    const ingested = await api.ingest({
+      content: 'If a supervisor task fails with a stale lease, requeue it before re-running the worker.',
+      category: 'workflow',
+      agentId: 'builder',
+      sourceType: 'immune-behavior',
+      sourcePath: 'immune:task_immunity',
+      heading: 'task_immunity',
+      isImmune: true,
+    });
+
+    expect(ingested.ok).toBe(true);
+    expect(ingested.node.isImmune).toBe(true);
+
+    const toggled = api.setImmune(ingested.node.nodeId, false, {
+      agentId: 'architect',
+      reason: 'manual review',
+    });
+    expect(toggled).toEqual(expect.objectContaining({
+      ok: true,
+      node: expect.objectContaining({
+        nodeId: ingested.node.nodeId,
+        isImmune: false,
+        metadata: expect.objectContaining({
+          lastImmuneSetBy: 'architect',
+          lastImmuneSetReason: 'manual review',
+        }),
+      }),
+    }));
+  });
+
   test('searchExistingNodes downranks stale nodes even when they carry more salience', async () => {
     const stale = await api.ingest({
       content: 'ServiceTitan auth endpoint builder token refresh guidance.',

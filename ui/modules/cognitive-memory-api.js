@@ -464,7 +464,8 @@ class CognitiveMemoryApi {
     });
     const nowMs = Date.now();
     const embedding = await this.embedText(content);
-    const existing = db.prepare('SELECT node_id FROM nodes WHERE content_hash = ? LIMIT 1').get(contentHash);
+    const existing = db.prepare('SELECT node_id, is_immune FROM nodes WHERE content_hash = ? LIMIT 1').get(contentHash);
+    const requestedImmune = result.isImmune === true || result.is_immune === 1;
 
     if (existing) {
       db.prepare(`
@@ -478,6 +479,7 @@ class CognitiveMemoryApi {
             title = ?,
             heading = ?,
             metadata_json = ?,
+            is_immune = ?,
             updated_at_ms = ?
         WHERE node_id = ?
       `).run(
@@ -490,6 +492,7 @@ class CognitiveMemoryApi {
         result.title || null,
         heading,
         JSON.stringify(result.metadata || {}),
+        requestedImmune ? 1 : Number(existing.is_immune || 0),
         nowMs,
         existing.node_id
       );
@@ -531,7 +534,7 @@ class CognitiveMemoryApi {
       contentHash,
       1,
       0,
-      0,
+      requestedImmune ? 1 : 0,
       JSON.stringify(embedding),
       sourceType,
       sourcePath,
@@ -703,6 +706,7 @@ class CognitiveMemoryApi {
         ingestedVia: input.ingestedVia || 'runtime',
         confidence,
       },
+      isImmune: input.isImmune === true || input.is_immune === 1,
     });
 
     if (!result) {
@@ -882,6 +886,41 @@ class CognitiveMemoryApi {
       try { db.exec('ROLLBACK;'); } catch {}
       throw err;
     }
+  }
+
+  setImmune(nodeId, value = true, options = {}) {
+    const normalizedNodeId = normalizeWhitespace(nodeId);
+    if (!normalizedNodeId) {
+      return { ok: false, reason: 'node_id_required' };
+    }
+    const existing = this.getNode(normalizedNodeId);
+    if (!existing) {
+      return { ok: false, reason: 'node_not_found' };
+    }
+
+    const nextIsImmune = value === false || value === 0 || value === '0' ? 0 : 1;
+    const nowMs = Date.now();
+    const metadata = {
+      ...(existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+        ? existing.metadata
+        : {}),
+      lastImmuneSetAt: isoNow(nowMs),
+      lastImmuneSetBy: options.agentId || options.agent_id || 'runtime',
+      lastImmuneSetReason: options.reason || null,
+    };
+
+    this.init().prepare(`
+      UPDATE nodes
+      SET is_immune = ?,
+          metadata_json = ?,
+          updated_at_ms = ?
+      WHERE node_id = ?
+    `).run(nextIsImmune, JSON.stringify(metadata), nowMs, normalizedNodeId);
+
+    return {
+      ok: true,
+      node: this.getNode(normalizedNodeId),
+    };
   }
 }
 

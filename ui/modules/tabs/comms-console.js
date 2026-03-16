@@ -15,7 +15,7 @@ const {
 const { escapeHtml } = require('./utils');
 
 const MAX_SCROLL_ENTRIES = 5000;
-const BODY_PREVIEW_LIMIT = 180;
+const BODY_COLLAPSE_LIMIT = 4000;
 const HISTORY_PAGE_SIZE = 50;
 const TOP_LOAD_THRESHOLD_PX = 24;
 
@@ -181,8 +181,8 @@ function extractBody(value) {
 }
 
 function bodyPreview(text) {
-  if (text.length <= BODY_PREVIEW_LIMIT) return text;
-  return `${text.slice(0, BODY_PREVIEW_LIMIT)}...`;
+  if (text.length <= BODY_COLLAPSE_LIMIT) return text;
+  return `${text.slice(0, BODY_COLLAPSE_LIMIT)}...`;
 }
 
 function normalizeAttempt(value) {
@@ -366,9 +366,9 @@ function createEntryNode(entry) {
       ${statusLabel ? `<span class="comms-console-status${statusClass}">${escapeHtml(statusLabel)}</span>` : ''}
       <span class="comms-console-session-id${sessionClass}" title="Session ID">${escapeHtml(sessionText)}</span>
     </div>
-    <div class="comms-console-entry-body${truncated ? ' is-truncated' : ''}">${escapeHtml(preview)}</div>
+    <div class="comms-console-entry-body${truncated ? ' is-truncated expanded' : ''}">${escapeHtml(truncated ? fullBody : preview)}</div>
     ${metaParts.length > 0 ? `<div class="comms-console-entry-meta">${escapeHtml(metaParts.join(' | '))}</div>` : ''}
-    ${truncated ? '<button class="comms-console-expand" data-action="toggle-body" type="button">Expand</button>' : ''}
+    ${truncated ? '<button class="comms-console-expand" data-action="toggle-body" type="button">Collapse</button>' : ''}
   `;
 
   if (truncated) {

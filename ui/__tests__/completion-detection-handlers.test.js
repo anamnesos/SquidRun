@@ -8,7 +8,12 @@ const {
   createDefaultContext,
 } = require('./helpers/ipc-harness');
 
+jest.mock('../modules/cognitive-memory-immunity', () => ({
+  stageImmediateTaskExtraction: jest.fn(async () => ({ ok: true })),
+}));
+
 const { registerCompletionDetectionHandlers } = require('../modules/ipc/completion-detection-handlers');
+const { stageImmediateTaskExtraction } = require('../modules/cognitive-memory-immunity');
 
 describe('Completion Detection Handlers', () => {
   let harness;
@@ -115,6 +120,30 @@ describe('Completion Detection Handlers', () => {
       const result = await harness.invoke('check-completion', '');
 
       expect(result.completed).toBe(false);
+    });
+
+    test('fires behavioral extraction without changing the response contract', async () => {
+      const result = await harness.invoke('check-completion', {
+        text: 'Ready for handoff to reviewer',
+        paneId: '1',
+        taskId: 'T-42',
+        files: ['ui/modules/ipc/completion-detection-handlers.js'],
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        completed: true,
+        pattern: expect.any(String),
+      }));
+
+      await Promise.resolve();
+      expect(stageImmediateTaskExtraction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paneId: '1',
+          taskId: 'T-42',
+          text: 'Ready for handoff to reviewer',
+        }),
+        expect.any(Object)
+      );
     });
   });
 

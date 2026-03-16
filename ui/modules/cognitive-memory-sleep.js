@@ -5,6 +5,8 @@ const { DatabaseSync } = require('node:sqlite');
 const { resolveCoordPath } = require('../config');
 const { CognitiveMemoryStore } = require('./cognitive-memory-store');
 const { MemorySearchIndex } = require('./memory-search');
+const { CognitiveMemoryApi } = require('./cognitive-memory-api');
+const { runBehavioralSleepPromotion } = require('./cognitive-memory-immunity');
 const { extractCandidates } = require('../scripts/hm-memory-extract');
 
 const DEFAULT_IDLE_THRESHOLD_MS = Math.max(
@@ -551,6 +553,17 @@ class SleepConsolidator {
       ? this.cognitiveStore.stageMemoryPRs(generated)
       : { ok: true, staged: [], merged: [], pendingCount: this.cognitiveStore.listPendingPRs({ limit: 1000 }).length };
 
+    const behavioralApi = new CognitiveMemoryApi({
+      cognitiveStore: this.cognitiveStore,
+      memorySearchIndex: this.memorySearchIndex,
+    });
+    const behavioralSummary = await runBehavioralSleepPromotion({
+      store: this.cognitiveStore,
+      api: behavioralApi,
+      memorySearchIndex: this.memorySearchIndex,
+      promotedBy: 'sleep-cycle',
+    });
+
     const lastRowId = episodes[episodes.length - 1]?.rowId || this.getLastProcessedRowId();
     this.setState('last_comms_row_id', String(lastRowId));
     this.setState('last_run_at_ms', String(Date.now()));
@@ -566,10 +579,13 @@ class SleepConsolidator {
       stagedCount: Number(staged.staged?.length || 0),
       mergedCount: Number(staged.merged?.length || 0),
       pendingCount: Number(staged.pendingCount || 0),
+      behavioralCandidateCount: Number(behavioralSummary?.candidateCount || 0),
+      behavioralPromotedCount: Number(behavioralSummary?.promoted || 0),
       lastProcessedRowId: lastRowId,
       clusterCount: clustering.clusters.length,
       noiseCount: clustering.noise.length,
-      status: generated.length > 0 ? 'complete' : 'no_patterns',
+      behavioralSummary,
+      status: (generated.length > 0 || Number(behavioralSummary?.candidateCount || 0) > 0) ? 'complete' : 'no_patterns',
     };
     this.recordRun(summary);
     return summary;
