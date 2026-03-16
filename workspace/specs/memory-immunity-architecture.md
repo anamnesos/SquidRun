@@ -46,4 +46,4 @@ To implement the RLM immunity layer, the `nodes` schema requires a new column:
 3. **Decay Logic Update (Retrieval Time):**
    - Update `ui/modules/cognitive-memory-api.js`. In the retrieval scoring loop, if `node.is_immune === 1`, force the recency multiplier to `1.0` (or its equivalent max value), ensuring the node's base vector similarity and salience are never penalized by age.
 4. **Memory Consistency Repair Safety:**
-   - Update `hm-memory-consistency.js`. During repair operations (`collapse_duplicate_hash` or `delete_revision_skew_orphan`), if ANY node in a duplicate group or being merged has `is_immune = 1`, the surviving node MUST inherit `is_immune = 1`. Revision-skew deletion must be blocked if `is_immune = 1` unless the user explicitly confirms.
+   - Update `ui/modules/memory-consistency-check.js`. During repair operations (`collapse_duplicate_hash` or `delete_revision_skew_orphan`), if ANY node in a duplicate group or being merged has `is_immune = 1`, the surviving node MUST inherit `is_immune = 1`. Revision-skew deletion must be blocked if `is_immune = 1` unless the user explicitly confirms.
