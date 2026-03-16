@@ -34,6 +34,7 @@ function usage() {
     '  node scripts/hm-memory-api.js retrieve <query> [--agent <id>] [--limit <n>] [--lease-ms <ms>]',
     '  node scripts/hm-memory-api.js patch --lease <lease-id> --content <text> [--agent <id>] [--reason <text>]',
     '  node scripts/hm-memory-api.js salience --node <node-id> [--delta <n>] [--decay <n>] [--max-depth <n>]',
+    '  node scripts/hm-memory-api.js set-immune --id <node-id> [--value <0|1>] [--agent <id>] [--reason <text>]',
     '',
   ].join('\n'));
 }
@@ -119,6 +120,20 @@ async function main(argv = process.argv.slice(2)) {
         delta: flags.delta,
         decay: flags.decay,
         maxDepth: flags['max-depth'],
+      });
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return;
+    }
+
+    if (command === 'set-immune') {
+      const nodeId = flags.id || flags.node;
+      if (!nodeId) {
+        throw new Error('set-immune requires --id');
+      }
+      const value = flags.value == null ? true : !['0', 'false', 'off'].includes(String(flags.value).toLowerCase());
+      const result = api.setImmune(nodeId, value, {
+        agentId: flags.agent || flags['agent-id'] || 'cli',
+        reason: flags.reason || null,
       });
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return;

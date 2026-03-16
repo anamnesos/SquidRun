@@ -37,6 +37,10 @@ jest.mock('../modules/memory-consistency-check', () => ({
   })),
 }));
 
+jest.mock('../modules/cognitive-memory-immunity', () => ({
+  stageImmediateTaskExtraction: jest.fn(async () => ({ ok: true })),
+}));
+
 const chokidar = require('chokidar');
 const fs = require('fs');
 const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');

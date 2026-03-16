@@ -38,6 +38,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/comms/message-envelope.js: Exports ENVELOPE_VERSION, buildOutboundMessageEnvelope, buildCanonicalEnvelopeMetadata, buildWebSocketDispatchMessage, ....
 - ui/modules/compaction-detector.js: Exports init, processChunk, getState, reset, ....
 - ui/modules/cognitive-memory-api.js: Lease-backed cognitive memory API for ingest, retrieve, patch, salience updates, transactive expertise lookup, and runtime IPC/websocket access over the cognitive memory store/search index.
+- ui/modules/cognitive-memory-immunity.js: Behavioral immunity layer that stages post-task heuristics and promotes matched failure->success corrections into immune cognitive-memory nodes.
 - ui/modules/constants.js: Exports BYPASS_CLEAR_DELAY_MS, BUTTON_DEBOUNCE_MS, SPINNER_INTERVAL_MS, UI_IDLE_THRESHOLD_MS, ....
 - ui/modules/context-compressor.js: Exports init, generateSnapshot, refreshAll, refresh, ....
 - ui/modules/contract-promotion-service.js: Exports ACTIONS, normalizeAction, getContractStatsSnapshot, approvePromotion, ....
@@ -63,7 +64,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/ipc/background-processes.js: Tracks background child processes, broadcasts process state to renderer, and terminates running processes on cleanup.
 - ui/modules/ipc/backup-handlers.js: Registers IPC channels (backup-list, backup-create, backup-restore, ...).
 - ui/modules/ipc/checkpoint-handlers.js: Registers IPC channels (create-checkpoint, list-checkpoints, get-checkpoint-diff, ...).
-- ui/modules/ipc/completion-detection-handlers.js: Registers IPC channels (check-completion, get-completion-patterns).
+- ui/modules/ipc/completion-detection-handlers.js: Registers IPC channels (check-completion, get-completion-patterns) and fires non-blocking post-task immunity extraction on completion/handoff signals.
 - ui/modules/ipc/completion-quality-handlers.js: Registers IPC channels (check-completion-quality, validate-state-transition, get-quality-rules, ...).
 - ui/modules/ipc/conflict-detection-handlers.js: Registers IPC channels (get-file-conflicts, check-file-conflicts).
 - ui/modules/ipc/contract-promotion-handlers.js: Exports registerContractPromotionHandlers, unregisterContractPromotionHandlers, CONTRACT_PROMOTION_CHANNEL_ACTIONS.
@@ -232,7 +233,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/hm-hook-precompress.js: Pre-compaction hook that extracts/stages memory candidates before context compression.
 - ui/scripts/hm-image-gen.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-investigate.js: CLI utility that sends/queries runtime actions via WebSocket.
-- ui/scripts/hm-memory-api.js: Cognitive memory CLI for direct node operations; supports `retrieve`, `ingest`, `patch`, and `salience` over the cognitive-memory store.
+- ui/scripts/hm-memory-api.js: Cognitive memory CLI for direct node operations; supports `retrieve`, `ingest`, `patch`, `salience`, and `set-immune` over the cognitive-memory store.
 - ui/scripts/hm-memory-consistency.js: On-demand CLI that reports drift between tracked knowledge markdown and knowledge-backed cognitive-memory nodes.
 - ui/scripts/hm-memory-extract.js: Extracts memory candidates from runtime/session artifacts for staged promotion review.
 - ui/scripts/hm-memory-index.js: Builds or refreshes the cognitive/vector memory index from workspace knowledge files.
@@ -262,7 +263,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/install-supervisor-task.ps1: PowerShell installer for registering the durable supervisor as a Windows scheduled task.
 - ui/scripts/local_embedder.py: Python helper worker for local embeddings.
 - ui/scripts/test-image-gen.js: Standalone diagnostic for Recraft/OpenAI image APIs with payload logging and variation testing.
-- ui/modules/cognitive-memory-sleep.js: Exports SleepConsolidator, resolves sleep threshold configs, and manages background semantic clustering.
+- ui/modules/cognitive-memory-sleep.js: Exports SleepConsolidator, resolves sleep threshold configs, manages background semantic clustering, and auto-promotes matched supervisor failure->success antibodies into immune nodes.
 - ui/modules/cognitive-memory-store.js: Cognitive memory vector and metadata store wrapper over sqlite-vec.
 - ui/modules/memory-search.js: Hybrid FTS and sqlite-vec memory search index and chunking engine.
 - ui/modules/supervisor/index.js: Supervisor module entrypoint.

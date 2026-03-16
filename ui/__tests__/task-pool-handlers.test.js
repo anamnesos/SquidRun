@@ -7,6 +7,10 @@ jest.mock('../modules/team-memory', () => ({
   appendPatternHookEvent: jest.fn(async () => ({ ok: true, queued: true })),
 }));
 
+jest.mock('../modules/cognitive-memory-immunity', () => ({
+  stageImmediateTaskExtraction: jest.fn(async () => ({ ok: true })),
+}));
+
 describe('task-pool handlers team-memory hooks', () => {
   let workspacePath;
   let handlers;
