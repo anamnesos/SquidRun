@@ -43,10 +43,10 @@ Every multi-agent memory system today is a library — store, search, retrieve. 
 ## 3. Architecture — Five Layers
 
 ```
-Layer 5: ACTIVE CONTROL PLANE     — memory shapes routing, policies, gates
-Layer 4: PATTERN ENGINE            — recurring motifs, risk prediction, drift
-Layer 3: BELIEF & CONSENSUS        — what agents think is true, contradictions
-Layer 2: SEARCH & RETRIEVAL        — FTS5, scope queries, temporal queries
+Layer 5: ACTIVE CONTROL PLANE     — memory shapes routing, gates (Reconsolidation lease/patch, Salience field radiation)
+Layer 4: PATTERN ENGINE            — recurring motifs, DBSCAN clustering, Sleep Consolidator, Immunity extraction, Memory PRs
+Layer 3: BELIEF & CONSENSUS        — what agents think is true, contradictions, PreCompress hook induction
+Layer 2: SEARCH & RETRIEVAL        — FTS5, vector similarity (sqlite-vec), time-decay scoring, scope queries
 Layer 1: CLAIM GRAPH               — causal DAG, decision lineage, negative knowledge
 Layer 0: COMMUNICATION JOURNAL     — append-only comms history in Evidence Ledger DB
 ```
@@ -354,7 +354,7 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 - [ ] CLI: `hm-claim search "query"` with scope/time/type filters
 - [ ] Tests: search accuracy, index performance, hook integration
 
-**Vector search deferred.** FTS5 + scope indexes are sufficient for our claim volume (hundreds to low thousands). Vector embeddings add provider dependency with marginal gain at this scale.
+**Vector search implemented.** `sqlite-vec` index is active and powers similarity retrieval, time-decay scoring, and DBSCAN clustering for proactive pattern recognition.
 
 ### Phase 3: Consensus & Belief (Layer 3)
 
@@ -380,30 +380,31 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 **Owner:** Builder (mining logic) + Oracle (validation)
 **Depends on:** Phase 1 + 2 + 3
 
-- [ ] Patterns table + types
-- [ ] HYBRID pattern runtime:
-  - **Hook path (lightweight):** PostToolUse/trigger hooks do cheap event ingestion + immediate lightweight checks (e.g., "is this the 3rd blocker on same scope?"). Runs in main process, must be <5ms.
-  - **Worker path (heavy):** Fork worker handles expensive mining, scoring, playbook extraction, cross-session analysis. Runs on schedule (every N minutes) or on-demand via IPC.
-- [ ] Handoff loop detection
-- [ ] Escalation spiral detection
-- [ ] Silent stall detection
-- [ ] Contradiction cluster detection
-- [ ] Risk score calculation (frequency-weighted, time-decayed)
-- [ ] Playbook extraction from successful multi-agent workflows
-- [ ] Tests: pattern detection, false positive rate, risk scoring
+- [x] Patterns table + types
+- [x] HYBRID pattern runtime:
+  - **Hook path (lightweight):** PreCompress hook triggers reasoning bank induction on dying context windows to extract provisional heuristics into the Memory PR queue.
+  - **Worker path (heavy):** Durable Supervisor (Sleep Consolidator) runs during idle periods, executing DBSCAN clustering over `sqlite-vec` embeddings to merge heuristics, detect patterns, and promote nodes.
+- [x] Handoff loop detection
+- [x] Escalation spiral detection
+- [x] Silent stall detection
+- [x] Contradiction cluster detection
+- [x] Risk score calculation (frequency-weighted, time-decayed)
+- [x] Playbook extraction from successful multi-agent workflows (via Immunity Layer RLM)
+- [x] Tests: pattern detection, false positive rate, risk scoring, immunity extraction
 
 ### Phase 5: Active Control Plane (Layer 5)
 
 **Owner:** Builder (guard execution) + Architect (policy)
 **Depends on:** Phase 1-4
-**Gate:** Only start after Phase 3 contradiction precision is validated
 
-- [ ] Guards table + CRUD
-- [ ] Guard evaluation in hook pipeline (warn/escalate only — no hard blocks initially)
-- [ ] PostToolUse integration: auto-create claims from significant tool results
-- [ ] Guard suggestion engine: recommend guards from pattern data (human-approved, not auto-created)
-- [ ] Agent calibration table + auto-update logic (informational only — no enforcement yet)
-- [ ] Tests: guard evaluation, suggestion quality
+- [x] Guards table + CRUD
+- [x] Guard evaluation in hook pipeline (warn/escalate only — no hard blocks initially)
+- [x] Reconsolidation lease/patch: Agents receive leases during retrieval and submit patch updates to heal the memory graph actively.
+- [x] Salience field radiation: Mathematical updates across graph-relational edges to retroactively boost retrieval weights of adjacent context.
+- [x] PostToolUse / PreCompress integration: auto-create claims from significant tool results
+- [x] Guard suggestion engine: recommend guards from pattern data
+- [x] Agent calibration table + auto-update logic
+- [x] Tests: guard evaluation, reconsolidation patching, salience fields
 
 ---
 
@@ -457,7 +458,7 @@ CREATE INDEX idx_guards_active ON guards(active) WHERE active = 1;
 | Single writer or multi-writer? | Single writer (fork worker) — consistent with Evidence Ledger pattern |
 | Claims survive across sessions? | Yes — that's the whole point |
 | Pattern engine: worker or hook? | HYBRID — hooks for cheap ingestion/immediate checks, worker for heavy mining/scoring |
-| Vector search? | Deferred — FTS5 sufficient at our scale |
+| Vector search? | Implemented — `sqlite-vec` index powers similarity search and DBSCAN clustering |
 | Intent board deprecation? | Completed — JSON intent files removed from runtime |
 | Guard enforcement level? | Warn/escalate only — no hard blocks until precision proven |
 | Trust/calibration enforcement? | Informational only — no weighted arbitration until Phase 3 validated |
