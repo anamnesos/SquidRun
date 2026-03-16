@@ -58,6 +58,8 @@ function createInjectionController(options = {}) {
     CLAUDE_ENTER_DELAY_MS = 50,
     CLAUDE_LONG_MESSAGE_BYTES = 1024,
     CLAUDE_LONG_MESSAGE_BASE_ENTER_DELAY_MS = 200,
+    HM_SEND_FAST_CHUNK_THRESHOLD_BYTES = IS_DARWIN ? 1024 : 256,
+    HM_SEND_FAST_ENTER_DELAY_MS = IS_DARWIN ? 150 : 500,
     CLAUDE_ENTER_DELAY_SCALE_START_BYTES = 256,
     CLAUDE_ENTER_DELAY_BYTES_PER_MS = 64,
     CLAUDE_ENTER_DELAY_MAX_EXTRA_MS = 250,
@@ -923,8 +925,12 @@ function createInjectionController(options = {}) {
       : normalizedText;
     const payloadBytes = Buffer.byteLength(payloadText, 'utf8');
     const enterDelayMs = computeScaledEnterDelayMs(capabilities.enterDelayMs, payloadBytes, capabilities);
-    const forceChunkedWriteForLongFastPath = hmSendFastEnter && isLongPayload;
-    const preferChunkedWrite = capabilities.useChunkedWrite || forceChunkedWriteForLongFastPath;
+    const hmSendFastChunkThresholdBytes = Math.max(
+      64,
+      Number(HM_SEND_FAST_CHUNK_THRESHOLD_BYTES) || (IS_DARWIN ? 1024 : 256)
+    );
+    const forceChunkedWriteForHmSendFastPath = hmSendFastEnter && payloadBytes >= hmSendFastChunkThresholdBytes;
+    const preferChunkedWrite = capabilities.useChunkedWrite || forceChunkedWriteForHmSendFastPath;
 
     // Defer before writing to avoid counting our own echoed input as "active output".
     const isLongClaudeMessage = capabilities.enterMethod === 'trusted' && payloadBytes >= longMessageBytes;
@@ -953,7 +959,7 @@ function createInjectionController(options = {}) {
     try {
       if (preferChunkedWrite) {
         const chunkThresholdBytes = Math.max(1024, Number(CLAUDE_CHUNK_THRESHOLD_BYTES) || (8 * 1024));
-        const shouldChunkWrite = forceChunkedWriteForLongFastPath || payloadBytes > chunkThresholdBytes;
+        const shouldChunkWrite = forceChunkedWriteForHmSendFastPath || payloadBytes > chunkThresholdBytes;
 
         if (!shouldChunkWrite) {
           await window.squidrun.pty.write(id, payloadText, createKernelMeta());
@@ -980,7 +986,7 @@ function createInjectionController(options = {}) {
             const chunkSize = Math.max(chunkMin, Math.min(chunkMax, Number(CLAUDE_CHUNK_SIZE) || 2048));
             const yieldEveryChunks = (Math.max(0, Number(CLAUDE_CHUNK_YIELD_MS) || 0) > 0) ? 1 : 0;
             const chunkOptions = { chunkSize, yieldEveryChunks };
-            if (forceChunkedWriteForLongFastPath) {
+            if (forceChunkedWriteForHmSendFastPath) {
               chunkOptions.waitForWriteAck = true;
             }
             const chunkResult = await window.squidrun.pty.writeChunked(
@@ -1024,7 +1030,14 @@ function createInjectionController(options = {}) {
       // Wait for the CLI to finish processing the pasted text before sending Enter.
       // Without this delay, \r arrives while the CLI is still ingesting the paste
       // and gets swallowed or treated as a literal newline — not a submit.
-      const fastPathDelayMs = Math.max(enterDelayMs, 80);
+      const hmSendFastDelayFloorMs = Math.max(
+        80,
+        Number(HM_SEND_FAST_ENTER_DELAY_MS) || (IS_DARWIN ? 150 : 500)
+      );
+      const hmSendFastExtraDelayMs = payloadBytes > longMessageBytes
+        ? Math.min(600, Math.ceil(Math.max(0, payloadBytes - longMessageBytes) / 64))
+        : 0;
+      const fastPathDelayMs = Math.max(enterDelayMs, hmSendFastDelayFloorMs + hmSendFastExtraDelayMs);
       const outputTsBeforeEnter = getLastOutputTimestamp(id);
       await sleep(fastPathDelayMs);
 

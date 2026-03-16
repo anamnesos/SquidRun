@@ -19,6 +19,7 @@ const {
   buildTaskStatusPatternEvent,
   buildTaskCloseClaimPayload,
 } = require('../team-memory/daily-integration');
+const { stageImmediateTaskExtraction } = require('../cognitive-memory-immunity');
 
 // In-memory task cache (loaded from file on startup)
 let taskPool = [];
@@ -293,6 +294,19 @@ function registerTaskPoolHandlers(ctx) {
     broadcastTaskUpdate();
 
     log.info('TaskPool', `Task ${targetId} status -> ${nextStatus}`);
+
+    Promise.resolve()
+      .then(() => stageImmediateTaskExtraction({
+        task,
+        taskId: targetId,
+        status: nextStatus,
+        metadata: meta,
+        domain: task?.metadata?.domain || meta?.domain || '',
+        session: meta?.session || task?.metadata?.session || null,
+      }))
+      .catch((err) => {
+        log.warn('TaskPool', `Behavioral extraction failed for ${targetId}: ${err.message}`);
+      });
 
     const patternResult = await appendPatternEvent(
       buildTaskStatusPatternEvent({
