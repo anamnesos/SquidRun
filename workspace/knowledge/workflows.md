@@ -11,7 +11,7 @@
 - **Bridge `bridge_unavailable` triage:** test app bridge path first (`node ui/scripts/hm-send.js --list-devices --role architect`). If runtime discovery fails but direct relay connect works, inspect `workspace/logs/app.log` for rapid `Connected to relay`/`Relay disconnected` churn. Restart the Electron app after any main-process bridge code change.
 - **Bridge flap fix pattern:** in `bridge-client.connect()`, treat `WebSocket.CLOSING` as an in-flight socket. Clear `this.socket` before creating a replacement socket. Ignore stale socket events (`open/message/error/close`) when `this.socket !== ws`.
 - **Bridge health triage:** use the Bridge tab first. It now hydrates from `bridge:get-status` and shows relay lifecycle state, device ID, relay URL, last connected/disconnected timestamps, disconnect reason/code, flap count, reconnect schedule, and last remote dispatch details before you dive into logs.
-- **PTY truncation hardening:** chunk payloads >=1KB for long agent messages. Pace chunk submission before Enter dispatch.
+- **PTY truncation hardening:** chunk payloads >=1KB for Claude and >=256B for hm-send fast-path on Windows. Pace chunk submission before Enter dispatch.
 - **Diagnostics bundle command:** run `node ui/scripts/hm-doctor.js` for a bug-report snapshot.
 
 ## Startup & Operations
@@ -24,6 +24,7 @@
   - **Ingest:** Agents can manually push new knowledge to the vector store using `node ui/scripts/hm-memory-api.js ingest "<fact>" --category <category> --agent <agent-id> [--confidence <0..1>]`.
   - **Retrieve:** Query memory via `node ui/scripts/hm-memory-api.js retrieve "<query>" --agent <agent-id> --limit N`. Retrieval automatically applies time-decay scoring, tracks reactivation thresholds, and consults `transactive_meta` for agent expertise recommendations.
   - **Promote:** Auto-promote pending PRs via `node ui/scripts/hm-memory-promote.js approve --all` so staged facts flow into `workspace/knowledge/`.
+  - **Immunity Layer:** Proven heuristics are automatically immune-protected via behavioral extraction to bypass recency penalties. To manually protect a node, use `node ui/scripts/hm-memory-api.js set-immune --id <node-id> [--value <0|1>]`.
   - **Lifecycle & Supervisor:** The Durable Supervisor (`ui/supervisor-daemon.js`) automatically handles background maintenance, including the Sleep Consolidator, memory lease janitor, and index synchronization.
 ## Task Delegation Template (Architect -> Builder)
 Structured envelopes for Builder delegation:
