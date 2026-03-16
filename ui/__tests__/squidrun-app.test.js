@@ -486,6 +486,39 @@ describe('SquidRunApp', () => {
       const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
       const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
       const teamMemory = require('../modules/team-memory');
+      createHealthSnapshot.mockReturnValueOnce({
+        generatedAt: '2026-03-13T00:00:00.000Z',
+        appStatus: {
+          sessionNumber: 147,
+          sessionId: 'app-session-147',
+        },
+        tests: {
+          testFileCount: 194,
+          jestList: { ok: true, count: 195 },
+        },
+        modules: {
+          moduleFileCount: 300,
+          keyModules: {
+            recovery_manager: { exists: true },
+            background_agent_manager: { exists: true },
+            scheduler: { exists: true },
+          },
+        },
+        databases: {
+          evidenceLedger: { exists: true, rowCount: 100 },
+          cognitiveMemory: { exists: true, rowCount: 4 },
+        },
+        bridge: {
+          enabled: true,
+          configured: true,
+          mode: 'connected',
+          running: true,
+          relayUrl: 'wss://relay.example.test',
+          deviceId: 'LOCAL',
+          state: 'connected',
+        },
+        status: { level: 'ok', warnings: [] },
+      });
       evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
         session: 147,
         status: 'ACTIVE',
@@ -520,6 +553,111 @@ describe('SquidRunApp', () => {
         state: expect.any(String),
       }));
       expect(teamMemory.initializeTeamMemoryRuntime).not.toHaveBeenCalled();
+    });
+
+    it('anchors startup ledger session context to app-status when ledger context is stale', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+      createHealthSnapshot.mockReturnValueOnce({
+        generatedAt: '2026-03-13T00:00:00.000Z',
+        appStatus: {
+          sessionNumber: 230,
+          sessionId: 'app-session-230',
+        },
+        tests: {
+          testFileCount: 194,
+          jestList: { ok: true, count: 195 },
+        },
+        modules: {
+          moduleFileCount: 300,
+          keyModules: {
+            recovery_manager: { exists: true },
+          },
+        },
+        databases: {
+          evidenceLedger: { exists: true, rowCount: 100 },
+          cognitiveMemory: { exists: true, rowCount: 4 },
+        },
+        bridge: {
+          enabled: true,
+          configured: true,
+          mode: 'connected',
+          running: true,
+          relayUrl: 'wss://relay.example.test',
+          deviceId: 'LOCAL',
+          state: 'connected',
+        },
+        status: { level: 'ok', warnings: [] },
+      });
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
+        session: 228,
+        status: 'ACTIVE',
+        mode: 'APP',
+        completed: ['Old completion'],
+      });
+      const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      await app.refreshStartupHealthArtifacts({
+        sessionNumber: 230,
+      });
+
+      expect(evidenceLedger.executeEvidenceLedgerOperation).toHaveBeenCalledWith(
+        'get-context',
+        { sessionNumber: 230 },
+        expect.any(Object)
+      );
+      expect(writeFileAtomic).toHaveBeenCalledWith(
+        expect.stringContaining('startup-health.md'),
+        expect.stringContaining('Session context: session 230 ACTIVE (APP)')
+      );
+    });
+
+    it('parses autonomous smoke JSON summaries even with surrounding stdout noise', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.resolveAutonomousSmokeProjectPath = jest.fn(() => '/tmp/project');
+      app.runAutonomousSmokeSidecar = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 'ok',
+        code: 0,
+        signal: null,
+        timedOut: false,
+        stdout: [
+          '[dotenv@17.2.3] injecting env (0) from .env',
+          '{',
+          '  "ok": true,',
+          '  "runId": "run-99",',
+          '  "url": "http://localhost:3000"',
+          '}',
+          'post-run note',
+        ].join('\n'),
+        stderr: '',
+      });
+      app.reportAutonomousSmokeSummary = jest.fn().mockResolvedValue({ ok: true });
+
+      app.runAutonomousSmokeInBackground({
+        runId: 'run-99',
+        senderRole: 'builder',
+      });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(app.reportAutonomousSmokeSummary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ok: true,
+          runId: 'run-99',
+          url: 'http://localhost:3000',
+          runner: expect.objectContaining({
+            status: 'ok',
+            exitCode: 0,
+          }),
+        }),
+        expect.objectContaining({
+          runId: 'run-99',
+          senderRole: 'builder',
+        })
+      );
     });
 
     it('runs firmware startup generation hook during init', async () => {

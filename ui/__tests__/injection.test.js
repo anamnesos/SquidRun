@@ -937,7 +937,7 @@ describe('Terminal Injection', () => {
 
       const promise = controller.doSendToPane(
         '1',
-        '(BUILDER #1): Builder online. Standing by.\n[PROJECT CONTEXT] name=squidrun\r',
+        '(BUILDER #1): Builder online. Standing by.\n[CURRENT PROJECT] name=squidrun\r',
         onComplete,
         { messageId: 'hm-ps', traceId: 'hm-ps' },
         { hmSendFastEnter: true }
@@ -948,7 +948,7 @@ describe('Terminal Injection', () => {
 
       expect(mockPty.write).toHaveBeenCalledWith(
         '1',
-        '# (BUILDER #1): Builder online. Standing by.\n# [PROJECT CONTEXT] name=squidrun',
+        '# (BUILDER #1): Builder online. Standing by.\n# [CURRENT PROJECT] name=squidrun',
         expect.any(Object)
       );
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');

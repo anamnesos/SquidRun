@@ -221,8 +221,51 @@ function parseStructuredJsonOutput(raw = '') {
     // Fall through.
   }
 
-  for (let idx = text.lastIndexOf('{'); idx >= 0; idx = text.lastIndexOf('{', idx - 1)) {
-    const candidate = text.slice(idx).trim();
+  const starts = [];
+  for (let idx = 0; idx < text.length; idx += 1) {
+    const char = text[idx];
+    if (char === '{' || char === '[') {
+      starts.push(idx);
+    }
+  }
+
+  const extractBalancedJson = (startIndex) => {
+    const opening = text[startIndex];
+    const closing = opening === '{' ? '}' : ']';
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let idx = startIndex; idx < text.length; idx += 1) {
+      const char = text[idx];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === '\\') {
+        escaped = inString;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+
+      if (char === opening) {
+        depth += 1;
+      } else if (char === closing) {
+        depth -= 1;
+        if (depth === 0) {
+          return text.slice(startIndex, idx + 1);
+        }
+      }
+    }
+    return null;
+  };
+
+  for (let index = starts.length - 1; index >= 0; index -= 1) {
+    const candidate = extractBalancedJson(starts[index]);
     if (!candidate) continue;
     try {
       const parsed = JSON.parse(candidate);
@@ -230,7 +273,7 @@ function parseStructuredJsonOutput(raw = '') {
         return parsed;
       }
     } catch (_) {
-      // Keep scanning from right to left.
+      // Keep scanning until a balanced JSON block parses.
     }
   }
   return null;
@@ -521,17 +564,23 @@ class SquidRunApp {
       ? snapshot.memoryConsistency.status
       : 'unknown';
     const memoryConsistencySummary = snapshot.memoryConsistency?.summary || {};
-    const ledgerSession = Number.isInteger(Number(ledgerContext?.session)) ? Number(ledgerContext.session) : sessionNumber;
+    const canonicalSessionNumber = Number.isInteger(Number(sessionNumber))
+      ? Number(sessionNumber)
+      : (Number.isInteger(Number(snapshot.appStatus?.sessionNumber)) ? Number(snapshot.appStatus.sessionNumber) : null);
+    const ledgerSession = canonicalSessionNumber ?? (Number.isInteger(Number(ledgerContext?.session)) ? Number(ledgerContext.session) : null);
     const ledgerMode = typeof ledgerContext?.mode === 'string' ? ledgerContext.mode : 'unknown';
     const ledgerStatus = typeof ledgerContext?.status === 'string' ? ledgerContext.status : 'unknown';
-    return `Startup health ${Number.isInteger(sessionNumber) ? `for session ${sessionNumber}` : 'snapshot'}: overall ${level}${score !== null ? ` score=${score}/100` : ''}. Evidence ledger rows=${evidenceRows}, cognitive memory rows=${cognitiveRows}. Memory consistency=${memoryConsistencyStatus} (entries=${Number(memoryConsistencySummary.knowledgeEntryCount || 0)}, nodes=${Number(memoryConsistencySummary.knowledgeNodeCount || 0)}, missing=${Number(memoryConsistencySummary.missingInCognitiveCount || 0)}, orphans=${Number(memoryConsistencySummary.orphanedNodeCount || 0)}, duplicates=${Number(memoryConsistencySummary.duplicateKnowledgeHashCount || 0)}). Bridge mode=${bridgeMode}, connection=${bridgeState}. Ledger context: session ${ledgerSession ?? 'unknown'} ${ledgerStatus} (${ledgerMode}).`;
+    return `Startup health ${Number.isInteger(canonicalSessionNumber) ? `for session ${canonicalSessionNumber}` : 'snapshot'}: overall ${level}${score !== null ? ` score=${score}/100` : ''}. Evidence ledger rows=${evidenceRows}, cognitive memory rows=${cognitiveRows}. Memory consistency=${memoryConsistencyStatus} (entries=${Number(memoryConsistencySummary.knowledgeEntryCount || 0)}, nodes=${Number(memoryConsistencySummary.knowledgeNodeCount || 0)}, missing=${Number(memoryConsistencySummary.missingInCognitiveCount || 0)}, orphans=${Number(memoryConsistencySummary.orphanedNodeCount || 0)}, duplicates=${Number(memoryConsistencySummary.duplicateKnowledgeHashCount || 0)}). Bridge mode=${bridgeMode}, connection=${bridgeState}. Ledger context: session ${ledgerSession ?? 'unknown'} ${ledgerStatus} (${ledgerMode}).`;
   }
 
-  buildStartupHealthReport(snapshot = {}, ledgerContext = {}) {
+  buildStartupHealthReport(snapshot = {}, ledgerContext = {}, sessionNumber = null) {
     const healthBody = String(renderStartupHealthMarkdown(snapshot) || '').trim();
     const lines = [healthBody];
     const ledgerLines = [];
-    const ledgerSession = Number.isInteger(Number(ledgerContext?.session)) ? Number(ledgerContext.session) : null;
+    const canonicalSessionNumber = Number.isInteger(Number(sessionNumber))
+      ? Number(sessionNumber)
+      : (Number.isInteger(Number(snapshot.appStatus?.sessionNumber)) ? Number(snapshot.appStatus.sessionNumber) : null);
+    const ledgerSession = canonicalSessionNumber ?? (Number.isInteger(Number(ledgerContext?.session)) ? Number(ledgerContext.session) : null);
     const ledgerStatus = typeof ledgerContext?.status === 'string' ? ledgerContext.status : null;
     const ledgerMode = typeof ledgerContext?.mode === 'string' ? ledgerContext.mode : null;
     if (ledgerSession !== null || ledgerStatus || ledgerMode) {
@@ -624,9 +673,15 @@ class SquidRunApp {
       jestTimeoutMs: options.jestTimeoutMs,
       bridgeStatus: this.getBridgeStatus(),
     });
+    const canonicalSessionNumber = asPositiveInt(
+      options.sessionNumber
+      ?? snapshot.appStatus?.sessionNumber
+      ?? this.getCurrentAppStatusSessionNumber(),
+      null
+    );
     const ledgerContext = await executeEvidenceLedgerOperation(
       'get-context',
-      {},
+      canonicalSessionNumber ? { sessionNumber: canonicalSessionNumber } : {},
       {
         source: {
           via: 'startup-health',
@@ -637,7 +692,8 @@ class SquidRunApp {
     );
     const report = this.buildStartupHealthReport(
       snapshot,
-      ledgerContext && ledgerContext.ok === false ? {} : (ledgerContext || {})
+      ledgerContext && ledgerContext.ok === false ? {} : (ledgerContext || {}),
+      canonicalSessionNumber
     );
     const outputPath = this.getStartupHealthPath();
     this.writeFileAtomic(outputPath, report);
@@ -653,7 +709,7 @@ class SquidRunApp {
         ledgerContext && ledgerContext.ok === false ? {} : (ledgerContext || {}),
         {
           nowMs: options.nowMs || Date.now(),
-          sessionNumber: options.sessionNumber,
+          sessionNumber: canonicalSessionNumber,
         }
       );
     }
@@ -1872,8 +1928,8 @@ class SquidRunApp {
             const projectPath = typeof project.path === 'string' ? project.path.trim() : '';
             if (!name && !projectPath) return text;
 
-            const marker = '[PROJECT CONTEXT]';
-            if (text.includes(marker)) return text;
+            const marker = '[CURRENT PROJECT]';
+            if (text.includes(marker) || text.includes('[PROJECT CONTEXT SWITCHED]')) return text;
 
             const fields = [];
             if (name) fields.push(`name=${name}`);

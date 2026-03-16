@@ -739,7 +739,7 @@ function setupProjectListener() {
     log.info('Project', 'Changed to:', projectPath);
     uiView.updateProjectDisplay(projectPath);
     const projectName = projectPath ? basenameFromPath(projectPath) : 'Developer Mode';
-    showToast(`Project changed to ${projectName || 'Developer Mode'} — restart agents to apply`, 'warning');
+    showToast(`[PROJECT CONTEXT SWITCHED] ${projectName || 'Developer Mode'} — restart agents to apply`, 'warning');
   });
   registerScopedIpcListener('project', 'project-warning', (event, message) => {
     log.warn('Project', message);
