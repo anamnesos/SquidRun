@@ -324,12 +324,13 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 
 ## 7) CONFIG FILES
 - `ui/settings.json`: user/runtime settings (pane commands, watcher/autospawn flags, hidden pane-host toggle). **Gitignored** (`.gitignore`).
-- `.squidrun/link.json`: bootstrap metadata (workspace root, comms script path, role targets, legacy session id). **Runtime-generated, gitignored**.
+- `.squidrun/link.json`: bootstrap metadata (workspace root, comms script path, role targets). **Runtime-generated, gitignored**.
 - `.squidrun/app-status.json`: current runtime status/session/pane-host health. **Runtime-generated, gitignored**.
 - `workspace/user-profile.json`: user-editable profile used by agent startup behavior. **Tracked**.
+- `workspace/knowledge/runtime-environment.md`: shared device registry and machine/runtime environment quirks. **Tracked**.
 - `docs/diagrams-reference.md`: ASCII templates for system topology (Agent Message Flow and Knowledge & Memory System) intended for Excalidraw visualization.
 - `ROLES.md`: canonical role boundaries/startup baseline/operating rules. **Tracked**.
-- `CLAUDE.md`, `CODEX.md`, `GEMINI.md`, `CLAUDE-AI.md`, `AGENTS.md`: model/agent shims and behavior contracts. **Tracked**.
+- `CLAUDE.md`, `CODEX.md`, `GEMINI.md`, `MODEL-SHIMS.md`, `CLAUDE-AI.md`, `AGENTS.md`: model/agent shims and behavior contracts. **Tracked**.
 
 ## 8) COORDINATION STATE (`.squidrun/`)
 - `.squidrun/handoffs/`: materialized session handoff index (`session.md`) from comms journal.

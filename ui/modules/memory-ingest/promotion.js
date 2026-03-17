@@ -110,15 +110,15 @@ function resolvePromotionTarget(entry = {}, projectRoot = getProjectRoot()) {
     if (value.device_id || value.deviceId) {
       const deviceId = String(value.device_id || value.deviceId).toUpperCase();
       return {
-        targetFile: 'workspace/knowledge/devices.md',
-        filePath: path.join(knowledgeDir, 'devices.md'),
+        targetFile: 'workspace/knowledge/runtime-environment.md',
+        filePath: path.join(knowledgeDir, 'runtime-environment.md'),
         heading: `## ${deviceId}`,
       };
     }
     return {
-      targetFile: 'workspace/knowledge/environment.md',
-      filePath: path.join(knowledgeDir, 'environment.md'),
-      heading: '# Environment',
+      targetFile: 'workspace/knowledge/runtime-environment.md',
+      filePath: path.join(knowledgeDir, 'runtime-environment.md'),
+      heading: '## Shared Notes',
     };
   }
   if (memoryClass === 'procedural_rule' || legacyCategory === 'workflow' || legacyDomain === 'workflows') {
