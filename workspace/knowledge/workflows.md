@@ -45,3 +45,4 @@ Comms cadence: Builder sends initial ACK + plan, then delta updates only on stat
 ## Builder Background Agent Slots
 Builder manages up to 3 background agents (builder-bg-1..3). Track slot status:
 - Slot, Owner, Objective, Status (running/blocked/done), Blocker reason, Handoff state
+

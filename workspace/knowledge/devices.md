@@ -13,3 +13,5 @@
 - OS: macOS (secondary machine)
 - Relay status: cross-device relay connected
 - Known quirks: packaged app path can be App Translocated; use fallback `.env` path `~/SquidRun/.env` (added in `v0.1.23`).
+
+
