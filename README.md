@@ -148,6 +148,34 @@ Full documentation is available in the `docs/guide/` directory:
 
 Core implementation lives in `ui/modules/`, `ui/modules/main/`, and `ui/scripts/`.
 
+## Cognitive Memory Architecture
+
+SquidRun is designed to remember what the team learns, not just what it says. The goal is simple: agents should not have to rediscover the same project facts, workflows, and decisions every session. That memory layer is what makes long-running multi-agent work feel cumulative instead of stateless.
+
+The system has three memory layers:
+
+- **Fast buffer:** a chronological evidence ledger in SQLite that records the raw stream of agent interactions, decisions, deliveries, and session activity.
+- **Slow graph:** a cognitive memory store that turns important facts into semantic nodes with vector embeddings, relational edges, confidence, salience, and agent-expertise metadata for retrieval.
+- **Flat knowledge files:** human-readable, git-tracked markdown in `workspace/knowledge/` for durable procedures and shared operational knowledge that should survive across devices and sessions.
+
+In practice, the flow looks like this:
+
+1. Agents work normally, and SquidRun logs the session into the evidence ledger.
+2. When an agent needs context, it can retrieve relevant memory semantically instead of depending only on the current terminal scrollback.
+3. During idle periods, the sleep consolidator reviews recent transcripts, extracts candidate facts, clusters related observations, and stages higher-value discoveries as memory PRs.
+4. Stable discoveries can be promoted into active memory and, when appropriate, written into the shared markdown knowledge base.
+5. On the next session, agents can retrieve that context again instead of re-learning it from scratch.
+
+This retrieval layer is more than keyword search. SquidRun uses vector similarity with salience and confidence weighting, time-decay for stale memories, and reactivation when a fact proves useful again. Bedrock facts can be marked immune so they do not fade just because they have not been referenced recently.
+
+The system also supports **transactive memory**: it tracks which agent has demonstrated expertise in which areas, so retrieval can recommend the best agent for a task. That helps the Architect delegate based on learned strengths instead of treating all panes as interchangeable.
+
+To keep memory editable instead of brittle, retrieved facts come back with reconsolidation leases. If an agent finds that a remembered fact is partially wrong or incomplete, it can patch that memory during the same turn rather than waiting for a human to clean it up later.
+
+From a user perspective, this is why SquidRun can preserve continuity across restarts, reduce repeated setup questions, remember operating procedures, and build up project-specific context over time. It is not just chat history. It is a supervised memory pipeline that turns raw sessions into reusable working knowledge.
+
+If you want to inspect or operate it directly, SquidRun exposes memory tooling through `hm-memory-api.js` and `hm-memory-promote.js`, but the normal workflow is automatic: agents retrieve context while working, consolidation runs during idle time, and approved knowledge becomes part of the team's long-term memory.
+
 ## Detailed Setup
 
 ### macOS Installation (Packaged App)
@@ -253,7 +281,7 @@ Useful commands:
 
 ## Current Status And Scope
 
-SquidRun is actively used for real multi-model coding sessions. The codebase has 3494 tests across 193 test suites, with quality gates such as ESLint, Jest, IPC validation, and trigger path enforcement in standard commit workflows. It is still early-stage and evolving rapidly.
+SquidRun is actively used for real multi-model coding sessions. The codebase has quality gates including ESLint, Jest (198 test suites), IPC validation, and trigger path enforcement in standard commit workflows. It is still early-stage and evolving rapidly.
 
 It is designed for trusted local environments and developer workflows, not hardened multi-tenant production use.
 
