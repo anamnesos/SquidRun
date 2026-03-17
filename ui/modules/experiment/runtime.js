@@ -280,6 +280,7 @@ class ExperimentRuntime {
     this.queue = [];
     this.currentRun = null;
     this.runMetaCache = new Map();
+    this.evidenceLedgerStore = null;
   }
 
   init(initOptions = {}) {
@@ -345,6 +346,10 @@ class ExperimentRuntime {
     if (this.store) {
       this.store.close();
       this.store = null;
+    }
+    if (this.evidenceLedgerStore) {
+      this.evidenceLedgerStore.close();
+      this.evidenceLedgerStore = null;
     }
   }
 
@@ -774,19 +779,15 @@ class ExperimentRuntime {
       };
     }
 
-    const store = new EvidenceLedgerStore({
-      dbPath: this.evidenceLedgerDbPath,
-      enabled: true,
-    });
-    const initResult = store.init();
-    if (!initResult?.ok) {
-      store.close();
+    const storeResult = this.getEvidenceLedgerStore();
+    if (!storeResult.ok || !storeResult.store) {
       return {
         ok: false,
-        reason: initResult?.reason || 'ledger_unavailable',
+        reason: storeResult.reason || 'ledger_unavailable',
         evidenceEventId: null,
       };
     }
+    const store = storeResult.store;
 
     const artifactDir = asString(details.artifactDir, path.join(this.artifactRoot, runId));
     const stdoutPath = path.join(artifactDir, 'stdout.log');
@@ -868,7 +869,6 @@ class ExperimentRuntime {
       nowMs: completedAt,
       ingestedAtMs: completedAt,
     });
-    store.close();
 
     if (!appendResult?.ok) {
       return {
@@ -883,6 +883,34 @@ class ExperimentRuntime {
       status: appendResult.status || 'inserted',
       evidenceEventId,
     };
+  }
+
+  getEvidenceLedgerStore() {
+    if (
+      this.evidenceLedgerStore
+      && (
+        typeof this.evidenceLedgerStore.isAvailable !== 'function'
+        || this.evidenceLedgerStore.isAvailable()
+      )
+    ) {
+      return { ok: true, store: this.evidenceLedgerStore };
+    }
+
+    const store = new EvidenceLedgerStore({
+      dbPath: this.evidenceLedgerDbPath,
+      enabled: true,
+    });
+    const initResult = store.init();
+    if (!initResult?.ok) {
+      try { store.close(); } catch {}
+      return {
+        ok: false,
+        reason: initResult?.reason || 'ledger_unavailable',
+      };
+    }
+
+    this.evidenceLedgerStore = store;
+    return { ok: true, store };
   }
 
   drainQueue() {
