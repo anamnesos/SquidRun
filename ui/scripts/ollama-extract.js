@@ -78,7 +78,13 @@ function parseOllamaResponse(response) {
   if (!raw) {
     throw new Error('ollama_response_missing_payload');
   }
-  return JSON.parse(raw);
+  const parsed = JSON.parse(raw);
+  if (Array.isArray(parsed)) return parsed;
+  // Llama models often wrap the array in an object (e.g. {"facts": [...]})
+  const values = Object.values(parsed);
+  const arrayValue = values.find((v) => Array.isArray(v));
+  if (arrayValue) return arrayValue;
+  throw new Error('extraction_output_not_array');
 }
 
 function validateExtractionArray(items) {
