@@ -16,6 +16,7 @@
 - **Architect comms rule (`hm-send --file`):** Builder must use `node ui/scripts/hm-send.js <target> --file <path>` for every Architect-bound message, not just long ones. We hit repeated truncation and pane-render confusion in Session 234 when inline sends mixed with large payloads. Treat `--file` as the permanent default for agent-to-agent messaging.
 - **Codex CLI shell arg truncation (Session 230):** Codex CLI can truncate long inline shell command args. The SquidRun pipeline (hm-send -> WebSocket -> evidence ledger -> injection -> PTY) is verified intact — messages land fully in the DB. The remaining failure mode is upstream payload truncation before `hm-send` runs, which is another reason to default to `--file`.
 - **Diagnostics bundle command:** run `node ui/scripts/hm-doctor.js` for a bug-report snapshot.
+- **Runtime truth inspector:** use `node ui/scripts/hm-doctor.js` before manually reading individual state/config files; it is the primary one-command runtime truth check.
 
 ## Startup & Operations
 - **Startup Health Pipeline:** On session startup, the system automatically runs `ui/scripts/hm-health-snapshot.js` and outputs codebase state to `.squidrun/build/startup-health.md`. This pipeline measures test coverage, module inventory, and daemon status, ingesting the factual state directly into `cognitive-memory.db` under the `system_health_state` and `codebase_inventory` categories to ground agent decision-making.
