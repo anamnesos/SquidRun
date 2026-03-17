@@ -15,8 +15,7 @@ const DEFAULT_TIER1_FILES = Object.freeze([
   'ARCHITECTURE.md',
   'workspace/knowledge/user-context.md',
   'workspace/knowledge/workflows.md',
-  'workspace/knowledge/environment.md',
-  'workspace/knowledge/devices.md',
+  'workspace/knowledge/runtime-environment.md',
   'workspace/knowledge/infrastructure.md',
   'workspace/knowledge/projects.md',
 ]);

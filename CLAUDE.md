@@ -1,57 +1,6 @@
 # CLAUDE.md
 
-## Scope
+See `MODEL-SHIMS.md` for shared shim config.
 
-This is the Claude-specific shim.
-
-- Canonical role definitions live in `ROLES.md`.
-- Determine behavior from runtime env (`SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`) + `ROLES.md`.
-- Do not duplicate role instructions in this file.
-
-## Claude Quirks
-
-- Prefer direct file operations and explicit shell commands with absolute paths.
-- Keep agent-to-agent communication on `hm-send.js`; terminal output is user-facing.
-- Reply quickly for `[ACK REQUIRED]` and `[URGENT]`; stay silent on `[FYI]` unless adding new information.
-- Do NOT use `EnterPlanMode`. Plan mode requires interactive approval which disrupts automated agent workflow. Just do the work directly.
-
-## Architect Guardrails (Pane 1)
-
-- If runtime role is Architect, act as coordinator only.
-- Architect must not perform implementation/debug/deploy work directly.
-- Architect must not spawn internal/sub-agents; delegate to Builder/Oracle via `hm-send.js`.
-
-## Oracle Guardrails (Pane 3)
-
-- If runtime role is Oracle, do not spawn internal/sub-agents of any kind.
-- Oracle operates as a single agent.
-
-## Startup (First Action)
-
-**Architect (Pane 1) — fresh install detection:**
-If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `session: 1`), skip the numbered steps below entirely. Follow the fresh-install instructions instead — read `user-profile.json` and `PRODUCT-GUIDE.md`, welcome the user, and wait for direction. Do NOT attempt to read coordination files that won't exist yet.
-
-**All Panes (Builder/Oracle, and Architect on returning sessions):**
-1. Read `.squidrun/app-status.json` to determine the active `session` number. 
-2. If `session` is `1` (Fresh Install): Do NOT attempt to read coordination files like `session.md` or `.squidrun/link.json` as they may not be fully initialized. Skip to step 5.
-3. If `session` > 1: Read `.squidrun/link.json` for project discovery (`workspace`) and shared script root (`squidrun_root`).
-4. If `session` > 1: Read the session handoff index: `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-5. For comms history, use: `node ui/scripts/hm-comms.js history --last N` (do NOT query the DB directly).
-6. Then follow the full startup baseline in `ROLES.md`.
-
-## User Profile
-
-- Read `workspace/user-profile.json` on startup. Adapt tone, explanation depth, and pacing to the user's `experience_level` and `communication_style`.
-- This file is user-edited. Do not modify it. Do not delete it in cleanups.
-
-## Compaction-Proof Rules
-
-These rules MUST survive context compaction. Re-read after every compaction event.
-
-- **Telegram replies:** When user messages via `[Telegram from ...]`, reply on Telegram: `node ui/scripts/hm-send.js telegram "(ARCHITECT #N): reply"`. The user is NOT at their PC. Terminal output is invisible to them.
-- **Screenshots:** When user says they uploaded a screenshot, read `.squidrun/screenshots/latest.png`.
-- **Long hm-send messages (>500 chars):** Write to temp file first, then `--file`. See ROLES.md for syntax.
-
-## Reference
-
-- Read `ROLES.md` for role boundaries and shared operating rules.
+- Claude CLI auto-reads this file at startup.
+- Do NOT use `EnterPlanMode`; it requires interactive approval and breaks automated sessions.
