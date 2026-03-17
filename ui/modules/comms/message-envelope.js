@@ -1,22 +1,50 @@
+// @ts-check
+
+/** @typedef {import('../../types/contracts').CanonicalEnvelopeMetadata} CanonicalEnvelopeMetadata */
+/** @typedef {import('../../types/contracts').OutboundMessageEnvelope} OutboundMessageEnvelope */
+/** @typedef {import('../../types/contracts').OutboundMessageEnvelopeInput} OutboundMessageEnvelopeInput */
+/** @typedef {import('../../types/contracts').ProjectMetadata} ProjectMetadata */
+/** @typedef {import('../../types/contracts').SpecialTargetRequest} SpecialTargetRequest */
+/** @typedef {import('../../types/contracts').TriggerFallbackDescriptor} TriggerFallbackDescriptor */
+/** @typedef {import('../../types/contracts').WebSocketDispatchMessage} WebSocketDispatchMessage */
+
 const ENVELOPE_VERSION = 'hm-envelope-v1';
 
+/**
+ * @param {unknown} value
+ * @returns {any}
+ */
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return value;
+  return /** @type {any} */ (value);
 }
 
+/**
+ * @param {unknown} value
+ * @param {string | null} [fallback]
+ * @returns {string | null}
+ */
 function asNonEmptyString(value, fallback = null) {
   if (value === null || value === undefined) return fallback;
   const text = String(value).trim();
   return text ? text : fallback;
 }
 
+/**
+ * @param {unknown} value
+ * @param {number} [fallback]
+ * @returns {number}
+ */
 function asFiniteTimestamp(value, fallback = Date.now()) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return Math.floor(fallback);
   return Math.floor(numeric);
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function toIso(value) {
   const ts = asFiniteTimestamp(value, Date.now());
   try {
@@ -26,6 +54,10 @@ function toIso(value) {
   }
 }
 
+/**
+ * @param {unknown} [projectInput]
+ * @returns {ProjectMetadata | null}
+ */
 function normalizeProjectMetadata(projectInput = null) {
   const project = asObject(projectInput);
   const name = asNonEmptyString(project.name);
@@ -41,6 +73,10 @@ function normalizeProjectMetadata(projectInput = null) {
   };
 }
 
+/**
+ * @param {OutboundMessageEnvelopeInput} [input]
+ * @returns {OutboundMessageEnvelope}
+ */
 function buildOutboundMessageEnvelope(input = {}) {
   const source = asObject(input);
   const senderInput = asObject(source.sender);
@@ -50,7 +86,7 @@ function buildOutboundMessageEnvelope(input = {}) {
   const senderRole = asNonEmptyString(
     senderInput.role || source.sender_role || source.senderRole,
     'unknown'
-  );
+  ) || 'unknown';
   const targetRaw = asNonEmptyString(
     targetInput.raw || source.target_raw || source.targetRaw,
     null
@@ -84,6 +120,10 @@ function buildOutboundMessageEnvelope(input = {}) {
   };
 }
 
+/**
+ * @param {OutboundMessageEnvelopeInput | OutboundMessageEnvelope} [envelopeInput]
+ * @returns {CanonicalEnvelopeMetadata}
+ */
 function buildCanonicalEnvelopeMetadata(envelopeInput = {}) {
   const envelope = buildOutboundMessageEnvelope(envelopeInput);
   return {
@@ -98,6 +138,11 @@ function buildCanonicalEnvelopeMetadata(envelopeInput = {}) {
   };
 }
 
+/**
+ * @param {OutboundMessageEnvelopeInput | OutboundMessageEnvelope} [envelopeInput]
+ * @param {Record<string, unknown>} [options]
+ * @returns {WebSocketDispatchMessage}
+ */
 function buildWebSocketDispatchMessage(envelopeInput = {}, options = {}) {
   const envelope = buildOutboundMessageEnvelope(envelopeInput);
   const opts = asObject(options);
@@ -114,6 +159,10 @@ function buildWebSocketDispatchMessage(envelopeInput = {}, options = {}) {
   };
 }
 
+/**
+ * @param {OutboundMessageEnvelopeInput | OutboundMessageEnvelope} [envelopeInput]
+ * @returns {TriggerFallbackDescriptor}
+ */
 function buildTriggerFallbackDescriptor(envelopeInput = {}) {
   const envelope = buildOutboundMessageEnvelope(envelopeInput);
   return {
@@ -123,12 +172,16 @@ function buildTriggerFallbackDescriptor(envelopeInput = {}) {
   };
 }
 
+/**
+ * @param {OutboundMessageEnvelopeInput | OutboundMessageEnvelope} [envelopeInput]
+ * @returns {SpecialTargetRequest}
+ */
 function buildSpecialTargetRequest(envelopeInput = {}) {
   const envelope = buildOutboundMessageEnvelope(envelopeInput);
   return {
     content: envelope.content,
     messageId: envelope.message_id,
-    senderRole: asNonEmptyString(envelope.sender?.role, 'system'),
+    senderRole: asNonEmptyString(envelope.sender?.role, 'system') || 'system',
     sessionId: asNonEmptyString(envelope.session_id, null),
     metadata: buildCanonicalEnvelopeMetadata(envelope),
   };
@@ -143,4 +196,3 @@ module.exports = {
   buildSpecialTargetRequest,
   normalizeProjectMetadata,
 };
-

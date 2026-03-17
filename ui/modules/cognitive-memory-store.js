@@ -5,10 +5,23 @@ const { getDatabaseSync } = require('./sqlite-compat');
 const DatabaseSync = getDatabaseSync();
 const { resolveCoordPath, getProjectRoot } = require('../config');
 
+/** @typedef {import('../types/contracts').MemoryPrCandidate} MemoryPrCandidate */
+/** @typedef {import('../types/contracts').MemoryPrRow} MemoryPrRow */
+/** @typedef {import('../types/contracts').TransactiveMetaRow} TransactiveMetaRow */
+/** @typedef {import('../types/contracts').WorkspacePaths} WorkspacePaths */
+
+/**
+ * @param {string} targetPath
+ * @returns {void}
+ */
 function ensureDir(targetPath) {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 }
 
+/**
+ * @param {Record<string, unknown>} [options]
+ * @returns {WorkspacePaths}
+ */
 function resolveWorkspacePaths(options = {}) {
   const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
   const workspaceDir = path.resolve(String(options.workspaceDir || path.join(projectRoot, 'workspace')));
@@ -18,6 +31,10 @@ function resolveWorkspacePaths(options = {}) {
   return { projectRoot, workspaceDir, memoryDir, dbPath, pendingPrPath };
 }
 
+/**
+ * @param {string} [prefix]
+ * @returns {string}
+ */
 function generateId(prefix = 'mem') {
   try {
     return `${prefix}-${crypto.randomUUID()}`;
@@ -26,16 +43,33 @@ function generateId(prefix = 'mem') {
   }
 }
 
+/**
+ * @param {unknown} value
+ * @param {number} [fallback]
+ * @returns {number}
+ */
 function asNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+/**
+ * @param {unknown} value
+ * @param {number} [fallback]
+ * @returns {number}
+ */
 function clampConfidence(value, fallback = 0.5) {
   const numeric = asNumber(value, fallback);
   return Math.max(0, Math.min(1, numeric));
 }
 
+/**
+ * @param {import('node:sqlite').DatabaseSync | import('better-sqlite3').Database} db
+ * @param {string} tableName
+ * @param {string} columnName
+ * @param {string} definition
+ * @returns {void}
+ */
 function ensureColumn(db, tableName, columnName, definition) {
   const rows = db.prepare(`PRAGMA table_info(${tableName})`).all();
   const exists = rows.some((row) => String(row.name) === String(columnName));
@@ -45,6 +79,9 @@ function ensureColumn(db, tableName, columnName, definition) {
 }
 
 class CognitiveMemoryStore {
+  /**
+   * @param {Record<string, unknown>} [options]
+   */
   constructor(options = {}) {
     this.paths = resolveWorkspacePaths(options);
     this.dbPath = this.paths.dbPath;
@@ -129,6 +166,10 @@ class CognitiveMemoryStore {
     this.db = null;
   }
 
+  /**
+   * @param {{ status?: string, limit?: number | string }} [options]
+   * @returns {MemoryPrRow[]}
+   */
   listPendingPRs(options = {}) {
     const db = this.init();
     const status = String(options.status || 'pending');
@@ -141,6 +182,10 @@ class CognitiveMemoryStore {
     `).all(status, limit);
   }
 
+  /**
+   * @param {string[] | string} [ids]
+   * @returns {MemoryPrRow[]}
+   */
   getMemoryPRsByIds(ids = []) {
     const normalizedIds = Array.from(new Set(
       (Array.isArray(ids) ? ids : [ids])
@@ -157,6 +202,11 @@ class CognitiveMemoryStore {
     `).all(...normalizedIds);
   }
 
+  /**
+   * @param {MemoryPrCandidate[]} [candidates]
+   * @param {Record<string, unknown>} [options]
+   * @returns {{ ok: true, staged: string[], merged: string[], pendingCount: number }}
+   */
   stageMemoryPRs(candidates = [], options = {}) {
     const db = this.init();
     const nowMs = Date.now();
@@ -253,6 +303,9 @@ class CognitiveMemoryStore {
     };
   }
 
+  /**
+   * @returns {{ version: number, updatedAt: string, items: Array<Record<string, unknown>> }}
+   */
   syncPendingPrFile() {
     const payload = {
       version: 1,
@@ -278,6 +331,10 @@ class CognitiveMemoryStore {
     return payload;
   }
 
+  /**
+   * @param {{ domain?: string, agent_id?: string, primary_agent_id?: string, expertise_delta?: number, pane_id?: string }} [input]
+   * @returns {Record<string, unknown>}
+   */
   recordTransactiveUse(input = {}) {
     const db = this.init();
     const domain = String(input.domain || '').trim();
@@ -323,6 +380,10 @@ class CognitiveMemoryStore {
     return { ok: true, status: 'inserted', domain, primary_agent_id: agentId, expertise_score: expertiseDelta };
   }
 
+  /**
+   * @param {{ limit?: number | string }} [options]
+   * @returns {TransactiveMetaRow[]}
+   */
   listTransactiveMeta(options = {}) {
     const db = this.init();
     const limit = Math.max(1, Math.min(500, Number.parseInt(options.limit || '100', 10) || 100));
@@ -333,6 +394,10 @@ class CognitiveMemoryStore {
     `).all(limit);
   }
 
+  /**
+   * @param {{ ids?: string[] | string, status?: string, review_increment?: number | string }} [input]
+   * @returns {{ ok: boolean, reason?: string, updated: number, rows: MemoryPrRow[] }}
+   */
   reviewMemoryPRs(input = {}) {
     const db = this.init();
     const ids = Array.from(new Set(

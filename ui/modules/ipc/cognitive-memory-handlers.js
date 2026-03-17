@@ -1,4 +1,10 @@
+// @ts-check
+
 const { CognitiveMemoryApi } = require('../cognitive-memory-api');
+
+/** @typedef {import('../../types/contracts').CognitiveMemoryAction} CognitiveMemoryAction */
+/** @typedef {import('../../types/contracts').CognitiveMemoryOperationOptions} CognitiveMemoryOperationOptions */
+/** @typedef {import('../../types/contracts').CognitiveMemoryPayload} CognitiveMemoryPayload */
 
 const COGNITIVE_MEMORY_CHANNELS = Object.freeze([
   'cognitive-memory:ingest',
@@ -7,13 +13,22 @@ const COGNITIVE_MEMORY_CHANNELS = Object.freeze([
   'cognitive-memory:salience',
 ]);
 
+/** @type {any} */
 let sharedApi = null;
 
+/**
+ * @param {unknown} value
+ * @returns {any}
+ */
 function asObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return value;
+  return /** @type {any} */ (value);
 }
 
+/**
+ * @param {...unknown} values
+ * @returns {string}
+ */
 function asText(...values) {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) {
@@ -23,6 +38,10 @@ function asText(...values) {
   return '';
 }
 
+/**
+ * @param {CognitiveMemoryOperationOptions} [options]
+ * @returns {InstanceType<typeof CognitiveMemoryApi> | NonNullable<CognitiveMemoryOperationOptions['api']>}
+ */
 function resolveSharedApi(options = {}) {
   if (options.api) return options.api;
   if (!sharedApi) {
@@ -39,6 +58,12 @@ function closeSharedCognitiveMemoryRuntime() {
   sharedApi = null;
 }
 
+/**
+ * @param {CognitiveMemoryAction | string} action
+ * @param {CognitiveMemoryPayload} [payload]
+ * @param {CognitiveMemoryOperationOptions} [options]
+ * @returns {Promise<any>}
+ */
 async function executeCognitiveMemoryOperation(action, payload = {}, options = {}) {
   const normalizedPayload = asObject(payload);
   const source = asObject(options.source);
@@ -84,6 +109,10 @@ async function executeCognitiveMemoryOperation(action, payload = {}, options = {
   }
 }
 
+/**
+ * @param {{ ipcMain: { handle(channel: string, handler: Function): void } }} ctx
+ * @returns {void}
+ */
 function registerCognitiveMemoryHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerCognitiveMemoryHandlers requires ctx.ipcMain');
@@ -92,15 +121,26 @@ function registerCognitiveMemoryHandlers(ctx) {
   const { ipcMain } = ctx;
   for (const channel of COGNITIVE_MEMORY_CHANNELS) {
     const action = channel.split(':')[1];
-    ipcMain.handle(channel, (_event, payload = {}) => executeCognitiveMemoryOperation(action, payload, {
-      source: {
-        via: 'ipc',
-        role: 'system',
-      },
-    }));
+    ipcMain.handle(
+      channel,
+      /**
+       * @param {any} _event
+       * @param {CognitiveMemoryPayload} [payload]
+       */
+      (_event, payload = {}) => executeCognitiveMemoryOperation(action, payload, {
+        source: {
+          via: 'ipc',
+          role: 'system',
+        },
+      })
+    );
   }
 }
 
+/**
+ * @param {{ ipcMain?: { removeHandler(channel: string): void } } | undefined} ctx
+ * @returns {void}
+ */
 function unregisterCognitiveMemoryHandlers(ctx) {
   const { ipcMain } = ctx || {};
   if (!ipcMain) return;

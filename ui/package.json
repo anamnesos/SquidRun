@@ -8,6 +8,7 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "test": "jest",
+    "typecheck": "tsc -p jsconfig.json --noEmit",
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
     "lint": "eslint \"**/*.js\"",
@@ -128,11 +129,13 @@
     }
   },
   "devDependencies": {
+    "@types/node": "^24.10.1",
     "@electron/rebuild": "^3.5.0",
     "electron": "^28.0.0",
     "eslint": "^9.39.2",
     "globals": "^17.1.0",
-    "jest": "^30.2.0"
+    "jest": "^30.2.0",
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.3",

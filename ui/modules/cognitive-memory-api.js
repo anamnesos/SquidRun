@@ -4,6 +4,12 @@ const DatabaseSync = getDatabaseSync();
 const { CognitiveMemoryStore } = require('./cognitive-memory-store');
 const { MemorySearchIndex } = require('./memory-search');
 
+/** @typedef {import('../types/contracts').CognitiveMemoryNode} CognitiveMemoryNode */
+/** @typedef {import('../types/contracts').MemoryLease} MemoryLease */
+/** @typedef {import('../types/contracts').RankedMemoryNodeEntry} RankedMemoryNodeEntry */
+/** @typedef {import('../types/contracts').RetrieveMemoryResult} RetrieveMemoryResult */
+/** @typedef {import('../types/contracts').TransactiveExpertResult} TransactiveExpertResult */
+
 const DEFAULT_LEASE_MS = Math.max(
   60_000,
   Number.parseInt(process.env.SQUIDRUN_MEMORY_LEASE_MS || '600000', 10) || 600000
@@ -31,6 +37,10 @@ const DEFAULT_REACTIVATION_WINDOW_MS = Math.max(
   Number.parseInt(process.env.SQUIDRUN_MEMORY_REACTIVATION_WINDOW_MS || `${6 * 60 * 60 * 1000}`, 10) || (6 * 60 * 60 * 1000)
 );
 
+/**
+ * @param {string} [prefix]
+ * @returns {string}
+ */
 function generateId(prefix = 'mem') {
   try {
     return `${prefix}-${crypto.randomUUID()}`;
@@ -39,34 +49,61 @@ function generateId(prefix = 'mem') {
   }
 }
 
+/**
+ * @param {unknown} value
+ * @param {number} min
+ * @param {number} max
+ * @returns {number}
+ */
 function clamp(value, min, max) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return min;
   return Math.max(min, Math.min(max, numeric));
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function normalizeWhitespace(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string[]}
+ */
 function tokenizeNormalized(value) {
   return normalizeWhitespace(value)
     .toLowerCase()
     .match(/[a-z0-9_]+/g) || [];
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
 function collapseNormalized(value) {
   return normalizeWhitespace(value)
     .toLowerCase()
     .replace(/[^a-z0-9_]+/g, '');
 }
 
+/**
+ * @param {unknown} value
+ * @returns {number[]}
+ */
 function normalizeVector(value) {
   const vector = Array.isArray(value) ? value.map((entry) => Number(entry || 0)) : [];
   const norm = Math.sqrt(vector.reduce((sum, entry) => sum + (entry * entry), 0)) || 1;
   return vector.map((entry) => entry / norm);
 }
 
+/**
+ * @param {unknown} left
+ * @param {unknown} right
+ * @returns {number}
+ */
 function cosineDistance(left, right) {
   const a = normalizeVector(left);
   const b = normalizeVector(right);
@@ -78,6 +115,12 @@ function cosineDistance(left, right) {
   return 1 - dot;
 }
 
+/**
+ * @template T
+ * @param {unknown} value
+ * @param {T} fallback
+ * @returns {T}
+ */
 function parseJson(value, fallback) {
   if (typeof value !== 'string' || value.length === 0) return fallback;
   try {
@@ -87,6 +130,13 @@ function parseJson(value, fallback) {
   }
 }
 
+/**
+ * @param {import('node:sqlite').DatabaseSync | import('better-sqlite3').Database} db
+ * @param {string} tableName
+ * @param {string} columnName
+ * @param {string} definition
+ * @returns {void}
+ */
 function ensureColumn(db, tableName, columnName, definition) {
   const rows = db.prepare(`PRAGMA table_info(${tableName})`).all();
   const exists = rows.some((row) => String(row.name) === String(columnName));
@@ -95,10 +145,19 @@ function ensureColumn(db, tableName, columnName, definition) {
   }
 }
 
+/**
+ * @param {number} [nowMs]
+ * @returns {string}
+ */
 function isoNow(nowMs = Date.now()) {
   return new Date(nowMs).toISOString();
 }
 
+/**
+ * @param {unknown} referenceMs
+ * @param {number} [nowMs]
+ * @returns {number}
+ */
 function computeRecencyMultiplier(referenceMs, nowMs = Date.now()) {
   const normalizedReferenceMs = Number(referenceMs || 0);
   if (!Number.isFinite(normalizedReferenceMs) || normalizedReferenceMs <= 0) {
@@ -113,11 +172,19 @@ function computeRecencyMultiplier(referenceMs, nowMs = Date.now()) {
     + ((1 - DEFAULT_MIN_RECENCY_MULTIPLIER) * freshness);
 }
 
+/**
+ * @param {unknown} value
+ * @returns {number}
+ */
 function parseIsoMs(value) {
   const parsed = Date.parse(String(value || ''));
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/**
+ * @param {Record<string, unknown>} [input]
+ * @returns {string}
+ */
 function hashNodeContent(input = {}) {
   const sourceType = normalizeWhitespace(input.sourceType || input.category || 'fact');
   const sourcePath = normalizeWhitespace(input.sourcePath || '');
@@ -127,6 +194,9 @@ function hashNodeContent(input = {}) {
 }
 
 class CognitiveMemoryApi {
+  /**
+   * @param {Record<string, unknown>} [options]
+   */
   constructor(options = {}) {
     this.logger = options.logger || console;
     this.cognitiveStore = options.cognitiveStore || new CognitiveMemoryStore(options.cognitiveStoreOptions || {});
@@ -196,6 +266,10 @@ class CognitiveMemoryApi {
     this.init().prepare('DELETE FROM memory_leases WHERE expires_at_ms <= ?').run(nowMs);
   }
 
+  /**
+   * @param {Record<string, unknown> | undefined | null} row
+   * @returns {CognitiveMemoryNode | null}
+   */
   mapNode(row) {
     if (!row) return null;
     return {
@@ -221,11 +295,19 @@ class CognitiveMemoryApi {
     };
   }
 
+  /**
+   * @param {string} nodeId
+   * @returns {CognitiveMemoryNode | null}
+   */
   getNode(nodeId) {
     const row = this.init().prepare('SELECT * FROM nodes WHERE node_id = ? LIMIT 1').get(String(nodeId || ''));
     return this.mapNode(row);
   }
 
+  /**
+   * @param {string} nodeId
+   * @returns {Array<Record<string, unknown>>}
+   */
   listRelatedEdges(nodeId) {
     return this.init().prepare(`
       SELECT rowid, * FROM edges
@@ -233,6 +315,11 @@ class CognitiveMemoryApi {
     `).all(String(nodeId || ''), String(nodeId || ''));
   }
 
+  /**
+   * @param {string[]} [nodeIds]
+   * @param {{ accessKind?: string, access_kind?: string, nowMs?: number }} [options]
+   * @returns {{ ok: true, updated: number, reactivated: number }}
+   */
   markNodesAccessed(nodeIds = [], options = {}) {
     const ids = Array.from(new Set((nodeIds || []).map((value) => String(value || '').trim()).filter(Boolean)));
     if (ids.length === 0) return { ok: true, updated: 0, reactivated: 0 };
@@ -290,6 +377,12 @@ class CognitiveMemoryApi {
     return { ok: true, updated: rows.length, reactivated };
   }
 
+  /**
+   * @param {string} nodeId
+   * @param {string} traceId
+   * @param {string} extractedAt
+   * @returns {void}
+   */
   upsertTrace(nodeId, traceId, extractedAt) {
     const normalizedTraceId = normalizeWhitespace(traceId);
     if (!nodeId || !normalizedTraceId) return;
@@ -306,6 +399,10 @@ class CognitiveMemoryApi {
     `).run(nodeId, normalizedTraceId, extractedAt || isoNow());
   }
 
+  /**
+   * @param {string} nodeId
+   * @returns {number[]}
+   */
   getNodeDocumentIds(nodeId) {
     if (!nodeId) return [];
     const rows = this.init().prepare(`
@@ -328,6 +425,10 @@ class CognitiveMemoryApi {
     return documentIds;
   }
 
+  /**
+   * @param {CognitiveMemoryNode | null | undefined} node
+   * @returns {Promise<Record<string, unknown>>}
+   */
   async syncNodeToSearchIndex(node) {
     const documentIds = this.getNodeDocumentIds(node?.nodeId);
     if (documentIds.length === 0) {
@@ -386,6 +487,11 @@ class CognitiveMemoryApi {
     };
   }
 
+  /**
+   * @param {string} query
+   * @param {{ limit?: number | string }} [options]
+   * @returns {TransactiveExpertResult}
+   */
   findTransactiveExperts(query, options = {}) {
     const normalizedQuery = normalizeWhitespace(query).toLowerCase();
     if (!normalizedQuery) {
@@ -448,6 +554,10 @@ class CognitiveMemoryApi {
     };
   }
 
+  /**
+   * @param {Record<string, unknown>} result
+   * @returns {Promise<CognitiveMemoryNode | null>}
+   */
   async ensureNodeFromSearchResult(result) {
     const db = this.init();
     const content = normalizeWhitespace(result.content || result.excerpt || '');
@@ -548,6 +658,11 @@ class CognitiveMemoryApi {
     return this.getNode(nodeId);
   }
 
+  /**
+   * @param {number[]} queryVector
+   * @param {number} [limit]
+   * @returns {RankedMemoryNodeEntry[]}
+   */
   searchExistingNodes(queryVector, limit = 5) {
     if (!Array.isArray(queryVector) || queryVector.length === 0) return [];
     const nowMs = Date.now();
@@ -580,6 +695,12 @@ class CognitiveMemoryApi {
       .slice(0, Math.max(1, limit));
   }
 
+  /**
+   * @param {string[]} nodeIds
+   * @param {string} [relationType]
+   * @param {number} [weight]
+   * @returns {{ ok: true, linked: number }}
+   */
   linkRelatedNodes(nodeIds, relationType = 'related_to', weight = 1) {
     const ids = Array.from(new Set((nodeIds || []).map((value) => String(value || '').trim()).filter(Boolean)));
     if (ids.length < 2) return { ok: true, linked: 0 };
@@ -607,6 +728,14 @@ class CognitiveMemoryApi {
     return { ok: true, linked };
   }
 
+  /**
+   * @param {string} nodeId
+   * @param {string} agentId
+   * @param {string} queryText
+   * @param {number} versionAtLease
+   * @param {number | string | undefined} leaseMs
+   * @returns {MemoryLease}
+   */
   createLease(nodeId, agentId, queryText, versionAtLease, leaseMs) {
     const nowMs = Date.now();
     const leaseId = generateId('lease');
@@ -619,6 +748,11 @@ class CognitiveMemoryApi {
     return { leaseId, expiresAtMs, versionAtLease };
   }
 
+  /**
+   * @param {string} query
+   * @param {{ limit?: number | string, agentId?: string, agent_id?: string, leaseMs?: number, transactiveLimit?: number | string, transactive_limit?: number | string }} [options]
+   * @returns {Promise<RetrieveMemoryResult>}
+   */
   async retrieve(query, options = {}) {
     const trimmedQuery = normalizeWhitespace(query);
     if (!trimmedQuery) {
@@ -676,6 +810,10 @@ class CognitiveMemoryApi {
     };
   }
 
+  /**
+   * @param {Record<string, unknown>} [input]
+   * @returns {Promise<{ ok: boolean, reason?: string, node?: CognitiveMemoryNode }>}
+   */
   async ingest(input = {}) {
     const content = normalizeWhitespace(input.content || input.text || '');
     if (!content) {
@@ -719,6 +857,12 @@ class CognitiveMemoryApi {
     };
   }
 
+  /**
+   * @param {string} leaseId
+   * @param {string} updatedContent
+   * @param {{ agentId?: string, agent_id?: string, reason?: string | null }} [options]
+   * @returns {Promise<Record<string, unknown>>}
+   */
   async patch(leaseId, updatedContent, options = {}) {
     const db = this.init();
     this.pruneExpiredLeases();
@@ -829,6 +973,10 @@ class CognitiveMemoryApi {
     }
   }
 
+  /**
+   * @param {{ nodeId?: string, node_id?: string, delta?: number, decay?: number, maxDepth?: number | string, max_depth?: number | string }} [input]
+   * @returns {{ ok: boolean, reason?: string, updates?: Array<Record<string, unknown>> }}
+   */
   applySalienceField(input = {}) {
     const db = this.init();
     const nodeId = normalizeWhitespace(input.nodeId || input.node_id || '');
@@ -888,6 +1036,12 @@ class CognitiveMemoryApi {
     }
   }
 
+  /**
+   * @param {string} nodeId
+   * @param {boolean | number | string} [value]
+   * @param {{ agentId?: string, agent_id?: string, reason?: string | null }} [options]
+   * @returns {{ ok: boolean, reason?: string, node?: CognitiveMemoryNode | null }}
+   */
   setImmune(nodeId, value = true, options = {}) {
     const normalizedNodeId = normalizeWhitespace(nodeId);
     if (!normalizedNodeId) {

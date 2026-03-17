@@ -18,6 +18,9 @@ const {
   parseGeminiModelFromCommand,
 } = require('../gemini-command');
 
+/** @typedef {import('../../types/contracts').AppStatusPayload} AppStatusPayload */
+/** @typedef {import('../../types/contracts').AppStatusWriteOptions} AppStatusWriteOptions */
+
 const CLI_NAMES = ['claude', 'codex', 'gemini'];
 const CLI_PREFERENCES = {
   '1': ['claude', 'codex', 'gemini'],
@@ -29,6 +32,11 @@ const CLI_VERSION_TIMEOUT_MS = 2500;
 const SMTP_PASS_OBFUSCATION_PREFIX = 'obf:v1:';
 const SETTINGS_FILE_NAME = 'settings.json';
 
+/**
+ * @param {unknown} value
+ * @param {number | null} [fallback]
+ * @returns {number | null}
+ */
 function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric <= 0) return fallback;
@@ -95,6 +103,10 @@ function buildCommandForCli(cli, options = {}) {
   return 'claude --permission-mode acceptEdits';
 }
 
+/**
+ * @param {{ isPackaged?: boolean }} [options]
+ * @returns {Record<string, unknown>}
+ */
 function createDefaultSettings({ isPackaged = false } = {}) {
   const geminiModel = resolveGeminiModelId();
   return {
@@ -372,6 +384,9 @@ class SettingsManager {
     return this.ctx.currentSettings;
   }
 
+  /**
+   * @returns {AppStatusPayload}
+   */
   readAppStatus() {
     try {
       this.refreshAppStatusPath();
@@ -385,6 +400,10 @@ class SettingsManager {
     }
   }
 
+  /**
+   * @param {AppStatusWriteOptions} [options]
+   * @returns {void}
+   */
   writeAppStatus(options = {}) {
     try {
       this.refreshAppStatusPath();
@@ -406,6 +425,7 @@ class SettingsManager {
         session = baseline + 1;
       }
 
+      /** @type {AppStatusPayload} */
       const status = {
         ...existing,
         started: opts.incrementSession === true

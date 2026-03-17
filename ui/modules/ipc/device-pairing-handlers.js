@@ -1,3 +1,14 @@
+// @ts-check
+
+/** @typedef {import('../../types/contracts').BridgeGetDevicesPayload} BridgeGetDevicesPayload */
+/** @typedef {import('../../types/contracts').BridgePairingJoinPayload} BridgePairingJoinPayload */
+/** @typedef {import('../../types/contracts').DevicePairingDeps} DevicePairingDeps */
+
+/**
+ * @param {{ ipcMain: { handle(channel: string, handler: Function): void } }} ctx
+ * @param {DevicePairingDeps} [deps]
+ * @returns {void}
+ */
 function registerDevicePairingHandlers(ctx, deps = {}) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerDevicePairingHandlers requires ctx.ipcMain');
@@ -20,7 +31,10 @@ function registerDevicePairingHandlers(ctx, deps = {}) {
     ? deps.joinBridgePairing
     : null;
 
-  ipcMain.handle('bridge:get-devices', async (_event, payload = {}) => {
+  ipcMain.handle('bridge:get-devices', async (
+    /** @type {any} */ _event,
+    payload = /** @type {BridgeGetDevicesPayload} */ ({})
+  ) => {
     if (!getBridgeDevices) {
       return { ok: false, status: 'unsupported', error: 'Bridge device API unavailable', devices: [] };
     }
@@ -46,7 +60,10 @@ function registerDevicePairingHandlers(ctx, deps = {}) {
     return { ok: true, state: getBridgePairingState() };
   });
 
-  ipcMain.handle('bridge:pairing-init', async (_event, payload = {}) => {
+  ipcMain.handle('bridge:pairing-init', async (
+    /** @type {any} */ _event,
+    payload = /** @type {BridgeGetDevicesPayload} */ ({})
+  ) => {
     if (!initiateBridgePairing) {
       return { ok: false, status: 'unsupported', error: 'Bridge pairing init unavailable' };
     }
@@ -56,7 +73,10 @@ function registerDevicePairingHandlers(ctx, deps = {}) {
     });
   });
 
-  ipcMain.handle('bridge:pairing-join', async (_event, payload = {}) => {
+  ipcMain.handle('bridge:pairing-join', async (
+    /** @type {any} */ _event,
+    payload = /** @type {BridgePairingJoinPayload} */ ({})
+  ) => {
     if (!joinBridgePairing) {
       return { ok: false, status: 'unsupported', error: 'Bridge pairing join unavailable' };
     }
@@ -68,6 +88,10 @@ function registerDevicePairingHandlers(ctx, deps = {}) {
   });
 }
 
+/**
+ * @param {{ ipcMain?: { removeHandler(channel: string): void } } | undefined} ctx
+ * @returns {void}
+ */
 function unregisterDevicePairingHandlers(ctx) {
   if (!ctx || !ctx.ipcMain) return;
   try { ctx.ipcMain.removeHandler('bridge:get-devices'); } catch (_) {}
