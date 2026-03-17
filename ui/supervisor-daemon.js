@@ -18,6 +18,10 @@ const {
   resolveSessionStatePath,
 } = require('./modules/cognitive-memory-sleep');
 const { stageImmediateTaskExtraction } = require('./modules/cognitive-memory-immunity');
+const {
+  readSystemCapabilitiesSnapshot,
+  resolveSleepExtractionCommandFromSnapshot,
+} = require('./modules/local-model-capabilities');
 
 const DEFAULT_POLL_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_POLL_MS || '4000', 10) || 4000);
 const DEFAULT_HEARTBEAT_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_HEARTBEAT_MS || '15000', 10) || 15000);
@@ -293,10 +297,37 @@ class SupervisorDaemon {
         minIntervalMs: this.sleepMinIntervalMs,
       }))
       : null;
+    this.lastSystemCapabilities = null;
+    this.lastSleepExtractionCommand = null;
 
     this.loopEvents.on('wake', (reason) => {
       this.handleWake(reason);
     });
+  }
+
+  refreshSleepExtractionCommand() {
+    const snapshot = readSystemCapabilitiesSnapshot(this.projectRoot);
+    this.lastSystemCapabilities = snapshot;
+    const command = resolveSleepExtractionCommandFromSnapshot(snapshot);
+    if (this.sleepConsolidator) {
+      this.sleepConsolidator.extractionCommand = command;
+    }
+    if (command) {
+      process.env.SQUIDRUN_SLEEP_EXTRACTION_COMMAND = command;
+    } else {
+      delete process.env.SQUIDRUN_SLEEP_EXTRACTION_COMMAND;
+    }
+    if (command !== this.lastSleepExtractionCommand) {
+      this.lastSleepExtractionCommand = command;
+      const mode = command
+        ? `local (${snapshot?.localModels?.sleepExtraction?.model || 'unknown-model'})`
+        : 'fallback';
+      this.logger.info(`Sleep extraction path configured: ${mode}`);
+    }
+    return {
+      command,
+      snapshot,
+    };
   }
 
   init() {
@@ -310,6 +341,7 @@ class SupervisorDaemon {
     if (!initResult.ok) {
       return initResult;
     }
+    this.refreshSleepExtractionCommand();
     if (this.sleepConsolidator && typeof this.sleepConsolidator.init === 'function') {
       try {
         this.sleepConsolidator.init();
@@ -529,6 +561,7 @@ class SupervisorDaemon {
     if (this.sleepCyclePromise) {
       return this.sleepCyclePromise;
     }
+    this.refreshSleepExtractionCommand();
 
     const decision = typeof this.sleepConsolidator.shouldRun === 'function'
       ? this.sleepConsolidator.shouldRun(nowMs)
@@ -1141,6 +1174,17 @@ class SupervisorDaemon {
         sessionStatePath: this.sessionStatePath,
         activity: this.getSleepActivitySnapshot(),
         lastSummary: this.lastSleepCycleSummary,
+      },
+      localModels: this.lastSystemCapabilities?.localModels || {
+        enabled: false,
+        provider: 'ollama',
+        sleepExtraction: {
+          enabled: false,
+          available: false,
+          model: null,
+          path: 'fallback',
+          reason: 'not_detected',
+        },
       },
       memoryConsistency: this.lastMemoryConsistencySummary || {
         enabled: this.memoryConsistencyEnabled,

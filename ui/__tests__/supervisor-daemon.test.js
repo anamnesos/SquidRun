@@ -52,6 +52,23 @@ jest.mock('../modules/cognitive-memory-immunity', () => ({
   stageImmediateTaskExtraction: jest.fn(async () => ({ ok: true })),
 }));
 
+jest.mock('../modules/local-model-capabilities', () => ({
+  readSystemCapabilitiesSnapshot: jest.fn(() => ({
+    localModels: {
+      enabled: true,
+      provider: 'ollama',
+      sleepExtraction: {
+        enabled: true,
+        available: true,
+        model: 'llama3:8b',
+        path: 'local-ollama',
+        command: '"node" "ollama-extract.js" --model "llama3:8b"',
+      },
+    },
+  })),
+  resolveSleepExtractionCommandFromSnapshot: jest.fn((snapshot) => snapshot?.localModels?.sleepExtraction?.command || ''),
+}));
+
 const chokidar = require('chokidar');
 const fs = require('fs');
 const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
@@ -211,6 +228,7 @@ describe('supervisor-daemon integrations', () => {
       }),
     }));
     expect(mockSleepConsolidator.init).toHaveBeenCalledTimes(1);
+    expect(mockSleepConsolidator.extractionCommand).toContain('ollama-extract.js');
     expect(mockLeaseJanitor.pruneExpiredLeases).toHaveBeenCalledTimes(1);
     expect(runMemoryConsistencyCheck).toHaveBeenCalledWith(expect.objectContaining({
       projectRoot: expect.any(String),
