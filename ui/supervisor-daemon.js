@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { EventEmitter } = require('events');
 const chokidar = require('chokidar');
 const { spawn } = require('child_process');
 const { getDatabaseSync } = require('./modules/sqlite-compat');
@@ -29,6 +30,11 @@ const DEFAULT_PENDING_TASK_TTL_MS = parseOptionalDurationMs(
 const DEFAULT_STDIO_TAIL_BYTES = Math.max(2048, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_STDIO_TAIL_BYTES || '16384', 10) || 16384);
 const DEFAULT_MEMORY_INDEX_DEBOUNCE_MS = Math.max(500, Number.parseInt(process.env.SQUIDRUN_MEMORY_INDEX_DEBOUNCE_MS || '2000', 10) || 2000);
 const DEFAULT_MEMORY_CONSISTENCY_POLL_MS = Math.max(60_000, Number.parseInt(process.env.SQUIDRUN_MEMORY_CONSISTENCY_POLL_MS || '300000', 10) || 300000);
+const DEFAULT_MAX_IDLE_BACKOFF_MS = Math.max(
+  DEFAULT_POLL_MS,
+  Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_MAX_IDLE_BACKOFF_MS || String(DEFAULT_POLL_MS * 8), 10)
+  || (DEFAULT_POLL_MS * 8)
+);
 const DEFAULT_SLEEP_IDLE_MS = DEFAULT_IDLE_THRESHOLD_MS;
 const DEFAULT_SLEEP_MIN_INTERVAL_MS = DEFAULT_MIN_INTERVAL_MS;
 
@@ -40,6 +46,7 @@ const DEFAULT_PID_PATH = resolveRuntimePath('supervisor.pid');
 const DEFAULT_STATUS_PATH = resolveRuntimePath('supervisor-status.json');
 const DEFAULT_LOG_PATH = resolveRuntimePath('supervisor.log');
 const DEFAULT_TASK_LOG_DIR = resolveRuntimePath(path.join('supervisor-tasks'));
+const DEFAULT_WAKE_SIGNAL_PATH = resolveRuntimePath('supervisor-wake.signal');
 
 function ensureDir(targetPath) {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -221,11 +228,21 @@ class SupervisorDaemon {
     this.workerLeaseOwnerPrefix = String(options.workerLeaseOwnerPrefix || 'supervisor');
     this.logger = options.logger || createLogger(this.logPath);
     this.activeWorkers = new Map();
-    this.pollTimer = null;
+    this.loopEvents = new EventEmitter();
+    this.tickTimer = null;
+    this.tickInFlight = null;
+    this.nextTickAtMs = 0;
+    this.pendingWakeReason = null;
+    this.currentBackoffMs = this.pollMs;
+    this.maxIdleBackoffMs = Math.max(
+      this.pollMs,
+      Number.parseInt(options.maxIdleBackoffMs || DEFAULT_MAX_IDLE_BACKOFF_MS, 10) || DEFAULT_MAX_IDLE_BACKOFF_MS
+    );
     this.statusTimer = null;
     this.stopping = false;
     this.startedAtMs = Date.now();
     this.memoryIndexWatcher = null;
+    this.wakeSignalWatcher = null;
     this.memoryIndexDebounceTimer = null;
     this.memoryIndexRefreshPromise = null;
     this.pendingMemoryIndexReason = null;
@@ -265,6 +282,7 @@ class SupervisorDaemon {
     this.sessionStatePath = options.sessionStatePath || resolveSessionStatePath();
     this.sleepCyclePromise = null;
     this.lastSleepCycleSummary = null;
+    this.wakeSignalPath = options.wakeSignalPath || DEFAULT_WAKE_SIGNAL_PATH;
     this.sleepConsolidator = this.sleepEnabled
       ? (options.sleepConsolidator || new SleepConsolidator({
         logger: this.logger,
@@ -275,6 +293,10 @@ class SupervisorDaemon {
         minIntervalMs: this.sleepMinIntervalMs,
       }))
       : null;
+
+    this.loopEvents.on('wake', (reason) => {
+      this.handleWake(reason);
+    });
   }
 
   init() {
@@ -314,14 +336,14 @@ class SupervisorDaemon {
 
     this.logger.info(`Supervisor daemon started (pid=${process.pid}, db=${this.store.dbPath})`);
     this.startMemoryIndexWatcher();
-    this.pollTimer = setInterval(() => {
-      this.tick().catch((err) => {
-        this.logger.error(`Supervisor tick failed: ${err.message}`);
-      });
-    }, this.pollMs);
+    this.startWakeSignalWatcher();
+    this.requestTick('startup');
     this.statusTimer = setInterval(() => {
       this.writeStatus();
-    }, Math.max(1000, this.pollMs));
+    }, Math.max(5000, this.heartbeatMs));
+    if (typeof this.statusTimer.unref === 'function') {
+      this.statusTimer.unref();
+    }
     return { ok: true };
   }
 
@@ -329,12 +351,13 @@ class SupervisorDaemon {
     if (this.stopping) return;
     this.stopping = true;
 
-    if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.tickTimer) clearTimeout(this.tickTimer);
     if (this.statusTimer) clearInterval(this.statusTimer);
-    this.pollTimer = null;
+    this.tickTimer = null;
     this.statusTimer = null;
 
     await this.stopMemoryIndexWatcher();
+    await this.stopWakeSignalWatcher();
 
     if (this.sleepConsolidator) {
       try { this.sleepConsolidator.close(); } catch {}
@@ -358,9 +381,11 @@ class SupervisorDaemon {
 
   async tick() {
     if (this.stopping) return;
-    this.runQueueHousekeeping(Date.now(), 'tick');
-    this.runMemoryLeaseHousekeeping(Date.now(), 'tick');
-    this.maybeRunMemoryConsistencyAudit(Date.now(), 'tick');
+    const nowMs = Date.now();
+    const queueHousekeeping = this.runQueueHousekeeping(nowMs, 'tick');
+    const leaseHousekeeping = this.runMemoryLeaseHousekeeping(nowMs, 'tick');
+    const memoryConsistency = this.maybeRunMemoryConsistencyAudit(nowMs, 'tick');
+    let claimedCount = 0;
 
     while (!this.stopping && this.activeWorkers.size < this.maxWorkers) {
       const leaseOwner = `${this.workerLeaseOwnerPrefix}-${process.pid}`;
@@ -374,11 +399,109 @@ class SupervisorDaemon {
         break;
       }
       if (!claim.task) break;
+      claimedCount += 1;
       await this.launchTask(claim.task, { leaseOwner });
     }
 
-    await this.maybeRunSleepCycle();
+    const sleepResult = await this.maybeRunSleepCycle();
     this.writeStatus();
+    return {
+      ok: true,
+      claimedCount,
+      activeWorkerCount: this.activeWorkers.size,
+      queueHousekeeping,
+      leaseHousekeeping,
+      memoryConsistency,
+      sleepResult,
+    };
+  }
+
+  requestTick(reason = 'manual') {
+    this.loopEvents.emit('wake', String(reason || 'manual'));
+  }
+
+  handleWake(reason = 'manual') {
+    if (this.stopping) return;
+    const nextReason = String(reason || 'manual');
+    if (this.tickInFlight) {
+      this.pendingWakeReason = nextReason;
+      return;
+    }
+    this.currentBackoffMs = this.pollMs;
+    this.scheduleTick(0, nextReason);
+  }
+
+  scheduleTick(delayMs = this.pollMs, reason = 'scheduled') {
+    if (this.stopping) return;
+    const safeDelayMs = Math.max(0, Number.parseInt(delayMs, 10) || 0);
+    const targetAtMs = Date.now() + safeDelayMs;
+    if (this.tickTimer && this.nextTickAtMs > 0 && this.nextTickAtMs <= targetAtMs) {
+      return;
+    }
+    if (this.tickTimer) {
+      clearTimeout(this.tickTimer);
+    }
+    this.nextTickAtMs = targetAtMs;
+    this.tickTimer = setTimeout(() => {
+      this.tickTimer = null;
+      this.nextTickAtMs = 0;
+      this.runScheduledTick(reason).catch((err) => {
+        this.logger.error(`Supervisor tick failed: ${err.message}`);
+      });
+    }, safeDelayMs);
+    if (typeof this.tickTimer.unref === 'function') {
+      this.tickTimer.unref();
+    }
+  }
+
+  computeNextTickDelay(summary = null) {
+    const claimedCount = Number(summary?.claimedCount || 0);
+    const activeWorkerCount = Number(summary?.activeWorkerCount || 0);
+    const queueRequeued = Number(summary?.queueHousekeeping?.requeueResult?.requeued || 0);
+    const pendingPruned = Number(summary?.queueHousekeeping?.pruneResult?.pruned || 0);
+    const leasePruned = Number(summary?.leaseHousekeeping?.pruned || 0);
+    const sleepRan = summary?.sleepResult && summary.sleepResult.skipped !== true;
+    const memoryChecked = summary?.memoryConsistency && summary.memoryConsistency.skipped !== true;
+    const performedWork = claimedCount > 0
+      || queueRequeued > 0
+      || pendingPruned > 0
+      || leasePruned > 0
+      || sleepRan
+      || memoryChecked;
+
+    if (performedWork || activeWorkerCount > 0) {
+      this.currentBackoffMs = this.pollMs;
+      return this.pollMs;
+    }
+
+    this.currentBackoffMs = Math.min(
+      this.maxIdleBackoffMs,
+      Math.max(this.pollMs, this.currentBackoffMs * 2)
+    );
+    return this.currentBackoffMs;
+  }
+
+  async runScheduledTick(reason = 'scheduled') {
+    if (this.stopping) return;
+    if (this.tickInFlight) {
+      this.pendingWakeReason = String(reason || 'scheduled');
+      return;
+    }
+
+    this.tickInFlight = this.tick();
+    try {
+      const summary = await this.tickInFlight;
+      if (this.stopping) return;
+      if (this.pendingWakeReason) {
+        const followUpReason = this.pendingWakeReason;
+        this.pendingWakeReason = null;
+        this.scheduleTick(0, followUpReason);
+        return;
+      }
+      this.scheduleTick(this.computeNextTickDelay(summary), reason);
+    } finally {
+      this.tickInFlight = null;
+    }
   }
 
   getSleepActivitySnapshot(nowMs = Date.now()) {
@@ -594,6 +717,7 @@ class SupervisorDaemon {
     this.activeWorkers.set(task.taskId, worker);
     this.store.attachWorkerPid(task.taskId, child.pid, { leaseOwner, nowMs: Date.now() });
     this.logger.info(`Task ${task.taskId} claimed and started as pid ${child.pid}`);
+    this.requestTick(`worker-start:${task.taskId}`);
 
     worker.heartbeatHandle = setInterval(() => {
       const heartbeat = this.store.heartbeatTask(task.taskId, {
@@ -744,6 +868,7 @@ class SupervisorDaemon {
         this.logger.warn(`Memory index refresh failed: ${err.message}`);
       });
     }, this.memoryIndexDebounceMs);
+    this.requestTick(`memory-index:${this.pendingMemoryIndexReason}`);
     if (typeof this.memoryIndexDebounceTimer.unref === 'function') {
       this.memoryIndexDebounceTimer.unref();
     }
@@ -808,6 +933,22 @@ class SupervisorDaemon {
     this.scheduleMemoryIndexRefresh('startup');
   }
 
+  startWakeSignalWatcher() {
+    if (this.wakeSignalWatcher) return;
+    ensureDir(this.wakeSignalPath);
+    this.wakeSignalWatcher = chokidar.watch(this.wakeSignalPath, {
+      ignoreInitial: true,
+      awaitWriteFinish: {
+        stabilityThreshold: 100,
+        pollInterval: 50,
+      },
+    });
+
+    this.wakeSignalWatcher.on('all', (eventName) => {
+      this.requestTick(`wake-signal:${eventName}`);
+    });
+  }
+
   async stopMemoryIndexWatcher() {
     if (this.memoryIndexDebounceTimer) clearTimeout(this.memoryIndexDebounceTimer);
     this.memoryIndexDebounceTimer = null;
@@ -823,6 +964,15 @@ class SupervisorDaemon {
       try {
         this.memorySearchIndex.close();
       } catch {}
+    }
+  }
+
+  async stopWakeSignalWatcher() {
+    if (this.wakeSignalWatcher) {
+      try {
+        await this.wakeSignalWatcher.close();
+      } catch {}
+      this.wakeSignalWatcher = null;
     }
   }
 
@@ -938,6 +1088,7 @@ class SupervisorDaemon {
       });
 
     this.writeStatus();
+    this.requestTick(`worker-settled:${worker.taskId}`);
   }
 
   async stopWorker(taskId, worker, reason) {
@@ -968,6 +1119,8 @@ class SupervisorDaemon {
       startedAtMs: this.startedAtMs,
       heartbeatAtMs: Date.now(),
       pollMs: this.pollMs,
+      currentBackoffMs: this.currentBackoffMs,
+      maxIdleBackoffMs: this.maxIdleBackoffMs,
       heartbeatMs: this.heartbeatMs,
       leaseMs: this.leaseMs,
       pendingTaskTtlMs: this.pendingTaskTtlMs,
