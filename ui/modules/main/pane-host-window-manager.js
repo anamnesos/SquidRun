@@ -34,7 +34,13 @@ function toNonEmptyString(value) {
 }
 
 function buildPaneHostQueryFromEnv(paneId) {
-  const query = { paneId: String(paneId) };
+  const query = {};
+  if (Array.isArray(paneId)) {
+    query.paneIds = paneId.map((value) => String(value)).join(',');
+  } else {
+    query.paneId = String(paneId);
+    query.paneIds = String(paneId);
+  }
   for (const [queryKey, envKey] of Object.entries(PANE_HOST_QUERY_ENV_MAP)) {
     const value = toNonEmptyString(process.env[envKey]);
     if (value) {
@@ -58,7 +64,8 @@ function createPaneHostWindowManager(options = {}) {
     getCurrentSettings = () => ({}),
   } = options;
 
-  const paneWindows = new Map();
+  let hostWindow = null;
+  const hostedPaneIds = new Set();
 
   function getPaneHostHtmlPath() {
     return path.join(__dirname, '..', '..', 'pane-host.html');
@@ -84,18 +91,24 @@ function createPaneHostWindowManager(options = {}) {
 
   function getPaneWindow(paneId) {
     const id = String(paneId);
-    const win = paneWindows.get(id);
-    if (!win || win.isDestroyed()) {
-      paneWindows.delete(id);
+    if (!hostedPaneIds.has(id)) return null;
+    if (!hostWindow || hostWindow.isDestroyed()) {
+      hostWindow = null;
+      hostedPaneIds.clear();
       return null;
     }
-    return win;
+    return hostWindow;
   }
 
-  async function createPaneWindow(paneId) {
+  async function createPaneWindow(paneId, allPaneIds = null) {
     const id = String(paneId);
+    hostedPaneIds.add(id);
     const existing = getPaneWindow(id);
     if (existing) return existing;
+
+    const paneIds = Array.isArray(allPaneIds) && allPaneIds.length > 0
+      ? Array.from(new Set(allPaneIds.map((value) => String(value))))
+      : Array.from(hostedPaneIds);
 
     const win = new BrowserWindow({
       width: HIDDEN_PANE_HOST_WIDTH,
@@ -111,15 +124,16 @@ function createPaneHostWindowManager(options = {}) {
         backgroundThrottling: false,
         preload: getPreloadPath(),
       },
-      title: `SquidRun Pane Host ${id}`,
+      title: `SquidRun Pane Host (${paneIds.join(', ')})`,
     });
 
-    paneWindows.set(id, win);
+    hostWindow = win;
     win.on('closed', () => {
-      paneWindows.delete(id);
+      hostWindow = null;
+      hostedPaneIds.clear();
     });
 
-    await win.loadFile(getPaneHostHtmlPath(), { query: buildPaneHostQuery(id) });
+    await win.loadFile(getPaneHostHtmlPath(), { query: buildPaneHostQuery(paneIds) });
 
     const settings = getCurrentSettings() || {};
     if (settings.devTools && process.env.SQUIDRUN_PANE_HOST_DEVTOOLS === '1') {
@@ -132,8 +146,10 @@ function createPaneHostWindowManager(options = {}) {
   async function ensurePaneWindows(paneIds = []) {
     const ids = Array.from(new Set((paneIds || []).map((paneId) => String(paneId))));
     for (const paneId of ids) {
-      await createPaneWindow(paneId);
+      hostedPaneIds.add(paneId);
     }
+    if (ids.length === 0) return;
+    await createPaneWindow(ids[0], ids);
   }
 
   function sendToPaneWindow(paneId, channel, payload) {
@@ -160,14 +176,15 @@ function createPaneHostWindowManager(options = {}) {
   }
 
   function closeAllPaneWindows() {
-    for (const win of paneWindows.values()) {
+    if (hostWindow) {
       try {
-        win.close();
+        hostWindow.close();
       } catch (err) {
         log.warn('PaneHost', `Failed to close pane host window: ${err.message}`);
       }
     }
-    paneWindows.clear();
+    hostWindow = null;
+    hostedPaneIds.clear();
   }
 
   return {

@@ -1,9 +1,13 @@
-function readPaneIdFromQuery(params) {
+function readPaneIdsFromQuery(params) {
   try {
-    const paneId = params.get('paneId');
-    return paneId ? String(paneId) : '1';
+    const raw = String(params.get('paneIds') || params.get('paneId') || '1');
+    const values = raw
+      .split(',')
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    return values.length > 0 ? Array.from(new Set(values)) : ['1'];
   } catch {
-    return '1';
+    return ['1'];
   }
 }
 
@@ -105,7 +109,7 @@ function withTimeout(promise, timeoutMs, label) {
   });
 }
 
-  function getUtf8ByteLength(value) {
+function getUtf8ByteLength(value) {
   const text = typeof value === 'string' ? value : String(value || '');
   if (typeof TextEncoder === 'function') {
     return new TextEncoder().encode(text).length;
@@ -113,32 +117,36 @@ function withTimeout(promise, timeoutMs, label) {
   return text.length;
 }
 
-function getCurrentPromptKind(terminal) {
-  try {
-    const buffer = terminal?.buffer?.active;
-    if (!buffer || typeof buffer.getLine !== 'function') return 'unknown';
-    const line = buffer.getLine(buffer.cursorY + buffer.viewportY);
-    if (!line || typeof line.translateToString !== 'function') return 'unknown';
-    return getPromptKindFromLine(line.translateToString(true));
-  } catch {
-    return 'unknown';
-  }
+function createPaneRuntime(paneId, terminal, fitAddon) {
+  return {
+    paneId,
+    terminal,
+    fitAddon,
+    injectedScrollback: false,
+    injectChain: Promise.resolve(),
+    ptyOutputTick: 0,
+    lastPtyOutputAtMs: 0,
+    pendingOutputWaiters: new Set(),
+    ipcChunkAssemblies: new Map(),
+    disposeDataListener: null,
+    disposeExitListener: null,
+  };
 }
 
 (function bootPaneHost() {
   const params = new URLSearchParams(window.location.search || '');
-  const paneId = readPaneIdFromQuery(params);
+  const paneIds = readPaneIdsFromQuery(params);
   const isDarwin = detectDarwin();
   const api = window.squidrun;
   const TerminalCtor = window.Terminal;
   const FitAddonCtor = window.FitAddon && window.FitAddon.FitAddon;
 
   if (!api?.pty || !api?.paneHost?.inject) {
-    console.error(`[PaneHost] Missing preload bridge for pane ${paneId}`);
+    console.error('[PaneHost] Missing preload bridge');
     return;
   }
   if (!TerminalCtor || !FitAddonCtor) {
-    console.error(`[PaneHost] Missing xterm globals for pane ${paneId}`);
+    console.error('[PaneHost] Missing xterm globals');
     return;
   }
 
@@ -222,52 +230,49 @@ function getCurrentPromptKind(terminal) {
     ? "'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace"
     : "'Consolas', 'Monaco', 'Courier New', monospace";
 
-  let injectedScrollback = false;
-  let injectChain = Promise.resolve();
-  let ptyOutputTick = 0;
-  let lastPtyOutputAtMs = 0;
-  const pendingOutputWaiters = new Set();
-  const ipcChunkAssemblies = new Map();
-
-  const terminal = new TerminalCtor({
-    theme: {
-      background: '#0a0a0f',
-      foreground: '#e8eaf0',
-      cursor: '#00f0ff',
-      cursorAccent: '#0a0a0f',
-      selection: 'rgba(0, 240, 255, 0.25)',
-    },
-    fontFamily: TERMINAL_FONT_FAMILY,
-    fontSize: 13,
-    cursorBlink: true,
-    cursorStyle: 'block',
-    scrollback: 3000,
-    rightClickSelectsWord: true,
-    allowProposedApi: true,
-  });
-
-  const terminalRoot = document.getElementById('paneHostTerminal');
+  const terminalRoot = document.getElementById('paneHostRoot');
   if (!terminalRoot) {
-    console.error(`[PaneHost] Missing terminal root for pane ${paneId}`);
+    console.error('[PaneHost] Missing terminal root');
     return;
   }
 
-  const fitAddon = new FitAddonCtor();
-  terminal.loadAddon(fitAddon);
-  terminal.open(terminalRoot);
-  fitAddon.fit();
-  terminal.focus();
+  /** @type {Map<string, ReturnType<typeof createPaneRuntime>>} */
+  const paneRuntimeById = new Map();
 
-  window.addEventListener('resize', () => {
+  function sendPaneHostAction(action, paneId, payload = {}) {
+    return api.paneHost.inject(paneId, {
+      action,
+      ...payload,
+    });
+  }
+
+  function reportDeliveryAck(paneId, deliveryId) {
+    if (!deliveryId) return;
+    sendPaneHostAction('delivery-ack', paneId, { deliveryId }).catch((err) => {
+      console.error(`[PaneHost] Failed to report delivery ack for pane ${paneId}:`, err?.message || err);
+    });
+  }
+
+  function reportDeliveryOutcome(paneId, payload = {}) {
+    sendPaneHostAction('delivery-outcome', paneId, payload).catch((err) => {
+      console.error(`[PaneHost] Failed to report delivery outcome for pane ${paneId}:`, err?.message || err);
+    });
+  }
+
+  function getCurrentPromptKind(terminal) {
     try {
-      fitAddon.fit();
+      const buffer = terminal?.buffer?.active;
+      if (!buffer || typeof buffer.getLine !== 'function') return 'unknown';
+      const line = buffer.getLine(buffer.cursorY + buffer.viewportY);
+      if (!line || typeof line.translateToString !== 'function') return 'unknown';
+      return getPromptKindFromLine(line.translateToString(true));
     } catch {
-      // Best-effort only.
+      return 'unknown';
     }
-  });
+  }
 
-  function waitForPtyOutputAfter(baselineTick, timeoutMs = POST_ENTER_VERIFY_TIMEOUT_MS) {
-    if (ptyOutputTick > baselineTick) return Promise.resolve(true);
+  function waitForPtyOutputAfter(runtime, baselineTick, timeoutMs = POST_ENTER_VERIFY_TIMEOUT_MS) {
+    if (runtime.ptyOutputTick > baselineTick) return Promise.resolve(true);
     const maxWaitMs = Number.isFinite(timeoutMs) && timeoutMs > 0
       ? timeoutMs
       : DEFAULT_POST_ENTER_VERIFY_TIMEOUT_MS;
@@ -279,32 +284,32 @@ function getCurrentPromptKind(terminal) {
         timeoutId: null,
       };
       waiter.timeoutId = setTimeout(() => {
-        pendingOutputWaiters.delete(waiter);
+        runtime.pendingOutputWaiters.delete(waiter);
         resolve(false);
       }, maxWaitMs);
-      pendingOutputWaiters.add(waiter);
+      runtime.pendingOutputWaiters.add(waiter);
     });
   }
 
-  function resolveOutputWaiters() {
-    if (pendingOutputWaiters.size === 0) return;
-    for (const waiter of Array.from(pendingOutputWaiters)) {
-      if (ptyOutputTick <= waiter.baselineTick) continue;
-      pendingOutputWaiters.delete(waiter);
+  function resolveOutputWaiters(runtime) {
+    if (runtime.pendingOutputWaiters.size === 0) return;
+    for (const waiter of Array.from(runtime.pendingOutputWaiters)) {
+      if (runtime.ptyOutputTick <= waiter.baselineTick) continue;
+      runtime.pendingOutputWaiters.delete(waiter);
       clearTimeout(waiter.timeoutId);
       waiter.resolve(true);
     }
   }
 
-  function paneHasRecentOutput(windowMs = SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS) {
+  function paneHasRecentOutput(runtime, windowMs = SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS) {
     const activeWindowMs = Number.isFinite(windowMs) && windowMs > 0
       ? windowMs
       : DEFAULT_SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS;
-    if (!lastPtyOutputAtMs) return false;
-    return (Date.now() - lastPtyOutputAtMs) <= activeWindowMs;
+    if (!runtime.lastPtyOutputAtMs) return false;
+    return (Date.now() - runtime.lastPtyOutputAtMs) <= activeWindowMs;
   }
 
-  async function deferSubmitWhilePaneActive(maxWaitMs = SUBMIT_DEFER_MAX_WAIT_MS) {
+  async function deferSubmitWhilePaneActive(runtime, maxWaitMs = SUBMIT_DEFER_MAX_WAIT_MS) {
     const deferMaxWaitMs = Number.isFinite(maxWaitMs) && maxWaitMs > 0
       ? maxWaitMs
       : DEFAULT_SUBMIT_DEFER_MAX_WAIT_MS;
@@ -314,47 +319,27 @@ function getCurrentPromptKind(terminal) {
     );
     const start = Date.now();
 
-    while (paneHasRecentOutput() && (Date.now() - start) < deferMaxWaitMs) {
+    while (paneHasRecentOutput(runtime) && (Date.now() - start) < deferMaxWaitMs) {
       await sleep(pollMs);
     }
 
     const waitedMs = Math.max(0, Date.now() - start);
     return {
       waitedMs,
-      forcedExpire: paneHasRecentOutput(),
+      forcedExpire: paneHasRecentOutput(runtime),
     };
   }
 
-  function sendPaneHostAction(action, payload = {}) {
-    return api.paneHost.inject(paneId, {
-      action,
-      ...payload,
-    });
-  }
-
-  function reportDeliveryAck(deliveryId) {
-    if (!deliveryId) return;
-    sendPaneHostAction('delivery-ack', { deliveryId }).catch((err) => {
-      console.error(`[PaneHost] Failed to report delivery ack for pane ${paneId}:`, err?.message || err);
-    });
-  }
-
-  function reportDeliveryOutcome(payload = {}) {
-    sendPaneHostAction('delivery-outcome', payload).catch((err) => {
-      console.error(`[PaneHost] Failed to report delivery outcome for pane ${paneId}:`, err?.message || err);
-    });
-  }
-
-  function pruneIpcChunkAssemblies(now = Date.now()) {
-    for (const [key, entry] of ipcChunkAssemblies.entries()) {
+  function pruneIpcChunkAssemblies(runtime, now = Date.now()) {
+    for (const [key, entry] of runtime.ipcChunkAssemblies.entries()) {
       const updatedAt = Number(entry?.updatedAtMs || 0);
       if (!Number.isFinite(updatedAt) || (updatedAt + 60000) <= now) {
-        ipcChunkAssemblies.delete(key);
+        runtime.ipcChunkAssemblies.delete(key);
       }
     }
   }
 
-  function prepareInjectedPayload(rawPayload = {}) {
+  function prepareInjectedPayload(runtime, rawPayload = {}) {
     const payload = (rawPayload && typeof rawPayload === 'object') ? rawPayload : {};
     const chunkMeta = payload.ipcChunk && typeof payload.ipcChunk === 'object' ? payload.ipcChunk : null;
     const message = String(payload.message || '');
@@ -362,26 +347,26 @@ function getCurrentPromptKind(terminal) {
     const expectedBytes = Number.isFinite(Number(payload.messageBytes)) ? Number(payload.messageBytes) : null;
 
     if (expectedBytes !== null && expectedBytes !== actualBytes) {
-      console.warn(`[PaneHost] IPC byte mismatch for pane ${paneId}: expected ${expectedBytes}, received ${actualBytes}`);
+      console.warn(`[PaneHost] IPC byte mismatch for pane ${runtime.paneId}: expected ${expectedBytes}, received ${actualBytes}`);
     }
 
     if (!chunkMeta) {
-      console.info(`[PaneHost] inject-message receive pane=${paneId} bytes=${actualBytes}/${expectedBytes ?? actualBytes}`);
+      console.info(`[PaneHost] inject-message receive pane=${runtime.paneId} bytes=${actualBytes}/${expectedBytes ?? actualBytes}`);
       return { ready: true, payload: { ...payload, message, messageBytes: actualBytes, ipcChunk: null } };
     }
 
-    pruneIpcChunkAssemblies();
+    pruneIpcChunkAssemblies(runtime);
     const groupId = toNonEmptyString(chunkMeta.groupId);
     const chunkIndex = Number.parseInt(String(chunkMeta.index ?? ''), 10);
     const chunkCount = Number.parseInt(String(chunkMeta.count ?? ''), 10);
     const totalBytes = Number.isFinite(Number(chunkMeta.totalBytes)) ? Number(chunkMeta.totalBytes) : null;
     if (!groupId || !Number.isFinite(chunkIndex) || !Number.isFinite(chunkCount) || chunkIndex < 0 || chunkCount <= 0) {
-      console.warn(`[PaneHost] Invalid IPC chunk metadata for pane ${paneId}; delivering chunk directly`);
+      console.warn(`[PaneHost] Invalid IPC chunk metadata for pane ${runtime.paneId}; delivering chunk directly`);
       return { ready: true, payload: { ...payload, message, messageBytes: actualBytes, ipcChunk: null } };
     }
 
-    const key = `${paneId}:${groupId}`;
-    const entry = ipcChunkAssemblies.get(key) || {
+    const key = `${runtime.paneId}:${groupId}`;
+    const entry = runtime.ipcChunkAssemblies.get(key) || {
       count: chunkCount,
       totalBytes,
       parts: new Array(chunkCount),
@@ -396,21 +381,21 @@ function getCurrentPromptKind(terminal) {
     }
     entry.updatedAtMs = Date.now();
     entry.payload = payload;
-    ipcChunkAssemblies.set(key, entry);
+    runtime.ipcChunkAssemblies.set(key, entry);
 
-    console.info(`[PaneHost] inject-message chunk pane=${paneId} group=${groupId} part=${chunkIndex + 1}/${chunkCount} bytes=${actualBytes}/${expectedBytes ?? actualBytes}`);
+    console.info(`[PaneHost] inject-message chunk pane=${runtime.paneId} group=${groupId} part=${chunkIndex + 1}/${chunkCount} bytes=${actualBytes}/${expectedBytes ?? actualBytes}`);
 
     if (entry.received < chunkCount) {
       return { ready: false, waitingFor: chunkCount - entry.received };
     }
 
-    ipcChunkAssemblies.delete(key);
+    runtime.ipcChunkAssemblies.delete(key);
     const fullMessage = entry.parts.join('');
     const reassembledBytes = getUtf8ByteLength(fullMessage);
     if (entry.totalBytes !== null && entry.totalBytes !== reassembledBytes) {
-      console.warn(`[PaneHost] IPC reassembly byte mismatch for pane ${paneId}: expected ${entry.totalBytes}, reassembled ${reassembledBytes}`);
+      console.warn(`[PaneHost] IPC reassembly byte mismatch for pane ${runtime.paneId}: expected ${entry.totalBytes}, reassembled ${reassembledBytes}`);
     }
-    console.info(`[PaneHost] inject-message reassembled pane=${paneId} group=${groupId} totalBytes=${reassembledBytes}`);
+    console.info(`[PaneHost] inject-message reassembled pane=${runtime.paneId} group=${groupId} totalBytes=${reassembledBytes}`);
 
     return {
       ready: true,
@@ -428,12 +413,12 @@ function getCurrentPromptKind(terminal) {
     };
   }
 
-  async function injectMessage(payload = {}) {
+  async function injectMessage(runtime, payload = {}) {
     const baseText = stripInternalRoutingWrappers(String(payload.message || ''));
     const deliveryId = payload.deliveryId || null;
     const traceContext = payload.traceContext || null;
     const hmSendTrace = isHmSendTraceContext(traceContext);
-    const promptKind = hmSendTrace ? getCurrentPromptKind(terminal) : 'unknown';
+    const promptKind = hmSendTrace ? getCurrentPromptKind(runtime.terminal) : 'unknown';
     const text = hmSendTrace ? formatHmSendForPrompt(baseText, promptKind) : baseText;
     const payloadBytes = getUtf8ByteLength(text);
     const isLongPayload = payloadBytes >= Math.max(
@@ -442,7 +427,6 @@ function getCurrentPromptKind(terminal) {
     );
 
     try {
-      // Use chunked write for large payloads to prevent PTY pipe truncation.
       const chunkThreshold = Number.isFinite(CHUNK_THRESHOLD_BYTES) && CHUNK_THRESHOLD_BYTES > 0
         ? CHUNK_THRESHOLD_BYTES
         : DEFAULT_CHUNK_THRESHOLD_BYTES;
@@ -466,7 +450,7 @@ function getCurrentPromptKind(terminal) {
           );
         }
         const chunkedResult = await withTimeout(
-          api.pty.writeChunked(paneId, text, chunkOptions, traceContext || null),
+          api.pty.writeChunked(runtime.paneId, text, chunkOptions, traceContext || null),
           WRITE_TIMEOUT_MS,
           'pane-host writeChunked'
         );
@@ -475,13 +459,12 @@ function getCurrentPromptKind(terminal) {
         }
       } else {
         await withTimeout(
-          api.pty.write(paneId, text, traceContext || null),
+          api.pty.write(runtime.paneId, text, traceContext || null),
           WRITE_TIMEOUT_MS,
           'pane-host write'
         );
       }
 
-      // Minimum wait for the PTY to process pasted text before sending Enter.
       const baseMinDelay = Math.max(
         100,
         Number.isFinite(MIN_ENTER_DELAY_MS) ? MIN_ENTER_DELAY_MS : DEFAULT_MIN_ENTER_DELAY_MS
@@ -492,27 +475,26 @@ function getCurrentPromptKind(terminal) {
       const minDelay = baseMinDelay + hmSendExtraDelayMs;
       await sleep(minDelay);
 
-      // Then wait for output activity to settle.
       const deferMaxWaitMs = isLongPayload
         ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, SUBMIT_DEFER_MAX_WAIT_LONG_MS)
         : SUBMIT_DEFER_MAX_WAIT_MS;
-      const deferResult = await deferSubmitWhilePaneActive(deferMaxWaitMs);
+      const deferResult = await deferSubmitWhilePaneActive(runtime, deferMaxWaitMs);
       if (deferResult.forcedExpire) {
         console.warn(
-          `[PaneHost] Submit defer window expired for pane ${paneId} after ${deferResult.waitedMs}ms; `
+          `[PaneHost] Submit defer window expired for pane ${runtime.paneId} after ${deferResult.waitedMs}ms; `
           + 'sending Enter while output is still active'
         );
       }
 
-      const outputBaseline = ptyOutputTick;
+      const outputBaseline = runtime.ptyOutputTick;
       const enterResult = await withTimeout(
-        sendPaneHostAction('dispatch-enter'),
+        sendPaneHostAction('dispatch-enter', runtime.paneId),
         ENTER_TIMEOUT_MS,
         'pane-host dispatch-enter'
       );
       if (!enterResult || !enterResult.success) {
         console.error(
-          `[PaneHost] pane-host dispatch-enter FAILED for pane ${paneId}:`,
+          `[PaneHost] pane-host dispatch-enter FAILED for pane ${runtime.paneId}:`,
           enterResult?.reason || 'unknown'
         );
       }
@@ -525,16 +507,16 @@ function getCurrentPromptKind(terminal) {
             : DEFAULT_HM_SEND_POST_ENTER_VERIFY_TIMEOUT_MS
         )
         : POST_ENTER_VERIFY_TIMEOUT_MS;
-      const outputObserved = await waitForPtyOutputAfter(outputBaseline, postEnterVerifyTimeoutMs);
+      const outputObserved = await waitForPtyOutputAfter(runtime, outputBaseline, postEnterVerifyTimeoutMs);
       const treatAsDelivered = Boolean(outputObserved || (hmSendTrace && enterResult?.success));
 
       if (deliveryId) {
         if (treatAsDelivered) {
-          reportDeliveryAck(deliveryId);
+          reportDeliveryAck(runtime.paneId, deliveryId);
         } else {
-          reportDeliveryOutcome({
+          reportDeliveryOutcome(runtime.paneId, {
             deliveryId,
-            paneId,
+            paneId: runtime.paneId,
             accepted: true,
             verified: false,
             status: 'accepted.unverified',
@@ -545,21 +527,21 @@ function getCurrentPromptKind(terminal) {
 
       if (!outputObserved && hmSendTrace && enterResult?.success) {
         console.warn(
-          `[PaneHost] hm-send trace accepted for pane ${paneId} without immediate PTY output `
+          `[PaneHost] hm-send trace accepted for pane ${runtime.paneId} without immediate PTY output `
           + `(${postEnterVerifyTimeoutMs}ms window)`
         );
       } else if (!outputObserved) {
         console.warn(
-          `[PaneHost] Delivery remained unverified for pane ${paneId} after Enter `
+          `[PaneHost] Delivery remained unverified for pane ${runtime.paneId} after Enter `
           + `(${postEnterVerifyTimeoutMs}ms without PTY output)`
         );
       }
     } catch (err) {
-      console.error(`[PaneHost] injectMessage FAILED for pane ${paneId}:`, err.message);
+      console.error(`[PaneHost] injectMessage FAILED for pane ${runtime.paneId}:`, err.message);
       if (deliveryId) {
-        reportDeliveryOutcome({
+        reportDeliveryOutcome(runtime.paneId, {
           deliveryId,
-          paneId,
+          paneId: runtime.paneId,
           accepted: false,
           verified: false,
           status: 'delivery_failed',
@@ -569,42 +551,91 @@ function getCurrentPromptKind(terminal) {
     }
   }
 
+  function createPaneTerminal(paneId) {
+    const section = document.createElement('div');
+    section.className = 'paneHostTerminal';
+    section.dataset.paneId = paneId;
+    terminalRoot.appendChild(section);
+
+    const terminal = new TerminalCtor({
+      theme: {
+        background: '#0a0a0f',
+        foreground: '#e8eaf0',
+        cursor: '#00f0ff',
+        cursorAccent: '#0a0a0f',
+        selection: 'rgba(0, 240, 255, 0.25)',
+      },
+      fontFamily: TERMINAL_FONT_FAMILY,
+      fontSize: 13,
+      cursorBlink: true,
+      cursorStyle: 'block',
+      scrollback: 3000,
+      rightClickSelectsWord: true,
+      allowProposedApi: true,
+    });
+
+    const fitAddon = new FitAddonCtor();
+    terminal.loadAddon(fitAddon);
+    terminal.open(section);
+    fitAddon.fit();
+
+    return createPaneRuntime(paneId, terminal, fitAddon);
+  }
+
   function handlePaneHostEvent(payload = {}) {
     const source = String(payload?.source || '').trim().toLowerCase();
     if (source !== 'pane-host') return;
-    if (String(payload?.paneId || '') !== paneId) return;
+    const paneId = String(payload?.paneId || '').trim();
+    if (!paneId) return;
+    const runtime = paneRuntimeById.get(paneId);
+    if (!runtime) return;
     const type = String(payload?.type || '').trim().toLowerCase();
 
     if (type === 'prime-scrollback') {
-      if (injectedScrollback) return;
+      if (runtime.injectedScrollback) return;
       const scrollback = String(payload?.scrollback || '');
       if (!scrollback) return;
-      injectedScrollback = true;
-      terminal.write(scrollback);
+      runtime.injectedScrollback = true;
+      runtime.terminal.write(scrollback);
       return;
     }
 
     if (type === 'inject-message') {
-      const prepared = prepareInjectedPayload(payload);
+      const prepared = prepareInjectedPayload(runtime, payload);
       if (!prepared.ready) return;
-      injectChain = injectChain
-        .then(() => injectMessage(prepared.payload))
+      runtime.injectChain = runtime.injectChain
+        .then(() => injectMessage(runtime, prepared.payload))
         .catch((err) => {
-          console.error(`[PaneHost] Inject chain error for pane ${paneId}:`, err?.message || err);
+          console.error(`[PaneHost] Inject chain error for pane ${runtime.paneId}:`, err?.message || err);
         });
     }
   }
 
-  const disposeDataListener = api.pty.onData(paneId, (data) => {
-    ptyOutputTick += 1;
-    lastPtyOutputAtMs = Date.now();
-    resolveOutputWaiters();
-    terminal.write(String(data || ''));
-  });
+  for (const paneId of paneIds) {
+    const runtime = createPaneTerminal(paneId);
+    paneRuntimeById.set(paneId, runtime);
 
-  const disposeExitListener = api.pty.onExit(paneId, (code) => {
-    const exitCode = code ?? '?';
-    terminal.write(`\r\n[Process exited with code ${exitCode}]\r\n`);
+    runtime.disposeDataListener = api.pty.onData(paneId, (data) => {
+      runtime.ptyOutputTick += 1;
+      runtime.lastPtyOutputAtMs = Date.now();
+      resolveOutputWaiters(runtime);
+      runtime.terminal.write(String(data || ''));
+    });
+
+    runtime.disposeExitListener = api.pty.onExit(paneId, (code) => {
+      const exitCode = code ?? '?';
+      runtime.terminal.write(`\r\n[Process exited with code ${exitCode}]\r\n`);
+    });
+  }
+
+  window.addEventListener('resize', () => {
+    for (const runtime of paneRuntimeById.values()) {
+      try {
+        runtime.fitAddon.fit();
+      } catch {
+        // Best-effort only.
+      }
+    }
   });
 
   api.pty.onKernelBridgeEvent((payload = {}) => {
@@ -612,12 +643,15 @@ function getCurrentPromptKind(terminal) {
   });
 
   window.addEventListener('beforeunload', () => {
-    if (typeof disposeDataListener === 'function') disposeDataListener();
-    if (typeof disposeExitListener === 'function') disposeExitListener();
+    for (const runtime of paneRuntimeById.values()) {
+      if (typeof runtime.disposeDataListener === 'function') runtime.disposeDataListener();
+      if (typeof runtime.disposeExitListener === 'function') runtime.disposeExitListener();
+    }
   });
 
-  sendPaneHostAction('ready').catch((err) => {
-    console.error(`[PaneHost] Failed to send ready for pane ${paneId}:`, err?.message || err);
-  });
+  for (const paneId of paneIds) {
+    sendPaneHostAction('ready', paneId).catch((err) => {
+      console.error(`[PaneHost] Failed to send ready for pane ${paneId}:`, err?.message || err);
+    });
+  }
 })();
-

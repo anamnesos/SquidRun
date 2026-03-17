@@ -1,3 +1,18 @@
+jest.mock('electron', () => ({
+  BrowserWindow: jest.fn().mockImplementation(() => ({
+    loadFile: jest.fn().mockResolvedValue(),
+    on: jest.fn(),
+    close: jest.fn(),
+    isDestroyed: jest.fn(() => false),
+    webContents: {
+      send: jest.fn(),
+      isLoadingMainFrame: jest.fn(() => false),
+      once: jest.fn(),
+      openDevTools: jest.fn(),
+    },
+  })),
+}));
+
 describe('pane-host-window-manager query defaults', () => {
   const originalEnv = process.env;
 
@@ -32,5 +47,23 @@ describe('pane-host-window-manager query defaults', () => {
     const query = _internals.buildPaneHostQueryFromEnv('3');
 
     expect(query.hmSendChunkThresholdBytes).toBe('1536');
+  });
+});
+
+describe('pane-host-window-manager multiplexing', () => {
+  beforeEach(() => {
+    jest.resetModules();
+  });
+
+  test('uses one hidden BrowserWindow for multiple pane hosts', async () => {
+    const { BrowserWindow } = require('electron');
+    const { createPaneHostWindowManager } = require('../modules/main/pane-host-window-manager');
+    const manager = createPaneHostWindowManager();
+
+    await manager.ensurePaneWindows(['1', '2', '3']);
+
+    expect(BrowserWindow).toHaveBeenCalledTimes(1);
+    expect(manager.getPaneWindow('1')).toBe(manager.getPaneWindow('2'));
+    expect(manager.getPaneWindow('2')).toBe(manager.getPaneWindow('3'));
   });
 });
