@@ -5,9 +5,6 @@
 
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
-const { WebLinksAddon } = require('@xterm/addon-web-links');
-const { WebglAddon } = require('@xterm/addon-webgl');
-const { SearchAddon } = require('@xterm/addon-search');
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -131,6 +128,9 @@ const PROMOTION_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 // Enable via settings.json: { "terminalWebGL": true }
 // Lazy-evaluated at first terminal creation (settings may not be loaded at module init)
 let _webglEnabled = null;
+let _webLinksAddonCtor = null;
+let _webglAddonCtor = null;
+let _searchAddonCtor = null;
 function isWebGLEnabled() {
   if (_webglEnabled === null) {
     try {
@@ -141,6 +141,27 @@ function isWebGLEnabled() {
     }
   }
   return _webglEnabled;
+}
+
+function getWebLinksAddonCtor() {
+  if (!_webLinksAddonCtor) {
+    ({ WebLinksAddon: _webLinksAddonCtor } = require('@xterm/addon-web-links'));
+  }
+  return _webLinksAddonCtor;
+}
+
+function getWebglAddonCtor() {
+  if (!_webglAddonCtor) {
+    ({ WebglAddon: _webglAddonCtor } = require('@xterm/addon-webgl'));
+  }
+  return _webglAddonCtor;
+}
+
+function getSearchAddonCtor() {
+  if (!_searchAddonCtor) {
+    ({ SearchAddon: _searchAddonCtor } = require('@xterm/addon-search'));
+  }
+  return _searchAddonCtor;
 }
 let promotionCheckTimer = null;
 
@@ -973,6 +994,66 @@ function formatStartupMemoryEntry(entry = {}) {
   return `- [${sourceType}] ${label}: ${clipped}`;
 }
 
+function shouldLoadWebLinksAddon(container) {
+  if (!container || typeof container.getClientRects !== 'function') return false;
+  return container.getClientRects().length > 0;
+}
+
+function setupTerminalAddons(paneId, terminal, container) {
+  const fitAddon = new FitAddon();
+  terminal.loadAddon(fitAddon);
+
+  if (shouldLoadWebLinksAddon(container)) {
+    try {
+      const WebLinksAddon = getWebLinksAddonCtor();
+      terminal.loadAddon(new WebLinksAddon());
+    } catch (err) {
+      log.warn(`Terminal ${paneId}`, `WebLinks addon unavailable: ${err.message}`);
+    }
+  }
+
+  if (isWebGLEnabled()) {
+    try {
+      const WebglAddon = getWebglAddonCtor();
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        log.warn(`Terminal ${paneId}`, 'WebGL context lost, falling back to canvas');
+        webglAddon.dispose();
+        if (webglAddons.get(paneId) === webglAddon) {
+          webglAddons.delete(paneId);
+        }
+      });
+      terminal.loadAddon(webglAddon);
+      webglAddons.set(paneId, webglAddon);
+      log.info(`Terminal ${paneId}`, 'WebGL renderer enabled');
+    } catch (e) {
+      log.warn(`Terminal ${paneId}`, `WebGL not available: ${e.message}`);
+    }
+  }
+
+  return { fitAddon };
+}
+
+function ensureSearchAddon(paneId) {
+  const id = String(paneId || '');
+  if (!id) return null;
+  const existing = searchAddons.get(id);
+  if (existing) return existing;
+  const terminal = terminals.get(id);
+  if (!terminal) return null;
+
+  try {
+    const SearchAddon = getSearchAddonCtor();
+    const searchAddon = new SearchAddon();
+    terminal.loadAddon(searchAddon);
+    searchAddons.set(id, searchAddon);
+    return searchAddon;
+  } catch (err) {
+    log.warn(`Terminal ${id}`, `Search addon unavailable: ${err.message}`);
+    return null;
+  }
+}
+
 function fetchStartupHealthSummary() {
   const healthPath = resolveCoordPath(path.join('build', 'startup-health.md'));
   if (!healthPath || typeof fs.existsSync !== 'function' || !fs.existsSync(healthPath)) return '';
@@ -1755,32 +1836,7 @@ function setupCopyPaste(container, terminal, paneId, statusMsg, { signal } = {})
   const { signal: paneSignal } = paneAbortController;
 
   const terminal = createTerminalInstance();
-  const fitAddon = new FitAddon();
-  const webLinksAddon = new WebLinksAddon();
-  const searchAddon = new SearchAddon();
-  terminal.loadAddon(fitAddon);
-  terminal.loadAddon(webLinksAddon);
-  terminal.loadAddon(searchAddon);
-  searchAddons.set(paneId, searchAddon);
-
-  // Load WebGL addon for GPU-accelerated rendering (opt-in via settings.json terminalWebGL: true)
-  if (isWebGLEnabled()) {
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        log.warn(`Terminal ${paneId}`, 'WebGL context lost, falling back to canvas');
-        webglAddon.dispose();
-        if (webglAddons.get(paneId) === webglAddon) {
-          webglAddons.delete(paneId);
-        }
-      });
-      terminal.loadAddon(webglAddon);
-      webglAddons.set(paneId, webglAddon);
-      log.info(`Terminal ${paneId}`, 'WebGL renderer enabled');
-    } catch (e) {
-      log.warn(`Terminal ${paneId}`, `WebGL not available: ${e.message}`);
-    }
-  }
+  const { fitAddon } = setupTerminalAddons(paneId, terminal, container);
 
   terminal.open(container);
   fitAddon.fit();
@@ -1953,32 +2009,7 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
   const { signal: paneSignal } = paneAbortController;
 
   const terminal = createTerminalInstance();
-  const fitAddon = new FitAddon();
-  const webLinksAddon = new WebLinksAddon();
-  const searchAddon = new SearchAddon();
-  terminal.loadAddon(fitAddon);
-  terminal.loadAddon(webLinksAddon);
-  terminal.loadAddon(searchAddon);
-  searchAddons.set(paneId, searchAddon);
-
-  // Load WebGL addon for GPU-accelerated rendering (opt-in via settings.json terminalWebGL: true)
-  if (isWebGLEnabled()) {
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        log.warn(`Terminal ${paneId}`, 'WebGL context lost, falling back to canvas');
-        webglAddon.dispose();
-        if (webglAddons.get(paneId) === webglAddon) {
-          webglAddons.delete(paneId);
-        }
-      });
-      terminal.loadAddon(webglAddon);
-      webglAddons.set(paneId, webglAddon);
-      log.info(`Terminal ${paneId}`, 'WebGL renderer enabled');
-    } catch (e) {
-      log.warn(`Terminal ${paneId}`, `WebGL not available: ${e.message}`);
-    }
-  }
+  const { fitAddon } = setupTerminalAddons(paneId, terminal, container);
 
   terminal.open(container);
   fitAddon.fit();
@@ -2069,7 +2100,6 @@ async function reattachTerminal(paneId, scrollback, options = {}) {
 
   terminals.set(paneId, terminal);
   fitAddons.set(paneId, fitAddon);
-  searchAddons.set(paneId, searchAddon);
 
   // Setup ResizeObserver to auto-resize terminal when container size changes
   setupResizeObserver(paneId);
@@ -2532,7 +2562,7 @@ let activeSearchPane = null;
 let searchBar = null;
 
 function openTerminalSearch(paneId) {
-  const searchAddon = searchAddons.get(paneId);
+  const searchAddon = ensureSearchAddon(paneId);
   if (!searchAddon) {
     log.warn(`Terminal ${paneId}`, 'Search addon not available');
     return;
