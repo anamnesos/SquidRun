@@ -73,6 +73,20 @@ describe('ollama-extract', () => {
     ]);
   });
 
+  test('parses wrapped object response from Llama models', () => {
+    const parsed = parseOllamaResponse({
+      response: JSON.stringify({
+        facts: [
+          { fact: 'Ollama runs on RTX 5090.', category: 'system_state', confidence: 0.85 },
+        ],
+      }),
+    });
+
+    expect(validateExtractionArray(parsed)).toEqual([
+      { fact: 'Ollama runs on RTX 5090.', category: 'system_state', confidence: 0.85 },
+    ]);
+  });
+
   test('rejects malformed extraction items', async () => {
     const fetchImpl = jest.fn().mockResolvedValue({
       ok: true,
