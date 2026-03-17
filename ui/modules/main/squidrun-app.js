@@ -111,6 +111,10 @@ const IS_DARWIN = process.platform === 'darwin';
 const PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS = IS_DARWIN ? 900 : 1500;
 const APP_IDLE_THRESHOLD_MS = 30000;
 const CONSOLE_LOG_FLUSH_INTERVAL_MS = 500;
+const PTY_DATA_IPC_BATCH_INTERVAL_MS = Number.parseInt(
+  process.env.SQUIDRUN_PTY_DATA_IPC_BATCH_INTERVAL_MS || '16',
+  10
+);
 const STARTUP_READY_BUFFER_MAX = 4096;
 const TELEGRAM_REPLY_WINDOW_MS = Number.parseInt(
   process.env.SQUIDRUN_TELEGRAM_REPLY_WINDOW_MS || String(5 * 60 * 1000),
@@ -375,6 +379,8 @@ class SquidRunApp {
     this.cliIdentityForwarderRegistered = false;
     this.triggerAckForwarderRegistered = false;
     this.startupReadyBuffers = new Map();
+    this.pendingPtyDataByPane = new Map();
+    this.ptyDataFlushTimer = null;
     this.teamMemoryInitialized = false;
     this.teamMemoryInitPromise = null;
     this.teamMemoryInitFailed = false;
@@ -3138,6 +3144,51 @@ class SquidRunApp {
     return true;
   }
 
+  schedulePtyDataFlush() {
+    if (this.ptyDataFlushTimer) return;
+    this.ptyDataFlushTimer = setTimeout(() => {
+      this.ptyDataFlushTimer = null;
+      this.flushBufferedPtyData();
+    }, PTY_DATA_IPC_BATCH_INTERVAL_MS);
+    if (typeof this.ptyDataFlushTimer.unref === 'function') {
+      this.ptyDataFlushTimer.unref();
+    }
+  }
+
+  queuePtyDataForUi(paneId, data) {
+    const paneKey = String(paneId);
+    const chunk = String(data ?? '');
+    if (!chunk) return;
+    const current = this.pendingPtyDataByPane.get(paneKey) || '';
+    this.pendingPtyDataByPane.set(paneKey, current + chunk);
+    this.schedulePtyDataFlush();
+  }
+
+  flushBufferedPtyData(targetPaneId = null) {
+    if (this.pendingPtyDataByPane.size === 0) return;
+
+    const paneIds = targetPaneId === null
+      ? Array.from(this.pendingPtyDataByPane.keys())
+      : [String(targetPaneId)];
+
+    for (const paneId of paneIds) {
+      const buffered = this.pendingPtyDataByPane.get(paneId);
+      if (!buffered) continue;
+      this.pendingPtyDataByPane.delete(paneId);
+
+      this.sendToVisibleWindow(`pty-data-${paneId}`, buffered);
+      if (this.isHiddenPaneHostModeEnabled()) {
+        this.paneHostWindowManager.sendToPaneWindow(String(paneId), `pty-data-${paneId}`, buffered);
+      }
+    }
+  }
+
+  clearPtyDataFlushTimer() {
+    if (!this.ptyDataFlushTimer) return;
+    clearTimeout(this.ptyDataFlushTimer);
+    this.ptyDataFlushTimer = null;
+  }
+
   async requestDaemonTerminalSnapshot(timeoutMs = 2000) {
     const daemonClient = this.ctx.daemonClient;
     if (!daemonClient || typeof daemonClient.list !== 'function') return [];
@@ -4011,6 +4062,7 @@ class SquidRunApp {
       if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
         return;
       }
+      this.flushBufferedPtyData(paneId);
       this.ctx.recoveryManager?.handleExit(paneId, code);
       this.usage.recordSessionEnd(paneId);
       this.recordSessionLifecyclePattern({
@@ -4027,9 +4079,7 @@ class SquidRunApp {
         .catch(err => log.error('Plugins', `Error in agent:stateChanged hook: ${err.message}`));
       this.broadcastClaudeState();
       this.activity.logActivity('state', paneId, `Session ended (exit code: ${code})`, { exitCode: code });
-      if (this.canSendToWindow(this.ctx.mainWindow)) {
-        this.ctx.mainWindow.webContents.send(`pty-exit-${paneId}`, code);
-      }
+      this.sendToVisibleWindow(`pty-exit-${paneId}`, code);
       if (this.isHiddenPaneHostModeEnabled()) {
         this.paneHostWindowManager.sendToPaneWindow(String(paneId), `pty-exit-${paneId}`, code);
       }
@@ -4056,12 +4106,7 @@ class SquidRunApp {
           .catch(err => log.error('Plugins', `Error in daemon:data hook: ${err.message}`));
       }
 
-      if (this.canSendToWindow(this.ctx.mainWindow)) {
-        this.ctx.mainWindow.webContents.send(`pty-data-${paneId}`, data);
-      }
-      if (this.isHiddenPaneHostModeEnabled()) {
-        this.paneHostWindowManager.sendToPaneWindow(String(paneId), `pty-data-${paneId}`, data);
-      }
+      this.queuePtyDataForUi(paneId, data);
 
       if (data.includes('Error') || data.includes('error:') || data.includes('FAILED')) {
         this.activity.logActivity('error', paneId, 'Terminal error detected', { snippet: data.substring(0, 200) }
@@ -6160,6 +6205,8 @@ class SquidRunApp {
   async shutdown() {
     log.info('App', 'Shutting down SquidRun Application');
     this.shuttingDown = true;
+    this.clearPtyDataFlushTimer();
+    this.flushBufferedPtyData();
     this.clearDaemonConnectTimeout();
     this.clearWebSocketStartRetry();
     if (this.paneHostBootstrapTimer) {

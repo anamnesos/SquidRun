@@ -301,6 +301,7 @@ describe('SquidRunApp', () => {
       usage: {
         loadUsageStats: jest.fn(),
         recordUsage: jest.fn(),
+        recordSessionEnd: jest.fn(),
       },
       cliIdentity: {
         getIdentity: jest.fn().mockReturnValue(null),
@@ -1400,6 +1401,74 @@ describe('SquidRunApp', () => {
   });
 
   describe('initDaemonClient', () => {
+    it('batches PTY data IPC per pane and flushes buffered output before exit', async () => {
+      jest.useFakeTimers();
+      try {
+        const { getDaemonClient } = require('../daemon-client');
+        const sharedDaemonClient = {
+          on: jest.fn(),
+          off: jest.fn(),
+          connect: jest.fn().mockResolvedValue(),
+          disconnect: jest.fn(),
+        };
+        getDaemonClient.mockReturnValue(sharedDaemonClient);
+
+        const mainWindow = {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          webContents: {
+            send: jest.fn(),
+            isDestroyed: jest.fn().mockReturnValue(false),
+          },
+        };
+
+        const ctx = {
+          ...mockAppContext,
+          mainWindow,
+          daemonClient: sharedDaemonClient,
+          agentRunning: new Map([['1', 'running']]),
+        };
+        const app = new SquidRunApp(ctx, mockManagers);
+
+        await app.initDaemonClient();
+
+        const dataListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'data')?.[1];
+        const exitListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'exit')?.[1];
+
+        expect(typeof dataListener).toBe('function');
+        expect(typeof exitListener).toBe('function');
+
+        mainWindow.webContents.send.mockClear();
+
+        dataListener('1', 'hel');
+        dataListener('1', 'lo');
+        dataListener('2', 'x');
+
+        expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+
+        jest.advanceTimersByTime(16);
+
+        expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty-data-1', 'hello');
+        expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty-data-2', 'x');
+
+        mainWindow.webContents.send.mockClear();
+
+        dataListener('1', 'tail');
+        exitListener('1', 0);
+
+        const ptyDataCallIndex = mainWindow.webContents.send.mock.calls.findIndex(
+          ([channel, payload]) => channel === 'pty-data-1' && payload === 'tail'
+        );
+        const ptyExitCallIndex = mainWindow.webContents.send.mock.calls.findIndex(
+          ([channel, payload]) => channel === 'pty-exit-1' && payload === 0
+        );
+
+        expect(ptyDataCallIndex).toBeGreaterThanOrEqual(0);
+        expect(ptyExitCallIndex).toBeGreaterThan(ptyDataCallIndex);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('cleans up existing daemon client listeners before re-attaching on re-init', async () => {
       const { getDaemonClient } = require('../daemon-client');
       const ipcHandlers = require('../modules/ipc-handlers');
