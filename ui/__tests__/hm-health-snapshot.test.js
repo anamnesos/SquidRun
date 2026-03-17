@@ -98,6 +98,7 @@ describe('hm-health-snapshot', () => {
 
     const snapshot = createHealthSnapshot({
       projectRoot: tempDir,
+      nowMs: Date.parse('2026-03-17T07:45:00.000Z'),
       jestTimeoutMs: 1000,
       bridgeStatus: {
         enabled: true,
@@ -113,6 +114,7 @@ describe('hm-health-snapshot', () => {
     expect(snapshot.status.label).toBe('OK');
     expect(snapshot.status.score).toBe(100);
     expect(snapshot.status.penalties).toEqual([]);
+    expect(snapshot.generatedAt).toBe('2026-03-17T07:45:00.000Z');
     expect(snapshot.tests.testFileCount).toBe(2);
     expect(snapshot.tests.jestList).toEqual(expect.objectContaining({
       ok: true,
@@ -190,6 +192,7 @@ describe('hm-health-snapshot', () => {
   test('renders a compact startup health markdown summary', () => {
     const { renderStartupHealthMarkdown } = require('../scripts/hm-health-snapshot');
     const markdown = renderStartupHealthMarkdown({
+      generatedAt: '2026-03-17T07:45:00.000Z',
       status: { level: 'ok', warnings: [] },
       tests: {
         testFileCount: 2,
@@ -229,6 +232,7 @@ describe('hm-health-snapshot', () => {
 
     expect(markdown).toContain('STARTUP HEALTH');
     expect(markdown).toContain('Overall: OK');
+    expect(markdown).toContain('Generated: 2026-03-17T07:45:00.000Z');
     expect(markdown).toContain('App Session: unknown');
     expect(markdown).toContain('Tests: 2 files, 2 Jest-discoverable suites');
     expect(markdown).toContain('Modules: 6 JS modules under ui/modules');

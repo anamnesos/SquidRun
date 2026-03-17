@@ -614,6 +614,31 @@ class SquidRunApp {
     return `${lines.filter(Boolean).join('\n').trim()}\n`;
   }
 
+  buildStartupHealthPlaceholderReport(sessionNumber = null, options = {}) {
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+    const generatedAt = typeof options.generatedAt === 'string' && options.generatedAt.trim()
+      ? options.generatedAt.trim()
+      : new Date(nowMs).toISOString();
+    const canonicalSessionNumber = asPositiveInt(
+      sessionNumber ?? this.getCurrentAppStatusSessionNumber(),
+      null
+    );
+    const sessionLabel = canonicalSessionNumber !== null
+      ? `session ${canonicalSessionNumber}`
+      : 'unknown';
+    return [
+      'STARTUP HEALTH',
+      '- Overall: REFRESHING',
+      `- Generated: ${generatedAt}`,
+      `- App Session: ${sessionLabel}`,
+      '',
+      'STARTUP LEDGER',
+      `- Session context: ${sessionLabel} ACTIVE (APP)`,
+      '- Snapshot status: refreshing current-session startup health...',
+      '',
+    ].join('\n');
+  }
+
   async ingestStartupHealthSnapshot(snapshot = {}, ledgerContext = {}, options = {}) {
     const ready = await this.ensureTeamMemoryInitialized('startup-health');
     if (!ready) {
@@ -674,20 +699,39 @@ class SquidRunApp {
   }
 
   async refreshStartupHealthArtifacts(options = {}) {
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+    const canonicalSessionNumber = asPositiveInt(
+      options.sessionNumber ?? this.getCurrentAppStatusSessionNumber(),
+      null
+    );
+    const generatedAt = typeof options.generatedAt === 'string' && options.generatedAt.trim()
+      ? options.generatedAt.trim()
+      : new Date(nowMs).toISOString();
+    const outputPath = this.getStartupHealthPath();
+    this.writeFileAtomic(
+      outputPath,
+      this.buildStartupHealthPlaceholderReport(canonicalSessionNumber, {
+        nowMs,
+        generatedAt,
+      })
+    );
+
     const snapshot = createHealthSnapshot({
       projectRoot: options.projectRoot || getProjectRoot(),
       jestTimeoutMs: options.jestTimeoutMs,
       bridgeStatus: this.getBridgeStatus(),
+      nowMs,
+      generatedAt,
     });
-    const canonicalSessionNumber = asPositiveInt(
-      options.sessionNumber
+    const resolvedSessionNumber = asPositiveInt(
+      canonicalSessionNumber
       ?? snapshot.appStatus?.sessionNumber
       ?? this.getCurrentAppStatusSessionNumber(),
       null
     );
     const ledgerContext = await executeEvidenceLedgerOperation(
       'get-context',
-      canonicalSessionNumber ? { sessionNumber: canonicalSessionNumber } : {},
+      resolvedSessionNumber ? { sessionNumber: resolvedSessionNumber } : {},
       {
         source: {
           via: 'startup-health',
@@ -699,9 +743,8 @@ class SquidRunApp {
     const report = this.buildStartupHealthReport(
       snapshot,
       ledgerContext && ledgerContext.ok === false ? {} : (ledgerContext || {}),
-      canonicalSessionNumber
+      resolvedSessionNumber
     );
-    const outputPath = this.getStartupHealthPath();
     this.writeFileAtomic(outputPath, report);
 
     let ingestResult = {
@@ -714,8 +757,8 @@ class SquidRunApp {
         snapshot,
         ledgerContext && ledgerContext.ok === false ? {} : (ledgerContext || {}),
         {
-          nowMs: options.nowMs || Date.now(),
-          sessionNumber: canonicalSessionNumber,
+          nowMs,
+          sessionNumber: resolvedSessionNumber,
         }
       );
     }
