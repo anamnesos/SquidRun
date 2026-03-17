@@ -263,6 +263,35 @@ jest.mock('../scripts/hm-health-snapshot', () => ({
   ].join('\n')),
 }));
 
+jest.mock('../modules/local-model-capabilities', () => ({
+  detectOllamaRuntime: jest.fn().mockResolvedValue({
+    running: true,
+    reachable: true,
+    selectedModel: 'llama3:8b',
+    suitableModelAvailable: true,
+    baseUrl: 'http://127.0.0.1:11434',
+    pulledModels: [{ name: 'llama3:8b' }],
+  }),
+  buildSystemCapabilitiesSnapshot: jest.fn((options = {}) => ({
+    generatedAt: '2026-03-17T10:15:00.000Z',
+    projectRoot: options.projectRoot || 'D:\\projects\\squidrun',
+    path: 'D:\\projects\\squidrun\\.squidrun\\runtime\\system-capabilities.json',
+    localModels: {
+      enabled: options.settings?.localModelEnabled === true,
+      ollama: options.ollama || {},
+      sleepExtraction: {
+        enabled: options.settings?.localModelEnabled === true,
+        available: true,
+        model: 'llama3:8b',
+        path: options.settings?.localModelEnabled === true ? 'local-ollama' : 'fallback',
+        command: options.settings?.localModelEnabled === true ? '"node" "ollama-extract.js"' : null,
+      },
+    },
+  })),
+  writeSystemCapabilitiesSnapshot: jest.fn(),
+  resolveSleepExtractionCommandFromSnapshot: jest.fn((snapshot) => snapshot?.localModels?.sleepExtraction?.command || ''),
+}));
+
 // Now require the module under test
 const { spawn } = require('child_process');
 const SquidRunApp = require('../modules/main/squidrun-app');
@@ -289,6 +318,8 @@ describe('SquidRunApp', () => {
     mockManagers = {
       settings: {
         loadSettings: jest.fn(),
+        saveSettings: jest.fn((patch) => Object.assign(mockAppContext.currentSettings, patch)),
+        readPersistedSettingsSnapshot: jest.fn(() => ({})),
         ensureCodexConfig: jest.fn(),
         writeAppStatus: jest.fn(),
         readAppStatus: jest.fn().mockReturnValue({ session: 147 }),
@@ -712,6 +743,7 @@ describe('SquidRunApp', () => {
 
       expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).toHaveBeenCalledTimes(1);
       expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).toHaveBeenCalledWith({ preflight: true });
+      expect(mockManagers.settings.saveSettings).toHaveBeenCalledWith({ localModelEnabled: true });
     });
 
     it('always increments session and initializes startup scope on app launch', async () => {

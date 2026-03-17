@@ -148,6 +148,38 @@ function summarizeClusterStatements(items) {
   return `${statements.slice(0, 2).join(' ')} ${statements.length - 2} more related signal(s).`;
 }
 
+function normalizeExternalCandidates(items, options = {}) {
+  const safeItems = Array.isArray(items) ? items : [];
+  const proposedBy = String(options.proposedBy || 'sleep-cycle');
+  const sessionId = String(options.sessionId || 'sleep-cycle');
+  const sourceEpisodes = Array.isArray(options.episodes) ? options.episodes : [];
+  const sourceRowIds = sourceEpisodes.map((episode) => Number(episode?.rowId || 0)).filter((value) => Number.isFinite(value) && value > 0);
+  return safeItems
+    .map((item, index) => {
+      const statement = normalizeWhitespace(item?.statement || item?.fact || '');
+      const category = normalizeWhitespace(item?.category || 'fact').toLowerCase();
+      const confidenceScore = Number(item?.confidence_score ?? item?.confidence ?? 0.5);
+      if (!statement) return null;
+      return {
+        category: category || 'fact',
+        statement,
+        confidence_score: Number.isFinite(confidenceScore) ? Math.max(0, Math.min(1, confidenceScore)) : 0.5,
+        review_count: Number.isFinite(Number(item?.review_count)) ? Number(item.review_count) : 0,
+        domain: normalizeWhitespace(item?.domain || category || 'external_extraction'),
+        proposed_by: normalizeWhitespace(item?.proposed_by || proposedBy) || proposedBy,
+        source_trace: normalizeWhitespace(item?.source_trace || `${sessionId}:ollama:${index}`) || `${sessionId}:ollama:${index}`,
+        source_payload: {
+          session_id: sessionId,
+          row_ids: sourceRowIds,
+          extractor: normalizeWhitespace(item?.source_payload?.extractor || 'external_command') || 'external_command',
+          ...(item?.source_payload && typeof item.source_payload === 'object' ? item.source_payload : {}),
+          raw_fact: item?.fact || null,
+        },
+      };
+    })
+    .filter(Boolean);
+}
+
 async function runExtractionCommand(command, payload) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, {
@@ -198,6 +230,7 @@ class SleepConsolidator {
     this.extractionCommand = normalizeWhitespace(options.extractionCommand || process.env.SQUIDRUN_SLEEP_EXTRACTION_COMMAND || '');
     this.extractor = typeof options.extractor === 'function' ? options.extractor : null;
     this.stateDb = null;
+    this.lastExtractionInfo = null;
   }
 
   init() {
@@ -353,22 +386,7 @@ class SleepConsolidator {
   async extractFacts(episodes) {
     const safeEpisodes = Array.isArray(episodes) ? episodes : [];
     if (safeEpisodes.length === 0) return [];
-
-    if (this.extractor) {
-      const result = await this.extractor(safeEpisodes);
-      return Array.isArray(result) ? result : [];
-    }
-
-    if (this.extractionCommand) {
-      const result = await runExtractionCommand(this.extractionCommand, {
-        episodes: safeEpisodes,
-        prompt: 'Extract only durable system facts, user preferences, and established architectural rules as structured candidates.',
-      });
-      if (Array.isArray(result)) return result;
-      if (Array.isArray(result?.candidates)) return result.candidates;
-    }
-
-    return extractCandidates({
+    const fallbackExtract = () => extractCandidates({
       session_id: safeEpisodes[safeEpisodes.length - 1]?.sessionId || 'sleep-cycle',
       hook_event: 'SleepCycle',
       transcript: safeEpisodes.map((episode) => episode.rawBody),
@@ -384,6 +402,58 @@ class SleepConsolidator {
       ...candidate,
       proposed_by: 'sleep-cycle',
     }));
+
+    if (this.extractor) {
+      const result = await this.extractor(safeEpisodes);
+      this.lastExtractionInfo = {
+        mode: 'custom-extractor',
+        ok: true,
+        candidateCount: Array.isArray(result) ? result.length : 0,
+      };
+      return Array.isArray(result) ? result : [];
+    }
+
+    if (this.extractionCommand) {
+      try {
+        const result = await runExtractionCommand(this.extractionCommand, {
+          episodes: safeEpisodes,
+          prompt: 'Extract only durable system facts, user preferences, and established architectural rules as structured candidates.',
+        });
+        const normalized = normalizeExternalCandidates(
+          Array.isArray(result) ? result : result?.candidates,
+          {
+            proposedBy: 'sleep-cycle',
+            sessionId: safeEpisodes[safeEpisodes.length - 1]?.sessionId || 'sleep-cycle',
+            episodes: safeEpisodes,
+          }
+        );
+        this.lastExtractionInfo = {
+          mode: 'external-command',
+          ok: true,
+          command: this.extractionCommand,
+          candidateCount: normalized.length,
+        };
+        return normalized;
+      } catch (err) {
+        this.lastExtractionInfo = {
+          mode: 'fallback',
+          ok: false,
+          command: this.extractionCommand,
+          error: err.message,
+        };
+        this.logger.warn(`Sleep extractor command failed, falling back to built-in extractor: ${err.message}`);
+        return fallbackExtract();
+      }
+    }
+
+    this.lastExtractionInfo = {
+      mode: 'built-in',
+      ok: true,
+      candidateCount: 0,
+    };
+    const fallbackCandidates = fallbackExtract();
+    this.lastExtractionInfo.candidateCount = fallbackCandidates.length;
+    return fallbackCandidates;
   }
 
   async ensureSearchIndexReady() {
@@ -585,6 +655,10 @@ class SleepConsolidator {
       clusterCount: clustering.clusters.length,
       noiseCount: clustering.noise.length,
       behavioralSummary,
+      extraction: this.lastExtractionInfo || {
+        mode: this.extractionCommand ? 'external-command' : 'built-in',
+        ok: true,
+      },
       status: (generated.length > 0 || Number(behavioralSummary?.candidateCount || 0) > 0) ? 'complete' : 'no_patterns',
     };
     this.recordRun(summary);

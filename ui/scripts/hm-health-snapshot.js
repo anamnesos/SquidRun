@@ -5,6 +5,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { getProjectRoot } = require('../config');
 const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
+const { readSystemCapabilitiesSnapshot } = require('../modules/local-model-capabilities');
 
 const KEY_MODULE_PATHS = Object.freeze({
   recovery_manager: path.join('ui', 'modules', 'recovery-manager.js'),
@@ -512,6 +513,32 @@ function inspectMemoryConsistency(projectRoot, options = {}) {
   }
 }
 
+function inspectSystemCapabilities(projectRoot, options = {}) {
+  if (options.systemCapabilities && typeof options.systemCapabilities === 'object') {
+    return options.systemCapabilities;
+  }
+  return readSystemCapabilitiesSnapshot(projectRoot) || {
+    generatedAt: null,
+    localModels: {
+      enabled: false,
+      provider: 'ollama',
+      ollama: {
+        running: false,
+        reachable: false,
+        selectedModel: null,
+        error: 'not_detected',
+      },
+      sleepExtraction: {
+        enabled: false,
+        available: false,
+        model: null,
+        path: 'fallback',
+        reason: 'not_detected',
+      },
+    },
+  };
+}
+
 function buildHealthStatus(snapshot) {
   const warnings = [];
   const penalties = [];
@@ -609,6 +636,7 @@ function createHealthSnapshot(options = {}) {
   };
   const bridge = normalizeBridgeSnapshot(options.bridgeStatus);
   const memoryConsistency = inspectMemoryConsistency(projectRoot, options);
+  const systemCapabilities = inspectSystemCapabilities(projectRoot, options);
 
   const snapshot = {
     generatedAt,
@@ -627,6 +655,7 @@ function createHealthSnapshot(options = {}) {
     databases,
     bridge,
     memoryConsistency,
+    systemCapabilities,
   };
 
   return {
@@ -702,6 +731,16 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   if (warnings.length > 0) {
     lines.push(`- Warnings: ${warnings.join('; ')}`);
   }
+
+  const localModels = snapshot.systemCapabilities?.localModels || {};
+  const ollama = localModels.ollama || {};
+  const sleepExtraction = localModels.sleepExtraction || {};
+  lines.push('');
+  lines.push('LOCAL MODELS');
+  lines.push(`- Feature Enabled: ${localModels.enabled === true ? 'yes' : 'no'}`);
+  lines.push(`- Ollama: ${ollama.running === true ? 'running' : 'unavailable'}${ollama.error ? ` (${ollama.error})` : ''}`);
+  lines.push(`- Selected Model: ${ollama.selectedModel || 'none'}`);
+  lines.push(`- Sleep Extraction: path=${sleepExtraction.path || 'fallback'}, enabled=${sleepExtraction.enabled === true ? 'yes' : 'no'}, available=${sleepExtraction.available === true ? 'yes' : 'no'}`);
 
   return `${lines.join('\n')}\n`;
 }

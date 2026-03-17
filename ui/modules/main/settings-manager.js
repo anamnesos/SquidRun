@@ -146,6 +146,7 @@ function createDefaultSettings({ isPackaged = false } = {}) {
     hiddenPaneHostsEnabled: process.platform === 'win32',
     operatingMode: isPackaged ? 'project' : 'developer',
     firmwareInjectionEnabled: false,
+    localModelEnabled: false,
     geminiModel,
     paneProjects: { '1': null, '2': null, '3': null },
     paneCommands: {
@@ -286,6 +287,18 @@ class SettingsManager {
     const persistedDefaults = JSON.parse(JSON.stringify(this.defaultSettings));
     persistedDefaults.smtpPass = obfuscateSmtpPassword(persistedDefaults.smtpPass);
     this.writeSettingsFile(persistedDefaults);
+  }
+
+  readPersistedSettingsSnapshot() {
+    try {
+      this.refreshRuntimeSettingsContext('read-persisted-settings');
+      if (!fs.existsSync(this.settingsPath)) {
+        return null;
+      }
+      return JSON.parse(fs.readFileSync(this.settingsPath, 'utf-8'));
+    } catch {
+      return null;
+    }
   }
 
   loadSettings() {

@@ -88,6 +88,7 @@ describe('SettingsManager CLI auto-detection', () => {
 
   test('defaults include explicit gemini model in pane command', () => {
     expect(manager.defaultSettings.geminiModel).toBeTruthy();
+    expect(manager.defaultSettings.localModelEnabled).toBe(false);
     expect(manager.defaultSettings.paneCommands['3']).toMatch(/^gemini --yolo --model /);
   });
 

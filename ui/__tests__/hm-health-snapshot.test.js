@@ -155,6 +155,11 @@ describe('hm-health-snapshot', () => {
         knowledgeNodeCount: 15,
       }),
     }));
+    expect(snapshot.systemCapabilities).toEqual(expect.objectContaining({
+      localModels: expect.objectContaining({
+        enabled: false,
+      }),
+    }));
     expect(runMemoryConsistencyCheck).toHaveBeenCalledWith(expect.objectContaining({
       projectRoot: tempDir,
       sampleLimit: 5,
@@ -228,6 +233,21 @@ describe('hm-health-snapshot', () => {
         deviceId: 'LOCAL',
         state: 'disconnected',
       },
+      systemCapabilities: {
+        localModels: {
+          enabled: true,
+          ollama: {
+            running: true,
+            selectedModel: 'llama3:8b',
+          },
+          sleepExtraction: {
+            enabled: true,
+            available: true,
+            model: 'llama3:8b',
+            path: 'local-ollama',
+          },
+        },
+      },
     });
 
     expect(markdown).toContain('STARTUP HEALTH');
@@ -244,6 +264,10 @@ describe('hm-health-snapshot', () => {
     expect(markdown).toContain('Connection: disconnected');
     expect(markdown).toContain('Device ID: LOCAL');
     expect(markdown).toContain('Runtime: mode=connecting, enabled=yes, configured=yes');
+    expect(markdown).toContain('LOCAL MODELS');
+    expect(markdown).toContain('Feature Enabled: yes');
+    expect(markdown).toContain('Selected Model: llama3:8b');
+    expect(markdown).toContain('Sleep Extraction: path=local-ollama, enabled=yes, available=yes');
   });
 
   test('degrades startup health when bridge is enabled but not connected', () => {
