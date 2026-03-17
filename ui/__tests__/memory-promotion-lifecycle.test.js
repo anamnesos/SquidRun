@@ -12,7 +12,7 @@ function writeProjectFixture(projectRoot) {
   fs.mkdirSync(knowledgeDir, { recursive: true });
   fs.writeFileSync(path.join(knowledgeDir, 'user-context.md'), '# User Context\n\n## Observed Preferences\n\n');
   fs.writeFileSync(path.join(knowledgeDir, 'workflows.md'), '# Workflows\n\n');
-  fs.writeFileSync(path.join(knowledgeDir, 'environment.md'), '# Environment\n\n');
+  fs.writeFileSync(path.join(knowledgeDir, 'runtime-environment.md'), '# Runtime Environment\n\n## Shared Notes\n\n');
   fs.writeFileSync(path.join(projectRoot, 'ARCHITECTURE.md'), '# Architecture\n\n## Decisions\n\n');
 }
 

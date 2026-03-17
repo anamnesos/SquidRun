@@ -8,7 +8,7 @@ const ROUTING_TABLE = Object.freeze({
   }),
   environment_quirk: Object.freeze({
     tier: 'tier1',
-    targetFile: 'workspace/knowledge/environment.md',
+    targetFile: 'workspace/knowledge/runtime-environment.md',
     routeType: 'promotion_candidate',
   }),
   procedural_rule: Object.freeze({
@@ -78,7 +78,7 @@ function resolveTargetFile(memory = {}) {
   if (!route || route.tier !== 'tier1') return null;
 
   if (memory.memory_class === 'environment_quirk') {
-    return memory.device_id ? 'workspace/knowledge/devices.md' : route.targetFile;
+    return 'workspace/knowledge/runtime-environment.md';
   }
 
   if (memory.memory_class === 'architecture_decision') {
