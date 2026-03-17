@@ -98,6 +98,12 @@ const {
   renderStartupHealthMarkdown,
 } = require('../../scripts/hm-health-snapshot');
 const {
+  buildSystemCapabilitiesSnapshot,
+  detectOllamaRuntime,
+  resolveSleepExtractionCommandFromSnapshot,
+  writeSystemCapabilitiesSnapshot,
+} = require('../local-model-capabilities');
+const {
   readPairedConfig,
   writePairedConfig,
 } = require('./device-pairing-store');
@@ -464,6 +470,7 @@ class SquidRunApp {
     this.websocketStartRetryTimer = null;
     this.websocketStartRetryAttempt = 0;
     this.supervisorBootstrapPromise = null;
+    this.lastSystemCapabilities = null;
     this.daemonConnectTimeoutTimer = null;
     this.daemonConnectedForStartup = false;
     this.daemonTimeoutTriggered = false;
@@ -720,6 +727,7 @@ class SquidRunApp {
       projectRoot: options.projectRoot || getProjectRoot(),
       jestTimeoutMs: options.jestTimeoutMs,
       bridgeStatus: this.getBridgeStatus(),
+      systemCapabilities: this.lastSystemCapabilities,
       nowMs,
       generatedAt,
     });
@@ -770,6 +778,41 @@ class SquidRunApp {
       ledgerContext,
       ingestResult,
     };
+  }
+
+  applyLocalModelEnvironment(snapshot = null) {
+    const extractionCommand = resolveSleepExtractionCommandFromSnapshot(snapshot);
+    if (extractionCommand) {
+      process.env.SQUIDRUN_SLEEP_EXTRACTION_COMMAND = extractionCommand;
+    } else {
+      delete process.env.SQUIDRUN_SLEEP_EXTRACTION_COMMAND;
+    }
+    return extractionCommand;
+  }
+
+  async refreshSystemCapabilities(options = {}) {
+    const projectRoot = options.projectRoot || getProjectRoot();
+    const persistedSettings = typeof this.settings.readPersistedSettingsSnapshot === 'function'
+      ? (this.settings.readPersistedSettingsSnapshot() || {})
+      : {};
+    const hasExplicitLocalModelSetting = Object.prototype.hasOwnProperty.call(persistedSettings, 'localModelEnabled');
+    const ollama = await detectOllamaRuntime({
+      nowMs: options.nowMs,
+      timeoutMs: options.timeoutMs,
+    });
+    if (!hasExplicitLocalModelSetting && ollama.suitableModelAvailable === true) {
+      this.settings.saveSettings({ localModelEnabled: true });
+    }
+    const snapshot = buildSystemCapabilitiesSnapshot({
+      projectRoot,
+      nowMs: options.nowMs,
+      settings: this.ctx.currentSettings,
+      ollama,
+    });
+    writeSystemCapabilitiesSnapshot(snapshot, snapshot.path);
+    this.lastSystemCapabilities = snapshot;
+    this.applyLocalModelEnvironment(snapshot);
+    return snapshot;
   }
 
   copyPathRecursive(sourcePath, destinationPath) {
@@ -1846,6 +1889,18 @@ class SquidRunApp {
     // 4. Auto-detect installed CLIs and patch invalid paneCommands (startup only)
     if (typeof this.settings.autoDetectPaneCommandsOnStartup === 'function') {
       this.settings.autoDetectPaneCommandsOnStartup();
+    }
+
+    try {
+      await this.refreshSystemCapabilities({ projectRoot: getProjectRoot() });
+    } catch (err) {
+      log.warn('LocalModels', `Capability detection failed: ${err.message}`);
+      this.lastSystemCapabilities = buildSystemCapabilitiesSnapshot({
+        projectRoot: getProjectRoot(),
+        settings: this.ctx.currentSettings,
+      });
+      writeSystemCapabilitiesSnapshot(this.lastSystemCapabilities, this.lastSystemCapabilities.path);
+      this.applyLocalModelEnvironment(this.lastSystemCapabilities);
     }
 
     // 5. Defer non-critical worker runtimes until first use.
