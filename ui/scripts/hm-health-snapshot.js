@@ -225,11 +225,23 @@ function countTestFiles(testRoot) {
 
 function listJestTests(projectRoot, timeoutMs = 30000) {
   const windowsCmd = resolveWindowsCmdPath();
-  const command = process.platform === 'win32'
-    ? `${windowsCmd} /d /s /c "npx jest --listTests"`
-    : 'npx jest --listTests';
+  const localJestBin = path.join(projectRoot, 'node_modules', 'jest', 'bin', 'jest.js');
+  const useLocalJestBin = safeStat(localJestBin)?.isFile() === true;
+  const command = useLocalJestBin
+    ? `${process.execPath} ${localJestBin} --listTests`
+    : (process.platform === 'win32'
+      ? `${windowsCmd} /d /s /c "npx jest --listTests"`
+      : 'npx jest --listTests');
   try {
-    const stdout = process.platform === 'win32'
+    const stdout = useLocalJestBin
+      ? execFileSync(process.execPath, [localJestBin, '--listTests'], {
+          cwd: projectRoot,
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: timeoutMs,
+          maxBuffer: 16 * 1024 * 1024,
+        })
+      : (process.platform === 'win32'
       ? execFileSync(windowsCmd, ['/d', '/s', '/c', 'npx jest --listTests'], {
           cwd: projectRoot,
           encoding: 'utf8',
@@ -243,7 +255,7 @@ function listJestTests(projectRoot, timeoutMs = 30000) {
           windowsHide: true,
           timeout: timeoutMs,
           maxBuffer: 16 * 1024 * 1024,
-        });
+        }));
     const files = String(stdout || '')
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -581,6 +593,10 @@ function createHealthSnapshot(options = {}) {
   const modulesRoot = path.join(projectRoot, 'ui', 'modules');
   const evidenceLedgerDbPath = path.join(projectRoot, '.squidrun', 'runtime', 'evidence-ledger.db');
   const cognitiveMemoryDbPath = path.join(projectRoot, 'workspace', 'memory', 'cognitive-memory.db');
+  const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+  const generatedAt = typeof options.generatedAt === 'string' && options.generatedAt.trim()
+    ? options.generatedAt.trim()
+    : new Date(nowMs).toISOString();
 
   const testFiles = countTestFiles(testsRoot);
   const jestList = listJestTests(uiRoot, asPositiveInt(options.jestTimeoutMs, 30000));
@@ -595,7 +611,7 @@ function createHealthSnapshot(options = {}) {
   const memoryConsistency = inspectMemoryConsistency(projectRoot, options);
 
   const snapshot = {
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     projectRoot,
     tests: {
       testsRoot,
@@ -625,6 +641,7 @@ function renderStartupHealthMarkdown(snapshot = {}) {
   const lines = [
     'STARTUP HEALTH',
     `- Overall: ${overallLevel}${overallScore !== null ? ` (score=${overallScore}/100)` : ''}`,
+    `- Generated: ${typeof snapshot.generatedAt === 'string' && snapshot.generatedAt.trim() ? snapshot.generatedAt.trim() : 'unknown'}`,
     `- App Session: ${Number.isInteger(Number(snapshot.appStatus?.sessionNumber)) ? `session ${Number(snapshot.appStatus.sessionNumber)}` : 'unknown'}${snapshot.appStatus?.error ? ` (app-status error: ${snapshot.appStatus.error})` : ''}`,
     `- Tests: ${Number(snapshot.tests?.testFileCount || 0)} files, ${Number(snapshot.tests?.jestList?.count || 0)} Jest-discoverable suites${snapshot.tests?.jestList?.ok === false ? ' (list failed)' : ''}`,
     `- Modules: ${Number(snapshot.modules?.moduleFileCount || 0)} JS modules under ui/modules`,
