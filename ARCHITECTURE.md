@@ -18,6 +18,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/config.js: Shared runtime constants and path resolution (project root, coord root, pane cwd, trigger targets, role maps).
 - ui/daemon-client.js: Electron-side daemon client for PTY lifecycle, reconnect logic, write-ack tracking, and kernel event forwarding.
 - ui/index.html: Main renderer shell (3-pane layout, broadcast input, settings panel, right tabs, and startup overlays).
+- ui/jsconfig.json: Scoped JavaScript type-check configuration for the first-stage JSDoc + `checkJs` gate (`tsc --noEmit`) over selected contract-heavy modules.
 - ui/pane-host.html: Hidden pane-host window document that mounts xterm and loads `pane-host-renderer.js`.
 - ui/pane-host-renderer.js: Hidden pane PTY bridge that injects messages, dispatches Enter, and reports delivery ack/outcome to main.
 - ui/preload.js: Context-isolated bridge bootstrap exposing `window.squidrun` / `window.squidrunAPI` and renderer module adapters.
@@ -211,6 +212,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/triggers/metrics.js: Exports recordSent, recordDelivered, recordFailed, recordTimeout, ....
 - ui/modules/triggers/routing.js: Exports setSharedState, routeTask, triggerAutoHandoff, formatAuxEvent, ....
 - ui/modules/triggers/sequencing.js: Exports loadMessageState, saveMessageState, parseMessageSequence, isDuplicateMessage, ....
+- ui/types/contracts.d.ts: Shared contract types used by JSDoc-annotated JS surfaces (message envelopes, IPC payloads, device pairing, cognitive memory, app status).
 - ui/modules/ui-view.js: Exports PANE_IDS, PANE_ROLES, SYNC_FILES, flashPaneHeader, ....
 - ui/modules/utils.js: Exports debounceButton, applyShortcutTooltips.
 - ui/modules/utils/transcript-store.js: Exports TRANSCRIPTS_DIR, getDateString, getTranscriptPath, parseTranscriptLines, ....
@@ -342,12 +344,12 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 
 ## 9) TEST INFRASTRUCTURE
 - Test suite root: `ui/__tests__/` (Jest, Node environment) with shared setup in `ui/__tests__/setup.js`.
-- Core commands (from `ui/package.json`): `npm test`, `npm run test:watch`, `npm run test:coverage`, `npm run lint`.
+- Core commands (from `ui/package.json`): `npm test`, `npm run test:watch`, `npm run test:coverage`, `npm run lint`, `npm run typecheck`.
 - Jest config: `ui/jest.config.js` (coverage thresholds, module mapping, setup files).
+- Typecheck config: `ui/jsconfig.json` scopes the initial `tsc --noEmit` gate to JSDoc-annotated contract modules instead of the full legacy JS codebase.
 - Mock patterns:
   - Electron API mocks in `ui/__tests__/mocks/electron.js`.
   - Shared IPC harness helpers in `ui/__tests__/helpers/ipc-harness.js`.
   - Config mocking helpers in `ui/__tests__/helpers/mock-config.js` and `ui/__tests__/helpers/real-config.js`.
   - Frequent fake-timer tests for watcher/terminal/runtime behavior.
 - Current suite scale: 193 suites / 3494 tests in the active Jest gate, with handler-heavy coverage across main/ipc/runtime modules.
-
