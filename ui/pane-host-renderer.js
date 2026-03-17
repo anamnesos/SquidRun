@@ -117,6 +117,34 @@ function getUtf8ByteLength(value) {
   return text.length;
 }
 
+function resolvePostEnterDeliveryResult({ outputObserved = false, enterSucceeded = false } = {}) {
+  if (outputObserved) {
+    return { ack: true };
+  }
+
+  if (!enterSucceeded) {
+    return {
+      ack: false,
+      outcome: {
+        accepted: false,
+        verified: false,
+        status: 'delivery_failed',
+        reason: 'enter_dispatch_failed',
+      },
+    };
+  }
+
+  return {
+    ack: false,
+    outcome: {
+      accepted: true,
+      verified: false,
+      status: 'accepted.unverified',
+      reason: 'post_enter_output_timeout',
+    },
+  };
+}
+
 function createPaneRuntime(paneId, terminal, fitAddon) {
   return {
     paneId,
@@ -133,7 +161,18 @@ function createPaneRuntime(paneId, terminal, fitAddon) {
   };
 }
 
-(function bootPaneHost() {
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    _internals: {
+      formatHmSendForPrompt,
+      getPromptKindFromLine,
+      resolvePostEnterDeliveryResult,
+    },
+  };
+}
+
+if (typeof window !== 'undefined') {
+  (function bootPaneHost() {
   const params = new URLSearchParams(window.location.search || '');
   const paneIds = readPaneIdsFromQuery(params);
   const isDarwin = detectDarwin();
@@ -508,27 +547,31 @@ function createPaneRuntime(paneId, terminal, fitAddon) {
         )
         : POST_ENTER_VERIFY_TIMEOUT_MS;
       const outputObserved = await waitForPtyOutputAfter(runtime, outputBaseline, postEnterVerifyTimeoutMs);
-      const treatAsDelivered = Boolean(outputObserved || (hmSendTrace && enterResult?.success));
+      const deliveryResult = resolvePostEnterDeliveryResult({
+        outputObserved,
+        enterSucceeded: Boolean(enterResult?.success),
+      });
 
       if (deliveryId) {
-        if (treatAsDelivered) {
+        if (deliveryResult.ack) {
           reportDeliveryAck(runtime.paneId, deliveryId);
         } else {
           reportDeliveryOutcome(runtime.paneId, {
             deliveryId,
             paneId: runtime.paneId,
-            accepted: true,
-            verified: false,
-            status: 'accepted.unverified',
-            reason: 'post_enter_output_timeout',
+            ...deliveryResult.outcome,
           });
         }
       }
 
       if (!outputObserved && hmSendTrace && enterResult?.success) {
         console.warn(
-          `[PaneHost] hm-send trace accepted for pane ${runtime.paneId} without immediate PTY output `
+          `[PaneHost] hm-send trace remained unverified for pane ${runtime.paneId} without immediate PTY output `
           + `(${postEnterVerifyTimeoutMs}ms window)`
+        );
+      } else if (!outputObserved && !enterResult?.success) {
+        console.warn(
+          `[PaneHost] Delivery failed for pane ${runtime.paneId} because dispatch-enter was not accepted`
         );
       } else if (!outputObserved) {
         console.warn(
@@ -654,4 +697,5 @@ function createPaneRuntime(paneId, terminal, fitAddon) {
       console.error(`[PaneHost] Failed to send ready for pane ${paneId}:`, err?.message || err);
     });
   }
-})();
+  })();
+}

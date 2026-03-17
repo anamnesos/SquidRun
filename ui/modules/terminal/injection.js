@@ -331,9 +331,33 @@ function createInjectionController(options = {}) {
       promptWasReady = false,
     } = baseline;
     const allowOutputTransitionOnly = Boolean(options.allowOutputTransitionOnly);
+    const requireObservedSignal = Boolean(options.requireObservedSignal);
 
     // Fallback when prompt probing is unavailable (mock/test edge cases).
     if (!promptProbeAvailable) {
+      if (requireObservedSignal) {
+        const start = Date.now();
+        while ((Date.now() - start) < SUBMIT_ACCEPT_VERIFY_WINDOW_MS) {
+          const outputTsAfter = getLastOutputTimestamp(paneId);
+          if (outputTsAfter > outputTsBefore) {
+            return {
+              accepted: true,
+              signal: 'output_transition_prompt_probe_unavailable',
+              outputTransitionObserved: true,
+              promptTransitionObserved: false,
+            };
+          }
+          await sleep(SUBMIT_ACCEPT_POLL_MS);
+        }
+
+        return {
+          accepted: false,
+          signal: 'prompt_probe_unavailable_no_output',
+          outputTransitionObserved: false,
+          promptTransitionObserved: false,
+        };
+      }
+
       return {
         accepted: true,
         signal: 'prompt_probe_unavailable',
@@ -1039,6 +1063,12 @@ function createInjectionController(options = {}) {
         : 0;
       const fastPathDelayMs = Math.max(enterDelayMs, hmSendFastDelayFloorMs + hmSendFastExtraDelayMs);
       const outputTsBeforeEnter = getLastOutputTimestamp(id);
+      const fastPathPromptProbeAvailable = canProbePromptState(id);
+      const fastPathBaseline = {
+        outputTsBefore: outputTsBeforeEnter,
+        promptProbeAvailable: fastPathPromptProbeAvailable,
+        promptWasReady: fastPathPromptProbeAvailable ? isPromptReady(id) : false,
+      };
       await sleep(fastPathDelayMs);
 
       bus.emit('inject.submit.requested', {
@@ -1093,6 +1123,33 @@ function createInjectionController(options = {}) {
           }
         }
       }
+
+      const verifyResult = await verifySubmitAccepted(id, fastPathBaseline, {
+        allowOutputTransitionOnly: true,
+        requireObservedSignal: true,
+      });
+      if (!verifyResult.accepted) {
+        log.warn(
+          `doSendToPane ${id}`,
+          `hm-send fast path submit remained unverified; signal=${verifyResult.signal} outputTransition=${verifyResult.outputTransitionObserved ? 'yes' : 'no'} promptTransition=${verifyResult.promptTransitionObserved ? 'yes' : 'no'}`
+        );
+        updatePaneStatus(id, 'Working');
+        lastTypedTime[id] = Date.now();
+        lastOutputTime[id] = Date.now();
+        finishWithClear({
+          success: true,
+          verified: false,
+          signal: 'accepted_unverified',
+          status: 'accepted.unverified',
+          reason: 'submit_not_accepted',
+        });
+        return;
+      }
+
+      log.info(
+        `doSendToPane ${id}`,
+        `hm-send fast path submit verified via ${verifyResult.signal}`
+      );
 
       updatePaneStatus(id, 'Working');
       lastTypedTime[id] = Date.now();

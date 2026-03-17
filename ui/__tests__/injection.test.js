@@ -915,6 +915,7 @@ describe('Terminal Injection', () => {
     });
 
     test('hm-send fast path comment-wraps payload when pane is at a PowerShell prompt', async () => {
+      let promptText = 'PS D:\\projects\\squidrun> ';
       terminals.set('1', {
         _squidrunBypass: false,
         buffer: {
@@ -922,7 +923,7 @@ describe('Terminal Injection', () => {
             cursorY: 0,
             viewportY: 0,
             getLine: jest.fn(() => ({
-              translateToString: () => 'PS D:\\projects\\squidrun> ',
+              translateToString: () => promptText,
             })),
           },
         },
@@ -930,6 +931,7 @@ describe('Terminal Injection', () => {
       const onComplete = jest.fn();
       mockPty.write.mockImplementation((paneId, data) => {
         if (paneId === '1' && data === '\r') {
+          promptText = 'running hm-send...';
           lastOutputTime['1'] = Date.now();
         }
         return Promise.resolve(undefined);
@@ -943,7 +945,7 @@ describe('Terminal Injection', () => {
         { hmSendFastEnter: true }
       );
 
-      await jest.advanceTimersByTimeAsync(800);
+      await jest.advanceTimersByTimeAsync(1200);
       await promise;
 
       expect(mockPty.write).toHaveBeenCalledWith(
@@ -961,12 +963,31 @@ describe('Terminal Injection', () => {
 
     test('hm-send long payloads use chunked PTY write and Enter waits for chunk completion', async () => {
       mockOptions.isCodexPane.mockReturnValue(true);
-      terminals.set('1', { _squidrunBypass: false });
+      let promptText = 'codex> ';
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
 
       let resolveChunkWrite;
       mockPty.writeChunked.mockImplementationOnce(() => new Promise((resolve) => {
         resolveChunkWrite = resolve;
       }));
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId === '1' && data === '\r') {
+          promptText = 'running...';
+          lastOutputTime['1'] = Date.now();
+        }
+        return Promise.resolve(undefined);
+      });
       const onComplete = jest.fn();
       const longPayload = `${'L'.repeat(1050)}\nline-two\r`;
 
@@ -989,7 +1010,7 @@ describe('Terminal Injection', () => {
 
       resolveChunkWrite({ success: true, chunks: 2, chunkSize: 1024 });
       // Fast path now waits for CLI to process paste before sending Enter
-      await jest.advanceTimersByTimeAsync(800);
+      await jest.advanceTimersByTimeAsync(1200);
       await promise;
 
       expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
@@ -1024,6 +1045,26 @@ describe('Terminal Injection', () => {
         }),
       };
       const fallbackController = createInjectionController(capabilityOptions);
+      let promptText = 'codex> ';
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId === '1' && data === '\r') {
+          promptText = 'running custom...';
+          lastOutputTime['1'] = Date.now();
+        }
+        return Promise.resolve(undefined);
+      });
       const onComplete = jest.fn();
       const mediumPayload = `${'M'.repeat(300)}\r`;
 
@@ -1035,7 +1076,7 @@ describe('Terminal Injection', () => {
         { hmSendFastEnter: true }
       );
 
-      await jest.advanceTimersByTimeAsync(800);
+      await jest.advanceTimersByTimeAsync(1200);
       await promise;
 
       expect(mockPty.writeChunked).toHaveBeenCalledWith(
@@ -1076,6 +1117,26 @@ describe('Terminal Injection', () => {
         }),
       };
       const fallbackController = createInjectionController(capabilityOptions);
+      let promptText = 'codex> ';
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
+      mockPty.write.mockImplementation((paneId, data) => {
+        if (paneId === '1' && data === '\r') {
+          promptText = 'running custom...';
+          lastOutputTime['1'] = Date.now();
+        }
+        return Promise.resolve(undefined);
+      });
       const onComplete = jest.fn();
 
       const promise = fallbackController.doSendToPane(
@@ -1097,6 +1158,52 @@ describe('Terminal Injection', () => {
         success: true,
         verified: true,
         signal: 'hm_send_fast_path',
+      });
+    });
+
+    test('hm-send fast path downgrades to accepted.unverified when no acceptance signal is observed', async () => {
+      const strictController = createInjectionController({
+        ...mockOptions,
+        constants: {
+          ...DEFAULT_CONSTANTS,
+          INJECTION_LOCK_TIMEOUT_MS: 3000,
+        },
+      });
+      let promptText = 'codex> ';
+      terminals.set('1', {
+        _squidrunBypass: false,
+        buffer: {
+          active: {
+            cursorY: 0,
+            viewportY: 0,
+            getLine: jest.fn(() => ({
+              translateToString: () => promptText,
+            })),
+          },
+        },
+      });
+      const onComplete = jest.fn();
+
+      const promise = strictController.doSendToPane(
+        '1',
+        'hm payload\r',
+        onComplete,
+        { messageId: 'hm-missed', traceId: 'hm-missed' },
+        { hmSendFastEnter: true }
+      );
+
+      await jest.advanceTimersByTimeAsync(2500);
+      await promise;
+
+      expect(mockPty.write).toHaveBeenCalledWith('1', 'hm payload', expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith('1', '\r');
+      expect(promptText).toBe('codex> ');
+      expect(onComplete).toHaveBeenCalledWith({
+        success: true,
+        verified: false,
+        signal: 'accepted_unverified',
+        status: 'accepted.unverified',
+        reason: 'submit_not_accepted',
       });
     });
 
