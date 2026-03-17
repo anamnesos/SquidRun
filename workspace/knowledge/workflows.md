@@ -13,7 +13,8 @@
 - **Bridge health triage:** use the Bridge tab first. It now hydrates from `bridge:get-status` and shows relay lifecycle state, device ID, relay URL, last connected/disconnected timestamps, disconnect reason/code, flap count, reconnect schedule, and last remote dispatch details before you dive into logs.
 - **PTY truncation hardening:** chunk payloads >=1KB for Claude and >=256B for hm-send fast-path on Windows. Pace chunk submission before Enter dispatch.
 - **Renderer black screen under multi-agent PTY load:** if the UI dies when several panes stream output at once, inspect `ui/modules/main/squidrun-app.js` first. The fix pattern is to batch `pty-data-*` IPC in the main process per pane on a short timer (about 16ms) and flush buffered output before pane exit or app shutdown instead of calling `webContents.send` for every PTY chunk.
-- **Codex CLI shell arg truncation (Session 230):** Codex CLI truncates long inline shell command args. The SquidRun pipeline (hm-send -> WebSocket -> evidence ledger -> injection -> PTY) is verified intact — messages land fully in the DB. The truncation is Codex cutting its own output before hm-send runs. **Fix:** Builder must use `--file` for any message over ~500 chars. Short pings can stay inline. This is a permanent behavioral rule, not a code fix.
+- **Architect comms rule (`hm-send --file`):** Builder must use `node ui/scripts/hm-send.js <target> --file <path>` for every Architect-bound message, not just long ones. We hit repeated truncation and pane-render confusion in Session 234 when inline sends mixed with large payloads. Treat `--file` as the permanent default for agent-to-agent messaging.
+- **Codex CLI shell arg truncation (Session 230):** Codex CLI can truncate long inline shell command args. The SquidRun pipeline (hm-send -> WebSocket -> evidence ledger -> injection -> PTY) is verified intact — messages land fully in the DB. The remaining failure mode is upstream payload truncation before `hm-send` runs, which is another reason to default to `--file`.
 - **Diagnostics bundle command:** run `node ui/scripts/hm-doctor.js` for a bug-report snapshot.
 
 ## Startup & Operations
@@ -28,6 +29,7 @@
   - **Promote:** Auto-promote pending PRs via `node ui/scripts/hm-memory-promote.js approve --all` so staged facts flow into `workspace/knowledge/`.
   - **Immunity Layer:** Proven heuristics are automatically immune-protected via behavioral extraction to bypass recency penalties. To manually protect a node, use `node ui/scripts/hm-memory-api.js set-immune --id <node-id> [--value <0|1>]`.
   - **Lifecycle & Supervisor:** The Durable Supervisor (`ui/supervisor-daemon.js`) automatically handles background maintenance, including the Sleep Consolidator, memory lease janitor, and index synchronization.
+- **JSDoc typecheck workflow:** Run `npm run typecheck` from `ui/` to execute the scoped `tsc -p jsconfig.json --noEmit` gate. The first slice intentionally targets the most bug-prone contract modules (message envelope + IPC surfaces) instead of the whole JS codebase; expand the `ui/jsconfig.json` include list only when a module is clean enough to be a reliable gate.
 ## Task Delegation Template (Architect -> Builder)
 Structured envelopes for Builder delegation:
 ```
@@ -45,4 +47,3 @@ Comms cadence: Builder sends initial ACK + plan, then delta updates only on stat
 ## Builder Background Agent Slots
 Builder manages up to 3 background agents (builder-bg-1..3). Track slot status:
 - Slot, Owner, Objective, Status (running/blocked/done), Blocker reason, Handoff state
-
