@@ -73,4 +73,15 @@ maybeDescribe('team-memory store', () => {
       expect(table?.name).toBe(tableName);
     }
   });
+
+  test('reuses the same sqlite connection on repeated init calls', () => {
+    const first = store.init();
+    const firstDb = store.db;
+    const second = store.init();
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(store.db).toBe(firstDb);
+    expect(second.driver).toBe(first.driver);
+  });
 });

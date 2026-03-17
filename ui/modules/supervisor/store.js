@@ -118,6 +118,15 @@ class SupervisorStore {
   }
 
   init(options = {}) {
+    if (this.isAvailable()) {
+      return {
+        ok: true,
+        driver: this.driverName,
+        dbPath: this.dbPath,
+        migrationResult: this.migrationResult,
+      };
+    }
+
     if (!this.enabled) {
       this.degradedReason = 'disabled';
       this.available = false;

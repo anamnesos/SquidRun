@@ -12,6 +12,8 @@ describe('experiment runtime evidence chain (phase6b)', () => {
   let artifactRoot;
   let profilesPath;
   let ledgerEvents;
+  let ledgerStoreInitCalls;
+  let ledgerStoreConstructCount;
   let mockExitCode;
   let TeamMemoryStore;
   let TeamMemoryClaims;
@@ -25,6 +27,8 @@ describe('experiment runtime evidence chain (phase6b)', () => {
     artifactRoot = path.join(tempDir, 'artifacts');
     profilesPath = path.join(tempDir, 'experiment-profiles.json');
     ledgerEvents = [];
+    ledgerStoreInitCalls = 0;
+    ledgerStoreConstructCount = 0;
     mockExitCode = 0;
 
     fs.writeFileSync(
@@ -50,9 +54,11 @@ describe('experiment runtime evidence chain (phase6b)', () => {
     jest.doMock('../modules/main/evidence-ledger-store', () => ({
       EvidenceLedgerStore: class MockEvidenceLedgerStore {
         constructor() {
+          ledgerStoreConstructCount += 1;
           this.available = true;
         }
         init() {
+          ledgerStoreInitCalls += 1;
           return { ok: true };
         }
         appendEvent(event) {
@@ -205,6 +211,40 @@ describe('experiment runtime evidence chain (phase6b)', () => {
     const claimRow = runtime.store.db.prepare('SELECT status FROM claims WHERE id = ?').get(claimId);
     expect(claimRow.status).toBe('contested');
     expect(experiment.attach.evidenceEventId).toMatch(/^evt_experiment_/);
+
+    runtime.close();
+  });
+
+  test('reuses a warm evidence ledger store across experiment completion events', () => {
+    const runtime = new ExperimentRuntime({
+      dbPath,
+      artifactRoot,
+      profilesPath,
+      evidenceLedgerDbPath: path.join(tempDir, 'evidence-ledger.db'),
+    });
+    expect(runtime.init({}).ok).toBe(true);
+
+    const first = runtime.appendExperimentCompletedLedgerEvent({
+      runId: 'exp-one',
+      profileId: 'jest-suite',
+      requestedBy: 'builder',
+      phaseStatus: 'succeeded',
+      completedAt: 1000,
+      artifactDir: path.join(artifactRoot, 'exp-one'),
+    });
+    const second = runtime.appendExperimentCompletedLedgerEvent({
+      runId: 'exp-two',
+      profileId: 'jest-suite',
+      requestedBy: 'builder',
+      phaseStatus: 'succeeded',
+      completedAt: 2000,
+      artifactDir: path.join(artifactRoot, 'exp-two'),
+    });
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(ledgerStoreConstructCount).toBe(1);
+    expect(ledgerStoreInitCalls).toBe(1);
 
     runtime.close();
   });

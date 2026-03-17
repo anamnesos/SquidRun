@@ -461,6 +461,10 @@ class EvidenceLedgerStore {
   }
 
   init() {
+    if (this.isAvailable()) {
+      return { ok: true, driver: this.driverName, dbPath: this.dbPath };
+    }
+
     if (!this.enabled) {
       this.degradedReason = 'disabled';
       logDegradedOnce('warn', 'disabled', 'Ledger disabled by config/flag; running in degraded mode');
