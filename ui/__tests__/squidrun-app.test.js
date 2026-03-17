@@ -541,7 +541,13 @@ describe('SquidRunApp', () => {
           reason: 'team_memory_not_initialized',
         }),
       }));
-      expect(writeFileAtomic).toHaveBeenCalledWith(
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('startup-health.md'),
+        expect.stringContaining('Snapshot status: refreshing current-session startup health...')
+      );
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        2,
         expect.stringContaining('startup-health.md'),
         expect.stringContaining('STARTUP LEDGER')
       );
@@ -549,6 +555,8 @@ describe('SquidRunApp', () => {
         projectRoot: '/test',
         jestTimeoutMs: undefined,
         bridgeStatus: expect.any(Object),
+        nowMs: expect.any(Number),
+        generatedAt: expect.any(String),
       }));
       expect(createHealthSnapshot.mock.calls[0][0].bridgeStatus).toEqual(expect.objectContaining({
         state: expect.any(String),
@@ -608,9 +616,39 @@ describe('SquidRunApp', () => {
         { sessionNumber: 230 },
         expect.any(Object)
       );
-      expect(writeFileAtomic).toHaveBeenCalledWith(
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        1,
         expect.stringContaining('startup-health.md'),
         expect.stringContaining('Session context: session 230 ACTIVE (APP)')
+      );
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('startup-health.md'),
+        expect.stringContaining('Session context: session 230 ACTIVE (APP)')
+      );
+    });
+
+    it('writes a fresh current-session placeholder before probing startup health', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+      createHealthSnapshot.mockImplementationOnce(() => {
+        throw new Error('snapshot probe failed');
+      });
+      const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      await expect(app.refreshStartupHealthArtifacts({
+        sessionNumber: 234,
+        nowMs: Date.parse('2026-03-17T07:50:00.000Z'),
+      })).rejects.toThrow('snapshot probe failed');
+
+      expect(writeFileAtomic).toHaveBeenCalledTimes(1);
+      expect(writeFileAtomic).toHaveBeenCalledWith(
+        expect.stringContaining('startup-health.md'),
+        expect.stringContaining('Generated: 2026-03-17T07:50:00.000Z')
+      );
+      expect(writeFileAtomic).toHaveBeenCalledWith(
+        expect.stringContaining('startup-health.md'),
+        expect.stringContaining('App Session: session 234')
       );
     });
 
