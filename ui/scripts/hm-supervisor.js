@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
+const fs = require('fs');
 const path = require('path');
 
+const { resolveCoordPath } = require('../config');
 const { SupervisorStore } = require('../modules/supervisor');
 
 function parseArgs(argv) {
@@ -58,6 +60,23 @@ function safeJsonParse(value, fallback) {
   } catch (err) {
     throw new Error(`Invalid JSON: ${err.message}`);
   }
+}
+
+function resolveWakeSignalPath(dbPath) {
+  if (dbPath) {
+    return path.join(path.dirname(path.resolve(String(dbPath))), 'supervisor-wake.signal');
+  }
+  return resolveCoordPath(path.join('runtime', 'supervisor-wake.signal'), { forWrite: true });
+}
+
+function signalSupervisorWake(dbPath, reason = 'enqueue') {
+  const wakeSignalPath = resolveWakeSignalPath(dbPath);
+  fs.mkdirSync(path.dirname(wakeSignalPath), { recursive: true });
+  fs.writeFileSync(wakeSignalPath, JSON.stringify({
+    reason,
+    updatedAt: new Date().toISOString(),
+    pid: process.pid,
+  }, null, 2));
 }
 
 function main() {
@@ -126,6 +145,9 @@ function main() {
         priority: flags.priority ? Number.parseInt(flags.priority, 10) : 100,
         contextSnapshot,
       });
+      if (result?.ok) {
+        signalSupervisorWake(flags['db-path'], 'enqueue');
+      }
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return;
     }
@@ -144,3 +166,12 @@ if (require.main === module) {
     process.exit(1);
   }
 }
+
+module.exports = {
+  parseArgs,
+  safeJsonParse,
+  resolveWakeSignalPath,
+  signalSupervisorWake,
+  openStore,
+  main,
+};

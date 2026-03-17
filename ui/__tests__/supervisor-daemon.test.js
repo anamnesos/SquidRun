@@ -1,8 +1,19 @@
-const handlers = {};
-let mockWatcher;
+const watcherRecords = [];
 
 jest.mock('chokidar', () => ({
-  watch: jest.fn(() => mockWatcher),
+  watch: jest.fn((targets) => {
+    const watcher = {
+      targets,
+      handlers: {},
+      on: jest.fn((event, handler) => {
+        watcher.handlers[event] = handler;
+        return watcher;
+      }),
+      close: jest.fn().mockResolvedValue(),
+    };
+    watcherRecords.push(watcher);
+    return watcher;
+  }),
 }));
 
 jest.mock('../modules/memory-search', () => ({
@@ -68,6 +79,13 @@ function createMockLogger() {
   };
 }
 
+function getWatcherByTarget(pattern) {
+  return watcherRecords.find((watcher) => {
+    const targets = Array.isArray(watcher.targets) ? watcher.targets : [watcher.targets];
+    return targets.some((target) => String(target) === String(pattern));
+  });
+}
+
 describe('supervisor-daemon integrations', () => {
   let mockMemorySearchIndex;
   let mockSleepConsolidator;
@@ -76,14 +94,7 @@ describe('supervisor-daemon integrations', () => {
 
   beforeEach(() => {
     jest.useFakeTimers();
-    for (const key of Object.keys(handlers)) delete handlers[key];
-    mockWatcher = {
-      on: jest.fn((event, handler) => {
-        handlers[event] = handler;
-        return mockWatcher;
-      }),
-      close: jest.fn().mockResolvedValue(),
-    };
+    watcherRecords.length = 0;
 
     mockMemorySearchIndex = {
       indexAll: jest.fn().mockResolvedValue({
@@ -119,13 +130,14 @@ describe('supervisor-daemon integrations', () => {
       statusPath: '/tmp/supervisor-status.json',
       logPath: '/tmp/supervisor.log',
       taskLogDir: '/tmp/supervisor-tasks',
+      wakeSignalPath: '/tmp/supervisor-wake.signal',
     });
     daemon.getMemoryIndexWatchTargets = jest.fn(() => ['/tmp/knowledge/**/*.md']);
   });
 
   afterEach(async () => {
     if (daemon) {
-      await daemon.stopMemoryIndexWatcher();
+      await daemon.stop('test-cleanup');
     }
     jest.useRealTimers();
   });
@@ -148,14 +160,15 @@ describe('supervisor-daemon integrations', () => {
 
   test('debounces file change events into a refresh', async () => {
     daemon.startMemoryIndexWatcher();
+    const memoryWatcher = getWatcherByTarget('/tmp/knowledge/**/*.md');
     await jest.runOnlyPendingTimersAsync();
     if (daemon.memoryIndexRefreshPromise) {
       await daemon.memoryIndexRefreshPromise;
     }
     mockMemorySearchIndex.indexAll.mockClear();
 
-    handlers.all('change', '/tmp/knowledge/user-context.md');
-    handlers.all('change', '/tmp/knowledge/workflows.md');
+    memoryWatcher.handlers.all('change', '/tmp/knowledge/user-context.md');
+    memoryWatcher.handlers.all('change', '/tmp/knowledge/workflows.md');
 
     await jest.runOnlyPendingTimersAsync();
     if (daemon.memoryIndexRefreshPromise) {
@@ -208,15 +221,46 @@ describe('supervisor-daemon integrations', () => {
     );
   });
 
-  test('closes watcher, memory index, and sleep consolidator on stop', async () => {
+  test('closes watcher, wake signal, memory index, and sleep consolidator on stop', async () => {
     daemon.startMemoryIndexWatcher();
-    await daemon.stopMemoryIndexWatcher();
+    daemon.startWakeSignalWatcher();
     await daemon.stop('test');
 
-    expect(mockWatcher.close).toHaveBeenCalledTimes(1);
+    const memoryWatcher = getWatcherByTarget('/tmp/knowledge/**/*.md');
+    const wakeWatcher = getWatcherByTarget('/tmp/supervisor-wake.signal');
+    expect(memoryWatcher.close).toHaveBeenCalledTimes(1);
+    expect(wakeWatcher.close).toHaveBeenCalledTimes(1);
     expect(mockMemorySearchIndex.close).toHaveBeenCalled();
     expect(mockSleepConsolidator.close).toHaveBeenCalled();
     expect(mockLeaseJanitor.close).toHaveBeenCalled();
+  });
+
+  test('backs off when idle and wakes immediately on demand', async () => {
+    daemon.memoryIndexEnabled = false;
+
+    const startResult = daemon.start();
+    expect(startResult).toEqual({ ok: true });
+
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(daemon.store.claimNextTask).toHaveBeenCalledTimes(1);
+    expect(daemon.currentBackoffMs).toBe(daemon.pollMs * 2);
+
+    daemon.requestTick('manual');
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(daemon.store.claimNextTask).toHaveBeenCalledTimes(2);
+    expect(daemon.currentBackoffMs).toBe(daemon.pollMs * 2);
+  });
+
+  test('wake signal watcher requests an immediate tick', () => {
+    const requestTickSpy = jest.spyOn(daemon, 'requestTick');
+
+    daemon.startWakeSignalWatcher();
+    const wakeWatcher = getWatcherByTarget('/tmp/supervisor-wake.signal');
+    wakeWatcher.handlers.all('change', '/tmp/supervisor-wake.signal');
+
+    expect(requestTickSpy).toHaveBeenCalledWith('wake-signal:change');
   });
 
   test('prunes expired memory leases during tick housekeeping', async () => {
