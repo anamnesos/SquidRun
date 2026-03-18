@@ -207,6 +207,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/terminal/injection.js: Terminal injection helpers Extracted from terminal.js to isolate fragile send/verify logic.
 - ui/modules/terminal/recovery.js: Terminal recovery helpers (unstick, restart, sweeper) Extracted from terminal.js to isolate recovery logic.
 - ui/modules/trading/orchestrator.js: Phase coordinator for the autonomous trading workflow; stores per-ticker agent signals, runs consensus/risk gating, executes market-open and midday actions, journals end-of-day summaries, and chains the full trading-day loop.
+- ui/modules/trading/signal-producer.js: Live market-data signal generator for trading agents; fetches watchlist snapshots, 5-day bars, and news, scores momentum/news/volume with agent-specific weighting, and returns/registers BUY/SELL/HOLD signals for the orchestrator.
 - ui/modules/token-utils.js: Exports estimateTokens, truncateToTokenBudget.
 - ui/modules/transition-ledger.js: Exports init, stop, reset, getTransition, ....
 - ui/modules/triggers.js: Exports init, setSelfHealing, setPluginManager, setWatcher, ....
