@@ -11,7 +11,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 5. PTY runtime is managed by daemon client (`ui/daemon-client.js`) connecting to `ui/terminal-daemon.js`; panes attach through renderer/hidden-host bridges.
 6. Watchers (`ui/modules/watcher.js` + `ui/modules/watcher-worker.js`) monitor workspace/trigger/message paths and route payloads through `ui/modules/triggers.js`.
 7. IPC handlers are registered via `ui/modules/ipc-handlers.js` + `ui/modules/ipc/handler-registry.js`; websocket dispatch uses `ui/modules/websocket-server.js` / `ui/modules/websocket-runtime.js`.
-8. `ui/supervisor-daemon.js` runs a user-session durable background supervisor backed by SQLite for queued async work; it survives UI closure and writes PID/status/task logs under `.squidrun/runtime/`.
+8. `ui/supervisor-daemon.js` runs a user-session durable background supervisor backed by SQLite for queued async work and autonomous trading cadences; it survives UI closure and writes PID/status/task logs under `.squidrun/runtime/`.
 9. Startup and coordination state is continuously materialized into `.squidrun/` (status, handoffs, snapshots, runtime ledgers).
 
 ## 3) KEY FILE MAP
@@ -312,7 +312,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - Retrieval access is tiered: exploratory reads update `last_accessed_at` / `access_count`, while repeated or explicit use reactivates recency. This prevents casual lookups from fully refreshing stale memories.
 - `transactive_meta` is consulted during `retrieve()`. When expertise rows exist, the API returns additive transactive guidance (`matches`, `recommendedAgentId`) alongside normal content results.
 - Patch writes stay in sync with search: `cognitive-memory-api.patch()` updates linked `memory-document:<id>` entries in `search-index.db`, including the FTS and vector-backed rows managed by `ui/modules/memory-search.js`.
-- Supervisor-backed maintenance is live: `ui/supervisor-daemon.js` initializes the sleep consolidator and lease janitor during startup, then reruns housekeeping on each supervisor tick while writing status under `.squidrun/runtime/`.
+- Supervisor-backed maintenance is live: `ui/supervisor-daemon.js` initializes the sleep consolidator and lease janitor during startup, reruns housekeeping on each supervisor tick, and now tracks stock, crypto, and LiveOps automation state under `.squidrun/runtime/`.
 - Startup health scoring contract is explicit in `ui/scripts/hm-health-snapshot.js`: score starts at 100, penalties subtract from named findings, thresholds map score bands to `OK`/`WARN`/`DEGRADED`/`CRITICAL`, and new probes are expected to register a stable warning code plus a documented penalty instead of open-coded score math. Current operational probes are bridge connectivity (`bridge_enabled_unconfigured`, `bridge_enabled_not_connected`) and memory consistency (`memory_consistency_drift`, generic unsynced fallback).
 - Sleep consolidation is wired through the supervisor, but it is intentionally gated by idle/activity thresholds. Its tables initialize at supervisor startup; full clustering/extraction runs only when the session is idle enough.
 - Memory expiration is enforced in active delivery paths: `ui/modules/memory-ingest/delivery.js` excludes expired rows from proactive injection, and `ui/modules/memory-ingest/lifecycle.js` advances expired memories to `status='expired'`.
