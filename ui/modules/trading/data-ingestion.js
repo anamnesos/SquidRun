@@ -342,7 +342,7 @@ async function getNews(options = {}) {
   const client = createAlpacaClient(options);
   const symbols = normalizeSymbols(options.symbols || getTickers());
   const params = {
-    limit: Number.parseInt(options.limit || `${DEFAULT_NEWS_LIMIT}`, 10) || DEFAULT_NEWS_LIMIT,
+    totalLimit: Number.parseInt(options.limit || `${DEFAULT_NEWS_LIMIT}`, 10) || DEFAULT_NEWS_LIMIT,
   };
   if (symbols.length > 0) {
     params.symbols = symbols;
