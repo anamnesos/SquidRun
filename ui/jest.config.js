@@ -3,7 +3,7 @@
  */
 module.exports = {
   testEnvironment: 'node',
-  roots: ['<rootDir>/__tests__'],
+  roots: ['<rootDir>/__tests__', '<rootDir>/modules/trading/__tests__'],
   testMatch: ['**/*.test.js'],
   collectCoverageFrom: [
     'modules/**/*.js',

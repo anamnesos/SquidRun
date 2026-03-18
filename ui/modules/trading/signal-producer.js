@@ -107,9 +107,9 @@ function groupNewsByTicker(newsItems = []) {
 }
 
 async function getNormalizedNews(options = {}) {
-	const client = dataIngestion.createAlpacaClient(options);
 	const symbols = watchlist.getTickers().map(toTicker).filter(Boolean);
-	const items = await client.getNews({
+	const items = await dataIngestion.getNews({
+		...options,
 		symbols,
 		limit: Math.max(20, symbols.length * 3),
 	});

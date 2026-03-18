@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { createAlpacaClient } = require('./data-ingestion');
 const { checkTrade, DEFAULT_LIMITS } = require('./risk-engine');
 const journal = require('./journal');
+const watchlist = require('./watchlist');
 
 function toPositiveInteger(value) {
   const numeric = Math.floor(Number(value));
@@ -113,6 +114,20 @@ function normalizeOrder(order = {}) {
 }
 
 async function submitOrder(input = {}, options = {}) {
+  const brokerType = resolveBrokerType(input, options);
+  if (brokerType !== 'alpaca') {
+    const broker = getBrokerAdapter(brokerType);
+    const result = await broker.submitOrder({ ...input, broker: brokerType }, { ...options, broker: brokerType });
+    if (options.recordJournal !== false) {
+      recordTradeSubmission(result, input, options);
+    }
+    return result;
+  }
+
+  return submitAlpacaOrder(input, options);
+}
+
+async function submitAlpacaOrder(input = {}, options = {}) {
   const client = createAlpacaClient(options);
   const payload = buildOrderPayload(input);
 
@@ -212,15 +227,37 @@ async function executeConsensusTrade(input = {}, options = {}) {
 }
 
 async function getAccountSnapshot(options = {}) {
+  const brokerTypes = resolveBrokerTypes(options);
+  if (brokerTypes.length === 1) {
+    return getBrokerAdapter(brokerTypes[0]).getAccount({ ...options, broker: brokerTypes[0] });
+  }
+
+  const accounts = await Promise.all(brokerTypes.map((brokerType) => {
+    return getBrokerAdapter(brokerType).getAccount({ ...options, broker: brokerType });
+  }));
+  return mergeAccountSnapshots(accounts);
+}
+
+async function getAlpacaAccountSnapshot(options = {}) {
   const client = createAlpacaClient(options);
   const account = await client.getAccount();
   return normalizeAccount(account);
 }
 
 async function getOpenPositions(options = {}) {
+  const brokerTypes = resolveBrokerTypes(options);
+  const positions = await Promise.all(brokerTypes.map((brokerType) => {
+    return getBrokerAdapter(brokerType).getPositions({ ...options, broker: brokerType });
+  }));
+  return positions.flat();
+}
+
+async function getAlpacaOpenPositions(options = {}) {
   const client = createAlpacaClient(options);
   const positions = await client.getPositions();
-  return Array.isArray(positions) ? positions.map(normalizePosition) : [];
+  return Array.isArray(positions)
+    ? positions.map((position) => ({ ...normalizePosition(position), broker: 'alpaca' }))
+    : [];
 }
 
 async function syncJournalPositions(options = {}) {
@@ -252,19 +289,43 @@ async function syncJournalPositions(options = {}) {
 }
 
 async function cancelOrder(orderId, options = {}) {
+  if (String(options.broker || '').trim().toLowerCase() && String(options.broker || '').trim().toLowerCase() !== 'alpaca') {
+    throw new Error('cancelOrder is currently only implemented for Alpaca');
+  }
+
+  return cancelAlpacaOrder(orderId, options);
+}
+
+async function cancelAlpacaOrder(orderId, options = {}) {
   const client = createAlpacaClient(options);
   await client.cancelOrder(orderId);
   return { ok: true, orderId };
 }
 
 async function liquidateAllPositions(options = {}) {
+  const brokerTypes = resolveBrokerTypes(options);
+  const results = await Promise.all(brokerTypes.map((brokerType) => {
+    if (brokerType === 'alpaca') {
+      return liquidateAllAlpacaPositions({ ...options, broker: brokerType });
+    }
+    return liquidateBrokerPositions(brokerType, options);
+  }));
+
+  return {
+    ok: results.every((result) => result?.ok !== false),
+    mode: brokerTypes.length > 1 ? 'multi-broker' : (results[0]?.mode || brokerTypes[0] || 'none'),
+    results,
+  };
+}
+
+async function liquidateAllAlpacaPositions(options = {}) {
   const client = createAlpacaClient(options);
   if (typeof client.closeAllPositions === 'function') {
     await client.closeAllPositions();
     return { ok: true, mode: 'closeAllPositions' };
   }
 
-  const positions = await getOpenPositions(options);
+  const positions = await getAlpacaOpenPositions(options);
   const orders = [];
   for (const position of positions) {
     const order = await client.createOrder({
@@ -285,16 +346,110 @@ async function liquidateAllPositions(options = {}) {
   };
 }
 
+async function liquidateBrokerPositions(brokerType, options = {}) {
+  const broker = getBrokerAdapter(brokerType);
+  const positions = await broker.getPositions({ ...options, broker: brokerType });
+  const orders = [];
+
+  for (const position of positions) {
+    const orderResult = await broker.submitOrder({
+      ticker: position.ticker,
+      exchange: position.exchange,
+      broker: brokerType,
+      direction: 'SELL',
+      shares: toPositiveInteger(position.shares),
+      orderType: 'market',
+    }, { ...options, broker: brokerType, recordJournal: false });
+    orders.push(orderResult);
+  }
+
+  return {
+    ok: true,
+    mode: `manual-${brokerType}`,
+    orders,
+  };
+}
+
+function resolveBrokerType(input = {}, options = {}) {
+  const explicit = String(options.broker || input.broker || '').trim().toLowerCase();
+  if (explicit) return explicit;
+  const ticker = String(input.ticker || input.symbol || '').trim().toUpperCase();
+  return ticker ? watchlist.getBrokerForTicker(ticker, 'alpaca') : 'alpaca';
+}
+
+function resolveBrokerTypes(options = {}) {
+  const explicit = String(options.broker || '').trim().toLowerCase();
+  if (explicit) return [explicit];
+
+  const symbols = Array.isArray(options.symbols) ? options.symbols : [];
+  if (symbols.length > 0) {
+    return Array.from(new Set(symbols.map((ticker) => watchlist.getBrokerForTicker(ticker, 'alpaca'))));
+  }
+
+  const brokers = watchlist.getWatchlist().map((entry) => entry.broker || 'alpaca');
+  return Array.from(new Set(brokers.length > 0 ? brokers : ['alpaca']));
+}
+
+function getBrokerAdapter(brokerType) {
+  const { createBroker } = require('./broker-adapter');
+  return createBroker(brokerType);
+}
+
+function mergeAccountSnapshots(accounts = []) {
+  return accounts.reduce((summary, account) => {
+    if (!account) return summary;
+    summary.id = summary.id || account.id || null;
+    summary.status = summary.status || account.status || null;
+    summary.equity += Number(account.equity || 0) || 0;
+    summary.cash += Number(account.cash || 0) || 0;
+    summary.buyingPower += Number(account.buyingPower || 0) || 0;
+    summary.daytradeCount += Number(account.daytradeCount || 0) || 0;
+    summary.patternDayTrader = summary.patternDayTrader || Boolean(account.patternDayTrader);
+    summary.raw.push(account.raw || account);
+    return summary;
+  }, {
+    id: null,
+    status: null,
+    equity: 0,
+    cash: 0,
+    buyingPower: 0,
+    daytradeCount: 0,
+    patternDayTrader: false,
+    raw: [],
+  });
+}
+
+function recordTradeSubmission(result, input = {}, options = {}) {
+  const db = options.journalDb || journal.getDb(options.journalPath);
+  journal.recordTrade(db, {
+    ticker: String(input.ticker || input.symbol || '').trim().toUpperCase(),
+    direction: String(input.direction || '').trim().toUpperCase(),
+    shares: toPositiveInteger(input.shares || input.qty),
+    price: Number(result?.order?.filledAvgPrice || input.referencePrice || input.price || 0) || 0,
+    stopLossPrice: Number(input.stopLossPrice || 0) || null,
+    consensusDetail: input.consensusDetail || null,
+    riskCheckDetail: input.riskCheckDetail || null,
+    status: String(result?.status || 'PENDING').trim().toUpperCase(),
+    alpacaOrderId: result?.order?.id != null ? String(result.order.id) : null,
+    notes: input.notes || null,
+  });
+}
+
 module.exports = {
   buildOrderPayload,
   normalizeAccount,
   normalizePosition,
   normalizeOrder,
+  submitAlpacaOrder,
   submitOrder,
   executeConsensusTrade,
+  getAlpacaAccountSnapshot,
   getAccountSnapshot,
+  getAlpacaOpenPositions,
   getOpenPositions,
   syncJournalPositions,
+  cancelAlpacaOrder,
   cancelOrder,
+  liquidateAllAlpacaPositions,
   liquidateAllPositions,
 };

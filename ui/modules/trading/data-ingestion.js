@@ -5,7 +5,7 @@ const dotenv = require('dotenv');
 
 const { getProjectRoot } = require('../../config');
 const log = require('../logger');
-const { getTickers } = require('./watchlist');
+const watchlist = require('./watchlist');
 
 const SEC_TICKER_MAP_URL = 'https://www.sec.gov/files/company_tickers.json';
 const SEC_SUBMISSIONS_BASE_URL = 'https://data.sec.gov/submissions';
@@ -285,16 +285,80 @@ async function getMarketCalendar(options = {}) {
   return client.getCalendar(params);
 }
 
-async function getWatchlistSnapshots(options = {}) {
+function resolveWatchlistEntries(symbols) {
+  const normalizedSymbols = normalizeSymbols(symbols || watchlist.getTickers());
+  return normalizedSymbols.map((ticker) => {
+    return watchlist.getEntry(ticker) || watchlist.normalizeWatchlistEntry({ ticker });
+  });
+}
+
+function groupEntriesByBroker(entries = []) {
+  const grouped = new Map();
+  for (const entry of entries) {
+    const brokerType = String(entry?.broker || 'alpaca').trim().toLowerCase() || 'alpaca';
+    if (!grouped.has(brokerType)) grouped.set(brokerType, []);
+    grouped.get(brokerType).push(entry);
+  }
+  return grouped;
+}
+
+function mergeSnapshotMaps(collections = [], symbols = []) {
+  const merged = new Map();
+  for (const collection of collections) {
+    const normalized = normalizeSnapshotCollection(collection);
+    for (const [symbol, snapshot] of normalized.entries()) {
+      merged.set(symbol, snapshot);
+    }
+  }
+
+  for (const symbol of normalizeSymbols(symbols)) {
+    if (!merged.has(symbol)) {
+      merged.set(symbol, {
+        symbol,
+        tradePrice: null,
+        bidPrice: null,
+        askPrice: null,
+        minuteClose: null,
+        dailyClose: null,
+        previousClose: null,
+        dailyVolume: null,
+        tradeTimestamp: null,
+        quoteTimestamp: null,
+        raw: null,
+      });
+    }
+  }
+
+  return merged;
+}
+
+async function getAlpacaWatchlistSnapshots(options = {}) {
   const client = createAlpacaClient(options);
-  const symbols = normalizeSymbols(options.symbols || getTickers());
+  const symbols = normalizeSymbols(options.symbols || watchlist.getTickers());
   const rawSnapshots = await client.getSnapshots(symbols);
   return normalizeSnapshotCollection(rawSnapshots, symbols);
 }
 
+async function getWatchlistSnapshots(options = {}) {
+  const { createBroker } = require('./broker-adapter');
+  const entries = resolveWatchlistEntries(options.symbols);
+  const grouped = groupEntriesByBroker(entries);
+  const snapshots = await Promise.all(Array.from(grouped.entries()).map(async ([brokerType, brokerEntries]) => {
+    const broker = createBroker(brokerType);
+    return broker.getSnapshots({
+      ...options,
+      broker: brokerType,
+      symbols: brokerEntries.map((entry) => entry.ticker),
+      watchlistEntries: brokerEntries,
+    });
+  }));
+
+  return mergeSnapshotMaps(snapshots, entries.map((entry) => entry.ticker));
+}
+
 async function getLatestBars(options = {}) {
   const client = createAlpacaClient(options);
-  const symbols = normalizeSymbols(options.symbols || getTickers());
+  const symbols = normalizeSymbols(options.symbols || watchlist.getTickers());
   const rawBars = await client.getLatestBars(symbols);
   const normalized = new Map();
 
@@ -313,7 +377,7 @@ async function getLatestBars(options = {}) {
 
 async function getHistoricalBars(options = {}) {
   const client = createAlpacaClient(options);
-  const symbols = normalizeSymbols(options.symbols || getTickers());
+  const symbols = normalizeSymbols(options.symbols || watchlist.getTickers());
   const params = {
     limit: Number.parseInt(options.limit || '30', 10) || 30,
     timeframe: resolveTimeframe(client, options.timeframe || '1Day'),
@@ -338,9 +402,9 @@ async function collectAsyncBars(asyncIterable) {
   return bars;
 }
 
-async function getNews(options = {}) {
+async function getAlpacaNews(options = {}) {
   const client = createAlpacaClient(options);
-  const symbols = normalizeSymbols(options.symbols || getTickers());
+  const symbols = normalizeSymbols(options.symbols || watchlist.getTickers());
   const params = {
     totalLimit: Number.parseInt(options.limit || `${DEFAULT_NEWS_LIMIT}`, 10) || DEFAULT_NEWS_LIMIT,
   };
@@ -354,6 +418,23 @@ async function getNews(options = {}) {
 
   const items = await client.getNews(params);
   return Array.isArray(items) ? items.map(normalizeNewsItem) : [];
+}
+
+async function getNews(options = {}) {
+  const { createBroker } = require('./broker-adapter');
+  const entries = resolveWatchlistEntries(options.symbols);
+  const grouped = groupEntriesByBroker(entries);
+  const newsLists = await Promise.all(Array.from(grouped.entries()).map(async ([brokerType, brokerEntries]) => {
+    const broker = createBroker(brokerType);
+    return broker.getNews({
+      ...options,
+      broker: brokerType,
+      symbols: brokerEntries.map((entry) => entry.ticker),
+      watchlistEntries: brokerEntries,
+    });
+  }));
+
+  return newsLists.flat().map(normalizeNewsItem);
 }
 
 async function fetchJson(url, options = {}) {
@@ -481,7 +562,7 @@ async function getYahooHistoricalBars(options = {}) {
 }
 
 async function buildWatchlistContext(options = {}) {
-  const symbols = normalizeSymbols(options.symbols || getTickers());
+  const symbols = normalizeSymbols(options.symbols || watchlist.getTickers());
   const [clock, calendar, snapshots, news] = await Promise.all([
     getMarketClock(options),
     getMarketCalendar({
@@ -507,6 +588,8 @@ module.exports = {
   DEFAULT_FILINGS_LIMIT,
   resolveAlpacaCredentials,
   createAlpacaClient,
+  getAlpacaWatchlistSnapshots,
+  getAlpacaNews,
   normalizeSymbols,
   normalizeSnapshot,
   normalizeSnapshotCollection,
