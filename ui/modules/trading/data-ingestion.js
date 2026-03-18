@@ -345,7 +345,7 @@ async function getNews(options = {}) {
     limit: Number.parseInt(options.limit || `${DEFAULT_NEWS_LIMIT}`, 10) || DEFAULT_NEWS_LIMIT,
   };
   if (symbols.length > 0) {
-    params.symbols = symbols.join(',');
+    params.symbols = symbols;
   }
   const start = formatIsoParam(options.start);
   const end = formatIsoParam(options.end);

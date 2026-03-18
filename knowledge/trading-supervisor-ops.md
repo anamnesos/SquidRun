@@ -39,6 +39,12 @@ Primary entrypoints:
 - `produceSignals(agentId, alpacaClient)` — fetches live watchlist snapshots, 5-day daily bars, and news, then returns agent-specific BUY/SELL/HOLD signals
 - `registerAllSignals(orchestrator, agentId, signals)` — writes those signals into the orchestrator for the consensus round
 
+Runtime wiring:
+
+- `runPreMarket()` now auto-generates and registers any missing Architect / Builder / Oracle signals inside the live orchestrator process
+- `runConsensusRound()` backfills any remaining missing signals before consensus so the supervisor can recover after a restart or partial signal state
+- `data-ingestion.getNews()` now sends Alpaca news requests with a symbol array instead of a comma-joined string, matching the current SDK contract
+
 Runtime state is persisted at:
 
 `workspace/.squidrun/runtime/trading-supervisor-state.json`
