@@ -43,6 +43,10 @@ const ASSET_SIGNAL_CONFIG = Object.freeze({
 		riskMomentumDivisor: 0.08,
 		riskRangeDivisor: 0.05,
 		thresholdOffset: 0,
+		trendWeight: 0,
+		chopWeight: 0,
+		exhaustionWeight: 0,
+		intradayMomentumDivisor: 0.02,
 	}),
 	crypto: Object.freeze({
 		momentumDivisor: 0.06,
@@ -51,6 +55,10 @@ const ASSET_SIGNAL_CONFIG = Object.freeze({
 		riskMomentumDivisor: 0.18,
 		riskRangeDivisor: 0.12,
 		thresholdOffset: 0.04,
+		trendWeight: 0.22,
+		chopWeight: 0.18,
+		exhaustionWeight: 0.10,
+		intradayMomentumDivisor: 0.045,
 	}),
 });
 
@@ -71,6 +79,35 @@ const NEGATIVE_NEWS_TERMS = Object.freeze([
 	'cuts',
 	'lower',
 	'lowered',
+]);
+
+const CRYPTO_POSITIVE_NEWS_TERMS = Object.freeze([
+	'etf',
+	'approval',
+	'approved',
+	'inflow',
+	'inflows',
+	'listing',
+	'launch',
+	'mainnet',
+	'partnership',
+	'adoption',
+	'upgrade',
+]);
+
+const CRYPTO_NEGATIVE_NEWS_TERMS = Object.freeze([
+	'hack',
+	'exploit',
+	'outflow',
+	'outflows',
+	'liquidation',
+	'liquidations',
+	'ban',
+	'banned',
+	'delay',
+	'delayed',
+	'reject',
+	'rejected',
 ]);
 
 function toAgentId(value) {
@@ -194,19 +231,29 @@ async function getHistoricalBarsWithFallback(options = {}, symbols = []) {
 }
 
 function scoreNews(newsItems = []) {
+	return scoreNewsForAsset(newsItems, DEFAULT_ASSET_CLASS);
+}
+
+function scoreNewsForAsset(newsItems = [], assetClass = DEFAULT_ASSET_CLASS) {
 	let positiveHits = 0;
 	let negativeHits = 0;
 	const matchedTerms = [];
+	const positiveTerms = assetClass === 'crypto'
+		? [...POSITIVE_NEWS_TERMS, ...CRYPTO_POSITIVE_NEWS_TERMS]
+		: POSITIVE_NEWS_TERMS;
+	const negativeTerms = assetClass === 'crypto'
+		? [...NEGATIVE_NEWS_TERMS, ...CRYPTO_NEGATIVE_NEWS_TERMS]
+		: NEGATIVE_NEWS_TERMS;
 
 	for (const item of newsItems) {
 		const haystack = `${item?.headline || ''} ${item?.summary || ''}`.toLowerCase();
-		for (const term of POSITIVE_NEWS_TERMS) {
+		for (const term of positiveTerms) {
 			if (haystack.includes(term)) {
 				positiveHits += 1;
 				matchedTerms.push(term);
 			}
 		}
-		for (const term of NEGATIVE_NEWS_TERMS) {
+		for (const term of negativeTerms) {
 			if (haystack.includes(term)) {
 				negativeHits += 1;
 				matchedTerms.push(term);
@@ -220,6 +267,71 @@ function scoreNews(newsItems = []) {
 		positiveHits,
 		negativeHits,
 		terms: Array.from(new Set(matchedTerms)).slice(0, 4),
+	};
+}
+
+function getDirectionalBias(value) {
+	if (value > 0.0025) return 1;
+	if (value < -0.0025) return -1;
+	return 0;
+}
+
+function getCryptoTrendDiagnostics(currentPrice, snapshot = {}, bars = [], assetConfig = ASSET_SIGNAL_CONFIG.crypto) {
+	const closes = bars.map((bar) => toNumber(bar?.close, 0)).filter((value) => value > 0);
+	const recentCloses = closes.slice(-3);
+	const shortAvgClose = mean(recentCloses);
+	const shortMomentumPct = shortAvgClose > 0 ? (currentPrice - shortAvgClose) / shortAvgClose : 0;
+	const recentTrendPct = recentCloses.length >= 2 && recentCloses[0] > 0
+		? (recentCloses[recentCloses.length - 1] - recentCloses[0]) / recentCloses[0]
+		: 0;
+	const intradayReference = toNumber(snapshot?.previousClose, 0) || toNumber(snapshot?.dailyClose, 0);
+	const intradayPct = intradayReference > 0 ? (currentPrice - intradayReference) / intradayReference : 0;
+	const directionalBiases = [
+		getDirectionalBias(shortMomentumPct),
+		getDirectionalBias(recentTrendPct),
+		getDirectionalBias(intradayPct),
+	].filter((value) => value !== 0);
+	const positiveVotes = directionalBiases.filter((value) => value > 0).length;
+	const negativeVotes = directionalBiases.filter((value) => value < 0).length;
+	let dominantBias = 0;
+	if (positiveVotes >= 2) dominantBias = 1;
+	if (negativeVotes >= 2) dominantBias = -1;
+
+	const alignmentStrength = dominantBias === 0
+		? 0
+		: clamp(
+			(
+				(Math.abs(shortMomentumPct) / Math.max(assetConfig.momentumDivisor, 0.0001))
+				+ (Math.abs(recentTrendPct) / Math.max(assetConfig.momentumDivisor, 0.0001))
+				+ (Math.abs(intradayPct) / Math.max(assetConfig.intradayMomentumDivisor, 0.0001))
+			) / 3,
+			0,
+			1
+		);
+	const mixedSignals = positiveVotes > 0 && negativeVotes > 0;
+	const chopPenalty = mixedSignals
+		? clamp(
+			(
+				(Math.abs(shortMomentumPct) / Math.max(assetConfig.momentumDivisor, 0.0001))
+				+ (Math.abs(recentTrendPct) / Math.max(assetConfig.momentumDivisor, 0.0001))
+				+ (Math.abs(intradayPct) / Math.max(assetConfig.intradayMomentumDivisor, 0.0001))
+			) / 4,
+			0,
+			1
+		)
+		: 0;
+	const exhaustionPenalty = dominantBias !== 0 && getDirectionalBias(intradayPct) !== dominantBias
+		? clamp(Math.abs(shortMomentumPct) / Math.max(assetConfig.momentumDivisor, 0.0001), 0, 1)
+		: 0;
+
+	return {
+		shortMomentumPct,
+		recentTrendPct,
+		intradayPct,
+		dominantBias,
+		alignmentStrength,
+		chopPenalty,
+		exhaustionPenalty,
 	};
 }
 
@@ -251,7 +363,18 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, opt
 		0,
 		1
 	);
-	const newsScore = scoreNews(newsItems);
+	const newsScore = scoreNewsForAsset(newsItems, assetClass);
+	const cryptoTrend = assetClass === 'crypto'
+		? getCryptoTrendDiagnostics(currentPrice, snapshot, bars, assetConfig)
+		: {
+			shortMomentumPct: 0,
+			recentTrendPct: 0,
+			intradayPct: 0,
+			dominantBias: 0,
+			alignmentStrength: 0,
+			chopPenalty: 0,
+			exhaustionPenalty: 0,
+		};
 
 	let compositeScore = (
 		(momentumScore * profile.momentumWeight)
@@ -259,6 +382,11 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, opt
 		+ (volumeScore * profile.volumeWeight)
 		- (riskPenalty * profile.riskWeight)
 	);
+	if (assetClass === 'crypto') {
+		compositeScore += (cryptoTrend.dominantBias * cryptoTrend.alignmentStrength * assetConfig.trendWeight);
+		compositeScore -= (cryptoTrend.chopPenalty * assetConfig.chopWeight);
+		compositeScore -= (cryptoTrend.exhaustionPenalty * assetConfig.exhaustionWeight);
+	}
 	compositeScore += profile.convictionBias * (
 		profile === AGENT_PROFILES.oracle
 			? newsScore.score
@@ -290,6 +418,16 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, opt
 		0.4,
 		0.92
 	);
+	const adjustedConfidence = assetClass === 'crypto'
+		? clamp(
+			confidence
+			+ (cryptoTrend.alignmentStrength * 0.06)
+			- (cryptoTrend.chopPenalty * 0.07)
+			- (cryptoTrend.exhaustionPenalty * 0.04),
+			0.4,
+			0.92
+		)
+		: confidence;
 
 	const momentumText = avgClose > 0
 		? `${momentumPct >= 0 ? 'above' : 'below'} 5d avg by ${(Math.abs(momentumPct) * 100).toFixed(1)}%`
@@ -299,16 +437,31 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, opt
 		: 'normal volume';
 	let newsText = 'neutral news flow';
 	if (newsScore.positiveHits > newsScore.negativeHits) {
-		newsText = `positive news (${newsScore.terms.join('/') || 'upgrade/beat/raise'})`;
+		newsText = `positive news (${newsScore.terms.join('/') || (assetClass === 'crypto' ? 'etf/inflow/listing' : 'upgrade/beat/raise')})`;
 	} else if (newsScore.negativeHits > newsScore.positiveHits) {
-		newsText = `negative news (${newsScore.terms.join('/') || 'downgrade/miss/cut'})`;
+		newsText = `negative news (${newsScore.terms.join('/') || (assetClass === 'crypto' ? 'hack/outflow/liquidation' : 'downgrade/miss/cut')})`;
 	}
+	const cryptoTrendText = assetClass === 'crypto'
+		? (
+			cryptoTrend.dominantBias > 0
+				? `trend aligned higher across 3d/intraday (${(cryptoTrend.shortMomentumPct * 100).toFixed(1)}% / ${(cryptoTrend.intradayPct * 100).toFixed(1)}%)`
+				: cryptoTrend.dominantBias < 0
+					? `trend aligned lower across 3d/intraday (${(cryptoTrend.shortMomentumPct * 100).toFixed(1)}% / ${(cryptoTrend.intradayPct * 100).toFixed(1)}%)`
+					: `mixed short-term crypto tape (${(cryptoTrend.shortMomentumPct * 100).toFixed(1)}% / ${(cryptoTrend.intradayPct * 100).toFixed(1)}%)`
+		)
+		: '';
 
 	let reasoning = `${momentumText}, ${volumeText}, ${newsText}.`;
 	if (direction === 'BUY') {
-		reasoning = `${momentumText}, ${volumeText}, ${newsText}; bias resolves to BUY.`;
+		reasoning = assetClass === 'crypto'
+			? `${momentumText}, ${cryptoTrendText}, ${volumeText}, ${newsText}; bias resolves to BUY.`
+			: `${momentumText}, ${volumeText}, ${newsText}; bias resolves to BUY.`;
 	} else if (direction === 'SELL') {
-		reasoning = `${momentumText}, ${volumeText}, ${newsText}; bias resolves to SELL.`;
+		reasoning = assetClass === 'crypto'
+			? `${momentumText}, ${cryptoTrendText}, ${volumeText}, ${newsText}; bias resolves to SELL.`
+			: `${momentumText}, ${volumeText}, ${newsText}; bias resolves to SELL.`;
+	} else if (assetClass === 'crypto' && (cryptoTrend.chopPenalty > 0.25 || cryptoTrend.exhaustionPenalty > 0.25)) {
+		reasoning = `${momentumText}, ${cryptoTrendText}, ${volumeText}, ${newsText}, but conflicting crypto trend structure keeps it HOLD.`;
 	} else if (riskPenalty > 0.55) {
 		reasoning = `${momentumText}, ${volumeText}, ${newsText}, but elevated short-term risk keeps it HOLD.`;
 	}
@@ -316,7 +469,7 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, opt
 	return {
 		ticker,
 		direction,
-		confidence: Number(confidence.toFixed(2)),
+		confidence: Number(adjustedConfidence.toFixed(2)),
 		reasoning,
 		metrics: {
 			currentPrice: Number(currentPrice.toFixed(2)),
@@ -326,6 +479,12 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, opt
 			riskPenalty: Number(riskPenalty.toFixed(2)),
 			newsScore: Number(newsScore.score.toFixed(2)),
 			assetClass,
+			shortMomentumPct: Number(cryptoTrend.shortMomentumPct.toFixed(4)),
+			recentTrendPct: Number(cryptoTrend.recentTrendPct.toFixed(4)),
+			intradayPct: Number(cryptoTrend.intradayPct.toFixed(4)),
+			trendAlignment: Number(cryptoTrend.alignmentStrength.toFixed(2)),
+			chopPenalty: Number(cryptoTrend.chopPenalty.toFixed(2)),
+			exhaustionPenalty: Number(cryptoTrend.exhaustionPenalty.toFixed(2)),
 		},
 	};
 }
@@ -383,6 +542,8 @@ function registerAllSignals(orchestrator, agentId, signals = []) {
 }
 
 module.exports = {
+	analyzeTicker,
+	scoreNewsForAsset,
 	produceSignals,
 	registerAllSignals,
 };
