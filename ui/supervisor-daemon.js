@@ -822,6 +822,18 @@ class SupervisorDaemon {
     }
   }
 
+  notifyTelegramTrading(message) {
+    try {
+      execFileSync(process.execPath, [HM_SEND_SCRIPT_PATH, 'telegram', message], {
+        cwd: this.projectRoot,
+        timeout: 15000,
+        stdio: 'ignore',
+      });
+    } catch (err) {
+      this.logger.warn(`Trading Telegram notify failed: ${err.message}`);
+    }
+  }
+
   async getTradingDaySchedule(date) {
     const calendarDay = await tradingScheduler.getCalendarDay(date, { projectRoot: this.projectRoot });
     if (!calendarDay) return null;
@@ -869,10 +881,22 @@ class SupervisorDaemon {
         this.tradingState.sleeping = false;
         this.notifyTradingAgents(phaseKey, tradingDay);
         result = await this.tradingOrchestrator.runPreMarket({ date: marketDate });
+        this.notifyTelegramTrading(`[TRADING] Pre-market wake for ${marketDate}. Watching ${Array.isArray(result?.symbols) ? result.symbols.length : '?'} stocks. Consensus at 6:25 AM PT, market open at 6:30 AM PT.`);
       } else if (phaseKey === 'pre_open_consensus') {
         result = await this.tradingOrchestrator.runConsensusRound({ date: marketDate });
+        const approved = Array.isArray(result?.approvedTrades) ? result.approvedTrades.length : 0;
+        const rejected = Array.isArray(result?.rejectedTrades) ? result.rejectedTrades.length : 0;
+        const tradeList = approved > 0
+          ? result.approvedTrades.map((t) => `${t.consensus?.decision} ${t.ticker}`).join(', ')
+          : 'none';
+        this.notifyTelegramTrading(`[TRADING] Consensus for ${marketDate}: ${approved} approved, ${rejected} rejected. Trades: ${tradeList}.`);
       } else if (phaseKey === 'market_open_execute') {
         result = await this.tradingOrchestrator.runMarketOpen({ date: marketDate });
+        const execCount = Array.isArray(result?.executions) ? result.executions.length : 0;
+        if (execCount > 0) {
+          const execList = result.executions.map((e) => `${e.consensus?.decision} ${e.ticker}`).join(', ');
+          this.notifyTelegramTrading(`[TRADING] Market open: ${execCount} orders executed — ${execList}.`);
+        }
       } else if (phaseKey === 'close_wake') {
         this.tradingState.sleeping = false;
         this.notifyTradingAgents(phaseKey, tradingDay);
