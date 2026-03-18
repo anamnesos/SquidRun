@@ -15,6 +15,7 @@ See `workspace/specs/trading-system-design.md` for full spec.
 - `executor.js` — Broker-routed order placement (Alpaca + IBKR)
 - `broker-adapter.js` — Unified broker interface for Alpaca and IBKR
 - `ibkr-client.js` — Interactive Brokers client wrapper for account, positions, orders, and snapshots
+- `portfolio-tracker.js` — Unified capital snapshot across Alpaca, IBKR, Polymarket, DeFi yield, and future token positions
 - `polymarket-client.js` — Polymarket CLOB client wrapper for auth, markets, order books, balances, and dry-run order flow
 - `polymarket-scanner.js` — Polymarket market discovery and filtering for liquid, short-horizon binary markets with edge ranking support
 - `polymarket-signals.js` — Deterministic per-agent Polymarket probability assessment and consensus aggregation
