@@ -206,6 +206,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/terminal/agent-colors.js: Exports attachAgentColors, AGENT_COLORS.
 - ui/modules/terminal/injection.js: Terminal injection helpers Extracted from terminal.js to isolate fragile send/verify logic.
 - ui/modules/terminal/recovery.js: Terminal recovery helpers (unstick, restart, sweeper) Extracted from terminal.js to isolate recovery logic.
+- ui/modules/trading/agent-attribution.js: Persistent prediction-attribution tracker that records per-agent calls and later outcomes, then computes asset-class-specific stats and leaderboards for future consensus vote weighting.
 - ui/modules/trading/broker-adapter.js: Unified trading-broker factory that presents the common account/positions/orders/snapshots/news interface used by the trading stack and dispatches requests to PaperBroker or [private-live-ops] implementations.
 - ui/modules/trading/data-ingestion.js: Trading data access layer for market clock/calendar, watchlist snapshots, bars, news, SEC filings, and Yahoo fallbacks; now broker-routes watchlist snapshot/news fetches so PaperBroker and [private-live-ops] symbols can coexist in the same run.
 - ui/modules/trading/dynamic-watchlist.js: Persistent static-plus-dynamic watchlist manager that lets future smart-money and launch-radar modules add sourced tickers with expiry while preserving a unified active watchlist for the trading stack.
