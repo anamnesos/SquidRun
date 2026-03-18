@@ -28,6 +28,17 @@ Daily market-day phases (Pacific Time):
 5. `1:00 PM` — `market_close_review`
 6. `1:30 PM` — `end_of_day`
 
+## Signal Production
+
+The pre-market signal generator lives at:
+
+`ui/modules/trading/signal-producer.js`
+
+Primary entrypoints:
+
+- `produceSignals(agentId, alpacaClient)` — fetches live watchlist snapshots, 5-day daily bars, and news, then returns agent-specific BUY/SELL/HOLD signals
+- `registerAllSignals(orchestrator, agentId, signals)` — writes those signals into the orchestrator for the consensus round
+
 Runtime state is persisted at:
 
 `workspace/.squidrun/runtime/trading-supervisor-state.json`
