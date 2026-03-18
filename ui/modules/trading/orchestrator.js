@@ -97,6 +97,44 @@ function normalizeSignal(agentId, ticker, signal = {}) {
 	};
 }
 
+function cloneAccountState(accountState = {}) {
+	return {
+		...accountState,
+		openPositions: Array.isArray(accountState.openPositions)
+			? accountState.openPositions.map((position) => ({ ...position }))
+			: [],
+	};
+}
+
+function applyTradeToAccountState(accountState, trade = {}, riskCheck = {}) {
+	const next = cloneAccountState(accountState);
+	const ticker = toTicker(trade.ticker);
+	const direction = toDirection(trade.direction);
+
+	next.tradesToday = toPositiveInteger(next.tradesToday) + 1;
+
+	if (direction === 'BUY') {
+		const shares = toPositiveInteger(riskCheck.maxShares);
+		const existing = next.openPositions.find((position) => toTicker(position.ticker) === ticker);
+		if (existing) {
+			existing.shares = toPositiveInteger(existing.shares) + shares;
+			existing.avgPrice = toNumber(trade.price, existing.avgPrice || 0);
+			existing.stopLossPrice = riskCheck.stopLossPrice || existing.stopLossPrice || null;
+		} else {
+			next.openPositions.push({
+				ticker,
+				shares,
+				avgPrice: toNumber(trade.price, 0),
+				stopLossPrice: riskCheck.stopLossPrice || null,
+			});
+		}
+	} else if (direction === 'SELL') {
+		next.openPositions = next.openPositions.filter((position) => toTicker(position.ticker) !== ticker);
+	}
+
+	return next;
+}
+
 function defaultState() {
 	return {
 		signals: new Map(),
@@ -288,6 +326,8 @@ class TradingOrchestrator {
 		const dailyPause = riskEngine.checkDailyPause(accountState, limits);
 		const results = completeSignals.size > 0 ? consensus.evaluateAll(completeSignals) : [];
 		const approvedTrades = [];
+		const rejectedTrades = [];
+		let simulatedAccountState = cloneAccountState(accountState);
 
 		for (const result of results) {
 			const signals = completeSignals.get(result.ticker) || [];
@@ -303,7 +343,7 @@ class TradingOrchestrator {
 					direction: result.decision,
 					price: referencePrice || 0,
 					marketCap: options.marketCaps?.[result.ticker] ?? null,
-				}, accountState, limits);
+				}, simulatedAccountState, limits);
 				actedOn = Boolean(riskCheck.approved);
 				if (riskCheck.approved) {
 					approvedTrades.push({
@@ -313,6 +353,18 @@ class TradingOrchestrator {
 						riskCheck,
 						marketCap: options.marketCaps?.[result.ticker] ?? null,
 						limits,
+					});
+					simulatedAccountState = applyTradeToAccountState(simulatedAccountState, {
+						ticker: result.ticker,
+						direction: result.decision,
+						price: referencePrice,
+					}, riskCheck);
+				} else {
+					rejectedTrades.push({
+						ticker: result.ticker,
+						consensus: result,
+						referencePrice,
+						riskCheck,
 					});
 				}
 			}
@@ -334,11 +386,13 @@ class TradingOrchestrator {
 			phase: 'consensus',
 			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
 			accountState,
+			simulatedAccountState,
 			killSwitch,
 			dailyPause,
 			incompleteSignals: incomplete,
 			results,
 			approvedTrades,
+			rejectedTrades,
 			asOf: new Date().toISOString(),
 		};
 
@@ -351,18 +405,14 @@ class TradingOrchestrator {
 		const consensusPhase = options.consensusPhase || this.state.phases.consensus || await this.runConsensusRound(options);
 		const approvedTrades = Array.isArray(options.approvedTrades) ? options.approvedTrades : consensusPhase.approvedTrades;
 		const executions = [];
+		let simulatedAccountState = cloneAccountState(consensusPhase.simulatedAccountState || consensusPhase.accountState || {});
 
 		for (const trade of approvedTrades) {
-			const [accountSnapshot, openPositions] = await Promise.all([
-				executor.getAccountSnapshot(options),
-				executor.getOpenPositions(options),
-			]);
-			const accountState = this.buildAccountState(accountSnapshot, openPositions, db, options);
 			const execution = await executor.executeConsensusTrade({
 				consensus: trade.consensus,
 				price: trade.referencePrice,
 				marketCap: trade.marketCap,
-				account: accountState,
+				account: simulatedAccountState,
 				limits: trade.limits,
 				requestedShares: trade.riskCheck?.maxShares,
 				notes: `market-open:${trade.ticker}`,
@@ -377,9 +427,17 @@ class TradingOrchestrator {
 				consensus: trade.consensus,
 				riskCheck: trade.riskCheck,
 				referencePrice: trade.referencePrice,
-				accountState,
+				accountState: simulatedAccountState,
 				execution,
 			});
+
+			if (execution?.ok) {
+				simulatedAccountState = applyTradeToAccountState(simulatedAccountState, {
+					ticker: trade.ticker,
+					direction: trade.consensus?.decision,
+					price: trade.referencePrice,
+				}, trade.riskCheck || {});
+			}
 		}
 
 		const syncedPositions = await executor.syncJournalPositions({
