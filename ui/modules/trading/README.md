@@ -20,8 +20,7 @@ See `workspace/specs/trading-system-design.md` for full spec.
 - `polymarket-signals.js` — Deterministic per-agent Polymarket probability assessment and consensus aggregation
 - `polymarket-sizer.js` — Half-Kelly Polymarket position sizing with bankroll, exposure, and stop-loss constraints
 - `journal.js` — SQLite trade journal
-- `scheduler.js` — Market-hours wake/sleep scheduling
-- `scheduler.js` — Market-hours wake/sleep scheduling plus 24/7 crypto consensus cadence
+- `scheduler.js` — Market-hours wake/sleep scheduling plus 24/7 crypto and Polymarket automation cadences
 - `telegram-summary.js` — Daily trading summary via Telegram
 
 ## Setup

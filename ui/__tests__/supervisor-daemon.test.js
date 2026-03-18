@@ -419,4 +419,90 @@ describe('supervisor-daemon integrations', () => {
 
     writeSpy.mockRestore();
   });
+
+  test('runs Polymarket dry-run execution through the supervisor phase wiring', async () => {
+    const polymarketDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: false,
+      cryptoTradingEnabled: false,
+      polymarketTradingEnabled: true,
+      polymarketClient: {
+        getBalance: jest.fn().mockResolvedValue({ balance: 162, available: 162 }),
+        getPositions: jest.fn().mockResolvedValue([]),
+        createOrder: jest.fn().mockResolvedValue({ ok: true, status: 'dry_run' }),
+      },
+      polymarketScanner: {
+        scanMarkets: jest.fn().mockResolvedValue([
+          {
+            conditionId: 'market-1',
+            question: 'Will BTC close above $120k by June 30?',
+            tokens: { yes: 'yes-token', no: 'no-token' },
+            currentPrices: { yes: 0.61, no: 0.39 },
+          },
+        ]),
+      },
+      polymarketSignals: {
+        produceSignals: jest.fn(() => new Map([
+          ['architect', [{ conditionId: 'market-1', probability: 0.74, confidence: 0.84, marketPrice: 0.61 }]],
+          ['builder', [{ conditionId: 'market-1', probability: 0.76, confidence: 0.86, marketPrice: 0.61 }]],
+          ['oracle', [{ conditionId: 'market-1', probability: 0.58, confidence: 0.7, marketPrice: 0.61 }]],
+        ])),
+        buildConsensus: jest.fn(() => ({
+          conditionId: 'market-1',
+          decision: 'BUY_YES',
+          consensus: true,
+          agreementCount: 2,
+          probability: 0.72,
+          edge: 0.11,
+        })),
+      },
+      polymarketSizer: {
+        positionSize: jest.fn().mockReturnValue({
+          executable: true,
+          stake: 24.3,
+          shares: 39.836,
+          reasons: [],
+        }),
+        shouldExit: jest.fn().mockReturnValue({ exit: false, reason: 'Hold', stopPrice: 0.48, adverseMovePct: 0 }),
+      },
+      pidPath: '/tmp/polymarket-supervisor.pid',
+      statusPath: '/tmp/polymarket-supervisor-status.json',
+      logPath: '/tmp/polymarket-supervisor.log',
+      taskLogDir: '/tmp/polymarket-supervisor-tasks',
+      wakeSignalPath: '/tmp/polymarket-supervisor-wake.signal',
+    });
+
+    const result = await polymarketDaemon.runPolymarketPhase({
+      key: 'polymarket_execute',
+      marketDate: '2026-03-18',
+      scheduledAt: '2026-03-18T08:10:00.000Z',
+      windowKey: '2026-03-18T08:00:00.000Z',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      phase: 'polymarket_execute',
+      summary: expect.objectContaining({ orders: 1 }),
+    }));
+    expect(polymarketDaemon.polymarketClient.createOrder).toHaveBeenCalledWith(
+      'yes-token',
+      'BUY',
+      0.61,
+      39.836,
+      expect.objectContaining({ dryRun: true })
+    );
+    expect(polymarketDaemon.polymarketTradingState.lastExecution).toEqual(expect.objectContaining({
+      orders: [
+        expect.objectContaining({
+          conditionId: 'market-1',
+          action: 'BUY_YES',
+        }),
+      ],
+    }));
+
+    await polymarketDaemon.stop('test-cleanup-polymarket');
+  });
 });

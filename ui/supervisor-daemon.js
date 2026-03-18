@@ -27,6 +27,10 @@ const tradingOrchestrator = require('./modules/trading/orchestrator');
 const tradingScheduler = require('./modules/trading/scheduler');
 const tradingWatchlist = require('./modules/trading/watchlist');
 const tradingRiskEngine = require('./modules/trading/risk-engine');
+const polymarketClient = require('./modules/trading/polymarket-client');
+const polymarketScanner = require('./modules/trading/polymarket-scanner');
+const polymarketSignals = require('./modules/trading/polymarket-signals');
+const polymarketSizer = require('./modules/trading/polymarket-sizer');
 
 const DEFAULT_POLL_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_POLL_MS || '4000', 10) || 4000);
 const DEFAULT_HEARTBEAT_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_HEARTBEAT_MS || '15000', 10) || 15000);
@@ -58,6 +62,7 @@ const DEFAULT_TASK_LOG_DIR = resolveRuntimePath(path.join('supervisor-tasks'));
 const DEFAULT_WAKE_SIGNAL_PATH = resolveRuntimePath('supervisor-wake.signal');
 const DEFAULT_TRADING_STATE_PATH = resolveRuntimePath('trading-supervisor-state.json');
 const DEFAULT_CRYPTO_TRADING_STATE_PATH = resolveRuntimePath('crypto-trading-supervisor-state.json');
+const DEFAULT_POLYMARKET_TRADING_STATE_PATH = resolveRuntimePath('polymarket-trading-state.json');
 const HM_SEND_SCRIPT_PATH = path.join(__dirname, 'scripts', 'hm-send.js');
 const TRADING_AGENT_TARGETS = Object.freeze(['architect', 'builder', 'oracle']);
 const TRADING_PHASES = Object.freeze([
@@ -161,6 +166,30 @@ function defaultCryptoTradingState() {
     nextEvent: null,
     updatedAt: null,
   };
+}
+
+function defaultPolymarketTradingState() {
+  return {
+    lastProcessedAt: null,
+    lastResult: null,
+    nextEvent: null,
+    dayStartDate: null,
+    dayStartBankroll: null,
+    lastScan: null,
+    lastConsensus: null,
+    lastExecution: null,
+    lastMonitor: null,
+    updatedAt: null,
+  };
+}
+
+function getDateKeyInTimeZone(value = new Date(), timeZone = tradingScheduler.MARKET_TIME_ZONE) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(value instanceof Date ? value : new Date(value));
 }
 
 function parseArgs(argv) {
@@ -382,6 +411,42 @@ class SupervisorDaemon {
         journalPath: resolveRuntimePath('trade-journal.db'),
       }))
       : null;
+    const polymarketConfigured = (() => {
+      try {
+        return Boolean(polymarketClient.resolvePolymarketConfig(process.env)?.configured);
+      } catch {
+        return false;
+      }
+    })();
+    this.polymarketTradingEnabled = options.polymarketTradingEnabled === true
+      || (
+        options.polymarketTradingEnabled !== false
+        && process.env.SQUIDRUN_POLYMARKET_AUTOMATION !== '0'
+        && polymarketConfigured
+      );
+    this.polymarketTradingStatePath = options.polymarketTradingStatePath || DEFAULT_POLYMARKET_TRADING_STATE_PATH;
+    this.polymarketTradingState = {
+      ...defaultPolymarketTradingState(),
+      ...(readJsonFile(this.polymarketTradingStatePath, defaultPolymarketTradingState()) || {}),
+    };
+    this.polymarketTradingPhasePromise = null;
+    this.lastPolymarketTradingSummary = this.polymarketTradingEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        lastProcessedAt: this.polymarketTradingState.lastProcessedAt || null,
+        nextEvent: this.polymarketTradingState.nextEvent || null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        lastProcessedAt: null,
+        nextEvent: null,
+      };
+    this.polymarketClient = options.polymarketClient || polymarketClient;
+    this.polymarketScanner = options.polymarketScanner || polymarketScanner;
+    this.polymarketSignals = options.polymarketSignals || polymarketSignals;
+    this.polymarketSizer = options.polymarketSizer || polymarketSizer;
     this.sleepConsolidator = this.sleepEnabled
       ? (options.sleepConsolidator || new SleepConsolidator({
         logger: this.logger,
@@ -532,6 +597,7 @@ class SupervisorDaemon {
 
     const tradingResult = await this.maybeRunTradingAutomation(nowMs);
     const cryptoTradingResult = await this.maybeRunCryptoTradingAutomation(nowMs);
+    const polymarketTradingResult = await this.maybeRunPolymarketTradingAutomation(nowMs);
     const sleepResult = await this.maybeRunSleepCycle();
     this.writeStatus();
     return {
@@ -543,6 +609,7 @@ class SupervisorDaemon {
       memoryConsistency,
       tradingResult,
       cryptoTradingResult,
+      polymarketTradingResult,
       sleepResult,
     };
   }
@@ -593,6 +660,7 @@ class SupervisorDaemon {
     const leasePruned = Number(summary?.leaseHousekeeping?.pruned || 0);
     const tradingRan = summary?.tradingResult && summary.tradingResult.skipped !== true;
     const cryptoTradingRan = summary?.cryptoTradingResult && summary.cryptoTradingResult.skipped !== true;
+    const polymarketTradingRan = summary?.polymarketTradingResult && summary.polymarketTradingResult.skipped !== true;
     const sleepRan = summary?.sleepResult && summary.sleepResult.skipped !== true;
     const memoryChecked = summary?.memoryConsistency && summary.memoryConsistency.skipped !== true;
     const performedWork = claimedCount > 0
@@ -601,6 +669,7 @@ class SupervisorDaemon {
       || leasePruned > 0
       || tradingRan
       || cryptoTradingRan
+      || polymarketTradingRan
       || sleepRan
       || memoryChecked;
 
@@ -710,6 +779,11 @@ class SupervisorDaemon {
   persistCryptoTradingState() {
     this.cryptoTradingState.updatedAt = new Date().toISOString();
     writeJsonFile(this.cryptoTradingStatePath, this.cryptoTradingState);
+  }
+
+  persistPolymarketTradingState() {
+    this.polymarketTradingState.updatedAt = new Date().toISOString();
+    writeJsonFile(this.polymarketTradingStatePath, this.polymarketTradingState);
   }
 
   describeTradingEvent(event) {
@@ -911,6 +985,269 @@ class SupervisorDaemon {
 
   getCryptoSymbols() {
     return tradingWatchlist.getTickers({ assetClass: 'crypto' });
+  }
+
+  async getPolymarketBankrollSnapshot(now = new Date()) {
+    const [balance, positions] = await Promise.all([
+      this.polymarketClient.getBalance(),
+      this.polymarketClient.getPositions(),
+    ]);
+    const normalizedPositions = Array.isArray(positions) ? positions : [];
+    const marketValue = normalizedPositions.reduce((sum, position) => {
+      return sum + Math.max(0, Number(position?.marketValue || 0));
+    }, 0);
+    const available = Number(balance?.available ?? balance?.balance ?? 0) || 0;
+    const bankroll = Number((available + marketValue).toFixed(2));
+    const dayKey = getDateKeyInTimeZone(now);
+    if (this.polymarketTradingState.dayStartDate !== dayKey || !Number.isFinite(Number(this.polymarketTradingState.dayStartBankroll))) {
+      this.polymarketTradingState.dayStartDate = dayKey;
+      this.polymarketTradingState.dayStartBankroll = bankroll;
+    }
+    const dayStartBankroll = Number(this.polymarketTradingState.dayStartBankroll || bankroll) || bankroll;
+    const dailyLossPct = dayStartBankroll > 0 ? Math.max(0, (dayStartBankroll - bankroll) / dayStartBankroll) : 0;
+
+    return {
+      balance,
+      positions: normalizedPositions,
+      bankroll,
+      currentExposure: Number(marketValue.toFixed(2)),
+      dayStartBankroll,
+      dailyLossPct: Number(dailyLossPct.toFixed(6)),
+    };
+  }
+
+  async getPolymarketCandidateMarkets(event, options = {}) {
+    const cached = this.polymarketTradingState.lastScan;
+    if (!options.forceRefresh && cached && cached.windowKey === event.windowKey && Array.isArray(cached.markets) && cached.markets.length > 0) {
+      return cached.markets;
+    }
+
+    const markets = await this.polymarketScanner.scanMarkets({
+      limit: options.limit || 12,
+    });
+    this.polymarketTradingState.lastScan = {
+      windowKey: event.windowKey || event.scheduledAt,
+      marketDate: event.marketDate || '',
+      scheduledAt: event.scheduledAt || '',
+      markets,
+    };
+    this.persistPolymarketTradingState();
+    return markets;
+  }
+
+  async buildPolymarketConsensus(event, options = {}) {
+    const cached = this.polymarketTradingState.lastConsensus;
+    if (!options.forceRefresh && cached && cached.windowKey === event.windowKey && Array.isArray(cached.results)) {
+      return cached;
+    }
+
+    const markets = await this.getPolymarketCandidateMarkets(event, options);
+    const signalsByAgent = this.polymarketSignals.produceSignals(markets, {
+      agentIds: TRADING_AGENT_TARGETS,
+    });
+    const results = markets.map((market) => {
+      const marketSignals = TRADING_AGENT_TARGETS.map((agentId) => {
+        return (signalsByAgent.get(agentId) || []).find((signal) => signal.conditionId === market.conditionId);
+      }).filter(Boolean);
+      if (marketSignals.length !== 3) return null;
+      return {
+        ...this.polymarketSignals.buildConsensus(marketSignals),
+        market,
+      };
+    }).filter(Boolean);
+
+    const payload = {
+      windowKey: event.windowKey || event.scheduledAt,
+      marketDate: event.marketDate || '',
+      scheduledAt: event.scheduledAt || '',
+      results,
+      actionable: results.filter((result) => result.consensus && result.decision !== 'HOLD'),
+      agentSignals: Object.fromEntries(Array.from(signalsByAgent.entries())),
+    };
+    this.polymarketTradingState.lastConsensus = payload;
+    this.persistPolymarketTradingState();
+    return payload;
+  }
+
+  async runPolymarketPhase(event) {
+    const phaseKey = String(event?.key || '').trim();
+    const scheduledAt = String(event?.scheduledAt || '').trim();
+    if (!phaseKey || !scheduledAt || !this.polymarketTradingEnabled) {
+      return { ok: false, phase: phaseKey || 'unknown', error: 'polymarket_phase_unavailable' };
+    }
+
+    try {
+      if (phaseKey === 'polymarket_scan') {
+        const markets = await this.getPolymarketCandidateMarkets(event, { forceRefresh: true });
+        const result = {
+          ok: true,
+          phase: phaseKey,
+          marketDate: event.marketDate || '',
+          scheduledAt,
+          summary: { markets: markets.length },
+        };
+        this.polymarketTradingState.lastResult = result;
+        this.persistPolymarketTradingState();
+        return result;
+      }
+
+      if (phaseKey === 'polymarket_consensus') {
+        const consensusPayload = await this.buildPolymarketConsensus(event, { forceRefresh: true });
+        const result = {
+          ok: true,
+          phase: phaseKey,
+          marketDate: event.marketDate || '',
+          scheduledAt,
+          summary: {
+            markets: consensusPayload.results.length,
+            actionable: consensusPayload.actionable.length,
+          },
+        };
+        this.polymarketTradingState.lastResult = result;
+        this.persistPolymarketTradingState();
+        return result;
+      }
+
+      if (phaseKey === 'polymarket_execute') {
+        const consensusPayload = await this.buildPolymarketConsensus(event);
+        const bankrollSnapshot = await this.getPolymarketBankrollSnapshot(new Date(scheduledAt));
+        const openPositions = bankrollSnapshot.positions.slice();
+        let currentExposure = bankrollSnapshot.currentExposure;
+        const orders = [];
+        const skipped = [];
+
+        for (const result of consensusPayload.actionable) {
+          const market = result.market;
+          const buyYes = result.decision === 'BUY_YES';
+          const tokenId = buyYes ? market.tokens?.yes : market.tokens?.no;
+          const marketPrice = buyYes ? Number(market.currentPrices?.yes || 0) : Number(market.currentPrices?.no || 0);
+          const probability = buyYes ? Number(result.probability || 0) : Number((1 - Number(result.probability || 0)).toFixed(4));
+          const existingExposure = openPositions.some((position) => {
+            return position.market === market.conditionId
+              || position.tokenId === market.tokens?.yes
+              || position.tokenId === market.tokens?.no;
+          });
+          if (existingExposure) {
+            skipped.push({ conditionId: market.conditionId, reason: 'market_already_open' });
+            continue;
+          }
+
+          const sizing = this.polymarketSizer.positionSize(bankrollSnapshot.bankroll, probability, marketPrice, {
+            openPositions,
+            currentExposure,
+            dailyLossPct: bankrollSnapshot.dailyLossPct,
+          });
+          if (!sizing.executable) {
+            skipped.push({ conditionId: market.conditionId, reason: sizing.reasons.join('; ') || 'not_executable' });
+            continue;
+          }
+
+          const order = await this.polymarketClient.createOrder(tokenId, 'BUY', marketPrice, sizing.shares, {
+            dryRun: true,
+          });
+          orders.push({
+            conditionId: market.conditionId,
+            action: result.decision,
+            tokenId,
+            price: marketPrice,
+            probability,
+            sizing,
+            order,
+          });
+          currentExposure = Number((currentExposure + sizing.stake).toFixed(2));
+          openPositions.push({
+            market: market.conditionId,
+            tokenId,
+            marketValue: sizing.stake,
+            costBasis: sizing.stake,
+          });
+        }
+
+        const result = {
+          ok: true,
+          phase: phaseKey,
+          marketDate: event.marketDate || '',
+          scheduledAt,
+          summary: {
+            orders: orders.length,
+            skipped: skipped.length,
+          },
+        };
+        this.polymarketTradingState.lastExecution = {
+          windowKey: event.windowKey || event.scheduledAt,
+          marketDate: event.marketDate || '',
+          scheduledAt,
+          orders,
+          skipped,
+          bankroll: bankrollSnapshot.bankroll,
+          dailyLossPct: bankrollSnapshot.dailyLossPct,
+        };
+        this.polymarketTradingState.lastResult = result;
+        this.persistPolymarketTradingState();
+        return result;
+      }
+
+      if (phaseKey === 'polymarket_monitor') {
+        const positions = await this.polymarketClient.getPositions();
+        const exits = [];
+
+        for (const position of Array.isArray(positions) ? positions : []) {
+          const exitCheck = this.polymarketSizer.shouldExit(position, position.currentPrice, {
+            now: scheduledAt,
+          });
+          if (!exitCheck.exit) continue;
+          const order = await this.polymarketClient.createOrder(position.tokenId, 'SELL', position.currentPrice, position.size, {
+            dryRun: true,
+          });
+          exits.push({
+            tokenId: position.tokenId,
+            market: position.market,
+            exitCheck,
+            order,
+          });
+        }
+
+        const result = {
+          ok: true,
+          phase: phaseKey,
+          marketDate: event.marketDate || '',
+          scheduledAt,
+          summary: {
+            positions: Array.isArray(positions) ? positions.length : 0,
+            exits: exits.length,
+          },
+        };
+        this.polymarketTradingState.lastMonitor = {
+          windowKey: event.windowKey || event.scheduledAt,
+          marketDate: event.marketDate || '',
+          scheduledAt,
+          exits,
+        };
+        this.polymarketTradingState.lastResult = result;
+        this.persistPolymarketTradingState();
+        return result;
+      }
+
+      return {
+        ok: true,
+        phase: phaseKey,
+        marketDate: event.marketDate || '',
+        scheduledAt,
+        summary: {},
+      };
+    } catch (err) {
+      this.logger.warn(`Polymarket trading phase ${phaseKey} failed at ${scheduledAt}: ${err.message}`);
+      const result = {
+        ok: false,
+        phase: phaseKey,
+        marketDate: event.marketDate || '',
+        scheduledAt,
+        error: err.message,
+      };
+      this.polymarketTradingState.lastResult = result;
+      this.persistPolymarketTradingState();
+      return result;
+    }
   }
 
   async runCryptoConsensusPhase(event) {
@@ -1241,6 +1578,88 @@ class SupervisorDaemon {
     });
 
     return this.cryptoTradingPhasePromise;
+  }
+
+  async maybeRunPolymarketTradingAutomation(nowMs = Date.now()) {
+    if (!this.polymarketTradingEnabled || this.stopping) {
+      return { ok: false, skipped: true, reason: 'polymarket_trading_disabled' };
+    }
+    if (this.polymarketTradingPhasePromise) {
+      return this.polymarketTradingPhasePromise;
+    }
+
+    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
+    const nextEvent = await tradingScheduler.getNextPolymarketWakeEvent(now, {
+      projectRoot: this.projectRoot,
+    }).catch((err) => {
+      this.logger.warn(`Next Polymarket event lookup failed: ${err.message}`);
+      return null;
+    });
+
+    const polymarketDay = tradingScheduler.buildPolymarketDailySchedule(now, {
+      projectRoot: this.projectRoot,
+    });
+    const lastProcessedAtMs = this.polymarketTradingState.lastProcessedAt
+      ? new Date(this.polymarketTradingState.lastProcessedAt).getTime()
+      : 0;
+    const dueEvents = polymarketDay.schedule.filter((event) => {
+      const scheduledAtMs = new Date(event.scheduledAt).getTime();
+      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
+    });
+
+    this.polymarketTradingState.nextEvent = this.describeTradingEvent(nextEvent);
+    this.persistPolymarketTradingState();
+
+    if (dueEvents.length === 0) {
+      this.lastPolymarketTradingSummary = {
+        enabled: true,
+        status: 'scheduled',
+        lastProcessedAt: this.polymarketTradingState.lastProcessedAt || null,
+        nextEvent: this.polymarketTradingState.nextEvent,
+      };
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'no_due_polymarket_phase',
+        nextEvent: this.polymarketTradingState.nextEvent,
+      };
+    }
+
+    this.polymarketTradingPhasePromise = (async () => {
+      const executed = [];
+      for (const event of dueEvents) {
+        const phaseResult = await this.runPolymarketPhase(event);
+        executed.push(phaseResult);
+        this.polymarketTradingState.lastProcessedAt = event.scheduledAt;
+        this.polymarketTradingState.lastResult = phaseResult;
+        this.persistPolymarketTradingState();
+        if (!phaseResult.ok) break;
+      }
+
+      const upcomingEvent = await tradingScheduler.getNextPolymarketWakeEvent(new Date(), {
+        projectRoot: this.projectRoot,
+      }).catch(() => null);
+      this.polymarketTradingState.nextEvent = this.describeTradingEvent(upcomingEvent);
+      this.persistPolymarketTradingState();
+      this.lastPolymarketTradingSummary = {
+        enabled: true,
+        status: executed.every((entry) => entry.ok) ? 'phase_completed' : 'phase_failed',
+        lastProcessedAt: this.polymarketTradingState.lastProcessedAt || null,
+        nextEvent: this.polymarketTradingState.nextEvent,
+        lastResult: executed[executed.length - 1] || null,
+      };
+
+      return {
+        ok: executed.every((entry) => entry.ok),
+        skipped: false,
+        executed,
+        nextEvent: this.polymarketTradingState.nextEvent,
+      };
+    })().finally(() => {
+      this.polymarketTradingPhasePromise = null;
+    });
+
+    return this.polymarketTradingPhasePromise;
   }
 
   runMemoryLeaseHousekeeping(nowMs = Date.now(), phase = 'tick') {
@@ -1862,6 +2281,14 @@ class SupervisorDaemon {
         lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
         nextEvent: this.cryptoTradingState.nextEvent || null,
         lastSummary: this.lastCryptoTradingSummary || null,
+      },
+      polymarketTradingAutomation: {
+        enabled: this.polymarketTradingEnabled,
+        running: Boolean(this.polymarketTradingPhasePromise),
+        statePath: this.polymarketTradingStatePath,
+        lastProcessedAt: this.polymarketTradingState.lastProcessedAt || null,
+        nextEvent: this.polymarketTradingState.nextEvent || null,
+        lastSummary: this.lastPolymarketTradingSummary || null,
       },
       ...extra,
     };
