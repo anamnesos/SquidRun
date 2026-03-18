@@ -25,6 +25,8 @@ const {
 } = require('./modules/local-model-capabilities');
 const tradingOrchestrator = require('./modules/trading/orchestrator');
 const tradingScheduler = require('./modules/trading/scheduler');
+const tradingWatchlist = require('./modules/trading/watchlist');
+const tradingRiskEngine = require('./modules/trading/risk-engine');
 
 const DEFAULT_POLL_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_POLL_MS || '4000', 10) || 4000);
 const DEFAULT_HEARTBEAT_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_HEARTBEAT_MS || '15000', 10) || 15000);
@@ -55,6 +57,7 @@ const DEFAULT_LOG_PATH = resolveRuntimePath('supervisor.log');
 const DEFAULT_TASK_LOG_DIR = resolveRuntimePath(path.join('supervisor-tasks'));
 const DEFAULT_WAKE_SIGNAL_PATH = resolveRuntimePath('supervisor-wake.signal');
 const DEFAULT_TRADING_STATE_PATH = resolveRuntimePath('trading-supervisor-state.json');
+const DEFAULT_CRYPTO_TRADING_STATE_PATH = resolveRuntimePath('crypto-trading-supervisor-state.json');
 const HM_SEND_SCRIPT_PATH = path.join(__dirname, 'scripts', 'hm-send.js');
 const TRADING_AGENT_TARGETS = Object.freeze(['architect', 'builder', 'oracle']);
 const TRADING_PHASES = Object.freeze([
@@ -146,6 +149,15 @@ function defaultTradingState() {
     marketDate: null,
     sleeping: true,
     phases: {},
+    nextEvent: null,
+    updatedAt: null,
+  };
+}
+
+function defaultCryptoTradingState() {
+  return {
+    lastProcessedAt: null,
+    lastResult: null,
     nextEvent: null,
     updatedAt: null,
   };
@@ -344,6 +356,32 @@ class SupervisorDaemon {
         journalPath: resolveRuntimePath('trade-journal.db'),
       }))
       : null;
+    this.cryptoTradingEnabled = options.cryptoTradingEnabled !== false
+      && process.env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION !== '0';
+    this.cryptoTradingStatePath = options.cryptoTradingStatePath || DEFAULT_CRYPTO_TRADING_STATE_PATH;
+    this.cryptoTradingState = {
+      ...defaultCryptoTradingState(),
+      ...(readJsonFile(this.cryptoTradingStatePath, defaultCryptoTradingState()) || {}),
+    };
+    this.cryptoTradingPhasePromise = null;
+    this.lastCryptoTradingSummary = this.cryptoTradingEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
+        nextEvent: this.cryptoTradingState.nextEvent || null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        lastProcessedAt: null,
+        nextEvent: null,
+      };
+    this.cryptoTradingOrchestrator = this.cryptoTradingEnabled
+      ? (options.cryptoTradingOrchestrator || tradingOrchestrator.createOrchestrator({
+        journalPath: resolveRuntimePath('trade-journal.db'),
+      }))
+      : null;
     this.sleepConsolidator = this.sleepEnabled
       ? (options.sleepConsolidator || new SleepConsolidator({
         logger: this.logger,
@@ -493,6 +531,7 @@ class SupervisorDaemon {
     }
 
     const tradingResult = await this.maybeRunTradingAutomation(nowMs);
+    const cryptoTradingResult = await this.maybeRunCryptoTradingAutomation(nowMs);
     const sleepResult = await this.maybeRunSleepCycle();
     this.writeStatus();
     return {
@@ -503,6 +542,7 @@ class SupervisorDaemon {
       leaseHousekeeping,
       memoryConsistency,
       tradingResult,
+      cryptoTradingResult,
       sleepResult,
     };
   }
@@ -552,6 +592,7 @@ class SupervisorDaemon {
     const pendingPruned = Number(summary?.queueHousekeeping?.pruneResult?.pruned || 0);
     const leasePruned = Number(summary?.leaseHousekeeping?.pruned || 0);
     const tradingRan = summary?.tradingResult && summary.tradingResult.skipped !== true;
+    const cryptoTradingRan = summary?.cryptoTradingResult && summary.cryptoTradingResult.skipped !== true;
     const sleepRan = summary?.sleepResult && summary.sleepResult.skipped !== true;
     const memoryChecked = summary?.memoryConsistency && summary.memoryConsistency.skipped !== true;
     const performedWork = claimedCount > 0
@@ -559,6 +600,7 @@ class SupervisorDaemon {
       || pendingPruned > 0
       || leasePruned > 0
       || tradingRan
+      || cryptoTradingRan
       || sleepRan
       || memoryChecked;
 
@@ -665,6 +707,11 @@ class SupervisorDaemon {
     writeJsonFile(this.tradingStatePath, this.tradingState);
   }
 
+  persistCryptoTradingState() {
+    this.cryptoTradingState.updatedAt = new Date().toISOString();
+    writeJsonFile(this.cryptoTradingStatePath, this.cryptoTradingState);
+  }
+
   describeTradingEvent(event) {
     if (!event) return null;
     return {
@@ -674,6 +721,7 @@ class SupervisorDaemon {
       scheduledAt: String(event.scheduledAt || ''),
       scheduledTimeLocal: String(event.scheduledTimeLocal || ''),
       displayTimeZone: String(event.displayTimeZone || ''),
+      windowKey: String(event.windowKey || ''),
     };
   }
 
@@ -861,6 +909,63 @@ class SupervisorDaemon {
     return null;
   }
 
+  getCryptoSymbols() {
+    return tradingWatchlist.getTickers({ assetClass: 'crypto' });
+  }
+
+  async runCryptoConsensusPhase(event) {
+    const phaseKey = String(event?.key || '').trim();
+    const scheduledAt = String(event?.scheduledAt || '').trim();
+    const cryptoSymbols = this.getCryptoSymbols();
+    if (!phaseKey || !scheduledAt || !this.cryptoTradingOrchestrator) {
+      return { ok: false, phase: phaseKey || 'unknown', error: 'crypto_phase_unavailable' };
+    }
+    if (cryptoSymbols.length === 0) {
+      return { ok: false, skipped: true, reason: 'no_crypto_symbols', phase: phaseKey };
+    }
+
+    try {
+      for (const ticker of cryptoSymbols) {
+        this.cryptoTradingOrchestrator.clearSignals(ticker);
+      }
+
+      const preMarket = await this.cryptoTradingOrchestrator.runPreMarket({
+        date: scheduledAt,
+        symbols: cryptoSymbols,
+        assetClass: 'crypto',
+      });
+      const consensusPhase = await this.cryptoTradingOrchestrator.runConsensusRound({
+        date: scheduledAt,
+        symbols: cryptoSymbols,
+        assetClass: 'crypto',
+        limits: tradingRiskEngine.DEFAULT_CRYPTO_LIMITS,
+      });
+
+      return {
+        ok: true,
+        phase: phaseKey,
+        marketDate: event.marketDate || '',
+        scheduledAt,
+        preMarket,
+        summary: {
+          symbols: cryptoSymbols.length,
+          approvedTrades: Array.isArray(consensusPhase?.approvedTrades) ? consensusPhase.approvedTrades.length : 0,
+          rejectedTrades: Array.isArray(consensusPhase?.rejectedTrades) ? consensusPhase.rejectedTrades.length : 0,
+          incompleteSignals: Array.isArray(consensusPhase?.incompleteSignals) ? consensusPhase.incompleteSignals.length : 0,
+        },
+      };
+    } catch (err) {
+      this.logger.warn(`Crypto trading phase ${phaseKey} failed at ${scheduledAt}: ${err.message}`);
+      return {
+        ok: false,
+        phase: phaseKey,
+        marketDate: event.marketDate || '',
+        scheduledAt,
+        error: err.message,
+      };
+    }
+  }
+
   async runTradingPhase(event, tradingDay) {
     const phaseKey = String(event?.key || '').trim();
     const marketDate = tradingDay?.marketDate || null;
@@ -1040,6 +1145,102 @@ class SupervisorDaemon {
     });
 
     return this.tradingPhasePromise;
+  }
+
+  async maybeRunCryptoTradingAutomation(nowMs = Date.now()) {
+    if (!this.cryptoTradingEnabled || this.stopping || !this.cryptoTradingOrchestrator) {
+      return { ok: false, skipped: true, reason: 'crypto_trading_disabled' };
+    }
+    if (this.cryptoTradingPhasePromise) {
+      return this.cryptoTradingPhasePromise;
+    }
+
+    const cryptoSymbols = this.getCryptoSymbols();
+    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
+    const nextEvent = await tradingScheduler.getNextCryptoWakeEvent(now, {
+      projectRoot: this.projectRoot,
+    }).catch((err) => {
+      this.logger.warn(`Next crypto event lookup failed: ${err.message}`);
+      return null;
+    });
+
+    if (cryptoSymbols.length === 0) {
+      this.cryptoTradingState.nextEvent = this.describeTradingEvent(nextEvent);
+      this.persistCryptoTradingState();
+      this.lastCryptoTradingSummary = {
+        enabled: true,
+        status: 'idle',
+        reason: 'no_crypto_symbols',
+        lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
+        nextEvent: this.cryptoTradingState.nextEvent,
+      };
+      return { ok: false, skipped: true, reason: 'no_crypto_symbols', nextEvent: this.cryptoTradingState.nextEvent };
+    }
+
+    const cryptoDay = tradingScheduler.buildCryptoDailySchedule(now, {
+      projectRoot: this.projectRoot,
+    });
+    const lastProcessedAtMs = this.cryptoTradingState.lastProcessedAt
+      ? new Date(this.cryptoTradingState.lastProcessedAt).getTime()
+      : 0;
+    const dueEvents = cryptoDay.schedule.filter((event) => {
+      const scheduledAtMs = new Date(event.scheduledAt).getTime();
+      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
+    });
+
+    this.cryptoTradingState.nextEvent = this.describeTradingEvent(nextEvent);
+    this.persistCryptoTradingState();
+
+    if (dueEvents.length === 0) {
+      this.lastCryptoTradingSummary = {
+        enabled: true,
+        status: 'scheduled',
+        lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
+        nextEvent: this.cryptoTradingState.nextEvent,
+      };
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'no_due_crypto_phase',
+        nextEvent: this.cryptoTradingState.nextEvent,
+      };
+    }
+
+    this.cryptoTradingPhasePromise = (async () => {
+      const executed = [];
+      for (const event of dueEvents) {
+        const phaseResult = await this.runCryptoConsensusPhase(event);
+        executed.push(phaseResult);
+        this.cryptoTradingState.lastProcessedAt = event.scheduledAt;
+        this.cryptoTradingState.lastResult = phaseResult;
+        this.persistCryptoTradingState();
+        if (!phaseResult.ok) break;
+      }
+
+      const upcomingEvent = await tradingScheduler.getNextCryptoWakeEvent(new Date(), {
+        projectRoot: this.projectRoot,
+      }).catch(() => null);
+      this.cryptoTradingState.nextEvent = this.describeTradingEvent(upcomingEvent);
+      this.persistCryptoTradingState();
+      this.lastCryptoTradingSummary = {
+        enabled: true,
+        status: executed.every((entry) => entry.ok) ? 'phase_completed' : 'phase_failed',
+        lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
+        nextEvent: this.cryptoTradingState.nextEvent,
+        lastResult: executed[executed.length - 1] || null,
+      };
+
+      return {
+        ok: executed.every((entry) => entry.ok),
+        skipped: false,
+        executed,
+        nextEvent: this.cryptoTradingState.nextEvent,
+      };
+    })().finally(() => {
+      this.cryptoTradingPhasePromise = null;
+    });
+
+    return this.cryptoTradingPhasePromise;
   }
 
   runMemoryLeaseHousekeeping(nowMs = Date.now(), phase = 'tick') {
@@ -1653,6 +1854,14 @@ class SupervisorDaemon {
         phases: this.tradingState.phases || {},
         nextEvent: this.tradingState.nextEvent || null,
         lastSummary: this.lastTradingSummary || null,
+      },
+      cryptoTradingAutomation: {
+        enabled: this.cryptoTradingEnabled,
+        running: Boolean(this.cryptoTradingPhasePromise),
+        statePath: this.cryptoTradingStatePath,
+        lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
+        nextEvent: this.cryptoTradingState.nextEvent || null,
+        lastSummary: this.lastCryptoTradingSummary || null,
       },
       ...extra,
     };
