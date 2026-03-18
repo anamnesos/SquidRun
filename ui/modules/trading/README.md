@@ -15,6 +15,7 @@ See `workspace/specs/trading-system-design.md` for full spec.
 - `executor.js` — Broker-routed order placement (Alpaca + IBKR)
 - `broker-adapter.js` — Unified broker interface for Alpaca and IBKR
 - `ibkr-client.js` — Interactive Brokers client wrapper for account, positions, orders, and snapshots
+- `polymarket-client.js` — Polymarket CLOB client wrapper for auth, markets, order books, balances, and dry-run order flow
 - `journal.js` — SQLite trade journal
 - `scheduler.js` — Market-hours wake/sleep scheduling
 - `scheduler.js` — Market-hours wake/sleep scheduling plus 24/7 crypto consensus cadence
@@ -33,6 +34,10 @@ See `workspace/specs/trading-system-design.md` for full spec.
    IBKR_PORT=4002
    IBKR_CLIENT_ID=17
    IBKR_PAPER=true
+   POLYMARKET_PRIVATE_KEY=your_exported_rabby_private_key
+   POLYMARKET_FUNDER_ADDRESS=your_polygon_profile_address
+   POLYMARKET_DRY_RUN=true
    ```
 4. Crypto is tracked separately from the default equity watchlist.
    Default crypto pairs: `BTC/USD`, `ETH/USD`, `SOL/USD`, `AVAX/USD`, `LINK/USD`, `DOGE/USD`
+5. Polymarket starts in dry-run mode by default so new market modules can log intended orders before any live execution is enabled.
