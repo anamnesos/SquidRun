@@ -9,7 +9,7 @@ const AGENT_PROFILES = Object.freeze({
 		newsWeight: 0.5,
 		volumeWeight: 0.15,
 		riskWeight: 0.1,
-		buyThreshold: 0.2,
+		buyThreshold: 0.12,
 		sellThreshold: -0.2,
 		convictionBias: 0.05,
 	}),
@@ -18,7 +18,7 @@ const AGENT_PROFILES = Object.freeze({
 		newsWeight: 0.2,
 		volumeWeight: 0.1,
 		riskWeight: 0.45,
-		buyThreshold: 0.28,
+		buyThreshold: 0.15,
 		sellThreshold: -0.28,
 		convictionBias: -0.03,
 	}),
@@ -27,11 +27,13 @@ const AGENT_PROFILES = Object.freeze({
 		newsWeight: 0.2,
 		volumeWeight: 0.25,
 		riskWeight: 0.1,
-		buyThreshold: 0.18,
+		buyThreshold: 0.10,
 		sellThreshold: -0.18,
 		convictionBias: 0.04,
 	}),
 });
+
+const EMPTY_PORTFOLIO_BUY_BIAS = 0.08;
 
 const POSITIVE_NEWS_TERMS = Object.freeze([
 	'upgrade',
@@ -188,7 +190,7 @@ function scoreNews(newsItems = []) {
 	};
 }
 
-function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile) {
+function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, options = {}) {
 	const currentPrice = pickReferencePrice(snapshot);
 	const closes = bars.map((bar) => toNumber(bar?.close, 0)).filter((value) => value > 0);
 	const volumes = bars.map((bar) => toNumber(bar?.volume, 0)).filter((value) => value > 0);
@@ -228,6 +230,11 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile) {
 				? momentumScore
 				: -riskPenalty
 	);
+
+	if (options.emptyPortfolio) {
+		compositeScore += EMPTY_PORTFOLIO_BUY_BIAS;
+	}
+
 	compositeScore = clamp(compositeScore, -1, 1);
 
 	let direction = 'HOLD';
@@ -284,11 +291,13 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile) {
 	};
 }
 
-async function produceSignals(agentId, alpacaClient) {
+async function produceSignals(agentId, alpacaClientOrOptions) {
 	const normalizedAgent = toAgentId(agentId);
 	const profile = AGENT_PROFILES[normalizedAgent];
 	const symbols = watchlist.getTickers().map(toTicker).filter(Boolean);
-	const clientOptions = alpacaClient ? { client: alpacaClient } : {};
+	const isOptions = alpacaClientOrOptions && typeof alpacaClientOrOptions === 'object' && !alpacaClientOrOptions.getAccount;
+	const clientOptions = isOptions ? alpacaClientOrOptions : (alpacaClientOrOptions ? { client: alpacaClientOrOptions } : {});
+	const emptyPortfolio = Boolean(clientOptions.emptyPortfolio);
 
 	const [snapshots, historicalBars, newsItems] = await Promise.all([
 		dataIngestion.getWatchlistSnapshots({ ...clientOptions, symbols }),
@@ -302,7 +311,7 @@ async function produceSignals(agentId, alpacaClient) {
 		const snapshot = snapshots instanceof Map ? snapshots.get(ticker) : snapshots?.[ticker];
 		const bars = historicalBars instanceof Map ? (historicalBars.get(ticker) || []) : (historicalBars?.[ticker] || []);
 		const relatedNews = newsByTicker.get(ticker) || [];
-		const signal = analyzeTicker(ticker, snapshot, bars, relatedNews, profile);
+		const signal = analyzeTicker(ticker, snapshot, bars, relatedNews, profile, { emptyPortfolio });
 		return {
 			ticker: signal.ticker,
 			direction: signal.direction,
