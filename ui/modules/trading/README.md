@@ -8,8 +8,8 @@ See `workspace/specs/trading-system-design.md` for full spec.
 
 ## Modules
 
-- `data-ingestion.js` — Broker-routed market data + news feeds (Alpaca + IBKR)
-- `watchlist.js` — Managed watchlist with broker/exchange-aware screening criteria
+- `data-ingestion.js` — Broker-routed market data + news feeds (Alpaca equities, Alpaca crypto, IBKR)
+- `watchlist.js` — Managed watchlist with broker/exchange/asset-class-aware screening criteria
 - `consensus.js` — 2-of-3 multi-model voting engine
 - `risk-engine.js` — Hard limits, stop losses, kill switch
 - `executor.js` — Broker-routed order placement (Alpaca + IBKR)
@@ -17,6 +17,7 @@ See `workspace/specs/trading-system-design.md` for full spec.
 - `ibkr-client.js` — Interactive Brokers client wrapper for account, positions, orders, and snapshots
 - `journal.js` — SQLite trade journal
 - `scheduler.js` — Market-hours wake/sleep scheduling
+- `scheduler.js` — Market-hours wake/sleep scheduling plus 24/7 crypto consensus cadence
 - `telegram-summary.js` — Daily trading summary via Telegram
 
 ## Setup
@@ -33,3 +34,5 @@ See `workspace/specs/trading-system-design.md` for full spec.
    IBKR_CLIENT_ID=17
    IBKR_PAPER=true
    ```
+4. Crypto is tracked separately from the default equity watchlist.
+   Default crypto pairs: `BTC/USD`, `ETH/USD`, `SOL/USD`, `AVAX/USD`, `LINK/USD`, `DOGE/USD`

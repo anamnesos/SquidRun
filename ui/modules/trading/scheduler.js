@@ -9,12 +9,16 @@ const { getMarketCalendar } = require('./data-ingestion');
 const MARKET_TIME_ZONE = 'America/Los_Angeles';
 const CALENDAR_SOURCE_TIME_ZONE = 'America/New_York';
 const DEFAULT_SCHEDULE_PREFIX = 'trading-';
+const DEFAULT_CRYPTO_INTERVAL_HOURS = 6;
 const DEFAULT_PHASES = Object.freeze([
   { key: 'premarket_wake', label: 'Pre-market wake', offsetMinutes: -60 },
   { key: 'pre_open_consensus', label: 'Consensus round', offsetMinutes: -5 },
   { key: 'market_open_execute', label: 'Market open execute', offsetMinutes: 0 },
   { key: 'close_wake', label: 'Close wake', anchor: 'close', offsetMinutes: -30 },
   { key: 'market_close_review', label: 'Market close review', anchor: 'close', offsetMinutes: 0 },
+]);
+const DEFAULT_CRYPTO_PHASES = Object.freeze([
+  { key: 'crypto_consensus', label: 'Crypto consensus round' },
 ]);
 
 function resolveCalendarCachePath() {
@@ -28,6 +32,22 @@ function resolveWakeSignalPath() {
 function toDateKey(value = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
   return date.toISOString().slice(0, 10);
+}
+
+function toDateKeyInZone(value = new Date(), timeZone = MARKET_TIME_ZONE) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return formatter.format(value instanceof Date ? value : new Date(value));
+}
+
+function resolveCryptoIntervalHours(value, fallback = DEFAULT_CRYPTO_INTERVAL_HOURS) {
+  const numeric = Number.parseInt(String(value || fallback), 10);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(4, Math.min(6, numeric));
 }
 
 function normalizeCalendarEntry(entry = {}) {
@@ -126,6 +146,10 @@ function formatTimeInZone(date, timeZone) {
     minute: '2-digit',
     hour12: false,
   }).format(date);
+}
+
+function padTimePart(value) {
+  return String(value).padStart(2, '0');
 }
 
 function buildTradingDaySchedule(calendarEntry, options = {}) {
@@ -229,6 +253,55 @@ async function getNextWakeEvent(referenceDate = new Date(), options = {}) {
   return null;
 }
 
+function buildCryptoDailySchedule(referenceDate = new Date(), options = {}) {
+  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  const displayTimeZone = options.displayTimeZone || MARKET_TIME_ZONE;
+  const intervalHours = resolveCryptoIntervalHours(options.intervalHours);
+  const phases = Array.isArray(options.phases) && options.phases.length > 0
+    ? options.phases
+    : DEFAULT_CRYPTO_PHASES;
+  const dateKey = toDateKeyInZone(now, displayTimeZone);
+  const schedule = [];
+
+  for (let hour = 0; hour < 24; hour += intervalHours) {
+    const scheduledAt = zonedDateTimeToUtc(dateKey, `${padTimePart(hour)}:00`, displayTimeZone);
+    for (const phase of phases) {
+      schedule.push({
+        key: phase.key,
+        label: phase.label,
+        marketDate: dateKey,
+        scheduledAt: scheduledAt.toISOString(),
+        scheduledTimeLocal: formatTimeInZone(scheduledAt, displayTimeZone),
+        displayTimeZone,
+        windowKey: scheduledAt.toISOString(),
+      });
+    }
+  }
+
+  return {
+    marketDate: dateKey,
+    intervalHours,
+    displayTimeZone,
+    schedule,
+  };
+}
+
+async function getNextCryptoWakeEvent(referenceDate = new Date(), options = {}) {
+  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  for (let offset = 0; offset < 3; offset += 1) {
+    const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
+    const cryptoDay = buildCryptoDailySchedule(candidateDate, options);
+    const nextEvent = cryptoDay.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
+    if (nextEvent) {
+      return {
+        ...nextEvent,
+        tradingDay: cryptoDay,
+      };
+    }
+  }
+  return null;
+}
+
 function writeWakeSignal(event, wakeSignalPath = resolveWakeSignalPath()) {
   fs.mkdirSync(path.dirname(wakeSignalPath), { recursive: true });
   fs.writeFileSync(wakeSignalPath, JSON.stringify({
@@ -293,16 +366,20 @@ async function syncSchedulesForNextTradingDay(scheduler, options = {}) {
 module.exports = {
   MARKET_TIME_ZONE,
   CALENDAR_SOURCE_TIME_ZONE,
+  DEFAULT_CRYPTO_INTERVAL_HOURS,
   DEFAULT_PHASES,
+  DEFAULT_CRYPTO_PHASES,
   resolveCalendarCachePath,
   resolveWakeSignalPath,
   normalizeCalendarEntry,
   zonedDateTimeToUtc,
   buildTradingDaySchedule,
+  buildCryptoDailySchedule,
   refreshTradingCalendar,
   getCalendarDay,
   isTradingDay,
   getNextWakeEvent,
+  getNextCryptoWakeEvent,
   writeWakeSignal,
   syncSchedulesForNextTradingDay,
 };

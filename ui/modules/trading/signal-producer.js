@@ -34,6 +34,25 @@ const AGENT_PROFILES = Object.freeze({
 });
 
 const EMPTY_PORTFOLIO_BUY_BIAS = 0.08;
+const DEFAULT_ASSET_CLASS = 'us_equity';
+const ASSET_SIGNAL_CONFIG = Object.freeze({
+	us_equity: Object.freeze({
+		momentumDivisor: 0.03,
+		volumeActivationRatio: 1.10,
+		volumeScale: 1.5,
+		riskMomentumDivisor: 0.08,
+		riskRangeDivisor: 0.05,
+		thresholdOffset: 0,
+	}),
+	crypto: Object.freeze({
+		momentumDivisor: 0.06,
+		volumeActivationRatio: 1.03,
+		volumeScale: 2.0,
+		riskMomentumDivisor: 0.18,
+		riskRangeDivisor: 0.12,
+		thresholdOffset: 0.04,
+	}),
+});
 
 const POSITIVE_NEWS_TERMS = Object.freeze([
 	'upgrade',
@@ -75,6 +94,14 @@ function clamp(value, min, max) {
 	return Math.max(min, Math.min(max, value));
 }
 
+function resolveAssetClass(ticker) {
+	return watchlist.getAssetClassForTicker(ticker, DEFAULT_ASSET_CLASS);
+}
+
+function getAssetSignalConfig(assetClass) {
+	return ASSET_SIGNAL_CONFIG[assetClass] || ASSET_SIGNAL_CONFIG.us_equity;
+}
+
 function mean(values = []) {
 	const numeric = values
 		.map((value) => Number(value))
@@ -109,7 +136,11 @@ function groupNewsByTicker(newsItems = []) {
 }
 
 async function getNormalizedNews(options = {}) {
-	const symbols = watchlist.getTickers().map(toTicker).filter(Boolean);
+	const symbols = dataIngestion.normalizeSymbols(
+		Array.isArray(options.symbols) && options.symbols.length > 0
+			? options.symbols
+			: watchlist.getTickers({ assetClass: options.assetClass || options.asset_class })
+	);
 	const items = await dataIngestion.getNews({
 		...options,
 		symbols,
@@ -133,7 +164,9 @@ async function getHistoricalBarsWithFallback(options = {}, symbols = []) {
 		result.set(ticker, Array.isArray(bars) ? bars : []);
 	}
 
-	const missing = normalizedSymbols.filter((ticker) => (result.get(ticker) || []).length < 3);
+	const missing = normalizedSymbols.filter((ticker) => {
+		return resolveAssetClass(ticker) !== 'crypto' && (result.get(ticker) || []).length < 3;
+	});
 	if (missing.length === 0) {
 		return result;
 	}
@@ -191,17 +224,19 @@ function scoreNews(newsItems = []) {
 }
 
 function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, options = {}) {
+	const assetClass = options.assetClass || resolveAssetClass(ticker);
+	const assetConfig = getAssetSignalConfig(assetClass);
 	const currentPrice = pickReferencePrice(snapshot);
 	const closes = bars.map((bar) => toNumber(bar?.close, 0)).filter((value) => value > 0);
 	const volumes = bars.map((bar) => toNumber(bar?.volume, 0)).filter((value) => value > 0);
 	const avgClose = mean(closes);
 	const avgVolume = mean(volumes);
 	const momentumPct = avgClose > 0 ? (currentPrice - avgClose) / avgClose : 0;
-	const momentumScore = clamp(momentumPct / 0.03, -1, 1);
+	const momentumScore = clamp(momentumPct / assetConfig.momentumDivisor, -1, 1);
 	const volumeRatio = avgVolume > 0 ? toNumber(snapshot?.dailyVolume, avgVolume) / avgVolume : 1;
-	const volumeScore = momentumScore === 0 || volumeRatio < 1.1
+	const volumeScore = momentumScore === 0 || volumeRatio < assetConfig.volumeActivationRatio
 		? 0
-		: clamp((volumeRatio - 1) / 1.5, 0, 1) * Math.sign(momentumScore);
+		: clamp((volumeRatio - 1) / assetConfig.volumeScale, 0, 1) * Math.sign(momentumScore);
 	const avgRangePct = mean(
 		bars.map((bar) => {
 			const high = toNumber(bar?.high, 0);
@@ -211,7 +246,8 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, opt
 		})
 	);
 	const riskPenalty = clamp(
-		((Math.abs(momentumPct) / 0.08) * 0.45) + ((avgRangePct / 0.05) * 0.55),
+		((Math.abs(momentumPct) / assetConfig.riskMomentumDivisor) * 0.45)
+		+ ((avgRangePct / assetConfig.riskRangeDivisor) * 0.55),
 		0,
 		1
 	);
@@ -238,9 +274,11 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, opt
 	compositeScore = clamp(compositeScore, -1, 1);
 
 	let direction = 'HOLD';
-	if (compositeScore >= profile.buyThreshold) {
+	const buyThreshold = profile.buyThreshold + assetConfig.thresholdOffset;
+	const sellThreshold = profile.sellThreshold - assetConfig.thresholdOffset;
+	if (compositeScore >= buyThreshold) {
 		direction = 'BUY';
-	} else if (compositeScore <= profile.sellThreshold) {
+	} else if (compositeScore <= sellThreshold) {
 		direction = 'SELL';
 	}
 
@@ -287,6 +325,7 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, opt
 			volumeRatio: Number(volumeRatio.toFixed(2)),
 			riskPenalty: Number(riskPenalty.toFixed(2)),
 			newsScore: Number(newsScore.score.toFixed(2)),
+			assetClass,
 		},
 	};
 }
@@ -294,9 +333,13 @@ function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, opt
 async function produceSignals(agentId, alpacaClientOrOptions) {
 	const normalizedAgent = toAgentId(agentId);
 	const profile = AGENT_PROFILES[normalizedAgent];
-	const symbols = watchlist.getTickers().map(toTicker).filter(Boolean);
 	const isOptions = alpacaClientOrOptions && typeof alpacaClientOrOptions === 'object' && !alpacaClientOrOptions.getAccount;
 	const clientOptions = isOptions ? alpacaClientOrOptions : (alpacaClientOrOptions ? { client: alpacaClientOrOptions } : {});
+	const symbols = dataIngestion.normalizeSymbols(
+		Array.isArray(clientOptions.symbols) && clientOptions.symbols.length > 0
+			? clientOptions.symbols
+			: watchlist.getTickers({ assetClass: clientOptions.assetClass || clientOptions.asset_class })
+	);
 	const emptyPortfolio = Boolean(clientOptions.emptyPortfolio);
 
 	const [snapshots, historicalBars, newsItems] = await Promise.all([
@@ -311,7 +354,10 @@ async function produceSignals(agentId, alpacaClientOrOptions) {
 		const snapshot = snapshots instanceof Map ? snapshots.get(ticker) : snapshots?.[ticker];
 		const bars = historicalBars instanceof Map ? (historicalBars.get(ticker) || []) : (historicalBars?.[ticker] || []);
 		const relatedNews = newsByTicker.get(ticker) || [];
-		const signal = analyzeTicker(ticker, snapshot, bars, relatedNews, profile, { emptyPortfolio });
+		const signal = analyzeTicker(ticker, snapshot, bars, relatedNews, profile, {
+			assetClass: resolveAssetClass(ticker),
+			emptyPortfolio,
+		});
 		return {
 			ticker: signal.ticker,
 			direction: signal.direction,

@@ -36,6 +36,45 @@ const DEFAULT_LIMITS = Object.freeze({
   allowOptions: false,
 });
 
+const DEFAULT_CRYPTO_LIMITS = Object.freeze({
+  ...DEFAULT_LIMITS,
+  maxPositionPct: 0.03,
+  stopLossPct: 0.04,
+  minStockPrice: 0,
+  minMarketCap: 0,
+});
+
+function normalizeAssetClass(value, fallback = 'us_equity') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return fallback;
+  return normalized === 'crypto' ? 'crypto' : 'us_equity';
+}
+
+function resolveRiskLimits(limits = DEFAULT_LIMITS, assetClass = 'us_equity') {
+  const normalizedAssetClass = normalizeAssetClass(assetClass);
+  const customLimits = limits && limits !== DEFAULT_LIMITS ? limits : {};
+  if (normalizedAssetClass === 'crypto') {
+    return {
+      ...DEFAULT_CRYPTO_LIMITS,
+      ...customLimits,
+      assetClass: normalizedAssetClass,
+    };
+  }
+
+  return {
+    ...DEFAULT_LIMITS,
+    ...customLimits,
+    assetClass: normalizedAssetClass,
+  };
+}
+
+function roundDownQuantity(value, decimals = 6) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  const factor = 10 ** decimals;
+  return Math.floor(numeric * factor) / factor;
+}
+
 /**
  * @typedef {Object} AccountState
  * @property {number} equity - Current account equity
@@ -65,6 +104,8 @@ const DEFAULT_LIMITS = Object.freeze({
  * @returns {RiskCheck}
  */
 function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
+  const assetClass = normalizeAssetClass(trade.assetClass || trade.asset_class);
+  const effectiveLimits = resolveRiskLimits(limits, assetClass);
   const violations = [];
 
   // --- ABSOLUTE PROHIBITIONS ---
@@ -73,54 +114,59 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
     violations.push('SHORT_PROHIBITED: Cannot sell a stock we do not own');
   }
 
-  if (trade.price < limits.minStockPrice) {
-    violations.push(`PENNY_STOCK: Price $${trade.price} below minimum $${limits.minStockPrice}`);
+  if (assetClass !== 'crypto' && trade.price < effectiveLimits.minStockPrice) {
+    violations.push(`PENNY_STOCK: Price $${trade.price} below minimum $${effectiveLimits.minStockPrice}`);
   }
 
-  if (trade.marketCap != null && trade.marketCap < limits.minMarketCap) {
-    violations.push(`SMALL_CAP: Market cap $${trade.marketCap} below minimum $${limits.minMarketCap}`);
+  if (assetClass !== 'crypto' && trade.marketCap != null && trade.marketCap < effectiveLimits.minMarketCap) {
+    violations.push(`SMALL_CAP: Market cap $${trade.marketCap} below minimum $${effectiveLimits.minMarketCap}`);
   }
 
   // --- KILL SWITCH ---
   const drawdownPct = account.peakEquity > 0
     ? (account.peakEquity - account.equity) / account.peakEquity
     : 0;
-  if (drawdownPct >= limits.maxDrawdownPct) {
-    violations.push(`KILL_SWITCH: Account down ${(drawdownPct * 100).toFixed(1)}% from peak (limit: ${limits.maxDrawdownPct * 100}%)`);
+  if (drawdownPct >= effectiveLimits.maxDrawdownPct) {
+    violations.push(`KILL_SWITCH: Account down ${(drawdownPct * 100).toFixed(1)}% from peak (limit: ${effectiveLimits.maxDrawdownPct * 100}%)`);
   }
 
   // --- DAILY LOSS LIMIT ---
   const dayLossPct = account.dayStartEquity > 0
     ? (account.dayStartEquity - account.equity) / account.dayStartEquity
     : 0;
-  if (dayLossPct >= limits.maxDailyLossPct) {
-    violations.push(`DAILY_LOSS: Down ${(dayLossPct * 100).toFixed(1)}% today (limit: ${limits.maxDailyLossPct * 100}%)`);
+  if (dayLossPct >= effectiveLimits.maxDailyLossPct) {
+    violations.push(`DAILY_LOSS: Down ${(dayLossPct * 100).toFixed(1)}% today (limit: ${effectiveLimits.maxDailyLossPct * 100}%)`);
   }
 
   // --- TRADE COUNT ---
-  if (account.tradesToday >= limits.maxTradesPerDay) {
-    violations.push(`MAX_TRADES: ${account.tradesToday} trades today (limit: ${limits.maxTradesPerDay})`);
+  if (account.tradesToday >= effectiveLimits.maxTradesPerDay) {
+    violations.push(`MAX_TRADES: ${account.tradesToday} trades today (limit: ${effectiveLimits.maxTradesPerDay})`);
   }
 
   // --- POSITION COUNT ---
   if (trade.direction === 'BUY') {
     const openCount = account.openPositions?.length || 0;
-    if (openCount >= limits.maxOpenPositions) {
-      violations.push(`MAX_POSITIONS: ${openCount} open positions (limit: ${limits.maxOpenPositions})`);
+    if (openCount >= effectiveLimits.maxOpenPositions) {
+      violations.push(`MAX_POSITIONS: ${openCount} open positions (limit: ${effectiveLimits.maxOpenPositions})`);
     }
   }
 
   // --- POSITION SIZE ---
-  const maxDollars = account.equity * limits.maxPositionPct;
-  const maxShares = trade.price > 0 ? Math.floor(maxDollars / trade.price) : 0;
+  const maxDollars = account.equity * effectiveLimits.maxPositionPct;
+  const maxShares = trade.price > 0
+    ? (assetClass === 'crypto'
+      ? roundDownQuantity(maxDollars / trade.price, 6)
+      : Math.floor(maxDollars / trade.price))
+    : 0;
 
-  if (trade.direction === 'BUY' && maxShares < 1) {
-    violations.push(`POSITION_TOO_SMALL: Max position $${maxDollars.toFixed(2)} cannot buy 1 share at $${trade.price}`);
+  if (trade.direction === 'BUY' && maxShares <= 0) {
+    const minimumQuantityText = assetClass === 'crypto' ? 'the minimum crypto quantity' : '1 share';
+    violations.push(`POSITION_TOO_SMALL: Max position $${maxDollars.toFixed(2)} cannot buy ${minimumQuantityText} at $${trade.price}`);
   }
 
   // --- STOP LOSS CALCULATION ---
   const stopLossPrice = trade.direction === 'BUY'
-    ? trade.price * (1 - limits.stopLossPct)
+    ? trade.price * (1 - effectiveLimits.stopLossPct)
     : null;
 
   return {
@@ -138,16 +184,17 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
  * @returns {{ triggered: boolean, drawdownPct: number, message: string }}
  */
 function checkKillSwitch(account, limits = DEFAULT_LIMITS) {
+  const effectiveLimits = resolveRiskLimits(limits, limits?.assetClass);
   const drawdownPct = account.peakEquity > 0
     ? (account.peakEquity - account.equity) / account.peakEquity
     : 0;
-  const triggered = drawdownPct >= limits.maxDrawdownPct;
+  const triggered = drawdownPct >= effectiveLimits.maxDrawdownPct;
   return {
     triggered,
     drawdownPct,
     message: triggered
       ? `KILL SWITCH: Portfolio down ${(drawdownPct * 100).toFixed(1)}% from peak $${account.peakEquity.toFixed(2)}. Selling all positions.`
-      : `Drawdown: ${(drawdownPct * 100).toFixed(1)}% (limit: ${limits.maxDrawdownPct * 100}%)`,
+      : `Drawdown: ${(drawdownPct * 100).toFixed(1)}% (limit: ${effectiveLimits.maxDrawdownPct * 100}%)`,
   };
 }
 
@@ -158,10 +205,11 @@ function checkKillSwitch(account, limits = DEFAULT_LIMITS) {
  * @returns {{ paused: boolean, dayLossPct: number, message: string }}
  */
 function checkDailyPause(account, limits = DEFAULT_LIMITS) {
+  const effectiveLimits = resolveRiskLimits(limits, limits?.assetClass);
   const dayLossPct = account.dayStartEquity > 0
     ? (account.dayStartEquity - account.equity) / account.dayStartEquity
     : 0;
-  const paused = dayLossPct >= limits.maxDailyLossPct;
+  const paused = dayLossPct >= effectiveLimits.maxDailyLossPct;
   return {
     paused,
     dayLossPct,
@@ -171,4 +219,11 @@ function checkDailyPause(account, limits = DEFAULT_LIMITS) {
   };
 }
 
-module.exports = { DEFAULT_LIMITS, checkTrade, checkKillSwitch, checkDailyPause };
+module.exports = {
+  DEFAULT_LIMITS,
+  DEFAULT_CRYPTO_LIMITS,
+  resolveRiskLimits,
+  checkTrade,
+  checkKillSwitch,
+  checkDailyPause,
+};

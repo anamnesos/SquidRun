@@ -17,10 +17,17 @@ function normalizeExchange(value, fallback = 'SMART') {
   return normalized || fallback;
 }
 
-function normalizeWatchlistEntry(entryOrTicker, name, sector, exchange, broker) {
+function normalizeAssetClass(value, fallback = 'us_equity') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (normalized === 'crypto') return 'crypto';
+  return 'us_equity';
+}
+
+function normalizeWatchlistEntry(entryOrTicker, name, sector, exchange, broker, assetClass) {
   const input = typeof entryOrTicker === 'object' && entryOrTicker != null
     ? entryOrTicker
-    : { ticker: entryOrTicker, name, sector, exchange, broker };
+    : { ticker: entryOrTicker, name, sector, exchange, broker, assetClass };
   const ticker = String(input.ticker || '').trim().toUpperCase();
   if (!ticker) {
     throw new Error('ticker is required');
@@ -32,6 +39,7 @@ function normalizeWatchlistEntry(entryOrTicker, name, sector, exchange, broker) 
     sector: String(input.sector || 'Unspecified').trim(),
     exchange: normalizeExchange(input.exchange),
     broker: normalizeBroker(input.broker),
+    assetClass: normalizeAssetClass(input.assetClass || input.asset_class),
   };
 }
 
@@ -52,14 +60,41 @@ const DEFAULT_WATCHLIST = [
   { ticker: 'JPM',   name: 'JPMorgan Chase',  sector: 'Financials' },
 ].map((entry) => normalizeWatchlistEntry(entry));
 
-let _watchlist = DEFAULT_WATCHLIST.map(cloneEntry);
+const DEFAULT_CRYPTO_WATCHLIST = [
+  { ticker: 'BTC/USD',  name: 'Bitcoin',   sector: 'Crypto', exchange: 'CRYPTO', broker: 'alpaca', assetClass: 'crypto' },
+  { ticker: 'ETH/USD',  name: 'Ethereum',  sector: 'Crypto', exchange: 'CRYPTO', broker: 'alpaca', assetClass: 'crypto' },
+  { ticker: 'SOL/USD',  name: 'Solana',    sector: 'Crypto', exchange: 'CRYPTO', broker: 'alpaca', assetClass: 'crypto' },
+  { ticker: 'AVAX/USD', name: 'Avalanche', sector: 'Crypto', exchange: 'CRYPTO', broker: 'alpaca', assetClass: 'crypto' },
+  { ticker: 'LINK/USD', name: 'Chainlink', sector: 'Crypto', exchange: 'CRYPTO', broker: 'alpaca', assetClass: 'crypto' },
+  { ticker: 'DOGE/USD', name: 'Dogecoin',  sector: 'Crypto', exchange: 'CRYPTO', broker: 'alpaca', assetClass: 'crypto' },
+].map((entry) => normalizeWatchlistEntry(entry));
+
+function createDefaultWatchlist() {
+  return [...DEFAULT_WATCHLIST, ...DEFAULT_CRYPTO_WATCHLIST].map(cloneEntry);
+}
+
+function matchesAssetClass(entry, assetClass) {
+  if (!assetClass || assetClass === 'all') return true;
+  return normalizeAssetClass(entry?.assetClass) === normalizeAssetClass(assetClass);
+}
+
+function filterWatchlist(entries, options = {}) {
+  if (options.includeAll === true) {
+    return entries.map(cloneEntry);
+  }
+
+  const assetClass = options.assetClass || options.asset_class || 'us_equity';
+  return entries.filter((entry) => matchesAssetClass(entry, assetClass)).map(cloneEntry);
+}
+
+let _watchlist = createDefaultWatchlist();
 
 /**
  * Get the current watchlist.
  * @returns {Array<{ticker: string, name: string, sector: string}>}
  */
-function getWatchlist() {
-  return _watchlist.map(cloneEntry);
+function getWatchlist(options = {}) {
+  return filterWatchlist(_watchlist, options);
 }
 
 function getEntry(ticker) {
@@ -72,8 +107,8 @@ function getEntry(ticker) {
  * Get just the ticker symbols.
  * @returns {string[]}
  */
-function getTickers() {
-  return _watchlist.map((w) => w.ticker);
+function getTickers(options = {}) {
+  return getWatchlist(options).map((w) => w.ticker);
 }
 
 function getBrokerForTicker(ticker, fallback = 'alpaca') {
@@ -82,6 +117,10 @@ function getBrokerForTicker(ticker, fallback = 'alpaca') {
 
 function getExchangeForTicker(ticker, fallback = 'SMART') {
   return getEntry(ticker)?.exchange || normalizeExchange(fallback);
+}
+
+function getAssetClassForTicker(ticker, fallback = 'us_equity') {
+  return getEntry(ticker)?.assetClass || normalizeAssetClass(fallback);
 }
 
 /**
@@ -93,8 +132,8 @@ function getExchangeForTicker(ticker, fallback = 'SMART') {
  * @param {string} broker
  * @returns {boolean} true if added, false if already exists
  */
-function addToWatchlist(ticker, name, sector, exchange, broker) {
-  const entry = normalizeWatchlistEntry(ticker, name, sector, exchange, broker);
+function addToWatchlist(ticker, name, sector, exchange, broker, assetClass) {
+  const entry = normalizeWatchlistEntry(ticker, name, sector, exchange, broker, assetClass);
   if (_watchlist.some((w) => w.ticker === entry.ticker)) return false;
   _watchlist.push(entry);
   return true;
@@ -116,7 +155,7 @@ function removeFromWatchlist(ticker) {
  * Reset to default watchlist.
  */
 function resetWatchlist() {
-  _watchlist = DEFAULT_WATCHLIST.map(cloneEntry);
+  _watchlist = createDefaultWatchlist();
 }
 
 /**
@@ -134,10 +173,13 @@ module.exports = {
   getTickers,
   getBrokerForTicker,
   getExchangeForTicker,
+  getAssetClassForTicker,
   addToWatchlist,
   removeFromWatchlist,
   resetWatchlist,
   isWatched,
+  normalizeAssetClass,
   normalizeWatchlistEntry,
   DEFAULT_WATCHLIST,
+  DEFAULT_CRYPTO_WATCHLIST,
 };

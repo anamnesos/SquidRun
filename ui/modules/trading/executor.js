@@ -12,10 +12,20 @@ function toPositiveInteger(value) {
   return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
 }
 
-function roundPrice(value) {
+function toPositiveQuantity(value, assetClass = 'us_equity') {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  if (watchlist.normalizeAssetClass(assetClass) === 'crypto') {
+    return Number(numeric.toFixed(6));
+  }
+  return toPositiveInteger(numeric);
+}
+
+function roundPrice(value, assetClass = 'us_equity') {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return null;
-  return Number(numeric.toFixed(2));
+  const decimals = watchlist.normalizeAssetClass(assetClass) === 'crypto' ? 6 : 2;
+  return Number(numeric.toFixed(decimals));
 }
 
 function normalizeDirection(value) {
@@ -24,6 +34,13 @@ function normalizeDirection(value) {
     return normalized;
   }
   throw new Error(`Unsupported trade direction: ${value}`);
+}
+
+function resolveAssetClass(input = {}, options = {}) {
+  const explicit = input.assetClass || input.asset_class || options.assetClass || options.asset_class;
+  if (explicit) return watchlist.normalizeAssetClass(explicit);
+  const ticker = String(input.ticker || input.symbol || '').trim().toUpperCase();
+  return ticker ? watchlist.getAssetClassForTicker(ticker, 'us_equity') : 'us_equity';
 }
 
 function generateClientOrderId(prefix = 'sq') {
@@ -35,11 +52,16 @@ function generateClientOrderId(prefix = 'sq') {
 
 function buildOrderPayload(input = {}) {
   const direction = normalizeDirection(input.direction);
-  const quantity = toPositiveInteger(input.shares || input.qty);
+  const assetClass = resolveAssetClass(input);
+  const quantity = toPositiveQuantity(input.shares || input.qty, assetClass);
   if (direction === 'HOLD') {
     throw new Error('Cannot build an order payload for HOLD');
   }
-  if (quantity < 1) {
+  if (quantity <= 0) {
+    const quantityLabel = assetClass === 'crypto' ? 'a positive crypto quantity' : 'at least 1 whole share';
+    throw new Error(`Order quantity must be ${quantityLabel}`);
+  }
+  if (assetClass !== 'crypto' && quantity < 1) {
     throw new Error('Order quantity must be at least 1 whole share');
   }
 
@@ -48,7 +70,7 @@ function buildOrderPayload(input = {}) {
     qty: quantity,
     side: direction === 'BUY' ? 'buy' : 'sell',
     type: input.orderType || 'market',
-    time_in_force: input.timeInForce || 'day',
+    time_in_force: input.timeInForce || (assetClass === 'crypto' ? 'gtc' : 'day'),
     client_order_id: input.clientOrderId || generateClientOrderId('trade'),
   };
 
@@ -56,15 +78,15 @@ function buildOrderPayload(input = {}) {
     throw new Error('ticker is required');
   }
 
-  if (direction === 'BUY' && Number(input.stopLossPrice) > 0) {
+  if (assetClass !== 'crypto' && direction === 'BUY' && Number(input.stopLossPrice) > 0) {
     payload.order_class = 'bracket';
     payload.stop_loss = {
-      stop_price: roundPrice(input.stopLossPrice),
+      stop_price: roundPrice(input.stopLossPrice, assetClass),
     };
   }
 
   if (input.limitPrice != null) {
-    payload.limit_price = roundPrice(input.limitPrice);
+    payload.limit_price = roundPrice(input.limitPrice, assetClass);
   }
 
   if (input.extendedHours === true) {
@@ -88,12 +110,14 @@ function normalizeAccount(account = {}) {
 }
 
 function normalizePosition(position = {}) {
+  const ticker = String(position.symbol || position.ticker || '').trim().toUpperCase();
   return {
-    ticker: String(position.symbol || position.ticker || '').trim().toUpperCase(),
+    ticker,
     shares: Number(position.qty || position.shares || 0) || 0,
     avgPrice: Number(position.avg_entry_price || position.avgPrice || 0) || 0,
     marketValue: Number(position.market_value || position.marketValue || 0) || 0,
     side: position.side || 'long',
+    assetClass: resolveAssetClass({ ticker, assetClass: position.asset_class || position.assetClass }),
     raw: position,
   };
 }
@@ -183,6 +207,7 @@ async function executeConsensusTrade(input = {}, options = {}) {
     direction,
     price: Number(input.price || input.referencePrice || 0) || 0,
     marketCap: input.marketCap ?? null,
+    assetClass: resolveAssetClass({ ticker: consensus.ticker || input.ticker, assetClass: input.assetClass || input.asset_class }),
   };
 
   const account = input.account || {
@@ -202,14 +227,14 @@ async function executeConsensusTrade(input = {}, options = {}) {
     };
   }
 
-  const quantityCap = toPositiveInteger(riskCheck.maxShares);
-  const requestedShares = toPositiveInteger(input.requestedShares || quantityCap);
+  const quantityCap = toPositiveQuantity(riskCheck.maxShares, trade.assetClass);
+  const requestedShares = toPositiveQuantity(input.requestedShares || quantityCap, trade.assetClass);
   const shares = Math.min(quantityCap, requestedShares || quantityCap);
-  if (shares < 1) {
+  if (shares <= 0) {
     return {
       ok: false,
       status: 'rejected',
-      reason: 'Risk engine did not allow at least one share',
+      reason: 'Risk engine did not allow a tradable quantity',
       riskCheck,
     };
   }
@@ -218,6 +243,7 @@ async function executeConsensusTrade(input = {}, options = {}) {
     ticker: trade.ticker,
     direction,
     shares,
+    assetClass: trade.assetClass,
     stopLossPrice: riskCheck.stopLossPrice,
     referencePrice: trade.price,
     consensusDetail: consensus,
@@ -330,10 +356,10 @@ async function liquidateAllAlpacaPositions(options = {}) {
   for (const position of positions) {
     const order = await client.createOrder({
       symbol: position.ticker,
-      qty: toPositiveInteger(position.shares),
+      qty: toPositiveQuantity(position.shares, position.assetClass),
       side: 'sell',
       type: 'market',
-      time_in_force: 'day',
+      time_in_force: position.assetClass === 'crypto' ? 'gtc' : 'day',
       client_order_id: generateClientOrderId('liq'),
     });
     orders.push(normalizeOrder(order));
@@ -357,7 +383,8 @@ async function liquidateBrokerPositions(brokerType, options = {}) {
       exchange: position.exchange,
       broker: brokerType,
       direction: 'SELL',
-      shares: toPositiveInteger(position.shares),
+      shares: toPositiveQuantity(position.shares, position.assetClass),
+      assetClass: position.assetClass,
       orderType: 'market',
     }, { ...options, broker: brokerType, recordJournal: false });
     orders.push(orderResult);
@@ -386,7 +413,7 @@ function resolveBrokerTypes(options = {}) {
     return Array.from(new Set(symbols.map((ticker) => watchlist.getBrokerForTicker(ticker, 'alpaca'))));
   }
 
-  const brokers = watchlist.getWatchlist().map((entry) => entry.broker || 'alpaca');
+  const brokers = watchlist.getWatchlist({ includeAll: true }).map((entry) => entry.broker || 'alpaca');
   return Array.from(new Set(brokers.length > 0 ? brokers : ['alpaca']));
 }
 
@@ -424,7 +451,7 @@ function recordTradeSubmission(result, input = {}, options = {}) {
   journal.recordTrade(db, {
     ticker: String(input.ticker || input.symbol || '').trim().toUpperCase(),
     direction: String(input.direction || '').trim().toUpperCase(),
-    shares: toPositiveInteger(input.shares || input.qty),
+    shares: toPositiveQuantity(input.shares || input.qty, resolveAssetClass(input, options)),
     price: Number(result?.order?.filledAvgPrice || input.referencePrice || input.price || 0) || 0,
     stopLossPrice: Number(input.stopLossPrice || 0) || null,
     consensusDetail: input.consensusDetail || null,
