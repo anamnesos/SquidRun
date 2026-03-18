@@ -11,6 +11,7 @@ See `workspace/specs/trading-system-design.md` for full spec.
 - `data-ingestion.js` — Broker-routed market data + news feeds (Alpaca equities, Alpaca crypto, IBKR)
 - `watchlist.js` — Backward-compatible watchlist facade for the live trading pipeline
 - `dynamic-watchlist.js` — Persistent static + dynamic watchlist with source tagging and expiry pruning
+- `agent-attribution.js` — Persistent per-agent prediction/outcome tracking with asset-class-specific stats and leaderboards
 - `consensus.js` — 2-of-3 multi-model voting engine
 - `risk-engine.js` — Hard limits, stop losses, kill switch
 - `executor.js` — Broker-routed order placement (Alpaca + IBKR)

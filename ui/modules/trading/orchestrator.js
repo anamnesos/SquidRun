@@ -6,6 +6,7 @@ const { getProjectRoot } = require('../../config');
 const dataIngestion = require('./data-ingestion');
 const watchlist = require('./watchlist');
 const consensus = require('./consensus');
+const agentAttribution = require('./agent-attribution');
 const riskEngine = require('./risk-engine');
 const executor = require('./executor');
 const journal = require('./journal');
@@ -424,8 +425,30 @@ class TradingOrchestrator {
 			const signalLookup = this.lookupSignalsByAgent(signals);
 			const snapshot = snapshots instanceof Map ? snapshots.get(result.ticker) : snapshots?.[result.ticker];
 			const referencePrice = pickReferencePrice(snapshot);
+			const assetClass = resolveAssetClassForTicker(result.ticker);
 			let riskCheck = null;
 			let actedOn = false;
+
+			for (const signal of signals) {
+				try {
+					agentAttribution.recordPrediction(
+						signal.agent,
+						signal.ticker,
+						signal.direction,
+						signal.confidence,
+						signal.timestamp,
+						{
+							assetClass,
+							marketType: options.marketType || options.market_type,
+							reasoning: signal.reasoning,
+							source: 'consensus_round',
+							statePath: options.agentAttributionStatePath,
+						}
+					);
+				} catch (_) {
+					// Attribution should never block consensus evaluation.
+				}
+			}
 
 			if (result.consensus && result.decision !== 'HOLD' && !killSwitch.triggered && !dailyPause.paused) {
 				riskCheck = riskEngine.checkTrade({
@@ -433,7 +456,7 @@ class TradingOrchestrator {
 					direction: result.decision,
 					price: referencePrice || 0,
 					marketCap: options.marketCaps?.[result.ticker] ?? null,
-					assetClass: resolveAssetClassForTicker(result.ticker),
+					assetClass,
 				}, simulatedAccountState, limits);
 				actedOn = Boolean(riskCheck.approved);
 				if (riskCheck.approved) {
@@ -449,7 +472,7 @@ class TradingOrchestrator {
 						ticker: result.ticker,
 						direction: result.decision,
 						price: referencePrice,
-						assetClass: resolveAssetClassForTicker(result.ticker),
+						assetClass,
 					}, riskCheck);
 				} else {
 					rejectedTrades.push({
