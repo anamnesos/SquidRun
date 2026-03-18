@@ -330,7 +330,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - `workspace/knowledge/runtime-environment.md`: shared device registry and machine/runtime environment quirks. **Tracked**.
 - `docs/diagrams-reference.md`: ASCII templates for system topology (Agent Message Flow and Knowledge & Memory System) intended for Excalidraw visualization.
 - `ROLES.md`: canonical role boundaries/startup baseline/operating rules. **Tracked**.
-- `CLAUDE.md`, `CODEX.md`, `GEMINI.md`, `MODEL-SHIMS.md`, `CLAUDE-AI.md`, `AGENTS.md`: model/agent shims and behavior contracts. **Tracked**.
+- `CLAUDE.md`, `GEMINI.md`, `AGENTS.md`: CLI-specific config files auto-read by Claude Code, Gemini CLI, and Codex CLI respectively. Each contains CLI quirks + mandatory directive to read `ROLES.md`. **Tracked**.
 
 ## 8) COORDINATION STATE (`.squidrun/`)
 - `.squidrun/handoffs/`: materialized session handoff index (`session.md`) from comms journal.
