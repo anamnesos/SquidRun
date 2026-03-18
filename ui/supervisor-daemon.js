@@ -688,10 +688,10 @@ class SupervisorDaemon {
   }
 
   isTradingPhaseComplete(marketDate, phaseKey) {
-    return this.tradingState.marketDate === marketDate
-      && this.tradingState.phases
-      && this.tradingState.phases[phaseKey]
-      && this.tradingState.phases[phaseKey].status === 'completed';
+    if (this.tradingState.marketDate !== marketDate) return false;
+    const phase = this.tradingState.phases && this.tradingState.phases[phaseKey];
+    if (!phase) return false;
+    return phase.status === 'completed' || phase.status === 'failed';
   }
 
   recordTradingPhaseState(marketDate, phaseKey, patch = {}) {
