@@ -5,7 +5,7 @@
 This file is the canonical role definition source for SquidRun agents.
 
 - Role identity comes from runtime env: `SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`.
-- Model files (`CLAUDE.md`, `GEMINI.md`, `CODEX.md`) contain model quirks only.
+- Model files (`CLAUDE.md`, `GEMINI.md`, `CODEX.md`) contain CLI-specific quirks and a mandatory startup directive to read this file.
 - If model guidance conflicts with this file on role behavior, follow this file.
 
 ## Runtime Identity
