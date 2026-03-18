@@ -17,6 +17,7 @@ See `workspace/specs/trading-system-design.md` for full spec.
 - `ibkr-client.js` — Interactive Brokers client wrapper for account, positions, orders, and snapshots
 - `polymarket-client.js` — Polymarket CLOB client wrapper for auth, markets, order books, balances, and dry-run order flow
 - `polymarket-scanner.js` — Polymarket market discovery and filtering for liquid, short-horizon binary markets with edge ranking support
+- `polymarket-signals.js` — Deterministic per-agent Polymarket probability assessment and consensus aggregation
 - `journal.js` — SQLite trade journal
 - `scheduler.js` — Market-hours wake/sleep scheduling
 - `scheduler.js` — Market-hours wake/sleep scheduling plus 24/7 crypto consensus cadence
