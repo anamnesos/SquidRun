@@ -1,0 +1,238 @@
+/**
+ * Trade Journal — SQLite-backed trade log and performance tracking.
+ *
+ * Records every trade decision (including HOLDs and rejections),
+ * consensus details, and daily P&L for learning and reporting.
+ */
+
+'use strict';
+
+const path = require('path');
+
+/** @type {import('node:sqlite').DatabaseSync | null} */
+let _db = null;
+
+function getDb(dbPath) {
+  if (_db) return _db;
+  const { DatabaseSync } = require('node:sqlite');
+  _db = new DatabaseSync(dbPath || path.join(process.cwd(), '.squidrun', 'runtime', 'trade-journal.db'));
+  _db.exec('PRAGMA journal_mode=WAL');
+  _db.exec('PRAGMA foreign_keys=ON');
+  ensureSchema(_db);
+  return _db;
+}
+
+function ensureSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS trades (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+      ticker TEXT NOT NULL,
+      direction TEXT NOT NULL CHECK(direction IN ('BUY','SELL')),
+      shares INTEGER NOT NULL,
+      price REAL NOT NULL,
+      stop_loss_price REAL,
+      total_value REAL NOT NULL,
+      consensus_detail TEXT,
+      risk_check_detail TEXT,
+      status TEXT NOT NULL DEFAULT 'FILLED' CHECK(status IN ('FILLED','REJECTED','CANCELLED','PENDING')),
+      alpaca_order_id TEXT,
+      notes TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS consensus_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+      ticker TEXT NOT NULL,
+      decision TEXT NOT NULL CHECK(decision IN ('BUY','SELL','HOLD')),
+      consensus_reached INTEGER NOT NULL DEFAULT 0,
+      agreement_count INTEGER NOT NULL DEFAULT 0,
+      architect_signal TEXT,
+      builder_signal TEXT,
+      oracle_signal TEXT,
+      dissent_reasoning TEXT,
+      acted_on INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS daily_summary (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL UNIQUE,
+      start_equity REAL NOT NULL,
+      end_equity REAL NOT NULL,
+      pnl REAL NOT NULL,
+      pnl_pct REAL NOT NULL,
+      trades_count INTEGER NOT NULL DEFAULT 0,
+      wins INTEGER NOT NULL DEFAULT 0,
+      losses INTEGER NOT NULL DEFAULT 0,
+      peak_equity REAL NOT NULL,
+      drawdown_pct REAL NOT NULL DEFAULT 0,
+      notes TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS positions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ticker TEXT NOT NULL UNIQUE,
+      shares INTEGER NOT NULL,
+      avg_price REAL NOT NULL,
+      stop_loss_price REAL,
+      opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+}
+
+/**
+ * Record a trade execution.
+ */
+function recordTrade(db, trade) {
+  const stmt = db.prepare(`
+    INSERT INTO trades (ticker, direction, shares, price, stop_loss_price, total_value, consensus_detail, risk_check_detail, status, alpaca_order_id, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  return stmt.run(
+    trade.ticker,
+    trade.direction,
+    trade.shares,
+    trade.price,
+    trade.stopLossPrice || null,
+    trade.shares * trade.price,
+    trade.consensusDetail ? JSON.stringify(trade.consensusDetail) : null,
+    trade.riskCheckDetail ? JSON.stringify(trade.riskCheckDetail) : null,
+    trade.status || 'FILLED',
+    trade.alpacaOrderId || null,
+    trade.notes || null,
+  );
+}
+
+/**
+ * Record a consensus evaluation (including no-trade HOLDs).
+ */
+function recordConsensus(db, entry) {
+  const stmt = db.prepare(`
+    INSERT INTO consensus_log (ticker, decision, consensus_reached, agreement_count, architect_signal, builder_signal, oracle_signal, dissent_reasoning, acted_on)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  return stmt.run(
+    entry.ticker,
+    entry.decision,
+    entry.consensusReached ? 1 : 0,
+    entry.agreementCount || 0,
+    entry.architectSignal ? JSON.stringify(entry.architectSignal) : null,
+    entry.builderSignal ? JSON.stringify(entry.builderSignal) : null,
+    entry.oracleSignal ? JSON.stringify(entry.oracleSignal) : null,
+    entry.dissentReasoning || null,
+    entry.actedOn ? 1 : 0,
+  );
+}
+
+/**
+ * Record end-of-day summary.
+ */
+function recordDailySummary(db, summary) {
+  const stmt = db.prepare(`
+    INSERT OR REPLACE INTO daily_summary (date, start_equity, end_equity, pnl, pnl_pct, trades_count, wins, losses, peak_equity, drawdown_pct, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  return stmt.run(
+    summary.date,
+    summary.startEquity,
+    summary.endEquity,
+    summary.pnl,
+    summary.pnlPct,
+    summary.tradesCount || 0,
+    summary.wins || 0,
+    summary.losses || 0,
+    summary.peakEquity,
+    summary.drawdownPct || 0,
+    summary.notes || null,
+  );
+}
+
+/**
+ * Update or insert a position.
+ */
+function upsertPosition(db, position) {
+  const stmt = db.prepare(`
+    INSERT INTO positions (ticker, shares, avg_price, stop_loss_price, opened_at, updated_at)
+    VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+    ON CONFLICT(ticker) DO UPDATE SET
+      shares = excluded.shares,
+      avg_price = excluded.avg_price,
+      stop_loss_price = excluded.stop_loss_price,
+      updated_at = datetime('now')
+  `);
+  return stmt.run(
+    position.ticker,
+    position.shares,
+    position.avgPrice,
+    position.stopLossPrice || null,
+  );
+}
+
+/**
+ * Remove a closed position.
+ */
+function closePosition(db, ticker) {
+  return db.prepare('DELETE FROM positions WHERE ticker = ?').run(ticker);
+}
+
+/**
+ * Get all open positions.
+ */
+function getOpenPositions(db) {
+  return db.prepare('SELECT * FROM positions ORDER BY ticker').all();
+}
+
+/**
+ * Get recent trades.
+ */
+function getRecentTrades(db, limit = 10) {
+  return db.prepare('SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?').all(limit);
+}
+
+/**
+ * Get daily summaries for a date range.
+ */
+function getDailySummaries(db, fromDate, toDate) {
+  return db.prepare('SELECT * FROM daily_summary WHERE date >= ? AND date <= ? ORDER BY date').all(fromDate, toDate);
+}
+
+/**
+ * Get performance stats.
+ */
+function getPerformanceStats(db) {
+  const totals = db.prepare(`
+    SELECT
+      COUNT(*) as total_days,
+      SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_days,
+      SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losing_days,
+      SUM(pnl) as total_pnl,
+      AVG(pnl_pct) as avg_daily_return,
+      MAX(peak_equity) as all_time_peak,
+      MAX(drawdown_pct) as max_drawdown
+    FROM daily_summary
+  `).get();
+
+  const tradeStats = db.prepare(`
+    SELECT
+      COUNT(*) as total_trades,
+      SUM(CASE WHEN direction = 'BUY' THEN 1 ELSE 0 END) as buys,
+      SUM(CASE WHEN direction = 'SELL' THEN 1 ELSE 0 END) as sells
+    FROM trades WHERE status = 'FILLED'
+  `).get();
+
+  return { ...totals, ...tradeStats };
+}
+
+module.exports = {
+  getDb,
+  recordTrade,
+  recordConsensus,
+  recordDailySummary,
+  upsertPosition,
+  closePosition,
+  getOpenPositions,
+  getRecentTrades,
+  getDailySummaries,
+  getPerformanceStats,
+};
