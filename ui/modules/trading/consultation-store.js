@@ -9,7 +9,7 @@ const { getProjectRoot, resolveCoordPath } = require('../../config');
 const { queryCommsJournalEntries } = require('../main/comms-journal');
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_CONSULTATION_TIMEOUT_MS = 60_000;
+const DEFAULT_CONSULTATION_TIMEOUT_MS = 120_000;
 const DEFAULT_CONSULTATION_POLL_MS = 1_000;
 const DEFAULT_CONSULTATION_REQUESTS_DIR = resolveCoordPath(path.join('runtime', 'consultation-requests'), { forWrite: true });
 const DEFAULT_CONSULTATION_RESPONSES_DIR = resolveCoordPath(path.join('runtime', 'consultation-responses'), { forWrite: true });

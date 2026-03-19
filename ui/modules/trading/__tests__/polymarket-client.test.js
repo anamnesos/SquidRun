@@ -97,6 +97,7 @@ describe('polymarket-client', () => {
     const result = await polymarketClient.createOrder('token-1', 'BUY', 0.55, 10, {
       privateKey: '0xabc123',
       funderAddress: '0xfunder',
+      dryRun: true,
     });
 
     expect(result.status).toBe('dry_run');

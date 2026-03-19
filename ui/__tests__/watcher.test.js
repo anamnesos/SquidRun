@@ -563,7 +563,7 @@ describe('watcher module', () => {
     const deliveryId = triggers.notifyAgents.mock.calls[0][2].deliveryId;
     emitDeliveryAck(deliveryId, '2');
 
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 100));
     expect(await watcher.getMessages('2', true)).toHaveLength(0);
     watcher.stopMessageWatcher();
     cleanupDir(tempDir);

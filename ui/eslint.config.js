@@ -29,6 +29,6 @@ module.exports = [
   },
   {
     // Ignore test files and node_modules
-    ignores: ['node_modules/**', '__tests__/**', '*.test.js']
+    ignores: ['node_modules/**', '**/__tests__/**', '**/*.test.js']
   }
 ];
