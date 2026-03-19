@@ -113,6 +113,19 @@ describe('Risk Engine', () => {
       const result = checkKillSwitch(makeAccount({ equity: 350, peakEquity: 500 }));
       expect(result.triggered).toBe(true);
     });
+
+    test('accepts a unified portfolio snapshot shape', () => {
+      const result = checkKillSwitch({
+        totalEquity: 900,
+        positions: [{ ticker: 'AAPL', shares: 2 }],
+        risk: {
+          peakEquity: 1200,
+          dayStartEquity: 1100,
+        },
+      });
+      expect(result.triggered).toBe(true);
+      expect(result.drawdownPct).toBeCloseTo(0.25);
+    });
   });
 
   describe('checkDailyPause', () => {
@@ -125,6 +138,19 @@ describe('Risk Engine', () => {
       const result = checkDailyPause(makeAccount({ equity: 450, dayStartEquity: 500 }));
       expect(result.paused).toBe(true);
       expect(result.message).toContain('DAILY PAUSE');
+    });
+
+    test('reads daily loss from a portfolio snapshot risk block', () => {
+      const result = checkDailyPause({
+        totalEquity: 960,
+        positions: [{ ticker: 'BTC/USD', shares: 0.05 }],
+        risk: {
+          peakEquity: 1000,
+          dayStartEquity: 1000,
+        },
+      });
+      expect(result.paused).toBe(false);
+      expect(result.dayLossPct).toBeCloseTo(0.04);
     });
   });
 });

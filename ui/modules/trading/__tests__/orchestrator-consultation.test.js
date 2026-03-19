@@ -18,6 +18,7 @@ jest.mock('../data-ingestion', () => ({
 jest.mock('../executor', () => ({
   getAccountSnapshot: jest.fn().mockResolvedValue({ equity: 10000 }),
   getOpenPositions: jest.fn().mockResolvedValue([]),
+  executeConsensusTrade: jest.fn().mockResolvedValue({ ok: true, status: 'dry_run', order: { id: 'poly-1' } }),
 }));
 
 jest.mock('../journal', () => ({
@@ -79,12 +80,113 @@ jest.mock('../consultation-store', () => ({
   }),
 }));
 
+jest.mock('../portfolio-tracker', () => ({
+  getPortfolioSnapshot: jest.fn().mockResolvedValue({
+    totalEquity: 12000,
+    positions: [],
+    markets: {
+      polymarket: {
+        equity: 162,
+        cash: 162,
+        marketValue: 0,
+        positions: [],
+      },
+    },
+    risk: {
+      peakEquity: 12000,
+      dayStartEquity: 12000,
+      dailyLossPct: 0,
+      totalDrawdownPct: 0,
+    },
+  }),
+}));
+
+jest.mock('../dynamic-watchlist', () => ({
+  cloneEntry: jest.fn((entry) => ({ ...entry })),
+  getActiveEntries: jest.fn(() => [
+    { ticker: 'AAPL', broker: 'alpaca', assetClass: 'us_equity', exchange: 'SMART' },
+  ]),
+  getEntry: jest.fn(() => null),
+  addTicker: jest.fn(() => true),
+  isWatched: jest.fn(() => true),
+  normalizeBroker: jest.fn((value, fallback = 'alpaca') => value || fallback),
+  normalizeExchange: jest.fn((value, fallback = 'SMART') => value || fallback),
+  normalizeAssetClass: jest.fn((value, fallback = 'us_equity') => value || fallback),
+  DEFAULT_WATCHLIST: [],
+  DEFAULT_CRYPTO_WATCHLIST: [],
+}));
+
+jest.mock('../polymarket-scanner', () => ({
+  scanMarkets: jest.fn().mockResolvedValue([
+    {
+      conditionId: 'market-1',
+      question: 'Will BTC close above $120k by June 30?',
+      tokens: { yes: 'yes-token', no: 'no-token' },
+      currentPrices: { yes: 0.61, no: 0.39 },
+    },
+  ]),
+}));
+
+jest.mock('../polymarket-signals', () => ({
+  produceSignals: jest.fn(() => new Map([
+    ['architect', [{ agent: 'architect', conditionId: 'market-1', probability: 0.74, confidence: 0.84, direction: 'BUY_YES', reasoning: 'architect poly' }]],
+    ['builder', [{ agent: 'builder', conditionId: 'market-1', probability: 0.76, confidence: 0.86, direction: 'BUY_YES', reasoning: 'builder poly' }]],
+    ['oracle', [{ agent: 'oracle', conditionId: 'market-1', probability: 0.58, confidence: 0.70, direction: 'BUY_NO', reasoning: 'oracle poly' }]],
+  ])),
+  buildConsensus: jest.fn(() => ({
+    conditionId: 'market-1',
+    decision: 'BUY_YES',
+    consensus: true,
+    agreementCount: 2,
+    probability: 0.72,
+    edge: 0.11,
+    summary: 'BUY YES edge',
+  })),
+}));
+
+jest.mock('../polymarket-sizer', () => ({
+  positionSize: jest.fn(() => ({
+    executable: true,
+    stake: 24.3,
+    shares: 39.836,
+    reasons: [],
+  })),
+}));
+
+const executor = require('../executor');
 const journal = require('../journal');
 const signalProducer = require('../signal-producer');
 const consultationStore = require('../consultation-store');
+const portfolioTracker = require('../portfolio-tracker');
+const dynamicWatchlist = require('../dynamic-watchlist');
+const polymarketScanner = require('../polymarket-scanner');
+const polymarketSignals = require('../polymarket-signals');
+const polymarketSizer = require('../polymarket-sizer');
 const { createOrchestrator } = require('../orchestrator');
 
 describe('orchestrator real consultation flow', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    portfolioTracker.getPortfolioSnapshot.mockResolvedValue({
+      totalEquity: 12000,
+      positions: [],
+      markets: {
+        polymarket: {
+          equity: 162,
+          cash: 162,
+          marketValue: 0,
+          positions: [],
+        },
+      },
+      risk: {
+        peakEquity: 12000,
+        dayStartEquity: 12000,
+        dailyLossPct: 0,
+        totalDrawdownPct: 0,
+      },
+    });
+  });
+
   test('collects real consultation responses first and only falls back for missing agents', async () => {
     const orchestrator = createOrchestrator({
       consultationSender: jest.fn(),
@@ -122,5 +224,68 @@ describe('orchestrator real consultation flow', () => {
       builderSignal: expect.objectContaining({ reasoning: 'builder fallback' }),
       oracleSignal: expect.objectContaining({ reasoning: 'oracle fallback' }),
     }));
+  });
+
+  test('runs the polymarket branch end-to-end and auto-adds smart money convergence tickers', async () => {
+    const orchestrator = createOrchestrator();
+
+    const consensusPhase = await orchestrator.runConsensusRound({
+      broker: 'polymarket',
+      assetClass: 'prediction_market',
+      smartMoneySignals: [
+        {
+          symbol: 'UNI',
+          chain: 'ethereum',
+          walletCount: 2,
+          totalUsdValue: 165000,
+        },
+      ],
+    });
+
+    expect(dynamicWatchlist.addTicker).toHaveBeenCalledWith('UNI', expect.objectContaining({
+      source: 'smart_money',
+      assetClass: 'crypto',
+    }));
+    expect(polymarketScanner.scanMarkets).toHaveBeenCalled();
+    expect(polymarketSignals.produceSignals).toHaveBeenCalled();
+    expect(polymarketSizer.positionSize).toHaveBeenCalledWith(
+      162,
+      0.72,
+      0.61,
+      expect.objectContaining({
+        dailyLossPct: 0,
+      })
+    );
+    expect(consensusPhase.approvedTrades).toEqual([
+      expect.objectContaining({
+        ticker: 'market-1',
+        tokenId: 'yes-token',
+        referencePrice: 0.61,
+      }),
+    ]);
+
+    const executionPhase = await orchestrator.runMarketOpen({
+      broker: 'polymarket',
+      assetClass: 'prediction_market',
+      consensusPhase,
+    });
+
+    expect(executor.executeConsensusTrade).toHaveBeenCalledWith(expect.objectContaining({
+      broker: 'polymarket',
+      assetClass: 'prediction_market',
+      tokenId: 'yes-token',
+      requestedShares: 39.836,
+      account: expect.objectContaining({
+        totalEquity: 12000,
+      }),
+    }), expect.objectContaining({
+      broker: 'polymarket',
+    }));
+    expect(executionPhase.executions).toEqual([
+      expect.objectContaining({
+        ticker: 'market-1',
+        execution: expect.objectContaining({ ok: true, status: 'dry_run' }),
+      }),
+    ]);
   });
 });

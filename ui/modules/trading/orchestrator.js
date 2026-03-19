@@ -5,12 +5,17 @@ const path = require('path');
 const { getProjectRoot } = require('../../config');
 const dataIngestion = require('./data-ingestion');
 const watchlist = require('./watchlist');
+const dynamicWatchlist = require('./dynamic-watchlist');
 const consensus = require('./consensus');
 const agentAttribution = require('./agent-attribution');
 const consultationStore = require('./consultation-store');
 const riskEngine = require('./risk-engine');
 const executor = require('./executor');
 const journal = require('./journal');
+const polymarketScanner = require('./polymarket-scanner');
+const polymarketSignals = require('./polymarket-signals');
+const polymarketSizer = require('./polymarket-sizer');
+const portfolioTracker = require('./portfolio-tracker');
 const tradingScheduler = require('./scheduler');
 const signalProducer = require('./signal-producer');
 const telegramSummary = require('./telegram-summary');
@@ -68,14 +73,46 @@ function toPositiveInteger(value) {
 function toPositiveQuantity(value, assetClass = 'us_equity') {
 	const numeric = Number(value);
 	if (!Number.isFinite(numeric) || numeric <= 0) return 0;
-	if (watchlist.normalizeAssetClass(assetClass) === 'crypto') {
+	const normalizedAssetClass = watchlist.normalizeAssetClass(assetClass);
+	if (normalizedAssetClass === 'crypto') {
 		return Number(numeric.toFixed(6));
+	}
+	if (normalizedAssetClass === 'prediction_market') {
+		return Number(numeric.toFixed(4));
 	}
 	return toPositiveInteger(numeric);
 }
 
 function resolveAssetClassForTicker(ticker, fallback = 'us_equity') {
 	return watchlist.getAssetClassForTicker(ticker, fallback);
+}
+
+function isPolymarketMode(options = {}) {
+	const explicit = String(options.broker || options.marketType || options.market_type || '').trim().toLowerCase();
+	if (explicit === 'polymarket') return true;
+	return String(options.assetClass || options.asset_class || '').trim().toLowerCase() === 'prediction_market';
+}
+
+function toJournalDecision(value) {
+	const normalized = String(value || '').trim().toUpperCase();
+	if (normalized === 'BUY_YES') return 'BUY';
+	if (normalized === 'BUY_NO') return 'SELL';
+	return toDirection(normalized);
+}
+
+function resolveSmartMoneyAssetClass(signal = {}) {
+	return String(signal.chain || '').trim().toLowerCase() === 'solana' ? 'solana_token' : 'crypto';
+}
+
+function resolveSmartMoneyExchange(signal = {}) {
+	return String(signal.chain || '').trim().toLowerCase() === 'solana' ? 'SOLANA' : 'CRYPTO';
+}
+
+function buildSmartMoneyReason(signal = {}) {
+	const wallets = toPositiveInteger(signal.walletCount || signal.wallets?.length || 0);
+	const totalUsdValue = Math.round(toNumber(signal.totalUsdValue, 0));
+	const chain = String(signal.chain || 'unknown').trim().toUpperCase();
+	return `Wallet convergence: ${wallets} wallets on ${chain}, ~$${totalUsdValue.toLocaleString('en-US')} total flow`;
 }
 
 function pickReferencePrice(snapshot) {
@@ -248,15 +285,23 @@ class TradingOrchestrator {
 
 	buildAccountState(accountSnapshot, openPositions, db, options = {}) {
 		const marketDate = toDateKey(options.date || this.state.meta.marketDate || new Date());
+		const portfolioSnapshot = accountSnapshot && typeof accountSnapshot.totalEquity === 'number'
+			? accountSnapshot
+			: null;
+		const liveEquity = toNumber(portfolioSnapshot?.totalEquity ?? accountSnapshot?.equity, 0);
+		const resolvedOpenPositions = Array.isArray(portfolioSnapshot?.positions)
+			? portfolioSnapshot.positions
+			: (Array.isArray(openPositions) ? openPositions : []);
 		const dayStartEquity = toNumber(
 			options.dayStartEquity
+			?? portfolioSnapshot?.risk?.dayStartEquity
 			?? this.state.meta.dayStartEquity
-			?? accountSnapshot?.equity,
+			?? liveEquity,
 			0
 		);
 		const peakEquity = Math.max(
-			toNumber(options.peakEquity ?? this.state.meta.peakEquity ?? accountSnapshot?.equity, 0),
-			toNumber(accountSnapshot?.equity, 0)
+			toNumber(options.peakEquity ?? portfolioSnapshot?.risk?.peakEquity ?? this.state.meta.peakEquity ?? liveEquity, 0),
+			liveEquity
 		);
 
 		this.state.meta.marketDate = marketDate;
@@ -264,11 +309,12 @@ class TradingOrchestrator {
 		this.state.meta.peakEquity = peakEquity;
 
 		return {
-			equity: toNumber(accountSnapshot?.equity, 0),
+			equity: liveEquity,
 			peakEquity,
 			dayStartEquity,
 			tradesToday: this.countTradesToday(db, marketDate, options),
-			openPositions: Array.isArray(openPositions) ? openPositions : [],
+			openPositions: resolvedOpenPositions,
+			portfolioSnapshot,
 		};
 	}
 
@@ -435,7 +481,281 @@ class TradingOrchestrator {
 		}, { unanimous: 0, majority: 0, noConsensus: 0 });
 	}
 
+	async getUnifiedPortfolioSnapshot(options = {}) {
+		return portfolioTracker.getPortfolioSnapshot({
+			...this.options.portfolioOptions,
+			...options,
+		});
+	}
+
+	async syncSmartMoneyWatchlist(options = {}) {
+		const scanner = options.smartMoneyScanner || this.options.smartMoneyScanner || null;
+		let pollResult = null;
+		let signals = Array.isArray(options.smartMoneySignals) ? options.smartMoneySignals : [];
+		if (signals.length === 0 && scanner && typeof scanner.pollNow === 'function') {
+			pollResult = await scanner.pollNow({ reason: options.reason || 'orchestrator' });
+			if (pollResult?.ok) {
+				if (Array.isArray(pollResult.freshSignals) && pollResult.freshSignals.length > 0) {
+					signals = pollResult.freshSignals;
+				} else if (Array.isArray(pollResult.signals)) {
+					signals = pollResult.signals;
+				}
+			}
+		}
+
+		const statePath = options.dynamicWatchlistStatePath || this.options.dynamicWatchlistStatePath;
+		const added = [];
+		const refreshed = [];
+		for (const signal of signals) {
+			const ticker = toTicker(signal.symbol || signal.ticker || signal.tokenAddress);
+			if (!ticker) continue;
+			const existed = dynamicWatchlist.getEntry(ticker, { statePath });
+			dynamicWatchlist.addTicker(ticker, {
+				statePath,
+				persist: options.persistDynamicWatchlist,
+				name: ticker,
+				sector: 'Smart Money',
+				source: 'smart_money',
+				reason: buildSmartMoneyReason(signal),
+				exchange: resolveSmartMoneyExchange(signal),
+				broker: 'alpaca',
+				assetClass: resolveSmartMoneyAssetClass(signal),
+				expiry: options.smartMoneyExpiry || null,
+			});
+			(existed ? refreshed : added).push(ticker);
+		}
+
+		return {
+			ok: pollResult?.ok !== false,
+			signals,
+			added,
+			refreshed,
+			pollResult,
+		};
+	}
+
+	async runPolymarketConsensusRound(options = {}) {
+		const db = this.getJournalDb(options);
+		const [smartMoneyWatchlist, portfolioSnapshot, markets] = await Promise.all([
+			this.syncSmartMoneyWatchlist({ ...options, reason: 'polymarket_consensus' }),
+			this.getUnifiedPortfolioSnapshot({ ...options, includePolymarket: true }),
+			Array.isArray(options.polymarketMarkets) && options.polymarketMarkets.length > 0
+				? Promise.resolve(options.polymarketMarkets)
+				: polymarketScanner.scanMarkets(options),
+		]);
+		const accountState = this.buildAccountState(portfolioSnapshot, portfolioSnapshot?.positions || [], db, options);
+		const limits = options.limits || this.options.limits || riskEngine.DEFAULT_LIMITS;
+		const killSwitch = riskEngine.checkKillSwitch(portfolioSnapshot, limits);
+		const dailyPause = riskEngine.checkDailyPause(portfolioSnapshot, limits);
+		const polymarketMarket = portfolioSnapshot?.markets?.polymarket || {};
+		const bankroll = toNumber(polymarketMarket.equity ?? polymarketMarket.liquidCapital ?? portfolioSnapshot?.totalEquity, 0);
+		let currentExposure = toNumber(polymarketMarket.marketValue, 0);
+		const openPositions = Array.isArray(polymarketMarket.positions)
+			? polymarketMarket.positions.map((position) => ({ ...position }))
+			: [];
+		const signalsByAgent = polymarketSignals.produceSignals(markets, {
+			...options,
+			agentIds: REQUIRED_AGENTS,
+		});
+		const results = [];
+		const approvedTrades = [];
+		const rejectedTrades = [];
+
+		for (const market of markets) {
+			const marketSignals = REQUIRED_AGENTS.map((agentId) => {
+				return (signalsByAgent.get(agentId) || []).find((signal) => signal.conditionId === market.conditionId);
+			}).filter(Boolean);
+			if (marketSignals.length !== REQUIRED_AGENTS.length) continue;
+
+			const result = {
+				...polymarketSignals.buildConsensus(marketSignals, options),
+				ticker: market.conditionId,
+				market,
+			};
+			results.push(result);
+			const signalLookup = this.lookupSignalsByAgent(marketSignals);
+			let actedOn = false;
+			let sizing = null;
+			let rejectionReason = null;
+
+			for (const signal of marketSignals) {
+				try {
+					agentAttribution.recordPrediction(
+						signal.agent,
+						market.conditionId,
+						signal.direction,
+						signal.confidence,
+						Date.now(),
+						{
+							assetClass: 'prediction_market',
+							marketType: 'polymarket',
+							reasoning: signal.reasoning,
+							source: 'polymarket_consensus',
+							statePath: options.agentAttributionStatePath,
+						}
+					);
+				} catch (_) {
+					// Attribution should never block consensus evaluation.
+				}
+			}
+
+			if (result.consensus && result.decision !== 'HOLD' && !killSwitch.triggered && !dailyPause.paused) {
+				const buyYes = result.decision === 'BUY_YES';
+				const tokenId = buyYes ? market.tokens?.yes : market.tokens?.no;
+				const referencePrice = buyYes
+					? toNumber(market.currentPrices?.yes, 0)
+					: toNumber(market.currentPrices?.no, 0);
+				const probability = buyYes
+					? toNumber(result.probability, 0)
+					: Number((1 - toNumber(result.probability, 0)).toFixed(4));
+				const alreadyOpen = openPositions.some((position) => {
+					return String(position.market || '').trim() === String(market.conditionId || '').trim()
+						|| String(position.tokenId || '').trim() === String(tokenId || '').trim();
+				});
+				if (alreadyOpen) {
+					rejectionReason = 'market_already_open';
+				} else if (!tokenId || referencePrice <= 0) {
+					rejectionReason = 'missing_polymarket_execution_context';
+				} else {
+					sizing = polymarketSizer.positionSize(bankroll, probability, referencePrice, {
+						...options,
+						openPositions,
+						currentExposure,
+						dailyLossPct: dailyPause.dayLossPct,
+					});
+					actedOn = Boolean(sizing.executable);
+					if (sizing.executable) {
+						approvedTrades.push({
+							ticker: market.conditionId,
+							consensus: result,
+							market,
+							tokenId,
+							referencePrice,
+							probability,
+							sizing,
+							limits,
+						});
+						currentExposure = Number((currentExposure + sizing.stake).toFixed(2));
+						openPositions.push({
+							market: market.conditionId,
+							tokenId,
+							marketValue: sizing.stake,
+							costBasis: sizing.stake,
+						});
+					} else {
+						rejectionReason = sizing.reasons.join('; ') || 'not_executable';
+					}
+				}
+			}
+
+			if (!actedOn && result.consensus && result.decision !== 'HOLD') {
+				rejectedTrades.push({
+					ticker: market.conditionId,
+					consensus: result,
+					market,
+					sizing,
+					reason: rejectionReason,
+				});
+			}
+
+			journal.recordConsensus(db, {
+				ticker: market.conditionId,
+				decision: toJournalDecision(result.decision),
+				consensusReached: result.consensus,
+				agreementCount: result.agreementCount,
+				architectSignal: signalLookup.architect || null,
+				builderSignal: signalLookup.builder || null,
+				oracleSignal: signalLookup.oracle || null,
+				dissentReasoning: result.summary || rejectionReason || null,
+				actedOn,
+			});
+		}
+
+		const phaseResult = {
+			phase: 'polymarket_consensus',
+			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
+			smartMoneyWatchlist,
+			portfolioSnapshot,
+			accountState,
+			killSwitch,
+			dailyPause,
+			markets,
+			agentSignals: Object.fromEntries(Array.from(signalsByAgent.entries())),
+			results,
+			approvedTrades,
+			rejectedTrades,
+			asOf: new Date().toISOString(),
+		};
+
+		this.state.phases.polymarketConsensus = phaseResult;
+		this.state.phases.consensus = phaseResult;
+		return phaseResult;
+	}
+
+	async runPolymarketMarketOpen(options = {}) {
+		const db = this.getJournalDb(options);
+		const consensusPhase = options.consensusPhase
+			|| this.state.phases.polymarketConsensus
+			|| this.state.phases.consensus
+			|| await this.runPolymarketConsensusRound(options);
+		const approvedTrades = Array.isArray(options.approvedTrades) ? options.approvedTrades : consensusPhase.approvedTrades;
+		const portfolioSnapshot = await this.getUnifiedPortfolioSnapshot({ ...options, includePolymarket: true });
+		const executions = [];
+
+		for (const trade of approvedTrades) {
+			let execution;
+			try {
+				execution = await executor.executeConsensusTrade({
+					consensus: trade.consensus,
+					ticker: trade.ticker,
+					conditionId: trade.market?.conditionId || trade.ticker,
+					tokenId: trade.tokenId,
+					yesTokenId: trade.market?.tokens?.yes,
+					noTokenId: trade.market?.tokens?.no,
+					currentPrices: trade.market?.currentPrices,
+					price: trade.referencePrice,
+					referencePrice: trade.referencePrice,
+					broker: 'polymarket',
+					assetClass: 'prediction_market',
+					account: portfolioSnapshot,
+					limits: trade.limits,
+					requestedShares: trade.sizing?.shares,
+					notes: `polymarket-open:${trade.ticker}`,
+				}, {
+					...options,
+					broker: 'polymarket',
+					journalDb: db,
+					journalPath: this.resolveJournalPath(options),
+				});
+			} catch (execErr) {
+				execution = { ok: false, status: 'error', error: execErr.message };
+			}
+
+			executions.push({
+				ticker: trade.ticker,
+				consensus: trade.consensus,
+				referencePrice: trade.referencePrice,
+				sizing: trade.sizing,
+				execution,
+			});
+		}
+
+		const syncedPositions = await executor.getOpenPositions({ ...options, broker: 'polymarket' }).catch(() => []);
+		const phaseResult = {
+			phase: 'polymarket_execute',
+			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
+			executions,
+			syncedPositions,
+			asOf: new Date().toISOString(),
+		};
+
+		this.state.phases.polymarketExecute = phaseResult;
+		this.state.phases.marketOpen = phaseResult;
+		return phaseResult;
+	}
+
 	async runPreMarket(options = {}) {
+		const smartMoneyWatchlist = await this.syncSmartMoneyWatchlist({ ...options, reason: 'premarket' });
 		const symbols = normalizeSymbols(options.symbols, options);
 		const marketDate = this.resetForMarketDate(options.date || new Date());
 		const isCrypto = watchlist.normalizeAssetClass(options.assetClass || options.asset_class, 'us_equity') === 'crypto';
@@ -456,6 +776,7 @@ class TradingOrchestrator {
 		const result = {
 			phase: 'premarket',
 			marketDate: schedule?.marketDate || marketDate,
+			smartMoneyWatchlist,
 			watchlist: watchlist.getWatchlist({ assetClass: options.assetClass || options.asset_class }),
 			symbols,
 			schedule,
@@ -478,14 +799,19 @@ class TradingOrchestrator {
 	}
 
 	async runConsensusRound(options = {}) {
+		if (isPolymarketMode(options)) {
+			return this.runPolymarketConsensusRound(options);
+		}
+
 		const db = this.getJournalDb(options);
+		const smartMoneyWatchlist = await this.syncSmartMoneyWatchlist({ ...options, reason: 'consensus_round' });
 		const symbols = normalizeSymbols(options.symbols, options);
 		const premarketContext = this.state.phases.premarket?.marketContext || {};
 		// Always fetch fresh data — cached Maps lose their entries after JSON serialization
 		const cachedSnapshots = options.snapshots || premarketContext.snapshots;
 		const hasCachedSnapshots = cachedSnapshots instanceof Map ? cachedSnapshots.size > 0
 			: (cachedSnapshots && typeof cachedSnapshots === 'object' && Object.keys(cachedSnapshots).length > 0);
-		const [freshSnapshots, bars, news, accountSnapshot, openPositions] = await Promise.all([
+		const [freshSnapshots, bars, news, portfolioSnapshot] = await Promise.all([
 			hasCachedSnapshots
 				? Promise.resolve(cachedSnapshots)
 				: dataIngestion.getWatchlistSnapshots({ ...options, symbols }),
@@ -499,8 +825,7 @@ class TradingOrchestrator {
 			options.news
 				|| (Array.isArray(premarketContext.news) && premarketContext.news.length > 0 ? premarketContext.news : null)
 				|| dataIngestion.getNews({ ...options, symbols, limit: Math.max(20, symbols.length * 3) }).catch(() => []),
-			executor.getAccountSnapshot(options),
-			executor.getOpenPositions(options),
+			this.getUnifiedPortfolioSnapshot(options),
 		]);
 		const snapshots = freshSnapshots;
 		const whaleData = options.whaleTransfers || null;
@@ -508,15 +833,15 @@ class TradingOrchestrator {
 			snapshots,
 			bars,
 			news,
-			accountSnapshot,
+			accountSnapshot: portfolioSnapshot,
 			whaleData,
 		}, options);
 		const autoGeneratedSignals = await this.backfillMissingSignals(symbols, options);
 		const { completeSignals, incomplete } = this.buildSignalMap(symbols);
-		const accountState = this.buildAccountState(accountSnapshot, openPositions, db, options);
+		const accountState = this.buildAccountState(portfolioSnapshot, portfolioSnapshot?.positions || [], db, options);
 		const limits = options.limits || this.options.limits || riskEngine.DEFAULT_LIMITS;
-		const killSwitch = riskEngine.checkKillSwitch(accountState, limits);
-		const dailyPause = riskEngine.checkDailyPause(accountState, limits);
+		const killSwitch = riskEngine.checkKillSwitch(portfolioSnapshot, limits);
+		const dailyPause = riskEngine.checkDailyPause(portfolioSnapshot, limits);
 		const results = completeSignals.size > 0 ? consensus.evaluateAll(completeSignals) : [];
 		const approvedTrades = [];
 		const rejectedTrades = [];
@@ -602,8 +927,10 @@ class TradingOrchestrator {
 		const phaseResult = {
 			phase: 'consensus',
 			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
+			smartMoneyWatchlist,
 			consultation,
 			autoGeneratedSignals,
+			portfolioSnapshot,
 			accountState,
 			simulatedAccountState,
 			killSwitch,
@@ -620,6 +947,10 @@ class TradingOrchestrator {
 	}
 
 	async runMarketOpen(options = {}) {
+		if (isPolymarketMode(options)) {
+			return this.runPolymarketMarketOpen(options);
+		}
+
 		const db = this.getJournalDb(options);
 		const consensusPhase = options.consensusPhase || this.state.phases.consensus || await this.runConsensusRound(options);
 		const approvedTrades = Array.isArray(options.approvedTrades) ? options.approvedTrades : consensusPhase.approvedTrades;
@@ -630,12 +961,9 @@ class TradingOrchestrator {
 
 		// If account state is empty (e.g. lost during serialization), fetch fresh from broker
 		if (!simulatedAccountState.equity || simulatedAccountState.equity <= 0) {
-			const [freshAccount, freshPositions] = await Promise.all([
-				executor.getAccountSnapshot(options),
-				executor.getOpenPositions(options),
-			]);
-			if (freshAccount?.equity > 0) {
-				simulatedAccountState = this.buildAccountState(freshAccount, freshPositions, db, options);
+			const portfolioSnapshot = await this.getUnifiedPortfolioSnapshot(options);
+			if (portfolioSnapshot?.totalEquity > 0) {
+				simulatedAccountState = this.buildAccountState(portfolioSnapshot, portfolioSnapshot.positions || [], db, options);
 			}
 		}
 
@@ -765,14 +1093,14 @@ class TradingOrchestrator {
 
 	async runMarketClose(options = {}) {
 		const db = this.getJournalDb(options);
-		const [accountSnapshot, openPositions] = await Promise.all([
-			executor.getAccountSnapshot(options),
+		const [portfolioSnapshot, openPositions] = await Promise.all([
+			this.getUnifiedPortfolioSnapshot(options),
 			executor.getOpenPositions(options),
 		]);
-		const accountState = this.buildAccountState(accountSnapshot, openPositions, db, options);
+		const accountState = this.buildAccountState(portfolioSnapshot, portfolioSnapshot?.positions || openPositions, db, options);
 		const limits = options.limits || this.options.limits || riskEngine.DEFAULT_LIMITS;
-		const killSwitch = riskEngine.checkKillSwitch(accountState, limits);
-		const dailyPause = riskEngine.checkDailyPause(accountState, limits);
+		const killSwitch = riskEngine.checkKillSwitch(portfolioSnapshot, limits);
+		const dailyPause = riskEngine.checkDailyPause(portfolioSnapshot, limits);
 		let liquidation = null;
 
 		if (killSwitch.triggered && options.autoLiquidate !== false) {
@@ -914,6 +1242,19 @@ class TradingOrchestrator {
 	}
 
 	async runFullDay(options = {}) {
+		if (isPolymarketMode(options)) {
+			const consensusPhase = await this.runPolymarketConsensusRound(options);
+			const marketOpen = await this.runPolymarketMarketOpen({ ...options, consensusPhase });
+			return {
+				preMarket: null,
+				consensus: consensusPhase,
+				marketOpen,
+				midDayCheck: null,
+				marketClose: null,
+				endOfDay: null,
+			};
+		}
+
 		const preMarket = await this.runPreMarket(options);
 		const consensusPhase = await this.runConsensusRound({ ...options, symbols: preMarket.symbols });
 		const marketOpen = await this.runMarketOpen({ ...options, consensusPhase });

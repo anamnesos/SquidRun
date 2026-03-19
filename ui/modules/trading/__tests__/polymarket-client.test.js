@@ -45,6 +45,7 @@ jest.mock('ethers', () => ({
 }));
 
 const polymarketClient = require('../polymarket-client');
+const executor = require('../executor');
 
 describe('polymarket-client', () => {
   beforeEach(async () => {
@@ -108,5 +109,38 @@ describe('polymarket-client', () => {
       side: 'BUY',
       size: 10,
     });
+  });
+
+  test('executor routes polymarket broker orders through createOrder', async () => {
+    const result = await executor.submitOrder({
+      broker: 'polymarket',
+      ticker: 'market-1',
+      direction: 'BUY_NO',
+      shares: 12.34567,
+      noTokenId: 'token-no',
+      noPrice: 0.43,
+    }, {
+      privateKey: '0xabc123',
+      funderAddress: '0xfunder',
+      dryRun: true,
+      recordJournal: false,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'dry_run',
+      payload: expect.objectContaining({
+        tokenId: 'token-no',
+        price: 0.43,
+        direction: 'BUY_NO',
+        side: 'BUY',
+      }),
+      order: expect.objectContaining({
+        tokenId: 'token-no',
+        qty: 12.3456,
+        filledAvgPrice: 0.43,
+      }),
+    });
+    expect(mockCreateAndPostOrder).not.toHaveBeenCalled();
   });
 });

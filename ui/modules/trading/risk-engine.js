@@ -48,13 +48,16 @@ const DEFAULT_CRYPTO_LIMITS = Object.freeze({
 function normalizeAssetClass(value, fallback = 'us_equity') {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return fallback;
-  return normalized === 'crypto' ? 'crypto' : 'us_equity';
+  if (['crypto', 'prediction_market', 'solana_token', 'defi_yield', 'us_equity'].includes(normalized)) {
+    return normalized;
+  }
+  return fallback;
 }
 
 function resolveRiskLimits(limits = DEFAULT_LIMITS, assetClass = 'us_equity') {
   const normalizedAssetClass = normalizeAssetClass(assetClass);
   const customLimits = limits && limits !== DEFAULT_LIMITS ? limits : {};
-  if (normalizedAssetClass === 'crypto') {
+  if (normalizedAssetClass === 'crypto' || normalizedAssetClass === 'prediction_market' || normalizedAssetClass === 'solana_token') {
     return {
       ...DEFAULT_CRYPTO_LIMITS,
       ...customLimits,
@@ -74,6 +77,54 @@ function roundDownQuantity(value, decimals = 6) {
   if (!Number.isFinite(numeric) || numeric <= 0) return 0;
   const factor = 10 ** decimals;
   return Math.floor(numeric * factor) / factor;
+}
+
+function normalizeTradeDirection(direction, assetClass = 'us_equity') {
+  const normalized = String(direction || '').trim().toUpperCase();
+  if (normalized === 'BUY' || normalized === 'SELL' || normalized === 'HOLD') {
+    return normalized;
+  }
+  if (normalizeAssetClass(assetClass) === 'prediction_market' && (normalized === 'BUY_YES' || normalized === 'BUY_NO')) {
+    return normalized;
+  }
+  return normalized;
+}
+
+function normalizeOpenPosition(position = {}) {
+  return {
+    ...position,
+    ticker: String(position.ticker || position.symbol || position.market || position.tokenId || '').trim().toUpperCase(),
+    shares: Number(position.shares ?? position.qty ?? position.size ?? 0) || 0,
+    assetClass: normalizeAssetClass(position.assetClass || position.asset_class, 'us_equity'),
+  };
+}
+
+function normalizeAccountState(account = {}) {
+  if (account && typeof account === 'object' && (
+    account.totalEquity != null
+    || account.risk
+    || account.markets
+    || Array.isArray(account.positions)
+  )) {
+    const totalEquity = Number(account.totalEquity ?? account.equity ?? 0) || 0;
+    const peakEquity = Number(account.risk?.peakEquity ?? account.peakEquity ?? totalEquity) || totalEquity;
+    const dayStartEquity = Number(account.risk?.dayStartEquity ?? account.dayStartEquity ?? totalEquity) || totalEquity;
+    return {
+      equity: totalEquity,
+      peakEquity,
+      dayStartEquity,
+      tradesToday: Number(account.tradesToday || 0) || 0,
+      openPositions: Array.isArray(account.positions) ? account.positions.map(normalizeOpenPosition) : [],
+    };
+  }
+
+  return {
+    equity: Number(account?.equity || 0) || 0,
+    peakEquity: Number(account?.peakEquity || account?.equity || 0) || 0,
+    dayStartEquity: Number(account?.dayStartEquity || account?.equity || 0) || 0,
+    tradesToday: Number(account?.tradesToday || 0) || 0,
+    openPositions: Array.isArray(account?.openPositions) ? account.openPositions.map(normalizeOpenPosition) : [],
+  };
 }
 
 /**
@@ -106,70 +157,76 @@ function roundDownQuantity(value, decimals = 6) {
  */
 function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
   const assetClass = normalizeAssetClass(trade.assetClass || trade.asset_class);
+  const normalizedAccount = normalizeAccountState(account);
+  const direction = normalizeTradeDirection(trade.direction, assetClass);
   const effectiveLimits = resolveRiskLimits(limits, assetClass);
   const violations = [];
+  const isBuyExposure = direction === 'BUY' || direction === 'BUY_YES' || direction === 'BUY_NO';
 
   // --- ABSOLUTE PROHIBITIONS ---
   const normTicker = (t) => String(t || '').replace(/[\/\-]/g, '').toUpperCase();
   const tradeTicker = normTicker(trade.ticker);
-  if (trade.direction === 'SELL' && !account.openPositions?.some(p => normTicker(p.ticker) === tradeTicker)) {
+  if (direction === 'SELL' && !normalizedAccount.openPositions?.some(p => normTicker(p.ticker) === tradeTicker)) {
     // Shorting check — can only sell what we own
     violations.push('SHORT_PROHIBITED: Cannot sell a stock we do not own');
   }
 
-  if (assetClass !== 'crypto' && trade.price < effectiveLimits.minStockPrice) {
+  if (assetClass === 'us_equity' && trade.price < effectiveLimits.minStockPrice) {
     violations.push(`PENNY_STOCK: Price $${trade.price} below minimum $${effectiveLimits.minStockPrice}`);
   }
 
-  if (assetClass !== 'crypto' && trade.marketCap != null && trade.marketCap < effectiveLimits.minMarketCap) {
+  if (assetClass === 'us_equity' && trade.marketCap != null && trade.marketCap < effectiveLimits.minMarketCap) {
     violations.push(`SMALL_CAP: Market cap $${trade.marketCap} below minimum $${effectiveLimits.minMarketCap}`);
   }
 
   // --- KILL SWITCH ---
-  const drawdownPct = account.peakEquity > 0
-    ? (account.peakEquity - account.equity) / account.peakEquity
+  const drawdownPct = normalizedAccount.peakEquity > 0
+    ? (normalizedAccount.peakEquity - normalizedAccount.equity) / normalizedAccount.peakEquity
     : 0;
   if (drawdownPct >= effectiveLimits.maxDrawdownPct) {
     violations.push(`KILL_SWITCH: Account down ${(drawdownPct * 100).toFixed(1)}% from peak (limit: ${effectiveLimits.maxDrawdownPct * 100}%)`);
   }
 
   // --- DAILY LOSS LIMIT ---
-  const dayLossPct = account.dayStartEquity > 0
-    ? (account.dayStartEquity - account.equity) / account.dayStartEquity
+  const dayLossPct = normalizedAccount.dayStartEquity > 0
+    ? (normalizedAccount.dayStartEquity - normalizedAccount.equity) / normalizedAccount.dayStartEquity
     : 0;
   if (dayLossPct >= effectiveLimits.maxDailyLossPct) {
     violations.push(`DAILY_LOSS: Down ${(dayLossPct * 100).toFixed(1)}% today (limit: ${effectiveLimits.maxDailyLossPct * 100}%)`);
   }
 
   // --- TRADE COUNT ---
-  if (account.tradesToday >= effectiveLimits.maxTradesPerDay) {
-    violations.push(`MAX_TRADES: ${account.tradesToday} trades today (limit: ${effectiveLimits.maxTradesPerDay})`);
+  if (normalizedAccount.tradesToday >= effectiveLimits.maxTradesPerDay) {
+    violations.push(`MAX_TRADES: ${normalizedAccount.tradesToday} trades today (limit: ${effectiveLimits.maxTradesPerDay})`);
   }
 
   // --- POSITION COUNT ---
-  if (trade.direction === 'BUY') {
-    const openCount = account.openPositions?.length || 0;
+  if (isBuyExposure) {
+    const openCount = normalizedAccount.openPositions?.length || 0;
     if (openCount >= effectiveLimits.maxOpenPositions) {
       violations.push(`MAX_POSITIONS: ${openCount} open positions (limit: ${effectiveLimits.maxOpenPositions})`);
     }
   }
 
   // --- POSITION SIZE ---
-  const maxDollars = account.equity * effectiveLimits.maxPositionPct;
+  const maxDollars = normalizedAccount.equity * effectiveLimits.maxPositionPct;
   const maxShares = trade.price > 0
     ? (assetClass === 'crypto'
       ? roundDownQuantity(maxDollars / trade.price, 6)
+      : (assetClass === 'prediction_market'
+        ? roundDownQuantity(maxDollars / trade.price, 4)
       : Math.floor(maxDollars / trade.price))
+    )
     : 0;
 
-  if (trade.direction === 'BUY' && maxShares <= 0) {
+  if (isBuyExposure && maxShares <= 0) {
     const minimumQuantityText = assetClass === 'crypto' ? 'the minimum crypto quantity' : '1 share';
     violations.push(`POSITION_TOO_SMALL: Max position $${maxDollars.toFixed(2)} cannot buy ${minimumQuantityText} at $${trade.price}`);
   }
 
   // --- MINIMUM NOTIONAL (Alpaca crypto requires >= $10 per order) ---
-  if (assetClass === 'crypto' && trade.direction === 'SELL' && trade.price > 0) {
-    const position = account.openPositions?.find(p => normTicker(p.ticker) === tradeTicker);
+  if (assetClass === 'crypto' && direction === 'SELL' && trade.price > 0) {
+    const position = normalizedAccount.openPositions?.find(p => normTicker(p.ticker) === tradeTicker);
     const positionValue = (position?.shares || 0) * trade.price;
     if (positionValue > 0 && positionValue < 10) {
       violations.push(`DUST_POSITION: ${tradeTicker} position worth $${positionValue.toFixed(2)} below $10 minimum order`);
@@ -177,7 +234,7 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
   }
 
   // --- STOP LOSS CALCULATION ---
-  const stopLossPrice = trade.direction === 'BUY'
+  const stopLossPrice = isBuyExposure
     ? trade.price * (1 - effectiveLimits.stopLossPct)
     : null;
 
@@ -196,16 +253,17 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
  * @returns {{ triggered: boolean, drawdownPct: number, message: string }}
  */
 function checkKillSwitch(account, limits = DEFAULT_LIMITS) {
+  const normalizedAccount = normalizeAccountState(account);
   const effectiveLimits = resolveRiskLimits(limits, limits?.assetClass);
-  const drawdownPct = account.peakEquity > 0
-    ? (account.peakEquity - account.equity) / account.peakEquity
+  const drawdownPct = normalizedAccount.peakEquity > 0
+    ? (normalizedAccount.peakEquity - normalizedAccount.equity) / normalizedAccount.peakEquity
     : 0;
   const triggered = drawdownPct >= effectiveLimits.maxDrawdownPct;
   return {
     triggered,
     drawdownPct,
     message: triggered
-      ? `KILL SWITCH: Portfolio down ${(drawdownPct * 100).toFixed(1)}% from peak $${account.peakEquity.toFixed(2)}. Selling all positions.`
+      ? `KILL SWITCH: Portfolio down ${(drawdownPct * 100).toFixed(1)}% from peak $${normalizedAccount.peakEquity.toFixed(2)}. Selling all positions.`
       : `Drawdown: ${(drawdownPct * 100).toFixed(1)}% (limit: ${effectiveLimits.maxDrawdownPct * 100}%)`,
   };
 }
@@ -217,9 +275,10 @@ function checkKillSwitch(account, limits = DEFAULT_LIMITS) {
  * @returns {{ paused: boolean, dayLossPct: number, message: string }}
  */
 function checkDailyPause(account, limits = DEFAULT_LIMITS) {
+  const normalizedAccount = normalizeAccountState(account);
   const effectiveLimits = resolveRiskLimits(limits, limits?.assetClass);
-  const dayLossPct = account.dayStartEquity > 0
-    ? (account.dayStartEquity - account.equity) / account.dayStartEquity
+  const dayLossPct = normalizedAccount.dayStartEquity > 0
+    ? (normalizedAccount.dayStartEquity - normalizedAccount.equity) / normalizedAccount.dayStartEquity
     : 0;
   const paused = dayLossPct >= effectiveLimits.maxDailyLossPct;
   return {
@@ -234,6 +293,7 @@ function checkDailyPause(account, limits = DEFAULT_LIMITS) {
 module.exports = {
   DEFAULT_LIMITS,
   DEFAULT_CRYPTO_LIMITS,
+  normalizeAccountState,
   resolveRiskLimits,
   checkTrade,
   checkKillSwitch,
