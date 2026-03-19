@@ -72,6 +72,7 @@ jest.mock('../modules/local-model-capabilities', () => ({
 const chokidar = require('chokidar');
 const fs = require('fs');
 const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
+const executor = require('../modules/trading/executor');
 const { SupervisorDaemon } = require('../supervisor-daemon');
 
 function createMockStore() {
@@ -160,6 +161,7 @@ describe('supervisor-daemon integrations', () => {
     if (daemon) {
       await daemon.stop('test-cleanup');
     }
+    jest.restoreAllMocks();
     jest.useRealTimers();
   });
 
@@ -424,7 +426,33 @@ describe('supervisor-daemon integrations', () => {
     writeSpy.mockRestore();
   });
 
-  test('runs Polymarket dry-run execution through the supervisor phase wiring', async () => {
+  test('runs Polymarket scan through orchestrator consensus and execution', async () => {
+    const consensusPhase = {
+      markets: [
+        {
+          conditionId: 'market-1',
+          question: 'Will BTC close above $120k by June 30?',
+        },
+      ],
+      approvedTrades: [
+        {
+          ticker: 'market-1',
+          consensus: { decision: 'BUY_YES', consensus: true },
+        },
+      ],
+      rejectedTrades: [],
+    };
+    const executionPhase = {
+      executions: [
+        { ticker: 'market-1', execution: { ok: true, status: 'dry_run' } },
+        { ticker: 'market-2', execution: { ok: false, status: 'rejected' } },
+      ],
+    };
+    const polymarketTradingOrchestrator = {
+      runPolymarketConsensusRound: jest.fn().mockResolvedValue(consensusPhase),
+      runPolymarketMarketOpen: jest.fn().mockResolvedValue(executionPhase),
+      getUnifiedPortfolioSnapshot: jest.fn(),
+    };
     const polymarketDaemon = new SupervisorDaemon({
       store: createMockStore(),
       logger: createMockLogger(),
@@ -433,6 +461,7 @@ describe('supervisor-daemon integrations', () => {
       tradingEnabled: false,
       cryptoTradingEnabled: false,
       polymarketTradingEnabled: true,
+      polymarketTradingOrchestrator,
       polymarketClient: {
         getBalance: jest.fn().mockResolvedValue({ balance: 162, available: 162 }),
         getPositions: jest.fn().mockResolvedValue([]),
@@ -480,7 +509,7 @@ describe('supervisor-daemon integrations', () => {
     });
 
     const result = await polymarketDaemon.runPolymarketPhase({
-      key: 'polymarket_execute',
+      key: 'polymarket_scan',
       marketDate: '2026-03-18',
       scheduledAt: '2026-03-18T08:10:00.000Z',
       windowKey: '2026-03-18T08:00:00.000Z',
@@ -488,26 +517,208 @@ describe('supervisor-daemon integrations', () => {
 
     expect(result).toEqual(expect.objectContaining({
       ok: true,
-      phase: 'polymarket_execute',
-      summary: expect.objectContaining({ orders: 1 }),
+      phase: 'polymarket_scan',
+      summary: expect.objectContaining({
+        markets: 1,
+        actionable: 1,
+        executions: 1,
+      }),
     }));
-    expect(polymarketDaemon.polymarketClient.createOrder).toHaveBeenCalledWith(
-      'yes-token',
-      'BUY',
-      0.61,
-      39.836,
-      expect.objectContaining({ dryRun: true })
-    );
+    expect(polymarketTradingOrchestrator.runPolymarketConsensusRound).toHaveBeenCalledWith(expect.objectContaining({
+      date: '2026-03-18',
+      broker: 'polymarket',
+      assetClass: 'prediction_market',
+      includePolymarket: true,
+    }));
+    expect(polymarketTradingOrchestrator.runPolymarketMarketOpen).toHaveBeenCalledWith(expect.objectContaining({
+      date: '2026-03-18',
+      broker: 'polymarket',
+      assetClass: 'prediction_market',
+      includePolymarket: true,
+      consensusPhase,
+    }));
     expect(polymarketDaemon.polymarketTradingState.lastExecution).toEqual(expect.objectContaining({
-      orders: [
+      executions: expect.arrayContaining([
         expect.objectContaining({
-          conditionId: 'market-1',
-          action: 'BUY_YES',
+          ticker: 'market-1',
+        }),
+      ]),
+    }));
+
+    await polymarketDaemon.stop('test-cleanup-polymarket');
+  });
+
+  test('runs Polymarket monitor exits with unified portfolio gates', async () => {
+    const submitOrderSpy = jest.spyOn(executor, 'submitOrder').mockResolvedValue({
+      ok: true,
+      status: 'dry_run',
+      orderId: 'pm-exit-1',
+    });
+    const polymarketTradingOrchestrator = {
+      runPolymarketConsensusRound: jest.fn(),
+      runPolymarketMarketOpen: jest.fn(),
+      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
+        equity: 1000,
+        totalEquity: 1000,
+        peakEquity: 1000,
+        dayStartEquity: 1000,
+        markets: {
+          polymarket: {
+            equity: 160,
+            positions: [],
+          },
+        },
+      }),
+    };
+    const polymarketDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: false,
+      cryptoTradingEnabled: false,
+      polymarketTradingEnabled: true,
+      polymarketTradingOrchestrator,
+      polymarketClient: {
+        getBalance: jest.fn().mockResolvedValue({ balance: 162, available: 162 }),
+        getPositions: jest.fn().mockResolvedValue([
+          {
+            tokenId: 'yes-token',
+            market: 'market-1',
+            size: 12.5,
+            avgEntryPrice: 0.61,
+            currentPrice: 0.44,
+          },
+          {
+            tokenId: 'no-token',
+            market: 'market-2',
+            size: 5,
+            avgEntryPrice: 0.38,
+            currentPrice: 0.41,
+          },
+        ]),
+        createOrder: jest.fn(),
+      },
+      polymarketSizer: {
+        positionSize: jest.fn(),
+        shouldExit: jest.fn((position) => {
+          if (position.tokenId === 'yes-token') {
+            return { exit: true, reason: 'Stop loss triggered', stopPrice: 0.488, adverseMovePct: 27.87 };
+          }
+          return { exit: false, reason: 'Hold', stopPrice: 0.304, adverseMovePct: -7.89 };
+        }),
+      },
+      pidPath: '/tmp/polymarket-monitor.pid',
+      statusPath: '/tmp/polymarket-monitor-status.json',
+      logPath: '/tmp/polymarket-monitor.log',
+      taskLogDir: '/tmp/polymarket-monitor-tasks',
+      wakeSignalPath: '/tmp/polymarket-monitor-wake.signal',
+    });
+
+    const result = await polymarketDaemon.runPolymarketPhase({
+      key: 'polymarket_monitor',
+      marketDate: '2026-03-18',
+      scheduledAt: '2026-03-18T08:30:00.000Z',
+      windowKey: '2026-03-18T08:30:00.000Z',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      phase: 'polymarket_monitor',
+      summary: expect.objectContaining({
+        positions: 2,
+        exits: 1,
+        killSwitch: false,
+        dailyPause: false,
+      }),
+    }));
+    expect(polymarketTradingOrchestrator.getUnifiedPortfolioSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+      date: '2026-03-18',
+      includePolymarket: true,
+      broker: 'polymarket',
+      assetClass: 'prediction_market',
+    }));
+    expect(polymarketDaemon.polymarketSizer.shouldExit).toHaveBeenCalledTimes(2);
+    expect(submitOrderSpy).toHaveBeenCalledWith(expect.objectContaining({
+      ticker: 'market-1',
+      broker: 'polymarket',
+      assetClass: 'prediction_market',
+      direction: 'SELL',
+      shares: 12.5,
+      tokenId: 'yes-token',
+      price: 0.44,
+    }), expect.objectContaining({
+      broker: 'polymarket',
+    }));
+    expect(polymarketDaemon.polymarketTradingState.lastMonitor).toEqual(expect.objectContaining({
+      exits: [
+        expect.objectContaining({
+          tokenId: 'yes-token',
+          market: 'market-1',
         }),
       ],
     }));
 
-    await polymarketDaemon.stop('test-cleanup-polymarket');
+    await polymarketDaemon.stop('test-cleanup-polymarket-monitor');
+  });
+
+  test('schedules only Polymarket scan and monitor phases for automation', async () => {
+    const consensusPhase = {
+      markets: [{ conditionId: 'market-1' }],
+      approvedTrades: [],
+      rejectedTrades: [],
+    };
+    const executionPhase = {
+      executions: [],
+    };
+    const polymarketTradingOrchestrator = {
+      runPolymarketConsensusRound: jest.fn().mockResolvedValue(consensusPhase),
+      runPolymarketMarketOpen: jest.fn().mockResolvedValue(executionPhase),
+      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
+        equity: 1000,
+        totalEquity: 1000,
+        peakEquity: 1000,
+        dayStartEquity: 1000,
+        markets: { polymarket: { equity: 1000, positions: [] } },
+      }),
+    };
+    const polymarketDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: false,
+      cryptoTradingEnabled: false,
+      polymarketTradingEnabled: true,
+      polymarketTradingOrchestrator,
+      polymarketClient: {
+        getBalance: jest.fn().mockResolvedValue({ balance: 162, available: 162 }),
+        getPositions: jest.fn().mockResolvedValue([]),
+        createOrder: jest.fn(),
+      },
+      polymarketSizer: {
+        positionSize: jest.fn(),
+        shouldExit: jest.fn().mockReturnValue({ exit: false, reason: 'Hold', stopPrice: 0.48, adverseMovePct: 0 }),
+      },
+      pidPath: '/tmp/polymarket-schedule.pid',
+      statusPath: '/tmp/polymarket-schedule-status.json',
+      logPath: '/tmp/polymarket-schedule.log',
+      taskLogDir: '/tmp/polymarket-schedule-tasks',
+      wakeSignalPath: '/tmp/polymarket-schedule-wake.signal',
+    });
+    polymarketDaemon.polymarketTradingState.lastProcessedAt = '2026-03-18T10:30:00.000Z';
+
+    const result = await polymarketDaemon.maybeRunPolymarketTradingAutomation(new Date('2026-03-18T11:00:00.000Z'));
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      skipped: false,
+    }));
+    expect(result.executed.map((entry) => entry.phase)).toEqual(['polymarket_scan', 'polymarket_monitor']);
+    expect(result.executed.map((entry) => entry.phase)).not.toContain('polymarket_consensus');
+    expect(result.executed.map((entry) => entry.phase)).not.toContain('polymarket_execute');
+
+    await polymarketDaemon.stop('test-cleanup-polymarket-schedule');
   });
 
   test('keeps Polymarket automation disabled by default until explicitly opted in', async () => {
