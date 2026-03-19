@@ -75,7 +75,7 @@ describe('crypto trading support', () => {
     const cryptoDay = scheduler.buildCryptoDailySchedule(new Date('2026-03-18T15:00:00.000Z'));
     const nextEvent = await scheduler.getNextCryptoWakeEvent(new Date('2026-03-18T15:00:00.000Z'));
 
-    expect(cryptoDay.schedule).toHaveLength(4);
+    expect(cryptoDay.schedule).toHaveLength(24);
     expect(new Set(cryptoDay.schedule.map((event) => event.key))).toEqual(new Set(['crypto_consensus']));
     expect(nextEvent).toMatchObject({
       key: 'crypto_consensus',

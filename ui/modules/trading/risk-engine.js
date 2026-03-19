@@ -109,7 +109,9 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
   const violations = [];
 
   // --- ABSOLUTE PROHIBITIONS ---
-  if (trade.direction === 'SELL' && !account.openPositions?.some(p => p.ticker === trade.ticker)) {
+  const normTicker = (t) => String(t || '').replace(/[\/\-]/g, '').toUpperCase();
+  const tradeTicker = normTicker(trade.ticker);
+  if (trade.direction === 'SELL' && !account.openPositions?.some(p => normTicker(p.ticker) === tradeTicker)) {
     // Shorting check — can only sell what we own
     violations.push('SHORT_PROHIBITED: Cannot sell a stock we do not own');
   }

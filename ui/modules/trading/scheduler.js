@@ -9,7 +9,7 @@ const { getMarketCalendar } = require('./data-ingestion');
 const MARKET_TIME_ZONE = 'America/Los_Angeles';
 const CALENDAR_SOURCE_TIME_ZONE = 'America/New_York';
 const DEFAULT_SCHEDULE_PREFIX = 'trading-';
-const DEFAULT_CRYPTO_INTERVAL_HOURS = 6;
+const DEFAULT_CRYPTO_INTERVAL_HOURS = 1;
 const DEFAULT_POLYMARKET_SCAN_INTERVAL_HOURS = 4;
 const DEFAULT_POLYMARKET_MONITOR_INTERVAL_MINUTES = 30;
 const DEFAULT_PHASES = Object.freeze([
@@ -55,7 +55,7 @@ function toDateKeyInZone(value = new Date(), timeZone = MARKET_TIME_ZONE) {
 function resolveCryptoIntervalHours(value, fallback = DEFAULT_CRYPTO_INTERVAL_HOURS) {
   const numeric = Number.parseInt(String(value || fallback), 10);
   if (!Number.isFinite(numeric)) return fallback;
-  return Math.max(4, Math.min(6, numeric));
+  return Math.max(1, Math.min(6, numeric));
 }
 
 function resolvePolymarketScanIntervalHours(value, fallback = DEFAULT_POLYMARKET_SCAN_INTERVAL_HOURS) {
