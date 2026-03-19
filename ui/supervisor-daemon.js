@@ -35,6 +35,7 @@ const polymarketScanner = require('./modules/trading/polymarket-scanner');
 const polymarketSignals = require('./modules/trading/polymarket-signals');
 const polymarketSizer = require('./modules/trading/polymarket-sizer');
 const launchRadar = require('./modules/trading/launch-radar');
+const yieldRouterModule = require('./modules/trading/yield-router');
 
 const DEFAULT_POLL_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_POLL_MS || '4000', 10) || 4000);
 const DEFAULT_HEARTBEAT_MS = Math.max(1000, Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_HEARTBEAT_MS || '15000', 10) || 15000);
@@ -68,6 +69,7 @@ const DEFAULT_TRADING_STATE_PATH = resolveRuntimePath('trading-supervisor-state.
 const DEFAULT_CRYPTO_TRADING_STATE_PATH = resolveRuntimePath('crypto-trading-supervisor-state.json');
 const DEFAULT_POLYMARKET_TRADING_STATE_PATH = resolveRuntimePath('polymarket-trading-state.json');
 const DEFAULT_LAUNCH_RADAR_STATE_PATH = resolveRuntimePath('launch-radar-supervisor-state.json');
+const DEFAULT_YIELD_ROUTER_STATE_PATH = resolveRuntimePath('yield-router-supervisor-state.json');
 const HM_SEND_SCRIPT_PATH = path.join(__dirname, 'scripts', 'hm-send.js');
 const TRADING_AGENT_TARGETS = Object.freeze(['architect', 'builder', 'oracle']);
 const TRADING_PHASES = Object.freeze([
@@ -91,6 +93,10 @@ const LAUNCH_RADAR_PHASES = Object.freeze([
   { key: 'launch_radar_scan', label: 'Launch radar scan' },
 ]);
 const DEFAULT_LAUNCH_RADAR_INTERVAL_MINUTES = 15;
+const YIELD_ROUTER_PHASES = Object.freeze([
+  { key: 'yield_rebalance', label: 'Yield router rebalance' },
+]);
+const DEFAULT_YIELD_ROUTER_INTERVAL_MINUTES = 6 * 60;
 
 function ensureDir(targetPath) {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -211,6 +217,16 @@ function defaultLaunchRadarState() {
   };
 }
 
+function defaultYieldRouterState() {
+  return {
+    lastProcessedAt: null,
+    lastResult: null,
+    nextEvent: null,
+    lastRebalance: null,
+    updatedAt: null,
+  };
+}
+
 function getDateKeyInTimeZone(value = new Date(), timeZone = tradingScheduler.MARKET_TIME_ZONE) {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone,
@@ -259,6 +275,51 @@ function getNextLaunchRadarEvent(referenceDate = new Date(), options = {}) {
   for (let offset = 0; offset < 3; offset += 1) {
     const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
     const day = buildLaunchRadarDailySchedule(candidateDate, options);
+    const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
+    if (nextEvent) {
+      return {
+        ...nextEvent,
+        day,
+      };
+    }
+  }
+  return null;
+}
+
+function buildYieldRouterDailySchedule(referenceDate = new Date(), options = {}) {
+  const intervalMinutes = Math.max(1, Math.floor(Number(options.intervalMinutes) || DEFAULT_YIELD_ROUTER_INTERVAL_MINUTES));
+  const start = startOfUtcDay(referenceDate);
+  const marketDate = start.toISOString().slice(0, 10);
+  const schedule = [];
+
+  for (let minuteOfDay = 0; minuteOfDay < (24 * 60); minuteOfDay += intervalMinutes) {
+    const scheduledAt = new Date(start.getTime() + (minuteOfDay * 60 * 1000));
+    for (const phase of YIELD_ROUTER_PHASES) {
+      schedule.push({
+        key: phase.key,
+        label: phase.label,
+        marketDate,
+        scheduledAt: scheduledAt.toISOString(),
+        scheduledTimeLocal: scheduledAt.toISOString(),
+        displayTimeZone: 'UTC',
+        windowKey: scheduledAt.toISOString(),
+      });
+    }
+  }
+
+  return {
+    marketDate,
+    intervalMinutes,
+    displayTimeZone: 'UTC',
+    schedule,
+  };
+}
+
+function getNextYieldRouterEvent(referenceDate = new Date(), options = {}) {
+  const now = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  for (let offset = 0; offset < 3; offset += 1) {
+    const candidateDate = new Date(now.getTime() + (offset * 24 * 60 * 60 * 1000));
+    const day = buildYieldRouterDailySchedule(candidateDate, options);
     const nextEvent = day.schedule.find((event) => new Date(event.scheduledAt).getTime() > now.getTime());
     if (nextEvent) {
       return {
@@ -660,6 +721,62 @@ class SupervisorDaemon {
         launchRadar: this.launchRadar,
       }))
       : null;
+    const yieldRouterAutomationRequested = options.yieldRouterEnabled === true
+      || process.env.SQUIDRUN_YIELD_ROUTER_AUTOMATION === '1';
+    this.yieldRouterEnabled = Boolean(yieldRouterAutomationRequested);
+    this.yieldRouterDryRun = options.yieldRouterDryRun === true
+      || process.env.SQUIDRUN_YIELD_ROUTER_DRY_RUN === '1';
+    this.yieldRouterStatePath = options.yieldRouterStatePath || DEFAULT_YIELD_ROUTER_STATE_PATH;
+    this.yieldRouterState = {
+      ...defaultYieldRouterState(),
+      ...(readJsonFile(this.yieldRouterStatePath, defaultYieldRouterState()) || {}),
+    };
+    this.yieldRouterPhasePromise = null;
+    this.lastYieldRouterSummary = this.yieldRouterEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        dryRun: this.yieldRouterDryRun,
+        lastProcessedAt: this.yieldRouterState.lastProcessedAt || null,
+        nextEvent: this.yieldRouterState.nextEvent || null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        dryRun: this.yieldRouterDryRun,
+        lastProcessedAt: null,
+        nextEvent: null,
+      };
+    this.yieldRouter = this.yieldRouterEnabled && options.yieldRouter !== null
+      ? (options.yieldRouter || yieldRouterModule.createYieldRouter({
+        statePath: resolveRuntimePath('yield-router-state.json'),
+        fetch: options.fetch || global.fetch,
+        env: options.env || process.env,
+      }))
+      : null;
+    this.yieldRouterOrchestrator = this.yieldRouterEnabled
+      ? (options.yieldRouterOrchestrator || tradingOrchestrator.createOrchestrator({
+        journalPath: resolveRuntimePath('trade-journal.db'),
+        yieldRouter: this.yieldRouter,
+      }))
+      : null;
+    if (this.yieldRouter) {
+      if (this.tradingOrchestrator?.options) {
+        this.tradingOrchestrator.options.yieldRouter = this.yieldRouter;
+      }
+      if (this.cryptoTradingOrchestrator?.options) {
+        this.cryptoTradingOrchestrator.options.yieldRouter = this.yieldRouter;
+      }
+      if (this.polymarketTradingOrchestrator?.options) {
+        this.polymarketTradingOrchestrator.options.yieldRouter = this.yieldRouter;
+      }
+      if (this.launchRadarOrchestrator?.options) {
+        this.launchRadarOrchestrator.options.yieldRouter = this.yieldRouter;
+      }
+      if (this.yieldRouterOrchestrator?.options) {
+        this.yieldRouterOrchestrator.options.yieldRouter = this.yieldRouter;
+      }
+    }
     this.sleepConsolidator = this.sleepEnabled
       ? (options.sleepConsolidator || new SleepConsolidator({
         logger: this.logger,
@@ -784,6 +901,10 @@ class SupervisorDaemon {
       this.launchRadar.stop();
       this.logger.info('Launch radar stopped');
     }
+    if (this.yieldRouter && typeof this.yieldRouter.stop === 'function') {
+      this.yieldRouter.stop();
+      this.logger.info('Yield router stopped');
+    }
 
     if (this.sleepConsolidator) {
       try { this.sleepConsolidator.close(); } catch {}
@@ -833,6 +954,7 @@ class SupervisorDaemon {
     const cryptoTradingResult = await this.maybeRunCryptoTradingAutomation(nowMs);
     const polymarketTradingResult = await this.maybeRunLiveOpsTradingAutomation(nowMs);
     const launchRadarResult = await this.maybeRunLaunchRadarAutomation(nowMs);
+    const yieldRouterResult = await this.maybeRunYieldRouterAutomation(nowMs);
     const sleepResult = await this.maybeRunSleepCycle();
     this.writeStatus();
     return {
@@ -846,6 +968,7 @@ class SupervisorDaemon {
       cryptoTradingResult,
       polymarketTradingResult,
       launchRadarResult,
+      yieldRouterResult,
       sleepResult,
     };
   }
@@ -1025,6 +1148,11 @@ class SupervisorDaemon {
   persistLaunchRadarState() {
     this.launchRadarState.updatedAt = new Date().toISOString();
     writeJsonFile(this.launchRadarStatePath, this.launchRadarState);
+  }
+
+  persistYieldRouterState() {
+    this.yieldRouterState.updatedAt = new Date().toISOString();
+    writeJsonFile(this.yieldRouterStatePath, this.yieldRouterState);
   }
 
   describeTradingEvent(event) {
@@ -1437,6 +1565,15 @@ class SupervisorDaemon {
             dailyPause: Boolean(dailyPause?.paused),
           },
         };
+        if (this.yieldRouterEnabled && this.yieldRouterOrchestrator && !this.yieldRouterPhasePromise) {
+          result.yieldRebalance = await this.runYieldRebalancePhase({
+            key: 'yield_rebalance',
+            marketDate,
+            scheduledAt: new Date().toISOString(),
+            windowKey: event.windowKey || event.scheduledAt,
+            triggerSource: phaseKey,
+          });
+        }
         this.polymarketTradingState.lastMonitor = {
           windowKey: event.windowKey || event.scheduledAt,
           marketDate,
@@ -1444,6 +1581,7 @@ class SupervisorDaemon {
           exits,
           killSwitch,
           dailyPause,
+          yieldRebalance: result.yieldRebalance || null,
         };
         this.polymarketTradingState.lastResult = result;
         this.persistLiveOpsTradingState();
@@ -1555,6 +1693,86 @@ class SupervisorDaemon {
       };
       this.launchRadarState.lastResult = result;
       this.persistLaunchRadarState();
+      return result;
+    }
+  }
+
+  async runYieldRebalancePhase(event) {
+    const phaseKey = String(event?.key || '').trim();
+    const scheduledAt = String(event?.scheduledAt || '').trim();
+    const marketDate = String(event?.marketDate || new Date(scheduledAt || Date.now()).toISOString().slice(0, 10)).trim();
+    if (!phaseKey || !scheduledAt || !this.yieldRouterEnabled || !this.yieldRouter || !this.yieldRouterOrchestrator) {
+      return { ok: false, phase: phaseKey || 'unknown', error: 'yield_router_phase_unavailable' };
+    }
+
+    try {
+      if (phaseKey !== 'yield_rebalance') {
+        return {
+          ok: true,
+          phase: phaseKey,
+          marketDate,
+          scheduledAt,
+          summary: {},
+        };
+      }
+
+      const portfolioSnapshot = await this.yieldRouterOrchestrator.getUnifiedPortfolioSnapshot({
+        date: marketDate || scheduledAt,
+        includeLiveOps: true,
+        yieldRouter: this.yieldRouter,
+      });
+      const allocation = this.yieldRouterOrchestrator.getCapitalAllocation(portfolioSnapshot, event.allocationOptions || {});
+      const rebalanceResult = await this.yieldRouterOrchestrator.returnIdleCapital({
+        date: marketDate || scheduledAt,
+        portfolioSnapshot,
+        yieldRouter: this.yieldRouter,
+        dryRun: this.yieldRouterDryRun,
+        killSwitchTriggered: portfolioSnapshot?.risk?.killSwitchTriggered === true,
+        ...event.rebalanceOptions,
+      });
+      const result = {
+        ok: rebalanceResult.ok !== false || rebalanceResult.skipped === true,
+        phase: phaseKey,
+        marketDate,
+        scheduledAt,
+        summary: {
+          action: rebalanceResult.action || 'none',
+          deposited: Number(rebalanceResult.deposit?.deposited || 0),
+          withdrawn: Number(rebalanceResult.withdrawal?.withdrawn || 0),
+          idleCapital: Number(allocation?.excess?.idleCapital || 0),
+          yieldGap: Number(allocation?.gaps?.yield || 0),
+          activeGap: Number(allocation?.gaps?.activeTrading || 0),
+          killSwitch: Boolean(portfolioSnapshot?.risk?.killSwitchTriggered),
+          dryRun: this.yieldRouterDryRun,
+          triggerSource: event.triggerSource || null,
+        },
+      };
+      this.yieldRouterState.lastProcessedAt = scheduledAt;
+      this.yieldRouterState.lastRebalance = {
+        windowKey: event.windowKey || event.scheduledAt,
+        marketDate,
+        scheduledAt,
+        triggerSource: event.triggerSource || null,
+        dryRun: this.yieldRouterDryRun,
+        portfolioSnapshot,
+        allocation,
+        rebalanceResult,
+      };
+      this.yieldRouterState.lastResult = result;
+      this.persistYieldRouterState();
+      return result;
+    } catch (err) {
+      this.logger.warn(`Yield router phase ${phaseKey} failed at ${scheduledAt}: ${err.message}`);
+      const result = {
+        ok: false,
+        phase: phaseKey,
+        marketDate,
+        scheduledAt,
+        error: err.message,
+      };
+      this.yieldRouterState.lastProcessedAt = scheduledAt;
+      this.yieldRouterState.lastResult = result;
+      this.persistYieldRouterState();
       return result;
     }
   }
@@ -1705,6 +1923,15 @@ class SupervisorDaemon {
         result = await this.tradingOrchestrator.runMidDayCheck({ date: marketDate });
       } else if (phaseKey === 'market_close_review') {
         result = await this.tradingOrchestrator.runMarketClose({ date: marketDate });
+        if (this.yieldRouterEnabled && this.yieldRouterOrchestrator && !this.yieldRouterPhasePromise) {
+          result.yieldRebalance = await this.runYieldRebalancePhase({
+            key: 'yield_rebalance',
+            marketDate,
+            scheduledAt: new Date().toISOString(),
+            windowKey: event.windowKey || event.scheduledAt,
+            triggerSource: phaseKey,
+          });
+        }
       } else if (phaseKey === 'end_of_day') {
         result = await this.tradingOrchestrator.runEndOfDay({ date: marketDate });
         this.tradingState.sleeping = true;
@@ -2102,6 +2329,85 @@ class SupervisorDaemon {
     });
 
     return this.launchRadarPhasePromise;
+  }
+
+  async maybeRunYieldRouterAutomation(nowMs = Date.now()) {
+    if (!this.yieldRouterEnabled || this.stopping || !this.yieldRouter || !this.yieldRouterOrchestrator) {
+      return { ok: false, skipped: true, reason: 'yield_router_disabled' };
+    }
+    if (this.yieldRouterPhasePromise) {
+      return this.yieldRouterPhasePromise;
+    }
+
+    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
+    const nextEvent = getNextYieldRouterEvent(now, {
+      intervalMinutes: DEFAULT_YIELD_ROUTER_INTERVAL_MINUTES,
+    });
+    const yieldRouterDay = buildYieldRouterDailySchedule(now, {
+      intervalMinutes: DEFAULT_YIELD_ROUTER_INTERVAL_MINUTES,
+    });
+    const lastProcessedAtMs = this.yieldRouterState.lastProcessedAt
+      ? new Date(this.yieldRouterState.lastProcessedAt).getTime()
+      : 0;
+    const dueEvents = yieldRouterDay.schedule.filter((event) => {
+      const scheduledAtMs = new Date(event.scheduledAt).getTime();
+      return scheduledAtMs <= now.getTime() && scheduledAtMs > lastProcessedAtMs;
+    });
+
+    this.yieldRouterState.nextEvent = this.describeTradingEvent(nextEvent);
+    this.persistYieldRouterState();
+
+    if (dueEvents.length === 0) {
+      this.lastYieldRouterSummary = {
+        enabled: true,
+        status: 'scheduled',
+        dryRun: this.yieldRouterDryRun,
+        lastProcessedAt: this.yieldRouterState.lastProcessedAt || null,
+        nextEvent: this.yieldRouterState.nextEvent,
+      };
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'no_due_yield_router_phase',
+        nextEvent: this.yieldRouterState.nextEvent,
+      };
+    }
+
+    this.yieldRouterPhasePromise = (async () => {
+      const executed = [];
+      for (const event of dueEvents) {
+        const phaseResult = await this.runYieldRebalancePhase(event);
+        executed.push(phaseResult);
+        this.yieldRouterState.lastResult = phaseResult;
+        this.persistYieldRouterState();
+        if (!phaseResult.ok) break;
+      }
+
+      const upcomingEvent = getNextYieldRouterEvent(new Date(), {
+        intervalMinutes: DEFAULT_YIELD_ROUTER_INTERVAL_MINUTES,
+      });
+      this.yieldRouterState.nextEvent = this.describeTradingEvent(upcomingEvent);
+      this.persistYieldRouterState();
+      this.lastYieldRouterSummary = {
+        enabled: true,
+        status: executed.every((entry) => entry.ok) ? 'phase_completed' : 'phase_failed',
+        dryRun: this.yieldRouterDryRun,
+        lastProcessedAt: this.yieldRouterState.lastProcessedAt || null,
+        nextEvent: this.yieldRouterState.nextEvent,
+        lastResult: executed[executed.length - 1] || null,
+      };
+
+      return {
+        ok: executed.every((entry) => entry.ok),
+        skipped: false,
+        executed,
+        nextEvent: this.yieldRouterState.nextEvent,
+      };
+    })().finally(() => {
+      this.yieldRouterPhasePromise = null;
+    });
+
+    return this.yieldRouterPhasePromise;
   }
 
   runMemoryLeaseHousekeeping(nowMs = Date.now(), phase = 'tick') {
@@ -2758,6 +3064,15 @@ class SupervisorDaemon {
         lastProcessedAt: this.launchRadarState.lastProcessedAt || null,
         nextEvent: this.launchRadarState.nextEvent || null,
         lastSummary: this.lastLaunchRadarSummary || null,
+      },
+      yieldRouterAutomation: {
+        enabled: this.yieldRouterEnabled,
+        running: Boolean(this.yieldRouterPhasePromise),
+        dryRun: this.yieldRouterDryRun,
+        statePath: this.yieldRouterStatePath,
+        lastProcessedAt: this.yieldRouterState.lastProcessedAt || null,
+        nextEvent: this.yieldRouterState.nextEvent || null,
+        lastSummary: this.lastYieldRouterSummary || null,
       },
       ...extra,
     };
