@@ -1340,17 +1340,35 @@ class SupervisorDaemon {
         whaleTransfers: whaleTransfers.length > 0 ? whaleTransfers : undefined,
       });
 
+      // Execute approved trades immediately — crypto markets are always open
+      const approved = Array.isArray(consensusPhase?.approvedTrades) ? consensusPhase.approvedTrades : [];
+      let executionResult = null;
+      if (approved.length > 0) {
+        this.logger.info(`Crypto consensus approved ${approved.length} trades — executing immediately`);
+        executionResult = await this.cryptoTradingOrchestrator.runMarketOpen({
+          date: scheduledAt,
+          assetClass: 'crypto',
+          consensusPhase,
+          approvedTrades: approved,
+        });
+        const execCount = Array.isArray(executionResult?.executions) ? executionResult.executions.length : 0;
+        const fills = (executionResult?.executions || []).filter((e) => e.execution?.ok);
+        this.logger.info(`Crypto execution: ${fills.length}/${execCount} orders filled`);
+      }
+
       return {
         ok: true,
         phase: phaseKey,
         marketDate: event.marketDate || '',
         scheduledAt,
         preMarket,
+        execution: executionResult,
         summary: {
           symbols: cryptoSymbols.length,
-          approvedTrades: Array.isArray(consensusPhase?.approvedTrades) ? consensusPhase.approvedTrades.length : 0,
+          approvedTrades: approved.length,
           rejectedTrades: Array.isArray(consensusPhase?.rejectedTrades) ? consensusPhase.rejectedTrades.length : 0,
           incompleteSignals: Array.isArray(consensusPhase?.incompleteSignals) ? consensusPhase.incompleteSignals.length : 0,
+          executedTrades: executionResult ? (executionResult.executions || []).filter((e) => e.execution?.ok).length : 0,
         },
       };
     } catch (err) {
