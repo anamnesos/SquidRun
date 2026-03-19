@@ -202,7 +202,7 @@ async function getHistoricalBarsWithFallback(options = {}, symbols = []) {
 	}
 
 	const missing = normalizedSymbols.filter((ticker) => {
-		return resolveAssetClass(ticker) !== 'crypto' && (result.get(ticker) || []).length < 3;
+		return (result.get(ticker) || []).length < 3;
 	});
 	if (missing.length === 0) {
 		return result;
@@ -210,8 +210,9 @@ async function getHistoricalBarsWithFallback(options = {}, symbols = []) {
 
 	const fallbackBars = await Promise.all(missing.map(async (ticker) => {
 		try {
+			const yahooTicker = ticker.includes('/') ? ticker.replace('/', '-') : ticker;
 			const bars = await dataIngestion.getYahooHistoricalBars({
-				ticker,
+				ticker: yahooTicker,
 				range: '5d',
 				interval: '1d',
 			});
@@ -338,8 +339,11 @@ function getCryptoTrendDiagnostics(currentPrice, snapshot = {}, bars = [], asset
 function analyzeTicker(ticker, snapshot, bars = [], newsItems = [], profile, options = {}) {
 	const assetClass = options.assetClass || resolveAssetClass(ticker);
 	const assetConfig = getAssetSignalConfig(assetClass);
-	const currentPrice = pickReferencePrice(snapshot);
+	let currentPrice = pickReferencePrice(snapshot);
 	const closes = bars.map((bar) => toNumber(bar?.close, 0)).filter((value) => value > 0);
+	if (!(currentPrice > 0) && closes.length > 0) {
+		currentPrice = closes[closes.length - 1];
+	}
 	const volumes = bars.map((bar) => toNumber(bar?.volume, 0)).filter((value) => value > 0);
 	const avgClose = mean(closes);
 	const avgVolume = mean(volumes);
