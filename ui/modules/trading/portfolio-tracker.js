@@ -8,6 +8,7 @@ const executor = require('./executor');
 const ibkrClient = require('./ibkr-client');
 const polymarketClient = require('./polymarket-client');
 const riskEngine = require('./risk-engine');
+const yieldRouter = require('./yield-router');
 
 const DEFAULT_PORTFOLIO_STATE_PATH = resolveCoordPath(path.join('runtime', 'portfolio-tracker-state.json'), { forWrite: true });
 const MARKET_TIME_ZONE = 'America/Los_Angeles';
@@ -262,6 +263,24 @@ async function collectPolymarketData(options = {}) {
   };
 }
 
+async function collectYieldDeposits(options = {}) {
+  if (Array.isArray(options.defiDeposits)) {
+    return options.defiDeposits;
+  }
+  if (options.includeYieldRouter === false || options.yieldRouter === null) {
+    return [];
+  }
+
+  const router = options.yieldRouter || yieldRouter.createYieldRouter({
+    fetch: options.fetch || global.fetch,
+    env: options.env || process.env,
+  });
+  if (!router || typeof router.getDeposits !== 'function') {
+    return [];
+  }
+  return router.getDeposits(options);
+}
+
 async function getPortfolioSnapshot(options = {}) {
   const snapshot = createEmptySnapshot();
   const includeIbkr = options.includeIbkr === true || options.ibkrAccount || options.ibkrPositions;
@@ -348,19 +367,24 @@ async function getPortfolioSnapshot(options = {}) {
     }
   }
 
-  const defiDeposits = Array.isArray(options.defiDeposits) ? options.defiDeposits.map(normalizeYieldDeposit) : [];
-  snapshot.markets.defi_yield.deposits = defiDeposits;
-  snapshot.markets.defi_yield.marketValue = Number(defiDeposits.reduce((sum, deposit) => sum + deposit.currentValue, 0).toFixed(2));
-  snapshot.markets.defi_yield.equity = snapshot.markets.defi_yield.marketValue;
-  snapshot.markets.defi_yield.pnl = Number(defiDeposits.reduce((sum, deposit) => sum + (deposit.currentValue - deposit.amount), 0).toFixed(2));
-  snapshot.markets.defi_yield.lockedCapital = Number(defiDeposits
-    .filter((deposit) => deposit.locked !== false)
-    .reduce((sum, deposit) => sum + deposit.currentValue, 0)
-    .toFixed(2));
-  snapshot.markets.defi_yield.liquidCapital = Number(defiDeposits
-    .filter((deposit) => deposit.locked === false)
-    .reduce((sum, deposit) => sum + deposit.currentValue, 0)
-    .toFixed(2));
+  try {
+    const defiDeposits = (await collectYieldDeposits(options)).map(normalizeYieldDeposit);
+    snapshot.markets.defi_yield.deposits = defiDeposits;
+    snapshot.markets.defi_yield.marketValue = Number(defiDeposits.reduce((sum, deposit) => sum + deposit.currentValue, 0).toFixed(2));
+    snapshot.markets.defi_yield.equity = snapshot.markets.defi_yield.marketValue;
+    snapshot.markets.defi_yield.pnl = Number(defiDeposits.reduce((sum, deposit) => sum + (deposit.currentValue - deposit.amount), 0).toFixed(2));
+    snapshot.markets.defi_yield.lockedCapital = Number(defiDeposits
+      .filter((deposit) => deposit.locked !== false)
+      .reduce((sum, deposit) => sum + deposit.currentValue, 0)
+      .toFixed(2));
+    snapshot.markets.defi_yield.liquidCapital = Number(defiDeposits
+      .filter((deposit) => deposit.locked === false)
+      .reduce((sum, deposit) => sum + deposit.currentValue, 0)
+      .toFixed(2));
+  } catch (err) {
+    appendSourceError(snapshot, 'yield_router', err);
+    snapshot.markets.defi_yield.sourceErrors.push(err.message);
+  }
 
   const solanaPositions = Array.isArray(options.solanaPositions) ? options.solanaPositions.map(normalizeSolanaPosition) : [];
   snapshot.markets.solana_tokens.positions = solanaPositions;

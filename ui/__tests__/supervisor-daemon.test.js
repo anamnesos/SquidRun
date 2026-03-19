@@ -955,6 +955,272 @@ describe('supervisor-daemon integrations', () => {
     await launchRadarDaemon.stop('test-cleanup-launch-radar-schedule');
   });
 
+  test('runs yield rebalances through the supervisor phase wiring', async () => {
+    const yieldRouter = {
+      requestCapital: jest.fn(),
+      returnCapital: jest.fn(),
+    };
+    const yieldRouterOrchestrator = {
+      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
+        totalEquity: 1000,
+        markets: {
+          alpaca_stocks: { equity: 400 },
+          alpaca_crypto: { equity: 0 },
+          ibkr_global: { equity: 0 },
+          polymarket: { equity: 0 },
+          defi_yield: { equity: 100 },
+          solana_tokens: { equity: 0 },
+          cash_reserve: { cash: 500, equity: 500 },
+        },
+        risk: {
+          killSwitchTriggered: false,
+        },
+      }),
+      getCapitalAllocation: jest.fn().mockReturnValue({
+        totalEquity: 1000,
+        excess: { idleCapital: 250 },
+        gaps: { yield: 250, activeTrading: 0 },
+      }),
+      returnIdleCapital: jest.fn().mockResolvedValue({
+        ok: true,
+        action: 'return_idle',
+        amount: 250,
+        deposit: { deposited: 250, venue: 'Morpho' },
+      }),
+    };
+    const yieldDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: false,
+      cryptoTradingEnabled: false,
+      polymarketTradingEnabled: false,
+      yieldRouterEnabled: true,
+      yieldRouter,
+      yieldRouterOrchestrator,
+      pidPath: '/tmp/yield-router.pid',
+      statusPath: '/tmp/yield-router-status.json',
+      logPath: '/tmp/yield-router.log',
+      taskLogDir: '/tmp/yield-router-tasks',
+      wakeSignalPath: '/tmp/yield-router-wake.signal',
+    });
+
+    const result = await yieldDaemon.runYieldRebalancePhase({
+      key: 'yield_rebalance',
+      marketDate: '2026-03-19',
+      scheduledAt: '2026-03-19T18:00:00.000Z',
+      windowKey: '2026-03-19T18:00:00.000Z',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      phase: 'yield_rebalance',
+      summary: expect.objectContaining({
+        action: 'return_idle',
+        deposited: 250,
+        withdrawn: 0,
+        idleCapital: 250,
+        yieldGap: 250,
+        killSwitch: false,
+      }),
+    }));
+    expect(yieldRouterOrchestrator.getUnifiedPortfolioSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+      date: '2026-03-19',
+      includePolymarket: true,
+      yieldRouter,
+    }));
+    expect(yieldRouterOrchestrator.returnIdleCapital).toHaveBeenCalledWith(expect.objectContaining({
+      portfolioSnapshot: expect.objectContaining({
+        totalEquity: 1000,
+      }),
+      yieldRouter,
+      dryRun: false,
+      killSwitchTriggered: false,
+    }));
+    expect(yieldDaemon.yieldRouterState.lastRebalance).toEqual(expect.objectContaining({
+      rebalanceResult: expect.objectContaining({
+        amount: 250,
+      }),
+    }));
+
+    await yieldDaemon.stop('test-cleanup-yield-router');
+  });
+
+  test('withdraws all yield positions when the kill switch is triggered during rebalance', async () => {
+    const yieldRouter = {
+      requestCapital: jest.fn(),
+      returnCapital: jest.fn(),
+    };
+    const yieldRouterOrchestrator = {
+      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
+        totalEquity: 700,
+        markets: {
+          alpaca_stocks: { equity: 250 },
+          alpaca_crypto: { equity: 0 },
+          ibkr_global: { equity: 0 },
+          polymarket: { equity: 0 },
+          defi_yield: { equity: 180 },
+          solana_tokens: { equity: 0 },
+          cash_reserve: { cash: 270, equity: 270 },
+        },
+        risk: {
+          killSwitchTriggered: true,
+        },
+      }),
+      getCapitalAllocation: jest.fn().mockReturnValue({
+        totalEquity: 700,
+        excess: { idleCapital: 0 },
+        gaps: { yield: 65, activeTrading: 0 },
+      }),
+      returnIdleCapital: jest.fn().mockResolvedValue({
+        ok: true,
+        action: 'withdraw_all',
+        withdrawal: {
+          ok: true,
+          withdrawn: 180,
+          sources: [{ venue: { protocol: 'Aave' }, amount: 180 }],
+        },
+      }),
+    };
+    const yieldDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: false,
+      cryptoTradingEnabled: false,
+      polymarketTradingEnabled: false,
+      yieldRouterEnabled: true,
+      yieldRouter,
+      yieldRouterOrchestrator,
+      pidPath: '/tmp/yield-router-kill.pid',
+      statusPath: '/tmp/yield-router-kill-status.json',
+      logPath: '/tmp/yield-router-kill.log',
+      taskLogDir: '/tmp/yield-router-kill-tasks',
+      wakeSignalPath: '/tmp/yield-router-kill-wake.signal',
+    });
+
+    const result = await yieldDaemon.runYieldRebalancePhase({
+      key: 'yield_rebalance',
+      marketDate: '2026-03-19',
+      scheduledAt: '2026-03-19T19:00:00.000Z',
+      windowKey: '2026-03-19T19:00:00.000Z',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      summary: expect.objectContaining({
+        action: 'withdraw_all',
+        withdrawn: 180,
+        killSwitch: true,
+      }),
+    }));
+    expect(yieldRouterOrchestrator.returnIdleCapital).toHaveBeenCalledWith(expect.objectContaining({
+      killSwitchTriggered: true,
+    }));
+
+    await yieldDaemon.stop('test-cleanup-yield-router-kill');
+  });
+
+  test('runs yield rebalance after market close review and on the 6-hour schedule', async () => {
+    const tradingOrchestrator = {
+      runMarketClose: jest.fn().mockResolvedValue({
+        phase: 'market_close',
+        marketDate: '2026-03-19',
+        openPositions: [],
+      }),
+      runPreMarket: jest.fn(),
+      runConsensusRound: jest.fn(),
+      runMarketOpen: jest.fn(),
+      runMidDayCheck: jest.fn(),
+      runEndOfDay: jest.fn(),
+    };
+    const yieldRouter = {
+      requestCapital: jest.fn(),
+      returnCapital: jest.fn(),
+    };
+    const yieldRouterOrchestrator = {
+      getUnifiedPortfolioSnapshot: jest.fn().mockResolvedValue({
+        totalEquity: 1000,
+        markets: {
+          alpaca_stocks: { equity: 400 },
+          alpaca_crypto: { equity: 0 },
+          ibkr_global: { equity: 0 },
+          polymarket: { equity: 0 },
+          defi_yield: { equity: 150 },
+          solana_tokens: { equity: 0 },
+          cash_reserve: { cash: 450, equity: 450 },
+        },
+        risk: {
+          killSwitchTriggered: false,
+        },
+      }),
+      getCapitalAllocation: jest.fn().mockReturnValue({
+        totalEquity: 1000,
+        excess: { idleCapital: 200 },
+        gaps: { yield: 200, activeTrading: 0 },
+      }),
+      returnIdleCapital: jest.fn().mockResolvedValue({
+        ok: true,
+        action: 'return_idle',
+        amount: 200,
+        deposit: { deposited: 200 },
+      }),
+    };
+    const yieldDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: true,
+      cryptoTradingEnabled: false,
+      polymarketTradingEnabled: false,
+      tradingOrchestrator,
+      yieldRouterEnabled: true,
+      yieldRouter,
+      yieldRouterOrchestrator,
+      pidPath: '/tmp/yield-router-trigger.pid',
+      statusPath: '/tmp/yield-router-trigger-status.json',
+      logPath: '/tmp/yield-router-trigger.log',
+      taskLogDir: '/tmp/yield-router-trigger-tasks',
+      wakeSignalPath: '/tmp/yield-router-trigger-wake.signal',
+    });
+
+    const tradingResult = await yieldDaemon.runTradingPhase({
+      key: 'market_close_review',
+      scheduledAt: '2026-03-19T20:00:00.000Z',
+      windowKey: '2026-03-19T20:00:00.000Z',
+    }, {
+      marketDate: '2026-03-19',
+    });
+
+    expect(tradingResult).toEqual(expect.objectContaining({
+      ok: true,
+      phase: 'market_close_review',
+    }));
+    expect(yieldRouterOrchestrator.returnIdleCapital).toHaveBeenCalledWith(expect.objectContaining({
+      killSwitchTriggered: false,
+    }));
+    expect(yieldDaemon.yieldRouterState.lastRebalance).toEqual(expect.objectContaining({
+      triggerSource: 'market_close_review',
+    }));
+
+    yieldDaemon.yieldRouterState.lastProcessedAt = '2026-03-19T06:00:00.000Z';
+    const scheduledResult = await yieldDaemon.maybeRunYieldRouterAutomation(new Date('2026-03-19T12:00:00.000Z'));
+
+    expect(scheduledResult).toEqual(expect.objectContaining({
+      ok: true,
+      skipped: false,
+    }));
+    expect(scheduledResult.executed.map((entry) => entry.phase)).toEqual(['yield_rebalance']);
+    expect(yieldDaemon.yieldRouterState.nextEvent).toEqual(expect.objectContaining({
+      key: 'yield_rebalance',
+    }));
+
+    await yieldDaemon.stop('test-cleanup-yield-router-trigger');
+  });
+
   test('keeps Polymarket automation disabled by default until explicitly opted in', async () => {
     const originalPrivateKey = process.env.POLYMARKET_PRIVATE_KEY;
     const originalFunder = process.env.POLYMARKET_FUNDER_ADDRESS;

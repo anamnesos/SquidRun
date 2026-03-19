@@ -26,6 +26,7 @@ jest.mock('../executor', () => ({
   getAccountSnapshot: jest.fn().mockResolvedValue({ equity: 10000 }),
   getOpenPositions: jest.fn().mockResolvedValue([]),
   executeConsensusTrade: jest.fn().mockResolvedValue({ ok: true, status: 'dry_run', order: { id: 'poly-1' } }),
+  syncJournalPositions: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock('../journal', () => ({
@@ -367,6 +368,170 @@ describe('orchestrator real consultation flow', () => {
     }));
     expect(syncLaunchRadarSpy).toHaveBeenNthCalledWith(2, expect.objectContaining({
       reason: 'consensus_round',
+    }));
+  });
+
+  test('computes capital allocation and parks excess idle cash in yield', async () => {
+    const yieldRouter = {
+      returnCapital: jest.fn().mockResolvedValue({
+        ok: true,
+        deposited: 250,
+        venue: 'Morpho',
+      }),
+      requestCapital: jest.fn(),
+    };
+    const orchestrator = createOrchestrator({ yieldRouter });
+    const portfolioSnapshot = {
+      totalEquity: 1000,
+      markets: {
+        alpaca_stocks: { equity: 250 },
+        alpaca_crypto: { equity: 150 },
+        ibkr_global: { equity: 0 },
+        polymarket: { equity: 0 },
+        defi_yield: { equity: 100 },
+        solana_tokens: { equity: 0 },
+        cash_reserve: { cash: 500, equity: 500 },
+      },
+    };
+
+    const allocation = orchestrator.getCapitalAllocation(portfolioSnapshot);
+    const result = await orchestrator.returnIdleCapital({
+      portfolioSnapshot,
+    });
+
+    expect(allocation).toEqual(expect.objectContaining({
+      targets: expect.objectContaining({
+        activeTrading: 400,
+        yield: 350,
+        reserve: 200,
+        launchRadar: 50,
+      }),
+      excess: expect.objectContaining({
+        idleCapital: 250,
+      }),
+      gaps: expect.objectContaining({
+        yield: 250,
+      }),
+    }));
+    expect(yieldRouter.returnCapital).toHaveBeenCalledWith(250, expect.objectContaining({
+      portfolioSnapshot,
+      totalCapital: 1000,
+      activeTradeCapital: 400,
+    }));
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      action: 'return_idle',
+      amount: 250,
+      deposit: expect.objectContaining({
+        deposited: 250,
+      }),
+    }));
+  });
+
+  test('requests trading capital from yield when active allocation is short', async () => {
+    const yieldRouter = {
+      returnCapital: jest.fn(),
+      requestCapital: jest.fn().mockResolvedValue({
+        ok: true,
+        withdrawn: 50,
+        sources: [
+          { venue: { protocol: 'Aave' }, amount: 50 },
+        ],
+      }),
+    };
+    const orchestrator = createOrchestrator({ yieldRouter });
+    const portfolioSnapshot = {
+      totalEquity: 1000,
+      markets: {
+        alpaca_stocks: { equity: 100 },
+        alpaca_crypto: { equity: 0 },
+        ibkr_global: { equity: 0 },
+        polymarket: { equity: 0 },
+        defi_yield: { equity: 250 },
+        solana_tokens: { equity: 0 },
+        cash_reserve: { cash: 300, equity: 300 },
+      },
+      risk: {
+        killSwitchTriggered: false,
+      },
+    };
+
+    const result = await orchestrator.requestTradingCapital(100, {
+      portfolioSnapshot,
+    });
+
+    expect(yieldRouter.requestCapital).toHaveBeenCalledWith(50, expect.objectContaining({
+      portfolioSnapshot,
+      totalCapital: 1000,
+    }));
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      requested: 100,
+      shortfall: 50,
+      requestAmount: 50,
+      withdrawal: expect.objectContaining({
+        withdrawn: 50,
+      }),
+    }));
+  });
+
+  test('requests trading capital before executing approved BUY trades', async () => {
+    const yieldRouter = {
+      returnCapital: jest.fn(),
+      requestCapital: jest.fn().mockResolvedValue({
+        ok: true,
+        withdrawn: 200,
+        sources: [],
+      }),
+    };
+    const orchestrator = createOrchestrator({ yieldRouter });
+    const consensusPhase = {
+      accountState: {
+        equity: 1000,
+        peakEquity: 1000,
+        dayStartEquity: 1000,
+        tradesToday: 0,
+        openPositions: [],
+      },
+      portfolioSnapshot: {
+        totalEquity: 1000,
+        markets: {
+          alpaca_stocks: { equity: 100 },
+          alpaca_crypto: { equity: 0 },
+          ibkr_global: { equity: 0 },
+          polymarket: { equity: 0 },
+          defi_yield: { equity: 250 },
+          solana_tokens: { equity: 0 },
+          cash_reserve: { cash: 400, equity: 400 },
+        },
+        risk: {
+          killSwitchTriggered: false,
+        },
+      },
+      approvedTrades: [
+        {
+          ticker: 'AAPL',
+          consensus: { decision: 'BUY' },
+          referencePrice: 100,
+          riskCheck: { maxShares: 2 },
+          limits: {},
+        },
+      ],
+    };
+
+    const result = await orchestrator.runMarketOpen({
+      consensusPhase,
+    });
+
+    expect(yieldRouter.requestCapital).toHaveBeenCalledWith(50, expect.objectContaining({
+      portfolioSnapshot: consensusPhase.portfolioSnapshot,
+    }));
+    expect(executor.executeConsensusTrade).toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      requiredTradingCapital: 200,
+      capitalRequest: expect.objectContaining({
+        requestAmount: 50,
+      }),
     }));
   });
 });

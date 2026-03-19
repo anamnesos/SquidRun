@@ -16,14 +16,24 @@ jest.mock('../polymarket-client', () => ({
   resolvePolymarketConfig: jest.fn(() => ({ configured: false })),
 }));
 
+jest.mock('../yield-router', () => ({
+  createYieldRouter: jest.fn(() => ({
+    getDeposits: jest.fn(() => []),
+  })),
+}));
+
 const executor = require('../executor');
 const ibkrClient = require('../ibkr-client');
 const polymarketClient = require('../polymarket-client');
+const yieldRouter = require('../yield-router');
 const portfolioTracker = require('../portfolio-tracker');
 
 describe('portfolio-tracker', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    yieldRouter.createYieldRouter.mockReturnValue({
+      getDeposits: jest.fn(() => []),
+    });
   });
 
   test('builds a unified portfolio snapshot across Alpaca, Polymarket, DeFi, and Solana tokens', async () => {
@@ -164,5 +174,55 @@ describe('portfolio-tracker', () => {
       'polymarket: polymarket auth failed',
     ]));
     expect(snapshot.markets.polymarket.sourceErrors).toEqual(['polymarket auth failed']);
+  });
+
+  test('loads yield deposits from the yield router into the unified portfolio view', async () => {
+    executor.getAlpacaAccountSnapshot.mockResolvedValue({
+      equity: 1000,
+      cash: 700,
+      buyingPower: 1400,
+    });
+    executor.getAlpacaOpenPositions.mockResolvedValue([
+      {
+        ticker: 'SPY',
+        shares: 1,
+        avgPrice: 300,
+        marketValue: 300,
+        assetClass: 'us_equity',
+        raw: { unrealized_pl: 0 },
+      },
+    ]);
+    yieldRouter.createYieldRouter.mockReturnValue({
+      getDeposits: jest.fn(() => [
+        {
+          protocol: 'Morpho',
+          amount: 75,
+          currentValue: 78,
+          apy: 0.09,
+          locked: false,
+          depositedAt: '2026-03-18T20:00:00.000Z',
+        },
+      ]),
+    });
+
+    const snapshot = await portfolioTracker.getPortfolioSnapshot({
+      persist: false,
+      includePolymarket: false,
+    });
+
+    expect(yieldRouter.createYieldRouter).toHaveBeenCalled();
+    expect(snapshot.markets.defi_yield).toMatchObject({
+      equity: 78,
+      liquidCapital: 78,
+      lockedCapital: 0,
+      pnl: 3,
+      deposits: [
+        expect.objectContaining({
+          venue: 'Morpho',
+          currentValue: 78,
+        }),
+      ],
+    });
+    expect(snapshot.totalEquity).toBe(1078);
   });
 });
