@@ -244,7 +244,16 @@ async function executeConsensusTrade(input = {}, options = {}) {
 
   const quantityCap = toPositiveQuantity(riskCheck.maxShares, trade.assetClass);
   const requestedShares = toPositiveQuantity(input.requestedShares || quantityCap, trade.assetClass);
-  const shares = Math.min(quantityCap, requestedShares || quantityCap);
+  let shares = Math.min(quantityCap, requestedShares || quantityCap);
+
+  // For SELL orders, cap at actual position size to avoid "insufficient balance" errors
+  if (direction === 'SELL') {
+    const normTicker = (t) => String(t || '').replace(/[\/\-]/g, '').toUpperCase();
+    const position = (account.openPositions || []).find(p => normTicker(p.ticker) === normTicker(trade.ticker));
+    if (position?.shares > 0) {
+      shares = Math.min(shares, toPositiveQuantity(position.shares, trade.assetClass));
+    }
+  }
   if (shares <= 0) {
     return {
       ok: false,
