@@ -28,6 +28,7 @@ const tradingScheduler = require('./modules/trading/scheduler');
 const tradingWatchlist = require('./modules/trading/watchlist');
 const tradingRiskEngine = require('./modules/trading/risk-engine');
 const { SmartMoneyScanner, createEtherscanProvider } = require('./modules/trading/smart-money-scanner');
+const macroRiskGate = require('./modules/trading/macro-risk-gate');
 const polymarketClient = require('./modules/trading/polymarket-client');
 const polymarketScanner = require('./modules/trading/polymarket-scanner');
 const polymarketSignals = require('./modules/trading/polymarket-signals');
@@ -1321,6 +1322,16 @@ class SupervisorDaemon {
     }
 
     try {
+      // Assess macro risk before any trading decisions
+      let macroRisk;
+      try {
+        macroRisk = await macroRiskGate.assessMacroRisk();
+        this.logger.info(`Macro risk: ${macroRisk.regime.toUpperCase()} (score: ${macroRisk.score}) — ${macroRisk.reason}`);
+      } catch (macroErr) {
+        this.logger.warn(`Macro risk gate failed: ${macroErr.message} — proceeding with defaults`);
+        macroRisk = { regime: 'yellow', score: 50, constraints: { allowLongs: true, positionSizeMultiplier: 0.6, buyConfidenceMultiplier: 0.8, sellConfidenceMultiplier: 1.0 }, reason: 'macro gate error fallback' };
+      }
+
       for (const ticker of cryptoSymbols) {
         this.cryptoTradingOrchestrator.clearSignals(ticker);
       }
@@ -1338,10 +1349,29 @@ class SupervisorDaemon {
         assetClass: 'crypto',
         limits: tradingRiskEngine.DEFAULT_CRYPTO_LIMITS,
         whaleTransfers: whaleTransfers.length > 0 ? whaleTransfers : undefined,
+        macroRisk,
       });
 
+      // Apply macro risk gate to approved trades
+      let approved = Array.isArray(consensusPhase?.approvedTrades) ? consensusPhase.approvedTrades : [];
+      if (macroRisk.regime === 'red') {
+        const blocked = approved.filter((t) => t.consensus?.decision === 'BUY');
+        if (blocked.length > 0) {
+          this.logger.info(`Macro RED regime: blocking ${blocked.length} BUY trades (${blocked.map(t => t.ticker).join(', ')})`);
+        }
+        approved = approved.filter((t) => t.consensus?.decision !== 'BUY');
+      }
+
+      // Apply position size multiplier from macro gate
+      if (macroRisk.constraints?.positionSizeMultiplier < 1) {
+        for (const trade of approved) {
+          if (trade.riskCheck?.maxShares) {
+            trade.riskCheck.maxShares = Math.floor(trade.riskCheck.maxShares * macroRisk.constraints.positionSizeMultiplier * 1e6) / 1e6;
+          }
+        }
+      }
+
       // Execute approved trades immediately — crypto markets are always open
-      const approved = Array.isArray(consensusPhase?.approvedTrades) ? consensusPhase.approvedTrades : [];
       let executionResult = null;
       if (approved.length > 0) {
         this.logger.info(`Crypto consensus approved ${approved.length} trades — executing immediately`);
@@ -1362,6 +1392,7 @@ class SupervisorDaemon {
         marketDate: event.marketDate || '',
         scheduledAt,
         preMarket,
+        macroRisk: { regime: macroRisk.regime, score: macroRisk.score, reason: macroRisk.reason },
         execution: executionResult,
         summary: {
           symbols: cryptoSymbols.length,
