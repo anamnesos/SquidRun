@@ -418,12 +418,9 @@ class SupervisorDaemon {
         return false;
       }
     })();
-    this.polymarketTradingEnabled = options.polymarketTradingEnabled === true
-      || (
-        options.polymarketTradingEnabled !== false
-        && process.env.SQUIDRUN_POLYMARKET_AUTOMATION !== '0'
-        && polymarketConfigured
-      );
+    const polymarketAutomationRequested = options.polymarketTradingEnabled === true
+      || process.env.SQUIDRUN_POLYMARKET_AUTOMATION === '1';
+    this.polymarketTradingEnabled = Boolean(polymarketAutomationRequested && polymarketConfigured);
     this.polymarketTradingStatePath = options.polymarketTradingStatePath || DEFAULT_POLYMARKET_TRADING_STATE_PATH;
     this.polymarketTradingState = {
       ...defaultLiveOpsTradingState(),
@@ -440,6 +437,7 @@ class SupervisorDaemon {
       : {
         enabled: false,
         status: 'disabled',
+        reason: polymarketConfigured ? 'manual_opt_in_required' : 'credentials_unavailable',
         lastProcessedAt: null,
         nextEvent: null,
       };
