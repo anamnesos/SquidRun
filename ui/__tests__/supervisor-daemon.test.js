@@ -505,4 +505,55 @@ describe('supervisor-daemon integrations', () => {
 
     await polymarketDaemon.stop('test-cleanup-polymarket');
   });
+
+  test('keeps Polymarket automation disabled by default until explicitly opted in', async () => {
+    const originalPrivateKey = process.env.POLYMARKET_PRIVATE_KEY;
+    const originalFunder = process.env.POLYMARKET_FUNDER_ADDRESS;
+    const originalAutomation = process.env.SQUIDRUN_POLYMARKET_AUTOMATION;
+
+    try {
+      process.env.POLYMARKET_PRIVATE_KEY = '0xabc123';
+      process.env.POLYMARKET_FUNDER_ADDRESS = '0xfunder';
+      delete process.env.SQUIDRUN_POLYMARKET_AUTOMATION;
+
+      const polymarketDaemon = new SupervisorDaemon({
+        store: createMockStore(),
+        logger: createMockLogger(),
+        memoryIndexEnabled: false,
+        sleepEnabled: false,
+        tradingEnabled: false,
+        cryptoTradingEnabled: false,
+        pidPath: '/tmp/polymarket-default-off.pid',
+        statusPath: '/tmp/polymarket-default-off-status.json',
+        logPath: '/tmp/polymarket-default-off.log',
+        taskLogDir: '/tmp/polymarket-default-off-tasks',
+        wakeSignalPath: '/tmp/polymarket-default-off-wake.signal',
+      });
+
+      expect(polymarketDaemon.polymarketTradingEnabled).toBe(false);
+      expect(polymarketDaemon.lastPolymarketTradingSummary).toEqual(expect.objectContaining({
+        enabled: false,
+        status: 'disabled',
+        reason: 'manual_opt_in_required',
+      }));
+
+      await polymarketDaemon.stop('test-cleanup-polymarket-default-off');
+    } finally {
+      if (originalPrivateKey == null) {
+        delete process.env.POLYMARKET_PRIVATE_KEY;
+      } else {
+        process.env.POLYMARKET_PRIVATE_KEY = originalPrivateKey;
+      }
+      if (originalFunder == null) {
+        delete process.env.POLYMARKET_FUNDER_ADDRESS;
+      } else {
+        process.env.POLYMARKET_FUNDER_ADDRESS = originalFunder;
+      }
+      if (originalAutomation == null) {
+        delete process.env.SQUIDRUN_POLYMARKET_AUTOMATION;
+      } else {
+        process.env.SQUIDRUN_POLYMARKET_AUTOMATION = originalAutomation;
+      }
+    }
+  });
 });
