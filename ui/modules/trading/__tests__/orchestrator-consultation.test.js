@@ -2,6 +2,13 @@
 
 jest.mock('../data-ingestion', () => ({
   normalizeSymbols: jest.fn((symbols = []) => Array.from(new Set((Array.isArray(symbols) ? symbols : [symbols]).map((symbol) => String(symbol).trim().toUpperCase()).filter(Boolean)))),
+  buildWatchlistContext: jest.fn().mockResolvedValue({
+    symbols: ['AAPL'],
+    snapshots: new Map([
+      ['AAPL', { symbol: 'AAPL', tradePrice: 200, dailyVolume: 1000, dailyClose: 198, previousClose: 198 }],
+    ]),
+    news: [],
+  }),
   getWatchlistSnapshots: jest.fn().mockResolvedValue(new Map([
     ['AAPL', { symbol: 'AAPL', tradePrice: 200, dailyVolume: 1000, dailyClose: 198, previousClose: 198 }],
   ])),
@@ -287,5 +294,79 @@ describe('orchestrator real consultation flow', () => {
         execution: expect.objectContaining({ ok: true, status: 'dry_run' }),
       }),
     ]);
+  });
+
+  test('syncs qualified launch radar tokens into the dynamic watchlist', async () => {
+    const launchRadarMock = {
+      pollNow: jest.fn().mockResolvedValue({
+        ok: true,
+        qualified: [
+          {
+            chain: 'solana',
+            symbol: 'SQD',
+            name: 'Squid Launch',
+            address: 'SoLaunch11111111111111111111111111111111111',
+            liquidityUsd: 12500,
+            holders: 44,
+            audit: { recommendation: 'proceed' },
+          },
+        ],
+      }),
+    };
+    const orchestrator = createOrchestrator({
+      launchRadar: launchRadarMock,
+      dynamicWatchlistStatePath: '/tmp/dynamic-watchlist.json',
+    });
+
+    const result = await orchestrator.syncLaunchRadarWatchlist({
+      reason: 'test_launch_radar',
+      now: '2026-03-19T21:00:00.000Z',
+    });
+
+    expect(launchRadarMock.pollNow).toHaveBeenCalledWith({ reason: 'test_launch_radar' });
+    expect(dynamicWatchlist.addTicker).toHaveBeenCalledWith('SQD', expect.objectContaining({
+      statePath: '/tmp/dynamic-watchlist.json',
+      source: 'launch_radar',
+      assetClass: 'solana_token',
+      exchange: 'SOLANA',
+      expiry: '2026-03-26T21:00:00.000Z',
+    }));
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      qualifiedTokens: [
+        expect.objectContaining({
+          symbol: 'SQD',
+        }),
+      ],
+      added: ['SQD'],
+    }));
+  });
+
+  test('runs launch radar sync during both premarket and consensus rounds', async () => {
+    const orchestrator = createOrchestrator();
+    const syncLaunchRadarSpy = jest.spyOn(orchestrator, 'syncLaunchRadarWatchlist').mockResolvedValue({
+      ok: true,
+      qualifiedTokens: [],
+      added: [],
+      refreshed: [],
+      pollResult: null,
+    });
+
+    await orchestrator.runPreMarket({
+      symbols: ['AAPL'],
+      date: '2026-03-19',
+    });
+    await orchestrator.runConsensusRound({
+      symbols: ['AAPL'],
+      date: '2026-03-19',
+      consultationTimeoutMs: 50,
+    });
+
+    expect(syncLaunchRadarSpy).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      reason: 'premarket',
+    }));
+    expect(syncLaunchRadarSpy).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      reason: 'consensus_round',
+    }));
   });
 });

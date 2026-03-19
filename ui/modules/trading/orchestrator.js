@@ -115,6 +115,24 @@ function buildSmartMoneyReason(signal = {}) {
 	return `Wallet convergence: ${wallets} wallets on ${chain}, ~$${totalUsdValue.toLocaleString('en-US')} total flow`;
 }
 
+function resolveLaunchRadarExchange(token = {}) {
+	const chain = String(token.chain || 'solana').trim().toLowerCase();
+	return chain === 'base' ? 'BASE' : 'SOLANA';
+}
+
+function buildLaunchRadarReason(token = {}) {
+	const chain = String(token.chain || 'unknown').trim().toUpperCase();
+	const liquidityUsd = Math.round(toNumber(token.liquidityUsd, 0));
+	const holders = toPositiveInteger(token.holders || token.holderCount || 0);
+	const recommendation = String(token.audit?.recommendation || 'proceed').trim().toLowerCase();
+	return `Launch radar: ${chain} token with ~$${liquidityUsd.toLocaleString('en-US')} liquidity, ${holders} holders, audit=${recommendation}`;
+}
+
+function resolveLaunchRadarExpiryDays(value) {
+	const numeric = toPositiveInteger(value);
+	return numeric > 0 ? numeric : 7;
+}
+
 function pickReferencePrice(snapshot) {
 	if (!snapshot) return null;
 	return [
@@ -534,6 +552,51 @@ class TradingOrchestrator {
 		};
 	}
 
+	async syncLaunchRadarWatchlist(options = {}) {
+		const radar = options.launchRadar || this.options.launchRadar || null;
+		let pollResult = null;
+		let qualifiedTokens = Array.isArray(options.launchRadarQualifiedTokens) ? options.launchRadarQualifiedTokens : [];
+		if (qualifiedTokens.length === 0 && radar && typeof radar.pollNow === 'function') {
+			pollResult = await radar.pollNow({ reason: options.reason || 'orchestrator' });
+			if (pollResult?.ok && Array.isArray(pollResult.qualified)) {
+				qualifiedTokens = pollResult.qualified;
+			}
+		}
+
+		const statePath = options.dynamicWatchlistStatePath || this.options.dynamicWatchlistStatePath;
+		const expiryDays = resolveLaunchRadarExpiryDays(options.launchRadarExpiryDays || this.options.launchRadarExpiryDays);
+		const now = options.now instanceof Date ? options.now : (options.now ? new Date(options.now) : new Date());
+		const expiry = new Date(now.getTime() + (expiryDays * 24 * 60 * 60 * 1000)).toISOString();
+		const added = [];
+		const refreshed = [];
+		for (const token of qualifiedTokens) {
+			const ticker = toTicker(token.symbol || token.ticker || token.address);
+			if (!ticker) continue;
+			const existed = dynamicWatchlist.getEntry(ticker, { statePath });
+			dynamicWatchlist.addTicker(ticker, {
+				statePath,
+				persist: options.persistDynamicWatchlist,
+				name: token.name || ticker,
+				sector: 'Launch Radar',
+				source: 'launch_radar',
+				reason: buildLaunchRadarReason(token),
+				exchange: resolveLaunchRadarExchange(token),
+				broker: 'alpaca',
+				assetClass: 'solana_token',
+				expiry,
+			});
+			(existed ? refreshed : added).push(ticker);
+		}
+
+		return {
+			ok: pollResult?.ok !== false,
+			qualifiedTokens,
+			added,
+			refreshed,
+			pollResult,
+		};
+	}
+
 	async runPolymarketConsensusRound(options = {}) {
 		const db = this.getJournalDb(options);
 		const [smartMoneyWatchlist, portfolioSnapshot, markets] = await Promise.all([
@@ -755,7 +818,10 @@ class TradingOrchestrator {
 	}
 
 	async runPreMarket(options = {}) {
-		const smartMoneyWatchlist = await this.syncSmartMoneyWatchlist({ ...options, reason: 'premarket' });
+		const [smartMoneyWatchlist, launchRadarWatchlist] = await Promise.all([
+			this.syncSmartMoneyWatchlist({ ...options, reason: 'premarket' }),
+			this.syncLaunchRadarWatchlist({ ...options, reason: 'premarket' }),
+		]);
 		const symbols = normalizeSymbols(options.symbols, options);
 		const marketDate = this.resetForMarketDate(options.date || new Date());
 		const isCrypto = watchlist.normalizeAssetClass(options.assetClass || options.asset_class, 'us_equity') === 'crypto';
@@ -777,6 +843,7 @@ class TradingOrchestrator {
 			phase: 'premarket',
 			marketDate: schedule?.marketDate || marketDate,
 			smartMoneyWatchlist,
+			launchRadarWatchlist,
 			watchlist: watchlist.getWatchlist({ assetClass: options.assetClass || options.asset_class }),
 			symbols,
 			schedule,
@@ -804,7 +871,10 @@ class TradingOrchestrator {
 		}
 
 		const db = this.getJournalDb(options);
-		const smartMoneyWatchlist = await this.syncSmartMoneyWatchlist({ ...options, reason: 'consensus_round' });
+		const [smartMoneyWatchlist, launchRadarWatchlist] = await Promise.all([
+			this.syncSmartMoneyWatchlist({ ...options, reason: 'consensus_round' }),
+			this.syncLaunchRadarWatchlist({ ...options, reason: 'consensus_round' }),
+		]);
 		const symbols = normalizeSymbols(options.symbols, options);
 		const premarketContext = this.state.phases.premarket?.marketContext || {};
 		// Always fetch fresh data — cached Maps lose their entries after JSON serialization
@@ -928,6 +998,7 @@ class TradingOrchestrator {
 			phase: 'consensus',
 			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
 			smartMoneyWatchlist,
+			launchRadarWatchlist,
 			consultation,
 			autoGeneratedSignals,
 			portfolioSnapshot,
