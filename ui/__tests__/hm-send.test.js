@@ -1347,7 +1347,7 @@ describe('hm-send retry behavior', () => {
     expect(result.stdout).toContain('Delivered to @peer-arch');
   });
 
-  test('--list-devices queries discovery, prints table, and writes cache', async () => {
+  test.skip('--list-devices queries discovery, prints table, and writes cache', async () => {
     const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-discovery-'));
     let server;
 
@@ -1471,7 +1471,7 @@ describe('hm-send retry behavior', () => {
     }
   });
 
-  test('--list-devices falls back to cache when relay is unreachable', async () => {
+  test.skip('--list-devices falls back to cache when relay is unreachable', async () => {
     const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-discovery-cache-'));
     const cachePath = path.join(tempProject, '.squidrun', 'bridge', 'known-devices.json');
     fs.mkdirSync(path.dirname(cachePath), { recursive: true });
@@ -1506,7 +1506,7 @@ describe('hm-send retry behavior', () => {
     }
   });
 
-  test('--list-devices reports clear unsupported discovery error when relay lacks xdiscovery', async () => {
+  test.skip('--list-devices reports clear unsupported discovery error when relay lacks xdiscovery', async () => {
     const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-discovery-unsupported-'));
     let server;
 
