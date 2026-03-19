@@ -29,13 +29,13 @@ function ensureSchema(db) {
       timestamp TEXT NOT NULL DEFAULT (datetime('now')),
       ticker TEXT NOT NULL,
       direction TEXT NOT NULL CHECK(direction IN ('BUY','SELL')),
-      shares INTEGER NOT NULL,
+      shares REAL NOT NULL,
       price REAL NOT NULL,
       stop_loss_price REAL,
       total_value REAL NOT NULL,
       consensus_detail TEXT,
       risk_check_detail TEXT,
-      status TEXT NOT NULL DEFAULT 'FILLED' CHECK(status IN ('FILLED','REJECTED','CANCELLED','PENDING')),
+      status TEXT NOT NULL DEFAULT 'FILLED',
       alpaca_order_id TEXT,
       notes TEXT
     );
