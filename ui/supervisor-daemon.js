@@ -29,6 +29,7 @@ const tradingWatchlist = require('./modules/trading/watchlist');
 const tradingRiskEngine = require('./modules/trading/risk-engine');
 const { SmartMoneyScanner, createEtherscanProvider } = require('./modules/trading/smart-money-scanner');
 const macroRiskGate = require('./modules/trading/macro-risk-gate');
+const { CircuitBreaker } = require('./modules/trading/circuit-breaker');
 const polymarketClient = require('./modules/trading/polymarket-client');
 const polymarketScanner = require('./modules/trading/polymarket-scanner');
 const polymarketSignals = require('./modules/trading/polymarket-signals');
@@ -464,6 +465,46 @@ class SupervisorDaemon {
       : null;
     this.smartMoneyScannerLastTrigger = null;
 
+    // Circuit breaker — continuous position monitor with stop-loss execution
+    const executor = require('./modules/trading/executor');
+    const dataIngestion = require('./modules/trading/data-ingestion');
+    this.circuitBreaker = this.cryptoTradingEnabled && options.circuitBreaker !== null
+      ? (options.circuitBreaker || new CircuitBreaker({
+        pollMs: 30_000,
+        hardStopPct: 0.04,   // 4% loss from entry
+        trailingStopPct: 0.03, // 3% drop from high-water mark
+        flashCrashPct: 0.05,  // 5% portfolio drop → sell all
+        minPositionValueUsd: 10,
+        cooldownMs: 5 * 60_000,
+        statePath: resolveRuntimePath('circuit-breaker-state.json'),
+        logger: this.logger,
+        getPositions: async () => executor.getOpenPositions(),
+        getSnapshots: async (symbols) => dataIngestion.getWatchlistSnapshots({ symbols }),
+        executeSell: async (ticker, shares, reason) => {
+          this.logger.warn(`[circuit-breaker] Executing emergency SELL: ${ticker} x${shares} — ${reason}`);
+          try {
+            const result = await executor.submitOrder({
+              ticker,
+              direction: 'SELL',
+              shares,
+              assetClass: 'crypto',
+              type: 'market',
+              timeInForce: 'gtc',
+            });
+            this.logger.info(`[circuit-breaker] SELL ${ticker} submitted: ${result?.orderId || 'ok'}`);
+            return { ok: true, orderId: result?.orderId };
+          } catch (err) {
+            this.logger.error(`[circuit-breaker] SELL ${ticker} failed: ${err.message}`);
+            return { ok: false, error: err.message };
+          }
+        },
+        getAccountEquity: async () => {
+          const account = await executor.getAccountSnapshot();
+          return Number(account?.equity) || 0;
+        },
+      }))
+      : null;
+
     const polymarketConfigured = (() => {
       try {
         return Boolean(polymarketClient.resolveLiveOpsConfig(process.env)?.configured);
@@ -584,6 +625,10 @@ class SupervisorDaemon {
       this.smartMoneyScanner.start();
       this.logger.info('Smart money scanner started');
     }
+    if (this.circuitBreaker) {
+      this.circuitBreaker.start();
+      this.logger.info('Circuit breaker started (30s poll, 4% hard stop, 3% trailing stop, 5% flash crash)');
+    }
     this.requestTick('startup');
     this.statusTimer = setInterval(() => {
       this.writeStatus();
@@ -609,6 +654,10 @@ class SupervisorDaemon {
     if (this.smartMoneyScanner) {
       this.smartMoneyScanner.stop();
       this.logger.info('Smart money scanner stopped');
+    }
+    if (this.circuitBreaker) {
+      this.circuitBreaker.stop();
+      this.logger.info('Circuit breaker stopped');
     }
 
     if (this.sleepConsolidator) {
@@ -2402,6 +2451,14 @@ class SupervisorDaemon {
           recentTransfers: this.smartMoneyScanner.state?.recentTransfers?.length || 0,
           convergenceSignals: this.smartMoneyScanner.state?.convergenceSignals?.length || 0,
         } : null,
+      },
+      circuitBreaker: {
+        enabled: Boolean(this.circuitBreaker),
+        running: Boolean(this.circuitBreaker?.running),
+        pollMs: this.circuitBreaker?.pollMs || null,
+        passCount: this.circuitBreaker?.passCount || 0,
+        highWaterMarks: this.circuitBreaker ? Object.keys(this.circuitBreaker.highWaterMarks).length : 0,
+        recentExits: this.circuitBreaker?.exits?.slice(-5) || [],
       },
       polymarketTradingAutomation: {
         enabled: this.polymarketTradingEnabled,
