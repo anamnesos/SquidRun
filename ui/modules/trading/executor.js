@@ -220,6 +220,14 @@ async function executeConsensusTrade(input = {}, options = {}) {
   const limits = input.limits || DEFAULT_LIMITS;
   const riskCheck = checkTrade(trade, account, limits);
   if (!riskCheck.approved) {
+    const debugInfo = {
+      equity: account.equity,
+      openPositionCount: account.openPositions?.length || 0,
+      openTickers: (account.openPositions || []).map(p => p.ticker).join(', '),
+      tradeTicker: trade.ticker,
+      tradeDirection: trade.direction,
+    };
+    console.warn('[executor] Trade rejected at execution:', JSON.stringify(debugInfo), 'violations:', riskCheck.violations);
     return {
       ok: false,
       status: 'rejected',

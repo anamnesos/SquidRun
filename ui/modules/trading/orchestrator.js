@@ -624,7 +624,20 @@ class TradingOrchestrator {
 		const consensusPhase = options.consensusPhase || this.state.phases.consensus || await this.runConsensusRound(options);
 		const approvedTrades = Array.isArray(options.approvedTrades) ? options.approvedTrades : consensusPhase.approvedTrades;
 		const executions = [];
-		let simulatedAccountState = cloneAccountState(consensusPhase.simulatedAccountState || consensusPhase.accountState || {});
+		// Use pre-trade accountState (not simulatedAccountState which already incremented tradesToday
+		// for the same trades we're about to execute, causing double-counting)
+		let simulatedAccountState = cloneAccountState(consensusPhase.accountState || consensusPhase.simulatedAccountState || {});
+
+		// If account state is empty (e.g. lost during serialization), fetch fresh from broker
+		if (!simulatedAccountState.equity || simulatedAccountState.equity <= 0) {
+			const [freshAccount, freshPositions] = await Promise.all([
+				executor.getAccountSnapshot(options),
+				executor.getOpenPositions(options),
+			]);
+			if (freshAccount?.equity > 0) {
+				simulatedAccountState = this.buildAccountState(freshAccount, freshPositions, db, options);
+			}
+		}
 
 		for (const trade of approvedTrades) {
 			const execution = await executor.executeConsensusTrade({

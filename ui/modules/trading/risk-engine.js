@@ -40,6 +40,7 @@ const DEFAULT_CRYPTO_LIMITS = Object.freeze({
   ...DEFAULT_LIMITS,
   maxPositionPct: 0.03,
   stopLossPct: 0.04,
+  maxTradesPerDay: 10,
   minStockPrice: 0,
   minMarketCap: 0,
 });
