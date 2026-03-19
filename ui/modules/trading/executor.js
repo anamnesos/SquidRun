@@ -16,7 +16,9 @@ function toPositiveQuantity(value, assetClass = 'us_equity') {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return 0;
   if (watchlist.normalizeAssetClass(assetClass) === 'crypto') {
-    return Number(numeric.toFixed(6));
+    // Truncate (floor) to 6 decimals — never round up to avoid exceeding available balance
+    const factor = 1e6;
+    return Math.floor(numeric * factor) / factor;
   }
   return toPositiveInteger(numeric);
 }
