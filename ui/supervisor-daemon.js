@@ -27,6 +27,7 @@ const tradingOrchestrator = require('./modules/trading/orchestrator');
 const tradingScheduler = require('./modules/trading/scheduler');
 const tradingWatchlist = require('./modules/trading/watchlist');
 const tradingRiskEngine = require('./modules/trading/risk-engine');
+const { SmartMoneyScanner, createEtherscanProvider } = require('./modules/trading/smart-money-scanner');
 const polymarketClient = require('./modules/trading/polymarket-client');
 const polymarketScanner = require('./modules/trading/polymarket-scanner');
 const polymarketSignals = require('./modules/trading/polymarket-signals');
@@ -411,6 +412,57 @@ class SupervisorDaemon {
         journalPath: resolveRuntimePath('trade-journal.db'),
       }))
       : null;
+
+    // Smart money scanner — watches for whale convergence and triggers immediate consensus rounds
+    this.smartMoneyScanner = this.cryptoTradingEnabled
+      ? (options.smartMoneyScanner || new SmartMoneyScanner({
+        provider: createEtherscanProvider({ minUsdValue: 50_000 }),
+        pollMs: 60_000,
+        minUsdValue: 50_000,
+        minWalletCount: 2,
+        convergenceWindowMs: 15 * 60_000,
+        triggerCooldownMs: 30 * 60_000,
+        statePath: resolveRuntimePath('smart-money-scanner-state.json'),
+        onTrigger: async (trigger) => {
+          this.logger.info(`Smart money convergence detected: ${trigger.ticker} on ${trigger.chain} — triggering immediate consensus`);
+          this.smartMoneyScannerLastTrigger = {
+            ticker: trigger.ticker,
+            chain: trigger.chain,
+            reason: trigger.reason,
+            at: new Date().toISOString(),
+          };
+          // Trigger an immediate crypto consensus round for the detected ticker
+          if (this.cryptoTradingOrchestrator && !this.cryptoTradingPhasePromise) {
+            const event = {
+              key: 'smart_money_trigger',
+              label: `Smart money convergence: ${trigger.ticker}`,
+              marketDate: new Date().toISOString().slice(0, 10),
+              scheduledAt: new Date().toISOString(),
+            };
+            this.cryptoTradingPhasePromise = this.runCryptoConsensusPhase(event)
+              .then((result) => {
+                this.lastCryptoTradingSummary = {
+                  enabled: true,
+                  status: 'completed',
+                  trigger: 'smart_money',
+                  ...result,
+                };
+                this.writeStatus();
+                return result;
+              })
+              .catch((err) => {
+                this.logger.error(`Smart money triggered consensus failed: ${err.message}`);
+                return { ok: false, error: err.message };
+              })
+              .finally(() => {
+                this.cryptoTradingPhasePromise = null;
+              });
+          }
+        },
+      }))
+      : null;
+    this.smartMoneyScannerLastTrigger = null;
+
     const polymarketConfigured = (() => {
       try {
         return Boolean(polymarketClient.resolvePolymarketConfig(process.env)?.configured);
@@ -527,6 +579,10 @@ class SupervisorDaemon {
     this.logger.info(`Supervisor daemon started (pid=${process.pid}, db=${this.store.dbPath})`);
     this.startMemoryIndexWatcher();
     this.startWakeSignalWatcher();
+    if (this.smartMoneyScanner) {
+      this.smartMoneyScanner.start();
+      this.logger.info('Smart money scanner started');
+    }
     this.requestTick('startup');
     this.statusTimer = setInterval(() => {
       this.writeStatus();
@@ -548,6 +604,11 @@ class SupervisorDaemon {
 
     await this.stopMemoryIndexWatcher();
     await this.stopWakeSignalWatcher();
+
+    if (this.smartMoneyScanner) {
+      this.smartMoneyScanner.stop();
+      this.logger.info('Smart money scanner stopped');
+    }
 
     if (this.sleepConsolidator) {
       try { this.sleepConsolidator.close(); } catch {}
@@ -2279,6 +2340,16 @@ class SupervisorDaemon {
         lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
         nextEvent: this.cryptoTradingState.nextEvent || null,
         lastSummary: this.lastCryptoTradingSummary || null,
+      },
+      smartMoneyScanner: {
+        enabled: Boolean(this.smartMoneyScanner),
+        running: Boolean(this.smartMoneyScanner?.running),
+        pollMs: this.smartMoneyScanner?.pollMs || null,
+        lastTrigger: this.smartMoneyScannerLastTrigger || null,
+        state: this.smartMoneyScanner ? {
+          recentTransfers: this.smartMoneyScanner.state?.recentTransfers?.length || 0,
+          convergenceSignals: this.smartMoneyScanner.state?.convergenceSignals?.length || 0,
+        } : null,
       },
       polymarketTradingAutomation: {
         enabled: this.polymarketTradingEnabled,

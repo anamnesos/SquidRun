@@ -463,6 +463,113 @@ function createStaticSmartMoneyProvider(transfers = []) {
   };
 }
 
+/**
+ * RPC-based provider — uses eth_getLogs to track large stablecoin/WETH transfers on-chain.
+ * No API key needed. Uses any Ethereum JSON-RPC endpoint.
+ */
+function createEtherscanProvider(options = {}) {
+  const rpcUrl = options.rpcUrl || process.env.ETH_RPC_URL || 'https://eth.llamarpc.com';
+  const minUsdValue = options.minUsdValue || 50_000;
+  const blocksPerPoll = options.blocksPerPoll || 25; // ~5 minutes of blocks
+
+  const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+  const TRACKED_TOKENS = {
+    '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': { symbol: 'USDC', decimals: 6, priceUsd: 1 },
+    '0xdac17f958d2ee523a2206206994597c13d831ec7': { symbol: 'USDT', decimals: 6, priceUsd: 1 },
+    '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': { symbol: 'WETH', decimals: 18, priceUsd: 2200 },
+  };
+  const TOKEN_ADDRESSES = Object.keys(TRACKED_TOKENS);
+
+  // Known whale/smart-money wallets — exchanges, market makers, funds
+  const WHALE_WALLETS = new Set([
+    '0x47ac0fb4f2d84898e4d9e7b4dab3c24507a6d503', // Binance 14
+    '0xbe0eb53f46cd790cd13851d5eff43d12404d33e8', // Binance 7
+    '0xf977814e90da44bfa03b6295a0616a897441acec', // Binance 8
+    '0x28c6c06298d514db089934071355e5743bf21d60', // Binance 14
+    '0x21a31ee1afc51d94c2efccaa2092ad1028285549', // Binance 15
+    '0xdfd5293d8e347dfe59e90efd55b2956a1343963d', // Binance 16
+    '0x56eddb7aa87536c09ccc2793473599fd21a8b17f', // Binance 17
+    '0x8894e0a0c962cb723c1ef8a1b26b8b3f7f1e2e19', // Jump Trading
+    '0x9696f59e4d72e237be84ffd425dcad154bf96976', // Jump Trading 2
+    '0x7758e507850da48cd47df1fb5f875c23e3340c50', // Wintermute
+    '0x00000000ae347930bd1e7b0f35588b92280f9e75', // Wintermute 2
+    '0xd6216fc19db775df9774a6e33526131da7d19a2c', // Cumberland
+    '0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0', // Kraken 4
+    '0x2faf487a4414fe77e2327f0bf4ae2a264a776ad2', // FTX Estate
+    '0x1db92e2eebc8e0c075a02bea49a2935bcd2dfcf4', // Galaxy Digital
+  ]);
+
+  return async function rpcSmartMoneyProvider({ cursor, fetch: fetchFn }) {
+    const _fetch = fetchFn || global.fetch;
+
+    const rpcCall = async (method, params) => {
+      const resp = await _fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error.message || 'rpc_error');
+      return data.result;
+    };
+
+    try {
+      const blockHex = await rpcCall('eth_blockNumber', []);
+      const currentBlock = parseInt(blockHex, 16);
+      const lastBlock = typeof cursor === 'number' && cursor > 0 ? cursor : (currentBlock - blocksPerPoll);
+      const fromBlock = '0x' + Math.max(lastBlock + 1, currentBlock - blocksPerPoll).toString(16);
+
+      const logs = await rpcCall('eth_getLogs', [{
+        fromBlock,
+        toBlock: 'latest',
+        address: TOKEN_ADDRESSES,
+        topics: [TRANSFER_TOPIC],
+      }]);
+
+      const transfers = [];
+      for (const log of (logs || [])) {
+        const tokenAddr = (log.address || '').toLowerCase();
+        const tokenInfo = TRACKED_TOKENS[tokenAddr];
+        if (!tokenInfo) continue;
+
+        const rawValue = BigInt(log.data || '0');
+        const value = Number(rawValue) / (10 ** tokenInfo.decimals);
+        const usdValue = value * tokenInfo.priceUsd;
+        if (usdValue < minUsdValue) continue;
+
+        const from = '0x' + (log.topics[1] || '').slice(26).toLowerCase();
+        const to = '0x' + (log.topics[2] || '').slice(26).toLowerCase();
+        const isWhaleFrom = WHALE_WALLETS.has(from);
+        const isWhaleTo = WHALE_WALLETS.has(to);
+        if (!isWhaleFrom && !isWhaleTo) continue;
+
+        const direction = isWhaleTo ? 'BUY' : 'SELL';
+        const walletAddress = isWhaleFrom ? from : to;
+
+        transfers.push({
+          transferId: log.transactionHash,
+          chain: 'ethereum',
+          walletAddress,
+          tokenAddress: tokenAddr,
+          symbol: tokenInfo.symbol,
+          direction,
+          value,
+          usdValue,
+          timestamp: new Date().toISOString(),
+          blockNumber: parseInt(log.blockNumber, 16),
+          txHash: log.transactionHash,
+        });
+      }
+
+      return { transfers, cursor: currentBlock };
+    } catch {
+      return { transfers: [], cursor: typeof cursor === 'number' ? cursor : 0 };
+    }
+  };
+}
+
 function createSmartMoneyScanner(options = {}) {
   return new SmartMoneyScanner(options);
 }
@@ -476,6 +583,7 @@ module.exports = {
   DEFAULT_TRIGGER_COOLDOWN_MS,
   SmartMoneyScanner,
   buildSignalKey,
+  createEtherscanProvider,
   createSmartMoneyScanner,
   createStaticSmartMoneyProvider,
   defaultScannerState,
