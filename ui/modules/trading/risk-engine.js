@@ -167,6 +167,15 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
     violations.push(`POSITION_TOO_SMALL: Max position $${maxDollars.toFixed(2)} cannot buy ${minimumQuantityText} at $${trade.price}`);
   }
 
+  // --- MINIMUM NOTIONAL (Alpaca crypto requires >= $10 per order) ---
+  if (assetClass === 'crypto' && trade.direction === 'SELL' && trade.price > 0) {
+    const position = account.openPositions?.find(p => normTicker(p.ticker) === tradeTicker);
+    const positionValue = (position?.shares || 0) * trade.price;
+    if (positionValue > 0 && positionValue < 10) {
+      violations.push(`DUST_POSITION: ${tradeTicker} position worth $${positionValue.toFixed(2)} below $10 minimum order`);
+    }
+  }
+
   // --- STOP LOSS CALCULATION ---
   const stopLossPrice = trade.direction === 'BUY'
     ? trade.price * (1 - effectiveLimits.stopLossPct)

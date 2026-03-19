@@ -65,6 +65,13 @@ function buildOrderPayload(input = {}) {
     throw new Error('Order quantity must be at least 1 whole share');
   }
 
+  // Alpaca requires minimum $10 notional value for crypto orders
+  const MIN_CRYPTO_NOTIONAL = 10;
+  const referencePrice = Number(input.referencePrice || input.price || 0) || 0;
+  if (assetClass === 'crypto' && referencePrice > 0 && quantity * referencePrice < MIN_CRYPTO_NOTIONAL) {
+    throw new Error(`Order notional $${(quantity * referencePrice).toFixed(2)} below Alpaca minimum $${MIN_CRYPTO_NOTIONAL}`);
+  }
+
   const payload = {
     symbol: String(input.ticker || input.symbol || '').trim().toUpperCase(),
     qty: quantity,

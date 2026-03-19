@@ -640,20 +640,25 @@ class TradingOrchestrator {
 		}
 
 		for (const trade of approvedTrades) {
-			const execution = await executor.executeConsensusTrade({
-				consensus: trade.consensus,
-				price: trade.referencePrice,
-				marketCap: trade.marketCap,
-				assetClass: resolveAssetClassForTicker(trade.ticker),
-				account: simulatedAccountState,
-				limits: trade.limits,
-				requestedShares: trade.riskCheck?.maxShares,
-				notes: `market-open:${trade.ticker}`,
-			}, {
-				...options,
-				journalDb: db,
-				journalPath: this.resolveJournalPath(options),
-			});
+			let execution;
+			try {
+				execution = await executor.executeConsensusTrade({
+					consensus: trade.consensus,
+					price: trade.referencePrice,
+					marketCap: trade.marketCap,
+					assetClass: resolveAssetClassForTicker(trade.ticker),
+					account: simulatedAccountState,
+					limits: trade.limits,
+					requestedShares: trade.riskCheck?.maxShares,
+					notes: `market-open:${trade.ticker}`,
+				}, {
+					...options,
+					journalDb: db,
+					journalPath: this.resolveJournalPath(options),
+				});
+			} catch (execErr) {
+				execution = { ok: false, status: 'error', error: execErr.message };
+			}
 
 			executions.push({
 				ticker: trade.ticker,
