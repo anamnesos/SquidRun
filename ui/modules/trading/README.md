@@ -13,6 +13,7 @@ See `workspace/specs/trading-system-design.md` for full spec.
 - `dynamic-watchlist.js` — Persistent static + dynamic watchlist with source tagging and expiry pruning
 - `agent-attribution.js` — Persistent per-agent prediction/outcome tracking with asset-class-specific stats and leaderboards
 - `wallet-tracker.js` — Smart-money wallet registry with mockable move ingestion and convergence detection
+- `smart-money-scanner.js` — Continuous smart-money polling loop with persisted transfer state, convergence detection, and trigger events for immediate consensus wakes
 - `consultation-store.js` — Runtime request/response store for real pane-agent market consultations via `hm-send`
 - `consensus.js` — 2-of-3 multi-model voting engine
 - `risk-engine.js` — Hard limits, stop losses, kill switch

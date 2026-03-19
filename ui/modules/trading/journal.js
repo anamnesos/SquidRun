@@ -12,6 +12,62 @@ const path = require('path');
 /** @type {import('node:sqlite').DatabaseSync | null} */
 let _db = null;
 
+const TRADE_TABLE_COLUMNS = Object.freeze([
+  'id',
+  'timestamp',
+  'ticker',
+  'direction',
+  'shares',
+  'price',
+  'stop_loss_price',
+  'total_value',
+  'consensus_detail',
+  'risk_check_detail',
+  'status',
+  'alpaca_order_id',
+  'notes',
+]);
+
+const POSITION_TABLE_COLUMNS = Object.freeze([
+  'id',
+  'ticker',
+  'shares',
+  'avg_price',
+  'stop_loss_price',
+  'opened_at',
+  'updated_at',
+]);
+
+const TRADES_TABLE_SQL = `
+  CREATE TABLE trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    ticker TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('BUY','SELL')),
+    shares REAL NOT NULL,
+    price REAL NOT NULL,
+    stop_loss_price REAL,
+    total_value REAL NOT NULL,
+    consensus_detail TEXT,
+    risk_check_detail TEXT,
+    status TEXT NOT NULL DEFAULT 'FILLED',
+    alpaca_order_id TEXT,
+    notes TEXT
+  )
+`;
+
+const POSITIONS_TABLE_SQL = `
+  CREATE TABLE positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL UNIQUE,
+    shares REAL NOT NULL,
+    avg_price REAL NOT NULL,
+    stop_loss_price REAL,
+    opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`;
+
 function getDb(dbPath) {
   if (_db) return _db;
   const { DatabaseSync } = require('node:sqlite');
@@ -72,13 +128,89 @@ function ensureSchema(db) {
     CREATE TABLE IF NOT EXISTS positions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ticker TEXT NOT NULL UNIQUE,
-      shares INTEGER NOT NULL,
+      shares REAL NOT NULL,
       avg_price REAL NOT NULL,
       stop_loss_price REAL,
       opened_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  migrateLegacySchemaIfNeeded(db);
+}
+
+function closeDb() {
+  if (!_db) return;
+  try {
+    _db.close();
+  } catch {}
+  _db = null;
+}
+
+function normalizeTradeStatus(value) {
+  const normalized = String(value || 'FILLED').trim().toUpperCase();
+  return normalized || 'FILLED';
+}
+
+function getTableSql(db, tableName) {
+  const row = db.prepare(`
+    SELECT sql
+    FROM sqlite_master
+    WHERE type = 'table' AND name = ?
+  `).get(tableName);
+  return String(row?.sql || '');
+}
+
+function getTableColumns(db, tableName) {
+  return db.prepare(`PRAGMA table_info(${tableName})`).all().map((row) => String(row.name || '').trim()).filter(Boolean);
+}
+
+function rebuildTable(db, tableName, createTableSql, desiredColumns) {
+  const existingColumns = new Set(getTableColumns(db, tableName));
+  const copyColumns = desiredColumns.filter((columnName) => existingColumns.has(columnName));
+  const legacyTableName = `${tableName}__legacy_migration`;
+
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(`DROP TABLE IF EXISTS ${legacyTableName}`);
+    db.exec(`ALTER TABLE ${tableName} RENAME TO ${legacyTableName}`);
+    db.exec(createTableSql);
+    if (copyColumns.length > 0) {
+      const columnList = copyColumns.join(', ');
+      db.exec(`INSERT INTO ${tableName} (${columnList}) SELECT ${columnList} FROM ${legacyTableName}`);
+    }
+    db.exec(`DROP TABLE ${legacyTableName}`);
+    db.exec('COMMIT');
+  } catch (err) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {}
+    throw err;
+  }
+}
+
+function migrateLegacySchemaIfNeeded(db) {
+  const tradesSql = getTableSql(db, 'trades');
+  if (requiresTradesMigration(tradesSql)) {
+    rebuildTable(db, 'trades', TRADES_TABLE_SQL, TRADE_TABLE_COLUMNS);
+  }
+
+  const positionsSql = getTableSql(db, 'positions');
+  if (requiresPositionsMigration(positionsSql)) {
+    rebuildTable(db, 'positions', POSITIONS_TABLE_SQL, POSITION_TABLE_COLUMNS);
+  }
+}
+
+function requiresTradesMigration(tableSql = '') {
+  const normalized = String(tableSql || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return false;
+  return /\bstatus\s+TEXT\b[^,]*\bCHECK\s*\(\s*status\s+IN\s*\(/i.test(normalized);
+}
+
+function requiresPositionsMigration(tableSql = '') {
+  const normalized = String(tableSql || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return false;
+  return /\bshares\s+INTEGER\b/i.test(normalized);
 }
 
 /**
@@ -98,7 +230,7 @@ function recordTrade(db, trade) {
     trade.shares * trade.price,
     trade.consensusDetail ? JSON.stringify(trade.consensusDetail) : null,
     trade.riskCheckDetail ? JSON.stringify(trade.riskCheckDetail) : null,
-    trade.status || 'FILLED',
+    normalizeTradeStatus(trade.status),
     trade.alpacaOrderId || null,
     trade.notes || null,
   );
@@ -225,7 +357,11 @@ function getPerformanceStats(db) {
 }
 
 module.exports = {
+  closeDb,
   getDb,
+  ensureSchema,
+  migrateLegacySchemaIfNeeded,
+  normalizeTradeStatus,
   recordTrade,
   recordConsensus,
   recordDailySummary,
