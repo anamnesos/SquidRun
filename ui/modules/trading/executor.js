@@ -246,12 +246,23 @@ async function executeConsensusTrade(input = {}, options = {}) {
   const requestedShares = toPositiveQuantity(input.requestedShares || quantityCap, trade.assetClass);
   let shares = Math.min(quantityCap, requestedShares || quantityCap);
 
-  // For SELL orders, cap at actual position size to avoid "insufficient balance" errors
+  // For SELL orders, cap at actual broker position to avoid "insufficient balance" errors.
+  // We fetch live position data because the account state may have stale quantities
+  // (e.g. original order qty vs actual settled qty after fees/partial fills).
   if (direction === 'SELL') {
     const normTicker = (t) => String(t || '').replace(/[\/\-]/g, '').toUpperCase();
-    const position = (account.openPositions || []).find(p => normTicker(p.ticker) === normTicker(trade.ticker));
-    if (position?.shares > 0) {
-      shares = Math.min(shares, toPositiveQuantity(position.shares, trade.assetClass));
+    try {
+      const livePositions = await getOpenPositions(options);
+      const livePosition = livePositions.find(p => normTicker(p.ticker) === normTicker(trade.ticker));
+      if (livePosition?.shares > 0) {
+        shares = Math.min(shares, toPositiveQuantity(livePosition.shares, trade.assetClass));
+      }
+    } catch (_) {
+      // Fallback to account state if broker fetch fails
+      const position = (account.openPositions || []).find(p => normTicker(p.ticker) === normTicker(trade.ticker));
+      if (position?.shares > 0) {
+        shares = Math.min(shares, toPositiveQuantity(position.shares, trade.assetClass));
+      }
     }
   }
   if (shares <= 0) {
