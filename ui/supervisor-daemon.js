@@ -414,7 +414,7 @@ class SupervisorDaemon {
       : null;
 
     // Smart money scanner — watches for whale convergence and triggers immediate consensus rounds
-    this.smartMoneyScanner = this.cryptoTradingEnabled
+    this.smartMoneyScanner = this.cryptoTradingEnabled && options.smartMoneyScanner !== null
       ? (options.smartMoneyScanner || new SmartMoneyScanner({
         provider: createEtherscanProvider({ minUsdValue: 50_000 }),
         pollMs: 60_000,
@@ -1330,11 +1330,14 @@ class SupervisorDaemon {
         symbols: cryptoSymbols,
         assetClass: 'crypto',
       });
+      // Pass whale transfer data from scanner into consensus context
+      const whaleTransfers = this.smartMoneyScanner?.state?.recentTransfers || [];
       const consensusPhase = await this.cryptoTradingOrchestrator.runConsensusRound({
         date: scheduledAt,
         symbols: cryptoSymbols,
         assetClass: 'crypto',
         limits: tradingRiskEngine.DEFAULT_CRYPTO_LIMITS,
+        whaleTransfers: whaleTransfers.length > 0 ? whaleTransfers : undefined,
       });
 
       return {
