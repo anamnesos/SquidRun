@@ -97,6 +97,10 @@ const YIELD_ROUTER_PHASES = Object.freeze([
   { key: 'yield_rebalance', label: 'Yield router rebalance' },
 ]);
 const DEFAULT_YIELD_ROUTER_INTERVAL_MINUTES = 6 * 60;
+const DEFAULT_TRADE_RECONCILIATION_POLL_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.SQUIDRUN_TRADE_RECONCILIATION_POLL_MS || '300000', 10) || 300_000
+);
 
 function ensureDir(targetPath) {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -224,6 +228,15 @@ function defaultYieldRouterState() {
     nextEvent: null,
     lastRebalance: null,
     updatedAt: null,
+  };
+}
+
+function defaultTradeReconciliationState() {
+  return {
+    lastProcessedAt: null,
+    lastPendingCount: 0,
+    lastResult: null,
+    lastError: null,
   };
 }
 
@@ -524,6 +537,24 @@ class SupervisorDaemon {
         journalPath: resolveRuntimePath('trade-journal.db'),
       }))
       : null;
+    this.tradeReconciliationPollMs = Math.max(
+      60_000,
+      Number.parseInt(
+        options.tradeReconciliationPollMs || DEFAULT_TRADE_RECONCILIATION_POLL_MS,
+        10
+      ) || DEFAULT_TRADE_RECONCILIATION_POLL_MS
+    );
+    this.tradeReconciliationPromise = null;
+    this.tradeReconciliationState = defaultTradeReconciliationState();
+    this.lastTradeReconciliationSummary = {
+      enabled: Boolean(this.tradingOrchestrator),
+      status: this.tradingOrchestrator ? 'idle' : 'disabled',
+      marketDate: this.tradingState.marketDate || null,
+      pendingCount: 0,
+      lastProcessedAt: null,
+      lastResult: null,
+      lastError: null,
+    };
     this.cryptoTradingEnabled = options.cryptoTradingEnabled !== false
       && process.env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION !== '0';
     this.cryptoTradingStatePath = options.cryptoTradingStatePath || DEFAULT_CRYPTO_TRADING_STATE_PATH;
@@ -550,6 +581,10 @@ class SupervisorDaemon {
         journalPath: resolveRuntimePath('trade-journal.db'),
       }))
       : null;
+    if (!this.tradingOrchestrator && this.cryptoTradingOrchestrator) {
+      this.lastTradeReconciliationSummary.enabled = true;
+      this.lastTradeReconciliationSummary.status = 'idle';
+    }
 
     // Smart money scanner — watches for whale convergence and triggers immediate consensus rounds
     this.smartMoneyScanner = this.cryptoTradingEnabled && options.smartMoneyScanner !== null
@@ -952,6 +987,7 @@ class SupervisorDaemon {
 
     const tradingResult = await this.maybeRunTradingAutomation(nowMs);
     const cryptoTradingResult = await this.maybeRunCryptoTradingAutomation(nowMs);
+    const tradeReconciliationResult = await this.maybeRunTradeReconciliation(nowMs);
     const polymarketTradingResult = await this.maybeRunLiveOpsTradingAutomation(nowMs);
     const launchRadarResult = await this.maybeRunLaunchRadarAutomation(nowMs);
     const yieldRouterResult = await this.maybeRunYieldRouterAutomation(nowMs);
@@ -965,6 +1001,7 @@ class SupervisorDaemon {
       leaseHousekeeping,
       memoryConsistency,
       tradingResult,
+      tradeReconciliationResult,
       cryptoTradingResult,
       polymarketTradingResult,
       launchRadarResult,
@@ -1018,6 +1055,7 @@ class SupervisorDaemon {
     const pendingPruned = Number(summary?.queueHousekeeping?.pruneResult?.pruned || 0);
     const leasePruned = Number(summary?.leaseHousekeeping?.pruned || 0);
     const tradingRan = summary?.tradingResult && summary.tradingResult.skipped !== true;
+    const tradeReconciliationRan = summary?.tradeReconciliationResult && summary.tradeReconciliationResult.skipped !== true;
     const cryptoTradingRan = summary?.cryptoTradingResult && summary.cryptoTradingResult.skipped !== true;
     const polymarketTradingRan = summary?.polymarketTradingResult && summary.polymarketTradingResult.skipped !== true;
     const sleepRan = summary?.sleepResult && summary.sleepResult.skipped !== true;
@@ -1027,6 +1065,7 @@ class SupervisorDaemon {
       || pendingPruned > 0
       || leasePruned > 0
       || tradingRan
+      || tradeReconciliationRan
       || cryptoTradingRan
       || polymarketTradingRan
       || sleepRan
@@ -1153,6 +1192,166 @@ class SupervisorDaemon {
   persistYieldRouterState() {
     this.yieldRouterState.updatedAt = new Date().toISOString();
     writeJsonFile(this.yieldRouterStatePath, this.yieldRouterState);
+  }
+
+  getTradeReconciliationOrchestrator() {
+    return this.tradingOrchestrator || this.cryptoTradingOrchestrator || null;
+  }
+
+  hasActiveTradingPhase() {
+    return Boolean(this.tradingPhasePromise || this.cryptoTradingPhasePromise);
+  }
+
+  getTradeReconciliationMarketDate(referenceDate = new Date()) {
+    if (this.tradingState.marketDate) {
+      return this.tradingState.marketDate;
+    }
+    return getDateKeyInTimeZone(referenceDate, tradingScheduler.MARKET_TIME_ZONE);
+  }
+
+  async maybeRunTradeReconciliation(nowMs = Date.now()) {
+    if (this.stopping) {
+      return { ok: false, skipped: true, reason: 'stopping' };
+    }
+    if (this.tradeReconciliationPromise) {
+      return this.tradeReconciliationPromise;
+    }
+
+    const orchestrator = this.getTradeReconciliationOrchestrator();
+    if (!orchestrator || typeof orchestrator.runReconciliation !== 'function') {
+      this.lastTradeReconciliationSummary = {
+        enabled: false,
+        status: 'disabled',
+        marketDate: this.tradingState.marketDate || null,
+        pendingCount: 0,
+        lastProcessedAt: this.tradeReconciliationState.lastProcessedAt || null,
+        lastResult: this.tradeReconciliationState.lastResult || null,
+        lastError: this.tradeReconciliationState.lastError || null,
+      };
+      return { ok: false, skipped: true, reason: 'reconciliation_disabled' };
+    }
+    if (typeof orchestrator.getPendingReconciliationTrades !== 'function') {
+      return { ok: false, skipped: true, reason: 'pending_trade_lookup_unavailable' };
+    }
+    if (this.hasActiveTradingPhase()) {
+      return { ok: false, skipped: true, reason: 'trading_phase_busy' };
+    }
+
+    const now = nowMs instanceof Date ? nowMs : new Date(nowMs);
+    const marketDate = this.getTradeReconciliationMarketDate(now);
+    const processedAt = now.toISOString();
+    const pendingTrades = orchestrator.getPendingReconciliationTrades({ date: marketDate });
+    const pendingCount = Array.isArray(pendingTrades) ? pendingTrades.length : 0;
+
+    if (pendingCount === 0) {
+      this.tradeReconciliationState.lastPendingCount = 0;
+      this.lastTradeReconciliationSummary = {
+        enabled: true,
+        status: 'idle',
+        marketDate,
+        pendingCount: 0,
+        lastProcessedAt: this.tradeReconciliationState.lastProcessedAt || null,
+        lastResult: this.tradeReconciliationState.lastResult || null,
+        lastError: this.tradeReconciliationState.lastError || null,
+      };
+      return { ok: false, skipped: true, reason: 'no_pending_trades', marketDate, pendingTrades: false, pendingCount: 0 };
+    }
+
+    const lastProcessedAtMs = this.tradeReconciliationState.lastProcessedAt
+      ? new Date(this.tradeReconciliationState.lastProcessedAt).getTime()
+      : 0;
+    const elapsedMs = lastProcessedAtMs > 0 ? (now.getTime() - lastProcessedAtMs) : Number.POSITIVE_INFINITY;
+    if (elapsedMs < this.tradeReconciliationPollMs) {
+      const nextDueInMs = Math.max(0, this.tradeReconciliationPollMs - elapsedMs);
+      this.tradeReconciliationState.lastPendingCount = pendingCount;
+      this.lastTradeReconciliationSummary = {
+        enabled: true,
+        status: 'waiting',
+        marketDate,
+        pendingCount,
+        lastProcessedAt: this.tradeReconciliationState.lastProcessedAt || null,
+        nextDueAt: new Date(now.getTime() + nextDueInMs).toISOString(),
+        lastResult: this.tradeReconciliationState.lastResult || null,
+        lastError: this.tradeReconciliationState.lastError || null,
+      };
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'interval_guard',
+        marketDate,
+        pendingTrades: true,
+        pendingCount,
+        nextDueInMs,
+      };
+    }
+
+    this.tradeReconciliationPromise = Promise.resolve(orchestrator.runReconciliation({ date: marketDate }))
+      .then((result) => {
+        const remainingTrades = orchestrator.getPendingReconciliationTrades({ date: marketDate });
+        const remainingPendingCount = Array.isArray(remainingTrades) ? remainingTrades.length : 0;
+        this.tradeReconciliationState = {
+          lastProcessedAt: processedAt,
+          lastPendingCount: remainingPendingCount,
+          lastResult: {
+            marketDate: result?.marketDate || marketDate,
+            orderUpdates: Array.isArray(result?.orderUpdates) ? result.orderUpdates.length : 0,
+            recordedOutcomes: Array.isArray(result?.recordedOutcomes) ? result.recordedOutcomes.length : 0,
+            asOf: result?.asOf || new Date().toISOString(),
+          },
+          lastError: null,
+        };
+        this.lastTradeReconciliationSummary = {
+          enabled: true,
+          status: 'completed',
+          marketDate: result?.marketDate || marketDate,
+          pendingCount: remainingPendingCount,
+          lastProcessedAt: this.tradeReconciliationState.lastProcessedAt,
+          lastResult: this.tradeReconciliationState.lastResult,
+          lastError: null,
+        };
+        this.logger.info(
+          `Trade reconciliation completed for ${marketDate}: `
+            + `pending=${pendingCount} updates=${this.tradeReconciliationState.lastResult.orderUpdates} `
+            + `outcomes=${this.tradeReconciliationState.lastResult.recordedOutcomes} `
+            + `remaining=${remainingPendingCount}`
+        );
+        return {
+          ok: true,
+          skipped: false,
+          marketDate,
+          pendingTrades: remainingPendingCount > 0,
+          pendingCount,
+          remainingPendingCount,
+          result,
+        };
+      })
+      .catch((err) => {
+        this.tradeReconciliationState.lastError = err.message;
+        this.tradeReconciliationState.lastPendingCount = pendingCount;
+        this.lastTradeReconciliationSummary = {
+          enabled: true,
+          status: 'failed',
+          marketDate,
+          pendingCount,
+          lastProcessedAt: this.tradeReconciliationState.lastProcessedAt || null,
+          lastResult: this.tradeReconciliationState.lastResult || null,
+          lastError: err.message,
+        };
+        this.logger.warn(`Trade reconciliation failed for ${marketDate}: ${err.message}`);
+        return {
+          ok: false,
+          skipped: false,
+          marketDate,
+          pendingTrades: true,
+          pendingCount,
+          error: err.message,
+        };
+      })
+      .finally(() => {
+        this.tradeReconciliationPromise = null;
+      });
+
+    return this.tradeReconciliationPromise;
   }
 
   describeTradingEvent(event) {
@@ -3023,6 +3222,13 @@ class SupervisorDaemon {
         phases: this.tradingState.phases || {},
         nextEvent: this.tradingState.nextEvent || null,
         lastSummary: this.lastTradingSummary || null,
+      },
+      tradeReconciliationAutomation: {
+        enabled: Boolean(this.getTradeReconciliationOrchestrator()),
+        running: Boolean(this.tradeReconciliationPromise),
+        pollMs: this.tradeReconciliationPollMs,
+        state: this.tradeReconciliationState || defaultTradeReconciliationState(),
+        lastSummary: this.lastTradeReconciliationSummary || null,
       },
       cryptoTradingAutomation: {
         enabled: this.cryptoTradingEnabled,
