@@ -26,6 +26,10 @@ const TRADE_TABLE_COLUMNS = Object.freeze([
   'status',
   'alpaca_order_id',
   'notes',
+  'filled_at',
+  'reconciled_at',
+  'realized_pnl',
+  'outcome_recorded_at',
 ]);
 
 const POSITION_TABLE_COLUMNS = Object.freeze([
@@ -52,7 +56,11 @@ const TRADES_TABLE_SQL = `
     risk_check_detail TEXT,
     status TEXT NOT NULL DEFAULT 'FILLED',
     alpaca_order_id TEXT,
-    notes TEXT
+    notes TEXT,
+    filled_at TEXT,
+    reconciled_at TEXT,
+    realized_pnl REAL,
+    outcome_recorded_at TEXT
   )
 `;
 
@@ -122,6 +130,10 @@ function ensureSchema(db) {
       losses INTEGER NOT NULL DEFAULT 0,
       peak_equity REAL NOT NULL,
       drawdown_pct REAL NOT NULL DEFAULT 0,
+      best_trade_ticker TEXT,
+      best_trade_pnl REAL,
+      worst_trade_ticker TEXT,
+      worst_trade_pnl REAL,
       notes TEXT
     );
 
@@ -137,6 +149,14 @@ function ensureSchema(db) {
   `);
 
   migrateLegacySchemaIfNeeded(db);
+  ensureColumnExists(db, 'trades', 'filled_at', 'TEXT');
+  ensureColumnExists(db, 'trades', 'reconciled_at', 'TEXT');
+  ensureColumnExists(db, 'trades', 'realized_pnl', 'REAL');
+  ensureColumnExists(db, 'trades', 'outcome_recorded_at', 'TEXT');
+  ensureColumnExists(db, 'daily_summary', 'best_trade_ticker', 'TEXT');
+  ensureColumnExists(db, 'daily_summary', 'best_trade_pnl', 'REAL');
+  ensureColumnExists(db, 'daily_summary', 'worst_trade_ticker', 'TEXT');
+  ensureColumnExists(db, 'daily_summary', 'worst_trade_pnl', 'REAL');
 }
 
 function closeDb() {
@@ -145,6 +165,12 @@ function closeDb() {
     _db.close();
   } catch {}
   _db = null;
+}
+
+function ensureColumnExists(db, tableName, columnName, columnSql) {
+  const existingColumns = new Set(getTableColumns(db, tableName));
+  if (existingColumns.has(columnName)) return;
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnSql}`);
 }
 
 function normalizeTradeStatus(value) {
@@ -262,8 +288,24 @@ function recordConsensus(db, entry) {
  */
 function recordDailySummary(db, summary) {
   const stmt = db.prepare(`
-    INSERT OR REPLACE INTO daily_summary (date, start_equity, end_equity, pnl, pnl_pct, trades_count, wins, losses, peak_equity, drawdown_pct, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO daily_summary (
+      date,
+      start_equity,
+      end_equity,
+      pnl,
+      pnl_pct,
+      trades_count,
+      wins,
+      losses,
+      peak_equity,
+      drawdown_pct,
+      best_trade_ticker,
+      best_trade_pnl,
+      worst_trade_ticker,
+      worst_trade_pnl,
+      notes
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   return stmt.run(
     summary.date,
@@ -276,6 +318,10 @@ function recordDailySummary(db, summary) {
     summary.losses || 0,
     summary.peakEquity,
     summary.drawdownPct || 0,
+    summary.bestTradeTicker || null,
+    summary.bestTradePnl ?? null,
+    summary.worstTradeTicker || null,
+    summary.worstTradePnl ?? null,
     summary.notes || null,
   );
 }
@@ -320,6 +366,79 @@ function getOpenPositions(db) {
  */
 function getRecentTrades(db, limit = 10) {
   return db.prepare('SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?').all(limit);
+}
+
+function getAllTrades(db) {
+  return db.prepare('SELECT * FROM trades ORDER BY timestamp ASC, id ASC').all();
+}
+
+function getTradeById(db, tradeId) {
+  return db.prepare('SELECT * FROM trades WHERE id = ?').get(tradeId) || null;
+}
+
+function getPendingTrades(db, statuses = ['PENDING_NEW', 'PENDING', 'ACCEPTED', 'NEW', 'PARTIALLY_FILLED']) {
+  const normalizedStatuses = Array.from(new Set(
+    (Array.isArray(statuses) ? statuses : [statuses])
+      .map((status) => normalizeTradeStatus(status))
+      .filter(Boolean)
+  ));
+  if (normalizedStatuses.length === 0) {
+    return [];
+  }
+
+  const placeholders = normalizedStatuses.map(() => '?').join(', ');
+  return db.prepare(`
+    SELECT *
+    FROM trades
+    WHERE status IN (${placeholders})
+    ORDER BY timestamp ASC, id ASC
+  `).all(...normalizedStatuses);
+}
+
+function updateTrade(db, tradeId, patch = {}) {
+  const current = getTradeById(db, tradeId);
+  if (!current) return null;
+
+  const nextShares = patch.shares !== undefined ? Number(patch.shares) : Number(current.shares || 0);
+  const nextPrice = patch.price !== undefined ? Number(patch.price) : Number(current.price || 0);
+  const updates = [];
+  const values = [];
+  const assign = (column, value) => {
+    if (value === undefined) return;
+    updates.push(`${column} = ?`);
+    values.push(value);
+  };
+
+  assign('shares', patch.shares !== undefined ? nextShares : undefined);
+  assign('price', patch.price !== undefined ? nextPrice : undefined);
+  assign('stop_loss_price', patch.stopLossPrice);
+  assign(
+    'total_value',
+    patch.totalValue !== undefined
+      ? Number(patch.totalValue)
+      : ((patch.shares !== undefined || patch.price !== undefined) ? Number((nextShares * nextPrice).toFixed(6)) : undefined)
+  );
+  assign('consensus_detail', patch.consensusDetail !== undefined
+    ? (patch.consensusDetail ? JSON.stringify(patch.consensusDetail) : null)
+    : undefined);
+  assign('risk_check_detail', patch.riskCheckDetail !== undefined
+    ? (patch.riskCheckDetail ? JSON.stringify(patch.riskCheckDetail) : null)
+    : undefined);
+  assign('status', patch.status !== undefined ? normalizeTradeStatus(patch.status) : undefined);
+  assign('alpaca_order_id', patch.alpacaOrderId);
+  assign('notes', patch.notes);
+  assign('filled_at', patch.filledAt);
+  assign('reconciled_at', patch.reconciledAt);
+  assign('realized_pnl', patch.realizedPnl);
+  assign('outcome_recorded_at', patch.outcomeRecordedAt);
+
+  if (updates.length === 0) {
+    return current;
+  }
+
+  values.push(tradeId);
+  db.prepare(`UPDATE trades SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+  return getTradeById(db, tradeId);
 }
 
 /**
@@ -369,6 +488,10 @@ module.exports = {
   closePosition,
   getOpenPositions,
   getRecentTrades,
+  getAllTrades,
+  getTradeById,
+  getPendingTrades,
+  updateTrade,
   getDailySummaries,
   getPerformanceStats,
 };

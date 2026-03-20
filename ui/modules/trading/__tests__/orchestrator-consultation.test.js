@@ -1,5 +1,12 @@
 'use strict';
 
+const mockJournalDb = { mocked: true };
+let mockTrades = [];
+let mockAlpacaClient = {
+  getOrder: jest.fn(),
+};
+let mockRecordedDailySummaries = [];
+
 jest.mock('../data-ingestion', () => ({
   normalizeSymbols: jest.fn((symbols = []) => Array.from(new Set((Array.isArray(symbols) ? symbols : [symbols]).map((symbol) => String(symbol).trim().toUpperCase()).filter(Boolean)))),
   buildWatchlistContext: jest.fn().mockResolvedValue({
@@ -20,6 +27,7 @@ jest.mock('../data-ingestion', () => ({
     ]],
   ])),
   getNews: jest.fn().mockResolvedValue([]),
+  createAlpacaClient: jest.fn(() => mockAlpacaClient),
 }));
 
 jest.mock('../executor', () => ({
@@ -27,12 +35,67 @@ jest.mock('../executor', () => ({
   getOpenPositions: jest.fn().mockResolvedValue([]),
   executeConsensusTrade: jest.fn().mockResolvedValue({ ok: true, status: 'dry_run', order: { id: 'poly-1' } }),
   syncJournalPositions: jest.fn().mockResolvedValue([]),
+  normalizeOrder: jest.fn((order = {}) => ({
+    id: order.id || null,
+    clientOrderId: order.client_order_id || null,
+    status: order.status || null,
+    symbol: order.symbol || '',
+    side: order.side || null,
+    qty: Number(order.qty || 0) || 0,
+    filledQty: Number(order.filled_qty || 0) || 0,
+    filledAvgPrice: Number(order.filled_avg_price || 0) || null,
+    type: order.type || null,
+    raw: order,
+  })),
 }));
 
 jest.mock('../journal', () => ({
-  getDb: jest.fn(() => ({ mocked: true })),
-  getRecentTrades: jest.fn(() => []),
+  getDb: jest.fn(() => mockJournalDb),
+  getRecentTrades: jest.fn((db, limit = 10) => mockTrades.slice().sort((left, right) => String(right.timestamp).localeCompare(String(left.timestamp))).slice(0, limit)),
+  getAllTrades: jest.fn(() => mockTrades.slice().sort((left, right) => {
+    const timeCompare = String(left.timestamp).localeCompare(String(right.timestamp));
+    if (timeCompare !== 0) return timeCompare;
+    return Number(left.id || 0) - Number(right.id || 0);
+  })),
+  getPendingTrades: jest.fn(() => mockTrades.filter((trade) => ['PENDING_NEW', 'PENDING', 'ACCEPTED', 'NEW', 'PARTIALLY_FILLED'].includes(String(trade.status || '').toUpperCase()))),
+  updateTrade: jest.fn((db, tradeId, patch = {}) => {
+    const index = mockTrades.findIndex((trade) => Number(trade.id) === Number(tradeId));
+    if (index === -1) return null;
+    const current = mockTrades[index];
+    const next = {
+      ...current,
+      ...(patch.shares !== undefined ? { shares: patch.shares } : {}),
+      ...(patch.price !== undefined ? { price: patch.price } : {}),
+      ...(patch.status !== undefined ? { status: String(patch.status).toUpperCase() } : {}),
+      ...(patch.alpacaOrderId !== undefined ? { alpaca_order_id: patch.alpacaOrderId } : {}),
+      ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
+      ...(patch.filledAt !== undefined ? { filled_at: patch.filledAt } : {}),
+      ...(patch.reconciledAt !== undefined ? { reconciled_at: patch.reconciledAt } : {}),
+      ...(patch.realizedPnl !== undefined ? { realized_pnl: patch.realizedPnl } : {}),
+      ...(patch.outcomeRecordedAt !== undefined ? { outcome_recorded_at: patch.outcomeRecordedAt } : {}),
+    };
+    if (patch.shares !== undefined || patch.price !== undefined) {
+      next.total_value = Number((Number(next.shares || 0) * Number(next.price || 0)).toFixed(6));
+    }
+    mockTrades[index] = next;
+    return { ...next };
+  }),
   recordConsensus: jest.fn(),
+  recordDailySummary: jest.fn((db, summary) => {
+    mockRecordedDailySummaries.push(summary);
+    return { changes: 1 };
+  }),
+}));
+
+jest.mock('../agent-attribution', () => ({
+  recordPrediction: jest.fn(),
+  recordOutcome: jest.fn(() => ({
+    settled: [
+      { agentId: 'architect' },
+      { agentId: 'builder' },
+      { agentId: 'oracle' },
+    ],
+  })),
 }));
 
 jest.mock('../risk-engine', () => ({
@@ -167,6 +230,8 @@ const signalProducer = require('../signal-producer');
 const consultationStore = require('../consultation-store');
 const portfolioTracker = require('../portfolio-tracker');
 const dynamicWatchlist = require('../dynamic-watchlist');
+const dataIngestion = require('../data-ingestion');
+const agentAttribution = require('../agent-attribution');
 const polymarketScanner = require('../polymarket-scanner');
 const polymarketSignals = require('../polymarket-signals');
 const polymarketSizer = require('../polymarket-sizer');
@@ -175,6 +240,11 @@ const { createOrchestrator } = require('../orchestrator');
 describe('orchestrator real consultation flow', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockTrades = [];
+    mockRecordedDailySummaries = [];
+    mockAlpacaClient = {
+      getOrder: jest.fn(),
+    };
     portfolioTracker.getPortfolioSnapshot.mockResolvedValue({
       totalEquity: 12000,
       positions: [],
@@ -193,6 +263,9 @@ describe('orchestrator real consultation flow', () => {
         totalDrawdownPct: 0,
       },
     });
+    executor.getAccountSnapshot.mockResolvedValue({ equity: 10000 });
+    executor.getOpenPositions.mockResolvedValue([]);
+    executor.syncJournalPositions.mockResolvedValue([]);
   });
 
   test('collects real consultation responses first and only falls back for missing agents', async () => {
@@ -531,6 +604,192 @@ describe('orchestrator real consultation flow', () => {
       requiredTradingCapital: 200,
       capitalRequest: expect.objectContaining({
         requestAmount: 50,
+      }),
+    }));
+  });
+
+  test('reconciles pending fills, records closed-position outcomes, and builds daily trade stats', async () => {
+    mockTrades = [
+      {
+        id: 1,
+        timestamp: '2026-03-19T14:30:00.000Z',
+        ticker: 'AAPL',
+        direction: 'BUY',
+        shares: 2,
+        price: 100,
+        total_value: 200,
+        status: 'PENDING_NEW',
+        alpaca_order_id: 'alpaca-buy-1',
+      },
+      {
+        id: 2,
+        timestamp: '2026-03-19T19:30:00.000Z',
+        ticker: 'AAPL',
+        direction: 'SELL',
+        shares: 2,
+        price: 110,
+        total_value: 220,
+        status: 'FILLED',
+        alpaca_order_id: 'alpaca-sell-1',
+      },
+    ];
+    mockAlpacaClient.getOrder.mockResolvedValue({
+      id: 'alpaca-buy-1',
+      symbol: 'AAPL',
+      status: 'filled',
+      qty: 2,
+      filled_qty: 2,
+      filled_avg_price: 101,
+      filled_at: '2026-03-19T14:31:00.000Z',
+    });
+
+    const orchestrator = createOrchestrator();
+    const result = await orchestrator.runReconciliation({
+      date: '2026-03-19',
+      agentAttributionStatePath: '/tmp/agent-attribution.json',
+    });
+
+    expect(dataIngestion.createAlpacaClient).toHaveBeenCalled();
+    expect(mockAlpacaClient.getOrder).toHaveBeenCalledWith('alpaca-buy-1');
+    expect(journal.updateTrade).toHaveBeenCalledWith(expect.anything(), 1, expect.objectContaining({
+      status: 'FILLED',
+      shares: 2,
+      price: 101,
+    }));
+    expect(agentAttribution.recordOutcome).toHaveBeenCalledWith(
+      'AAPL',
+      'BUY',
+      expect.closeTo(18 / 202, 6),
+      '2026-03-19T19:30:00.000Z',
+      expect.objectContaining({
+        assetClass: 'us_equity',
+        marketType: 'stocks',
+        source: 'trade_reconciliation',
+      })
+    );
+    expect(result).toEqual(expect.objectContaining({
+      phase: 'reconciliation',
+      marketDate: '2026-03-19',
+      orderUpdates: [
+        expect.objectContaining({
+          tradeId: 1,
+          status: 'FILLED',
+          filledQty: 2,
+          filledPrice: 101,
+        }),
+      ],
+      recordedOutcomes: [
+        expect.objectContaining({
+          tradeId: 2,
+          ticker: 'AAPL',
+          realizedPnl: 18,
+        }),
+      ],
+      dailySummary: expect.objectContaining({
+        totalTrades: 2,
+        wins: 1,
+        losses: 0,
+        netPnl: 18,
+        bestTrade: expect.objectContaining({ ticker: 'AAPL', pnl: 18 }),
+        worstTrade: expect.objectContaining({ ticker: 'AAPL', pnl: 18 }),
+      }),
+    }));
+  });
+
+  test('writes end-of-day summary rows with realized win/loss and best/worst trade data', async () => {
+    mockTrades = [
+      {
+        id: 10,
+        timestamp: '2026-03-19T14:30:00.000Z',
+        ticker: 'AAPL',
+        direction: 'BUY',
+        shares: 1,
+        price: 100,
+        total_value: 100,
+        status: 'FILLED',
+      },
+      {
+        id: 11,
+        timestamp: '2026-03-19T19:30:00.000Z',
+        ticker: 'AAPL',
+        direction: 'SELL',
+        shares: 1,
+        price: 112,
+        total_value: 112,
+        status: 'FILLED',
+        realized_pnl: 12,
+        outcome_recorded_at: '2026-03-19T19:31:00.000Z',
+      },
+      {
+        id: 12,
+        timestamp: '2026-03-19T15:00:00.000Z',
+        ticker: 'MSFT',
+        direction: 'BUY',
+        shares: 1,
+        price: 200,
+        total_value: 200,
+        status: 'FILLED',
+      },
+      {
+        id: 13,
+        timestamp: '2026-03-19T20:00:00.000Z',
+        ticker: 'MSFT',
+        direction: 'SELL',
+        shares: 1,
+        price: 190,
+        total_value: 190,
+        status: 'FILLED',
+        realized_pnl: -10,
+        outcome_recorded_at: '2026-03-19T20:01:00.000Z',
+      },
+    ];
+    executor.getAccountSnapshot.mockResolvedValue({ equity: 10150 });
+    const orchestrator = createOrchestrator();
+    orchestrator.state.meta.marketDate = '2026-03-19';
+    orchestrator.state.meta.dayStartEquity = 10000;
+    orchestrator.state.meta.peakEquity = 10180;
+    orchestrator.state.phases.reconciliation = {
+      phase: 'reconciliation',
+      marketDate: '2026-03-19',
+      syncedPositions: [],
+      dailySummary: {
+        totalTrades: 4,
+        wins: 1,
+        losses: 1,
+        netPnl: 2,
+        bestTrade: { ticker: 'AAPL', pnl: 12 },
+        worstTrade: { ticker: 'MSFT', pnl: -10 },
+      },
+    };
+
+    const result = await orchestrator.runEndOfDay({
+      date: '2026-03-19',
+      sendTelegram: false,
+    });
+
+    expect(journal.recordDailySummary).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      date: '2026-03-19',
+      tradesCount: 4,
+      wins: 1,
+      losses: 1,
+      bestTradeTicker: 'AAPL',
+      bestTradePnl: 12,
+      worstTradeTicker: 'MSFT',
+      worstTradePnl: -10,
+    }));
+    expect(mockRecordedDailySummaries).toEqual([
+      expect.objectContaining({
+        bestTradeTicker: 'AAPL',
+        worstTradeTicker: 'MSFT',
+      }),
+    ]);
+    expect(result).toEqual(expect.objectContaining({
+      realizedSummary: expect.objectContaining({
+        netPnl: 2,
+      }),
+      summary: expect.objectContaining({
+        bestTradeTicker: 'AAPL',
+        worstTradeTicker: 'MSFT',
       }),
     }));
   });

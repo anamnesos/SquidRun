@@ -102,6 +102,8 @@ describe('trading journal schema migration', () => {
       WHERE type = 'table' AND name = 'trades'
     `).get()?.sql;
     const positionsInfo = migratedDb.prepare('PRAGMA table_info(positions)').all();
+    const tradesInfo = migratedDb.prepare('PRAGMA table_info(trades)').all();
+    const summaryInfo = migratedDb.prepare('PRAGMA table_info(daily_summary)').all();
     const rows = migratedDb.prepare(`
       SELECT ticker, status
       FROM trades
@@ -110,6 +112,14 @@ describe('trading journal schema migration', () => {
 
     expect(String(tradesSql)).not.toMatch(/CHECK\s*\(\s*status\s+IN/i);
     expect(positionsInfo.find((column) => column.name === 'shares')).toMatchObject({ type: 'REAL' });
+    expect(tradesInfo.find((column) => column.name === 'filled_at')).toBeTruthy();
+    expect(tradesInfo.find((column) => column.name === 'reconciled_at')).toBeTruthy();
+    expect(tradesInfo.find((column) => column.name === 'realized_pnl')).toBeTruthy();
+    expect(tradesInfo.find((column) => column.name === 'outcome_recorded_at')).toBeTruthy();
+    expect(summaryInfo.find((column) => column.name === 'best_trade_ticker')).toBeTruthy();
+    expect(summaryInfo.find((column) => column.name === 'best_trade_pnl')).toBeTruthy();
+    expect(summaryInfo.find((column) => column.name === 'worst_trade_ticker')).toBeTruthy();
+    expect(summaryInfo.find((column) => column.name === 'worst_trade_pnl')).toBeTruthy();
     expect(rows).toEqual([
       { ticker: 'SOL/USD', status: 'PENDING' },
       { ticker: 'ETH/USD', status: 'PARTIALLY_FILLED' },

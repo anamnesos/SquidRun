@@ -174,6 +174,178 @@ function estimateTradeCapitalRequirement(trades = []) {
 	}, 0));
 }
 
+function normalizeBrokerOrderStatus(value) {
+	const normalized = String(value || '').trim().toLowerCase();
+	if (!normalized) return 'PENDING_NEW';
+	if (['accepted', 'pending_new', 'pending', 'new', 'accepted_for_bidding', 'held', 'calculated'].includes(normalized)) {
+		return 'PENDING_NEW';
+	}
+	if (normalized === 'partially_filled') {
+		return 'PARTIALLY_FILLED';
+	}
+	if (normalized === 'filled') {
+		return 'FILLED';
+	}
+	if (['canceled', 'cancelled', 'done_for_day', 'expired', 'stopped', 'suspended'].includes(normalized)) {
+		return 'CANCELLED';
+	}
+	if (['replaced', 'rejected'].includes(normalized)) {
+		return 'REJECTED';
+	}
+	return String(value || '').trim().toUpperCase();
+}
+
+function resolveTradeAssetClass(trade = {}) {
+	return resolveAssetClassForTicker(trade.ticker, 'us_equity');
+}
+
+function resolveTradeMarketType(assetClass = 'us_equity') {
+	if (assetClass === 'prediction_market') return 'polymarket';
+	if (assetClass === 'crypto') return 'crypto';
+	if (assetClass === 'solana_token') return 'solana';
+	if (assetClass === 'defi_yield') return 'defi';
+	return 'stocks';
+}
+
+function getOrderFilledQuantity(order = {}) {
+	return toNumber(
+		order.filledQty
+		?? order.filled_qty
+		?? order.qty
+		?? order.raw?.filled_qty,
+		0
+	);
+}
+
+function getOrderFilledPrice(order = {}) {
+	return toNumber(
+		order.filledAvgPrice
+		?? order.filled_avg_price
+		?? order.raw?.filled_avg_price
+		?? order.raw?.average_fill_price,
+		0
+	);
+}
+
+function getOrderFilledTimestamp(order = {}, fallback = new Date().toISOString()) {
+	const filledAt = order.raw?.filled_at
+		|| order.raw?.updated_at
+		|| order.raw?.timestamp
+		|| order.updated_at
+		|| order.timestamp
+		|| fallback;
+	const normalized = new Date(filledAt);
+	return Number.isNaN(normalized.getTime()) ? fallback : normalized.toISOString();
+}
+
+function buildOpenPositionTickerSet(positions = []) {
+	return new Set(
+		(Array.isArray(positions) ? positions : [])
+			.map((position) => toTicker(position?.ticker))
+			.filter(Boolean)
+	);
+}
+
+function buildTradeOutcomeCandidates(trades = [], openPositionTickers = new Set()) {
+	const lotsByTicker = new Map();
+	const outcomes = [];
+
+	for (const trade of Array.isArray(trades) ? trades : []) {
+		if (String(trade?.status || '').trim().toUpperCase() !== 'FILLED') continue;
+		const ticker = toTicker(trade.ticker);
+		if (!ticker) continue;
+		const direction = String(trade.direction || '').trim().toUpperCase();
+		const shares = toNumber(trade.shares, 0);
+		const price = toNumber(trade.price, 0);
+		if (shares <= 0 || price <= 0) continue;
+
+		const lots = lotsByTicker.get(ticker) || [];
+		if (direction === 'BUY') {
+			lots.push({
+				shares,
+				price,
+				tradeId: trade.id,
+				timestamp: trade.timestamp,
+			});
+			lotsByTicker.set(ticker, lots);
+			continue;
+		}
+
+		if (direction !== 'SELL') {
+			continue;
+		}
+
+		let remaining = shares;
+		let matchedShares = 0;
+		let costBasis = 0;
+		while (remaining > 0.000001 && lots.length > 0) {
+			const lot = lots[0];
+			const matched = Math.min(remaining, lot.shares);
+			costBasis += matched * lot.price;
+			matchedShares += matched;
+			lot.shares -= matched;
+			remaining -= matched;
+			if (lot.shares <= 0.000001) {
+				lots.shift();
+			}
+		}
+
+		lotsByTicker.set(ticker, lots);
+		if (matchedShares <= 0 || costBasis <= 0) continue;
+
+		const proceeds = matchedShares * price;
+		const realizedPnl = roundCurrency(proceeds - costBasis);
+		const realizedReturn = costBasis > 0 ? Number((realizedPnl / costBasis).toFixed(6)) : 0;
+		const remainingShares = lots.reduce((sum, lot) => sum + toNumber(lot.shares, 0), 0);
+		const isClosed = remainingShares <= 0.000001 && !openPositionTickers.has(ticker);
+		outcomes.push({
+			trade,
+			ticker,
+			matchedShares,
+			costBasis: roundCurrency(costBasis),
+			proceeds: roundCurrency(proceeds),
+			realizedPnl,
+			realizedReturn,
+			isClosed,
+		});
+	}
+
+	return outcomes;
+}
+
+function summarizeDailyTradeOutcomes(trades = [], marketDate = '') {
+	const tradeRows = Array.isArray(trades) ? trades : [];
+	const filledTrades = tradeRows.filter((trade) => {
+		return String(trade.timestamp || '').startsWith(marketDate)
+			&& String(trade.status || '').trim().toUpperCase() === 'FILLED';
+	});
+	const closedOutcomes = tradeRows.filter((trade) => {
+		return String(trade.timestamp || '').startsWith(marketDate)
+			&& String(trade.direction || '').trim().toUpperCase() === 'SELL'
+			&& trade.outcome_recorded_at
+			&& Number.isFinite(Number(trade.realized_pnl));
+	});
+	const sortedByPnl = closedOutcomes.slice().sort((left, right) => toNumber(right.realized_pnl, 0) - toNumber(left.realized_pnl, 0));
+	const bestTrade = sortedByPnl[0] || null;
+	const worstTrade = sortedByPnl[sortedByPnl.length - 1] || null;
+	return {
+		totalTrades: filledTrades.length,
+		wins: closedOutcomes.filter((trade) => toNumber(trade.realized_pnl, 0) > 0).length,
+		losses: closedOutcomes.filter((trade) => toNumber(trade.realized_pnl, 0) < 0).length,
+		netPnl: roundCurrency(closedOutcomes.reduce((sum, trade) => sum + toNumber(trade.realized_pnl, 0), 0)),
+		bestTrade: bestTrade ? {
+			ticker: bestTrade.ticker,
+			pnl: roundCurrency(bestTrade.realized_pnl),
+			tradeId: bestTrade.id,
+		} : null,
+		worstTrade: worstTrade ? {
+			ticker: worstTrade.ticker,
+			pnl: roundCurrency(worstTrade.realized_pnl),
+			tradeId: worstTrade.id,
+		} : null,
+	};
+}
+
 function pickReferencePrice(snapshot) {
 	if (!snapshot) return null;
 	return [
@@ -738,6 +910,126 @@ class TradingOrchestrator {
 			allocation,
 			withdrawal,
 		};
+	}
+
+	async runReconciliation(options = {}) {
+		const db = this.getJournalDb(options);
+		const marketDate = this.state.meta.marketDate || toDateKey(options.date || new Date());
+		const pendingTrades = journal.getPendingTrades(db).filter((trade) => {
+			return watchlist.getBrokerForTicker(trade.ticker, 'alpaca') === 'alpaca'
+				&& String(trade.alpaca_order_id || '').trim().length > 0;
+		});
+		const alpacaClient = pendingTrades.length > 0
+			? (options.alpacaClient || this.options.alpacaClient || this.options.client || dataIngestion.createAlpacaClient(options))
+			: null;
+		const orderUpdates = [];
+
+		for (const trade of pendingTrades) {
+			try {
+				let rawOrder = null;
+				if (typeof alpacaClient?.getOrder === 'function') {
+					rawOrder = await alpacaClient.getOrder(String(trade.alpaca_order_id));
+				} else if (typeof alpacaClient?.getOrderByClientOrderId === 'function') {
+					rawOrder = await alpacaClient.getOrderByClientOrderId(String(trade.alpaca_order_id));
+				} else {
+					throw new Error('alpaca_get_order_unavailable');
+				}
+				const order = executor.normalizeOrder(rawOrder || {});
+				const status = normalizeBrokerOrderStatus(order.status);
+				const filledQty = getOrderFilledQuantity(order);
+				const filledPrice = getOrderFilledPrice(order);
+				const update = journal.updateTrade(db, trade.id, {
+					status,
+					shares: filledQty > 0 ? filledQty : undefined,
+					price: filledPrice > 0 ? filledPrice : undefined,
+					filledAt: status === 'FILLED' ? getOrderFilledTimestamp(order) : undefined,
+					reconciledAt: new Date().toISOString(),
+				});
+				orderUpdates.push({
+					tradeId: trade.id,
+					ticker: trade.ticker,
+					orderId: trade.alpaca_order_id,
+					status,
+					filledQty,
+					filledPrice,
+					trade: update,
+				});
+			} catch (err) {
+				orderUpdates.push({
+					tradeId: trade.id,
+					ticker: trade.ticker,
+					orderId: trade.alpaca_order_id,
+					ok: false,
+					error: err.message,
+				});
+			}
+		}
+
+		const syncedPositions = await executor.syncJournalPositions({
+			...options,
+			journalDb: db,
+			journalPath: this.resolveJournalPath(options),
+		});
+		const openPositionTickers = buildOpenPositionTickerSet(syncedPositions);
+		const allTrades = journal.getAllTrades(db);
+		const tradeOutcomes = buildTradeOutcomeCandidates(allTrades, openPositionTickers);
+		const recordedOutcomes = [];
+
+		for (const outcome of tradeOutcomes) {
+			const tradeId = outcome.trade.id;
+			journal.updateTrade(db, tradeId, {
+				realizedPnl: outcome.realizedPnl,
+			});
+			if (!outcome.isClosed || outcome.trade.outcome_recorded_at) {
+				continue;
+			}
+
+			const assetClass = resolveTradeAssetClass(outcome.trade);
+			const actualDirection = outcome.realizedReturn > 0 ? 'BUY' : (outcome.realizedReturn < 0 ? 'SELL' : 'HOLD');
+			const attributionResult = agentAttribution.recordOutcome(
+				outcome.ticker,
+				actualDirection,
+				outcome.realizedReturn,
+				outcome.trade.timestamp || new Date().toISOString(),
+				{
+					assetClass,
+					marketType: resolveTradeMarketType(assetClass),
+					statePath: options.agentAttributionStatePath || this.options.agentAttributionStatePath,
+					source: 'trade_reconciliation',
+				}
+			);
+			const outcomeRecordedAt = new Date().toISOString();
+			const updatedTrade = journal.updateTrade(db, tradeId, {
+				outcomeRecordedAt,
+				realizedPnl: outcome.realizedPnl,
+			});
+			recordedOutcomes.push({
+				tradeId,
+				ticker: outcome.ticker,
+				realizedPnl: outcome.realizedPnl,
+				realizedReturn: outcome.realizedReturn,
+				costBasis: outcome.costBasis,
+				proceeds: outcome.proceeds,
+				settledPredictions: attributionResult.settled.length,
+				trade: updatedTrade,
+			});
+		}
+
+		const reconciledTrades = journal.getAllTrades(db);
+		const dailySummary = summarizeDailyTradeOutcomes(reconciledTrades, marketDate);
+		const phaseResult = {
+			phase: 'reconciliation',
+			marketDate,
+			pendingTrades: pendingTrades.map((trade) => ({ ...trade })),
+			orderUpdates,
+			syncedPositions,
+			recordedOutcomes,
+			dailySummary,
+			asOf: new Date().toISOString(),
+		};
+
+		this.state.phases.reconciliation = phaseResult;
+		return phaseResult;
 	}
 
 	async syncSmartMoneyWatchlist(options = {}) {
@@ -1414,6 +1706,7 @@ class TradingOrchestrator {
 
 	async runMarketClose(options = {}) {
 		const db = this.getJournalDb(options);
+		const marketDate = this.state.meta.marketDate || toDateKey(options.date || new Date());
 		const [portfolioSnapshot, openPositions] = await Promise.all([
 			this.getUnifiedPortfolioSnapshot(options),
 			executor.getOpenPositions(options),
@@ -1439,19 +1732,22 @@ class TradingOrchestrator {
 			}
 		}
 
-		const syncedPositions = await executor.syncJournalPositions({
+		const reconciliation = await this.runReconciliation({
 			...options,
+			date: marketDate,
 			journalDb: db,
 			journalPath: this.resolveJournalPath(options),
 		});
+		const syncedPositions = reconciliation.syncedPositions;
 		const phaseResult = {
 			phase: 'market_close',
-			marketDate: this.state.meta.marketDate || toDateKey(options.date || new Date()),
+			marketDate,
 			accountState,
 			openPositions,
 			killSwitch,
 			dailyPause,
 			liquidation,
+			reconciliation,
 			syncedPositions,
 			asOf: new Date().toISOString(),
 		};
@@ -1487,34 +1783,52 @@ class TradingOrchestrator {
 	async runEndOfDay(options = {}) {
 		const db = this.getJournalDb(options);
 		const marketDate = this.state.meta.marketDate || toDateKey(options.date || new Date());
-		const [accountSnapshot, syncedPositions] = await Promise.all([
+		const reconciliation = options.reconciliation
+			|| (this.state.phases.reconciliation?.marketDate === marketDate ? this.state.phases.reconciliation : null)
+			|| await this.runReconciliation({
+				...options,
+				date: marketDate,
+				journalDb: db,
+				journalPath: this.resolveJournalPath(options),
+			});
+		const [accountSnapshot] = await Promise.all([
 			executor.getAccountSnapshot(options),
-			executor.syncJournalPositions({
+		]);
+		const syncedPositions = Array.isArray(reconciliation?.syncedPositions)
+			? reconciliation.syncedPositions
+			: await executor.syncJournalPositions({
 				...options,
 				journalDb: db,
 				journalPath: this.resolveJournalPath(options),
-			}),
-		]);
+			});
 		const accountState = this.buildAccountState(accountSnapshot, syncedPositions, db, { ...options, date: marketDate });
-		const recentTrades = journal.getRecentTrades(db, toPositiveInteger(options.recentTradeLimit) || DEFAULT_RECENT_TRADE_SCAN);
-		const todaysTrades = recentTrades.filter((trade) => String(trade.timestamp || '').startsWith(marketDate));
+		const allTrades = journal.getAllTrades(db);
+		const todaysTrades = allTrades.filter((trade) => {
+			return String(trade.timestamp || '').startsWith(marketDate)
+				&& String(trade.status || '').trim().toUpperCase() === 'FILLED';
+		});
 		const startEquity = accountState.dayStartEquity;
 		const endEquity = accountState.equity;
 		const pnl = endEquity - startEquity;
 		const pnlPct = startEquity > 0 ? pnl / startEquity : 0;
 		const drawdown = riskEngine.checkKillSwitch(accountState, options.limits || this.options.limits || riskEngine.DEFAULT_LIMITS);
 		const consensusStats = this.summarizeConsensus(this.state.phases.consensus?.results || []);
+		const realizedSummary = reconciliation?.dailySummary || summarizeDailyTradeOutcomes(allTrades, marketDate);
 		const summaryRecord = {
 			date: marketDate,
 			startEquity,
 			endEquity,
 			pnl,
 			pnlPct,
-			tradesCount: todaysTrades.length,
-			wins: toPositiveInteger(options.wins),
-			losses: toPositiveInteger(options.losses),
+			tradesCount: realizedSummary.totalTrades,
+			wins: realizedSummary.wins,
+			losses: realizedSummary.losses,
 			peakEquity: accountState.peakEquity,
 			drawdownPct: drawdown.drawdownPct,
+			bestTradeTicker: realizedSummary.bestTrade?.ticker || null,
+			bestTradePnl: realizedSummary.bestTrade?.pnl ?? null,
+			worstTradeTicker: realizedSummary.worstTrade?.ticker || null,
+			worstTradePnl: realizedSummary.worstTrade?.pnl ?? null,
 			notes: options.notes || null,
 		};
 
@@ -1551,6 +1865,8 @@ class TradingOrchestrator {
 			phase: 'end_of_day',
 			marketDate,
 			summary: summaryRecord,
+			reconciliation,
+			realizedSummary,
 			trades: todaysTrades,
 			openPositions: syncedPositions,
 			consensusStats,
@@ -1605,6 +1921,7 @@ module.exports = {
 	getCapitalAllocation: defaultOrchestrator.getCapitalAllocation.bind(defaultOrchestrator),
 	returnIdleCapital: defaultOrchestrator.returnIdleCapital.bind(defaultOrchestrator),
 	requestTradingCapital: defaultOrchestrator.requestTradingCapital.bind(defaultOrchestrator),
+	runReconciliation: defaultOrchestrator.runReconciliation.bind(defaultOrchestrator),
 	runPreMarket: defaultOrchestrator.runPreMarket.bind(defaultOrchestrator),
 	runConsensusRound: defaultOrchestrator.runConsensusRound.bind(defaultOrchestrator),
 	runMarketOpen: defaultOrchestrator.runMarketOpen.bind(defaultOrchestrator),
