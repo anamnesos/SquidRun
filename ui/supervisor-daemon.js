@@ -1246,6 +1246,8 @@ class SupervisorDaemon {
         marketDate: result.marketDate || null,
         openPositions: Array.isArray(result.openPositions) ? result.openPositions.length : 0,
         liquidation: Boolean(result.liquidation),
+        reconciledTrades: Array.isArray(result.reconciliation?.orderUpdates) ? result.reconciliation.orderUpdates.length : 0,
+        outcomesRecorded: Array.isArray(result.reconciliation?.recordedOutcomes) ? result.reconciliation.recordedOutcomes.length : 0,
       };
     }
 
