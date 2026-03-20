@@ -358,6 +358,13 @@ function pickReferencePrice(snapshot) {
 	].map((value) => Number(value)).find((value) => Number.isFinite(value) && value > 0) || null;
 }
 
+function getReconcilablePendingTrades(db) {
+	return journal.getPendingTrades(db).filter((trade) => {
+		return watchlist.getBrokerForTicker(trade.ticker, 'alpaca') === 'alpaca'
+			&& String(trade.alpaca_order_id || '').trim().length > 0;
+	});
+}
+
 function normalizeSymbols(symbols, options = {}) {
 	return dataIngestion.normalizeSymbols(
 		Array.isArray(symbols)
@@ -584,6 +591,11 @@ class TradingOrchestrator {
 		}
 
 		return Array.from(missingByAgent.entries()).filter(([, tickers]) => tickers.length > 0);
+	}
+
+	getPendingReconciliationTrades(options = {}) {
+		const db = this.getJournalDb(options);
+		return getReconcilablePendingTrades(db).map((trade) => ({ ...trade }));
 	}
 
 	isRealConsultationEnabled(options = {}) {
@@ -915,10 +927,7 @@ class TradingOrchestrator {
 	async runReconciliation(options = {}) {
 		const db = this.getJournalDb(options);
 		const marketDate = this.state.meta.marketDate || toDateKey(options.date || new Date());
-		const pendingTrades = journal.getPendingTrades(db).filter((trade) => {
-			return watchlist.getBrokerForTicker(trade.ticker, 'alpaca') === 'alpaca'
-				&& String(trade.alpaca_order_id || '').trim().length > 0;
-		});
+		const pendingTrades = this.getPendingReconciliationTrades({ ...options, journalDb: db });
 		const alpacaClient = pendingTrades.length > 0
 			? (options.alpacaClient || this.options.alpacaClient || this.options.client || dataIngestion.createAlpacaClient(options))
 			: null;

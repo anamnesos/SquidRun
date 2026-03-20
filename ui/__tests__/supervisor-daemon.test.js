@@ -426,6 +426,138 @@ describe('supervisor-daemon integrations', () => {
     writeSpy.mockRestore();
   });
 
+  test('reconciles pending trades on a 5-minute cadence while pending orders remain', async () => {
+    const tradingOrchestrator = {
+      getPendingReconciliationTrades: jest.fn()
+        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
+        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
+        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
+        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
+        .mockReturnValueOnce([]),
+      runReconciliation: jest.fn()
+        .mockResolvedValueOnce({
+          phase: 'reconciliation',
+          marketDate: '2026-03-19',
+          orderUpdates: [{ tradeId: 1, status: 'FILLED' }],
+          recordedOutcomes: [],
+          asOf: '2026-03-19T14:35:00.000Z',
+        })
+        .mockResolvedValueOnce({
+          phase: 'reconciliation',
+          marketDate: '2026-03-19',
+          orderUpdates: [],
+          recordedOutcomes: [],
+          asOf: '2026-03-19T14:40:01.000Z',
+        }),
+    };
+    const tradingDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: true,
+      cryptoTradingEnabled: false,
+      polymarketTradingEnabled: false,
+      tradingOrchestrator,
+      tradingStatePath: '/tmp/trade-reconcile-cadence-trading-state.json',
+      pidPath: '/tmp/trade-reconcile-cadence.pid',
+      statusPath: '/tmp/trade-reconcile-cadence-status.json',
+      logPath: '/tmp/trade-reconcile-cadence.log',
+      taskLogDir: '/tmp/trade-reconcile-cadence-tasks',
+      wakeSignalPath: '/tmp/trade-reconcile-cadence-wake.signal',
+    });
+
+    const first = await tradingDaemon.maybeRunTradeReconciliation(new Date('2026-03-19T14:35:00.000Z'));
+    expect(first).toEqual(expect.objectContaining({
+      ok: true,
+      skipped: false,
+      marketDate: '2026-03-19',
+      pendingCount: 1,
+      remainingPendingCount: 1,
+    }));
+
+    const second = await tradingDaemon.maybeRunTradeReconciliation(new Date('2026-03-19T14:39:00.000Z'));
+    expect(second).toEqual(expect.objectContaining({
+      ok: false,
+      skipped: true,
+      reason: 'interval_guard',
+      marketDate: '2026-03-19',
+      pendingCount: 1,
+    }));
+
+    const third = await tradingDaemon.maybeRunTradeReconciliation(new Date('2026-03-19T14:40:01.000Z'));
+    expect(third).toEqual(expect.objectContaining({
+      ok: true,
+      skipped: false,
+      marketDate: '2026-03-19',
+      pendingCount: 1,
+      remainingPendingCount: 0,
+    }));
+
+    expect(tradingOrchestrator.runReconciliation).toHaveBeenCalledTimes(2);
+    expect(tradingOrchestrator.runReconciliation).toHaveBeenNthCalledWith(1, expect.objectContaining({ date: '2026-03-19' }));
+    expect(tradingOrchestrator.runReconciliation).toHaveBeenNthCalledWith(2, expect.objectContaining({ date: '2026-03-19' }));
+
+    await tradingDaemon.stop('test-cleanup-trade-reconcile-cadence');
+  });
+
+  test('runs reconciliation from the supervisor tick without waiting for end of day', async () => {
+    jest.setSystemTime(new Date('2026-03-19T21:10:00.000Z'));
+
+    const tradingOrchestrator = {
+      getPendingReconciliationTrades: jest.fn()
+        .mockReturnValueOnce([{ id: 1, ticker: 'AAPL', alpaca_order_id: 'alpaca-1' }])
+        .mockReturnValueOnce([]),
+      runReconciliation: jest.fn().mockResolvedValue({
+        phase: 'reconciliation',
+        marketDate: '2026-03-19',
+        orderUpdates: [{ tradeId: 1, status: 'FILLED' }],
+        recordedOutcomes: [],
+        asOf: '2026-03-19T21:10:00.000Z',
+      }),
+      runPreMarket: jest.fn(),
+      runConsensusRound: jest.fn(),
+      runMarketOpen: jest.fn(),
+      runMidDayCheck: jest.fn(),
+      runMarketClose: jest.fn(),
+      runEndOfDay: jest.fn(),
+    };
+    const tradingDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: true,
+      cryptoTradingEnabled: false,
+      polymarketTradingEnabled: false,
+      tradingOrchestrator,
+      tradingStatePath: '/tmp/trade-reconcile-tick-trading-state.json',
+      pidPath: '/tmp/trade-reconcile-tick.pid',
+      statusPath: '/tmp/trade-reconcile-tick-status.json',
+      logPath: '/tmp/trade-reconcile-tick.log',
+      taskLogDir: '/tmp/trade-reconcile-tick-tasks',
+      wakeSignalPath: '/tmp/trade-reconcile-tick-wake.signal',
+    });
+    jest.spyOn(tradingDaemon, 'getTradingDaySchedule').mockResolvedValue(null);
+    jest.spyOn(tradingDaemon, 'getNextTradingEvent').mockResolvedValue(null);
+
+    const result = await tradingDaemon.tick();
+
+    expect(result.tradeReconciliationResult).toEqual(expect.objectContaining({
+      ok: true,
+      skipped: false,
+      marketDate: '2026-03-19',
+      pendingCount: 1,
+      remainingPendingCount: 0,
+    }));
+    expect(tradingOrchestrator.runReconciliation).toHaveBeenCalledWith(expect.objectContaining({
+      date: '2026-03-19',
+    }));
+    expect(tradingOrchestrator.runEndOfDay).not.toHaveBeenCalled();
+
+    await tradingDaemon.stop('test-cleanup-trade-reconcile-tick');
+  });
+
   test('runs Polymarket scan through orchestrator consensus and execution', async () => {
     const consensusPhase = {
       markets: [
