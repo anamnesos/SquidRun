@@ -29,7 +29,7 @@ describe('dynamic-watchlist', () => {
       broker: 'alpaca',
       sector: 'Memecoin',
       reason: 'Viral velocity spike',
-      expiry: '2026-03-20T00:00:00.000Z',
+      expiry: '2099-12-31T00:00:00.000Z',
       now: '2026-03-18T00:00:00.000Z',
     });
 
