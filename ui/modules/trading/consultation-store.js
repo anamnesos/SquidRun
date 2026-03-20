@@ -164,20 +164,25 @@ function buildConsultationPrompt(targetRole, request = {}, options = {}) {
   const requestPath = resolveConsultationRequestPath(request.requestId, options);
   const relativePath = path.relative(getProjectRoot(), requestPath).replace(/\\/g, '/');
   const deadline = request.deadline || new Date(Date.now() + DEFAULT_CONSULTATION_TIMEOUT_MS).toISOString();
+  const symbols = Array.isArray(request.symbols) ? request.symbols : [];
+  const sampleSignals = symbols.slice(0, 2).map((ticker) => (
+    { ticker, direction: 'BUY', confidence: 0.72, reasoning: '...' }
+  ));
+  if (sampleSignals.length === 0) {
+    sampleSignals.push({ ticker: 'BTC/USD', direction: 'BUY', confidence: 0.72, reasoning: '...' });
+  }
   const sample = JSON.stringify({
     requestId: request.requestId,
     agentId: targetRole,
-    signals: [
-      { ticker: request.symbols?.[0] || 'BTC/USD', direction: 'BUY', confidence: 0.72, reasoning: '...' },
-    ],
+    signals: sampleSignals,
   });
 
   return [
-    `Analyze consultation request ${request.requestId}.`,
+    `Analyze ALL ${symbols.length} symbols in consultation request ${request.requestId}: ${symbols.join(', ')}.`,
     `Market context at ${relativePath} (${requestPath}).`,
-    `Reply via hm-send architect with JSON: ${sample}`,
+    `Reply via hm-send architect with JSON containing a signal for EVERY symbol: ${sample}`,
     `Deadline: ${deadline}.`,
-    'Use your normal role prefix if needed, but keep the JSON itself valid and complete.',
+    'Use your normal role prefix if needed, but keep the JSON itself valid and complete. Include all symbols, not just the examples shown.',
   ].join(' ');
 }
 
