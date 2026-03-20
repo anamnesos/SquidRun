@@ -13,6 +13,13 @@
       "command": "cmd",
       "args": ["/c", "npx", "-y", "@playwright/mcp@latest"],
       "env": {}
+    },
+    "trustquote": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["tsx", "scripts/mcp-server.ts"],
+      "cwd": "D:/projects/TrustQuote",
+      "env": {}
     }
   }
 }
