@@ -37,10 +37,17 @@ For a quick protocol smoke test:
 
 ## Current Tool Surface
 
-The MCP server currently exposes 8 tools:
+The MCP server currently exposes 15 tools:
 
 - `trustquote_send_invoice`
 - `trustquote_book_job`
+- `trustquote_record_payment`
+- `trustquote_create_estimate`
+- `trustquote_schedule_job`
+- `trustquote_list_schedule`
+- `trustquote_get_invoice`
+- `trustquote_list_invoices`
+- `trustquote_record_expense`
 - `trustquote_check_payments`
 - `trustquote_business_summary`
 - `trustquote_send_reminder`
