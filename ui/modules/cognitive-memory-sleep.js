@@ -6,6 +6,7 @@ const { resolveCoordPath } = require('../config');
 const { CognitiveMemoryStore } = require('./cognitive-memory-store');
 const { MemorySearchIndex } = require('./memory-search');
 const { CognitiveMemoryApi } = require('./cognitive-memory-api');
+const { CognitiveMemoryAntibodyWorker } = require('./cognitive-memory-antibody');
 const { runBehavioralSleepPromotion } = require('./cognitive-memory-immunity');
 const { extractCandidates } = require('../scripts/hm-memory-extract');
 
@@ -633,6 +634,13 @@ class SleepConsolidator {
       memorySearchIndex: this.memorySearchIndex,
       promotedBy: 'sleep-cycle',
     });
+    const antibodyWorker = new CognitiveMemoryAntibodyWorker({
+      api: behavioralApi,
+      cognitiveStore: this.cognitiveStore,
+      memorySearchIndex: this.memorySearchIndex,
+      logger: this.logger,
+    });
+    const antibodySummary = await antibodyWorker.runOnce({ limit: 10 });
 
     const lastRowId = episodes[episodes.length - 1]?.rowId || this.getLastProcessedRowId();
     this.setState('last_comms_row_id', String(lastRowId));
@@ -651,10 +659,12 @@ class SleepConsolidator {
       pendingCount: Number(staged.pendingCount || 0),
       behavioralCandidateCount: Number(behavioralSummary?.candidateCount || 0),
       behavioralPromotedCount: Number(behavioralSummary?.promoted || 0),
+      antibodyProcessedCount: Number(antibodySummary?.processed?.length || 0),
       lastProcessedRowId: lastRowId,
       clusterCount: clustering.clusters.length,
       noiseCount: clustering.noise.length,
       behavioralSummary,
+      antibodySummary,
       extraction: this.lastExtractionInfo || {
         mode: this.extractionCommand ? 'external-command' : 'built-in',
         ok: true,
