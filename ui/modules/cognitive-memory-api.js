@@ -3,6 +3,13 @@ const { getDatabaseSync } = require('./sqlite-compat');
 const DatabaseSync = getDatabaseSync();
 const { CognitiveMemoryStore } = require('./cognitive-memory-store');
 const { MemorySearchIndex } = require('./memory-search');
+const { emit } = require('./event-bus');
+const {
+  CognitiveMemoryAntibodyWorker,
+  extractMemoryScope,
+  isUserSourcedFact,
+  processPostIngestAntibody,
+} = require('./cognitive-memory-antibody');
 
 /** @typedef {import('../types/contracts').CognitiveMemoryNode} CognitiveMemoryNode */
 /** @typedef {import('../types/contracts').MemoryLease} MemoryLease */
@@ -130,6 +137,24 @@ function parseJson(value, fallback) {
   }
 }
 
+function normalizeAntibodyStatus(value) {
+  const normalized = normalizeWhitespace(value).toLowerCase();
+  if (normalized === 'suspected_conflict') return 'suspected_conflict';
+  if (normalized === 'classified_conflict') return 'classified_conflict';
+  if (normalized === 'classified_update') return 'classified_update';
+  if (normalized === 'uncertain') return 'uncertain';
+  return 'clear';
+}
+
+function normalizeAdjudicationStatus(value) {
+  const normalized = normalizeWhitespace(value).toLowerCase();
+  if (normalized === 'pending') return 'pending';
+  if (normalized === 'accepted_correction') return 'accepted_correction';
+  if (normalized === 'rejected_hallucination') return 'rejected_hallucination';
+  if (normalized === 'coexistence') return 'coexistence';
+  return null;
+}
+
 /**
  * @param {import('node:sqlite').DatabaseSync | import('better-sqlite3').Database} db
  * @param {string} tableName
@@ -201,6 +226,18 @@ class CognitiveMemoryApi {
     this.logger = options.logger || console;
     this.cognitiveStore = options.cognitiveStore || new CognitiveMemoryStore(options.cognitiveStoreOptions || {});
     this.memorySearchIndex = options.memorySearchIndex || new MemorySearchIndex(options.memorySearchOptions || {});
+    this.antibodyWorker = new CognitiveMemoryAntibodyWorker({
+      api: this,
+      cognitiveStore: this.cognitiveStore,
+      logger: this.logger,
+      classifierAgents: options.antibodyClassifierAgents,
+      sender: options.antibodySender,
+      queryEntries: options.antibodyQueryEntries,
+      hmSendPath: options.antibodyHmSendPath,
+      cwd: options.antibodyCwd,
+      requestsDir: options.antibodyRequestsDir,
+      responsesDir: options.antibodyResponsesDir,
+    });
     this.db = null;
   }
 
@@ -225,6 +262,13 @@ class CognitiveMemoryApi {
     ensureColumn(this.db, 'nodes', 'metadata_json', "TEXT DEFAULT '{}' ");
     ensureColumn(this.db, 'nodes', 'created_at_ms', 'INTEGER DEFAULT 0');
     ensureColumn(this.db, 'nodes', 'updated_at_ms', 'INTEGER DEFAULT 0');
+    ensureColumn(this.db, 'nodes', 'antibody_status', "TEXT DEFAULT 'clear'");
+    ensureColumn(this.db, 'nodes', 'antibody_score', 'REAL DEFAULT 0');
+    ensureColumn(this.db, 'nodes', 'conflicts_with_memory_id', 'TEXT');
+    ensureColumn(this.db, 'nodes', 'classified_by', 'TEXT');
+    ensureColumn(this.db, 'nodes', 'classified_at', 'INTEGER DEFAULT 0');
+    ensureColumn(this.db, 'nodes', 'adjudication_status', 'TEXT');
+    ensureColumn(this.db, 'nodes', 'quarantined_at', 'INTEGER DEFAULT 0');
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS memory_leases (
@@ -292,6 +336,13 @@ class CognitiveMemoryApi {
       metadata: parseJson(row.metadata_json, {}),
       createdAtMs: Number(row.created_at_ms || 0),
       updatedAtMs: Number(row.updated_at_ms || 0),
+      antibodyStatus: normalizeAntibodyStatus(row.antibody_status),
+      antibodyScore: Number(row.antibody_score || 0),
+      conflictsWithMemoryId: row.conflicts_with_memory_id || null,
+      classifiedBy: row.classified_by || null,
+      classifiedAtMs: Number(row.classified_at || 0),
+      adjudicationStatus: normalizeAdjudicationStatus(row.adjudication_status),
+      quarantinedAtMs: Number(row.quarantined_at || 0),
     };
   }
 
@@ -329,7 +380,7 @@ class CognitiveMemoryApi {
     const nowIso = isoNow(nowMs);
     const placeholders = ids.map(() => '?').join(', ');
     const rows = db.prepare(`
-      SELECT node_id, last_accessed_at, updated_at_ms
+      SELECT node_id, last_accessed_at, updated_at_ms, antibody_status
       FROM nodes
       WHERE node_id IN (${placeholders})
     `).all(...ids);
@@ -353,11 +404,13 @@ class CognitiveMemoryApi {
           && (nowMs - previousAccessMs) <= DEFAULT_REACTIVATION_WINDOW_MS
         );
         const shouldReactivate = isExplicitUse || isRepeatRetrieval;
-        const nextUpdatedAtMs = shouldReactivate
+        const antibodyStatus = normalizeAntibodyStatus(row.antibody_status);
+        const gatedReactivate = antibodyStatus !== 'clear' ? false : shouldReactivate;
+        const nextUpdatedAtMs = gatedReactivate
           ? nowMs
           : Number(row.updated_at_ms || 0);
 
-        if (shouldReactivate) {
+        if (gatedReactivate) {
           reactivated += 1;
         }
 
@@ -631,8 +684,15 @@ class CognitiveMemoryApi {
         heading,
         metadata_json,
         created_at_ms,
-        updated_at_ms
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        updated_at_ms,
+        antibody_status,
+        antibody_score,
+        conflicts_with_memory_id,
+        classified_by,
+        classified_at,
+        adjudication_status,
+        quarantined_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       nodeId,
       result.category || sourceType || 'fact',
@@ -652,7 +712,14 @@ class CognitiveMemoryApi {
       heading,
       JSON.stringify(result.metadata || {}),
       nowMs,
-      nowMs
+      nowMs,
+      'clear',
+      0,
+      null,
+      null,
+      0,
+      null,
+      0
     );
     this.upsertTrace(nodeId, result.documentId ? `memory-document:${result.documentId}` : contentHash, isoNow(nowMs));
     return this.getNode(nodeId);
@@ -663,13 +730,38 @@ class CognitiveMemoryApi {
    * @param {number} [limit]
    * @returns {RankedMemoryNodeEntry[]}
    */
-  searchExistingNodes(queryVector, limit = 5) {
+  searchExistingNodes(queryVector, limit = 5, options = {}) {
     if (!Array.isArray(queryVector) || queryVector.length === 0) return [];
     const nowMs = Date.now();
+    const excludeNodeIds = new Set(
+      (Array.isArray(options.excludeNodeIds) ? options.excludeNodeIds : [])
+        .map((value) => normalizeWhitespace(value))
+        .filter(Boolean)
+    );
+    const excludeAntibodyFlagged = options.excludeAntibodyFlagged === true;
+    const minimumConfidence = Number.isFinite(Number(options.minimumConfidence))
+      ? Number(options.minimumConfidence)
+      : null;
+    const scopeNode = options.scopeNode || null;
     const rows = this.init().prepare('SELECT * FROM nodes').all();
     return rows
       .map((row) => {
         const node = this.mapNode(row);
+        if (!node) return null;
+        if (excludeNodeIds.has(node.nodeId)) return null;
+        if (excludeAntibodyFlagged && node.antibodyStatus !== 'clear') return null;
+        if (minimumConfidence != null && Number(node.confidenceScore || 0) < minimumConfidence) return null;
+        if (scopeNode) {
+          const leftScope = extractMemoryScope(scopeNode);
+          const rightScope = extractMemoryScope(node);
+          if (
+            (leftScope.memoryClass && rightScope.memoryClass && leftScope.memoryClass !== rightScope.memoryClass)
+            || (leftScope.claimType && rightScope.claimType && leftScope.claimType !== rightScope.claimType)
+            || (leftScope.domain && rightScope.domain && leftScope.domain !== rightScope.domain)
+          ) {
+            return null;
+          }
+        }
         const distance = cosineDistance(queryVector, node.embedding);
         const baseScore = (1 - distance)
           + (node.salienceScore * 0.1)
@@ -690,6 +782,7 @@ class CognitiveMemoryApi {
           freshnessPenaltyBypassed: node.isImmune,
         };
       })
+      .filter(Boolean)
       .filter((entry) => Number.isFinite(entry.distance))
       .sort((left, right) => right.score - left.score || left.distance - right.distance)
       .slice(0, Math.max(1, limit));
@@ -749,6 +842,221 @@ class CognitiveMemoryApi {
   }
 
   /**
+   * @param {string} nodeId
+   * @returns {Array<Record<string, unknown>>}
+   */
+  listActiveLeasesForNode(nodeId) {
+    const normalizedNodeId = normalizeWhitespace(nodeId);
+    if (!normalizedNodeId) return [];
+    this.pruneExpiredLeases();
+    return this.init().prepare(`
+      SELECT *
+      FROM memory_leases
+      WHERE node_id = ?
+      ORDER BY expires_at_ms DESC
+    `).all(normalizedNodeId);
+  }
+
+  /**
+   * @param {string} nodeId
+   * @param {{ reason?: string, status?: string, source?: string }} [options]
+   * @returns {{ ok: true, invalidated: number }}
+   */
+  invalidateLeasesForNode(nodeId, options = {}) {
+    const normalizedNodeId = normalizeWhitespace(nodeId);
+    if (!normalizedNodeId) return { ok: true, invalidated: 0 };
+    const db = this.init();
+    const activeLeases = this.listActiveLeasesForNode(normalizedNodeId);
+    if (activeLeases.length === 0) return { ok: true, invalidated: 0 };
+    db.prepare('DELETE FROM memory_leases WHERE node_id = ?').run(normalizedNodeId);
+    for (const lease of activeLeases) {
+      emit('memory.lease.invalidated', {
+        paneId: 'system',
+        source: options.source || 'cognitive-memory-api.js',
+        payload: {
+          leaseId: lease.lease_id,
+          nodeId: normalizedNodeId,
+          agentId: lease.agent_id,
+          reason: options.reason || 'antibody_state_changed',
+          antibodyStatus: options.status || null,
+        },
+      });
+    }
+    return { ok: true, invalidated: activeLeases.length };
+  }
+
+  /**
+   * @param {string} nodeId
+   * @param {'clear' | 'suspected_conflict' | 'classified_conflict' | 'classified_update' | 'uncertain'} status
+   * @param {{ conflictsWithMemoryId?: string | null, antibodyScore?: number, classifiedBy?: string | null, classifiedAtMs?: number, adjudicationStatus?: string | null, quarantinedAtMs?: number | null, invalidateLeases?: boolean }} [options]
+   * @returns {{ ok: boolean, reason?: string, node?: CognitiveMemoryNode | null, invalidation?: { ok: true, invalidated: number } }}
+   */
+  setAntibodyState(nodeId, status, options = {}) {
+    const normalizedNodeId = normalizeWhitespace(nodeId);
+    if (!normalizedNodeId) return { ok: false, reason: 'node_id_required' };
+    const existing = this.getNode(normalizedNodeId);
+    if (!existing) return { ok: false, reason: 'node_not_found' };
+
+    const nextStatus = normalizeAntibodyStatus(status);
+    const nowMs = Number.isFinite(Number(options.classifiedAtMs)) ? Number(options.classifiedAtMs) : Date.now();
+    const nextAdjudication = (
+      options.adjudicationStatus === undefined
+        ? existing.adjudicationStatus
+        : normalizeAdjudicationStatus(options.adjudicationStatus)
+    );
+    const nextQuarantinedAtMs = nextStatus === 'clear'
+      ? 0
+      : (options.quarantinedAtMs == null
+        ? (existing.quarantinedAtMs || nowMs)
+        : Number(options.quarantinedAtMs || 0));
+
+    this.init().prepare(`
+      UPDATE nodes
+      SET antibody_status = ?,
+          antibody_score = ?,
+          conflicts_with_memory_id = ?,
+          classified_by = ?,
+          classified_at = ?,
+          adjudication_status = ?,
+          quarantined_at = ?,
+          updated_at_ms = ?
+      WHERE node_id = ?
+    `).run(
+      nextStatus,
+      Math.max(0, Math.min(1, Number(options.antibodyScore ?? existing.antibodyScore ?? 0))),
+      options.conflictsWithMemoryId === undefined
+        ? existing.conflictsWithMemoryId
+        : (options.conflictsWithMemoryId ? String(options.conflictsWithMemoryId) : null),
+      options.classifiedBy === undefined
+        ? existing.classifiedBy
+        : (options.classifiedBy ? String(options.classifiedBy) : null),
+      nextStatus === 'clear' ? 0 : nowMs,
+      nextAdjudication,
+      nextQuarantinedAtMs,
+      Date.now(),
+      normalizedNodeId
+    );
+
+    let invalidation = { ok: true, invalidated: 0 };
+    if ((options.invalidateLeases !== false) && nextStatus !== 'clear') {
+      invalidation = this.invalidateLeasesForNode(normalizedNodeId, {
+        reason: 'antibody_state_changed',
+        status: nextStatus,
+        source: 'cognitive-memory-api.js',
+      });
+    }
+    return {
+      ok: true,
+      node: this.getNode(normalizedNodeId),
+      invalidation,
+    };
+  }
+
+  /**
+   * @param {string} nodeId
+   * @param {{ supersededByNodeId?: string | null, reason?: string | null, actorId?: string | null }} [options]
+   * @returns {{ ok: boolean, reason?: string, node?: CognitiveMemoryNode | null }}
+   */
+  deprecateNode(nodeId, options = {}) {
+    const normalizedNodeId = normalizeWhitespace(nodeId);
+    if (!normalizedNodeId) return { ok: false, reason: 'node_id_required' };
+    const existing = this.getNode(normalizedNodeId);
+    if (!existing) return { ok: false, reason: 'node_not_found' };
+    const nowMs = Date.now();
+    const metadata = {
+      ...(existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+        ? existing.metadata
+        : {}),
+      deprecatedAt: isoNow(nowMs),
+      deprecatedReason: options.reason || 'superseded',
+      deprecatedBy: options.actorId || 'runtime',
+      supersededByNodeId: options.supersededByNodeId || null,
+    };
+    this.init().prepare(`
+      UPDATE nodes
+      SET metadata_json = ?,
+          updated_at_ms = ?
+      WHERE node_id = ?
+    `).run(JSON.stringify(metadata), nowMs, normalizedNodeId);
+    return { ok: true, node: this.getNode(normalizedNodeId) };
+  }
+
+  /**
+   * @param {{ nodeId?: string, conflictingNodeId?: string | null, decision?: string, actorId?: string | null, reason?: string | null }} [input]
+   * @returns {{ ok: boolean, reason?: string, node?: CognitiveMemoryNode | null }}
+   */
+  adjudicateAntibodyConflict(input = {}) {
+    const nodeId = normalizeWhitespace(input.nodeId);
+    const conflictingNodeId = normalizeWhitespace(input.conflictingNodeId || '');
+    const decision = normalizeAdjudicationStatus(input.decision) || null;
+    if (!nodeId || !decision) return { ok: false, reason: 'node_id_and_decision_required' };
+    const node = this.getNode(nodeId);
+    if (!node) return { ok: false, reason: 'node_not_found' };
+
+    if (decision === 'accepted_correction') {
+      this.setAntibodyState(nodeId, 'clear', {
+        conflictsWithMemoryId: conflictingNodeId || null,
+        adjudicationStatus: decision,
+        classifiedBy: input.actorId || 'architect',
+        quarantinedAtMs: 0,
+        invalidateLeases: false,
+      });
+      if (conflictingNodeId) {
+        this.deprecateNode(conflictingNodeId, {
+          supersededByNodeId: nodeId,
+          reason: input.reason || 'accepted_correction',
+          actorId: input.actorId || 'architect',
+        });
+        this.setAntibodyState(conflictingNodeId, 'classified_conflict', {
+          conflictsWithMemoryId: nodeId,
+          adjudicationStatus: decision,
+          classifiedBy: input.actorId || 'architect',
+          quarantinedAtMs: Date.now(),
+        });
+      }
+    } else if (decision === 'rejected_hallucination') {
+      this.setAntibodyState(nodeId, 'classified_conflict', {
+        conflictsWithMemoryId: conflictingNodeId || null,
+        adjudicationStatus: decision,
+        classifiedBy: input.actorId || 'architect',
+        quarantinedAtMs: Date.now(),
+      });
+    } else if (decision === 'coexistence') {
+      this.setAntibodyState(nodeId, 'clear', {
+        conflictsWithMemoryId: conflictingNodeId || null,
+        adjudicationStatus: decision,
+        classifiedBy: input.actorId || 'architect',
+        quarantinedAtMs: 0,
+        invalidateLeases: false,
+      });
+    } else {
+      return { ok: false, reason: 'unsupported_decision' };
+    }
+
+    const domain = extractMemoryScope(node).domain;
+    const metadata = node.metadata && typeof node.metadata === 'object' && !Array.isArray(node.metadata)
+      ? node.metadata
+      : {};
+    const agentId = normalizeWhitespace(metadata.agentId || metadata.agent_id || '');
+    if (agentId && domain) {
+      const suspicionDelta = decision === 'rejected_hallucination' ? 0.15 : -0.05;
+      const trustDelta = decision === 'accepted_correction' ? 0.05 : -0.05;
+      const acceptedDelta = decision === 'accepted_correction' ? 1 : 0;
+      const rejectedDelta = decision === 'rejected_hallucination' ? 1 : 0;
+      this.cognitiveStore.updateAgentDomainTrust({
+        agent_id: agentId,
+        domain,
+        trust_delta: trustDelta,
+        suspicion_delta: suspicionDelta,
+        accepted_delta: acceptedDelta,
+        rejected_delta: rejectedDelta,
+      });
+    }
+
+    return { ok: true, node: this.getNode(nodeId) };
+  }
+
+  /**
    * @param {string} query
    * @param {{ limit?: number | string, agentId?: string, agent_id?: string, leaseMs?: number, transactiveLimit?: number | string, transactive_limit?: number | string }} [options]
    * @returns {Promise<RetrieveMemoryResult>}
@@ -772,7 +1080,14 @@ class CognitiveMemoryApi {
     }
 
     const queryVector = await this.embedText(trimmedQuery);
-    const rankedNodes = this.searchExistingNodes(queryVector, Math.max(limit * 2, 8));
+    const proactiveInjection = (
+      options.proactiveInjection === true
+      || options.proactive_injection === true
+      || normalizeWhitespace(options.purpose || options.reason).toLowerCase() === 'proactive_injection'
+    );
+    const rankedNodes = this.searchExistingNodes(queryVector, Math.max(limit * 2, 8), {
+      excludeAntibodyFlagged: proactiveInjection,
+    });
     const deduped = [];
     const seen = new Set();
     for (const entry of rankedNodes) {
@@ -822,8 +1137,14 @@ class CognitiveMemoryApi {
 
     const category = normalizeWhitespace(input.category || input.sourceType || input.source_type || 'fact');
     const agentId = normalizeWhitespace(input.agentId || input.agent_id || input.agent || 'runtime');
+    const userSourced = isUserSourcedFact({
+      ...input,
+      agentId,
+    });
     const confidence = clamp(
-      Number.isFinite(Number(input.confidence)) ? Number(input.confidence) : DEFAULT_INGEST_CONFIDENCE,
+      userSourced
+        ? 1
+        : (Number.isFinite(Number(input.confidence)) ? Number(input.confidence) : DEFAULT_INGEST_CONFIDENCE),
       0,
       1
     );
@@ -843,6 +1164,10 @@ class CognitiveMemoryApi {
         command: input.command || 'ingest',
         ingestedVia: input.ingestedVia || 'runtime',
         confidence,
+        claimType: input.claimType || input.claim_type || null,
+        memoryClass: input.memoryClass || input.memory_class || null,
+        domain: input.domain || null,
+        userSourced,
       },
       isImmune: input.isImmune === true || input.is_immune === 1,
     });
@@ -851,9 +1176,16 @@ class CognitiveMemoryApi {
       return { ok: false, reason: 'node_not_created' };
     }
 
+    await processPostIngestAntibody(this, result, input, {
+      autoDispatch: true,
+      dispatchQueuedWork: () => this.antibodyWorker.runOnce({ limit: 3 }),
+    }).catch((error) => {
+      this.logger.warn?.(`Antibody post-ingest screening failed for ${result.nodeId}: ${error.message}`);
+    });
+
     return {
       ok: true,
-      node: result,
+      node: this.getNode(result.nodeId),
     };
   }
 
@@ -917,7 +1249,10 @@ class CognitiveMemoryApi {
       }
 
       const nextVersion = Number(node.current_version || 1) + 1;
-      const nextConfidence = clamp(Number(node.confidence_score || 0.5) + 0.1, 0, 1);
+      const antibodyStatus = normalizeAntibodyStatus(node.antibody_status);
+      const nextConfidence = antibodyStatus === 'clear'
+        ? clamp(Number(node.confidence_score || 0.5) + 0.1, 0, 1)
+        : clamp(Number(node.confidence_score || 0.5), 0, 1);
       const nextSalience = clamp(Number(node.salience_score || 0) + DEFAULT_SALIENCE_DELTA, 0, 5);
       const metadata = {
         ...parseJson(node.metadata_json, {}),

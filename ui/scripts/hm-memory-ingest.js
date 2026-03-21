@@ -9,6 +9,7 @@
  */
 
 const { executeOperation, closeRuntime } = require('../modules/team-memory/worker-client');
+const { CognitiveMemoryApi } = require('../modules/cognitive-memory-api');
 
 function usage() {
   console.log('Usage: node hm-memory-ingest.js [options]');
@@ -62,6 +63,54 @@ function asString(value, fallback = '') {
   if (typeof value !== 'string') return fallback;
   const normalized = value.trim();
   return normalized || fallback;
+}
+
+function asObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
+function shouldMirrorToCognitiveMemory(payload = {}) {
+  const claimType = asString(payload.claim_type || payload.claimType || '', '').toLowerCase();
+  const memoryClass = asString(payload.memory_class || payload.memoryClass || '', '').toLowerCase();
+  if (claimType === 'objective_fact') return true;
+  return memoryClass === 'architecture_decision' || memoryClass === 'codebase_inventory';
+}
+
+function deriveCognitiveMirrorInput(payload = {}) {
+  const provenance = asObject(payload.provenance);
+  const scope = asObject(payload.scope);
+  const agentId = asString(
+    provenance.agent_id,
+    provenance.agentId,
+    provenance.actor,
+    provenance.source_role,
+    provenance.role,
+    'runtime'
+  );
+  const memoryClass = asString(payload.memory_class || payload.memoryClass || '', '');
+  const claimType = asString(payload.claim_type || payload.claimType || '', '');
+  const domain = asString(scope.domain || scope.topic || provenance.domain || memoryClass || claimType || 'team-memory', 'team-memory');
+  const sourceRole = asString(provenance.source_role || provenance.role || agentId, agentId).toLowerCase();
+  const userSourced = sourceRole === 'user' || sourceRole === 'human';
+  return {
+    content: asString(payload.content || '', ''),
+    category: memoryClass || claimType || 'fact',
+    agentId,
+    confidence: Number.isFinite(Number(payload.confidence)) ? Number(payload.confidence) : undefined,
+    sourceType: userSourced ? 'user-correction' : 'hm-memory-ingest',
+    sourcePath: userSourced ? 'user:hm-memory-ingest' : `team-memory:${agentId || 'runtime'}`,
+    heading: domain,
+    metadata: {
+      memory_class: memoryClass || null,
+      claim_type: claimType || null,
+      domain,
+      sourceTrace: asString(payload.source_trace || '', '') || null,
+      provenance,
+      scope,
+      userSourced,
+    },
+  };
 }
 
 function parseJson(raw, label) {
@@ -141,6 +190,24 @@ async function main(argv = process.argv.slice(2)) {
 
   try {
     const result = await executeOperation('ingest-memory', payload, runtimeOptions);
+    let cognitiveMirror = null;
+    if (result?.ok && shouldMirrorToCognitiveMemory(payload)) {
+      const api = new CognitiveMemoryApi();
+      try {
+        cognitiveMirror = await api.ingest(deriveCognitiveMirrorInput(payload));
+      } catch (error) {
+        cognitiveMirror = {
+          ok: false,
+          reason: 'cognitive_mirror_failed',
+          error: error.message,
+        };
+      } finally {
+        api.close();
+      }
+    }
+    if (cognitiveMirror) {
+      result.cognitive_memory = cognitiveMirror;
+    }
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return result?.ok ? 0 : 1;
   } finally {
