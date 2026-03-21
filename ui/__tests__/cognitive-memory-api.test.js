@@ -211,6 +211,41 @@ maybeDescribe('cognitive-memory api', () => {
     }));
   });
 
+  test('proactive injection excludes antibody-flagged nodes while normal retrieval still sees them', async () => {
+    const ingested = await api.ingest({
+      content: 'ServiceTitan private auth bridge requires APIKEY mode for legacy routing.',
+      category: 'fact',
+      agentId: 'builder',
+      confidence: 0.88,
+      sourceType: 'agent-ingest',
+      sourcePath: 'agent:builder:antibody-gate',
+      heading: 'ServiceTitan',
+      metadata: {
+        claim_type: 'objective_fact',
+        domain: 'servicetitan_auth',
+      },
+    });
+    api.setAntibodyState(ingested.node.nodeId, 'suspected_conflict', {
+      conflictsWithMemoryId: 'node-existing',
+      antibodyScore: 0.81,
+      classifiedBy: 'heuristic_screen',
+      adjudicationStatus: 'pending',
+    });
+
+    const normal = await api.retrieve('ServiceTitan private auth bridge requires APIKEY mode', {
+      agentId: 'builder',
+      limit: 5,
+    });
+    const proactive = await api.retrieve('ServiceTitan private auth bridge requires APIKEY mode', {
+      agentId: 'builder',
+      limit: 5,
+      purpose: 'proactive_injection',
+    });
+
+    expect(normal.results.some((entry) => entry.nodeId === ingested.node.nodeId)).toBe(true);
+    expect(proactive.results.some((entry) => entry.nodeId === ingested.node.nodeId)).toBe(false);
+  });
+
   test('searchExistingNodes downranks stale nodes even when they carry more salience', async () => {
     const stale = await api.ingest({
       content: 'ServiceTitan auth endpoint builder token refresh guidance.',
@@ -336,6 +371,86 @@ maybeDescribe('cognitive-memory api', () => {
       nodeId: patched.node.nodeId,
       currentVersion: 2,
       leaseVersion: 1,
+    }));
+  });
+
+  test('patch freezes confidence for antibody-flagged memories', async () => {
+    const ingested = await api.ingest({
+      content: 'Supervisor retry window is 15 minutes for stale worker leases.',
+      category: 'fact',
+      agentId: 'builder',
+      confidence: 0.61,
+      sourceType: 'agent-ingest',
+      sourcePath: 'agent:builder:flagged-patch',
+      heading: 'Supervisor',
+      metadata: {
+        claim_type: 'objective_fact',
+        domain: 'supervisor_leases',
+      },
+    });
+    const retrieved = await api.retrieve('Supervisor retry window is 15 minutes', {
+      agentId: 'builder',
+      limit: 1,
+    });
+    api.setAntibodyState(ingested.node.nodeId, 'suspected_conflict', {
+      conflictsWithMemoryId: 'node-existing',
+      antibodyScore: 0.73,
+      classifiedBy: 'heuristic_screen',
+      adjudicationStatus: 'pending',
+    });
+
+    const afterFlagRetrieve = await api.retrieve('Supervisor retry window is 15 minutes', {
+      agentId: 'builder',
+      limit: 1,
+    });
+    const before = api.getNode(ingested.node.nodeId);
+    const patched = await api.patch(
+      afterFlagRetrieve.results.find((entry) => entry.nodeId === ingested.node.nodeId).leaseId,
+      'Supervisor retry window is 20 minutes for stale worker leases.',
+      { agentId: 'builder', reason: 'editing while quarantined' }
+    );
+
+    expect(patched.ok).toBe(true);
+    expect(patched.node.confidenceScore).toBe(before.confidenceScore);
+    expect(patched.node.antibodyStatus).toBe('suspected_conflict');
+  });
+
+  test('user-sourced facts bypass antibody quarantine and deprecate conflicting agent facts', async () => {
+    const agentFact = await api.ingest({
+      content: 'ServiceTitan auth endpoint uses /v1/token for the production OAuth exchange.',
+      category: 'fact',
+      agentId: 'builder',
+      confidence: 0.91,
+      sourceType: 'agent-ingest',
+      sourcePath: 'agent:builder:servicetitan-auth',
+      heading: 'ServiceTitan',
+      metadata: {
+        claim_type: 'objective_fact',
+        domain: 'servicetitan_auth',
+      },
+    });
+    const userFact = await api.ingest({
+      content: 'ServiceTitan auth endpoint now uses /v2/token for the production OAuth exchange.',
+      category: 'fact',
+      agentId: 'user',
+      sourceType: 'user-correction',
+      sourcePath: 'user:chat',
+      heading: 'ServiceTitan',
+      metadata: {
+        userSourced: true,
+        claim_type: 'objective_fact',
+        domain: 'servicetitan_auth',
+      },
+    });
+
+    const updatedAgentFact = api.getNode(agentFact.node.nodeId);
+    expect(userFact.node.confidenceScore).toBe(1);
+    expect(userFact.node.antibodyStatus).toBe('clear');
+    expect(updatedAgentFact.antibodyStatus).toBe('classified_conflict');
+    expect(updatedAgentFact.metadata).toEqual(expect.objectContaining({
+      deprecatedBy: 'user',
+      deprecatedReason: 'user_override',
+      supersededByNodeId: userFact.node.nodeId,
     }));
   });
 

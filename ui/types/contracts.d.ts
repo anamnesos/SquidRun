@@ -1,4 +1,15 @@
 export type JsonRecord = Record<string, unknown>;
+export type AntibodyStatus =
+  | 'clear'
+  | 'suspected_conflict'
+  | 'classified_conflict'
+  | 'classified_update'
+  | 'uncertain';
+export type AntibodyAdjudicationStatus =
+  | 'pending'
+  | 'accepted_correction'
+  | 'rejected_hallucination'
+  | 'coexistence';
 
 export interface ProjectMetadata {
   name: string | null;
@@ -154,6 +165,40 @@ export interface CognitiveMemoryNode {
   metadata: JsonRecord;
   createdAtMs: number;
   updatedAtMs: number;
+  antibodyStatus: AntibodyStatus;
+  antibodyScore: number;
+  conflictsWithMemoryId: string | null;
+  classifiedBy: string | null;
+  classifiedAtMs: number;
+  adjudicationStatus: AntibodyAdjudicationStatus | null;
+  quarantinedAtMs: number;
+}
+
+export interface AntibodyQueueRow {
+  queue_id: string;
+  node_id: string;
+  conflicting_node_id: string | null;
+  request_type: string;
+  status: string;
+  classifier_strategy: string | null;
+  classifier_request_id: string | null;
+  heuristic_label: string | null;
+  heuristic_score: number;
+  payload_json: string;
+  result_json: string;
+  created_at_ms: number;
+  updated_at_ms: number;
+  last_attempt_at_ms: number | null;
+}
+
+export interface AgentDomainTrustRow {
+  agent_id: string;
+  domain: string;
+  trust_score: number;
+  suspicion_score: number;
+  accepted_count: number;
+  rejected_count: number;
+  updated_at_ms: number;
 }
 
 export interface MemoryLease {

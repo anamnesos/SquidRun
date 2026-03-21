@@ -9,6 +9,8 @@ const { resolveCoordPath, getProjectRoot } = require('../config');
 /** @typedef {import('../types/contracts').MemoryPrRow} MemoryPrRow */
 /** @typedef {import('../types/contracts').TransactiveMetaRow} TransactiveMetaRow */
 /** @typedef {import('../types/contracts').WorkspacePaths} WorkspacePaths */
+/** @typedef {import('../types/contracts').AntibodyQueueRow} AntibodyQueueRow */
+/** @typedef {import('../types/contracts').AgentDomainTrustRow} AgentDomainTrustRow */
 
 /**
  * @param {string} targetPath
@@ -154,8 +156,57 @@ class CognitiveMemoryStore {
 
       CREATE INDEX IF NOT EXISTS idx_memory_pr_status ON memory_pr_queue(status, updated_at_ms DESC);
       CREATE INDEX IF NOT EXISTS idx_memory_pr_domain ON memory_pr_queue(domain, updated_at_ms DESC);
+
+      CREATE TABLE IF NOT EXISTS antibody_queue (
+        queue_id TEXT PRIMARY KEY,
+        node_id TEXT NOT NULL,
+        conflicting_node_id TEXT,
+        request_type TEXT NOT NULL DEFAULT 'classification',
+        status TEXT NOT NULL DEFAULT 'pending',
+        classifier_strategy TEXT,
+        classifier_request_id TEXT,
+        heuristic_label TEXT,
+        heuristic_score REAL DEFAULT 0,
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        result_json TEXT NOT NULL DEFAULT '{}',
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        last_attempt_at_ms INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_antibody_queue_status ON antibody_queue(status, updated_at_ms DESC);
+      CREATE INDEX IF NOT EXISTS idx_antibody_queue_node ON antibody_queue(node_id, updated_at_ms DESC);
+      CREATE INDEX IF NOT EXISTS idx_antibody_queue_conflict ON antibody_queue(conflicting_node_id, updated_at_ms DESC);
+
+      CREATE TABLE IF NOT EXISTS agent_domain_trust (
+        agent_id TEXT NOT NULL,
+        domain TEXT NOT NULL,
+        trust_score REAL NOT NULL DEFAULT 0.5,
+        suspicion_score REAL NOT NULL DEFAULT 0,
+        accepted_count INTEGER NOT NULL DEFAULT 0,
+        rejected_count INTEGER NOT NULL DEFAULT 0,
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (agent_id, domain)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_agent_domain_trust_suspicion
+      ON agent_domain_trust(domain, suspicion_score DESC, updated_at_ms DESC);
     `);
     ensureColumn(db, 'nodes', 'is_immune', 'INTEGER DEFAULT 0');
+    ensureColumn(db, 'nodes', 'antibody_status', "TEXT DEFAULT 'clear'");
+    ensureColumn(db, 'nodes', 'antibody_score', 'REAL DEFAULT 0');
+    ensureColumn(db, 'nodes', 'conflicts_with_memory_id', 'TEXT');
+    ensureColumn(db, 'nodes', 'classified_by', 'TEXT');
+    ensureColumn(db, 'nodes', 'classified_at', 'INTEGER DEFAULT 0');
+    ensureColumn(db, 'nodes', 'adjudication_status', 'TEXT');
+    ensureColumn(db, 'nodes', 'quarantined_at', 'INTEGER DEFAULT 0');
+    db.prepare(`
+      UPDATE nodes
+      SET antibody_status = COALESCE(NULLIF(TRIM(antibody_status), ''), 'clear'),
+          antibody_score = COALESCE(antibody_score, 0),
+          classified_at = COALESCE(classified_at, 0),
+          quarantined_at = COALESCE(quarantined_at, 0)
+    `).run();
     this.db = db;
     return db;
   }
@@ -392,6 +443,249 @@ class CognitiveMemoryStore {
       ORDER BY expertise_score DESC, updated_at_ms DESC
       LIMIT ?
     `).all(limit);
+  }
+
+  /**
+   * @param {{ node_id?: string, conflicting_node_id?: string | null, request_type?: string, status?: string, classifier_strategy?: string | null, classifier_request_id?: string | null, heuristic_label?: string | null, heuristic_score?: number, payload?: Record<string, unknown>, result?: Record<string, unknown> }} [input]
+   * @returns {{ ok: boolean, reason?: string, queue_id?: string, status?: string }}
+   */
+  enqueueAntibodyJob(input = {}) {
+    const db = this.init();
+    const nodeId = String(input.node_id || '').trim();
+    if (!nodeId) {
+      return { ok: false, reason: 'node_id_required' };
+    }
+
+    const conflictingNodeId = input.conflicting_node_id ? String(input.conflicting_node_id).trim() : null;
+    const requestType = String(input.request_type || 'classification').trim() || 'classification';
+    const classifierStrategy = input.classifier_strategy ? String(input.classifier_strategy).trim() : null;
+    const nowMs = Date.now();
+    const existing = db.prepare(`
+      SELECT queue_id
+      FROM antibody_queue
+      WHERE node_id = ?
+        AND COALESCE(conflicting_node_id, '') = COALESCE(?, '')
+        AND request_type = ?
+        AND status IN ('pending', 'dispatched', 'responses_pending', 'awaiting_adjudication')
+      ORDER BY updated_at_ms DESC
+      LIMIT 1
+    `).get(nodeId, conflictingNodeId, requestType);
+
+    if (existing?.queue_id) {
+      db.prepare(`
+        UPDATE antibody_queue
+        SET classifier_strategy = COALESCE(?, classifier_strategy),
+            heuristic_label = COALESCE(?, heuristic_label),
+            heuristic_score = MAX(COALESCE(heuristic_score, 0), ?),
+            payload_json = ?,
+            updated_at_ms = ?
+        WHERE queue_id = ?
+      `).run(
+        classifierStrategy,
+        input.heuristic_label ? String(input.heuristic_label) : null,
+        Math.max(0, Math.min(1, asNumber(input.heuristic_score, 0))),
+        JSON.stringify(input.payload || {}),
+        nowMs,
+        existing.queue_id
+      );
+      return { ok: true, queue_id: existing.queue_id, status: 'merged' };
+    }
+
+    const queueId = generateId('antibody');
+    db.prepare(`
+      INSERT INTO antibody_queue (
+        queue_id,
+        node_id,
+        conflicting_node_id,
+        request_type,
+        status,
+        classifier_strategy,
+        classifier_request_id,
+        heuristic_label,
+        heuristic_score,
+        payload_json,
+        result_json,
+        created_at_ms,
+        updated_at_ms,
+        last_attempt_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      queueId,
+      nodeId,
+      conflictingNodeId,
+      requestType,
+      String(input.status || 'pending'),
+      classifierStrategy,
+      input.classifier_request_id ? String(input.classifier_request_id) : null,
+      input.heuristic_label ? String(input.heuristic_label) : null,
+      Math.max(0, Math.min(1, asNumber(input.heuristic_score, 0))),
+      JSON.stringify(input.payload || {}),
+      JSON.stringify(input.result || {}),
+      nowMs,
+      nowMs,
+      null
+    );
+    return { ok: true, queue_id: queueId, status: 'queued' };
+  }
+
+  /**
+   * @param {{ status?: string | string[], limit?: number | string }} [options]
+   * @returns {AntibodyQueueRow[]}
+   */
+  listAntibodyQueue(options = {}) {
+    const db = this.init();
+    const limit = Math.max(1, Math.min(500, Number.parseInt(options.limit || '100', 10) || 100));
+    const statuses = Array.isArray(options.status) ? options.status : [options.status || 'pending'];
+    const normalizedStatuses = Array.from(new Set(statuses.map((value) => String(value || '').trim()).filter(Boolean)));
+    if (normalizedStatuses.length === 0) {
+      return db.prepare(`
+        SELECT *
+        FROM antibody_queue
+        ORDER BY updated_at_ms DESC
+        LIMIT ?
+      `).all(limit);
+    }
+    const placeholders = normalizedStatuses.map(() => '?').join(', ');
+    return db.prepare(`
+      SELECT *
+      FROM antibody_queue
+      WHERE status IN (${placeholders})
+      ORDER BY updated_at_ms DESC
+      LIMIT ?
+    `).all(...normalizedStatuses, limit);
+  }
+
+  /**
+   * @param {string} queueId
+   * @returns {AntibodyQueueRow | null}
+   */
+  getAntibodyQueueItem(queueId) {
+    const normalizedQueueId = String(queueId || '').trim();
+    if (!normalizedQueueId) return null;
+    return this.init().prepare(`
+      SELECT *
+      FROM antibody_queue
+      WHERE queue_id = ?
+      LIMIT 1
+    `).get(normalizedQueueId) || null;
+  }
+
+  /**
+   * @param {string} queueId
+   * @param {{ status?: string, classifier_request_id?: string | null, payload?: Record<string, unknown>, result?: Record<string, unknown>, heuristic_label?: string | null, heuristic_score?: number, last_attempt_at_ms?: number | null }} [patch]
+   * @returns {{ ok: boolean, reason?: string }}
+   */
+  updateAntibodyJob(queueId, patch = {}) {
+    const normalizedQueueId = String(queueId || '').trim();
+    if (!normalizedQueueId) {
+      return { ok: false, reason: 'queue_id_required' };
+    }
+    const existing = this.getAntibodyQueueItem(normalizedQueueId);
+    if (!existing) {
+      return { ok: false, reason: 'queue_item_not_found' };
+    }
+
+    const nowMs = Date.now();
+    this.init().prepare(`
+      UPDATE antibody_queue
+      SET status = COALESCE(?, status),
+          classifier_request_id = COALESCE(?, classifier_request_id),
+          payload_json = ?,
+          result_json = ?,
+          heuristic_label = COALESCE(?, heuristic_label),
+          heuristic_score = COALESCE(?, heuristic_score),
+          last_attempt_at_ms = COALESCE(?, last_attempt_at_ms),
+          updated_at_ms = ?
+      WHERE queue_id = ?
+    `).run(
+      patch.status ? String(patch.status) : null,
+      patch.classifier_request_id ? String(patch.classifier_request_id) : null,
+      JSON.stringify(patch.payload || JSON.parse(existing.payload_json || '{}')),
+      JSON.stringify(patch.result || JSON.parse(existing.result_json || '{}')),
+      patch.heuristic_label ? String(patch.heuristic_label) : null,
+      patch.heuristic_score == null ? null : Math.max(0, Math.min(1, asNumber(patch.heuristic_score, 0))),
+      patch.last_attempt_at_ms == null ? null : asNumber(patch.last_attempt_at_ms, 0),
+      nowMs,
+      normalizedQueueId
+    );
+    return { ok: true };
+  }
+
+  /**
+   * @param {{ agent_id?: string, domain?: string, trust_delta?: number, suspicion_delta?: number, accepted_delta?: number | string, rejected_delta?: number | string }} [input]
+   * @returns {{ ok: boolean, reason?: string, row?: AgentDomainTrustRow }}
+   */
+  updateAgentDomainTrust(input = {}) {
+    const db = this.init();
+    const agentId = String(input.agent_id || '').trim();
+    const domain = String(input.domain || '').trim().toLowerCase();
+    if (!agentId || !domain) {
+      return { ok: false, reason: 'agent_id_and_domain_required' };
+    }
+
+    const existing = db.prepare(`
+      SELECT *
+      FROM agent_domain_trust
+      WHERE agent_id = ? AND domain = ?
+      LIMIT 1
+    `).get(agentId, domain);
+    const nowMs = Date.now();
+    const trustDelta = asNumber(input.trust_delta, 0);
+    const suspicionDelta = asNumber(input.suspicion_delta, 0);
+    const acceptedDelta = Math.max(0, Number.parseInt(input.accepted_delta || '0', 10) || 0);
+    const rejectedDelta = Math.max(0, Number.parseInt(input.rejected_delta || '0', 10) || 0);
+
+    if (existing) {
+      const nextTrust = Math.max(0, Math.min(1, asNumber(existing.trust_score, 0.5) + trustDelta));
+      const nextSuspicion = Math.max(0, Math.min(1, asNumber(existing.suspicion_score, 0) + suspicionDelta));
+      db.prepare(`
+        UPDATE agent_domain_trust
+        SET trust_score = ?,
+            suspicion_score = ?,
+            accepted_count = accepted_count + ?,
+            rejected_count = rejected_count + ?,
+            updated_at_ms = ?
+        WHERE agent_id = ? AND domain = ?
+      `).run(
+        nextTrust,
+        nextSuspicion,
+        acceptedDelta,
+        rejectedDelta,
+        nowMs,
+        agentId,
+        domain
+      );
+    } else {
+      db.prepare(`
+        INSERT INTO agent_domain_trust (
+          agent_id,
+          domain,
+          trust_score,
+          suspicion_score,
+          accepted_count,
+          rejected_count,
+          updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        agentId,
+        domain,
+        Math.max(0, Math.min(1, 0.5 + trustDelta)),
+        Math.max(0, Math.min(1, suspicionDelta)),
+        acceptedDelta,
+        rejectedDelta,
+        nowMs
+      );
+    }
+
+    return {
+      ok: true,
+      row: db.prepare(`
+        SELECT *
+        FROM agent_domain_trust
+        WHERE agent_id = ? AND domain = ?
+        LIMIT 1
+      `).get(agentId, domain),
+    };
   }
 
   /**
