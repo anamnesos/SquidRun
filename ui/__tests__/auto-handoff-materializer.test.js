@@ -248,6 +248,103 @@ describe('auto-handoff-materializer', () => {
     expect(content).toContain('TASK');
   });
 
+  test('materializeSessionHandoff reuses the last meaningful session and preserves the prior handoff copy', async () => {
+    const handoffsDir = path.join(tempDir, 'handoffs');
+    const outputPath = path.join(handoffsDir, 'session.md');
+    const backupPath = path.join(handoffsDir, 'last-session.md');
+    fs.mkdirSync(handoffsDir, { recursive: true });
+    fs.writeFileSync(outputPath, '# Old Handoff\n\nPrevious content.\n', 'utf8');
+
+    const result = await materializeSessionHandoff({
+      sessionId: 'app-session-257',
+      outputPath,
+      legacyMirrorPath: false,
+      enableSessionHistory: true,
+      rows: [
+        {
+          messageId: 'm-current-1',
+          sessionId: 'app-session-257',
+          senderRole: 'builder',
+          targetRole: 'architect',
+          channel: 'ws',
+          direction: 'outbound',
+          status: 'brokered',
+          rawBody: '(BUILDER #1): Builder online. Standing by.',
+          brokeredAtMs: 4000,
+        },
+      ],
+      crossSessionRows: [
+        {
+          messageId: 'm-prior-1',
+          sessionId: 'app-session-256',
+          senderRole: 'architect',
+          targetRole: 'builder',
+          channel: 'ws',
+          direction: 'outbound',
+          status: 'brokered',
+          rawBody: '(ARCHITECT #9): TASK: Fix session continuity capture',
+          brokeredAtMs: 3000,
+        },
+      ],
+      querySessionSnapshot: () => ({
+        session: 256,
+        sessionSummary: {
+          sessionNumber: 256,
+          createdAtMs: 3500,
+          summaryMarkdown: '# Session 256 Summary\n\n## Findings\n- Session-end snapshot captured.\n',
+        },
+      }),
+      querySessionSummariesFromMemory: () => [],
+      readFallbackSummary: () => null,
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 5000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.written).toBe(true);
+    expect(result.usedFallbackSession).toBe(true);
+    expect(result.sourceSessionId).toBe('app-session-256');
+    expect(fs.readFileSync(outputPath, 'utf8')).toContain('TASK: Fix session continuity capture');
+    expect(fs.readFileSync(outputPath, 'utf8')).toContain('## Prior Session Summaries');
+    expect(fs.readFileSync(outputPath, 'utf8')).toContain('Session-end snapshot captured.');
+    expect(fs.readFileSync(backupPath, 'utf8')).toContain('Previous content.');
+  });
+
+  test('materializeSessionHandoff does not overwrite session.md when no meaningful content exists', async () => {
+    const handoffsDir = path.join(tempDir, 'handoffs');
+    const outputPath = path.join(handoffsDir, 'session.md');
+    fs.mkdirSync(handoffsDir, { recursive: true });
+    fs.writeFileSync(outputPath, '# Preserved Handoff\n\nKeep me.\n', 'utf8');
+
+    const result = await materializeSessionHandoff({
+      sessionId: 'app-session-300',
+      outputPath,
+      legacyMirrorPath: false,
+      rows: [
+        {
+          messageId: 'm-current-1',
+          sessionId: 'app-session-300',
+          senderRole: 'architect',
+          targetRole: 'builder',
+          channel: 'ws',
+          direction: 'outbound',
+          status: 'brokered',
+          rawBody: '(ARCHITECT #1): Copy. Clean session, no pending work. Stand by for tasking.',
+          brokeredAtMs: 1000,
+        },
+      ],
+      crossSessionRows: [],
+      queryClaims: () => ({ ok: true, claims: [] }),
+      nowMs: 2000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.written).toBe(false);
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toBe('no_meaningful_content');
+    expect(fs.readFileSync(outputPath, 'utf8')).toContain('Keep me.');
+  });
+
   test('materializeSessionHandoff includes concise unresolved claims section', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const longStatement = 'A very long contested claim statement '.repeat(6);

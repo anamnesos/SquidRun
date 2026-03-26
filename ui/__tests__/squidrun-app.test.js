@@ -268,6 +268,17 @@ jest.mock('../scripts/hm-health-snapshot', () => ({
   ].join('\n')),
 }));
 
+jest.mock('../scripts/hm-session-summary', () => ({
+  generateSessionSummary: jest.fn(async () => ({
+    ok: true,
+    sessionNumber: 147,
+    messageCount: 3,
+    summaryText: '# Session 147 Summary\n\n## Findings\n- Shipped continuity fix.\n',
+    memoryResult: { ok: true, nodeId: 'node-session-147' },
+    fallbackResult: { ok: true, path: 'D:\\projects\\squidrun\\.squidrun\\handoffs\\last-session-summary.md' },
+  })),
+}));
+
 jest.mock('../modules/local-model-capabilities', () => ({
   detectOllamaRuntime: jest.fn().mockResolvedValue({
     running: true,
@@ -1258,6 +1269,73 @@ describe('SquidRunApp', () => {
 
     it('shuts down cleanly in PTY mode', async () => {
       await expect(app.shutdown()).resolves.toBeUndefined();
+    });
+
+    it('captures session-end state before tearing down runtimes', async () => {
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const teamMemory = require('../modules/team-memory');
+      const { generateSessionSummary } = require('../scripts/hm-session-summary');
+      app.teamMemoryInitialized = true;
+      app.ledgerAppSession = {
+        sessionId: 'ses-147',
+        sessionNumber: 147,
+      };
+      app.commsSessionScopeId = 'app-session-147';
+      mockManagers.settings.readAppStatus.mockReturnValue({ session: 147 });
+      evidenceLedger.executeEvidenceLedgerOperation.mockImplementation(async (action, payload) => {
+        if (action === 'record-session-end') {
+          return { ok: true, sessionId: payload.sessionId };
+        }
+        if (action === 'snapshot-context') {
+          return { ok: true, snapshotId: 'snap-147' };
+        }
+        if (action === 'list-sessions') {
+          return [{ sessionId: 'ses-147', sessionNumber: 147 }];
+        }
+        return { ok: true };
+      });
+
+      await app.shutdown();
+
+      expect(generateSessionSummary).toHaveBeenCalledWith(expect.objectContaining({
+        sessionNumber: 147,
+        includeSummaryText: true,
+      }));
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'capture-precompact-memory',
+        expect.objectContaining({
+          session_id: 'app-session-147',
+          session_ordinal: 147,
+          reason: 'session_end',
+        })
+      );
+      expect(evidenceLedger.executeEvidenceLedgerOperation).toHaveBeenCalledWith(
+        'record-session-end',
+        expect.objectContaining({
+          sessionId: 'ses-147',
+          summary: 'Session 147 captured 3 messages before shutdown.',
+          stats: {
+            messageCount: 3,
+          },
+        }),
+        expect.any(Object)
+      );
+      expect(evidenceLedger.executeEvidenceLedgerOperation).toHaveBeenCalledWith(
+        'snapshot-context',
+        expect.objectContaining({
+          sessionId: 'ses-147',
+          trigger: 'session_end',
+          content: expect.objectContaining({
+            summary: 'Session 147 captured 3 messages before shutdown.',
+            summaryMarkdown: '# Session 147 Summary\n\n## Findings\n- Shipped continuity fix.\n',
+            sessionSummary: expect.objectContaining({
+              sessionNumber: 147,
+              messageCount: 3,
+            }),
+          }),
+        }),
+        expect.any(Object)
+      );
     });
   });
 

@@ -69,7 +69,10 @@ const {
   materializeSessionHandoff,
   removeLegacyPaneHandoffFiles,
 } = require('./auto-handoff-materializer');
-const { closeCommsJournalStores } = require('./comms-journal');
+const {
+  closeCommsJournalStores,
+  queryCommsJournalEntries,
+} = require('./comms-journal');
 const {
   buildGuardFiringPatternEvent,
   buildGuardPreflightEvent,
@@ -97,6 +100,9 @@ const {
   createHealthSnapshot,
   renderStartupHealthMarkdown,
 } = require('../../scripts/hm-health-snapshot');
+const {
+  generateSessionSummary,
+} = require('../../scripts/hm-session-summary');
 const {
   buildSystemCapabilitiesSnapshot,
   detectOllamaRuntime,
@@ -486,6 +492,7 @@ class SquidRunApp {
     this.packagedOnboardingState = null;
     this.shuttingDown = false;
     this.fullShutdownPromise = null;
+    this.sessionEndCapturePromise = null;
     this.runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
     this.runtimeLifecycleQueue = Promise.resolve();
   }
@@ -1270,6 +1277,175 @@ class SquidRunApp {
     } catch {
       return null;
     }
+  }
+
+  async resolveLedgerSessionForShutdown(sessionNumber = null) {
+    const canonicalSessionNumber = asPositiveInt(
+      sessionNumber ?? this.ledgerAppSession?.sessionNumber ?? this.getCurrentAppStatusSessionNumber(),
+      null
+    );
+    if (this.ledgerAppSession?.sessionId && this.ledgerAppSession?.sessionNumber === canonicalSessionNumber) {
+      return {
+        sessionId: this.ledgerAppSession.sessionId,
+        sessionNumber: canonicalSessionNumber,
+      };
+    }
+    if (!canonicalSessionNumber) return null;
+
+    const sessions = await executeEvidenceLedgerOperation(
+      'list-sessions',
+      { limit: 10, order: 'desc' },
+      {
+        source: {
+          via: 'app-shutdown',
+          role: 'system',
+          paneId: null,
+        },
+      }
+    );
+    if (!Array.isArray(sessions)) return null;
+
+    const match = sessions.find((entry) => {
+      return asPositiveInt(entry?.sessionNumber, null) === canonicalSessionNumber;
+    });
+    if (!match?.sessionId) return null;
+    return {
+      sessionId: match.sessionId,
+      sessionNumber: canonicalSessionNumber,
+    };
+  }
+
+  async captureSessionEndState(options = {}) {
+    if (this.sessionEndCapturePromise) {
+      return this.sessionEndCapturePromise;
+    }
+
+    this.sessionEndCapturePromise = (async () => {
+      const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+      const sessionNumber = asPositiveInt(
+        options.sessionNumber ?? this.ledgerAppSession?.sessionNumber ?? this.getCurrentAppStatusSessionNumber(),
+        null
+      );
+      if (!sessionNumber) {
+        return {
+          ok: false,
+          skipped: true,
+          reason: 'session_number_unavailable',
+        };
+      }
+
+      const source = {
+        via: 'app-shutdown',
+        role: 'system',
+        paneId: null,
+      };
+      const summaryResult = await generateSessionSummary({
+        sessionNumber,
+        includeSummaryText: true,
+        queryCommsJournal: (filters, queryOptions) => queryCommsJournalEntries(filters, queryOptions),
+        dbPath: options.dbPath || null,
+        nowMs,
+      });
+      const summaryMarkdown = typeof summaryResult?.summaryText === 'string'
+        ? summaryResult.summaryText
+        : `# Session ${sessionNumber} Summary\n\nNo messages recorded in this session.\n`;
+      const messageCount = Number.isFinite(Number(summaryResult?.messageCount))
+        ? Math.max(0, Math.floor(Number(summaryResult.messageCount)))
+        : 0;
+      const sessionSummary = {
+        sessionNumber,
+        sessionScopeId: this.commsSessionScopeId || null,
+        messageCount,
+        generatedAt: new Date(nowMs).toISOString(),
+        createdAtMs: nowMs,
+        summaryMarkdown,
+        fallbackPath: summaryResult?.fallbackResult?.path || null,
+        memoryNodeId: summaryResult?.memoryResult?.nodeId || null,
+      };
+      const sessionSummaryLine = `Session ${sessionNumber} captured ${messageCount} message${messageCount === 1 ? '' : 's'} before shutdown.`;
+      const ledgerSession = await this.resolveLedgerSessionForShutdown(sessionNumber);
+
+      let precompactResult = {
+        ok: false,
+        skipped: true,
+        reason: 'team_memory_not_initialized',
+      };
+      if (this.teamMemoryInitialized) {
+        try {
+          precompactResult = await teamMemory.executeTeamMemoryOperation('capture-precompact-memory', {
+            session_id: this.commsSessionScopeId || null,
+            session_ordinal: sessionNumber,
+            summary: summaryMarkdown,
+            reason: 'session_end',
+            nowMs,
+          });
+        } catch (err) {
+          precompactResult = { ok: false, reason: 'capture_failed', error: err.message };
+        }
+      }
+
+      if (!ledgerSession?.sessionId) {
+        return {
+          ok: summaryResult?.ok !== false,
+          skipped: true,
+          reason: 'ledger_session_unavailable',
+          summaryResult,
+          precompactResult,
+        };
+      }
+
+      const recordResult = await executeEvidenceLedgerOperation(
+        'record-session-end',
+        {
+          sessionId: ledgerSession.sessionId,
+          endedAtMs: nowMs,
+          summary: sessionSummaryLine,
+          stats: {
+            messageCount,
+          },
+          meta: {
+            source: 'squidrun-app',
+            sessionScopeId: this.commsSessionScopeId || null,
+            fallbackSummaryPath: sessionSummary.fallbackPath,
+            memoryNodeId: sessionSummary.memoryNodeId,
+          },
+        },
+        { source }
+      );
+      const snapshotResult = await executeEvidenceLedgerOperation(
+        'snapshot-context',
+        {
+          sessionId: ledgerSession.sessionId,
+          trigger: 'session_end',
+          nowMs,
+          content: {
+            session: sessionNumber,
+            date: new Date(nowMs).toISOString().slice(0, 10),
+            mode: 'APP',
+            status: 'READY',
+            source: 'ledger.session_end',
+            summary: sessionSummaryLine,
+            summaryMarkdown,
+            stats: {
+              messageCount,
+            },
+            sessionSummary,
+          },
+        },
+        { source }
+      );
+
+      return {
+        ok: recordResult?.ok !== false && snapshotResult?.ok !== false,
+        summaryResult,
+        precompactResult,
+        recordResult,
+        snapshotResult,
+        sessionSummary,
+      };
+    })();
+
+    return this.sessionEndCapturePromise;
   }
 
   getStartupSessionFloor() {
@@ -2791,6 +2967,21 @@ class SquidRunApp {
       try {
         const result = await materializeSessionHandoff({
           sessionId: this.commsSessionScopeId || null,
+          enableSessionHistory: true,
+          querySessionSnapshot: ({ sessionId }) => executeEvidenceLedgerOperation(
+            'get-context',
+            {
+              sessionId,
+              preferSnapshot: true,
+            },
+            {
+              source: {
+                via: 'auto-handoff',
+                role: 'system',
+                paneId: null,
+              },
+            }
+          ),
         });
         if (result?.ok === false) {
           log.warn('AutoHandoff', `Materialize failed (${reason}): ${result.reason || result.error || 'unknown'}`);
@@ -6414,6 +6605,14 @@ class SquidRunApp {
     }
     this.mainWindowSendRaw = null;
     this.mainWindowSendInterceptInstalled = false;
+    try {
+      const sessionEndResult = await this.captureSessionEndState();
+      if (sessionEndResult?.ok === false && sessionEndResult?.skipped !== true) {
+        log.warn('EvidenceLedger', `Session-end capture failed: ${sessionEndResult.reason || sessionEndResult.error || 'unknown'}`);
+      }
+    } catch (err) {
+      log.warn('EvidenceLedger', `Session-end capture error during shutdown: ${err.message}`);
+    }
     this.paneHostWindowManager.closeAllPaneWindows();
     await this.stopAutoHandoffMaterializer({ flush: true });
     contextCompressor.shutdown();

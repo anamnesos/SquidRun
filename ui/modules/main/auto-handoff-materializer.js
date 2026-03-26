@@ -8,11 +8,17 @@ const {
   queryCommsJournalEntries,
 } = require('./comms-journal');
 const { executeTeamMemoryOperation } = require('../team-memory/runtime');
+const {
+  parseSessionNumber,
+  querySessionSummariesFromMemory,
+  readFallbackSummary,
+} = require('../../scripts/hm-session-summary');
 
 const HANDOFFS_RELATIVE_DIR = 'handoffs';
 const SESSION_HANDOFF_FILE = 'session.md';
 const LEGACY_PANE_HANDOFFS = ['1.md', '2.md', '3.md'];
 const DEFAULT_QUERY_LIMIT = 5000;
+const DEFAULT_SESSION_HISTORY_LIMIT = 3;
 const DEFAULT_RECENT_LIMIT = 250;
 const DEFAULT_TAGGED_LIMIT = 120;
 const DEFAULT_CROSS_SESSION_LIMIT = 120;
@@ -42,6 +48,12 @@ const TRANSPORT_ARTIFACT_CLAIM_PATTERNS = [
   /\bsession started\b/i,
 ];
 const LEGACY_BOOTSTRAP_SESSION_ID_PATTERN = /^app-\d+-\d+$/i;
+const SESSION_BOOTSTRAP_NOISE_PATTERNS = [
+  /^\((?:architect|builder|oracle)\s+#\d+\):\s+.+\bonline\.\s+standing by\.?$/i,
+  /^\((?:architect|builder|oracle)\s+#\d+\):\s+standing by(?: for tasking)?\.?$/i,
+  /^\((?:architect|builder|oracle)\s+#\d+\):\s+copy\.\s+clean session(?:,\s+no pending work)?\.\s+stand by(?: for tasking)?\.?$/i,
+  /^\((?:architect|builder|oracle)\s+#\d+\):\s+clean session(?:,\s+no pending work)?\.\s+stand by(?: for tasking)?\.?$/i,
+];
 
 function toOptionalString(value, fallback = null) {
   if (value === null || value === undefined) return fallback;
@@ -249,6 +261,163 @@ function isTransportArtifactClaimStatement(statement) {
   const normalized = toOptionalString(statement, '').toLowerCase();
   if (!normalized) return false;
   return TRANSPORT_ARTIFACT_CLAIM_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function isTestNoiseRow(row = {}) {
+  return String(row?.senderRole || '').toLowerCase() === 'cli'
+    && String(row?.rawBody || '').startsWith('(TEST ');
+}
+
+function isMeaningfulHandoffRow(row = {}) {
+  const body = toOptionalString(row?.rawBody, '');
+  if (!body) return false;
+  if (isTestNoiseRow(row)) return false;
+  return !SESSION_BOOTSTRAP_NOISE_PATTERNS.some((pattern) => pattern.test(body));
+}
+
+function filterMeaningfulRows(rows = []) {
+  return (Array.isArray(rows) ? rows : []).filter((row) => isMeaningfulHandoffRow(row));
+}
+
+function groupRowsBySession(rows = []) {
+  const groups = new Map();
+  for (const row of sortByEventTsAsc(Array.isArray(rows) ? rows : [])) {
+    const sessionId = toOptionalString(row?.sessionId, null);
+    if (!sessionId) continue;
+    if (!groups.has(sessionId)) {
+      groups.set(sessionId, []);
+    }
+    groups.get(sessionId).push(row);
+  }
+  return groups;
+}
+
+function selectSourceSessionRows(currentSessionId, currentRows = [], allRows = []) {
+  const normalizedCurrentSessionId = toOptionalString(currentSessionId, null);
+  const currentSessionRows = Array.isArray(currentRows) ? currentRows : [];
+  const currentMeaningfulRows = filterMeaningfulRows(currentSessionRows);
+  if (currentMeaningfulRows.length > 0) {
+    return {
+      sessionId: normalizedCurrentSessionId,
+      rows: currentSessionRows,
+      meaningfulRows: currentMeaningfulRows,
+      usedFallback: false,
+    };
+  }
+
+  const groups = groupRowsBySession(allRows);
+  const candidates = [];
+  for (const [sessionId, sessionRows] of groups.entries()) {
+    if (!sessionId || sessionId === normalizedCurrentSessionId) continue;
+    const meaningfulRows = filterMeaningfulRows(sessionRows);
+    if (meaningfulRows.length === 0) continue;
+    const latestTsMs = sessionRows.reduce((max, row) => Math.max(max, toEventTsMs(row)), 0);
+    candidates.push({
+      sessionId,
+      rows: sessionRows,
+      meaningfulRows,
+      latestTsMs,
+    });
+  }
+
+  candidates.sort((left, right) => {
+    if (left.latestTsMs !== right.latestTsMs) return right.latestTsMs - left.latestTsMs;
+    return left.sessionId.localeCompare(right.sessionId);
+  });
+
+  const fallback = candidates[0];
+  if (!fallback) {
+    return {
+      sessionId: normalizedCurrentSessionId,
+      rows: currentSessionRows,
+      meaningfulRows: currentMeaningfulRows,
+      usedFallback: false,
+    };
+  }
+
+  return {
+    sessionId: fallback.sessionId,
+    rows: fallback.rows,
+    meaningfulRows: fallback.meaningfulRows,
+    usedFallback: true,
+  };
+}
+
+function normalizePriorSessionSummary(summary = {}) {
+  const content = toOptionalString(summary?.content, null);
+  if (!content) return null;
+  const sessionNumber = parseSessionNumber(summary?.sessionNumber);
+  const createdAtMs = Number.isFinite(Number(summary?.createdAtMs))
+    ? Math.max(0, Math.floor(Number(summary.createdAtMs)))
+    : 0;
+  return {
+    nodeId: toOptionalString(summary?.nodeId, null) || `summary-${sessionNumber || 'unknown'}-${createdAtMs || 'fallback'}`,
+    content,
+    sessionNumber,
+    createdAtMs,
+  };
+}
+
+function gatherPriorSessionSummaries(limit = 3, options = {}) {
+  const maxResults = Math.max(1, Math.min(20, Number(limit) || DEFAULT_SESSION_HISTORY_LIMIT));
+  const queryFn = typeof options.querySessionSummariesFromMemory === 'function'
+    ? options.querySessionSummariesFromMemory
+    : querySessionSummariesFromMemory;
+  const fallbackFn = typeof options.readFallbackSummary === 'function'
+    ? options.readFallbackSummary
+    : readFallbackSummary;
+
+  let summaries = [];
+  try {
+    const queriedSummaries = queryFn(maxResults, {
+      cognitiveMemoryApi: options.cognitiveMemoryApi,
+    });
+    summaries = Array.isArray(queriedSummaries) ? queriedSummaries : [];
+  } catch {
+    summaries = [];
+  }
+
+  const normalized = summaries
+    .map((summary) => normalizePriorSessionSummary(summary))
+    .filter(Boolean)
+    .slice(0, maxResults);
+  if (normalized.length > 0) return normalized;
+
+  const fallbackContent = fallbackFn(options.fallbackPath);
+  const fallbackSummary = normalizePriorSessionSummary({
+    nodeId: 'fallback-last-session-summary',
+    content: fallbackContent,
+    sessionNumber: null,
+    createdAtMs: 0,
+  });
+  return fallbackSummary ? [fallbackSummary] : [];
+}
+
+async function querySessionSnapshotSummary(sessionId, options = {}) {
+  if (typeof options.querySessionSnapshot !== 'function') return null;
+  try {
+    const snapshot = await Promise.resolve(options.querySessionSnapshot({ sessionId }));
+    const payload = safeJsonObject(snapshot?.content && typeof snapshot.content === 'object'
+      ? snapshot.content
+      : snapshot);
+    const sessionSummary = safeJsonObject(payload.sessionSummary);
+    const content = toOptionalString(
+      sessionSummary.summaryMarkdown
+      || sessionSummary.summaryText
+      || payload.summaryMarkdown
+      || payload.summaryText,
+      null
+    );
+    if (!content) return null;
+    return normalizePriorSessionSummary({
+      nodeId: toOptionalString(snapshot?.snapshotId, null) || 'session-end-snapshot',
+      content,
+      sessionNumber: parseSessionNumber(sessionSummary.sessionNumber ?? payload.session),
+      createdAtMs: Number(sessionSummary.createdAtMs ?? snapshot?.createdAtMs ?? 0) || 0,
+    });
+  } catch {
+    return null;
+  }
 }
 
 function normalizeUnresolvedClaims(claims = [], maxClaims = UNRESOLVED_CLAIMS_MAX) {
@@ -734,6 +903,35 @@ function buildSessionHandoffMarkdown(rows, options = {}) {
     }
   }
 
+  // Prior session summaries for cross-session continuity
+  const priorSummaries = Array.isArray(options.priorSessionSummaries) ? options.priorSessionSummaries : [];
+  if (priorSummaries.length > 0) {
+    lines.push(
+      '',
+      '## Prior Session Summaries',
+      '',
+    );
+    for (const summary of priorSummaries) {
+      const sessionLabel = summary.sessionNumber ? `Session ${summary.sessionNumber}` : 'Unknown session';
+      const createdAt = summary.createdAtMs > 0 ? toIso(summary.createdAtMs) : '-';
+      lines.push(`### ${sessionLabel} (captured: ${createdAt})`);
+      lines.push('');
+      // Include full summary content, indented as a block
+      const content = String(summary.content || '').trim();
+      if (content) {
+        // Strip the top-level heading if present (it would be redundant)
+        const contentLines = content.split('\n');
+        const startIndex = contentLines.length > 0 && /^#\s+Session\s+\d+/.test(contentLines[0]) ? 1 : 0;
+        for (let i = startIndex; i < contentLines.length; i += 1) {
+          lines.push(contentLines[i]);
+        }
+      } else {
+        lines.push('(no content)');
+      }
+      lines.push('');
+    }
+  }
+
   return `${lines.join('\n')}\n`;
 }
 
@@ -744,15 +942,22 @@ function resolvePrimarySessionHandoffPath() {
   return path.join(WORKSPACE_PATH, HANDOFFS_RELATIVE_DIR, SESSION_HANDOFF_FILE);
 }
 
+function resolveLastSessionHandoffPath(primaryPath) {
+  return path.join(path.dirname(primaryPath), 'last-session.md');
+}
+
 async function ensureParentDir(targetPath) {
   await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
 }
 
-async function writeTextIfChanged(filePath, content) {
+async function writeTextIfChanged(filePath, content, options = {}) {
   const next = String(content || '');
   try {
+    let current = null;
+    let hasExistingFile = false;
     try {
-      const current = await fs.promises.readFile(filePath, 'utf8');
+      current = await fs.promises.readFile(filePath, 'utf8');
+      hasExistingFile = true;
       if (current === next) {
         return { changed: false };
       }
@@ -763,8 +968,15 @@ async function writeTextIfChanged(filePath, content) {
     }
 
     await ensureParentDir(filePath);
+    let backupPath = null;
+    const requestedBackupPath = toOptionalString(options.backupPath, null);
+    if (hasExistingFile && requestedBackupPath && path.resolve(requestedBackupPath) !== path.resolve(filePath)) {
+      await ensureParentDir(requestedBackupPath);
+      await fs.promises.writeFile(requestedBackupPath, current, 'utf8');
+      backupPath = requestedBackupPath;
+    }
     await fs.promises.writeFile(filePath, next, 'utf8');
-    return { changed: true };
+    return { changed: true, backupPath };
   } catch (err) {
     return { changed: false, error: err.message };
   }
@@ -805,6 +1017,7 @@ async function materializeSessionHandoff(options = {}) {
         )
     );
   const crossSessionRows = Array.isArray(queriedCrossSessionRows) ? queriedCrossSessionRows : [];
+  const sourceSession = selectSourceSessionRows(sessionId, rows, crossSessionRows);
   const unresolvedClaims = Array.isArray(options.unresolvedClaims)
     ? normalizeUnresolvedClaims(options.unresolvedClaims, options.unresolvedClaimsMax)
     : await queryUnresolvedClaims({
@@ -814,8 +1027,56 @@ async function materializeSessionHandoff(options = {}) {
       unresolvedClaimsMax: options.unresolvedClaimsMax,
     });
 
-  const markdown = buildSessionHandoffMarkdown(rows, {
-    sessionId: sessionId || '-',
+  // Gather prior session summaries for cross-session continuity
+  const sessionHistoryLimit = Math.max(0, Number(options.sessionHistoryLimit) || DEFAULT_SESSION_HISTORY_LIMIT);
+  let priorSessionSummaries = [];
+  if (Array.isArray(options.priorSessionSummaries)) {
+    priorSessionSummaries = options.priorSessionSummaries;
+  } else if (sessionHistoryLimit > 0 && options.skipSessionHistory !== true && options.enableSessionHistory === true) {
+    priorSessionSummaries = gatherPriorSessionSummaries(sessionHistoryLimit, {
+      cognitiveMemoryApi: options.cognitiveMemoryApi,
+      fallbackPath: options.sessionSummaryFallbackPath,
+      querySessionSummariesFromMemory: options.querySessionSummariesFromMemory,
+      readFallbackSummary: options.readFallbackSummary,
+    });
+  }
+  if (sourceSession.usedFallback && sourceSession.sessionId) {
+    const snapshotSummary = await querySessionSnapshotSummary(sourceSession.sessionId, options);
+    if (snapshotSummary) {
+      const dedupKey = `${snapshotSummary.sessionNumber || 'unknown'}:${snapshotSummary.content}`;
+      const existingKeys = new Set(priorSessionSummaries
+        .map((summary) => normalizePriorSessionSummary(summary))
+        .filter(Boolean)
+        .map((summary) => `${summary.sessionNumber || 'unknown'}:${summary.content}`));
+      if (!existingKeys.has(dedupKey)) {
+        priorSessionSummaries = [snapshotSummary, ...priorSessionSummaries];
+      }
+    }
+  }
+
+  const normalizedPriorSessionSummaries = priorSessionSummaries
+    .map((summary) => normalizePriorSessionSummary(summary))
+    .filter(Boolean);
+
+  const primaryPath = toOptionalString(options.outputPath, null) || resolvePrimarySessionHandoffPath();
+  const fallbackOnly = sourceSession.meaningfulRows.length === 0
+    && normalizedPriorSessionSummaries.length === 0
+    && unresolvedClaims.length === 0;
+  if (fallbackOnly) {
+    return {
+      ok: true,
+      outputPath: primaryPath,
+      mirrorPath: options.legacyMirrorPath === false ? null : toOptionalString(options.legacyMirrorPath, null),
+      rowsScanned: 0,
+      written: false,
+      skipped: true,
+      reason: 'no_meaningful_content',
+      sourceSessionId: sourceSession.sessionId || sessionId || null,
+    };
+  }
+
+  const markdown = buildSessionHandoffMarkdown(sourceSession.rows, {
+    sessionId: sourceSession.sessionId || sessionId || '-',
     nowMs: options.nowMs,
     recentLimit: options.recentLimit,
     taggedLimit: options.taggedLimit,
@@ -828,15 +1089,18 @@ async function materializeSessionHandoff(options = {}) {
     crossSessionTaggedRows: crossSessionRows,
     unresolvedClaims,
     unresolvedClaimsMax: options.unresolvedClaimsMax,
+    priorSessionSummaries: normalizedPriorSessionSummaries,
   });
 
-  const primaryPath = toOptionalString(options.outputPath, null) || resolvePrimarySessionHandoffPath();
   const legacyMirrorPath = options.legacyMirrorPath === false
     ? null
     : toOptionalString(options.legacyMirrorPath, null);
+  const backupPath = options.lastSessionPath === false
+    ? null
+    : toOptionalString(options.lastSessionPath, null) || resolveLastSessionHandoffPath(primaryPath);
 
   const writes = [];
-  const primaryWrite = await writeTextIfChanged(primaryPath, markdown);
+  const primaryWrite = await writeTextIfChanged(primaryPath, markdown, { backupPath });
   if (primaryWrite.error) {
     return {
       ok: false,
@@ -846,7 +1110,7 @@ async function materializeSessionHandoff(options = {}) {
       rowsScanned: Array.isArray(rows) ? rows.length : 0,
     };
   }
-  writes.push({ path: primaryPath, changed: primaryWrite.changed });
+  writes.push({ path: primaryPath, changed: primaryWrite.changed, backupPath: primaryWrite.backupPath || null });
 
   if (legacyMirrorPath && path.resolve(legacyMirrorPath) !== path.resolve(primaryPath)) {
     const mirrorWrite = await writeTextIfChanged(legacyMirrorPath, markdown);
@@ -866,9 +1130,11 @@ async function materializeSessionHandoff(options = {}) {
     ok: true,
     outputPath: primaryPath,
     mirrorPath: legacyMirrorPath,
-    rowsScanned: Array.isArray(rows) ? rows.length : 0,
+    rowsScanned: Array.isArray(sourceSession.rows) ? sourceSession.rows.length : 0,
     written: writes.some((entry) => entry.changed),
     writes,
+    sourceSessionId: sourceSession.sessionId || sessionId || null,
+    usedFallbackSession: sourceSession.usedFallback === true,
   };
 }
 
@@ -934,6 +1200,10 @@ module.exports = {
     resolveCurrentSessionScopeIdFromAppStatus,
     resolveEffectiveSessionScopeId,
     resolvePrimarySessionHandoffPath,
+    resolveLastSessionHandoffPath,
+    isMeaningfulHandoffRow,
+    filterMeaningfulRows,
+    selectSourceSessionRows,
     LEGACY_PANE_HANDOFFS,
   },
 };
