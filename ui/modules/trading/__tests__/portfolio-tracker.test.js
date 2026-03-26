@@ -66,6 +66,11 @@ describe('portfolio-tracker', () => {
 
     const snapshot = await portfolioTracker.getPortfolioSnapshot({
       persist: false,
+      state: {
+        peakEquity: null,
+        dayStartEquity: null,
+        dayStartDate: null,
+      },
       defiDeposits: [
         { venue: 'Morpho', amount: 50, currentValue: 52, apy: 0.08, locked: true },
       ],

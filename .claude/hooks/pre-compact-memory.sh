@@ -39,3 +39,8 @@ COMPACTION SURVIVAL NOTES:
 - Check workspace/knowledge/ for shared procedural memory.
 - Check .squidrun/app-status.json for current session number.
 CONTEXT
+
+# Inject Agency Layer verbatim anchors and profiles
+if command -v node >/dev/null 2>&1; then
+  node "$PROJECT_DIR/ui/scripts/hm-hook-injection.js"
+fi

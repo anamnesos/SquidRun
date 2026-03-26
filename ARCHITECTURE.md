@@ -110,7 +110,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/ipc/shared-context-handlers.js: Registers IPC channels (read-shared-context, write-shared-context, get-shared-context-path, ...).
 - ui/modules/ipc/smart-routing-handlers.js: Registers IPC channels (route-task, get-best-agent, get-agent-roles, ...).
 - ui/modules/ipc/state-handlers.js: Registers IPC channels (get-state, set-state, trigger-sync, ...).
-- ui/modules/ipc/task-parser-handlers.js: Registers IPC channels (parse-task-input, route-task-input).
+- ui/modules/ipc/task-parser-handlers.js: Registers IPC channels (parse-task-input, route-task-input), returns high-stakes problem previews/capability output, and persists detected intake into the problem orchestrator on routed submissions.
 - ui/modules/ipc/task-pool-handlers.js: Registers IPC channels (get-task-list, claim-task, update-task-status, ...).
 - ui/modules/ipc/team-memory-handlers.js: Exports TEAM_MEMORY_CHANNELS, registerTeamMemoryHandlers, unregisterTeamMemoryHandlers.
 - ui/modules/ipc/template-handlers.js: Registers IPC channels (save-template, load-template, list-templates, ...).
@@ -157,6 +157,8 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/model-selector.js: Exports initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute, ....
 - ui/modules/notifications.js: Exports showNotification, showToast, showStatusNotice, DEFAULT_TOAST_TIMEOUT, ....
 - ui/modules/performance-data.js: Exports DEFAULT_PERFORMANCE, createDefaultPerformance, createPerformanceLoader.
+- ui/modules/capability-planner.js: Static domain capability registry that turns detected legal/financial/medical problems into user-facing "here is what we can do" action plans.
+- ui/modules/problem-orchestrator.js: Phase 1 real-problem orchestration skeleton that owns `.squidrun/runtime/active-cases.json`, dedupes intake records, attaches capability plans, and surfaces oracle timeout/disagreement warnings in case state and startup summaries.
 - ui/modules/pipeline.js: Exports init, setMainWindow, onMessage, markCommitted, ....
 - ui/modules/plugins/index.js: Plugin-module entrypoint that re-exports `createPluginManager`.
 - ui/modules/plugins/plugin-manager.js: Plugin Manager Loads plugin manifests, manages lifecycle, and dispatches hook events.
@@ -179,7 +181,7 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/modules/tabs/oracle.js: Exports setupOracleTab, destroyOracleTab, applyImageGenCapability.
 - ui/modules/tabs/screenshots.js: Exports setupScreenshots, destroyScreenshots, loadScreenshots.
 - ui/modules/tabs/utils.js: Exports escapeHtml.
-- ui/modules/task-parser.js: Exports parseTaskInput.
+- ui/modules/task-parser.js: Exports parseTaskInput and lightweight legal/financial/medical problem-intake detection metadata for orchestration triggers.
 - ui/modules/team-memory/backfill.js: Exports runBackfill, buildBackfillRecord, resolveDefaultEvidenceLedgerDbPath.
 - ui/modules/team-memory/claims.js: Exports TeamMemoryClaims, CLAIM_TYPES, CLAIM_STATUS, CONSENSUS_POSITIONS, ....
 - ui/modules/team-memory/comms-tagged-extractor.js: Exports TAG_RULES, extractTaggedItems, buildTaggedClaimRecord, extractTaggedClaimsFromComms, ....
@@ -241,10 +243,13 @@ SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (
 - ui/scripts/doc-lint.js: Lints `.squidrun/build/*.md` docs for active-item caps, required metadata fields, and stale-marker correctness.
 - ui/scripts/evidence-ledger-seed-memory.js: Seeds Evidence Ledger decision memory from context snapshot markdown/JSON with deterministic IDs.
 - ui/scripts/hm-bg.js: Background Builder control CLI; uses WebSocket for live PTY agents and the durable supervisor queue CLI for queued work.
+- ui/scripts/hm-capabilities.js: Runtime capability-manifest CLI that scans live `hm-*` scripts, writes `.squidrun/runtime/tool-manifest.json`, and supports `list`, `search`, and `verify` lookups before agents make negative capability claims.
 - ui/scripts/hm-ci-check.js: CLI utility for reading the latest CI/pre-commit gate status used by review and release workflows.
 - ui/scripts/hm-claim.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-comms.js: CLI utility that reads comms history from `.squidrun/runtime/evidence-ledger.db` via `node:sqlite`.
 - ui/scripts/hm-compat-count.js: Utility script for compatibility/counting diagnostics used in release and audit workflows.
+- ui/scripts/hm-defi-close.js: Hyperliquid position-close CLI that cancels open TP/SL orders, submits a reduce-only IOC close order, and verifies the position is flat.
+- ui/scripts/hm-defi-execute.js: DeFi execution pipeline CLI that bridges funds, swaps collateral, deposits to Hyperliquid, and opens the configured leveraged perp trade.
 - ui/scripts/hm-doctor.js: Preflight health-check CLI for dependencies, native modules, transport port, shell defaults, and `.squidrun` permissions.
 - ui/scripts/hm-experiment.js: CLI utility that sends/queries runtime actions via WebSocket.
 - ui/scripts/hm-github.js: CLI utility that sends/queries runtime actions via WebSocket.

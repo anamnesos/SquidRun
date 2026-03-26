@@ -7,6 +7,7 @@ const { promisify } = require('util');
 
 const { getProjectRoot, resolveCoordPath } = require('../../config');
 const { queryCommsJournalEntries } = require('../main/comms-journal');
+const { getCrisisUniverse } = require('./crisis-mode');
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_CONSULTATION_TIMEOUT_MS = 120_000;
@@ -94,6 +95,9 @@ function createConsultationRequest(payload = {}) {
     bars: serializeMap(payload.bars || {}),
     news: serializeMap(payload.news || []),
     accountSnapshot: serializeMap(payload.accountSnapshot || null),
+    macroRisk: serializeMap(payload.macroRisk || null),
+    strategyMode: toText(payload.strategyMode || payload.macroRisk?.strategyMode || null).toLowerCase() || null,
+    brokerCapabilities: serializeMap(payload.brokerCapabilities || null),
   };
 }
 
@@ -165,8 +169,22 @@ function buildConsultationPrompt(targetRole, request = {}, options = {}) {
   const relativePath = path.relative(getProjectRoot(), requestPath).replace(/\\/g, '/');
   const deadline = request.deadline || new Date(Date.now() + DEFAULT_CONSULTATION_TIMEOUT_MS).toISOString();
   const symbols = Array.isArray(request.symbols) ? request.symbols : [];
+  const strategyMode = toText(request.strategyMode || request?.macroRisk?.strategyMode || null).toLowerCase();
+  const crisisUniverse = getCrisisUniverse(request?.macroRisk || request);
+  const executableCrisisBuys = Array.isArray(request?.brokerCapabilities?.supportedUniverse)
+    ? request.brokerCapabilities.supportedUniverse
+    : [];
   const sampleSignals = symbols.slice(0, 2).map((ticker) => (
-    { ticker, direction: 'BUY', confidence: 0.72, reasoning: '...' }
+    {
+      ticker,
+      direction: strategyMode === 'crisis'
+        ? 'BUY'
+        : (request?.macroRisk?.constraints?.allowLongs === false ? 'HOLD' : 'BUY'),
+      confidence: strategyMode === 'crisis'
+        ? 0.76
+        : (request?.macroRisk?.constraints?.allowLongs === false ? 0.83 : 0.72),
+      reasoning: '...'
+    }
   ));
   if (sampleSignals.length === 0) {
     sampleSignals.push({ ticker: 'BTC/USD', direction: 'BUY', confidence: 0.72, reasoning: '...' });
@@ -177,13 +195,35 @@ function buildConsultationPrompt(targetRole, request = {}, options = {}) {
     signals: sampleSignals,
   });
 
+  const macroRisk = request?.macroRisk || null;
+  const macroInstruction = strategyMode === 'crisis'
+    ? `Live macro regime: ${toText(macroRisk?.regime).toUpperCase()} with strategy mode CRISIS (score ${toNumber(macroRisk?.score, 0)}). ${toText(macroRisk?.reason)}`
+    : (macroRisk
+      ? `Live macro regime: ${toText(macroRisk.regime).toUpperCase()} (score ${toNumber(macroRisk.score, 0)}). ${toText(macroRisk.reason)} ${macroRisk?.constraints?.allowLongs === false ? 'Do not emit BUY signals under this regime. Use HOLD or defensive SELL only.' : 'Scale any BUY confidence by the current macro regime before replying.'}`
+      : '');
+
+  if (strategyMode === 'crisis') {
+    return [
+      `Crisis consultation for ${request.requestId}: what should we short or hedge?`,
+      `Use the crisis universe only: ${crisisUniverse.join(', ')}.`,
+      `Phase 1 executable path is BUY-side only, so prefer BUY ideas on tradable inverse ETFs / crisis longs first. Executable BUY universe from broker capabilities: ${executableCrisisBuys.join(', ') || 'none provided'}.`,
+      'SHORT, COVER, and BUY_PUT are valid signal directions for analysis, but they are not executable in Phase 1.',
+      `Market context and broker capabilities are in ${relativePath} (${requestPath}).`,
+      macroInstruction,
+      `Reply via hm-send architect with JSON containing a signal for EVERY symbol: ${sample}`,
+      `Deadline: ${deadline}.`,
+      'Use your normal role prefix if needed, but keep the JSON itself valid and complete. Include all symbols, not just the examples shown.',
+    ].filter(Boolean).join(' ');
+  }
+
   return [
     `Analyze ALL ${symbols.length} symbols in consultation request ${request.requestId}: ${symbols.join(', ')}.`,
     `Market context at ${relativePath} (${requestPath}).`,
+    macroInstruction,
     `Reply via hm-send architect with JSON containing a signal for EVERY symbol: ${sample}`,
     `Deadline: ${deadline}.`,
     'Use your normal role prefix if needed, but keep the JSON itself valid and complete. Include all symbols, not just the examples shown.',
-  ].join(' ');
+  ].filter(Boolean).join(' ');
 }
 
 async function dispatchConsultationRequests(request = {}, agentIds = [], options = {}) {

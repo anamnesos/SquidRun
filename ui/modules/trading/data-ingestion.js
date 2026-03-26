@@ -687,6 +687,7 @@ module.exports = {
   normalizeSnapshotCollection,
   normalizeNewsItem,
   normalizeBarRecord,
+  normalizeBarsMap,
   getMarketClock,
   getMarketCalendar,
   getWatchlistSnapshots,

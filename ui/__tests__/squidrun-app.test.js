@@ -166,6 +166,11 @@ jest.mock('../scripts/hm-telegram', () => ({
     chatId: 123456789,
     messageId: 42,
   })),
+  normalizeChatId: jest.fn((value) => {
+    if (value === null || value === undefined) return null;
+    const text = String(value).trim();
+    return /^-?\d+$/.test(text) ? text : null;
+  }),
 }));
 
 // Mock organic-ui-handlers
@@ -1724,6 +1729,47 @@ describe('SquidRunApp', () => {
       );
       expect(app.telegramInboundContext.lastInboundAtMs).toBeGreaterThan(0);
     });
+
+    it('captures inbound Telegram chatId for reply routing', () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('hi there', 'eunbyul', { chatId: 8754356993 });
+
+      expect(app.telegramInboundContext).toEqual(
+        expect.objectContaining({
+          sender: 'eunbyul',
+          chatId: '8754356993',
+        })
+      );
+    });
+
+    it('includes saved file path in pane injection for inbound Telegram photos', () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      const triggers = require('../modules/triggers');
+      telegramPoller.start.mockReturnValue(true);
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('[Photo received]', '@Rachelchoi', {
+        chatId: 8754356993,
+        media: {
+          kind: 'photo',
+          localPath: 'D:\\projects\\Korean Fraud\\telegram-photos\\photo-11.jpg',
+          latestScreenshotPath: 'D:\\projects\\squidrun\\.squidrun\\screenshots\\latest.png',
+        },
+      });
+
+      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
+        ['1'],
+        '[Telegram from @Rachelchoi]: [Photo received] | saved: D:\\projects\\Korean Fraud\\telegram-photos\\photo-11.jpg',
+        null
+      );
+    });
   });
 
   describe('Telegram auto-reply routing', () => {
@@ -1792,6 +1838,7 @@ describe('SquidRunApp', () => {
       app.telegramInboundContext = {
         sender: null,
         lastInboundAtMs: 0,
+        chatId: null,
       };
 
       const result = await app.routeTelegramReply({
@@ -1811,6 +1858,34 @@ describe('SquidRunApp', () => {
             routeKind: 'telegram',
             targetRaw: 'telegram',
           }),
+          chatId: null,
+        })
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: true,
+          status: 'telegram_delivered',
+        })
+      );
+    });
+
+    it('passes chatId override through routeTelegramReply', async () => {
+      const { sendTelegram } = require('../scripts/hm-telegram');
+
+      const result = await app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Direct ping to Eunbyul.',
+        messageId: 'telegram-route-3',
+        chatId: '8754356993',
+      });
+
+      expect(sendTelegram).toHaveBeenCalledWith(
+        'Direct ping to Eunbyul.',
+        process.env,
+        expect.objectContaining({
+          messageId: 'telegram-route-3',
+          chatId: '8754356993',
         })
       );
       expect(result).toEqual(

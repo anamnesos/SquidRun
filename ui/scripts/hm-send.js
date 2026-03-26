@@ -18,7 +18,7 @@ const {
   appendCommsJournalEntry,
   closeCommsJournalStores,
 } = require('../modules/main/comms-journal');
-const { sendTelegram, sendTelegramPhoto } = require('./hm-telegram');
+const { sendTelegram, sendTelegramPhoto, normalizeChatId } = require('./hm-telegram');
 const {
   buildOutboundMessageEnvelope,
   buildCanonicalEnvelopeMetadata,
@@ -116,12 +116,13 @@ let resolvedMessageFilePath = null;
 let cleanupMessageFilePathOnSuccess = null;
 let useStdin = false;
 let telegramPhotoPath = null;
+let telegramChatIdOverride = null;
 
 // Known flags that signal end of inline message content.
 // Words starting with "--" that are NOT in this set are treated as message text,
 // which prevents accidental truncation when message content contains "--something".
 const KNOWN_FLAGS = new Set([
-  '--role', '--file', '--stdin', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices',
+  '--role', '--file', '--stdin', '--photo', '--priority', '--timeout', '--retries', '--no-fallback', '--list-devices', '--chat-id',
 ]);
 
 function shouldCleanupMessageFile(filePath) {
@@ -178,6 +179,11 @@ for (; i < args.length; i++) {
       process.exit(1);
     }
     telegramPhotoPath = args[i + 1];
+    i++;
+    continue;
+  }
+  if (token === '--chat-id' && args[i + 1]) {
+    telegramChatIdOverride = args[i + 1];
     i++;
     continue;
   }
@@ -952,12 +958,14 @@ async function sendSpecialTargetFallback(targetInput, request = null) {
         senderRole: specialRequest.senderRole || role || 'system',
         sessionId: specialRequest.sessionId || null,
         metadata: specialRequest.metadata || null,
+        chatId: telegramChatIdOverride || null,
       })
       : sendTelegram(specialRequest.content, process.env, {
         messageId: specialRequest.messageId || null,
         senderRole: specialRequest.senderRole || role || 'system',
         sessionId: specialRequest.sessionId || null,
         metadata: specialRequest.metadata || null,
+        chatId: telegramChatIdOverride || null,
       });
     const result = await sendOperation;
     if (!result?.ok) {
@@ -1334,13 +1342,24 @@ async function sendViaWebSocketWithAck(envelope, options = {}) {
   let lastError = null;
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    ws.send(JSON.stringify(buildWebSocketDispatchMessage(envelope, {
+    const dispatchMessage = buildWebSocketDispatchMessage(envelope, {
       target,
       priority,
       ackRequired: true,
       attempt,
       maxAttempts: attempts,
-    })));
+    });
+    const resolvedTelegramChatId = normalizeChatId(telegramChatIdOverride);
+    if (resolvedTelegramChatId && isSpecialTarget(target)) {
+      dispatchMessage.metadata = {
+        ...(dispatchMessage.metadata || {}),
+        chatId: resolvedTelegramChatId,
+        telegram: {
+          chatId: resolvedTelegramChatId,
+        },
+      };
+    }
+    ws.send(JSON.stringify(dispatchMessage));
 
     try {
       const ack = await waitForMatch(

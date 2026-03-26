@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "updatedAt": "2026-03-26",
+  "packs": [
+    {
+      "domain": "legal",
+      "templates": [
+        {
+          "id": "contents-certification",
+          "path": "legal/contents-certification-template.md",
+          "label": "Contents Certification / 내용증명"
+        },
+        {
+          "id": "complaint-filing",
+          "path": "legal/complaint-filing-template.md",
+          "label": "Complaint Filing Template"
+        },
+        {
+          "id": "evidence-index",
+          "path": "legal/evidence-index-template.md",
+          "label": "Evidence Index"
+        }
+      ]
+    },
+    {
+      "domain": "financial",
+      "templates": [
+        {
+          "id": "debt-summary",
+          "path": "financial/debt-summary-template.md",
+          "label": "Debt Summary"
+        },
+        {
+          "id": "creditor-map",
+          "path": "financial/creditor-map-template.md",
+          "label": "Creditor Map"
+        },
+        {
+          "id": "program-eligibility-checklist",
+          "path": "financial/program-eligibility-checklist-template.md",
+          "label": "Program Eligibility Checklist"
+        }
+      ]
+    }
+  ]
+}

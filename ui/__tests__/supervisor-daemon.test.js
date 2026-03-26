@@ -73,6 +73,7 @@ const chokidar = require('chokidar');
 const fs = require('fs');
 const { runMemoryConsistencyCheck } = require('../modules/memory-consistency-check');
 const executor = require('../modules/trading/executor');
+const macroRiskGate = require('../modules/trading/macro-risk-gate');
 const { SupervisorDaemon } = require('../supervisor-daemon');
 
 function createMockStore() {
@@ -556,6 +557,291 @@ describe('supervisor-daemon integrations', () => {
     expect(tradingOrchestrator.runEndOfDay).not.toHaveBeenCalled();
 
     await tradingDaemon.stop('test-cleanup-trade-reconcile-tick');
+  });
+
+  test('opens a Hyperliquid ETH short after approved crypto SELL consensus', async () => {
+    jest.spyOn(macroRiskGate, 'assessMacroRisk').mockResolvedValue({
+      regime: 'red',
+      score: 55,
+      reason: 'defensive',
+      constraints: {
+        allowLongs: false,
+        positionSizeMultiplier: 1,
+      },
+    });
+
+    const consensusPhase = {
+      results: [
+        {
+          ticker: 'ETH/USD',
+          consensus: true,
+          decision: 'SELL',
+          confidence: 0.86,
+          agreementCount: 3,
+        },
+      ],
+      approvedTrades: [
+        {
+          ticker: 'ETH/USD',
+          consensus: { decision: 'SELL' },
+          riskCheck: { maxShares: 1.25 },
+          referencePrice: 2100,
+        },
+      ],
+      rejectedTrades: [],
+      incompleteSignals: [],
+    };
+    const cryptoTradingOrchestrator = {
+      clearSignals: jest.fn(),
+      runPreMarket: jest.fn().mockResolvedValue({ phase: 'premarket' }),
+      runConsensusRound: jest.fn().mockResolvedValue(consensusPhase),
+      runMarketOpen: jest.fn().mockResolvedValue({ executions: [] }),
+    };
+    const hyperliquidExecutor = {
+      getAccountState: jest.fn().mockResolvedValue({
+        accountValue: 37,
+        positions: [],
+      }),
+      openEthShort: jest.fn().mockResolvedValue({ ok: true, exitCode: 0, stdout: 'opened' }),
+      closeEthPosition: jest.fn(),
+    };
+    const tradingDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: false,
+      cryptoTradingEnabled: true,
+      cryptoMonitorOnly: false,
+      hyperliquidExecutionEnabled: true,
+      cryptoTradingOrchestrator,
+      hyperliquidExecutor,
+      pidPath: '/tmp/hyperliquid-open.pid',
+      statusPath: '/tmp/hyperliquid-open-status.json',
+      logPath: '/tmp/hyperliquid-open.log',
+      taskLogDir: '/tmp/hyperliquid-open-tasks',
+      wakeSignalPath: '/tmp/hyperliquid-open-wake.signal',
+    });
+    jest.spyOn(tradingDaemon, 'getCryptoSymbols').mockReturnValue(['ETH/USD']);
+
+    const result = await tradingDaemon.runCryptoConsensusPhase({
+      key: 'crypto_consensus',
+      marketDate: '2026-03-25',
+      scheduledAt: '2026-03-25T20:00:00.000Z',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      hyperliquidExecution: expect.objectContaining({
+        ok: false,
+        skipped: true,
+        phase: 'hyperliquid_execution',
+        reason: 'hyperliquid_disabled',
+      }),
+      summary: expect.objectContaining({
+        hyperliquidAction: 'none',
+        hyperliquidExecuted: false,
+      }),
+    }));
+    expect(cryptoTradingOrchestrator.runMarketOpen).toHaveBeenCalledWith(expect.objectContaining({
+      assetClass: 'crypto',
+      approvedTrades: expect.arrayContaining([
+        expect.objectContaining({ ticker: 'ETH/USD' }),
+      ]),
+    }));
+    expect(hyperliquidExecutor.openEthShort).not.toHaveBeenCalled();
+    expect(hyperliquidExecutor.closeEthPosition).not.toHaveBeenCalled();
+
+    await tradingDaemon.stop('test-cleanup-hyperliquid-open');
+  });
+
+  test('still opens a Hyperliquid ETH short when crypto execution is monitor-only', async () => {
+    jest.spyOn(macroRiskGate, 'assessMacroRisk').mockResolvedValue({
+      regime: 'red',
+      score: 55,
+      reason: 'defensive',
+      constraints: {
+        allowLongs: false,
+        positionSizeMultiplier: 1,
+      },
+    });
+
+    const consensusPhase = {
+      results: [
+        {
+          ticker: 'ETH/USD',
+          consensus: true,
+          decision: 'SELL',
+          confidence: 0.86,
+          agreementCount: 3,
+        },
+      ],
+      approvedTrades: [
+        {
+          ticker: 'ETH/USD',
+          consensus: { decision: 'SELL' },
+          riskCheck: { maxShares: 1.25 },
+          referencePrice: 2100,
+        },
+      ],
+      rejectedTrades: [],
+      incompleteSignals: [],
+    };
+    const cryptoTradingOrchestrator = {
+      clearSignals: jest.fn(),
+      runPreMarket: jest.fn().mockResolvedValue({ phase: 'premarket' }),
+      runConsensusRound: jest.fn().mockResolvedValue(consensusPhase),
+      runMarketOpen: jest.fn(),
+    };
+    const hyperliquidExecutor = {
+      getAccountState: jest.fn().mockResolvedValue({
+        accountValue: 37,
+        positions: [],
+      }),
+      openEthShort: jest.fn().mockResolvedValue({ ok: true, exitCode: 0, stdout: 'opened' }),
+      closeEthPosition: jest.fn(),
+    };
+    const tradingDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: false,
+      cryptoTradingEnabled: true,
+      cryptoMonitorOnly: true,
+      hyperliquidExecutionEnabled: true,
+      cryptoTradingOrchestrator,
+      hyperliquidExecutor,
+      pidPath: '/tmp/hyperliquid-monitor-only.pid',
+      statusPath: '/tmp/hyperliquid-monitor-only-status.json',
+      logPath: '/tmp/hyperliquid-monitor-only.log',
+      taskLogDir: '/tmp/hyperliquid-monitor-only-tasks',
+      wakeSignalPath: '/tmp/hyperliquid-monitor-only-wake.signal',
+    });
+    jest.spyOn(tradingDaemon, 'getCryptoSymbols').mockReturnValue(['ETH/USD']);
+
+    const result = await tradingDaemon.runCryptoConsensusPhase({
+      key: 'crypto_consensus',
+      marketDate: '2026-03-25',
+      scheduledAt: '2026-03-25T20:00:00.000Z',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      execution: null,
+      hyperliquidExecution: expect.objectContaining({
+        ok: false,
+        skipped: true,
+        phase: 'hyperliquid_execution',
+        reason: 'hyperliquid_disabled',
+      }),
+      summary: expect.objectContaining({
+        approvedTrades: 1,
+        executedTrades: 0,
+        hyperliquidAction: 'none',
+        hyperliquidExecuted: false,
+        monitorOnly: true,
+      }),
+    }));
+    expect(cryptoTradingOrchestrator.runMarketOpen).not.toHaveBeenCalled();
+    expect(hyperliquidExecutor.openEthShort).not.toHaveBeenCalled();
+
+    await tradingDaemon.stop('test-cleanup-hyperliquid-monitor-only');
+  });
+
+  test('closes an existing Hyperliquid ETH short on bullish consensus even when BUYs are macro-blocked', async () => {
+    jest.spyOn(macroRiskGate, 'assessMacroRisk').mockResolvedValue({
+      regime: 'red',
+      score: 55,
+      reason: 'defensive',
+      constraints: {
+        allowLongs: false,
+        positionSizeMultiplier: 1,
+      },
+    });
+
+    const consensusPhase = {
+      results: [
+        {
+          ticker: 'ETH/USD',
+          consensus: true,
+          decision: 'BUY',
+          confidence: 0.82,
+          agreementCount: 3,
+        },
+      ],
+      approvedTrades: [
+        {
+          ticker: 'ETH/USD',
+          consensus: { decision: 'BUY' },
+          riskCheck: { maxShares: 1.1 },
+          referencePrice: 2050,
+        },
+      ],
+      rejectedTrades: [],
+      incompleteSignals: [],
+    };
+    const cryptoTradingOrchestrator = {
+      clearSignals: jest.fn(),
+      runPreMarket: jest.fn().mockResolvedValue({ phase: 'premarket' }),
+      runConsensusRound: jest.fn().mockResolvedValue(consensusPhase),
+      runMarketOpen: jest.fn(),
+    };
+    const hyperliquidExecutor = {
+      getAccountState: jest.fn().mockResolvedValue({
+        accountValue: 37,
+        positions: [
+          { coin: 'ETH', size: -0.12, side: 'short', entryPx: 2100, unrealizedPnl: 4.2, liquidationPx: 2400 },
+        ],
+      }),
+      openEthShort: jest.fn(),
+      closeEthPosition: jest.fn().mockResolvedValue({ ok: true, exitCode: 0, stdout: 'closed' }),
+    };
+    const tradingDaemon = new SupervisorDaemon({
+      store: createMockStore(),
+      logger: createMockLogger(),
+      memoryIndexEnabled: false,
+      sleepEnabled: false,
+      tradingEnabled: false,
+      cryptoTradingEnabled: true,
+      cryptoMonitorOnly: false,
+      hyperliquidExecutionEnabled: true,
+      cryptoTradingOrchestrator,
+      hyperliquidExecutor,
+      pidPath: '/tmp/hyperliquid-close.pid',
+      statusPath: '/tmp/hyperliquid-close-status.json',
+      logPath: '/tmp/hyperliquid-close.log',
+      taskLogDir: '/tmp/hyperliquid-close-tasks',
+      wakeSignalPath: '/tmp/hyperliquid-close-wake.signal',
+    });
+    jest.spyOn(tradingDaemon, 'getCryptoSymbols').mockReturnValue(['ETH/USD']);
+
+    const result = await tradingDaemon.runCryptoConsensusPhase({
+      key: 'crypto_consensus',
+      marketDate: '2026-03-25',
+      scheduledAt: '2026-03-25T20:00:00.000Z',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      hyperliquidExecution: expect.objectContaining({
+        ok: false,
+        skipped: true,
+        phase: 'hyperliquid_execution',
+        reason: 'hyperliquid_disabled',
+      }),
+      summary: expect.objectContaining({
+        approvedTrades: 0,
+        executedTrades: 0,
+        hyperliquidAction: 'none',
+        hyperliquidExecuted: false,
+      }),
+    }));
+    expect(cryptoTradingOrchestrator.runMarketOpen).not.toHaveBeenCalled();
+    expect(hyperliquidExecutor.closeEthPosition).not.toHaveBeenCalled();
+    expect(hyperliquidExecutor.openEthShort).not.toHaveBeenCalled();
+
+    await tradingDaemon.stop('test-cleanup-hyperliquid-close');
   });
 
   test('runs Polymarket scan through orchestrator consensus and execution', async () => {

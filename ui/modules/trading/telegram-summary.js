@@ -14,6 +14,11 @@ const os = require('os');
 
 const HM_SEND = path.join(__dirname, '..', '..', 'scripts', 'hm-send.js');
 
+function toNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
 /**
  * Send a message to James via Telegram.
  * Uses --file for long messages to avoid truncation.
@@ -53,20 +58,25 @@ function sendTelegram(message) {
  * @param {Object} [data.consensusStats]
  */
 function sendDailySummary(data) {
-  const sign = data.pnl >= 0 ? '+' : '';
-  const weekSign = (data.weekPnlPct || 0) >= 0 ? '+' : '';
+  const equity = toNumber(data?.equity, 0);
+  const pnl = toNumber(data?.pnl, 0);
+  const pnlPct = toNumber(data?.pnlPct, 0);
+  const weekPnlPct = toNumber(data?.weekPnlPct, 0);
+  const peakEquity = toNumber(data?.peakEquity, 0);
+  const sign = pnl >= 0 ? '+' : '';
+  const weekSign = weekPnlPct >= 0 ? '+' : '';
 
   let tradesSection = 'No trades today';
   if (data.trades && data.trades.length > 0) {
     tradesSection = data.trades.map(t =>
-      `${t.direction} ${t.shares}x ${t.ticker} @ $${t.price.toFixed(2)}`
+      `${t.direction} ${t.shares}x ${t.ticker} @ $${toNumber(t?.price, 0).toFixed(2)}`
     ).join('\n');
   }
 
   let positionsSection = 'No open positions (100% cash)';
   if (data.openPositions && data.openPositions.length > 0) {
     positionsSection = data.openPositions.map(p =>
-      `${p.ticker}: ${p.shares} shares @ $${p.avg_price.toFixed(2)} (stop: $${(p.stop_loss_price || 0).toFixed(2)})`
+      `${p.ticker}: ${toNumber(p?.shares, 0)} shares @ $${toNumber(p?.avgPrice ?? p?.avg_price, 0).toFixed(2)} (stop: $${toNumber(p?.stopLossPrice ?? p?.stop_loss_price, 0).toFixed(2)})`
     ).join('\n');
   }
 
@@ -79,10 +89,10 @@ function sendDailySummary(data) {
   const message = [
     `Trading Day Summary - ${data.date}`,
     '',
-    `Portfolio: $${data.equity.toFixed(2)} (${sign}${(data.pnlPct * 100).toFixed(2)}%)`,
-    `Day P&L: ${sign}$${data.pnl.toFixed(2)}`,
-    `Week-to-date: ${weekSign}${((data.weekPnlPct || 0) * 100).toFixed(2)}%`,
-    `Peak: $${data.peakEquity.toFixed(2)}`,
+    `Portfolio: $${equity.toFixed(2)} (${sign}${(pnlPct * 100).toFixed(2)}%)`,
+    `Day P&L: ${sign}$${pnl.toFixed(2)}`,
+    `Week-to-date: ${weekSign}${(weekPnlPct * 100).toFixed(2)}%`,
+    `Peak: $${peakEquity.toFixed(2)}`,
     '',
     `Trades:`,
     tradesSection,

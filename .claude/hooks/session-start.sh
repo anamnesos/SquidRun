@@ -21,7 +21,17 @@ fi
 
 # On compact/resume, output reminder context
 if [ "$SOURCE" = "compact" ] || [ "$SOURCE" = "resume" ]; then
-  echo '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Session resumed/compacted. Re-read CLAUDE.md and workspace/knowledge/ for context. Check hm-comms history for recent messages."}}'
+  # Build a combined string of the default context + the injected agency layer
+  AGENCY_LAYER=""
+  if command -v node >/dev/null 2>&1; then
+    AGENCY_LAYER=$(node "$PROJECT_DIR/ui/scripts/hm-hook-injection.js")
+  fi
+  
+  # Escape for JSON string
+  COMBINED_CONTEXT="Session resumed/compacted. Re-read CLAUDE.md and workspace/knowledge/ for context. Check hm-comms history for recent messages.\n\n$AGENCY_LAYER"
+  JSON_SAFE_CONTEXT=$(echo -n "$COMBINED_CONTEXT" | jq -Rs .)
+
+  echo '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":'"$JSON_SAFE_CONTEXT"'}}'
 fi
 
 exit 0

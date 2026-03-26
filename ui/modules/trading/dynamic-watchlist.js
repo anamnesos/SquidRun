@@ -94,6 +94,8 @@ function cloneEntry(entry = {}) {
 }
 
 const DEFAULT_WATCHLIST = [
+  { ticker: 'SPY',   name: 'SPDR S&P 500 ETF Trust', sector: 'Index ETF' },
+  { ticker: 'QQQ',   name: 'Invesco QQQ Trust', sector: 'Index ETF/Tech' },
   { ticker: 'AAPL',  name: 'Apple',           sector: 'Tech/Consumer' },
   { ticker: 'MSFT',  name: 'Microsoft',       sector: 'Tech/Cloud' },
   { ticker: 'NVDA',  name: 'NVIDIA',          sector: 'Semiconductors/AI' },
@@ -104,6 +106,16 @@ const DEFAULT_WATCHLIST = [
   { ticker: 'AMD',   name: 'AMD',             sector: 'Semiconductors' },
   { ticker: 'AVGO',  name: 'Broadcom',        sector: 'Semiconductors/Net' },
   { ticker: 'JPM',   name: 'JPMorgan Chase',  sector: 'Financials' },
+  { ticker: 'SQQQ',  name: 'ProShares UltraPro Short QQQ', sector: 'Crisis/Inverse ETF' },
+  { ticker: 'BITI',  name: 'ProShares Short Bitcoin ETF', sector: 'Crisis/Crypto Hedge' },
+  { ticker: 'PSQ',   name: 'ProShares Short QQQ', sector: 'Crisis/Inverse ETF' },
+  { ticker: 'SH',    name: 'ProShares Short S&P500', sector: 'Crisis/Inverse ETF' },
+  { ticker: 'UVXY',  name: 'ProShares Ultra VIX Short-Term Futures ETF', sector: 'Crisis/Volatility' },
+  { ticker: 'XLE',   name: 'Energy Select Sector SPDR Fund', sector: 'Crisis/Energy' },
+  { ticker: 'ITA',   name: 'iShares U.S. Aerospace & Defense ETF', sector: 'Crisis/Defense' },
+  { ticker: 'GLD',   name: 'SPDR Gold Shares', sector: 'Macro/Gold Hedge' },
+  { ticker: 'TLT',   name: 'iShares 20+ Year Treasury Bond ETF', sector: 'Macro/Bond Hedge' },
+  { ticker: 'UUP',   name: 'Invesco DB US Dollar Index Bullish Fund', sector: 'Crisis/USD Hedge' },
 ].map((entry) => {
   const normalized = normalizeWatchlistEntry(entry, { source: 'static', assetClass: 'us_equity' });
   normalized.addedAt = null;

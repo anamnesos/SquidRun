@@ -16,10 +16,20 @@ const polymarketScanner = require('./polymarket-scanner');
 const polymarketSignals = require('./polymarket-signals');
 const polymarketSizer = require('./polymarket-sizer');
 const portfolioTracker = require('./portfolio-tracker');
+const macroRiskGate = require('./macro-risk-gate');
 const tradingScheduler = require('./scheduler');
 const signalProducer = require('./signal-producer');
 const telegramSummary = require('./telegram-summary');
 const yieldRouterModule = require('./yield-router');
+const {
+	STRATEGY_MODES,
+	buildBrokerCapabilityPayload,
+	deriveCrisisRiskLimits,
+	estimateCrisisBookExposure,
+	getCrisisUniverse,
+	normalizeSignalDirection,
+	validateCrisisSignalCapability,
+} = require('./crisis-mode');
 
 const REQUIRED_AGENTS = Object.freeze(['architect', 'builder', 'oracle']);
 const DEFAULT_MODELS = Object.freeze({
@@ -27,7 +37,18 @@ const DEFAULT_MODELS = Object.freeze({
 	builder: 'gpt',
 	oracle: 'gemini',
 });
-const DEFAULT_PROFIT_TARGET_PCT = 0.05;
+const LIVE_ETF_STRATEGY_SYMBOLS = Object.freeze(['SPY', 'QQQ', 'GLD', 'TLT', 'XLE']);
+const LIVE_CRYPTO_MONITOR_SYMBOLS = Object.freeze(['BTC/USD', 'ETH/USD', 'SOL/USD', 'AVAX/USD', 'LINK/USD', 'DOGE/USD']);
+const DEFAULT_LIVE_ENTRY_MODE = 'unanimous_or_high';
+const DEFAULT_LIVE_MIN_AGREE_CONFIDENCE = 0.72;
+const DEFAULT_LIVE_MAX_IDEAS_PER_ROUND = 2;
+const DEFAULT_PROFIT_TARGET_PCT = 0.08;
+const DEFAULT_TRAILING_STOP_PCT = 0.04;
+const DEFAULT_LIVE_MAX_POSITION_PCT = 0.025;
+const DEFAULT_LIVE_EQUITY_LIMITS = Object.freeze({
+	...riskEngine.DEFAULT_LIMITS,
+	maxPositionPct: DEFAULT_LIVE_MAX_POSITION_PCT,
+});
 const DEFAULT_RECENT_TRADE_SCAN = 250;
 const DEFAULT_ACTIVE_TRADING_RATIO = 0.4;
 const DEFAULT_YIELD_ROUTER_RATIO = yieldRouterModule.DEFAULT_YIELD_TARGET_RATIO || 0.35;
@@ -47,8 +68,8 @@ function toAgentId(value) {
 }
 
 function toDirection(value) {
-	const normalized = String(value || '').trim().toUpperCase();
-	if (!['BUY', 'SELL', 'HOLD'].includes(normalized)) {
+	const normalized = normalizeSignalDirection(value, { strict: true });
+	if (!['BUY', 'SELL', 'HOLD', 'SHORT', 'COVER', 'BUY_PUT'].includes(normalized)) {
 		throw new Error(`Unsupported signal direction: ${value}`);
 	}
 	return normalized;
@@ -375,6 +396,192 @@ function normalizeSymbols(symbols, options = {}) {
 	);
 }
 
+function resolveStrategyMode(macroRisk = null) {
+	return String(macroRisk?.strategyMode || STRATEGY_MODES.NORMAL).trim().toLowerCase() || STRATEGY_MODES.NORMAL;
+}
+
+function averageConfidence(signals = []) {
+	if (!Array.isArray(signals) || signals.length === 0) return 0;
+	return signals.reduce((sum, signal) => sum + toConfidence(signal?.confidence), 0) / signals.length;
+}
+
+function resolveEntryMode(options = {}, orchestratorOptions = {}) {
+	return String(
+		options.entryMode
+		|| options.consensusEntryMode
+		|| orchestratorOptions.entryMode
+		|| orchestratorOptions.consensusEntryMode
+		|| DEFAULT_LIVE_ENTRY_MODE
+	).trim().toLowerCase();
+}
+
+function resolveMinAgreeConfidence(options = {}, orchestratorOptions = {}) {
+	return toNumber(
+		options.minAgreeConfidence
+		?? options.minConfidence
+		?? orchestratorOptions.minAgreeConfidence
+		?? orchestratorOptions.minConfidence,
+		DEFAULT_LIVE_MIN_AGREE_CONFIDENCE
+	);
+}
+
+function resolveMaxIdeasPerRound(options = {}, orchestratorOptions = {}) {
+	return toPositiveInteger(
+		options.maxIdeasPerRound
+		?? options.maxIdeasPerStep
+		?? orchestratorOptions.maxIdeasPerRound
+		?? orchestratorOptions.maxIdeasPerStep
+		?? DEFAULT_LIVE_MAX_IDEAS_PER_ROUND
+	);
+}
+
+function shouldTakeApprovedTrade(trade = {}, options = {}, orchestratorOptions = {}) {
+	const entryMode = resolveEntryMode(options, orchestratorOptions);
+	const agreeing = Array.isArray(trade?.consensus?.agreeing) ? trade.consensus.agreeing : [];
+	const agreementCount = toNumber(trade?.consensus?.agreementCount, agreeing.length);
+	const minAgreeConfidence = resolveMinAgreeConfidence(options, orchestratorOptions);
+	const averageAgreeConfidence = averageConfidence(agreeing);
+
+	if (entryMode === 'unanimous') {
+		return {
+			ok: agreementCount === 3,
+			reason: `ENTRY_FILTER: unanimous requires 3 agreeing signals (got ${agreementCount})`,
+			averageAgreeConfidence,
+		};
+	}
+	if (entryMode === 'high_confidence') {
+		return {
+			ok: agreementCount >= 2 && averageAgreeConfidence >= minAgreeConfidence,
+			reason: `ENTRY_FILTER: high_confidence requires 2+ agreeing signals with average confidence >= ${minAgreeConfidence.toFixed(2)} (got ${agreementCount} @ ${averageAgreeConfidence.toFixed(2)})`,
+			averageAgreeConfidence,
+		};
+	}
+	if (entryMode === 'unanimous_or_high') {
+		return {
+			ok: agreementCount === 3 || (agreementCount >= 2 && averageAgreeConfidence >= minAgreeConfidence),
+			reason: `ENTRY_FILTER: unanimous_or_high requires unanimity or 2+ agreeing signals with average confidence >= ${minAgreeConfidence.toFixed(2)} (got ${agreementCount} @ ${averageAgreeConfidence.toFixed(2)})`,
+			averageAgreeConfidence,
+		};
+	}
+	return {
+		ok: agreementCount >= 2,
+		reason: `ENTRY_FILTER: majority requires 2+ agreeing signals (got ${agreementCount})`,
+		averageAgreeConfidence,
+	};
+}
+
+function selectTopTradeIdeas(candidates = [], options = {}, orchestratorOptions = {}) {
+	const capped = resolveMaxIdeasPerRound(options, orchestratorOptions);
+	const sorted = candidates.slice().sort((left, right) => {
+		const leftConfidence = toNumber(left?.averageAgreeConfidence, averageConfidence(left?.consensus?.agreeing || []));
+		const rightConfidence = toNumber(right?.averageAgreeConfidence, averageConfidence(right?.consensus?.agreeing || []));
+		return rightConfidence - leftConfidence;
+	});
+	if (capped <= 0) {
+		return {
+			selected: sorted,
+			excluded: [],
+		};
+	}
+	return {
+		selected: sorted.slice(0, capped),
+		excluded: sorted.slice(capped),
+	};
+}
+
+function resolveDefaultSymbols(symbols, options = {}, macroRisk = null) {
+	const explicitSymbols = Array.isArray(symbols)
+		? symbols
+		: (symbols ? [symbols] : []);
+	if (explicitSymbols.length > 0) {
+		return normalizeSymbols(explicitSymbols, options);
+	}
+
+	const assetClass = watchlist.normalizeAssetClass(options.assetClass || options.asset_class, 'us_equity');
+	if (assetClass === 'crypto') {
+		return normalizeSymbols(LIVE_CRYPTO_MONITOR_SYMBOLS, options);
+	}
+	if (resolveStrategyMode(macroRisk) === STRATEGY_MODES.CRISIS) {
+		return normalizeSymbols(getCrisisUniverse(macroRisk), options);
+	}
+	return normalizeSymbols(LIVE_ETF_STRATEGY_SYMBOLS, options);
+}
+
+function buildCapabilityGateSignal(signal = {}, brokerCapabilities = null, macroRisk = null) {
+	const normalized = {
+		...signal,
+		ticker: toTicker(signal.ticker),
+		direction: normalizeSignalDirection(signal.direction),
+		confidence: toConfidence(signal.confidence),
+		reasoning: String(signal.reasoning || '').trim(),
+	};
+	const validation = validateCrisisSignalCapability(normalized, brokerCapabilities, macroRisk);
+	if (validation.ok) {
+		return normalized;
+	}
+	return {
+		...normalized,
+		direction: 'HOLD',
+		confidence: Math.max(normalized.confidence, 0.74),
+		reasoning: `${normalized.reasoning}${normalized.reasoning ? ' ' : ''}Capability gate blocked ${normalized.ticker}: ${validation.reason}`.trim(),
+	};
+}
+
+function buildEffectiveRiskLimits(baseLimits = {}, macroRisk = null) {
+	if (resolveStrategyMode(macroRisk) !== STRATEGY_MODES.CRISIS) {
+		return baseLimits;
+	}
+	return deriveCrisisRiskLimits(baseLimits);
+}
+
+function resolveLiveRiskLimits(options = {}, orchestratorOptions = {}, macroRisk = null) {
+	const explicitLimits = options.limits || orchestratorOptions.limits;
+	if (explicitLimits) {
+		return explicitLimits;
+	}
+	const assetClass = watchlist.normalizeAssetClass(options.assetClass || options.asset_class, 'us_equity');
+	if (assetClass === 'crypto') {
+		return riskEngine.DEFAULT_CRYPTO_LIMITS;
+	}
+	if (resolveStrategyMode(macroRisk) === STRATEGY_MODES.CRISIS) {
+		return DEFAULT_LIVE_EQUITY_LIMITS;
+	}
+	return DEFAULT_LIVE_EQUITY_LIMITS;
+}
+
+async function fetchBrokerCapabilities(symbols = [], options = {}) {
+	const uniqueSymbols = Array.from(new Set((Array.isArray(symbols) ? symbols : []).map(toTicker).filter(Boolean)));
+	if (uniqueSymbols.length === 0) return null;
+
+	try {
+		const client = options.alpacaClient
+			|| options.client
+			|| dataIngestion.createAlpacaClient(options);
+		if (!client || typeof client.getAsset !== 'function' || typeof client.getAccount !== 'function') {
+			return null;
+		}
+
+		const [account, assets] = await Promise.all([
+			client.getAccount(),
+			Promise.all(uniqueSymbols.map(async (ticker) => {
+				try {
+					return [ticker, await client.getAsset(ticker)];
+				} catch {
+					return [ticker, null];
+				}
+			})),
+		]);
+
+		return buildBrokerCapabilityPayload({
+			account,
+			assets: new Map(assets),
+			phase: 'phase1',
+		});
+	} catch {
+		return null;
+	}
+}
+
 function normalizeSignal(agentId, ticker, signal = {}) {
 	const normalizedAgent = toAgentId(agentId);
 	const normalizedTicker = toTicker(ticker || signal.ticker);
@@ -550,7 +757,7 @@ class TradingOrchestrator {
 			equity: liveEquity,
 			peakEquity,
 			dayStartEquity,
-			tradesToday: this.countTradesToday(db, marketDate, options),
+			tradesToday: toPositiveInteger(options.tradesToday ?? this.countTradesToday(db, marketDate, options)),
 			openPositions: resolvedOpenPositions,
 			portfolioSnapshot,
 		};
@@ -641,6 +848,9 @@ class TradingOrchestrator {
 			bars: context.bars || {},
 			news: context.news || [],
 			accountSnapshot: context.accountSnapshot || null,
+			macroRisk: context.macroRisk || options.macroRisk || null,
+			strategyMode: context.macroRisk?.strategyMode || options.macroRisk?.strategyMode || null,
+			brokerCapabilities: context.brokerCapabilities || options.brokerCapabilities || null,
 		}, {
 			requestsDir: options.consultationRequestsDir || this.options.consultationRequestsDir,
 		});
@@ -657,7 +867,14 @@ class TradingOrchestrator {
 		const responseResult = await consultationStore.collectConsultationResponses(request, requestedAgents, consultationOptions);
 
 		for (const response of responseResult.responses) {
-			signalProducer.registerAllSignals(this, response.agentId, response.signals);
+			const normalizedSignals = (Array.isArray(response.signals) ? response.signals : []).map((signal) => {
+				return buildCapabilityGateSignal(
+					macroRiskGate.applyMacroRiskToSignal(signal, context.macroRisk || options.macroRisk || null),
+					context.brokerCapabilities || options.brokerCapabilities || null,
+					context.macroRisk || options.macroRisk || null
+				);
+			});
+			signalProducer.registerAllSignals(this, response.agentId, normalizedSignals);
 		}
 
 		return {
@@ -688,11 +905,31 @@ class TradingOrchestrator {
 
 		for (const [agentId, missingTickers] of missingByAgent) {
 			const signalOptions = alpacaClient
-				? { client: alpacaClient, emptyPortfolio: Boolean(options.emptyPortfolio), symbols: missingTickers }
-				: { emptyPortfolio: Boolean(options.emptyPortfolio), symbols: missingTickers };
+				? {
+					client: alpacaClient,
+					emptyPortfolio: Boolean(options.emptyPortfolio),
+					symbols: missingTickers,
+					macroRisk: options.macroRisk || null,
+					snapshots: options.snapshots || null,
+					bars: options.bars || null,
+					news: options.news || null,
+				}
+				: {
+					emptyPortfolio: Boolean(options.emptyPortfolio),
+					symbols: missingTickers,
+					macroRisk: options.macroRisk || null,
+					snapshots: options.snapshots || null,
+					bars: options.bars || null,
+					news: options.news || null,
+				};
 			const producedSignals = await signalProducer.produceSignals(agentId, signalOptions);
+			const gatedSignals = producedSignals.map((signal) => buildCapabilityGateSignal(
+				signal,
+				options.brokerCapabilities || null,
+				options.macroRisk || null
+			));
 			const missingSet = new Set(missingTickers.map(toTicker));
-			const selectedSignals = producedSignals.filter((signal) => missingSet.has(toTicker(signal.ticker)));
+			const selectedSignals = gatedSignals.filter((signal) => missingSet.has(toTicker(signal.ticker)));
 			signalProducer.registerAllSignals(this, agentId, selectedSignals);
 			generated.push({
 				agentId,
@@ -1357,7 +1594,7 @@ class TradingOrchestrator {
 			this.syncSmartMoneyWatchlist({ ...options, reason: 'premarket' }),
 			this.syncLaunchRadarWatchlist({ ...options, reason: 'premarket' }),
 		]);
-		const symbols = normalizeSymbols(options.symbols, options);
+		const symbols = resolveDefaultSymbols(options.symbols, options);
 		const marketDate = this.resetForMarketDate(options.date || new Date());
 		const isCrypto = watchlist.normalizeAssetClass(options.assetClass || options.asset_class, 'us_equity') === 'crypto';
 		const calendarDay = isCrypto
@@ -1379,7 +1616,7 @@ class TradingOrchestrator {
 			marketDate: schedule?.marketDate || marketDate,
 			smartMoneyWatchlist,
 			launchRadarWatchlist,
-			watchlist: watchlist.getWatchlist({ assetClass: options.assetClass || options.asset_class }),
+			watchlist: symbols.map((ticker) => watchlist.getEntry(ticker)).filter(Boolean),
 			symbols,
 			schedule,
 			marketContext,
@@ -1410,7 +1647,23 @@ class TradingOrchestrator {
 			this.syncSmartMoneyWatchlist({ ...options, reason: 'consensus_round' }),
 			this.syncLaunchRadarWatchlist({ ...options, reason: 'consensus_round' }),
 		]);
-		const symbols = normalizeSymbols(options.symbols, options);
+		const macroRisk = options.macroRisk || await macroRiskGate.assessMacroRisk().catch(() => null);
+		const strategyMode = resolveStrategyMode(macroRisk);
+		const crisisUniverse = getCrisisUniverse(macroRisk);
+		const symbols = resolveDefaultSymbols(
+			(Array.isArray(options.symbols) && options.symbols.length > 0)
+				? options.symbols
+				: (strategyMode === STRATEGY_MODES.CRISIS ? crisisUniverse : options.symbols),
+			options,
+			macroRisk
+		);
+		const brokerCapabilities = strategyMode === STRATEGY_MODES.CRISIS
+			? await fetchBrokerCapabilities(symbols, {
+				alpacaClient: options.alpacaClient || this.options.alpacaClient || null,
+				client: options.client || this.options.client || null,
+				...options,
+			})
+			: null;
 		const premarketContext = this.state.phases.premarket?.marketContext || {};
 		// Always fetch fresh data — cached Maps lose their entries after JSON serialization
 		const cachedSnapshots = options.snapshots || premarketContext.snapshots;
@@ -1430,7 +1683,7 @@ class TradingOrchestrator {
 			options.news
 				|| (Array.isArray(premarketContext.news) && premarketContext.news.length > 0 ? premarketContext.news : null)
 				|| dataIngestion.getNews({ ...options, symbols, limit: Math.max(20, symbols.length * 3) }).catch(() => []),
-			this.getUnifiedPortfolioSnapshot(options),
+			options.portfolioSnapshot || this.getUnifiedPortfolioSnapshot(options),
 		]);
 		const snapshots = freshSnapshots;
 		const whaleData = options.whaleTransfers || null;
@@ -1440,16 +1693,27 @@ class TradingOrchestrator {
 			news,
 			accountSnapshot: portfolioSnapshot,
 			whaleData,
-		}, options);
-		const autoGeneratedSignals = await this.backfillMissingSignals(symbols, options);
+			macroRisk,
+			brokerCapabilities,
+		}, { ...options, macroRisk });
+		const autoGeneratedSignals = await this.backfillMissingSignals(symbols, {
+			...options,
+			macroRisk,
+			brokerCapabilities,
+			snapshots,
+			bars,
+			news,
+		});
 		const { completeSignals, incomplete } = this.buildSignalMap(symbols);
 		const accountState = this.buildAccountState(portfolioSnapshot, portfolioSnapshot?.positions || [], db, options);
-		const limits = options.limits || this.options.limits || riskEngine.DEFAULT_LIMITS;
+		const limits = buildEffectiveRiskLimits(resolveLiveRiskLimits(options, this.options, macroRisk), macroRisk);
 		const killSwitch = riskEngine.checkKillSwitch(portfolioSnapshot, limits);
 		const dailyPause = riskEngine.checkDailyPause(portfolioSnapshot, limits);
 		const results = completeSignals.size > 0 ? consensus.evaluateAll(completeSignals) : [];
 		const approvedTrades = [];
 		const rejectedTrades = [];
+		const candidateTrades = [];
+		const consensusRecords = [];
 		let simulatedAccountState = cloneAccountState(accountState);
 
 		for (const result of results) {
@@ -1483,39 +1747,133 @@ class TradingOrchestrator {
 			}
 
 			if (result.consensus && result.decision !== 'HOLD' && !killSwitch.triggered && !dailyPause.paused) {
-				riskCheck = riskEngine.checkTrade({
+				const entryDecision = shouldTakeApprovedTrade({
 					ticker: result.ticker,
-					direction: result.decision,
-					price: referencePrice || 0,
-					marketCap: options.marketCaps?.[result.ticker] ?? null,
-					assetClass,
-				}, simulatedAccountState, limits);
-				actedOn = Boolean(riskCheck.approved);
-				if (riskCheck.approved) {
-					approvedTrades.push({
-						ticker: result.ticker,
-						consensus: result,
-						referencePrice,
-						riskCheck,
-						marketCap: options.marketCaps?.[result.ticker] ?? null,
-						limits,
-					});
-					simulatedAccountState = applyTradeToAccountState(simulatedAccountState, {
-						ticker: result.ticker,
-						direction: result.decision,
-						price: referencePrice,
-						assetClass,
-					}, riskCheck);
-				} else {
+					consensus: result,
+				}, options, this.options);
+				if (!entryDecision.ok) {
 					rejectedTrades.push({
 						ticker: result.ticker,
 						consensus: result,
 						referencePrice,
-						riskCheck,
+						riskCheck: {
+							approved: false,
+							violations: [entryDecision.reason],
+						},
+					});
+				} else {
+					candidateTrades.push({
+						ticker: result.ticker,
+						consensus: result,
+						referencePrice,
+						assetClass,
+						marketCap: options.marketCaps?.[result.ticker] ?? null,
+						averageAgreeConfidence: entryDecision.averageAgreeConfidence,
 					});
 				}
 			}
 
+			consensusRecords.push({
+				result,
+				signalLookup,
+				actedOn,
+			});
+		}
+
+		const { selected: selectedTrades, excluded: excludedTrades } = selectTopTradeIdeas(candidateTrades, options, this.options);
+		for (const trade of excludedTrades) {
+			rejectedTrades.push({
+				ticker: trade.ticker,
+				consensus: trade.consensus,
+				referencePrice: trade.referencePrice,
+				riskCheck: {
+					approved: false,
+					violations: [`ENTRY_CAP: only top ${resolveMaxIdeasPerRound(options, this.options)} ideas per round are executable`],
+				},
+			});
+		}
+
+		for (const trade of selectedTrades) {
+			let riskCheck = null;
+			let actedOn = false;
+
+			if (strategyMode === STRATEGY_MODES.CRISIS) {
+				const validation = validateCrisisSignalCapability({
+					ticker: trade.ticker,
+					direction: trade.consensus?.decision,
+				}, brokerCapabilities, macroRisk);
+				if (!validation.ok) {
+					rejectedTrades.push({
+						ticker: trade.ticker,
+						consensus: trade.consensus,
+						referencePrice: trade.referencePrice,
+						riskCheck: {
+							approved: false,
+							violations: [`CRISIS_CAPABILITY_GATE: ${validation.reason}`],
+						},
+					});
+					continue;
+				}
+			}
+
+			riskCheck = riskEngine.checkTrade({
+				ticker: trade.ticker,
+				direction: trade.consensus?.decision,
+				price: trade.referencePrice || 0,
+				marketCap: trade.marketCap,
+				assetClass: trade.assetClass,
+			}, simulatedAccountState, limits);
+
+			if (riskCheck.approved && strategyMode === STRATEGY_MODES.CRISIS && trade.consensus?.decision === 'BUY') {
+				const crisisBookExposure = estimateCrisisBookExposure(simulatedAccountState, crisisUniverse);
+				const proposedExposure = toNumber(trade.referencePrice, 0) * toNumber(riskCheck.maxShares, 0);
+				const maxBookPct = toNumber(limits.crisisBookPct, 0.08);
+				const maxBookDollars = toNumber(simulatedAccountState.equity, 0) * maxBookPct;
+				if ((crisisBookExposure + proposedExposure) > maxBookDollars) {
+					riskCheck = {
+						approved: false,
+						violations: [
+							`CRISIS_BOOK_CAP: ${(crisisBookExposure + proposedExposure).toFixed(2)} exceeds ${(maxBookDollars).toFixed(2)}`,
+						],
+						maxShares: null,
+						stopLossPrice: riskCheck.stopLossPrice,
+					};
+				}
+			}
+
+			actedOn = Boolean(riskCheck.approved);
+			if (riskCheck.approved) {
+				approvedTrades.push({
+					ticker: trade.ticker,
+					consensus: trade.consensus,
+					referencePrice: trade.referencePrice,
+					riskCheck,
+					marketCap: trade.marketCap,
+					limits,
+				});
+				simulatedAccountState = applyTradeToAccountState(simulatedAccountState, {
+					ticker: trade.ticker,
+					direction: trade.consensus?.decision,
+					price: trade.referencePrice,
+					assetClass: trade.assetClass,
+				}, riskCheck);
+			} else {
+				rejectedTrades.push({
+					ticker: trade.ticker,
+					consensus: trade.consensus,
+					referencePrice: trade.referencePrice,
+					riskCheck,
+				});
+			}
+
+			const record = consensusRecords.find((item) => item.result?.ticker === trade.ticker);
+			if (record) {
+				record.actedOn = actedOn;
+			}
+		}
+
+		for (const record of consensusRecords) {
+			const { result, signalLookup, actedOn } = record;
 			journal.recordConsensus(db, {
 				ticker: result.ticker,
 				decision: result.decision,
@@ -1535,6 +1893,8 @@ class TradingOrchestrator {
 			smartMoneyWatchlist,
 			launchRadarWatchlist,
 			consultation,
+			macroRisk,
+			brokerCapabilities,
 			autoGeneratedSignals,
 			portfolioSnapshot,
 			accountState,

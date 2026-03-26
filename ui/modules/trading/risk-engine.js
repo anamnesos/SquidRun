@@ -7,6 +7,8 @@
 
 'use strict';
 
+const { normalizeSignalDirection } = require('./crisis-mode');
+
 /**
  * @typedef {Object} RiskLimits
  * @property {number} maxPositionPct - Max % of account per trade (default 0.05 = 5%)
@@ -80,8 +82,8 @@ function roundDownQuantity(value, decimals = 6) {
 }
 
 function normalizeTradeDirection(direction, assetClass = 'us_equity') {
-  const normalized = String(direction || '').trim().toUpperCase();
-  if (normalized === 'BUY' || normalized === 'SELL' || normalized === 'HOLD') {
+  const normalized = normalizeSignalDirection(direction, { fallback: '' });
+  if (normalized === 'BUY' || normalized === 'SELL' || normalized === 'HOLD' || normalized === 'SHORT' || normalized === 'COVER' || normalized === 'BUY_PUT') {
     return normalized;
   }
   if (normalizeAssetClass(assetClass) === 'prediction_market' && (normalized === 'BUY_YES' || normalized === 'BUY_NO')) {
@@ -169,6 +171,15 @@ function checkTrade(trade, account, limits = DEFAULT_LIMITS) {
   if (direction === 'SELL' && !normalizedAccount.openPositions?.some(p => normTicker(p.ticker) === tradeTicker)) {
     // Shorting check — can only sell what we own
     violations.push('SHORT_PROHIBITED: Cannot sell a stock we do not own');
+  }
+  if (direction === 'SHORT' && effectiveLimits.allowShorting !== true) {
+    violations.push('SHORT_PROHIBITED: Crisis short execution is disabled until phase 2');
+  }
+  if (direction === 'COVER') {
+    violations.push('COVER_PROHIBITED: Crisis short cover flow is disabled until phase 2');
+  }
+  if (direction === 'BUY_PUT' && effectiveLimits.allowOptions !== true) {
+    violations.push('OPTIONS_PROHIBITED: BUY_PUT execution is disabled until phase 2');
   }
 
   if (assetClass === 'us_equity' && trade.price < effectiveLimits.minStockPrice) {

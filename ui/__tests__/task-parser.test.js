@@ -73,4 +73,27 @@ describe('task-parser', () => {
     expect(result.success).toBe(true);
     expect(result.subtasks.length).toBeGreaterThanOrEqual(2);
   });
+
+  test('detects legal problem intake metadata', () => {
+    const result = taskParser.parseTaskInput('My landlord charged me $2,000 and I need help with a contract dispute.');
+    expect(result.success).toBe(true);
+    expect(result.problemIntake.detected).toBe(true);
+    expect(result.problemIntake.domain).toBe('legal');
+    expect(result.problemIntake.triggers).toContain('institution:landlord');
+    expect(result.problemIntake.triggers).toContain('money-amount');
+  });
+
+  test('detects financial problem intake metadata', () => {
+    const result = taskParser.parseTaskInput('I need help negotiating credit card debt with my bank before collections starts.');
+    expect(result.success).toBe(true);
+    expect(result.problemIntake.detected).toBe(true);
+    expect(result.problemIntake.domain).toBe('financial');
+  });
+
+  test('does not flag normal coding work as problem intake', () => {
+    const result = taskParser.parseTaskInput('Implement the notification badge and add tests for the toolbar.');
+    expect(result.success).toBe(true);
+    expect(result.problemIntake.detected).toBe(false);
+    expect(result.problemIntake.domain).toBeNull();
+  });
 });

@@ -30,6 +30,8 @@ describe('consultation-store', () => {
       bars: new Map([['BTC/USD', [{ close: 64000 }]]]),
       news: [{ headline: 'ETF inflows accelerate' }],
       accountSnapshot: { equity: 10000 },
+      macroRisk: { regime: 'red', score: 66, constraints: { allowLongs: false } },
+      brokerCapabilities: { supportedUniverse: ['SQQQ'] },
     }, {
       requestsDir,
     });
@@ -45,7 +47,64 @@ describe('consultation-store', () => {
         'BTC/USD': [{ close: 64000 }],
       },
       accountSnapshot: { equity: 10000 },
+      macroRisk: {
+        regime: 'red',
+        score: 66,
+        constraints: { allowLongs: false },
+      },
+      brokerCapabilities: {
+        supportedUniverse: ['SQQQ'],
+      },
     }));
+  });
+
+  test('builds macro-aware prompts that suppress BUYs when longs are blocked', () => {
+    const prompt = consultationStore.buildConsultationPrompt('builder', {
+      requestId: 'consult-3',
+      deadline: '2099-03-19T03:01:00.000Z',
+      symbols: ['BTC/USD'],
+      macroRisk: {
+        regime: 'red',
+        score: 66,
+        reason: 'Fear and conflict spike',
+        constraints: { allowLongs: false },
+      },
+    }, {
+      requestsDir,
+    });
+
+    expect(prompt).toContain('Live macro regime: RED');
+    expect(prompt).toContain('Do not emit BUY signals');
+    expect(prompt).toContain('"direction":"HOLD"');
+  });
+
+  test('builds crisis consultation prompts with crisis universe and broker capabilities', () => {
+    const prompt = consultationStore.buildConsultationPrompt('builder', {
+      requestId: 'consult-crisis-1',
+      deadline: '2099-03-19T03:01:00.000Z',
+      symbols: ['SQQQ', 'BITI'],
+      strategyMode: 'crisis',
+      macroRisk: {
+        regime: 'stay_cash',
+        strategyMode: 'crisis',
+        score: 95,
+        reason: 'Hormuz conflict escalation',
+        constraints: {
+          crisisUniverse: ['SQQQ', 'BITI', 'PSQ'],
+        },
+      },
+      brokerCapabilities: {
+        supportedUniverse: ['SQQQ', 'BITI'],
+      },
+    }, {
+      requestsDir,
+    });
+
+    expect(prompt).toContain('Crisis consultation');
+    expect(prompt).toContain('what should we short or hedge');
+    expect(prompt).toContain('SQQQ, BITI, PSQ');
+    expect(prompt).toContain('Phase 1 executable path is BUY-side only');
+    expect(prompt).toContain('"direction":"BUY"');
   });
 
   test('parses role-prefixed hm-send JSON replies and stores them by request and agent', async () => {

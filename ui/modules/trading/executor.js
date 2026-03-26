@@ -7,6 +7,7 @@ const { checkTrade, checkKillSwitch, checkDailyPause, DEFAULT_LIMITS } = require
 const journal = require('./journal');
 const polymarketClient = require('./polymarket-client');
 const watchlist = require('./watchlist');
+const { normalizeSignalDirection } = require('./crisis-mode');
 
 function toPositiveInteger(value) {
   const numeric = Math.floor(Number(value));
@@ -40,8 +41,8 @@ function roundPrice(value, assetClass = 'us_equity') {
 }
 
 function normalizeDirection(value, options = {}) {
-  const normalized = String(value || '').trim().toUpperCase();
-  if (normalized === 'BUY' || normalized === 'SELL' || normalized === 'HOLD') {
+  const normalized = normalizeSignalDirection(value, { allowPolymarket: options.allowPolymarket === true });
+  if (normalized === 'BUY' || normalized === 'SELL' || normalized === 'HOLD' || normalized === 'SHORT' || normalized === 'COVER' || normalized === 'BUY_PUT') {
     return normalized;
   }
   if (options.allowPolymarket === true && (normalized === 'BUY_YES' || normalized === 'BUY_NO')) {
@@ -77,6 +78,9 @@ function buildOrderPayload(input = {}) {
   const quantity = toPositiveQuantity(input.shares || input.qty, assetClass);
   if (direction === 'HOLD') {
     throw new Error('Cannot build an order payload for HOLD');
+  }
+  if (direction === 'SHORT' || direction === 'COVER' || direction === 'BUY_PUT') {
+    throw new Error(`Order payload for ${direction} is not available until crisis mode phase 2`);
   }
   if (quantity <= 0) {
     const quantityLabel = assetClass === 'crypto' ? 'a positive crypto quantity' : 'at least 1 whole share';
@@ -386,6 +390,14 @@ async function executeConsensusTrade(input = {}, options = {}) {
 
   if (assetClass === 'prediction_market' || direction === 'BUY_YES' || direction === 'BUY_NO') {
     return executePredictionMarketConsensusTrade(input, options);
+  }
+
+  if (direction === 'SHORT' || direction === 'COVER' || direction === 'BUY_PUT') {
+    return {
+      ok: false,
+      status: 'rejected',
+      reason: `${direction} execution is not enabled until crisis mode phase 2`,
+    };
   }
 
   const trade = {

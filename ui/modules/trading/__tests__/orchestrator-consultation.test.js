@@ -105,14 +105,42 @@ jest.mock('../risk-engine', () => ({
   checkTrade: jest.fn(() => ({ approved: true, violations: [], maxShares: 2, stopLossPrice: 194 })),
 }));
 
+jest.mock('../macro-risk-gate', () => ({
+  assessMacroRisk: jest.fn().mockResolvedValue({
+    regime: 'green',
+    score: 22,
+    reason: 'All clear',
+    constraints: {
+      allowLongs: true,
+      blockNewPositions: false,
+      positionSizeMultiplier: 1,
+      buyConfidenceMultiplier: 1,
+      sellConfidenceMultiplier: 1,
+    },
+  }),
+  applyMacroRiskToSignal: jest.fn((signal, macroRisk) => {
+    if (String(signal?.direction || '').toUpperCase() === 'BUY' && macroRisk?.constraints?.allowLongs === false) {
+      return {
+        ...signal,
+        direction: 'HOLD',
+        confidence: 0.72,
+        reasoning: `${signal.reasoning} macro blocked`,
+      };
+    }
+    return { ...signal };
+  }),
+}));
+
 jest.mock('../signal-producer', () => ({
   produceSignals: jest.fn(async (agentId, options = {}) => {
     const ticker = (options.symbols || [])[0] || 'AAPL';
+    const macroBlocked = options?.macroRisk?.constraints?.allowLongs === false;
+    const baseDirection = agentId === 'builder' ? 'BUY' : 'HOLD';
     return [{
       ticker,
-      direction: agentId === 'builder' ? 'BUY' : 'HOLD',
+      direction: macroBlocked && baseDirection === 'BUY' ? 'HOLD' : baseDirection,
       confidence: agentId === 'builder' ? 0.64 : 0.55,
-      reasoning: `${agentId} fallback`,
+      reasoning: macroBlocked && baseDirection === 'BUY' ? `${agentId} fallback macro blocked` : `${agentId} fallback`,
       model: `${agentId}-heuristic`,
       timestamp: Date.now(),
     }];
@@ -235,6 +263,7 @@ const agentAttribution = require('../agent-attribution');
 const polymarketScanner = require('../polymarket-scanner');
 const polymarketSignals = require('../polymarket-signals');
 const polymarketSizer = require('../polymarket-sizer');
+const macroRiskGate = require('../macro-risk-gate');
 const { createOrchestrator } = require('../orchestrator');
 
 describe('orchestrator real consultation flow', () => {
@@ -266,6 +295,18 @@ describe('orchestrator real consultation flow', () => {
     executor.getAccountSnapshot.mockResolvedValue({ equity: 10000 });
     executor.getOpenPositions.mockResolvedValue([]);
     executor.syncJournalPositions.mockResolvedValue([]);
+    macroRiskGate.assessMacroRisk.mockResolvedValue({
+      regime: 'green',
+      score: 22,
+      reason: 'All clear',
+      constraints: {
+        allowLongs: true,
+        blockNewPositions: false,
+        positionSizeMultiplier: 1,
+        buyConfidenceMultiplier: 1,
+        sellConfidenceMultiplier: 1,
+      },
+    });
   });
 
   test('collects real consultation responses first and only falls back for missing agents', async () => {
@@ -280,6 +321,11 @@ describe('orchestrator real consultation flow', () => {
     });
 
     expect(consultationStore.writeConsultationRequest).toHaveBeenCalled();
+    expect(consultationStore.writeConsultationRequest).toHaveBeenCalledWith(expect.objectContaining({
+      macroRisk: expect.objectContaining({
+        regime: 'green',
+      }),
+    }), expect.anything());
     expect(consultationStore.dispatchConsultationRequests).toHaveBeenCalled();
     expect(consultationStore.collectConsultationResponses).toHaveBeenCalled();
     expect(signalProducer.produceSignals).toHaveBeenCalledTimes(2);
@@ -304,6 +350,57 @@ describe('orchestrator real consultation flow', () => {
       architectSignal: expect.objectContaining({ reasoning: 'real architect analysis' }),
       builderSignal: expect.objectContaining({ reasoning: 'builder fallback' }),
       oracleSignal: expect.objectContaining({ reasoning: 'oracle fallback' }),
+    }));
+  });
+
+  test('defaults the live equity premarket universe to the ETF strategy profile', async () => {
+    const orchestrator = createOrchestrator();
+
+    const result = await orchestrator.runPreMarket({
+      date: '2026-03-20',
+    });
+
+    expect(result.symbols).toEqual(['SPY', 'QQQ', 'GLD', 'TLT', 'XLE']);
+  });
+
+  test('rejects low-confidence 2-of-3 equity buys under the live unanimous_or_high filter', async () => {
+    const orchestrator = createOrchestrator({
+      consultationEnabled: false,
+    });
+
+    orchestrator.registerSignal('architect', 'AAPL', {
+      direction: 'BUY',
+      confidence: 0.69,
+      reasoning: 'architect low conviction buy',
+    });
+    orchestrator.registerSignal('builder', 'AAPL', {
+      direction: 'BUY',
+      confidence: 0.70,
+      reasoning: 'builder low conviction buy',
+    });
+    orchestrator.registerSignal('oracle', 'AAPL', {
+      direction: 'HOLD',
+      confidence: 0.80,
+      reasoning: 'oracle not convinced',
+    });
+
+    const result = await orchestrator.runConsensusRound({
+      symbols: ['AAPL'],
+    });
+
+    expect(result.approvedTrades).toEqual([]);
+    expect(result.rejectedTrades).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        ticker: 'AAPL',
+        riskCheck: expect.objectContaining({
+          approved: false,
+          violations: [expect.stringContaining('ENTRY_FILTER')],
+        }),
+      }),
+    ]));
+    expect(journal.recordConsensus).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      ticker: 'AAPL',
+      actedOn: false,
     }));
   });
 
@@ -368,6 +465,55 @@ describe('orchestrator real consultation flow', () => {
         execution: expect.objectContaining({ ok: true, status: 'dry_run' }),
       }),
     ]);
+  });
+
+  test('macro red normalizes consultation and fallback BUY signals into HOLD before consensus', async () => {
+    macroRiskGate.assessMacroRisk.mockResolvedValue({
+      regime: 'red',
+      score: 66,
+      reason: 'Macro RED',
+      constraints: {
+        allowLongs: false,
+        blockNewPositions: true,
+        positionSizeMultiplier: 0.35,
+        buyConfidenceMultiplier: 0.6,
+        sellConfidenceMultiplier: 1.1,
+      },
+    });
+    consultationStore.collectConsultationResponses.mockResolvedValueOnce({
+      requestId: 'consult-live-1',
+      responses: [
+        {
+          requestId: 'consult-live-1',
+          agentId: 'architect',
+          signals: [
+            { ticker: 'AAPL', direction: 'BUY', confidence: 0.91, reasoning: 'real architect analysis' },
+          ],
+        },
+      ],
+      missingAgents: ['builder', 'oracle'],
+    });
+
+    const orchestrator = createOrchestrator({
+      consultationSender: jest.fn(),
+      consultationQuery: jest.fn(),
+    });
+
+    const result = await orchestrator.runConsensusRound({
+      symbols: ['AAPL'],
+      consultationTimeoutMs: 50,
+    });
+
+    expect(signalProducer.produceSignals).toHaveBeenCalledWith('builder', expect.objectContaining({
+      macroRisk: expect.objectContaining({ regime: 'red' }),
+    }));
+    expect(journal.recordConsensus).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      ticker: 'AAPL',
+      architectSignal: expect.objectContaining({ direction: 'HOLD', reasoning: expect.stringContaining('macro blocked') }),
+      builderSignal: expect.objectContaining({ direction: 'HOLD' }),
+      oracleSignal: expect.objectContaining({ direction: 'HOLD' }),
+    }));
+    expect(result.approvedTrades).toEqual([]);
   });
 
   test('syncs qualified launch radar tokens into the dynamic watchlist', async () => {

@@ -311,6 +311,36 @@ describe('Context Compressor Module', () => {
     });
   });
 
+  describe('buildActiveCasesSection', () => {
+    it('should build a section when active cases exist', () => {
+      fs.existsSync.mockImplementation((filePath) => typeof filePath === 'string' && filePath.includes('active-cases'));
+      fs.readFileSync.mockImplementation((filePath) => {
+        if (typeof filePath === 'string' && filePath.includes('active-cases')) {
+          return JSON.stringify({
+            schemaVersion: 1,
+            updatedAt: '2026-03-26T10:00:00.000Z',
+            cases: [
+              {
+                caseId: 'case-1',
+                title: 'Landlord dispute over deposit',
+                domain: 'legal',
+                status: 'architect_pass',
+                updatedAt: '2026-03-26T10:00:00.000Z',
+              },
+            ],
+          });
+        }
+        return '{}';
+      });
+
+      const section = _internals.buildActiveCasesSection();
+
+      expect(section).not.toBeNull();
+      expect(section.id).toBe('activeCases');
+      expect(section.content).toContain('LEGAL architect_pass');
+    });
+  });
+
   describe('buildTeamStatusSection', () => {
     it('should build status from handoff files', () => {
       fs.existsSync.mockReturnValue(true);

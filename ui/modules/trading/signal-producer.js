@@ -1,6 +1,7 @@
 'use strict';
 
 const dataIngestion = require('./data-ingestion');
+const macroRiskGate = require('./macro-risk-gate');
 const watchlist = require('./watchlist');
 
 const AGENT_PROFILES = Object.freeze({
@@ -498,17 +499,34 @@ async function produceSignals(agentId, alpacaClientOrOptions) {
 	const profile = AGENT_PROFILES[normalizedAgent];
 	const isOptions = alpacaClientOrOptions && typeof alpacaClientOrOptions === 'object' && !alpacaClientOrOptions.getAccount;
 	const clientOptions = isOptions ? alpacaClientOrOptions : (alpacaClientOrOptions ? { client: alpacaClientOrOptions } : {});
+	const macroRisk = clientOptions.macroRisk || null;
+	const providedSnapshots = clientOptions.snapshots || null;
+	const providedBars = clientOptions.bars || null;
+	const providedNews = clientOptions.news || null;
 	const symbols = dataIngestion.normalizeSymbols(
 		Array.isArray(clientOptions.symbols) && clientOptions.symbols.length > 0
 			? clientOptions.symbols
 			: watchlist.getTickers({ assetClass: clientOptions.assetClass || clientOptions.asset_class })
 	);
 	const emptyPortfolio = Boolean(clientOptions.emptyPortfolio);
+	const hasProvidedSnapshots = providedSnapshots instanceof Map
+		? providedSnapshots.size > 0
+		: Boolean(providedSnapshots && typeof providedSnapshots === 'object' && Object.keys(providedSnapshots).length > 0);
+	const hasProvidedBars = providedBars instanceof Map
+		? providedBars.size > 0
+		: Boolean(providedBars && typeof providedBars === 'object' && Object.keys(providedBars).length > 0);
+	const hasProvidedNews = Array.isArray(providedNews);
 
 	const [snapshots, historicalBars, newsItems] = await Promise.all([
-		dataIngestion.getWatchlistSnapshots({ ...clientOptions, symbols }),
-		getHistoricalBarsWithFallback(clientOptions, symbols),
-		getNormalizedNews({ ...clientOptions, symbols }),
+		hasProvidedSnapshots
+			? Promise.resolve(dataIngestion.normalizeSnapshotCollection(providedSnapshots, symbols))
+			: dataIngestion.getWatchlistSnapshots({ ...clientOptions, symbols }),
+		hasProvidedBars
+			? Promise.resolve(dataIngestion.normalizeBarsMap(providedBars, symbols))
+			: getHistoricalBarsWithFallback(clientOptions, symbols),
+		hasProvidedNews
+			? Promise.resolve((providedNews || []).map((item) => dataIngestion.normalizeNewsItem(item)))
+			: getNormalizedNews({ ...clientOptions, symbols }),
 	]);
 
 	const newsByTicker = groupNewsByTicker(newsItems);
@@ -521,12 +539,12 @@ async function produceSignals(agentId, alpacaClientOrOptions) {
 			assetClass: resolveAssetClass(ticker),
 			emptyPortfolio,
 		});
-		return {
+		return macroRiskGate.applyMacroRiskToSignal({
 			ticker: signal.ticker,
 			direction: signal.direction,
 			confidence: signal.confidence,
 			reasoning: signal.reasoning,
-		};
+		}, macroRisk);
 	});
 }
 

@@ -78,8 +78,8 @@ const POSITIONS_TABLE_SQL = `
 
 function getDb(dbPath) {
   if (_db) return _db;
-  const { DatabaseSync } = require('node:sqlite');
-  _db = new DatabaseSync(dbPath || path.join(process.cwd(), '.squidrun', 'runtime', 'trade-journal.db'));
+  const { openDatabase } = require('../sqlite-compat');
+  _db = openDatabase(dbPath || path.join(process.cwd(), '.squidrun', 'runtime', 'trade-journal.db'));
   _db.exec('PRAGMA journal_mode=WAL');
   _db.exec('PRAGMA foreign_keys=ON');
   ensureSchema(_db);
