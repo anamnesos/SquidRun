@@ -27,6 +27,7 @@ const {
   buildSessionHandoffMarkdown,
 } = require('./main/auto-handoff-materializer');
 const { queryCommsJournalEntries } = require('./main/comms-journal');
+const { ACTIVE_CASES_RELATIVE_PATH, buildStartupResumeSummary } = require('./problem-orchestrator');
 
 const SNAPSHOTS_RELATIVE_DIR = 'context-snapshots';
 const SESSION_HANDOFF_RELATIVE_PATH = path.join('handoffs', 'session.md');
@@ -38,6 +39,7 @@ const REFRESH_INTERVAL_MS = 300000; // 300 seconds
 const SECTION_PRIORITIES = {
   handoff: 110,        // Auto-materialized handoff content — highest priority
   appStatus: 105,      // Session number + note from app-status.json
+  activeCases: 103,    // Active high-stakes cases to resume on restart
   teamStatus: 100,
   recentChanges: 90,
   activeIssues: 75,
@@ -49,6 +51,7 @@ const SECTION_PRIORITIES = {
 const WATCHED_FILES = [
   APP_STATUS_RELATIVE_PATH,
   SESSION_HANDOFF_RELATIVE_PATH,
+  ACTIVE_CASES_RELATIVE_PATH,
 ];
 
 // Module state
@@ -349,6 +352,19 @@ function buildTeamStatusSection() {
   };
 }
 
+function buildActiveCasesSection() {
+  const summary = buildStartupResumeSummary({}, { limit: 3 });
+  if (!summary || summary.count <= 0 || !Array.isArray(summary.items) || summary.items.length === 0) {
+    return null;
+  }
+
+  return {
+    id: 'activeCases',
+    priority: SECTION_PRIORITIES.activeCases,
+    content: `### Active Cases\n- ${summary.items.join('\n- ')}`,
+  };
+}
+
 /**
  * Build the Recent Changes section from shared state changelog
  */
@@ -510,6 +526,7 @@ function generateSnapshot(paneId, options = {}) {
   const sections = [
     buildHandoffSection(paneId),
     buildAppStatusSection(),
+    buildActiveCasesSection(),
     buildTeamStatusSection(),
     buildRecentChangesSection(paneId),
     buildActiveIssuesSection(),
@@ -690,6 +707,7 @@ module.exports = {
   _internals: {
     buildHandoffSection,
     buildAppStatusSection,
+    buildActiveCasesSection,
     buildTeamStatusSection,
     buildRecentChangesSection,
     buildActiveIssuesSection,

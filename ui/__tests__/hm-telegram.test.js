@@ -52,6 +52,22 @@ describe('hm-telegram', () => {
     expect(hmTelegram.parseMessage(['Hey,', 'build', 'passed!'])).toBe('Hey, build passed!');
   });
 
+  test('parseCliArgs extracts --chat-id and photo mode arguments', () => {
+    expect(hmTelegram.parseCliArgs(['--chat-id', '8754356993', 'reply now'])).toEqual({
+      ok: true,
+      photoPath: null,
+      chatId: '8754356993',
+      message: 'reply now',
+    });
+
+    expect(hmTelegram.parseCliArgs(['--photo', 'captcha.png', '--chat-id', '8754356993', 'caption text'])).toEqual({
+      ok: true,
+      photoPath: 'captcha.png',
+      chatId: '8754356993',
+      message: 'caption text',
+    });
+  });
+
   test('getMissingConfigKeys reports required env vars', () => {
     const config = hmTelegram.getTelegramConfig({});
     expect(hmTelegram.getMissingConfigKeys(config)).toEqual([
@@ -207,6 +223,25 @@ describe('hm-telegram', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toContain('not allowlisted');
     expect(https.request).not.toHaveBeenCalled();
+  });
+
+  test('resolveOutboundChatId prefers reply context when it differs from default chat', () => {
+    const config = hmTelegram.getTelegramConfig({
+      TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
+      TELEGRAM_CHAT_ID: '111111',
+    });
+
+    expect(hmTelegram.resolveOutboundChatId(config, {
+      replyContext: {
+        chatId: '8754356993',
+      },
+    })).toBe('8754356993');
+
+    expect(hmTelegram.resolveOutboundChatId(config, {
+      replyContext: {
+        chatId: '111111',
+      },
+    })).toBe('111111');
   });
 
   test('sendTelegram queues and paces messages beyond 10 per minute', async () => {

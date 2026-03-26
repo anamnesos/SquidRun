@@ -51,6 +51,22 @@ jest.mock('../modules/task-parser', () => ({
   parseTaskInput: jest.fn(),
 }));
 
+var mockUpsertProblemCase = jest.fn();
+jest.mock('../modules/problem-orchestrator', () => ({
+  getSharedProblemOrchestrator: jest.fn(() => ({
+    upsertProblemCase: mockUpsertProblemCase,
+    previewProblemCase: jest.fn(() => ({
+      ok: true,
+      case: {
+        caseId: 'preview-1',
+        userFacing: {
+          shortNotice: 'Here is what we can do: map the legal issue and build an evidence packet.',
+        },
+      },
+    })),
+  })),
+}));
+
 const fs = require('fs');
 const taskParser = require('../modules/task-parser');
 const { registerTaskParserHandlers } = require('../modules/ipc/task-parser-handlers');
@@ -61,6 +77,7 @@ describe('Task Parser Handlers', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUpsertProblemCase.mockReset();
     harness = createIpcHarness();
     ctx = createDefaultContext({ ipcMain: harness.ipcMain });
     ctx.WORKSPACE_PATH = '/test/workspace';
@@ -74,6 +91,7 @@ describe('Task Parser Handlers', () => {
       success: true,
       subtasks: [{ taskType: 'code', text: 'Write a function' }],
       ambiguity: { isAmbiguous: false },
+      problemIntake: { detected: false, domain: null },
     });
 
     registerTaskParserHandlers(ctx);
@@ -99,6 +117,7 @@ describe('Task Parser Handlers', () => {
         success: true,
         subtasks: [{ taskType: 'code', text: 'Build a feature' }],
         ambiguity: { isAmbiguous: false },
+        problemIntake: { detected: false, domain: null },
       });
 
       const result = await harness.invoke('parse-task-input', 'Build a feature');
@@ -106,6 +125,22 @@ describe('Task Parser Handlers', () => {
       expect(result.success).toBe(true);
       expect(result.subtasks).toBeDefined();
       expect(taskParser.parseTaskInput).toHaveBeenCalledWith('Build a feature');
+    });
+
+    test('returns problem preview for high-stakes input', async () => {
+      taskParser.parseTaskInput.mockReturnValue({
+        success: true,
+        raw: 'My landlord is threatening eviction over a lease dispute.',
+        subtasks: [{ taskType: 'coordination', text: 'Need help' }],
+        ambiguity: { isAmbiguous: false },
+        problemIntake: { detected: true, domain: 'legal' },
+      });
+
+      const result = await harness.invoke('parse-task-input', 'Need help');
+
+      expect(result.problemPreview).toEqual(expect.objectContaining({
+        ok: true,
+      }));
     });
 
     test('returns parser error', async () => {
@@ -125,6 +160,7 @@ describe('Task Parser Handlers', () => {
         success: true,
         subtasks: [{ taskType: 'code', text: 'Build something' }],
         ambiguity: { isAmbiguous: true, reason: 'Unclear scope' },
+        problemIntake: { detected: false, domain: null },
       });
 
       const result = await harness.invoke('parse-task-input', 'Build something');
@@ -143,6 +179,7 @@ describe('Task Parser Handlers', () => {
           { taskType: 'review', text: 'Review code' },
         ],
         ambiguity: { isAmbiguous: false },
+        problemIntake: { detected: false, domain: null },
       });
 
       const result = await harness.invoke('route-task-input', 'Write and review code', {});
@@ -184,6 +221,7 @@ describe('Task Parser Handlers', () => {
         success: true,
         subtasks: [{ taskType: 'unclear', text: 'Something vague' }],
         ambiguity: { isAmbiguous: true, reason: 'Unclear intent' },
+        problemIntake: { detected: false, domain: null },
       });
 
       const result = await harness.invoke('route-task-input', 'Do something', {});
@@ -198,6 +236,7 @@ describe('Task Parser Handlers', () => {
         success: true,
         subtasks: [{ taskType: 'unclear', text: 'Something vague' }],
         ambiguity: { isAmbiguous: true, reason: 'Unclear intent' },
+        problemIntake: { detected: false, domain: null },
       });
 
       const result = await harness.invoke('route-task-input', 'Do something', { force: true });
@@ -235,12 +274,48 @@ describe('Task Parser Handlers', () => {
         success: true,
         subtasks: [{ taskType: 'code', text: 'Task' }],
         ambiguity: { isAmbiguous: false },
+        problemIntake: { detected: false, domain: null },
       });
 
       const result = await harness.invoke('route-task-input', 'Task', {});
 
       expect(result.success).toBe(false);
       expect(result.routed[0].routing.success).toBe(false);
+    });
+
+    test('creates a problem case when routed input is high-stakes', async () => {
+      mockUpsertProblemCase.mockReturnValue({
+        ok: true,
+        created: true,
+        case: {
+          caseId: 'case-1',
+          status: 'capability_plan',
+          userFacing: {
+            shortNotice: 'Here is what we can do: map the legal issue and build an evidence packet.',
+          },
+        },
+      });
+      taskParser.parseTaskInput.mockReturnValue({
+        success: true,
+        raw: 'My landlord is threatening eviction over a lease dispute.',
+        subtasks: [{ taskType: 'coordination', text: 'Need help' }],
+        ambiguity: { isAmbiguous: false },
+        problemIntake: { detected: true, domain: 'legal' },
+      });
+
+      const result = await harness.invoke('route-task-input', 'Need help', {});
+
+      expect(mockUpsertProblemCase).toHaveBeenCalledWith(expect.objectContaining({
+        source: 'route-task-input',
+        parsed: expect.objectContaining({
+          raw: 'My landlord is threatening eviction over a lease dispute.',
+        }),
+      }));
+      expect(result.problemCase).toEqual(expect.objectContaining({
+        ok: true,
+        created: true,
+      }));
+      expect(result.problemCase.case.userFacing.shortNotice).toContain('Here is what we can do');
     });
   });
 });

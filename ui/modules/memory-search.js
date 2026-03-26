@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { DatabaseSync } = require('node:sqlite');
+const { getDatabaseSync, openDatabase } = require('./sqlite-compat');
 const sqliteVec = require('sqlite-vec');
 const log = require('./logger');
 const { getProjectRoot } = require('../config');
@@ -610,9 +610,8 @@ class MemorySearchIndex {
     if (this.db) return this.db;
     ensureDir(this.paths.memoryDir);
     ensureDir(this.paths.modelCacheDir);
-    const db = new DatabaseSync(this.dbPath, { allowExtension: true });
+    const db = openDatabase(this.dbPath, { allowExtension: true });
     try {
-      db.enableLoadExtension(true);
       sqliteVec.load(db);
       db.exec('PRAGMA journal_mode=WAL;');
       db.exec('PRAGMA synchronous=NORMAL;');
