@@ -26,9 +26,16 @@ function getTelegramConfig(env = process.env) {
     return null;
   }
 
+  // Parse additional authorized chat IDs (comma-separated)
+  const extraIds = (env.TELEGRAM_AUTHORIZED_CHAT_IDS || '').trim();
+  const authorizedChatIds = extraIds
+    ? extraIds.split(',').map(s => Number.parseInt(s.trim(), 10)).filter(Number.isFinite)
+    : [];
+
   return {
     botToken,
     chatId,
+    authorizedChatIds,
   };
 }
 
@@ -80,7 +87,9 @@ function getAuthorizedChatId(message) {
 function isAuthorizedChat(message, currentConfig) {
   const chatId = getAuthorizedChatId(message);
   if (chatId === null) return false;
-  return chatId === currentConfig.chatId;
+  if (chatId === currentConfig.chatId) return true;
+  if (Array.isArray(currentConfig.authorizedChatIds) && currentConfig.authorizedChatIds.includes(chatId)) return true;
+  return false;
 }
 
 function normalizeFrom(rawFrom) {
@@ -150,7 +159,7 @@ async function pollNow() {
         if (!isAuthorizedChat(message, config)) {
           log.warn(
             'Telegram',
-            `Rejected inbound Telegram message from unauthorized chat (${message?.chat?.id ?? 'unknown'})`
+            `Rejected inbound Telegram message from unauthorized chat (${message?.chat?.id ?? 'unknown'}) — config.chatId=${config.chatId} authorizedChatIds=${JSON.stringify(config.authorizedChatIds)} msgChatId=${message?.chat?.id} typeof=${typeof message?.chat?.id}`
           );
           return;
         }
