@@ -6,13 +6,15 @@
 const log = require('../logger');
 const taskParser = require('../task-parser');
 const { createPerformanceLoader } = require('../performance-data');
+const { getSharedProblemOrchestrator } = require('../problem-orchestrator');
 
-function registerTaskParserHandlers(ctx) {
+function registerTaskParserHandlers(ctx, deps = {}) {
   if (!ctx || !ctx.ipcMain) {
     throw new Error('registerTaskParserHandlers requires ctx.ipcMain');
   }
 
   const { ipcMain } = ctx;
+  const problemOrchestrator = deps.problemOrchestrator || getSharedProblemOrchestrator();
   const missingDependency = (name) => ({
     success: false,
     error: `${name} not available`,
@@ -38,9 +40,16 @@ function registerTaskParserHandlers(ctx) {
     if (!parsed.success) {
       return parsed;
     }
+    const problemPreview = parsed.problemIntake?.detected === true
+      ? problemOrchestrator.previewProblemCase({
+        parsed,
+        source: 'parse-task-input',
+      })
+      : null;
     return {
       success: true,
       ...parsed,
+      problemPreview,
     };
   });
 
@@ -58,11 +67,20 @@ function registerTaskParserHandlers(ctx) {
       return parsed;
     }
 
+    const problemCase = parsed.problemIntake?.detected === true
+      ? problemOrchestrator.upsertProblemCase({
+        parsed,
+        source: options.source || 'route-task-input',
+      })
+      : null;
+
     if (parsed.ambiguity?.isAmbiguous && !options.force) {
       return {
         success: false,
         reason: 'ambiguous',
         ambiguity: parsed.ambiguity,
+        problemIntake: parsed.problemIntake,
+        problemCase,
         subtasks: parsed.subtasks,
       };
     }
@@ -86,6 +104,8 @@ function registerTaskParserHandlers(ctx) {
       success: allSuccess,
       routed,
       ambiguity: parsed.ambiguity,
+      problemIntake: parsed.problemIntake,
+      problemCase,
     };
   });
 }

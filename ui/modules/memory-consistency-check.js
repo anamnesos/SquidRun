@@ -1,7 +1,8 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { DatabaseSync } = require('node:sqlite');
+const { getDatabaseSync } = require('./sqlite-compat');
+const DatabaseSync = getDatabaseSync();
 const {
   buildKnowledgeSources,
   resolveWorkspacePaths,

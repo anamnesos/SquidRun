@@ -1522,14 +1522,16 @@ function setupEventListeners() {
       const result = await ipcRenderer.invoke('route-task-input', message);
       if (result?.success) {
         const routedCount = result.routed?.length || 0;
-        showStatusNotice(`Auto-routed ${routedCount} task${routedCount === 1 ? '' : 's'}`);
+        const capabilityNotice = result?.problemCase?.case?.userFacing?.shortNotice || null;
+        showStatusNotice(capabilityNotice || `Auto-routed ${routedCount} task${routedCount === 1 ? '' : 's'}`);
         showDeliveryStatus('queued');
         return true;
       }
       if (result?.ambiguity?.isAmbiguous) {
         showDeliveryStatus('failed');
         const questions = result.ambiguity.questions?.join(' ') || 'Clarification needed.';
-        showStatusNotice(`Clarify: ${questions}`, 9000);
+        const capabilityNotice = result?.problemCase?.case?.userFacing?.shortNotice || null;
+        showStatusNotice(capabilityNotice || `Clarify: ${questions}`, 9000);
         return false;
       }
       showDeliveryStatus('failed');

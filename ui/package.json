@@ -46,7 +46,9 @@
     "memory:extract": "node scripts/hm-memory-extract.js",
     "memory:registry": "node scripts/hm-memory-registry.js",
     "memory:promote": "node scripts/hm-memory-promote.js",
-    "memory:api": "node scripts/hm-memory-api.js"
+    "memory:api": "node scripts/hm-memory-api.js",
+    "subtitle:pipeline": "node scripts/hm-subtitle-pipeline.js",
+    "trading:backtest": "node scripts/hm-backtest.js"
   },
   "keywords": [
     "electron",

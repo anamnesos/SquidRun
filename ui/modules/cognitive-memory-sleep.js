@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { DatabaseSync } = require('node:sqlite');
+const { getDatabaseSync } = require('./sqlite-compat');
 const { resolveCoordPath } = require('../config');
 const { CognitiveMemoryStore } = require('./cognitive-memory-store');
 const { MemorySearchIndex } = require('./memory-search');
@@ -237,6 +237,7 @@ class SleepConsolidator {
   init() {
     if (this.stateDb) return this.stateDb;
     this.cognitiveStore.init();
+    const DatabaseSync = getDatabaseSync();
     this.stateDb = new DatabaseSync(this.cognitiveStore.dbPath);
     this.stateDb.exec('PRAGMA journal_mode=WAL;');
     this.stateDb.exec('PRAGMA synchronous=NORMAL;');
@@ -337,7 +338,8 @@ class SleepConsolidator {
     }
     const afterRowId = Math.max(0, Number.parseInt(options.afterRowId || this.getLastProcessedRowId(), 10) || 0);
     const limit = Math.max(1, Math.min(500, Number.parseInt(options.limit || this.maxEpisodes, 10) || this.maxEpisodes));
-    const db = new DatabaseSync(this.evidenceDbPath);
+    const DatabaseSync2 = getDatabaseSync();
+    const db = new DatabaseSync2(this.evidenceDbPath);
     try {
       return db.prepare(`
         SELECT

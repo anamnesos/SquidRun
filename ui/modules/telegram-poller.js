@@ -3,11 +3,17 @@
  * Uses raw HTTPS polling and relays inbound messages to a callback.
  */
 
+const fs = require('fs');
+const path = require('path');
 const https = require('https');
+const { resolveCoordPath } = require('../config');
 const log = require('./logger');
 
 const DEFAULT_POLL_INTERVAL_MS = 5000;
 const MIN_POLL_INTERVAL_MS = 1000;
+const DEFAULT_INBOUND_MEDIA_DIR = path.join('screenshots', 'telegram-inbound');
+const DEFAULT_LATEST_SCREENSHOT_PATH = path.join('screenshots', 'latest.png');
+const DEFAULT_EXTERNAL_TELEGRAM_PHOTO_DIR = 'D:\\projects\\Korean Fraud\\telegram-photos';
 
 let running = false;
 let pollTimer = null;
@@ -16,6 +22,9 @@ let pollIntervalMs = DEFAULT_POLL_INTERVAL_MS;
 let onMessage = null;
 let config = null;
 let nextOffset = 0;
+let mediaDownloadEnabled = true;
+let mediaDownloadRoot = null;
+let latestScreenshotPath = null;
 
 function getTelegramConfig(env = process.env) {
   const botToken = (env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -26,11 +35,19 @@ function getTelegramConfig(env = process.env) {
     return null;
   }
 
-  // Parse additional authorized chat IDs (comma-separated)
-  const extraIds = (env.TELEGRAM_AUTHORIZED_CHAT_IDS || '').trim();
-  const authorizedChatIds = extraIds
-    ? extraIds.split(',').map(s => Number.parseInt(s.trim(), 10)).filter(Number.isFinite)
-    : [];
+  // Parse additional authorized chat IDs from both legacy and current env names.
+  const extraIds = [
+    env.TELEGRAM_AUTHORIZED_CHAT_IDS,
+    env.TELEGRAM_CHAT_ALLOWLIST,
+  ]
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter(Boolean)
+    .join(',');
+  const authorizedChatIds = Array.from(new Set(
+    extraIds
+      ? extraIds.split(',').map(s => Number.parseInt(s.trim(), 10)).filter(Number.isFinite)
+      : []
+  ));
 
   return {
     botToken,
@@ -64,6 +81,34 @@ function requestTelegram(method, path) {
           resolve({
             statusCode: response.statusCode || 0,
             body: responseBody,
+          });
+        });
+      }
+    );
+
+    request.on('error', reject);
+    request.end();
+  });
+}
+
+function requestTelegramBuffer(method, requestPath) {
+  return new Promise((resolve, reject) => {
+    const request = https.request(
+      {
+        hostname: 'api.telegram.org',
+        port: 443,
+        path: requestPath,
+        method,
+      },
+      (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        response.on('end', () => {
+          resolve({
+            statusCode: response.statusCode || 0,
+            body: Buffer.concat(chunks),
           });
         });
       }
@@ -120,6 +165,226 @@ function parseMessageTimestampMs(message) {
   return Math.floor(dateSeconds * 1000);
 }
 
+function resolveWritableCoordPath(relPath) {
+  try {
+    return resolveCoordPath(relPath, { forWrite: true });
+  } catch (_) {
+    return path.resolve(process.cwd(), '.squidrun', relPath);
+  }
+}
+
+function ensureDir(dirPath) {
+  fs.mkdirSync(dirPath, { recursive: true });
+}
+
+function resolveDefaultMediaDownloadRoot() {
+  return process.env.TELEGRAM_INBOUND_MEDIA_DIR
+    ? path.resolve(process.env.TELEGRAM_INBOUND_MEDIA_DIR)
+    : DEFAULT_EXTERNAL_TELEGRAM_PHOTO_DIR;
+}
+
+function resolveDefaultLatestScreenshotPath() {
+  return resolveWritableCoordPath(DEFAULT_LATEST_SCREENSHOT_PATH);
+}
+
+function sanitizeFilenamePart(value, fallback = 'telegram') {
+  const normalized = String(value || '')
+    .trim()
+    .replace(/[^a-z0-9._-]+/gi, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return normalized || fallback;
+}
+
+function getFileExtension(fileName = '', mimeType = '', telegramFilePath = '', fallback = '.jpg') {
+  const fromName = path.extname(String(fileName || '')).trim();
+  if (fromName) return fromName.toLowerCase();
+
+  const fromTelegramPath = path.extname(String(telegramFilePath || '')).trim();
+  if (fromTelegramPath) return fromTelegramPath.toLowerCase();
+
+  const normalizedMimeType = String(mimeType || '').trim().toLowerCase();
+  if (normalizedMimeType === 'image/png') return '.png';
+  if (normalizedMimeType === 'image/webp') return '.webp';
+  if (normalizedMimeType === 'image/gif') return '.gif';
+  if (normalizedMimeType === 'image/heic' || normalizedMimeType === 'image/heif') return '.heic';
+  if (normalizedMimeType.startsWith('image/')) return '.jpg';
+
+  return fallback;
+}
+
+function isImageDocument(document) {
+  if (!document || typeof document !== 'object') return false;
+  const mimeType = String(document.mime_type || '').trim().toLowerCase();
+  if (mimeType.startsWith('image/')) return true;
+
+  const extension = path.extname(String(document.file_name || '')).trim().toLowerCase();
+  return ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif'].includes(extension);
+}
+
+function extractInboundMessage(update) {
+  if (!update || typeof update !== 'object') return { kind: null, message: null };
+  const candidates = ['message', 'edited_message', 'channel_post', 'edited_channel_post'];
+  for (const kind of candidates) {
+    if (update[kind] && typeof update[kind] === 'object') {
+      return {
+        kind,
+        message: update[kind],
+      };
+    }
+  }
+  return { kind: null, message: null };
+}
+
+function selectInboundMedia(message) {
+  const photoArray = Array.isArray(message?.photo) ? message.photo : [];
+  if (photoArray.length > 0) {
+    const photo = photoArray[photoArray.length - 1];
+    const fileId = typeof photo?.file_id === 'string' ? photo.file_id.trim() : '';
+    if (fileId) {
+      return {
+        kind: 'photo',
+        fileId,
+        telegram: photo,
+        fileName: '',
+        mimeType: 'image/jpeg',
+        fileUniqueId: typeof photo?.file_unique_id === 'string' ? photo.file_unique_id.trim() : '',
+      };
+    }
+  }
+
+  const document = message?.document && typeof message.document === 'object' ? message.document : null;
+  if (isImageDocument(document)) {
+    const fileId = typeof document?.file_id === 'string' ? document.file_id.trim() : '';
+    if (fileId) {
+      return {
+        kind: 'document',
+        fileId,
+        telegram: document,
+        fileName: typeof document.file_name === 'string' ? document.file_name.trim() : '',
+        mimeType: typeof document.mime_type === 'string' ? document.mime_type.trim() : '',
+        fileUniqueId: typeof document.file_unique_id === 'string' ? document.file_unique_id.trim() : '',
+      };
+    }
+  }
+
+  return null;
+}
+
+async function requestTelegramJson(method, requestPath) {
+  const response = await requestTelegram(method, requestPath);
+  let payload = null;
+  try {
+    payload = JSON.parse(response.body || '{}');
+  } catch (err) {
+    return {
+      ok: false,
+      statusCode: response.statusCode,
+      error: `invalid_json:${err.message}`,
+      payload: null,
+    };
+  }
+
+  if (response.statusCode < 200 || response.statusCode >= 300 || payload?.ok === false) {
+    return {
+      ok: false,
+      statusCode: response.statusCode,
+      error: payload?.description || `telegram_request_failed:${response.statusCode}`,
+      payload,
+    };
+  }
+
+  return {
+    ok: true,
+    statusCode: response.statusCode,
+    payload,
+  };
+}
+
+function buildGetFilePath(currentConfig, fileId) {
+  const query = new URLSearchParams();
+  query.append('file_id', fileId);
+  return `/bot${currentConfig.botToken}/getFile?${query.toString()}`;
+}
+
+function buildDownloadPath(currentConfig, telegramFilePath) {
+  return `/file/bot${currentConfig.botToken}/${telegramFilePath.replace(/^\/+/, '')}`;
+}
+
+function buildInboundMediaFilePath(media, context = {}) {
+  const baseDir = mediaDownloadRoot || resolveDefaultMediaDownloadRoot();
+  ensureDir(baseDir);
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const updateLabel = Number.isFinite(Number(context.updateId))
+    ? `u${Math.floor(Number(context.updateId))}`
+    : `m${Math.floor(Number(context.messageId || Date.now()))}`;
+  const idLabel = sanitizeFilenamePart(
+    media.fileUniqueId || media.fileName || media.fileId || media.kind,
+    media.kind
+  );
+  const extension = getFileExtension(
+    media.fileName,
+    media.mimeType,
+    media.telegramFilePath,
+    media.kind === 'photo' ? '.jpg' : '.bin'
+  );
+  return path.join(baseDir, `${timestamp}-${updateLabel}-${idLabel}${extension}`);
+}
+
+function persistInboundMedia(buffer, media, context = {}) {
+  const archivePath = buildInboundMediaFilePath(media, context);
+  ensureDir(path.dirname(archivePath));
+  fs.writeFileSync(archivePath, buffer);
+
+  const result = {
+    kind: media.kind,
+    fileId: media.fileId,
+    telegramFilePath: media.telegramFilePath || null,
+    fileName: media.fileName || null,
+    mimeType: media.mimeType || null,
+    localPath: archivePath,
+    bytes: buffer.length,
+    latestScreenshotPath: null,
+  };
+
+  const latestPath = latestScreenshotPath || resolveDefaultLatestScreenshotPath();
+  if (latestPath && String(result.mimeType || '').toLowerCase().startsWith('image/')) {
+    ensureDir(path.dirname(latestPath));
+    fs.copyFileSync(archivePath, latestPath);
+    result.latestScreenshotPath = latestPath;
+  }
+
+  return result;
+}
+
+async function maybeDownloadInboundMedia(message, currentConfig, context = {}) {
+  if (!mediaDownloadEnabled || !currentConfig) return null;
+
+  const media = selectInboundMedia(message);
+  if (!media) return null;
+
+  const fileResult = await requestTelegramJson('GET', buildGetFilePath(currentConfig, media.fileId));
+  if (!fileResult.ok) {
+    throw new Error(`getFile failed (${fileResult.error})`);
+  }
+
+  const telegramFilePath = typeof fileResult.payload?.result?.file_path === 'string'
+    ? fileResult.payload.result.file_path.trim()
+    : '';
+  if (!telegramFilePath) {
+    throw new Error('getFile returned no file_path');
+  }
+
+  media.telegramFilePath = telegramFilePath;
+  const downloadResponse = await requestTelegramBuffer('GET', buildDownloadPath(currentConfig, telegramFilePath));
+  if (downloadResponse.statusCode < 200 || downloadResponse.statusCode >= 300) {
+    throw new Error(`file download failed (${downloadResponse.statusCode})`);
+  }
+
+  return persistInboundMedia(downloadResponse.body, media, context);
+}
+
 async function pollNow() {
   if (!running || !config || pollInFlight) return;
   pollInFlight = true;
@@ -142,46 +407,76 @@ async function pollNow() {
     }
 
     const updates = Array.isArray(payload.result) ? payload.result : [];
-    updates
+    const sortedUpdates = updates
       .slice()
       .sort((left, right) => {
         const leftId = parseUpdateId(left) ?? 0;
         const rightId = parseUpdateId(right) ?? 0;
         return leftId - rightId;
-      })
-      .forEach((update) => {
-        const updateId = parseUpdateId(update);
-        if (updateId === null || updateId < nextOffset) return;
-        nextOffset = Math.max(nextOffset, updateId + 1);
-
-        const message = update?.message && typeof update.message === 'object' ? update.message : null;
-        if (!message) return;
-        if (!isAuthorizedChat(message, config)) {
-          log.warn(
-            'Telegram',
-            `Rejected inbound Telegram message from unauthorized chat (${message?.chat?.id ?? 'unknown'}) — config.chatId=${config.chatId} authorizedChatIds=${JSON.stringify(config.authorizedChatIds)} msgChatId=${message?.chat?.id} typeof=${typeof message?.chat?.id}`
-          );
-          return;
-        }
-
-        const text = normalizeBody(message.text);
-        if (!text) return;
-
-        if (typeof onMessage === 'function') {
-          try {
-            onMessage(text, normalizeFrom(message.from), {
-              updateId,
-              messageId: Number.isFinite(Number(message?.message_id))
-                ? Number(message.message_id)
-                : null,
-              chatId: getAuthorizedChatId(message),
-              timestampMs: parseMessageTimestampMs(message),
-            });
-          } catch (err) {
-            log.warn('Telegram', `Telegram callback failed: ${err.message}`);
-          }
-        }
       });
+
+    for (const update of sortedUpdates) {
+      const updateId = parseUpdateId(update);
+      if (updateId === null || updateId < nextOffset) continue;
+      nextOffset = Math.max(nextOffset, updateId + 1);
+
+      const inbound = extractInboundMessage(update);
+      const message = inbound.message;
+      if (!message) continue;
+      if (!isAuthorizedChat(message, config)) {
+        log.warn(
+          'Telegram',
+          `Rejected inbound Telegram message from unauthorized chat (${message?.chat?.id ?? 'unknown'}) — config.chatId=${config.chatId} authorizedChatIds=${JSON.stringify(config.authorizedChatIds)} msgChatId=${message?.chat?.id} typeof=${typeof message?.chat?.id}`
+        );
+        continue;
+      }
+
+      const text = normalizeBody(message.text);
+      const caption = normalizeBody(message.caption);
+      const photoArray = Array.isArray(message.photo) ? message.photo : null;
+      const document = message.document && typeof message.document === 'object' ? message.document : null;
+      const messageId = Number.isFinite(Number(message?.message_id))
+        ? Number(message.message_id)
+        : null;
+
+      let downloadedMedia = null;
+      try {
+        downloadedMedia = await maybeDownloadInboundMedia(message, config, {
+          updateId,
+          messageId,
+        });
+      } catch (err) {
+        log.warn('Telegram', `Telegram media download failed: ${err.message}`);
+      }
+
+      // Build display text: prefer text, fall back to caption, then describe media
+      let displayText = text;
+      if (!displayText && photoArray) {
+        displayText = caption ? `[Photo] ${caption}` : '[Photo received]';
+      }
+      if (!displayText && document) {
+        const fileName = document.file_name || 'unknown';
+        displayText = caption ? `[File: ${fileName}] ${caption}` : `[File: ${fileName}]`;
+      }
+      if (!displayText) continue;
+
+      if (typeof onMessage === 'function') {
+        try {
+          await Promise.resolve(onMessage(displayText, normalizeFrom(message.from), {
+            updateId,
+            updateKind: inbound.kind,
+            messageId,
+            chatId: getAuthorizedChatId(message),
+            timestampMs: parseMessageTimestampMs(message),
+            photo: photoArray ? photoArray[photoArray.length - 1] : null,
+            document: document || null,
+            media: downloadedMedia,
+          }));
+        } catch (err) {
+          log.warn('Telegram', `Telegram callback failed: ${err.message}`);
+        }
+      }
+    }
   } catch (err) {
     log.warn('Telegram', `Telegram polling error: ${err.message}`);
   } finally {
@@ -202,6 +497,15 @@ function start(options = {}) {
     : DEFAULT_POLL_INTERVAL_MS;
 
   onMessage = typeof options.onMessage === 'function' ? options.onMessage : null;
+  mediaDownloadEnabled = options.downloadMedia !== false;
+  mediaDownloadRoot = typeof options.mediaDownloadRoot === 'string' && options.mediaDownloadRoot.trim()
+    ? path.resolve(options.mediaDownloadRoot)
+    : (typeof options.env?.TELEGRAM_INBOUND_MEDIA_DIR === 'string' && options.env.TELEGRAM_INBOUND_MEDIA_DIR.trim()
+      ? path.resolve(options.env.TELEGRAM_INBOUND_MEDIA_DIR)
+      : resolveDefaultMediaDownloadRoot());
+  latestScreenshotPath = typeof options.latestScreenshotPath === 'string' && options.latestScreenshotPath.trim()
+    ? path.resolve(options.latestScreenshotPath)
+    : resolveDefaultLatestScreenshotPath();
   nextOffset = 0;
   pollInFlight = false;
   running = true;
@@ -229,6 +533,9 @@ function stop() {
   onMessage = null;
   config = null;
   nextOffset = 0;
+  mediaDownloadEnabled = true;
+  mediaDownloadRoot = null;
+  latestScreenshotPath = null;
 }
 
 function isRunning() {
@@ -239,9 +546,15 @@ const _internals = {
   getTelegramConfig,
   buildUpdatesPath,
   requestTelegram,
+  requestTelegramBuffer,
+  requestTelegramJson,
+  maybeDownloadInboundMedia,
+  selectInboundMedia,
+  extractInboundMessage,
   pollNow,
   parseUpdateId,
   isAuthorizedChat,
+  isImageDocument,
 };
 
 module.exports = {

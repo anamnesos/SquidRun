@@ -42,7 +42,7 @@ const sharedState = require('../shared-state');
 const contextCompressor = require('../context-compressor');
 const smsPoller = require('../sms-poller');
 const telegramPoller = require('../telegram-poller');
-const { sendTelegram } = require('../../scripts/hm-telegram');
+const { sendTelegram, normalizeChatId } = require('../../scripts/hm-telegram');
 const {
   shouldTriggerAutonomousSmoke,
   buildSmokeRunnerArgs,
@@ -103,6 +103,7 @@ const {
   resolveSleepExtractionCommandFromSnapshot,
   writeSystemCapabilitiesSnapshot,
 } = require('../local-model-capabilities');
+const { createProblemOrchestrator } = require('../problem-orchestrator');
 const {
   readPairedConfig,
   writePairedConfig,
@@ -368,6 +369,12 @@ class SquidRunApp {
         }
       },
     });
+    this.problemOrchestrator = createProblemOrchestrator();
+    try {
+      this.problemOrchestrator.ensureState();
+    } catch (error) {
+      log.warn('ProblemOrchestrator', `Failed ensuring active-cases state at startup: ${error.message}`);
+    }
     this.lastDaemonOutputAtMs = Date.now();
     this.daemonClientListeners = [];
     this.consoleLogPath = path.join(WORKSPACE_PATH, 'console.log');
@@ -400,6 +407,7 @@ class SquidRunApp {
     this.telegramInboundContext = {
       lastInboundAtMs: 0,
       sender: null,
+      chatId: null,
     };
     this.autonomousSmoke = {
       inFlight: false,
@@ -2515,6 +2523,7 @@ class SquidRunApp {
                 content: canonicalEnvelope.content,
                 fromRole: data.role || 'unknown',
                 messageId: canonicalEnvelope.message_id,
+                chatId: data.message?.metadata?.telegram?.chatId || data.message?.metadata?.chatId || null,
               });
               const deliveryResult = {
                 accepted: Boolean(telegramResult?.accepted),
@@ -3133,6 +3142,7 @@ class SquidRunApp {
       clearActivityLog: () => this.activity.clearActivityLog(),
       saveActivityLog: () => this.activity.saveActivityLog(),
       firmwareManager: this.firmwareManager,
+      problemOrchestrator: this.problemOrchestrator,
       getBridgeDevices: (options = {}) => this.getBridgeDevices(options),
       getBridgeStatus: () => this.getBridgeStatus(),
       getBridgePairingState: () => this.getBridgePairingState(),
@@ -4941,11 +4951,46 @@ class SquidRunApp {
     return normalized === 'user' || normalized === 'telegram';
   }
 
-  markTelegramInboundContext(sender = 'unknown') {
+  getTelegramReplyContextPath() {
+    try {
+      return resolveCoordPath(path.join('runtime', 'telegram-reply-context.json'), { forWrite: true });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  persistTelegramReplyContext(context = {}) {
+    const contextPath = this.getTelegramReplyContextPath();
+    const chatId = normalizeChatId(context?.chatId);
+    if (!contextPath || !chatId) return false;
+
+    const payload = {
+      chatId,
+      defaultChatId: normalizeChatId(process.env.TELEGRAM_CHAT_ID || '') || null,
+      sender: typeof context?.sender === 'string' && context.sender.trim() ? context.sender.trim() : null,
+      lastInboundAtMs: Number.isFinite(Number(context?.lastInboundAtMs))
+        ? Math.floor(Number(context.lastInboundAtMs))
+        : Date.now(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      fs.mkdirSync(path.dirname(contextPath), { recursive: true });
+      fs.writeFileSync(contextPath, JSON.stringify(payload, null, 2));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  markTelegramInboundContext(sender = 'unknown', metadata = {}) {
+    const chatId = normalizeChatId(metadata?.chatId);
     this.telegramInboundContext = {
       lastInboundAtMs: Date.now(),
       sender: typeof sender === 'string' && sender.trim() ? sender.trim() : 'unknown',
+      chatId,
     };
+    this.persistTelegramReplyContext(this.telegramInboundContext);
     return this.telegramInboundContext;
   }
 
@@ -4955,7 +5000,13 @@ class SquidRunApp {
     return (nowMs - lastInboundAtMs) <= TELEGRAM_REPLY_WINDOW_MS;
   }
 
-  async routeTelegramReply({ target, content, fromRole = 'system', messageId = null } = {}) {
+  async routeTelegramReply({
+    target,
+    content,
+    fromRole = 'system',
+    messageId = null,
+    chatId = null,
+  } = {}) {
     const normalizedTarget = this.normalizeOutboundTarget(target);
     if (!this.isTelegramReplyTarget(normalizedTarget)) {
       return {
@@ -4988,10 +5039,12 @@ class SquidRunApp {
     }
 
     try {
+      const replyChatId = normalizeChatId(chatId) || normalizeChatId(this.telegramInboundContext?.chatId);
       const result = await sendTelegram(message, process.env, {
         messageId,
         senderRole: fromRole,
         sessionId: this.commsSessionScopeId || null,
+        chatId: replyChatId || null,
         metadata: {
           routeKind: 'telegram',
           targetRaw: normalizedTarget,
@@ -6160,8 +6213,14 @@ class SquidRunApp {
         const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
         const body = typeof text === 'string' ? text.trim() : '';
         if (!body) return;
+        const media = metadata?.media && typeof metadata.media === 'object' ? metadata.media : null;
+        const archivePath = typeof media?.localPath === 'string' && media.localPath.trim()
+          ? media.localPath.trim()
+          : null;
 
-        this.markTelegramInboundContext(sender);
+        this.markTelegramInboundContext(sender, {
+          chatId: metadata?.chatId,
+        });
         const updateId = Number.isFinite(Number(metadata?.updateId))
           ? Math.floor(Number(metadata.updateId))
           : null;
@@ -6198,6 +6257,15 @@ class SquidRunApp {
               chatId: Number.isFinite(Number(metadata?.chatId))
                 ? Number(metadata.chatId)
                 : null,
+              mediaKind: typeof media?.kind === 'string' ? media.kind : null,
+              telegramFileId: typeof media?.fileId === 'string' ? media.fileId : null,
+              telegramFilePath: typeof media?.telegramFilePath === 'string' ? media.telegramFilePath : null,
+              mediaMimeType: typeof media?.mimeType === 'string' ? media.mimeType : null,
+              mediaFileName: typeof media?.fileName === 'string' ? media.fileName : null,
+              downloadedFilePath: archivePath,
+              latestScreenshotPath: typeof media?.latestScreenshotPath === 'string'
+                ? media.latestScreenshotPath
+                : null,
             },
           },
           {
@@ -6214,7 +6282,8 @@ class SquidRunApp {
         }).catch((err) => {
           log.warn('EvidenceLedger', `Telegram inbound journal upsert error: ${err.message}`);
         });
-        const formatted = `[Telegram from ${sender}]: ${body}`;
+        const formattedBody = archivePath ? `${body} | saved: ${archivePath}` : body;
+        const formatted = `[Telegram from ${sender}]: ${formattedBody}`;
         const result = triggers.sendDirectMessage(['1'], formatted, null);
         if (!result?.success) {
           log.warn('Telegram', `Failed to inject inbound Telegram into pane 1 (${result?.error || 'unknown'})`);

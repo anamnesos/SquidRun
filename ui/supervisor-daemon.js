@@ -71,6 +71,8 @@ const DEFAULT_POLYMARKET_TRADING_STATE_PATH = resolveRuntimePath('polymarket-tra
 const DEFAULT_LAUNCH_RADAR_STATE_PATH = resolveRuntimePath('launch-radar-supervisor-state.json');
 const DEFAULT_YIELD_ROUTER_STATE_PATH = resolveRuntimePath('yield-router-supervisor-state.json');
 const HM_SEND_SCRIPT_PATH = path.join(__dirname, 'scripts', 'hm-send.js');
+const HM_DEFI_EXECUTE_SCRIPT_PATH = path.join(__dirname, 'scripts', 'hm-defi-execute.js');
+const HM_DEFI_CLOSE_SCRIPT_PATH = path.join(__dirname, 'scripts', 'hm-defi-close.js');
 const TRADING_AGENT_TARGETS = Object.freeze(['architect', 'builder', 'oracle']);
 const TRADING_PHASES = Object.freeze([
   { key: 'premarket_wake', label: 'Pre-market wake', offsetMinutes: -60 },
@@ -123,6 +125,11 @@ function writeJsonFile(filePath, payload) {
   fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
 }
 
+function toNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
 function trimTail(value, maxBytes = DEFAULT_STDIO_TAIL_BYTES) {
   const text = typeof value === 'string' ? value : String(value || '');
   if (!text) return '';
@@ -135,6 +142,131 @@ function appendFileSafe(filePath, chunk) {
   try {
     fs.appendFileSync(filePath, chunk);
   } catch {}
+}
+
+function has[private-live-ops]Credentials(env = process.env) {
+  return Boolean(
+    String(env?.POLYMARKET_PRIVATE_KEY || '').trim()
+    && String(env?.POLYMARKET_FUNDER_ADDRESS || '').trim()
+  );
+}
+
+function normalize[private-live-ops]Position(position = {}) {
+  const size = toNumber(position?.szi ?? position?.size, 0);
+  return {
+    coin: String(position?.coin || position?.asset || '').trim().toUpperCase(),
+    size,
+    side: size < 0 ? 'short' : (size > 0 ? 'long' : 'flat'),
+    entryPx: toNumber(position?.entryPx, 0),
+    unrealizedPnl: toNumber(position?.unrealizedPnl, 0),
+    liquidationPx: toNumber(position?.liquidationPx, 0),
+  };
+}
+
+async function executeNodeScript(scriptPath, args = [], options = {}) {
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let child = null;
+    let timedOut = false;
+    const timeoutMs = Math.max(1_000, Number.parseInt(options.timeoutMs || '120000', 10) || 120_000);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        child?.kill();
+      } catch {}
+    }, timeoutMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+
+    try {
+      child = spawn(process.execPath, [scriptPath, ...args], {
+        cwd: options.cwd || getProjectRoot(),
+        env: options.env || process.env,
+        shell: false,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      resolve({
+        ok: false,
+        exitCode: null,
+        error: err.message,
+        stdout,
+        stderr,
+      });
+      return;
+    }
+
+    child.stdout.on('data', (chunk) => {
+      stdout = trimTail(stdout + String(chunk || ''), 64 * 1024);
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr = trimTail(stderr + String(chunk || ''), 64 * 1024);
+    });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({
+        ok: false,
+        exitCode: null,
+        error: err.message,
+        stdout,
+        stderr,
+      });
+    });
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      resolve({
+        ok: !timedOut && Number(code) === 0,
+        exitCode: Number.isFinite(Number(code)) ? Number(code) : null,
+        signal: signal || null,
+        timedOut,
+        stdout,
+        stderr,
+      });
+    });
+  });
+}
+
+function create[private-live-ops]Executor(options = {}) {
+  const env = options.env || process.env;
+  const cwd = options.cwd || getProjectRoot();
+  const dryRun = options.dryRun === true;
+
+  return {
+    async getAccountState() {
+      const { HttpTransport, InfoClient } = await import('@nktkas/[private-live-ops]');
+      const transport = new HttpTransport();
+      const info = new InfoClient({ transport });
+      const state = await info.clearinghouseState({ user: env.POLYMARKET_FUNDER_ADDRESS });
+      const positions = Array.isArray(state?.assetPositions)
+        ? state.assetPositions
+          .map((entry) => normalize[private-live-ops]Position(entry?.position || {}))
+          .filter((position) => position.coin && position.side !== 'flat')
+        : [];
+      return {
+        accountValue: toNumber(state?.marginSummary?.accountValue, 0),
+        withdrawable: toNumber(state?.withdrawable, 0),
+        positions,
+      };
+    },
+
+    async openEthShort() {
+      return executeNodeScript(HM_DEFI_EXECUTE_SCRIPT_PATH, dryRun ? ['--dry-run', 'trade'] : ['trade'], {
+        cwd,
+        env,
+      });
+    },
+
+    async closeEthPosition() {
+      return executeNodeScript(HM_DEFI_CLOSE_SCRIPT_PATH, dryRun ? ['--dry-run'] : [], {
+        cwd,
+        env,
+      });
+    },
+  };
 }
 
 function createLogger(logPath) {
@@ -454,6 +586,7 @@ class SupervisorDaemon {
     this.workerLeaseOwnerPrefix = String(options.workerLeaseOwnerPrefix || 'supervisor');
     this.logger = options.logger || createLogger(this.logPath);
     this.activeWorkers = new Map();
+    this.runtimeEnv = options.env || process.env;
     this.loopEvents = new EventEmitter();
     this.tickTimer = null;
     this.tickInFlight = null;
@@ -557,6 +690,7 @@ class SupervisorDaemon {
     };
     this.cryptoTradingEnabled = options.cryptoTradingEnabled !== false
       && process.env.SQUIDRUN_CRYPTO_TRADING_AUTOMATION !== '0';
+    this.cryptoMonitorOnly = options.cryptoMonitorOnly !== false;
     this.cryptoTradingStatePath = options.cryptoTradingStatePath || DEFAULT_CRYPTO_TRADING_STATE_PATH;
     this.cryptoTradingState = {
       ...defaultCryptoTradingState(),
@@ -581,6 +715,40 @@ class SupervisorDaemon {
         journalPath: resolveRuntimePath('trade-journal.db'),
       }))
       : null;
+    const [private-live-ops]Configured = Boolean(options.[private-live-ops]Executor) || has[private-live-ops]Credentials(this.runtimeEnv);
+    const [private-live-ops]AutomationRequested = options.[private-live-ops]ExecutionEnabled !== false
+      && this.runtimeEnv.SQUIDRUN_LIVE_OPS_AUTOMATION !== '0';
+    this.[private-live-ops]ExecutionEnabled = Boolean(this.cryptoTradingEnabled && [private-live-ops]AutomationRequested && [private-live-ops]Configured);
+    this.[private-live-ops]ExecutionDryRun = options.[private-live-ops]ExecutionDryRun === true
+      || this.runtimeEnv.SQUIDRUN_LIVE_OPS_DRY_RUN === '1';
+    this.[private-live-ops]Executor = this.[private-live-ops]ExecutionEnabled
+      ? (options.[private-live-ops]Executor || create[private-live-ops]Executor({
+        env: this.runtimeEnv,
+        cwd: this.projectRoot,
+        dryRun: this.[private-live-ops]ExecutionDryRun,
+      }))
+      : null;
+    this.last[private-live-ops]ExecutionSummary = this.[private-live-ops]ExecutionEnabled
+      ? {
+        enabled: true,
+        status: 'idle',
+        dryRun: this.[private-live-ops]ExecutionDryRun,
+        accountValue: null,
+        position: null,
+        action: null,
+        reason: null,
+        executedAt: null,
+      }
+      : {
+        enabled: false,
+        status: 'disabled',
+        dryRun: this.[private-live-ops]ExecutionDryRun,
+        reason: [private-live-ops]Configured ? 'manual_opt_out' : 'credentials_unavailable',
+        accountValue: null,
+        position: null,
+        action: null,
+        executedAt: null,
+      };
     if (!this.tradingOrchestrator && this.cryptoTradingOrchestrator) {
       this.lastTradeReconciliationSummary.enabled = true;
       this.lastTradeReconciliationSummary.status = 'idle';
@@ -639,11 +807,11 @@ class SupervisorDaemon {
     // Circuit breaker — continuous position monitor with stop-loss execution
     const executor = require('./modules/trading/executor');
     const dataIngestion = require('./modules/trading/data-ingestion');
-    this.circuitBreaker = this.cryptoTradingEnabled && options.circuitBreaker !== null
+    this.circuitBreaker = (this.tradingEnabled || this.cryptoTradingEnabled) && options.circuitBreaker !== null
       ? (options.circuitBreaker || new CircuitBreaker({
         pollMs: 30_000,
         hardStopPct: 0.04,   // 4% loss from entry
-        trailingStopPct: 0.03, // 3% drop from high-water mark
+        trailingStopPct: 0.04, // 4% drop from high-water mark
         flashCrashPct: 0.05,  // 5% portfolio drop → sell all
         minPositionValueUsd: 10,
         cooldownMs: 5 * 60_000,
@@ -652,15 +820,16 @@ class SupervisorDaemon {
         getPositions: async () => executor.getOpenPositions(),
         getSnapshots: async (symbols) => dataIngestion.getWatchlistSnapshots({ symbols }),
         executeSell: async (ticker, shares, reason) => {
+          const assetClass = tradingWatchlist.getAssetClassForTicker(ticker, 'us_equity');
           this.logger.warn(`[circuit-breaker] Executing emergency SELL: ${ticker} x${shares} — ${reason}`);
           try {
             const result = await executor.submitOrder({
               ticker,
               direction: 'SELL',
               shares,
-              assetClass: 'crypto',
-              type: 'market',
-              timeInForce: 'gtc',
+              assetClass,
+              orderType: 'market',
+              ...(assetClass === 'crypto' ? { timeInForce: 'gtc' } : {}),
             });
             this.logger.info(`[circuit-breaker] SELL ${ticker} submitted: ${result?.orderId || 'ok'}`);
             return { ok: true, orderId: result?.orderId };
@@ -1557,6 +1726,174 @@ class SupervisorDaemon {
     return tradingWatchlist.getTickers({ assetClass: 'crypto' });
   }
 
+  extractConsensusResultForTicker(consensusPhase, ticker) {
+    const normalizedTicker = String(ticker || '').trim().toUpperCase();
+    const results = Array.isArray(consensusPhase?.results) ? consensusPhase.results : [];
+    return results.find((result) => String(result?.ticker || '').trim().toUpperCase() === normalizedTicker) || null;
+  }
+
+  summarize[private-live-ops]Position(position) {
+    if (!position || !position.coin) return null;
+    return {
+      coin: position.coin,
+      side: position.side,
+      size: position.size,
+      entryPx: position.entryPx,
+      unrealizedPnl: position.unrealizedPnl,
+      liquidationPx: position.liquidationPx,
+    };
+  }
+
+  resolve[private-live-ops]EthDirective(consensusPhase, approvedTrades = []) {
+    const ethConsensus = this.extractConsensusResultForTicker(consensusPhase, 'ETH/USD');
+    const approvedEthTrade = (Array.isArray(approvedTrades) ? approvedTrades : []).find((trade) => {
+      return String(trade?.ticker || '').trim().toUpperCase() === 'ETH/USD';
+    }) || null;
+    const decision = String(ethConsensus?.decision || '').trim().toUpperCase();
+
+    if (!ethConsensus || ethConsensus.consensus !== true || !decision) {
+      return {
+        action: 'none',
+        reason: 'no_eth_consensus',
+        consensus: ethConsensus,
+        approvedTrade: approvedEthTrade,
+      };
+    }
+
+    if (decision === 'BUY' || decision === 'COVER') {
+      return {
+        action: 'close_position',
+        reason: 'eth_bullish_consensus',
+        consensus: ethConsensus,
+        approvedTrade: approvedEthTrade,
+      };
+    }
+
+    if ((decision === 'SELL' || decision === 'SHORT') && approvedEthTrade) {
+      return {
+        action: 'open_short',
+        reason: 'eth_bearish_consensus_approved',
+        consensus: ethConsensus,
+        approvedTrade: approvedEthTrade,
+      };
+    }
+
+    if (decision === 'SELL' || decision === 'SHORT') {
+      return {
+        action: 'none',
+        reason: 'eth_sell_not_approved',
+        consensus: ethConsensus,
+        approvedTrade: approvedEthTrade,
+      };
+    }
+
+    return {
+      action: 'none',
+      reason: 'eth_non_actionable_consensus',
+      consensus: ethConsensus,
+      approvedTrade: approvedEthTrade,
+    };
+  }
+
+  async run[private-live-ops]ExecutionPhase({ scheduledAt, marketDate, consensusPhase, approvedTrades = [] } = {}) {
+    const phase = '[private-live-ops]_execution';
+    if (!this.[private-live-ops]ExecutionEnabled || !this.[private-live-ops]Executor) {
+      return {
+        ok: false,
+        skipped: true,
+        phase,
+        reason: '[private-live-ops]_disabled',
+      };
+    }
+
+    const directive = this.resolve[private-live-ops]EthDirective(consensusPhase, approvedTrades);
+    const accountState = await this.[private-live-ops]Executor.getAccountState();
+    const ethPosition = Array.isArray(accountState?.positions)
+      ? accountState.positions.find((position) => position.coin === 'ETH' && position.side !== 'flat')
+      : null;
+    const positionSummary = this.summarize[private-live-ops]Position(ethPosition);
+    let result = {
+      ok: true,
+      skipped: true,
+      phase,
+      scheduledAt,
+      marketDate,
+      action: 'none',
+      reason: directive.reason,
+      signal: directive.consensus
+        ? {
+          ticker: directive.consensus.ticker,
+          decision: directive.consensus.decision,
+          confidence: directive.consensus.confidence,
+          agreementCount: directive.consensus.agreementCount,
+        }
+        : null,
+      approvedTrade: directive.approvedTrade
+        ? {
+          ticker: directive.approvedTrade.ticker,
+          decision: directive.approvedTrade.consensus?.decision || null,
+          maxShares: directive.approvedTrade.riskCheck?.maxShares ?? null,
+        }
+        : null,
+      accountValue: toNumber(accountState?.accountValue, 0),
+      position: positionSummary,
+      execution: null,
+    };
+
+    if (directive.action === 'open_short') {
+      if (ethPosition?.side === 'short') {
+        result.reason = 'eth_short_already_open';
+      } else if (ethPosition?.side === 'long') {
+        result.reason = 'eth_long_position_present';
+      } else {
+        const execution = await this.[private-live-ops]Executor.openEthShort({
+          scheduledAt,
+          marketDate,
+          consensus: directive.consensus,
+        });
+        result = {
+          ...result,
+          ok: execution?.ok !== false,
+          skipped: false,
+          action: 'open_short',
+          reason: execution?.ok !== false ? directive.reason : (execution?.error || execution?.stderr || 'open_short_failed'),
+          execution,
+        };
+      }
+    } else if (directive.action === 'close_position') {
+      if (!ethPosition) {
+        result.reason = 'no_eth_position_to_close';
+      } else {
+        const execution = await this.[private-live-ops]Executor.closeEthPosition({
+          scheduledAt,
+          marketDate,
+          consensus: directive.consensus,
+        });
+        result = {
+          ...result,
+          ok: execution?.ok !== false,
+          skipped: false,
+          action: 'close_position',
+          reason: execution?.ok !== false ? directive.reason : (execution?.error || execution?.stderr || 'close_position_failed'),
+          execution,
+        };
+      }
+    }
+
+    this.last[private-live-ops]ExecutionSummary = {
+      enabled: true,
+      status: result.ok ? (result.skipped ? 'idle' : 'completed') : 'failed',
+      dryRun: this.[private-live-ops]ExecutionDryRun,
+      accountValue: result.accountValue,
+      position: result.position,
+      action: result.action,
+      reason: result.reason,
+      executedAt: scheduledAt || new Date().toISOString(),
+      signal: result.signal,
+    };
+    return result;
+  }
+
   async getLiveOpsBankrollSnapshot(now = new Date()) {
     const [balance, positions] = await Promise.all([
       this.polymarketClient.getBalance(),
@@ -2022,10 +2359,10 @@ class SupervisorDaemon {
 
       // Apply macro risk gate to approved trades
       let approved = Array.isArray(consensusPhase?.approvedTrades) ? consensusPhase.approvedTrades : [];
-      if (macroRisk.regime === 'red') {
+      if (macroRisk?.constraints?.allowLongs === false || macroRisk.regime === 'red' || macroRisk.regime === 'stay_cash') {
         const blocked = approved.filter((t) => t.consensus?.decision === 'BUY');
         if (blocked.length > 0) {
-          this.logger.info(`Macro RED regime: blocking ${blocked.length} BUY trades (${blocked.map(t => t.ticker).join(', ')})`);
+          this.logger.info(`Macro ${String(macroRisk.regime || '').toUpperCase()} regime: blocking ${blocked.length} BUY trades (${blocked.map(t => t.ticker).join(', ')})`);
         }
         approved = approved.filter((t) => t.consensus?.decision !== 'BUY');
       }
@@ -2037,6 +2374,16 @@ class SupervisorDaemon {
             trade.riskCheck.maxShares = Math.floor(trade.riskCheck.maxShares * macroRisk.constraints.positionSizeMultiplier * 1e6) / 1e6;
           }
         }
+      }
+
+      const actionableCount = approved.length;
+      const approvedFor[private-live-ops] = approved.slice();
+
+      if (this.cryptoMonitorOnly) {
+        if (actionableCount > 0) {
+          this.logger.info(`Crypto automation is monitor-only: skipping execution for ${actionableCount} approved trade(s)`);
+        }
+        approved = [];
       }
 
       // Execute approved trades immediately — crypto markets are always open
@@ -2054,6 +2401,18 @@ class SupervisorDaemon {
         this.logger.info(`Crypto execution: ${fills.length}/${execCount} orders filled`);
       }
 
+      const [private-live-ops]Execution = await this.run[private-live-ops]ExecutionPhase({
+        scheduledAt,
+        marketDate: event.marketDate || '',
+        consensusPhase,
+        approvedTrades: approvedFor[private-live-ops],
+      });
+      if (![private-live-ops]Execution.skipped) {
+        this.logger.info(
+          `[private-live-ops] execution ${[private-live-ops]Execution.ok ? 'completed' : 'failed'}: ${[private-live-ops]Execution.action} (${[private-live-ops]Execution.reason})`
+        );
+      }
+
       return {
         ok: true,
         phase: phaseKey,
@@ -2062,12 +2421,16 @@ class SupervisorDaemon {
         preMarket,
         macroRisk: { regime: macroRisk.regime, score: macroRisk.score, reason: macroRisk.reason },
         execution: executionResult,
+        [private-live-ops]Execution,
         summary: {
           symbols: cryptoSymbols.length,
-          approvedTrades: approved.length,
+          approvedTrades: actionableCount,
           rejectedTrades: Array.isArray(consensusPhase?.rejectedTrades) ? consensusPhase.rejectedTrades.length : 0,
           incompleteSignals: Array.isArray(consensusPhase?.incompleteSignals) ? consensusPhase.incompleteSignals.length : 0,
           executedTrades: executionResult ? (executionResult.executions || []).filter((e) => e.execution?.ok).length : 0,
+          [private-live-ops]Action: [private-live-ops]Execution?.action || 'none',
+          [private-live-ops]Executed: Boolean([private-live-ops]Execution && ![private-live-ops]Execution.skipped),
+          monitorOnly: this.cryptoMonitorOnly,
         },
       };
     } catch (err) {
@@ -3237,6 +3600,11 @@ class SupervisorDaemon {
         lastProcessedAt: this.cryptoTradingState.lastProcessedAt || null,
         nextEvent: this.cryptoTradingState.nextEvent || null,
         lastSummary: this.lastCryptoTradingSummary || null,
+      },
+      [private-live-ops]Execution: {
+        enabled: this.[private-live-ops]ExecutionEnabled,
+        dryRun: this.[private-live-ops]ExecutionDryRun,
+        lastSummary: this.last[private-live-ops]ExecutionSummary || null,
       },
       smartMoneyScanner: {
         enabled: Boolean(this.smartMoneyScanner),

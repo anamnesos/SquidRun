@@ -23,6 +23,7 @@ const TELEGRAM_RATE_LIMIT_WINDOW_MS = 60_000;
 const TELEGRAM_MESSAGE_MAX_CHARS = 4_000;
 const TELEGRAM_CAPTION_MAX_CHARS = 1_000;
 const TELEGRAM_TRUNCATED_SUFFIX = '[message truncated]';
+const TELEGRAM_REPLY_CONTEXT_PATH = path.join('runtime', 'telegram-reply-context.json');
 
 let telegramRateLimiterQueue = Promise.resolve();
 let telegramRateLimiterTimestamps = [];
@@ -182,12 +183,48 @@ function upsertTelegramJournal(entry = {}) {
 function usage() {
   console.log('Usage: node hm-telegram.js <message>');
   console.log('       node hm-telegram.js --photo <image-path> [caption]');
+  console.log('       node hm-telegram.js [--chat-id <chat-id>] <message>');
+  console.log('       node hm-telegram.js --photo <image-path> [caption] [--chat-id <chat-id>]');
   console.log('Env required: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID');
   console.log('Optional: TELEGRAM_CHAT_ALLOWLIST (comma-separated chat ids)');
 }
 
 function parseMessage(args = []) {
   return args.join(' ').trim();
+}
+
+function parseCliArgs(argv = []) {
+  let photoPath = null;
+  let chatId = null;
+  const messageParts = [];
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (token === '--photo') {
+      if (!argv[i + 1]) {
+        return { ok: false, error: '--photo requires an image path' };
+      }
+      photoPath = argv[i + 1];
+      i += 1;
+      continue;
+    }
+    if (token === '--chat-id') {
+      if (!argv[i + 1]) {
+        return { ok: false, error: '--chat-id requires a chat ID' };
+      }
+      chatId = argv[i + 1];
+      i += 1;
+      continue;
+    }
+    messageParts.push(token);
+  }
+
+  return {
+    ok: true,
+    photoPath,
+    chatId,
+    message: parseMessage(messageParts),
+  };
 }
 
 function normalizeChatId(value) {
@@ -207,11 +244,56 @@ function parseChatAllowlist(value) {
   return Array.from(new Set(parsed));
 }
 
+function resolveTelegramReplyContextPath() {
+  if (typeof resolveCoordPath !== 'function') return null;
+  try {
+    return resolveCoordPath(TELEGRAM_REPLY_CONTEXT_PATH);
+  } catch (_) {
+    return null;
+  }
+}
+
+function readTelegramReplyContext() {
+  const contextPath = resolveTelegramReplyContextPath();
+  if (!contextPath) return null;
+
+  const payload = parseJsonFileSafe(contextPath);
+  if (!payload || typeof payload !== 'object') return null;
+
+  const chatId = normalizeChatId(payload.chatId);
+  if (!chatId) return null;
+
+  return {
+    chatId,
+    sender: typeof payload.sender === 'string' ? payload.sender.trim() || null : null,
+    defaultChatId: normalizeChatId(payload.defaultChatId),
+    lastInboundAtMs: Number.isFinite(Number(payload.lastInboundAtMs))
+      ? Math.floor(Number(payload.lastInboundAtMs))
+      : null,
+  };
+}
+
+function resolveReplyContextChatId(config, options = {}) {
+  const opts = asObject(options);
+  const replyContext = (opts.replyContext && typeof opts.replyContext === 'object' && !Array.isArray(opts.replyContext))
+    ? opts.replyContext
+    : readTelegramReplyContext();
+  const replyChatId = normalizeChatId(replyContext?.chatId);
+  if (!replyChatId) return null;
+
+  const defaultChatId = normalizeChatId(replyContext?.defaultChatId) || normalizeChatId(config?.chatId);
+  if (defaultChatId && replyChatId === defaultChatId) {
+    return null;
+  }
+  return replyChatId;
+}
+
 function resolveOutboundChatId(config, options = {}) {
   const opts = asObject(options);
   return (
     normalizeChatId(opts.chatId)
     || normalizeChatId(opts.telegramChatId)
+    || resolveReplyContextChatId(config, opts)
     || normalizeChatId(config?.chatId)
     || null
   );
@@ -658,15 +740,14 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     process.exit(argv.length < 1 ? 1 : 0);
   }
 
-  // Handle --photo flag
-  if (argv[0] === '--photo') {
-    if (argv.length < 2) {
-      console.error('[hm-telegram] --photo requires an image path');
-      process.exit(1);
-    }
-    const photoPath = argv[1];
-    const caption = argv.slice(2).join(' ').trim() || '';
-    const result = await sendTelegramPhoto(photoPath, caption, env);
+  const parsed = parseCliArgs(argv);
+  if (!parsed.ok) {
+    console.error(`[hm-telegram] ${parsed.error}`);
+    process.exit(1);
+  }
+
+  if (parsed.photoPath) {
+    const result = await sendTelegramPhoto(parsed.photoPath, parsed.message, env, { chatId: parsed.chatId });
     if (!result.ok) {
       closeCommsJournalStores();
       console.error(`[hm-telegram] Photo failed: ${result.error}`);
@@ -679,13 +760,13 @@ async function main(argv = process.argv.slice(2), env = process.env) {
     process.exit(0);
   }
 
-  const message = parseMessage(argv);
+  const message = parsed.message;
   if (!message) {
     console.error('[hm-telegram] Message cannot be empty');
     process.exit(1);
   }
 
-  const result = await sendTelegram(message, env);
+  const result = await sendTelegram(message, env, { chatId: parsed.chatId });
   if (!result.ok) {
     closeCommsJournalStores();
     console.error(`[hm-telegram] Failed: ${result.error}`);
@@ -708,6 +789,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  parseCliArgs,
   parseMessage,
   getTelegramConfig,
   getMissingConfigKeys,
@@ -717,6 +799,8 @@ module.exports = {
   sendTelegramPhoto,
   normalizeChatId,
   parseChatAllowlist,
+  readTelegramReplyContext,
+  resolveReplyContextChatId,
   resolveOutboundChatId,
   isChatAllowed,
   maybeTruncateTelegramMessage,
