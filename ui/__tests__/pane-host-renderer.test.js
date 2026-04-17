@@ -12,7 +12,7 @@ describe('pane-host-renderer internals', () => {
         chunkThresholdBytes: 1024,
         chunkSizeBytes: 4096,
         hmSendChunkThresholdBytes: 256,
-        hmSendChunkYieldEveryChunks: 1,
+        hmSendChunkYieldEveryChunks: 0,
       })
     ).toEqual(expect.objectContaining({
       method: 'chunked',
@@ -20,7 +20,7 @@ describe('pane-host-renderer internals', () => {
       writeText: '\x1b[Hsmall hm-send payload',
       chunkOptions: expect.objectContaining({
         chunkSize: 4096,
-        yieldEveryChunks: 1,
+        yieldEveryChunks: 0,
       }),
     }));
   });
@@ -37,7 +37,7 @@ describe('pane-host-renderer internals', () => {
         chunkThresholdBytes: 1024,
         chunkSizeBytes: 4096,
         hmSendChunkThresholdBytes: 256,
-        hmSendChunkYieldEveryChunks: 1,
+        hmSendChunkYieldEveryChunks: 0,
       })
     ).toEqual(expect.objectContaining({
       method: 'chunked',
@@ -45,9 +45,40 @@ describe('pane-host-renderer internals', () => {
       writeText: '\x1b[Hreassembled hidden host payload',
       chunkOptions: expect.objectContaining({
         chunkSize: 4096,
-        yieldEveryChunks: 1,
+        yieldEveryChunks: 0,
       }),
     }));
+  });
+
+  test('keeps full routed hm-send payload intact for long chunked writes', () => {
+    const rawPayload = '[AGENT MSG - reply via hm-send.js] (ORACLE #11): '
+      + `${'X'.repeat(5000)}`
+      + '\n[CURRENT PROJECT] name=squidrun | path=D:\\projects\\squidrun';
+    const strippedPayload = _internals.stripInternalRoutingWrappers(rawPayload);
+    const plan = _internals.buildPtyWriteDispatchPlan({
+      text: strippedPayload,
+      payloadBytes: Buffer.byteLength(strippedPayload, 'utf8'),
+      hmSendTrace: true,
+      hasChunkedWriter: true,
+      homeResetBeforeWrite: true,
+      chunkThresholdBytes: 1024,
+      chunkSizeBytes: 4096,
+      hmSendChunkThresholdBytes: 256,
+      hmSendChunkYieldEveryChunks: 0,
+    });
+
+    expect(strippedPayload.startsWith('(ORACLE #11): ')).toBe(true);
+    expect(plan).toEqual(expect.objectContaining({
+      method: 'chunked',
+      forceChunkedWrite: true,
+      forceChunkForHmSend: true,
+      writeText: '\x1b[H' + strippedPayload,
+      chunkOptions: expect.objectContaining({
+        chunkSize: 4096,
+        yieldEveryChunks: 0,
+      }),
+    }));
+    expect(plan.writeText).toContain('\n[CURRENT PROJECT] name=squidrun | path=D:\\projects\\squidrun');
   });
 
   test('keeps direct PTY writes only for non-hm-send small payloads', () => {
@@ -61,7 +92,7 @@ describe('pane-host-renderer internals', () => {
         chunkThresholdBytes: 1024,
         chunkSizeBytes: 4096,
         hmSendChunkThresholdBytes: 256,
-        hmSendChunkYieldEveryChunks: 1,
+        hmSendChunkYieldEveryChunks: 0,
       })
     ).toEqual(expect.objectContaining({
       method: 'direct',
