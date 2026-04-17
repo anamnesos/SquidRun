@@ -16,6 +16,7 @@
 
 const { invokeBridge, sendBridge, onBridge } = require('./renderer-bridge');
 const { PANE_IDS, resolvePaneCwd } = require('../config');
+const { getProfileInstructionFilename } = require('../profile');
 const log = require('./logger');
 const bus = require('./event-bus');
 const diagnosticLog = require('./diagnostic-log');
@@ -792,8 +793,9 @@ function setupRefreshButtons(sendToPaneFn) {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const paneId = btn.dataset.paneId;
+      const rolesDoc = getProfileInstructionFilename('ROLES.md', process.env.SQUIDRUN_PROFILE || 'main');
       const refreshPrompt =
-        `Refresh startup context: read ROLES.md, runtime memory snapshot (Evidence Ledger + Team Memory), .squidrun/build/blockers.md, ` +
+        `Refresh startup context: read ${rolesDoc}, runtime memory snapshot (Evidence Ledger + Team Memory), .squidrun/build/blockers.md, ` +
         `.squidrun/build/errors.md, .squidrun/handoffs/session.md, and .squidrun/context-snapshots/${paneId}.md. Then report status.`;
       sendToPaneFn(paneId, `${refreshPrompt}\r`);
     });

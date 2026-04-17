@@ -6,6 +6,23 @@
 const path = require('path');
 const os = require('os');
 const { app, Menu } = require('electron');
+const { parseLaunchIntent } = require('./modules/main/launch-intent');
+const { applyProfileEnv, getActiveProfileName, isMainProfile } = require('./profile');
+
+const initialLaunchIntent = parseLaunchIntent(process.argv.slice(1));
+const activeProfileName = applyProfileEnv(initialLaunchIntent.profileName || 'main');
+
+if (!isMainProfile(activeProfileName) && typeof app?.getPath === 'function' && typeof app?.setPath === 'function') {
+  try {
+    const defaultUserDataPath = app.getPath('userData');
+    if (defaultUserDataPath) {
+      app.setPath('userData', path.join(defaultUserDataPath, activeProfileName));
+    }
+  } catch (_) {
+    // Best effort only; packaged profile isolation can still fall back to file-level scoping.
+  }
+}
+
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const fallbackEnvPath = process.env.SQUIDRUN_PROJECT_ROOT
   ? path.join(process.env.SQUIDRUN_PROJECT_ROOT, '.env')
@@ -20,8 +37,10 @@ if (fallbackEnvPath) {
 
 // Enforce single-instance ownership to prevent duplicate watcher/process
 // trees from racing on .squidrun trigger files.
-const singleInstanceLock = app.requestSingleInstanceLock();
-if (!singleInstanceLock) {
+const singleInstanceLock = isMainProfile(activeProfileName)
+  ? app.requestSingleInstanceLock({ profile: getActiveProfileName() })
+  : true;
+if (singleInstanceLock === false) {
   app.quit();
   process.exit(0);
 }
@@ -72,7 +91,6 @@ const UsageManager = require('./modules/main/usage-manager');
 const CliIdentityManager = require('./modules/main/cli-identity');
 const FirmwareManager = require('./modules/main/firmware-manager');
 const SquidRunApp = require('./modules/main/squidrun-app');
-const { parseLaunchIntent } = require('./modules/main/launch-intent');
 
 // 1. Initialize managers with shared context
 appContext.electronApp = app;
@@ -92,7 +110,7 @@ const squidrunApp = new SquidRunApp(appContext, {
   cliIdentity,
   firmwareManager,
 });
-squidrunApp.setLaunchWindowProfile(parseLaunchIntent(process.argv.slice(1)));
+squidrunApp.setLaunchWindowProfile(initialLaunchIntent);
 
 app.on('second-instance', (_event, commandLine = []) => {
   const launchProfile = squidrunApp.setLaunchWindowProfile(parseLaunchIntent(commandLine));

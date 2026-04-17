@@ -1,5 +1,7 @@
 'use strict';
 
+const { DEFAULT_PROFILE, normalizeProfileName, parseProfileArg } = require('../../profile');
+
 function toNonEmptyString(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -20,7 +22,9 @@ function normalizeLaunchIntent(rawIntent = {}) {
   const includeMainWindow = windowKey === 'main'
     ? true
     : rawIntent.includeMainWindow !== false;
+  const profileName = normalizeProfileName(rawIntent.profileName || DEFAULT_PROFILE);
   return {
+    profileName,
     windowKey,
     includeMainWindow,
     focusWindowKey: normalizeWindowKey(rawIntent.focusWindowKey || windowKey),
@@ -31,6 +35,7 @@ function parseLaunchIntent(argv = []) {
   const args = Array.isArray(argv) ? argv.slice() : [];
   let windowKey = null;
   let includeMainWindow = true;
+  const profileName = parseProfileArg(args);
 
   for (let index = 0; index < args.length; index += 1) {
     const token = toNonEmptyString(String(args[index] || ''));
@@ -67,6 +72,7 @@ function parseLaunchIntent(argv = []) {
   }
 
   return normalizeLaunchIntent({
+    profileName,
     windowKey,
     includeMainWindow,
   });

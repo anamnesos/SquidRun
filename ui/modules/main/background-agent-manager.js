@@ -1,4 +1,5 @@
 const log = require('../logger');
+const { getProfileInstructionFilename } = require('../../profile');
 const {
   hasCodexDangerouslyBypassFlag,
   hasCodexAskForApprovalFlag,
@@ -223,11 +224,13 @@ class BackgroundAgentManager {
     const modelShim = runtime === 'gemini'
       ? 'GEMINI.md'
       : (runtime === 'codex' ? 'CODEX.md' : 'CLAUDE.md');
+    const rolesDoc = getProfileInstructionFilename('ROLES.md', process.env.SQUIDRUN_PROFILE || 'main');
+    const modelDoc = getProfileInstructionFilename(modelShim, process.env.SQUIDRUN_PROFILE || 'main');
 
     return sanitizeMultilineForPty(
       `You are ${alias} (${paneId}), a headless Background Builder Agent. `
-      + `Read ROLES.md, ${modelShim}, .squidrun/handoffs/session.md, and .squidrun/app-status.json before work. `
-      + `Background-agent override: do not run the standard Builder/Oracle Architect check-in from ROLES.md or AGENTS.md. `
+      + `Read ${rolesDoc}, ${modelDoc}, .squidrun/handoffs/session.md, and .squidrun/app-status.json before work. `
+      + `Background-agent override: do not run the standard Builder/Oracle Architect check-in from ${rolesDoc} or AGENTS.md. `
       + `Owner binding is strict: report only to Builder (pane 2) via `
       + `hm-send builder \"(${alias.toUpperCase()} #1): online and ready\" --role ${alias}. `
       + `Never send startup or status check-ins to Architect directly. `

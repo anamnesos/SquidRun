@@ -10,6 +10,7 @@ const os = require('os');
 const { spawnSync } = require('child_process');
 const log = require('../logger');
 const { WORKSPACE_PATH, PROJECT_ROOT, resolveCoordPath } = require('../../config');
+const { getActiveProfileName, isMainProfile } = require('../../profile');
 const {
   buildGeminiCommand: buildGeminiCliCommand,
   resolveGeminiModelId,
@@ -193,6 +194,9 @@ class SettingsManager {
   }
 
   resolveSettingsPath() {
+    if (!isMainProfile(getActiveProfileName())) {
+      return resolveCoordPath(path.join('settings', SETTINGS_FILE_NAME), { forWrite: true });
+    }
     if (this.isPackaged) {
       const { value: userDataPath } = this.tryGetElectronPath('userData');
       if (typeof userDataPath === 'string' && userDataPath.trim()) {

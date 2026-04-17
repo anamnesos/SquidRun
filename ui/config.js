@@ -7,6 +7,12 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { execFileSync } = require('child_process');
+const {
+  getActiveProfileName,
+  isMainProfile,
+  namespaceCoordRelPath,
+  getProfilePipePath,
+} = require('./profile');
 
 function envFlagEnabled(name, defaultValue = true) {
   const raw = process.env[name];
@@ -18,10 +24,8 @@ function envFlagEnabled(name, defaultValue = true) {
   return defaultValue;
 }
 
-// Named pipe path (Windows) or Unix socket
-const PIPE_PATH = os.platform() === 'win32'
-  ? '\\\\.\\pipe\\squidrun-terminal'
-  : '/tmp/squidrun-terminal.sock';
+const ACTIVE_PROFILE = getActiveProfileName();
+const PIPE_PATH = getProfilePipePath(ACTIVE_PROFILE, os.platform());
 
 // Workspace paths
 const LEGACY_WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
@@ -236,6 +240,10 @@ function getProjectRoot() {
   return activeProjectRoot;
 }
 
+function getActiveProfile() {
+  return getActiveProfileName();
+}
+
 function getSquidrunRoot() {
   return DEFAULT_PROJECT_ROOT;
 }
@@ -316,12 +324,14 @@ function shouldBlockLegacyWorkspaceFallback(relPath = '') {
   if (!normalized) return false;
   if (normalized === 'runtime') return true;
   if (normalized.startsWith('runtime/')) return true;
+  if (normalized.startsWith('runtime-')) return true;
   if (normalized.endsWith('/evidence-ledger.db') || normalized === 'evidence-ledger.db') return true;
   return false;
 }
 
 function resolveCoordPath(relPath, options = {}) {
-  const normalizedRelPath = String(relPath || '')
+  const relPathWithProfile = namespaceCoordRelPath(relPath, getActiveProfile());
+  const normalizedRelPath = String(relPathWithProfile || '')
     .replace(/^[\\/]+/, '')
     .replace(/[\\/]+/g, path.sep);
 
@@ -411,6 +421,7 @@ const PROTOCOL_EVENTS = ['data', 'exit', 'spawned', 'list', 'attached', 'killed'
 const evidenceLedgerEnabled = envFlagEnabled('SQUIDRUN_EVIDENCE_LEDGER_ENABLED', true);
 
 module.exports = {
+  ACTIVE_PROFILE,
   PIPE_PATH,
   WORKSPACE_PATH,
   LEGACY_WORKSPACE_PATH,
@@ -445,6 +456,7 @@ module.exports = {
   PROTOCOL_ACTIONS,
   PROTOCOL_EVENTS,
   getProjectRoot,
+  getActiveProfile,
   getSquidrunRoot,
   setProjectRoot,
   resetProjectRoot,

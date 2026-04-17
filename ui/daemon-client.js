@@ -12,12 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const { EventEmitter } = require('events');
 const log = require('./modules/logger');
-const { PANE_ROLES, resolveCoordPath } = require('./config');
-
-// Named pipe path (Windows) or Unix socket
-const PIPE_PATH = os.platform() === 'win32'
-  ? '\\\\.\\pipe\\squidrun-terminal'
-  : '/tmp/squidrun-terminal.sock';
+const { PANE_ROLES, resolveCoordPath, PIPE_PATH } = require('./config');
 
 // In packaged builds, __dirname points inside app.asar which can't be spawned.
 // Resolve to the unpacked copy so child_process.spawn works.

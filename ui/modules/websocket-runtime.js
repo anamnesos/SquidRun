@@ -16,8 +16,9 @@ const {
   resolveBackgroundBuilderAlias,
   resolveBackgroundBuilderPaneId,
 } = require('../config');
+const { getProfileWebSocketPort } = require('../profile');
 
-const DEFAULT_PORT = 9900;
+const DEFAULT_PORT = getProfileWebSocketPort(process.env.SQUIDRUN_PROFILE || 'main');
 const MESSAGE_ACK_TTL_MS = 60000;
 const ROUTING_STALE_MS = 60000;
 const RATE_LIMIT_WINDOW_MS = 1000;  // 1-second sliding window
