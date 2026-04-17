@@ -505,25 +505,33 @@ function applyWindowChrome(windowContext = getCurrentWindowContext()) {
     ? windowContext
     : getCurrentWindowContext();
   const windowKey = String(normalized?.windowKey || 'main').trim() || 'main';
+  const profileName = String(normalized?.profileName || 'main').trim() || 'main';
   if (document.body) {
     document.body.dataset.windowKey = windowKey;
+    document.body.dataset.profileName = profileName;
   }
-  document.title = windowKey === 'main'
-    ? 'SquidRun'
-    : `SquidRun - ${windowKey === 'private-profile' ? '[private-profile] Workspace' : windowKey}`;
+  if (profileName === 'private-profile') {
+    document.title = 'SquidRun - 은별';
+  } else {
+    document.title = windowKey === 'main'
+      ? 'SquidRun'
+      : `SquidRun - ${windowKey === 'private-profile' ? '[private-profile] Workspace' : windowKey}`;
+  }
 
   const fullRestartBtn = document.getElementById('fullRestartBtn');
   if (fullRestartBtn) {
     if (!fullRestartBtn.dataset.defaultHtml) {
       fullRestartBtn.dataset.defaultHtml = fullRestartBtn.innerHTML;
     }
-    if (windowKey === 'main') {
+    if (windowKey === 'main' && profileName === 'main') {
       fullRestartBtn.innerHTML = fullRestartBtn.dataset.defaultHtml;
       fullRestartBtn.title = 'Shutdown cleanly (run \'npm start\' to restart)';
       fullRestartBtn.dataset.windowAction = 'shutdown-app';
     } else {
       fullRestartBtn.innerHTML = 'Close Window';
-      fullRestartBtn.title = `Close the ${windowKey} window only`;
+      fullRestartBtn.title = profileName === 'private-profile'
+        ? 'Close the [private-profile] profile window only'
+        : `Close the ${windowKey} window only`;
       fullRestartBtn.dataset.windowAction = 'close-window';
     }
   }

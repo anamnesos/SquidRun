@@ -23,6 +23,12 @@ const {
   setProjectRoot,
   resolveCoordPath,
 } = require('../../config');
+const {
+  getActiveProfileName,
+  isMainProfile,
+  buildProfileTelegramEnv,
+  resolveProfileInstructionPath,
+} = require('../../profile');
 const { createPluginManager } = require('../plugins');
 const { createBackupManager } = require('../backup-manager');
 const { createRecoveryManager } = require('../recovery-manager');
@@ -46,6 +52,7 @@ const contextCompressor = require('../context-compressor');
 const smsPoller = require('../sms-poller');
 const telegramPoller = require('../telegram-poller');
 const { normalizeChatId } = require('../../scripts/hm-telegram');
+const { sendTelegram } = require('../../scripts/hm-telegram');
 const { sendRoutedTelegramMessage } = require('../../scripts/hm-telegram-routing');
 const {
   shouldTriggerAutonomousSmoke,
@@ -230,6 +237,11 @@ function asPositiveInt(value, fallback = null) {
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric <= 0) return fallback;
   return numeric;
+}
+
+function asString(value, fallback = '') {
+  if (value === null || value === undefined) return fallback;
+  return String(value);
 }
 
 function resolveSupervisorLaunchExecutable() {
@@ -575,7 +587,9 @@ class SquidRunApp {
     this.sessionEndCapturePromise = null;
     this.runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
     this.runtimeLifecycleQueue = Promise.resolve();
+    this.activeProfileName = getActiveProfileName();
     this.launchWindowProfile = {
+      profileName: this.activeProfileName,
       windowKey: 'main',
       standaloneWindow: false,
     };
@@ -1139,8 +1153,16 @@ class SquidRunApp {
         path.join(workspacePath, 'CLAUDE.md')
       );
       this.copyFileIfMissing(
+        path.join(templateRoot, 'CLAUDE.private-profile.md'),
+        path.join(workspacePath, 'CLAUDE.private-profile.md')
+      );
+      this.copyFileIfMissing(
         path.join(templateRoot, 'ROLES.md'),
         path.join(workspacePath, 'ROLES.md')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'ROLES.private-profile.md'),
+        path.join(workspacePath, 'ROLES.private-profile.md')
       );
       this.copyFileIfMissing(
         path.join(templateRoot, 'PRODUCT-GUIDE.md'),
@@ -3464,10 +3486,14 @@ class SquidRunApp {
 
     const isPrimaryWindow = windowKey === 'main';
     const windowTitle = rawOptions.title
-      || (isPrimaryWindow ? 'SquidRun' : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`);
+      || (isPrimaryWindow
+        ? (this.activeProfileName === 'private-profile' ? 'SquidRun - 은별' : 'SquidRun')
+        : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`);
     const query = {
       windowKey,
       windowTeam: String(rawOptions.windowTeam || windowKey).trim() || windowKey,
+      profileName: this.activeProfileName,
+      profileLabel: this.activeProfileName === 'private-profile' ? '[private-profile]' : this.formatWindowKeyLabel(this.activeProfileName),
     };
 
     const windowRef = new BrowserWindow({
@@ -3523,10 +3549,12 @@ class SquidRunApp {
 
   setLaunchWindowProfile(profile = {}) {
     const windowKey = toNonEmptyString(profile.windowKey) || 'main';
+    const profileName = toNonEmptyString(profile.profileName) || this.activeProfileName;
     const includeMainWindow = windowKey === 'main'
       ? true
       : profile.includeMainWindow !== false && profile.standaloneWindow !== true;
     this.launchWindowProfile = {
+      profileName,
       windowKey,
       includeMainWindow,
       standaloneWindow: includeMainWindow !== true,
@@ -3631,6 +3659,9 @@ class SquidRunApp {
   getWindowSessionScopeId(windowKey = 'main') {
     const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
     const baseScopeId = toNonEmptyString(this.commsSessionScopeId) || `app-${process.pid}-${Date.now()}`;
+    if (normalizedWindowKey === 'main' && !isMainProfile(this.activeProfileName)) {
+      return `${baseScopeId}:${this.activeProfileName}`;
+    }
     return normalizedWindowKey === 'main'
       ? baseScopeId
       : `${baseScopeId}:${normalizedWindowKey}`;
@@ -3708,7 +3739,7 @@ class SquidRunApp {
 
   get[private-profile]DesktopShortcutPath() {
     if (process.platform !== 'win32' || typeof app?.getPath !== 'function') return null;
-    return path.join(app.getPath('desktop'), '[private-profile].lnk');
+    return path.join(app.getPath('desktop'), 'SquidRun - 은별.lnk');
   }
 
   build[private-profile]DesktopShortcutOptions() {
@@ -3718,10 +3749,10 @@ class SquidRunApp {
     return {
       target: process.execPath,
       args: isPackaged
-        ? '--window=private-profile --standalone-window'
-        : `"${uiRoot}" --window=private-profile --standalone-window`,
+        ? '--profile=private-profile'
+        : `"${uiRoot}" --profile=private-profile`,
       cwd: isPackaged ? path.dirname(process.execPath) : uiRoot,
-      description: 'Open [private-profile] as a standalone SquidRun window',
+      description: 'Open the [private-profile] SquidRun profile.',
       icon: path.join(uiRoot, 'assets', 'squidrun-favicon.ico'),
       iconIndex: 0,
       appUserModelId: WINDOWS_APP_USER_MODEL_ID,
@@ -3755,7 +3786,8 @@ class SquidRunApp {
 
   get[private-profile]StartupSourcePaths() {
     return [
-      path.join(getProjectRoot() || process.cwd(), 'CLAUDE.md'),
+      resolveProfileInstructionPath(getProjectRoot() || process.cwd(), 'CLAUDE.md', 'private-profile'),
+      resolveProfileInstructionPath(getProjectRoot() || process.cwd(), 'ROLES.md', 'private-profile'),
       path.join(getProjectRoot() || process.cwd(), 'workspace', 'knowledge', 'case-operations.md'),
       path.join(getProjectRoot() || process.cwd(), 'workspace', 'knowledge', 'handoff-corrections.md'),
       ...EUNBYEOL_CONFIRMED_FACT_PATHS,
@@ -3817,9 +3849,10 @@ class SquidRunApp {
   async build[private-profile]StartupBundle() {
     const sourcePaths = this.get[private-profile]StartupSourcePaths();
     const claudePath = sourcePaths[0];
-    const caseOperationsPath = sourcePaths[1];
-    const handoffCorrectionsPath = sourcePaths[2];
-    const confirmedFactsPaths = sourcePaths.slice(3);
+    const rolesPath = sourcePaths[1];
+    const caseOperationsPath = sourcePaths[2];
+    const handoffCorrectionsPath = sourcePaths[3];
+    const confirmedFactsPaths = sourcePaths.slice(4);
     const [telegramHistory, cognitiveEntries] = await Promise.all([
       this.readRecent[private-profile]TelegramHistory(8),
       this.read[private-profile]CognitiveMemoryEntries(6),
@@ -3828,6 +3861,10 @@ class SquidRunApp {
     const claudeLines = this.readTextFileSafe(claudePath)
       .split(/\r?\n/)
       .filter((line) => /은별|private-profile|rachelchoi|case-operations|confirmed-facts|hillstate|jeon|qeline|korean fraud/i.test(line))
+      .slice(0, 16);
+    const rolesLines = this.readTextFileSafe(rolesPath)
+      .split(/\r?\n/)
+      .filter((line) => /은별|private-profile|telegram|8754356993|case|hillstate|jeon|qeline/i.test(line))
       .slice(0, 16);
     const caseOperationsPreview = this.readTextFileSafe(caseOperationsPath)
       .split(/\r?\n/)
@@ -3861,6 +3898,9 @@ class SquidRunApp {
       '',
       'Scoped CLAUDE.md lines:',
       ...(claudeLines.length > 0 ? claudeLines.map((line) => `> ${line}`) : ['> No [private-profile]-specific CLAUDE.md lines found.']),
+      '',
+      'Scoped ROLES.md lines:',
+      ...(rolesLines.length > 0 ? rolesLines.map((line) => `> ${line}`) : ['> No [private-profile]-specific ROLES.md lines found.']),
       '',
       `Case dashboard preview (${caseOperationsPath}):`,
       ...(caseOperationsPreview.length > 0 ? caseOperationsPreview.map((line) => `- ${line}`) : ['- Missing or empty case-operations.md']),
@@ -4566,28 +4606,30 @@ class SquidRunApp {
       if (lifecycleRoot) {
         await this.initPostLoad();
       }
-      if (!isPrimaryWindow) {
-        let private-profileBundle = null;
-        if (windowKey === 'private-profile') {
-          try {
-            private-profileBundle = await this.inject[private-profile]StartupBundle();
-          } catch (err) {
-            log.warn('Window', `Failed to build [private-profile] startup bundle: ${err.message}`);
-          }
-        }
+      let private-profileBundle = null;
+      if (this.activeProfileName === 'private-profile' || windowKey === 'private-profile') {
         try {
-          window.webContents.send('window-context', {
-            windowKey,
-            windowTeam: windowKey,
-            roleLayout: 'standard',
-            sessionScopeId: this.getWindowSessionScopeId(windowKey),
-            startupBundlePath: private-profileBundle?.bundlePath || null,
-            startupSourceFiles: private-profileBundle?.sourcePaths || [],
-            autoBootAgents: windowKey === 'private-profile',
-          });
+          private-profileBundle = await this.inject[private-profile]StartupBundle();
         } catch (err) {
-          log.warn('Window', `Failed to seed secondary window context for ${windowKey}: ${err.message}`);
+          log.warn('Window', `Failed to build [private-profile] startup bundle: ${err.message}`);
         }
+      }
+      try {
+        window.webContents.send('window-context', {
+          windowKey,
+          windowTeam: this.activeProfileName === 'private-profile' && windowKey === 'main' ? 'private-profile' : windowKey,
+          profileName: this.activeProfileName,
+          profileLabel: this.activeProfileName === 'private-profile' ? '[private-profile]' : this.formatWindowKeyLabel(this.activeProfileName),
+          roleLayout: 'standard',
+          sessionScopeId: this.getWindowSessionScopeId(windowKey),
+          startupBundlePath: private-profileBundle?.bundlePath || null,
+          startupSourceFiles: private-profileBundle?.sourcePaths || [],
+          autoBootAgents: this.activeProfileName === 'private-profile' || windowKey === 'private-profile',
+        });
+      } catch (err) {
+        log.warn('Window', `Failed to seed window context for ${windowKey}: ${err.message}`);
+      }
+      if (!isPrimaryWindow) {
         try {
           this.seedRendererWindowState(window, { windowKey });
         } catch (err) {
@@ -6650,6 +6692,9 @@ class SquidRunApp {
   }
 
   resolveTelegramInboundWindowKey(chatId = null) {
+    if (!isMainProfile(this.activeProfileName)) {
+      return 'main';
+    }
     const normalizedChatId = normalizeChatId(chatId);
     return normalizedChatId === '8754356993' ? 'private-profile' : 'main';
   }
@@ -7912,6 +7957,7 @@ class SquidRunApp {
 
   startTelegramPoller() {
     const started = telegramPoller.start({
+      env: buildProfileTelegramEnv(process.env, this.activeProfileName),
       onMessage: (text, from, metadata = {}) => {
         const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
         const media = metadata?.media && typeof metadata.media === 'object' ? metadata.media : null;
