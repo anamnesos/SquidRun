@@ -21,6 +21,16 @@ function readPositiveIntFromQuery(params, key, fallback) {
   }
 }
 
+function readNonNegativeIntFromQuery(params, key, fallback) {
+  try {
+    const raw = params.get(key);
+    const numeric = Number.parseInt(String(raw || ''), 10);
+    return Number.isFinite(numeric) && numeric >= 0 ? numeric : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function detectDarwin() {
   const platform = String(
     navigator.userAgentData?.platform
@@ -155,7 +165,7 @@ function buildPtyWriteDispatchPlan({
   chunkThresholdBytes = 1024,
   chunkSizeBytes = 4096,
   hmSendChunkThresholdBytes = 256,
-  hmSendChunkYieldEveryChunks = 1,
+  hmSendChunkYieldEveryChunks = 0,
 } = {}) {
   const normalizedText = typeof text === 'string' ? text : String(text || '');
   const normalizedPayloadBytes = Number.isFinite(payloadBytes)
@@ -171,9 +181,9 @@ function buildPtyWriteDispatchPlan({
     ? hmSendChunkThresholdBytes
     : 256;
   const normalizedHmSendChunkYieldEveryChunks = Number.isFinite(hmSendChunkYieldEveryChunks)
-    && hmSendChunkYieldEveryChunks > 0
+    && hmSendChunkYieldEveryChunks >= 0
     ? hmSendChunkYieldEveryChunks
-    : 1;
+    : 0;
 
   const forceChunkedWrite = Boolean(hmSendTrace || ipcReassembled);
   const forceChunkForHmSend = Boolean(hmSendTrace && normalizedPayloadBytes >= normalizedHmSendChunkThresholdBytes);
@@ -240,6 +250,7 @@ if (typeof module !== 'undefined' && module.exports) {
       formatHmSendForPrompt,
       getPromptKindFromLine,
       resolvePostEnterDeliveryResult,
+      stripInternalRoutingWrappers,
     },
   };
 }
@@ -273,7 +284,7 @@ if (typeof window !== 'undefined') {
   const DEFAULT_CHUNK_THRESHOLD_BYTES = 1024;
   const DEFAULT_CHUNK_SIZE_BYTES = 4096;
   const DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES = isDarwin ? 1024 : 256;
-  const DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = 1;
+  const DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = 0;
 
   const POST_ENTER_VERIFY_TIMEOUT_MS = readPositiveIntFromQuery(
     params,
@@ -330,7 +341,7 @@ if (typeof window !== 'undefined') {
     'hmSendChunkThresholdBytes',
     DEFAULT_HM_SEND_CHUNK_THRESHOLD_BYTES
   );
-  const HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = readPositiveIntFromQuery(
+  const HM_SEND_CHUNK_YIELD_EVERY_CHUNKS = readNonNegativeIntFromQuery(
     params,
     'hmSendChunkYieldEveryChunks',
     DEFAULT_HM_SEND_CHUNK_YIELD_EVERY_CHUNKS
