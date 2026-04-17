@@ -58,6 +58,11 @@ const mockContractPromotion = {
 };
 jest.mock('../modules/contract-promotion', () => mockContractPromotion);
 
+const mockStartupAiBriefing = {
+  readStartupBriefing: jest.fn(() => ''),
+};
+jest.mock('../modules/startup-ai-briefing', () => mockStartupAiBriefing);
+
 // Mock window.squidrun
 const mockSquidRun = {
   invoke: jest.fn().mockResolvedValue({ ok: true }),
@@ -481,7 +486,10 @@ describe('terminal.js module', () => {
       expect(mockSquidRun.paneHost.inject).not.toHaveBeenCalled();
       expect(
         mockSquidRun.pty.write.mock.calls.some(
-          ([paneId, text]) => paneId === '1' && text === 'startup gated payload'
+          ([paneId, text]) => (
+            paneId === '1'
+            && /^\[\d{2}:\d{2} local\] startup gated payload$/.test(text)
+          )
         )
       ).toBe(true);
     });
@@ -494,9 +502,9 @@ describe('terminal.js module', () => {
 
       expect(terminal.messageQueue['1']).toHaveLength(1);
       expect(terminal.messageQueue['1'][0].message).toBe('test message');
-      // Clear lock and pending processQueue timers
+      // Clear lock and timers without draining the whole scheduler graph.
       terminal.setInjectionInFlight(false);
-      jest.runAllTimers();
+      jest.clearAllTimers();
     });
 
     test('should include timestamp in queued message', () => {
@@ -542,6 +550,14 @@ describe('terminal.js module', () => {
   });
 
   describe('startup health briefing', () => {
+    test('reads startup ai briefing when present', () => {
+      mockStartupAiBriefing.readStartupBriefing.mockReturnValueOnce('# AI Startup Briefing\n\n- the user cares about shipping automation safely.');
+      const briefing = terminal._internals.fetchStartupAiBriefing();
+
+      expect(briefing).toContain('AI Startup Briefing');
+      expect(briefing).not.toContain('[SQUIDRUN RECALL START]');
+    });
+
     test('reads startup health artifact when present', () => {
       const existsSpy = jest.spyOn(fs, 'existsSync').mockImplementation((targetPath) => (
         String(targetPath).includes('startup-health.md')
@@ -558,6 +574,20 @@ describe('terminal.js module', () => {
 
       existsSpy.mockRestore();
       readSpy.mockRestore();
+    });
+
+    test('builds startup identity without recall blocks', async () => {
+      mockStartupAiBriefing.readStartupBriefing.mockReturnValueOnce('# AI Startup Briefing\n\n- Current priority: supervisor stability.');
+      const existsSpy = jest.spyOn(fs, 'existsSync').mockReturnValue(false);
+
+      const message = await terminal._internals.buildStartupIdentityMessage('2');
+
+      expect(message).toContain('# SQUIDRUN SESSION: Builder');
+      expect(message).toContain('AI Startup Briefing');
+      expect(message).not.toContain('STARTUP RECALL');
+      expect(message).not.toContain('[SQUIDRUN RECALL START]');
+
+      existsSpy.mockRestore();
     });
   });
 
@@ -601,6 +631,20 @@ describe('terminal.js module', () => {
 
       expect(() => terminal.broadcast('best effort')).not.toThrow();
       expect(connectionCb).toHaveBeenCalledWith('Message sent to Architect');
+    });
+
+    test('sends raw pane-1 user text without adding a second recall block', async () => {
+      terminal.setInjectionInFlight(true);
+
+      terminal.broadcast('the user direct prompt');
+      await Promise.resolve();
+
+      expect(terminal.messageQueue['1']).toBeDefined();
+      expect(terminal.messageQueue['1'][0].message).toBe('the user direct prompt');
+      expect(terminal.messageQueue['1'][0].message).not.toContain('[SQUIDRUN RECALL START]');
+
+      jest.clearAllTimers();
+      terminal.setInjectionInFlight(false);
     });
   });
 

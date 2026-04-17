@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { createBackgroundProcessController } = require('./background-processes');
+const { resolveRuntimeInt } = require('../runtime-config');
 
 const ALLOWED_COMMANDS = new Set([
   'npm', 'npx', 'node', 'git', 'jest', 'eslint', 'tsc', 'prettier',
@@ -196,13 +197,23 @@ function registerProcessHandlers(ctx) {
   });
 
   ipcMain.handle('get-daemon-runtime-config', () => ({
-    throttleQueueMaxItems: toPositiveInt(
-      process.env.SQUIDRUN_THROTTLE_QUEUE_MAX_ITEMS,
-      DEFAULT_THROTTLE_QUEUE_MAX_ITEMS
+    throttleQueueMaxItems: resolveRuntimeInt(
+      'throttleQueueMaxItems',
+      toPositiveInt(
+        process.env.SQUIDRUN_THROTTLE_QUEUE_MAX_ITEMS,
+        DEFAULT_THROTTLE_QUEUE_MAX_ITEMS
+      )
     ),
-    throttleQueueMaxBytes: toPositiveInt(
-      process.env.SQUIDRUN_THROTTLE_QUEUE_MAX_BYTES,
-      DEFAULT_THROTTLE_QUEUE_MAX_BYTES
+    throttleQueueMaxBytes: resolveRuntimeInt(
+      'throttleQueueMaxBytes',
+      toPositiveInt(
+        process.env.SQUIDRUN_THROTTLE_QUEUE_MAX_BYTES,
+        DEFAULT_THROTTLE_QUEUE_MAX_BYTES
+      )
+    ),
+    agentResponseWatchdogMs: resolveRuntimeInt(
+      'agentResponseWatchdogMs',
+      toPositiveInt(process.env.SQUIDRUN_AGENT_RESPONSE_WATCHDOG_MS, 15 * 60 * 1000)
     ),
   }));
 }

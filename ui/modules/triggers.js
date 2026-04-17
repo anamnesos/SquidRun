@@ -602,6 +602,9 @@ function sendStaggered(panes, message, meta = {}) {
     traceId: meta?.deliveryId || null,
     parentEventId: meta?.parentEventId || null,
   });
+  const payloadMeta = (meta?.meta && typeof meta.meta === 'object')
+    ? { ...meta.meta }
+    : undefined;
   if (!mainWindow || mainWindow.isDestroyed()) return false;
   const deliveryId = meta?.deliveryId;
   let immediateDispatchCount = 0;
@@ -615,6 +618,7 @@ function sendStaggered(panes, message, meta = {}) {
         message,
         deliveryId,
         traceContext,
+        meta: payloadMeta,
       });
       if (dispatched) {
         immediateDispatchCount += 1;
@@ -631,6 +635,7 @@ function sendStaggered(panes, message, meta = {}) {
         message,
         deliveryId,
         traceContext,
+        meta: payloadMeta,
       });
       if (!dispatched) {
         log.warn('Trigger', `sendStaggered delayed dispatch failed for pane ${paneId}`);
@@ -894,7 +899,11 @@ function sendDirectMessage(targetPanes, message, fromRole = null, options = {}) 
     : 'direct_multi';
   const senderRole = parsed.sender || (typeof fromRole === 'string' ? fromRole.toLowerCase() : null);
   const deliveryId = sequencing.createDeliveryId(senderRole || 'unknown', parsed.seq, recipientRole);
-  const queued = sendStaggered(notified, fullMessage, { traceContext, deliveryId });
+  const queued = sendStaggered(notified, fullMessage, {
+    traceContext,
+    deliveryId,
+    meta: options?.meta,
+  });
   if (!queued) {
     return buildDeliveryResult({
       accepted: false,

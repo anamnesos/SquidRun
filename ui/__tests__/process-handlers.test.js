@@ -29,8 +29,13 @@ jest.mock('child_process', () => ({
   spawn: jest.fn(() => createMockProcess()),
 }));
 
+jest.mock('../modules/runtime-config', () => ({
+  resolveRuntimeInt: jest.fn((key, fallback) => fallback),
+}));
+
 const os = require('os');
 const { spawn } = require('child_process');
+const { resolveRuntimeInt } = require('../modules/runtime-config');
 const { registerProcessHandlers } = require('../modules/ipc/process-handlers');
 
 describe('Process Handlers', () => {
@@ -225,6 +230,25 @@ describe('Process Handlers', () => {
         status: 'running',
         exitCode: undefined,
         error: undefined,
+      });
+    });
+  });
+
+  describe('get-daemon-runtime-config', () => {
+    test('returns runtime-config overrides for hot-reloadable daemon tunables', async () => {
+      resolveRuntimeInt.mockImplementation((key, fallback) => {
+        if (key === 'throttleQueueMaxItems') return 321;
+        if (key === 'throttleQueueMaxBytes') return 654321;
+        if (key === 'agentResponseWatchdogMs') return 45000;
+        return fallback;
+      });
+
+      const result = await harness.invoke('get-daemon-runtime-config');
+
+      expect(result).toEqual({
+        throttleQueueMaxItems: 321,
+        throttleQueueMaxBytes: 654321,
+        agentResponseWatchdogMs: 45000,
       });
     });
   });

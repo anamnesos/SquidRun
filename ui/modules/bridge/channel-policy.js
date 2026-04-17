@@ -18,6 +18,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'contract-promotion:approve',
   'contract-promotion:list',
   'contract-promotion:reject',
+  'capture-screenshot',
   'delete-friction',
   'delete-screenshot',
   'daemon-is-process-running',
@@ -27,7 +28,9 @@ const INVOKE_CHANNELS = Object.freeze([
   'get-activity-log',
   'get-all-pane-projects',
   'get-app-status',
+  'get-startup-services-status',
   'get-api-keys',
+  'get-onboarding-state',
   'get-claims',
   'get-daemon-runtime-config',
   'get-feature-capabilities',
@@ -56,6 +59,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'list-processes',
   'list-screenshots',
   'notify-external-test',
+  'open-app-window',
   'oracle:deleteImage',
   'oracle:generateImage',
   'oracle:listImages',
@@ -79,6 +83,7 @@ const INVOKE_CHANNELS = Object.freeze([
   'select-project',
   'send-trusted-enter',
   'set-project-context',
+  'complete-onboarding',
   'set-api-keys',
   'set-setting',
   'spawn-claude',
@@ -151,6 +156,7 @@ const ON_CHANNELS = Object.freeze([
   'unstick-pane',
   'watchdog-alert',
   'bridge:pairing-state',
+  'window-context',
 ]);
 
 const DYNAMIC_ON_CHANNEL_PATTERNS = Object.freeze([

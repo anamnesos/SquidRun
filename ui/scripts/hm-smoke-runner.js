@@ -1905,10 +1905,7 @@ async function runSmoke(options) {
     });
 
     if (!resolution.ok) {
-      failures.add('url_resolution_failed', `No reachable URL found (${resolution.reason || 'unknown_reason'})`, {
-        route: options.route,
-        checks: resolution.checks || [],
-      });
+      runtime.noopReason = resolution.reason || 'no_testable_target';
     } else {
       targetUrl = resolution.url;
       source = resolution.source;
@@ -2256,30 +2253,49 @@ async function runSmoke(options) {
     };
   }
 
-  const primaryReasons = [];
-  if (runtime.navigationError) primaryReasons.push('navigation_failed');
-  if (selectorChecks.some((entry) => !entry.ok)) primaryReasons.push('required_selector_missing');
-  if (textChecks.some((entry) => !entry.ok)) primaryReasons.push('required_text_missing');
-  if (consoleErrors.length > 0) primaryReasons.push('console_errors_detected');
-  if (pageErrors.length > 0) primaryReasons.push('page_errors_detected');
-  if (requestFailures.length > 0) primaryReasons.push('request_failures_detected');
-  if (httpErrors.length > 0) primaryReasons.push('http_errors_detected');
-  browserMatrix.primary = {
-    browser: 'chromium',
-    status: primaryReasons.length === 0 ? 'pass' : 'failed',
-    ok: primaryReasons.length === 0,
-    reasons: primaryReasons,
-    url: activeTargetUrl || null,
-    title: runtime.title,
-    selectorCount: options.requireSelectors.length,
-    missingSelectorCount: selectorChecks.filter((entry) => !entry.ok).length,
-    requiredTextCount: options.requireTexts.length,
-    missingTextCount: textChecks.filter((entry) => !entry.ok).length,
-    consoleErrorCount: consoleErrors.length,
-    pageErrorCount: pageErrors.length,
-    requestFailureCount: requestFailures.length,
-    httpErrorCount: httpErrors.length,
-  };
+  if (activeTargetUrl) {
+    const primaryReasons = [];
+    if (runtime.navigationError) primaryReasons.push('navigation_failed');
+    if (selectorChecks.some((entry) => !entry.ok)) primaryReasons.push('required_selector_missing');
+    if (textChecks.some((entry) => !entry.ok)) primaryReasons.push('required_text_missing');
+    if (consoleErrors.length > 0) primaryReasons.push('console_errors_detected');
+    if (pageErrors.length > 0) primaryReasons.push('page_errors_detected');
+    if (requestFailures.length > 0) primaryReasons.push('request_failures_detected');
+    if (httpErrors.length > 0) primaryReasons.push('http_errors_detected');
+    browserMatrix.primary = {
+      browser: 'chromium',
+      status: primaryReasons.length === 0 ? 'pass' : 'failed',
+      ok: primaryReasons.length === 0,
+      reasons: primaryReasons,
+      url: activeTargetUrl || null,
+      title: runtime.title,
+      selectorCount: options.requireSelectors.length,
+      missingSelectorCount: selectorChecks.filter((entry) => !entry.ok).length,
+      requiredTextCount: options.requireTexts.length,
+      missingTextCount: textChecks.filter((entry) => !entry.ok).length,
+      consoleErrorCount: consoleErrors.length,
+      pageErrorCount: pageErrors.length,
+      requestFailureCount: requestFailures.length,
+      httpErrorCount: httpErrors.length,
+    };
+  } else {
+    browserMatrix.primary = {
+      browser: 'chromium',
+      status: 'noop',
+      ok: true,
+      reasons: ['no_testable_target'],
+      url: null,
+      title: null,
+      selectorCount: 0,
+      missingSelectorCount: 0,
+      requiredTextCount: 0,
+      missingTextCount: 0,
+      consoleErrorCount: 0,
+      pageErrorCount: 0,
+      requestFailureCount: 0,
+      httpErrorCount: 0,
+    };
+  }
 
   if (options.runFirefoxGate && activeTargetUrl) {
     let playwright = null;
@@ -2404,6 +2420,10 @@ async function runSmoke(options) {
 
   const summary = {
     ok: failures.list.length === 0,
+    status: targetUrl ? 'ok' : 'noop',
+    testable: Boolean(targetUrl),
+    summaryType: 'hm-smoke-runner-summary',
+    noopReason: targetUrl ? null : (runtime.noopReason || 'no_testable_target'),
     runId: layout.runId,
     runDir: layout.runDir,
     artifactRoot: layout.artifactRoot,
@@ -2472,6 +2492,7 @@ async function runSmoke(options) {
     firefoxGateStatus: browserMatrix?.firefox?.status || 'not_run',
     firefoxGateOk: browserMatrix?.firefox?.ok === true,
     firefoxGateError: browserMatrix?.firefox?.error || null,
+    browserMatrix: browserMatrix ? { ...browserMatrix } : null,
     debugPackagePath: null,
     debugManifestPath: null,
     debugExplanationPath: null,

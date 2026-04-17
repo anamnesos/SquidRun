@@ -8,6 +8,8 @@ const { MemorySearchIndex } = require('./memory-search');
 const { CognitiveMemoryApi } = require('./cognitive-memory-api');
 const { CognitiveMemoryAntibodyWorker } = require('./cognitive-memory-antibody');
 const { runBehavioralSleepPromotion } = require('./cognitive-memory-immunity');
+const { TeamMemoryStore } = require('./team-memory/store');
+const { TeamMemoryClaims } = require('./team-memory/claims');
 const { extractCandidates } = require('../scripts/hm-memory-extract');
 
 const DEFAULT_IDLE_THRESHOLD_MS = Math.max(
@@ -32,6 +34,22 @@ const DEFAULT_CLUSTER_MIN_POINTS = Math.max(
 const DEFAULT_RELATED_DISTANCE = Number.isFinite(Number(process.env.SQUIDRUN_SLEEP_RELATED_DISTANCE))
   ? Number(process.env.SQUIDRUN_SLEEP_RELATED_DISTANCE)
   : 0.22;
+const DEFAULT_TEAM_MEMORY_CONTRADICTION_LIMIT = Math.max(
+  10,
+  Number.parseInt(process.env.SQUIDRUN_SLEEP_TEAM_MEMORY_CONTRADICTION_LIMIT || '100', 10) || 100
+);
+const TEAM_MEMORY_NOISE_PATTERNS = [
+  /^delivered\./i,
+  /^routed[_.\-]/i,
+  /^session started\b/i,
+  /^session resumed\b/i,
+  /^wake signal\b/i,
+  /^heartbeat\b/i,
+  /^bridge[_.\-]/i,
+  /^monitor[_.\-]/i,
+  /^hook[_.\-]/i,
+  /^startup[_.\-]/i,
+];
 
 function resolveEvidenceLedgerPath() {
   return resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
@@ -149,6 +167,100 @@ function summarizeClusterStatements(items) {
   return `${statements.slice(0, 2).join(' ')} ${statements.length - 2} more related signal(s).`;
 }
 
+function looksLikeOperationalNoiseStatement(statement = '') {
+  const normalized = normalizeWhitespace(statement);
+  if (!normalized) return true;
+  if (TEAM_MEMORY_NOISE_PATTERNS.some((pattern) => pattern.test(normalized))) return true;
+  if (/^[a-z0-9_.:-]+$/i.test(normalized) && !/\s/.test(normalized)) return true;
+  return false;
+}
+
+function isSubstantiveTeamMemoryClaim(claim = null) {
+  if (!claim || typeof claim !== 'object') return false;
+  const owner = normalizeWhitespace(claim.owner).toLowerCase();
+  if (!['user', 'architect', 'builder', 'oracle'].includes(owner)) return false;
+  if (!['fact', 'negative'].includes(normalizeWhitespace(claim.claimType).toLowerCase())) return false;
+  if (normalizeWhitespace(claim.status).toLowerCase() === 'deprecated') return false;
+
+  const statement = normalizeWhitespace(claim.statement);
+  if (!statement || looksLikeOperationalNoiseStatement(statement)) return false;
+
+  if (/[\u3040-\u30ff\u3400-\u9fff]/.test(statement) && statement.length >= 6) {
+    return true;
+  }
+
+  const tokens = statement.match(/[A-Za-z0-9]+/g) || [];
+  if (tokens.length >= 4) return true;
+  if (statement.length >= 24 && /\s/.test(statement)) return true;
+  return false;
+}
+
+function chooseContradictionOrientation(entry = {}) {
+  const left = entry.claimADetails || null;
+  const right = entry.claimBDetails || null;
+  if (!left || !right) return null;
+
+  if (left.supersedes && left.supersedes === right.id) {
+    return {
+      primary: left,
+      conflicting: right,
+      autoDecision: 'accepted_correction',
+      deprecatedClaimId: right.id,
+      resolutionReason: 'team_memory_supersedes',
+    };
+  }
+  if (right.supersedes && right.supersedes === left.id) {
+    return {
+      primary: right,
+      conflicting: left,
+      autoDecision: 'accepted_correction',
+      deprecatedClaimId: left.id,
+      resolutionReason: 'team_memory_supersedes',
+    };
+  }
+
+  const primary = Number(right.updatedAt || 0) > Number(left.updatedAt || 0) ? right : left;
+  const conflicting = primary.id === left.id ? right : left;
+  return {
+    primary,
+    conflicting,
+    autoDecision: null,
+    deprecatedClaimId: null,
+    resolutionReason: null,
+  };
+}
+
+function buildTeamMemoryClaimNodePayload(claim = {}, contradiction = {}, side = 'a') {
+  return {
+    category: 'team_memory_claim',
+    content: normalizeWhitespace(claim.statement),
+    confidence: Number.isFinite(Number(claim.confidence)) ? Number(claim.confidence) : 0.8,
+    sourceType: 'team-memory-claim',
+    sourcePath: `team-memory:claim:${claim.id}`,
+    title: 'Team Memory Claim',
+    heading: `claim:${normalizeWhitespace(claim.claimType).toLowerCase() || 'fact'}`,
+    metadata: {
+      claimId: claim.id,
+      claimType: claim.claimType || null,
+      claimOwner: claim.owner || null,
+      claimSession: claim.session || contradiction.session || null,
+      contradictionId: contradiction.id || null,
+      contradictionReason: contradiction.reason || null,
+      contradictionSide: side,
+      source: 'team-memory-contradiction',
+      userSourced: normalizeWhitespace(claim.owner).toLowerCase() === 'user',
+    },
+  };
+}
+
+function parseAntibodyQueueJson(value, fallback = {}) {
+  try {
+    return JSON.parse(String(value || ''));
+  } catch {
+    return fallback;
+  }
+}
+
 function normalizeExternalCandidates(items, options = {}) {
   const safeItems = Array.isArray(items) ? items : [];
   const proposedBy = String(options.proposedBy || 'sleep-cycle');
@@ -215,12 +327,214 @@ async function runExtractionCommand(command, payload) {
   });
 }
 
+async function syncTeamMemoryContradictionsToAntibody(options = {}) {
+  const api = options.api;
+  if (!api) return { ok: false, reason: 'api_required' };
+
+  const teamStore = options.teamMemoryStore || new TeamMemoryStore({
+    dbPath: options.teamMemoryDbPath,
+  });
+  const ownsTeamStore = !options.teamMemoryStore;
+
+  try {
+    const initResult = teamStore.init();
+    if (!initResult?.ok) {
+      return { ok: false, reason: initResult?.reason || 'team_memory_unavailable' };
+    }
+    const claims = options.teamMemoryClaims || new TeamMemoryClaims(teamStore.db);
+    const limit = Math.max(1, Number.parseInt(options.limit || `${DEFAULT_TEAM_MEMORY_CONTRADICTION_LIMIT}`, 10) || DEFAULT_TEAM_MEMORY_CONTRADICTION_LIMIT);
+    const contradictions = claims.getContradictions({
+      activeOnly: true,
+      limit,
+      includeClaimDetails: true,
+    });
+    if (!contradictions?.ok) {
+      return { ok: false, reason: contradictions?.reason || 'contradictions_unavailable' };
+    }
+
+    let scanned = 0;
+    let filteredNoise = 0;
+    let queued = 0;
+    let merged = 0;
+    const queueIds = [];
+
+    for (const contradiction of contradictions.contradictions || []) {
+      scanned += 1;
+      if (!isSubstantiveTeamMemoryClaim(contradiction.claimADetails) || !isSubstantiveTeamMemoryClaim(contradiction.claimBDetails)) {
+        filteredNoise += 1;
+        continue;
+      }
+
+      const orientation = chooseContradictionOrientation(contradiction);
+      if (!orientation?.primary || !orientation?.conflicting) {
+        filteredNoise += 1;
+        continue;
+      }
+
+      const primaryNode = await api.ensureNodeFromSearchResult(
+        buildTeamMemoryClaimNodePayload(orientation.primary, contradiction, 'primary')
+      );
+      const conflictingNode = await api.ensureNodeFromSearchResult(
+        buildTeamMemoryClaimNodePayload(orientation.conflicting, contradiction, 'conflicting')
+      );
+      if (!primaryNode?.nodeId || !conflictingNode?.nodeId || primaryNode.nodeId === conflictingNode.nodeId) {
+        continue;
+      }
+
+      const queueResult = api.cognitiveStore.enqueueAntibodyJob({
+        node_id: primaryNode.nodeId,
+        conflicting_node_id: conflictingNode.nodeId,
+        request_type: 'team_memory_contradiction',
+        status: 'pending',
+        classifier_strategy: 'team_memory_contradiction',
+        heuristic_label: contradiction.reason === 'supersedes_conflict_same_scope' ? 'update' : 'contradiction',
+        heuristic_score: contradiction.reason === 'supersedes_conflict_same_scope' ? 0.88 : 0.74,
+        payload: {
+          source: 'team-memory-contradiction',
+          contradictionId: contradiction.id,
+          claimAId: contradiction.claimA,
+          claimBId: contradiction.claimB,
+          reason: contradiction.reason,
+          primaryClaimId: orientation.primary.id,
+          conflictingClaimId: orientation.conflicting.id,
+          autoDecision: orientation.autoDecision,
+          deprecatedClaimId: orientation.deprecatedClaimId,
+          resolutionReason: orientation.resolutionReason,
+        },
+      });
+      if (queueResult?.ok) {
+        queueIds.push(queueResult.queue_id);
+        if (queueResult.status === 'merged') {
+          merged += 1;
+        } else {
+          queued += 1;
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      scanned,
+      filteredNoise,
+      queued,
+      merged,
+      queueIds,
+    };
+  } finally {
+    if (ownsTeamStore) {
+      try { teamStore.close(); } catch {}
+    }
+  }
+}
+
+function applyTeamMemoryAntibodyOutcomes(options = {}) {
+  const api = options.api;
+  const cognitiveStore = options.cognitiveStore || api?.cognitiveStore;
+  if (!api || !cognitiveStore) return { ok: false, reason: 'api_required' };
+
+  const teamStore = options.teamMemoryStore || new TeamMemoryStore({
+    dbPath: options.teamMemoryDbPath,
+  });
+  const ownsTeamStore = !options.teamMemoryStore;
+
+  try {
+    const initResult = teamStore.init();
+    if (!initResult?.ok) {
+      return { ok: false, reason: initResult?.reason || 'team_memory_unavailable' };
+    }
+    const claims = options.teamMemoryClaims || new TeamMemoryClaims(teamStore.db);
+    const queueIds = Array.from(new Set(
+      (Array.isArray(options.queueIds) ? options.queueIds : [])
+        .map((value) => normalizeWhitespace(value))
+        .filter(Boolean)
+    ));
+
+    let resolved = 0;
+    let deprecatedClaims = 0;
+    let adjudicated = 0;
+
+    for (const queueId of queueIds) {
+      const item = cognitiveStore.getAntibodyQueueItem(queueId);
+      if (!item || String(item.status || '').trim().toLowerCase() !== 'completed') continue;
+      const payload = parseAntibodyQueueJson(item.payload_json, {});
+      const result = parseAntibodyQueueJson(item.result_json, {});
+      if (payload.source !== 'team-memory-contradiction') continue;
+      if (result?.teamMemoryResolution?.appliedAt) continue;
+
+      const consensusStatus = normalizeWhitespace(result?.consensus?.status || '').toLowerCase();
+      const nowMs = Date.now();
+      let resolution = { action: 'none', appliedAt: null };
+
+      if (consensusStatus === 'coexistence' && payload.contradictionId) {
+        const updated = claims.resolveContradictionsByIds([payload.contradictionId], nowMs);
+        if (updated > 0) {
+          resolved += updated;
+          resolution = { action: 'coexistence', appliedAt: nowMs, resolvedCount: updated };
+        }
+      } else if (
+        payload.autoDecision === 'accepted_correction'
+        && ['update', 'contradiction'].includes(consensusStatus)
+      ) {
+        const adjudication = api.adjudicateAntibodyConflict({
+          nodeId: item.node_id,
+          conflictingNodeId: item.conflicting_node_id || null,
+          decision: 'accepted_correction',
+          actorId: 'sleep-antibody',
+          reason: payload.resolutionReason || 'team_memory_supersedes',
+        });
+        if (adjudication?.ok) {
+          adjudicated += 1;
+        }
+        if (payload.deprecatedClaimId) {
+          const deprecation = claims.deprecateClaim(
+            payload.deprecatedClaimId,
+            'system',
+            payload.resolutionReason || 'team_memory_supersedes',
+            nowMs
+          );
+          if (deprecation?.ok) {
+            deprecatedClaims += 1;
+            resolved += Number(deprecation.resolvedContradictions || 0);
+            resolution = {
+              action: 'accepted_correction',
+              appliedAt: nowMs,
+              deprecatedClaimId: payload.deprecatedClaimId,
+              resolvedCount: Number(deprecation.resolvedContradictions || 0),
+            };
+          }
+        }
+      }
+
+      if (resolution.appliedAt) {
+        cognitiveStore.updateAntibodyJob(queueId, {
+          result: {
+            ...result,
+            teamMemoryResolution: resolution,
+          },
+        });
+      }
+    }
+
+    return {
+      ok: true,
+      resolved,
+      deprecatedClaims,
+      adjudicated,
+    };
+  } finally {
+    if (ownsTeamStore) {
+      try { teamStore.close(); } catch {}
+    }
+  }
+}
+
 class SleepConsolidator {
   constructor(options = {}) {
     this.logger = options.logger || console;
     this.cognitiveStore = options.cognitiveStore || new CognitiveMemoryStore(options.cognitiveStoreOptions || {});
     this.memorySearchIndex = options.memorySearchIndex || new MemorySearchIndex(options.memorySearchOptions || {});
     this.evidenceDbPath = path.resolve(String(options.evidenceDbPath || resolveEvidenceLedgerPath()));
+    this.teamMemoryDbPath = path.resolve(String(options.teamMemoryDbPath || resolveCoordPath(path.join('runtime', 'team-memory.sqlite'), { forWrite: true })));
     this.sessionStatePath = path.resolve(String(options.sessionStatePath || resolveSessionStatePath()));
     this.idleThresholdMs = Math.max(60_000, Number.parseInt(options.idleThresholdMs || DEFAULT_IDLE_THRESHOLD_MS, 10) || DEFAULT_IDLE_THRESHOLD_MS);
     this.minIntervalMs = Math.max(30_000, Number.parseInt(options.minIntervalMs || DEFAULT_MIN_INTERVAL_MS, 10) || DEFAULT_MIN_INTERVAL_MS);
@@ -228,6 +542,10 @@ class SleepConsolidator {
     this.clusterEpsilon = Number.isFinite(Number(options.clusterEpsilon)) ? Number(options.clusterEpsilon) : DEFAULT_CLUSTER_EPSILON;
     this.clusterMinPoints = Math.max(2, Number.parseInt(options.clusterMinPoints || DEFAULT_CLUSTER_MIN_POINTS, 10) || DEFAULT_CLUSTER_MIN_POINTS);
     this.relatedDistance = Number.isFinite(Number(options.relatedDistance)) ? Number(options.relatedDistance) : DEFAULT_RELATED_DISTANCE;
+    this.teamMemoryContradictionLimit = Math.max(
+      1,
+      Number.parseInt(options.teamMemoryContradictionLimit || `${DEFAULT_TEAM_MEMORY_CONTRADICTION_LIMIT}`, 10) || DEFAULT_TEAM_MEMORY_CONTRADICTION_LIMIT
+    );
     this.extractionCommand = normalizeWhitespace(options.extractionCommand || process.env.SQUIDRUN_SLEEP_EXTRACTION_COMMAND || '');
     this.extractor = typeof options.extractor === 'function' ? options.extractor : null;
     this.stateDb = null;
@@ -636,6 +954,12 @@ class SleepConsolidator {
       memorySearchIndex: this.memorySearchIndex,
       promotedBy: 'sleep-cycle',
     });
+    const teamMemoryAntibodySummary = await syncTeamMemoryContradictionsToAntibody({
+      api: behavioralApi,
+      cognitiveStore: this.cognitiveStore,
+      teamMemoryDbPath: this.teamMemoryDbPath,
+      limit: this.teamMemoryContradictionLimit,
+    });
     const antibodyWorker = new CognitiveMemoryAntibodyWorker({
       api: behavioralApi,
       cognitiveStore: this.cognitiveStore,
@@ -643,6 +967,12 @@ class SleepConsolidator {
       logger: this.logger,
     });
     const antibodySummary = await antibodyWorker.runOnce({ limit: 10 });
+    const teamMemoryResolutionSummary = applyTeamMemoryAntibodyOutcomes({
+      api: behavioralApi,
+      cognitiveStore: this.cognitiveStore,
+      teamMemoryDbPath: this.teamMemoryDbPath,
+      queueIds: teamMemoryAntibodySummary?.queueIds || [],
+    });
 
     const lastRowId = episodes[episodes.length - 1]?.rowId || this.getLastProcessedRowId();
     this.setState('last_comms_row_id', String(lastRowId));
@@ -661,11 +991,18 @@ class SleepConsolidator {
       pendingCount: Number(staged.pendingCount || 0),
       behavioralCandidateCount: Number(behavioralSummary?.candidateCount || 0),
       behavioralPromotedCount: Number(behavioralSummary?.promoted || 0),
+      teamMemoryContradictionScannedCount: Number(teamMemoryAntibodySummary?.scanned || 0),
+      teamMemoryContradictionFilteredNoiseCount: Number(teamMemoryAntibodySummary?.filteredNoise || 0),
+      teamMemoryContradictionQueuedCount: Number(teamMemoryAntibodySummary?.queued || 0),
+      teamMemoryContradictionMergedCount: Number(teamMemoryAntibodySummary?.merged || 0),
+      teamMemoryContradictionResolvedCount: Number(teamMemoryResolutionSummary?.resolved || 0),
       antibodyProcessedCount: Number(antibodySummary?.processed?.length || 0),
       lastProcessedRowId: lastRowId,
       clusterCount: clustering.clusters.length,
       noiseCount: clustering.noise.length,
       behavioralSummary,
+      teamMemoryAntibodySummary,
+      teamMemoryResolutionSummary,
       antibodySummary,
       extraction: this.lastExtractionInfo || {
         mode: this.extractionCommand ? 'external-command' : 'built-in',
@@ -684,9 +1021,15 @@ module.exports = {
   DEFAULT_IDLE_THRESHOLD_MS,
   DEFAULT_MAX_EPISODES,
   DEFAULT_MIN_INTERVAL_MS,
+  DEFAULT_TEAM_MEMORY_CONTRADICTION_LIMIT,
   SleepConsolidator,
+  applyTeamMemoryAntibodyOutcomes,
+  chooseContradictionOrientation,
+  isSubstantiveTeamMemoryClaim,
+  looksLikeOperationalNoiseStatement,
   resolveEvidenceLedgerPath,
   resolveSessionStatePath,
   runDbscan,
+  syncTeamMemoryContradictionsToAntibody,
   vectorDistance,
 };

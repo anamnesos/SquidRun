@@ -32,6 +32,28 @@ const DEFAULT_MIN_RECENCY_MULTIPLIER = Math.max(
   )
 );
 const SUPPORTED_KNOWLEDGE_EXTENSIONS = new Set(['.md', '.markdown']);
+const SUPPORTED_EVIDENCE_TEXT_EXTENSIONS = new Set(['.md', '.markdown', '.txt', '.html', '.htm', '.json']);
+const SUPPORTED_EVIDENCE_METADATA_EXTENSIONS = new Set([
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.gif',
+  '.webp',
+  '.bmp',
+  '.svg',
+  '.mp4',
+  '.mov',
+  '.wav',
+  '.mp3',
+  '.m4a',
+  '.pdf',
+  '.zip',
+]);
+const DEFAULT_CASE_EVIDENCE_FOLDERS = [
+  'Jeon Myeongsam Case',
+  'Hillstate Case',
+  'Korean Fraud',
+];
 
 function resolveWorkspacePaths(options = {}) {
   const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
@@ -41,6 +63,12 @@ function resolveWorkspacePaths(options = {}) {
   const memoryDir = path.resolve(String(options.memoryDir || path.join(workspaceDir, 'memory')));
   const dbPath = path.resolve(String(options.dbPath || path.join(memoryDir, 'search-index.db')));
   const modelCacheDir = path.resolve(String(options.modelCacheDir || path.join(memoryDir, 'models')));
+  const siblingRoot = path.resolve(String(options.siblingRoot || path.dirname(projectRoot)));
+  const caseEvidenceDirs = Array.isArray(options.caseEvidenceDirs) && options.caseEvidenceDirs.length > 0
+    ? options.caseEvidenceDirs.map((targetPath) => path.resolve(String(targetPath)))
+    : DEFAULT_CASE_EVIDENCE_FOLDERS
+      .map((folderName) => path.join(siblingRoot, folderName, 'evidence'))
+      .filter((targetPath) => fs.existsSync(targetPath));
 
   return {
     projectRoot,
@@ -50,6 +78,8 @@ function resolveWorkspacePaths(options = {}) {
     memoryDir,
     dbPath,
     modelCacheDir,
+    siblingRoot,
+    caseEvidenceDirs,
   };
 }
 
@@ -300,6 +330,40 @@ function listMarkdownFiles(rootDir) {
     }
   }
   return results.sort((left, right) => left.localeCompare(right));
+}
+
+function listFiles(rootDir) {
+  if (!fs.existsSync(rootDir)) return [];
+  const results = [];
+  const stack = [rootDir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    const entries = fs.readdirSync(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      results.push(fullPath);
+    }
+  }
+  return results.sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeSourcePath(filePath, paths) {
+  const projectRoot = path.resolve(String(paths?.projectRoot || process.cwd()));
+  const workspaceDir = path.resolve(String(paths?.workspaceDir || projectRoot));
+  const siblingRoot = path.resolve(String(paths?.siblingRoot || path.dirname(projectRoot)));
+
+  if (filePath.startsWith(workspaceDir + path.sep) || filePath === workspaceDir) {
+    return path.relative(workspaceDir, filePath).replace(/\\/g, '/');
+  }
+  if (filePath.startsWith(projectRoot + path.sep) || filePath === projectRoot) {
+    return path.relative(projectRoot, filePath).replace(/\\/g, '/');
+  }
+  return path.relative(siblingRoot, filePath).replace(/\\/g, '/');
 }
 
 function getMarkdownTitle(content, fallback = '') {
@@ -557,6 +621,77 @@ function buildSessionHandoffSources(paths) {
   return sources;
 }
 
+function buildEvidenceSources(paths, options = {}) {
+  const evidenceDirs = Array.isArray(paths.caseEvidenceDirs) ? paths.caseEvidenceDirs : [];
+  const sources = [];
+
+  for (const evidenceDir of evidenceDirs) {
+    if (!fs.existsSync(evidenceDir)) continue;
+    const caseName = path.basename(path.dirname(evidenceDir));
+    const filePaths = listFiles(evidenceDir);
+
+    for (const filePath of filePaths) {
+      const extension = path.extname(filePath).toLowerCase();
+      const stat = fs.statSync(filePath);
+      const sourcePath = normalizeSourcePath(filePath, paths);
+      const sourceGroup = `case_evidence:${sourcePath}`;
+      const title = path.basename(filePath);
+      const heading = `${caseName} evidence`;
+
+      if (SUPPORTED_EVIDENCE_TEXT_EXTENSIONS.has(extension)) {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const chunks = chunkText(content, options);
+        chunks.forEach((chunkContent, chunkIndex) => {
+          sources.push({
+            sourceKey: `case_evidence:${sourcePath}:${chunkIndex}`,
+            sourceGroup,
+            sourceType: 'case_evidence',
+            sourcePath,
+            title,
+            heading,
+            content: chunkContent,
+            lastModifiedMs: stat.mtimeMs,
+            metadata: {
+              caseName,
+              extension,
+              chunkIndex,
+              indexedMode: 'text',
+            },
+          });
+        });
+        continue;
+      }
+
+      if (!SUPPORTED_EVIDENCE_METADATA_EXTENSIONS.has(extension)) {
+        continue;
+      }
+
+      sources.push({
+        sourceKey: `case_evidence:${sourcePath}:metadata`,
+        sourceGroup,
+        sourceType: 'case_evidence_asset',
+        sourcePath,
+        title,
+        heading,
+        content: [
+          `${caseName} evidence asset ${title}.`,
+          `Relative path: ${sourcePath}.`,
+          `File type: ${extension.replace(/^\./, '') || 'unknown'}.`,
+        ].join(' '),
+        lastModifiedMs: stat.mtimeMs,
+        metadata: {
+          caseName,
+          extension,
+          indexedMode: 'metadata',
+          sizeBytes: stat.size,
+        },
+      });
+    }
+  }
+
+  return sources;
+}
+
 let embeddingPipelinePromise = null;
 
 async function loadEmbeddingPipeline(options = {}) {
@@ -714,6 +849,7 @@ class MemorySearchIndex {
     return [
       ...buildKnowledgeSources(this.paths, options),
       ...buildSessionHandoffSources(this.paths),
+      ...buildEvidenceSources(this.paths, options),
     ];
   }
 
@@ -1164,6 +1300,7 @@ module.exports = {
   parseMarkdownTable,
   buildKnowledgeSources,
   buildSessionHandoffSources,
+  buildEvidenceSources,
   MemorySearchIndex,
 };
 

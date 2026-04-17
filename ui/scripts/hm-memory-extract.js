@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { CognitiveMemoryStore } = require('../modules/cognitive-memory-store');
+const { stripRecallBlocks } = require('../modules/memory-recall');
 const DEFAULT_FRAGMENT_CHARS = 900;
 const DEFAULT_FRAGMENT_OVERLAP_CHARS = 140;
 
@@ -31,7 +32,7 @@ function parseArgs(argv) {
 }
 
 function normalizeText(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim();
+  return stripRecallBlocks(String(value || '')).replace(/\s+/g, ' ').trim();
 }
 
 function findFragmentBoundaryBefore(text, index, window = 80) {

@@ -82,6 +82,10 @@ function createInjectionController(options = {}) {
   // Track per-pane queue defer retry backoff and deferred-log suppression state.
   const queueDeferBackoffMs = new Map();
   const queueDeferLogState = new Map();
+  // Keep same-pane injections serialized. hm-send fast-path bypasses the global
+  // injection lock so different panes can proceed in parallel, but overlapping
+  // writes into one PTY can interleave and truncate user input.
+  const paneInjectionInFlight = new Set();
 
   /**
    * Attempt to focus textarea with retries
@@ -332,6 +336,7 @@ function createInjectionController(options = {}) {
     } = baseline;
     const allowOutputTransitionOnly = Boolean(options.allowOutputTransitionOnly);
     const requireObservedSignal = Boolean(options.requireObservedSignal);
+    const acceptOutputTransitionWithoutPrompt = options.acceptOutputTransitionWithoutPrompt !== false;
 
     // Fallback when prompt probing is unavailable (mock/test edge cases).
     if (!promptProbeAvailable) {
@@ -340,6 +345,14 @@ function createInjectionController(options = {}) {
         while ((Date.now() - start) < SUBMIT_ACCEPT_VERIFY_WINDOW_MS) {
           const outputTsAfter = getLastOutputTimestamp(paneId);
           if (outputTsAfter > outputTsBefore) {
+            if (!acceptOutputTransitionWithoutPrompt) {
+              return {
+                accepted: false,
+                signal: 'output_transition_without_prompt_probe_disallowed',
+                outputTransitionObserved: true,
+                promptTransitionObserved: false,
+              };
+            }
             return {
               accepted: true,
               signal: 'output_transition_prompt_probe_unavailable',
@@ -391,6 +404,14 @@ function createInjectionController(options = {}) {
     // If prompt was not ready at baseline, prompt transition cannot be observed.
     // In that case, treat output transition as sufficient acceptance signal.
     if ((allowOutputTransitionOnly || !promptWasReady) && outputTransitionObserved) {
+      if (!acceptOutputTransitionWithoutPrompt) {
+        return {
+          accepted: false,
+          signal: 'output_transition_without_prompt_disallowed',
+          outputTransitionObserved,
+          promptTransitionObserved,
+        };
+      }
       return {
         accepted: true,
         signal: allowOutputTransitionOnly ? 'output_transition_allowed' : 'output_transition_prompt_unavailable',
@@ -517,6 +538,7 @@ function createInjectionController(options = {}) {
     if (!Array.isArray(queue) || queue.length === 0) {
       clearDeferredState(id);
       compactionDeferStart.delete(id);
+      paneInjectionInFlight.delete(id);
       return 0;
     }
 
@@ -525,6 +547,7 @@ function createInjectionController(options = {}) {
     delete messageQueue[id];
     clearDeferredState(id);
     compactionDeferStart.delete(id);
+    paneInjectionInFlight.delete(id);
     bus.emit('queue.depth.changed', {
       paneId: id,
       payload: { depth: 0, cleared: droppedItems.length, reason },
@@ -537,6 +560,19 @@ function createInjectionController(options = {}) {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
     return trimmed ? trimmed : null;
+  }
+
+  function formatLocalClockPrefix(now = new Date()) {
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    return `[${hours}:${minutes} local]`;
+  }
+
+  function prependVisibleTimestamp(message, now = new Date()) {
+    const text = typeof message === 'string' ? message : String(message ?? '');
+    if (!text) return text;
+    if (/^\[\d{2}:\d{2} local\]\s/.test(text)) return text;
+    return `${formatLocalClockPrefix(now)} ${text}`;
   }
 
   function normalizeTraceContext(traceContext = null) {
@@ -679,6 +715,7 @@ function createInjectionController(options = {}) {
     if (!queue || queue.length === 0) {
       clearDeferredState(id);
       compactionDeferStart.delete(id);
+      paneInjectionInFlight.delete(id);
       return;
     }
     const capabilities = getPaneInjectionCapabilities(id);
@@ -689,6 +726,11 @@ function createInjectionController(options = {}) {
       || isHmSendFastTraceContext(peekTraceContext)
     );
     const bypassesLock = capabilities.bypassGlobalLock || hmSendFastEnter;
+
+    if (paneInjectionInFlight.has(id)) {
+      scheduleDeferredRetry(paneId, 'pane injection in flight');
+      return;
+    }
 
     // Compaction gate: never inject while compaction is confirmed on this pane.
     // Only applies to Claude panes — Codex/Gemini don't do Claude-style compaction.
@@ -758,6 +800,9 @@ function createInjectionController(options = {}) {
     const hmSendFastEnterOverride = item && typeof item === 'object'
       ? item.hmSendFastEnter
       : undefined;
+    const injectMeta = item && typeof item === 'object' && item.meta && typeof item.meta === 'object'
+      ? { ...item.meta }
+      : null;
     const itemTraceContext = normalizeTraceContext(item && typeof item === 'object' ? item.traceContext : null);
     const itemCorrId = itemTraceContext?.traceId
       || itemTraceContext?.correlationId
@@ -777,6 +822,7 @@ function createInjectionController(options = {}) {
         acceptOutputTransitionOnly: Boolean(acceptOutputTransitionOnlyOverride),
         hmSendFastEnter: Boolean(hmSendFastEnterOverride || isHmSendFastTraceContext(itemTraceContext)),
         useChunkedWrite: capabilities.useChunkedWrite,
+        visibility: injectMeta?.visibility || null,
       },
       correlationId: itemCorrId,
       causationId: itemCausationId,
@@ -799,8 +845,10 @@ function createInjectionController(options = {}) {
       log.info(`Terminal ${id}`, `${capabilities.modeLabel} pane: immediate send`);
       setInjectionInFlight(true);
     }
+    paneInjectionInFlight.add(id);
 
     doSendToPane(paneId, queuedMessage, (result) => {
+      paneInjectionInFlight.delete(id);
       if (!bypassesLock) {
         setInjectionInFlight(false);
       }
@@ -826,6 +874,7 @@ function createInjectionController(options = {}) {
       startupInjection: startupInjectionOverride,
       acceptOutputTransitionOnly: acceptOutputTransitionOnlyOverride,
       hmSendFastEnter: hmSendFastEnterOverride,
+      meta: injectMeta,
     });
   }
 
@@ -862,7 +911,7 @@ function createInjectionController(options = {}) {
       finish(result || { success: true });
     };
 
-    const rawText = message.replace(/\r$/, '');
+    const rawText = prependVisibleTimestamp(message.replace(/\r$/, ''));
     const id = String(paneId);
     const capabilities = getPaneInjectionCapabilities(id);
     const shouldVerifySubmitAccepted = (typeof behaviorOverrides.verifySubmitAccepted === 'boolean')
@@ -870,6 +919,9 @@ function createInjectionController(options = {}) {
       : capabilities.verifySubmitAccepted;
     const isStartupInjection = Boolean(behaviorOverrides.startupInjection);
     const allowOutputTransitionOnly = Boolean(behaviorOverrides.acceptOutputTransitionOnly);
+    const injectMeta = (behaviorOverrides.meta && typeof behaviorOverrides.meta === 'object')
+      ? { ...behaviorOverrides.meta }
+      : null;
     const normalizedTraceContext = normalizeTraceContext(traceContext);
     const hmSendFastEnter = Boolean(behaviorOverrides.hmSendFastEnter)
       || isHmSendFastTraceContext(normalizedTraceContext);
@@ -893,6 +945,9 @@ function createInjectionController(options = {}) {
         causationId: currentParentEventId || undefined,
         source: EVENT_SOURCE,
       };
+      if (injectMeta) {
+        kernelMeta.meta = { ...injectMeta };
+      }
       currentParentEventId = eventId;
       return kernelMeta;
     };
@@ -982,8 +1037,11 @@ function createInjectionController(options = {}) {
 
     try {
       if (preferChunkedWrite) {
-        const chunkThresholdBytes = Math.max(1024, Number(CLAUDE_CHUNK_THRESHOLD_BYTES) || (8 * 1024));
-        const shouldChunkWrite = forceChunkedWriteForHmSendFastPath || payloadBytes > chunkThresholdBytes;
+        const chunkThresholdBytes = Math.max(
+          1024,
+          Number(CLAUDE_CHUNK_THRESHOLD_BYTES) || DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES
+        );
+        const shouldChunkWrite = forceChunkedWriteForHmSendFastPath || payloadBytes >= chunkThresholdBytes;
 
         if (!shouldChunkWrite) {
           await window.squidrun.pty.write(id, payloadText, createKernelMeta());
@@ -1127,6 +1185,7 @@ function createInjectionController(options = {}) {
       const verifyResult = await verifySubmitAccepted(id, fastPathBaseline, {
         allowOutputTransitionOnly: true,
         requireObservedSignal: true,
+        acceptOutputTransitionWithoutPrompt: false,
       });
       if (!verifyResult.accepted) {
         log.warn(
@@ -1356,7 +1415,11 @@ function createInjectionController(options = {}) {
 
     const requestedEvent = bus.emit('inject.requested', {
       paneId: id,
-      payload: { priority: options.priority || false, messageLen: payloadMessage.length },
+      payload: {
+        priority: options.priority || false,
+        messageLen: payloadMessage.length,
+        visibility: options?.meta?.visibility || null,
+      },
       correlationId: corrId,
       causationId,
       source: EVENT_SOURCE,
@@ -1394,6 +1457,7 @@ function createInjectionController(options = {}) {
       acceptOutputTransitionOnly: typeof options.acceptOutputTransitionOnly === 'boolean'
         ? options.acceptOutputTransitionOnly
         : undefined,
+      meta: (options.meta && typeof options.meta === 'object') ? { ...options.meta } : null,
     };
 
     const maxItems = getInjectionQueueMaxItems();
@@ -1439,7 +1503,11 @@ function createInjectionController(options = {}) {
 
     bus.emit('inject.queued', {
       paneId: id,
-      payload: { depth: queue.length, priority: queueItem.priority },
+      payload: {
+        depth: queue.length,
+        priority: queueItem.priority,
+        visibility: queueItem.meta?.visibility || null,
+      },
       correlationId: corrId,
       causationId: queueTraceContext.parentEventId || undefined,
       source: EVENT_SOURCE,

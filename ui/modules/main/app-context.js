@@ -6,6 +6,7 @@
 class AppContext {
   constructor() {
     this.mainWindow = null;
+    this.windows = new Map();
     this.daemonClient = null;
     this.recoveryManager = null;
     this.pluginManager = null;
@@ -41,6 +42,44 @@ class AppContext {
 
   setMainWindow(window) {
     this.mainWindow = window;
+    if (window) {
+      this.windows.set('main', window);
+    } else {
+      this.windows.delete('main');
+    }
+  }
+
+  setWindow(windowKey, window) {
+    const key = String(windowKey || 'main').trim() || 'main';
+    if (window) {
+      this.windows.set(key, window);
+    } else {
+      this.windows.delete(key);
+    }
+    if (key === 'main') {
+      this.mainWindow = window || null;
+    }
+    return window || null;
+  }
+
+  getWindow(windowKey = 'main') {
+    const key = String(windowKey || 'main').trim() || 'main';
+    if (key === 'main') {
+      return this.mainWindow || this.windows.get('main') || null;
+    }
+    return this.windows.get(key) || null;
+  }
+
+  deleteWindow(windowKey = 'main') {
+    const key = String(windowKey || 'main').trim() || 'main';
+    this.windows.delete(key);
+    if (key === 'main') {
+      this.mainWindow = null;
+    }
+  }
+
+  getWindows() {
+    return new Map(this.windows);
   }
 
   setDaemonClient(client) {

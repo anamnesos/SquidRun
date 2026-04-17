@@ -6,25 +6,11 @@
 const log = require('./logger');
 const terminal = require('./terminal');
 
-/**
- * Initializes the command palette UI component
- * Provides fuzzy search across all available commands
- */
-function initCommandPalette() {
-  const overlay = document.getElementById('commandPaletteOverlay');
-  const palette = document.getElementById('commandPalette');
-  const input = document.getElementById('commandPaletteInput');
-  const list = document.getElementById('commandPaletteList');
-
-  if (!overlay || !palette || !input || !list) return;
-
-  let selectedIndex = 0;
-  let filteredCommands = [];
-
-  // Define all available commands
-  const commands = [
+function getCommandPaletteCommands(options = {}) {
+  return [
     // Agent Control
     { id: 'spawn-all', label: 'Spawn All Agents', icon: '🚀', category: 'Agents', action: () => document.getElementById('spawnAllBtn')?.click() },
+    { id: 'open-private-profile-window', label: 'Open [private-profile] Window', icon: '🪟', category: 'Windows', action: () => options.openAppWindow?.('private-profile') },
     // Navigation
     { id: 'focus-1', label: 'Focus Architect (Pane 1)', icon: '1️⃣', category: 'Navigate', shortcut: 'Alt+1', action: () => terminal.focusPane('1') },
     { id: 'focus-2', label: 'Focus Builder (Pane 2)', icon: '2️⃣', category: 'Navigate', shortcut: 'Alt+2', action: () => terminal.focusPane('2') },
@@ -34,7 +20,6 @@ function initCommandPalette() {
     { id: 'toggle-settings', label: 'Toggle Settings Panel', icon: '⚙️', category: 'Panels', action: () => document.getElementById('settingsBtn')?.click() },
     { id: 'toggle-panel', label: 'Toggle Right Panel', icon: '📊', category: 'Panels', action: () => document.getElementById('panelBtn')?.click() },
     { id: 'toggle-friction', label: 'View Friction Logs', icon: '🔧', category: 'Panels', action: () => {
-      // Open right panel and switch to friction tab
       const rightPanel = document.getElementById('rightPanel');
       if (rightPanel && !rightPanel.classList.contains('visible')) {
         document.getElementById('panelBtn')?.click();
@@ -48,6 +33,25 @@ function initCommandPalette() {
     // System
     { id: 'shutdown', label: 'Shutdown SquidRun', icon: '🔌', category: 'System', action: () => document.getElementById('fullRestartBtn')?.click() },
   ];
+}
+
+/**
+ * Initializes the command palette UI component
+ * Provides fuzzy search across all available commands
+ */
+function initCommandPalette(options = {}) {
+  const overlay = document.getElementById('commandPaletteOverlay');
+  const palette = document.getElementById('commandPalette');
+  const input = document.getElementById('commandPaletteInput');
+  const list = document.getElementById('commandPaletteList');
+
+  if (!overlay || !palette || !input || !list) return;
+
+  let selectedIndex = 0;
+  let filteredCommands = [];
+
+  // Define all available commands
+  const commands = getCommandPaletteCommands(options);
 
   function openPalette() {
     overlay.classList.add('open');
@@ -175,4 +179,5 @@ function initCommandPalette() {
 
 module.exports = {
   initCommandPalette,
+  getCommandPaletteCommands,
 };

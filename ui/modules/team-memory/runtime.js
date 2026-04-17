@@ -11,6 +11,7 @@ const { MemoryIngestService } = require('../memory-ingest/service');
 const { MemoryLifecycleService } = require('../memory-ingest/lifecycle');
 const { MemoryPromotionService } = require('../memory-ingest/promotion');
 const { MemoryDeliveryService } = require('../memory-ingest/delivery');
+const { RecallFeedbackService } = require('./recall-feedback');
 const log = require('../logger');
 const { resolveCoordPath } = require('../../config');
 
@@ -121,6 +122,9 @@ function createTeamMemoryRuntime(options = {}) {
     lifecycleService,
     projectRoot: options.projectRoot || options.workspaceRoot,
   });
+  const recallFeedbackService = new RecallFeedbackService({
+    db: store.db,
+  });
 
   if (initResult?.ok === true) {
     ingestService.initializeRuntime({
@@ -140,6 +144,7 @@ function createTeamMemoryRuntime(options = {}) {
     promotionService,
     lifecycleService,
     deliveryService,
+    recallFeedbackService,
     initResult,
   };
 }
@@ -253,6 +258,7 @@ function executeTeamMemoryOperation(action, payload = {}, options = {}) {
   const promotionService = runtime?.promotionService;
   const lifecycleService = runtime?.lifecycleService;
   const deliveryService = runtime?.deliveryService;
+  const recallFeedbackService = runtime?.recallFeedbackService;
 
   if (!store || !store.isAvailable()) {
     return { ok: false, reason: 'unavailable' };
@@ -511,6 +517,15 @@ function executeTeamMemoryOperation(action, payload = {}, options = {}) {
 
     case 'record-memory-injection-feedback':
       return deliveryService.recordInjectionFeedback(opPayload);
+
+    case 'record-recall-set':
+      return recallFeedbackService.recordRecallSet(opPayload);
+
+    case 'record-recall-feedback':
+      return recallFeedbackService.recordRecallFeedback(opPayload);
+
+    case 'get-recall-rank-adjustments':
+      return recallFeedbackService.getRankAdjustments(opPayload);
 
     case 'build-cross-device-handoff':
       return deliveryService.buildCrossDeviceHandoff(opPayload);

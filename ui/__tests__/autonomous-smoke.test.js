@@ -41,6 +41,24 @@ describe('autonomous-smoke helpers', () => {
 
       expect(result).toEqual({ trigger: false, reason: null });
     });
+
+    test('does not trigger for routine completed status message', () => {
+      const result = shouldTriggerAutonomousSmoke({
+        senderRole: 'builder',
+        messageContent: 'Task completed and staged for commit',
+      });
+
+      expect(result).toEqual({ trigger: false, reason: null });
+    });
+
+    test('does not trigger for routine done status message', () => {
+      const result = shouldTriggerAutonomousSmoke({
+        senderRole: 'builder',
+        messageContent: 'Done, tests are green',
+      });
+
+      expect(result).toEqual({ trigger: false, reason: null });
+    });
   });
 
   describe('buildSmokeRunnerArgs', () => {

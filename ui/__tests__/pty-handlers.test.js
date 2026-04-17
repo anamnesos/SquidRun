@@ -388,7 +388,7 @@ describe('PTY Handlers', () => {
 
       const result = await harness.invoke('pty-write', '1', payload);
 
-      expect(result).toEqual({ success: true });
+      expect(result).toEqual({ success: true, chunked: true, chunks: 1, chunkSize: 4096 });
       expect(ctx.daemonClient.write).toHaveBeenCalled();
     });
 
@@ -400,7 +400,7 @@ describe('PTY Handlers', () => {
       const result = await harness.invoke('pty-write', '1', payload);
 
       expect(ctx.daemonClient.write).toHaveBeenCalled();
-      expect(result).toEqual({ success: false, error: 'daemon_write_failed' });
+      expect(result).toEqual({ success: false, error: 'Failed to send write to daemon' });
     });
   });
 
@@ -473,6 +473,36 @@ describe('PTY Handlers', () => {
 
       expect(result).toEqual({ success: true, chunks: 3, chunkSize: 2048 });
       expect(ctx.daemonClient.writeAndWaitAck).toHaveBeenCalledTimes(3);
+    });
+
+    test('waits for each chunk ack before sending the next chunk', async () => {
+      ctx.daemonClient.connected = true;
+      const resolvers = [];
+      ctx.daemonClient.writeAndWaitAck = jest.fn(() => new Promise((resolve) => {
+        resolvers.push(resolve);
+      }));
+      const payload = 'E'.repeat(4200);
+
+      const resultPromise = harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 2048 });
+      await Promise.resolve();
+
+      expect(ctx.daemonClient.writeAndWaitAck).toHaveBeenCalledTimes(1);
+      expect(ctx.daemonClient.writeAndWaitAck.mock.calls[0][1]).toBe(payload.slice(0, 2048));
+
+      resolvers.shift()({ success: true, status: 'accepted' });
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+
+      expect(ctx.daemonClient.writeAndWaitAck).toHaveBeenCalledTimes(2);
+      expect(ctx.daemonClient.writeAndWaitAck.mock.calls[1][1]).toBe(payload.slice(2048, 4096));
+
+      resolvers.shift()({ success: true, status: 'accepted' });
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+
+      expect(ctx.daemonClient.writeAndWaitAck).toHaveBeenCalledTimes(3);
+      expect(ctx.daemonClient.writeAndWaitAck.mock.calls[2][1]).toBe(payload.slice(4096));
+
+      resolvers.shift()({ success: true, status: 'accepted' });
+      await expect(resultPromise).resolves.toEqual({ success: true, chunks: 3, chunkSize: 2048 });
     });
 
     test('returns failure when writeAndWaitAck fails', async () => {

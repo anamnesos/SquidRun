@@ -73,34 +73,58 @@ function formatMsg(level, subsystem, message, extra) {
   return [prefix, message];
 }
 
+function createMirrorWriter(stream) {
+  if (!stream || typeof stream.write !== 'function') {
+    return () => {};
+  }
+  let disabled = false;
+  const markBroken = () => {
+    disabled = true;
+    try { stream.removeListener('error', markBroken); } catch {}
+  };
+  try {
+    stream.on('error', markBroken);
+  } catch {
+    disabled = true;
+  }
+  return (line) => {
+    if (disabled || !line || stream.destroyed || stream.writable === false) return;
+    try {
+      stream.write(line, (error) => {
+        if (error) markBroken();
+      });
+    } catch {
+      markBroken();
+    }
+  };
+}
+
+const writeStdout = createMirrorWriter(process.stdout);
+const writeStderr = createMirrorWriter(process.stderr);
+
 function write(level, subsystem, message, extra) {
   if (LEVELS[level] < minLevel) return;
   const parts = formatMsg(level, subsystem, message, extra);
-  try {
-    if (level === 'error') {
-      console.error(...parts);
-    } else if (level === 'warn') {
-      console.warn(...parts);
-    } else {
-      console.log(...parts);
-    }
-  } catch (_) {
-    // EPIPE / broken stdout pipe — fall through to file logging
+  const line = parts
+    .map((part) => {
+      if (typeof part === 'string') return part;
+      try {
+        return JSON.stringify(part);
+      } catch {
+        return String(part);
+      }
+    })
+    .join(' ');
+  const lineWithNewline = `${line}\n`;
+  if (level === 'error' || level === 'warn') {
+    writeStderr(lineWithNewline);
+  } else {
+    writeStdout(lineWithNewline);
   }
 
   ensureLogDir();
   try {
-    const line = parts
-      .map((part) => {
-        if (typeof part === 'string') return part;
-        try {
-          return JSON.stringify(part);
-        } catch {
-          return String(part);
-        }
-      })
-      .join(' ');
-    bufferedWriter.write(`${line}\n`);
+    bufferedWriter.write(lineWithNewline);
   } catch (_err) {
     // Ignore file logging errors to avoid breaking runtime
   }

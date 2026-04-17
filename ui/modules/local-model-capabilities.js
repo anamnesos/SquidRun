@@ -4,6 +4,7 @@ const path = require('path');
 const { getProjectRoot, resolveCoordPath } = require('../config');
 
 const DEFAULT_OLLAMA_BASE_URL = String(process.env.SQUIDRUN_OLLAMA_URL || 'http://127.0.0.1:11434').trim();
+const DEFAULT_ANTHROPIC_BASE_URL = String(process.env.SQUIDRUN_ANTHROPIC_BASE_URL || 'https://api.anthropic.com').trim();
 const DEFAULT_OLLAMA_TIMEOUT_MS = Math.max(
   250,
   Number.parseInt(process.env.SQUIDRUN_OLLAMA_TIMEOUT_MS || '1500', 10) || 1500
@@ -20,6 +21,7 @@ const DEFAULT_PREFERRED_OLLAMA_MODELS = Object.freeze([
   'qwen2.5:7b',
   'mistral:7b',
 ]);
+const DEFAULT_SLEEP_EXTRACTION_MODEL = String(process.env.SQUIDRUN_SLEEP_EXTRACTION_MODEL || 'claude-opus-4-6').trim();
 
 function toNonEmptyString(value) {
   if (typeof value !== 'string') return null;
@@ -31,6 +33,10 @@ function quoteShellArg(value) {
   const text = String(value ?? '');
   if (!text) return '""';
   return `"${text.replace(/"/g, '\\"')}"`;
+}
+
+function hasKey(value) {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 function resolveSystemCapabilitiesPath(projectRoot = null) {
@@ -186,6 +192,24 @@ function buildOllamaExtractionCommand(options = {}) {
   return args.map(quoteShellArg).join(' ');
 }
 
+function buildAnthropicExtractionCommand(options = {}) {
+  const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
+  const model = toNonEmptyString(options.model) || DEFAULT_SLEEP_EXTRACTION_MODEL;
+  if (!model) return '';
+  const scriptPath = path.join(projectRoot, 'ui', 'scripts', 'claude-extract.js');
+  const args = [
+    process.execPath,
+    scriptPath,
+    '--model',
+    model,
+    '--base-url',
+    toNonEmptyString(options.baseUrl) || DEFAULT_ANTHROPIC_BASE_URL,
+    '--timeout',
+    String(Math.max(1000, Number.parseInt(String(options.timeoutMs || DEFAULT_EXTRACTION_TIMEOUT_MS), 10) || DEFAULT_EXTRACTION_TIMEOUT_MS)),
+  ];
+  return args.map(quoteShellArg).join(' ');
+}
+
 function buildSystemCapabilitiesSnapshot(options = {}) {
   const projectRoot = path.resolve(String(options.projectRoot || getProjectRoot() || process.cwd()));
   const settings = (options.settings && typeof options.settings === 'object') ? options.settings : {};
@@ -204,12 +228,16 @@ function buildSystemCapabilitiesSnapshot(options = {}) {
   };
   const cpuInfo = Array.isArray(os.cpus()) ? os.cpus() : [];
   const localModelEnabled = settings.localModelEnabled === true;
-  const extractionAvailable = localModelEnabled && ollama.running === true && ollama.suitableModelAvailable === true;
+  const anthropicApiKey = toNonEmptyString(options.anthropicApiKey)
+    || toNonEmptyString(process.env.ANTHROPIC_API_KEY);
+  const sleepExtractionModel = toNonEmptyString(options.sleepExtractionModel)
+    || DEFAULT_SLEEP_EXTRACTION_MODEL;
+  const extractionAvailable = hasKey(anthropicApiKey);
   const extractionCommand = extractionAvailable
-    ? buildOllamaExtractionCommand({
+    ? buildAnthropicExtractionCommand({
       projectRoot,
-      model: ollama.selectedModel,
-      baseUrl: ollama.baseUrl,
+      model: sleepExtractionModel,
+      baseUrl: options.anthropicBaseUrl,
       timeoutMs: options.extractionTimeoutMs,
     })
     : '';
@@ -231,16 +259,15 @@ function buildSystemCapabilitiesSnapshot(options = {}) {
       ollama,
       sleepExtraction: {
         enabled: extractionAvailable,
-        available: ollama.running === true && ollama.suitableModelAvailable === true,
-        model: ollama.selectedModel,
+        available: extractionAvailable,
+        provider: extractionAvailable ? 'anthropic' : 'fallback',
+        model: extractionAvailable ? sleepExtractionModel : null,
         timeoutMs: Math.max(1000, Number.parseInt(String(options.extractionTimeoutMs || DEFAULT_EXTRACTION_TIMEOUT_MS), 10) || DEFAULT_EXTRACTION_TIMEOUT_MS),
         command: extractionCommand || null,
-        path: extractionAvailable ? 'local-ollama' : 'fallback',
+        path: extractionAvailable ? 'anthropic-api' : 'fallback',
         reason: extractionAvailable
-          ? 'local_ollama_enabled'
-          : (ollama.running !== true
-            ? 'ollama_unavailable'
-            : (ollama.suitableModelAvailable !== true ? 'model_missing' : 'feature_disabled')),
+          ? 'anthropic_api_configured'
+          : 'anthropic_api_key_missing',
       },
     },
   };
@@ -272,6 +299,9 @@ module.exports = {
   DEFAULT_OLLAMA_BASE_URL,
   DEFAULT_OLLAMA_TIMEOUT_MS,
   DEFAULT_PREFERRED_OLLAMA_MODELS,
+  DEFAULT_SLEEP_EXTRACTION_MODEL,
+  DEFAULT_ANTHROPIC_BASE_URL,
+  buildAnthropicExtractionCommand,
   buildOllamaExtractionCommand,
   buildSystemCapabilitiesSnapshot,
   detectOllamaRuntime,

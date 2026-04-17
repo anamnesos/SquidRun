@@ -165,22 +165,84 @@ body::before {
   z-index: -1;
 }
 
+body[data-window-key="private-profile"] {
+  --color-primary: #ff8f4a;
+  --color-primary-hover: #ffb07b;
+  --color-secondary: #ffd166;
+  --color-secondary-hover: #ffe099;
+  --color-accent: #ff5c8a;
+  --color-accent-hover: #ff7aa1;
+  --color-bg-dark: #130b10;
+  --color-bg-medium: #1d1118;
+  --color-bg-light: #2a1822;
+  --color-bg-elevated: #241520;
+  --color-border: #3a2230;
+  --color-border-light: #573244;
+  --color-text: #fff3ec;
+  --color-text-muted: #e0b9ab;
+  --color-text-dim: #a97f75;
+  --glow-primary: 0 0 26px rgba(255, 143, 74, 0.36);
+  --glow-secondary: 0 0 24px rgba(255, 209, 102, 0.3);
+  --glow-accent: 0 0 24px rgba(255, 92, 138, 0.34);
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 59px,
+      rgba(255, 143, 74, 0.025) 59px,
+      rgba(255, 143, 74, 0.025) 60px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 59px,
+      rgba(255, 92, 138, 0.02) 59px,
+      rgba(255, 92, 138, 0.02) 60px
+    ),
+    radial-gradient(ellipse at 20% 10%, rgba(255, 209, 102, 0.04) 0%, transparent 48%),
+    radial-gradient(ellipse at 80% 85%, rgba(255, 92, 138, 0.05) 0%, transparent 52%),
+    linear-gradient(180deg, rgba(23, 11, 17, 0.94) 0%, rgba(13, 8, 12, 0.98) 100%),
+    var(--color-bg-dark);
+}
+
+body[data-window-key="private-profile"]::before {
+  background:
+    radial-gradient(55% 50% at 12% 0%, rgba(255, 209, 102, 0.08), transparent 60%),
+    radial-gradient(50% 45% at 92% 100%, rgba(255, 92, 138, 0.08), transparent 68%);
+}
+
+body[data-window-key="private-profile"] .header,
+body[data-window-key="private-profile"] .state-bar,
+body[data-window-key="private-profile"] .status-bar {
+  border-color: rgba(255, 143, 74, 0.22);
+  box-shadow: 0 0 0 1px rgba(255, 92, 138, 0.08), 0 10px 28px rgba(0, 0, 0, 0.3);
+}
+
+body[data-window-key="private-profile"] .pane-header {
+  background:
+    linear-gradient(90deg, rgba(255, 143, 74, 0.12), rgba(255, 92, 138, 0.04)),
+    rgba(18, 11, 18, 0.88);
+}
+
 .startup-loading-overlay {
   position: fixed;
-  top: 12px;
+  top: 16px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 5000;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px 14px;
-  border-radius: 999px;
-  border: 1px solid rgba(0, 240, 255, 0.22);
-  background: rgba(10, 14, 24, 0.82);
-  backdrop-filter: blur(8px);
+  flex-direction: column;
+  gap: 12px;
+  width: min(560px, calc(100vw - 32px));
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(0, 240, 255, 0.18);
+  background:
+    linear-gradient(180deg, rgba(17, 23, 37, 0.96), rgba(9, 13, 22, 0.94)),
+    radial-gradient(circle at top left, rgba(0, 240, 255, 0.08), transparent 45%);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(8px);
-  pointer-events: none;
   opacity: 1;
   visibility: visible;
   transition: opacity 280ms ease, visibility 280ms ease;
@@ -255,19 +317,19 @@ body::before {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .startup-loading-logo {
-  width: 26px;
-  height: 26px;
+  width: 34px;
+  height: 34px;
   object-fit: contain;
   opacity: 0.95;
 }
 
 .startup-loading-spinner {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   border: 2px solid rgba(232, 234, 240, 0.22);
   border-top-color: #00f0ff;
@@ -278,15 +340,142 @@ body::before {
   display: none;
 }
 
+.startup-loading-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .startup-loading-text {
   color: var(--color-text);
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.startup-loading-stage-text {
+  color: rgba(232, 234, 240, 0.68);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.startup-loading-progress-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.startup-loading-progress-track {
+  position: relative;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.startup-loading-progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #00f0ff 0%, #7df6ff 60%, #ffd36b 100%);
+  box-shadow: 0 0 16px rgba(0, 240, 255, 0.28);
+  transition: width 220ms ease;
+}
+
+.startup-loading-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: rgba(232, 234, 240, 0.68);
+  font-size: 11px;
+}
+
+.startup-loading-percent {
+  color: rgba(255, 255, 255, 0.82);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.startup-loading-checks {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.startup-loading-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.startup-loading-check-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.startup-loading-check.ready .startup-loading-check-dot {
+  background: #4ce1a1;
+  box-shadow: 0 0 10px rgba(76, 225, 161, 0.34);
+}
+
+.startup-loading-check.loading .startup-loading-check-dot {
+  background: #00f0ff;
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
+}
+
+.startup-loading-check.degraded .startup-loading-check-dot {
+  background: #ffb347;
+  box-shadow: 0 0 10px rgba(255, 179, 71, 0.28);
+}
+
+.startup-loading-check.pending .startup-loading-check-dot {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.startup-loading-check-label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.startup-loading-check-name {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.startup-loading-check-detail {
+  color: rgba(232, 234, 240, 0.58);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .startup-loading-overlay.error .startup-loading-text {
   color: #ffd1d1;
+}
+
+.startup-loading-overlay.error .startup-loading-stage-text,
+.startup-loading-overlay.error .startup-loading-meta,
+.startup-loading-overlay.error .startup-loading-check-detail {
+  color: rgba(255, 209, 209, 0.8);
 }
 
 @keyframes startup-spin {

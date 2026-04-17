@@ -147,6 +147,7 @@ function createPreloadApi(ipcRenderer) {
     },
 
     screenshot: {
+      capture: (options = null) => ipc.invoke('capture-screenshot', options),
       save: (base64Data, originalName) => ipc.invoke('save-screenshot', base64Data, originalName),
       list: (options = null) => ipc.invoke('list-screenshots', options),
       delete: (filename) => ipc.invoke('delete-screenshot', filename),

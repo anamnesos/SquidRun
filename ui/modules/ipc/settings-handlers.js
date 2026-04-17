@@ -279,6 +279,13 @@ function registerSettingsHandlers(ctx, deps) {
     return ctx.settings.readAppStatus() || null;
   });
 
+  ipcMain.handle('get-startup-services-status', async () => {
+    if (typeof deps.getStartupServicesStatus === 'function') {
+      return (await deps.getStartupServicesStatus()) || null;
+    }
+    return null;
+  });
+
   ipcMain.handle('set-setting', (event, key, value) => {
     const normalizedKey = typeof key === 'string' ? key.trim() : '';
     if (!normalizedKey) {
@@ -486,6 +493,7 @@ function unregisterSettingsHandlers(ctx) {
   if (ipcMain) {
     ipcMain.removeHandler('get-settings');
     ipcMain.removeHandler('get-app-status');
+    ipcMain.removeHandler('get-startup-services-status');
     ipcMain.removeHandler('set-setting');
     ipcMain.removeHandler('get-all-settings');
     ipcMain.removeHandler('get-api-keys');
